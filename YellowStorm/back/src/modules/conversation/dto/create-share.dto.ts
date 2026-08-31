@@ -1,5 +1,6 @@
-import { IsString, IsOptional, IsIn, IsArray, IsEmail, IsInt, Min, Max, MaxLength } from 'class-validator';
+import { IsString, IsOptional, IsIn, IsArray, IsEmail, IsInt, Min, Max, MaxLength, ArrayMaxSize } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { Transform } from 'class-transformer';
 
 export class CreateShareDto {
   @ApiProperty({ enum: ['public', 'private'] })
@@ -14,7 +15,13 @@ export class CreateShareDto {
 
   @ApiPropertyOptional({ description: 'Recipient emails (for private shares)', type: [String] })
   @IsOptional()
+  @Transform(({ value }) =>
+    Array.isArray(value)
+      ? [...new Set(value.map((email: unknown) => String(email).trim().toLowerCase()))]
+      : value,
+  )
   @IsArray()
+  @ArrayMaxSize(20)
   @IsEmail({}, { each: true })
   recipientEmails?: string[];
 

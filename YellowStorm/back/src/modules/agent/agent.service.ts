@@ -37,7 +37,12 @@ import { normalizeWidgetSettings } from './constants/widget-default-settings';
 import { AgentRepository, CreateAgentInput, UpdateAgentInput } from './repositories/agent.repository';
 import { AgentRecord } from './repositories/agent-record.mapper';
 import { AgentRoleEmbeddingService } from './services/agent-role-embedding.service';
-import { PLATFORM_COPILOT, PLATFORM_COPILOT_AGENT_SLUG } from './constants/platform-copilot.constants';
+import {
+  PLATFORM_COPILOT,
+  PLATFORM_COPILOT_AGENT_SLUG,
+  PLATFORM_COPILOT_HANDOFF_RUNTIME_INSTRUCTION,
+  PLATFORM_COPILOT_PLAYBOOK_CONNECTOR_SLUG,
+} from './constants/platform-copilot.constants';
 
 /** Agent-type slug of the orchestrating manager agent. */
 const MANAGER_SLUG = 'manager';
@@ -518,7 +523,7 @@ export class AgentService {
     sharedAgentIds?: string[],
     groupMembers?: any[],
     selectedConnectorId?: string,
-    runtimeContext?: { conversationId: string; correlationId: string },
+    runtimeContext?: { conversationId: string; correlationId: string; playbookHandoffAttached?: boolean },
     reasoningEffort?: string,
   ): Promise<IGrpcAgent[]> {
     this.logger.log('Building agents for stream', {
@@ -755,7 +760,7 @@ export class AgentService {
         connectorsMap,
         effectiveConnectorIds,
         userId,
-        this.buildConnectorActionKeysByConnectorId(agent.connectorActionSelections),
+        this.buildRuntimeConnectorActionKeysByConnectorId(agent, effectiveConnectorIds, connectorsMap),
       );
       if (agent.agentTypeSlug === PLATFORM_COPILOT && runtimeContext) {
         for (const binding of connectorBindings) {
@@ -781,6 +786,11 @@ export class AgentService {
         }
       } else {
         prompt = agent.instruction || '';
+      }
+      if (agent.agentTypeSlug === PLATFORM_COPILOT
+        && runtimeContext?.playbookHandoffAttached
+        && !prompt.includes(PLATFORM_COPILOT_HANDOFF_RUNTIME_INSTRUCTION)) {
+        prompt += `${prompt ? '\n\n' : ''}${PLATFORM_COPILOT_HANDOFF_RUNTIME_INSTRUCTION}`;
       }
 
       // Append Group Members info if provided
@@ -1802,6 +1812,24 @@ export class AgentService {
     return new Map(
       selections.map((selection) => [selection.connectorId, new Set(selection.actionKeys)]),
     );
+  }
+
+  private buildRuntimeConnectorActionKeysByConnectorId(
+    agent: Pick<IAgentForStream, 'agentTypeSlug' | 'connectorActionSelections'>,
+    connectorIds: string[],
+    connectorsMap: Map<string, IConnectorResponse>,
+  ): Map<string, Set<string>> | undefined {
+    const selected = this.buildConnectorActionKeysByConnectorId(agent.connectorActionSelections);
+    if (agent.agentTypeSlug !== PLATFORM_COPILOT) return selected;
+
+    const runtimeSelections = new Map(selected ?? []);
+    for (const connectorId of connectorIds) {
+      const connector = connectorsMap.get(connectorId);
+      if (connector?.slug?.toLowerCase() === PLATFORM_COPILOT_PLAYBOOK_CONNECTOR_SLUG) {
+        runtimeSelections.delete(connectorId);
+      }
+    }
+    return runtimeSelections.size ? runtimeSelections : undefined;
   }
 
   private toGrpcSkill(skill: ISkillResponse): Record<string, unknown> {

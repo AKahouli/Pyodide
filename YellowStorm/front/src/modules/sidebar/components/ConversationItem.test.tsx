@@ -13,6 +13,7 @@ const storeState = vi.hoisted(() => ({
 }));
 
 const typewriterText = vi.hoisted(() => ({ value: '' }));
+const sidebarState = vi.hoisted(() => ({ isMobile: false, setOpenMobile: vi.fn() }));
 
 vi.mock('@/components/ui/sidebar', () => ({
   SidebarMenuItem: ({ children }: { children: ReactNode }) => <div>{children}</div>,
@@ -20,6 +21,7 @@ vi.mock('@/components/ui/sidebar', () => ({
     <div data-active={String(Boolean(isActive))}>{children}</div>
   ),
   SidebarMenuAction: ({ children, showOnHover: _showOnHover, draggable: _draggable, ...props }: { children: ReactNode; showOnHover?: boolean; draggable?: boolean; 'aria-label'?: string }) => <button type='button' {...props}>{children}</button>,
+  useSidebar: () => sidebarState,
 }));
 
 vi.mock('@/components/ui/dropdown-menu', () => ({
@@ -53,6 +55,7 @@ describe('ConversationItem', () => {
     typewriterText.value = '';
     storeState.typewriterConversationId = null;
     storeState.typewriterName = '';
+    sidebarState.isMobile = false;
   });
 
   it('renders normal title and active state', () => {
@@ -94,5 +97,17 @@ describe('ConversationItem', () => {
 
     await userEvent.click(screen.getByRole('button', { name: 'conversations.delete' }));
     expect(screen.getByText('delete-open')).toBeInTheDocument();
+  });
+
+  it('closes the mobile sidebar when navigating', async () => {
+    sidebarState.isMobile = true;
+    render(
+      <MemoryRouter>
+        <ConversationItem id='c1' title='My convo' />
+      </MemoryRouter>,
+    );
+
+    await userEvent.click(screen.getByText('My convo'));
+    expect(sidebarState.setOpenMobile).toHaveBeenCalledWith(false);
   });
 });

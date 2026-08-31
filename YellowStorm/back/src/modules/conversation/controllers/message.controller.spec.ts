@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { Types } from 'mongoose';
 import { MessageController } from './message.controller';
 
@@ -35,6 +36,7 @@ describe('MessageController.sendMessage sticky routing', () => {
   let choiceInteractionService: { canonicalize: jest.Mock; canonicalizeMany: jest.Mock };
   let responseReliabilityService: { rerun: jest.Mock };
   let conversationArtifactService: { resolveDownloadUrl: jest.Mock; resolveCitationUrl: jest.Mock };
+  let playbookHandoffService: { bind: jest.Mock; attachUserMessage: jest.Mock };
   let logger: {
     setContext: jest.Mock;
     log: jest.Mock;
@@ -84,6 +86,10 @@ describe('MessageController.sendMessage sticky routing', () => {
     choiceInteractionService = { canonicalize: jest.fn(), canonicalizeMany: jest.fn() };
     responseReliabilityService = { rerun: jest.fn().mockResolvedValue({ messageId: 'ai-1', reliabilityEvaluation: { status: 'pending' } }) };
     conversationArtifactService = { resolveDownloadUrl: jest.fn(), resolveCitationUrl: jest.fn() };
+    playbookHandoffService = {
+      bind: jest.fn().mockResolvedValue(undefined),
+      attachUserMessage: jest.fn().mockResolvedValue(undefined),
+    };
     logger = {
       setContext: jest.fn(),
       log: jest.fn(),
@@ -103,6 +109,7 @@ describe('MessageController.sendMessage sticky routing', () => {
       { resolveRuntime: jest.fn(), assertRuntimeRequestAllowed: jest.fn(), resolveEffectiveAgents: jest.fn() } as any,
       responseReliabilityService as any,
       conversationArtifactService as any,
+      playbookHandoffService as any,
     );
   });
 
@@ -127,9 +134,11 @@ describe('MessageController.sendMessage sticky routing', () => {
       taggedAgentIds: [],
     });
 
+    const playbookHandoffId = randomUUID();
     await controller.sendMessage(user, conversationId, {
       content: 'validate this playbook',
       requestId: 'turn-1',
+      playbookHandoffId,
       clientContext: {
         contextVersion: 1,
         route: '/playbooks',
@@ -155,7 +164,11 @@ describe('MessageController.sendMessage sticky routing', () => {
     }));
     expect(streamService.startStream).toHaveBeenCalledWith(
       userId.toString(), conversationId, expect.any(String),
-      expect.objectContaining({ agentIds: [stickyAgentId], clientContext: expect.objectContaining({ contextVersion: 1 }) }),
+      expect.objectContaining({
+        agentIds: [stickyAgentId],
+        clientContext: expect.objectContaining({ contextVersion: 1 }),
+        playbookHandoffId,
+      }),
       'turn-1', undefined, 'Ada Lovelace', undefined,
     );
   });
@@ -470,6 +483,39 @@ describe('MessageController.sendMessage sticky routing', () => {
       .resolves.toEqual({ aiMessage: undefined });
     expect(conversationService.resolvePlatformCopilotAgent).toHaveBeenCalled();
     expect(messageService.createAIPlaceholder).toHaveBeenCalled();
+  });
+
+  it('reattaches a handoff when recovering an idempotent platform turn', async () => {
+    const userMessageId = new Types.ObjectId().toString();
+    const aiMessageId = new Types.ObjectId().toString();
+    const dto = {
+      content: 'Create a lead Playbook', requestId: 'turn-handoff', playbookHandoffId: randomUUID(),
+    } as any;
+    conversationService.getConversationDocument.mockResolvedValue({
+      isFirstMessage: false,
+      runtimePurpose: 'platform_copilot',
+      pinnedAgentId: new Types.ObjectId(stickyAgentId),
+      taggedAgentIds: [],
+    });
+    messageService.findTurnByRequestId.mockResolvedValue({
+      userMessage: { id: userMessageId, content: dto.content },
+      aiMessageId,
+      requestFingerprint: (controller as any).fingerprintTurn(dto),
+    });
+    messageService.getMessageDocument.mockResolvedValue({ isComplete: true });
+
+    await controller.sendMessage(user, conversationId, dto);
+
+    expect(playbookHandoffService.bind).toHaveBeenCalledWith({
+      handoffId: dto.playbookHandoffId,
+      ownerId: userId.toString(),
+      platformConversationId: conversationId,
+      turnRequestId: dto.requestId,
+      prompt: dto.content,
+    });
+    expect(playbookHandoffService.attachUserMessage).toHaveBeenCalledWith(
+      dto.playbookHandoffId, userId.toString(), userMessageId,
+    );
   });
 
   it('preserves model reasoning metadata on regenerated placeholders', async () => {

@@ -138,7 +138,6 @@ export function SystemPage() {
   };
 
   const fetchStatus = async () => {
-    setLoading(true);
     setError(null);
 
     try {

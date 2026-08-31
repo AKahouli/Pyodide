@@ -1,6 +1,10 @@
 import { Module, forwardRef } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
-import { HealthController } from './health.controller';
+import { PublicHealthController } from './public-health.controller';
+import { AdminHealthController } from './admin-health.controller';
+import { AdminPostgresHealthController } from './admin-postgres-health.controller';
+import { PostgresHealthService } from './postgres-health.service';
+import { AuthorizationModule } from '../authorization';
 import { HealthService } from './health.service';
 import { HealthHistoryService } from './health-history.service';
 import { HealthHistory, HealthHistorySchema } from './schemas/health-history.schema';
@@ -20,9 +24,10 @@ import { SemanticModelModule } from '../semantic-model/semantic-model.module';
     forwardRef(() => ConversationModule),  // Import to use StreamService for gRPC health checks
     forwardRef(() => ConversationV2Module),  // Import to use ConversationV2GrpcClientService for V2 gRPC health
     SemanticModelModule,
+    AuthorizationModule,
   ],
-  controllers: [HealthController],
-  providers: [HealthService, HealthHistoryService],
+  controllers: [PublicHealthController, AdminHealthController, AdminPostgresHealthController],
+  providers: [HealthService, HealthHistoryService, PostgresHealthService],
   exports: [HealthService, HealthHistoryService],
 })
 export class HealthModule {}

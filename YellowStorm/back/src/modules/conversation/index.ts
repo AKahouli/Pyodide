@@ -5,8 +5,4 @@ export * from './services/stream.service';
 export * from './services/stream-gateway.service';
 export * from './services/share.service';
 export * from './services/report.service';
-export * from './schemas/conversation.schema';
-export * from './schemas/message.schema';
-export * from './schemas/report.schema';
-export * from './schemas/shared-conversation.schema';
 export * from './interfaces';

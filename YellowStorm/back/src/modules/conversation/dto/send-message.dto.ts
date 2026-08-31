@@ -1,5 +1,5 @@
 import { Type } from 'class-transformer';
-import { IsString, IsOptional, IsBoolean, IsArray, IsMongoId, MaxLength, ValidateNested, IsIn, ArrayMaxSize, ArrayUnique, Matches, IsNotEmpty, IsInt, Min, Max } from 'class-validator';
+import { IsString, IsOptional, IsBoolean, IsArray, IsMongoId, MaxLength, ValidateNested, IsIn, ArrayMaxSize, ArrayUnique, Matches, IsNotEmpty, IsInt, Min, Max, IsUUID } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 
 class ConnectorRepoDto {
@@ -67,6 +67,11 @@ export class SendMessageDto {
   @Matches(/^[A-Za-z0-9._:-]+$/)
   @MaxLength(128)
   requestId?: string;
+
+  @ApiPropertyOptional({ description: 'Opaque prepared Conversation-to-Playbook handoff identifier' })
+  @IsOptional()
+  @IsUUID()
+  playbookHandoffId?: string;
 
   @ApiProperty({ maxLength: 50000 })
   @IsString()

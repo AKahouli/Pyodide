@@ -33,8 +33,8 @@ describe('WorkyTurnContextService', () => {
     };
     agentService = {
       findDefaultByAgentType: jest.fn().mockImplementation((typeId: string) => {
-        if (typeId === 'type-planner') return Promise.resolve({ id: 'agent-planner' });
-        if (typeId === 'type-executer') return Promise.resolve({ id: 'agent-executer' });
+        if (typeId === 'type-planner') return Promise.resolve({ id: 'agent-planner', connectors: ['c1'] });
+        if (typeId === 'type-executer') return Promise.resolve({ id: 'agent-executer', connectors: ['c2'] });
         return Promise.resolve(null);
       }),
       buildGrpcAgentsForPlaybook: jest
@@ -59,21 +59,42 @@ describe('WorkyTurnContextService', () => {
   });
 
   describe('resolveConnectors', () => {
-    it('resolves every connector worky needs by slug', async () => {
+    it('resolves the union of connectors linked to the planner and executer agents', async () => {
       const connectors = await service.resolveConnectors('user-1');
 
-      // microsoft365 was split into outlook (mail/calendar), sharepoint (files)
-      // and teams; all three have to be asked for or the plan silently loses
-      // whole tool families.
-      for (const slug of ['code-interpreter', 'linkup', 'outlook', 'sharepoint', 'teams']) {
-        expect(connectorService.findBySlug).toHaveBeenCalledWith(slug);
-      }
+      // Worky's toolset is whatever the admin linked to its agents (agent_connectors),
+      // not a hardcoded slug list: planner has c1, executer has c2 → their union.
+      expect(agentService.findDefaultByAgentType).toHaveBeenCalledWith('type-planner');
+      expect(agentService.findDefaultByAgentType).toHaveBeenCalledWith('type-executer');
       expect(connectorService.findByIdsForGrpc).toHaveBeenCalledWith(['c1', 'c2'], 'user-1');
       expect(connectors).toEqual([{ connector_id: 'c1' }, { connector_id: 'c2' }]);
     });
 
-    it('returns no connectors and swallows the error when resolution fails', async () => {
-      connectorService.findBySlug.mockRejectedValue(new Error('connector svc down'));
+    it('de-duplicates a connector linked to both agents', async () => {
+      agentService.findDefaultByAgentType.mockImplementation((typeId: string) =>
+        typeId === 'type-planner'
+          ? Promise.resolve({ id: 'agent-planner', connectors: ['c1', 'c2'] })
+          : Promise.resolve({ id: 'agent-executer', connectors: ['c2'] }),
+      );
+
+      await service.resolveConnectors('user-1');
+
+      expect(connectorService.findByIdsForGrpc).toHaveBeenCalledWith(['c1', 'c2'], 'user-1');
+    });
+
+    it('returns [] and does not call the connector service when nothing is linked', async () => {
+      agentService.findDefaultByAgentType.mockImplementation((typeId: string) =>
+        Promise.resolve({ id: typeId === 'type-planner' ? 'agent-planner' : 'agent-executer', connectors: [] }),
+      );
+
+      const connectors = await service.resolveConnectors('user-1');
+
+      expect(connectors).toEqual([]);
+      expect(connectorService.findByIdsForGrpc).not.toHaveBeenCalled();
+    });
+
+    it('returns [] and swallows the error when resolution fails', async () => {
+      agentService.findDefaultByAgentType.mockRejectedValue(new Error('agent svc down'));
 
       const connectors = await service.resolveConnectors('user-1');
 
@@ -81,9 +102,14 @@ describe('WorkyTurnContextService', () => {
       expect(connectors).toEqual([]);
     });
 
-    it('keeps the mailbox subscription alive whenever outlook resolves', async () => {
+    it('arms the mail webhook when the outlook connector is one of the linked ones', async () => {
+      agentService.findDefaultByAgentType.mockImplementation((typeId: string) =>
+        typeId === 'type-executer'
+          ? Promise.resolve({ id: 'agent-executer', connectors: ['mail-id'] })
+          : Promise.resolve({ id: 'agent-planner', connectors: [] }),
+      );
       connectorService.findBySlug.mockImplementation((slug: string) =>
-        slug === 'outlook' ? Promise.resolve({ id: 'c3', slug: 'outlook' }) : Promise.resolve(null),
+        slug === 'outlook' ? Promise.resolve({ id: 'mail-id', slug: 'outlook' }) : Promise.resolve(null),
       );
 
       await service.resolveConnectors('user-1');
@@ -91,23 +117,15 @@ describe('WorkyTurnContextService', () => {
       expect(mailSubscriptions.ensureForUser).toHaveBeenCalledWith('user-1');
     });
 
-    it('does not arm the mail webhook off sharepoint or teams', async () => {
-      // Both are Graph connectors too, so "a Microsoft connector resolved" is
-      // not the condition -- arming off either would subscribe a mailbox whose
-      // send_email tool the plan never had.
+    it('does not arm the mail webhook when outlook is not among the linked connectors', async () => {
+      // Agents link c1/c2; the outlook connector has a different id, so its
+      // send_email tool is not in this turn — no mailbox subscription.
       connectorService.findBySlug.mockImplementation((slug: string) =>
-        slug === 'sharepoint' || slug === 'teams'
-          ? Promise.resolve({ id: 'c4', slug })
-          : Promise.resolve(null),
+        slug === 'outlook' ? Promise.resolve({ id: 'mail-id', slug: 'outlook' }) : Promise.resolve(null),
       );
 
       await service.resolveConnectors('user-1');
 
-      expect(mailSubscriptions.ensureForUser).not.toHaveBeenCalled();
-    });
-
-    it('does not touch the mail subscription when outlook is not bound', async () => {
-      await service.resolveConnectors('user-1'); // only code-interpreter/linkup resolve, per the default mock
       expect(mailSubscriptions.ensureForUser).not.toHaveBeenCalled();
     });
   });

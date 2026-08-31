@@ -162,7 +162,7 @@ describe('PlatformCopilotMascot', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     localStorage.removeItem(PLATFORM_COPILOT_PANEL_WIDTH_STORAGE_KEY);
-    usePlatformCopilotPanelStore.setState({ open: false, pendingPrompt: null });
+    usePlatformCopilotPanelStore.setState({ open: false, pendingPrompt: null, pendingHandoff: null });
     designerOpen = false;
     pageMode = 'design';
     currentExecution = null;
@@ -428,6 +428,31 @@ describe('PlatformCopilotMascot', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Close Yellowmind' }));
     fireEvent.click(screen.getByRole('button', { name: 'Open Yellowmind' }));
     expect(screen.getByRole('dialog', { name: 'Yellowmind' })).toBeInTheDocument();
+  });
+
+  it('preserves an edited handoff prompt across pending-state refreshes', async () => {
+    const user = userEvent.setup();
+    const pendingHandoff = {
+      handoffId: 'handoff-1',
+      platformConversationId: 'conversation-handoff',
+      suggestedPrompt: 'Create the suggested workflow',
+      expiresAt: new Date(Date.now() + 60_000).toISOString(),
+      messageRequestId: 'message-request-1',
+      preview: { goal: 'Review incidents', executionSummaries: [], planSteps: [], actions: [], resources: [], omissions: {} },
+    };
+    usePlatformCopilotPanelStore.setState({ open: true, pendingHandoff });
+    renderMascot();
+    expect(screen.getByRole('button', { name: 'Open Yellowmind conversation history' })).toBeDisabled();
+    const composer = screen.getByRole('textbox', { name: 'Ask about your Playbooks...' });
+    await user.clear(composer);
+    await user.type(composer, 'Create an edited incident workflow');
+
+    act(() => usePlatformCopilotPanelStore.setState({ pendingHandoff: { ...pendingHandoff } }));
+    await user.click(screen.getByRole('button', { name: 'Send to Yellowmind' }));
+
+    expect(platformCopilotMock.send).toHaveBeenCalledWith(
+      'Create an edited incident workflow', undefined, undefined, expect.objectContaining({ handoffId: 'handoff-1' }),
+    );
   });
 
   it('renders present_choices clarifications and submits the selected option', async () => {

@@ -5,7 +5,7 @@
 React module for Manus conversations: composer, streaming timeline,
 right panel (tool details + **Nodepod app preview**), skills/connectors,
 **Runtime Browser Host**, **source revision viewer**, **deploy controls**,
-and **App Marketplace** integration.
+and **App Marketplace** integration. 
 
 Related docs:
 
@@ -175,34 +175,34 @@ Used for:
 
 ## Event shape
 
-From SSE / replay ([`interfaces/events.ts`](interfaces/events.ts)):
+From SSE / replay ([`interfaces/events.ts`](interfaces/events.ts)). Every event carries a
+`BaseEvent` of `{ event_id, timestamp, sequence? }` (`sequence` present on persisted
+events, absent on the optimistic client-side user echo):
 
 ```ts
 // Core message
-{ type: 'message'; event_id: string; timestamp: number; role: 'user'|'assistant'; content: string; attachments?: FileInfo[]; model?: string }
+{ type: 'message'; event_id: string; timestamp: number; role: 'user'|'assistant'; content: string; attachments?: FileInfo[]; modelId?: string | null }
+
+// Tool call lifecycle (single `tool` event, upserted by tool_call_id per turn)
+{ type: 'tool'; event_id: string; timestamp: number; tool_call_id: string; name: string; status: string; function: string; args: Record<string, unknown>; content?: ToolContent }
+
+// Plan steps
+{ type: 'step'; event_id: string; timestamp: number; id: string; status: string; description: string }
+{ type: 'plan'; event_id: string; timestamp: number; steps: Array<{ id: string; status: string; description: string }> }
+
+// Progress
+{ type: 'app_build_progress'; event_id: string; timestamp: number; phase: string; message: string }
+
+// Questions (waits for a clarification choice)
+{ type: 'wait'; event_id: string; timestamp: number; question_id?: string; question_text?: string; options?: QuestionOption[] }
 
 // Application preview
 { type: 'application_component'; event_id: string; timestamp: number; url: string; title?: string; ceph_path?: string; files_tree?: FilesTreeNode | null; file_count?: number; revision_id?: string }
 
-// Tool call lifecycle
-{ type: 'tool_call_start'; event_id: string; tool_call_id: string; tool_name: string; function_name: string; function_args: Record<string, unknown> }
-{ type: 'tool_call_end'; event_id: string; tool_call_id: string; function_result: unknown; tool_content?: { result: unknown } }
-
-// Progress
-{ type: 'app_build_progress'; event_id: string; phase: string; message?: string; progress?: number }
-
-// Plan & thinking
-{ type: 'plan'; event_id: string; steps: PlanStep[] }
-{ type: 'thinking'; event_id: string; content: string }
-
-// Questions
-{ type: 'question'; event_id: string; question_id: string; question_text: string; options?: QuestionOption[] }
-
 // Lifecycle
-{ type: 'title'; event_id: string; title: string }
+{ type: 'title'; event_id: string; timestamp: number; title: string }
 { type: 'done'; event_id: string; timestamp: number }
-{ type: 'error'; event_id: string; error: string }
-{ type: 'wait'; event_id: string; question_id?: string }
+{ type: 'error'; event_id: string; timestamp: number; error: string }
 ```
 
 `FilesTreeNode`:
@@ -219,22 +219,35 @@ From SSE / replay ([`interfaces/events.ts`](interfaces/events.ts)):
 
 ## Store
 
-[`store.ts`](store.ts) (Zustand) keeps:
+[`store.ts`](store.ts) (Zustand) keeps two stores: `useConversationV2Store` (the
+active conversation's view state) and `useConversationV2PointersStore` (the session
+sidebar list). The active store's `State`:
 
 ```ts
 // Session
 sessionId: string | null;
-title: string;
-status: 'active' | 'completed' | 'error' | 'waiting';
-isShared: boolean;
+title: string | null;
+systemWorkspaceId: string | null;
 workspaceIds: string[];
+selectedModelId: string | null;   // null = admin default (persisted per session)
 selectedSkillIds: string[];
 selectedConnectorIds: string[];
-systemWorkspaceId: string | null;
+selectedConnectorRepo: SelectedConnectorRepoState | null;
 
-// Messages
-messages: TimelineEntry[];       // ordered events for rendering
-toolCalls: Map<string, ToolCallState>;  // tool call lifecycle
+// Streaming / events
+events: AgentEvent[];             // ordered events for rendering
+streaming: boolean;
+streamError: string | null;
+lastSequence: number;             // dedupe/gap-detection against live frames
+liveToolCallId: string | null;    // latest non-message tool the panel follows
+liveAssistantIds: Set<string>;    // assistant event_ids that arrived live (typewriter)
+pendingQuestion: PendingQuestion | null;
+
+// Right panel
+rightPanelMode: 'closed' | 'tool' | 'app';
+rightPanelAppTab: 'preview' | 'data';
+selectedToolCallId: string | null;
+filesSheetOpen: boolean;
 
 // App Builder
 applicationComponent: {
@@ -243,34 +256,40 @@ applicationComponent: {
   cephPath?: string;
   filesTree?: FilesTreeNode | null;
   fileCount?: number;
-  revision: string;   // event_id — remounts Nodepod on new generation
-  revisionId?: string;
+  revision: string;            // SSE event_id — remounts Nodepod on new generation
+  workspaceRevisionId?: string; // finalized rev (e.g. rev_13) used to deploy
 } | null;
+appBuildProgress: AppBuildProgress | null;
+appViewMode: 'nodepod' | 'deployed';
 
 // Deploy
 deployStatus: 'idle' | 'deploying' | 'deployed' | 'error';
 deployedUrl: string | null;
-deployedAppTitle: string | null;
 lastDeployedAt: string | null;
 
-// UI state
-rightPanelMode: 'code' | 'preview';
-selectedFile: string | null;
-rightPanelOpen: boolean;
+// Browser runtime
+runtimeStatus: AppRuntimeUiStatus;   // shadows BrowserRuntimeHost; never stores ticket/token
+
+// Background conversations (per-user pipe)
+streamingStateCache: Map<string, SessionSlice>;
 ```
 
-- Live: `handleEvent('application_component')` sets the object and `rightPanelMode: 'app'`.
-- Replay / cache: `deriveApplicationComponent` takes the **last** `application_component` in history.
-- `setDeployState` updates `deployedUrl` only — it does **not** overwrite Nodepod source fields.
+- Live: `handleEvent('application_component')` sets the object, `appBuildProgress: null`
+  and `rightPanelMode: 'app'`.
+- The per-user pipe routes by `sessionId`: events for other sessions accumulate in
+  `streamingStateCache` (via `handleStreamEvent`), switching sessions hydrates from it.
+- `setDeployState` updates `deployedUrl` only — it does **not** overwrite Nodepod source
+  fields, and flips `appViewMode` to `'deployed'` when opening an already-deployed session.
+- Runtime status never stores `ticket` / `mcpToken` / sandbox IDs (see BrowserRuntimeHost).
 
 ### Session reducer
 
-`utils/session-reducer.ts` (382L) processes SSE events into timeline entries:
+`utils/session-reducer.ts` (383L) processes SSE events into timeline entries:
 
 - Deduplicates events by `event_id`.
 - Merges consecutive assistant text deltas into a single bubble.
-- Tracks tool call start/end lifecycle.
-- Handles plan steps, thinking blocks, questions.
+- Tracks tool (`tool`), step (`step`) and plan (`plan`) lifecycle.
+- Handles terminal states: `wait` (clarification), `done`, `error`.
 - Preserves ordering by `sequence` number.
 
 ## UI layout
@@ -322,10 +341,14 @@ rightPanelOpen: boolean;
 
 ### Right panel modes
 
+The panel has two `rightPanelMode` values (`tool` and `app`), plus an inner
+`rightPanelAppTab` selector for the app surface:
+
 | Mode | Content | When |
 |---|---|---|
-| **Code** | `AppSourceFileTree` + `AppSourceFileViewer` | Always available after `application_component` |
-| **Preview** | Nodepod iframe (live) or Deployed iframe | Default after generation; toggle in DeployControls |
+| **Tool** | `ToolDetailDispatch` (tool call details for the selected tool) | Selecting a tool call in the timeline |
+| **App — Preview / Source** | `ApplicationComponentView`: `AppSourceFileTree` + read-only `AppSourceFileViewer`, or Nodepod (live) / Deployed iframe | After `application_component`; Nodepod↔Deployed toggle in DeployControls |
+| **App — Data** | `AppDataPanel` (production database dev/prod tables + rows) | App data tab when the app has an app-data store |
 
 Selecting a file in the tree switches the main pane to **Source** (read-only).
 Binary files show a size message instead of a viewer.
@@ -359,7 +382,7 @@ When a tool call is selected in the timeline, the right panel shows
 
 ## Tool views
 
-Eight specialized views for rendering tool call results in the right panel:
+Seven specialized views for rendering tool call results in the right panel:
 
 | Component | Renders |
 |---|---|
@@ -377,42 +400,52 @@ Eight specialized views for rendering tool call results in the right panel:
 
 ```ts
 // Sessions
-conversationV2Api.createSession(body?)           // POST /conversation-v2/sessions
-conversationV2Api.getSessions(query?)            // GET /conversation-v2/sessions
-conversationV2Api.getSession(id)                 // GET /conversation-v2/sessions/:id
-conversationV2Api.patchSession(id, body)         // PATCH /conversation-v2/sessions/:id
-conversationV2Api.deleteSession(id)              // DELETE /conversation-v2/sessions/:id
+conversationV2Api.createSession(workspaceIds?)       // POST /conversation-v2/sessions
+conversationV2Api.listSessions(params?)              // GET /conversation-v2/sessions
+conversationV2Api.getSession(id)                     // GET /conversation-v2/sessions/:id
+conversationV2Api.patchSession(id, body)             // PATCH /conversation-v2/sessions/:id
+conversationV2Api.deleteSession(id)                  // DELETE /conversation-v2/sessions/:id
 
 // Chat
-conversationV2Api.sendMessage(id, body)          // POST /conversation-v2/sessions/:id/message
-conversationV2Api.stopSession(id)                // POST /conversation-v2/sessions/:id/stop
-conversationV2Api.pauseSession(id)               // POST /conversation-v2/sessions/:id/pause
-conversationV2Api.resumeSession(id)              // POST /conversation-v2/sessions/:id/resume
+conversationV2Api.sendMessage(id, body)              // POST /conversation-v2/sessions/:id/message
+conversationV2Api.stopSession(id)                    // POST /conversation-v2/sessions/:id/stop
+conversationV2Api.pauseSession(id)                   // POST /conversation-v2/sessions/:id/pause
+conversationV2Api.resumeSession(id)                  // POST /conversation-v2/sessions/:id/resume
 
 // Events
-conversationV2Api.getEvents(id, query?)          // GET /conversation-v2/sessions/:id/events
+conversationV2Api.listEvents(id, since, limit?)      // GET /conversation-v2/sessions/:id/events
 
-// App Builder
-conversationV2Api.issueRuntimeTicket(id)         // POST /conversation-v2/sessions/:id/runtime-ticket
+// Users
+conversationV2Api.searchUsers(query, limit?)         // GET /users/search
+
+// App Builder runtime
+conversationV2Api.createRuntimeTicket(id)            // POST /conversation-v2/sessions/:id/runtime-ticket
 
 // Source revisions
-conversationV2Api.getRevisionFiles(id, revId)    // GET …/revisions/:revisionId/files
+conversationV2Api.getRevisionFiles(id, revId)        // GET …/revisions/:revisionId/files
 conversationV2Api.presignRevisionFiles(id, rev, paths) // POST …/revisions/:revisionId/presign
 conversationV2Api.commitWorkspaceRevision(id, body)     // POST …/revisions/commit
 conversationV2Api.getAppSourceUrls(id, ceph, paths)     // POST …/app-source/urls (legacy)
 conversationV2Api.getFileSignedUrl(path)               // POST /conversation-v2/files/signed-url
 
 // Deploy & share
-conversationV2Api.deploySession(id, body)        // POST /conversation-v2/sessions/:id/deploy
-conversationV2Api.shareDeploy(id, body)          // POST /conversation-v2/sessions/:id/share-deploy
-conversationV2Api.getApps()                       // GET /conversation-v2/apps
-conversationV2Api.removeApp(id)                   // DELETE /conversation-v2/apps/:id
-conversationV2Api.getShared(token)                // GET /conversation-v2/share/v2/:token
+conversationV2Api.deploySession(id, body)            // POST /conversation-v2/sessions/:id/deploy
+conversationV2Api.shareDeployedApp(id, emails)       // POST /conversation-v2/sessions/:id/share-deploy
+conversationV2Api.getShared(token)                   // GET /conversation-v2/share/v2/:token
+
+// App data (production database)
+conversationV2Api.getAppDataStatus(id)               // GET …/app-data/status
+conversationV2Api.getAppDataTables(id, env)          // GET …/app-data/:env/tables
+conversationV2Api.getAppDataRows(id, env, table)     // GET …/app-data/:env/tables/:table/rows
 
 // Workspace
-conversationV2Api.getWorkspaceDocuments(id, q)   // GET …/workspace-documents
-conversationV2Api.getVncSignedUrl(id)             // GET …/vnc/signed-url
+conversationV2Api.listWorkspaceDocuments(id, params) // GET …/workspace-documents
+conversationV2Api.getVncSignedUrl(id)                // GET …/vnc/signed-url
 ```
+
+The deployed-apps Marketplace list and removal (`GET /conversation-v2/apps`,
+`DELETE /conversation-v2/apps/:id`) are consumed by the sibling `app-marketplace`
+module (`appMarketplaceApi`), not `conversationV2Api`.
 
 ## SSE streaming
 
@@ -421,26 +454,24 @@ connection:
 
 - Connects to `GET /conversation-v2/stream` on app mount.
 - Registers named event listeners for each event type.
-- Dispatches events to the store via `handleEvent()`.
-- Heartbeat handling: server sends `: heartbeat\n\n` every 15s.
-- Reconnection: on disconnect, reconnects after a backoff delay.
+- Dispatches events to the store via `handleStreamEvent()` (routes by `sessionId`).
+- Heartbeat handling: server sends `event: heartbeat` every 15s; a 35s watchdog reconnects on silence.
+- Reconnection: on disconnect, reconnects with exponential backoff (up to 10 attempts, 1s → 60s).
 - Connection ID tracking: server sends `event: connected` with `connectionId`.
 
 ### Event → Store mapping
 
 ```ts
-stream.addEventListener('message', (e) => handleEvent('message', e.data));
-stream.addEventListener('application_component', (e) => handleEvent('application_component', e.data));
-stream.addEventListener('tool_call_start', (e) => handleEvent('tool_call_start', e.data));
-stream.addEventListener('tool_call_end', (e) => handleEvent('tool_call_end', e.data));
-stream.addEventListener('app_build_progress', (e) => handleEvent('app_build_progress', e.data));
-stream.addEventListener('plan', (e) => handleEvent('plan', e.data));
-stream.addEventListener('thinking', (e) => handleEvent('thinking', e.data));
-stream.addEventListener('question', (e) => handleEvent('question', e.data));
-stream.addEventListener('title', (e) => handleEvent('title', e.data));
-stream.addEventListener('done', (e) => handleEvent('done', e.data));
-stream.addEventListener('error', (e) => handleEvent('error', e.data));
-stream.addEventListener('wait', (e) => handleEvent('wait', e.data));
+stream.addEventListener('message', (e) => handleStreamEvent('message', e.data));
+stream.addEventListener('tool', (e) => handleStreamEvent('tool', e.data));
+stream.addEventListener('step', (e) => handleStreamEvent('step', e.data));
+stream.addEventListener('plan', (e) => handleStreamEvent('plan', e.data));
+stream.addEventListener('wait', (e) => handleStreamEvent('wait', e.data));
+stream.addEventListener('title', (e) => handleStreamEvent('title', e.data));
+stream.addEventListener('done', (e) => handleStreamEvent('done', e.data));
+stream.addEventListener('error', (e) => handleStreamEvent('error', e.data));
+stream.addEventListener('application_component', (e) => handleStreamEvent('application_component', e.data));
+stream.addEventListener('app_build_progress', (e) => handleStreamEvent('app_build_progress', e.data));
 ```
 
 ## Vite / service worker
@@ -495,8 +526,8 @@ tool views, deploy controls).
 
 | Path | Role |
 |---|---|
-| `interfaces/events.ts` | Event types (message, tool, plan, question, etc.) |
-| `interfaces/session.ts` | Session, timeline entry, tool call types |
+| `interfaces/events.ts` | Event types (message, tool, step, plan, wait, lifecycle, application) |
+| `interfaces/session.ts` | Session, pointer, status, deploy state types |
 | `interfaces/application.ts` | FilesTreeNode, ApplicationComponent types |
 | `interfaces/api.ts` | API response types |
 | `interfaces/permissions.ts` | Permission types |
@@ -545,11 +576,12 @@ tool views, deploy controls).
 
 | Path | Role |
 |---|---|
-| `RightPanel.tsx` | Resizable panel shell: Code/Preview tabs, deploy controls |
+| `RightPanel.tsx` | Resizable panel shell: Tool/App (Preview | Data) tabs, deploy controls |
 | `ApplicationComponentView.tsx` | Dual-pane: file tree + preview/source |
 | `AppSourceFileTree.tsx` | File explorer with search, expand/collapse |
 | `AppSourceFileViewer.tsx` | Read-only code viewer |
 | `AppBuildProgressPanel.tsx` | Build progress stepper |
+| `AppDataPanel.tsx` | App-data store browse: dev/prod environments, tables, rows |
 | `DeployControls.tsx` | Publish/Update, Nodepod↔Deployed toggle, Share |
 | `ShareDeployDialog.tsx` | User search + email share dialog |
 
@@ -576,7 +608,7 @@ tool views, deploy controls).
 | `runtime/PreviewController.ts` | Preview iframe management, build, reload, inspect |
 | `runtime/NodepodRuntimeAdapter.ts` | Nodepod VFS adapter (read/write/list/delete/search) |
 | `runtime/RevisionHydrator.ts` | Download revision files → write to Nodepod VFS |
-| `runtime/RuntimeToolHandlers.ts` | MCP tool → VFS operation mapping (730L) |
+| `runtime/RuntimeToolHandlers.ts` | MCP tool → VFS operation mapping (739L) |
 | `runtime/RuntimeCapabilities.ts` | Capability detection (filesystem, npm, preview) |
 | `runtime/WorkspaceRevisionStore.ts` | In-memory workspace state + SHA-256 tracking |
 | `runtime/ToolError.ts` | Typed tool error class |
@@ -588,7 +620,7 @@ tool views, deploy controls).
 
 ### Tests
 
-22 test files covering:
+19 test files covering:
 - Store state management (`store.test.ts`)
 - Session reducer (`session-reducer.test.ts`)
 - Conversation merge (`conversation-merge.test.ts`)

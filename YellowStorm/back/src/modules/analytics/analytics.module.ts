@@ -3,15 +3,7 @@ import { MongooseModule } from '@nestjs/mongoose';
 import { LoggerModule } from '@modules/logger';
 import { User, UserSchema } from '@modules/user/schemas/user.schema';
 import { UsageLog, UsageLogSchema } from '@modules/usage/schemas/usage-log.schema';
-import {
-  Conversation,
-  ConversationSchema,
-} from '@modules/conversation/schemas/conversation.schema';
-import {
-  Message,
-  MessageSchema,
-} from '@modules/conversation/schemas/message.schema';
-import { Report, ReportSchema } from '@modules/conversation/schemas/report.schema';
+import { ConversationPersistenceModule } from '@modules/conversation/persistence/conversation-persistence.module';
 import { AnalyticsController } from './controllers';
 import {
   AnalyticsService,
@@ -28,10 +20,8 @@ import { AuthorizationModule } from '../authorization/authorization.module';
     MongooseModule.forFeature([
       { name: User.name, schema: UserSchema },
       { name: UsageLog.name, schema: UsageLogSchema },
-      { name: Conversation.name, schema: ConversationSchema },
-      { name: Message.name, schema: MessageSchema },
-      { name: Report.name, schema: ReportSchema },
     ]),
+    ConversationPersistenceModule,
   ],
   controllers: [AnalyticsController],
   providers: [

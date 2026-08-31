@@ -1,8 +1,5 @@
 import { Injectable, HttpStatus, Inject, forwardRef } from '@nestjs/common';
-import { InjectModel } from '@nestjs/mongoose';
-import { Model, Types } from 'mongoose';
 import { ConfigService } from '@nestjs/config';
-import { Message, MessageDocument } from '../schemas/message.schema';
 import {
   CreateUserMessageData,
   CreateAIPlaceholderData,
@@ -20,7 +17,7 @@ import { ConversationService } from './conversation.service';
 import { StreamGatewayService } from './stream-gateway.service';
 import { WorkspaceDocumentService } from '../../workspace/workspace-document.service';
 import { LoggerService } from '../../logger';
-import { ConflictException, NotFoundException } from '../../exceptions';
+import { BadRequestException, ConflictException, NotFoundException } from '../../exceptions';
 import { AppException } from '../../exceptions/exceptions/base.exception';
 import { ErrorCode } from '../../exceptions/constants/error-codes';
 import { sanitizeTaskDiagnosticItems } from '../utils/task-diagnostics';
@@ -28,14 +25,16 @@ import { sanitizePublicComponent } from '../utils/public-component-sanitizer';
 import { StreamEvent } from '../interfaces/stream.interface';
 import { EmailService } from '../../email/email.service';
 import { ConversationSettingsService } from '../../system/conversation-settings.service';
+import { MESSAGE_STORE, type MessageRecord, type MessageStore } from '../persistence/message-store';
+
+const SETTINGS_LOOKUP_TIMEOUT_MS = 1_000;
 
 @Injectable()
 export class MessageService {
   private readonly appUrl: string;
 
   constructor(
-    @InjectModel(Message.name)
-    private readonly messageModel: Model<MessageDocument>,
+    @Inject(MESSAGE_STORE) private readonly messageStore: MessageStore,
     private readonly conversationService: ConversationService,
     private readonly streamGateway: StreamGatewayService,
     @Inject(forwardRef(() => WorkspaceDocumentService))
@@ -46,10 +45,7 @@ export class MessageService {
     private readonly conversationSettings?: ConversationSettingsService,
   ) {
     this.logger.setContext('MessageService');
-    this.appUrl = this.configService.get<string>(
-      'app.frontendUrl',
-      'http://localhost:5173',
-    );
+    this.appUrl = this.configService.get<string>('app.frontendUrl', 'http://localhost:5173');
   }
 
   async createUserMessage(data: CreateUserMessageData): Promise<MessageResponse> {
@@ -59,10 +55,7 @@ export class MessageService {
       attachedFiles: data.attachedFileIds?.length || 0,
     });
 
-    const maxLength = this.configService.get<number>(
-      'conversation.maxMessageLength',
-      50000,
-    );
+    const maxLength = this.configService.get<number>('conversation.maxMessageLength', 50000);
 
     if (data.content.length > maxLength) {
       this.logger.warn('Message too long', {
@@ -77,10 +70,7 @@ export class MessageService {
       });
     }
 
-    const maxFiles = this.configService.get<number>(
-      'conversation.maxFilesPerMessage',
-      5,
-    );
+    const maxFiles = this.configService.get<number>('conversation.maxFilesPerMessage', 5);
 
     if (data.attachedFileIds && data.attachedFileIds.length > maxFiles) {
       this.logger.warn('Too many files attached', {
@@ -94,48 +84,27 @@ export class MessageService {
         statusCode: HttpStatus.BAD_REQUEST,
       });
     }
-    const message = await this.messageModel.create({
-      conversationId: new Types.ObjectId(data.conversationId),
-      senderId: new Types.ObjectId(data.senderId),
-      parentMessageId: data.parentMessageId ? new Types.ObjectId(data.parentMessageId) : undefined,
-      conversationType: 'user',
-      content: data.content,
-      attachedFileIds: data.attachedFileIds?.map((id) => new Types.ObjectId(id)),
-      webSearchEnabled: data.webSearchEnabled || false,
-      modelId: data.modelId,
-      reasoningEffort: data.reasoningEffort,
-      agentIds: data.agentIds?.map((id) => new Types.ObjectId(id)),
-      memberIds: data.memberIds?.map((id) => new Types.ObjectId(id)),
-      isStreaming: false,
-      isComplete: true,
-      requestId: data.requestId,
-      interaction: data.interaction,
-      interactions: data.interactions,
-      replayContext: data.replayContext,
-    });
-
-    // Update conversation
-    await this.conversationService.addMessageRef(data.conversationId, message._id.toString());
-    await this.conversationService.updateLastMessageAt(data.conversationId);
-
-    // Persist tagged agents for group conversations
-    if (data.agentIds && data.agentIds.length > 0) {
+    const message = await this.messageStore.createUser(data);
+    if (data.agentIds?.length) {
       await this.conversationService.updateTaggedAgents(data.conversationId, data.agentIds);
     }
 
     // mention notification
-    this.extractAndNotifyMentions(message, data.conversationId)
-      .catch((err) => this.logger.error('Failed to process mentions', { error: err instanceof Error ? err.message : err }));
+    this.extractAndNotifyMentions(message, data.conversationId).catch((err) =>
+      this.logger.error('Failed to process mentions', {
+        error: err instanceof Error ? err.message : err,
+      }),
+    );
 
     this.logger.log('User message created', {
-      messageId: message._id.toString(),
+      messageId: message.id,
       conversationId: data.conversationId,
     });
 
     const response = this.mapToResponse(message);
 
     if (message.attachedFileIds?.length) {
-      const fileIds = message.attachedFileIds.map((id) => id.toString());
+      const fileIds = message.attachedFileIds;
       const fileMap = await this.resolveAttachedFiles(fileIds);
       response.attachedFiles = fileIds
         .map((fid) => fileMap.get(fid))
@@ -160,31 +129,10 @@ export class MessageService {
       questionMessageId: data.questionMessageId,
     });
 
-    const message = await this.messageModel.create({
-      conversationId: new Types.ObjectId(data.conversationId),
-      conversationType: 'ai',
-      senderId: data.senderId ? new Types.ObjectId(data.senderId) : undefined,
-      modelId: data.modelId,
-      reasoningEffort: data.reasoningEffort,
-      questionMessageId: new Types.ObjectId(data.questionMessageId),
-      isStreaming: true,
-      isComplete: false,
-      components: [],
-      requestId: data.requestId,
-    });
-
-    // Link question to answer — only set if not already linked (preserves first answer for branching)
-    const questionMsg = await this.messageModel.findById(data.questionMessageId);
-    if (questionMsg && !questionMsg.answerMessageId) {
-      questionMsg.answerMessageId = message._id;
-      await questionMsg.save();
-    }
-
-    // Update conversation
-    await this.conversationService.addMessageRef(data.conversationId, message._id.toString());
+    const message = await this.messageStore.createAiPlaceholder(data);
 
     this.logger.log('AI placeholder created', {
-      messageId: message._id.toString(),
+      messageId: message.id,
       conversationId: data.conversationId,
     });
 
@@ -211,81 +159,43 @@ export class MessageService {
       durationMs: data.durationMs,
     });
 
-    const guardrailDecision = (data.guardrailDecision ?? this.findGuardrailDecision(data.components)) as Record<string, unknown> | undefined;
-    let message: MessageDocument | null;
-    if (data.streamExecutionLeaseId) {
-      message = await this.messageModel.findOneAndUpdate(
-        {
-          _id: new Types.ObjectId(data.messageId),
-          streamExecutionLeaseId: data.streamExecutionLeaseId,
-          isComplete: { $ne: true },
-        },
-        {
-          $set: {
-            components: data.components,
-            isStreaming: false,
-            isComplete: true,
-            inputTokens: data.inputTokens,
-            outputTokens: data.outputTokens,
-            durationMs: data.durationMs,
-            timeToFirstChunk: data.timeToFirstChunk,
-            timeToFirstToken: data.timeToFirstToken,
-            modelRequestTelemetry: data.modelRequestTelemetry,
-            guardrailDecision,
-          },
-        },
-        { new: true },
-      ).exec();
-    } else {
-      message = await this.messageModel.findById(data.messageId);
-    }
+    const guardrailDecision =
+      data.guardrailDecision ?? this.findGuardrailDecision(data.components);
+    const message = await this.messageStore.completeAi({ ...data, guardrailDecision });
 
     if (!message) {
       this.logger.error('AI message not found for completion', {
         messageId: data.messageId,
       });
       if (data.streamExecutionLeaseId) {
-        throw new ConflictException(ErrorCode.CONFLICT, 'Stream execution lease no longer owns this response');
+        throw new ConflictException(
+          ErrorCode.CONFLICT,
+          'Stream execution lease no longer owns this response',
+        );
       }
       throw new NotFoundException(ErrorCode.CHAT_MESSAGE_NOT_FOUND, 'AI message not found');
     }
 
-    if (!data.streamExecutionLeaseId) {
-      message.components = data.components as any;
-      message.isStreaming = false;
-      message.isComplete = true;
-      message.inputTokens = data.inputTokens;
-      message.outputTokens = data.outputTokens;
-      message.durationMs = data.durationMs;
-      message.timeToFirstChunk = data.timeToFirstChunk;
-      message.timeToFirstToken = data.timeToFirstToken;
-      message.modelRequestTelemetry = data.modelRequestTelemetry;
-      message.guardrailDecision = guardrailDecision;
-      await message.save();
-    }
-
     // mention notification
-    this.extractAndNotifyMentions(message, message.conversationId.toString())
-      .catch((err) => this.logger.error('Failed to process mentions', { error: err instanceof Error ? err.message : err }));
-
-    // Update conversation lastMessageAt
-    await this.conversationService.updateLastMessageAt(
-      message.conversationId.toString(),
+    this.extractAndNotifyMentions(message, message.conversationId).catch((err) =>
+      this.logger.error('Failed to process mentions', {
+        error: err instanceof Error ? err.message : err,
+      }),
     );
 
     this.logger.log('AI message completed', {
-      messageId: message._id.toString(),
-      conversationId: message.conversationId.toString(),
+      messageId: message.id,
+      conversationId: message.conversationId,
     });
 
     const response = this.mapToResponse(message);
 
     // Broadcast update
-    await this.broadcastMessage(message.conversationId.toString(), {
+    await this.broadcastMessage(message.conversationId, {
       type: 'message_updated',
       data: {
-        conversationId: message.conversationId.toString(),
-        messageId: message._id.toString(),
+        conversationId: message.conversationId,
+        messageId: message.id,
         message: response,
       },
     });
@@ -293,11 +203,14 @@ export class MessageService {
     return response;
   }
 
-  private async extractAndNotifyMentions(message: MessageDocument, conversationId: string): Promise<void> {
+  private async extractAndNotifyMentions(
+    message: MessageRecord,
+    conversationId: string,
+  ): Promise<void> {
     let fullText = '';
     if (message.conversationType === 'ai') {
-      const textComponents = (message.components as any[])?.filter(c => c.type === 'text') || [];
-      fullText = textComponents.map(c => c.data?.content || '').join('\n');
+      const textComponents = (message.components as any[])?.filter((c) => c.type === 'text') || [];
+      fullText = textComponents.map((c) => c.data?.content || '').join('\n');
     } else {
       fullText = message.content || '';
     }
@@ -314,7 +227,7 @@ export class MessageService {
 
     // 1. Check explicit memberIds if present
     if (message.memberIds && message.memberIds.length > 0) {
-      message.memberIds.forEach(id => mentionedUserIds.add(id.toString()));
+      message.memberIds.forEach((id) => mentionedUserIds.add(id));
     }
 
     // 2. Fallback to text analysis
@@ -338,14 +251,14 @@ export class MessageService {
     const emailsToSend: any[] = [];
 
     for (const userId of mentionedUserIds) {
-      const member = members.find(m => m.userId === userId);
+      const member = members.find((m) => m.userId === userId);
       if (!member) continue;
 
       // Save mention to database
-      await this.conversationService.addMention(conversationId, userId, message._id.toString());
+      await this.conversationService.addMention(conversationId, userId, message.id);
 
       // Broadcast event
-      this.broadcastMention(conversationId, message._id.toString(), userId);
+      this.broadcastMention(conversationId, message.id, userId);
 
       // Prepare email if member has an email
       if (member.email) {
@@ -356,10 +269,14 @@ export class MessageService {
             <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto; line-height: 1.5; color: #333;">
               <h2 style="color: #0f172a;">You have been mentioned!</h2>
               <p>${message.conversationType === 'ai' ? 'The AI agent' : 'A user'} mentioned you in the conversation <strong>${conversation.title}</strong>.</p>
-              ${fullText ? `
+              ${
+                fullText
+                  ? `
               <p style="margin: 20px 0; padding: 15px; background-color: #f8fafc; border-left: 4px solid #0f172a; border-radius: 4px;">
                 <em>"${fullText.substring(0, 200)}${fullText.length > 200 ? '...' : ''}"</em>
-              </p>` : ''}
+              </p>`
+                  : ''
+              }
               <p>To view the full context and reply, please click the link below:</p>
               <div style="margin: 30px 0;">
                 <a href="${conversationUrl}" style="background-color: #0f172a; color: white; padding: 12px 24px; text-decoration: none; border-radius: 6px; font-weight: 500; display: inline-block;">View Conversation</a>
@@ -375,7 +292,7 @@ export class MessageService {
       await this.emailService.sendBulk({ emails: emailsToSend, stopOnError: false });
       this.logger.log('Mention notifications processed', {
         conversationId,
-        messageId: message._id.toString(),
+        messageId: message.id,
         emailCount: emailsToSend.length,
         totalMentions: mentionedUserIds.size,
       });
@@ -393,45 +310,81 @@ export class MessageService {
         },
       });
     } catch (err) {
-      this.logger.error('Failed to broadcast mention', { userId, error: err instanceof Error ? err.message : err });
+      this.logger.error('Failed to broadcast mention', {
+        userId,
+        error: err instanceof Error ? err.message : err,
+      });
     }
   }
 
   async findByConversation(
     conversationId: string,
     params: MessageQueryParams,
-  ): Promise<PaginatedMessages> {
-    const { page = 1, limit = 50, conversationType } = params;
-    const skip = (page - 1) * limit;
-
-    const query: Record<string, unknown> = {
-      conversationId: new Types.ObjectId(conversationId),
-    };
-
-    if (conversationType) {
-      query.conversationType = conversationType;
+  ): Promise<PaginatedMessages | import('../interfaces/message.interface').CursorPaginatedMessages> {
+    if ((params.mode ?? 'legacy') === 'cursor') {
+      if (params.page !== undefined) {
+        throw new BadRequestException(ErrorCode.VALIDATION_ERROR, 'page is not valid in cursor mode');
+      }
+      const limit = params.limit ?? 50;
+      const [window, redactSensitiveText] = await Promise.all([
+        this.messageStore.listCursor({
+          conversationId,
+          limit,
+          cursor: params.cursor,
+          conversationType: params.conversationType,
+        }),
+        this.resolveRedactSensitiveText(),
+      ]);
+      const questionIds = window.records
+        .filter((message) => message.conversationType === 'user')
+        .map((message) => message.id);
+      const branches = await this.messageStore.findBranchesByQuestions(questionIds);
+      const allRecords = [...window.records, ...[...branches.values()].flat()];
+      const fileMap = await this.resolveAttachedFiles(
+        allRecords.flatMap((message) => message.attachedFileIds ?? []),
+      );
+      const mapResponse = (message: MessageRecord): MessageResponse => {
+        const response = this.mapToResponse(message, redactSensitiveText);
+        if (message.attachedFileIds?.length) {
+          response.attachedFiles = message.attachedFileIds
+            .map((id) => fileMap.get(id))
+            .filter((file): file is AttachedFileResponse => Boolean(file));
+        }
+        return response;
+      };
+      return {
+        messages: window.records.map(mapResponse),
+        branchesByQuestion: Object.fromEntries(
+          [...branches].map(([id, records]) => [id, records.map(mapResponse)]),
+        ),
+        pagination: {
+          mode: 'cursor',
+          limit,
+          hasMore: window.hasMore,
+          nextCursor: window.nextCursor,
+        },
+      };
     }
-
-    const [messages, total] = await Promise.all([
-      this.messageModel
-        .find(query)
-        .sort({ createdAt: -1 })
-        .skip(skip)
-        .limit(limit)
-        .lean()
-        .exec(),
-      this.messageModel.countDocuments(query),
+    if (params.cursor !== undefined) {
+      throw new BadRequestException(ErrorCode.VALIDATION_ERROR, 'cursor requires cursor mode');
+    }
+    const { page = 1, limit = 50, conversationType } = params;
+    const [{ records: messages, total }, redactSensitiveText] = await Promise.all([
+      this.messageStore.listPage({
+        conversationId,
+        page,
+        limit,
+        conversationType,
+      }),
+      this.resolveRedactSensitiveText(),
     ]);
-
-    // Reverse so messages are returned oldest-to-newest within each page
-    messages.reverse();
 
     // Batch-resolve attached files for all messages on this page
     const allFileIds: string[] = [];
     for (const m of messages) {
       if (m.attachedFileIds?.length) {
         for (const fid of m.attachedFileIds) {
-          allFileIds.push(fid.toString());
+          allFileIds.push(fid);
         }
       }
     }
@@ -440,10 +393,10 @@ export class MessageService {
 
     return {
       messages: messages.map((m) => {
-        const response = this.mapToResponse(m);
+        const response = this.mapToResponse(m, redactSensitiveText);
         if (m.attachedFileIds?.length) {
           response.attachedFiles = m.attachedFileIds
-            .map((fid) => fileMap.get(fid.toString()))
+            .map((fid) => fileMap.get(fid))
             .filter((f): f is AttachedFileResponse => !!f);
         }
         return response;
@@ -458,19 +411,19 @@ export class MessageService {
   }
 
   async findById(messageId: string): Promise<MessageResponse> {
-    const message = await this.messageModel.findById(messageId);
+    const [message, redactSensitiveText] = await Promise.all([
+      this.messageStore.findById(messageId),
+      this.resolveRedactSensitiveText(),
+    ]);
 
     if (!message) {
-      throw new NotFoundException(
-        ErrorCode.CHAT_MESSAGE_NOT_FOUND,
-        'Message not found',
-      );
+      throw new NotFoundException(ErrorCode.CHAT_MESSAGE_NOT_FOUND, 'Message not found');
     }
 
-    const response = this.mapToResponse(message);
+    const response = this.mapToResponse(message, redactSensitiveText);
 
     if (message.attachedFileIds?.length) {
-      const fileIds = message.attachedFileIds.map((id) => id.toString());
+      const fileIds = message.attachedFileIds;
       const fileMap = await this.resolveAttachedFiles(fileIds);
       response.attachedFiles = fileIds
         .map((fid) => fileMap.get(fid))
@@ -480,20 +433,14 @@ export class MessageService {
     return response;
   }
 
-  async updateFeedback(
-    messageId: string,
-    feedback: FeedbackType,
-  ): Promise<MessageResponse> {
-    const message = await this.messageModel.findById(messageId);
+  async updateFeedback(messageId: string, feedback: FeedbackType): Promise<MessageResponse> {
+    const existing = await this.messageStore.findById(messageId);
 
-    if (!message) {
-      throw new NotFoundException(
-        ErrorCode.CHAT_MESSAGE_NOT_FOUND,
-        'Message not found',
-      );
+    if (!existing) {
+      throw new NotFoundException(ErrorCode.CHAT_MESSAGE_NOT_FOUND, 'Message not found');
     }
 
-    if (message.conversationType !== 'ai') {
+    if (existing.conversationType !== 'ai') {
       throw new AppException({
         code: ErrorCode.CHAT_INVALID_FEEDBACK,
         message: 'Feedback can only be given on AI messages',
@@ -501,9 +448,9 @@ export class MessageService {
       });
     }
 
-    message.feedback = feedback;
-    message.feedbackAt = new Date();
-    await message.save();
+    const message = await this.messageStore.updateFeedback(messageId, feedback, new Date());
+    if (!message)
+      throw new NotFoundException(ErrorCode.CHAT_MESSAGE_NOT_FOUND, 'Message not found');
 
     this.logger.log('Message feedback updated', {
       messageId,
@@ -513,10 +460,10 @@ export class MessageService {
     const response = this.mapToResponse(message);
 
     // Broadcast update
-    this.broadcastMessage(message.conversationId.toString(), {
+    this.broadcastMessage(message.conversationId, {
       type: 'message_updated',
       data: {
-        conversationId: message.conversationId.toString(),
+        conversationId: message.conversationId,
         messageId,
         message: response,
       },
@@ -529,11 +476,11 @@ export class MessageService {
     messageId: string,
     evaluation: ReliabilityEvaluation,
   ): Promise<MessageResponse> {
-    const message = await this.messageModel.findById(messageId);
-    if (!message) {
+    const existing = await this.messageStore.findById(messageId);
+    if (!existing) {
       throw new NotFoundException(ErrorCode.CHAT_MESSAGE_NOT_FOUND, 'Message not found');
     }
-    if (message.conversationType !== 'ai') {
+    if (existing.conversationType !== 'ai') {
       throw new AppException({
         code: ErrorCode.BAD_REQUEST,
         message: 'Reliability evaluation applies only to AI messages',
@@ -541,107 +488,99 @@ export class MessageService {
       });
     }
 
-    message.reliabilityEvaluation = evaluation;
-    message.reliabilityEvaluationHeartbeatAt = evaluation.status === 'pending' ? new Date() : undefined;
-    await message.save();
+    const message = await this.messageStore.updateReliability(messageId, evaluation);
+    if (!message)
+      throw new NotFoundException(ErrorCode.CHAT_MESSAGE_NOT_FOUND, 'Message not found');
     const response = this.mapToResponse(message);
-    await this.broadcastMessage(message.conversationId.toString(), {
+    await this.broadcastMessage(message.conversationId, {
       type: 'message_updated',
       data: {
-        conversationId: message.conversationId.toString(),
+        conversationId: message.conversationId,
         messageId,
-        message: { reliabilityEvaluation: response.reliabilityEvaluation } as Partial<MessageResponse>,
+        message: {
+          reliabilityEvaluation: response.reliabilityEvaluation,
+        } as Partial<MessageResponse>,
       },
     });
     return response;
   }
 
-  async claimStreamExecution(messageId: string, leaseId: string, leaseDurationMs: number): Promise<boolean> {
+  async claimStreamExecution(
+    messageId: string,
+    leaseId: string,
+    leaseDurationMs: number,
+  ): Promise<boolean> {
     const now = new Date();
-    const claimed = await this.messageModel.findOneAndUpdate(
-      {
-        _id: new Types.ObjectId(messageId),
-        conversationType: 'ai',
-        isComplete: { $ne: true },
-        $or: [
-          { streamExecutionLeaseExpiresAt: { $exists: false } },
-          { streamExecutionLeaseExpiresAt: null },
-          { streamExecutionLeaseExpiresAt: { $lte: now } },
-        ],
-      },
-      {
-        $set: {
-          streamExecutionLeaseId: leaseId,
-          streamExecutionLeaseExpiresAt: new Date(now.getTime() + leaseDurationMs),
-        },
-      },
-      { new: true },
-    ).lean().exec();
-    return Boolean(claimed);
+    return this.messageStore.claimStream(
+      messageId,
+      leaseId,
+      now,
+      new Date(now.getTime() + leaseDurationMs),
+    );
   }
 
-  async renewStreamExecution(messageId: string, leaseId: string, leaseDurationMs: number): Promise<boolean> {
-    const result = await this.messageModel.updateOne(
-      { _id: new Types.ObjectId(messageId), streamExecutionLeaseId: leaseId, isComplete: { $ne: true } },
-      { $set: { streamExecutionLeaseExpiresAt: new Date(Date.now() + leaseDurationMs) } },
-    ).exec();
-    return result.modifiedCount === 1;
+  async renewStreamExecution(
+    messageId: string,
+    leaseId: string,
+    leaseDurationMs: number,
+  ): Promise<boolean> {
+    return this.messageStore.renewStream(
+      messageId,
+      leaseId,
+      new Date(Date.now() + leaseDurationMs),
+    );
   }
 
   async releaseStreamExecution(messageId: string, leaseId: string): Promise<void> {
-    await this.messageModel.updateOne(
-      { _id: new Types.ObjectId(messageId), streamExecutionLeaseId: leaseId },
-      { $unset: { streamExecutionLeaseId: '', streamExecutionLeaseExpiresAt: '' } },
-    ).exec();
+    await this.messageStore.releaseStream(messageId, leaseId);
   }
 
   async findTurnByRequestId(
     conversationId: string,
     senderId: string,
     requestId: string,
-  ): Promise<{ userMessage: MessageResponse; aiMessageId?: string; requestFingerprint?: string } | null> {
-    const userMessage = await this.messageModel.findOne({
-      conversationId: new Types.ObjectId(conversationId),
-      senderId: new Types.ObjectId(senderId),
-      conversationType: 'user',
-      requestId,
-    }).exec();
-    if (!userMessage) return null;
-    const aiMessage = await this.messageModel.findOne({
-      conversationId: new Types.ObjectId(conversationId),
-      senderId: new Types.ObjectId(senderId),
-      conversationType: 'ai',
-      questionMessageId: userMessage._id,
-      requestId,
-    }).select('_id').lean().exec();
+  ): Promise<{
+    userMessage: MessageResponse;
+    aiMessageId?: string;
+    requestFingerprint?: string;
+  } | null> {
+    const turn = await this.messageStore.findTurnByRequestId(conversationId, senderId, requestId);
+    if (!turn) return null;
     return {
-      userMessage: this.mapToResponse(userMessage),
-      aiMessageId: aiMessage?._id?.toString(),
-      requestFingerprint: userMessage.replayContext?.requestFingerprint,
+      userMessage: this.mapToResponse(turn.user),
+      aiMessageId: turn.aiId,
+      requestFingerprint: turn.user.replayContext?.requestFingerprint,
     };
   }
 
-  async claimReliabilityEvaluation(conversationId: string, messageId: string, manual: boolean): Promise<MessageResponse | null> {
-    if (!Types.ObjectId.isValid(conversationId) || !Types.ObjectId.isValid(messageId)) {
+  async claimReliabilityEvaluation(
+    conversationId: string,
+    messageId: string,
+    manual: boolean,
+  ): Promise<MessageResponse | null> {
+    if (!/^[0-9a-f]{24}$/.test(conversationId) || !/^[0-9a-f]{24}$/.test(messageId)) {
       if (!manual) return null;
       throw new NotFoundException(ErrorCode.CHAT_MESSAGE_NOT_FOUND, 'Message not found');
     }
-    const messageObjectId = new Types.ObjectId(messageId);
-    const conversationObjectId = new Types.ObjectId(conversationId);
-    const message = await this.messageModel.findOne({ _id: messageObjectId, conversationId: conversationObjectId });
-    if (!message) {
+    const message = await this.messageStore.findById(messageId);
+    if (!message || message.conversationId !== conversationId) {
       if (!manual) return null;
       throw new NotFoundException(ErrorCode.CHAT_MESSAGE_NOT_FOUND, 'Message not found');
     }
 
     const components = Array.isArray(message.components) ? message.components : [];
-    const hasAnswer = message.conversationType === 'ai'
-      && message.isComplete === true
-      && message.isStreaming === false
-      && components.some((component) => component.type === 'text'
-        && typeof component.data?.content === 'string' && component.data.content.trim())
-      && !components.some((component) => component.type === 'error')
-      && !!message.questionMessageId;
+    const hasAnswer =
+      message.conversationType === 'ai' &&
+      message.isComplete === true &&
+      message.isStreaming === false &&
+      components.some(
+        (component) =>
+          component.type === 'text' &&
+          typeof component.data?.content === 'string' &&
+          component.data.content.trim(),
+      ) &&
+      !components.some((component) => component.type === 'error') &&
+      !!message.questionMessageId;
     if (!hasAnswer) {
       if (!manual) return null;
       throw new AppException({
@@ -652,8 +591,10 @@ export class MessageService {
     }
 
     const correctionInProgress = ['queued', 'correcting', 're_evaluating'];
-    if ((manual && message.reliabilityEvaluation?.status === 'pending')
-      || correctionInProgress.includes(message.correctionWorkflow?.status ?? '')) {
+    if (
+      (manual && message.reliabilityEvaluation?.status === 'pending') ||
+      correctionInProgress.includes(message.correctionWorkflow?.status ?? '')
+    ) {
       if (!manual) return null;
       throw new AppException({
         code: ErrorCode.CONFLICT,
@@ -662,24 +603,11 @@ export class MessageService {
       });
     }
 
-    const requestedAt = new Date().toISOString();
-    const claimFilter = {
-        _id: messageObjectId,
-        conversationId: conversationObjectId,
-        'correctionWorkflow.status': { $nin: correctionInProgress },
-        ...(manual
-          ? { 'reliabilityEvaluation.status': { $ne: 'pending' } }
-          : { reliabilityEvaluation: { $exists: false } }),
-      };
-    const claimed = await this.messageModel.findOneAndUpdate(
-      claimFilter,
-      {
-        $set: {
-          reliabilityEvaluation: { status: 'pending', requestedAt },
-          reliabilityEvaluationHeartbeatAt: new Date(),
-        },
-      },
-      { new: true },
+    const claimed = await this.messageStore.claimReliability(
+      conversationId,
+      messageId,
+      manual,
+      new Date().toISOString(),
     );
     if (!claimed) {
       if (!manual) return null;
@@ -696,13 +624,18 @@ export class MessageService {
       data: {
         conversationId,
         messageId,
-        message: { reliabilityEvaluation: response.reliabilityEvaluation } as Partial<MessageResponse>,
+        message: {
+          reliabilityEvaluation: response.reliabilityEvaluation,
+        } as Partial<MessageResponse>,
       },
     });
     return response;
   }
 
-  async rerunReliabilityEvaluation(conversationId: string, messageId: string): Promise<MessageResponse> {
+  async rerunReliabilityEvaluation(
+    conversationId: string,
+    messageId: string,
+  ): Promise<MessageResponse> {
     const response = await this.claimReliabilityEvaluation(conversationId, messageId, true);
     if (!response) {
       throw new AppException({
@@ -714,23 +647,26 @@ export class MessageService {
     return response;
   }
 
-  async updateCorrectionWorkflow(messageId: string, workflow: NonNullable<MessageResponse['correctionWorkflow']>, correctionRunId?: string): Promise<MessageResponse> {
-    let message = await this.messageModel.findById(messageId);
-    if (!message || message.conversationType !== 'ai') throw new NotFoundException(ErrorCode.CHAT_MESSAGE_NOT_FOUND, 'AI message not found');
-    if (correctionRunId && message.correctionWorkflow?.correctionRunId !== correctionRunId) throw new NotFoundException(ErrorCode.CHAT_MESSAGE_NOT_FOUND, 'Correction run ownership lost');
-    const nextWorkflow = { ...(message.correctionWorkflow || {}), ...workflow, attempts: workflow.attempts ?? message.correctionWorkflow?.attempts } as typeof workflow;
-    if (correctionRunId) {
-      message = await this.messageModel.findOneAndUpdate({ _id: messageId, 'correctionWorkflow.correctionRunId': correctionRunId }, { $set: { correctionWorkflow: nextWorkflow } }, { new: true });
-      if (!message) throw new NotFoundException(ErrorCode.CHAT_MESSAGE_NOT_FOUND, 'Correction run ownership lost');
-    } else {
-      message.correctionWorkflow = nextWorkflow;
-      await message.save();
-    }
+  async updateCorrectionWorkflow(
+    messageId: string,
+    workflow: NonNullable<MessageResponse['correctionWorkflow']>,
+    correctionRunId?: string,
+  ): Promise<MessageResponse> {
+    const message = await this.messageStore.updateCorrectionWorkflow(
+      messageId,
+      workflow,
+      correctionRunId,
+    );
+    if (!message)
+      throw new NotFoundException(
+        ErrorCode.CHAT_MESSAGE_NOT_FOUND,
+        correctionRunId ? 'Correction run ownership lost' : 'AI message not found',
+      );
     const response = this.mapToResponse(message);
-    await this.broadcastMessage(message.conversationId.toString(), {
+    await this.broadcastMessage(message.conversationId, {
       type: 'message_updated',
       data: {
-        conversationId: message.conversationId.toString(),
+        conversationId: message.conversationId,
         messageId,
         message: { correctionWorkflow: response.correctionWorkflow } as Partial<MessageResponse>,
       },
@@ -738,62 +674,40 @@ export class MessageService {
     return response;
   }
 
-  async claimCorrectionRun(messageId: string, runId: string, leaseExpiresAt: string): Promise<boolean> {
-    const now = new Date().toISOString();
-    const message = await this.messageModel.findOneAndUpdate({
-      _id: messageId,
-      conversationType: 'ai',
-      'reliabilityEvaluation.status': { $ne: 'pending' },
-      $or: [
-        { 'correctionWorkflow.correctionRunId': { $exists: false } },
-        { 'correctionWorkflow.status': { $in: ['corrected', 'failed', 'abstained', 'human_review_required'] } },
-        { 'correctionWorkflow.leaseExpiresAt': { $lt: now } },
-      ],
-    }, {
-      $set: {
-        'correctionWorkflow.correctionRunId': runId,
-        'correctionWorkflow.leaseExpiresAt': leaseExpiresAt,
-        'correctionWorkflow.status': 'queued',
-        'correctionWorkflow.activeVersion': 'original',
-      },
-    }, { new: true });
-    return Boolean(message);
+  async claimCorrectionRun(
+    messageId: string,
+    runId: string,
+    leaseExpiresAt: string,
+  ): Promise<boolean> {
+    return this.messageStore.claimCorrectionRun(
+      messageId,
+      runId,
+      leaseExpiresAt,
+      new Date().toISOString(),
+    );
   }
 
-  async upsertCorrectionAttempt(messageId: string, attempt: ResponseCorrectionAttempt, correctionRunId?: string): Promise<MessageResponse> {
-    let message = await this.messageModel.findById(messageId);
-    if (!message || message.conversationType !== 'ai') {
-      throw new NotFoundException(ErrorCode.CHAT_MESSAGE_NOT_FOUND, 'AI message not found');
-    }
-    const workflow = message.correctionWorkflow;
-    if (!workflow) throw new NotFoundException(ErrorCode.CHAT_MESSAGE_NOT_FOUND, 'Correction workflow not found');
-    if (correctionRunId && workflow.correctionRunId !== correctionRunId) {
-      throw new NotFoundException(ErrorCode.CHAT_MESSAGE_NOT_FOUND, 'Correction run ownership lost');
-    }
-    const attempts = [...(workflow.attempts || [])];
-    const index = attempts.findIndex((item) => item.attemptId === attempt.attemptId);
+  async upsertCorrectionAttempt(
+    messageId: string,
+    attempt: ResponseCorrectionAttempt,
+    correctionRunId?: string,
+  ): Promise<MessageResponse> {
     const sanitizedAttempt = { ...attempt, components: this.publicComponents(attempt.components) };
-    if (index >= 0) {
-      const existing = attempts[index];
-      attempts[index] = ['accepted', 'rejected', 'failed'].includes(existing.status)
-        ? existing
-        : { ...existing, ...sanitizedAttempt };
-    } else {
-      attempts.push(sanitizedAttempt);
-    }
-    const nextWorkflow = { ...workflow, attempts };
-    if (correctionRunId) {
-      message = await this.messageModel.findOneAndUpdate({ _id: messageId, 'correctionWorkflow.correctionRunId': correctionRunId }, { $set: { correctionWorkflow: nextWorkflow } }, { new: true });
-      if (!message) throw new NotFoundException(ErrorCode.CHAT_MESSAGE_NOT_FOUND, 'Correction run ownership lost');
-    } else {
-      message.correctionWorkflow = nextWorkflow;
-      await message.save();
-    }
+    const message = await this.messageStore.upsertCorrectionAttempt(
+      messageId,
+      sanitizedAttempt,
+      correctionRunId,
+    );
+    if (!message)
+      throw new NotFoundException(
+        ErrorCode.CHAT_MESSAGE_NOT_FOUND,
+        correctionRunId ? 'Correction run ownership lost' : 'Correction workflow not found',
+      );
     const response = this.mapToResponse(message);
-    await this.broadcastMessage(message.conversationId.toString(), {
+    await this.broadcastMessage(message.conversationId, {
       type: 'message_updated',
       data: {
-        conversationId: message.conversationId.toString(),
+        conversationId: message.conversationId,
         messageId,
         message: { correctionWorkflow: response.correctionWorkflow } as Partial<MessageResponse>,
       },
@@ -802,112 +716,64 @@ export class MessageService {
   }
 
   async markStaleReliabilityEvaluationsFailed(cutoff: Date): Promise<number> {
-    const staleQuery = {
-      'reliabilityEvaluation.status': 'pending',
-      $or: [
-        { reliabilityEvaluationHeartbeatAt: { $lt: cutoff } },
-        {
-          reliabilityEvaluationHeartbeatAt: { $exists: false },
-          'reliabilityEvaluation.requestedAt': { $lt: cutoff.toISOString() },
-        },
-      ],
-    };
-    const candidates = await this.messageModel.find(staleQuery).select('_id').lean().exec();
-    let updatedCount = 0;
-    for (const candidate of candidates) {
-      // Reapply the stale predicate atomically so a fresh heartbeat or completed job wins the race.
-      const message = await this.messageModel.findOneAndUpdate(
-        { _id: candidate._id, ...staleQuery },
-        {
-          $set: {
-            'reliabilityEvaluation.status': 'failed',
-            'reliabilityEvaluation.failureCode': 'stale_pending_after_restart',
-            'reliabilityEvaluation.evaluatedAt': new Date().toISOString(),
-          },
-          $unset: { reliabilityEvaluationHeartbeatAt: 1 },
-        },
-        { new: true },
-      );
-      if (!message) continue;
+    const messages = await this.messageStore.failStaleReliability(cutoff);
+    for (const message of messages) {
       const response = this.mapToResponse(message);
-      await this.broadcastMessage(message.conversationId.toString(), {
+      await this.broadcastMessage(message.conversationId, {
         type: 'message_updated',
         data: {
-          conversationId: message.conversationId.toString(),
-          messageId: message._id.toString(),
-          message: { reliabilityEvaluation: response.reliabilityEvaluation } as Partial<MessageResponse>,
+          conversationId: message.conversationId,
+          messageId: message.id,
+          message: {
+            reliabilityEvaluation: response.reliabilityEvaluation,
+          } as Partial<MessageResponse>,
         },
       });
-      updatedCount += 1;
     }
-    return updatedCount;
+    return messages.length;
   }
 
   async touchPendingReliabilityEvaluations(messageIds: string[]): Promise<void> {
     if (!messageIds.length) return;
-    await this.messageModel.updateMany(
-      {
-        _id: { $in: messageIds },
-        'reliabilityEvaluation.status': 'pending',
-      },
-      { $set: { reliabilityEvaluationHeartbeatAt: new Date() } },
-    );
+    await this.messageStore.touchPendingReliability(messageIds, new Date());
   }
 
-  async getMessageDocument(messageId: string): Promise<MessageDocument> {
-    const message = await this.messageModel.findById(messageId);
+  async getMessageDocument(messageId: string): Promise<MessageRecord> {
+    const message = await this.messageStore.findById(messageId);
 
     if (!message) {
-      throw new NotFoundException(
-        ErrorCode.CHAT_MESSAGE_NOT_FOUND,
-        'Message not found',
-      );
+      throw new NotFoundException(ErrorCode.CHAT_MESSAGE_NOT_FOUND, 'Message not found');
     }
 
     return message;
   }
 
-  async findAllByConversation(conversationId: string): Promise<MessageDocument[]> {
-    return this.messageModel
-      .find({ conversationId: new Types.ObjectId(conversationId) })
-      .sort({ createdAt: 1 })
-      .lean()
-      .exec() as Promise<MessageDocument[]>;
+  async findAllByConversation(conversationId: string): Promise<MessageRecord[]> {
+    return this.messageStore.listByConversation(conversationId);
   }
 
   async markStreamFailed(messageId: string, streamExecutionLeaseId?: string): Promise<void> {
-    const update = { isStreaming: false, isComplete: false };
-    if (streamExecutionLeaseId) {
-      await this.messageModel.findOneAndUpdate({
-        _id: new Types.ObjectId(messageId),
-        streamExecutionLeaseId,
-        isComplete: { $ne: true },
-      }, update);
-      return;
-    }
-    await this.messageModel.findByIdAndUpdate(messageId, update);
+    await this.messageStore.markStreamFailed(messageId, streamExecutionLeaseId);
   }
 
   async cleanupStaleStreams(olderThanMinutes: number): Promise<number> {
     const cutoff = new Date(Date.now() - olderThanMinutes * 60 * 1000);
-    const result = await this.messageModel.updateMany(
-      { isStreaming: true, updatedAt: { $lt: cutoff } },
-      { isStreaming: false, isComplete: false },
-    );
-    return result.modifiedCount;
+    return this.messageStore.cleanupStaleStreams(cutoff);
   }
 
-  async updateUserMessage(messageId: string, content: string, agentIds?: string[], memberIds?: string[]): Promise<MessageResponse> {
-    const message = await this.messageModel.findById(messageId);
+  async updateUserMessage(
+    messageId: string,
+    content: string,
+    agentIds?: string[],
+    memberIds?: string[],
+  ): Promise<MessageResponse> {
+    const existing = await this.messageStore.findById(messageId);
 
-    if (!message) {
-      throw new NotFoundException(
-        ErrorCode.CHAT_MESSAGE_NOT_FOUND,
-        'Message not found',
-      );
+    if (!existing) {
+      throw new NotFoundException(ErrorCode.CHAT_MESSAGE_NOT_FOUND, 'Message not found');
     }
 
-    if (message.conversationType !== 'user') {
+    if (existing.conversationType !== 'user') {
       throw new AppException({
         code: ErrorCode.CHAT_INVALID_FEEDBACK,
         message: 'Only user messages can be edited',
@@ -915,33 +781,26 @@ export class MessageService {
       });
     }
 
-    message.content = content;
-    message.isEdited = true;
-    message.editedAt = new Date();
-    if (agentIds !== undefined) {
-      message.agentIds = agentIds.map((id) => new Types.ObjectId(id));
-      // Persist tagged agents for group conversations (roster only; sticky owned by sendMessage)
-      if (agentIds.length > 0) {
-        await this.conversationService.updateTaggedAgents(
-          message.conversationId.toString(),
-          agentIds,
-        );
-      }
-    }
-    if (memberIds !== undefined) {
-      message.memberIds = memberIds.map((id) => new Types.ObjectId(id));
-    }
-    await message.save();
+    const message = await this.messageStore.updateUser(messageId, {
+      content,
+      agentIds,
+      memberIds,
+      editedAt: new Date(),
+    });
+    if (!message)
+      throw new NotFoundException(ErrorCode.CHAT_MESSAGE_NOT_FOUND, 'Message not found');
+    if (agentIds?.length)
+      await this.conversationService.updateTaggedAgents(message.conversationId, agentIds);
 
     this.logger.log('User message updated', { messageId });
 
     const response = this.mapToResponse(message);
 
     // Broadcast update
-    this.broadcastMessage(message.conversationId.toString(), {
+    this.broadcastMessage(message.conversationId, {
       type: 'message_updated',
       data: {
-        conversationId: message.conversationId.toString(),
+        conversationId: message.conversationId,
         messageId,
         message: response,
       },
@@ -951,21 +810,11 @@ export class MessageService {
   }
 
   async deleteByConversation(conversationId: string): Promise<number> {
-    const result = await this.messageModel.deleteMany({
-      conversationId: new Types.ObjectId(conversationId),
-    });
-    return result.deletedCount;
+    return this.messageStore.deleteByConversation(conversationId);
   }
 
   async findBranchesByQuestion(questionMessageId: string): Promise<MessageResponse[]> {
-    const messages = await this.messageModel
-      .find({
-        questionMessageId: new Types.ObjectId(questionMessageId),
-        conversationType: 'ai',
-      })
-      .sort({ createdAt: 1 })
-      .lean()
-      .exec();
+    const messages = await this.messageStore.findBranchesByQuestion(questionMessageId);
 
     return messages.map((m) => this.mapToResponse(m));
   }
@@ -974,7 +823,9 @@ export class MessageService {
    * Resolve attached file IDs to AttachedFileResponse objects with presigned download URLs.
    * Returns a Map for efficient lookup.
    */
-  private async resolveAttachedFiles(fileIds: string[]): Promise<Map<string, AttachedFileResponse>> {
+  private async resolveAttachedFiles(
+    fileIds: string[],
+  ): Promise<Map<string, AttachedFileResponse>> {
     const map = new Map<string, AttachedFileResponse>();
     if (fileIds.length === 0) return map;
 
@@ -1012,15 +863,15 @@ export class MessageService {
     return map;
   }
 
-  private mapToResponse(message: MessageDocument | Record<string, any>): MessageResponse {
+  private mapToResponse(message: MessageRecord, redactSensitiveText?: boolean): MessageResponse {
     const toStr = (v: any) => v?.toString?.() ?? v;
     const toISO = (v: any) => (v instanceof Date ? v.toISOString() : v);
     return {
-      id: toStr(message._id),
+      id: message.id,
       conversationId: toStr(message.conversationId),
       conversationType: message.conversationType as 'user' | 'ai',
       content: message.content,
-      components: this.publicComponents(message.components, true) as any,
+      components: this.publicComponents(message.components, true, redactSensitiveText) as any,
       attachedFileIds: message.attachedFileIds?.map((id: any) => toStr(id)),
       modelId: message.modelId,
       reasoningEffort: message.reasoningEffort,
@@ -1044,18 +895,34 @@ export class MessageService {
       interaction: message.interaction as Record<string, unknown> | undefined,
       interactions: message.interactions as Record<string, unknown>[] | undefined,
       reliabilityEvaluation: message.reliabilityEvaluation as ReliabilityEvaluation | undefined,
-      correctionWorkflow: message.correctionWorkflow ? {
-        ...message.correctionWorkflow,
-        ...(message.correctionWorkflow.correctedComponents ? {
-          correctedComponents: this.publicComponents(message.correctionWorkflow.correctedComponents),
-        } : {}),
-        ...(message.correctionWorkflow.attempts ? {
-          attempts: message.correctionWorkflow.attempts.map((attempt: ResponseCorrectionAttempt) => ({
-            ...attempt,
-            components: this.publicComponents(attempt.components),
-          })),
-        } : {}),
-      } as MessageResponse['correctionWorkflow'] : undefined,
+      correctionWorkflow: message.correctionWorkflow
+        ? ({
+            ...message.correctionWorkflow,
+            ...(message.correctionWorkflow.correctedComponents
+              ? {
+                  correctedComponents: this.publicComponents(
+                    message.correctionWorkflow.correctedComponents,
+                    false,
+                    redactSensitiveText,
+                  ),
+                }
+              : {}),
+            ...(message.correctionWorkflow.attempts
+              ? {
+                  attempts: message.correctionWorkflow.attempts.map(
+                    (attempt: ResponseCorrectionAttempt) => ({
+                      ...attempt,
+                      components: this.publicComponents(
+                        attempt.components,
+                        false,
+                        redactSensitiveText,
+                      ),
+                    }),
+                  ),
+                }
+              : {}),
+          } as MessageResponse['correctionWorkflow'])
+        : undefined,
       agentIds: message.agentIds?.map((id: any) => toStr(id)),
       memberIds: message.memberIds?.map((id: any) => toStr(id)),
       senderId: toStr(message.senderId),
@@ -1065,31 +932,77 @@ export class MessageService {
     };
   }
 
-  private publicComponents(components: unknown, includeToolResults = false): MessageComponent[] | undefined {
+  private publicComponents(
+    components: unknown,
+    includeToolResults = false,
+    resolvedRedactSensitiveText?: boolean,
+  ): MessageComponent[] | undefined {
     if (!Array.isArray(components)) return undefined;
-    const redactSensitiveText = this.conversationSettings?.shouldRedactSensitiveText() !== false;
+    const redactSensitiveText = resolvedRedactSensitiveText
+      ?? this.conversationSettings?.shouldRedactSensitiveText() !== false;
     const options = { redactSensitiveText, includeAgentDetail: true };
     return components.map((component) => {
       if (component?.type === 'task' && component.data) {
-        return sanitizePublicComponent({
-          id: component.id,
-          type: component.type,
-          data: {
-            ...component.data,
-            items: redactSensitiveText ? sanitizeTaskDiagnosticItems(component.data.items) : component.data.items,
+        return sanitizePublicComponent(
+          {
+            id: component.id,
+            type: component.type,
+            data: {
+              ...component.data,
+              items: redactSensitiveText
+                ? sanitizeTaskDiagnosticItems(component.data.items)
+                : component.data.items,
+            },
           },
-        }, options);
+          options,
+        );
       }
       if (!component?.data) return component;
       if (component.type !== 'toolActivity' || includeToolResults) {
-        return sanitizePublicComponent({ id: component.id, type: component.type, data: { ...component.data } }, options);
+        return sanitizePublicComponent(
+          { id: component.id, type: component.type, data: { ...component.data } },
+          options,
+        );
       }
-      const { resultJson: _resultJson, result_json: _resultJsonSnake, ...publicData } = component.data;
-      return sanitizePublicComponent({ id: component.id, type: component.type, data: publicData }, options);
+      const {
+        resultJson: _resultJson,
+        result_json: _resultJsonSnake,
+        ...publicData
+      } = component.data;
+      return sanitizePublicComponent(
+        { id: component.id, type: component.type, data: publicData },
+        options,
+      );
     });
   }
 
-  private findGuardrailDecision(components: MessageComponent[]): CompleteAIMessageData['guardrailDecision'] {
+  private async resolveRedactSensitiveText(): Promise<boolean> {
+    if (!this.conversationSettings) return true;
+    let timeout: ReturnType<typeof setTimeout> | undefined;
+    try {
+      const settings = await Promise.race([
+        this.conversationSettings.getSettings(),
+        new Promise<never>((_, reject) => {
+          timeout = setTimeout(
+            () => reject(new Error('Conversation redaction setting lookup timed out')),
+            SETTINGS_LOOKUP_TIMEOUT_MS,
+          );
+        }),
+      ]);
+      return settings.redactSensitiveText !== false;
+    } catch (error) {
+      this.logger.warn('Failed to resolve conversation redaction setting', {
+        error: error instanceof Error ? error.message : 'Unknown error',
+      });
+      return true;
+    } finally {
+      if (timeout) clearTimeout(timeout);
+    }
+  }
+
+  private findGuardrailDecision(
+    components: MessageComponent[],
+  ): CompleteAIMessageData['guardrailDecision'] {
     for (const component of components) {
       const decision = component.data?.guardrailDecision;
       if (decision && typeof decision === 'object') {

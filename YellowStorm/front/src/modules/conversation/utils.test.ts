@@ -109,6 +109,22 @@ describe('conversation utils', () => {
     }
   });
 
+  it('attaches a citation to repeated reference markers outside its original parent', () => {
+    const parts = mapComponentsToContentParts([
+      { id: 'draft', type: 'text', data: { content: 'Draft result [2].' } } as never,
+      { id: 'final', type: 'text', data: { content: 'Final result [2].' } } as never,
+      { type: 'citation', data: { parentId: 'draft', source: 'report.pdf', reference: '2' } } as never,
+    ]);
+
+    expect(parts).toHaveLength(2);
+    for (const part of parts) {
+      expect(part.type).toBe('text');
+      if (part.type === 'text') {
+        expect(part.citations).toEqual([expect.objectContaining({ source: 'report.pdf', reference: '2' })]);
+      }
+    }
+  });
+
   it('converts components to markdown', () => {
     const markdown = componentsToMarkdown([
       { type: 'text', data: { content: 'Hi' } },

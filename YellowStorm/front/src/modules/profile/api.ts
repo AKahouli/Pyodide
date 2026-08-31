@@ -83,7 +83,7 @@ export async function deleteAccount(): Promise<void> {
  */
 export async function getHealthStatus(): Promise<HealthCheckResult> {
   const response = await apiClient.get<ApiResponse<HealthCheckResult>>(
-    API_ENDPOINTS.health.check,
+    API_ENDPOINTS.health.admin,
     {
       // Accept 200 (healthy) and 503 (unhealthy) as valid responses
       validateStatus: (status) => status === 200 || status === 503,

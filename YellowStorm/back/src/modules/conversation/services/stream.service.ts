@@ -66,6 +66,7 @@ export interface StreamRequest {
   };
   skillIds?: string[];
   clientContext?: ConversationClientContextV1;
+  playbookHandoffId?: string;
 }
 
 export interface StreamGovernanceOverride {
@@ -763,6 +764,7 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
         skillIds: request.skillIds ?? [],
         connectorRepo: request.connectorRepo,
         clientContext: request.clientContext,
+        playbookHandoffId: request.playbookHandoffId,
         governanceOverride,
       },
       username,
@@ -869,13 +871,11 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
     runtimeCorrelationId = sessionId,
   ): Promise<BuiltAgentExecutionRequest> {
     const conversation = await this.conversationService.getConversationDocument(conversationId);
-    const systemWorkspaceId = conversation.systemWorkspaceId?.toString();
-    const groupMembers = conversation.groupMeta?.isGroup
+    const systemWorkspaceId = conversation.systemWorkspaceId;
+    const groupMembers = conversation.isGroup
       ? await this.conversationService.getGroupMembers(conversationId)
       : [];
-    const sharedAgentIds = conversation.groupMeta?.isGroup
-      ? conversation.groupMeta.taggedAgents?.map((id) => id.toString()) || []
-      : [];
+    const sharedAgentIds = conversation.isGroup ? conversation.groupTaggedAgentIds : [];
     const governanceOverride = request.governanceOverride;
     const requestedGovernedAgentIds = governanceOverride
       ? (request.agentIds.length ? request.agentIds : [governanceOverride.primaryAgentId])
@@ -894,6 +894,7 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
           conversation.runtimePurpose === PLATFORM_COPILOT ? {
             conversationId,
             correlationId: runtimeCorrelationId,
+            playbookHandoffAttached: Boolean(request.playbookHandoffId),
           } : undefined,
           request.reasoningEffort,
         ),

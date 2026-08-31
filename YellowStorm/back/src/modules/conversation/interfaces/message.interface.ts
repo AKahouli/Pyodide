@@ -130,6 +130,7 @@ export interface MessageReplayContext {
     repoUrl?: string;
   };
   clientContext?: ConversationClientContextV1;
+  playbookHandoffId?: string;
   governanceOverride?: {
     runtimeMode: 'governed';
     primaryAgentId: string;
@@ -284,9 +285,17 @@ export interface ModelRequestTelemetry {
 }
 
 export interface MessageQueryParams {
+  mode?: 'legacy' | 'cursor';
+  cursor?: string;
   page?: number;
   limit?: number;
   conversationType?: ConversationType;
+}
+
+export interface CursorPaginatedMessages {
+  messages: MessageResponse[];
+  branchesByQuestion: Record<string, MessageResponse[]>;
+  pagination: { mode: 'cursor'; limit: number; hasMore: boolean; nextCursor: string | null };
 }
 
 export interface AttachedFileResponse {

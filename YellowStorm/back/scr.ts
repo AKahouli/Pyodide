@@ -44,8 +44,7 @@ async function main(): Promise<void> {
 
   loadEnv();
 
-  const uri ="mongodb://root:47U9QDO7R0jq@142.132.131.111:3506/poc-aga-005?authSource=admin"
-;
+  const uri = process.env.MONGODB_URI;
 
   if (!uri) {
 
@@ -104,5 +103,3 @@ main().catch((err) => {
   process.exit(1);
 
 });
-
- 

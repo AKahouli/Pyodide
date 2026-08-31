@@ -27,9 +27,10 @@ vi.mock('@/lib/api', () => ({
     users: { me: '/users/me' },
     auth: { sessions: '/auth/sessions' },
     health: {
-      check: '/health/check',
-      history: '/health/history',
-      stats: '/health/stats',
+      check: '/health',
+      admin: '/admin/health',
+      history: '/admin/health/history',
+      stats: '/admin/health/stats',
     },
   },
 }));
@@ -99,7 +100,7 @@ describe('profile api', () => {
 
     const result = await getHealthStatus();
 
-    expect(getMock).toHaveBeenCalledWith('/health/check', { validateStatus: expect.any(Function) });
+    expect(getMock).toHaveBeenCalledWith('/admin/health', { validateStatus: expect.any(Function) });
     expect(result).toEqual({ status: 'ok' });
   });
 
@@ -111,9 +112,9 @@ describe('profile api', () => {
     const history = await getHealthHistory({ minutes: 30 });
     const stats = await getHealthStats(60);
 
-    expect(getMock).toHaveBeenCalledWith('/health/history', { params: { minutes: 30 } });
+    expect(getMock).toHaveBeenCalledWith('/admin/health/history', { params: { minutes: 30 } });
     expect(history).toEqual({ items: [] });
-    expect(getMock).toHaveBeenCalledWith('/health/stats', { params: { minutes: 60 } });
+    expect(getMock).toHaveBeenCalledWith('/admin/health/stats', { params: { minutes: 60 } });
     expect(stats).toEqual({ uptime: 99 });
   });
 });
