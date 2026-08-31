@@ -1117,6 +1117,7 @@ class OrchestratorService:
 
     async def plan_turn(self, *, session_id: str, user_id: str, message: str,
                         model: str, connectors: Optional[List[dict]] = None,
+                        planner_connectors: Optional[List[dict]] = None,
                         planner_model: Optional[str] = None, planner_prompt: Optional[str] = None,
                         executor_prompt: Optional[str] = None,
                         executor_name: Optional[str] = None,
@@ -1135,6 +1136,7 @@ class OrchestratorService:
         # (chit-chat): answer and finish the turn here, no graph is ever built.
         plan = await self._make_plan(session_id, user_id, message,
                                      planner_model=planner_model, planner_prompt=planner_prompt,
+                                     planner_connectors=planner_connectors,
                                      requester=requester)
         logger.info("[worky] 5. planner LLM → Plan session=%s title=%r steps=%d",
                     session_id, plan.title, len(plan.steps))
@@ -1204,6 +1206,7 @@ class OrchestratorService:
     async def converse_turn(self, *, session_id: str, user_id: str, message: str,
                             planner_model: Optional[str] = None,
                             planner_prompt: Optional[str] = None,
+                            planner_connectors: Optional[List[dict]] = None,
                             requester: Optional[dict] = None) -> Plan:
         """A message that arrives WHILE a plan is executing.
 
@@ -1240,6 +1243,7 @@ class OrchestratorService:
             plan = await self._make_plan(
                 session_id, user_id, amend_message,
                 planner_model=planner_model, planner_prompt=planner_prompt,
+                planner_connectors=planner_connectors,
                 plan_session=f"{session_id}_conv_{uuid.uuid4().hex[:8]}",
                 requester=requester)
             live = self._active.get(session_id)  # re-check: may have finished while planning
@@ -1715,6 +1719,7 @@ class OrchestratorService:
     async def _make_plan(self, session_id: str, user_id: str, message: str, *,
                          planner_model: Optional[str] = None,
                          planner_prompt: Optional[str] = None,
+                         planner_connectors: Optional[List[dict]] = None,
                          plan_session: Optional[str] = None,
                          requester: Optional[dict] = None) -> Plan:
         # The planner's ADK session accumulates history across calls. The main
@@ -1734,7 +1739,12 @@ class OrchestratorService:
             # this hardcoded copy (whose {{ }} JSON examples reached the model as
             # invalid doubled braces). Same replace-semantics the executor uses.
             instruction=(planner_prompt or PLANNER_INSTRUCTION),
-            tools=[human_agents.make_find_human_agents_tool()],
+            # The planner runs on ITS OWN connectors (like the executor runs on
+            # its own): whatever the admin linked to the worky-planner agent
+            # becomes a planner tool. find_human_agents stays as the built-in
+            # until a human-agents MCP is linked to replace it.
+            tools=[human_agents.make_find_human_agents_tool(),
+                   *self._tools_for(planner_connectors, session_id, user_id)],
             output_schema=_PlannerOutput,
         )
         runner = self._runner_factory(planner, f"planner_{session_id}")

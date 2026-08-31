@@ -73,12 +73,26 @@ def _requester(request) -> Optional[dict]:
     return {"name": name, "email": email, "role": role}
 
 
+def _agent_connectors(agent) -> list:
+    """The connectors bound to THIS agent, from its
+    agent_params.connector_bindings_json — for debugging whether an agent's
+    UI-linked connectors actually reached the request (separate from the
+    top-level request.connectors worky's executor runs on)."""
+    try:
+        raw = dict(agent.agent_params.params).get("connector_bindings_json", "")
+        bindings = json.loads(raw) if raw else []
+        return [b.get("connector_slug") or b.get("connector_name") for b in bindings]
+    except (ValueError, TypeError, AttributeError):
+        return []
+
+
 def _describe_request(request) -> str:
     """One-line dump of every RunRequest field, secrets redacted (connector
     auth_headers carry Bearer tokens; skill/agent instructions are large)."""
     skills = [{"id": s.id, "name": s.name} for s in request.skills]
     agents = [{"id": a.id, "name": a.name, "agent_type": a.agent_type,
-               "model": a.chatbot.model, "prompt_len": len(a.prompt)}
+               "model": a.chatbot.model, "prompt_len": len(a.prompt),
+               "connectors": _agent_connectors(a)}
               for a in request.agents]
     connectors = [
         {
@@ -140,6 +154,24 @@ def _connectors_to_dicts(connectors) -> list:
             "actions": actions,
         })
     return out
+
+
+def _agent_connector_bindings(agent) -> list:
+    """The connectors bound to ONE agent, parsed from its
+    agent_params.connector_bindings_json — already in the dict shape
+    create_connector_tools wants (the chat path json.loads's the same string).
+
+    Worky builds each agent's tools from its OWN connectors (like chat), not a
+    shared top-level request.connectors list: the executor's tools come from the
+    executor agent's bindings, the planner's from the planner agent's."""
+    if agent is None:
+        return []
+    try:
+        raw = dict(agent.agent_params.params).get("connector_bindings_json", "")
+        bindings = json.loads(raw) if raw else []
+        return bindings if isinstance(bindings, list) else []
+    except (ValueError, TypeError, AttributeError):
+        return []
 
 
 class CompanionAiServicer(pb_grpc.CompanionAiServicer):
@@ -221,6 +253,7 @@ class CompanionAiServicer(pb_grpc.CompanionAiServicer):
                 message=request.message,
                 planner_model=planner.chatbot.model if planner else None,
                 planner_prompt=planner.prompt if planner else None,
+                planner_connectors=_agent_connector_bindings(planner),
                 requester=_requester(request))
             logger.info("[worky] converse turn done (session=%s run=%s)",
                         request.session_id, run_id)
@@ -254,7 +287,13 @@ class CompanionAiServicer(pb_grpc.CompanionAiServicer):
                 except BaseException:  # noqa: BLE001 — prev's cancellation is expected
                     pass
 
-            connectors = _connectors_to_dicts(request.connectors)
+            # Each worky agent runs on its OWN connectors (like the chat path):
+            # the executor's tools come from the executor agent's bindings, the
+            # planner's from the planner agent's — not a shared top-level list.
+            executor = _agent_by_type(request.agents, EXECUTOR_AGENT_TYPE)
+            planner = _agent_by_type(request.agents, PLANNER_AGENT_TYPE)
+            connectors = _agent_connector_bindings(executor)
+            planner_connectors = _agent_connector_bindings(planner)
             # STEP 4 — new turn, or the answer to a pending question? A pending
             # interrupt (set while blocked on ask-the-user, and NOT cleared until
             # the turn finishes) means this message is the answer → resume;
@@ -274,7 +313,6 @@ class CompanionAiServicer(pb_grpc.CompanionAiServicer):
                     else "continue — resume paused plan" if status == "paused"
                     else "new turn — planning")
             logger.info("[worky] 4. %s (session=%s)", mode, request.session_id)
-            executor = _agent_by_type(request.agents, EXECUTOR_AGENT_TYPE)
             executor_prompt = executor.prompt if executor else None
             # Who the turn is for. RunRequest carries the requester's identity so
             # the planner/executor address them directly and never delegate or
@@ -291,10 +329,10 @@ class CompanionAiServicer(pb_grpc.CompanionAiServicer):
                     model=model, connectors=connectors,
                     executor_prompt=_with_requester(executor_prompt, requester))
             else:
-                planner = _agent_by_type(request.agents, PLANNER_AGENT_TYPE)
                 await self._svc.plan_turn(
                     session_id=request.session_id, user_id=request.user_id,
                     message=request.message, model=model, connectors=connectors,
+                    planner_connectors=planner_connectors,
                     planner_model=planner.chatbot.model if planner else None,
                     planner_prompt=planner.prompt if planner else None,
                     executor_prompt=executor_prompt,
@@ -495,7 +533,7 @@ class CompanionAiServicer(pb_grpc.CompanionAiServicer):
             await self._svc.resume_turn(
                 session_id=session_id, user_id=wait["user_id"],
                 answer=answer, model=model,
-                connectors=_connectors_to_dicts(request.connectors),
+                connectors=_agent_connector_bindings(executor),
                 interrupt_id=wait["interrupt_id"],
                 executor_prompt=executor.prompt if executor else None)
             logger.info("[worky] DeliverMailReply turn done (session=%s step=%s)",

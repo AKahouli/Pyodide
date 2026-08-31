@@ -21,15 +21,6 @@ import {
  * plan is resumed by that webhook.
  */
 const WORKY_MAIL_CONNECTOR_SLUG = 'outlook';
-const WORKY_CONNECTOR_SLUGS = [
-  'code-interpreter',
-  'linkup',
-  WORKY_MAIL_CONNECTOR_SLUG,
-  'sharepoint',
-  'teams',
-  'githubpoc',
-];
-
 /**
  * Resolves the model and connectors an orchestrator turn needs to actually do
  * its job with real tools — shared by every path that can start or continue a
@@ -120,27 +111,40 @@ export class WorkyTurnContextService {
     }
   }
 
-  /** Per-user connectors worky needs (see WORKY_CONNECTOR_SLUGS).
+  /** The connectors linked to worky's planner/executor agents (agent_connectors).
    *  Auth resolved by ConnectorService; failures are non-fatal (send none) --
    *  a turn or resume must not fail just because connector lookup did. */
   async resolveConnectors(userId: string): Promise<unknown[]> {
     try {
-      const found = (
-        await Promise.all(WORKY_CONNECTOR_SLUGS.map((slug) => this.connectorService.findBySlug(slug)))
-      ).filter(Boolean);
-      if (found.length) {
-        // Tied to the mail connector by name, not to "some Microsoft connector
-        // is present": sharepoint and teams are Graph too, and arming the mail
-        // webhook off either of them would subscribe a mailbox whose send_email
-        // tool the plan never had.
-        if (found.some((c) => c!.slug === WORKY_MAIL_CONNECTOR_SLUG)) {
-          this.ensureMailSubscription(userId);
-        }
-        return await this.connectorService.findByIdsForGrpc(
-          found.map((c) => c!.id),
-          userId,
-        );
+      // Worky's connectors are whatever the admin linked to its planner/executor
+      // agents in the UI (agent_connectors) — the agents fully define the toolset,
+      // like a chat agent. No hardcoded connector list: link a connector to a
+      // worky agent to grant it, unlink to remove it.
+      const [plannerType, executorType] = await Promise.all([
+        this.agentTypeService.findBySlug(WORKY_PLANNER_AGENT_TYPE_SLUG),
+        this.agentTypeService.findBySlug(WORKY_EXECUTOR_AGENT_TYPE_SLUG),
+      ]);
+      const [plannerAgent, executorAgent] = await Promise.all([
+        plannerType ? this.agentService.findDefaultByAgentType(plannerType.id) : null,
+        executorType ? this.agentService.findDefaultByAgentType(executorType.id) : null,
+      ]);
+      const connectorIds = [
+        ...new Set([
+          ...(plannerAgent?.connectors || []),
+          ...(executorAgent?.connectors || []),
+        ]),
+      ];
+      if (!connectorIds.length) return [];
+
+      // Arm the mail webhook only when the mail connector is one of the linked
+      // ones — a plan that can send mail needs a subscription for the reply.
+      // Tied to the mail connector by id, not "some Microsoft connector is
+      // present": sharepoint/teams are Graph too but never send_email.
+      const mailConnector = await this.connectorService.findBySlug(WORKY_MAIL_CONNECTOR_SLUG);
+      if (mailConnector && connectorIds.includes(mailConnector.id)) {
+        this.ensureMailSubscription(userId);
       }
+      return await this.connectorService.findByIdsForGrpc(connectorIds, userId);
     } catch (err) {
       this.logger.warn('[worky-orchestrator] connector resolution failed; sending none', {
         error: (err as Error).message,
