@@ -14,9 +14,9 @@ import type {
   AppOwnershipFilter,
   AppSortKey,
   AppViewMode,
-} from '../../hooks/useAppMarketplaceFilters';
+} from '../../hooks/useAppBuilderFilters';
 
-interface AppMarketplaceFiltersProps {
+interface AppBuilderFiltersProps {
   searchInput: string;
   onSearchChange: (value: string) => void;
   owner: AppOwnershipFilter;
@@ -29,7 +29,7 @@ interface AppMarketplaceFiltersProps {
   onClearAll: () => void;
 }
 
-export function AppMarketplaceFilters({
+export function AppBuilderFilters({
   searchInput,
   onSearchChange,
   owner,
@@ -40,8 +40,8 @@ export function AppMarketplaceFilters({
   onViewChange,
   hasActiveFilters,
   onClearAll,
-}: AppMarketplaceFiltersProps) {
-  const { t } = useModuleTranslation('app-marketplace');
+}: AppBuilderFiltersProps) {
+  const { t } = useModuleTranslation('app-builder');
 
   return (
     <div className='flex flex-wrap items-center gap-2 rounded-xl border border-border/60 bg-card/40 p-2'>

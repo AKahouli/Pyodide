@@ -5,13 +5,13 @@ const listDeployedAppsMock = vi.hoisted(() => vi.fn());
 const removeAppMock = vi.hoisted(() => vi.fn());
 
 vi.mock('./api', () => ({
-  appMarketplaceApi: {
+  appBuilderApi: {
     listDeployedApps: listDeployedAppsMock,
     removeApp: removeAppMock,
   },
 }));
 
-import { useAppMarketplaceStore, initialState } from './store';
+import { useAppBuilderStore, initialState } from './store';
 
 const mockApps: DeployedApp[] = [
   {
@@ -24,18 +24,18 @@ const mockApps: DeployedApp[] = [
   },
 ];
 
-describe('useAppMarketplaceStore', () => {
+describe('useAppBuilderStore', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    useAppMarketplaceStore.setState(initialState);
+    useAppBuilderStore.setState(initialState);
   });
 
   it('fetchApps stores the deployed apps', async () => {
     listDeployedAppsMock.mockResolvedValueOnce(mockApps);
 
-    await useAppMarketplaceStore.getState().fetchApps();
+    await useAppBuilderStore.getState().fetchApps();
 
-    const state = useAppMarketplaceStore.getState();
+    const state = useAppBuilderStore.getState();
     expect(state.apps).toEqual(mockApps);
     expect(state.loading).toBe(false);
     expect(state.error).toBe(false);
@@ -44,22 +44,22 @@ describe('useAppMarketplaceStore', () => {
   it('fetchApps flags the error state on failure', async () => {
     listDeployedAppsMock.mockRejectedValueOnce(new Error('network'));
 
-    await useAppMarketplaceStore.getState().fetchApps();
+    await useAppBuilderStore.getState().fetchApps();
 
-    const state = useAppMarketplaceStore.getState();
+    const state = useAppBuilderStore.getState();
     expect(state.apps).toEqual([]);
     expect(state.error).toBe(true);
     expect(state.loading).toBe(false);
   });
 
   it('removeApp deletes the card from local state after the API succeeds', async () => {
-    useAppMarketplaceStore.setState({ apps: mockApps });
+    useAppBuilderStore.setState({ apps: mockApps });
     removeAppMock.mockResolvedValueOnce(undefined);
 
-    await useAppMarketplaceStore.getState().removeApp('session-1');
+    await useAppBuilderStore.getState().removeApp('session-1');
 
     expect(removeAppMock).toHaveBeenCalledWith('session-1');
-    expect(useAppMarketplaceStore.getState().apps).toEqual([]);
-    expect(useAppMarketplaceStore.getState().deletingSessionId).toBeNull();
+    expect(useAppBuilderStore.getState().apps).toEqual([]);
+    expect(useAppBuilderStore.getState().deletingSessionId).toBeNull();
   });
 });

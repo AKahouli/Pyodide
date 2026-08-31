@@ -8,7 +8,7 @@ const removeAppMock = vi.hoisted(() => vi.fn());
 const navigateMock = vi.hoisted(() => vi.fn());
 
 vi.mock('../api', () => ({
-  appMarketplaceApi: {
+  appBuilderApi: {
     listDeployedApps: listDeployedAppsMock,
     removeApp: removeAppMock,
   },
@@ -24,8 +24,8 @@ vi.mock('react-router-dom', async (importOriginal) => ({
   useNavigate: () => navigateMock,
 }));
 
-import { AppMarketplacePage } from './AppMarketplacePage';
-import { useAppMarketplaceStore, initialState } from '../store';
+import { AppBuilderPage } from './AppBuilderPage';
+import { useAppBuilderStore, initialState } from '../store';
 
 const mockApps: DeployedApp[] = [
   {
@@ -54,15 +54,15 @@ const mixedApps: DeployedApp[] = [...mockApps, ...sharedApps];
 function renderPage(initialRoute = '/') {
   return render(
     <MemoryRouter initialEntries={[initialRoute]}>
-      <AppMarketplacePage />
+      <AppBuilderPage />
     </MemoryRouter>,
   );
 }
 
-describe('AppMarketplacePage', () => {
+describe('AppBuilderPage', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    useAppMarketplaceStore.setState(initialState);
+    useAppBuilderStore.setState(initialState);
   });
 
   it('renders the deployed apps returned by the API', async () => {
@@ -145,16 +145,6 @@ describe('AppMarketplacePage', () => {
     renderPage();
 
     expect(await screen.findByText(/page\.empty/)).toBeInTheDocument();
-  });
-
-  it('shows overview counts for personal and shared apps', async () => {
-    listDeployedAppsMock.mockResolvedValueOnce(mixedApps);
-
-    renderPage();
-
-    await screen.findByText('Generated app');
-    const counts = screen.getAllByText('1', { selector: '.text-4xl' });
-    expect(counts).toHaveLength(2);
   });
 
   it('filters apps by search query from URL', async () => {

@@ -1,20 +1,15 @@
 {
   "button": {
-    "label": "App Marketplace",
-    "tooltip": "App Marketplace"
+    "label": "App Builder",
+    "tooltip": "App Builder"
   },
   "page": {
-    "title": "App Market",
+    "title": "App Builder",
     "description": "Your deployed and shared applications",
     "empty": "No deployed apps yet. Publish an app from a conversation to see it here.",
     "error": "Failed to load your deployed apps."
   },
   "hub": {
-    "overview": {
-      "eyebrow": "Overview",
-      "personal": "Personal",
-      "shared": "Shared with me"
-    },
     "filters": {
       "searchPlaceholder": "Search apps...",
       "ownerAll": "All",
@@ -48,15 +43,15 @@
     "share": "Share app & conversation",
     "manageUsers": "Manage app users",
     "delete": "Delete",
-    "deleteTitle": "Remove app from Marketplace?",
-    "deleteDescription": "The conversation and hosted app will be kept. Publishing again will add it back to Marketplace.",
+    "deleteTitle": "Remove app from App Builder?",
+    "deleteDescription": "The conversation and hosted app will be kept. Publishing again will add it back to App Builder.",
     "unshare": "Remove",
     "unshareTitle": "Remove shared app?",
-    "unshareDescription": "This only removes the app from your Marketplace. The owner's conversation stays private.",
+    "unshareDescription": "This only removes the app from your App Builder. The owner's conversation stays private.",
     "cancel": "Cancel",
-    "deleteSuccess": "App removed from Marketplace.",
+    "deleteSuccess": "App removed from App Builder.",
     "deleteError": "Failed to remove the app.",
-    "unshareSuccess": "Shared app removed from your Marketplace.",
+    "unshareSuccess": "Shared app removed from your App Builder.",
     "unshareError": "Failed to remove the shared app."
   },
   "endUsers": {

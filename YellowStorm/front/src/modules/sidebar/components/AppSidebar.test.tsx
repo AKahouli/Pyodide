@@ -11,7 +11,7 @@ const featureVisibility = vi.hoisted(() => ({
   workspace: true,
   playbook: true,
   governance: true,
-  appMarketplace: true,
+  appBuilder: true,
   worky: true,
   agents: true,
 }));
@@ -96,10 +96,10 @@ vi.mock('@/modules/connected-app', () => ({ ConnectedAppButton: () => <div>conne
 vi.mock('@/modules/playbook/components/PlaybookButton', () => ({ PlaybookButton: () => <div>playbook-btn</div> }));
 vi.mock('@/modules/governance', () => ({ GovernanceButton: () => <div>governance-btn</div> }));
 vi.mock('@/modules/worky/components/WorkyButton', () => ({ WorkyButton: () => <div>worky-btn</div> }));
-vi.mock('@/modules/app-marketplace', () => ({ AppMarketplaceButton: () => <div>app-marketplace-btn</div> }));
+vi.mock('@/modules/app-builder', () => ({ AppBuilderButton: () => <div>app-builder-btn</div> }));
 vi.mock('@/modules/admin', () => ({
   AdminButton: () => <div>admin-btn</div>,
-  DEFAULT_FEATURE_VISIBILITY: { conversation: true, workspace: true, playbook: true, governance: true, appMarketplace: true, worky: true, agents: true },
+  DEFAULT_FEATURE_VISIBILITY: { conversation: true, workspace: true, playbook: true, governance: true, appBuilder: true, worky: true, agents: true },
   getFeatureVisibility: vi.fn(async () => ({ ...featureVisibility })),
 }));
 vi.mock('@/modules/admin/hooks/usePermissions', () => ({
@@ -156,7 +156,7 @@ describe('AppSidebar', () => {
     storeFns.currentConversationId = 'c1';
     permissionState.governance = true;
     permissionState.semanticModels = true;
-    Object.assign(featureVisibility, { conversation: true, workspace: true, playbook: true, governance: true, appMarketplace: true, worky: true, agents: true });
+    Object.assign(featureVisibility, { conversation: true, workspace: true, playbook: true, governance: true, appBuilder: true, worky: true, agents: true });
   });
 
   it('hides disabled feature buttons but keeps conversation history', async () => {
@@ -165,7 +165,7 @@ describe('AppSidebar', () => {
       workspace: false,
       playbook: false,
       governance: false,
-      appMarketplace: false,
+      appBuilder: false,
       worky: false,
       agents: false,
     });
@@ -180,7 +180,7 @@ describe('AppSidebar', () => {
     expect(screen.queryByText('agent-btn')).not.toBeInTheDocument();
     expect(screen.queryByText('playbook-btn')).not.toBeInTheDocument();
     expect(screen.queryByText('governance-btn')).not.toBeInTheDocument();
-    expect(screen.queryByText('app-marketplace-btn')).not.toBeInTheDocument();
+    expect(screen.queryByText('app-builder-btn')).not.toBeInTheDocument();
     expect(screen.queryByText('worky-btn')).not.toBeInTheDocument();
     expect(screen.getByText('history.label')).toBeInTheDocument();
     expect(screen.getByText('conversation-c1')).toBeInTheDocument();

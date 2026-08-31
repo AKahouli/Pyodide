@@ -17,7 +17,7 @@ export interface AppEndUserSummary {
   createdAt: string;
 }
 
-export const appMarketplaceApi = {
+export const appBuilderApi = {
   /** Owned + shared deployed apps of the current user, newest first. */
   async listDeployedApps(): Promise<DeployedApp[]> {
     const res = await apiClient.get<ApiResponse<ListDeployedAppsResponse>>(
@@ -25,7 +25,7 @@ export const appMarketplaceApi = {
     );
     return res.data.data.items;
   },
-  /** Remove an app from Marketplace without deleting its conversation. */
+  /** Remove an app from App Builder without deleting its conversation. */
   async removeApp(sessionId: string): Promise<void> {
     await apiClient.delete(`/conversation-v2/apps/${sessionId}`);
   },

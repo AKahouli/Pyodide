@@ -1,15 +1,15 @@
 import { useModuleTranslation } from '@/modules/localization';
-import type { AppMarketplaceFilteredGroups, AppViewMode } from '../../hooks/useAppMarketplaceFilters';
+import type { AppBuilderFilteredGroups, AppViewMode } from '../../hooks/useAppBuilderFilters';
 import { DeployedAppCard } from '../DeployedAppCard';
 
-interface AppMarketplaceGridProps {
-  groups: AppMarketplaceFilteredGroups;
+interface AppBuilderGridProps {
+  groups: AppBuilderFilteredGroups;
   view: AppViewMode;
   showSections: boolean;
 }
 
-export function AppMarketplaceGrid({ groups, view, showSections }: AppMarketplaceGridProps) {
-  const { t } = useModuleTranslation('app-marketplace');
+export function AppBuilderGrid({ groups, view, showSections }: AppBuilderGridProps) {
+  const { t } = useModuleTranslation('app-builder');
 
   const sections = [
     { key: 'owned', title: t('hub.sections.personal'), apps: groups.owned },

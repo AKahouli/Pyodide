@@ -2,19 +2,18 @@ import { useEffect } from 'react';
 import { Loader2, Store, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { useModuleTranslation } from '@/modules/localization';
-import { useAppMarketplaceFilters } from '../hooks/useAppMarketplaceFilters';
-import { useAppMarketplaceStore } from '../store';
-import { AppMarketplaceFilters } from './hub/AppMarketplaceFilters';
-import { AppMarketplaceGrid } from './hub/AppMarketplaceGrid';
-import { AppMarketplaceOverview } from './hub/AppMarketplaceOverview';
+import { useAppBuilderFilters } from '../hooks/useAppBuilderFilters';
+import { useAppBuilderStore } from '../store';
+import { AppBuilderFilters } from './hub/AppBuilderFilters';
+import { AppBuilderGrid } from './hub/AppBuilderGrid';
 
-export function AppMarketplacePage() {
-  const { t } = useModuleTranslation('app-marketplace');
-  const apps = useAppMarketplaceStore((s) => s.apps);
-  const loading = useAppMarketplaceStore((s) => s.loading);
-  const error = useAppMarketplaceStore((s) => s.error);
-  const fetchApps = useAppMarketplaceStore((s) => s.fetchApps);
-  const filters = useAppMarketplaceFilters(apps);
+export function AppBuilderPage() {
+  const { t } = useModuleTranslation('app-builder');
+  const apps = useAppBuilderStore((s) => s.apps);
+  const loading = useAppBuilderStore((s) => s.loading);
+  const error = useAppBuilderStore((s) => s.error);
+  const fetchApps = useAppBuilderStore((s) => s.fetchApps);
+  const filters = useAppBuilderFilters(apps);
 
   useEffect(() => {
     fetchApps();
@@ -57,14 +56,7 @@ export function AppMarketplacePage() {
             </div>
           ) : (
             <>
-              <AppMarketplaceOverview
-                activeOwner={filters.filters.owner}
-                ownedCount={filters.ownedCount}
-                sharedCount={filters.sharedCount}
-                onSelectOwner={filters.setOwner}
-              />
-
-              <AppMarketplaceFilters
+              <AppBuilderFilters
                 searchInput={filters.searchInput}
                 onSearchChange={filters.setSearchInput}
                 owner={filters.filters.owner}
@@ -91,7 +83,7 @@ export function AppMarketplacePage() {
                   </Button>
                 </div>
               ) : (
-                <AppMarketplaceGrid
+                <AppBuilderGrid
                   groups={filters.filteredGroups}
                   view={filters.filters.view}
                   showSections={filters.filters.owner === 'all'}

@@ -12,7 +12,7 @@ import {
 } from '@/components/ui/tooltip';
 import { ShareDeployDialog } from '@/modules/conversation-v2/components/RightPanel/ShareDeployDialog';
 import { useModuleTranslation } from '@/modules/localization';
-import type { AppViewMode } from '../hooks/useAppMarketplaceFilters';
+import type { AppViewMode } from '../hooks/useAppBuilderFilters';
 import type { DeployedApp } from '../types';
 import { DeleteDeployedAppButton } from './DeleteDeployedAppButton';
 import { AppEndUsersDialog } from './AppEndUsersDialog';
@@ -26,7 +26,7 @@ export const DeployedAppCard = memo(function DeployedAppCard({
   app,
   view = 'list',
 }: DeployedAppCardProps) {
-  const { t } = useModuleTranslation('app-marketplace');
+  const { t } = useModuleTranslation('app-builder');
   const navigate = useNavigate();
   const [shareOpen, setShareOpen] = useState(false);
   const [usersOpen, setUsersOpen] = useState(false);

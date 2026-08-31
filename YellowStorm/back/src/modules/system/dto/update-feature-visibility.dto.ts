@@ -21,7 +21,7 @@ export class UpdateFeatureVisibilityDto implements FeatureVisibility {
 
   @ApiProperty()
   @IsBoolean()
-  appMarketplace!: boolean;
+  appBuilder!: boolean;
 
   @ApiProperty()
   @IsBoolean()

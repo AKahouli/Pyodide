@@ -8,14 +8,14 @@ export type AppOwnershipFilter = 'all' | 'owned' | 'shared';
 export type AppSortKey = 'deployed' | 'name';
 export type AppViewMode = 'grid' | 'list';
 
-export interface AppMarketplaceFilterState {
+export interface AppBuilderFilterState {
   search: string;
   owner: AppOwnershipFilter;
   sort: AppSortKey;
   view: AppViewMode;
 }
 
-export interface AppMarketplaceFilteredGroups {
+export interface AppBuilderFilteredGroups {
   owned: DeployedApp[];
   shared: DeployedApp[];
 }
@@ -54,7 +54,7 @@ function sortApps(list: DeployedApp[], sort: AppSortKey): DeployedApp[] {
   return copy;
 }
 
-export function useAppMarketplaceFilters(apps: DeployedApp[]) {
+export function useAppBuilderFilters(apps: DeployedApp[]) {
   const [searchParams, setSearchParams] = useSearchParams();
 
   const rawSearch = searchParams.get('q') ?? '';
@@ -140,7 +140,7 @@ export function useAppMarketplaceFilters(apps: DeployedApp[]) {
     );
   }, [setSearchParams]);
 
-  const filters: AppMarketplaceFilterState = useMemo(
+  const filters: AppBuilderFilterState = useMemo(
     () => ({ search: rawSearch, owner, sort, view }),
     [rawSearch, owner, sort, view],
   );
@@ -154,7 +154,7 @@ export function useAppMarketplaceFilters(apps: DeployedApp[]) {
     [apps],
   );
 
-  const filteredGroups: AppMarketplaceFilteredGroups = useMemo(() => {
+  const filteredGroups: AppBuilderFilteredGroups = useMemo(() => {
     const owned =
       owner === 'all' || owner === 'owned'
         ? sortApps(ownedApps.filter((app) => matches(app, rawSearch)), sort)
@@ -185,7 +185,5 @@ export function useAppMarketplaceFilters(apps: DeployedApp[]) {
     filteredGroups,
     isEmpty,
     visibleApps,
-    ownedCount: ownedApps.length,
-    sharedCount: sharedApps.length,
   };
 }

@@ -14,7 +14,7 @@ import {
 } from '@/components/ui/alert-dialog';
 import { showError, showSuccess } from '@/lib/notifications';
 import { useModuleTranslation } from '@/modules/localization';
-import { useAppMarketplaceStore } from '../store';
+import { useAppBuilderStore } from '../store';
 import type { DeployedAppSource } from '../types';
 
 export function DeleteDeployedAppButton({
@@ -24,10 +24,10 @@ export function DeleteDeployedAppButton({
   sessionId: string;
   source?: DeployedAppSource;
 }) {
-  const { t } = useModuleTranslation('app-marketplace');
+  const { t } = useModuleTranslation('app-builder');
   const [open, setOpen] = useState(false);
-  const removeApp = useAppMarketplaceStore((state) => state.removeApp);
-  const isDeleting = useAppMarketplaceStore(
+  const removeApp = useAppBuilderStore((state) => state.removeApp);
+  const isDeleting = useAppBuilderStore(
     (state) => state.deletingSessionId === sessionId,
   );
   const isShared = source === 'shared';

@@ -41,7 +41,7 @@ import {
 import { cn } from '@/lib/utils';
 import { useModuleTranslation } from '@/modules/localization';
 import {
-  appMarketplaceApi,
+  appBuilderApi,
   type AppEndUserGrants,
   type AppEndUserSummary,
 } from '../api';
@@ -91,7 +91,7 @@ export function AppEndUsersDialog({
   open,
   onOpenChange,
 }: AppEndUsersDialogProps) {
-  const { t } = useModuleTranslation('app-marketplace');
+  const { t } = useModuleTranslation('app-builder');
   const [users, setUsers] = useState<AppEndUserSummary[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -102,7 +102,7 @@ export function AppEndUsersDialog({
     setLoading(true);
     setError(null);
     try {
-      const list = await appMarketplaceApi.listEndUsers(sessionId);
+      const list = await appBuilderApi.listEndUsers(sessionId);
       setUsers(list);
     } catch (err) {
       setError(err instanceof Error ? err.message : t('endUsers.loadError'));
@@ -132,7 +132,7 @@ export function AppEndUsersDialog({
     setSavingUserId(userId);
     setError(null);
     try {
-      const updated = await appMarketplaceApi.updateEndUserGrants(sessionId, userId, grants);
+      const updated = await appBuilderApi.updateEndUserGrants(sessionId, userId, grants);
       updateUser(updated);
     } catch (err) {
       setError(err instanceof Error ? err.message : t('endUsers.saveError'));
@@ -315,7 +315,7 @@ function EndUserTableRow({
   onToggleGrant,
   onApplyPreset,
 }: EndUserRowProps) {
-  const { t } = useModuleTranslation('app-marketplace');
+  const { t } = useModuleTranslation('app-builder');
   const disabled = user.status === 'disabled';
   const enabledCount = countEnabledGrants(user.grants);
 
@@ -369,7 +369,7 @@ function EndUserMobileCard({
   onToggleGrant,
   onApplyPreset,
 }: EndUserRowProps) {
-  const { t } = useModuleTranslation('app-marketplace');
+  const { t } = useModuleTranslation('app-builder');
   const disabled = user.status === 'disabled';
   const enabledCount = countEnabledGrants(user.grants);
 
@@ -431,7 +431,7 @@ function PresetMenu({
   summary?: string;
   onApplyPreset: (preset: keyof typeof PRESETS) => void;
 }) {
-  const { t } = useModuleTranslation('app-marketplace');
+  const { t } = useModuleTranslation('app-builder');
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>

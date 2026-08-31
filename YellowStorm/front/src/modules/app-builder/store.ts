@@ -1,9 +1,9 @@
 import { create } from 'zustand';
 import { devtools } from 'zustand/middleware';
-import { appMarketplaceApi } from './api';
+import { appBuilderApi } from './api';
 import type { DeployedApp } from './types';
 
-interface AppMarketplaceState {
+interface AppBuilderState {
   apps: DeployedApp[];
   loading: boolean;
   error: boolean;
@@ -19,14 +19,14 @@ export const initialState = {
   deletingSessionId: null,
 };
 
-export const useAppMarketplaceStore = create<AppMarketplaceState>()(
+export const useAppBuilderStore = create<AppBuilderState>()(
   devtools(
     (set) => ({
       ...initialState,
       fetchApps: async () => {
         set({ loading: true, error: false }, false, 'fetchApps/start');
         try {
-          const apps = await appMarketplaceApi.listDeployedApps();
+          const apps = await appBuilderApi.listDeployedApps();
           set({ apps, loading: false }, false, 'fetchApps/done');
         } catch {
           set({ loading: false, error: true }, false, 'fetchApps/error');
@@ -35,7 +35,7 @@ export const useAppMarketplaceStore = create<AppMarketplaceState>()(
       removeApp: async (sessionId) => {
         set({ deletingSessionId: sessionId }, false, 'removeApp/start');
         try {
-          await appMarketplaceApi.removeApp(sessionId);
+          await appBuilderApi.removeApp(sessionId);
           set(
             (state) => ({
               apps: state.apps.filter((app) => app.sessionId !== sessionId),
@@ -50,6 +50,6 @@ export const useAppMarketplaceStore = create<AppMarketplaceState>()(
         }
       },
     }),
-    { name: 'app-marketplace-store' },
+    { name: 'app-builder-store' },
   ),
 );

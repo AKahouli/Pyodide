@@ -1,20 +1,15 @@
 {
   "button": {
-    "label": "App Marketplace",
-    "tooltip": "App Marketplace"
+    "label": "App Builder",
+    "tooltip": "App Builder"
   },
   "page": {
-    "title": "Marché d'apps",
+    "title": "App Builder",
     "description": "Vos applications déployées et partagées",
     "empty": "Aucune application déployée pour le moment. Publiez une application depuis une conversation pour la voir ici.",
     "error": "Impossible de charger vos applications déployées."
   },
   "hub": {
-    "overview": {
-      "eyebrow": "Vue d'ensemble",
-      "personal": "Personnelles",
-      "shared": "Partagées avec moi"
-    },
     "filters": {
       "searchPlaceholder": "Rechercher des applications...",
       "ownerAll": "Toutes",
@@ -48,15 +43,15 @@
     "share": "Partager l'app et la conversation",
     "manageUsers": "Gérer les utilisateurs",
     "delete": "Supprimer",
-    "deleteTitle": "Retirer l'application du Marketplace ?",
-    "deleteDescription": "La conversation et l'application hébergée seront conservées. Une nouvelle publication l'ajoutera de nouveau au Marketplace.",
+    "deleteTitle": "Retirer l'application d'App Builder ?",
+    "deleteDescription": "La conversation et l'application hébergée seront conservées. Une nouvelle publication l'ajoutera de nouveau à App Builder.",
     "unshare": "Retirer",
     "unshareTitle": "Retirer l'application partagée ?",
-    "unshareDescription": "Cela retire uniquement l'application de votre Marketplace. La conversation du propriétaire reste privée.",
+    "unshareDescription": "Cela retire uniquement l'application de votre App Builder. La conversation du propriétaire reste privée.",
     "cancel": "Annuler",
-    "deleteSuccess": "Application retirée du Marketplace.",
+    "deleteSuccess": "Application retirée d'App Builder.",
     "deleteError": "Impossible de retirer l'application.",
-    "unshareSuccess": "Application partagée retirée de votre Marketplace.",
+    "unshareSuccess": "Application partagée retirée de votre App Builder.",
     "unshareError": "Impossible de retirer l'application partagée."
   },
   "endUsers": {

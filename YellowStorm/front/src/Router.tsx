@@ -14,8 +14,8 @@ import { PermissionGuard } from './modules/admin/components/PermissionGuard';
 // Lazy-loaded connected apps
 const ConnectedAppsPage = React.lazy(() => import('./modules/connected-app/components/ConnectedAppsPage').then((m) => ({ default: m.ConnectedAppsPage })));
 
-// Lazy-loaded app marketplace
-const AppMarketplacePage = React.lazy(() => import('./modules/app-marketplace/components/AppMarketplacePage').then((m) => ({ default: m.AppMarketplacePage })));
+// Lazy-loaded app builder
+const AppBuilderPage = React.lazy(() => import('./modules/app-builder/components/AppBuilderPage').then((m) => ({ default: m.AppBuilderPage })));
 
 const PlatformOverviewPage = React.lazy(() =>
   import('@/modules/platform-overview').then((m) => ({ default: m.PlatformOverviewPage }))
@@ -249,10 +249,10 @@ export const router = createHashRouter([
         ),
       },
       {
-        path: 'app-market',
+        path: 'app-builder',
         element: (
           <Suspense fallback={null}>
-            <AppMarketplacePage />
+            <AppBuilderPage />
           </Suspense>
         ),
       },
