@@ -7,6 +7,8 @@ export interface GeminiLiveHandlers {
   onSetupComplete?: () => void;
   onInputTranscript?: (text: string) => void;
   onOutputTranscript?: (text: string) => void;
+  /** Gemini signals the end of a turn — used to segment the user's utterance for memory. */
+  onTurnComplete?: () => void;
   onResumptionHandle?: (handle: string) => void;
   onGoAway?: () => void;
   onClose?: (ev: CloseEvent) => void;
@@ -76,6 +78,7 @@ export function openGeminiLive(
       for (const part of sc.modelTurn?.parts ?? []) {
         if (part.inlineData?.data) handlers.onAudio(base64ToInt16(part.inlineData.data));
       }
+      if (sc.turnComplete) handlers.onTurnComplete?.();
     }
   };
 

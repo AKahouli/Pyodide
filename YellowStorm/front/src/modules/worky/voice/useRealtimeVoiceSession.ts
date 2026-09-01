@@ -6,6 +6,7 @@ import { openGeminiLive, type GeminiLiveConnection } from './geminiLiveClient';
 import { handleToolCall } from './toolCallRelay';
 import { attachMilestoneInjector } from './milestoneInjector';
 import { PCM_CAPTURE_WORKLET } from './pcm-capture-worklet';
+import { openVoiceMemoryIngest, type VoiceMemoryIngest } from './voiceMemoryIngest';
 import { downsampleFloat, floatTo16BitPCM } from './pcmAudio';
 import { shouldReconnect } from './reconnectPolicy';
 
@@ -46,6 +47,12 @@ export function useRealtimeVoiceSession(streamId: string): VoiceSessionApi {
   const userSpeechRef = useRef<string[]>([]);
   // MCP tool routing from the session envelope, captured so hang-up can dispatch.
   const toolRoutingRef = useRef<{ endpoints?: Record<string, string>; streamIdTools?: string[] }>({});
+  // Voice-memory sidecar: mirrors mic PCM + per-turn transcript for long-term
+  // memory. Best-effort and fully independent of the Gemini path; a no-op unless
+  // VITE_VOICE_MEMORY_WS_URL is configured. `memTurnRef` accumulates the current
+  // user turn's transcript, flushed on turnComplete.
+  const memRef = useRef<VoiceMemoryIngest | null>(null);
+  const memTurnRef = useRef<string[]>([]);
 
   const teardown = useCallback(() => {
     closingRef.current = true;
@@ -59,6 +66,9 @@ export function useRealtimeVoiceSession(streamId: string): VoiceSessionApi {
     streamRef.current = null;
     void ctxRef.current?.close();
     ctxRef.current = null;
+    memRef.current?.close();
+    memRef.current = null;
+    memTurnRef.current = [];
   }, []);
 
   const playPcm = useCallback((pcm: Int16Array) => {
@@ -89,6 +99,9 @@ export function useRealtimeVoiceSession(streamId: string): VoiceSessionApi {
     closingRef.current = false;
     const envelope = await createVoiceSession(streamId, handleRef.current);
     toolRoutingRef.current = { endpoints: envelope.toolEndpoints, streamIdTools: envelope.streamIdTools };
+    // Best-effort long-term memory: a no-op unless the sidecar URL is configured.
+    memRef.current = openVoiceMemoryIngest();
+    memTurnRef.current = [];
 
     // Only stream mic audio after the server acknowledges setup, so we never
     // push audio into a session Gemini hasn't configured yet. A short fallback
@@ -128,10 +141,18 @@ export function useRealtimeVoiceSession(streamId: string): VoiceSessionApi {
         // ponytail: assumes fragments are deltas (join → full text). If Gemini
         // ever sends cumulative snapshots, de-dup here or split on turnComplete.
         userSpeechRef.current.push(t);
+        memTurnRef.current.push(t); // this turn's transcript, for memory ingest
       },
       onOutputTranscript: (t) => {
         if (import.meta.env?.DEV) console.log('[voice] concierge:', t);
         setTranscript((p) => ({ ...p, manager: t }));
+      },
+      // End of a turn: hand this turn's transcript to memory (the sidecar pairs it
+      // with the audio it has been buffering), then start a fresh turn.
+      onTurnComplete: () => {
+        const said = memTurnRef.current.join('').trim();
+        memTurnRef.current = [];
+        if (said) memRef.current?.endTurn(said);
       },
       onResumptionHandle: (h) => {
         handleRef.current = h;
@@ -210,7 +231,9 @@ export function useRealtimeVoiceSession(streamId: string): VoiceSessionApi {
       let sum = 0;
       for (let i = 0; i < f.length; i++) sum += f[i] * f[i];
       setLevel(Math.min(1, Math.sqrt(sum / f.length) * 4));
-      conn.sendAudioChunk(floatTo16BitPCM(downsampleFloat(f, ctx.sampleRate, 16000)));
+      const pcm16 = floatTo16BitPCM(downsampleFloat(f, ctx.sampleRate, 16000));
+      conn.sendAudioChunk(pcm16); // Gemini path — unchanged, always first
+      memRef.current?.sendAudio(pcm16); // fork a copy to long-term memory (best-effort)
       if (import.meta.env?.DEV && !loggedFirstChunk) {
         loggedFirstChunk = true;
         console.log('[voice] first mic chunk sent to Gemini (', f.length, 'samples )');
