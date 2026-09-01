@@ -20,6 +20,10 @@ export class WorkyMessage extends Document {
   @Prop({ type: String, default: null })
   externalId?: string | null;
 
+  /** Correlates the submitted request with manager messages mirrored through Electric. */
+  @Prop({ type: String, default: null })
+  turnId?: string | null;
+
   @Prop({
     type: String,
     enum: ['owner', 'manager', 'system'],

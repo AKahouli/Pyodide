@@ -36,6 +36,55 @@ describe('useWorkyStore.appendMessage', () => {
 
     expect(useWorkyStore.getState().messages.map((m) => m.id)).toEqual(['m1', 'm2']);
   });
+
+  it('ends the active turn only for its correlated manager reply', () => {
+    useWorkyStore.getState().beginTurn('turn-current');
+
+    useWorkyStore.getState().appendMessage(
+      msg({ id: 'm2', role: 'manager', turnId: 'turn-current' }),
+    );
+
+    expect(useWorkyStore.getState()).toMatchObject({ streaming: false, activeTurnId: null });
+  });
+
+  it('keeps the active turn running for stale and uncorrelated replies', () => {
+    useWorkyStore.getState().beginTurn('turn-current');
+
+    useWorkyStore.getState().appendMessage(
+      msg({ id: 'm2', role: 'manager', turnId: 'turn-old' }),
+    );
+    useWorkyStore.getState().appendMessage(
+      msg({ id: 'm3', role: 'manager', turnId: null }),
+    );
+
+    expect(useWorkyStore.getState()).toMatchObject({
+      streaming: true,
+      activeTurnId: 'turn-current',
+    });
+  });
+
+  it('ends the active turn when its reply arrives through a cache refresh', () => {
+    useWorkyStore.getState().beginTurn('turn-current');
+
+    useWorkyStore.getState().setMessages([
+      msg({ id: 'm1', role: 'manager', turnId: 'turn-old' }),
+      msg({ id: 'm2', role: 'manager', turnId: 'turn-current' }),
+    ]);
+
+    expect(useWorkyStore.getState()).toMatchObject({ streaming: false, activeTurnId: null });
+  });
+
+  it('does not let a stale failure finish a newer turn', () => {
+    useWorkyStore.getState().beginTurn('turn-old');
+    useWorkyStore.getState().beginTurn('turn-current');
+
+    useWorkyStore.getState().finishTurn('turn-old');
+
+    expect(useWorkyStore.getState()).toMatchObject({
+      streaming: true,
+      activeTurnId: 'turn-current',
+    });
+  });
 });
 
 describe('useWorkyStore.setMessages', () => {

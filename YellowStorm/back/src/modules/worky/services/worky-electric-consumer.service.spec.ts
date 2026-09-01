@@ -84,6 +84,24 @@ const makeService = () => {
   };
 };
 
+describe('WorkyElectricConsumerService.onModuleInit', () => {
+  it('uses a versioned messages cursor so new columns receive a fresh snapshot', async () => {
+    const { service } = makeService();
+    const subscribe = jest.fn().mockResolvedValue(undefined);
+    (service as any).subscribe = subscribe;
+
+    await service.onModuleInit();
+
+    expect(subscribe).toHaveBeenNthCalledWith(
+      1,
+      'messages',
+      'messages',
+      expect.any(Function),
+      'messages:turn-id-v1',
+    );
+  });
+});
+
 describe('WorkyElectricConsumerService.handleMessages', () => {
   it('upserts a message by (streamId, externalId) and emits to the owner', async () => {
     const { service, messageModel, streamService, events } = makeService();

@@ -4,7 +4,7 @@ const AGENTS = [{ id: 'planner-1', agent_type: 'worky planner' }, { id: 'executo
 
 describe('WorkyMessageController', () => {
   let controller: WorkyMessageController;
-  let planning: { appendOwnerMessage: jest.Mock; listMessages: jest.Mock };
+  let planning: { appendOwnerMessage: jest.Mock; listMessages: jest.Mock; failTurn: jest.Mock };
   let streamService: { ensureKickoffContext: jest.Mock; findByIdInternal: jest.Mock };
   let orchestrator: { runTask: jest.Mock; stopSession: jest.Mock; pauseSession: jest.Mock };
   let turnContext: { resolveWorkyAgents: jest.Mock; resolveConnectors: jest.Mock };
@@ -14,6 +14,7 @@ describe('WorkyMessageController', () => {
     planning = {
       appendOwnerMessage: jest.fn(),
       listMessages: jest.fn(),
+      failTurn: jest.fn(),
     };
     streamService = {
       ensureKickoffContext: jest.fn(),
@@ -55,12 +56,13 @@ describe('WorkyMessageController', () => {
     streamService.ensureKickoffContext.mockResolvedValue({ aiSessionId: 'sess-xyz' });
     const user = { _id: { toString: () => 'user-1' } } as any;
 
-    const res = await controller.sendMessage(user, 'stream-1', { content: 'hi' } as any);
+    const res = await controller.sendMessage(user, 'stream-1', { content: 'hi', turnId: 'turn-1' } as any);
 
-    expect(planning.appendOwnerMessage).toHaveBeenCalledWith('user-1', 'stream-1', { content: 'hi' });
+    expect(planning.appendOwnerMessage).toHaveBeenCalledWith('user-1', 'stream-1', { content: 'hi', turnId: 'turn-1' });
     expect(streamService.ensureKickoffContext).toHaveBeenCalledWith('stream-1', 'user-1');
     expect(orchestrator.runTask).toHaveBeenCalledWith('user-1', 'sess-xyz', 'hi', expect.any(Object));
-    expect(res).toEqual({ id: 'm1', content: 'hi', createdAt: 'now', turnStarted: true });
+    expect(orchestrator.runTask.mock.calls[0][3]).toMatchObject({ turnId: 'turn-1' });
+    expect(res).toEqual({ id: 'm1', content: 'hi', createdAt: 'now', turnId: 'turn-1', turnStarted: true });
   });
 
   it('resolves connectors and the two worky agents for this user and forwards them to RunTask', async () => {
@@ -68,7 +70,7 @@ describe('WorkyMessageController', () => {
     streamService.ensureKickoffContext.mockResolvedValue({ aiSessionId: 'sess-xyz' });
     const user = { _id: { toString: () => 'user-1' } } as any;
 
-    await controller.sendMessage(user, 'stream-1', { content: 'hi' } as any);
+    await controller.sendMessage(user, 'stream-1', { content: 'hi', turnId: 'turn-2' } as any);
 
     expect(turnContext.resolveWorkyAgents).toHaveBeenCalledWith('user-1');
     expect(turnContext.resolveConnectors).toHaveBeenCalledWith('user-1');
@@ -81,6 +83,19 @@ describe('WorkyMessageController', () => {
         connectors: [{ connector_id: 'c1' }, { connector_id: 'c2' }],
       }),
     );
+  });
+
+  it('emits a correlated terminal event when gRPC kickoff fails', async () => {
+    planning.appendOwnerMessage.mockResolvedValue({ id: 'm1', content: 'hi', createdAt: 'now' });
+    streamService.ensureKickoffContext.mockResolvedValue({ aiSessionId: 'sess-xyz' });
+    orchestrator.runTask.mockRejectedValue(new Error('unavailable'));
+    const user = { _id: { toString: () => 'user-1' } } as any;
+
+    const res = await controller.sendMessage(user, 'stream-1', { content: 'hi', turnId: 'turn-3' } as any);
+    await Promise.resolve();
+
+    expect(res).toMatchObject({ id: 'm1', turnId: 'turn-3', turnStarted: true });
+    expect(planning.failTurn).toHaveBeenCalledWith('user-1', 'stream-1', 'turn-3');
   });
 
   it('resolves the same way for resumeTurn as it does for a fresh message', async () => {

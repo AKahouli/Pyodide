@@ -9,6 +9,7 @@ import { useWorkyUiStore } from '../uiStore';
 const STREAM_ID = 'stream-1';
 interface SendInput {
   content: string;
+  turnId: string;
   managerModelId?: string;
   workerModelId?: string;
 }
@@ -50,13 +51,19 @@ vi.mock('../store', () => ({
   useWorkyStreaming: () => streamingValue,
   useWorkyStore: (selector: (s: {
     setStreamError: (v: string | null) => void;
-    setStreaming: (v: boolean) => void;
+    beginTurn: (turnId: string) => void;
+    finishTurn: (turnId: string) => void;
   }) => unknown) =>
-    selector({ setStreamError: setStreamErrorMock, setStreaming: setStreamingMock }),
+    selector({
+      setStreamError: setStreamErrorMock,
+      beginTurn: beginTurnMock,
+      finishTurn: finishTurnMock,
+    }),
 }));
 
 const setStreamErrorMock = vi.fn();
-const setStreamingMock = vi.fn();
+const beginTurnMock = vi.fn();
+const finishTurnMock = vi.fn();
 
 function TestProviders({ children }: { children: ReactNode }): JSX.Element {
   const qc = new QueryClient({
@@ -77,7 +84,8 @@ describe('PromptBar composer', () => {
     streamingValue = false;
     stopMutateMock.mockClear();
     setStreamErrorMock.mockClear();
-    setStreamingMock.mockClear();
+    beginTurnMock.mockClear();
+    finishTurnMock.mockClear();
     useWorkyUiStore.getState().reset();
   });
 
@@ -93,7 +101,7 @@ describe('PromptBar composer', () => {
     fireEvent.click(screen.getByTestId('worky-prompt-send'));
 
     expect(sendCalls).toHaveLength(1);
-    expect(sendCalls[0]).toEqual({ content: 'hello' });
+    expect(sendCalls[0]).toEqual({ content: 'hello', turnId: expect.any(String) });
     expect(sendCalls[0].managerModelId).toBeUndefined();
     expect(sendCalls[0].workerModelId).toBeUndefined();
   });
@@ -134,7 +142,7 @@ describe('PromptBar composer', () => {
     fireEvent.change(textarea, { target: { value: 'show progress' } });
     fireEvent.click(screen.getByTestId('worky-prompt-send'));
 
-    expect(setStreamingMock).toHaveBeenCalledWith(true);
+    expect(beginTurnMock).toHaveBeenCalledWith(sendCalls[0].turnId);
   });
 
   it('clears any prior stream error when a new message is sent', () => {
@@ -166,6 +174,7 @@ describe('PromptBar composer', () => {
 
     const alert = await screen.findByTestId('worky-send-error');
     expect(alert).toHaveTextContent('Network exploded');
+    expect(finishTurnMock).toHaveBeenCalledWith(sendCalls[0].turnId);
 
     // Stream switch must clear the failure so it never bleeds across.
     const { rerender } = render(

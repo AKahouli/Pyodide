@@ -184,6 +184,7 @@ export interface UpdateWorkyStreamData {
  */
 export interface SendWorkyMessageData {
   content: string;
+  turnId: string;
   managerModelId?: string;
   workerModelId?: string;
 }
@@ -194,6 +195,7 @@ export type WorkyMessageRole = 'owner' | 'manager' | 'system';
 
 export interface WorkyMessage {
   id: string;
+  turnId?: string | null;
   role: WorkyMessageRole;
   content: string;
   planDeltaRef: string | null;

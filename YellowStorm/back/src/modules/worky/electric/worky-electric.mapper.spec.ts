@@ -28,13 +28,13 @@ describe('worky-electric.mapper', () => {
 
     it('maps a message row to Mongo $set with externalId + a message.appended event', () => {
       const { set, event } = mapMessage(
-        { id: 'pg-msg-1', session_id: 's', role: 'assistant', content: 'hello', created_at: '2026-07-03T00:00:00Z' },
+        { id: 'pg-msg-1', session_id: 's', role: 'assistant', content: 'hello', turn_id: 'turn-1', created_at: '2026-07-03T00:00:00Z' },
         'stream-1',
       );
-      expect(set).toMatchObject({ streamId: 'stream-1', externalId: 'pg-msg-1', role: 'manager', content: 'hello' });
+      expect(set).toMatchObject({ streamId: 'stream-1', externalId: 'pg-msg-1', turnId: 'turn-1', role: 'manager', content: 'hello' });
       expect(set.emittedAt).toEqual(new Date('2026-07-03T00:00:00Z'));
       expect(set).not.toHaveProperty('createdAt');
-      expect(event).toMatchObject({ type: 'message.appended', payload: { id: 'pg-msg-1', role: 'manager', content: 'hello' } });
+      expect(event).toMatchObject({ type: 'message.appended', payload: { id: 'pg-msg-1', turnId: 'turn-1', role: 'manager', content: 'hello' } });
     });
 
     it('maps owner role through unchanged', () => {

@@ -104,15 +104,16 @@ async def test_readmodel_roundtrip(pool):
     ])
     await rm.set_step_status(sid, "a", "completed", result="got data")
     await rm.set_step_status(sid, "b", "blocked", blocked_reason="need input")
-    await rm.add_message("m1", sid, "user", "do it")
+    await rm.add_message("m1", sid, "user", "do it", "turn-1")
 
     async with pool.acquire() as con:
         a = await con.fetchrow(f'SELECT * FROM "{SCHEMA}".plan_steps WHERE session_id=$1 AND step_id=$2', sid, "a")
         b = await con.fetchrow(f'SELECT * FROM "{SCHEMA}".plan_steps WHERE session_id=$1 AND step_id=$2', sid, "b")
-        msg = await con.fetchval(f'SELECT content FROM "{SCHEMA}".messages WHERE id=$1', "m1")
+        msg = await con.fetchrow(
+            f'SELECT content, turn_id FROM "{SCHEMA}".messages WHERE id=$1', "m1")
     assert a["status"] == "completed" and a["result"] == "got data"
     assert b["status"] == "blocked" and b["blocked_reason"] == "need input"
-    assert msg == "do it"
+    assert msg["content"] == "do it" and msg["turn_id"] == "turn-1"
     print("ok  read-model: session/plan/steps/messages project + read back")
 
 

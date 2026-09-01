@@ -22,6 +22,7 @@ import { Permissions } from '../../authorization/constants/permissions';
 import { LoggerService } from '../../logger';
 import { WorkyTurnContextService } from '../services/worky-turn-context.service';
 import { requesterOpts } from '../worky-requester.util';
+import { randomUUID } from 'node:crypto';
 
 @ApiTags('Worky')
 @ApiBearerAuth()
@@ -47,8 +48,12 @@ export class WorkyMessageController {
     @CurrentUser() user: UserDocument,
     @Param('id') streamId: string,
     @Body() dto: CreateWorkyMessageDto,
-  ): Promise<{ id: string; content: string; createdAt: string; turnStarted: true }> {
-    const saved = await this.planning.appendOwnerMessage(user._id.toString(), streamId, dto);
+  ): Promise<{ id: string; content: string; createdAt: string; turnId: string; turnStarted: true }> {
+    const turnId = dto.turnId ?? randomUUID();
+    const saved = await this.planning.appendOwnerMessage(user._id.toString(), streamId, {
+      ...dto,
+      turnId,
+    });
     const ctx = await this.streamService.ensureKickoffContext(streamId, user._id.toString());
     // The two agents worky forwards (default worky-planner + worky-executer)
     // carry their own model/prompt/tools; connectors resolve separately. Shared
@@ -57,9 +62,8 @@ export class WorkyMessageController {
       this.turnContext.resolveWorkyAgents(user._id.toString()),
       this.turnContext.resolveConnectors(user._id.toString()),
     ]);
-    // Fire-and-forget kickoff. The manager writes task/message rows into
-    // its Postgres; the Electric consumer mirrors them into Mongo and
-    // re-emits over the SSE channel `/worky/streams/{id}/events`.
+    // RunTask returns an immediate ack; the accepted turn continues in the
+    // background and writes rows that Electric mirrors into Mongo and SSE.
     this.logger.log('[worky-orchestrator] RunTask kickoff', {
       streamId,
       aiSid: ctx.aiSessionId,
@@ -71,15 +75,18 @@ export class WorkyMessageController {
       .runTask(user._id.toString(), ctx.aiSessionId, dto.content, {
         agents,
         connectors,
+        turnId,
         ...requesterOpts(user),
       })
-      .catch((err) =>
+      .catch((err: Error) => {
         this.logger.error('[worky-orchestrator] RunTask kickoff failed', {
           streamId,
-          error: (err as Error).message,
-        }),
-      );
-    return { ...saved, turnStarted: true };
+          turnId,
+          error: err.message,
+        });
+        this.planning.failTurn(user._id.toString(), streamId, turnId);
+      });
+    return { ...saved, turnId, turnStarted: true };
   }
 
   @Get(':id/messages')
@@ -95,6 +102,7 @@ export class WorkyMessageController {
       id: string;
       role: string;
       content: string;
+      turnId: string | null;
       planDeltaRef: string | null;
       createdAt: string;
       components: Array<{ id: string; type: string; data: Record<string, unknown> }>;

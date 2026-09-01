@@ -105,7 +105,7 @@ export function useBoard(streamId: string | null | undefined) {
 export function useSendMessage(streamId: string) {
   const qc = useQueryClient();
   return useMutation<
-    { id: string; content: string; createdAt: string; turnStarted: true },
+    { id: string; content: string; createdAt: string; turnId: string; turnStarted: true },
     Error,
     SendWorkyMessageData
   >({

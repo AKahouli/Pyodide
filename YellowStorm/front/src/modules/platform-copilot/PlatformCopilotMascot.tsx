@@ -1,7 +1,6 @@
 import * as React from 'react';
 import { Activity, ArrowUpRight, Bot, History, Library, ListChecks, MessageSquarePlus, Send, ShieldCheck, Sparkles, Workflow, X } from 'lucide-react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { Streamdown } from 'streamdown';
 import { useStickToBottomContext } from 'use-stick-to-bottom';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -9,6 +8,7 @@ import { ResizablePanel } from '@/components/ui/resizable-panel';
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import { Textarea } from '@/components/ui/textarea';
 import { ChatConversation, ChatConversationContent, ChatScrollButton } from '@/components/ai-elements/chat-conversation';
+import { AssistantMarkdown } from '@/components/ai-elements/assistant-response';
 import { handleApiError } from '@/lib/api-error';
 import { useModuleTranslation } from '@/modules/localization';
 import { usePlaybookStore, usePlaybookUiStore } from '@/modules/playbook';
@@ -416,7 +416,7 @@ export function PlatformCopilotMascot() {
                 {message.role === 'assistant' ? (
                   <>
                     <PlatformCopilotActivity components={message.components} isStreaming={message.isStreaming} />
-                    {message.text && <Streamdown className='min-w-0 w-full max-w-full overflow-hidden break-words [&_code]:[overflow-wrap:anywhere] [&_ol]:my-2 [&_ol]:pl-5 [&_p]:my-2 [&_p]:[overflow-wrap:anywhere] [&_pre]:w-full [&_pre]:max-w-full [&_pre]:overflow-x-auto [&_pre_code]:break-normal [&_pre_code]:[overflow-wrap:normal] [&_table]:my-3 [&_table]:block [&_table]:w-full [&_table]:max-w-full [&_table]:overflow-x-auto [&_table]:whitespace-nowrap [&_ul]:my-2 [&_ul]:pl-5'>{message.text}</Streamdown>}
+                    {message.text && <AssistantMarkdown>{message.text}</AssistantMarkdown>}
                     {(() => {
                       const pendingChoices = message.components
                         .filter((component) => component.type === 'choice')

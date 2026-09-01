@@ -188,6 +188,7 @@ export class WorkyOrchestratorGrpcClientService
       userName?: string;
       userEmail?: string;
       userRole?: string;
+      turnId?: string;
     },
   ): Promise<{ sessionId: string; accepted: boolean; runId: string }> {
     const request: Record<string, unknown> = {
@@ -203,6 +204,7 @@ export class WorkyOrchestratorGrpcClientService
     if (opts.userName) request.user_name = opts.userName;
     if (opts.userEmail) request.user_email = opts.userEmail;
     if (opts.userRole) request.user_role = opts.userRole;
+    if (opts.turnId) request.turn_id = opts.turnId;
     return new Promise((resolve, reject) => {
       this.client.RunTask(
         request,

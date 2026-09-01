@@ -176,6 +176,73 @@ describe('ChatMessageThread', () => {
     expect(screen.getByText('just text')).toBeInTheDocument();
   });
 
+  it('renders persisted manager Markdown including tables', () => {
+    mockedUseMessages.mockReturnValue([
+      {
+        id: 'm3',
+        role: 'manager',
+        content: '| Agent | Status |\n| --- | --- |\n| Researcher | Done |',
+        planDeltaRef: null,
+        createdAt: '2026-08-13T10:00:00.000Z',
+      },
+    ]);
+
+    render(
+      <TestProviders>
+        <ChatMessageThread />
+      </TestProviders>,
+    );
+
+    expect(screen.getByRole('table')).toBeInTheDocument();
+    expect(screen.getByRole('columnheader', { name: 'Agent' })).toBeInTheDocument();
+    expect(screen.getByRole('cell', { name: 'Researcher' })).toBeInTheDocument();
+  });
+
+  it('renders fenced manager code as a formatted code block', () => {
+    mockedUseMessages.mockReturnValue([
+      {
+        id: 'm-code',
+        role: 'manager',
+        content: '```ts\nconst status = "done";\n```',
+        planDeltaRef: null,
+        createdAt: '2026-08-13T10:00:00.000Z',
+      },
+    ]);
+
+    render(
+      <TestProviders>
+        <ChatMessageThread />
+      </TestProviders>,
+    );
+
+    expect(screen.getByText('const status = "done";').closest('pre')).not.toBeNull();
+  });
+
+  it('uses the shared assistant activity presentation for manager components', () => {
+    mockedUseMessages.mockReturnValue([
+      {
+        id: 'm4',
+        role: 'manager',
+        content: '',
+        planDeltaRef: null,
+        createdAt: '2026-08-13T10:00:00.000Z',
+        components: [
+          { id: 'tool-1', type: 'toolActivity', data: { summary: 'Researching prospects', status: 'completed' } },
+          { id: 'text-1', type: 'text', data: { content: 'Research complete.' } },
+        ],
+      },
+    ]);
+
+    render(
+      <TestProviders>
+        <ChatMessageThread />
+      </TestProviders>,
+    );
+
+    expect(screen.getByText('Researching prospects')).toBeInTheDocument();
+    expect(screen.getByText('Research complete.')).toBeInTheDocument();
+  });
+
   it('renders clarifications inline after the owner message that triggered them', () => {
     mockedUseMessages.mockReturnValue([
       {

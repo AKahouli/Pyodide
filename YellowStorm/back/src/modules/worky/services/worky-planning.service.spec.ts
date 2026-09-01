@@ -139,6 +139,23 @@ const makeService = (options: MakeOptions = {}) => {
 
 describe('WorkyPlanningService.appendOwnerMessage', () => {
   const streamId = new Types.ObjectId().toString();
+
+  it('emits a correlated terminal failure for a rejected orchestrator kickoff', () => {
+    const { service, events, ownerId } = makeService();
+
+    service.failTurn(ownerId.toString(), streamId, 'turn-failed');
+
+    expect(events.emit).toHaveBeenCalledWith(ownerId.toString(), streamId, {
+      type: 'stream.terminal',
+      emittedAt: expect.any(Number),
+      payload: {
+        error: true,
+        source: 'orchestrator-kickoff',
+        turnId: 'turn-failed',
+      },
+    });
+  });
+
   it('persists the message and emits message.appended on the SSE channel', async () => {
     const { service, messageModel, events, ownerId } = makeService();
     const result = await service.appendOwnerMessage(ownerId.toString(), streamId, {

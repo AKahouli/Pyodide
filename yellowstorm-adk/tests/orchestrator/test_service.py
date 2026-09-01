@@ -12,6 +12,29 @@ from src.companion_ai import scheduler, service as svc
 from src.companion_ai.plan import Plan, Status, Step
 
 
+@pytest.mark.asyncio
+async def test_add_message_projects_active_turn_id():
+    rm = MagicMock(add_message=AsyncMock())
+    service = svc.OrchestratorService(MagicMock(), rm, planner_model="m")
+    token = svc.active_turn_id.set("turn-1")
+    try:
+        await service._add_message("session-1", "assistant", "done")
+    finally:
+        svc.active_turn_id.reset(token)
+
+    args = rm.add_message.await_args.args
+    assert args[1:] == ("session-1", "assistant", "done", "turn-1")
+
+
+@pytest.mark.asyncio
+async def test_add_message_propagates_projection_failure():
+    rm = MagicMock(add_message=AsyncMock(side_effect=RuntimeError("database unavailable")))
+    service = svc.OrchestratorService(MagicMock(), rm, planner_model="m")
+
+    with pytest.raises(RuntimeError, match="database unavailable"):
+        await service._add_message("session-1", "assistant", "done")
+
+
 def test_make_plan_extracts_a_plan_when_output_schema_is_combined_with_tools(monkeypatch):
     """LlmAgent.output_schema + tools together works by ADK injecting a
     set_model_response tool and synthesizing a compatible final text event

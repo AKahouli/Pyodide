@@ -86,9 +86,9 @@ export async function getMessages(streamId: string, limit = 200): Promise<WorkyM
 export async function sendMessage(
   streamId: string,
   data: SendWorkyMessageData,
-): Promise<{ id: string; content: string; createdAt: string; turnStarted: true }> {
+): Promise<{ id: string; content: string; createdAt: string; turnId: string; turnStarted: true }> {
   const response = await apiClient.post<
-    ApiResponse<{ id: string; content: string; createdAt: string; turnStarted: true }>
+    ApiResponse<{ id: string; content: string; createdAt: string; turnId: string; turnStarted: true }>
   >(API_ENDPOINTS.worky.streamMessages(streamId), data);
   return unwrap(response);
 }

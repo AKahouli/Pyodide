@@ -81,7 +81,8 @@ function WorkyStreamBody({ streamId }: { streamId: string }): JSX.Element {
 
   useEffect(() => {
     setWhatsappModalOpen(false);
-  }, [streamId]);
+    setStreaming(false);
+  }, [streamId, setStreaming]);
 
   useEffect(() => {
     setBoardLoading(boardQuery.isFetching);
@@ -108,6 +109,7 @@ function WorkyStreamBody({ streamId }: { streamId: string }): JSX.Element {
             id: String((event.data as { id?: string }).id ?? ''),
             role: ((event.data as { role?: string }).role ?? 'manager') as WorkyMessage['role'],
             content: String((event.data as { content?: string }).content ?? ''),
+            turnId: typeof event.data.turnId === 'string' ? event.data.turnId : null,
             planDeltaRef: null,
             createdAt: new Date().toISOString(),
           };
@@ -231,6 +233,10 @@ function WorkyStreamBody({ streamId }: { streamId: string }): JSX.Element {
           break;
         }
         case 'stream.terminal': {
+          const terminalTurnId =
+            typeof event.data.turnId === 'string' ? event.data.turnId : null;
+          const activeTurnId = useWorkyStore.getState().activeTurnId;
+          if (activeTurnId && terminalTurnId !== activeTurnId) break;
           setStreaming(false);
           resetAssistantText();
           if (event.data && (event.data as { error?: boolean }).error) {

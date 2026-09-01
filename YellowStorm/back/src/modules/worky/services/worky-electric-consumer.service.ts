@@ -47,6 +47,7 @@ import {
  */
 @Injectable()
 export class WorkyElectricConsumerService implements OnModuleInit, OnModuleDestroy {
+  private static readonly MESSAGES_CURSOR_KEY = 'messages:turn-id-v1';
   private streams: Array<{ unsubscribe: () => void }> = [];
 
   constructor(
@@ -75,6 +76,7 @@ export class WorkyElectricConsumerService implements OnModuleInit, OnModuleDestr
       'messages',
       this.config.get<string>('worky.electricMessagesTable')!,
       (m) => this.handleMessages(m),
+      WorkyElectricConsumerService.MESSAGES_CURSOR_KEY,
     );
     await this.subscribe(
       'plans',
@@ -117,12 +119,17 @@ export class WorkyElectricConsumerService implements OnModuleInit, OnModuleDestr
     shape: string,
     table: string,
     handler: (messages: unknown[]) => Promise<void>,
+    cursorKey = shape,
   ): Promise<void> {
-    const cursor = await this.cursorModel.findOne({ shape }).lean<{ handle?: string | null; offset?: string | null }>().exec();
+    const cursor = await this.cursorModel
+      .findOne({ shape: cursorKey })
+      .lean<{ handle?: string | null; offset?: string | null }>()
+      .exec();
     const secret = this.config.get<string>('worky.electricSecret');
     const url = this.config.get<string>('worky.electricUrl')!;
     this.logger.log('[worky-electric] subscribing', {
       shape,
+      cursorKey,
       table,
       url,
       hasSecret: !!secret,
@@ -152,7 +159,7 @@ export class WorkyElectricConsumerService implements OnModuleInit, OnModuleDestr
       async (messages) => {
         this.logger.log('[worky-electric] batch', { shape, messageCount: messages.length });
         await handler(messages);
-        await this.persistCursor(shape, stream.shapeHandle, String(stream.lastOffset));
+        await this.persistCursor(cursorKey, stream.shapeHandle, String(stream.lastOffset));
       },
       (err) => this.logger.error('[worky-electric] stream error', { shape, error: (err as Error).message }),
     );

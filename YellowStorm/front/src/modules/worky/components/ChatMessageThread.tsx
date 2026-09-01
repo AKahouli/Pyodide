@@ -1,12 +1,13 @@
 import { useMemo } from 'react';
+import { Bot } from 'lucide-react';
 import { useModuleTranslation } from '@/modules/localization';
 import {
   ChatConversation,
   ChatConversationContent,
-  ChatMessageBubble,
   ChatScrollButton,
-  type ChatMessage,
 } from '@/components/ai-elements/chat-conversation';
+import { AssistantActivity, AssistantMarkdown } from '@/components/ai-elements/assistant-response';
+import { AIMessageContent } from '@/components/ai-elements/ai-message-content';
 import { MessageProvider } from '@/components/ai-elements/message-context';
 import { mapComponentsToContentParts } from '@/modules/conversation/utils';
 import { useWorkyMessages, useWorkyStore } from '../store';
@@ -67,22 +68,7 @@ function toChronologicalThread(
     );
 }
 
-/** Maps a worky message onto the shared ChatMessage shape the conversation chat
- *  bubble consumes: owner→user (right, primary), manager/system→assistant (left).
- *  Rich components render when present; otherwise the plain-text content. */
-function toChatMessage(message: WorkyMessage): ChatMessage {
-  const content =
-    message.components && message.components.length > 0
-      ? mapComponentsToContentParts(message.components)
-      : message.content;
-  const timestamp = message.createdAt ? new Date(message.createdAt) : undefined;
-  return {
-    id: message.id,
-    role: message.role === 'owner' ? 'user' : 'assistant',
-    content,
-    timestamp: timestamp && !Number.isNaN(timestamp.getTime()) ? timestamp : undefined,
-  };
-}
+const ACTIVITY_COMPONENT_TYPES = new Set(['agentActivity', 'toolActivity', 'checkpoint', 'plan', 'task', 'queue']);
 
 export function ChatMessageThread({
   streamId,
@@ -101,6 +87,16 @@ export function ChatMessageThread({
     [messages, pendingClarifications, showClarifications],
   );
   const hasContent = messages.length > 0 || showClarifications;
+  const activityLabels = {
+    title: t('messages.activity.title'),
+    reasoning: t('messages.activity.reasoning'),
+    status: {
+      running: t('messages.activity.status.running'),
+      completed: t('messages.activity.status.completed'),
+      failed: t('messages.activity.status.failed'),
+      pending: t('messages.activity.status.pending'),
+    },
+  };
 
   return (
     <section
@@ -125,17 +121,40 @@ export function ChatMessageThread({
         <MessageProvider fileViewerDisplayMode='floating'>
         <ChatConversation className='min-h-0 flex-1'>
           <ChatConversationContent
-            className='gap-3 px-2 py-2'
+            className='min-w-0 gap-5 px-4 py-5'
             data-testid='worky-message-list'
+            aria-live='polite'
           >
             {threadItems.map((item) =>
               item.kind === 'message' ? (
-                <ChatMessageBubble
+                <article
                   key={item.message.id}
-                  message={toChatMessage(item.message)}
-                  density='compact'
+                  className={cn('min-w-0 max-w-full', item.message.role === 'owner' ? 'ml-8' : 'w-full')}
                   data-testid={`worky-message-${item.message.role}`}
-                />
+                >
+                  <div className='mb-1.5 flex items-center gap-2 text-[11px] font-medium text-muted-foreground'>
+                    {item.message.role !== 'owner' && <Bot className='size-3.5' aria-hidden='true' />}
+                    {t(`messages.role.${item.message.role}`)}
+                  </div>
+                  {item.message.role === 'owner' ? (
+                    <div className='rounded-2xl rounded-tr-sm bg-primary px-4 py-3 text-sm text-primary-foreground shadow-sm'>
+                      <p className='whitespace-pre-wrap break-words'>{item.message.content}</p>
+                    </div>
+                  ) : (
+                    <div className='min-w-0 max-w-full overflow-hidden text-sm leading-6 text-foreground'>
+                      {item.message.components?.length ? (
+                        <>
+                          <AssistantActivity components={item.message.components} isStreaming={false} labels={activityLabels} />
+                          <AIMessageContent
+                            parts={mapComponentsToContentParts(item.message.components.filter((component) => !ACTIVITY_COMPONENT_TYPES.has(component.type)))}
+                          />
+                        </>
+                      ) : (
+                        <AssistantMarkdown>{item.message.content}</AssistantMarkdown>
+                      )}
+                    </div>
+                  )}
+                </article>
               ) : (
                 <ChatClarificationCard
                   key={item.clarification.id}

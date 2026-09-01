@@ -102,7 +102,7 @@ export class WorkyPlanningService {
     userId: string,
     streamId: string,
     dto: CreateWorkyMessageDto,
-  ): Promise<{ id: string; content: string; createdAt: string }> {
+  ): Promise<{ id: string; content: string; createdAt: string; turnId: string | null }> {
     const stream = await this.loadStream(streamId, userId);
     if (!this.isMessageablePhase(stream.status)) {
       throw new BadRequestException(
@@ -114,6 +114,7 @@ export class WorkyPlanningService {
       streamId: stream._id,
       role: 'owner',
       content: dto.content,
+      turnId: dto.turnId ?? null,
       planDeltaRef: null,
       emittedAt: new Date(),
     });
@@ -124,13 +125,27 @@ export class WorkyPlanningService {
         id: (message._id as Types.ObjectId).toString(),
         role: 'owner',
         content: dto.content,
+        turnId: dto.turnId ?? null,
       },
     });
     return {
       id: (message._id as Types.ObjectId).toString(),
       content: dto.content,
       createdAt: message.createdAt.toISOString(),
+      turnId: dto.turnId ?? null,
     };
+  }
+
+  failTurn(userId: string, streamId: string, turnId: string): void {
+    this.events.emit(userId, streamId, {
+      type: 'stream.terminal',
+      emittedAt: Date.now(),
+      payload: {
+        error: true,
+        source: 'orchestrator-kickoff',
+        turnId,
+      },
+    });
   }
 
   /**
@@ -182,7 +197,7 @@ export class WorkyPlanningService {
     userId: string,
     streamId: string,
     limit = 200,
-  ): Promise<Array<{ id: string; role: string; content: string; planDeltaRef: string | null; createdAt: string; components: Array<{ id: string; type: string; data: Record<string, unknown> }> }>> {
+  ): Promise<Array<{ id: string; role: string; content: string; turnId: string | null; planDeltaRef: string | null; createdAt: string; components: Array<{ id: string; type: string; data: Record<string, unknown> }> }>> {
     await this.loadStream(streamId, userId);
     const docs = await this.messages
       .find({ streamId: new Types.ObjectId(streamId) })
@@ -215,6 +230,7 @@ export class WorkyPlanningService {
       id: (m._id as Types.ObjectId).toString(),
       role: m.role as string,
       content: m.content as string,
+      turnId: typeof m.turnId === 'string' ? m.turnId : null,
       planDeltaRef: m.planDeltaRef ? (m.planDeltaRef as Types.ObjectId).toString() : null,
       createdAt: (m.createdAt as Date).toISOString(),
       components: typeof m.externalId === 'string' ? byMessage.get(m.externalId) ?? [] : [],

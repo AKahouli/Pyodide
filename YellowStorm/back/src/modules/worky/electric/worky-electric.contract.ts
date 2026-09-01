@@ -4,6 +4,7 @@ export interface PgMessageRow {
   session_id: string;
   role: string;
   content: string;
+  turn_id?: string | null;
   created_at: string;
 }
 

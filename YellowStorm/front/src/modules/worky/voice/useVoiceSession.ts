@@ -157,7 +157,7 @@ export function useVoiceSession(streamId: string): VoiceSessionApi {
           setError('replyTimeout');
           rearm();
         }, useVoiceSettings.getState().replyTimeoutMs);
-        await send.mutateAsync({ content: text });
+        await send.mutateAsync({ content: text, turnId: crypto.randomUUID() });
       } catch {
         if (!activeRef.current) return;
         awaitingRef.current = false;
