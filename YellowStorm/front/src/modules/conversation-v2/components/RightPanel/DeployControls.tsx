@@ -32,6 +32,8 @@ export function DeployControls() {
   const appViewMode = useConversationV2Store((s) => s.appViewMode);
   const sessionId = useConversationV2Store((s) => s.sessionId);
   const deploy = useConversationV2Store((s) => s.deploy);
+  const previewRevisionId = useConversationV2Store((s) => s.previewRevisionId);
+  const finalizedVersions = useConversationV2Store((s) => s.finalizedVersions);
   const setAppViewMode = useConversationV2Store((s) => s.setAppViewMode);
   const [shareOpen, setShareOpen] = useState(false);
 
@@ -42,7 +44,11 @@ export function DeployControls() {
 
   const handleDeploy = async () => {
     try {
-      await deploy();
+      const deployRevisionId =
+        previewRevisionId ??
+        finalizedVersions[0]?.revisionId ??
+        undefined;
+      await deploy(deployRevisionId);
       showSuccess(t('toasts.deploy.success'));
     } catch {
       showError(t('toasts.deploy.error'));

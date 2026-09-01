@@ -75,6 +75,10 @@ export class ConversationV2Session extends Document {
   @Prop({ type: Date, default: null })
   lastDeployedAt!: Date | null;
 
+  /** Workspace revision id last published via app-builder deploy (e.g. rev_15). */
+  @Prop({ type: String, default: null })
+  lastDeployedRevisionId!: string | null;
+
   // Workspace ObjectIds the user attached to this session via the frontend selector.
   // Persisted so the UI can re-display the selection on session reload. Access is
   // re-checked at chat time — entries here may become stale if the user loses access.

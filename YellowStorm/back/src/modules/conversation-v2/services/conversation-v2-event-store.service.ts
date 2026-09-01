@@ -114,6 +114,18 @@ export class ConversationV2EventStoreService {
     return rows as unknown as PersistedEventRow[];
   }
 
+  async listByType(
+    sessionId: string,
+    type: ConversationV2EventTypeName,
+  ): Promise<PersistedEventRow[]> {
+    const rows = await this.events
+      .find({ sessionId, type })
+      .sort({ sequence: 1 })
+      .lean()
+      .exec();
+    return rows as unknown as PersistedEventRow[];
+  }
+
   async tagModel(sessionId: string, eventId: string, modelId: string): Promise<void> {
     await this.events.updateOne(
       { sessionId, eventId },

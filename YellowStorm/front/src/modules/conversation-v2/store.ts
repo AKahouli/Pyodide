@@ -29,7 +29,15 @@ import {
   maybeRestartDevServerAfterAppDataTool,
   refreshHostPreview,
 } from './runtime/BrowserRuntimeHost';
+import {
+  finalizedVersionsFromEvents,
+  mergeFinalizedVersions,
+  resolveLatestFinalizedRevisionId,
+  type FinalizedAppVersion,
+} from './utils/finalized-versions';
 import { CONVERSATION_V2_DEFAULT_MODEL_CHANGED_EVENT } from '@/modules/models/store';
+
+export type { FinalizedAppVersion };
 
 export interface ApplicationComponentState {
   url: string;
@@ -112,6 +120,11 @@ interface State {
   selectedConnectorIds: string[];
   /** Active clarification choices from the latest wait event (clickable A/B/C). */
   pendingQuestion: PendingQuestion | null;
+  /** Stable finalized workspace revisions (Version History). */
+  finalizedVersions: FinalizedAppVersion[];
+  /** Revision currently shown in Nodepod preview (preview-only; may differ from agent binding). */
+  previewRevisionId: string | null;
+  loadingFinalizedVersions: boolean;
   /**
    * Live state for conversations that are streaming in the BACKGROUND (i.e. not
    * the one currently on screen). Events arriving on the per-user pipe for a
@@ -217,7 +230,13 @@ interface Actions {
   setAppViewMode: (mode: 'nodepod' | 'deployed') => void;
   /** Publish/deploy the current session's app. Flips to 'deploying' immediately,
    *  then 'deployed' (+ url) or 'error' once the backend responds. */
-  deploy: () => Promise<void>;
+  deploy: (revisionId?: string) => Promise<void>;
+  /** Load finalized versions from the backend (with event merge). */
+  loadFinalizedVersions: (sessionId?: string) => Promise<void>;
+  /** Preview a historical finalized revision in Nodepod (does not change agent binding). */
+  previewFinalizedVersion: (revisionId: string) => void;
+  /** Return Nodepod preview to the latest finalized revision. */
+  returnToLatestPreview: () => void;
   clearTypewriter: () => void;
   /** Set the selected connector repository for the session. */
   setSelectedConnectorRepo: (repo: State['selectedConnectorRepo']) => void;
@@ -264,6 +283,9 @@ const initial: State = {
       selectedSkillIds: [],
       selectedConnectorIds: [],
       pendingQuestion: null,
+  finalizedVersions: [],
+  previewRevisionId: null,
+  loadingFinalizedVersions: false,
   streamingStateCache: new Map<string, SessionSlice>(),
 };
 
@@ -295,6 +317,9 @@ function createSessionViewDefaults(): Pick<
   | 'selectedSkillIds'
   | 'selectedConnectorIds'
   | 'pendingQuestion'
+  | 'finalizedVersions'
+  | 'previewRevisionId'
+  | 'loadingFinalizedVersions'
 > {
   return {
     events: [],
@@ -321,6 +346,9 @@ function createSessionViewDefaults(): Pick<
     selectedSkillIds: [],
     selectedConnectorIds: [],
     pendingQuestion: null,
+    finalizedVersions: [],
+    previewRevisionId: null,
+    loadingFinalizedVersions: false,
   };
 }
 
@@ -360,6 +388,13 @@ function freshViewState(): Partial<State> {
     typewriterSessionId: null,
     typewriterName: null,
   };
+}
+
+function resolveDeployRevisionId(state: State, explicitRevisionId?: string): string | undefined {
+  const trimmed = explicitRevisionId?.trim();
+  if (trimmed) return trimmed;
+  if (state.previewRevisionId?.trim()) return state.previewRevisionId.trim();
+  return resolveLatestFinalizedRevisionId(state.finalizedVersions) ?? state.applicationComponent?.workspaceRevisionId;
 }
 
 export const useConversationV2Store = create<State & Actions>()(
@@ -654,14 +689,65 @@ export const useConversationV2Store = create<State & Actions>()(
           'setDeployState',
         ),
       setAppViewMode: (mode) => set({ appViewMode: mode }, false, 'setAppViewMode'),
-      deploy: async () => {
+      loadFinalizedVersions: async (sessionId) => {
+        const id = sessionId ?? get().sessionId;
+        if (!id) return;
+        set({ loadingFinalizedVersions: true }, false, 'loadFinalizedVersions/start');
+        try {
+          const { items } = await conversationV2Api.getFinalizedVersions(id);
+          const fromEvents = finalizedVersionsFromEvents(
+            get().sessionId === id ? get().events : [],
+          );
+          const merged = mergeFinalizedVersions(items, fromEvents);
+          const latest = resolveLatestFinalizedRevisionId(merged);
+          set(
+            (s) => ({
+              finalizedVersions: merged,
+              previewRevisionId:
+                s.previewRevisionId && merged.some((v) => v.revisionId === s.previewRevisionId)
+                  ? s.previewRevisionId
+                  : latest,
+              loadingFinalizedVersions: false,
+            }),
+            false,
+            'loadFinalizedVersions/done',
+          );
+        } catch {
+          set({ loadingFinalizedVersions: false }, false, 'loadFinalizedVersions/error');
+        }
+      },
+      previewFinalizedVersion: (revisionId) => {
+        const sessionId = get().sessionId;
+        if (!sessionId || !revisionId.trim()) return;
+        set(
+          {
+            previewRevisionId: revisionId.trim(),
+            appViewMode: 'nodepod',
+            rightPanelMode: 'app',
+          },
+          false,
+          'previewFinalizedVersion',
+        );
+        syncHostRevisionSources(sessionId, revisionId.trim());
+      },
+      returnToLatestPreview: () => {
+        const latest = resolveLatestFinalizedRevisionId(get().finalizedVersions);
+        if (!latest) return;
+        get().previewFinalizedVersion(latest);
+      },
+      deploy: async (revisionId) => {
         const id = get().sessionId;
         if (!id) return;
+        const state = get();
+        const deployRevisionId = resolveDeployRevisionId(state, revisionId);
         set({ deployStatus: 'deploying' }, false, 'deploy/start');
         try {
+          const title =
+            state.finalizedVersions.find((v) => v.revisionId === deployRevisionId)?.title ??
+            state.applicationComponent?.title;
           const r = await conversationV2Api.deploySession(id, {
-            title: get().applicationComponent?.title,
-            revisionId: get().applicationComponent?.workspaceRevisionId,
+            title,
+            revisionId: deployRevisionId,
           });
           set(
             {
@@ -744,6 +830,9 @@ export const useConversationV2Store = create<State & Actions>()(
           get().applicationComponent,
         );
         const appBuildProgress = deriveAppBuildProgress(events, get().appBuildProgress);
+        const fromEvents = finalizedVersionsFromEvents(events);
+        const merged = mergeFinalizedVersions(get().finalizedVersions, fromEvents);
+        const latest = resolveLatestFinalizedRevisionId(merged);
         set(
           {
             events: dedupeReplayEvents(events),
@@ -753,6 +842,8 @@ export const useConversationV2Store = create<State & Actions>()(
             liveAssistantIds: new Set<string>(),
             applicationComponent,
             appBuildProgress: applicationComponent ? null : appBuildProgress,
+            finalizedVersions: merged,
+            previewRevisionId: latest,
             ...(applicationComponent || appBuildProgress
               ? { rightPanelMode: 'app' as const }
               : {}),
@@ -797,7 +888,8 @@ export const useConversationV2Store = create<State & Actions>()(
           previewSessionId: string | null;
           syncRevision: { sessionId: string; revisionId: string } | null;
           titleSync: { sessionId: string; title: string } | null;
-        } = { previewSessionId: null, syncRevision: null, titleSync: null };
+          loadFinalizedVersions: string | null;
+        } = { previewSessionId: null, syncRevision: null, titleSync: null, loadFinalizedVersions: null };
         set(
           (state) => {
             const incomingSeq = (event as { sequence?: number }).sequence;
@@ -967,6 +1059,20 @@ export const useConversationV2Store = create<State & Actions>()(
                 if (state.sessionId && event.revision_id) {
                   sideEffects.syncRevision = { sessionId: state.sessionId, revisionId: event.revision_id };
                 }
+                const finalizedAt = new Date(event.timestamp * 1000).toISOString();
+                const optimisticVersion: FinalizedAppVersion = {
+                  revisionId: event.revision_id ?? '',
+                  title: event.title?.trim() || 'App',
+                  finalizedAt,
+                  ...(typeof event.file_count === 'number' ? { fileCount: event.file_count } : {}),
+                };
+                const mergedVersions =
+                  event.revision_id != null && event.revision_id !== ''
+                    ? mergeFinalizedVersions([optimisticVersion], state.finalizedVersions)
+                    : state.finalizedVersions;
+                if (state.sessionId && event.revision_id) {
+                  sideEffects.loadFinalizedVersions = state.sessionId;
+                }
                 return withSeq({
                   events: [...state.events, event],
                   applicationComponent: {
@@ -979,6 +1085,8 @@ export const useConversationV2Store = create<State & Actions>()(
                     workspaceRevisionId:
                       event.revision_id ?? state.applicationComponent?.workspaceRevisionId,
                   },
+                  finalizedVersions: mergedVersions,
+                  previewRevisionId: event.revision_id ?? state.previewRevisionId,
                   appBuildProgress: null,
                   rightPanelMode: 'app',
                 });
@@ -1026,6 +1134,9 @@ export const useConversationV2Store = create<State & Actions>()(
         if (sideEffects.previewSessionId) refreshHostPreview(sideEffects.previewSessionId);
         if (sideEffects.syncRevision) {
           syncHostRevisionSources(sideEffects.syncRevision.sessionId, sideEffects.syncRevision.revisionId);
+        }
+        if (sideEffects.loadFinalizedVersions) {
+          void get().loadFinalizedVersions(sideEffects.loadFinalizedVersions);
         }
       },
     }),

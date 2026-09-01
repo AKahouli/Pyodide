@@ -507,7 +507,7 @@ describe('useConversationV2Store', () => {
     expect(useConversationV2Store.getState().appViewMode).toBe('deployed');
   });
 
-  it('deploy sends the finalized workspace revision id', async () => {
+  it('deploy prefers previewRevisionId then latest finalized version', async () => {
     const deploySpy = vi.spyOn(conversationV2Api, 'deploySession').mockResolvedValueOnce({
       deployStatus: 'deployed',
       deployedUrl: 'https://apps.yellowsys.org/apps/2e65d5fa87a0499f/',
@@ -515,6 +515,50 @@ describe('useConversationV2Store', () => {
     });
     useConversationV2Store.setState({
       sessionId: 'session-1',
+      previewRevisionId: 'rev_7',
+      finalizedVersions: [
+        {
+          revisionId: 'rev_15',
+          title: 'Latest finalized',
+          finalizedAt: '2026-08-14T10:00:00.000Z',
+        },
+        {
+          revisionId: 'rev_7',
+          title: 'Older finalized',
+          finalizedAt: '2026-08-01T10:00:00.000Z',
+        },
+      ],
+      applicationComponent: {
+        title: 'Generated app',
+        url: 'nodepod://preview',
+        revision: 'evt-1',
+        workspaceRevisionId: 'rev_20',
+      },
+    });
+
+    await useConversationV2Store.getState().deploy();
+
+    expect(deploySpy).toHaveBeenCalledWith('session-1', {
+      title: 'Older finalized',
+      revisionId: 'rev_7',
+    });
+  });
+
+  it('deploy sends the latest finalized workspace revision id when preview is unset', async () => {
+    const deploySpy = vi.spyOn(conversationV2Api, 'deploySession').mockResolvedValueOnce({
+      deployStatus: 'deployed',
+      deployedUrl: 'https://apps.yellowsys.org/apps/2e65d5fa87a0499f/',
+      lastDeployedAt: '2026-08-14T10:00:00.000Z',
+    });
+    useConversationV2Store.setState({
+      sessionId: 'session-1',
+      finalizedVersions: [
+        {
+          revisionId: 'rev_15',
+          title: 'Generated app',
+          finalizedAt: '2026-08-14T10:00:00.000Z',
+        },
+      ],
       applicationComponent: {
         title: 'Generated app',
         url: 'nodepod://preview',

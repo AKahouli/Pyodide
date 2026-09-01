@@ -16,6 +16,7 @@ import type { AppViewMode } from '../hooks/useAppBuilderFilters';
 import type { DeployedApp } from '../types';
 import { DeleteDeployedAppButton } from './DeleteDeployedAppButton';
 import { AppEndUsersDialog } from './AppEndUsersDialog';
+import { AppRevisionMeta } from './AppRevisionMeta';
 
 interface DeployedAppCardProps {
   app: DeployedApp;
@@ -140,6 +141,7 @@ export const DeployedAppCard = memo(function DeployedAppCard({
             {t('card.deployedAt', { date: new Date(app.lastDeployedAt).toLocaleString() })}
           </p>
         )}
+        <AppRevisionMeta revision={app} />
       </div>
     </>
   );

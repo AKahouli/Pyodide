@@ -10,6 +10,7 @@ import { ToolDetailDispatch } from './tool-views/ToolDetailDispatch';
 import { ApplicationComponentView } from './ApplicationComponentView';
 import { AppBuildProgressPanel } from './AppBuildProgressPanel';
 import { DeployControls } from './DeployControls';
+import { VersionHistoryPanel } from './VersionHistoryPanel';
 import { AppDataPanel } from './AppDataPanel';
 
 const RIGHT_PANEL_STORAGE_KEY = 'conversation-v2-right-panel-width';
@@ -135,6 +136,7 @@ export function RightPanel() {
                   )}
                   aria-hidden={showDataTab || undefined}
                 >
+                  <VersionHistoryPanel />
                   <ApplicationComponentView
                     title={applicationComponent?.title}
                     filesTree={applicationComponent?.filesTree}
