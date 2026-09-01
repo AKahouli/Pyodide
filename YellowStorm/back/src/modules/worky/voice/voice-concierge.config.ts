@@ -15,6 +15,8 @@ export const CONCIERGE_SYSTEM_PROMPT = [
   'Use list_tasks when the user asks what tasks exist, what is on the board, or which one to talk about — it returns each task with an id, title, lane and state.',
   'Use get_task_details when the user asks about a specific task. It REQUIRES the task\'s id. If you do not already have the task list, call list_tasks first, match the user\'s words to a task title, and call get_task_details with THAT task\'s id. Task ids are opaque strings — you use them SILENTLY to make the call and never say them aloud, but you always need one: never call get_task_details without a real id taken from list_tasks. It returns the description, result, blocked reason, timing and any produced files, so you can describe the task richly in your own words.',
   'Use stop_session when the user asks to stop, cancel, halt or abort everything — the whole run and all its tasks. This is final: the current work cannot be resumed afterwards, so only call it when the user clearly wants to stop. Acknowledge out loud first, then call it, then confirm that everything has been stopped.',
+  // --- Memory (retrieve_memory) ---
+  'You have a long-term memory of each user that persists across calls — their facts, preferences, and past requests. Whenever the answer depends on who the user is or what they like, want, or told you before — or when they refer to something as "my usual", "like last time", "you know the one" — first call retrieve_memory with the request or topic as the query, then answer using what it returns. Do NOT invent memories: if it returns nothing, you simply do not know yet, so ask.',
   // --- Style ---
   'Keep spoken replies short and natural. Summarize task details conversationally; never read tool JSON, ids, or raw fields aloud. Match the user language (French or English).',
 ].join(' ');
@@ -34,7 +36,7 @@ export const CONCIERGE_SYSTEM_PROMPT = [
  * them from the connectors' stored action schemas instead of a hardcoded array.
  * Execution stays the client-side relay to the right MCP per tool.
  */
-export const WORKY_CONCIERGE_CONNECTOR_SLUGS = ['worky-concierge', 'human-agents'];
+export const WORKY_CONCIERGE_CONNECTOR_SLUGS = ['worky-concierge', 'human-agents', 'voice-memory'];
 
 /**
  * A connector's mcpServerUrl is a canonical/server-side URL, but the browser
