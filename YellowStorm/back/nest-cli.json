@@ -4,7 +4,14 @@
   "sourceRoot": "src",
   "compilerOptions": {
     "deleteOutDir": true,
-    "assets": ["**/*.proto", "**/*.pem", "**/*.crt", "**/*.cert"],
+    "assets": [
+      "**/*.proto",
+      "**/*.pem",
+      "**/*.crt",
+      "**/*.cert",
+      { "include": "modules/app-data/templates/assets/**/*", "outDir": "dist/src" },
+      { "include": "modules/conversation-v2/templates/assets/**/*", "outDir": "dist/src" }
+    ],
     "watchAssets": true,
     "plugins": [
       {

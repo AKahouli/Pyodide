@@ -21,7 +21,7 @@ interface AuthState {
 
 interface AuthContextValue extends AuthState {
   login: (email: string, password: string) => Promise<void>;
-  register: (email: string, password: string, displayName?: string) => Promise<void>;
+  register: (email: string, password: string, displayName?: string, inviteToken?: string) => Promise<void>;
   logout: () => void;
   refreshMe: () => Promise<void>;
 }
@@ -29,27 +29,28 @@ interface AuthContextValue extends AuthState {
 const AuthContext = createContext<AuthContextValue | null>(null);
 
 /**
- * YellowStorm Nodepod preview injects VITE_YM_APP_DATA_ENV=dev.
- * The session owner builds inside YellowStorm — no app login gate in preview.
- * Deployed builds use prod and enforce register/login + owner-managed grants.
+ * YellowStorm Nodepod preview runs `vite dev` with VITE_YM_APP_DATA_ENV=dev.
+ * Deployed static builds must enforce auth even if a stale env var says "dev".
  */
 export function isDevPreview(): boolean {
-  return import.meta.env.VITE_YM_APP_DATA_ENV === 'dev';
+  return import.meta.env.DEV && import.meta.env.VITE_YM_APP_DATA_ENV === 'dev';
 }
 
 const proxyEnabled = import.meta.env.VITE_YM_APP_DATA_PROXY === 'true' && typeof window !== 'undefined';
 const inIframe = proxyEnabled && window.parent !== window;
 const inNewTab = proxyEnabled && window.parent === window;
 
-function resolveAuthBaseUrl(): string {
+function resolveAppDataRootUrl(): string {
   const dataUrl = import.meta.env.VITE_YM_APP_DATA_URL as string | undefined;
   const appDataId = import.meta.env.VITE_YM_APP_DATA_ID as string | undefined;
   if (!dataUrl || !appDataId) {
     throw new Error('App auth is not configured (missing VITE_YM_APP_DATA_URL or VITE_YM_APP_DATA_ID).');
   }
-  const trimmed = dataUrl.replace(/\/$/, '');
-  const withoutEnv = trimmed.replace(/\/(dev|prod)$/, '');
-  return `${withoutEnv}/auth`;
+  return dataUrl.replace(/\/$/, '').replace(/\/(dev|prod|auth)$/, '');
+}
+
+function resolveAuthBaseUrl(): string {
+  return `${resolveAppDataRootUrl()}/auth`;
 }
 
 let proxyIdCounter = 0;
@@ -134,6 +135,31 @@ export function getStoredUser(): AppUser | null {
   try { return JSON.parse(raw) as AppUser; } catch { return null; }
 }
 
+function throwAuthError(res: Response, payload: { message?: string; code?: string }, fallback: string): never {
+  const err = new Error(payload?.message ?? `${fallback} (${res.status})`) as Error & {
+    status: number;
+    code?: string;
+  };
+  err.status = res.status;
+  err.code = payload?.code;
+  throw err;
+}
+
+export interface ResolvedInvite {
+  email: string;
+  appTitle: string;
+  expiresAt: string;
+}
+
+export async function resolveInvite(token: string): Promise<ResolvedInvite> {
+  const root = resolveAppDataRootUrl();
+  const res = await authFetch(`${root}/invites/resolve?token=${encodeURIComponent(token)}`);
+  const payload = (await parseJsonResponse(res)) as ResolvedInvite & { message?: string; code?: string };
+  if (!res.ok) throwAuthError(res, payload, 'Invite lookup failed');
+  if (!payload.email) throw new Error('Invite response missing email');
+  return { email: payload.email, appTitle: payload.appTitle, expiresAt: payload.expiresAt };
+}
+
 export async function login(email: string, password: string): Promise<{ token: string; user: AppUser }> {
   const base = resolveAuthBaseUrl();
   const res = await authFetch(`${base}/login`, {
@@ -141,22 +167,27 @@ export async function login(email: string, password: string): Promise<{ token: s
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ email, password }),
   });
-  const payload = (await parseJsonResponse(res)) as { token?: string; user?: AppUser; message?: string };
-  if (!res.ok) throw new Error(payload?.message ?? `Login failed (${res.status})`);
+  const payload = (await parseJsonResponse(res)) as { token?: string; user?: AppUser; message?: string; code?: string };
+  if (!res.ok) throwAuthError(res, payload, 'Login failed');
   if (!payload.token || !payload.user) throw new Error('Login response missing token or user');
   persistSession(payload.token, payload.user);
   return { token: payload.token, user: payload.user };
 }
 
-export async function register(email: string, password: string, displayName?: string): Promise<{ token: string; user: AppUser }> {
+export async function register(
+  email: string,
+  password: string,
+  displayName?: string,
+  inviteToken?: string,
+): Promise<{ token: string; user: AppUser }> {
   const base = resolveAuthBaseUrl();
   const res = await authFetch(`${base}/register`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ email, password, displayName }),
+    body: JSON.stringify({ email, password, displayName, inviteToken }),
   });
-  const payload = (await parseJsonResponse(res)) as { token?: string; user?: AppUser; message?: string };
-  if (!res.ok) throw new Error(payload?.message ?? `Register failed (${res.status})`);
+  const payload = (await parseJsonResponse(res)) as { token?: string; user?: AppUser; message?: string; code?: string };
+  if (!res.ok) throwAuthError(res, payload, 'Register failed');
   if (!payload.token || !payload.user) throw new Error('Register response missing token or user');
   persistSession(payload.token, payload.user);
   return { token: payload.token, user: payload.user };
@@ -215,8 +246,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const { token, user } = await login(email, password);
       setState({ user, token, isLoading: false });
     },
-    register: async (email, password, displayName) => {
-      const { token, user } = await register(email, password, displayName);
+    register: async (email, password, displayName, inviteToken) => {
+      const { token, user } = await register(email, password, displayName, inviteToken);
       setState({ user, token, isLoading: false });
     },
     logout: () => {

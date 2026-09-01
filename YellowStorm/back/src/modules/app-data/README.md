@@ -33,9 +33,10 @@ lives in tenant schemas; Nodepod/microVM runtimes execute code only.
 
 | Endpoint | Auth | Purpose |
 |----------|------|---------|
-| `POST /api/v1/app-data/public/:appDataId/auth/register` | Public + rate limit | Register app user (grants deny-all) |
+| `POST /api/v1/app-data/public/:appDataId/auth/register` | Public + rate limit | Register app user (grants deny-all). Optional `inviteToken` binds the invited email. |
 | `POST /api/v1/app-data/public/:appDataId/auth/login` | Public + rate limit | Login → JWT |
 | `GET /api/v1/app-data/public/:appDataId/auth/me` | Bearer JWT | Current user |
+| `GET /api/v1/app-data/public/:appDataId/invites/resolve?token=` | Public + rate limit | Resolve a share invite (email + title + expiry). `404` invalid, `410` expired/consumed, `403` token/app mismatch. |
 | `GET/POST/PATCH/DELETE /api/v1/app-data/public/:appDataId/:environment/tables/...` | Bearer JWT on **prod** when `endUserAuthEnabled` | CRUD with owner-managed grants |
 
 Owner management (JWT YellowMind + `ConversationV2OwnerGuard`, which also allows shared users):
@@ -54,13 +55,21 @@ Owner management (JWT YellowMind + `ConversationV2OwnerGuard`, which also allows
 
 When `endUserAuthEnabled=true`, **PROD public CRUD** uses per-user grants instead of table policies. Policies replicated to prod **strip `anonymous`**.
 
-**Preview (Nodepod):** the starter skips the login gate when `VITE_YM_APP_DATA_ENV=dev` (injected by the runtime). The YellowStorm owner builds without register/login; DEV CRUD uses table policies.
+**Preview (Nodepod):** the starter skips the login gate when `vite dev` runs with
+`VITE_YM_APP_DATA_ENV=dev` (injected by the runtime). Deployed production builds
+always enforce auth regardless of that env var.
 
 **DEV policies:** `schema_apply` auto-seeds default policies on new tables (`anonymous` + `yellowmind_owner`, full CRUD). Preview browser CRUD uses principal `anonymous`; MCP `row_*` uses `yellowmind_owner`. Manual override via `policy_apply`.
 
 After `provision`, restart the Vite dev server (`yellowruntime_dev_server` `action=restart`) so `VITE_YM_*` reaches the preview.
 
 Default deny-all grants for newly registered app users until the owner enables CRUD in App Marketplace.
+
+App Builder share invites use an opaque token (hashed on the Mongo share row). The
+deployed Register page calls `GET …/invites/resolve` to prefill and lock the email,
+then `POST …/auth/register` with `inviteToken`. New App Builder sessions use
+starter revision `starter_react_vite_v4` (`appbuilder/manifests/_system/starter_react_vite_v4.json`).
+Existing deployed apps need a **redeploy** to pick up the Register prefill UI; the backend accepts the token immediately.
 
 ## React starter templates
 

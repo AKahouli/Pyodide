@@ -289,7 +289,7 @@ URL search params are used for filter state:
    - Deleting a **shared deployed app** ("unshare") only removes it from the current user's view. The owner is unaffected.
    - Deleting a **draft** permanently deletes the associated conversation (irreversible).
 
-3. **End-user permissions:** Only the app owner can manage end-user grants. New users have no permissions by default.
+3. **End-user permissions:** Only the app owner can manage end-user grants. New users have no permissions by default. Sharing with an email that has no YellowMind account still sends an invite: the guest opens `{deployedUrl}register?invite=TOKEN`, the email is prefilled and locked, and register creates an app end-user with deny-all grants. If they later create a YellowMind account with the same email, the App Builder share is claimed automatically.
 
 4. **Pagination:** Client-side only, 9 items per page. Resets to page 1 on tab/data change.
 

@@ -105,6 +105,7 @@ export class ConversationV2DeployService {
 
     let deployRevisionId = revisionId;
     await this.assertRevisionSupportsSubpath(aiSessionId, revisionId);
+    await this.assertRevisionSupportsAuth(aiSessionId, revisionId);
     try {
       deployRevisionId = await this.injectEnvProduction(aiSessionId, revisionId, productionEnv);
     } catch (err) {
@@ -336,6 +337,29 @@ export class ConversationV2DeployService {
     if (!hasAppBase) {
       throw new ServiceUnavailableException(
         'This app cannot be deployed under /apps/{sessionId}/. Regenerate it with the current starter, then deploy again.',
+      );
+    }
+  }
+
+  /** Deployed apps must mount AppRouter so /login and /register stay reachable. */
+  private async assertRevisionSupportsAuth(
+    workspaceId: string,
+    revisionId: string,
+  ): Promise<void> {
+    const revision = await this.revisions.getAuthorizedRevision(workspaceId, revisionId);
+    const mainEntry = revision.files.find(
+      (file) => file.path === 'src/main.jsx' || file.path === 'src/main.tsx',
+    );
+    if (!mainEntry) return;
+
+    const mainSource = await this.revisions.readRevisionFileText(
+      workspaceId,
+      revisionId,
+      mainEntry.path,
+    );
+    if (!mainSource?.includes('AppRouter')) {
+      throw new ServiceUnavailableException(
+        'This app revision does not mount AppRouter in src/main.jsx. Restore the starter entry point (AppRouter with /login and /register), then deploy again.',
       );
     }
   }

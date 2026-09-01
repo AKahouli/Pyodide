@@ -39,6 +39,16 @@ export class ConversationV2AppShare extends Document {
   @Prop({ type: Boolean, default: true })
   includeConversation!: boolean;
 
+  /** SHA-256 of the opaque register-invite token. Never store the raw token. */
+  @Prop({ type: String, required: false, default: null })
+  inviteTokenHash!: string | null;
+
+  @Prop({ type: Date, required: false, default: null })
+  inviteExpiresAt!: Date | null;
+
+  @Prop({ type: Date, required: false, default: null })
+  inviteConsumedAt!: Date | null;
+
   createdAt!: Date;
   updatedAt!: Date;
 }
@@ -61,3 +71,10 @@ ConversationV2AppShareSchema.index(
   },
 );
 ConversationV2AppShareSchema.index({ recipientUserId: 1, updatedAt: -1 });
+ConversationV2AppShareSchema.index(
+  { inviteTokenHash: 1 },
+  {
+    unique: true,
+    partialFilterExpression: { inviteTokenHash: { $type: 'string' } },
+  },
+);
