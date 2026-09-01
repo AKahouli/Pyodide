@@ -177,9 +177,10 @@
   },
   "share": {
     "title": "Partager l'application et la conversation",
-    "searchPlaceholder": "Rechercher un utilisateur par email…",
+    "searchPlaceholder": "Rechercher ou saisir une adresse email…",
     "searching": "Recherche…",
-    "noResults": "Aucun utilisateur trouvé",
+    "noResults": "Saisissez une adresse email valide",
+    "addEmail": "Ajouter",
     "remove": "Retirer",
     "cancel": "Annuler",
     "send": "Envoyer"

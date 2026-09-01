@@ -21,11 +21,23 @@ import {
   ConversationV2SessionDocument,
 } from '../schemas/conversation-v2-session.schema';
 import type { DeployedAppSummary } from './conversation-v2-session.service';
+import { ConversationV2ShareService } from './conversation-v2-share.service';
+import { buildAppShareInviteEmail } from '../templates/app-share-invite.email';
 
 export interface ShareAppsBatchResult {
   shared: Array<{ shareId: string; recipientEmail: string }>;
   notFound: string[];
   skippedSelf: string[];
+}
+
+export interface ResolvedAppShareInvite {
+  email: string;
+  appTitle: string;
+  deployedUrl: string;
+  sessionId: string;
+  workspaceId: string | null;
+  expiresAt: Date;
+  consumed: boolean;
 }
 
 /**
@@ -46,6 +58,7 @@ export class ConversationV2AppShareService {
     private readonly email: EmailService,
     private readonly notifications: NotificationsService,
     private readonly config: ConfigService,
+    private readonly shareTokens: ConversationV2ShareService,
   ) {}
 
   async shareByEmails(params: {
@@ -72,10 +85,6 @@ export class ConversationV2AppShareService {
       try {
         shared.push(await this.shareOne({ ...params, email }));
       } catch (error) {
-        if (error instanceof NotFoundException && error.code === ErrorCode.USER_NOT_FOUND) {
-          notFound.push(email);
-          continue;
-        }
         if (error instanceof BadRequestException) {
           skippedSelf.push(email);
           continue;
@@ -88,6 +97,8 @@ export class ConversationV2AppShareService {
   }
 
   async listSharedWithUser(userId: string): Promise<DeployedAppSummary[]> {
+    await this.claimPendingSharesForUser(userId);
+
     const docs = await this.model
       .find({ recipientUserId: new Types.ObjectId(userId) })
       .sort({ updatedAt: -1 })
@@ -129,6 +140,8 @@ export class ConversationV2AppShareService {
 
   /** True when the user has an app-share row with conversation access for this session. */
   async hasConversationAccess(userId: string, sessionId: string): Promise<boolean> {
+    await this.claimPendingSharesForUser(userId);
+
     if (!Types.ObjectId.isValid(sessionId) || !Types.ObjectId.isValid(userId)) return false;
     const share = await this.model
       .findOne({
@@ -152,6 +165,61 @@ export class ConversationV2AppShareService {
       .lean()
       .exec();
     return !!result;
+  }
+
+  /**
+   * Look up a register-invite token by SHA-256 hash. Returns null when the
+   * token is unknown. Callers map expired/consumed/mismatch to HTTP errors.
+   */
+  async resolveInviteToken(token: string): Promise<ResolvedAppShareInvite | null> {
+    const hash = this.hashInviteToken(token);
+    if (!hash) return null;
+
+    const share = await this.model.findOne({ inviteTokenHash: hash }).lean().exec();
+    if (!share?.inviteExpiresAt) return null;
+
+    const email = await this.resolveShareEmail(share);
+    if (!email) return null;
+
+    const session = await this.sessionModel.findById(share.sessionId).lean().exec();
+    const workspaceId = session?.aiSessionId ?? null;
+    const liveTitle =
+      (session as { deployedAppTitle?: string | null } | null)?.deployedAppTitle?.trim() ||
+      session?.title?.trim() ||
+      share.title;
+
+    return {
+      email,
+      appTitle: liveTitle || 'An app',
+      deployedUrl: share.deployedUrl,
+      sessionId: share.sessionId.toString(),
+      workspaceId,
+      expiresAt: share.inviteExpiresAt,
+      consumed: !!share.inviteConsumedAt,
+    };
+  }
+
+  /**
+   * Mark the invite consumed. Idempotent when the same email already consumed it.
+   * Returns false when the token is unknown, expired, or bound to another email.
+   */
+  async consumeInviteToken(token: string, email: string): Promise<boolean> {
+    const hash = this.hashInviteToken(token);
+    if (!hash) return false;
+    const normalized = email.trim().toLowerCase();
+
+    const share = await this.model.findOne({ inviteTokenHash: hash }).exec();
+    if (!share?.inviteExpiresAt) return false;
+    if (share.inviteExpiresAt.getTime() < Date.now()) return false;
+
+    const shareEmail = await this.resolveShareEmail(share);
+    if (!shareEmail || shareEmail !== normalized) return false;
+
+    if (share.inviteConsumedAt) return true;
+
+    share.inviteConsumedAt = new Date();
+    await share.save();
+    return true;
   }
 
   async deleteAllSharesForSession(sessionId: string): Promise<void> {
@@ -187,25 +255,61 @@ export class ConversationV2AppShareService {
     lastDeployedAt: Date | null;
   }): Promise<{ shareId: string; recipientEmail: string }> {
     const email = params.email.trim().toLowerCase();
-    const recipient = await this.users.findByEmail(email);
-    if (!recipient) {
+    const owner = await this.users.findById(params.ownerId);
+    if (!owner) {
       throw new NotFoundException(ErrorCode.USER_NOT_FOUND);
     }
-    if (recipient._id.toString() === params.ownerId) {
+    if (owner.email.toLowerCase() === email) {
       throw new BadRequestException('You cannot share an app with yourself');
     }
+
+    const { token, hash } = this.shareTokens.issue();
+    const inviteFields = {
+      inviteTokenHash: hash,
+      inviteExpiresAt: this.buildInviteExpiry(),
+      inviteConsumedAt: null as Date | null,
+    };
+
+    const recipient = await this.users.findByEmail(email);
+    const share = recipient
+      ? await this.upsertKnownRecipientShare(params, recipient._id, email, inviteFields)
+      : await this.upsertPendingEmailShare(params, email, inviteFields);
 
     await this.sendInviteEmail({
       to: email,
       title: params.title,
       deployedUrl: params.deployedUrl,
       sessionId: params.sessionId,
+      inviteToken: token,
     });
 
-    const share = await this.model.findOneAndUpdate(
+    if (recipient) {
+      await this.notifyRecipient(recipient._id.toString(), params.title);
+    }
+
+    return { shareId: share._id.toString(), recipientEmail: email };
+  }
+
+  private async upsertKnownRecipientShare(
+    params: {
+      ownerId: string;
+      sessionId: string;
+      title: string;
+      deployedUrl: string;
+      lastDeployedAt: Date | null;
+    },
+    recipientId: Types.ObjectId,
+    email: string,
+    inviteFields: {
+      inviteTokenHash: string;
+      inviteExpiresAt: Date;
+      inviteConsumedAt: Date | null;
+    },
+  ): Promise<ConversationV2AppShareDocument> {
+    return this.model.findOneAndUpdate(
       {
         sessionId: new Types.ObjectId(params.sessionId),
-        recipientUserId: recipient._id,
+        recipientUserId: recipientId,
       },
       {
         $set: {
@@ -214,18 +318,99 @@ export class ConversationV2AppShareService {
           deployedUrl: params.deployedUrl,
           lastDeployedAt: params.lastDeployedAt,
           includeConversation: true,
+          recipientEmail: email,
+          ...inviteFields,
         },
         $setOnInsert: {
           sessionId: new Types.ObjectId(params.sessionId),
-          recipientUserId: recipient._id,
+          recipientUserId: recipientId,
         },
       },
       { upsert: true, new: true },
     );
+  }
 
-    await this.notifyRecipient(recipient._id.toString(), params.title);
+  private async upsertPendingEmailShare(
+    params: {
+      ownerId: string;
+      sessionId: string;
+      title: string;
+      deployedUrl: string;
+      lastDeployedAt: Date | null;
+    },
+    email: string,
+    inviteFields: {
+      inviteTokenHash: string;
+      inviteExpiresAt: Date;
+      inviteConsumedAt: Date | null;
+    },
+  ): Promise<ConversationV2AppShareDocument> {
+    return this.model.findOneAndUpdate(
+      {
+        sessionId: new Types.ObjectId(params.sessionId),
+        recipientEmail: email,
+      },
+      {
+        $set: {
+          ownerId: new Types.ObjectId(params.ownerId),
+          title: params.title,
+          deployedUrl: params.deployedUrl,
+          lastDeployedAt: params.lastDeployedAt,
+          includeConversation: true,
+          recipientEmail: email,
+          ...inviteFields,
+        },
+        $setOnInsert: {
+          sessionId: new Types.ObjectId(params.sessionId),
+        },
+      },
+      { upsert: true, new: true },
+    );
+  }
 
-    return { shareId: share._id.toString(), recipientEmail: email };
+  private async claimPendingSharesForUser(userId: string): Promise<void> {
+    const user = await this.users.findById(userId);
+    if (!user?.email) return;
+
+    const email = user.email.trim().toLowerCase();
+    await this.model
+      .updateMany(
+        {
+          recipientEmail: email,
+          $or: [{ recipientUserId: null }, { recipientUserId: { $exists: false } }],
+        },
+        {
+          $set: { recipientUserId: new Types.ObjectId(userId) },
+        },
+      )
+      .exec();
+  }
+
+  private async resolveShareEmail(share: {
+    recipientEmail?: string | null;
+    recipientUserId?: Types.ObjectId | null;
+  }): Promise<string | null> {
+    if (share.recipientEmail) return share.recipientEmail.trim().toLowerCase();
+    if (!share.recipientUserId) return null;
+    const user = await this.users.findById(share.recipientUserId.toString());
+    return user?.email?.trim().toLowerCase() ?? null;
+  }
+
+  private hashInviteToken(token: string): string | null {
+    const trimmed = token?.trim();
+    if (!trimmed) return null;
+    return this.shareTokens.hashToken(trimmed);
+  }
+
+  private buildInviteExpiry(): Date {
+    const days = this.config.get<number>('conversationV2.appShareInviteTtlDays', 7);
+    const ttl = Number.isFinite(days) && days >= 1 ? days : 7;
+    return new Date(Date.now() + ttl * 24 * 60 * 60 * 1000);
+  }
+
+  private buildRegisterInviteUrl(deployedUrl: string, token: string): string {
+    const base = deployedUrl.replace(/\/?$/, '/');
+    return `${base}register?invite=${encodeURIComponent(token)}`;
   }
 
   private async sendInviteEmail(params: {
@@ -233,28 +418,17 @@ export class ConversationV2AppShareService {
     title: string;
     deployedUrl: string;
     sessionId: string;
+    inviteToken: string;
   }): Promise<void> {
-    const appName = this.config.get<string>('app.name', 'YelloStorm');
-    const frontBase = this.config.get<string>('app.frontendUrl') ?? 'http://localhost:5173';
-    const base = frontBase.replace(/\/$/, '');
-    const marketplaceUrl = `${base}/#/app-builder`;
-    const conversationUrl = `${base}/#/conversation-v2/${params.sessionId}`;
-    const subject = `${params.title || 'An app'} has been shared with you`;
-    const html = `
-      <p>Hello,</p>
-      <p>An app and its conversation built on ${appName} have been shared with you.</p>
-      <p><strong>App:</strong> <a href="${params.deployedUrl}" target="_blank" rel="noreferrer">${params.deployedUrl}</a></p>
-      <p><strong>Conversation:</strong> <a href="${conversationUrl}">Open the conversation</a></p>
-      <p>You can also open the app from your <a href="${marketplaceUrl}">App Builder</a>.</p>
-    `;
-    const text = [
-      'An app and its conversation have been shared with you.',
-      `App: ${params.deployedUrl}`,
-      `Conversation: ${conversationUrl}`,
-      `App Builder: ${marketplaceUrl}`,
-    ].join('\n');
+    const registerUrl = this.buildRegisterInviteUrl(params.deployedUrl, params.inviteToken);
+    const inviteTtlDays = this.config.get<number>('conversationV2.appShareInviteTtlDays', 7);
+    const { subject, html, text, attachments } = buildAppShareInviteEmail({
+      appTitle: params.title,
+      registerUrl,
+      inviteTtlDays,
+    });
 
-    const result = await this.email.send({ to: params.to, subject, html, text });
+    const result = await this.email.send({ to: params.to, subject, html, text, attachments });
     if (!result.success) {
       this.logger.warn(`Failed to send app-share email to ${params.to}`);
       throw new ServiceUnavailableException(

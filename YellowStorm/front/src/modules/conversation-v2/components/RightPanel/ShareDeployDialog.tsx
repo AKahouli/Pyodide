@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Loader2, Search, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
@@ -22,6 +22,16 @@ export interface ShareDeployDialogProps {
   onOpenChange: (open: boolean) => void;
 }
 
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+function normalizeEmail(value: string): string {
+  return value.trim().toLowerCase();
+}
+
+function isEmail(value: string): boolean {
+  return EMAIL_RE.test(normalizeEmail(value));
+}
+
 function userLabel(u: UserSearchResult): string {
   const name = [u.firstName, u.lastName].filter(Boolean).join(' ').trim();
   return name || u.email;
@@ -43,7 +53,7 @@ export function ShareDeployDialog({
   const [query, setQuery] = useState('');
   const [results, setResults] = useState<UserSearchResult[]>([]);
   const [searching, setSearching] = useState(false);
-  const [selected, setSelected] = useState<UserSearchResult[]>([]);
+  const [selectedEmails, setSelectedEmails] = useState<string[]>([]);
   const [sending, setSending] = useState(false);
   const requestId = useRef(0);
 
@@ -51,7 +61,7 @@ export function ShareDeployDialog({
     if (!open) {
       setQuery('');
       setResults([]);
-      setSelected([]);
+      setSelectedEmails([]);
       setSearching(false);
     }
   }, [open]);
@@ -78,21 +88,27 @@ export function ShareDeployDialog({
     return () => clearTimeout(timer);
   }, [query]);
 
-  const addUser = (u: UserSearchResult) => {
-    setSelected((prev) => (prev.some((x) => x.id === u.id) ? prev : [...prev, u]));
+  const addEmail = useCallback((raw: string) => {
+    const email = normalizeEmail(raw);
+    if (!isEmail(email)) return false;
+    setSelectedEmails((prev) => (prev.includes(email) ? prev : [...prev, email]));
     setQuery('');
     setResults([]);
+    return true;
+  }, []);
+
+  const addUser = (u: UserSearchResult) => {
+    addEmail(u.email);
   };
-  const removeUser = (id: string) => setSelected((prev) => prev.filter((u) => u.id !== id));
+
+  const removeEmail = (email: string) =>
+    setSelectedEmails((prev) => prev.filter((value) => value !== email));
 
   const handleSend = async () => {
-    if (selected.length === 0) return;
+    if (selectedEmails.length === 0) return;
     setSending(true);
     try {
-      const result = await conversationV2Api.shareDeployedApp(
-        sessionId,
-        selected.map((u) => u.email),
-      );
+      const result = await conversationV2Api.shareDeployedApp(sessionId, selectedEmails);
       if (result.sent === 0) {
         toast.error(t('toasts.share.error'));
         return;
@@ -106,7 +122,9 @@ export function ShareDeployDialog({
     }
   };
 
-  const showResults = query.trim().length >= 3;
+  const trimmedQuery = query.trim();
+  const showResults = trimmedQuery.length >= 3;
+  const canAddTypedEmail = isEmail(trimmedQuery) && !selectedEmails.includes(normalizeEmail(trimmedQuery));
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -121,6 +139,12 @@ export function ShareDeployDialog({
           <Input
             value={query}
             onChange={(e) => setQuery(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && canAddTypedEmail) {
+                e.preventDefault();
+                addEmail(trimmedQuery);
+              }
+            }}
             placeholder={t('share.searchPlaceholder')}
             className='pl-8'
             autoFocus
@@ -132,41 +156,55 @@ export function ShareDeployDialog({
                   <Loader2 className='size-4 animate-spin' />
                   {t('share.searching')}
                 </div>
-              ) : results.length === 0 ? (
-                <div className='px-2 py-3 text-sm text-muted-foreground'>{t('share.noResults')}</div>
               ) : (
-                results.map((u) => (
-                  <button
-                    key={u.id}
-                    type='button'
-                    onClick={() => addUser(u)}
-                    className='flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left text-sm hover:bg-accent'
-                  >
-                    <span className='flex size-7 shrink-0 items-center justify-center rounded-full bg-muted text-xs font-medium'>
-                      {initials(u)}
-                    </span>
-                    <span className='flex min-w-0 flex-col'>
-                      <span className='truncate'>{userLabel(u)}</span>
-                      <span className='truncate text-xs text-muted-foreground'>{u.email}</span>
-                    </span>
-                  </button>
-                ))
+                <>
+                  {canAddTypedEmail && (
+                    <button
+                      type='button'
+                      onClick={() => addEmail(trimmedQuery)}
+                      className='flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left text-sm hover:bg-accent'
+                    >
+                      <span className='text-muted-foreground'>{t('share.addEmail')}</span>
+                      <span className='truncate font-medium'>{normalizeEmail(trimmedQuery)}</span>
+                    </button>
+                  )}
+                  {results.length === 0 && !canAddTypedEmail ? (
+                    <div className='px-2 py-3 text-sm text-muted-foreground'>{t('share.noResults')}</div>
+                  ) : (
+                    results.map((u) => (
+                      <button
+                        key={u.id}
+                        type='button'
+                        onClick={() => addUser(u)}
+                        className='flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left text-sm hover:bg-accent'
+                      >
+                        <span className='flex size-7 shrink-0 items-center justify-center rounded-full bg-muted text-xs font-medium'>
+                          {initials(u)}
+                        </span>
+                        <span className='flex min-w-0 flex-col'>
+                          <span className='truncate'>{userLabel(u)}</span>
+                          <span className='truncate text-xs text-muted-foreground'>{u.email}</span>
+                        </span>
+                      </button>
+                    ))
+                  )}
+                </>
               )}
             </div>
           )}
         </div>
 
-        {selected.length > 0 && (
+        {selectedEmails.length > 0 && (
           <div className='flex flex-wrap gap-1.5'>
-            {selected.map((u) => (
+            {selectedEmails.map((email) => (
               <span
-                key={u.id}
+                key={email}
                 className='inline-flex items-center gap-1 rounded-full border bg-muted px-2 py-0.5 text-xs'
               >
-                {u.email}
+                {email}
                 <button
                   type='button'
-                  onClick={() => removeUser(u.id)}
+                  onClick={() => removeEmail(email)}
                   className='text-muted-foreground hover:text-foreground'
                   aria-label={t('share.remove')}
                 >
@@ -181,7 +219,7 @@ export function ShareDeployDialog({
           <Button variant='ghost' onClick={() => onOpenChange(false)}>
             {t('share.cancel')}
           </Button>
-          <Button onClick={handleSend} disabled={selected.length === 0 || sending} className='gap-1.5'>
+          <Button onClick={handleSend} disabled={selectedEmails.length === 0 || sending} className='gap-1.5'>
             {sending && <Loader2 className='size-4 animate-spin' />}
             {t('share.send')}
           </Button>

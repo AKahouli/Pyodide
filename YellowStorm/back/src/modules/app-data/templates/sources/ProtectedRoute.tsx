@@ -1,13 +1,14 @@
-import { Navigate, useLocation } from 'react-router-dom';
+import { Navigate, Outlet, useLocation } from 'react-router-dom';
 import { isDevPreview, useAuth } from '@/lib/yellowmind-auth';
 
-export function ProtectedRoute({ children }: { children: React.ReactNode }) {
+/** Layout route: renders <Outlet /> when authenticated (or in Nodepod dev preview). */
+export function ProtectedRoute() {
   const devPreview = isDevPreview();
   const { user, isLoading } = useAuth();
   const location = useLocation();
 
   if (devPreview) {
-    return <>{children}</>;
+    return <Outlet />;
   }
 
   if (isLoading) {
@@ -22,5 +23,5 @@ export function ProtectedRoute({ children }: { children: React.ReactNode }) {
     return <Navigate to="/login" replace state={{ from: location.pathname }} />;
   }
 
-  return <>{children}</>;
+  return <Outlet />;
 }

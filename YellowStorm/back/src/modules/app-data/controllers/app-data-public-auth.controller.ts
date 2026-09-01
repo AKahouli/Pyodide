@@ -52,6 +52,7 @@ export class AppDataPublicAuthController {
       email: body.email,
       password: body.password,
       displayName: body.displayName,
+      inviteToken: body.inviteToken,
     });
   }
 

@@ -255,6 +255,7 @@ export const configValidationSchema = Joi.object({
   APP_BUILDER_DEPLOY_INITIAL_STATUS_DELAY_MS: Joi.number().min(0).default(15_000),
   APP_BUILDER_DEPLOY_STATUS_POLL_INTERVAL_MS: Joi.number().min(1_000).default(15_000),
   APP_BUILDER_DEPLOYED_APPS_PATH_PREFIX: Joi.string().default('/apps'),
+  APP_SHARE_INVITE_TTL_DAYS: Joi.number().min(1).max(90).default(7),
 
   // App Builder runtime — MCP + Broker on YellowStorm (see app-runtime/README.md).
   APP_RUNTIME_MCP_ENABLED: Joi.boolean().default(true),

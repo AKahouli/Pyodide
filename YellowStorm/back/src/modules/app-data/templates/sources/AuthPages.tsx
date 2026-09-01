@@ -1,7 +1,7 @@
-import { FormEvent, ReactNode, useState } from 'react';
-import { Link, useNavigate, useLocation } from 'react-router-dom';
+import { FormEvent, ReactNode, useEffect, useState } from 'react';
+import { Link, useNavigate, useLocation, useSearchParams } from 'react-router-dom';
 import { isAppHomePath, resolvePublicAsset } from '@/lib/app-base';
-import { useAuth } from '@/lib/yellowmind-auth';
+import { resolveInvite, useAuth } from '@/lib/yellowmind-auth';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -13,6 +13,49 @@ import { Label } from '@/components/ui/label';
  */
 function redirectAfterAuth(navigate: ReturnType<typeof useNavigate>, from: string) {
   navigate(isAppHomePath(from) ? '/' : from, { replace: true });
+}
+
+function useInviteToken(): string {
+  const [params] = useSearchParams();
+  return params.get('invite')?.trim() || '';
+}
+
+type InviteState =
+  | { status: 'idle' }
+  | { status: 'loading' }
+  | { status: 'ready'; email: string }
+  | { status: 'error'; message: string };
+
+function useResolvedInvite(token: string): InviteState {
+  const [state, setState] = useState<InviteState>(token ? { status: 'loading' } : { status: 'idle' });
+
+  useEffect(() => {
+    if (!token) {
+      setState({ status: 'idle' });
+      return;
+    }
+    let cancelled = false;
+    setState({ status: 'loading' });
+    void resolveInvite(token)
+      .then((invite) => {
+        if (!cancelled) setState({ status: 'ready', email: invite.email });
+      })
+      .catch((err: Error & { status?: number }) => {
+        if (cancelled) return;
+        setState({
+          status: 'error',
+          message:
+            err.status === 410
+              ? 'This invitation has expired or has already been used.'
+              : 'This invitation is invalid.',
+        });
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [token]);
+
+  return state;
 }
 
 const FIELD =
@@ -121,18 +164,25 @@ export function LoginPage() {
   const { login } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
+  const inviteToken = useInviteToken();
+  const invite = useResolvedInvite(inviteToken);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
   const from = (location.state as { from?: string } | null)?.from ?? '/';
+  const lockedEmail = invite.status === 'ready' ? invite.email : '';
+
+  useEffect(() => {
+    if (lockedEmail) setEmail(lockedEmail);
+  }, [lockedEmail]);
 
   async function onSubmit(e: FormEvent) {
     e.preventDefault();
     setError(null);
     setPending(true);
     try {
-      await login(email, password);
+      await login(lockedEmail || email, password);
       redirectAfterAuth(navigate, from);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Login failed');
@@ -141,6 +191,8 @@ export function LoginPage() {
     }
   }
 
+  const registerTo = inviteToken ? `/register?invite=${encodeURIComponent(inviteToken)}` : '/register';
+
   return (
     <AuthShell
       title="Welcome back"
@@ -148,7 +200,7 @@ export function LoginPage() {
       footer={
         <>
           No account?{' '}
-          <Link to="/register" state={{ from }} className="font-medium text-primary underline-offset-4 hover:underline">
+          <Link to={registerTo} state={{ from }} className="font-medium text-primary underline-offset-4 hover:underline">
             Create one
           </Link>
         </>
@@ -163,8 +215,9 @@ export function LoginPage() {
             autoComplete="email"
             placeholder="you@company.com"
             className={FIELD}
-            value={email}
+            value={lockedEmail || email}
             onChange={(e) => setEmail(e.target.value)}
+            readOnly={!!lockedEmail}
             required
           />
         </div>
@@ -181,6 +234,7 @@ export function LoginPage() {
             required
           />
         </div>
+        {invite.status === 'error' && <p className="text-sm text-destructive">{invite.message}</p>}
         {error && <p className="text-sm text-destructive">{error}</p>}
         <Button type="submit" className="h-12 w-full rounded-full text-base font-medium" disabled={pending}>
           {pending ? 'Signing in…' : 'Sign in'}
@@ -194,35 +248,76 @@ export function RegisterPage() {
   const { register } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
+  const inviteToken = useInviteToken();
+  const invite = useResolvedInvite(inviteToken);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [displayName, setDisplayName] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
   const from = (location.state as { from?: string } | null)?.from ?? '/';
+  const lockedEmail = invite.status === 'ready' ? invite.email : '';
+  const loginTo = inviteToken ? `/login?invite=${encodeURIComponent(inviteToken)}` : '/login';
+
+  useEffect(() => {
+    if (lockedEmail) setEmail(lockedEmail);
+  }, [lockedEmail]);
 
   async function onSubmit(e: FormEvent) {
     e.preventDefault();
     setError(null);
     setPending(true);
     try {
-      await register(email, password, displayName || undefined);
+      await register(lockedEmail || email, password, displayName || undefined, inviteToken || undefined);
       redirectAfterAuth(navigate, from);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Registration failed');
+      const code = (err as Error & { code?: string }).code;
+      if (code === 'APP_DATA_EMAIL_TAKEN' && inviteToken) {
+        setError('This email is already registered. Sign in instead.');
+      } else {
+        setError(err instanceof Error ? err.message : 'Registration failed');
+      }
     } finally {
       setPending(false);
     }
   }
 
+  if (invite.status === 'loading') {
+    return (
+      <AuthShell title="Create your account" description="Checking your invitation…" footer={null}>
+        <p className="text-sm text-muted-foreground">Loading invitation…</p>
+      </AuthShell>
+    );
+  }
+
+  if (invite.status === 'error') {
+    return (
+      <AuthShell
+        title="Invitation unavailable"
+        description={invite.message}
+        footer={
+          <Link to="/login" className="font-medium text-primary underline-offset-4 hover:underline">
+            Sign in
+          </Link>
+        }
+      >
+        <p className="text-sm text-muted-foreground">Ask the app owner to send a new invitation.</p>
+      </AuthShell>
+    );
+  }
+
   return (
     <AuthShell
       title="Create your account"
-      description="Register to use this application. Your data stays scoped to this app."
+      description={
+        lockedEmail
+          ? 'Register with the invited email to use this application.'
+          : 'Register to use this application. Your data stays scoped to this app.'
+      }
       footer={
         <>
           Already have an account?{' '}
-          <Link to="/login" state={{ from }} className="font-medium text-primary underline-offset-4 hover:underline">
+          <Link to={loginTo} state={{ from }} className="font-medium text-primary underline-offset-4 hover:underline">
             Sign in
           </Link>
         </>
@@ -247,8 +342,9 @@ export function RegisterPage() {
             autoComplete="email"
             placeholder="you@company.com"
             className={FIELD}
-            value={email}
+            value={lockedEmail || email}
             onChange={(e) => setEmail(e.target.value)}
+            readOnly={!!lockedEmail}
             required
           />
         </div>
@@ -266,7 +362,19 @@ export function RegisterPage() {
             required
           />
         </div>
-        {error && <p className="text-sm text-destructive">{error}</p>}
+        {error && (
+          <p className="text-sm text-destructive">
+            {error}
+            {error.includes('already registered') && (
+              <>
+                {' '}
+                <Link to={loginTo} state={{ from }} className="font-medium underline-offset-4 hover:underline">
+                  Sign in
+                </Link>
+              </>
+            )}
+          </p>
+        )}
         <Button type="submit" className="h-12 w-full rounded-full text-base font-medium" disabled={pending}>
           {pending ? 'Creating…' : 'Create account'}
         </Button>

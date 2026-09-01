@@ -12,6 +12,7 @@ import {
 import { AppDataMcpController } from './controllers/app-data-mcp.controller';
 import { AppDataPublicController } from './controllers/app-data-public.controller';
 import { AppDataPublicAuthController } from './controllers/app-data-public-auth.controller';
+import { AppDataPublicInviteController } from './controllers/app-data-public-invite.controller';
 import { AppDataOwnerController } from './controllers/app-data-owner.controller';
 import { AppDataHealthController } from './controllers/app-data-health.controller';
 import { AppDataAdvisoryLockService } from './services/app-data-advisory-lock.service';
@@ -48,6 +49,7 @@ import { AppDataSchemaService } from './services/app-data-schema.service';
     AppDataMcpController,
     AppDataPublicController,
     AppDataPublicAuthController,
+    AppDataPublicInviteController,
     AppDataOwnerController,
     AppDataHealthController,
   ],

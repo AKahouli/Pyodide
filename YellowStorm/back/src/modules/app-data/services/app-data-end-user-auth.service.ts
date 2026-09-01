@@ -1,5 +1,5 @@
 import { randomBytes } from 'crypto';
-import { HttpStatus, Inject, Injectable } from '@nestjs/common';
+import { HttpStatus, Inject, Injectable, Logger, forwardRef } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
 import { eq } from 'drizzle-orm';
@@ -13,6 +13,7 @@ import {
   type AppDataAppRow,
   type AppDataEndUserRow,
 } from '@modules/postgres/schema/app-data.schema';
+import { ConversationV2AppShareService } from '@modules/conversation-v2/services/conversation-v2-app-share.service';
 import {
   AppDataErrorCode,
   AppDataException,
@@ -37,6 +38,8 @@ export interface AppEndUserAuthResult {
 
 @Injectable()
 export class AppDataEndUserAuthService {
+  private readonly logger = new Logger(AppDataEndUserAuthService.name);
+
   constructor(
     @Inject(DRIZZLE_DB) private readonly db: NodePgDatabase<typeof schema>,
     private readonly config: ConfigService,
@@ -45,6 +48,8 @@ export class AppDataEndUserAuthService {
     private readonly endUsers: AppDataEndUserService,
     private readonly grants: AppDataEndUserGrantsService,
     private readonly audit: AppDataAuditService,
+    @Inject(forwardRef(() => ConversationV2AppShareService))
+    private readonly appShares: ConversationV2AppShareService,
   ) {}
 
   isEndUserAuthGloballyEnabled(): boolean {
@@ -170,11 +175,25 @@ export class AppDataEndUserAuthService {
     };
   }
 
+  async resolveInvite(
+    appDataId: string,
+    token: string,
+  ): Promise<{ email: string; appTitle: string; expiresAt: string }> {
+    const app = await this.catalog.requireAppByAppDataId(appDataId);
+    const invite = await this.requireValidInvite(app, token);
+    return {
+      email: invite.email,
+      appTitle: invite.appTitle,
+      expiresAt: invite.expiresAt.toISOString(),
+    };
+  }
+
   async register(params: {
     appDataId: string;
     email: string;
     password: string;
     displayName?: string;
+    inviteToken?: string;
   }): Promise<AppEndUserAuthResult> {
     const app = await this.catalog.requireAppByAppDataId(params.appDataId);
     if (!this.isEndUserAuthEnabledForApp(app)) {
@@ -184,7 +203,20 @@ export class AppDataEndUserAuthService {
       );
     }
 
-    const email = this.endUsers.normalizeEmail(params.email);
+    const inviteToken = params.inviteToken?.trim() || undefined;
+    let email = this.endUsers.normalizeEmail(params.email);
+    if (inviteToken) {
+      const invite = await this.requireValidInvite(app, inviteToken);
+      if (email !== invite.email) {
+        throw new AppDataException(
+          AppDataErrorCode.INVITE_MISMATCH,
+          'Invite email does not match',
+          HttpStatus.FORBIDDEN,
+        );
+      }
+      email = invite.email;
+    }
+
     if (!email || !params.password || params.password.length < 8) {
       throw new AppDataException(
         AppDataErrorCode.INVALID_MANIFEST,
@@ -217,11 +249,19 @@ export class AppDataEndUserAuthService {
 
     await this.grants.seedDenyAll(app.id, user.id);
 
+    let inviteConsumed = false;
+    if (inviteToken) {
+      inviteConsumed = await this.appShares.consumeInviteToken(inviteToken, email);
+      if (!inviteConsumed) {
+        this.logger.warn(`Invite consume failed after register for app ${app.appDataId}`);
+      }
+    }
+
     await this.audit.record({
       appId: app.id,
-      eventType: 'end_user_register',
+      eventType: inviteToken ? 'invite_register' : 'end_user_register',
       actorPrincipal: 'anonymous',
-      metadata: { userId: user.id, email },
+      metadata: { userId: user.id, email, inviteConsumed },
     });
 
     const token = await this.signToken(app, user);
@@ -281,5 +321,38 @@ export class AppDataEndUserAuthService {
       email: user.email,
       displayName: user.displayName,
     };
+  }
+
+  private async requireValidInvite(app: AppDataAppRow, token: string) {
+    const invite = await this.appShares.resolveInviteToken(token);
+    if (!invite) {
+      throw new AppDataException(
+        AppDataErrorCode.INVITE_INVALID,
+        'Invite token is invalid',
+        HttpStatus.NOT_FOUND,
+      );
+    }
+    if (invite.consumed) {
+      throw new AppDataException(
+        AppDataErrorCode.INVITE_CONSUMED,
+        'Invite token has already been used',
+        HttpStatus.GONE,
+      );
+    }
+    if (invite.expiresAt.getTime() < Date.now()) {
+      throw new AppDataException(
+        AppDataErrorCode.INVITE_EXPIRED,
+        'Invite token has expired',
+        HttpStatus.GONE,
+      );
+    }
+    if (!invite.workspaceId || invite.workspaceId !== app.workspaceId) {
+      throw new AppDataException(
+        AppDataErrorCode.INVITE_MISMATCH,
+        'Invite does not belong to this app',
+        HttpStatus.FORBIDDEN,
+      );
+    }
+    return invite;
   }
 }

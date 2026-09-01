@@ -102,6 +102,19 @@ export class RuntimeRevisionService {
     };
   }
 
+  /** Read a single revision file from its content-addressed Ceph blob. */
+  async readRevisionFileText(
+    workspaceId: string,
+    revisionId: string,
+    relativePath: string,
+  ): Promise<string | null> {
+    const revision = await this.getAuthorizedRevision(workspaceId, revisionId);
+    const file = revision.files.find((entry) => entry.path === relativePath);
+    if (!file) return null;
+    const raw = await this.documents.download(file.objectKey);
+    return raw.toString('utf8');
+  }
+
   /**
    * Ensure the workspace has a Mongo row for the starter revision (idempotent).
    * Binding still points `latestRevisionId` at the shared starter id; this
