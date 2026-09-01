@@ -439,6 +439,8 @@ export interface VoiceSessionEnvelope {
   toolEndpoints?: Record<string, string>;
   /** tools that take the session streamId as an argument; others must not get it. */
   streamIdTools?: string[];
+  /** voice-memory sidecar WS (mic fork → long-term memory); empty/absent ⇒ fork off. */
+  memoryWsUrl?: string;
   expiresAt: string;
 }
 

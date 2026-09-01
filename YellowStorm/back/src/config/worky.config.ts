@@ -43,6 +43,10 @@ export default registerAs('worky', () => ({
     'wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1alpha.GenerativeService.BidiGenerateContentConstrained',
   voiceTokenTtlSec: parseInt(process.env.WORKY_VOICE_TOKEN_TTL_SEC || '1800', 10),
   voiceSessionStartTtlSec: parseInt(process.env.WORKY_VOICE_SESSION_START_TTL_SEC || '60', 10),
+  // voice-memory sidecar WebSocket (mic fork → long-term memory). Delivered to the
+  // browser in the session envelope so it's runtime-configurable (no front rebuild).
+  // Empty ⇒ the front skips the mic fork entirely (memory writes off).
+  voiceMemoryWsUrl: process.env.WORKY_VOICE_MEMORY_WS_URL || '',
 
   // Electric SQL sync (manager-owned Postgres → Nest consumer).
   electricUrl: process.env.WORKY_ELECTRIC_URL || 'http://electric:3000/v1/shape',

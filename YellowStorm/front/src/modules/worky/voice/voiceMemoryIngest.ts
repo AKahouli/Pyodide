@@ -7,7 +7,8 @@ import { AUTH_STORAGE_KEYS } from '../../../lib/api/config';
  * Gemini path and every operation is best-effort: if the sidecar is unreachable
  * or misbehaves, memory is silently skipped and the voice loop is unaffected.
  *
- * Enabled only when VITE_VOICE_MEMORY_WS_URL is set; otherwise a no-op handle.
+ * Enabled only when the backend provides `memoryWsUrl` in the session envelope
+ * (runtime-configured server-side); otherwise a no-op handle.
  *
  * Protocol (to the sidecar): binary frames = 16 kHz mono PCM16 (the same buffer
  * sent to Gemini); {"type":"turn_end","transcript":...} on each finished user
@@ -35,10 +36,10 @@ function accessToken(): string | null {
   }
 }
 
-export function openVoiceMemoryIngest(): VoiceMemoryIngest {
-  const base = import.meta.env.VITE_VOICE_MEMORY_WS_URL as string | undefined;
+export function openVoiceMemoryIngest(wsUrl?: string): VoiceMemoryIngest {
+  const base = wsUrl; // from the session envelope (backend-configured)
   const token = accessToken();
-  if (!base || !token) return NOOP; // feature off, or not authenticated
+  if (!base || !token) return NOOP; // feature off (no URL), or not authenticated
 
   let ws: WebSocket | null = null;
   let open = false;

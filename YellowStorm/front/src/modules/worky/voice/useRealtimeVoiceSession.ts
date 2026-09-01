@@ -49,7 +49,7 @@ export function useRealtimeVoiceSession(streamId: string): VoiceSessionApi {
   const toolRoutingRef = useRef<{ endpoints?: Record<string, string>; streamIdTools?: string[] }>({});
   // Voice-memory sidecar: mirrors mic PCM + per-turn transcript for long-term
   // memory. Best-effort and fully independent of the Gemini path; a no-op unless
-  // VITE_VOICE_MEMORY_WS_URL is configured. `memTurnRef` accumulates the current
+  // the session envelope carries a memoryWsUrl. `memTurnRef` accumulates the current
   // user turn's transcript, flushed on turnComplete.
   const memRef = useRef<VoiceMemoryIngest | null>(null);
   const memTurnRef = useRef<string[]>([]);
@@ -99,8 +99,9 @@ export function useRealtimeVoiceSession(streamId: string): VoiceSessionApi {
     closingRef.current = false;
     const envelope = await createVoiceSession(streamId, handleRef.current);
     toolRoutingRef.current = { endpoints: envelope.toolEndpoints, streamIdTools: envelope.streamIdTools };
-    // Best-effort long-term memory: a no-op unless the sidecar URL is configured.
-    memRef.current = openVoiceMemoryIngest();
+    // Best-effort long-term memory: a no-op unless the backend put a memoryWsUrl in
+    // the session envelope (runtime-configured server-side, not a front build var).
+    memRef.current = openVoiceMemoryIngest(envelope.memoryWsUrl);
     memTurnRef.current = [];
 
     // Only stream mic audio after the server acknowledges setup, so we never
