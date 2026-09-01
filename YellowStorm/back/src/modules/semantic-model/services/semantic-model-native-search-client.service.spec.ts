@@ -25,6 +25,7 @@ function config(
     schema: 'semantic_model',
     ageGraph: 'semantic_model_graph',
     nativeSearchUrl: 'http://localhost:8045/search_native',
+    nativeSearchBatchUrl: 'http://localhost:8045/search_native/batch',
     nativeSearchAuthToken: 'test-token',
     nativeSearchLogQuery: false,
     evidenceSearchTimeoutMs: 180000,
@@ -69,6 +70,79 @@ describe('SemanticModelNativeSearchClient', () => {
 
     await expect(client.search({ query: 'q', workspace_id: 'w', file_name: 'f.pdf' }))
       .resolves.toEqual([{ content: 'Evidence' }]);
+  });
+
+  it('posts and correlates a native-search batch by id', async () => {
+    mockedAxios.post.mockResolvedValueOnce({
+      data: {
+        results: [
+          { id: '1', error: { message: 'not found' } },
+          { id: '0', result: [{ content: 'Evidence A' }] },
+        ],
+      },
+    });
+    const client = new SemanticModelNativeSearchClient(config());
+    const requests = [
+      { query: 'q1', workspace_id: 'w', file_name: 'a.pdf' },
+      { query: 'q2', workspace_id: 'w', file_name: 'b.pdf' },
+    ];
+
+    await expect(client.searchBatch(requests)).resolves.toEqual([
+      { sections: [{ content: 'Evidence A' }], error: null },
+      { sections: [], error: 'not found' },
+    ]);
+    expect(mockedAxios.post).toHaveBeenCalledWith(
+      'http://localhost:8045/search_native/batch',
+      {
+        requests: [
+          { id: '0', ...requests[0] },
+          { id: '1', ...requests[1] },
+        ],
+      },
+      expect.objectContaining({
+        headers: {
+          Authorization: 'Bearer test-token',
+          'Content-Type': 'application/json',
+        },
+        timeout: 180000,
+      }),
+    );
+  });
+
+  it('rejects batches larger than ten without sending them', async () => {
+    const client = new SemanticModelNativeSearchClient(config());
+    const requests = Array.from({ length: 11 }, (_, index) => ({
+      query: `q${index}`,
+      workspace_id: 'w',
+      file_name: 'f.pdf',
+    }));
+
+    await expect(client.searchBatch(requests)).rejects.toThrow('10-request limit');
+    expect(mockedAxios.post).not.toHaveBeenCalled();
+  });
+
+  it('rejects a batch response with missing or duplicate ids', async () => {
+    mockedAxios.post.mockResolvedValueOnce({
+      data: { results: [{ id: '0', result: [] }, { id: '0', result: [] }] },
+    });
+    const client = new SemanticModelNativeSearchClient(config());
+
+    await expect(client.searchBatch([
+      { query: 'q1', workspace_id: 'w', file_name: 'a.pdf' },
+      { query: 'q2', workspace_id: 'w', file_name: 'b.pdf' },
+    ])).rejects.toThrow('invalid batch response');
+  });
+
+  it('retries a transient batch failure once', async () => {
+    mockedAxios.post
+      .mockRejectedValueOnce({ response: { status: 503 } })
+      .mockResolvedValueOnce({ data: { results: [{ id: '0', result: [] }] } });
+    const client = new SemanticModelNativeSearchClient(config());
+
+    await expect(client.searchBatch([
+      { query: 'q', workspace_id: 'w', file_name: 'f.pdf' },
+    ])).resolves.toEqual([{ sections: [], error: null }]);
+    expect(mockedAxios.post).toHaveBeenCalledTimes(2);
   });
 
   it('rejects malformed responses', async () => {

@@ -67,6 +67,7 @@ export const configValidationSchema = Joi.object({
   SEMANTIC_PG_POOL_MAX: Joi.number().min(1).max(50).default(10),
   SEMANTIC_AGE_GRAPH: Joi.string().pattern(/^[a-z][a-z0-9_]{0,62}$/).default('semantic_model_graph'),
   SEMANTIC_MODEL_NATIVE_SEARCH_URL: Joi.string().uri().default('http://localhost:8045/search_native'),
+  SEMANTIC_MODEL_NATIVE_SEARCH_BATCH_URL: Joi.string().uri().default('http://localhost:8045/search_native/batch'),
   SEMANTIC_MODEL_NATIVE_SEARCH_AUTH_TOKEN: Joi.string().allow('').optional(),
   SEMANTIC_MODEL_NATIVE_SEARCH_LOG_QUERY: Joi.boolean().default(false),
   SEMANTIC_MODEL_EVIDENCE_SEARCH_TIMEOUT_MS: Joi.number().min(5000).max(1800000).default(180000),

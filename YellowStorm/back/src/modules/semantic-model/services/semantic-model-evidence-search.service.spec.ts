@@ -43,7 +43,7 @@ describe('SemanticModelEvidenceSearchService', () => {
   const models = { requireRole: jest.fn() };
   const corpusPreparation = { prepare: jest.fn() };
   const graphCommands = { getGraph: jest.fn() };
-  const nativeSearch = { search: jest.fn() };
+  const nativeSearch = { searchBatch: jest.fn() };
 
   const service = new SemanticModelEvidenceSearchService(
     config,
@@ -77,22 +77,34 @@ describe('SemanticModelEvidenceSearchService', () => {
     });
   });
 
-  it('calls native search once per attribute plus one identity query', async () => {
-    nativeSearch.search.mockResolvedValue([{ content: 'Jane Doe', section_id: 7 }]);
+  it('sends all generated queries in one native-search batch', async () => {
+    nativeSearch.searchBatch.mockImplementation(async (requests: unknown[]) =>
+      requests.map(() => ({
+        sections: [{ content: 'Jane Doe', section_id: 7 }],
+        error: null,
+      })),
+    );
 
     const result = await service.search('user-1', 'model-1');
 
-    expect(nativeSearch.search).toHaveBeenCalledTimes(3);
-    expect(nativeSearch.search).toHaveBeenNthCalledWith(1, {
-      query: 'Employee: Name: full name',
-      workspace_id: 'workspace-1',
-      file_name: 'employee.pdf',
-    });
-    expect(nativeSearch.search).toHaveBeenNthCalledWith(3, {
-      query: 'Employee: main subject, proper name, or identifier of the Employee',
-      workspace_id: 'workspace-1',
-      file_name: 'employee.pdf',
-    });
+    expect(nativeSearch.searchBatch).toHaveBeenCalledTimes(1);
+    expect(nativeSearch.searchBatch).toHaveBeenCalledWith([
+      {
+        query: 'Employee: Name: full name',
+        workspace_id: 'workspace-1',
+        file_name: 'employee.pdf',
+      },
+      {
+        query: 'Employee: Email: work email',
+        workspace_id: 'workspace-1',
+        file_name: 'employee.pdf',
+      },
+      {
+        query: 'Employee: main subject, proper name, or identifier of the Employee',
+        workspace_id: 'workspace-1',
+        file_name: 'employee.pdf',
+      },
+    ]);
     expect(result.failedUnits).toEqual([]);
     expect(result.tasks[0].evidence).toEqual([{
       source: 'employee.pdf',
@@ -104,9 +116,11 @@ describe('SemanticModelEvidenceSearchService', () => {
   });
 
   it('keeps successful evidence when one query fails', async () => {
-    nativeSearch.search
-      .mockRejectedValueOnce(new Error('timeout'))
-      .mockResolvedValue([{ content: 'Jane Doe', file_name: 'employee.pdf' }]);
+    nativeSearch.searchBatch.mockResolvedValue([
+      { sections: [], error: 'timeout' },
+      { sections: [{ content: 'Jane Doe', file_name: 'employee.pdf' }], error: null },
+      { sections: [{ content: 'Jane Doe', file_name: 'employee.pdf' }], error: null },
+    ]);
 
     const result = await service.search('user-1', 'model-1');
 
@@ -115,8 +129,39 @@ describe('SemanticModelEvidenceSearchService', () => {
     expect(result.tasks[0].toolResults.some((item) => item.status === 'failed')).toBe(true);
   });
 
+  it('splits generated searches into batches of at most ten', async () => {
+    const documents = Array.from({ length: 11 }, (_, index) => ({
+      sourceDocumentId: `document-${index}`,
+      workspaceId: 'workspace-1',
+      originalName: `employee-${index}.pdf`,
+      mimeType: 'application/pdf',
+      indexingStatus: 'ready',
+    }));
+    corpusPreparation.prepare.mockResolvedValue({
+      bindings: [{
+        bindingId: 'binding-1',
+        target: { kind: 'node_type', id: 'employee', label: 'Employee' },
+        resourceKind: 'document',
+        workspaceId: 'workspace-1',
+        documentId: 'document-0',
+        retrievalMode: 'targeted',
+        priority: 1,
+        documents,
+      }],
+    });
+    nativeSearch.searchBatch.mockImplementation(async (requests: unknown[]) =>
+      requests.map(() => ({ sections: [], error: null })),
+    );
+
+    await service.search('user-1', 'model-1');
+
+    expect(nativeSearch.searchBatch).toHaveBeenCalledTimes(4);
+    expect(nativeSearch.searchBatch.mock.calls.map(([requests]) => requests.length))
+      .toEqual([10, 10, 10, 3]);
+  });
+
   it('marks the document failed when every query fails', async () => {
-    nativeSearch.search.mockRejectedValue(new Error('unavailable'));
+    nativeSearch.searchBatch.mockRejectedValue(new Error('unavailable'));
 
     const result = await service.search('user-1', 'model-1');
 
@@ -129,7 +174,7 @@ describe('SemanticModelEvidenceSearchService', () => {
   });
 
   it('propagates fatal native-search configuration and authentication errors', async () => {
-    nativeSearch.search.mockRejectedValue(new SemanticModelNativeSearchFatalError(
+    nativeSearch.searchBatch.mockRejectedValue(new SemanticModelNativeSearchFatalError(
       ErrorCode.SERVICE_UNAVAILABLE,
       'unauthorized',
     ));

@@ -49,30 +49,36 @@ export class SemanticModelEvidenceSearchService {
       })),
     );
 
-    const jobResults = await this.runWithConcurrency(
-      jobs,
+    const batches = this.chunk(jobs, 10);
+    const batchResults = await this.runWithConcurrency(
+      batches,
       this.config.evidenceSearchConcurrency,
-      async (job) => {
+      async (batch) => {
         try {
-          const sections = await this.nativeSearch.search({
+          const results = await this.nativeSearch.searchBatch(batch.map((job) => ({
             query: job.query,
             workspace_id: job.binding.workspaceId,
             file_name: job.document.originalName,
-          });
-          return { ...job, sections, error: null as string | null };
+          })));
+          return batch.map((job, index) => ({
+            ...job,
+            sections: results[index].sections,
+            error: results[index].error,
+          }));
         } catch (error) {
           if (error instanceof SemanticModelNativeSearchFatalError) throw error;
           const message = error instanceof Error
             ? error.message.slice(0, 300)
             : String(error).slice(0, 300);
-          return {
+          return batch.map((job) => ({
             ...job,
             sections: [] as SemanticModelNativeSearchSection[],
             error: message,
-          };
+          }));
         }
       },
     );
+    const jobResults = batchResults.flat();
 
     const resultsByUnit = new Map<number, typeof jobResults>();
     for (const result of jobResults) {
@@ -240,6 +246,14 @@ export class SemanticModelEvidenceSearchService {
     });
     await Promise.all(workers);
     return results;
+  }
+
+  private chunk<T>(items: T[], size: number): T[][] {
+    const chunks: T[][] = [];
+    for (let index = 0; index < items.length; index += size) {
+      chunks.push(items.slice(index, index + size));
+    }
+    return chunks;
   }
 
   private describeOntologySearchScope(

@@ -20,6 +20,19 @@ export interface SemanticModelNativeSearchSection {
   section_id?: unknown;
 }
 
+export interface SemanticModelNativeSearchBatchResult {
+  sections: SemanticModelNativeSearchSection[];
+  error: string | null;
+}
+
+interface NativeSearchBatchResponseItem {
+  id?: unknown;
+  result?: unknown;
+  error?: unknown;
+}
+
+const NATIVE_SEARCH_BATCH_SIZE = 10;
+
 export class SemanticModelNativeSearchFatalError extends ServiceUnavailableException {}
 
 @Injectable()
@@ -106,6 +119,126 @@ export class SemanticModelNativeSearchClient {
     throw new ServiceUnavailableException(
       ErrorCode.SERVICE_UNAVAILABLE,
       'Semantic native search failed',
+    );
+  }
+
+  async searchBatch(
+    requests: SemanticModelNativeSearchRequest[],
+  ): Promise<SemanticModelNativeSearchBatchResult[]> {
+    if (requests.length === 0) return [];
+    if (requests.length > NATIVE_SEARCH_BATCH_SIZE) {
+      throw new SemanticModelNativeSearchFatalError(
+        ErrorCode.SERVICE_UNAVAILABLE,
+        `Semantic native search batch exceeds the ${NATIVE_SEARCH_BATCH_SIZE}-request limit`,
+      );
+    }
+    if (!this.config.nativeSearchAuthToken) {
+      throw new SemanticModelNativeSearchFatalError(
+        ErrorCode.SERVICE_UNAVAILABLE,
+        'SEMANTIC_MODEL_NATIVE_SEARCH_AUTH_TOKEN is not configured',
+      );
+    }
+
+    const batchedRequests = requests.map((request, index) => ({
+      id: String(index),
+      ...request,
+    }));
+    for (let attempt = 1; attempt <= 2; attempt++) {
+      try {
+        this.logger.debug('Semantic native search batch request', {
+          endpoint: this.config.nativeSearchBatchUrl,
+          requestCount: requests.length,
+          attempt,
+        });
+        const { data } = await axios.post<unknown>(
+          this.config.nativeSearchBatchUrl,
+          { requests: batchedRequests },
+          {
+            headers: {
+              Authorization: `Bearer ${this.config.nativeSearchAuthToken}`,
+              'Content-Type': 'application/json',
+            },
+            timeout: this.config.evidenceSearchTimeoutMs,
+          },
+        );
+        return this.parseBatchResults(data, requests.length);
+      } catch (error) {
+        if (error instanceof SemanticModelNativeSearchFatalError) throw error;
+        const status = axios.isAxiosError(error) ? error.response?.status : undefined;
+        const validationDetails = axios.isAxiosError(error)
+          ? this.validationDetails(error.response?.data)
+          : [];
+        this.logger.warn('Semantic native search batch request failed', {
+          endpoint: this.config.nativeSearchBatchUrl,
+          requestCount: requests.length,
+          attempt,
+          status,
+          validationDetails,
+        });
+        if (status && status >= 400 && status < 500 && status !== 408 && status !== 429) {
+          const detail = validationDetails.length > 0
+            ? `: ${validationDetails.map((item) => `${item.location} [${item.type}]`).join('; ')}`
+            : '';
+          throw new SemanticModelNativeSearchFatalError(
+            ErrorCode.SERVICE_UNAVAILABLE,
+            `Semantic native search batch rejected the request: HTTP ${status}${detail}`,
+          );
+        }
+        if (attempt < 2) {
+          await new Promise((resolve) => setTimeout(resolve, 100));
+          continue;
+        }
+        const reason = status ? `HTTP ${status}` : 'network or timeout error';
+        throw new ServiceUnavailableException(
+          ErrorCode.SERVICE_UNAVAILABLE,
+          `Semantic native search batch failed: ${reason}`,
+        );
+      }
+    }
+    throw new ServiceUnavailableException(
+      ErrorCode.SERVICE_UNAVAILABLE,
+      'Semantic native search batch failed',
+    );
+  }
+
+  private parseBatchResults(payload: unknown, requestCount: number): SemanticModelNativeSearchBatchResult[] {
+    if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+      throw this.invalidBatchResponse();
+    }
+    const items = (payload as { results?: unknown }).results;
+    if (!Array.isArray(items) || items.length !== requestCount) {
+      throw this.invalidBatchResponse();
+    }
+    const byId = new Map<string, NativeSearchBatchResponseItem>();
+    for (const item of items) {
+      if (!item || typeof item !== 'object' || Array.isArray(item)) throw this.invalidBatchResponse();
+      const value = item as NativeSearchBatchResponseItem;
+      if (typeof value.id !== 'string' || byId.has(value.id)) throw this.invalidBatchResponse();
+      byId.set(value.id, value);
+    }
+    return Array.from({ length: requestCount }, (_, index) => {
+      const item = byId.get(String(index));
+      if (!item) throw this.invalidBatchResponse();
+      if (item.error != null) {
+        return { sections: [], error: this.batchItemError(item.error) };
+      }
+      return { sections: this.parseSections(item.result), error: null };
+    });
+  }
+
+  private batchItemError(error: unknown): string {
+    if (typeof error === 'string') return error.slice(0, 300) || 'Native search failed';
+    if (error && typeof error === 'object' && !Array.isArray(error)) {
+      const message = (error as { message?: unknown }).message;
+      if (typeof message === 'string' && message.trim()) return message.trim().slice(0, 300);
+    }
+    return 'Native search failed';
+  }
+
+  private invalidBatchResponse(): SemanticModelNativeSearchFatalError {
+    return new SemanticModelNativeSearchFatalError(
+      ErrorCode.SERVICE_UNAVAILABLE,
+      'Semantic native search returned an invalid batch response',
     );
   }
 
