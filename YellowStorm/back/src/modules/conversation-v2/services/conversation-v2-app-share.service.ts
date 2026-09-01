@@ -72,10 +72,6 @@ export class ConversationV2AppShareService {
       try {
         shared.push(await this.shareOne({ ...params, email }));
       } catch (error) {
-        if (error instanceof NotFoundException && error.code === ErrorCode.USER_NOT_FOUND) {
-          notFound.push(email);
-          continue;
-        }
         if (error instanceof BadRequestException) {
           skippedSelf.push(email);
           continue;
@@ -88,6 +84,8 @@ export class ConversationV2AppShareService {
   }
 
   async listSharedWithUser(userId: string): Promise<DeployedAppSummary[]> {
+    await this.claimPendingSharesForUser(userId);
+
     const docs = await this.model
       .find({ recipientUserId: new Types.ObjectId(userId) })
       .sort({ updatedAt: -1 })
@@ -129,6 +127,8 @@ export class ConversationV2AppShareService {
 
   /** True when the user has an app-share row with conversation access for this session. */
   async hasConversationAccess(userId: string, sessionId: string): Promise<boolean> {
+    await this.claimPendingSharesForUser(userId);
+
     if (!Types.ObjectId.isValid(sessionId) || !Types.ObjectId.isValid(userId)) return false;
     const share = await this.model
       .findOne({
@@ -187,11 +187,11 @@ export class ConversationV2AppShareService {
     lastDeployedAt: Date | null;
   }): Promise<{ shareId: string; recipientEmail: string }> {
     const email = params.email.trim().toLowerCase();
-    const recipient = await this.users.findByEmail(email);
-    if (!recipient) {
+    const owner = await this.users.findById(params.ownerId);
+    if (!owner) {
       throw new NotFoundException(ErrorCode.USER_NOT_FOUND);
     }
-    if (recipient._id.toString() === params.ownerId) {
+    if (owner.email.toLowerCase() === email) {
       throw new BadRequestException('You cannot share an app with yourself');
     }
 
@@ -202,10 +202,38 @@ export class ConversationV2AppShareService {
       sessionId: params.sessionId,
     });
 
+    const recipient = await this.users.findByEmail(email);
+    if (recipient) {
+      const share = await this.model.findOneAndUpdate(
+        {
+          sessionId: new Types.ObjectId(params.sessionId),
+          recipientUserId: recipient._id,
+        },
+        {
+          $set: {
+            ownerId: new Types.ObjectId(params.ownerId),
+            title: params.title,
+            deployedUrl: params.deployedUrl,
+            lastDeployedAt: params.lastDeployedAt,
+            includeConversation: true,
+          },
+          $setOnInsert: {
+            sessionId: new Types.ObjectId(params.sessionId),
+            recipientUserId: recipient._id,
+          },
+        },
+        { upsert: true, new: true },
+      );
+
+      await this.notifyRecipient(recipient._id.toString(), params.title);
+
+      return { shareId: share._id.toString(), recipientEmail: email };
+    }
+
     const share = await this.model.findOneAndUpdate(
       {
         sessionId: new Types.ObjectId(params.sessionId),
-        recipientUserId: recipient._id,
+        recipientEmail: email,
       },
       {
         $set: {
@@ -214,18 +242,35 @@ export class ConversationV2AppShareService {
           deployedUrl: params.deployedUrl,
           lastDeployedAt: params.lastDeployedAt,
           includeConversation: true,
+          recipientEmail: email,
         },
         $setOnInsert: {
           sessionId: new Types.ObjectId(params.sessionId),
-          recipientUserId: recipient._id,
         },
       },
       { upsert: true, new: true },
     );
 
-    await this.notifyRecipient(recipient._id.toString(), params.title);
-
     return { shareId: share._id.toString(), recipientEmail: email };
+  }
+
+  private async claimPendingSharesForUser(userId: string): Promise<void> {
+    const user = await this.users.findById(userId);
+    if (!user?.email) return;
+
+    const email = user.email.trim().toLowerCase();
+    await this.model
+      .updateMany(
+        {
+          recipientEmail: email,
+          $or: [{ recipientUserId: null }, { recipientUserId: { $exists: false } }],
+        },
+        {
+          $set: { recipientUserId: new Types.ObjectId(userId) },
+          $unset: { recipientEmail: '' },
+        },
+      )
+      .exec();
   }
 
   private async sendInviteEmail(params: {

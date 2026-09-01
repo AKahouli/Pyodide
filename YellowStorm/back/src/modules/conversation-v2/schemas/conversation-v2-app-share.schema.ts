@@ -18,8 +18,13 @@ export class ConversationV2AppShare extends Document {
   @Prop({ type: Types.ObjectId, ref: 'User', required: true, index: true })
   ownerId!: Types.ObjectId;
 
-  @Prop({ type: Types.ObjectId, ref: 'User', required: true, index: true })
-  recipientUserId!: Types.ObjectId;
+  /** Set when the recipient already has an account. */
+  @Prop({ type: Types.ObjectId, ref: 'User', required: false, default: null, index: true })
+  recipientUserId!: Types.ObjectId | null;
+
+  /** Set for invitees who do not have an account yet; claimed on first access. */
+  @Prop({ type: String, required: false, default: null, index: true })
+  recipientEmail!: string | null;
 
   @Prop({ type: String, required: true })
   title!: string;
@@ -43,6 +48,16 @@ export const ConversationV2AppShareSchema =
 
 ConversationV2AppShareSchema.index(
   { sessionId: 1, recipientUserId: 1 },
-  { unique: true },
+  {
+    unique: true,
+    partialFilterExpression: { recipientUserId: { $type: 'objectId' } },
+  },
+);
+ConversationV2AppShareSchema.index(
+  { sessionId: 1, recipientEmail: 1 },
+  {
+    unique: true,
+    partialFilterExpression: { recipientEmail: { $type: 'string' } },
+  },
 );
 ConversationV2AppShareSchema.index({ recipientUserId: 1, updatedAt: -1 });

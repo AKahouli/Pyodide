@@ -177,9 +177,10 @@
   },
   "share": {
     "title": "Share app & conversation",
-    "searchPlaceholder": "Search a user by email…",
+    "searchPlaceholder": "Search or enter an email address…",
     "searching": "Searching…",
-    "noResults": "No user found",
+    "noResults": "Enter a valid email address",
+    "addEmail": "Add",
     "remove": "Remove",
     "cancel": "Cancel",
     "send": "Send"

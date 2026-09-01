@@ -15,9 +15,10 @@ describe('ConversationV2AppShareService', () => {
 
   const findOneAndUpdate = jest.fn();
   const find = jest.fn();
+  const updateMany = jest.fn().mockReturnValue({ exec: () => Promise.resolve({ modifiedCount: 0 }) });
   const sessionFind = jest.fn();
 
-  const users = { findByEmail: jest.fn() };
+  const users = { findByEmail: jest.fn(), findById: jest.fn() };
   const email = {
     isAvailable: jest.fn().mockReturnValue(true),
     send: jest.fn().mockResolvedValue({ success: true }),
@@ -53,6 +54,8 @@ describe('ConversationV2AppShareService', () => {
 
   beforeEach(async () => {
     jest.clearAllMocks();
+    users.findByEmail.mockReset();
+    users.findById.mockReset();
     email.isAvailable.mockReturnValue(true);
     email.send.mockResolvedValue({ success: true });
 
@@ -61,7 +64,7 @@ describe('ConversationV2AppShareService', () => {
         ConversationV2AppShareService,
         {
           provide: getModelToken(ConversationV2AppShare.name),
-          useValue: { findOneAndUpdate, find },
+          useValue: { findOneAndUpdate, find, updateMany },
         },
         {
           provide: getModelToken(ConversationV2Session.name),
@@ -82,6 +85,7 @@ describe('ConversationV2AppShareService', () => {
     const recipientId = new Types.ObjectId();
     const sessionId = new Types.ObjectId();
     const shareId = new Types.ObjectId();
+    users.findById.mockResolvedValueOnce({ _id: ownerId, email: 'owner@example.com' });
     users.findByEmail.mockResolvedValueOnce({ _id: recipientId });
     findOneAndUpdate.mockResolvedValueOnce({ _id: shareId });
 
@@ -107,7 +111,9 @@ describe('ConversationV2AppShareService', () => {
   });
 
   it('shareByEmails does not persist share when email delivery fails', async () => {
+    const ownerId = new Types.ObjectId();
     const recipientId = new Types.ObjectId();
+    users.findById.mockResolvedValueOnce({ _id: ownerId, email: 'owner@example.com' });
     users.findByEmail.mockResolvedValueOnce({ _id: recipientId });
     email.send.mockResolvedValueOnce({ success: false });
 
@@ -125,23 +131,33 @@ describe('ConversationV2AppShareService', () => {
     expect(findOneAndUpdate).not.toHaveBeenCalled();
   });
 
-  it('shareByEmails collects unknown recipients', async () => {
+  it('shareByEmails invites unknown recipients by email', async () => {
+    const ownerId = new Types.ObjectId();
+    const sessionId = new Types.ObjectId();
+    const shareId = new Types.ObjectId();
+    users.findById.mockResolvedValue({ _id: ownerId, email: 'owner@example.com' });
     users.findByEmail.mockResolvedValue(null);
+    findOneAndUpdate.mockResolvedValue({ _id: shareId });
 
     await expect(
       svc.shareByEmails({
-        ownerId: new Types.ObjectId().toString(),
-        sessionId: new Types.ObjectId().toString(),
+        ownerId: ownerId.toString(),
+        sessionId: sessionId.toString(),
         emails: ['missing@example.com'],
         title: 'App',
         deployedUrl: 'https://apps.example/a',
         lastDeployedAt: null,
       }),
     ).resolves.toEqual({
-      shared: [],
-      notFound: ['missing@example.com'],
+      shared: [{ shareId: shareId.toString(), recipientEmail: 'missing@example.com' }],
+      notFound: [],
       skippedSelf: [],
     });
+    expect(findOneAndUpdate).toHaveBeenCalled();
+    expect(findOneAndUpdate.mock.calls.at(-1)?.[0]).toEqual(
+      expect.objectContaining({ recipientEmail: 'missing@example.com' }),
+    );
+    expect(notifications.sendToUser).not.toHaveBeenCalled();
   });
 
   it('listSharedWithUser treats legacy shares without includeConversation as conversation-enabled', async () => {
