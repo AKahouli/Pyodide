@@ -1,4 +1,8 @@
 {
+  "ERR_2535": "La liaison d'entrée du Playbook est invalide.",
+  "ERR_2536": "Une entrée obligatoire du Playbook est manquante.",
+  "ERR_2537": "La ressource d'entrée sélectionnée est indisponible ou inaccessible.",
+  "ERR_2538": "Un paramètre obligatoire du Playbook n'est pas configuré.",
   "ERR_2534": "L'agent par défaut Playbook Planner est indisponible ou ambigu.",
   "ERR_1000": "Une erreur s'est produite. Veuillez réessayer plus tard.",
   "ERR_1001": "Vérifiez vos informations puis réessayez.",

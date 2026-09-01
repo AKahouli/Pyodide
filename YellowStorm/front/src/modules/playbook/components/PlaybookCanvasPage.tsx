@@ -65,7 +65,7 @@ import { isIntentIteratorTask } from '../utils/intent-task-template';
 import { usePlaybookCanvas, type TriggerNodeActions } from '../hooks/usePlaybookCanvas';
 import { usePlaybookCanvasNodeHandlers, type PlaybookBindingModalState } from '../hooks/usePlaybookCanvasNodeHandlers';
 import { usePlaybookCanvasPageHandlers } from '../hooks/usePlaybookCanvasPageHandlers';
-import { usePlaybookCanvasExecutionHandlers } from '../hooks/usePlaybookCanvasExecutionHandlers';
+import { buildPlaybookRunOptions, usePlaybookCanvasExecutionHandlers } from '../hooks/usePlaybookCanvasExecutionHandlers';
 import { usePlaybookCanvasOutputFormatHandlers } from '../hooks/usePlaybookCanvasOutputFormatHandlers';
 import { flowEdgesToControlEdges, flowEdgesToPlaybookEdges } from '../hooks/helpers/control-edge-serializer';
 import { dataBindingsToLayerEdges, filterMirroredDataLayerEdges } from '../hooks/helpers/data-binding-serializer';
@@ -93,6 +93,9 @@ import { PlaybookGeneratingOverlay } from './PlaybookGeneratingOverlay';
 import { PlaybookDesignerPanel } from './PlaybookDesignerPanel';
 import { PlaybookNodeAdvisorDialog } from './PlaybookNodeAdvisorDialog';
 import { PlaybookUsageIndicator } from './PlaybookUsageIndicator';
+import { PlaybookInputsBar } from './PlaybookInputsBar';
+import { PlaybookInputConfigurationDialog } from './PlaybookInputConfigurationDialog';
+import { PlaybookRunDialog } from './PlaybookRunDialog';
 import { SharePlaybookDialog } from './SharePlaybookDialog';
 import { ConnectorSidebar } from './ConnectorSidebar';
 import { ConnectorBindingModal } from './ConnectorBindingModal';
@@ -104,11 +107,12 @@ import {
   createIntentSuggestionBindingId,
   createIntentSuggestionNodeId,
 } from '../utils/intent-application-key';
-import { appendDesignMessage, cancelPlaybookIntentConstruction, discardPlaybookIntentConstruction, fetchPlaybookIntentConstruction, fetchPlaybookIntentTraces, getPlaybookAssistantMessages, requestPlaybookNodeAdvisor, runPlaybookAssistantTurn, startAdvisorRemediationConstruction, startPlaybookIntentConstruction, streamPlaybookIntentConstruction, uploadPlaybookAssistantAttachment } from '../api';
+import { appendDesignMessage, cancelPlaybookIntentConstruction, discardPlaybookIntentConstruction, fetchPlaybookIntentConstruction, fetchPlaybookIntentTraces, getPlaybook, getPlaybookAssistantMessages, requestPlaybookNodeAdvisor, runPlaybookAssistantTurn, startAdvisorRemediationConstruction, startPlaybookIntentConstruction, streamPlaybookIntentConstruction, uploadPlaybookAssistantAttachment } from '../api';
 import { playbookFeatures } from '../features';
 import { getDefaultIteratorInputPorts, getDefaultIteratorOutputPorts } from '../hooks/helpers/node-serializer';
 import type {
   PlaybookTask,
+  Playbook,
   SemanticMatchResult,
   PlaybookPageMode,
   PlaybookNodeData,
@@ -132,6 +136,8 @@ import type {
   TaskInputPort,
   TaskOutputPort,
   PlaybookNodeType,
+  PlaybookInputDescriptor,
+  PlaybookInputContract,
 } from '../types';
 import { edgeMatchesIntentPortPair, getPreferredIntentInputPortId, getPreferredIntentOutputPortId, playbookEdgesToFlowEdges, resolveIntentEdgePorts } from '../hooks/helpers/control-edge-serializer';
 import { useModuleTranslation } from '@/modules/localization';
@@ -151,7 +157,7 @@ import {
 } from '../utils/playbook-canvas-layout';
 import { resolveCanvasNodeSelection } from '../utils/playbook-canvas-selection';
 import { usePlaybookIntentFlow } from '../utils/playbook-intent-flow';
-import { getUnboundRequiredPortsForTaskIds } from '../utils/required-port-validation';
+import { getUnboundRequiredPortsForTaskIds, isDataBindingResolved } from '../utils/required-port-validation';
 import type { PlaybookValidationIssue } from '../utils/required-port-validation';
 import { getEffectiveNodeType } from '../utils/node-type';
 import {
@@ -164,6 +170,9 @@ import {
   hasPendingJudgeEvaluations,
 } from '../utils/playbook-canvas-status';
 import { showError, showWarning } from '@/lib/notifications';
+import { parseApiError } from '@/lib/api-error';
+import { ErrorCode } from '@/lib/error-codes';
+import { usePlaybookInputContract } from '../hooks/usePlaybookInputContract';
 
 
 function PlaybookTriggersSheet(props: React.ComponentProps<typeof PlaybookScheduleSheet>) {
@@ -470,6 +479,71 @@ export function isTaskConfiguredForExecution(task: PlaybookTask): boolean {
   return Boolean(task.assignedAgentId);
 }
 
+export function canRunPlaybookInputContract(
+  isDirty: boolean,
+  isSaving: boolean,
+  contract: Pick<PlaybookInputContract, 'configurationReady' | 'definitionRevision' | 'graphValid' | 'invalidInputCount'> | undefined,
+  playbookRevision: number | undefined,
+): boolean {
+  return !isDirty
+    && !isSaving
+    && contract !== undefined
+    && contract.graphValid
+    && contract.configurationReady
+    && contract.invalidInputCount === 0
+    && contract.definitionRevision === playbookRevision;
+}
+
+export function getPlaybookInputRevisionSyncAction(
+  contractRevision: number,
+  playbookRevision: number,
+): 'contract' | 'playbook' | 'none' {
+  if (contractRevision < playbookRevision) return 'contract';
+  if (contractRevision > playbookRevision) return 'playbook';
+  return 'none';
+}
+
+export function getPlaybookInputRevisionSyncRequest(
+  playbookId: string,
+  contractRevision: number,
+  playbookRevision: number,
+  blockPlaybookRefresh: boolean,
+): { action: 'contract' | 'playbook'; key: string } | null {
+  const action = getPlaybookInputRevisionSyncAction(contractRevision, playbookRevision);
+  if (action === 'none' || (action === 'playbook' && blockPlaybookRefresh)) return null;
+  const key = `${playbookId}:${action}:${contractRevision}:${playbookRevision}`;
+  return { action, key };
+}
+
+export interface PlaybookInputRevisionSyncState {
+  inFlightKey: string | null;
+  completedKey: string | null;
+  failuresByKey: Record<string, number>;
+}
+
+export async function runPlaybookInputRevisionSync(
+  state: PlaybookInputRevisionSyncState,
+  request: { key: string },
+  synchronize: () => Promise<boolean>,
+): Promise<'succeeded' | 'failed' | 'skipped'> {
+  if (state.inFlightKey !== null || state.completedKey === request.key) return 'skipped';
+  state.inFlightKey = request.key;
+  try {
+    if (!await synchronize()) {
+      state.failuresByKey[request.key] = (state.failuresByKey[request.key] ?? 0) + 1;
+      return 'failed';
+    }
+    state.completedKey = request.key;
+    delete state.failuresByKey[request.key];
+    return 'succeeded';
+  } catch {
+    state.failuresByKey[request.key] = (state.failuresByKey[request.key] ?? 0) + 1;
+    return 'failed';
+  } finally {
+    state.inFlightKey = null;
+  }
+}
+
 function PlaybookCanvasInner() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
@@ -508,6 +582,7 @@ function PlaybookCanvasInner() {
   const fetchExecution = usePlaybookStore((s) => s.fetchExecution);
   const updatePlaybook = usePlaybookStore((s) => s.updatePlaybook);
   const clonePlaybook = usePlaybookStore((s) => s.clonePlaybook);
+  const fetchPlaybook = usePlaybookStore((s) => s.fetchPlaybook);
   const updateTasks = usePlaybookStore((s) => s.updateTasks);
   const updateEdges = usePlaybookStore((s) => s.updateEdges);
   const updateDataBindings = usePlaybookStore((s) => s.updateDataBindings);
@@ -520,6 +595,7 @@ function PlaybookCanvasInner() {
   const deleteOutputFormatTemplate = usePlaybookStore((s) => s.deleteOutputFormatTemplate);
   const updateWorkspaces = usePlaybookStore((s) => s.updateWorkspaces);
   const executePlaybook = usePlaybookStore((s) => s.executePlaybook);
+  const startFlowExecutionAction = usePlaybookStore((s) => s.startFlowExecutionAction);
   const resumeFromStep = usePlaybookStore((s) => s.resumeFromStep);
   const runFromStep = usePlaybookStore((s) => s.runFromStep);
   const stopExecution = usePlaybookStore((s) => s.stopExecution);
@@ -668,6 +744,9 @@ function PlaybookCanvasInner() {
   const [nameValue, setNameValue] = useState('');
   const [shareDialogOpen, setShareDialogOpen] = useState(false);
   const [evaluationDialogOpen, setEvaluationDialogOpen] = useState(false);
+  const [runDialogOpen, setRunDialogOpen] = useState(false);
+  const [configurationInput, setConfigurationInput] = useState<PlaybookInputDescriptor | null>(null);
+  const [configurationValue, setConfigurationValue] = useState<unknown>();
   const [nodeAdvisorOpen, setNodeAdvisorOpen] = useState(false);
   const [referenceModePrompt, setReferenceModePrompt] = useState<ReferenceModePromptState>(null);
   const [nodeAdvisorLoading, setNodeAdvisorLoading] = useState(false);
@@ -701,6 +780,43 @@ function PlaybookCanvasInner() {
   const importFileInputRef = useRef<HTMLInputElement>(null);
   const importPlaybookDefinition = usePlaybookStore((s) => s.importPlaybookDefinition);
   const [toolbarCollapsed, setToolbarCollapsed] = useState(true);
+  const inputContractQuery = usePlaybookInputContract(id);
+  const inputRevisionSyncRef = useRef<PlaybookInputRevisionSyncState>({
+    inFlightKey: null,
+    completedKey: null,
+    failuresByKey: {},
+  });
+  const [inputRevisionRetry, setInputRevisionRetry] = useState(0);
+  useEffect(() => {
+    inputRevisionSyncRef.current = { inFlightKey: null, completedKey: null, failuresByKey: {} };
+  }, [id]);
+  useEffect(() => {
+    if (!id || !inputContractQuery.data || playbook?.definitionRevision === undefined) return;
+    const contractRevision = inputContractQuery.data.definitionRevision;
+    const playbookRevision = playbook.definitionRevision;
+    const request = getPlaybookInputRevisionSyncRequest(
+      id,
+      contractRevision,
+      playbookRevision,
+      isDirty || isSaving,
+    );
+    if (!request) return;
+    const synchronize = request.action === 'contract'
+      ? async () => {
+          const result = await inputContractQuery.refetch();
+          return !result.error && result.data?.definitionRevision === playbookRevision;
+        }
+      : async () => {
+          await fetchPlaybook(id);
+          return usePlaybookStore.getState().currentPlaybook?.definitionRevision === contractRevision;
+        };
+    const syncState = inputRevisionSyncRef.current;
+    void runPlaybookInputRevisionSync(syncState, request, synchronize).then((outcome) => {
+      if (inputRevisionSyncRef.current === syncState && outcome === 'failed' && syncState.failuresByKey[request.key] === 1) {
+        setInputRevisionRetry((attempt) => attempt + 1);
+      }
+    });
+  }, [fetchPlaybook, id, inputContractQuery.data, inputContractQuery.refetch, inputRevisionRetry, isDirty, isSaving, playbook?.definitionRevision]);
   const assessPlaybookIntentDesign = usePlaybookStore((s) => s.assessPlaybookIntentDesign);
   const nodeTemplates = usePlaybookStore((s) => s.nodeTemplates);
   const defaultAgents = useDefaultAgents();
@@ -764,7 +880,7 @@ function PlaybookCanvasInner() {
   const setAssistantOperation = usePlaybookUiStore((s) => s.setAssistantOperation);
   const setAssistantPreviewStatus = usePlaybookUiStore((s) => s.setAssistantPreviewStatus);
   const clearAssistantOperation = usePlaybookUiStore((s) => s.clearAssistantOperation);
-  const { saveNow, validationIssues } = useAutosave({ paused: constructionActive || assistantPreviewStatus === 'ready' || assistantPreviewStatus === 'applying' || assistantPreviewStatus === 'discarding' });
+  const { saveNow, validationIssues } = useAutosave({ paused: Boolean(configurationInput) || constructionActive || assistantPreviewStatus === 'ready' || assistantPreviewStatus === 'applying' || assistantPreviewStatus === 'discarding' });
 
   useEffect(() => {
     setConstructionDiagnosticState({ ownerPlaybookId: id, diagnostics: [] });
@@ -2793,6 +2909,33 @@ function PlaybookCanvasInner() {
       ];
     };
 
+    const upsertTriggerBinding = (
+      resolvedTargetId: string,
+      targetPort: string,
+      triggerPath: string,
+    ) => {
+      const targetTask = nextTasks.find((task) => task.id === resolvedTargetId);
+      const targetInputPort = targetTask?.inputPorts?.find((port) => port.id === targetPort);
+      if (!targetTask || !targetInputPort || !/^playbookInputs\.[a-z0-9][a-z0-9_]*[a-z0-9]$/.test(triggerPath)) return;
+      nextDataBindings = nextDataBindings.filter(
+        (binding) => !(binding.targetNode === resolvedTargetId && binding.targetPort === targetPort),
+      );
+      nextDataBindings.push({
+        id: createIntentSuggestionBindingId(
+          suggestionApplicationKey,
+          resolvedTargetId,
+          targetPort,
+          'trigger',
+          triggerPath,
+          'current',
+        ),
+        targetNode: resolvedTargetId,
+        targetPort,
+        sourceKind: 'trigger',
+        triggerPath,
+      });
+    };
+
     const removeNodeOutputBinding = (
       resolvedTargetId: string,
       targetPort: string,
@@ -2869,6 +3012,9 @@ function PlaybookCanvasInner() {
           if (!port.required) {
             return;
           }
+          if (nextDataBindings.some((binding) => binding.targetNode === task.id
+            && binding.targetPort === port.id
+            && isDataBindingResolved(binding))) return;
 
           const incomingEdges = nextEdges.filter((edge) => {
             const edgeData = (edge.data || {}) as { targetInputPortId?: string; routerLabel?: string | null };
@@ -2933,7 +3079,7 @@ function PlaybookCanvasInner() {
       targetNodeRef: string | null,
       targetPort: string,
       targetIteratorNodeRef?: string | null,
-      sourceKind?: 'node-output' | 'constant' | 'state',
+      sourceKind?: 'node-output' | 'constant' | 'state' | 'trigger',
       sourceTaskId?: string | null,
       sourceNodeRef?: string | null,
       sourcePort?: string | null,
@@ -2941,6 +3087,7 @@ function PlaybookCanvasInner() {
       iteration?: 'current' | 'previous',
       constantValue?: unknown,
       statePath?: string,
+      triggerPath?: string,
     ) => {
       const resolvedTargetId = resolveScopedTaskReference(targetTaskId, targetNodeRef, targetIteratorNodeRef);
       if (!resolvedTargetId || !targetPort) return;
@@ -2965,6 +3112,10 @@ function PlaybookCanvasInner() {
       }
       if (sourceKind === 'state') {
         upsertStateBinding(resolvedTargetId, targetPort, statePath || '');
+        return;
+      }
+      if (sourceKind === 'trigger') {
+        upsertTriggerBinding(resolvedTargetId, targetPort, triggerPath || '');
         return;
       }
 
@@ -3169,7 +3320,9 @@ function PlaybookCanvasInner() {
 
     const orderedChanges = [
       ...suggestion.changes.filter((change) => change.type === 'delete_data_binding'),
-      ...suggestion.changes.filter((change) => change.type !== 'delete_node' && change.type !== 'delete_edge' && change.type !== 'delete_data_binding'),
+      ...suggestion.changes.filter((change) => change.type === 'create_node' || change.type === 'update_node'),
+      ...suggestion.changes.filter((change) => change.type === 'create_edge'),
+      ...suggestion.changes.filter((change) => change.type === 'create_data_binding'),
       ...suggestion.changes.filter((change) => change.type === 'delete_edge'),
       ...suggestion.changes.filter((change) => change.type === 'delete_node'),
     ];
@@ -3254,6 +3407,23 @@ function PlaybookCanvasInner() {
             undefined,
             undefined,
             change.statePath,
+          );
+        } else if (change.sourceKind === 'trigger') {
+          applyDataBindingChange(
+            'create_data_binding',
+            change.targetTaskId,
+            change.targetNodeRef,
+            change.targetPort,
+            change.targetIteratorNodeRef,
+            change.sourceKind,
+            null,
+            null,
+            null,
+            null,
+            undefined,
+            undefined,
+            undefined,
+            change.triggerPath,
           );
         } else {
           applyDataBindingChange(
@@ -3628,7 +3798,7 @@ function PlaybookCanvasInner() {
     }
   }, [consumePlaybookConstruction, getCurrentDefinitionRevision, id, intentDesign, playbook, refreshDesignerAssistantHistory, showError, t]);
 
-  const { handleRun, handleStop } = usePlaybookCanvasExecutionHandlers({
+  const { handleStop } = usePlaybookCanvasExecutionHandlers({
     id,
     playbook,
     isDirty,
@@ -3901,6 +4071,7 @@ function PlaybookCanvasInner() {
         <div className="flex-1 bg-muted/20" />
         <PlaybookGeneratingOverlay />
       </div>
+
     );
   }
 
@@ -3948,6 +4119,12 @@ function PlaybookCanvasInner() {
   const hasWorkspace = (playbook.workspaces?.length || 0) > 0;
   const unconfiguredTaskCount = playbook.tasks.filter((task) => !isTaskConfiguredForExecution(task)).length;
   const canRun = hasRunnableContent && hasWorkspace && unconfiguredTaskCount === 0 && !hasActiveExecution && !isSaving && !isDirty;
+  const canRunWithInputs = canRun && canRunPlaybookInputContract(
+    isDirty,
+    isSaving,
+    inputContractQuery.data,
+    playbook.definitionRevision,
+  );
 
   return (
     <div className="flex flex-col h-full w-full">
@@ -3989,7 +4166,7 @@ function PlaybookCanvasInner() {
         </div>
         <div className="hidden xl:block"><PlaybookUsageIndicator /></div>
         <PlaybookStatusActions
-          onRun={handleRun}
+          onRun={() => { if (canRunWithInputs) setRunDialogOpen(true); }}
           onStop={handleStop}
           onSave={saveNow}
           isDirty={isDirty}
@@ -3997,7 +4174,7 @@ function PlaybookCanvasInner() {
           isExecuting={isExecuting}
           hasActiveExecution={hasActiveExecution}
           isStopping={isStopping}
-          canRun={canRun}
+          canRun={canRunWithInputs}
           hasRunnableContent={hasRunnableContent}
           hasWorkspace={hasWorkspace}
           unconfiguredTaskCount={unconfiguredTaskCount}
@@ -4045,6 +4222,18 @@ function PlaybookCanvasInner() {
           onShare={playbook.accessLevel !== 'read' && playbook.accessLevel !== 'write' ? () => setShareDialogOpen(true) : undefined}
         />
       </div>
+
+      <PlaybookInputsBar
+        contract={inputContractQuery.data}
+        loading={inputContractQuery.isLoading}
+        canConfigure={playbook.accessLevel !== 'read'}
+        canRun={canRunWithInputs}
+        onConfigure={(input) => {
+          setConfigurationInput(input);
+          setConfigurationValue(undefined);
+        }}
+        onRun={() => { if (canRunWithInputs) setRunDialogOpen(true); }}
+      />
 
       {id && playbook?.accessLevel !== 'read' && playbook?.accessLevel !== 'write' && (
           <PlaybookTriggersSheet
@@ -4365,6 +4554,109 @@ function PlaybookCanvasInner() {
         </DialogContent>
       </Dialog>
 
+      {inputContractQuery.data ? (
+        <PlaybookRunDialog
+          open={runDialogOpen}
+          onOpenChange={setRunDialogOpen}
+          playbookName={playbook.name}
+          contract={inputContractQuery.data}
+          canRun={canRunWithInputs}
+          onRun={async (inputContext, idempotencyKey) => {
+            const state = usePlaybookStore.getState();
+            if (!canRunPlaybookInputContract(
+              state.isDirty,
+              state.isSaving,
+              inputContractQuery.data,
+              state.currentPlaybook?.definitionRevision,
+            )) {
+              if (inputContractQuery.data.definitionRevision !== state.currentPlaybook?.definitionRevision) {
+                await inputContractQuery.refetch();
+              }
+              showError(t('inputs.runStateChanged'));
+              return false;
+            }
+            setPageMode('run');
+            setExecutionPanelCollapsed(false);
+            setDesignerOpen(false);
+            setWorkspaceExplorerOpen(false);
+            setConnectorSidebarOpen(false);
+            setSkillSidebarOpen(false);
+            setGlobalSidebarOpen(false);
+            const result = await startFlowExecutionAction(
+              playbook.id,
+              inputContext,
+              idempotencyKey,
+              buildPlaybookRunOptions(playbook, nodeReflectionEnabled),
+            );
+            if (result?.executionId) {
+              await fetchExecution(playbook.id, result.executionId);
+              viewExecutionInPanel(result.executionId);
+              setExecutionPanelCollapsed(false);
+              setExecutionPanelOpen(true);
+            }
+            return true;
+          }}
+        />
+      ) : null}
+
+      <PlaybookInputConfigurationDialog
+        input={configurationInput}
+        value={configurationValue}
+        dirty={isDirty}
+        onValueChange={setConfigurationValue}
+        onDismiss={() => {
+          setConfigurationInput(null);
+          setConfigurationValue(undefined);
+        }}
+        onSave={async () => {
+          if (!id || !configurationInput || configurationValue === undefined) return false;
+          const playbookId = id;
+          const attemptedInput = configurationInput;
+          const attemptedRevision = usePlaybookStore.getState().currentPlaybook?.definitionRevision;
+          const currentBindings = usePlaybookStore.getState().currentPlaybook?.dataBindings ?? [];
+          updateDataBindings(replacePlaybookInputBinding(currentBindings, attemptedInput, configurationValue));
+          return savePlaybookInputConfiguration(
+            saveCurrentPlaybook,
+            () => usePlaybookStore.getState().isDirty,
+            inputContractQuery.refetch,
+            async () => {
+              const recovery = await recoverPlaybookInputConfigurationConflict({
+                playbookId,
+                attemptedRevision,
+                inputId: attemptedInput.id,
+                fetchPlaybook: getPlaybook,
+                commitPlaybook: (refreshedPlaybook) => {
+                  const state = usePlaybookStore.getState();
+                  if (activePlaybookIdRef.current !== playbookId || state.currentPlaybook?.id !== playbookId) {
+                    return false;
+                  }
+                  usePlaybookStore.setState({
+                    currentPlaybook: refreshedPlaybook,
+                    isDirty: false,
+                    undoStack: [],
+                    redoStack: [],
+                  });
+                  return true;
+                },
+                refetchContract: inputContractQuery.refetch,
+                isRouteCurrent: () => activePlaybookIdRef.current === playbookId,
+              });
+              if (recovery.status === 'recovered') {
+                setConfigurationInput(recovery.input);
+                showWarning(t('inputs.configurationConflictRecovered'));
+              } else if (recovery.status === 'input-removed') {
+                setConfigurationInput(null);
+                setConfigurationValue(undefined);
+                showWarning(t('inputs.configurationConflictInputRemoved'));
+              } else {
+                showError(t('inputs.configurationConflictRefreshFailed'));
+              }
+            },
+          );
+        }}
+        onSaveError={() => showError(t('inputs.configurationSaveFailed'))}
+      />
+
       <Dialog open={!!editingOutputFormatTaskId} onOpenChange={(nextOpen) => { if (!nextOpen) saveAndCloseOutputFormatDialog(); }}>
         <DialogContent className="max-w-3xl">
           <DialogHeader>
@@ -4479,4 +4771,89 @@ export function PlaybookCanvasPage() {
       <PlaybookCanvasInner />
     </ReactFlowProvider>
   );
+}
+export async function savePlaybookInputConfiguration(
+  save: (options: { reason: 'manual' }) => Promise<void>,
+  isDirty: () => boolean,
+  refetchContract: () => Promise<unknown>,
+  recoverConflict?: () => Promise<void>,
+): Promise<boolean> {
+  try {
+    await save({ reason: 'manual' });
+  } catch (error) {
+    if (recoverConflict && parseApiError(error).code === ErrorCode.CONFLICT) {
+      await recoverConflict();
+      return false;
+    }
+    throw error;
+  }
+  if (isDirty()) return false;
+  await refetchContract();
+  return true;
+}
+
+export function replacePlaybookInputBinding(
+  bindings: DataBinding[],
+  input: Pick<PlaybookInputDescriptor, 'taskId' | 'portId'>,
+  value: unknown,
+): DataBinding[] {
+  return [
+    ...bindings.filter((binding) => !(binding.targetNode === input.taskId && binding.targetPort === input.portId)),
+    {
+      id: `playbook-input-${input.taskId}-${input.portId}`,
+      targetNode: input.taskId,
+      targetPort: input.portId,
+      sourceKind: 'constant',
+      constantValue: value,
+    },
+  ];
+}
+
+interface InputConfigurationConflictRecoveryOptions {
+  playbookId: string;
+  attemptedRevision?: number;
+  inputId: string;
+  fetchPlaybook: (id: string) => Promise<Playbook>;
+  commitPlaybook: (playbook: Playbook) => boolean;
+  refetchContract: () => Promise<{ data?: PlaybookInputContract; error?: unknown }>;
+  isRouteCurrent: () => boolean;
+}
+
+export async function recoverPlaybookInputConfigurationConflict({
+  playbookId,
+  attemptedRevision,
+  inputId,
+  fetchPlaybook,
+  commitPlaybook,
+  refetchContract,
+  isRouteCurrent,
+}: InputConfigurationConflictRecoveryOptions): Promise<
+  { status: 'recovered'; input: PlaybookInputDescriptor }
+  | { status: 'input-removed' }
+  | { status: 'failed' }
+> {
+  if (!isRouteCurrent()) return { status: 'failed' };
+  let refreshedPlaybook: Playbook;
+  try {
+    refreshedPlaybook = await fetchPlaybook(playbookId);
+  } catch {
+    return { status: 'failed' };
+  }
+  if (
+    !isRouteCurrent()
+    || refreshedPlaybook.id !== playbookId
+    || refreshedPlaybook.definitionRevision === attemptedRevision
+  ) return { status: 'failed' };
+  if (!commitPlaybook(refreshedPlaybook)) return { status: 'failed' };
+
+  const contractResult = await refetchContract();
+  if (
+    !isRouteCurrent()
+    || contractResult.error
+    || contractResult.data?.playbookId !== playbookId
+    || contractResult.data.definitionRevision !== refreshedPlaybook.definitionRevision
+  ) return { status: 'failed' };
+
+  const input = contractResult.data.inputs.find((candidate) => candidate.id === inputId);
+  return input ? { status: 'recovered', input } : { status: 'input-removed' };
 }

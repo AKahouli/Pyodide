@@ -108,7 +108,7 @@ describe('PlaybookFlowExecutionService start preflight', () => {
       { reserve: jest.fn(), confirmLink: jest.fn(), release: jest.fn() } as any,
       flowService as any,
       { buildSnapshot: jest.fn().mockReturnValue({ settings: {}, nodes: [], controlEdges: [], dataBindings: [] }) } as any,
-      { validate: jest.fn() } as any,
+      { validate: jest.fn(), collectValidationErrors: jest.fn().mockReturnValue([]) } as any,
       { buildGrpcAgentsForPlaybook: jest.fn() } as any,
       { cacheOwner: jest.fn(), emitExecutionQueued: jest.fn() } as any,
       new PlaybookFlowObservabilityService(
@@ -128,6 +128,259 @@ describe('PlaybookFlowExecutionService start preflight', () => {
 
     expect(flowService.findOneForExecutionStart).toHaveBeenCalledWith('flow-1', 'owner-1');
     expect(flowService.findOne).not.toHaveBeenCalled();
+  });
+
+  it('rejects missing runtime inputs before reserving idempotency', async () => {
+    const sanitizedDocument = { save: jest.fn() };
+    const flowService = { findById: jest.fn().mockResolvedValue(sanitizedDocument) };
+    const graphSanitizerService = {
+      sanitize: jest.fn().mockReturnValue({
+        nodes: [],
+        controlEdges: [],
+        dataBindings: [],
+        removedOrphanedEdgeCount: 1,
+        removedOrphanedBindingCount: 0,
+        removedStaleBindingCount: 0,
+      }),
+    };
+    const { service, idempotencyService } = createExecutionServiceForTests({ flowService, graphSanitizerService });
+    (service as any).inputContractService = {
+      derive: jest.fn().mockReturnValue({
+        inputs: [{
+          id: 'step-1:brief',
+          taskId: 'step-1',
+          taskTitle: 'Draft report',
+          portId: 'brief',
+          label: 'Brief',
+          artifactKind: 'text',
+          required: true,
+          scope: 'runtime',
+          binding: { kind: 'trigger', triggerPath: 'playbookInputs.brief' },
+          acceptedSources: ['manual'],
+          readiness: 'runtime_required',
+        }],
+      }),
+    };
+
+    await expect(service.start('flow-1', 'owner-1', {}, 'idem-1'))
+      .rejects.toThrow('Required Playbook input Brief is missing.');
+
+    expect(idempotencyService.reserve).not.toHaveBeenCalled();
+    expect(flowService.findById).not.toHaveBeenCalled();
+    expect(sanitizedDocument.save).not.toHaveBeenCalled();
+  });
+
+  it('rejects inaccessible document inputs before reserving idempotency', async () => {
+    const { service, idempotencyService } = createExecutionServiceForTests();
+    (service as any).inputContractService = {
+      derive: jest.fn().mockReturnValue({
+        inputs: [{
+          id: 'step-1:document',
+          taskId: 'step-1',
+          taskTitle: 'Summarize document',
+          portId: 'document',
+          label: 'Document',
+          artifactKind: 'document',
+          required: true,
+          scope: 'runtime',
+          binding: { kind: 'trigger', triggerPath: 'playbookInputs.document' },
+          acceptedSources: ['document'],
+          readiness: 'runtime_required',
+        }],
+      }),
+    };
+    (service as any).workspaceShareService = {
+      assertUserHasAccess: jest.fn().mockRejectedValue(new Error('forbidden')),
+    };
+    (service as any).workspaceDocumentService = { findByIds: jest.fn() };
+
+    await expect(service.start('flow-1', 'owner-1', {
+      playbookInputs: {
+        document: { kind: 'document', id: 'doc-1', workspaceId: 'workspace-1' },
+      },
+    }, 'idem-1')).rejects.toThrow('The selected resource for Document is unavailable or inaccessible.');
+
+    expect(idempotencyService.reserve).not.toHaveBeenCalled();
+  });
+
+  it('fails closed when document authorization services are unavailable', async () => {
+    const { service } = createExecutionServiceForTests();
+    (service as any).inputContractService = {
+      derive: jest.fn().mockReturnValue({
+        inputs: [{
+          id: 'step-1:document',
+          taskId: 'step-1',
+          taskTitle: 'Summarize document',
+          portId: 'document',
+          label: 'Document',
+          artifactKind: 'document',
+          required: true,
+          scope: 'runtime',
+          binding: { kind: 'trigger', triggerPath: 'playbookInputs.document' },
+          acceptedSources: ['document'],
+          readiness: 'runtime_required',
+        }],
+      }),
+    };
+
+    await expect(service.start('flow-1', 'owner-1', {
+      playbookInputs: {
+        document: { kind: 'document', id: 'doc-1', workspaceId: 'workspace-1' },
+      },
+    })).rejects.toThrow('The selected resource for Document is unavailable or inaccessible.');
+  });
+
+  it('revalidates configured destinations with write access before reserving idempotency', async () => {
+    const flowService = {
+      findOneForExecutionStart: jest.fn().mockResolvedValue({
+        id: 'flow-1',
+        nodes: [{
+          id: 'step-1',
+          kind: 'step',
+          label: 'Save report',
+          input: { ports: [{ id: 'destination', label: 'Destination workspace', type: 'document', required: true }] },
+          output: { ports: [] },
+        }],
+        controlEdges: [],
+        dataBindings: [{
+          id: 'binding-1',
+          targetNode: 'step-1',
+          targetPort: 'destination',
+          sourceKind: 'constant',
+          constantValue: { kind: 'workspace', id: 'workspace-1', workspaceId: 'workspace-1' },
+        }],
+        settings: {},
+      }),
+    };
+    const { service, idempotencyService } = createExecutionServiceForTests({ flowService });
+    const workspaceShareService = {
+      assertUserHasAccess: jest.fn(),
+      assertUserHasWriteAccess: jest.fn().mockRejectedValue(new Error('read only')),
+    };
+    (service as any).workspaceShareService = workspaceShareService;
+    (service as any).inputContractService = {
+      derive: jest.fn().mockReturnValue({
+        inputs: [{
+          id: 'step-1:destination',
+          taskId: 'step-1',
+          taskTitle: 'Save report',
+          portId: 'destination',
+          label: 'Destination workspace',
+          artifactKind: 'document',
+          required: true,
+          scope: 'configuration',
+          binding: { kind: 'constant' },
+          acceptedSources: ['workspace'],
+          readiness: 'configured',
+        }],
+      }),
+    };
+
+    await expect(service.start('flow-1', 'owner-1', {}, 'idem-1'))
+      .rejects.toThrow('The selected resource for Destination workspace is unavailable or inaccessible.');
+
+    expect(workspaceShareService.assertUserHasWriteAccess).toHaveBeenCalledWith('owner-1', 'workspace-1');
+    expect(workspaceShareService.assertUserHasAccess).not.toHaveBeenCalled();
+    expect(idempotencyService.reserve).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['primitive', 'workspace-1'],
+    ['unknown resource', { kind: 'bucket', id: 'workspace-1', workspaceId: 'workspace-1' }],
+    ['document resource', { kind: 'document', id: 'doc-1', workspaceId: 'workspace-1' }],
+  ])('rejects a %s configuration destination before authorization and idempotency', async (_label, constantValue) => {
+    const flowService = {
+      findOneForExecutionStart: jest.fn().mockResolvedValue({
+        id: 'flow-1',
+        nodes: [{
+          id: 'step-1', kind: 'step', label: 'Save report',
+          input: { ports: [{ id: 'destination', label: 'Destination workspace', type: 'data', required: true }] },
+          output: { ports: [] },
+        }],
+        controlEdges: [],
+        dataBindings: [{
+          id: 'binding-1', targetNode: 'step-1', targetPort: 'destination',
+          sourceKind: 'constant', constantValue,
+        }],
+        settings: {},
+      }),
+    };
+    const { service, idempotencyService } = createExecutionServiceForTests({ flowService });
+    const workspaceShareService = {
+      assertUserHasAccess: jest.fn(),
+      assertUserHasWriteAccess: jest.fn(),
+    };
+    (service as any).workspaceShareService = workspaceShareService;
+    (service as any).inputContractService = {
+      derive: jest.fn().mockReturnValue({
+        inputs: [{
+          id: 'step-1:destination', taskId: 'step-1', taskTitle: 'Save report',
+          portId: 'destination', label: 'Destination workspace', artifactKind: 'data',
+          required: true, scope: 'configuration', binding: { kind: 'constant' },
+          acceptedSources: ['workspace'], readiness: 'configured',
+        }],
+      }),
+    };
+
+    await expect(service.start('flow-1', 'owner-1', {}, 'idem-1'))
+      .rejects.toThrow('The selected resource for Destination workspace is unavailable or inaccessible.');
+
+    expect(workspaceShareService.assertUserHasWriteAccess).not.toHaveBeenCalled();
+    expect(idempotencyService.reserve).not.toHaveBeenCalled();
+  });
+
+  it('rejects workspace resources whose id does not match their authorized workspace', async () => {
+    const { service, idempotencyService } = createExecutionServiceForTests();
+    const workspaceShareService = { assertUserHasAccess: jest.fn() };
+    (service as any).workspaceShareService = workspaceShareService;
+    (service as any).inputContractService = {
+      derive: jest.fn().mockReturnValue({
+        inputs: [{
+          id: 'step-1:workspace',
+          taskId: 'step-1',
+          taskTitle: 'Read workspace',
+          portId: 'workspace',
+          label: 'Workspace',
+          artifactKind: 'document',
+          required: true,
+          scope: 'runtime',
+          binding: { kind: 'trigger', triggerPath: 'playbookInputs.workspace' },
+          acceptedSources: ['workspace'],
+          readiness: 'runtime_required',
+        }],
+      }),
+    };
+
+    await expect(service.start('flow-1', 'owner-1', {
+      playbookInputs: {
+        workspace: { kind: 'workspace', id: 'workspace-other', workspaceId: 'workspace-1' },
+      },
+    }, 'idem-1')).rejects.toThrow('The selected resource for Workspace is unavailable or inaccessible.');
+
+    expect(workspaceShareService.assertUserHasAccess).not.toHaveBeenCalled();
+    expect(idempotencyService.reserve).not.toHaveBeenCalled();
+  });
+
+  it('persists a shared-write collaborator sanitation with the document owner before idempotency', async () => {
+    const conflict = new Error('revision conflict');
+    const flowService = {
+      findOneForExecutionStart: jest.fn().mockResolvedValue({
+        id: 'flow-1',
+        ownerId: 'document-owner',
+        definitionRevision: 7,
+        nodes: [],
+        controlEdges: [{ id: 'orphan', source: 'missing', target: 'missing' }],
+        dataBindings: [],
+        settings: {},
+      }),
+      persistSanitizedExecutionGraph: jest.fn().mockRejectedValue(conflict),
+    };
+    const { service, idempotencyService } = createExecutionServiceForTests({ flowService });
+
+    await expect(service.start('flow-1', 'owner-1', {}, 'idem-1')).rejects.toThrow('revision conflict');
+
+    expect(flowService.persistSanitizedExecutionGraph).toHaveBeenCalledWith('flow-1', 'document-owner', 7, [], []);
+    expect(idempotencyService.reserve).not.toHaveBeenCalled();
   });
 });
 
@@ -232,7 +485,7 @@ describe('PlaybookFlowExecutionService lifecycle handling', () => {
       idempotencyService as any,
       { findOne: jest.fn().mockResolvedValue({ nodes: [], controlEdges: [], dataBindings: [], settings: {} }) } as any,
       { buildSnapshot: jest.fn().mockReturnValue({ settings: { recursionLimit: 25, maxParallelism: 5 } }) } as any,
-      { validate: jest.fn() } as any,
+      { validate: jest.fn(), collectValidationErrors: jest.fn().mockReturnValue([]) } as any,
       { buildGrpcAgentsForPlaybook: jest.fn() } as any,
       { cacheOwner: jest.fn(), emitExecutionQueued: jest.fn() } as any,
       new PlaybookFlowObservabilityService(
@@ -284,7 +537,7 @@ describe('PlaybookFlowExecutionService lifecycle handling', () => {
       idempotencyService as any,
       { findOne: jest.fn().mockResolvedValue({ nodes: [], controlEdges: [], dataBindings: [], settings: {} }) } as any,
       { buildSnapshot: jest.fn().mockReturnValue({ settings: { recursionLimit: 25, maxParallelism: 5 } }) } as any,
-      { validate: jest.fn() } as any,
+      { validate: jest.fn(), collectValidationErrors: jest.fn().mockReturnValue([]) } as any,
       { buildGrpcAgentsForPlaybook: jest.fn() } as any,
       { cacheOwner: jest.fn(), emitExecutionQueued: jest.fn() } as any,
       new PlaybookFlowObservabilityService(
@@ -363,7 +616,7 @@ describe('PlaybookFlowExecutionService lifecycle handling', () => {
       idempotencyService as any,
       { findOne: jest.fn().mockResolvedValue({ nodes: [], controlEdges: [], dataBindings: [], settings: {} }) } as any,
       { buildSnapshot: jest.fn().mockReturnValue({ settings: { recursionLimit: 25, maxParallelism: 5 } }) } as any,
-      { validate: jest.fn() } as any,
+      { validate: jest.fn(), collectValidationErrors: jest.fn().mockReturnValue([]) } as any,
       { buildGrpcAgentsForPlaybook: jest.fn() } as any,
       { cacheOwner: jest.fn(), emitExecutionQueued: jest.fn() } as any,
       new PlaybookFlowObservabilityService(
@@ -511,7 +764,7 @@ describe('PlaybookFlowExecutionService lifecycle handling', () => {
       idempotencyService as any,
       { findOne: jest.fn().mockResolvedValue({ nodes: [], controlEdges: [], dataBindings: [], settings: {} }) } as any,
       { buildSnapshot: jest.fn().mockReturnValue({ settings: {}, nodes: [], controlEdges: [], dataBindings: [] }) } as any,
-      { validate: jest.fn() } as any,
+      { validate: jest.fn(), collectValidationErrors: jest.fn().mockReturnValue([]) } as any,
       { buildGrpcAgentsForPlaybook: jest.fn() } as any,
       { cacheOwner: jest.fn(), emitExecutionQueued: jest.fn() } as any,
       new PlaybookFlowObservabilityService(

@@ -13,6 +13,7 @@ const apiMock = vi.hoisted(() => ({
   deletePlaybook: vi.fn(),
   clonePlaybook: vi.fn(),
   executePlaybook: vi.fn(),
+  startFlowExecution: vi.fn(),
   cancelFlowExecution: vi.fn(),
   resumeFlowApproval: vi.fn(),
   rerunPlaybookStep: vi.fn(),
@@ -42,7 +43,15 @@ const toastMock = vi.hoisted(() => ({
 
 const autoLayoutMock = vi.hoisted(() => vi.fn((tasks) => tasks));
 const handleApiErrorMock = vi.hoisted(() => vi.fn());
-const parseApiErrorMock = vi.hoisted(() => vi.fn(() => ({ message: 'parseApiError message' })));
+const parseApiErrorMock = vi.hoisted(() => vi.fn((): {
+  code: string;
+  message: string;
+  statusCode: number;
+  requiresReAuth: boolean;
+  raw: unknown;
+} => ({
+  code: 'ERR_1000', message: 'parseApiError message', statusCode: 500, requiresReAuth: false, raw: null,
+})));
 
 vi.mock('./api', async (importOriginal) => {
   const actual = await importOriginal<typeof import('./api')>();
@@ -61,7 +70,9 @@ describe('playbook store', () => {
     apiMock.updatePlaybook.mockReset();
     apiMock.patchFlowDelta.mockReset();
     parseApiErrorMock.mockReset();
-    parseApiErrorMock.mockImplementation(() => ({ message: 'parseApiError message' }));
+    parseApiErrorMock.mockImplementation(() => ({
+      code: 'ERR_1000', message: 'parseApiError message', statusCode: 500, requiresReAuth: false, raw: null,
+    }));
     usePlaybookStore.getState().reset();
     usePlaybookUiStore.setState(initialPlaybookUiState);
     __setDeltaAutosaveAvailableForTests(false);
@@ -71,6 +82,33 @@ describe('playbook store', () => {
     usePlaybookStore.getState().reset();
     usePlaybookUiStore.setState(initialPlaybookUiState);
     __setDeltaAutosaveAvailableForTests(false);
+  });
+
+  it('forwards runtime inputs and complete execution options through the legacy flow action', async () => {
+    apiMock.startFlowExecution.mockResolvedValueOnce({ executionId: 'execution-inputs' });
+    const options = {
+      executionMode: 'inherit' as const,
+      stepExecutionModes: { 'task-1': 'replay_strict' as const },
+      runNodeReflection: true,
+      advisorScoringMode: 'heuristic' as const,
+      advisorAutopilotEnabled: true,
+      advisorAutopilotTargetScore: 87,
+      advisorAutopilotMaxTurns: 6,
+    };
+
+    await usePlaybookStore.getState().startFlowExecutionAction(
+      'playbook-1',
+      { playbookInputs: { prompt: 'Draft' } },
+      'run-1',
+      options,
+    );
+
+    expect(apiMock.startFlowExecution).toHaveBeenCalledWith(
+      'playbook-1',
+      { playbookInputs: { prompt: 'Draft' } },
+      'run-1',
+      options,
+    );
   });
 
   it('projects Dynamic Reasoning topology into the cached and current execution', () => {
@@ -453,6 +491,27 @@ describe('playbook store', () => {
     expect(apiMock.updatePlaybook).toHaveBeenCalledTimes(1);
     expect(apiMock.getFlow).toHaveBeenCalledWith('p1', { view: 'base' });
     expect(usePlaybookStore.getState().isDirty).toBe(true);
+  });
+
+  it('propagates manual revision conflicts after settling save state', async () => {
+    const playbook = makePlaybook({ id: 'p1', definitionRevision: 1 });
+    const conflict = { code: 'ERR_1005', statusCode: 409 };
+    apiMock.getPlaybook.mockResolvedValueOnce(playbook);
+    apiMock.updatePlaybook.mockRejectedValueOnce(conflict);
+    parseApiErrorMock.mockReturnValue({
+      code: 'ERR_1005', message: 'Conflict', statusCode: 409, requiresReAuth: false, raw: conflict,
+    });
+
+    await usePlaybookStore.getState().fetchPlaybook('p1');
+    usePlaybookStore.setState({
+      currentPlaybook: { ...playbook, description: 'Changed locally' },
+      isDirty: true,
+      dirtyVersion: 1,
+    });
+
+    await expect(usePlaybookStore.getState().saveCurrentPlaybook({ reason: 'manual' })).rejects.toBe(conflict);
+
+    expect(usePlaybookStore.getState()).toMatchObject({ isDirty: true, isSaving: false, savingDirtyVersion: null });
   });
 
   it('fetchFlow loads the base flow first, then merges enriched active replays', async () => {

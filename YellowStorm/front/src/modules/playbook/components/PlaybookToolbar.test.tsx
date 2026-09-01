@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react';
 import { render, screen } from '@testing-library/react';
+import { useState } from 'react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
 import { PlaybookStatusActions, PlaybookToolbar } from './PlaybookToolbar';
@@ -108,6 +109,22 @@ describe('PlaybookToolbar', () => {
 
     await userEvent.click(screen.getByText('Prepare report'));
     expect(onValidationIssueSelect).toHaveBeenCalledWith(validationIssue);
+  });
+
+  it('routes the header Run action to the runtime input dialog', async () => {
+    function HeaderRunHarness() {
+      const [dialogOpen, setDialogOpen] = useState(false);
+      return (
+        <>
+          <PlaybookStatusActions {...defaultStatusProps} onRun={() => setDialogOpen(true)} />
+          {dialogOpen ? <div role="dialog">runtime-inputs</div> : null}
+        </>
+      );
+    }
+    render(<HeaderRunHarness />);
+
+    await userEvent.click(screen.getByRole('button', { name: 'toolbar.run' }));
+    expect(screen.getByRole('dialog')).toHaveTextContent('runtime-inputs');
   });
 
   it('surfaces unconfigured workflow steps as readiness blockers', async () => {

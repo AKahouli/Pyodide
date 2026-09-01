@@ -482,6 +482,7 @@ export const API_ENDPOINTS = {
     generate: '/playbooks/generate',
     rewritePrompt: '/playbooks/rewrite-prompt',
     byId: (id: string) => `/playbooks/${id}`,
+    inputContract: (id: string) => `/playbooks/${id}/input-contract`,
     integrationLink: (id: string) => `/playbooks/${id}/integration-link`,
     publicExecute: (token: string) => `/playbooks/public/${token}/execute`,
     execute: (id: string) => `/playbooks/${id}/execute`,
@@ -620,6 +621,7 @@ export const API_ENDPOINTS = {
   playbookFlows: {
     list: '/playbooks',
     byId: (id: string) => `/playbooks/${id}`,
+    inputContract: (id: string) => `/playbooks/${id}/input-contract`,
     delta: (id: string) => `/playbooks/${id}/delta`,
     generate: '/playbooks/generate',
     rewritePrompt: '/playbooks/rewrite-prompt',

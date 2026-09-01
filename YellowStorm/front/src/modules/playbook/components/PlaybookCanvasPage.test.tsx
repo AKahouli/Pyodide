@@ -1,9 +1,9 @@
 import { describe, expect, it, vi } from 'vitest';
-import { buildIntentEdgeOptions, buildOverviewResultNodeIds, canAppendIntentEdge, getInitialPlaybookPageMode, getScopedConstructionDiagnostics, hydrateAssistantOperationHandoff, isPlaybookRouteCurrent, isTaskConfiguredForExecution, loadLatestPlaybookAssistantHistory, pruneUnreachableDataBindings, remapRouterConditionSourceNodes, resolveDiagnosticNodeId, resolveIntentNodeSemantics, shouldApplyInitialAutoLayout, shouldAutoLayoutAfterConstruction, shouldBlockCanvasMutationShortcut, shouldClearConstructionDiagnostics, shouldConsumeAssistantOperationHandoff, shouldEnableCanvasNodeDragging, shouldRenderPlaybookAssistant, shouldUsePlaybookMcpAssistant, updateScopedConstructionDiagnostics } from './PlaybookCanvasPage';
+import { buildIntentEdgeOptions, buildOverviewResultNodeIds, canAppendIntentEdge, canRunPlaybookInputContract, getInitialPlaybookPageMode, getPlaybookInputRevisionSyncAction, getPlaybookInputRevisionSyncRequest, getScopedConstructionDiagnostics, hydrateAssistantOperationHandoff, isPlaybookRouteCurrent, isTaskConfiguredForExecution, loadLatestPlaybookAssistantHistory, pruneUnreachableDataBindings, recoverPlaybookInputConfigurationConflict, remapRouterConditionSourceNodes, replacePlaybookInputBinding, resolveDiagnosticNodeId, resolveIntentNodeSemantics, runPlaybookInputRevisionSync, savePlaybookInputConfiguration, shouldApplyInitialAutoLayout, shouldAutoLayoutAfterConstruction, shouldBlockCanvasMutationShortcut, shouldClearConstructionDiagnostics, shouldConsumeAssistantOperationHandoff, shouldEnableCanvasNodeDragging, shouldRenderPlaybookAssistant, shouldUsePlaybookMcpAssistant, updateScopedConstructionDiagnostics, type PlaybookInputRevisionSyncState } from './PlaybookCanvasPage';
 import { resolveCanvasNodeSelection } from '../utils/playbook-canvas-selection';
 import { buildCanvasJudgeStateMap, hasPendingJudgeEvaluations } from '../utils/playbook-canvas-status';
 import { makeExecution } from '../test-utils';
-import type { PlaybookTask } from '../types';
+import type { Playbook, PlaybookTask } from '../types';
 
 const makeTask = (overrides: Partial<PlaybookTask> = {}) => ({
   id: 'task-1',
@@ -16,6 +16,179 @@ const makeTask = (overrides: Partial<PlaybookTask> = {}) => ({
   assignedAgentId: 'agent-1',
   ...overrides,
 }) as PlaybookTask;
+
+describe('savePlaybookInputConfiguration', () => {
+  it('uses the current store revision and keeps the dialog open when save leaves a dirty draft', async () => {
+    const save = vi.fn().mockResolvedValue(undefined);
+    const refetchContract = vi.fn().mockResolvedValue(undefined);
+
+    await expect(savePlaybookInputConfiguration(save, () => true, refetchContract)).resolves.toBe(false);
+
+    expect(save).toHaveBeenCalledWith({ reason: 'manual' });
+    expect(refetchContract).not.toHaveBeenCalled();
+  });
+
+  it('refreshes the contract only after a successful clean save', async () => {
+    const save = vi.fn().mockResolvedValue(undefined);
+    const refetchContract = vi.fn().mockResolvedValue(undefined);
+
+    await expect(savePlaybookInputConfiguration(save, () => false, refetchContract)).resolves.toBe(true);
+
+    expect(refetchContract).toHaveBeenCalledOnce();
+  });
+
+  it('recovers a manual revision conflict instead of reporting a generic save failure', async () => {
+    const conflict = {
+      isAxiosError: true,
+      response: {
+        status: 409,
+        data: { success: false, error: { code: 'ERR_1005', message: 'Conflict', statusCode: 409 } },
+      },
+    };
+    const recoverConflict = vi.fn().mockResolvedValue(undefined);
+
+    await expect(savePlaybookInputConfiguration(
+      vi.fn().mockRejectedValue(conflict),
+      () => true,
+      vi.fn(),
+      recoverConflict,
+    )).resolves.toBe(false);
+
+    expect(recoverConflict).toHaveBeenCalledOnce();
+  });
+});
+
+describe('Playbook input configuration conflict recovery', () => {
+  const input = {
+    id: 'task-1:destination', taskId: 'task-1', taskTitle: 'Save report',
+    portId: 'destination', label: 'Destination', artifactKind: 'data' as const,
+    required: true as const, scope: 'configuration' as const,
+    binding: { kind: 'constant' as const }, acceptedSources: ['workspace' as const],
+    readiness: 'configured' as const,
+  };
+
+  it('loads the latest Playbook before its matching contract and retains the input for explicit retry', async () => {
+    const calls: string[] = [];
+    let playbook = { id: 'playbook-1', definitionRevision: 4 } as Playbook;
+    const result = await recoverPlaybookInputConfigurationConflict({
+      playbookId: 'playbook-1',
+      attemptedRevision: 3,
+      inputId: input.id,
+      fetchPlaybook: vi.fn(async () => { calls.push('playbook'); return { ...playbook, definitionRevision: 5 }; }),
+      commitPlaybook: vi.fn((refreshed) => { playbook = refreshed; return true; }),
+      refetchContract: vi.fn(async () => {
+        calls.push('contract');
+        return { data: { playbookId: 'playbook-1', definitionRevision: 5, graphValid: true, configurationReady: true, runtimeInputCount: 0, invalidInputCount: 0, inputs: [input] } };
+      }),
+      isRouteCurrent: () => true,
+    });
+
+    expect(calls).toEqual(['playbook', 'contract']);
+    expect(result).toEqual({ status: 'recovered', input });
+  });
+
+  it('does not let a late recovery for Playbook A replace Playbook B after navigation', async () => {
+    let routeCurrent = true;
+    let currentPlaybook = { id: 'playbook-1', definitionRevision: 3 } as Playbook;
+    let resolvePlaybook!: (playbook: Playbook) => void;
+    const pendingPlaybook = new Promise<Playbook>((resolve) => { resolvePlaybook = resolve; });
+    const refetchContract = vi.fn();
+    const recovery = recoverPlaybookInputConfigurationConflict({
+      playbookId: 'playbook-1', attemptedRevision: 3, inputId: input.id,
+      fetchPlaybook: vi.fn(() => pendingPlaybook),
+      commitPlaybook: vi.fn((refreshed) => {
+        if (!routeCurrent || currentPlaybook.id !== 'playbook-1') return false;
+        currentPlaybook = refreshed;
+        return true;
+      }),
+      refetchContract,
+      isRouteCurrent: () => routeCurrent,
+    });
+
+    routeCurrent = false;
+    currentPlaybook = { ...currentPlaybook, id: 'playbook-2', definitionRevision: 7 };
+    resolvePlaybook({ ...currentPlaybook, id: 'playbook-1', definitionRevision: 4 });
+
+    await expect(recovery).resolves.toEqual({ status: 'failed' });
+    expect(currentPlaybook.id).toBe('playbook-2');
+    expect(refetchContract).not.toHaveBeenCalled();
+  });
+
+  it('replaces only the target binding on retry and preserves competing server bindings', () => {
+    const competingBinding = { id: 'server-binding', targetNode: 'task-2', targetPort: 'source', sourceKind: 'constant' as const, constantValue: 'server value' };
+    const staleTarget = { id: 'old-target', targetNode: input.taskId, targetPort: input.portId, sourceKind: 'constant' as const, constantValue: { id: 'old' } };
+
+    expect(replacePlaybookInputBinding([competingBinding, staleTarget], input, { id: 'new' })).toEqual([
+      competingBinding,
+      expect.objectContaining({ targetNode: input.taskId, targetPort: input.portId, constantValue: { id: 'new' } }),
+    ]);
+  });
+});
+
+describe('Playbook input dialog guards', () => {
+  const readyContract = {
+    configurationReady: true,
+    definitionRevision: 4,
+    graphValid: true,
+    invalidInputCount: 0,
+  };
+
+  it('allows runs only for a clean saved playbook at the contract revision', () => {
+    expect(canRunPlaybookInputContract(false, false, readyContract, 4)).toBe(true);
+    expect(canRunPlaybookInputContract(true, false, readyContract, 4)).toBe(false);
+    expect(canRunPlaybookInputContract(false, true, readyContract, 4)).toBe(false);
+    expect(canRunPlaybookInputContract(false, false, { ...readyContract, definitionRevision: 3 }, 4)).toBe(false);
+  });
+
+  it('blocks every entry point for an invalid or configuration-incomplete contract', () => {
+    expect(canRunPlaybookInputContract(false, false, { ...readyContract, graphValid: false }, 4)).toBe(false);
+    expect(canRunPlaybookInputContract(false, false, { ...readyContract, configurationReady: false }, 4)).toBe(false);
+    expect(canRunPlaybookInputContract(false, false, { ...readyContract, invalidInputCount: 1 }, 4)).toBe(false);
+  });
+
+  it('reconciles contract and playbook revisions in the correct direction', () => {
+    expect(getPlaybookInputRevisionSyncAction(3, 4)).toBe('contract');
+    expect(getPlaybookInputRevisionSyncAction(5, 4)).toBe('playbook');
+    expect(getPlaybookInputRevisionSyncAction(4, 4)).toBe('none');
+  });
+
+  it('builds directional synchronization requests only when refresh is safe', () => {
+    expect(getPlaybookInputRevisionSyncRequest('playbook-a', 3, 4, false)).toEqual({ action: 'contract', key: 'playbook-a:contract:3:4' });
+    expect(getPlaybookInputRevisionSyncRequest('playbook-a', 5, 4, false)).toEqual({ action: 'playbook', key: 'playbook-a:playbook:5:4' });
+    expect(getPlaybookInputRevisionSyncRequest('playbook-a', 5, 4, true)).toBeNull();
+    expect(getPlaybookInputRevisionSyncRequest('playbook-a', 4, 4, false)).toBeNull();
+  });
+
+  it.each([
+    ['contract', 'playbook-a:contract:3:4'],
+    ['playbook', 'playbook-a:playbook:5:4'],
+  ])('retries failed %s synchronization without duplicating an in-flight request', async (_action, key) => {
+    const state: PlaybookInputRevisionSyncState = { inFlightKey: null, completedKey: null, failuresByKey: {} };
+    let resolveFirst!: (successful: boolean) => void;
+    const first = runPlaybookInputRevisionSync(
+      state,
+      { key },
+      () => new Promise<boolean>((resolve) => { resolveFirst = resolve; }),
+    );
+
+    await expect(runPlaybookInputRevisionSync(state, { key }, async () => true)).resolves.toBe('skipped');
+    resolveFirst(false);
+    await expect(first).resolves.toBe('failed');
+    await expect(runPlaybookInputRevisionSync(state, { key }, async () => true)).resolves.toBe('succeeded');
+    await expect(runPlaybookInputRevisionSync(state, { key }, async () => true)).resolves.toBe('skipped');
+  });
+
+  it('does not carry completed synchronization state across Playbook routes', async () => {
+    const playbookAState: PlaybookInputRevisionSyncState = { inFlightKey: null, completedKey: null, failuresByKey: {} };
+    const requestA = getPlaybookInputRevisionSyncRequest('playbook-a', 5, 4, false)!;
+    const requestB = getPlaybookInputRevisionSyncRequest('playbook-b', 5, 4, false)!;
+    await expect(runPlaybookInputRevisionSync(playbookAState, requestA, async () => true)).resolves.toBe('succeeded');
+
+    const playbookBState: PlaybookInputRevisionSyncState = { inFlightKey: null, completedKey: null, failuresByKey: {} };
+    await expect(runPlaybookInputRevisionSync(playbookBState, requestB, async () => true)).resolves.toBe('succeeded');
+    expect(requestB.key).not.toBe(requestA.key);
+  });
+});
 
 describe('isTaskConfiguredForExecution', () => {
   it('requires an assigned agent for enabled agent tasks', () => {

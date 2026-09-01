@@ -118,6 +118,8 @@ import { PlaybookIntentSuggestionDiagnosticsService } from './services/playbook-
 import { PlaybookFlowPrimitiveRegistryService } from './services/playbook-flow-primitive-registry.service';
 import { PlaybookIntentBlueprintRepairService } from './services/playbook-intent-blueprint-repair.service';
 import { PlaybookIntentBlueprintCompilerService } from './services/playbook-intent-blueprint-compiler.service';
+import { PlaybookInputContractService } from './services/playbook-input-contract.service';
+import { PlaybookIntentExternalInputNormalizerService } from './services/playbook-intent-external-input-normalizer.service';
 import { PlaybookFlowStreamAuthGuard } from './guards/playbook-flow-stream-auth.guard';
 import { PlaybookFlowObservabilityService } from './services/observability/playbook-flow-observability.service';
 import { PlaybookFlowPublicReasoningParserService } from './services/observability/playbook-flow-public-reasoning-parser.service';
@@ -297,6 +299,8 @@ import { PlaybookAssistantAttachmentService } from './assistant/playbook-assista
     PlaybookIntentSuggestionDiagnosticsService,
     PlaybookIntentBlueprintRepairService,
     PlaybookIntentBlueprintCompilerService,
+    PlaybookInputContractService,
+    PlaybookIntentExternalInputNormalizerService,
     PlaybookFlowPrimitiveRegistryService,
     PlaybookFlowStreamAuthGuard,
     PlaybookFlowObservabilityService,

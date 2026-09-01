@@ -2,13 +2,12 @@ import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
-import { ArrowLeft, Library, Pencil, Share, ShieldCheck, Trash2, Users } from 'lucide-react';
+import { ArrowLeft, Pencil, Share, ShieldCheck, Trash2, Users } from 'lucide-react';
 import { useConversationStore, useCurrentConversation } from '../store';
 import { useTypewriter } from '../hooks/useTypewriter';
 import { RenameDialog } from './RenameDialog';
 import { DeleteConversationDialog } from './DeleteConversationDialog';
 import { ShareDialog } from './ShareDialog';
-import { WorkspaceManagerSheet } from './WorkspaceManagerSheet';
 import { CreateGroupConversationDialog } from './CreateGroupConversationDialog';
 import { useModuleTranslation } from '@/modules/localization';
 
@@ -23,7 +22,6 @@ export function ConversationHeader() {
   const [renameOpen, setRenameOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [shareOpen, setShareOpen] = useState(false);
-  const [workspaceSheetOpen, setWorkspaceSheetOpen] = useState(false);
   const [groupDialogOpen, setGroupDialogOpen] = useState(false);
   const { t } = useModuleTranslation('conversation');
 
@@ -90,18 +88,6 @@ export function ConversationHeader() {
           {!isGoverned && <TooltipProvider>
             <Tooltip>
               <TooltipTrigger asChild>
-                <Button variant='ghost' size='icon' onClick={() => setWorkspaceSheetOpen(true)} className='size-11 shrink-0 md:size-9' aria-label={t('header.tooltips.workspaces')}>
-                  <Library className='h-4 w-4' />
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent>
-                <p>{t('header.tooltips.workspaces')}</p>
-              </TooltipContent>
-            </Tooltip>
-          </TooltipProvider>}
-          {!isGoverned && <TooltipProvider>
-            <Tooltip>
-              <TooltipTrigger asChild>
                 <Button variant='ghost' size='icon' onClick={handleShare} className='size-11 shrink-0 md:size-9' aria-label={t('header.tooltips.share')}>
                   <Share className='h-4 w-4' />
                 </Button>
@@ -129,8 +115,6 @@ export function ConversationHeader() {
       <DeleteConversationDialog open={deleteOpen} onOpenChange={setDeleteOpen} onConfirm={handleDelete} title={conversation.title} />
 
       {!isGoverned && <ShareDialog open={shareOpen} onOpenChange={setShareOpen} conversationId={conversation.id} conversationTitle={conversation.title} />}
-
-      {!isGoverned && <WorkspaceManagerSheet open={workspaceSheetOpen} onOpenChange={setWorkspaceSheetOpen} conversationId={conversation.id} workspaceIds={conversation.workspaces || []} />}
 
       <CreateGroupConversationDialog open={groupDialogOpen} onOpenChange={setGroupDialogOpen} mode='manage' />
     </>

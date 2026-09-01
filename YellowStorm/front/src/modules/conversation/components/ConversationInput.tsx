@@ -1,4 +1,4 @@
-import { useCallback, useMemo } from 'react';
+import { useCallback, useEffect, useMemo, useRef } from 'react';
 import { toast } from 'sonner';
 import { BrainCircuit, ChevronDown, X, Reply, Search } from 'lucide-react';
 import Input from '@/components/ai-elements/input';
@@ -6,7 +6,7 @@ import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import { PromptInputButton } from '@/components/ai-elements/prompt-input';
 import type { PromptInputMessage } from '@/components/ai-elements/prompt-input';
-import { useConversationStore, useIsAwaitingFirstChunk, useInputDisabled, useReplyingToMessage, useSelectedWorkspaceIds, useDeepSearchEnabled, useSetDeepSearchEnabled, useSelectedModelId, useSelectedReasoningEffort, useSetSelectedReasoningEffort } from '../store';
+import { useConversationStore, useIsAwaitingFirstChunk, useInputDisabled, useReplyingToMessage, useSelectedWorkspaceIds, useSetSelectedWorkspaceIds, useDeepSearchEnabled, useSetDeepSearchEnabled, useSelectedModelId, useSelectedReasoningEffort, useSetSelectedReasoningEffort } from '../store';
 import { UsageLimitBanner } from '@/modules/usage';
 import { useUsage } from '@/modules/usage/UsageContext';
 import { useConversationFileUpload } from '../hooks/useConversationFileUpload';
@@ -34,6 +34,7 @@ export function ConversationInput({ conversationId }: ConversationInputProps) {
   const isStreaming = useConversationStore((s) => s.isStreaming);
   const inputDisabled = useInputDisabled();
   const selectedWorkspaceIds = useSelectedWorkspaceIds();
+  const setSelectedWorkspaceIds = useSetSelectedWorkspaceIds();
   const currentConversation = useConversationStore((s) => s.currentConversation);
   const governedMode = currentConversation?.runtimeMode === 'governed';
   const platformCopilot = currentConversation?.runtimePurpose === 'platform_copilot';
@@ -61,6 +62,42 @@ export function ConversationInput({ conversationId }: ConversationInputProps) {
   });
 
   const isLimitExceeded = usageStatus?.isLimitExceeded ?? false;
+  const workspacePersistenceQueue = useRef<Promise<void>>(Promise.resolve());
+  const persistedWorkspaceIds = useRef<string[]>(currentConversation?.workspaces ?? []);
+  const persistedWorkspaceConversationId = useRef<string | null>(currentConversation?.id === conversationId ? conversationId : null);
+
+  useEffect(() => {
+    if (currentConversation?.id === conversationId && persistedWorkspaceConversationId.current !== conversationId) {
+      persistedWorkspaceIds.current = currentConversation.workspaces ?? [];
+      persistedWorkspaceConversationId.current = conversationId;
+    }
+  }, [conversationId, currentConversation?.id, currentConversation?.workspaces]);
+
+  const persistWorkspaceSelection = useCallback((workspaceIds: string[]) => {
+    if (governedMode) return;
+
+    workspacePersistenceQueue.current = workspacePersistenceQueue.current
+      .then(async () => {
+        const persistedIds = persistedWorkspaceIds.current;
+        const selectionChanged = workspaceIds.length !== persistedIds.length
+          || workspaceIds.some((id) => !persistedIds.includes(id));
+        if (!selectionChanged) return;
+
+        try {
+          await updateConversation(conversationId, { workspaces: workspaceIds });
+          persistedWorkspaceIds.current = workspaceIds;
+        } catch (error) {
+          const currentSelection = useConversationStore.getState().selectedWorkspaceIds;
+          const failedSelectionIsCurrent = currentSelection.length === workspaceIds.length
+            && currentSelection.every((id) => workspaceIds.includes(id));
+          if (failedSelectionIsCurrent) {
+            setSelectedWorkspaceIds(persistedIds);
+          }
+          throw error;
+        }
+      })
+      .catch(() => undefined);
+  }, [conversationId, governedMode, setSelectedWorkspaceIds, updateConversation]);
 
   const membersToTag = useMemo(() => {
     if (!currentConversation?.groupMeta?.isGroup || !user?.id) return undefined;
@@ -105,12 +142,16 @@ export function ConversationInput({ conversationId }: ConversationInputProps) {
   );
 
   const handleSubmit = useCallback(
-    async (message: PromptInputMessage, modelId: string, agentIds?: string[], memberIds?: string[], _workspaceIds?: string[], connectorRepo?: { connectorId: string; connectorName: string; repoId: string; repoName: string; repoUrl?: string }, teamIds?: string[]) => {
+    async (message: PromptInputMessage, modelId: string, agentIds?: string[], memberIds?: string[], workspaceIds?: string[], connectorRepo?: { connectorId: string; connectorName: string; repoId: string; repoName: string; repoUrl?: string }, teamIds?: string[]) => {
       if (!message.text?.trim() && !completedFileIds.length) return;
 
-      const persistedWorkspaceIds = currentConversation?.workspaces ?? [];
-      if (!governedMode && (selectedWorkspaceIds.length !== persistedWorkspaceIds.length || selectedWorkspaceIds.some((id) => !persistedWorkspaceIds.includes(id)))) {
-        await updateConversation(conversationId, { workspaces: selectedWorkspaceIds });
+      await workspacePersistenceQueue.current;
+      const submittedWorkspaceIds = workspaceIds ?? selectedWorkspaceIds;
+      const persistedIds = persistedWorkspaceIds.current;
+      if (!governedMode && (submittedWorkspaceIds.length !== persistedIds.length || submittedWorkspaceIds.some((id) => !persistedIds.includes(id)))) {
+        await updateConversation(conversationId, { workspaces: submittedWorkspaceIds });
+        persistedWorkspaceIds.current = submittedWorkspaceIds;
+        setSelectedWorkspaceIds(submittedWorkspaceIds);
       }
 
       // Build optimistic attachedFiles from the upload hook state
@@ -146,7 +187,7 @@ export function ConversationInput({ conversationId }: ConversationInputProps) {
       clearAll();
       clearReplyingTo();
     },
-    [completedFileIds, uploadFiles, sendMessage, conversationId, clearAll, clearReplyingTo, replyingToMessage?.id, currentConversation?.workspaces, governedMode, platformCopilot, selectedWorkspaceIds, updateConversation, deepSearchEnabled, effectiveReasoningEffort],
+    [completedFileIds, uploadFiles, sendMessage, conversationId, clearAll, clearReplyingTo, replyingToMessage?.id, governedMode, platformCopilot, selectedWorkspaceIds, setSelectedWorkspaceIds, updateConversation, deepSearchEnabled, effectiveReasoningEffort],
   );
 
   const senderDisplayName = useMemo(() => {
@@ -225,6 +266,7 @@ export function ConversationInput({ conversationId }: ConversationInputProps) {
         members={membersToTag}
         autoMention={autoMention}
         showWorkspaceSelect={!governedMode}
+        onWorkspaceSelectionChange={persistWorkspaceSelection}
         preserveWorkspaceSelectionOnSubmit
         showModelSelector
         governedMode={governedMode}

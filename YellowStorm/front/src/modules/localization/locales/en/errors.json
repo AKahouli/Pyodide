@@ -1,4 +1,8 @@
 {
+  "ERR_2535": "The Playbook input binding is invalid.",
+  "ERR_2536": "A required Playbook input is missing.",
+  "ERR_2537": "The selected Playbook input resource is unavailable or inaccessible.",
+  "ERR_2538": "A required Playbook setting is not configured.",
   "ERR_2534": "The Playbook Planner default agent is unavailable or ambiguous.",
   "ERR_1000": "Something went wrong. Please try again later.",
   "ERR_1001": "Please check your input and try again.",

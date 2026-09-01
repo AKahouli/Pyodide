@@ -234,6 +234,10 @@ export enum ErrorCode {
   PLAYBOOK_FLOW_APPROVAL_NOT_FOUND = 'ERR_2532',
   PLAYBOOK_FLOW_DUPLICATE_NAME = 'ERR_2533',
   PLAYBOOK_PLANNER_UNAVAILABLE = 'ERR_2534',
+  PLAYBOOK_INPUT_BINDING_INVALID = 'ERR_2535',
+  PLAYBOOK_REQUIRED_INPUT_MISSING = 'ERR_2536',
+  PLAYBOOK_INPUT_RESOURCE_INACCESSIBLE = 'ERR_2537',
+  PLAYBOOK_CONFIGURATION_REQUIRED = 'ERR_2538',
 
   // Project errors (2700-2799)
   PROJECT_NOT_FOUND = 'ERR_2700',
@@ -635,6 +639,10 @@ export const ErrorMessages: Record<ErrorCode, string> = {
   [ErrorCode.PLAYBOOK_FLOW_APPROVAL_NOT_FOUND]: 'No pending approval found for this execution.',
   [ErrorCode.PLAYBOOK_FLOW_DUPLICATE_NAME]: 'A playbook with this name already exists.',
   [ErrorCode.PLAYBOOK_PLANNER_UNAVAILABLE]: 'The Playbook Planner default agent is unavailable or ambiguous.',
+  [ErrorCode.PLAYBOOK_INPUT_BINDING_INVALID]: 'The Playbook input binding is invalid.',
+  [ErrorCode.PLAYBOOK_REQUIRED_INPUT_MISSING]: 'A required Playbook input is missing.',
+  [ErrorCode.PLAYBOOK_INPUT_RESOURCE_INACCESSIBLE]: 'A Playbook input resource is unavailable or inaccessible.',
+  [ErrorCode.PLAYBOOK_CONFIGURATION_REQUIRED]: 'A required Playbook setting is not configured.',
 
   [ErrorCode.PROJECT_NOT_FOUND]: 'Project not found.',
   [ErrorCode.PROJECT_ALREADY_EXISTS]: 'A project with this name already exists.',

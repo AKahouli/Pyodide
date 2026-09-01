@@ -43,6 +43,7 @@ import type {
   StepEvaluationHistoryEntry,
   PlaybookPageMode,
   PlaybookUndoSnapshot,
+  ExecutePlaybookData,
   SyncPlaybookMailSubscriptionData,
   TaskTemplate,
   ArtifactKind,
@@ -66,6 +67,7 @@ import { autoLayoutTasks } from './utils/auto-layout';
 import { mergeComponents } from './utils/merge-components';
 import { mergeDynamicReasoningUpdate } from './stream/executionEventMerger';
 import { handleApiError, parseApiError } from '@/lib/api-error';
+import { ErrorCode } from '@/lib/error-codes';
 import { i18nInstance } from '@/modules/localization/i18nInstance';
 import { playbookFeatures } from './features';
 import { usePlaybookUiStore } from './uiStore';
@@ -1761,6 +1763,7 @@ const createPlaybookStore: StateCreator<PlaybookStore> = (set, get) => ({
           }
         } catch (err) {
           const latestState = get();
+          const apiError = parseApiError(err);
           if (latestState.saveRequestId === requestId) {
             const autosaveFailed = latestState.lastSaveReason === 'autosave';
             const nextBackoffMs = autosaveFailed ? getAutosaveRetryDelayMs(latestState.autosaveBackoffUntil) : null;
@@ -1802,6 +1805,9 @@ const createPlaybookStore: StateCreator<PlaybookStore> = (set, get) => ({
           ) {
             toast.warning(tPlaybook('store.toasts.autosaveRetrying', 'Autosave is backing off and will retry shortly'));
             return;
+          }
+          if (latestState.lastSaveReason !== 'autosave' && apiError.code === ErrorCode.CONFLICT) {
+            throw err;
           }
           const msg = err instanceof Error ? err.message : tPlaybook('store.errors.updateFailed', 'Failed to save');
           toast.error(msg);
@@ -5360,14 +5366,14 @@ const createPlaybookStore: StateCreator<PlaybookStore> = (set, get) => ({
         }
       },
 
-      startFlowExecutionAction: async (flowId: string, inputContext?: Record<string, unknown>, idempotencyKey?: string) => {
+      startFlowExecutionAction: async (flowId: string, inputContext?: Record<string, unknown>, idempotencyKey?: string, options?: ExecutePlaybookData) => {
         try {
           set((state) => ({
             executingPlaybookIds: [...state.executingPlaybookIds, flowId],
           }));
           const result = playbookFeatures.queryMutationsEnabled
-            ? await startExecutionMutation({ flowId, inputContext, idempotencyKey })
-            : await api.startFlowExecution(flowId, inputContext, idempotencyKey);
+            ? await startExecutionMutation({ flowId, inputContext, idempotencyKey, options })
+            : await api.startFlowExecution(flowId, inputContext, idempotencyKey, options);
           return result;
         } catch (err) {
           set((state) => ({
