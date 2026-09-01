@@ -7,7 +7,7 @@ export interface SemanticModelEvidenceSearchTask {
   sourceDocumentId: string;
   fileName: string;
   text: string;
-  /** Native citations emitted by the ADK Search Agent / Logical Search MCP. */
+  /** Native passages returned by the Logical Search HTTP endpoint. */
   evidence: Array<{
     source: string;
     fileName: string;

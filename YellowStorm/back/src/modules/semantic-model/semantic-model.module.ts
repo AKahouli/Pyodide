@@ -19,6 +19,7 @@ import { SemanticModelService } from './services/semantic-model.service';
 import { SemanticModelOntologyGenerationService } from './services/semantic-model-ontology-generation.service';
 import { SemanticModelCorpusPreparationService } from './services/semantic-model-corpus-preparation.service';
 import { SemanticModelEvidenceSearchService } from './services/semantic-model-evidence-search.service';
+import { SemanticModelNativeSearchClient } from './services/semantic-model-native-search-client.service';
 import { SemanticModelMappingProposalService } from './services/semantic-model-mapping-proposal.service';
 import { SemanticModelValidationService } from './services/semantic-model-validation.service';
 import { SemanticModelVersionService } from './services/semantic-model-version.service';
@@ -34,6 +35,7 @@ import { SemanticModelShareService } from './services/semantic-model-share.servi
     SemanticKnowledgeBindingService,SemanticModelVersionService,SemanticModelProvisioningService,
     SemanticModelOntologyGenerationService,
     SemanticModelCorpusPreparationService,
+    SemanticModelNativeSearchClient,
     SemanticModelEvidenceSearchService,
     SemanticModelMappingProposalService,
     SemanticModelShareService,

@@ -1,43 +1,21 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
-import { ModuleRef } from '@nestjs/core';
 import { ConfigType } from '@nestjs/config';
-import { randomUUID } from 'node:crypto';
 import semanticModelConfig from '@config/semantic-model.config';
-import { AGENT_TASK_EXECUTOR } from '@common/tokens/agent-task-execution.token';
-import { ServiceUnavailableException } from '@modules/exceptions';
-import { ErrorCode } from '@modules/exceptions/constants/error-codes';
-import { SemanticModelEvidenceSearchFailedUnit, SemanticModelEvidenceSearchResponse, SemanticModelEvidenceSearchTask } from '../domain/semantic-model-evidence-search.types';
+import {
+  SemanticModelEvidenceSearchFailedUnit,
+  SemanticModelEvidenceSearchResponse,
+  SemanticModelEvidenceSearchTask,
+} from '../domain/semantic-model-evidence-search.types';
 import { SemanticGraph } from '../domain/semantic-model.types';
 import { SelectedCorpusBinding } from '../domain/selected-corpus-manifest.types';
-import { SemanticModelCorpusPreparationService } from './semantic-model-corpus-preparation.service';
 import { SemanticGraphCommandService } from './semantic-graph-command.service';
+import { SemanticModelCorpusPreparationService } from './semantic-model-corpus-preparation.service';
+import {
+  SemanticModelNativeSearchClient,
+  SemanticModelNativeSearchFatalError,
+  SemanticModelNativeSearchSection,
+} from './semantic-model-native-search-client.service';
 import { SemanticModelService } from './semantic-model.service';
-
-interface AgentTaskExecutor {
-  runSingleAgentTask(input: {
-    userId: string;
-    agentId: string;
-    query: string;
-    attachedFiles: [];
-    workspaceContext: Array<{ workspace_id: string; workspace_name: string }>;
-    correlationId: string;
-    conversationId: string;
-    timeoutMs?: number;
-    usageEndpoint: string;
-  }): Promise<{
-    text: string;
-    citations: Array<{
-      source: string;
-      fileName: string;
-      page?: string;
-      pageContent?: string;
-      workspaceId?: string;
-      reference?: string;
-      highlightText?: string;
-    }>;
-    toolResults: Array<{ name: string; status: 'completed' | 'failed'; result: unknown }>;
-  }>;
-}
 
 @Injectable()
 export class SemanticModelEvidenceSearchService {
@@ -49,104 +27,106 @@ export class SemanticModelEvidenceSearchService {
     private readonly models: SemanticModelService,
     private readonly corpusPreparation: SemanticModelCorpusPreparationService,
     private readonly graphCommands: SemanticGraphCommandService,
-    private readonly moduleRef: ModuleRef,
+    private readonly nativeSearch: SemanticModelNativeSearchClient,
   ) {}
 
   async search(userId: string, modelId: string): Promise<SemanticModelEvidenceSearchResponse> {
     await this.models.requireRole(userId, modelId, ['owner', 'editor', 'viewer']);
-    const searchAgentId = this.config.searchAgentId;
-    if (!searchAgentId) {
-      throw new ServiceUnavailableException(
-        ErrorCode.SERVICE_UNAVAILABLE,
-        'SEMANTIC_MODEL_SEARCH_AGENT_ID is not configured',
-      );
-    }
-
     const manifest = await this.corpusPreparation.prepare(userId, modelId);
     const graph = await this.graphCommands.getGraph(userId, modelId) as SemanticGraph;
     const bindings = manifest.bindings.filter((binding) => binding.documents.length > 0);
-    const agentTasks = this.moduleRef.get<AgentTaskExecutor>(AGENT_TASK_EXECUTOR, { strict: false });
-    const searchRunId = randomUUID();
     const searchUnits = bindings.flatMap((binding) =>
       binding.documents.map((document) => ({ binding, document })),
     );
     const failedUnits: SemanticModelEvidenceSearchFailedUnit[] = [];
-    const runUnit = async ({ binding, document }: { binding: typeof bindings[number]; document: typeof binding.documents[number] }): Promise<SemanticModelEvidenceSearchTask | null> => {
-      // ADK persists conversationId in a varchar(128) column, so we cannot
-      // fit modelId + bindingId + documentId + runId (~147 chars). Use a
-      // fresh UUID for isolation and rely on correlationId + logs for tracing.
-      const conversationId = `sm-e:${randomUUID()}`;
-      try {
-        const result = await agentTasks.runSingleAgentTask({
-          userId,
-          agentId: searchAgentId,
-          query: this.buildSearchTask(binding, graph, document),
-          attachedFiles: [],
-          workspaceContext: [{
-            workspace_id: binding.workspaceId,
-            workspace_name: binding.workspaceId,
-          }],
-          correlationId: `semantic-model-evidence:${modelId}:${binding.bindingId}:${document.sourceDocumentId}:${searchRunId}`,
-          conversationId,
-          timeoutMs: this.config.evidenceSearchTimeoutMs,
-          usageEndpoint: 'semantic-model-evidence-search',
-        });
-        // search_native results don't go through citation_sources registration so
-        // result.citations is empty. Extract passages directly from toolResults.
-        const toolEvidence = result.toolResults
-          .filter((tr) => tr.status === 'completed' && String(tr.name).includes('search_native'))
-          .flatMap((tr) => {
-            const payload = tr.result as Record<string, unknown> | null;
-            const sections: unknown[] = Array.isArray(payload?.result) ? (payload!.result as unknown[])
-              : Array.isArray(payload) ? (payload as unknown[]) : [];
-            return sections.flatMap((section) => {
-              if (!section || typeof section !== 'object') return [];
-              const s = section as Record<string, unknown>;
-              const quote = String(s['content'] || '').trim();
-              if (!quote) return [];
-              return [{
-                source: String(s['file_name'] || ''),
-                fileName: String(s['file_name'] || document.originalName),
-                page: s['page_range'] ? String(s['page_range']) : undefined,
-                quote,
-                workspaceId: String(s['workspace_id'] || binding.workspaceId),
-                reference: s['section_id'] != null ? String(s['section_id']) : undefined,
-              }];
-            });
+    const jobs = searchUnits.flatMap(({ binding, document }, unitIndex) =>
+      this.buildSearchQueries(binding, graph).map((query, queryIndex) => ({
+        unitIndex,
+        queryIndex,
+        binding,
+        document,
+        query,
+      })),
+    );
+
+    const jobResults = await this.runWithConcurrency(
+      jobs,
+      this.config.evidenceSearchConcurrency,
+      async (job) => {
+        try {
+          const sections = await this.nativeSearch.search({
+            query: job.query,
+            workspace_id: job.binding.workspaceId,
+            file_name: job.document.originalName,
           });
-        const citationEvidence = result.citations.map((citation) => ({
-          source: citation.source,
-          fileName: citation.fileName,
-          page: citation.page,
-          quote: citation.highlightText || citation.pageContent,
-          workspaceId: citation.workspaceId,
-          reference: citation.reference,
-        }));
-        return {
-          bindingId: binding.bindingId,
-          target: binding.target,
-          workspaceId: binding.workspaceId,
-          sourceDocumentId: document.sourceDocumentId,
-          fileName: document.originalName,
-          text: result.text,
-          evidence: this.uniqueEvidence([...toolEvidence, ...citationEvidence]),
-          toolResults: result.toolResults,
-        };
-      } catch (error) {
-        const errorMessage = error instanceof Error ? error.message.slice(0, 300) : String(error).slice(0, 300);
+          return { ...job, sections, error: null as string | null };
+        } catch (error) {
+          if (error instanceof SemanticModelNativeSearchFatalError) throw error;
+          const message = error instanceof Error
+            ? error.message.slice(0, 300)
+            : String(error).slice(0, 300);
+          return {
+            ...job,
+            sections: [] as SemanticModelNativeSearchSection[],
+            error: message,
+          };
+        }
+      },
+    );
+
+    const resultsByUnit = new Map<number, typeof jobResults>();
+    for (const result of jobResults) {
+      const unitResults = resultsByUnit.get(result.unitIndex) ?? [];
+      unitResults.push(result);
+      resultsByUnit.set(result.unitIndex, unitResults);
+    }
+
+    const tasks: SemanticModelEvidenceSearchTask[] = [];
+    for (const [unitIndex, unit] of searchUnits.entries()) {
+      const unitResults = (resultsByUnit.get(unitIndex) ?? [])
+        .sort((left, right) => left.queryIndex - right.queryIndex);
+      const successful = unitResults.filter((result) => !result.error);
+      if (unitResults.length === 0 || successful.length === 0) {
+        const errorMessage = unitResults
+          .map((result) => result.error)
+          .filter(Boolean)
+          .join('; ') || 'No search queries were generated';
         this.logger.warn('Evidence search unit failed — skipping, continuing with partial results', {
           modelId,
-          bindingId: binding.bindingId,
-          sourceDocumentId: document.sourceDocumentId,
-          fileName: document.originalName,
+          bindingId: unit.binding.bindingId,
+          sourceDocumentId: unit.document.sourceDocumentId,
+          fileName: unit.document.originalName,
           error: errorMessage,
         });
-        failedUnits.push({ bindingId: binding.bindingId, sourceDocumentId: document.sourceDocumentId, fileName: document.originalName, error: errorMessage });
-        return null;
+        failedUnits.push({
+          bindingId: unit.binding.bindingId,
+          sourceDocumentId: unit.document.sourceDocumentId,
+          fileName: unit.document.originalName,
+          error: errorMessage.slice(0, 300),
+        });
+        continue;
       }
-    };
-    const rawResults = await this.runWithConcurrency(searchUnits, this.config.evidenceSearchConcurrency, runUnit);
-    const tasks = rawResults.filter((t): t is SemanticModelEvidenceSearchTask => t !== null);
+
+      const evidence = successful.flatMap((result) =>
+        this.toEvidence(result.sections, unit.binding.workspaceId, unit.document.originalName),
+      );
+      tasks.push({
+        bindingId: unit.binding.bindingId,
+        target: unit.binding.target,
+        workspaceId: unit.binding.workspaceId,
+        sourceDocumentId: unit.document.sourceDocumentId,
+        fileName: unit.document.originalName,
+        text: `${successful.length}/${unitResults.length} native search queries completed`,
+        evidence: this.uniqueEvidence(evidence),
+        toolResults: unitResults.map((result) => ({
+          name: 'search_native',
+          status: result.error ? 'failed' : 'completed',
+          result: result.error
+            ? { query: result.query, error: result.error }
+            : { query: result.query, result: result.sections },
+        })),
+      });
+    }
 
     return {
       modelId,
@@ -155,33 +135,87 @@ export class SemanticModelEvidenceSearchService {
       failedUnits,
       summary: {
         searchedBindingCount: tasks.length,
-        candidateDocumentCount: bindings.reduce((count, binding) => count + binding.documents.length, 0),
+        candidateDocumentCount: bindings.reduce(
+          (count, binding) => count + binding.documents.length,
+          0,
+        ),
         failedUnitCount: failedUnits.length,
       },
     };
   }
 
-  private buildSearchTask(
-    binding: SelectedCorpusBinding,
-    graph: SemanticGraph,
-    document: SelectedCorpusBinding['documents'][number],
-  ): string {
-    const ontologySearchScope = this.describeOntologySearchScope(binding, graph);
-    return [
-      'Collect evidence for the Semantic Model using ONLY the search_native connector tool. Do not use any other retrieval tool (no get_document_strategy, no read_content, no read_blocks, no search, no web search, no Deep Search).',
-      `Workspace ID: ${binding.workspaceId}`,
-      `Document file name: ${document.originalName}`,
-      `(Internal trace only — do NOT pass to any tool parameter: sourceDocumentId=${document.sourceDocumentId})`,
-      `Ontology target: ${binding.target.kind} "${binding.target.label}".`,
-      `Ontology search scope: ${JSON.stringify(ontologySearchScope)}.`,
-      'For EACH attribute declared in the ontology search scope, call search_native exactly once with: workspace_id, file_name, and a query that is ALWAYS scoped to the concept — combine the concept label with the attribute label and description. Example: for concept "Skill" and attribute "name", the query must be "Skill: name of the skill, competency or technology" — NEVER just "name". Scoping the query to the concept prevents the tool from returning passages about unrelated entity types that happen to share the same field name.',
-      'Additionally call search_native once with a query asking for the main subject or identifier of this document in the context of the concept (e.g. for an Employee concept: "Employee: full name of the employee") so the extracted instance can be labeled.',
-      'After retrieval, register the passages you rely on as citations via locate_answer_citations.',
-      'Report per attribute: a short supporting quote when found, or an explicit not_found marker. Never invent values. Do not create ontology entities, relations, or inferred facts in this task.',
-    ].join('\n');
+  private buildSearchQueries(binding: SelectedCorpusBinding, graph: SemanticGraph): string[] {
+    const scope = this.describeOntologySearchScope(binding, graph);
+    const concepts = this.searchConcepts(scope, binding.target.label);
+    return [...new Set(concepts.flatMap(({ label, attributes }) => [
+      ...attributes.map((attribute) => {
+        const detail = [attribute['label'] || attribute['key'], attribute['description']]
+          .filter((value): value is string =>
+            typeof value === 'string' && value.trim().length > 0,
+          )
+          .join(': ');
+        return `${label}: ${detail}`;
+      }),
+      `${label}: main subject, proper name, or identifier of the ${label}`,
+    ]))];
   }
 
-  private uniqueEvidence(evidence: SemanticModelEvidenceSearchTask['evidence']): SemanticModelEvidenceSearchTask['evidence'] {
+  private searchConcepts(
+    scope: Record<string, unknown>,
+    fallbackLabel: string,
+  ): Array<{ label: string; attributes: Array<Record<string, unknown>> }> {
+    const result: Array<{ label: string; attributes: Array<Record<string, unknown>> }> = [];
+    const add = (candidate: unknown, fallback: string) => {
+      if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate)) return;
+      const value = candidate as Record<string, unknown>;
+      const label = String(value['label'] || value['key'] || fallback).trim();
+      if (!label) return;
+      const attributes = Array.isArray(value['attributes'])
+        ? value['attributes'].filter((item): item is Record<string, unknown> =>
+          item !== null && typeof item === 'object' && !Array.isArray(item),
+        )
+        : [];
+      result.push({ label, attributes });
+    };
+
+    if (scope['kind'] === 'model') {
+      for (const nodeType of Array.isArray(scope['nodeTypes']) ? scope['nodeTypes'] : []) {
+        add(nodeType, fallbackLabel);
+      }
+    } else if (scope['kind'] === 'relation_type') {
+      add(scope['source'], `${fallbackLabel} source`);
+      add(scope['target'], `${fallbackLabel} target`);
+      add(scope, fallbackLabel);
+    } else if (scope['kind'] === 'record') {
+      add(scope['nodeType'], fallbackLabel);
+    } else {
+      add(scope, fallbackLabel);
+    }
+    return result;
+  }
+
+  private toEvidence(
+    sections: SemanticModelNativeSearchSection[],
+    workspaceId: string,
+    fileName: string,
+  ): SemanticModelEvidenceSearchTask['evidence'] {
+    return sections.flatMap((section) => {
+      const quote = String(section.content || '').trim();
+      if (!quote) return [];
+      return [{
+        source: String(section.file_name || fileName),
+        fileName: String(section.file_name || fileName),
+        page: section.page_range ? String(section.page_range) : undefined,
+        quote,
+        workspaceId: String(section.workspace_id || workspaceId),
+        reference: section.section_id != null ? String(section.section_id) : undefined,
+      }];
+    });
+  }
+
+  private uniqueEvidence(
+    evidence: SemanticModelEvidenceSearchTask['evidence'],
+  ): SemanticModelEvidenceSearchTask['evidence'] {
     return [...new Map(evidence.map((item) => [
       [item.source, item.fileName, item.page ?? '', item.quote ?? ''].join('|'),
       item,
@@ -208,15 +242,19 @@ export class SemanticModelEvidenceSearchService {
     return results;
   }
 
-  private describeOntologySearchScope(binding: SelectedCorpusBinding, graph: SemanticGraph): Record<string, unknown> {
-    const attributes = (items: SemanticGraph['nodes'][number]['attributes']) => items.map((attribute) => ({
-      key: attribute.key,
-      label: attribute.label,
-      type: attribute.type,
-      description: attribute.description,
-      required: attribute.required,
-      options: attribute.options,
-    }));
+  private describeOntologySearchScope(
+    binding: SelectedCorpusBinding,
+    graph: SemanticGraph,
+  ): Record<string, unknown> {
+    const attributes = (items: SemanticGraph['nodes'][number]['attributes']) =>
+      items.map((attribute) => ({
+        key: attribute.key,
+        label: attribute.label,
+        type: attribute.type,
+        description: attribute.description,
+        required: attribute.required,
+        options: attribute.options,
+      }));
     const node = graph.nodes.find((candidate) => candidate.id === binding.target.id);
     if (binding.target.kind === 'node_type' && node) {
       return {
@@ -240,8 +278,16 @@ export class SemanticModelEvidenceSearchService {
         inverseLabel: relation.inverseLabel,
         description: relation.description,
         cardinality: relation.cardinality,
-        source: source && { key: source.key, label: source.label, attributes: attributes(source.attributes) },
-        target: target && { key: target.key, label: target.label, attributes: attributes(target.attributes) },
+        source: source && {
+          key: source.key,
+          label: source.label,
+          attributes: attributes(source.attributes),
+        },
+        target: target && {
+          key: target.key,
+          label: target.label,
+          attributes: attributes(target.attributes),
+        },
         attributes: attributes(relation.attributes),
       };
     }
@@ -252,7 +298,11 @@ export class SemanticModelEvidenceSearchService {
       return {
         kind: 'record',
         label: record.label,
-        nodeType: recordType && { key: recordType.key, label: recordType.label, attributes: attributes(recordType.attributes) },
+        nodeType: recordType && {
+          key: recordType.key,
+          label: recordType.label,
+          attributes: attributes(recordType.attributes),
+        },
       };
     }
 
@@ -263,14 +313,6 @@ export class SemanticModelEvidenceSearchService {
         label: candidate.label,
         description: candidate.description,
         aliases: candidate.aliases,
-        attributes: attributes(candidate.attributes),
-      })),
-      relationTypes: graph.relations.map((candidate) => ({
-        key: candidate.key,
-        label: candidate.label,
-        description: candidate.description,
-        sourceNodeTypeId: candidate.sourceNodeTypeId,
-        targetNodeTypeId: candidate.targetNodeTypeId,
         attributes: attributes(candidate.attributes),
       })),
     };
