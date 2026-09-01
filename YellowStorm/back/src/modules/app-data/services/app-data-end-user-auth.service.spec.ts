@@ -1,12 +1,17 @@
+/**
+ * This suite performs real bcrypt work and builds a nested-testing module whose
+ * TypeScript compilation is slow. Individual tests are milliseconds, but under a
+ * full parallel test-suite run the default 5s per-test timeout is exceeded by
+ * module setup + bcrypt CPU contention. Raise the timeout for reliability.
+ */
+jest.setTimeout(20_000);
+
 import { HttpStatus } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
 import { ConversationV2AppShareService } from '@modules/conversation-v2/services/conversation-v2-app-share.service';
 import { DRIZZLE_DB } from '@modules/postgres/postgres.constants';
-import {
-  AppDataErrorCode,
-  AppDataException,
-} from '../constants/app-data.errors';
+import { AppDataErrorCode, AppDataException } from '../constants/app-data.errors';
 import { AppDataAuditService } from './app-data-audit.service';
 import { AppDataCatalogService } from './app-data-catalog.service';
 import { AppDataEndUserAuthService } from './app-data-end-user-auth.service';
@@ -36,9 +41,9 @@ describe('AppDataEndUserAuthService invites', () => {
     consumeInviteToken: jest.fn(),
   };
   const jwtService = { signAsync: jest.fn().mockResolvedValue('signed-jwt') };
-  const returning = jest.fn().mockResolvedValue([
-    { id: 'user-1', email: 'guest@example.com', displayName: null },
-  ]);
+  const returning = jest
+    .fn()
+    .mockResolvedValue([{ id: 'user-1', email: 'guest@example.com', displayName: null }]);
   const values = jest.fn().mockReturnValue({ returning });
   const db = { insert: jest.fn().mockReturnValue({ values }) };
   const config = {
@@ -56,9 +61,7 @@ describe('AppDataEndUserAuthService invites', () => {
     endUsers.findByEmail.mockResolvedValue(null);
     appShares.consumeInviteToken.mockResolvedValue(true);
     jwtService.signAsync.mockResolvedValue('signed-jwt');
-    returning.mockResolvedValue([
-      { id: 'user-1', email: 'guest@example.com', displayName: null },
-    ]);
+    returning.mockResolvedValue([{ id: 'user-1', email: 'guest@example.com', displayName: null }]);
 
     const module = await Test.createTestingModule({
       providers: [

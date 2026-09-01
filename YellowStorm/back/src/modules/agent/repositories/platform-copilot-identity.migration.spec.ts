@@ -1,8 +1,20 @@
+/**
+ * Integration test against a real (remote) Postgres: each Drizzle/pg query pays
+ * network round-trip latency, and under a full parallel test-suite run the
+ * default 5s per-test timeout is routinely exceeded. Give the suite a generous
+ * timeout so slow remote-DB tests do not flake.
+ */
+jest.setTimeout(30_000);
+
 import * as fs from 'fs';
 import * as path from 'path';
 import { Types } from 'mongoose';
 import { AgentRepository, CreateAgentInput } from './agent.repository';
-import { deleteAgents, describeIntegration, makeTestDb } from '../../postgres/testing/pg-integration';
+import {
+  deleteAgents,
+  describeIntegration,
+  makeTestDb,
+} from '../../postgres/testing/pg-integration';
 
 const initialMigrationSql = fs.readFileSync(
   path.resolve(process.cwd(), 'drizzle/0002_platform_copilot_identity.sql'),
@@ -169,8 +181,9 @@ describeIntegration('platform copilot identity migration', () => {
       disabledSkills: canonical.disabledSkills,
       knowledgeBases: canonical.knowledgeBases,
     });
-    await expect(repository.findActiveDefaultIdBySlugAndType('platform-copilot', 'platform_copilot'))
-      .resolves.toBe(canonical.id);
+    await expect(
+      repository.findActiveDefaultIdBySlugAndType('platform-copilot', 'platform_copilot'),
+    ).resolves.toBe(canonical.id);
   });
 
   it('does not change an already-correct canonical Agent type slug', async () => {
@@ -197,10 +210,12 @@ describeIntegration('platform copilot identity migration', () => {
       await writerClient.query('BEGIN');
       await writerClient.query("SET LOCAL lock_timeout = '100ms'");
 
-      await expect(writerClient.query(
-        'UPDATE agents SET agent_type_slug = $1 WHERE id = $2',
-        ['another_type', canonical.id],
-      )).rejects.toThrow(/lock timeout/);
+      await expect(
+        writerClient.query('UPDATE agents SET agent_type_slug = $1 WHERE id = $2', [
+          'another_type',
+          canonical.id,
+        ]),
+      ).rejects.toThrow(/lock timeout/);
       await writerClient.query('ROLLBACK');
       await migrationClient.query('COMMIT');
     } finally {
@@ -213,7 +228,10 @@ describeIntegration('platform copilot identity migration', () => {
 
   it.each([
     ['legacy identity', async (input: CreateAgentInput) => input],
-    ['inactive canonical Agent', async (input: CreateAgentInput) => ({ ...input, slug: 'platform-copilot', isActive: false })],
+    [
+      'inactive canonical Agent',
+      async (input: CreateAgentInput) => ({ ...input, slug: 'platform-copilot', isActive: false }),
+    ],
   ])('rejects a %s without mutation', async (_label, prepare) => {
     const input = await prepare(createInput('my-second-brain'));
     created.push(input.id);
@@ -235,10 +253,11 @@ describeIntegration('platform copilot identity migration', () => {
     const canonical = createInput('platform-copilot');
     created.push(canonical.id);
     await repository.create(canonical);
-    await pool.query(
-      'UPDATE agents SET agent_type_slug = $1, agent_type_id = $2 WHERE id = $3',
-      [agentTypeSlug, _label === 'an invalid type identity' ? 'zzzzzzzzzzzzzzzzzzzzzzzz' : canonical.agentType, canonical.id],
-    );
+    await pool.query('UPDATE agents SET agent_type_slug = $1, agent_type_id = $2 WHERE id = $3', [
+      agentTypeSlug,
+      _label === 'an invalid type identity' ? 'zzzzzzzzzzzzzzzzzzzzzzzz' : canonical.agentType,
+      canonical.id,
+    ]);
 
     await expect(pool.query(agentTypeSlugMigrationSql)).rejects.toThrow(expectedError);
     expect((await repository.findById(canonical.id))?.agentTypeSlug).toBe(agentTypeSlug);
