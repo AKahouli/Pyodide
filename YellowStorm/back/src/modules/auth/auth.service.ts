@@ -8,6 +8,7 @@ import * as crypto from 'crypto';
 import { UAParser } from 'ua-parser-js';
 import { Session, SessionDocument } from './schemas/session.schema';
 import { UserService } from '../user/user.service';
+import { RegistrationApprovalService } from '../user/registration-approval.service';
 import { UserDocument } from '../user/schemas/user.schema';
 import {
   assertAccountAccessible,
@@ -51,6 +52,7 @@ export class AuthService {
     @Inject(forwardRef(() => WorkspaceInitializerService))
     private readonly workspaceInitializer: WorkspaceInitializerService,
     private readonly humainAgentService: HumainAgentService,
+    private readonly registrationApprovalService: RegistrationApprovalService,
   ) {
     this.logger.setContext(AuthService.name);
     this.bcryptRounds = this.configService.get<number>('auth.bcryptRounds', 12);
@@ -126,6 +128,19 @@ export class AuthService {
 
     // Send verification email
     await this.sendVerificationEmail(user.email, user.emailVerificationToken!);
+
+    try {
+      await this.registrationApprovalService.notifySuperAdminsOfRegistration({
+        userId: user._id.toString(),
+        email: user.email,
+        requestedAt: user.createdAt,
+      });
+    } catch (error) {
+      this.logger.warn('Failed to notify super admins of registration', {
+        userId: user._id,
+        error: (error as Error).message,
+      });
+    }
 
     return {
       message: 'Registration successful. Please check your email to verify your account.',

@@ -1,6 +1,6 @@
 # Authentication Module (Backend)
 
-The authentication module provides secure user authentication with JWT tokens, session management, email verification, password reset, and security features like token rotation and new login location alerts.
+The authentication module provides secure user authentication with JWT tokens, session management, email verification, password reset, Super Admin review of classic signups, and security features like token rotation and new login location alerts.
 
 ## Table of Contents
 
@@ -10,6 +10,7 @@ The authentication module provides secure user authentication with JWT tokens, s
 - [Directory Structure](#directory-structure)
 - [Security Features](#security-features)
 - [Authentication Flow](#authentication-flow)
+- [Classic Registration Approval](#classic-registration-approval)
 - [Token Strategy](#token-strategy)
 - [Session Management](#session-management)
 - [API Endpoints](#api-endpoints)
@@ -26,8 +27,8 @@ The authentication module provides secure user authentication with JWT tokens, s
 
 The authentication module provides:
 
-- **User Registration**: Email/password registration with email verification
-- **Login/Logout**: Secure authentication with JWT access tokens
+- **User Registration**: Email/password registration with email verification; classic signups start `inactive` and `pending` Super Admin review
+- **Login/Logout**: Secure authentication with JWT access tokens; `inactive` and `suspended` accounts cannot obtain a session
 - **Refresh Token Rotation**: Secure token refresh with reuse detection
 - **Session Management**: View and revoke active sessions
 - **Email Verification**: Magic link verification flow
@@ -54,6 +55,13 @@ The authentication module provides:
 │           │              │    JwtService    │                                │
 │           │              │ (Token Signing)  │                                │
 │           │              └──────────────────┘                                │
+│           │                       │                                          │
+│           │                       ▼                                          │
+│           │              ┌──────────────────────────────┐                    │
+│           │              │ RegistrationApprovalService  │                    │
+│           │              │ (UserModule — Super Admin    │                    │
+│           │              │  registration notice)        │                    │
+│           │              └──────────────────────────────┘                    │
 │           │                                                                  │
 │           ▼                                                                  │
 │  ┌──────────────────┐    ┌──────────────────┐    ┌──────────────────┐       │
@@ -168,15 +176,21 @@ auth/
 ```
 1. POST /auth/register { email, password }
 2. AuthService.register()
-   ├── UserService.create() - hash password, generate verification token
+   ├── UserService.create()
+   │   ├── hash password, generate verification token
+   │   └── persist status: inactive, registrationApproval: pending
    ├── UsageService.getDefaultPlan() - get free plan
    ├── UserService.assignPlan() - assign to new user
-   └── Send verification email (async)
+   ├── Send verification email (best-effort)
+   └── RegistrationApprovalService.notifySuperAdminsOfRegistration() (best-effort)
 3. Return { message, userId }
 4. User clicks email link
 5. GET /auth/verify-email?token=xxx
 6. UserService.verifyEmail() - mark emailVerified: true
+   (status and registrationApproval are unchanged)
 ```
+
+New OAuth users are not in this flow (`createOAuthUser` still defaults to `active`). Completing email verification does **not** activate the account.
 
 ### Login Flow
 
@@ -184,7 +198,9 @@ auth/
 1. POST /auth/login { email, password }
 2. AuthService.login()
    ├── UserService.findByEmail()
-   ├── Check status !== 'suspended'
+   ├── assertAccountAccessible(user)
+   │   ├── status === 'suspended' → ERR_1110
+   │   └── status === 'inactive'  → ERR_1202
    ├── UserService.validatePassword() - bcrypt compare
    ├── Check emailVerified === true
    ├── Check for new login location
@@ -209,7 +225,9 @@ auth/
    ├── Verify session.isValid (detect reuse)
    ├── Verify session not expired
    ├── bcrypt.compare(token, session.refreshTokenHash)
-   ├── Get user, check not suspended
+   ├── Get user; if inactive or suspended, invalidate all sessions and deny
+   │   ├── status === 'suspended' → ERR_1110
+   │   └── status === 'inactive'  → ERR_1202
    ├── Invalidate old session (isValid = false)
    ├── Create new session in same tokenFamily
    ├── Fetch fresh permissions (propagate role changes)
@@ -273,6 +291,50 @@ auth/
 | Token replay | Single-use: cleared after successful reset |
 | Stale tokens | 1-hour expiry, cleared on expiry check |
 | Session hijacking post-reset | All sessions invalidated via `invalidateAllUserSessions` |
+
+---
+
+## Classic Registration Approval
+
+Classic email/password signups wait for Super Admin review. Approve/reject **API and UsersPage actions are not in this auth module yet**; until they exist, the account stays `inactive` and cannot log in.
+
+| Field | Classic `UserService.create()` | OAuth `createOAuthUser()` |
+|-------|-------------------------------|---------------------------|
+| `status` | `inactive` (explicit) | schema default `active` |
+| `registrationApproval` | `pending` | omitted |
+| Email verification | required before login | already verified by provider |
+| Super Admin notice | yes, after verification email | no |
+
+### Account access gates
+
+`assertAccountAccessible` / `getAccountAccessDenial` live in the user module and are used by:
+
+| Surface | Inactive (`ERR_1202`) | Suspended (`ERR_1110`) |
+|---------|----------------------|------------------------|
+| `AuthService.login()` | Forbidden, before password check | same |
+| `AuthService.refreshTokens()` | Forbidden + all sessions invalidated | same |
+| `JwtStrategy.validate()` | Unauthorized | same |
+| OAuth login of an **existing** linked user | Forbidden | same |
+
+Helper messages:
+
+- Suspended: `Account is suspended`
+- Inactive: `This account is inactive pending approval.`
+
+### Super Admin notification (best-effort)
+
+After the verification email, `AuthService.register()` calls `RegistrationApprovalService.notifySuperAdminsOfRegistration()`. Failures never fail registration (SMTP down, send error, missing role, or no recipients → log/warn).
+
+Recipients: users with role `super_admin` and `status: active`. One email per recipient (other Super Admin addresses are not exposed in To/CC).
+
+Email links (hash router; Super Admin must already be signed in):
+
+```
+{APP_FRONTEND_URL}/#/admin/users?status=inactive&review={userId}&decision=approve
+{APP_FRONTEND_URL}/#/admin/users?status=inactive&review={userId}&decision=reject
+```
+
+These open the admin users page. They are **not** one-click approve/reject tokens.
 
 ---
 
@@ -411,6 +473,8 @@ Content-Type: application/json
 }
 ```
 
+The created user is `inactive` with `registrationApproval: pending`. Login is denied with `ERR_1202` until Super Admin approval (approval API is not in this module yet).
+
 **Login:**
 ```http
 POST /api/v1/auth/login
@@ -528,7 +592,7 @@ async validate(payload: JwtPayload) {
   // 1. Verify token type is 'access'
   // 2. Check session is still valid (enables immediate revocation)
   // 3. Load user from database
-  // 4. Check user not suspended
+  // 4. Deny inactive (ERR_1202) or suspended (ERR_1110)
   // 5. Attach permissions to user object
   return user;
 }
@@ -760,6 +824,7 @@ APP_FRONTEND_URL=https://app.yellostorm.com
 | ERR_1116 | AUTH_RESET_TOKEN_INVALID | Password reset token invalid or already used |
 | ERR_1117 | AUTH_RESET_TOKEN_EXPIRED | Password reset token has expired |
 | ERR_1120 | AUTH_TOKEN_MISSING | Auth token missing (SSE) |
+| ERR_1202 | USER_INACTIVE | Account is inactive pending Super Admin approval (login / refresh / JWT / existing OAuth login) |
 
 ---
 
@@ -767,7 +832,7 @@ APP_FRONTEND_URL=https://app.yellostorm.com
 
 ### Verification Email
 
-Sent on registration with magic link:
+Sent on registration with magic link (best-effort: unavailable mail is logged, registration still succeeds):
 
 ```
 Subject: Verify your email address - YelloStorm
@@ -778,6 +843,24 @@ Contains:
 - 24-hour expiry notice
 - Plain text fallback
 ```
+
+Verifying the address does not change `status` or `registrationApproval`.
+
+### Super Admin Registration Notice
+
+Sent after the verification email to every **active** user with the `super_admin` role (best-effort; never fails registration):
+
+```
+Subject: New registration request - YelloStorm
+
+Contains:
+- Applicant email, user id, requested-at (ISO UTC)
+- Approve and Reject buttons/links to /#/admin/users?status=inactive&review={userId}&decision=...
+- Notice that the Super Admin must be signed in
+- Plain text fallback
+```
+
+Links are deep-links into the admin UI, not public action tokens. If there is no `super_admin` role or no active Super Admin users, the service logs a warning and skips sending.
 
 ### Password Reset Email
 
@@ -859,6 +942,6 @@ export class SomeService {
 ### Invalidating All User Sessions
 
 ```typescript
-// When user changes password or is suspended
+// When user changes password, is suspended, or is inactive at refresh
 await this.authService.invalidateAllUserSessions(userId);
 ```
