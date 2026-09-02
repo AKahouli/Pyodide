@@ -4,7 +4,7 @@ import { Model } from 'mongoose';
 import { SystemSetting, SystemSettingDocument, MaintenanceValue, RegistrationValue, AppearanceValue, CorsSettingsValue } from './schemas/system-setting.schema';
 import { MaintenanceStatus } from './interfaces/maintenance.interface';
 import { RegistrationStatus } from './interfaces/registration.interface';
-import { AppearanceSettings } from './interfaces/appearance.interface';
+import { AppearanceSettings, AppearanceThemeSettings } from './interfaces/appearance.interface';
 import {
   AdminPlaybookSettings,
   DEFAULT_ADMIN_PLAYBOOK_SETTINGS,
@@ -14,14 +14,18 @@ import {
 } from './interfaces/playbook-settings.interface';
 import { LoggerService } from '../logger';
 import { User, UserDocument } from '../user/schemas/user.schema';
+import { BadRequestException } from '../exceptions';
+import { ErrorCode } from '../exceptions/constants/error-codes';
+import { APPEARANCE_COLOR_THEMES, APPEARANCE_SETTINGS_KEY } from './constants/appearance-logo.constants';
+import { AppearanceLogoService } from './services/appearance-logo.service';
 
 const MAINTENANCE_KEY = 'maintenance_mode';
 const REGISTRATION_KEY = 'registration_settings';
-const APPEARANCE_KEY = 'appearance_settings';
+const APPEARANCE_KEY = APPEARANCE_SETTINGS_KEY;
 const PLAYBOOK_SETTINGS_KEY = 'playbook_settings';
 const CORS_SETTINGS_KEY = 'cors_settings';
 const CACHE_TTL_MS = 5000; // 5 seconds
-const DEFAULT_APPEARANCE: AppearanceSettings = {
+const DEFAULT_APPEARANCE: AppearanceThemeSettings = {
   defaultColorTheme: 'default',
   themes: {
     default: { labelKey: 'appearance.colorTheme.default', logo: 'yellowmind' },
@@ -31,8 +35,8 @@ const DEFAULT_APPEARANCE: AppearanceSettings = {
   },
 };
 
-function normalizeAppearanceSettings(value: AppearanceValue): AppearanceSettings {
-  const normalizeLogo = (logo?: string): 'yellowmind' | 'kpmg' => (logo === 'kpmg' ? 'kpmg' : 'yellowmind');
+function normalizeAppearanceSettings(value: AppearanceValue): AppearanceThemeSettings {
+  const normalizeLogo = (logo?: string): string => (typeof logo === 'string' && logo.trim() ? logo.trim() : 'yellowmind');
 
   return {
     defaultColorTheme: value.defaultColorTheme as AppearanceSettings['defaultColorTheme'],
@@ -106,7 +110,7 @@ function normalizePlaybookIntentNormalizationLimits(
 export class SystemService implements OnApplicationBootstrap {
   private maintenanceCache: MaintenanceStatus | null = null;
   private registrationCache: RegistrationStatus | null = null;
-  private appearanceCache: AppearanceSettings | null = null;
+  private appearanceCache: AppearanceThemeSettings | null = null;
   private playbookSettingsCache: AdminPlaybookSettings | null = null;
   private corsSettingsCache: CorsSettingsValue | null = null;
   private lastCacheUpdate = 0;
@@ -121,6 +125,7 @@ export class SystemService implements OnApplicationBootstrap {
     @InjectModel(User.name)
     private readonly userModel: Model<UserDocument>,
     private readonly logger: LoggerService,
+    private readonly appearanceLogoService: AppearanceLogoService,
   ) {
     this.logger.setContext(SystemService.name);
   }
@@ -352,13 +357,20 @@ export class SystemService implements OnApplicationBootstrap {
   async getAppearanceSettings(): Promise<AppearanceSettings> {
     const now = Date.now();
     if (this.appearanceCache && now - this.lastCacheUpdate < CACHE_TTL_MS) {
-      return this.appearanceCache;
+      return this.withLogos(this.appearanceCache);
     }
 
-    return this.refreshAppearanceCache();
+    return this.withLogos(await this.refreshAppearanceCache());
   }
 
-  async setAppearanceSettings(settings: AppearanceSettings): Promise<AppearanceSettings> {
+  async setAppearanceSettings(settings: AppearanceThemeSettings): Promise<AppearanceSettings> {
+    const logos = await this.appearanceLogoService.listPublic();
+    for (const theme of APPEARANCE_COLOR_THEMES) {
+      if (!this.appearanceLogoService.isKnownLogoId(settings.themes[theme].logo, logos)) {
+        throw new BadRequestException(ErrorCode.APPEARANCE_LOGO_NOT_FOUND);
+      }
+    }
+
     const value: AppearanceValue = {
       defaultColorTheme: settings.defaultColorTheme,
       themes: settings.themes,
@@ -370,9 +382,12 @@ export class SystemService implements OnApplicationBootstrap {
       { upsert: true, new: true },
     );
 
-    this.appearanceCache = settings;
+    this.appearanceCache = {
+      defaultColorTheme: settings.defaultColorTheme,
+      themes: settings.themes,
+    };
     this.lastCacheUpdate = Date.now();
-    return settings;
+    return { ...this.appearanceCache, logos };
   }
 
   async getPlaybookSettings(): Promise<AdminPlaybookSettings> {
@@ -563,7 +578,7 @@ export class SystemService implements OnApplicationBootstrap {
     }
   }
 
-  private async refreshAppearanceCache(): Promise<AppearanceSettings> {
+  private async refreshAppearanceCache(): Promise<AppearanceThemeSettings> {
     try {
       const setting = await this.systemSettingModel.findOne({ key: APPEARANCE_KEY });
 
@@ -631,6 +646,30 @@ export class SystemService implements OnApplicationBootstrap {
       'enabled' in value &&
       typeof (value as RegistrationValue).enabled === 'boolean'
     );
+  }
+
+  private async withLogos(settings: AppearanceThemeSettings): Promise<AppearanceSettings> {
+    try {
+      const logos = await this.appearanceLogoService.listPublic();
+      const validIds = new Set(logos.map((logo) => logo.id));
+      const themes = { ...settings.themes };
+      for (const theme of APPEARANCE_COLOR_THEMES) {
+        if (!validIds.has(themes[theme].logo)) {
+          themes[theme] = { ...themes[theme], logo: 'yellowmind' };
+        }
+      }
+      return { defaultColorTheme: settings.defaultColorTheme, themes, logos };
+    } catch (error) {
+      this.logger.warn('Failed to load appearance logos', { error: (error as Error).message });
+      return {
+        defaultColorTheme: settings.defaultColorTheme,
+        themes: settings.themes,
+        logos: [
+          { id: 'yellowmind', name: 'Yellowmind', kind: 'builtin' },
+          { id: 'kpmg', name: 'KPMG', kind: 'builtin' },
+        ],
+      };
+    }
   }
 
   private isAppearanceValue(value: unknown): value is AppearanceValue {
