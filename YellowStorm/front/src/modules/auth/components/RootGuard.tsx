@@ -4,6 +4,7 @@
  * - Shows landing page for guests
  * - Shows app layout for authenticated users
  * - Redirects to profile completion if needed
+ * - Shows a full-screen pending-approval page until Super Admin validation
  */
 
 import * as React from 'react';
@@ -14,6 +15,7 @@ import { SidebarProvider, SidebarInset, SidebarTriggerMobile } from '@/component
 import { AppSidebar } from '@/modules/sidebar';
 import { useAuth } from '../useAuth';
 import { LandingPage } from './LandingPage';
+import { PendingApprovalPage } from './PendingApprovalPage';
 import { NewConversationPage } from '@/modules/conversation';
 import { useModelsStore } from '@/modules/models';
 import { useConversationStream } from '@/modules/conversation/hooks/useConversationStream';
@@ -23,9 +25,17 @@ import { DEFAULT_FEATURE_VISIBILITY, getFeatureVisibility } from '@/modules/admi
 import { PlatformCopilotMascot } from '@/modules/platform-copilot';
 
 export function RootGuard() {
-  const { isAuthenticated, isLoading, requiresEmailVerification, requiresProfileCompletion } = useAuth();
+  const {
+    isAuthenticated,
+    isLoading,
+    logout,
+    requiresEmailVerification,
+    requiresProfileCompletion,
+    user,
+  } = useAuth();
   const location = useLocation();
   const fetchModels = useModelsStore((state) => state.fetchModels);
+  const pendingApproval = user?.status === 'inactive';
   const [platformCopilotEnabled, setPlatformCopilotEnabled] = React.useState(
     DEFAULT_FEATURE_VISIBILITY.platformCopilot,
   );
@@ -40,13 +50,13 @@ export function RootGuard() {
 
   // Initialize models when authenticated
   React.useEffect(() => {
-    if (isAuthenticated && !requiresEmailVerification && !requiresProfileCompletion) {
+    if (isAuthenticated && !requiresEmailVerification && !requiresProfileCompletion && !pendingApproval) {
       fetchModels();
     }
-  }, [isAuthenticated, requiresEmailVerification, requiresProfileCompletion, fetchModels]);
+  }, [isAuthenticated, requiresEmailVerification, requiresProfileCompletion, pendingApproval, fetchModels]);
 
   React.useEffect(() => {
-    if (!isAuthenticated || requiresEmailVerification || requiresProfileCompletion) {
+    if (!isAuthenticated || requiresEmailVerification || requiresProfileCompletion || pendingApproval) {
       setPlatformCopilotEnabled(false);
       return;
     }
@@ -59,7 +69,7 @@ export function RootGuard() {
         if (active) setPlatformCopilotEnabled(false);
       });
     return () => { active = false; };
-  }, [isAuthenticated, requiresEmailVerification, requiresProfileCompletion]);
+  }, [isAuthenticated, requiresEmailVerification, requiresProfileCompletion, pendingApproval]);
 
   // Still loading auth state - show spinner to prevent flash of wrong content
   if (isLoading) {
@@ -83,6 +93,10 @@ export function RootGuard() {
   // Authenticated but profile incomplete - redirect to complete profile
   if (requiresProfileCompletion) {
     return <Navigate to='/complete-profile' replace />;
+  }
+
+  if (pendingApproval) {
+    return <PendingApprovalPage onLogout={() => void logout()} />;
   }
 
   // Fully authenticated - show app layout
