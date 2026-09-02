@@ -5,6 +5,7 @@
 
 import * as React from 'react';
 import { useAuth } from '@/modules/auth';
+import { isPendingAdminApproval } from '@/modules/auth/utils/isPendingAdminApproval';
 import * as usageApi from './api';
 import type { UsageStatus, Plan, UsageContextType } from './types';
 
@@ -22,7 +23,7 @@ export function UsageProvider({ children }: UsageProviderProps) {
   const [error, setError] = React.useState<string | null>(null);
 
   const fetchUsageStatus = React.useCallback(async () => {
-    if (!isAuthenticated) return;
+    if (!isAuthenticated || isPendingAdminApproval(user)) return;
 
     try {
       setIsLoading(true);
@@ -36,7 +37,7 @@ export function UsageProvider({ children }: UsageProviderProps) {
     } finally {
       setIsLoading(false);
     }
-  }, [isAuthenticated]);
+  }, [isAuthenticated, user]);
 
   const fetchPlans = React.useCallback(async () => {
     try {
@@ -53,20 +54,18 @@ export function UsageProvider({ children }: UsageProviderProps) {
 
   // Fetch usage status when user becomes authenticated
   React.useEffect(() => {
-    if (isAuthenticated && user) {
+    if (isAuthenticated && user && !isPendingAdminApproval(user)) {
       fetchUsageStatus();
       fetchPlans();
-    } else {
-      // Clear state when logged out
+    } else if (!isAuthenticated || !user) {
       setStatus(null);
       setPlans([]);
       setError(null);
     }
   }, [isAuthenticated, user, fetchUsageStatus, fetchPlans]);
 
-  // Periodically refresh usage status (every 5 minutes)
   React.useEffect(() => {
-    if (!isAuthenticated) return;
+    if (!isAuthenticated || isPendingAdminApproval(user)) return;
 
     const interval = setInterval(
       () => {
@@ -76,7 +75,7 @@ export function UsageProvider({ children }: UsageProviderProps) {
     );
 
     return () => clearInterval(interval);
-  }, [isAuthenticated, fetchUsageStatus]);
+  }, [isAuthenticated, user, fetchUsageStatus]);
 
   const value: UsageContextType = {
     status,

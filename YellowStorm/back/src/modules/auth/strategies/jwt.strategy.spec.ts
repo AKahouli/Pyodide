@@ -34,19 +34,21 @@ describe('JwtStrategy account access', () => {
     return { strategy };
   };
 
-  it('rejects inactive users with USER_INACTIVE', async () => {
-    const { strategy } = makeStrategy({ status: UserStatus.INACTIVE });
-
-    await expect(strategy.validate(payload)).rejects.toMatchObject({
-      code: ErrorCode.USER_INACTIVE,
-    });
-  });
-
   it('rejects suspended users with AUTH_ACCOUNT_SUSPENDED', async () => {
     const { strategy } = makeStrategy({ status: UserStatus.SUSPENDED });
 
     await expect(strategy.validate(payload)).rejects.toMatchObject({
       code: ErrorCode.AUTH_ACCOUNT_SUSPENDED,
+    });
+  });
+
+  it('allows inactive users pending Super Admin approval', async () => {
+    const user = { status: UserStatus.INACTIVE };
+    const { strategy } = makeStrategy(user);
+
+    await expect(strategy.validate(payload)).resolves.toMatchObject({
+      status: UserStatus.INACTIVE,
+      permissions: [],
     });
   });
 

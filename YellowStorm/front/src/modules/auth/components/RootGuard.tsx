@@ -14,17 +14,27 @@ import { SidebarProvider, SidebarInset, SidebarTriggerMobile } from '@/component
 import { AppSidebar } from '@/modules/sidebar';
 import { useAuth } from '../useAuth';
 import { LandingPage } from './LandingPage';
+import { InactiveAccountBanner } from './InactiveAccountBanner';
 import { NewConversationPage } from '@/modules/conversation';
 import { useModelsStore } from '@/modules/models';
 import { useConversationStream } from '@/modules/conversation/hooks/useConversationStream';
 import { useConversationV2StreamConnection } from '@/modules/conversation-v2/useStream';
 import { DEFAULT_FEATURE_VISIBILITY, getFeatureVisibility } from '@/modules/admin';
 import { PlatformCopilotMascot } from '@/modules/platform-copilot';
+import { isPendingAdminApproval } from '../utils/isPendingAdminApproval';
 
 export function RootGuard() {
-  const { isAuthenticated, isLoading, requiresEmailVerification, requiresProfileCompletion } = useAuth();
+  const {
+    isAuthenticated,
+    isLoading,
+    logout,
+    requiresEmailVerification,
+    requiresProfileCompletion,
+    user,
+  } = useAuth();
   const location = useLocation();
   const fetchModels = useModelsStore((state) => state.fetchModels);
+  const pendingApproval = isPendingAdminApproval(user);
   const [platformCopilotEnabled, setPlatformCopilotEnabled] = React.useState(
     DEFAULT_FEATURE_VISIBILITY.platformCopilot,
   );
@@ -37,13 +47,24 @@ export function RootGuard() {
 
   // Initialize models when authenticated
   React.useEffect(() => {
-    if (isAuthenticated && !requiresEmailVerification && !requiresProfileCompletion) {
+    if (
+      isAuthenticated &&
+      !requiresEmailVerification &&
+      !requiresProfileCompletion &&
+      !pendingApproval
+    ) {
       fetchModels();
     }
-  }, [isAuthenticated, requiresEmailVerification, requiresProfileCompletion, fetchModels]);
+  }, [
+    isAuthenticated,
+    requiresEmailVerification,
+    requiresProfileCompletion,
+    pendingApproval,
+    fetchModels,
+  ]);
 
   React.useEffect(() => {
-    if (!isAuthenticated || requiresEmailVerification || requiresProfileCompletion) {
+    if (!isAuthenticated || requiresEmailVerification || requiresProfileCompletion || pendingApproval) {
       setPlatformCopilotEnabled(false);
       return;
     }
@@ -56,7 +77,7 @@ export function RootGuard() {
         if (active) setPlatformCopilotEnabled(false);
       });
     return () => { active = false; };
-  }, [isAuthenticated, requiresEmailVerification, requiresProfileCompletion]);
+  }, [isAuthenticated, requiresEmailVerification, requiresProfileCompletion, pendingApproval]);
 
   // Still loading auth state - show spinner to prevent flash of wrong content
   if (isLoading) {
@@ -85,13 +106,7 @@ export function RootGuard() {
   // Fully authenticated - show app layout
   const isIndexRoute = location.pathname === '/';
 
-  // Hide the floating Second Brain mascot inside a Worky stream workspace
-  // (`/worky/:streamId`): it floats over the stream chat. It stays visible on
-  // the Worky dashboard (`/worky`), the stream report (`/worky/:id/report`) and
-  // everywhere else.
-  const isWorkyStreamRoute = /^\/worky\/[^/]+$/.test(location.pathname);
-
-  return (
+  const appShell = (
     <SidebarProvider>
       <AppSidebar />
       <SidebarInset className='bg-transparent'>
@@ -102,5 +117,19 @@ export function RootGuard() {
       </SidebarInset>
       {platformCopilotEnabled && <PlatformCopilotMascot />}
     </SidebarProvider>
+  );
+
+  if (!pendingApproval) {
+    return appShell;
+  }
+
+  return (
+    <div className='flex min-h-svh flex-col'>
+      <InactiveAccountBanner onLogout={() => void logout()} />
+      <div className='relative min-h-0 flex-1'>
+        <div className='pointer-events-none min-h-full select-none'>{appShell}</div>
+        <div className='absolute inset-0 z-40' aria-hidden />
+      </div>
+    </div>
   );
 }

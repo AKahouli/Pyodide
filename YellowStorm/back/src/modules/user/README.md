@@ -113,6 +113,8 @@ user/
 ├── admin-user.controller.ts     # Admin API endpoints
 ├── user.service.ts              # Business logic
 ├── registration-approval.service.ts  # Super Admin registration notice + approve/reject
+├── guards/
+│   └── account-approval.guard.ts # Inactive users: auth + /users/me* only
 ├── schemas/
 │   └── user.schema.ts           # MongoDB schema with embedded documents
 ├── interfaces/
@@ -698,6 +700,10 @@ Assign a subscription plan to a user.
 ---
 
 ## Security
+
+### Pending registration feature gate
+
+Classic signups remain `inactive` until Super Admin approval. They **may** obtain a JWT, complete `/users/me/complete-profile`, and call `/auth/*`. `AccountApprovalGuard` (global `APP_GUARD` after JWT) rejects every other HTTP route with `ERR_1202`. Suspended accounts are still denied at session level (`ERR_1110`).
 
 ### Password Hashing
 

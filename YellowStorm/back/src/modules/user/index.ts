@@ -5,5 +5,6 @@ export * from './user.controller';
 export * from './schemas/user.schema';
 export * from './interfaces/user.interface';
 export * from './utils/assert-account-accessible';
+export * from './guards/account-approval.guard';
 export * from './dto/update-profile.dto';
 export * from './dto/complete-profile.dto';

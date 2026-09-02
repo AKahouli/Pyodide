@@ -320,7 +320,7 @@ describe('OAuthFlowService', () => {
         });
       });
 
-      it('should throw when linked user is inactive', async () => {
+      it('should login when linked user is inactive pending approval', async () => {
         setupCallbackMocks({ sub: 'ms-123', email: 'user@example.com' });
         providerLinkService.findByProviderUser.mockResolvedValue({
           userId: MOCK_USER_ID,
@@ -331,12 +331,14 @@ describe('OAuthFlowService', () => {
           ...mockUser,
           status: UserStatus.INACTIVE,
         });
+        providerLinkTokenModel.create.mockResolvedValue({});
 
-        await expect(
-          service.handleCallback(MOCK_PROVIDER_KEY, MOCK_CODE, MOCK_STATE, '127.0.0.1', 'ua'),
-        ).rejects.toMatchObject({
-          code: ErrorCode.USER_INACTIVE,
-        });
+        const result = await service.handleCallback(
+          MOCK_PROVIDER_KEY, MOCK_CODE, MOCK_STATE, '127.0.0.1', 'ua',
+        );
+
+        expect(result.type).toBe('login');
+        expect(result.accessToken).toBeDefined();
       });
     });
 
@@ -463,7 +465,7 @@ describe('OAuthFlowService', () => {
       });
     });
 
-    it('should throw when user is inactive', async () => {
+    it('should exchange a temp token for an inactive user pending approval', async () => {
       providerLinkTokenModel.findOneAndDelete.mockResolvedValue({
         token: 'temp-token',
         userId: MOCK_USER_ID,
@@ -474,12 +476,12 @@ describe('OAuthFlowService', () => {
         ...mockUser,
         status: UserStatus.INACTIVE,
       });
+      userService.updateLastLogin.mockResolvedValue(undefined);
 
-      await expect(
-        service.exchangeTempToken('temp-token', '127.0.0.1', 'ua'),
-      ).rejects.toMatchObject({
-        code: ErrorCode.USER_INACTIVE,
-      });
+      const result = await service.exchangeTempToken('temp-token', '127.0.0.1', 'ua');
+
+      expect(result.accessToken).toBe('jwt-token');
+      expect(result.user).toBeDefined();
     });
   });
 

@@ -198,6 +198,28 @@ export function AuthProvider({ children }: AuthProviderProps) {
     }
   }, []);
 
+  React.useEffect(() => {
+    if (!state.isAuthenticated || state.user?.status !== 'inactive') {
+      return;
+    }
+
+    const poll = () => {
+      void refreshUser().catch(() => undefined);
+    };
+    const interval = window.setInterval(poll, 15_000);
+    const onVisibility = () => {
+      if (!document.hidden) {
+        poll();
+      }
+    };
+    document.addEventListener('visibilitychange', onVisibility);
+
+    return () => {
+      window.clearInterval(interval);
+      document.removeEventListener('visibilitychange', onVisibility);
+    };
+  }, [state.isAuthenticated, state.user?.status, refreshUser]);
+
   const value = React.useMemo<AuthContextType>(
     () => ({
       ...state,

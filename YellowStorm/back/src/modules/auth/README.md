@@ -28,7 +28,7 @@ The authentication module provides secure user authentication with JWT tokens, s
 The authentication module provides:
 
 - **User Registration**: Email/password registration with email verification; classic signups start `inactive` and `pending` Super Admin review
-- **Login/Logout**: Secure authentication with JWT access tokens; `inactive` and `suspended` accounts cannot obtain a session
+- **Login/Logout**: Secure authentication with JWT access tokens; `suspended` accounts cannot obtain a session; `inactive` pending users can sign in and complete their profile, then wait for Super Admin approval in-app
 - **Refresh Token Rotation**: Secure token refresh with reuse detection
 - **Session Management**: View and revoke active sessions
 - **Email Verification**: Magic link verification flow
@@ -199,8 +199,7 @@ New OAuth users are not in this flow (`createOAuthUser` still defaults to `activ
 2. AuthService.login()
    ├── UserService.findByEmail()
    ├── assertAccountAccessible(user)
-   │   ├── status === 'suspended' → ERR_1110
-   │   └── status === 'inactive'  → ERR_1202
+   │   └── status === 'suspended' → ERR_1110
    ├── UserService.validatePassword() - bcrypt compare
    ├── Check emailVerified === true
    ├── Check for new login location
@@ -225,9 +224,7 @@ New OAuth users are not in this flow (`createOAuthUser` still defaults to `activ
    ├── Verify session.isValid (detect reuse)
    ├── Verify session not expired
    ├── bcrypt.compare(token, session.refreshTokenHash)
-   ├── Get user; if inactive or suspended, invalidate all sessions and deny
-   │   ├── status === 'suspended' → ERR_1110
-   │   └── status === 'inactive'  → ERR_1202
+   ├── Get user; if suspended, invalidate all sessions and deny (ERR_1110)
    ├── Invalidate old session (isValid = false)
    ├── Create new session in same tokenFamily
    ├── Fetch fresh permissions (propagate role changes)
@@ -323,19 +320,21 @@ Re-approve already `approved` / re-reject already `rejected` → 200 no-op. Appr
 
 ### Account access gates
 
-`assertAccountAccessible` / `getAccountAccessDenial` live in the user module and are used by:
+`assertAccountAccessible` / `getAccountAccessDenial` live in the user module and block **suspended** accounts from obtaining or keeping a session:
 
-| Surface | Inactive (`ERR_1202`) | Suspended (`ERR_1110`) |
-|---------|----------------------|------------------------|
-| `AuthService.login()` | Forbidden, before password check | same |
-| `AuthService.refreshTokens()` | Forbidden + all sessions invalidated | same |
-| `JwtStrategy.validate()` | Unauthorized | same |
-| OAuth login of an **existing** linked user | Forbidden | same |
+| Surface | Inactive | Suspended (`ERR_1110`) |
+|---------|----------|------------------------|
+| `AuthService.login()` | Allowed | Forbidden, before password check |
+| `AuthService.refreshTokens()` | Allowed | Forbidden + all sessions invalidated |
+| `JwtStrategy.validate()` | Allowed | Unauthorized |
+| OAuth login of an **existing** linked user | Allowed | Forbidden |
+
+Inactive classic users can sign in and call `/auth/*` plus `/users/me*`. `AccountApprovalGuard` (global, after JWT) returns `ERR_1202` on every other API until Super Admin approval.
 
 Helper messages:
 
 - Suspended: `Account is suspended`
-- Inactive: `This account is inactive pending approval.`
+- Inactive (feature guard / in-app banner): `This account is inactive pending approval.`
 
 ### Super Admin notification (best-effort)
 
@@ -491,7 +490,7 @@ Content-Type: application/json
 }
 ```
 
-The created user is `inactive` with `registrationApproval: pending`. Login is denied with `ERR_1202` until a Super Admin calls `POST /admin/users/:id/approve-registration`.
+The created user is `inactive` with `registrationApproval: pending`. Login succeeds after email verification; app features stay blocked (`ERR_1202`) until a Super Admin calls `POST /admin/users/:id/approve-registration`.
 
 **Login:**
 ```http
@@ -610,7 +609,7 @@ async validate(payload: JwtPayload) {
   // 1. Verify token type is 'access'
   // 2. Check session is still valid (enables immediate revocation)
   // 3. Load user from database
-  // 4. Deny inactive (ERR_1202) or suspended (ERR_1110)
+  // 4. Deny suspended (ERR_1110); inactive pending users may keep a session
   // 5. Attach permissions to user object
   return user;
 }
@@ -842,7 +841,7 @@ APP_FRONTEND_URL=https://app.yellostorm.com
 | ERR_1116 | AUTH_RESET_TOKEN_INVALID | Password reset token invalid or already used |
 | ERR_1117 | AUTH_RESET_TOKEN_EXPIRED | Password reset token has expired |
 | ERR_1120 | AUTH_TOKEN_MISSING | Auth token missing (SSE) |
-| ERR_1202 | USER_INACTIVE | Account is inactive pending Super Admin approval (login / refresh / JWT / existing OAuth login) |
+| ERR_1202 | USER_INACTIVE | Account is inactive pending Super Admin approval (app features; login still succeeds) |
 
 ---
 
@@ -976,6 +975,6 @@ export class SomeService {
 ### Invalidating All User Sessions
 
 ```typescript
-// When user changes password, is suspended, or is inactive at refresh
+// When user changes password or is suspended
 await this.authService.invalidateAllUserSessions(userId);
 ```

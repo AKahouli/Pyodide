@@ -102,4 +102,38 @@ describe('AuthProvider', () => {
     expect(localStorage.getItem(AUTH_STORAGE_KEYS.accessToken)).toBeNull();
     expect(localStorage.getItem(AUTH_STORAGE_KEYS.user)).toBeNull();
   });
+
+  it('starts polling getCurrentUser while the signed-in account is inactive', async () => {
+    const setIntervalSpy = vi.spyOn(window, 'setInterval');
+    const inactiveUser = { ...baseUser, status: 'inactive' as const };
+    authApiMock.login.mockResolvedValue({
+      accessToken: 'access-token',
+      expiresIn: 3600,
+      user: inactiveUser,
+    });
+    authApiMock.getCurrentUser.mockResolvedValue({ ...baseUser, status: 'active' });
+
+    const { result } = renderHook(() => useAuth(), {
+      wrapper: AuthProvider,
+    });
+
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
+
+    await act(async () => {
+      await result.current.login({ email: 'user@example.com', password: testPassword });
+    });
+    expect(result.current.user?.status).toBe('inactive');
+
+    const poll = setIntervalSpy.mock.calls.find((call) => call[1] === 15_000)?.[0] as
+      | (() => void)
+      | undefined;
+    expect(poll).toBeTypeOf('function');
+
+    await act(async () => {
+      poll?.();
+    });
+
+    await waitFor(() => expect(result.current.user?.status).toBe('active'));
+    setIntervalSpy.mockRestore();
+  });
 });

@@ -27,7 +27,7 @@
   "ERR_1113": "Your session has been revoked. Please sign in again.",
   "ERR_1200": "User not found.",
   "ERR_1201": "An account with this email already exists.",
-  "ERR_1202": "This account has been deactivated.",
+  "ERR_1202": "Your account is inactive pending administrator approval.",
   "ERR_1300": "Agent not found.",
   "ERR_1301": "This agent is currently unavailable.",
   "ERR_1302": "You have reached your agent usage limit.",
