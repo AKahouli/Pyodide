@@ -1335,6 +1335,8 @@ class OrchestratorService:
         """
         if not new_steps:
             return 0
+        if len({s.id for s in new_steps}) != len(new_steps):
+            raise ValueError("plan has duplicate step ids")
         # The plan's frontier: steps nothing currently depends on. Injected steps
         # hang off it so they schedule in a NEW wave AFTER all existing work.
         # Without this, an independent step (no deps) lands in wave 0 alongside
@@ -1354,8 +1356,8 @@ class OrchestratorService:
             if not s.is_persona:
                 s.assignee = live.executor_id
                 s.assignee_name = live.executor_name or DEFAULT_EXECUTOR_LABEL
+        scheduler.validate(Plan(steps=[*live.steps, *new_steps]))
         live.steps.extend(new_steps)
-        scheduler.validate(live)
         scheduler.assign_waves(live)
         for s in new_steps:
             await self._project_step(session_id, live, s)
@@ -1750,37 +1752,56 @@ class OrchestratorService:
         # whatever prompt the agentstore supplies.
         ctx = requester_context(requester)
         planner_message = f"{ctx}\n\n---\nUser's request:\n{message}" if ctx else message
-        text = ""
-        async for ev in runner.run_async(
-            user_id=user_id, session_id=plan_session,
-            new_message=types.Content(role="user", parts=[types.Part(text=planner_message)])):
-            if ev.content and ev.content.parts:
-                for p in ev.content.parts:
-                    if getattr(p, "text", None):
-                        text = p.text
-        data = _extract_json(text)
-        steps = []
-        for s in data.get("steps", []):
-            assignee_id = assignee_name = assignee_role = None
-            if s.get("assignee"):
-                # Trust the API's resolution, not whatever the planner echoed
-                # back — same reasoning as delegate_to_human_agent: an LLM
-                # relaying fields can drift, a fresh lookup can't.
-                matches = await human_agents.search_human_agents(name=s["assignee"])
+        first_validation_error: Optional[ValueError] = None
+        for attempt in range(2):
+            text = ""
+            async for ev in runner.run_async(
+                user_id=user_id, session_id=plan_session,
+                new_message=types.Content(role="user", parts=[types.Part(text=planner_message)])):
+                if ev.content and ev.content.parts:
+                    for p in ev.content.parts:
+                        if getattr(p, "text", None):
+                            text = p.text
+            data = _extract_json(text)
+            raw_steps = data.get("steps", [])
+            steps = [Step(id=s["id"], title=s.get("title", ""),
+                          description=s.get("description", ""),
+                          kind=s.get("kind", "execute"), question=s.get("question"),
+                          depends_on=list(s.get("depends_on", [])))
+                     for s in raw_steps]
+            plan = Plan(title=data.get("title", ""), goal=data.get("goal", ""),
+                        answer=data.get("answer") or None, steps=steps,
+                        ops=[dict(o) for o in data.get("ops", []) if o.get("step_id")])
+            if first_validation_error is not None and not plan.steps:
+                raise ValueError("planner correction returned no executable steps") \
+                    from first_validation_error
+            try:
+                scheduler.validate(plan)
+            except ValueError as exc:
+                if attempt == 1:
+                    raise
+                first_validation_error = exc
+                planner_message = (
+                    "Your previous plan had an invalid dependency graph. Return the complete "
+                    "replacement plan as strict JSON. Every step id must be unique, every "
+                    "depends_on id must identify a step in the replacement, and the graph "
+                    "must have no cycles. Do not return a direct reply or omit any work."
+                )
+                continue
+
+            for step, raw_step in zip(plan.steps, raw_steps):
+                if not raw_step.get("assignee"):
+                    continue
+                # Resolve identities only after the graph is safe to execute.
+                matches = await human_agents.search_human_agents(name=raw_step["assignee"])
                 if matches:
-                    assignee_name = matches[0].get("name") or s["assignee"]
-                    assignee_id = matches[0].get("id") or assignee_name
-                    assignee_role = matches[0].get("role")
-            steps.append(Step(id=s["id"], title=s.get("title", ""),
-                              description=s.get("description", ""),
-                              kind=s.get("kind", "execute"), question=s.get("question"),
-                              depends_on=list(s.get("depends_on", [])),
-                              is_persona=bool(assignee_name),
-                              assignee=assignee_id, assignee_name=assignee_name,
-                              assignee_role=assignee_role))
-        return Plan(title=data.get("title", ""), goal=data.get("goal", ""),
-                    answer=data.get("answer") or None, steps=steps,
-                    ops=[dict(o) for o in data.get("ops", []) if o.get("step_id")])
+                    step.assignee_name = matches[0].get("name") or raw_step["assignee"]
+                    step.assignee = matches[0].get("id") or step.assignee_name
+                    step.assignee_role = matches[0].get("role")
+                    step.is_persona = True
+            return plan
+
+        raise RuntimeError("planner validation retry exhausted")
 
     def _build_planner_model(self, model_name: Optional[str] = None):
         # Always has the find_human_agents discovery tool now.

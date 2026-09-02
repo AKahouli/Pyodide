@@ -11,7 +11,14 @@ export interface PgMessageRow {
 export interface PgPlanRow {
   session_id: string;
   title: string;
+  goal?: string | null;
   status: string;
+}
+
+export interface PgSessionRow {
+  id: string;
+  status: string;
+  interrupt_id?: string | null;
 }
 
 export interface PgPlanStepRow {
@@ -28,6 +35,11 @@ export interface PgPlanStepRow {
   depends_on?: string; // comma-joined step_ids
   wave?: number;
   assignee?: string; // which executor sub-agent is handling this step (for display/grouping)
+  interrupt_id?: string | null;
+  assignee_name?: string | null;
+  assignee_role?: string | null;
+  is_persona?: boolean;
+  is_dynamic_delegate?: boolean;
 }
 
 /** One fully-formed component of a manager chat message (message_components shape). */

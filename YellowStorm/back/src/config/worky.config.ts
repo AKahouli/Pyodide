@@ -49,6 +49,7 @@ export default registerAs('worky', () => ({
   // Shared secret appended as `&secret=<...>` to every Electric shape request.
   electricSecret: process.env.ELECTRIC_SECRET || '',
   electricMessagesTable: process.env.WORKY_ELECTRIC_MESSAGES_TABLE || 'messages',
+  electricSessionsTable: process.env.WORKY_ELECTRIC_SESSIONS_TABLE || 'sessions',
   electricPlansTable: process.env.WORKY_ELECTRIC_PLANS_TABLE || 'plans',
   electricPlanStepsTable: process.env.WORKY_ELECTRIC_PLAN_STEPS_TABLE || 'plan_steps',
   electricMessageComponentsTable: process.env.WORKY_ELECTRIC_MESSAGE_COMPONENTS_TABLE || 'message_components',

@@ -1,6 +1,6 @@
 import { useState, type JSX } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Zap, ChevronDown, LayoutGrid, Loader2, Plus, Square } from 'lucide-react';
+import { Zap, ChevronDown, LayoutGrid, Plus } from 'lucide-react';
 import { useModuleTranslation } from '@/modules/localization';
 import {
   DropdownMenu,
@@ -12,8 +12,8 @@ import {
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import { useStream, useStreams } from '../../query/hooks';
-import { useStopSession } from '../../hooks/useStopSession';
 import { NewStreamDialog } from '../NewStreamDialog';
+import { CompanionExecutionControls } from '../executive/CompanionExecutionControls';
 
 /**
  * Desktop Worky top bar: logo + wordmark and the stream switcher. The switcher
@@ -23,7 +23,7 @@ import { NewStreamDialog } from '../NewStreamDialog';
  * Stream search lives on the landing dashboard only. Budget is shown by
  * `WorkyActivityRail`, so it is not duplicated here.
  */
-export function WorkyTopBar({ streamId }: { streamId: string }): JSX.Element {
+export function WorkyTopBar({ streamId, sessionStatus }: { streamId: string; sessionStatus?: string | null }): JSX.Element {
   const { t } = useModuleTranslation('worky');
   const navigate = useNavigate();
   const { data: stream } = useStream(streamId);
@@ -31,7 +31,6 @@ export function WorkyTopBar({ streamId }: { streamId: string }): JSX.Element {
   // default so most of the owner's streams remain reachable here.
   const { data: streamsPage } = useStreams({ limit: 100 });
   const streams = streamsPage?.data ?? [];
-  const { stop, canStop, isStopping } = useStopSession(streamId);
   const [createOpen, setCreateOpen] = useState(false);
 
   return (
@@ -88,27 +87,9 @@ export function WorkyTopBar({ streamId }: { streamId: string }): JSX.Element {
         </Button>
       </div>
 
-      {/* Global kill-switch: cancels the whole orchestrator run (all tasks).
-          Terminal — the run can't be resumed — so it is only enabled while a
-          run is live (see useStopSession.canStop). */}
-      <Button
-        type="button"
-        size="sm"
-        variant="destructive"
-        onClick={stop}
-        disabled={!canStop}
-        aria-label={t('stream.stopSession')}
-        title={t('stream.stopSession')}
-        data-testid="worky-topbar-stop-session"
-        className="ml-auto gap-1.5"
-      >
-        {isStopping ? (
-          <Loader2 className="size-4 animate-spin" />
-        ) : (
-          <Square className="size-4" />
-        )}
-        <span>{t('stream.stopSession')}</span>
-      </Button>
+      <div className='ml-auto'>
+        <CompanionExecutionControls streamId={streamId} sessionStatus={sessionStatus} />
+      </div>
 
       <NewStreamDialog open={createOpen} onOpenChange={setCreateOpen} />
     </div>

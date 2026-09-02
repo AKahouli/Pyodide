@@ -6,6 +6,7 @@ import { useWorkyUiStore } from '../../uiStore';
 import { useResizableSidebar } from '../../useResizableSidebar';
 import { ChatMessageThread } from '../ChatMessageThread';
 import { PromptBar } from '../PromptBar';
+import type { WorkyExecutiveViewModel } from '../../executive/executiveModel';
 
 const SIDEBAR_WIDTH_STORAGE_KEY = 'worky:chat-sidebar-width';
 
@@ -38,10 +39,12 @@ export function WorkyActivityRail({
   streamId,
   onWhatsAppClick,
   whatsappConnected,
+  model,
 }: {
   streamId: string;
   onWhatsAppClick?: () => void;
   whatsappConnected?: boolean;
+  model?: WorkyExecutiveViewModel;
 }): JSX.Element {
   const { t } = useModuleTranslation('worky');
   const [tab, setTab] = useState<'chat' | 'activity'>('chat');
@@ -73,6 +76,12 @@ export function WorkyActivityRail({
         />
       </div>
 
+      <div className='border-b border-border/60 px-4 py-3'>
+        <p className='text-xs font-bold uppercase tracking-[0.16em] text-foreground'>{t('executive.rail.title')}</p>
+        <p className='mt-1 text-xs leading-5 text-muted-foreground'>
+          {t('executive.rail.summary', { active: model?.summary.active ?? 0, needs: model?.summary.needsInput ?? 0 })}
+        </p>
+      </div>
       <div className="flex shrink-0 gap-1 rounded-lg border border-border bg-muted p-0.5 m-3 mb-2">
         {(['chat', 'activity'] as const).map((v) => (
           <button
@@ -101,6 +110,7 @@ export function WorkyActivityRail({
           />
           <PromptBar
             streamId={streamId}
+            sessionStatus={model?.session?.status}
             onWhatsAppClick={onWhatsAppClick}
             whatsappConnected={whatsappConnected}
           />

@@ -424,4 +424,16 @@ export const configValidationSchema = Joi.object({
     ),
   WORKY_VOICE_TOKEN_TTL_SEC: Joi.number().min(60).max(3600).default(1800),
   WORKY_VOICE_SESSION_START_TTL_SEC: Joi.number().min(30).max(600).default(60),
+
+  // Worky - Electric SQL projection sync
+  WORKY_ELECTRIC_URL: Joi.string().uri().default('http://electric:3000/v1/shape'),
+  ELECTRIC_SECRET: Joi.string().allow('').default(''),
+  WORKY_ELECTRIC_MESSAGES_TABLE: Joi.string().default('messages'),
+  WORKY_ELECTRIC_SESSIONS_TABLE: Joi.string().default('sessions'),
+  WORKY_ELECTRIC_PLANS_TABLE: Joi.string().default('plans'),
+  WORKY_ELECTRIC_PLAN_STEPS_TABLE: Joi.string().default('plan_steps'),
+  WORKY_ELECTRIC_MESSAGE_COMPONENTS_TABLE: Joi.string().default('message_components'),
+  WORKY_ELECTRIC_PLAN_STEP_COMPONENTS_TABLE: Joi.string().default('plan_step_components'),
+  WORKY_ELECTRIC_PLAN_STEP_ARTIFACTS_TABLE: Joi.string().default('plan_step_artifacts'),
+  WORKY_ELECTRIC_DEBUG: Joi.boolean().default(false),
 });

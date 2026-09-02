@@ -209,6 +209,7 @@ export interface WorkyTask {
   streamId: string;
   /** plan_steps.step_id (Electric source) — what `dependsOnStepIds` entries refer to. */
   externalId: string | null;
+  ordinal?: number | null;
   title: string;
   description: string;
   lane: WorkyBoardLane;
@@ -219,6 +220,14 @@ export interface WorkyTask {
   assigneeId: string | null;
   /** Executor sub-agent that handled this task (Electric plan_steps.assignee). Null when unattributed. */
   assigneeKey?: string | null;
+  /** Companion step semantics. Optional while backend/frontend roll independently. */
+  kind?: string;
+  question?: string | null;
+  interruptId?: string | null;
+  assigneeName?: string | null;
+  assigneeRole?: string | null;
+  isPersona?: boolean;
+  isDynamicDelegate?: boolean;
   actionCategory: WorkyActionCategory;
   dependsOn: string[];
   /** Parallel wave index (plan_steps.wave via Electric); null outside a plan. */
@@ -272,8 +281,21 @@ export interface WorkyTaskResultContent {
 
 export interface WorkyBoardResponse {
   streamId: string;
+  plan?: WorkyPlanSummary | null;
+  session?: WorkyCompanionSessionSummary | null;
   lanes: Record<WorkyBoardLane, WorkyTask[]>;
   pendingClarifications: WorkyPendingClarification[];
+}
+
+export interface WorkyPlanSummary {
+  title: string;
+  goal: string;
+  status: string;
+}
+
+export interface WorkyCompanionSessionSummary {
+  status: string;
+  activeInterruptId: string | null;
 }
 
 export interface WorkyPendingClarification {

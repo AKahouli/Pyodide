@@ -1,12 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
-import { Bot } from 'lucide-react';
 import { useModuleTranslation } from '@/modules/localization';
-import { Button } from '@/components/ui/button';
 import { StreamHeader } from './StreamHeader';
-import { KanbanBoard } from './KanbanBoard';
-import { WorkyGraphBoard } from './WorkyGraphBoard';
 import { PlanDeltaToast } from './PlanDeltaToast';
 import { ApprovalModal } from './ApprovalModal';
 import { TaskDetailDrawer } from './TaskDetailDrawer';
@@ -25,10 +21,7 @@ import {
 } from '../query/hooks';
 import { isWhatsAppConnected } from '@/lib/whatsapp-integration-utils';
 import { useIsMobile } from '@/hooks/use-mobile';
-import { cn } from '@/lib/utils';
 import { WorkyMobileStream } from './mobile/WorkyMobileStream';
-import { AgentTeamView } from './mobile/AgentTeamView';
-import { useStreamAgents } from '../agents/useStreamAgents';
 import { WorkyVoiceDock } from './desktop/WorkyVoiceDock';
 import { WorkyTopBar } from './desktop/WorkyTopBar';
 import { WorkyActivityRail } from './desktop/WorkyActivityRail';
@@ -36,7 +29,15 @@ import { ManagerChatSheet } from './mobile/ManagerChatSheet';
 import { useWorkyVoiceSession } from '../voice/useWorkyVoiceSession';
 import { VoiceSettingsSheet } from './voice/VoiceSettingsSheet';
 import { ConciergeInstructionsDialog } from './voice/ConciergeInstructionsDialog';
-import type { WorkyEvent, WorkyMessage, WorkyPendingClarification, WorkyTask } from '../types';
+import type { WorkyBoardResponse, WorkyEvent, WorkyMessage, WorkyPendingClarification, WorkyTask } from '../types';
+import { deriveExecutiveView } from '../executive/deriveExecutiveView';
+import { WorkyExecutiveView } from './executive/WorkyExecutiveView';
+
+const EMPTY_BOARD: WorkyBoardResponse = {
+  streamId: '',
+  lanes: { backlog: [], ready: [], running: [], review: [], blocked: [], failed: [], done: [], canceled: [] },
+  pendingClarifications: [],
+};
 
 function summarizeDelta(event: WorkyEvent, fallback: string): string {
   const created = (event.data.createdTaskIds as string[] | undefined)?.length ?? 0;
@@ -69,12 +70,10 @@ function WorkyStreamBody({ streamId }: { streamId: string }): JSX.Element {
   const streamQuery = useStream(streamId);
   const updateStream = useUpdateStream();
   const [selectedTask, setSelectedTask] = useState<WorkyTask | null>(null);
-  const [boardView, setBoardView] = useState<'agents' | 'status' | 'graph'>('agents');
   const [approvalFor, setApprovalFor] = useState<WorkyPendingClarification | null>(null);
   const [whatsappModalOpen, setWhatsappModalOpen] = useState(false);
   const whatsappQuery = useWorkyWhatsAppIntegration(streamId);
   const isMobile = useIsMobile();
-  const { agents: streamAgents } = useStreamAgents();
   const pushActivity = useWorkyUiStore((s) => s.pushActivity);
   const clearActivity = useWorkyUiStore((s) => s.clearActivity);
   const activitySeq = useRef(0);
@@ -230,6 +229,7 @@ function WorkyStreamBody({ streamId }: { streamId: string }): JSX.Element {
         }
         case 'stream.updated': {
           void qc.invalidateQueries({ queryKey: workyKeys.detail(streamId) });
+          void qc.invalidateQueries({ queryKey: workyKeys.board(streamId) });
           break;
         }
         case 'stream.terminal': {
@@ -306,6 +306,7 @@ function WorkyStreamBody({ streamId }: { streamId: string }): JSX.Element {
   const voice = useWorkyVoiceSession(streamId, voiceOpen && !isMobile);
   const [voiceSettingsOpen, setVoiceSettingsOpen] = useState(false);
   const [promptOpen, setPromptOpen] = useState(false);
+  const executiveModel = deriveExecutiveView(boardQuery.data ?? EMPTY_BOARD, streamQuery.data?.status);
   // Close the slide-over automatically on stream switch so the next
   // stream doesn't inherit the open state of the previous one.
   useEffect(() => {
@@ -318,76 +319,25 @@ function WorkyStreamBody({ streamId }: { streamId: string }): JSX.Element {
         streamId={streamId}
         approvalFor={approvalFor}
         onApprovalClose={() => setApprovalFor(null)}
+        model={executiveModel}
+        onWhatsAppClick={() => setWhatsappModalOpen(true)}
+        whatsappConnected={isWhatsAppConnected(whatsappQuery.data?.status)}
       />
     );
   }
 
   return (
     <div className='flex h-full w-full flex-col overflow-hidden'>
-      <WorkyTopBar streamId={streamId} />
+      <WorkyTopBar streamId={streamId} sessionStatus={executiveModel.session?.status} />
       <div className='flex min-h-0 flex-1 overflow-hidden'>
       <main
         data-testid='worky-stream-main'
         className='flex min-w-0 flex-1 flex-col overflow-hidden'
       >
         <StreamHeader streamId={streamId} onRename={onRename} />
-        {streamQuery.data ? (
-          <div className='flex items-center justify-end gap-2 border-b border-border/60 bg-background/20 px-6 py-2'>
-            <div
-              role='tablist'
-              aria-label={tWorky('kanban.view.status')}
-              className='grid shrink-0 grid-cols-3 rounded-md border border-border/60 bg-muted/20 p-0.5 text-xs'
-              data-testid='worky-board-view-toggle'
-            >
-              {(['agents', 'status', 'graph'] as const).map((view) => (
-                <button
-                  key={view}
-                  type='button'
-                  role='tab'
-                  aria-selected={boardView === view}
-                  data-testid={`worky-board-view-${view}`}
-                  onClick={() => setBoardView(view)}
-                  className={cn(
-                    'rounded px-2 py-1 font-medium transition-colors',
-                    boardView === view
-                      ? 'bg-background text-foreground shadow-sm'
-                      : 'text-muted-foreground hover:text-foreground',
-                  )}
-                >
-                  {tWorky(`kanban.view.${view}`)}
-                </button>
-              ))}
-            </div>
-            <Button
-              type='button'
-              size='sm'
-              variant='outline'
-              onClick={() => setOrchestratorOpen(true)}
-              className='lg:hidden'
-              data-testid='worky-orchestrator-open'
-              aria-label={tWorky('orchestrator.open')}
-            >
-              <Bot className='mr-1 h-3.5 w-3.5' />
-              {tWorky('orchestrator.open')}
-            </Button>
-          </div>
-        ) : null}
-        {boardView === 'graph' ? (
-          <WorkyGraphBoard onTaskClick={setSelectedTask} />
-        ) : boardView === 'agents' ? (
-          // pb clears the fixed WorkyVoiceDock, which would otherwise cover the
-          // last row of agent cards at the bottom of the scroll.
-          <div className='min-h-0 flex-1 overflow-y-auto p-6 pb-28' data-testid='worky-agents-scroll'>
-            <div className='mx-auto flex max-w-5xl flex-col gap-4'>
-              <h2 className='text-lg font-bold text-foreground'>
-                {tWorky('agents.team.title')} · {tWorky('agents.team.count', { count: streamAgents.length })}
-              </h2>
-              <AgentTeamView onOpenTask={setSelectedTask} showHeader={false} columns={2} />
-            </div>
-          </div>
-        ) : (
-          <KanbanBoard streamId={streamId} onTaskClick={setSelectedTask} />
-        )}
+        <div className='min-h-0 flex-1 overflow-y-auto bg-muted/20' data-testid='worky-executive-scroll'>
+          <WorkyExecutiveView streamId={streamId} model={executiveModel} onTaskClick={setSelectedTask} />
+        </div>
       </main>
       {selectedTask ? (
         <TaskDetailDrawer
@@ -399,6 +349,7 @@ function WorkyStreamBody({ streamId }: { streamId: string }): JSX.Element {
         streamId={streamId}
         onWhatsAppClick={() => setWhatsappModalOpen(true)}
         whatsappConnected={isWhatsAppConnected(whatsappQuery.data?.status)}
+        model={executiveModel}
       />
       {/* Sidebar-mode file viewer host. Floating mode is mounted globally in
           App.tsx; sidebar mode needs a per-page host — without this, clicking
@@ -411,6 +362,7 @@ function WorkyStreamBody({ streamId }: { streamId: string }): JSX.Element {
         onOpenChange={setOrchestratorOpen}
         onWhatsAppClick={() => setWhatsappModalOpen(true)}
         whatsappConnected={isWhatsAppConnected(whatsappQuery.data?.status)}
+        sessionStatus={executiveModel.session?.status}
       />
       <PlanDeltaToast />
       {approvalFor ? (

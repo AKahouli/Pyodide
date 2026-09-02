@@ -43,6 +43,7 @@ const makeService = () => {
       const values: Record<string, unknown> = {
         'worky.electricUrl': 'http://electric:3000/v1/shape',
         'worky.electricMessagesTable': 'messages',
+        'worky.electricSessionsTable': 'sessions',
         'worky.electricPlansTable': 'plans',
         'worky.electricPlanStepsTable': 'plan_steps',
         'worky.electricMessageComponentsTable': 'message_components',
@@ -99,6 +100,80 @@ describe('WorkyElectricConsumerService.onModuleInit', () => {
       expect.any(Function),
       'messages:turn-id-v1',
     );
+    expect(subscribe).toHaveBeenNthCalledWith(2, 'sessions', 'sessions', expect.any(Function), 'sessions:v1');
+    expect(subscribe).toHaveBeenNthCalledWith(3, 'plans', 'plans', expect.any(Function), 'plans:v2');
+    expect(subscribe).toHaveBeenNthCalledWith(4, 'plan_steps', 'plan_steps', expect.any(Function), 'plan_steps:v2');
+  });
+});
+
+describe('WorkyElectricConsumerService batch cursor', () => {
+  it('does not persist a cursor when shutdown interrupts batch processing', async () => {
+    const { service } = makeService();
+    const persist = jest.fn().mockResolvedValue(undefined);
+    const handler = jest.fn().mockImplementation(async () => {
+      service.onModuleDestroy();
+    });
+
+    await (service as any).processBatch(handler, [{ value: 'row' }], persist);
+
+    expect(handler).toHaveBeenCalled();
+    expect(persist).not.toHaveBeenCalled();
+  });
+});
+
+describe('WorkyElectricConsumerService.handleSessions', () => {
+  it('upserts session state independently and emits stream.updated', async () => {
+    const { service, planProjectionModel, streamService, events } = makeService();
+    streamService.findByAiSessionId.mockResolvedValue({ streamId: 'stream-1', ownerUserId: 'owner-1' });
+    planProjectionModel.findOneAndUpdate.mockReturnValue({ exec: () => Promise.resolve({}) } as any);
+
+    await service.handleSessions([{
+      key: 'sessions/session-1', headers: { operation: 'insert' },
+      value: { id: 'session-1', status: 'waiting', interrupt_id: 'ask:1' },
+    }]);
+
+    expect(planProjectionModel.findOneAndUpdate).toHaveBeenCalledWith(
+      { streamId: 'stream-1' },
+      { $set: { streamId: 'stream-1', sessionStatus: 'waiting', activeInterruptId: 'ask:1' } },
+      expect.objectContaining({ upsert: true, setDefaultsOnInsert: true }),
+    );
+    expect(events.emit).toHaveBeenCalledWith('owner-1', 'stream-1', expect.objectContaining({ type: 'stream.updated' }));
+  });
+
+  it('retries a failed session projection before completing the batch', async () => {
+    const { service, planProjectionModel, streamService, events } = makeService();
+    streamService.findByAiSessionId.mockResolvedValue({ streamId: 'stream-1', ownerUserId: 'owner-1' });
+    planProjectionModel.findOneAndUpdate
+      .mockReturnValueOnce({ exec: () => Promise.reject(new Error('mongo unavailable')) } as any)
+      .mockReturnValueOnce({ exec: () => Promise.resolve({}) } as any);
+    (service as any).waitForProjectionRetry = jest.fn().mockResolvedValue(undefined);
+
+    await service.handleSessions([{
+      key: 'sessions/session-1', headers: { operation: 'update' },
+      value: { id: 'session-1', status: 'paused', interrupt_id: null },
+    }]);
+
+    expect(planProjectionModel.findOneAndUpdate).toHaveBeenCalledTimes(2);
+    expect(events.emit).toHaveBeenCalledTimes(1);
+  });
+
+  it('stops retrying without emitting when shutdown interrupts the batch', async () => {
+    const { service, planProjectionModel, streamService, events } = makeService();
+    streamService.findByAiSessionId.mockResolvedValue({ streamId: 'stream-1', ownerUserId: 'owner-1' });
+    planProjectionModel.findOneAndUpdate.mockReturnValue({
+      exec: () => Promise.reject(new Error('mongo unavailable')),
+    } as any);
+    (service as any).waitForProjectionRetry = jest.fn().mockImplementation(async () => {
+      service.onModuleDestroy();
+    });
+
+    await service.handleSessions([{
+      key: 'sessions/session-1', headers: { operation: 'update' },
+      value: { id: 'session-1', status: 'paused', interrupt_id: null },
+    }]);
+
+    expect(planProjectionModel.findOneAndUpdate).toHaveBeenCalledTimes(1);
+    expect(events.emit).not.toHaveBeenCalled();
   });
 });
 
@@ -225,7 +300,7 @@ describe('WorkyElectricConsumerService.handleMessages', () => {
     expect(logger.warn).toHaveBeenCalled();
   });
 
-  it('continues processing subsequent rows when one row fails (per-row guard)', async () => {
+  it('continues processing subsequent rows when one message row fails', async () => {
     const { service, messageModel, streamService, events, logger } = makeService();
     streamService.findByAiSessionId.mockResolvedValue({ streamId: 'stream-1', ownerUserId: 'owner-1' });
     messageModel.findOneAndUpdate
@@ -321,12 +396,13 @@ describe('WorkyElectricConsumerService.handlePlanSteps', () => {
     expect(logger.warn).toHaveBeenCalled();
   });
 
-  it('continues processing subsequent rows when one row fails (per-row guard)', async () => {
+  it('retries a failed row before processing subsequent rows', async () => {
     const { service, taskModel, streamService, events, logger } = makeService();
     streamService.findByAiSessionId.mockResolvedValue({ streamId: 'stream-1', ownerUserId: 'owner-1' });
     taskModel.findOneAndUpdate
       .mockReturnValueOnce({ exec: () => Promise.reject(new Error('db down')) } as any)
-      .mockReturnValueOnce({ exec: () => Promise.resolve({ _id: 'obj-2' }) } as any);
+      .mockReturnValue({ exec: () => Promise.resolve({ _id: 'obj-2' }) } as any);
+    (service as any).waitForProjectionRetry = jest.fn().mockResolvedValue(undefined);
 
     const makeMsg = (id: string) => ({
       key: `"public"."plan_steps"/"${id}"`,
@@ -336,11 +412,11 @@ describe('WorkyElectricConsumerService.handlePlanSteps', () => {
 
     await expect(service.handlePlanSteps([makeMsg('step-1'), makeMsg('step-2')])).resolves.toBeUndefined();
 
-    expect(taskModel.findOneAndUpdate).toHaveBeenCalledTimes(2);
-    expect(events.emit).toHaveBeenCalledTimes(1);
+    expect(taskModel.findOneAndUpdate).toHaveBeenCalledTimes(3);
+    expect(events.emit).toHaveBeenCalledTimes(2);
     expect(logger.error).toHaveBeenCalledWith(
-      'Failed to process plan_step row',
-      expect.objectContaining({ error: 'db down' }),
+      expect.stringContaining('retrying before cursor advance'),
+      expect.objectContaining({ shape: 'plan_steps', error: 'db down' }),
     );
   });
 });
@@ -393,12 +469,13 @@ describe('WorkyElectricConsumerService.handlePlans', () => {
     expect(logger.warn).toHaveBeenCalled();
   });
 
-  it('continues processing subsequent rows when one row fails (per-row guard)', async () => {
+  it('retries a failed row before processing subsequent rows', async () => {
     const { service, planProjectionModel, streamService, events, logger } = makeService();
     streamService.findByAiSessionId.mockResolvedValue({ streamId: 'stream-1', ownerUserId: 'owner-1' });
     planProjectionModel.findOneAndUpdate
       .mockReturnValueOnce({ exec: () => Promise.reject(new Error('db down')) } as any)
-      .mockReturnValueOnce({ exec: () => Promise.resolve({ _id: 'obj-2' }) } as any);
+      .mockReturnValue({ exec: () => Promise.resolve({ _id: 'obj-2' }) } as any);
+    (service as any).waitForProjectionRetry = jest.fn().mockResolvedValue(undefined);
 
     const makeMsg = (id: string) => ({
       key: `"public"."plans"/"${id}"`,
@@ -408,11 +485,11 @@ describe('WorkyElectricConsumerService.handlePlans', () => {
 
     await expect(service.handlePlans([makeMsg('sess-1'), makeMsg('sess-2')])).resolves.toBeUndefined();
 
-    expect(planProjectionModel.findOneAndUpdate).toHaveBeenCalledTimes(2);
-    expect(events.emit).toHaveBeenCalledTimes(1);
+    expect(planProjectionModel.findOneAndUpdate).toHaveBeenCalledTimes(3);
+    expect(events.emit).toHaveBeenCalledTimes(2);
     expect(logger.error).toHaveBeenCalledWith(
-      'Failed to process plan row',
-      expect.objectContaining({ error: 'db down' }),
+      expect.stringContaining('retrying before cursor advance'),
+      expect.objectContaining({ shape: 'plans', error: 'db down' }),
     );
   });
 });

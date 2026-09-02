@@ -9,9 +9,12 @@ import { UserDocument } from '../../user/schemas/user.schema';
 import { RequirePermissions } from '../../authorization/decorators/require-permissions.decorator';
 import { Permissions } from '../../authorization/constants/permissions';
 import { WorkyInteraction } from '../schemas/worky-interaction.schema';
+import { WorkyPlanProjection, WorkyPlanProjectionDocument } from '../schemas/worky-plan-projection.schema';
 
 export interface WorkyBoardResponse {
   streamId: string;
+  plan: { title: string; goal: string; status: string } | null;
+  session: { status: string; activeInterruptId: string | null } | null;
   lanes: Record<BoardLane, IBoardTaskView[]>;
   pendingClarifications: Array<{
     id: string;
@@ -35,6 +38,8 @@ export class WorkyBoardController {
     private readonly tasks: WorkyTaskService,
     @InjectModel(WorkyInteraction.name)
     private readonly interactions: Model<WorkyInteraction>,
+    @InjectModel(WorkyPlanProjection.name)
+    private readonly planProjections: Model<WorkyPlanProjectionDocument>,
   ) {}
 
   @Get(':id/board')
@@ -46,11 +51,14 @@ export class WorkyBoardController {
     @Param('id') streamId: string,
   ): Promise<WorkyBoardResponse> {
     const streamObjectId = new Types.ObjectId(streamId);
-    const pending = await this.interactions
-      .find({ streamId: streamObjectId, status: 'pending' })
-      .sort({ createdAt: 1 })
-      .lean()
-      .exec();
+    const [pending, projection] = await Promise.all([
+      this.interactions
+        .find({ streamId: streamObjectId, status: 'pending' })
+        .sort({ createdAt: 1 })
+        .lean()
+        .exec(),
+      this.planProjections.findOne({ streamId: streamObjectId }).lean().exec(),
+    ]);
     const blockersByTaskId = new Map<string, string[]>();
     for (const p of pending) {
       const id = (p._id as Types.ObjectId).toString();
@@ -75,6 +83,12 @@ export class WorkyBoardController {
     ) as unknown as Record<BoardLane, IBoardTaskView[]>;
     return {
       streamId,
+      plan: projection?.status
+        ? { title: projection.title ?? '', goal: projection.goal ?? '', status: projection.status }
+        : null,
+      session: projection?.sessionStatus
+        ? { status: projection.sessionStatus, activeInterruptId: projection.activeInterruptId ?? null }
+        : null,
       lanes: { ...emptyLanes, ...lanes },
       pendingClarifications: pending.map((p) => ({
         id: (p._id as Types.ObjectId).toString(),

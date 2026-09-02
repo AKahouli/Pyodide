@@ -1,24 +1,15 @@
 import { useCallback } from 'react';
 import { useModuleTranslation } from '@/modules/localization';
-import { useStopTurn, useStream } from '../query/hooks';
-import { useWorkyStore, useWorkyStreaming } from '../store';
+import { useStopTurn } from '../query/hooks';
+import { useWorkyStore } from '../store';
 import { useWorkyUiStore } from '../uiStore';
-import type { WorkyStreamStatus } from '../types';
 
 /**
  * Stream statuses for which there is a live orchestrator run to stop. Terminal
  * or idle states (created / stopped / completed / archived / paused) are
  * excluded so the global Stop control is only offered when it does something.
  */
-const STOPPABLE_STATUSES: ReadonlySet<WorkyStreamStatus> = new Set([
-  'planning',
-  'start_requested',
-  'active',
-  'partially_blocked',
-  'waiting_for_owner',
-  'waiting_for_human',
-  'waiting_for_budget_decision',
-]);
+const STOPPABLE_STATUSES: ReadonlySet<string> = new Set(['running', 'paused', 'waiting', 'blocked']);
 
 export interface UseStopSession {
   /** Trigger the terminal StopSession RPC for this stream. Safe to call repeatedly. */
@@ -42,10 +33,8 @@ export interface UseStopSession {
  * StopSession is terminal: the run cannot be resumed, so we do not attempt any
  * optimistic status rewrite beyond clearing the local streaming flag.
  */
-export function useStopSession(streamId: string): UseStopSession {
+export function useStopSession(streamId: string, sessionStatus?: string | null): UseStopSession {
   const { t } = useModuleTranslation('worky');
-  const { data: stream } = useStream(streamId);
-  const streaming = useWorkyStreaming();
   const setStreaming = useWorkyStore((s) => s.setStreaming);
   const setStreamError = useWorkyStore((s) => s.setStreamError);
   const notifySendError = useWorkyUiStore((s) => s.notifySendError);
@@ -53,7 +42,7 @@ export function useStopSession(streamId: string): UseStopSession {
 
   const canStop =
     !stopTurn.isPending &&
-    (streaming || (stream ? STOPPABLE_STATUSES.has(stream.status) : false));
+    Boolean(sessionStatus && STOPPABLE_STATUSES.has(sessionStatus));
 
   const stop = useCallback(() => {
     if (stopTurn.isPending) return;

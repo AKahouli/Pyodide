@@ -16,6 +16,7 @@ import { WorkyPlanStepArtifact, WorkyPlanStepArtifactDocument } from '../schemas
 import {
   PgMessageRow,
   PgPlanRow,
+  PgSessionRow,
   PgPlanStepRow,
   PgMessageComponentRow,
   PgPlanStepComponentRow,
@@ -24,6 +25,7 @@ import {
 import {
   mapMessage,
   mapPlan,
+  mapSession,
   mapPlanStep,
   isKnownPlanStepStatus,
   mapMessageComponent,
@@ -48,7 +50,11 @@ import {
 @Injectable()
 export class WorkyElectricConsumerService implements OnModuleInit, OnModuleDestroy {
   private static readonly MESSAGES_CURSOR_KEY = 'messages:turn-id-v1';
+  private static readonly SESSIONS_CURSOR_KEY = 'sessions:v1';
+  private static readonly PLANS_CURSOR_KEY = 'plans:v2';
+  private static readonly PLAN_STEPS_CURSOR_KEY = 'plan_steps:v2';
   private streams: Array<{ unsubscribe: () => void }> = [];
+  private destroyed = false;
 
   constructor(
     private readonly config: ConfigService,
@@ -79,14 +85,22 @@ export class WorkyElectricConsumerService implements OnModuleInit, OnModuleDestr
       WorkyElectricConsumerService.MESSAGES_CURSOR_KEY,
     );
     await this.subscribe(
+      'sessions',
+      this.config.get<string>('worky.electricSessionsTable')!,
+      (m) => this.handleSessions(m),
+      WorkyElectricConsumerService.SESSIONS_CURSOR_KEY,
+    );
+    await this.subscribe(
       'plans',
       this.config.get<string>('worky.electricPlansTable')!,
       (m) => this.handlePlans(m),
+      WorkyElectricConsumerService.PLANS_CURSOR_KEY,
     );
     await this.subscribe(
       'plan_steps',
       this.config.get<string>('worky.electricPlanStepsTable')!,
       (m) => this.handlePlanSteps(m),
+      WorkyElectricConsumerService.PLAN_STEPS_CURSOR_KEY,
     );
     await this.subscribe(
       'message_components',
@@ -106,11 +120,14 @@ export class WorkyElectricConsumerService implements OnModuleInit, OnModuleDestr
   }
 
   onModuleDestroy(): void {
+    this.destroyed = true;
     for (const s of this.streams) {
       try {
         s.unsubscribe();
-      } catch {
-        /* noop */
+      } catch (error) {
+        this.logger.warn('[worky-electric] unsubscribe failed', {
+          error: error instanceof Error ? error.message : String(error),
+        });
       }
     }
   }
@@ -158,12 +175,22 @@ export class WorkyElectricConsumerService implements OnModuleInit, OnModuleDestr
     const unsubscribe = stream.subscribe(
       async (messages) => {
         this.logger.log('[worky-electric] batch', { shape, messageCount: messages.length });
-        await handler(messages);
-        await this.persistCursor(cursorKey, stream.shapeHandle, String(stream.lastOffset));
+        await this.processBatch(handler, messages, () =>
+          this.persistCursor(cursorKey, stream.shapeHandle, String(stream.lastOffset)),
+        );
       },
       (err) => this.logger.error('[worky-electric] stream error', { shape, error: (err as Error).message }),
     );
     this.streams.push({ unsubscribe });
+  }
+
+  private async processBatch(
+    handler: (messages: unknown[]) => Promise<void>,
+    messages: unknown[],
+    persist: () => Promise<void>,
+  ): Promise<void> {
+    await handler(messages);
+    if (!this.destroyed) await persist();
   }
 
   /**
@@ -298,6 +325,7 @@ export class WorkyElectricConsumerService implements OnModuleInit, OnModuleDestr
 
   async handlePlanSteps(messages: unknown[]): Promise<void> {
     for (const m of messages as any[]) {
+      if (this.destroyed) return;
       if (isControlMessage(m)) {
         if (this.debug) {
           this.logger.debug('[worky-electric] control', { shape: 'plan_steps', headers: m.headers });
@@ -306,7 +334,7 @@ export class WorkyElectricConsumerService implements OnModuleInit, OnModuleDestr
       }
       if (!isChangeMessage(m)) continue;
       if (m.headers.operation === 'delete') continue; // manager tombstones out of scope
-      try {
+      await this.retryProjection('plan_steps', async () => {
         const row = m.value as unknown as PgPlanStepRow;
         if (this.debug) {
           this.logger.debug('[worky-electric] row', {
@@ -319,7 +347,7 @@ export class WorkyElectricConsumerService implements OnModuleInit, OnModuleDestr
         const target = await this.streamService.findByAiSessionId(row.session_id);
         if (!target) {
           this.logger.warn('[worky-electric] unknown session', { shape: 'plan_steps', sid: row.session_id });
-          continue;
+          return;
         }
         if (!isKnownPlanStepStatus(row.status)) {
           this.logger.warn('Unknown plan_step status', { status: row.status, step: row.step_id });
@@ -344,15 +372,13 @@ export class WorkyElectricConsumerService implements OnModuleInit, OnModuleDestr
             set,
           });
         }
-      } catch (err) {
-        this.logger.error('Failed to process plan_step row', { error: (err as Error).message });
-        continue;
-      }
+      });
     }
   }
 
   async handlePlans(messages: unknown[]): Promise<void> {
     for (const m of messages as any[]) {
+      if (this.destroyed) return;
       if (isControlMessage(m)) {
         if (this.debug) {
           this.logger.debug('[worky-electric] control', { shape: 'plans', headers: m.headers });
@@ -361,7 +387,7 @@ export class WorkyElectricConsumerService implements OnModuleInit, OnModuleDestr
       }
       if (!isChangeMessage(m)) continue;
       if (m.headers.operation === 'delete') continue; // manager tombstones out of scope
-      try {
+      await this.retryProjection('plans', async () => {
         const row = m.value as unknown as PgPlanRow;
         if (this.debug) {
           this.logger.debug('[worky-electric] row', {
@@ -374,7 +400,7 @@ export class WorkyElectricConsumerService implements OnModuleInit, OnModuleDestr
         const target = await this.streamService.findByAiSessionId(row.session_id);
         if (!target) {
           this.logger.warn('[worky-electric] unknown session', { shape: 'plans', sid: row.session_id });
-          continue;
+          return;
         }
         const streamOid = this.toStreamOid(target.streamId);
         const { set, event } = mapPlan(row, target.streamId);
@@ -395,11 +421,59 @@ export class WorkyElectricConsumerService implements OnModuleInit, OnModuleDestr
             set,
           });
         }
+      });
+    }
+  }
+
+  async handleSessions(messages: unknown[]): Promise<void> {
+    for (const m of messages as any[]) {
+      if (this.destroyed) return;
+      if (isControlMessage(m)) continue;
+      if (!isChangeMessage(m)) continue;
+      if (m.headers.operation === 'delete') continue;
+      await this.retryProjection('sessions', async () => {
+        const row = m.value as unknown as PgSessionRow;
+        const target = await this.streamService.findByAiSessionId(row.id);
+        if (!target) {
+          this.logger.warn('[worky-electric] unknown session', { shape: 'sessions', sid: row.id });
+          return;
+        }
+        const streamOid = this.toStreamOid(target.streamId);
+        const { set, event } = mapSession(row, target.streamId);
+        await this.planProjectionModel
+          .findOneAndUpdate(
+            { streamId: streamOid },
+            { $set: { ...set, streamId: streamOid } },
+            { upsert: true, new: true, setDefaultsOnInsert: true },
+          )
+          .exec();
+        this.events.emit(target.ownerUserId, target.streamId, event);
+      });
+    }
+  }
+
+  private async retryProjection(shape: string, operation: () => Promise<void>): Promise<void> {
+    let attempt = 0;
+    while (!this.destroyed) {
+      try {
+        await operation();
+        return;
       } catch (err) {
-        this.logger.error('Failed to process plan row', { error: (err as Error).message });
-        continue;
+        attempt += 1;
+        if (attempt === 1 || (attempt & (attempt - 1)) === 0) {
+          this.logger.error('[worky-electric] projection failed; retrying before cursor advance', {
+            shape,
+            attempt,
+            error: (err as Error).message,
+          });
+        }
+        await this.waitForProjectionRetry(Math.min(30_000, 1_000 * 2 ** (attempt - 1)));
       }
     }
+  }
+
+  private async waitForProjectionRetry(delayMs: number): Promise<void> {
+    await new Promise((resolve) => setTimeout(resolve, delayMs));
   }
 
   async handleMessageComponents(messages: unknown[]): Promise<void> {

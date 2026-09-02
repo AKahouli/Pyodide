@@ -15,25 +15,27 @@ export function ManagerChatSheet({
   onOpenChange,
   onWhatsAppClick,
   whatsappConnected,
+  sessionStatus,
 }: {
   streamId: string;
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onWhatsAppClick?: () => void;
   whatsappConnected?: boolean;
+  sessionStatus?: string | null;
 }): JSX.Element {
   const { t } = useModuleTranslation('worky');
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
       <SheetContent side="bottom" className="flex h-[85vh] flex-col gap-0 rounded-t-2xl p-0">
         <SheetHeader className="border-b border-border px-4 py-3">
-          <SheetTitle>{t('voice.manager')}</SheetTitle>
+          <SheetTitle>{t('executive.rail.title')}</SheetTitle>
           <SheetDescription className='sr-only'>{t('messages.description')}</SheetDescription>
         </SheetHeader>
         <div className="min-h-0 flex-1 overflow-y-auto">
           <ChatMessageThread streamId={streamId} />
         </div>
-        <PromptBar streamId={streamId} onWhatsAppClick={onWhatsAppClick} whatsappConnected={whatsappConnected} />
+        <PromptBar streamId={streamId} sessionStatus={sessionStatus} onWhatsAppClick={onWhatsAppClick} whatsappConnected={whatsappConnected} />
       </SheetContent>
     </Sheet>
   );

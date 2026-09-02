@@ -18,6 +18,8 @@ vi.mock('../../query/hooks', () => ({
   useStream: () => ({ data: { title: 'Q3 Market Expansion', status: 'active' } }),
   // Consumed by useStopSession (stop button in the mobile header).
   useStopTurn: () => ({ mutate: vi.fn(), isPending: false }),
+  usePauseTurn: () => ({ mutate: vi.fn(), isPending: false }),
+  useResumeTurn: () => ({ mutate: vi.fn(), isPending: false }),
 }));
 vi.mock('../../agents/useStreamAgents', () => ({
   useStreamAgents: () => ({ agents: [{ key: 'a' }, { key: 'b' }, { key: 'c' }, { key: 'd' }], ungrouped: [] }),
@@ -27,18 +29,16 @@ import { MobileStreamHeader } from './MobileStreamHeader';
 
 describe('MobileStreamHeader', () => {
   it('shows the stream title and an "N agents · Status" subtitle', () => {
-    render(<MobileStreamHeader streamId="s1" onBack={() => {}} onOpenChat={() => {}} />);
+    render(<MobileStreamHeader streamId="s1" onBack={() => {}} />);
     expect(screen.getByText('Q3 Market Expansion')).toBeTruthy();
     expect(screen.getByText('4 agents · Active')).toBeTruthy();
   });
 
-  it('wires back and chat actions', async () => {
+  it('wires the back action without duplicating the bottom-nav chat control', async () => {
     const onBack = vi.fn();
-    const onOpenChat = vi.fn();
-    render(<MobileStreamHeader streamId="s1" onBack={onBack} onOpenChat={onOpenChat} />);
+    render(<MobileStreamHeader streamId="s1" onBack={onBack} />);
     await userEvent.click(screen.getByLabelText('header.back'));
-    await userEvent.click(screen.getByLabelText('orchestrator.tabs.chat'));
     expect(onBack).toHaveBeenCalled();
-    expect(onOpenChat).toHaveBeenCalled();
+    expect(screen.queryByLabelText('orchestrator.tabs.chat')).not.toBeInTheDocument();
   });
 });

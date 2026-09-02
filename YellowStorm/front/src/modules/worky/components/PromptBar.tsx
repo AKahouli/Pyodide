@@ -1,17 +1,17 @@
-import { Loader2, MessageCircle, Send, Square } from 'lucide-react';
+import { MessageCircle, Send } from 'lucide-react';
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type JSX } from 'react';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { useModuleTranslation } from '@/modules/localization';
 import { useSendMessage } from '../query/hooks';
-import { useStopSession } from '../hooks/useStopSession';
-import { useWorkyStore, useWorkyStreaming } from '../store';
+import { useWorkyStore } from '../store';
 import { useWorkyUiStore } from '../uiStore';
 import type { WorkyStreamStatus } from '../types';
 
 interface PromptBarProps {
   streamId: string;
   status?: WorkyStreamStatus;
+  sessionStatus?: string | null;
   onWhatsAppClick?: () => void;
   whatsappConnected?: boolean;
 }
@@ -29,6 +29,7 @@ interface PromptBarProps {
 export function PromptBar({
   streamId,
   status,
+  sessionStatus,
   onWhatsAppClick,
   whatsappConnected,
 }: PromptBarProps): JSX.Element {
@@ -36,16 +37,13 @@ export function PromptBar({
   const [value, setValue] = useState('');
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const send = useSendMessage(streamId);
-  const streaming = useWorkyStreaming();
   const setStreamError = useWorkyStore((s) => s.setStreamError);
   const beginTurn = useWorkyStore((s) => s.beginTurn);
   const finishTurn = useWorkyStore((s) => s.finishTurn);
   const notifySendError = useWorkyUiStore((s) => s.notifySendError);
   const clearSendError = useWorkyUiStore((s) => s.clearSendError);
   const sendError = useWorkyUiStore((s) => s.sendError);
-  const { stop, isStopping } = useStopSession(streamId);
-
-  const isDisabled = send.isPending || status === 'archived';
+  const isDisabled = send.isPending || status === 'archived' || sessionStatus === 'paused';
 
   // Grow the composer to fit its content, but cap it at 40% of the chat
   // sidebar's height (falling back to 40vh when the composer is not inside the
@@ -86,7 +84,7 @@ export function PromptBar({
   const submit = (e: React.FormEvent) => {
     e.preventDefault();
     const content = value.trim();
-    if (!content || isDisabled || streaming) return;
+    if (!content || isDisabled) return;
     setStreamError(null);
     clearSendError();
     const turnId = crypto.randomUUID();
@@ -163,39 +161,17 @@ export function PromptBar({
               ) : null}
             </Button>
           ) : null}
-          {streaming ? (
-            // While a run streams, the primary button stops the whole run
-            // (terminal StopSession) instead of submitting an empty draft.
-            <Button
-              type='button'
-              size='icon'
-              variant='default'
-              onClick={stop}
-              disabled={isStopping}
-              aria-label={t('promptBar.stop')}
-              title={t('promptBar.stop')}
-              data-testid='worky-prompt-stop'
-              className='size-11 shrink-0 rounded-lg'
-            >
-              {isStopping ? (
-                <Loader2 className='h-4 w-4 animate-spin' />
-              ) : (
-                <Square className='h-4 w-4' />
-              )}
-            </Button>
-          ) : (
-            <Button
-              type='submit'
-              size='icon'
-              variant='default'
-              disabled={isDisabled || !value.trim()}
-              aria-label={t('promptBar.send')}
-              data-testid='worky-prompt-send'
-              className='size-11 shrink-0 rounded-lg'
-            >
-              <Send className='h-4 w-4' />
-            </Button>
-          )}
+          <Button
+            type='submit'
+            size='icon'
+            variant='default'
+            disabled={isDisabled || !value.trim()}
+            aria-label={t('promptBar.send')}
+            data-testid='worky-prompt-send'
+            className='size-11 shrink-0 rounded-lg'
+          >
+            <Send className='h-4 w-4' />
+          </Button>
         </div>
       </form>
     </footer>

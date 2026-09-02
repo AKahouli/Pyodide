@@ -2,7 +2,6 @@ import { useState, type JSX } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useWorkyUiStore } from '../../uiStore';
 import type { WorkyPendingClarification, WorkyTask } from '../../types';
-import { AgentTeamView } from './AgentTeamView';
 import { MobileStreamHeader } from './MobileStreamHeader';
 import { WorkyMobileNav } from './WorkyMobileNav';
 import { TaskDetailSheet } from './TaskDetailSheet';
@@ -10,6 +9,8 @@ import { ApprovalSheet } from './ApprovalSheet';
 import { ManagerChatSheet } from './ManagerChatSheet';
 import { VoiceSession } from '../voice/VoiceSession';
 import { PlanDeltaToast } from '../PlanDeltaToast';
+import type { WorkyExecutiveViewModel } from '../../executive/executiveModel';
+import { WorkyExecutiveView } from '../executive/WorkyExecutiveView';
 
 /**
  * Single-column mobile layout for a stream: agent-team body, bottom nav with
@@ -23,10 +24,16 @@ export function WorkyMobileStream({
   streamId,
   approvalFor,
   onApprovalClose,
+  model,
+  onWhatsAppClick,
+  whatsappConnected,
 }: {
   streamId: string;
   approvalFor: WorkyPendingClarification | null;
   onApprovalClose: () => void;
+  model: WorkyExecutiveViewModel;
+  onWhatsAppClick?: () => void;
+  whatsappConnected?: boolean;
 }): JSX.Element {
   const navigate = useNavigate();
   const activeSheet = useWorkyUiStore((s) => s.activeSheet);
@@ -45,11 +52,11 @@ export function WorkyMobileStream({
       <MobileStreamHeader
         streamId={streamId}
         onBack={() => navigate('/worky')}
-        onOpenChat={() => setActiveSheet('chat')}
+        sessionStatus={model.session?.status}
       />
       {/* pb keeps the last agent card clear of the nav's raised voice button. */}
       <div className="min-h-0 flex-1 overflow-y-auto px-4 pt-1 pb-8">
-        <AgentTeamView onOpenTask={openTask} />
+        <WorkyExecutiveView streamId={streamId} model={model} onTaskClick={openTask} />
       </div>
 
       <div className="shrink-0">
@@ -69,6 +76,9 @@ export function WorkyMobileStream({
         streamId={streamId}
         open={activeSheet === 'chat'}
         onOpenChange={(o) => setActiveSheet(o ? 'chat' : null)}
+        sessionStatus={model.session?.status}
+        onWhatsAppClick={onWhatsAppClick}
+        whatsappConnected={whatsappConnected}
       />
       <ApprovalSheet
         streamId={streamId}

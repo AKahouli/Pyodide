@@ -192,7 +192,7 @@ describe('PromptBar composer', () => {
     });
   });
 
-  it('swaps the send button for a stop button while streaming and stops the run', () => {
+  it('keeps send available while streaming so the active plan can be amended', () => {
     streamingValue = true;
     render(
       <TestProviders>
@@ -200,12 +200,21 @@ describe('PromptBar composer', () => {
       </TestProviders>,
     );
 
-    // Send is replaced by stop while a run is in flight.
-    expect(screen.queryByTestId('worky-prompt-send')).not.toBeInTheDocument();
-    fireEvent.click(screen.getByTestId('worky-prompt-stop'));
+    const textarea = screen.getByTestId('worky-prompt-content');
+    fireEvent.change(textarea, { target: { value: 'add a follow-up' } });
+    fireEvent.click(screen.getByTestId('worky-prompt-send'));
+    expect(sendCalls[0]).toMatchObject({ content: 'add a follow-up' });
+    expect(screen.queryByTestId('worky-prompt-stop')).not.toBeInTheDocument();
+  });
 
-    expect(stopMutateMock).toHaveBeenCalledTimes(1);
-    expect(stopMutateMock.mock.calls[0][0]).toEqual({ streamId: STREAM_ID });
+  it('disables message submission while the Companion session is paused', () => {
+    render(
+      <TestProviders>
+        <PromptBar streamId={STREAM_ID} status='active' sessionStatus='paused' />
+      </TestProviders>,
+    );
+    expect(screen.getByTestId('worky-prompt-content')).toBeDisabled();
+    expect(screen.getByTestId('worky-prompt-send')).toBeDisabled();
   });
 
   it('does not render the removed in-composer dictation mic', () => {

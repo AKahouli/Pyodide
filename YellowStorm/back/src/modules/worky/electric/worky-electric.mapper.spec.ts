@@ -1,4 +1,4 @@
-import { mapMessage, mapPlan, mapPlanStep, mapRole, mapStatusToLane, isKnownPlanStepStatus } from './worky-electric.mapper';
+import { mapMessage, mapPlan, mapPlanStep, mapRole, mapSession, mapStatusToLane, isKnownPlanStepStatus } from './worky-electric.mapper';
 import { mapMessageComponent, mapPlanStepComponent, mapPlanStepArtifact } from './worky-electric.mapper';
 
 describe('worky-electric.mapper', () => {
@@ -205,16 +205,47 @@ describe('worky-electric.mapper', () => {
       expect(missing.assigneeKey).toBeNull();
       expect(blank.assigneeKey).toBeNull();
     });
+
+    it('preserves ask and persona delegation semantics', () => {
+      const { set } = mapPlanStep(
+        {
+          session_id: 's', step_id: 'step-1', ordinal: 1, status: 'blocked',
+          description: '', kind: 'ask', question: 'Which market?',
+          interrupt_id: 'ask:1', assignee: 'directory-id', assignee_name: 'Emmanuel',
+          assignee_role: 'Senior Business', is_persona: true, is_dynamic_delegate: true,
+        },
+        'stream-1',
+      );
+      expect(set).toMatchObject({
+        kind: 'ask', question: 'Which market?', interruptId: 'ask:1',
+        assigneeKey: 'directory-id', assigneeName: 'Emmanuel', assigneeRole: 'Senior Business',
+        isPersona: true, isDynamicDelegate: true,
+      });
+    });
   });
 
   describe('mapPlan', () => {
     it('passes the raw status through and emits a stream.updated event', () => {
-      const { set, event } = mapPlan({ session_id: 's', title: 'My Plan', status: 'completed' }, 'stream-1');
-      expect(set).toEqual({ streamId: 'stream-1', title: 'My Plan', status: 'completed' });
+      const { set, event } = mapPlan({ session_id: 's', title: 'My Plan', goal: 'Ship it', status: 'completed' }, 'stream-1');
+      expect(set).toEqual({ streamId: 'stream-1', title: 'My Plan', goal: 'Ship it', status: 'completed' });
       expect(event).toMatchObject({
         type: 'stream.updated',
         payload: { plan: { title: 'My Plan', status: 'completed' } },
       });
+    });
+  });
+
+  describe('mapSession', () => {
+    it('maps only session control state and the active interrupt', () => {
+      const { set, event } = mapSession(
+        { id: 'session-1', status: 'waiting', interrupt_id: 'ask:1' },
+        'stream-1',
+      );
+      expect(set).toEqual({
+        streamId: 'stream-1', sessionStatus: 'waiting', activeInterruptId: 'ask:1',
+      });
+      expect(set).not.toHaveProperty('status');
+      expect(event).toMatchObject({ type: 'stream.updated' });
     });
   });
 });
