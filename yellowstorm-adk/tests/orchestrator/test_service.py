@@ -68,9 +68,68 @@ def test_make_plan_extracts_a_plan_when_output_schema_is_combined_with_tools(mon
     plan = asyncio.run(service._make_plan("sess1", "u1", "search bitcoin then ask Rabeb"))
 
     assert plan.title == "Bitcoin investment check"
-    assert [s.id for s in plan.steps] == ["s1", "s2"]
+    # Step ids are namespaced with plan.id (_namespace_step_ids): the planner
+    # emits s1/s2 on every turn and one session is reused across turns, so bare
+    # ids collided with an earlier turn's rows in the read-model — the per-plan
+    # prefix makes them turn-unique. depends_on is remapped to match.
+    assert [s.id for s in plan.steps] == [f"{plan.id}_s1", f"{plan.id}_s2"]
+    assert plan.steps[1].depends_on == [f"{plan.id}_s1"]
     assert plan.steps[1].assignee_name == "Rabeb"
     assert plan.steps[1].assignee == "rabeb"
+
+
+def test_make_plan_survives_a_flaky_planner_duplicate_blank_and_dangling_deps(monkeypatch):
+    """A planner (seen live with glm-5.3-go) can emit a step twice, a blank id, a
+    self-dep, or a dep on a step it never wrote. Any of these makes
+    scheduler.validate raise and aborts the whole turn — nothing projected, the
+    session hangs 'running'. _make_plan must drop the offenders and yield a valid
+    plan instead."""
+    from pydantic import PrivateAttr
+    from google.adk.models import BaseLlm
+    from google.adk.models.llm_response import LlmResponse
+    from google.adk.runners import Runner
+    from google.adk.sessions import InMemorySessionService
+    from google.genai import types as genai_types
+
+    class _ScriptedLlm(BaseLlm):
+        _resp: object = PrivateAttr()
+
+        def __init__(self, resp):
+            super().__init__(model="fake")
+            object.__setattr__(self, "_resp", resp)
+
+        async def generate_content_async(self, llm_request, stream=False):
+            yield self._resp
+
+    plan_json = {
+        "title": "messy", "goal": "g", "answer": "", "steps": [
+            {"id": "s1", "kind": "execute", "title": "A", "description": "d", "depends_on": []},
+            {"id": "s2", "kind": "execute", "title": "B", "description": "d", "depends_on": ["s1"]},
+            {"id": "s2", "kind": "execute", "title": "B-dupe", "description": "d", "depends_on": ["s1"]},
+            {"id": "", "kind": "execute", "title": "blank", "description": "d", "depends_on": []},
+            {"id": "s3", "kind": "execute", "title": "C", "description": "d",
+             "depends_on": ["s1", "s3", "ghost"]},   # self-dep + dangling
+        ],
+    }
+    resp = LlmResponse(content=genai_types.Content(role="model", parts=[
+        genai_types.Part(function_call=genai_types.FunctionCall(
+            name="set_model_response", args=plan_json, id="c1"))]))
+    monkeypatch.setattr(svc.nodes, "build_llm", lambda *a, **k: _ScriptedLlm(resp))
+
+    session_service = InMemorySessionService()
+    service = svc.OrchestratorService(
+        lambda node, app_name: Runner(node=node, app_name=app_name, session_service=session_service),
+        None, planner_model="fake")
+    plan = asyncio.run(service._make_plan("sess1", "u1", "do messy things"))
+
+    # duplicate s2 and blank id dropped → 3 unique steps, all namespaced
+    assert [s.id for s in plan.steps] == [f"{plan.id}_s1", f"{plan.id}_s2", f"{plan.id}_s3"]
+    # self-dep (s3) and dangling ("ghost") pruned; the real dep on s1 survives
+    s3 = plan.steps[2]
+    assert s3.depends_on == [f"{plan.id}_s1"]
+    # and the whole thing is now a valid DAG the orchestrator won't choke on
+    scheduler.validate(plan)      # must not raise
+    scheduler.assign_waves(plan)
 
 
 def test_step_row_shows_the_personas_display_name_before_it_runs():
