@@ -9,8 +9,8 @@ import { LoggerService } from '@modules/logger';
 import { BadRequestException, NotFoundException } from '@modules/exceptions';
 import { ErrorCode } from '@modules/exceptions/constants/error-codes';
 import {
+  buildAdminUsersUrl,
   buildRegistrationPendingAdminEmail,
-  buildRegistrationReviewUrl,
 } from './templates/registration-pending-admin.email';
 import {
   buildLoginUrl,
@@ -114,10 +114,8 @@ export class RegistrationApprovalService {
     const content = buildRegistrationPendingAdminEmail({
       appName: this.appName,
       applicantEmail: notice.email,
-      userId: notice.userId,
       requestedAt,
-      approveUrl: buildRegistrationReviewUrl(this.frontendUrl, notice.userId, 'approve'),
-      rejectUrl: buildRegistrationReviewUrl(this.frontendUrl, notice.userId, 'reject'),
+      usersAdminUrl: buildAdminUsersUrl(this.frontendUrl),
     });
 
     for (const to of emails) {

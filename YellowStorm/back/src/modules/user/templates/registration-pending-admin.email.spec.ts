@@ -1,42 +1,43 @@
 import {
+  buildAdminUsersUrl,
   buildRegistrationPendingAdminEmail,
-  buildRegistrationReviewUrl,
+  formatRegistrationRequestedAt,
 } from './registration-pending-admin.email';
 
 describe('registration pending admin email', () => {
-  it('includes applicant identity and review links', () => {
-    const userId = '64b1f0c2a1b2c3d4e5f60789';
-    const approveUrl = buildRegistrationReviewUrl('http://localhost:5173/', userId, 'approve');
-    const rejectUrl = buildRegistrationReviewUrl('http://localhost:5173/', userId, 'reject');
+  it('formats requested-at in a readable Europe/Paris datetime', () => {
+    expect(formatRegistrationRequestedAt(new Date('2026-09-02T14:21:14.350Z'))).toBe(
+      '02/09/2026 à 16:21',
+    );
+  });
+
+  it('includes applicant email, readable date, and the users admin link', () => {
+    const usersAdminUrl = buildAdminUsersUrl('http://localhost:5173/');
     const content = buildRegistrationPendingAdminEmail({
       appName: 'YelloStorm',
       applicantEmail: 'jane@acme.io',
-      userId,
-      requestedAt: new Date('2026-09-02T12:00:00.000Z'),
-      approveUrl,
-      rejectUrl,
+      requestedAt: new Date('2026-09-02T14:21:14.350Z'),
+      usersAdminUrl,
     });
 
-    expect(approveUrl).toBe(
-      `http://localhost:5173/#/admin/users?status=inactive&review=${userId}&decision=approve`,
-    );
-    expect(rejectUrl).toContain('decision=reject');
+    expect(usersAdminUrl).toBe('http://localhost:5173/#/admin/users');
     expect(content.subject).toContain('YelloStorm');
     expect(content.html).toContain('jane@acme.io');
-    expect(content.html).toContain(userId);
-    expect(content.html).toContain('2026-09-02T12:00:00.000Z');
-    expect(content.text).toContain(approveUrl);
-    expect(content.text).toContain(rejectUrl);
+    expect(content.html).toContain('02/09/2026 à 16:21');
+    expect(content.html).toContain(usersAdminUrl);
+    expect(content.html).not.toContain('User ID');
+    expect(content.html).not.toContain('2026-09-02T14:21:14.350Z');
+    expect(content.html).not.toContain('decision=approve');
+    expect(content.text).toContain(usersAdminUrl);
+    expect(content.text).not.toContain('User ID');
   });
 
   it('escapes HTML in applicant email', () => {
     const content = buildRegistrationPendingAdminEmail({
       appName: 'YelloStorm',
       applicantEmail: '<script>alert(1)</script>@acme.io',
-      userId: 'abc',
       requestedAt: new Date('2026-09-02T12:00:00.000Z'),
-      approveUrl: 'http://localhost:5173/#/admin/users?review=abc&decision=approve',
-      rejectUrl: 'http://localhost:5173/#/admin/users?review=abc&decision=reject',
+      usersAdminUrl: 'http://localhost:5173/#/admin/users',
     });
 
     expect(content.html).not.toContain('<script>alert(1)</script>');

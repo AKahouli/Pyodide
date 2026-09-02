@@ -72,12 +72,13 @@ describe('RegistrationApprovalService', () => {
     expect(payload.to).toBe('sa@acme.io');
     expect(payload.subject).toContain('New registration request');
     expect(payload.html).toContain('jane@acme.io');
-    expect(payload.html).toContain(applicant.userId);
-    expect(payload.html).toContain(`review=${applicant.userId}`);
-    expect(payload.html).toContain('decision=approve');
-    expect(payload.html).toContain('decision=reject');
+    expect(payload.html).toContain('http://localhost:5173/#/admin/users');
+    expect(payload.html).not.toContain(applicant.userId);
+    expect(payload.html).not.toContain('User ID');
+    expect(payload.html).not.toContain('2026-09-02T12:00:00.000Z');
+    expect(payload.html).toContain('02/09/2026 à 14:00');
     expect(payload.text).toContain('jane@acme.io');
-    expect(payload.text).toContain(`/#/admin/users?status=inactive&review=${applicant.userId}`);
+    expect(payload.text).toContain('http://localhost:5173/#/admin/users');
   });
 
   it('skips sending when email service is unavailable', async () => {
