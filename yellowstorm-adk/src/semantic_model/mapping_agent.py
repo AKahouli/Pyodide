@@ -32,18 +32,29 @@ class SemanticModelMappingAgent:
         settings = get_settings()
         normalize_text, LiteLLM = self._dependencies()
 
-        llm = LiteLLM(
-            model=settings.SEMANTIC_MODEL_ONTOLOGY_MODEL,
-            api_key=settings.LITELLM_API_SECRET_KEY,
-            api_base=settings.LITELLM_API_BASE_URL,
-            timeout=settings.SEMANTIC_MODEL_LLM_TIMEOUT_SECONDS,
+        llm_kwargs: dict[str, Any] = {
+            "model": settings.SEMANTIC_MODEL_ONTOLOGY_MODEL,
+            "api_key": settings.LITELLM_API_SECRET_KEY,
+            "api_base": settings.LITELLM_API_BASE_URL,
+            "timeout": settings.SEMANTIC_MODEL_LLM_TIMEOUT_SECONDS,
+        }
+        max_tokens = getattr(settings, "SEMANTIC_MODEL_LLM_MAX_TOKENS", 0)
+        if max_tokens and max_tokens > 0:
+            llm_kwargs["max_tokens"] = max_tokens
+        llm = LiteLLM(**llm_kwargs)
+
+        concurrency = settings.SEMANTIC_MODEL_EXTRACTION_CONCURRENCY
+        batch_size = settings.SEMANTIC_MODEL_EXTRACTION_BATCH_SIZE
+
+        # Stage 1 — extract raw nodes. Batches multiple concepts per LLM call per doc
+        # to reduce total call count from N×M (concepts × docs) to ~M×ceil(N/batch_size).
+        raw_nodes = self._extractor.extract(
+            graph, search_tasks, llm, normalize_text,
+            concurrency=concurrency, batch_size=batch_size,
         )
 
-        # Stage 1 — extract raw nodes (one LLM call per node_type × document)
-        raw_nodes = self._extractor.extract(graph, search_tasks, llm, normalize_text)
-
-        # Stage 2 — resolve: dedup + merge with Semantica DuplicateDetector
-        resolved_nodes, merge_groups = self._resolver.resolve(raw_nodes, graph)
+        # Stage 2 — resolve: dedup + merge with Semantica DuplicateDetector (parallel per concept type)
+        resolved_nodes, merge_groups = self._resolver.resolve(raw_nodes, graph, concurrency=concurrency)
 
         # Stage 3 — detect edges with Semantica NER + RelationExtractor
         edges = self._edge_detector.detect(

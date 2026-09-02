@@ -65,6 +65,20 @@ class Settings(BaseSettings):
     ATTRIBUT_EXTRACT_MODEL: str = "gpt-5.4-mini"
     SEMANTIC_MODEL_ONTOLOGY_MODEL: str = "gpt-5.4-nano"
     SEMANTIC_MODEL_LLM_TIMEOUT_SECONDS: Optional[int] = None
+    # Concurrency for ALL 3 mapping pipeline stages (extraction, resolution, edge detection).
+    # A single knob controls the max parallel workers used by:
+    #   - NodeExtractor (parallel LLM calls per document batch)
+    #   - NodeResolver (parallel dedup per concept type)
+    #   - EdgeDetector (parallel NER + RelationExtractor per document blob)
+    # Increase to accelerate on providers that accept many concurrent requests.
+    SEMANTIC_MODEL_EXTRACTION_CONCURRENCY: int = 8
+    # Max number of concepts extracted per single LLM call (batching per document).
+    # Small models (DeepSeek Flash, gemma, llama) may drop concepts if too many are batched.
+    # Set to 1 to disable batching (legacy per-concept mode).
+    SEMANTIC_MODEL_EXTRACTION_BATCH_SIZE: int = 6
+    # Cap the LLM response length. Prevents runaway 10k+ token generations that
+    # eat wall-clock time without adding value. Set to 0 to disable the cap.
+    SEMANTIC_MODEL_LLM_MAX_TOKENS: int = 32000
     EXCEL_MCP_URL: str
     MICROSANDBOX_MCP_URL: Optional[str] = None
     MICROSANDBOX_DOCUMENT_SERVER_URL: Optional[str] = None

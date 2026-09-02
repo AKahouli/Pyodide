@@ -35,12 +35,16 @@ class SemanticModelOntologyAgent:
             name=ontology_name,
             base_uri=namespace,
         )
-        result = LiteLLM(
-            model=settings.SEMANTIC_MODEL_ONTOLOGY_MODEL,
-            api_key=settings.LITELLM_API_SECRET_KEY,
-            api_base=settings.LITELLM_API_BASE_URL,
-            timeout=settings.SEMANTIC_MODEL_LLM_TIMEOUT_SECONDS,
-        ).generate_structured(prompt)
+        llm_kwargs: dict[str, Any] = {
+            "model": settings.SEMANTIC_MODEL_ONTOLOGY_MODEL,
+            "api_key": settings.LITELLM_API_SECRET_KEY,
+            "api_base": settings.LITELLM_API_BASE_URL,
+            "timeout": settings.SEMANTIC_MODEL_LLM_TIMEOUT_SECONDS,
+        }
+        max_tokens = getattr(settings, "SEMANTIC_MODEL_LLM_MAX_TOKENS", 0)
+        if max_tokens and max_tokens > 0:
+            llm_kwargs["max_tokens"] = max_tokens
+        result = LiteLLM(**llm_kwargs).generate_structured(prompt)
         ontology = generator._normalize_output(
             result,
             name=ontology_name,

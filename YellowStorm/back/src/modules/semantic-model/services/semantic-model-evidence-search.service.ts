@@ -1,6 +1,8 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import { ConfigType } from '@nestjs/config';
 import semanticModelConfig from '@config/semantic-model.config';
+import { ServiceUnavailableException } from '@modules/exceptions';
+import { ErrorCode } from '@modules/exceptions/constants/error-codes';
 import {
   SemanticModelEvidenceSearchFailedUnit,
   SemanticModelEvidenceSearchResponse,
@@ -132,6 +134,22 @@ export class SemanticModelEvidenceSearchService {
             : { query: result.query, result: result.sections },
         })),
       });
+    }
+
+    // Fail loudly when the search backend is completely unavailable.
+    // Silent partial-result mode is only acceptable when SOME units succeeded —
+    // a 100% failure rate always signals a system problem (search server down,
+    // wrong URL, auth failure) that must reach the user, not be swallowed.
+    if (searchUnits.length > 0 && tasks.length === 0) {
+      const sampleError = failedUnits[0]?.error ?? 'unknown';
+      this.logger.error(
+        `Evidence search fully failed: ${failedUnits.length}/${searchUnits.length} units failed. First error: ${sampleError}`,
+        { modelId },
+      );
+      throw new ServiceUnavailableException(
+        ErrorCode.SERVICE_UNAVAILABLE,
+        `Evidence search is unavailable: all ${failedUnits.length} search unit(s) failed. Check that the native search service is reachable. Last error: ${sampleError}`,
+      );
     }
 
     return {

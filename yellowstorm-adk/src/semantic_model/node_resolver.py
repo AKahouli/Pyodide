@@ -13,6 +13,7 @@ schema-aware attribute-union strategy.
 
 from __future__ import annotations
 
+import concurrent.futures
 import logging
 import re
 from typing import Any
@@ -34,6 +35,7 @@ class NodeResolver:
         self,
         raw_nodes: list[dict[str, Any]],
         graph: dict[str, Any],
+        concurrency: int = 8,
     ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
         catalog_type_ids = self._catalog_type_ids(graph)
 
@@ -44,13 +46,22 @@ class NodeResolver:
         merge_groups: list[dict[str, Any]] = []
         final_nodes: list[dict[str, Any]] = []
 
-        for type_id, nodes in by_type.items():
-            if type_id in catalog_type_ids:
-                merged, groups = self._resolve_catalog(nodes)
-            else:
-                merged, groups = self._resolve_rich(nodes)
-            final_nodes.extend(merged)
-            merge_groups.extend(groups)
+        # Each node type is fully independent — resolve them in parallel.
+        # Semantica's DuplicateDetector may make internal LLM calls, so parallelizing
+        # by type divides wall time by the number of concept types (up to `concurrency`).
+        def _resolve_type(type_id: str, nodes: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+            return self._resolve_catalog(nodes) if type_id in catalog_type_ids else self._resolve_rich(nodes)
+
+        max_workers = max(1, min(concurrency, len(by_type))) if by_type else 1
+        with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as pool:
+            futures = {pool.submit(_resolve_type, tid, nodes): tid for tid, nodes in by_type.items()}
+            for future in concurrent.futures.as_completed(futures):
+                try:
+                    merged, groups = future.result()
+                    final_nodes.extend(merged)
+                    merge_groups.extend(groups)
+                except Exception:
+                    logger.exception("Node resolution failed for type=%s", futures[future])
 
         # Remove catalog nodes whose label matches a rich node label.
         # These are entity names the LLM misclassified as catalog values
