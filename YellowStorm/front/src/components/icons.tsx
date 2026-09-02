@@ -8,7 +8,7 @@ type IconProps = Readonly<React.HTMLAttributes<SVGElement>>;
 export function AppLogo({ className, style, ...props }: IconProps) {
   const { theme, logo } = useContext(ThemeProviderContext);
 
-  if (logo === 'kpmg') {
+  if (logo.id === 'kpmg') {
     return <Icons.Kpmg className={`ml-2 w-auto ${className || ''}`} style={{ color: theme === 'light' ? '#2563eb' : '#ffffff', ...style }} {...props} />;
   }
 

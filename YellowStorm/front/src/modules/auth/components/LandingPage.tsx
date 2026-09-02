@@ -3,7 +3,7 @@ import { Button } from '@/components/ui/button';
 import { appConfig } from '@/config/app';
 import { AuthModals } from './modals/AuthModals';
 import { NavLink } from 'react-router-dom';
-import { Icons, AppLogo } from '@/components/icons';
+import { AppBrandLogo } from '@/components/AppBrandLogo';
 import { StarsBackground } from '@/modules/conversation/effects/stars-background';
 import { useModuleTranslation } from '@/modules/localization';
 import { useAuth } from '../useAuth';
@@ -46,7 +46,7 @@ export function LandingPage() {
       <div className='absolute top-6 left-6 z-20'>
         <div className='flex items-center gap-2'>
           <NavLink to='/' className='flex items-center mb-4'>
-            <AppLogo className='h-12 w-56' />
+            <AppBrandLogo className='h-12 w-56' />
           </NavLink>{' '}
         </div>
       </div>

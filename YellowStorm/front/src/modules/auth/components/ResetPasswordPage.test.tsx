@@ -7,10 +7,8 @@ import { ResetPasswordPage } from './ResetPasswordPage';
 const resetPasswordMock = vi.hoisted(() => vi.fn());
 
 vi.mock('../api', () => ({ resetPassword: resetPasswordMock }));
-// Avoid icons ↔ ThemeContext ↔ auth barrel circular import during module collection
-vi.mock('@/components/icons', () => ({
-  Icons: { YellowMind: () => <div>logo</div> },
-  AppLogo: ({ className }: { className?: string }) => (
+vi.mock('@/components/AppBrandLogo', () => ({
+  AppBrandLogo: ({ className }: { className?: string }) => (
     <div data-testid='app-logo' className={className}>
       logo
     </div>

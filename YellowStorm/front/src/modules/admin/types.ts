@@ -213,16 +213,28 @@ export interface SetCorsSettingsRequest {
 
 export type AdminColorTheme = 'default' | 'yellow' | 'orange' | 'blue';
 
-export type AdminThemeLogo = 'yellowmind' | 'kpmg';
+export type AdminThemeLogo = string;
+
+export interface AppearanceLogo {
+  id: string;
+  name: string;
+  kind: 'builtin' | 'custom';
+  contentType?: string;
+  width?: number;
+  height?: number;
+  url?: string;
+  updatedAt?: string;
+}
 
 export interface AppearanceThemeConfig {
   labelKey: string;
-  logo: AdminThemeLogo;
+  logo: string;
 }
 
 export interface AppearanceSettings {
   defaultColorTheme: AdminColorTheme;
   themes: Record<AdminColorTheme, AppearanceThemeConfig>;
+  logos: AppearanceLogo[];
 }
 
 // Plan Types

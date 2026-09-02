@@ -14,7 +14,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from '@/components/ui/form';
 import { Input } from '@/components/ui/input';
-import { Icons, AppLogo } from '@/components/icons';
+import { AppBrandLogo } from '@/components/AppBrandLogo';
 import { StarsBackground } from '@/modules/conversation/effects/stars-background';
 import { useModuleTranslation } from '@/modules/localization';
 import type { TranslationParams } from '@/modules/localization';
@@ -114,7 +114,7 @@ export function ResetPasswordPage() {
       {/* Header */}
       <div className='absolute top-6 left-6 z-20'>
         <NavLink to='/' className='flex items-center'>
-          <AppLogo className='h-12 w-56' />
+          <AppBrandLogo className='h-12 w-56' />
         </NavLink>
       </div>
 

@@ -15,6 +15,8 @@ The Admin module provides administrative functionality for managing users, roles
 - [Audit Logging](#audit-logging)
 - [System Logs](#system-logs)
 - [Components Reference](#components-reference)
+- [Appearance](#appearance)
+- [Connectors](#connectors)
 - [Testing](#testing)
 - [Best Practices](#best-practices)
 
@@ -31,6 +33,7 @@ The admin module is a permission-gated section of the application that allows au
 - **Audit Logs**: Track all admin actions for compliance
 - **System Logs**: View application logs in real-time for debugging
 - **System**: Toggle maintenance mode
+- **Appearance**: Apply a global color palette and manage the sidebar logo library
 - **Connectors**: Manage MCP server integrations with OAuth 2.0 authentication
 - **Tools**: Manage tool definitions and attributes
 - **Skills**: Manage skill definitions and imports
@@ -175,6 +178,14 @@ front/src/modules/admin/
 │   ├── AdminButton.tsx   # Entry button for main sidebar
 │   └── AdminDashboard.tsx # Dashboard overview
 │
+├── appearance/
+│   ├── ColorThemeCard.tsx
+│   ├── LogoLibrarySection.tsx
+│   ├── LogoMark.tsx
+│   ├── LogoUploadDialog.tsx
+│   ├── constants/
+│   └── utils/
+│
 └── pages/
     ├── index.ts          # Page exports
     ├── UsersPage.tsx     # User management
@@ -184,6 +195,7 @@ front/src/modules/admin/
     ├── AuditLogsPage.tsx # Audit log viewer
     ├── LogsPage.tsx      # System logs viewer
     ├── SystemPage.tsx    # System settings
+    ├── AppearancePage.tsx # Global color palette + logo library
     │
     ├── tools/
     │   ├── index.ts
@@ -585,6 +597,57 @@ Navigation sidebar with permission-filtered menu items.
 // Automatically included in AdminLayout
 // Items filtered based on user's permissions
 ```
+
+---
+
+## Appearance
+
+Admin Appearance (`/admin/appearance`) stores a **global color palette** and a **sidebar logo library**. Palette changes apply to every user. Selecting a logo assigns it to all four palettes immediately.
+
+### Folder layout
+
+Keep React components thin. Constants and helpers live next to the UI, not inside it:
+
+```
+appearance/
+├── ColorThemeCard.tsx          # Palette preview card
+├── LogoLibrarySection.tsx      # Builtin + custom catalog
+├── LogoMark.tsx                # Builtin SVG or custom <img>
+├── LogoUploadDialog.tsx        # Validate, fit, upload
+├── constants/
+│   ├── appearance.constants.ts # Fallback logos, default map, sync event name
+│   ├── logo.constants.ts       # Slot 224×48, retina 448×96, MIME, size limits
+│   └── theme-palettes.ts       # Preview swatches for ColorThemeCard
+└── utils/
+    ├── appearance-settings.ts  # Catalog/map helpers + `yellowstorm:appearance-updated`
+    ├── logo-mime.ts            # MIME + source dimension checks
+    ├── logo-file.ts            # inspectLogoFile / prepareLogoUpload
+    ├── logo-fit.ts             # Canvas contain+center rasterize to PNG
+    └── logo-url.ts             # Authenticated-origin URL for custom logo files
+```
+
+`AppBrandLogo` (`src/components/AppBrandLogo.tsx`) is the shared chrome: custom logos render as `<img>`, builtins go through `Icons.AppLogo`. `CombinedProvider` loads public appearance settings, applies `applyColorThemeClass`, and resolves the current logo via `resolveThemeLogo`. After a save, dispatch `yellowstorm:appearance-updated` so other tabs/windows refresh.
+
+### Upload pipeline
+
+1. Client checks type (png/jpeg/webp/svg), source size (8 MB), and landscape dimensions (min 80×24, aspect 1.2–10).
+2. Canvas contain-fits the image into the sidebar slot and stores a PNG (448×96, falling back to 224×48 if the retina blob exceeds 512 KB).
+3. `createAppearanceLogo` / `updateAppearanceLogo` send `multipart/form-data` without a forced `Content-Type` so Axios can set the boundary.
+4. The API stores the PNG and returns metadata; the file is served at `GET /experimental/system/appearance/logos/:id/file`.
+
+Built-in ids `yellowmind` and `kpmg` cannot be edited or deleted. Deleting a custom logo that is in use falls back to `yellowmind` on the server.
+
+### API helpers (`api.ts`)
+
+| Function | Endpoint | Notes |
+|---|---|---|
+| `getAppearanceSettings` | `GET /experimental/system/appearance` | Public; includes `logos` |
+| `setAppearanceSettings` | `POST /experimental/system/appearance` | `SYSTEM_MAINTENANCE`; body is `defaultColorTheme` + `themes` only |
+| `createAppearanceLogo` | `POST /experimental/system/appearance/logos` | Multipart `file` + optional `name` |
+| `updateAppearanceLogo` | `PATCH /experimental/system/appearance/logos/:id` | Rename and/or replace file |
+| `deleteAppearanceLogo` | `DELETE /experimental/system/appearance/logos/:id` | Custom logos only |
+
+Copy lives in `locales/en.json` and `locales/fr.json` under `appearance.*`. Validation keys are `appearance.logo.validation.{type,unreadable,size,dimensions}`.
 
 ---
 
