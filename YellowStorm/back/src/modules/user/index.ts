@@ -1,5 +1,6 @@
 export * from './user.module';
 export * from './user.service';
+export * from './registration-approval.service';
 export * from './user.controller';
 export * from './schemas/user.schema';
 export * from './interfaces/user.interface';
