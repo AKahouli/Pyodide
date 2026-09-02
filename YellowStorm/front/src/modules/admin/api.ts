@@ -266,12 +266,16 @@ export async function getAppearanceSettings(): Promise<AppearanceSettings> {
   return response.data.data;
 }
 
-export async function setAppearanceSettings(data: AppearanceSettings): Promise<AppearanceSettings> {
+export async function setAppearanceSettings(
+  data: AppearanceSettings,
+  options?: { applyToAllUsers?: boolean },
+): Promise<AppearanceSettings> {
   const response = await apiClient.post<ApiResponse<AppearanceSettings>>(
     API_ENDPOINTS.system.appearance,
     {
       defaultColorTheme: data.defaultColorTheme,
       themes: data.themes,
+      applyToAllUsers: options?.applyToAllUsers === true,
     },
   );
   return response.data.data;

@@ -3,6 +3,7 @@
  */
 
 import type { LucideIcon } from 'lucide-react';
+import type { ColorTheme } from '@/contexts/ThemeContext';
 import type { ModuleTranslationKey } from '@/modules/localization';
 import type {
   AgentConnectorActionSelection,
@@ -211,8 +212,7 @@ export interface SetCorsSettingsRequest {
   origins: CorsOriginEntry[];
 }
 
-export type AdminColorTheme = 'default' | 'yellow' | 'orange' | 'blue';
-
+export type AdminColorTheme = ColorTheme;
 export type AdminThemeLogo = string;
 
 export interface AppearanceLogo {
