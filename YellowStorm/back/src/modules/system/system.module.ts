@@ -10,6 +10,7 @@ import { AdminWorkspaceUploadSettingsController } from './controllers/admin-work
 import { WorkspaceUploadSettingsController } from './controllers/workspace-upload-settings.controller';
 import { MaintenanceGuard } from './guards/maintenance.guard';
 import { SystemSetting, SystemSettingSchema } from './schemas/system-setting.schema';
+import { AppearanceLogo, AppearanceLogoSchema } from './schemas/appearance-logo.schema';
 import { AuthorizationModule } from '../authorization/authorization.module';
 import { User, UserSchema } from '../user/schemas/user.schema';
 import { ConnectorModule } from '../connector/connector.module';
@@ -24,12 +25,15 @@ import { ConversationSettingsService } from './conversation-settings.service';
 import { AdminConversationSettingsController } from './controllers/admin-conversation-settings.controller';
 import { FeatureVisibilityService } from './feature-visibility.service';
 import { PlatformCopilotBootstrapService } from './services/platform-copilot-bootstrap.service';
+import { AppearanceLogoService } from './services/appearance-logo.service';
+import { AppearanceLogoController } from './controllers/appearance-logo.controller';
 
 @Global() // Make SystemService available globally for the guard
 @Module({
   imports: [
     MongooseModule.forFeature([
       { name: SystemSetting.name, schema: SystemSettingSchema },
+      { name: AppearanceLogo.name, schema: AppearanceLogoSchema },
       { name: User.name, schema: UserSchema },
     ]),
     JwtModule.registerAsync({
@@ -51,6 +55,7 @@ import { PlatformCopilotBootstrapService } from './services/platform-copilot-boo
   ],
   controllers: [
     SystemController,
+    AppearanceLogoController,
     AdminWorkspaceUploadSettingsController,
     WorkspaceUploadSettingsController,
     AdminWorkspaceEvidenceSearchSettingsController,
@@ -59,6 +64,7 @@ import { PlatformCopilotBootstrapService } from './services/platform-copilot-boo
   ],
   providers: [
     SystemService,
+    AppearanceLogoService,
     WorkspaceUploadSettingsService,
     WorkspaceEvidenceSearchSettingsService,
     WorkspaceTransformationSettingsService,

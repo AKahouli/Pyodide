@@ -8,6 +8,7 @@ import { RateLimitSkip } from '../rate-limiter';
 import { MaintenanceStatus } from './interfaces/maintenance.interface';
 import { RegistrationStatus } from './interfaces/registration.interface';
 import { AppearanceSettings } from './interfaces/appearance.interface';
+import { SetAppearanceSettingsDto } from './dto/set-appearance-settings.dto';
 import { CorsSettingsValue } from './schemas/system-setting.schema';
 import { RequirePermissions, PermissionsGuard, Permissions, AuditLogService } from '../authorization';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
@@ -212,7 +213,7 @@ export class SystemController {
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Set appearance settings' })
   async setAppearanceSettings(
-    @Body() body: AppearanceSettings,
+    @Body() body: SetAppearanceSettingsDto,
     @CurrentUser() user: UserDocument,
     @Req() req: Request,
   ): Promise<AppearanceSettings> {
