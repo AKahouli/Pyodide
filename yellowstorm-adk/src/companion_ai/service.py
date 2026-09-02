@@ -1141,10 +1141,42 @@ class OrchestratorService:
                                      requester=requester)
         logger.info("[worky] 5. planner LLM → Plan session=%s title=%r steps=%d",
                     session_id, plan.title, len(plan.steps))
+        # A genuine direct reply (CASE A) has an ANSWER. Zero steps AND an empty
+        # answer is a broken/empty planner response, not chit-chat — seen live:
+        # glm-5.3-go returned {steps:[], answer:"", ops:[{op:"find_human_agents"}]}
+        # for "search solana and email Imed", so the turn silently 'completed'
+        # having done and said nothing. Retry the planner once on a fresh session
+        # (a flaky planner often succeeds on the second try); if it's STILL empty,
+        # tell the user rather than posting an empty reply.
+        if not plan.steps and not (plan.answer or "").strip():
+            logger.warning("[worky] 5. empty plan (0 steps, no answer) — retrying planner once session=%s",
+                           session_id)
+            plan = await self._make_plan(
+                session_id, user_id, message,
+                planner_model=planner_model, planner_prompt=planner_prompt,
+                planner_connectors=planner_connectors,
+                plan_session=f"{session_id}_plan_retry_{uuid.uuid4().hex[:6]}",
+                requester=requester)
+            logger.info("[worky] 5. planner retry → steps=%d answer=%s",
+                        len(plan.steps), bool((plan.answer or "").strip()))
         if not plan.steps:
-            logger.info("[worky] 5. direct reply (no plan) → session=%s completed", session_id)
-            await self._add_message(session_id, "assistant", plan.answer or "")
-            await self._project(self._rm and self._rm.set_session_status(session_id, "completed"))
+            answer = (plan.answer or "").strip()
+            if answer:
+                # A genuine direct reply (CASE A): it has an answer — complete.
+                logger.info("[worky] 5. direct reply (no plan) → session=%s completed", session_id)
+                await self._add_message(session_id, "assistant", answer)
+                await self._project(self._rm and self._rm.set_session_status(session_id, "completed"))
+            else:
+                # Still empty after the retry — the planner failed to produce a plan
+                # (0 steps, no answer). FAIL the turn with the cause instead of
+                # silently 'completing' on nothing, so the client sees a real error.
+                reason = ("Échec de la planification : le planificateur n'a produit aucun "
+                          "plan (0 étape, réponse vide), même après une nouvelle tentative "
+                          "— impossible de traiter cette demande.")
+                logger.warning("[worky] 5. empty plan after retry → session=%s FAILED (%s)",
+                               session_id, reason)
+                await self._add_message(session_id, "assistant", reason)
+                await self._project(self._rm and self._rm.set_session_status(session_id, "failed"))
             return plan
 
         # Stamp the client's executor onto every non-persona step once, here —

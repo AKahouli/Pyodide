@@ -155,6 +155,53 @@ def test_dep_results_context_injects_only_completed_direct_dependencies():
     assert svc.OrchestratorService._dep_results_context(plan)(s4) is None
 
 
+def test_plan_turn_fails_the_session_on_an_empty_planner_response():
+    """A broken/empty planner output (0 steps AND empty answer — seen live with
+    glm-5.3-go returning {steps:[], answer:"", ops:[...]} for a real task) must
+    NOT silently 'complete': retry the planner once, and if it's still empty, FAIL
+    the session with a message naming the cause."""
+    rm = MagicMock(ensure_session=AsyncMock(), add_message=AsyncMock(),
+                   set_session_status=AsyncMock())
+    service = svc.OrchestratorService(MagicMock(), rm, planner_model="m")
+
+    calls = {"n": 0}
+    async def empty_plan(*a, **k):
+        calls["n"] += 1
+        return Plan(id="p", title="", goal="", answer="", steps=[])
+    service._make_plan = empty_plan
+
+    posted = {}
+    async def capture_msg(session_id, role, content):
+        posted["content"] = content
+    service._add_message = capture_msg
+
+    asyncio.run(service.plan_turn(session_id="s", user_id="u", message="search X and email Y", model="m"))
+
+    assert calls["n"] == 2, f"planner should be retried once (got {calls['n']} calls)"
+    assert (posted.get("content") or "").strip(), "must post a message naming the cause"
+    rm.set_session_status.assert_awaited_with("s", "failed")   # fail, not complete
+
+
+def test_plan_turn_keeps_a_genuine_direct_reply_completed():
+    """The empty-plan guard must NOT fire on a real CASE A reply: 0 steps but a
+    non-empty answer is chit-chat — complete it, don't fail it or retry."""
+    rm = MagicMock(ensure_session=AsyncMock(), add_message=AsyncMock(),
+                   set_session_status=AsyncMock())
+    service = svc.OrchestratorService(MagicMock(), rm, planner_model="m")
+
+    calls = {"n": 0}
+    async def direct_reply(*a, **k):
+        calls["n"] += 1
+        return Plan(id="p", title="", goal="", answer="Bonjour ! Comment puis-je aider ?", steps=[])
+    service._make_plan = direct_reply
+    service._add_message = AsyncMock()
+
+    asyncio.run(service.plan_turn(session_id="s", user_id="u", message="salut", model="m"))
+
+    assert calls["n"] == 1, "a real direct reply must NOT trigger a retry"
+    rm.set_session_status.assert_awaited_with("s", "completed")
+
+
 def test_step_row_shows_the_personas_display_name_before_it_runs():
     """The client should see "Rabeb", not a blank/internal node id, the moment
     a persona-assigned step is projected — not only once it starts running."""
