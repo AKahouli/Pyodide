@@ -236,7 +236,7 @@ export const configValidationSchema = Joi.object({
   CONVERSATION_V2_GRPC_UNARY_DEADLINE_MS: Joi.number().default(5000),
   CONVERSATION_V2_GRPC_STREAM_DEADLINE_MS: Joi.number().default(900000),
   CONVERSATION_V2_SSE_HEARTBEAT_MS: Joi.number().default(15000),
-  CONVERSATION_V2_MAX_MESSAGE_LENGTH: Joi.number().default(16384),
+  CONVERSATION_V2_MAX_MESSAGE_LENGTH: Joi.number().default(30000),
   CONVERSATION_V2_GRPC_MAX_MESSAGE_BYTES: Joi.number().default(16 * 1024 * 1024),
   CONVERSATION_V2_MAX_CONCURRENT_STREAMS: Joi.number().min(1).default(5),
   CONVERSATION_V2_MAX_SSE_CONNECTIONS: Joi.number().min(1).default(5),

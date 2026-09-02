@@ -16,7 +16,7 @@ import { ModelsService } from '@modules/models/models.service';
 import type { ConversationV2Event } from '../types/conversation-v2.types';
 
 const config = new Map<string, unknown>([
-  ['conversationV2.maxMessageLength', 16384],
+  ['conversationV2.maxMessageLength', 30000],
   ['conversationV2.maxConcurrentStreams', 5],
   ['conversationV2.grpcIdleTimeoutMs', 120000],
 ]);
