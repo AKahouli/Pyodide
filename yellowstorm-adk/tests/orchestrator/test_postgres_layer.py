@@ -198,6 +198,80 @@ async def test_new_message_does_not_mutate_executed_steps(pool):
     print("ok  re-plan: namespaced ids keep executed steps intact (no cross-turn collision)")
 
 
+async def test_a_failed_turn_marks_the_session_and_running_step_failed(pool):
+    """A model/tool error raised out of the drive must NOT leave the session stuck
+    'running' with a phantom step (proven live: an executor model 401 left the
+    session 'running' forever, one step falsely 'completed'). _drive_until_quiescent's
+    fail-safe marks the running step + session 'failed' so the client sees a
+    terminal state and a new message re-plans instead of routing to converse."""
+    from src.companion_ai.service import OrchestratorService
+    from src.companion_ai.plan import Plan, Step, Status
+
+    rm = readmodel.ReadModel(pool, schema=SCHEMA)
+    await readmodel.init_schema(pool, SCHEMA)
+    sid = "sess_failturn"
+    await rm.ensure_session(sid, "u1", None, "running")
+    plan = Plan(id="pf", title="t", goal="g", steps=[
+        Step(id="a", title="Running one", status=Status.RUNNING),
+        Step(id="b", title="Pending one", status=Status.PENDING, depends_on=["a"])])
+    await rm.upsert_plan(sid, plan.id, plan.title, plan.goal, "running")
+    await rm.upsert_steps(sid, [OrchestratorService._step_row(i, s) for i, s in enumerate(plan.steps)])
+
+    svc = OrchestratorService(lambda *a, **k: None, rm, planner_model="x")
+
+    async def boom(*a, **k):
+        raise RuntimeError("model 401 Unauthorized")
+    svc._drive_loop = boom  # make the drive blow up like a failing model
+
+    with pytest.raises(RuntimeError):
+        await svc._drive_until_quiescent(None, sid, "u1", plan, {}, None,
+                                         model="m", connectors=[], executor_prompt=None)
+
+    snap = await rm.snapshot(sid)
+    assert snap["session"]["status"] == "failed", snap["session"]["status"]
+    assert snap["plan"]["status"] == "failed", snap["plan"]["status"]  # plan terminal too
+    rows = {x["step_id"]: x for x in snap["steps"]}
+    assert rows["a"]["status"] == "failed", rows["a"]["status"]        # running -> failed
+    assert "RuntimeError" in (rows["a"]["blocked_reason"] or "")       # with the error recorded
+    assert rows["b"]["status"] == "pending"                            # never ran; left as-is
+    print("ok  failed turn: session + plan + running step marked failed (not stuck 'running')")
+
+
+async def test_apply_event_marks_step_failed_on_an_error_event(pool):
+    """When ADK reports a model/tool error as an EVENT (a final_response with no
+    content), the step must be marked 'failed', not 'completed' with an empty
+    result (the false-completion seen live on an executor model 401)."""
+    from src.companion_ai.service import OrchestratorService
+    from src.companion_ai.plan import Plan, Step, Status
+
+    class _NI:
+        def __init__(self, path): self.path = path; self.output_for = None
+    class _Ev:  # minimal ADK-event stand-in _apply_event reads
+        def __init__(self, path, error_message):
+            self.node_info = _NI(path); self.error_message = error_message
+            self.error_code = None; self.content = None; self.long_running_tool_ids = None
+        def is_final_response(self): return True
+        def get_function_calls(self): return []
+        def get_function_responses(self): return []
+
+    rm = readmodel.ReadModel(pool, schema=SCHEMA)
+    await readmodel.init_schema(pool, SCHEMA)
+    sid = "sess_errev"
+    await rm.ensure_session(sid, "u1", None, "running")
+    plan = Plan(id="pe", steps=[Step(id="s1", title="A")])
+    await rm.upsert_steps(sid, [OrchestratorService._step_row(0, plan.steps[0])])
+
+    svc = OrchestratorService(lambda *a, **k: None, rm, planner_model="x")
+    await svc._apply_event(sid, plan, _Ev("wf@1/node1@1", "AuthenticationError: 401 Unauthorized"),
+                           {"node1": "s1"}, set())
+
+    assert plan.steps[0].status is Status.FAILED
+    row = (await rm.snapshot(sid))["steps"][0]
+    assert row["status"] == "failed", row["status"]
+    assert "401" in (row["blocked_reason"] or "")
+    print("ok  _apply_event: error event -> step failed (not falsely completed)")
+
+
 async def test_a_reply_claims_its_wait_exactly_once(pool):
     """Graph retries a notification it thinks failed, and duplicates are normal.
     A second delivery must not resume the step again — that would answer an
