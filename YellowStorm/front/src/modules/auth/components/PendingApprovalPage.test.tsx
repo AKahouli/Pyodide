@@ -18,15 +18,25 @@ vi.mock('@/components/AppBrandLogo', () => ({
   ),
 }));
 
+vi.mock('@/modules/conversation/effects/stars-background', () => ({
+  StarsBackground: () => <div data-testid='stars-bg' />,
+}));
+
 describe('PendingApprovalPage', () => {
-  it('renders the logo, warning alert, message, and logs out', async () => {
+  it('renders the waiting steps, email hint, and logs out', async () => {
     const onLogout = vi.fn();
     render(<PendingApprovalPage onLogout={onLogout} />);
 
     expect(screen.getByTestId('app-logo')).toBeInTheDocument();
-    expect(screen.getByRole('alert')).toHaveTextContent('pendingApproval.message');
-    expect(screen.getByRole('alert').querySelector('svg')).toBeTruthy();
-    expect(screen.getByRole('button', { name: 'pendingApproval.logout' })).toBeInTheDocument();
+    expect(screen.getByRole('img', { name: 'pendingApproval.heroAlt' })).toBeInTheDocument();
+    expect(screen.getByRole('status')).toBeInTheDocument();
+    expect(screen.getByRole('heading')).toHaveTextContent('pendingApproval.welcomePrefix');
+    expect(screen.getByText('pendingApproval.success')).toBeInTheDocument();
+    expect(screen.getByText('pendingApproval.steps.signup.label')).toBeInTheDocument();
+    expect(screen.getByText('pendingApproval.steps.validation.status')).toBeInTheDocument();
+    expect(screen.getByText('pendingApproval.steps.access.status')).toBeInTheDocument();
+    expect(screen.getByText('pendingApproval.message')).toBeInTheDocument();
+    expect(screen.getByText('pendingApproval.emailHint')).toBeInTheDocument();
     expect(screen.getAllByRole('button')).toHaveLength(1);
 
     await userEvent.click(screen.getByRole('button', { name: 'pendingApproval.logout' }));

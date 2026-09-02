@@ -1,39 +1,116 @@
-import { AlertTriangle } from 'lucide-react';
+import { Check, LogOut, Mail } from 'lucide-react';
 import { AppBrandLogo } from '@/components/AppBrandLogo';
-import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
+import { StarsBackground } from '@/modules/conversation/effects/stars-background';
 import { useModuleTranslation } from '@/modules/localization';
+import { AuthScrollShell } from './AuthScrollShell';
+
+const PENDING_APPROVAL_HERO_SRC = '/pending-approval-hero.png';
 
 interface PendingApprovalPageProps {
   onLogout: () => void;
+}
+
+const STEPS = [
+  { id: 'signup', state: 'done' },
+  { id: 'validation', state: 'current' },
+  { id: 'access', state: 'upcoming' },
+] as const;
+
+function PendingApprovalHero({ alt }: { alt: string }) {
+  return (
+    <img
+      src={PENDING_APPROVAL_HERO_SRC}
+      alt={alt}
+      className='mx-auto h-44 w-auto object-contain sm:h-52'
+    />
+  );
+}
+
+function StepIcon({ state }: { state: (typeof STEPS)[number]['state'] }) {
+  if (state === 'done') {
+    return (
+      <span className='flex h-8 w-8 items-center justify-center rounded-full bg-orange-500 text-white'>
+        <Check className='h-4 w-4' strokeWidth={3} />
+      </span>
+    );
+  }
+  if (state === 'current') {
+    return (
+      <span className='flex h-8 w-8 items-center justify-center rounded-full border-2 border-orange-500'>
+        <span className='h-2.5 w-2.5 rounded-full bg-orange-500' />
+      </span>
+    );
+  }
+  return <span className='h-8 w-8 rounded-full border-2 border-neutral-600' />;
 }
 
 export function PendingApprovalPage({ onLogout }: PendingApprovalPageProps) {
   const { t } = useModuleTranslation('auth');
 
   return (
-    <div
-      role='alertdialog'
-      aria-labelledby='pending-approval-message'
-      aria-modal='true'
-      className='fixed inset-0 z-[100] flex flex-col bg-background'
-    >
-      <header className='absolute left-6 top-6 z-10'>
-        <AppBrandLogo className='h-12 w-56' />
-      </header>
-      <main className='flex flex-1 flex-col items-center justify-center px-6'>
-        <div className='flex w-full max-w-lg flex-col items-center gap-8'>
-          <Alert className='border-amber-500/40 bg-amber-500/15 text-amber-950 dark:text-amber-50 [&>svg]:text-amber-600 dark:[&>svg]:text-amber-400'>
-            <AlertTriangle aria-hidden className='h-4 w-4' />
-            <AlertDescription id='pending-approval-message' className='text-sm font-medium leading-relaxed sm:text-base'>
+    <div className='fixed inset-0 z-[100] bg-[#0b0b0b]'>
+      <AuthScrollShell>
+        <StarsBackground shootingStars={false} />
+
+        <header className='absolute top-6 left-6 z-20'>
+          <AppBrandLogo className='h-12 w-56' />
+        </header>
+
+        <main className='relative z-10 flex min-h-full flex-col items-center justify-center px-4 py-24'>
+          <section
+            role='status'
+            aria-labelledby='pending-approval-title'
+            aria-describedby='pending-approval-message'
+            className='relative w-full max-w-lg rounded-[24px] border border-white/10 bg-white/[0.04] px-6 py-8 text-center shadow-[0_24px_80px_rgba(0,0,0,0.45)] backdrop-blur-sm'
+          >
+            <PendingApprovalHero alt={t('pendingApproval.heroAlt')} />
+
+            <h1 id='pending-approval-title' className='mt-2 text-[28px] font-semibold leading-tight tracking-tight text-white'>
+              {t('pendingApproval.welcomePrefix')}
+              <span className='bg-gradient-to-r from-yellow-400 to-orange-500 bg-clip-text text-transparent'>
+                {t('pendingApproval.welcomeAccent')}
+              </span>
+            </h1>
+            <p className='mt-2 text-sm text-neutral-400'>{t('pendingApproval.success')}</p>
+
+            <ol className='mt-8 grid grid-cols-3 gap-2 rounded-2xl bg-black/35 px-3 py-4'>
+              {STEPS.map((step, index) => (
+                <li key={step.id} className='relative flex flex-col items-center text-center'>
+                  {index < STEPS.length - 1 ? (
+                    <span aria-hidden className='absolute top-4 left-[calc(50%+18px)] right-[calc(-50%+18px)] border-t border-dotted border-neutral-600' />
+                  ) : null}
+                  <StepIcon state={step.state} />
+                  <p className='mt-3 text-xs font-semibold text-white'>{t(`pendingApproval.steps.${step.id}.label`)}</p>
+                  <p className={step.state === 'current' ? 'mt-1 text-xs font-medium text-orange-400' : 'mt-1 text-xs text-neutral-500'}>
+                    {t(`pendingApproval.steps.${step.id}.status`)}
+                  </p>
+                </li>
+              ))}
+            </ol>
+
+            <p id='pending-approval-message' className='mt-6 text-sm leading-relaxed text-neutral-300'>
               {t('pendingApproval.message')}
-            </AlertDescription>
-          </Alert>
-          <Button type='button' variant='outline' onClick={onLogout}>
-            {t('pendingApproval.logout')}
-          </Button>
-        </div>
-      </main>
+            </p>
+
+            <p className='mt-5 flex items-center justify-center gap-2 rounded-xl bg-black/40 px-4 py-3 text-sm text-neutral-300'>
+              <Mail aria-hidden className='h-4 w-4 shrink-0 text-orange-400' />
+              {t('pendingApproval.emailHint')}
+            </p>
+
+            <Button
+              type='button'
+              variant='outline'
+              size='lg'
+              onClick={onLogout}
+              className='mt-6 h-11 w-full rounded-xl border-orange-500/40 bg-transparent font-semibold text-white hover:bg-orange-500/10 hover:text-white'
+            >
+              <LogOut className='h-4 w-4' />
+              {t('pendingApproval.logout')}
+            </Button>
+          </section>
+        </main>
+      </AuthScrollShell>
     </div>
   );
 }

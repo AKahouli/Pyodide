@@ -27,6 +27,9 @@ vi.mock('@/components/ui/sidebar', () => ({
   SidebarTriggerMobile: () => <button type='button'>trigger</button>,
 }));
 vi.mock('@/modules/auth/components/LandingPage', () => ({ LandingPage: () => <div>landing page</div> }));
+vi.mock('@/modules/conversation/effects/stars-background', () => ({
+  StarsBackground: () => <div data-testid='stars-bg' />,
+}));
 vi.mock('@/modules/admin', () => ({
   DEFAULT_FEATURE_VISIBILITY: { platformCopilot: false },
   getFeatureVisibility: getFeatureVisibilityMock,
@@ -129,7 +132,8 @@ describe('RootGuard', () => {
 
     renderWithRouter(<RootGuard />);
 
-    expect(screen.getByRole('alertdialog')).toHaveTextContent('pendingApproval.message');
+    expect(screen.getByRole('status')).toHaveTextContent('pendingApproval.message');
+    expect(screen.getByRole('heading')).toHaveTextContent('pendingApproval.welcomePrefix');
     expect(screen.getByRole('button', { name: 'pendingApproval.logout' })).toBeInTheDocument();
     expect(screen.queryByTestId('sidebar-provider')).not.toBeInTheDocument();
     expect(screen.queryByText('new conversation page')).not.toBeInTheDocument();
@@ -154,6 +158,6 @@ describe('RootGuard', () => {
     );
 
     await waitFor(() => expect(screen.getByText('complete profile page')).toBeInTheDocument());
-    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument();
+    expect(screen.queryByRole('status')).not.toBeInTheDocument();
   });
 });
