@@ -1765,7 +1765,19 @@ class OrchestratorService:
                         text = p.text
         data = _extract_json(text)
         steps = []
+        seen_ids: set = set()
         for s in data.get("steps", []):
+            # A flaky planner (observed live with glm-5.3-go) can emit the same
+            # step twice or a blank id. Both collapse to one row under
+            # _namespace_step_ids and trip scheduler.validate ("duplicate step
+            # ids"), which aborts the WHOLE turn so nothing is projected and the
+            # session hangs 'running'. Drop the offender and keep the plan.
+            sid = s.get("id")
+            if not sid or sid in seen_ids:
+                logger.warning("[worky] planner emitted a %s step id %r — dropping it (session=%s)",
+                               "duplicate" if sid in seen_ids else "blank", sid, session_id)
+                continue
+            seen_ids.add(sid)
             assignee_id = assignee_name = assignee_role = None
             if s.get("assignee"):
                 # Trust the API's resolution, not whatever the planner echoed
@@ -1776,16 +1788,48 @@ class OrchestratorService:
                     assignee_name = matches[0].get("name") or s["assignee"]
                     assignee_id = matches[0].get("id") or assignee_name
                     assignee_role = matches[0].get("role")
-            steps.append(Step(id=s["id"], title=s.get("title", ""),
+            steps.append(Step(id=sid, title=s.get("title", ""),
                               description=s.get("description", ""),
                               kind=s.get("kind", "execute"), question=s.get("question"),
                               depends_on=list(s.get("depends_on", [])),
                               is_persona=bool(assignee_name),
                               assignee=assignee_id, assignee_name=assignee_name,
                               assignee_role=assignee_role))
-        return Plan(title=data.get("title", ""), goal=data.get("goal", ""),
+        # Prune deps validate() would also reject: a self-dep or a reference to a
+        # step the planner never emitted (or that we just dropped). A dangling dep
+        # is meaningless work-ordering, so drop it rather than abort the turn.
+        kept = {s.id for s in steps}
+        for s in steps:
+            s.depends_on = [d for d in s.depends_on if d in kept and d != s.id]
+        plan = Plan(title=data.get("title", ""), goal=data.get("goal", ""),
                     answer=data.get("answer") or None, steps=steps,
                     ops=[dict(o) for o in data.get("ops", []) if o.get("step_id")])
+        self._namespace_step_ids(plan)
+        return plan
+
+    @staticmethod
+    def _namespace_step_ids(plan: Plan) -> None:
+        """Prefix every step id with this plan's id, in place (deps too).
+
+        Step ids come verbatim from the planner (see _make_plan: Step(id=s["id"])),
+        which labels them s1, s2, … on EVERY turn — it can't see prior turns. But
+        the read-model keys plan_steps by (session_id, step_id) and one session is
+        reused across turns, so a later turn's bare s1/s2 collided with an earlier,
+        already-EXECUTED turn's rows and overwrote their title/description in place
+        (upsert's ON CONFLICT rewrites content but not status/result → a finished
+        step the user watched complete silently relabelled to the new message's
+        task). Namespacing by the per-turn plan.id makes ids unique across turns;
+        depends_on is remapped the same way so intra-plan wiring is unchanged.
+        node_name() sanitises the id for ADK anyway, so the prefix is transparent
+        downstream. converse's _inject_steps re-ids to fresh uuids regardless, so
+        this only has to fix the plan_turn path — the one that reuses the session.
+        """
+        if not plan.steps:
+            return
+        idmap = {s.id: f"{plan.id}_{s.id}" for s in plan.steps}
+        for s in plan.steps:
+            s.id = idmap[s.id]
+            s.depends_on = [idmap.get(d, d) for d in s.depends_on]
 
     def _build_planner_model(self, model_name: Optional[str] = None):
         # Always has the find_human_agents discovery tool now.

@@ -147,6 +147,57 @@ async def test_outstanding_interrupts_are_tracked_per_step(pool):
     print("ok  read-model: interrupts tracked per step, cleared independently")
 
 
+async def test_new_message_does_not_mutate_executed_steps(pool):
+    """Regression: a follow-up message reuses the session, and the planner labels
+    its steps s1, s2, … on EVERY turn (it can't see prior turns). Because
+    plan_steps is keyed by (session_id, step_id), a later turn's bare s1/s2 used
+    to collide with an earlier, already-EXECUTED turn's rows and overwrite their
+    title/description in place. _namespace_step_ids prefixes ids by plan.id; this
+    proves the executed rows survive a second turn untouched. Drives the real
+    OrchestratorService helpers (namespacing + row projection)."""
+    from src.companion_ai.service import OrchestratorService
+    from src.companion_ai.plan import Plan, Step
+
+    rm = readmodel.ReadModel(pool, schema=SCHEMA)
+    await readmodel.init_schema(pool, SCHEMA)
+    sid = "sess_replan"
+    await rm.ensure_session(sid, "u1", None, "running")
+
+    async def project(plan):
+        OrchestratorService._namespace_step_ids(plan)
+        await rm.upsert_plan(sid, plan.id, plan.title, plan.goal, "running")
+        await rm.upsert_steps(sid, [OrchestratorService._step_row(i, s)
+                                    for i, s in enumerate(plan.steps)])
+
+    # ---- turn 1: planner emits s1,s2; they run and complete ----
+    planA = Plan(id="planA", title="Prospection", goal="g1", steps=[
+        Step(id="s1", title="Rechercher les comptes", description="find accounts"),
+        Step(id="s2", title="Rediger le plan", description="write plan", depends_on=["s1"])])
+    await project(planA)
+    assert [s.id for s in planA.steps] == ["planA_s1", "planA_s2"]
+    assert planA.steps[1].depends_on == ["planA_s1"]          # deps remapped consistently
+    for s in planA.steps:
+        await rm.set_step_status(sid, s.id, "completed", result=f"done:{s.title}")
+
+    # ---- turn 2: a brand-new message; planner AGAIN labels its steps s1,s2 ----
+    planB = Plan(id="planB", title="Deplacement", goal="g2", steps=[
+        Step(id="s1", title="Reserver un vol", description="book flight"),
+        Step(id="s2", title="Envoyer email", description="send email", depends_on=["s1"])])
+    await project(planB)
+
+    # ---- the executed turn-1 rows must be UNTOUCHED, turn-2 rows are separate ----
+    async with pool.acquire() as con:
+        rows = {r["step_id"]: r for r in await con.fetch(
+            f'SELECT * FROM "{SCHEMA}".plan_steps WHERE session_id=$1', sid)}
+    assert set(rows) == {"planA_s1", "planA_s2", "planB_s1", "planB_s2"}, set(rows)
+    assert rows["planA_s1"]["title"] == "Rechercher les comptes"
+    assert rows["planA_s1"]["status"] == "completed"
+    assert rows["planA_s1"]["result"] == "done:Rechercher les comptes"
+    assert rows["planA_s2"]["title"] == "Rediger le plan"
+    assert rows["planB_s1"]["title"] == "Reserver un vol" and rows["planB_s1"]["status"] == "pending"
+    print("ok  re-plan: namespaced ids keep executed steps intact (no cross-turn collision)")
+
+
 async def test_a_reply_claims_its_wait_exactly_once(pool):
     """Graph retries a notification it thinks failed, and duplicates are normal.
     A second delivery must not resume the step again — that would answer an
