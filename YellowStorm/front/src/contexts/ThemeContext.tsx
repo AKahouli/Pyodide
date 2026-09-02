@@ -1,5 +1,5 @@
 import { useAuth } from '@/modules/auth';
-import { createContext, useEffect, useState } from 'react';
+import { createContext, useEffect, useMemo, useState } from 'react';
 import { applyColorThemeClass } from './apply-color-theme';
 
 export const COLOR_THEMES = [
@@ -14,6 +14,7 @@ export type ColorTheme = (typeof COLOR_THEMES)[number]['value'];
 export type ThemeLogoValue = {
   id: string;
   url?: string | null;
+  name?: string;
 };
 
 type ThemeProviderProps = {
@@ -28,26 +29,17 @@ export type ThemeProviderState = {
   setTheme: (theme: string) => void;
   colorTheme: ColorTheme;
   setColorTheme: (colorTheme: ColorTheme) => void;
-  colorThemeLabels: Record<ColorTheme, string>;
   logo: ThemeLogoValue;
   setLogo: (logo: ThemeLogoValue) => void;
 };
 
-const COLOR_THEME_LABELS: Record<ColorTheme, string> = {
-  default: 'Original',
-  yellow: 'Jaune',
-  orange: 'Orange',
-  blue: 'Bleu',
-};
-
-const DEFAULT_LOGO: ThemeLogoValue = { id: 'yellowmind' };
+const DEFAULT_LOGO: ThemeLogoValue = { id: 'yellowmind', name: 'Yellowmind' };
 
 const initialState: ThemeProviderState = {
   theme: 'dark',
   setTheme: () => null,
   colorTheme: 'default',
   setColorTheme: () => null,
-  colorThemeLabels: COLOR_THEME_LABELS,
   logo: DEFAULT_LOGO,
   setLogo: () => null,
 };
@@ -59,6 +51,7 @@ export function ThemeProvider({ children, defaultTheme = 'dark', defaultColorThe
   const [colorTheme, setColorTheme] = useState<ColorTheme>(defaultColorTheme);
   const [logo, setLogo] = useState<ThemeLogoValue>(DEFAULT_LOGO);
   const { isAuthenticated, user } = useAuth();
+  const userColorTheme = user?.appearance?.colorTheme;
 
   useEffect(() => {
     const root = globalThis.document.documentElement;
@@ -76,7 +69,7 @@ export function ThemeProvider({ children, defaultTheme = 'dark', defaultColorThe
 
   useEffect(() => {
     applyColorThemeClass(colorTheme);
-    setLogo(resolveLogoForTheme?.(colorTheme) ?? (colorTheme === 'blue' ? { id: 'kpmg' } : DEFAULT_LOGO));
+    setLogo(resolveLogoForTheme?.(colorTheme) ?? (colorTheme === 'blue' ? { id: 'kpmg', name: 'KPMG' } : DEFAULT_LOGO));
   }, [colorTheme, resolveLogoForTheme]);
 
   useEffect(() => {
@@ -86,29 +79,26 @@ export function ThemeProvider({ children, defaultTheme = 'dark', defaultColorThe
   }, [defaultColorTheme, isAuthenticated]);
 
   useEffect(() => {
-    if (!isAuthenticated || !user) {
+    if (!isAuthenticated || !userColorTheme) {
       return;
     }
-    const fromUser = user.appearance?.colorTheme;
-    if (fromUser) {
-      setColorTheme(fromUser);
-    }
-  }, [isAuthenticated, user]);
+    setColorTheme(userColorTheme);
+  }, [isAuthenticated, userColorTheme]);
+
+  const value = useMemo<ThemeProviderState>(
+    () => ({
+      theme,
+      setTheme,
+      colorTheme,
+      setColorTheme,
+      logo,
+      setLogo,
+    }),
+    [theme, colorTheme, logo],
+  );
 
   return (
-    <ThemeProviderContext.Provider
-      {...props}
-      value={{
-        theme,
-        setTheme: (nextTheme: string) => {
-          setTheme(nextTheme);
-        },
-        colorTheme,
-        setColorTheme,
-        colorThemeLabels: COLOR_THEME_LABELS,
-        logo,
-        setLogo,
-      }}>
+    <ThemeProviderContext.Provider {...props} value={value}>
       {children}
     </ThemeProviderContext.Provider>
   );

@@ -11,12 +11,13 @@ import { SettingsModalProvider } from '@/modules/profile';
 import { UsageProvider } from '@/modules/usage/UsageContext';
 import { NotificationsProvider } from '@/modules/notifications';
 import { LocalizationProvider } from '@/modules/localization';
-import { applyColorThemeClass } from '@/contexts/apply-color-theme';
 import { ThemeProvider } from '@/contexts/ThemeContext';
 import { getGlobalAppearanceSettings } from '@/modules/auth/api';
 import { PlaybookQueryProvider } from '@/modules/playbook/query/queryProvider';
-import { APPEARANCE_SETTINGS_UPDATED_EVENT } from '@/modules/admin/appearance/constants';
-import { resolveThemeLogo } from '@/modules/admin/appearance/utils/appearance-settings';
+import {
+  APPEARANCE_SETTINGS_UPDATED_EVENT,
+  resolveThemeLogo,
+} from '@/lib/appearance';
 import type { AppearanceSettings } from '@/modules/admin/types';
 
 type CombinedProviderProps = Readonly<{
@@ -33,76 +34,67 @@ type CombinedProviderProps = Readonly<{
  * - ThemeProvider: handles theme (light/dark)
  * - SettingsModalProvider: handles settings modals
  */
-export function CombinedProvider({ children }: CombinedProviderProps) {
-  function ProviderComponent({ children: providerChildren }: { children: ReactNode }) {
-    const [appearanceSettings, setAppearanceSettings] = useState<AppearanceSettings | null>(null);
+function AppProviders({ children }: { children: ReactNode }) {
+  const [appearanceSettings, setAppearanceSettings] = useState<AppearanceSettings | null>(null);
 
-    useEffect(() => {
-      let isMounted = true;
+  useEffect(() => {
+    let isMounted = true;
 
+    getGlobalAppearanceSettings()
+      .then((appearance) => {
+        if (isMounted) {
+          setAppearanceSettings(appearance);
+        }
+      })
+      .catch(() => undefined);
+
+    return () => {
+      isMounted = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    const handleAppearanceSync = (event: Event) => {
+      const detail = (event as CustomEvent<AppearanceSettings | undefined>).detail;
+      if (detail) {
+        setAppearanceSettings(detail);
+        return;
+      }
       getGlobalAppearanceSettings()
-        .then((appearance) => {
-          if (isMounted) {
-            setAppearanceSettings(appearance);
-            applyColorThemeClass(appearance.defaultColorTheme);
-          }
-        })
-        .catch(() => {
-          if (isMounted) {
-            applyColorThemeClass('default');
-          }
-        });
+        .then(setAppearanceSettings)
+        .catch(() => undefined);
+    };
 
-      return () => {
-        isMounted = false;
-      };
-    }, []);
+    window.addEventListener(APPEARANCE_SETTINGS_UPDATED_EVENT, handleAppearanceSync);
+    return () => {
+      window.removeEventListener(APPEARANCE_SETTINGS_UPDATED_EVENT, handleAppearanceSync);
+    };
+  }, []);
 
-    useEffect(() => {
-      const handleThemeSync = () => {
-        getGlobalAppearanceSettings()
-          .then((appearance) => {
-            setAppearanceSettings(appearance);
-            applyColorThemeClass(appearance.defaultColorTheme);
-          })
-          .catch(() => {
-            // Keep the current theme if sync fails.
-          });
-      };
+  const resolveLogoForTheme = useCallback(
+    (colorTheme: ColorTheme) => resolveThemeLogo(appearanceSettings, colorTheme),
+    [appearanceSettings],
+  );
 
-      window.addEventListener('storage', handleThemeSync);
-      window.addEventListener('focus', handleThemeSync);
-      window.addEventListener(APPEARANCE_SETTINGS_UPDATED_EVENT, handleThemeSync);
-      return () => {
-        window.removeEventListener('storage', handleThemeSync);
-        window.removeEventListener('focus', handleThemeSync);
-        window.removeEventListener(APPEARANCE_SETTINGS_UPDATED_EVENT, handleThemeSync);
-      };
-    }, []);
+  return (
+    <LocalizationProvider>
+      <AuthProvider>
+        <PlaybookQueryProvider>
+          <NotificationsProvider>
+            <UsageProvider>
+              <ThemeProvider
+                defaultColorTheme={appearanceSettings?.defaultColorTheme}
+                resolveLogoForTheme={resolveLogoForTheme}>
+                <SettingsModalProvider>{children}</SettingsModalProvider>
+              </ThemeProvider>
+            </UsageProvider>
+          </NotificationsProvider>
+        </PlaybookQueryProvider>
+      </AuthProvider>
+    </LocalizationProvider>
+  );
+}
 
-    const resolveLogoForTheme = useCallback(
-      (colorTheme: ColorTheme) => resolveThemeLogo(appearanceSettings, colorTheme),
-      [appearanceSettings],
-    );
-
-    return (
-      <LocalizationProvider>
-        <AuthProvider>
-          <PlaybookQueryProvider>
-            <NotificationsProvider>
-              <UsageProvider>
-                <ThemeProvider
-                  defaultColorTheme={appearanceSettings?.defaultColorTheme}
-                  resolveLogoForTheme={resolveLogoForTheme}>
-                  <SettingsModalProvider>{providerChildren}</SettingsModalProvider>
-                </ThemeProvider>
-              </UsageProvider>
-            </NotificationsProvider>
-          </PlaybookQueryProvider>
-        </AuthProvider>
-      </LocalizationProvider>
-    );
-  }
-
-  return <ProviderComponent>{children}</ProviderComponent>;
+export function CombinedProvider({ children }: CombinedProviderProps) {
+  return <AppProviders>{children}</AppProviders>;
 }
