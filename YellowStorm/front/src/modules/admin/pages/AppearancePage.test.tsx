@@ -4,7 +4,6 @@ import { screen, waitFor, within } from '@testing-library/react';
 import { renderWithProviders } from '@/test/renderWithProviders';
 import { AppearancePage } from './AppearancePage';
 import { getAppearanceSettings, setAppearanceSettings } from '../api';
-import { getGlobalAppearanceSettings } from '@/modules/auth/api';
 import type { AppearanceSettings } from '../types';
 
 const { refreshUserMock, useAuthMock } = vi.hoisted(() => {
@@ -33,9 +32,6 @@ vi.mock('../api', () => ({
   updateAppearanceLogo: vi.fn(),
   deleteAppearanceLogo: vi.fn(),
 }));
-vi.mock('@/modules/auth/api', () => ({
-  getGlobalAppearanceSettings: vi.fn(),
-}));
 
 const settings: AppearanceSettings = {
   defaultColorTheme: 'default',
@@ -55,12 +51,10 @@ describe('AppearancePage', () => {
   beforeEach(() => {
     vi.mocked(getAppearanceSettings).mockReset();
     vi.mocked(setAppearanceSettings).mockReset();
-    vi.mocked(getGlobalAppearanceSettings).mockReset();
     refreshUserMock.mockReset();
     refreshUserMock.mockResolvedValue(undefined);
     vi.mocked(getAppearanceSettings).mockResolvedValue(settings);
     vi.mocked(setAppearanceSettings).mockResolvedValue(settings);
-    vi.mocked(getGlobalAppearanceSettings).mockResolvedValue(settings);
   });
 
   it('renders color themes as palettes without logos', async () => {
@@ -74,10 +68,28 @@ describe('AppearancePage', () => {
     expect(screen.getByRole('button', { name: 'appearance.actions.applyToAll' })).toBeDisabled();
   });
 
+  it('does not persist before settings have loaded', async () => {
+    vi.mocked(getAppearanceSettings).mockReturnValue(new Promise(() => undefined));
+    renderWithProviders(<AppearancePage />);
+
+    expect(screen.getAllByText('appearance.actions.loading').length).toBeGreaterThan(0);
+    expect(screen.queryByRole('radio', { name: 'Yellowmind' })).not.toBeInTheDocument();
+    expect(setAppearanceSettings).not.toHaveBeenCalled();
+  });
+
+  it('shows retry instead of the catalog when load fails', async () => {
+    vi.mocked(getAppearanceSettings).mockRejectedValue(new Error('unavailable'));
+    renderWithProviders(<AppearancePage />);
+
+    expect(await screen.findByRole('button', { name: 'appearance.actions.retry' })).toBeInTheDocument();
+    expect(screen.queryByRole('radio', { name: 'Yellowmind' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'appearance.logo.upload' })).not.toBeInTheDocument();
+    expect(setAppearanceSettings).not.toHaveBeenCalled();
+  });
+
   it('applies the selected color theme globally', async () => {
     const nextSettings: AppearanceSettings = { ...settings, defaultColorTheme: 'yellow' };
     vi.mocked(setAppearanceSettings).mockResolvedValue(nextSettings);
-    vi.mocked(getGlobalAppearanceSettings).mockResolvedValue(nextSettings);
 
     const { user } = renderWithProviders(<AppearancePage />);
     const yellow = await screen.findByRole('radio', { name: 'appearance.colorTheme.yellow' });
@@ -88,11 +100,14 @@ describe('AppearancePage', () => {
     await user.click(apply);
 
     await waitFor(() => {
-      expect(setAppearanceSettings).toHaveBeenCalledWith({
-        defaultColorTheme: 'yellow',
-        logos: settings.logos,
-        themes: settings.themes,
-      });
+      expect(setAppearanceSettings).toHaveBeenCalledWith(
+        {
+          defaultColorTheme: 'yellow',
+          logos: settings.logos,
+          themes: settings.themes,
+        },
+        { applyToAllUsers: true },
+      );
     });
     expect(refreshUserMock).toHaveBeenCalled();
     expect(document.documentElement.classList.contains('theme-yellowsys')).toBe(true);
@@ -107,7 +122,7 @@ describe('AppearancePage', () => {
     expect(await screen.findByRole('radio', { name: 'Yellowmind' })).toBeChecked();
   });
 
-  it('applies a selected logo to every color theme immediately', async () => {
+  it('applies a selected logo to every color theme immediately without applying palettes to all users', async () => {
     const nextSettings: AppearanceSettings = {
       ...settings,
       themes: {
@@ -118,17 +133,19 @@ describe('AppearancePage', () => {
       },
     };
     vi.mocked(setAppearanceSettings).mockResolvedValue(nextSettings);
-    vi.mocked(getGlobalAppearanceSettings).mockResolvedValue(nextSettings);
 
     const { user } = renderWithProviders(<AppearancePage />);
     await user.click(await screen.findByRole('radio', { name: 'KPMG' }));
 
     await waitFor(() => {
-      expect(setAppearanceSettings).toHaveBeenCalledWith({
-        defaultColorTheme: 'default',
-        logos: settings.logos,
-        themes: nextSettings.themes,
-      });
+      expect(setAppearanceSettings).toHaveBeenCalledWith(
+        {
+          defaultColorTheme: 'default',
+          logos: settings.logos,
+          themes: nextSettings.themes,
+        },
+        { applyToAllUsers: false },
+      );
     });
     expect(screen.getByRole('radio', { name: 'KPMG' })).toBeChecked();
   });

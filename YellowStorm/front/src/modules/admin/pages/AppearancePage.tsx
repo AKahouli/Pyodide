@@ -1,4 +1,4 @@
-import { useContext, useEffect, useState, type KeyboardEvent } from 'react';
+import { useContext, useEffect, useRef, useState, type KeyboardEvent } from 'react';
 import { Globe2, Image, Palette } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -6,7 +6,6 @@ import { COLOR_THEMES, ThemeProviderContext, type ColorTheme } from '@/contexts/
 import { parseApiError } from '@/lib/api-error';
 import { showError, showSuccess } from '@/lib/notifications';
 import { useAuth } from '@/modules/auth/useAuth';
-import { getGlobalAppearanceSettings } from '@/modules/auth/api';
 import { useModuleTranslation } from '@/modules/localization';
 import type { ModuleTranslationKey } from '@/modules/localization';
 import { getAppearanceSettings, setAppearanceSettings } from '../api';
@@ -24,31 +23,21 @@ import {
   replaceMissingLogos,
 } from '../appearance/utils';
 
+type LoadState = 'loading' | 'ready' | 'error';
+
 export function AppearancePage() {
   const { t } = useModuleTranslation('admin');
   const { refreshUser } = useAuth();
   const { setColorTheme, setLogo } = useContext(ThemeProviderContext);
+  const persistLock = useRef(false);
+  const [loadState, setLoadState] = useState<LoadState>('loading');
+  const [reloadToken, setReloadToken] = useState(0);
   const [selectedTheme, setSelectedTheme] = useState<ColorTheme>('default');
   const [savedTheme, setSavedTheme] = useState<ColorTheme>('default');
   const [themeLogoMap, setThemeLogoMap] = useState<Record<ColorTheme, string>>(DEFAULT_LOGO_MAP);
   const [logos, setLogos] = useState<AppearanceLogo[]>(FALLBACK_LOGOS);
   const [saving, setSaving] = useState(false);
   const [assigningLogo, setAssigningLogo] = useState(false);
-
-  useEffect(() => {
-    let cancelled = false;
-    getAppearanceSettings()
-      .then((settings) => {
-        if (cancelled) return;
-        applySettings(settings);
-      })
-      .catch(() => {
-        if (!cancelled) showError(t('appearance.actions.loadFailed'));
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [t]);
 
   const applySettings = (settings: AppearanceSettings) => {
     const nextLogos = logosFromSettings(settings);
@@ -59,44 +48,72 @@ export function AppearancePage() {
     setLogos(nextLogos);
   };
 
+  useEffect(() => {
+    let cancelled = false;
+    setLoadState('loading');
+    getAppearanceSettings()
+      .then((settings) => {
+        if (cancelled) return;
+        applySettings(settings);
+        setLoadState('ready');
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setLoadState('error');
+          showError(t('appearance.actions.loadFailed'));
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [t, reloadToken]);
+
   const hasUnsavedTheme = selectedTheme !== savedTheme;
+  const pageReady = loadState === 'ready';
+  const persistBusy = saving || assigningLogo;
 
   const persistAppearance = async () => {
+    if (!pageReady || persistLock.current || persistBusy || !hasUnsavedTheme) {
+      return;
+    }
+    persistLock.current = true;
     setSaving(true);
     try {
       const nextSettings = buildAppearanceSettings(selectedTheme, themeLogoMap, logos);
-      await setAppearanceSettings(nextSettings);
-      const refreshedSettings = await getGlobalAppearanceSettings();
-      applySettings(refreshedSettings);
-      setColorTheme(refreshedSettings.defaultColorTheme);
+      const saved = await setAppearanceSettings(nextSettings, { applyToAllUsers: true });
+      applySettings(saved);
+      setColorTheme(saved.defaultColorTheme);
       try {
         await refreshUser();
       } catch {
         // Keep the live theme even if /me is unavailable.
       }
-      notifyAppearanceSettingsUpdated();
+      notifyAppearanceSettingsUpdated(saved);
       showSuccess(t('appearance.actions.applied'));
     } catch (error) {
       showError(parseApiError(error).message || t('appearance.actions.applyFailed'));
     } finally {
+      persistLock.current = false;
       setSaving(false);
     }
   };
 
   const persistAssignedLogo = async (logoId: string, catalog: AppearanceLogo[], notifyUser: boolean) => {
-    if (assigningLogo || themeLogoMap[savedTheme] === logoId) {
+    if (!pageReady || persistLock.current || persistBusy || themeLogoMap[savedTheme] === logoId) {
       return;
     }
     const nextMap = logoMapForAllThemes(logoId);
     const entry = catalog.find((item) => item.id === logoId);
+    persistLock.current = true;
     setAssigningLogo(true);
     setThemeLogoMap(nextMap);
-    setLogo({ id: logoId, url: entry ? appearanceLogoSrc(entry) : undefined });
+    setLogo({ id: logoId, url: entry ? appearanceLogoSrc(entry) : undefined, name: entry?.name });
     try {
-      await setAppearanceSettings(buildAppearanceSettings(savedTheme, nextMap, catalog));
-      const refreshedSettings = await getGlobalAppearanceSettings();
-      applySettings(refreshedSettings);
-      notifyAppearanceSettingsUpdated();
+      const saved = await setAppearanceSettings(buildAppearanceSettings(savedTheme, nextMap, catalog), {
+        applyToAllUsers: false,
+      });
+      applySettings(saved);
+      notifyAppearanceSettingsUpdated(saved);
       if (notifyUser) {
         showSuccess(t('appearance.logo.applied'));
       }
@@ -104,6 +121,7 @@ export function AppearancePage() {
       showError(parseApiError(error).message || t('appearance.logo.applyFailed'));
       getAppearanceSettings().then(applySettings).catch(() => undefined);
     } finally {
+      persistLock.current = false;
       setAssigningLogo(false);
     }
   };
@@ -112,7 +130,7 @@ export function AppearancePage() {
     setLogos(nextLogos);
     const validIds = new Set(nextLogos.map((logo) => logo.id));
     if (!validIds.has(themeLogoMap[savedTheme])) {
-      setLogo({ id: 'yellowmind' });
+      setLogo({ id: 'yellowmind', name: 'Yellowmind' });
     }
     setThemeLogoMap((current) => replaceMissingLogos(current, validIds));
     if (assignId) {
@@ -141,70 +159,96 @@ export function AppearancePage() {
         <p className='text-sm text-muted-foreground'>{t('appearance.description')}</p>
       </div>
 
-      <Card>
-        <CardHeader>
-          <div className='flex items-start gap-3'>
-            <div className='flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary'>
-              <Palette className='h-5 w-5' />
-            </div>
-            <div className='space-y-1'>
-              <CardTitle>{t('appearance.colorTheme.label')}</CardTitle>
-              <CardDescription>{t('appearance.colorTheme.description')}</CardDescription>
-            </div>
-          </div>
-        </CardHeader>
-        <CardContent className='space-y-5'>
-          <div
-            role='radiogroup'
-            aria-label={t('appearance.colorTheme.label')}
-            onKeyDown={onThemeKeyDown}
-            className='grid gap-3 sm:grid-cols-2 xl:grid-cols-4'>
-            {COLOR_THEMES.map((themeOption) => (
-              <ColorThemeCard
-                key={themeOption.value}
-                value={themeOption.value}
-                label={t(themeOption.labelKey as ModuleTranslationKey<'admin'>)}
-                selected={selectedTheme === themeOption.value}
-                isActive={savedTheme === themeOption.value}
-                activeLabel={t('appearance.colorTheme.active')}
-                onSelect={setSelectedTheme}
-              />
-            ))}
-          </div>
-          <div className='flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between'>
-            <p className='text-sm text-muted-foreground'>
-              {hasUnsavedTheme ? t('appearance.colorTheme.applyHint') : t('appearance.colorTheme.alreadyApplied')}
-            </p>
-            <Button onClick={() => void persistAppearance()} disabled={saving || !hasUnsavedTheme} className='sm:w-auto'>
-              <Globe2 className='mr-2 h-4 w-4' />
-              {saving ? t('appearance.actions.applying') : t('appearance.actions.applyToAll')}
+      {loadState === 'error' ? (
+        <Card>
+          <CardContent className='flex flex-col gap-3 py-6 sm:flex-row sm:items-center sm:justify-between'>
+            <p className='text-sm text-muted-foreground'>{t('appearance.actions.loadFailed')}</p>
+            <Button type='button' variant='outline' onClick={() => setReloadToken((token) => token + 1)}>
+              {t('appearance.actions.retry')}
             </Button>
-          </div>
-        </CardContent>
-      </Card>
+          </CardContent>
+        </Card>
+      ) : (
+        <>
+          <Card>
+            <CardHeader>
+              <div className='flex items-start gap-3'>
+                <div className='flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary'>
+                  <Palette className='h-5 w-5' />
+                </div>
+                <div className='space-y-1'>
+                  <CardTitle>{t('appearance.colorTheme.label')}</CardTitle>
+                  <CardDescription>{t('appearance.colorTheme.description')}</CardDescription>
+                </div>
+              </div>
+            </CardHeader>
+          <CardContent className='space-y-5'>
+            {loadState === 'loading' ? (
+              <p className='text-sm text-muted-foreground'>{t('appearance.actions.loading')}</p>
+            ) : (
+              <>
+                <div
+                  role='radiogroup'
+                  aria-label={t('appearance.colorTheme.label')}
+                  onKeyDown={onThemeKeyDown}
+                  className='grid gap-3 sm:grid-cols-2 xl:grid-cols-4'>
+                  {COLOR_THEMES.map((themeOption) => (
+                    <ColorThemeCard
+                      key={themeOption.value}
+                      value={themeOption.value}
+                      label={t(themeOption.labelKey as ModuleTranslationKey<'admin'>)}
+                      selected={selectedTheme === themeOption.value}
+                      isActive={savedTheme === themeOption.value}
+                      activeLabel={t('appearance.colorTheme.active')}
+                      onSelect={setSelectedTheme}
+                    />
+                  ))}
+                </div>
+                <div className='flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between'>
+                  <p className='text-sm text-muted-foreground'>
+                    {hasUnsavedTheme ? t('appearance.colorTheme.applyHint') : t('appearance.colorTheme.alreadyApplied')}
+                  </p>
+                  <Button
+                    onClick={() => void persistAppearance()}
+                    disabled={!pageReady || persistBusy || !hasUnsavedTheme}
+                    className='sm:w-auto'>
+                    <Globe2 className='mr-2 h-4 w-4' />
+                    {saving ? t('appearance.actions.applying') : t('appearance.actions.applyToAll')}
+                  </Button>
+                </div>
+              </>
+            )}
+          </CardContent>
+        </Card>
 
-      <Card>
-        <CardHeader>
-          <div className='flex items-start gap-3'>
-            <div className='flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary'>
-              <Image className='h-5 w-5' />
+        <Card>
+          <CardHeader>
+            <div className='flex items-start gap-3'>
+              <div className='flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary'>
+                <Image className='h-5 w-5' />
+              </div>
+              <div className='space-y-1'>
+                <CardTitle>{t('appearance.logo.title')}</CardTitle>
+                <CardDescription>{t('appearance.logo.description')}</CardDescription>
+              </div>
             </div>
-            <div className='space-y-1'>
-              <CardTitle>{t('appearance.logo.title')}</CardTitle>
-              <CardDescription>{t('appearance.logo.description')}</CardDescription>
-            </div>
-          </div>
-        </CardHeader>
-        <CardContent>
-          <LogoLibrarySection
-            logos={logos}
-            selectedLogoId={themeLogoMap[savedTheme]}
-            assigning={assigningLogo}
-            onSelectLogo={(logoId) => void persistAssignedLogo(logoId, logos, true)}
-            onLogosChange={handleLogosChange}
-          />
-        </CardContent>
-      </Card>
+          </CardHeader>
+          <CardContent>
+            {loadState === 'loading' ? (
+              <p className='text-sm text-muted-foreground'>{t('appearance.actions.loading')}</p>
+            ) : (
+              <LogoLibrarySection
+                logos={logos}
+                selectedLogoId={themeLogoMap[savedTheme]}
+                assigning={!pageReady || persistBusy}
+                onSelectLogo={(logoId) => void persistAssignedLogo(logoId, logos, true)}
+                onLogosChange={handleLogosChange}
+              />
+            )}
+          </CardContent>
+        </Card>
+        </>
+      )}
     </div>
   );
 }
