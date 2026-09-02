@@ -758,6 +758,8 @@ export const PERMISSION_GROUPS: PermissionGroup[] = [
 
 export type UserStatus = 'active' | 'inactive' | 'suspended';
 
+export type RegistrationApproval = 'pending' | 'approved' | 'rejected';
+
 export interface AdminUserResponse {
   id: string;
   email: string;
@@ -769,6 +771,7 @@ export interface AdminUserResponse {
     company?: string;
   };
   status: UserStatus;
+  registrationApproval?: RegistrationApproval;
   plan?: {
     id: string;
     slug: string;

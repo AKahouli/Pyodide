@@ -313,6 +313,8 @@ export const API_ENDPOINTS = {
     byId: (id: string) => `/admin/users/${id}`,
     suspend: (id: string) => `/admin/users/${id}/suspend`,
     activate: (id: string) => `/admin/users/${id}/activate`,
+    approveRegistration: (id: string) => `/admin/users/${id}/approve-registration`,
+    rejectRegistration: (id: string) => `/admin/users/${id}/reject-registration`,
     assignPlan: (id: string) => `/admin/users/${id}/assign-plan`,
   },
   auditLogs: {

@@ -1,6 +1,7 @@
 import { Types } from 'mongoose';
 import { RegistrationApprovalService } from './registration-approval.service';
-import { UserStatus } from './schemas/user.schema';
+import { RegistrationApproval, UserStatus } from './schemas/user.schema';
+import { ErrorCode } from '../exceptions/constants/error-codes';
 
 describe('RegistrationApprovalService', () => {
   const applicant = {
@@ -121,3 +122,162 @@ describe('RegistrationApprovalService', () => {
     expect(logger.error).toHaveBeenCalled();
   });
 });
+
+describe('RegistrationApprovalService decisions', () => {
+  const userId = new Types.ObjectId();
+
+  const makeUserDoc = (overrides: Record<string, unknown> = {}) => ({
+    _id: userId,
+    email: 'jane@acme.io',
+    status: UserStatus.INACTIVE,
+    registrationApproval: RegistrationApproval.PENDING,
+    save: jest.fn().mockResolvedValue(undefined),
+    ...overrides,
+  });
+
+  const makeDecisionService = (user: ReturnType<typeof makeUserDoc> | null, sendResult?: { success: boolean; error?: string; attempts: number }) => {
+    const userModel = {
+      find: jest.fn(),
+      findById: jest.fn().mockResolvedValue(user),
+    };
+    const emailService = {
+      isAvailable: jest.fn().mockReturnValue(true),
+      send: jest.fn().mockResolvedValue(sendResult ?? { success: true, attempts: 1 }),
+    };
+    const logger = {
+      setContext: jest.fn(),
+      log: jest.fn(),
+      warn: jest.fn(),
+      error: jest.fn(),
+    };
+    const service = new RegistrationApprovalService(
+      userModel as never,
+      { findRoleByName: jest.fn() } as never,
+      emailService as never,
+      {
+        get: jest.fn((key: string, def: unknown) => {
+          if (key === 'app.name') return 'YelloStorm';
+          if (key === 'app.frontendUrl') return 'http://localhost:5173';
+          return def;
+        }),
+      } as never,
+      logger as never,
+    );
+    return { service, userModel, emailService, logger };
+  };
+
+  it('approves an inactive pending user and sends a confirmation email', async () => {
+    const user = makeUserDoc();
+    const { service, emailService } = makeDecisionService(user);
+
+    const result = await service.approveRegistration(userId.toString());
+
+    expect(result).toMatchObject({
+      changed: true,
+      email: 'jane@acme.io',
+      status: UserStatus.ACTIVE,
+      registrationApproval: RegistrationApproval.APPROVED,
+    });
+    expect(user.save).toHaveBeenCalled();
+    expect(emailService.send).toHaveBeenCalledTimes(1);
+    expect(emailService.send.mock.calls[0][0].to).toBe('jane@acme.io');
+    expect(emailService.send.mock.calls[0][0].subject).toContain('approved');
+    expect(emailService.send.mock.calls[0][0].html).toContain('http://localhost:5173/#/');
+  });
+
+  it('is a no-op when the registration is already approved', async () => {
+    const user = makeUserDoc({
+      status: UserStatus.ACTIVE,
+      registrationApproval: RegistrationApproval.APPROVED,
+    });
+    const { service, emailService } = makeDecisionService(user);
+
+    const result = await service.approveRegistration(userId.toString());
+
+    expect(result.changed).toBe(false);
+    expect(user.save).not.toHaveBeenCalled();
+    expect(emailService.send).not.toHaveBeenCalled();
+  });
+
+  it('reactivates a rejected user and sends a confirmation email', async () => {
+    const user = makeUserDoc({ registrationApproval: RegistrationApproval.REJECTED });
+    const { service, emailService } = makeDecisionService(user);
+
+    const result = await service.approveRegistration(userId.toString());
+
+    expect(result.changed).toBe(true);
+    expect(result.status).toBe(UserStatus.ACTIVE);
+    expect(result.registrationApproval).toBe(RegistrationApproval.APPROVED);
+    expect(emailService.send).toHaveBeenCalledTimes(1);
+  });
+
+  it('still approves when the confirmation email fails', async () => {
+    const user = makeUserDoc();
+    const { service, logger } = makeDecisionService(user, {
+      success: false,
+      error: 'smtp down',
+      attempts: 1,
+    });
+
+    await expect(service.approveRegistration(userId.toString())).resolves.toMatchObject({
+      changed: true,
+      status: UserStatus.ACTIVE,
+    });
+    expect(logger.error).toHaveBeenCalled();
+  });
+
+  it('rejects an inactive pending user without sending email', async () => {
+    const user = makeUserDoc();
+    const { service, emailService } = makeDecisionService(user);
+
+    const result = await service.rejectRegistration(userId.toString());
+
+    expect(result).toMatchObject({
+      changed: true,
+      status: UserStatus.INACTIVE,
+      registrationApproval: RegistrationApproval.REJECTED,
+    });
+    expect(user.save).toHaveBeenCalled();
+    expect(emailService.send).not.toHaveBeenCalled();
+  });
+
+  it('is a no-op when the registration is already rejected', async () => {
+    const user = makeUserDoc({ registrationApproval: RegistrationApproval.REJECTED });
+    const { service } = makeDecisionService(user);
+
+    const result = await service.rejectRegistration(userId.toString());
+
+    expect(result.changed).toBe(false);
+    expect(user.status).toBe(UserStatus.INACTIVE);
+    expect(user.save).not.toHaveBeenCalled();
+  });
+
+  it('does not approve a suspended account', async () => {
+    const { service } = makeDecisionService(
+      makeUserDoc({ status: UserStatus.SUSPENDED, registrationApproval: undefined }),
+    );
+
+    await expect(service.approveRegistration(userId.toString())).rejects.toMatchObject({
+      code: ErrorCode.BAD_REQUEST,
+    });
+  });
+
+  it('does not reject an active account', async () => {
+    const { service } = makeDecisionService(
+      makeUserDoc({ status: UserStatus.ACTIVE, registrationApproval: RegistrationApproval.APPROVED }),
+    );
+
+    await expect(service.rejectRegistration(userId.toString())).rejects.toMatchObject({
+      code: ErrorCode.BAD_REQUEST,
+    });
+  });
+
+  it('throws when the user does not exist', async () => {
+    const { service } = makeDecisionService(null);
+
+    await expect(service.approveRegistration(userId.toString())).rejects.toMatchObject({
+      code: ErrorCode.USER_NOT_FOUND,
+    });
+  });
+});
+

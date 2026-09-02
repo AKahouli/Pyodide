@@ -32,7 +32,7 @@ The user module provides:
 - **Microsoft OAuth**: Link Microsoft accounts for SSO
 - **Plan Assignment**: Associate users with subscription plans
 - **Status Management**: Active, inactive, suspended account states
-- **Admin Operations**: List, filter, suspend, activate users
+- **Admin Operations**: List, filter, suspend, activate users; Super Admin registration approve/reject
 - **RBAC Integration**: Role-based access control via roles reference
 
 ---
@@ -51,6 +51,8 @@ The user module provides:
 │  │ PUT  /users/me     │           │ GET  /admin/users/:id│                  │
 │  │ POST /complete     │           │ POST /suspend       │                   │
 │  └─────────┬──────────┘           │ POST /activate      │                   │
+│            │                      │ POST /approve-registration │            │
+│            │                      │ POST /reject-registration  │            │
 │            │                      │ POST /assign-plan   │                   │
 │            │                      └─────────┬───────────┘                   │
 │            │                                │                                │
@@ -110,6 +112,7 @@ user/
 ├── user.controller.ts           # User-facing API endpoints
 ├── admin-user.controller.ts     # Admin API endpoints
 ├── user.service.ts              # Business logic
+├── registration-approval.service.ts  # Super Admin registration notice + approve/reject
 ├── schemas/
 │   └── user.schema.ts           # MongoDB schema with embedded documents
 ├── interfaces/
@@ -188,6 +191,9 @@ export class User {
   // Status
   @Prop({ enum: UserStatus, default: UserStatus.ACTIVE })
   status: UserStatus;
+
+  @Prop({ enum: RegistrationApproval })
+  registrationApproval?: RegistrationApproval;
 
   // Timestamps
   createdAt: Date;
@@ -584,7 +590,9 @@ All admin endpoints require `PermissionsGuard` with specific permissions.
 | `GET` | `/admin/users` | `USERS_READ` | List users with pagination/filtering |
 | `GET` | `/admin/users/:id` | `USERS_READ` | Get user by ID |
 | `POST` | `/admin/users/:id/suspend` | `USERS_SUSPEND` | Suspend user account |
-| `POST` | `/admin/users/:id/activate` | `USERS_ACTIVATE` | Activate user account |
+| `POST` | `/admin/users/:id/activate` | `USERS_ACTIVATE` | Activate a **suspended** user |
+| `POST` | `/admin/users/:id/approve-registration` | `SUPER_ADMIN` (`*`) | Approve a pending classic registration |
+| `POST` | `/admin/users/:id/reject-registration` | `SUPER_ADMIN` (`*`) | Reject a pending classic registration |
 | `POST` | `/admin/users/:id/assign-plan` | `USERS_ASSIGN_PLAN` | Assign plan to user |
 
 ### GET /admin/users
@@ -619,6 +627,7 @@ List users with filtering and pagination.
         "company": "Acme Corp"
       },
       "status": "active",
+      "registrationApproval": "approved",
       "plan": {
         "id": "plan123",
         "slug": "professional",
@@ -650,11 +659,29 @@ Suspend a user account. Suspended users cannot log in.
 
 ### POST /admin/users/:id/activate
 
-Reactivate a suspended user account.
+Reactivate a **suspended** user account. Do not use this to approve a pending classic registration.
 
 **Response:**
 ```json
 { "message": "User activated successfully" }
+```
+
+### POST /admin/users/:id/approve-registration
+
+Super Admin only (`*`). Sets `status: active` and `registrationApproval: approved`. Sends a best-effort confirmation email. Re-approving an already approved user is a 200 no-op. Approving a rejected user is allowed.
+
+**Response:**
+```json
+{ "message": "Registration approved" }
+```
+
+### POST /admin/users/:id/reject-registration
+
+Super Admin only (`*`). Leaves `status: inactive` and sets `registrationApproval: rejected`. No email is sent. Re-rejecting an already rejected user is a 200 no-op.
+
+**Response:**
+```json
+{ "message": "Registration rejected" }
 ```
 
 ### POST /admin/users/:id/assign-plan
