@@ -1,7 +1,7 @@
 import { IsString, IsOptional, IsNumber, Min, Max, IsEnum } from 'class-validator';
 import { ApiPropertyOptional, ApiProperty } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
-import { UserStatus } from '../schemas/user.schema';
+import { RegistrationApproval, UserStatus } from '../schemas/user.schema';
 
 export class AdminListUsersQueryDto {
   @ApiPropertyOptional({ description: 'Page number', default: 1 })
@@ -70,6 +70,7 @@ export interface AdminUserResponse {
     company?: string;
   };
   status: UserStatus;
+  registrationApproval?: RegistrationApproval;
   plan?: {
     id: string;
     slug: string;

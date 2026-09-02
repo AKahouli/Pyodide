@@ -296,7 +296,7 @@ New OAuth users are not in this flow (`createOAuthUser` still defaults to `activ
 
 ## Classic Registration Approval
 
-Classic email/password signups wait for Super Admin review. Approve/reject **API and UsersPage actions are not in this auth module yet**; until they exist, the account stays `inactive` and cannot log in.
+Classic email/password signups wait for Super Admin review. Completing email verification does **not** activate the account.
 
 | Field | Classic `UserService.create()` | OAuth `createOAuthUser()` |
 |-------|-------------------------------|---------------------------|
@@ -304,6 +304,22 @@ Classic email/password signups wait for Super Admin review. Approve/reject **API
 | `registrationApproval` | `pending` | omitted |
 | Email verification | required before login | already verified by provider |
 | Super Admin notice | yes, after verification email | no |
+
+Approve and reject live on the **user admin API** (not this auth module):
+
+| Method | Endpoint | Permission |
+|--------|----------|------------|
+| `POST` | `/admin/users/:id/approve-registration` | `*` (Super Admin) |
+| `POST` | `/admin/users/:id/reject-registration` | `*` (Super Admin) |
+
+`users.*` (regular admin) cannot call these routes. `POST /admin/users/:id/activate` remains **suspended → active** only.
+
+| Action | `status` | `registrationApproval` | User email |
+|--------|----------|------------------------|------------|
+| Approve | `inactive` → `active` | `approved` | confirmation (best-effort) |
+| Reject | stays `inactive` | `rejected` | none |
+
+Re-approve already `approved` / re-reject already `rejected` → 200 no-op. Approving a rejected account is allowed (recovery). UsersPage Valider/Refuser is Super Admin only; email deep-links open the confirmation dialog (`decision=approve` or `decision=reject`).
 
 ### Account access gates
 
@@ -335,6 +351,8 @@ Email links (hash router; Super Admin must already be signed in):
 ```
 
 These open the admin users page. They are **not** one-click approve/reject tokens.
+
+`RegistrationApprovalService.approveRegistration()` / `rejectRegistration()` run from `AdminUserController` (permission `*`). Approve sends a best-effort confirmation email to the applicant (`{APP_FRONTEND_URL}/#/`). Mail failure does not roll back the approval.
 
 ---
 
@@ -473,7 +491,7 @@ Content-Type: application/json
 }
 ```
 
-The created user is `inactive` with `registrationApproval: pending`. Login is denied with `ERR_1202` until Super Admin approval (approval API is not in this module yet).
+The created user is `inactive` with `registrationApproval: pending`. Login is denied with `ERR_1202` until a Super Admin calls `POST /admin/users/:id/approve-registration`.
 
 **Login:**
 ```http
@@ -861,6 +879,22 @@ Contains:
 ```
 
 Links are deep-links into the admin UI, not public action tokens. If there is no `super_admin` role or no active Super Admin users, the service logs a warning and skips sending.
+
+### Registration Approved (user confirmation)
+
+Sent after Super Admin approval (best-effort; mail failure does not roll back status `active`):
+
+```
+Subject: Your account has been approved - YelloStorm
+
+Contains:
+- Notice that access is active
+- Sign-in button/link to /#/
+- Reminder to complete email verification if needed
+- Plain text fallback
+```
+
+Rejection does not send mail to the applicant.
 
 ### Password Reset Email
 

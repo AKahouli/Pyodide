@@ -88,4 +88,27 @@ describe('UserService classic registration status', () => {
     expect(verified.status).toBe(UserStatus.INACTIVE);
     expect(verified.registrationApproval).toBe(RegistrationApproval.PENDING);
   });
+
+  it('keeps a rejected user inactive when verifying email', async () => {
+    const userDoc = {
+      _id: new Types.ObjectId(),
+      emailVerified: false,
+      emailVerificationExpiry: new Date(Date.now() + 60_000),
+      status: UserStatus.INACTIVE,
+      registrationApproval: RegistrationApproval.REJECTED,
+      save: jest.fn().mockResolvedValue(undefined),
+    };
+    const userModel = {
+      findOne: jest.fn().mockReturnValue({
+        select: jest.fn().mockResolvedValue(userDoc),
+      }),
+    };
+    const service = makeService(userModel);
+
+    const verified = await service.verifyEmail('b'.repeat(64));
+
+    expect(verified.emailVerified).toBe(true);
+    expect(verified.status).toBe(UserStatus.INACTIVE);
+    expect(verified.registrationApproval).toBe(RegistrationApproval.REJECTED);
+  });
 });

@@ -406,6 +406,14 @@ export async function activateUser(id: string): Promise<void> {
   await apiClient.post(API_ENDPOINTS.adminUsers.activate(id));
 }
 
+export async function approveRegistration(id: string): Promise<void> {
+  await apiClient.post(API_ENDPOINTS.adminUsers.approveRegistration(id));
+}
+
+export async function rejectRegistration(id: string): Promise<void> {
+  await apiClient.post(API_ENDPOINTS.adminUsers.rejectRegistration(id));
+}
+
 export async function assignPlanToUser(
   userId: string,
   data: AssignPlanRequest
