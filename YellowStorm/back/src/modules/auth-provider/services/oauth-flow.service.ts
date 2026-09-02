@@ -14,8 +14,8 @@ import { AuthorizationService } from '@modules/authorization/authorization.servi
 import { EmailService } from '@modules/email';
 import { LoggerService } from '@modules/logger';
 import { WorkspaceInitializerService } from '@modules/workspace/workspace-initializer.service';
-import { UserStatus } from '@modules/user/schemas/user.schema';
-import { BadRequestException, ForbiddenException, UnauthorizedException } from '@modules/exceptions';
+import { assertAccountAccessible } from '@modules/user/utils/assert-account-accessible';
+import { BadRequestException, UnauthorizedException } from '@modules/exceptions';
 import { ErrorCode } from '@modules/exceptions/constants/error-codes';
 import { OAuthCallbackResult, OAuthUserInfo } from '../interfaces/auth-provider.interface';
 
@@ -187,9 +187,7 @@ export class OAuthFlowService {
       throw new UnauthorizedException(ErrorCode.USER_NOT_FOUND, 'User not found');
     }
 
-    if (user.status === UserStatus.SUSPENDED) {
-      throw new ForbiddenException(ErrorCode.AUTH_ACCOUNT_SUSPENDED, 'Account is suspended');
-    }
+    assertAccountAccessible(user);
 
     // Generate real tokens
     const userRoles = user.roles || [];
@@ -270,9 +268,7 @@ export class OAuthFlowService {
         throw new UnauthorizedException(ErrorCode.USER_NOT_FOUND, 'Linked user not found');
       }
 
-      if (user.status === UserStatus.SUSPENDED) {
-        throw new ForbiddenException(ErrorCode.AUTH_ACCOUNT_SUSPENDED, 'Account is suspended');
-      }
+      assertAccountAccessible(user);
 
       // Create temp token for frontend exchange
       const tempToken = await this.createTempLoginToken(user._id);

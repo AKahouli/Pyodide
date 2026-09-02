@@ -1,4 +1,4 @@
-import { UserStatus } from '../schemas/user.schema';
+import { RegistrationApproval, UserStatus } from '../schemas/user.schema';
 
 export interface IUserProfile {
   firstName?: string;
@@ -31,6 +31,7 @@ export interface IUser {
   microsoftAccountId?: string;
   plan?: IUserPlan;
   status: UserStatus;
+  registrationApproval?: RegistrationApproval;
   createdAt: Date;
   updatedAt: Date;
   lastLoginAt?: Date;

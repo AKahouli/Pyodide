@@ -319,6 +319,25 @@ describe('OAuthFlowService', () => {
           code: ErrorCode.AUTH_ACCOUNT_SUSPENDED,
         });
       });
+
+      it('should throw when linked user is inactive', async () => {
+        setupCallbackMocks({ sub: 'ms-123', email: 'user@example.com' });
+        providerLinkService.findByProviderUser.mockResolvedValue({
+          userId: MOCK_USER_ID,
+          providerKey: MOCK_PROVIDER_KEY,
+          providerUserId: 'ms-123',
+        });
+        userService.findById.mockResolvedValue({
+          ...mockUser,
+          status: UserStatus.INACTIVE,
+        });
+
+        await expect(
+          service.handleCallback(MOCK_PROVIDER_KEY, MOCK_CODE, MOCK_STATE, '127.0.0.1', 'ua'),
+        ).rejects.toMatchObject({
+          code: ErrorCode.USER_INACTIVE,
+        });
+      });
     });
 
     describe('decision tree — email exists, not linked', () => {
@@ -441,6 +460,25 @@ describe('OAuthFlowService', () => {
         service.exchangeTempToken('temp-token', '127.0.0.1', 'ua'),
       ).rejects.toMatchObject({
         code: ErrorCode.AUTH_ACCOUNT_SUSPENDED,
+      });
+    });
+
+    it('should throw when user is inactive', async () => {
+      providerLinkTokenModel.findOneAndDelete.mockResolvedValue({
+        token: 'temp-token',
+        userId: MOCK_USER_ID,
+        providerKey: '__temp_login__',
+        expiresAt: new Date(Date.now() + 300000),
+      });
+      userService.findById.mockResolvedValue({
+        ...mockUser,
+        status: UserStatus.INACTIVE,
+      });
+
+      await expect(
+        service.exchangeTempToken('temp-token', '127.0.0.1', 'ua'),
+      ).rejects.toMatchObject({
+        code: ErrorCode.USER_INACTIVE,
       });
     });
   });

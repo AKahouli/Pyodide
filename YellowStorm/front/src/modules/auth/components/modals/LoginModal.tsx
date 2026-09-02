@@ -66,6 +66,8 @@ export const LoginModal = memo(function LoginModal({ open, onOpenChange, onSwitc
         setError(t('login.error.notVerified'));
       } else if (apiError.code === 'ERR_1110') {
         setError(t('login.error.suspended'));
+      } else if (apiError.code === 'ERR_1202') {
+        setError(t('login.error.inactive'));
       } else if (apiError.details && apiError.details.length > 0) {
         setError(apiError.details.map((d) => d.message).join('. '));
       } else if (apiError.message) {

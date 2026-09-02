@@ -23,6 +23,7 @@
   "login.error.passwordRequired": "Password is required",
   "login.error.notVerified": "Please verify your email address. Check your inbox for the verification link.",
   "login.error.suspended": "Your account has been suspended. Please contact support.",
+  "login.error.inactive": "Your account is inactive pending administrator approval.",
   "login.error.failed": "Login failed. Please check your credentials and try again.",
   "login.forgotPassword": "Forgot password?",
   "forgotPassword.title": "Forgot password",
@@ -173,6 +174,7 @@
   "oauthCallback.error.ERR_1128": "This login provider is not configured. Please contact your administrator.",
   "oauthCallback.error.ERR_1129": "This provider account is already linked to another user.",
   "oauthCallback.error.ERR_1110": "Your account has been suspended. Please contact your administrator.",
+  "oauthCallback.error.ERR_1202": "Your account is inactive pending administrator approval.",
   "oauthCallback.error.ERR_1200": "User account not found. Please try signing in again.",
   "oauthCallback.error.ERR_1201": "An account with this email already exists.",
   "oauthCallback.error.backToLogin": "Back to Login"
