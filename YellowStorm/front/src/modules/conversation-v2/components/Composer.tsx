@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { CheckIcon, PauseIcon, PlayIcon, SquareIcon } from 'lucide-react';
 import {
   PromptInput,
@@ -38,6 +38,9 @@ import type { SkillOption } from '@/modules/agent/types';
 import { RecentSkillsMenu } from '@/modules/skill/components/RecentSkillsMenu';
 import { ManageSkillsDialog } from '@/modules/skill/components/ManageSkillsDialog';
 import { SelectedSkillsPills } from '@/modules/skill/components/SelectedSkillsPills';
+import { UsageLimitBanner } from '@/modules/usage';
+import { useUsage } from '@/modules/usage/UsageContext';
+import { useModuleTranslation } from '@/modules/localization';
 
 interface ComposerProps {
   onSend: (text: string, model?: string) => void;
@@ -56,6 +59,23 @@ export function Composer({ onSend }: ComposerProps) {
     sessionId ? s.items.find((p) => p.sessionId === sessionId)?.status : undefined,
   );
   const { t } = useConversationV2Translation();
+  const { t: tConversation } = useModuleTranslation('conversation');
+  const { status: usageStatus } = useUsage();
+  const isLimitExceeded = usageStatus?.isLimitExceeded ?? false;
+
+  const limitPlaceholder = useMemo(() => {
+    if (!isLimitExceeded) return undefined;
+    if (!usageStatus?.resetsAt) return tConversation('input.limitReached');
+    const now = new Date();
+    const reset = new Date(usageStatus.resetsAt);
+    const diffMs = reset.getTime() - now.getTime();
+    const hours = Math.floor(diffMs / (1000 * 60 * 60));
+    const minutes = Math.max(0, Math.floor((diffMs % (1000 * 60 * 60)) / (1000 * 60)));
+    if (hours > 0) {
+      return tConversation('input.limitCountdownHours', { hours, minutes });
+    }
+    return tConversation('input.limitCountdownMinutes', { minutes });
+  }, [isLimitExceeded, usageStatus?.resetsAt, tConversation]);
 
   const models = useModels();
   const chefs = useChefs();
@@ -103,11 +123,11 @@ export function Composer({ onSend }: ComposerProps) {
   const status: 'ready' | 'streaming' = streaming ? 'streaming' : 'ready';
   const isPaused = !streaming && pointerStatus === 'paused';
   const turnOpen = isTurnOpen(events);
-  const inputLocked = streaming || turnOpen;
+  const inputLocked = streaming || turnOpen || isLimitExceeded;
 
   const handleSubmit = (message: PromptInputMessage) => {
     const value = message.text?.trim() ?? '';
-    if (!value || inputLocked) return;
+    if (!value || inputLocked || isLimitExceeded) return;
     onSend(value, activeModel?.litellmModel || undefined);
   };
 
@@ -118,11 +138,15 @@ export function Composer({ onSend }: ComposerProps) {
 
   return (
     <div className='shrink-0 z-10 border-t border-border/50 bg-background/80 p-4 backdrop-blur-xs'>
+      {isLimitExceeded ? <UsageLimitBanner /> : null}
       <div className='mx-auto w-full max-w-3xl'>
         <PromptInputProvider>
           <PromptInput onSubmit={handleSubmit}>
             <PromptInputBody>
-              <PromptInputTextarea placeholder={t('composer.placeholder')} disabled={inputLocked} />
+              <PromptInputTextarea
+                placeholder={limitPlaceholder ?? t('composer.placeholder')}
+                disabled={inputLocked}
+              />
             </PromptInputBody>
             <PromptInputFooter>
               <PromptInputTools>

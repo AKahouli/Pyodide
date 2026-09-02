@@ -21,6 +21,9 @@ const submitRoutingMock = vi.hoisted(() => ({
   memberIds: undefined as string[] | undefined,
   teamIds: undefined as string[] | undefined,
 }));
+const usageStatusMock = vi.hoisted(() => ({
+  value: { isLimitExceeded: false, plan: { name: 'Free' }, resetsAt: new Date(Date.now() + 3600000).toISOString() },
+}));
 
 vi.mock('@/components/ai-elements/input', () => ({
   default: ({
@@ -123,7 +126,11 @@ vi.mock('@/modules/localization', () => ({
 }));
 
 vi.mock('@/modules/usage/UsageContext', () => ({
-  useUsage: () => ({ status: { isLimitExceeded: false } }),
+  useUsage: () => ({ status: usageStatusMock.value }),
+}));
+
+vi.mock('@/modules/usage/components/UsageLimitBanner', () => ({
+  UsageLimitBanner: () => <div role='alert'>usage-limit-banner</div>,
 }));
 
 vi.mock('./components/GroupChatButton', () => ({
@@ -195,6 +202,11 @@ vi.mock('@/modules/conversation/effects/stars-background', () => ({
 describe('NewConversationPage', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    usageStatusMock.value = {
+      isLimitExceeded: false,
+      plan: { name: 'Free' },
+      resetsAt: new Date(Date.now() + 3600000).toISOString(),
+    };
     createConversationMock.mockResolvedValue({ id: 'conv-1' });
     sendMessageMock.mockResolvedValue(undefined);
     selectedWorkspaceIdsMock.value = ['ws-1'];
@@ -203,6 +215,18 @@ describe('NewConversationPage', () => {
     submitRoutingMock.agentIds = ['agent-1'];
     submitRoutingMock.memberIds = undefined;
     submitRoutingMock.teamIds = undefined;
+  });
+
+  it('shows a quota alert on the chat page when the plan limit is exceeded', () => {
+    usageStatusMock.value = {
+      isLimitExceeded: true,
+      plan: { name: 'Free' },
+      resetsAt: new Date(Date.now() + 3600000).toISOString(),
+    };
+
+    render(<NewConversationPage />);
+
+    expect(screen.getByRole('alert')).toHaveTextContent('usage-limit-banner');
   });
 
   it('forwards selected connector repo on first legacy message', async () => {
