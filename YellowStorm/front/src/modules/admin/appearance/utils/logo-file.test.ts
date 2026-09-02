@@ -14,22 +14,10 @@ describe('inspectLogoFile', () => {
     expect(await inspectLogoFile(file)).toEqual({ ok: false, issue: 'type' });
   });
 
-  it('accepts a sidebar-shaped SVG', async () => {
+  it('rejects SVG uploads', async () => {
     const svg = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 300 56"></svg>';
     const file = new File([svg], 'mark.svg', { type: 'image/svg+xml' });
-    expect(await inspectLogoFile(file)).toEqual({ ok: true, inspection: { width: 300, height: 56, isSvg: true } });
-  });
-
-  it('rejects a square SVG that cannot fit the sidebar slot', async () => {
-    const svg = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 2000 2000"></svg>';
-    const file = new File([svg], 'huge.svg', { type: 'image/svg+xml' });
-    expect(await inspectLogoFile(file)).toEqual({ ok: false, issue: 'dimensions' });
-  });
-
-  it('rejects a portrait SVG', async () => {
-    const svg = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 224"></svg>';
-    const file = new File([svg], 'tall.svg', { type: 'image/svg+xml' });
-    expect(await inspectLogoFile(file)).toEqual({ ok: false, issue: 'dimensions' });
+    expect(await inspectLogoFile(file)).toEqual({ ok: false, issue: 'type' });
   });
 });
 

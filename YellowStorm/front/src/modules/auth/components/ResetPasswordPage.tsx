@@ -21,6 +21,7 @@ import type { TranslationParams } from '@/modules/localization';
 import { resetPassword } from '../api';
 import { getErrorMessage } from '../utils/errorHelpers';
 import { StatusSection } from './StatusSection';
+import { AuthScrollShell } from './AuthScrollShell';
 
 const REDIRECT_DELAY = 10;
 
@@ -108,7 +109,7 @@ export function ResetPasswordPage() {
   const handleGoToLogin = () => navigate('/');
 
   return (
-    <div className='relative min-h-screen w-full overflow-hidden'>
+    <AuthScrollShell>
       <StarsBackground shootingStars={false} />
 
       {/* Header */}
@@ -119,7 +120,7 @@ export function ResetPasswordPage() {
       </div>
 
       {/* Main content */}
-      <main className='relative z-10 flex min-h-screen flex-col items-center justify-center px-6'>
+      <main className='relative z-10 flex min-h-full flex-col items-center justify-center px-6 py-24'>
         <Card className='w-full max-w-md bg-neutral border-neutral-800'>
           {(status === 'form' || status === 'submitting') && (
             <>
@@ -208,6 +209,6 @@ export function ResetPasswordPage() {
           )}
         </Card>
       </main>
-    </div>
+    </AuthScrollShell>
   );
 }

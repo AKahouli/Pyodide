@@ -1,11 +1,8 @@
-import { COLOR_THEMES, type ColorTheme, type ThemeLogoValue } from '@/contexts/ThemeContext';
-import { APPEARANCE_SETTINGS_UPDATED_EVENT, FALLBACK_LOGOS } from '../constants';
+import { COLOR_THEMES, type ColorTheme } from '@/contexts/ThemeContext';
 import type { AppearanceLogo, AppearanceSettings } from '@/modules/admin/types';
-import { appearanceLogoSrc } from './logo-url';
+import { FALLBACK_LOGOS } from '../constants';
 
-export function notifyAppearanceSettingsUpdated(): void {
-  window.dispatchEvent(new Event(APPEARANCE_SETTINGS_UPDATED_EVENT));
-}
+export { notifyAppearanceSettingsUpdated, resolveThemeLogo, appearanceLogoSrc } from '@/lib/appearance';
 
 export function logosFromSettings(settings: AppearanceSettings): AppearanceLogo[] {
   const fromApi = settings.logos?.length ? settings.logos : FALLBACK_LOGOS;
@@ -51,10 +48,4 @@ export function replaceMissingLogos(map: Record<ColorTheme, string>, validIds: S
     }
   }
   return next;
-}
-
-export function resolveThemeLogo(settings: AppearanceSettings | null, colorTheme: ColorTheme): ThemeLogoValue {
-  const id = settings?.themes[colorTheme]?.logo ?? 'yellowmind';
-  const entry = settings?.logos?.find((item) => item.id === id);
-  return { id, url: entry ? appearanceLogoSrc(entry) : undefined };
 }

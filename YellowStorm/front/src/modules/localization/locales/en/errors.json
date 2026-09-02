@@ -50,7 +50,6 @@
   "ERR_1604": "Logo dimensions do not fit the sidebar. Use a wide mark up to 448×96 px.",
   "ERR_1605": "Logo file is too large. Maximum size is 512 KB.",
   "ERR_1606": "Built-in logos cannot be changed or deleted.",
-  "ERR_1607": "This logo is assigned to a color theme. Reassign it before deleting.",
   "ERR_1608": "You have reached the maximum number of custom logos.",
   "ERR_1700": "Usage limit exceeded. Please upgrade your plan or wait for the limit to reset.",
   "ERR_1701": "Rate limit exceeded. Please slow down your requests.",

@@ -1,4 +1,4 @@
-type ColorTheme = 'default' | 'yellow' | 'orange' | 'blue';
+import type { ColorTheme } from '@/contexts/ThemeContext';
 
 const COLOR_THEME_CLASSES = [
   'theme-default',

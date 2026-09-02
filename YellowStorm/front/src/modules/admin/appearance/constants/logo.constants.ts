@@ -10,7 +10,7 @@ export const APPEARANCE_LOGO_OUTPUT = {
   heightPx: APPEARANCE_LOGO_SLOT.heightPx * 2,
 } as const;
 
-export const APPEARANCE_LOGO_ALLOWED_MIMES = ['image/png', 'image/jpeg', 'image/webp', 'image/svg+xml'] as const;
+export const APPEARANCE_LOGO_ALLOWED_MIMES = ['image/png', 'image/jpeg', 'image/webp'] as const;
 
 export const APPEARANCE_LOGO_ACCEPT = APPEARANCE_LOGO_ALLOWED_MIMES.join(',');
 

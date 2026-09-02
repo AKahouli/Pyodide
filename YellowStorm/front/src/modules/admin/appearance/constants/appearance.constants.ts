@@ -1,7 +1,7 @@
 import type { ColorTheme } from '@/contexts/ThemeContext';
 import type { AppearanceLogo } from '@/modules/admin/types';
 
-export const APPEARANCE_SETTINGS_UPDATED_EVENT = 'yellowstorm:appearance-updated';
+export { APPEARANCE_SETTINGS_UPDATED_EVENT } from '@/lib/appearance';
 
 export const FALLBACK_LOGOS: AppearanceLogo[] = [
   { id: 'yellowmind', name: 'Yellowmind', kind: 'builtin' },
@@ -11,6 +11,6 @@ export const FALLBACK_LOGOS: AppearanceLogo[] = [
 export const DEFAULT_LOGO_MAP: Record<ColorTheme, string> = {
   default: 'yellowmind',
   yellow: 'yellowmind',
-  orange: 'yellowmind',
+  orange: 'kpmg',
   blue: 'kpmg',
 };

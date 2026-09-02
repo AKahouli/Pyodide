@@ -21,6 +21,7 @@ import { StarsBackground } from '@/modules/conversation/effects/stars-background
 import { appConfig } from '@/config/app';
 import { useModuleTranslation } from '@/modules/localization';
 import { useAuth } from '../useAuth';
+import { AuthScrollShell } from './AuthScrollShell';
 
 type ProfileFormValues = {
   firstName: string;
@@ -126,7 +127,7 @@ export function ProfileCompletionPage() {
     }
   };
   return (
-    <div className='relative flex h-full min-h-0 w-full flex-1 flex-col overflow-y-auto'>
+    <AuthScrollShell>
       <StarsBackground shootingStars={false} />
 
       {/* Header */}
@@ -292,6 +293,6 @@ export function ProfileCompletionPage() {
           </CardContent>
         </Card>
       </main>
-    </div>
+    </AuthScrollShell>
   );
 }
