@@ -28,6 +28,7 @@
   "login.error.passwordRequired": "Le mot de passe est requis",
   "login.error.notVerified": "Veuillez vérifier votre adresse email. Vérifiez votre boîte de réception pour le lien de vérification.",
   "login.error.suspended": "Votre compte a été suspendu. Veuillez contacter le support.",
+  "login.error.inactive": "Votre compte est inactif en attente de validation par un administrateur.",
   "login.error.failed": "Échec de la connexion. Vérifiez vos identifiants et réessayez.",
   "login.forgotPassword": "Mot de passe oublié ?",
   "forgotPassword.title": "Mot de passe oublié",
@@ -173,6 +174,7 @@
   "oauthCallback.error.ERR_1128": "Ce fournisseur de connexion n'est pas configuré. Contactez votre administrateur.",
   "oauthCallback.error.ERR_1129": "Ce compte fournisseur est déjà lié à un autre utilisateur.",
   "oauthCallback.error.ERR_1110": "Votre compte a été suspendu. Contactez votre administrateur.",
+  "oauthCallback.error.ERR_1202": "Votre compte est inactif en attente de validation par un administrateur.",
   "oauthCallback.error.ERR_1200": "Compte utilisateur introuvable. Veuillez réessayer.",
   "oauthCallback.error.ERR_1201": "Un compte avec cet email existe déjà.",
   "oauthCallback.error.backToLogin": "Retour à la connexion"

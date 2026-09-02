@@ -8,7 +8,11 @@ import * as crypto from 'crypto';
 import { UAParser } from 'ua-parser-js';
 import { Session, SessionDocument } from './schemas/session.schema';
 import { UserService } from '../user/user.service';
-import { UserDocument, UserStatus } from '../user/schemas/user.schema';
+import { UserDocument } from '../user/schemas/user.schema';
+import {
+  assertAccountAccessible,
+  getAccountAccessDenial,
+} from '../user/utils/assert-account-accessible';
 import { LoggerService } from '../logger';
 import { EmailService } from '../email';
 import { UsageService } from '../usage';
@@ -143,10 +147,7 @@ export class AuthService {
       throw new UnauthorizedException(ErrorCode.INVALID_CREDENTIALS, 'Invalid email or password');
     }
 
-    // Check if account is suspended
-    if (user.status === UserStatus.SUSPENDED) {
-      throw new ForbiddenException(ErrorCode.AUTH_ACCOUNT_SUSPENDED, 'Account is suspended');
-    }
+    assertAccountAccessible(user);
 
     // Validate password
     const isPasswordValid = await this.userService.validatePassword(user, dto.password);
@@ -378,9 +379,10 @@ export class AuthService {
       throw new UnauthorizedException(ErrorCode.USER_NOT_FOUND, 'User not found');
     }
 
-    if (user.status === UserStatus.SUSPENDED) {
+    const accessDenial = getAccountAccessDenial(user.status);
+    if (accessDenial) {
       await this.invalidateAllUserSessions(user._id.toString());
-      throw new ForbiddenException(ErrorCode.AUTH_ACCOUNT_SUSPENDED, 'Account is suspended');
+      throw new ForbiddenException(accessDenial.code, accessDenial.message);
     }
 
     // Invalidate old session (token rotation)
