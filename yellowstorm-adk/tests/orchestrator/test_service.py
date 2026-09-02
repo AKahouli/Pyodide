@@ -132,6 +132,29 @@ def test_make_plan_survives_a_flaky_planner_duplicate_blank_and_dangling_deps(mo
     scheduler.assign_waves(plan)
 
 
+def test_dep_results_context_injects_only_completed_direct_dependencies():
+    """A downstream step is handed the results of the COMPLETED steps it directly
+    depends_on — not pending ones, not the whole plan, not transitive results.
+    (Fixes: depends_on was ordering-only, so a step ran blind to upstream output.)"""
+    s1 = Step(id="a", title="Search", description="d", status=Status.COMPLETED, result="FOUND=42")
+    s2 = Step(id="b", title="Pending", description="d", status=Status.PENDING, result="not yet")
+    s3 = Step(id="c", title="Use", description="d", depends_on=["a", "b"])
+    plan = Plan(steps=[s1, s2, s3])
+    ctx = svc.OrchestratorService._dep_results_context(plan)
+
+    assert ctx(s1) is None                      # no deps → nothing injected
+    out = ctx(s3)
+    assert out and "FOUND=42" in out            # completed dep's result is injected
+    assert "Search" in out                      # labelled by the dep's title
+    assert "not yet" not in out                 # a pending dep is excluded
+
+    # direct-only: a step depending on c (not yet completed) sees nothing —
+    # a's result does not reach it transitively through c.
+    s4 = Step(id="e", depends_on=["c"])
+    plan.steps.append(s4)
+    assert svc.OrchestratorService._dep_results_context(plan)(s4) is None
+
+
 def test_step_row_shows_the_personas_display_name_before_it_runs():
     """The client should see "Rabeb", not a blank/internal node id, the moment
     a persona-assigned step is projected — not only once it starts running."""

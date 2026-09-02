@@ -1083,6 +1083,7 @@ class OrchestratorService:
             tools=self._tools_for(connectors, session_id, user_id),
             tools_for_step=tools_for_step,
             instruction_for_step=instruction_for_step,
+            context_for_step=self._dep_results_context(plan),
             custom_instruction=executor_prompt,
             replay_completed=replay_completed)
         factory_holder.append(factory)
@@ -1830,6 +1831,39 @@ class OrchestratorService:
         for s in plan.steps:
             s.id = idmap[s.id]
             s.depends_on = [idmap.get(d, d) for d in s.depends_on]
+
+    @staticmethod
+    def _dep_results_context(plan: Plan):
+        """Per-step hook handing a step the RESULTS of the completed steps it
+        depends_on, so a downstream step can actually use upstream output.
+
+        `depends_on` is ordering only: each step runs as its own ADK node on its
+        own branch and normally sees nothing but its own description (proven — a
+        step asked to echo an upstream secret returned NONE). But the orchestrator
+        holds every completed step's result on the live Plan, so we read it fresh
+        at model-call time and inject just the DIRECT dependencies' results — not
+        the whole plan, so a step still never learns its siblings' tasks (that
+        leak is exactly what the isolation was built to prevent).
+        """
+        by_id = {s.id: s for s in plan.steps}
+
+        def ctx(step: Step) -> Optional[str]:
+            blocks = []
+            for dep_id in step.depends_on:
+                dep = by_id.get(dep_id)
+                if dep and dep.status is Status.COMPLETED and (dep.result or "").strip():
+                    r = dep.result.strip()
+                    # ponytail: flat cap per dependency; summarise upstream if a
+                    # step ever needs to lean on a result larger than this.
+                    if len(r) > 4000:
+                        r = r[:4000] + "\n[…tronqué]"
+                    blocks.append(f"— Étape « {dep.title or dep.id} » :\n{r}")
+            if not blocks:
+                return None
+            return ("Résultats des étapes précédentes dont dépend la tienne "
+                    "(sers-t'en, ne les refais pas) :\n\n" + "\n\n".join(blocks))
+
+        return ctx
 
     def _build_planner_model(self, model_name: Optional[str] = None):
         # Always has the find_human_agents discovery tool now.
