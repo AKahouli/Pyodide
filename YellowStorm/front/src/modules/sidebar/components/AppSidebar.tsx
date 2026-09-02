@@ -32,7 +32,7 @@ import { Input } from '@/components/ui/input';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { ProfileMenu } from '@/components/ui/profile-menu';
 import { ModeToggle } from '@/components/mode-toggle';
-import { AppLogo } from '@/components/icons';
+import { AppBrandLogo } from '@/components/AppBrandLogo';
 import { cn } from '@/lib/utils';
 import {
   useConversationStore,
@@ -457,7 +457,7 @@ export const AppSidebar = memo(function AppSidebar() {
           aria-label={t('actions.home')}
           className='flex items-center h-12 mb-4 overflow-hidden duration-500 ease-linear group-data-[collapsible=icon]:w-0 group-data-[collapsible=icon]:opacity-0'
         >
-          <AppLogo className='h-12 shrink-0' />
+          <AppBrandLogo className='h-12 shrink-0' />
         </NavLink>
       </SidebarHeader>
 

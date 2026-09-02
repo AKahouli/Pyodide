@@ -9,7 +9,7 @@ import { CheckCircle2, XCircle, Loader2, Mail } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
-import { Icons, AppLogo } from '@/components/icons';
+import { AppBrandLogo } from '@/components/AppBrandLogo';
 import { StarsBackground } from '@/modules/conversation/effects/stars-background';
 import { useModuleTranslation } from '@/modules/localization';
 import type { TranslationParams } from '@/modules/localization';
@@ -116,7 +116,7 @@ export function EmailVerificationPage() {
       {/* Header */}
       <div className='absolute top-6 left-6 z-20'>
         <NavLink to='/' className='flex items-center'>
-          <AppLogo className='h-12 w-56' />
+          <AppBrandLogo className='h-12 w-56' />
         </NavLink>
       </div>
 

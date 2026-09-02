@@ -21,9 +21,8 @@ vi.mock('@/modules/localization', () => ({
 vi.mock('@/modules/conversation/effects/stars-background', () => ({
   StarsBackground: () => <div data-testid='stars-bg' />,
 }));
-vi.mock('@/components/icons', () => ({
-  Icons: { YellowMind: () => <div>logo</div> },
-  AppLogo: ({ className }: { className?: string }) => <div data-testid='app-logo' className={className}>logo</div>,
+vi.mock('@/components/AppBrandLogo', () => ({
+  AppBrandLogo: ({ className }: { className?: string }) => <div data-testid='app-logo' className={className}>logo</div>,
 }));
 vi.mock('../modals/AuthModals', () => ({ AuthModals: () => <div data-testid='auth-modals' /> }));
 vi.mock('../api', () => ({
