@@ -1,6 +1,5 @@
 import {
   isAppearanceLogoMime,
-  isUnsafeSvg,
   readAppearanceLogoDimensions,
   sniffAppearanceLogoMime,
   validateAppearanceLogoDimensions,
@@ -46,10 +45,10 @@ describe('appearance-image.util', () => {
     expect(readAppearanceLogoDimensions(bmp, 'image/bmp')).toEqual({ width: 300, height: 56 });
   });
 
-  it('reads SVG viewBox dimensions and rejects scripted SVG', () => {
+  it('reads SVG viewBox dimensions but does not allow SVG logos', () => {
     const svg = Buffer.from('<svg viewBox="0 0 300 56" xmlns="http://www.w3.org/2000/svg"></svg>');
     expect(readAppearanceLogoDimensions(svg, 'image/svg+xml')).toEqual({ width: 300, height: 56 });
-    expect(isUnsafeSvg(Buffer.from('<svg><script>alert(1)</script></svg>'))).toBe(true);
+    expect(isAppearanceLogoMime('image/svg+xml')).toBe(false);
   });
 
   it('accepts sidebar-shaped logos and rejects oversized ones', () => {
@@ -60,9 +59,10 @@ describe('appearance-image.util', () => {
     expect(validateAppearanceLogoDimensions({ width: 256, height: 256 })).toBe(false);
   });
 
-  it('allows only png, jpeg, webp and svg logos', () => {
+  it('allows only png, jpeg and webp logos', () => {
     expect(isAppearanceLogoMime('image/png')).toBe(true);
     expect(isAppearanceLogoMime('image/jpg')).toBe(true);
+    expect(isAppearanceLogoMime('image/svg+xml')).toBe(false);
     expect(isAppearanceLogoMime('image/gif')).toBe(false);
     expect(isAppearanceLogoMime('image/bmp')).toBe(false);
   });

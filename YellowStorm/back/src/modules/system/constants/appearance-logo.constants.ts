@@ -17,7 +17,7 @@ export const APPEARANCE_LOGO_CONSTRAINTS = {
   maxCustomLogos: 20,
 } as const;
 
-export const APPEARANCE_LOGO_ALLOWED_MIMES = ['image/png', 'image/jpeg', 'image/webp', 'image/svg+xml'] as const;
+export const APPEARANCE_LOGO_ALLOWED_MIMES = ['image/png', 'image/jpeg', 'image/webp'] as const;
 
 export const BUILTIN_APPEARANCE_LOGOS = [
   { id: 'yellowmind', name: 'Yellowmind' },

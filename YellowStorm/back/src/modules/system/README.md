@@ -232,7 +232,7 @@ Appearance settings live in `system_settings` under the key `appearance_settings
 | Path | Responsibility |
 |---|---|
 | `constants/appearance-logo.constants.ts` | Slot 224×48, constraints, allowed MIMEs, builtin ids (data only) |
-| `utils/appearance-image.util.ts` | MIME sniff/normalize, dimension read, SVG script rejection, slot validation |
+| `utils/appearance-image.util.ts` | MIME sniff/normalize, dimension read, slot validation |
 | `services/appearance-logo.service.ts` | Upload parse, CRUD, unassign-from-themes on delete |
 | `controllers/appearance-logo.controller.ts` | Public file GET; admin POST/PATCH/DELETE |
 | `system.service.ts` | Palette settings + `logos` catalog on GET; rejects unknown logo ids on POST |
@@ -241,25 +241,26 @@ Appearance settings live in `system_settings` under the key `appearance_settings
 
 The backend does **not** resize images (`sharp` is not used). The SPA contain-fits to a PNG before upload. The API still validates:
 
-- Types: `image/png`, `image/jpeg`, `image/webp`, `image/svg+xml` (sniffed from bytes)
+- Types: `image/png`, `image/jpeg`, `image/webp` (sniffed from bytes). SVG is rejected (`ERR_1603`).
 - Stored file ≤ 512 KB; multipart source ≤ 8 MB
 - Native size between 80×24 and 448×96, aspect 1.2–10
 - At most 20 custom logos
 - Built-in ids cannot be updated or deleted
 - Deleting a custom logo remaps any theme using it to `yellowmind`
 
-Helmet defaults `Cross-Origin-Resource-Policy` to `same-origin`, which blocks `<img>` from the SPA origin. Bootstrap sets CORP to `cross-origin`, and the file GET repeats that header.
+Helmet defaults `Cross-Origin-Resource-Policy` to `same-origin`. The public file GET sets `Cross-Origin-Resource-Policy: cross-origin` so the SPA `<img>` can load the logo. Any legacy SVG blob is served as `application/octet-stream` with `Content-Disposition: attachment`.
+
+`POST /experimental/system/appearance` accepts optional `applyToAllUsers`. When `true`, `defaultColorTheme` is copied onto every user document. Logo-only saves must send `applyToAllUsers: false` (or omit it).
 
 ### Error codes
 
 | Code | When |
 |---|---|
 | `ERR_1602` | Logo id not found |
-| `ERR_1603` | Not an allowed image (or unsafe SVG) |
+| `ERR_1603` | Not an allowed image (including SVG) |
 | `ERR_1604` | Dimensions incompatible with the sidebar slot |
 | `ERR_1605` | File larger than 512 KB |
 | `ERR_1606` | Built-in logo cannot be modified |
-| `ERR_1607` | Reserved (logo in use — delete now unassigns instead) |
 | `ERR_1608` | Custom logo limit reached |
 
 ---
@@ -399,7 +400,7 @@ Public. Returns the global palette, per-theme logo ids, and the logo catalog (bu
 
 ### POST /experimental/system/appearance
 
-Requires `SYSTEM_MAINTENANCE`. Body is `defaultColorTheme` plus `themes` (each theme has `labelKey` and `logo`). Logo ids must exist in the catalog. Applying a palette also updates every user document.
+Requires `SYSTEM_MAINTENANCE`. Body is `defaultColorTheme`, `themes` (each theme has `labelKey` and `logo`), and optional `applyToAllUsers`. Logo ids must exist in the catalog. When `applyToAllUsers` is true, every user document is updated to that palette.
 
 ### GET /experimental/system/appearance/logos/:id/file
 

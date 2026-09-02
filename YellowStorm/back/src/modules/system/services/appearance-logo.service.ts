@@ -2,8 +2,8 @@ import { Injectable } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import { decodeMultipartFilename } from '@common/utils';
-import { BadRequestException, NotFoundException } from '../../exceptions';
-import { ErrorCode } from '../../exceptions/constants/error-codes';
+import { BadRequestException, NotFoundException } from '@modules/exceptions';
+import { ErrorCode } from '@modules/exceptions/constants/error-codes';
 import {
   APPEARANCE_COLOR_THEMES,
   APPEARANCE_LOGO_CONSTRAINTS,
@@ -16,7 +16,6 @@ import { AppearanceLogo, AppearanceLogoDocument } from '../schemas/appearance-lo
 import { AppearanceValue, SystemSetting, SystemSettingDocument } from '../schemas/system-setting.schema';
 import {
   isAppearanceLogoMime,
-  isUnsafeSvg,
   readAppearanceLogoDimensions,
   sniffAppearanceLogoMime,
   validateAppearanceLogoDimensions,
@@ -58,11 +57,11 @@ export class AppearanceLogoService {
   }
 
   async create(file: UploadedLogoFile, name?: string): Promise<AppearanceLogoDto> {
+    const parsed = this.parseUpload(file);
     const count = await this.logoModel.countDocuments().exec();
     if (count >= APPEARANCE_LOGO_CONSTRAINTS.maxCustomLogos) {
       throw new BadRequestException(ErrorCode.APPEARANCE_LOGO_LIMIT_REACHED);
     }
-    const parsed = this.parseUpload(file);
     const doc = await this.logoModel.create({
       name: this.resolveName(name, file.originalname),
       contentType: parsed.mimeType,
@@ -115,9 +114,6 @@ export class AppearanceLogoService {
     }
     const mimeType = sniffAppearanceLogoMime(file.buffer, file.mimetype);
     if (!isAppearanceLogoMime(mimeType)) {
-      throw new BadRequestException(ErrorCode.APPEARANCE_LOGO_INVALID_TYPE);
-    }
-    if (mimeType === 'image/svg+xml' && isUnsafeSvg(file.buffer)) {
       throw new BadRequestException(ErrorCode.APPEARANCE_LOGO_INVALID_TYPE);
     }
     const dimensions = readAppearanceLogoDimensions(file.buffer, mimeType);

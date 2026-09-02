@@ -47,6 +47,17 @@ describe('AppearanceLogoService', () => {
     expect(service.isKnownLogoId('missing', [{ id: 'yellowmind', name: 'Yellowmind', kind: 'builtin' }])).toBe(false);
   });
 
+  it('rejects SVG uploads', async () => {
+    const svg = Buffer.from('<svg viewBox="0 0 300 56" xmlns="http://www.w3.org/2000/svg"></svg>');
+    const service = new AppearanceLogoService(
+      { countDocuments: jest.fn().mockReturnValue({ exec: jest.fn().mockResolvedValue(0) }), create: jest.fn() } as never,
+      {} as never,
+    );
+    await expect(
+      service.create({ originalname: 'mark.svg', mimetype: 'image/svg+xml', size: svg.length, buffer: svg }),
+    ).rejects.toMatchObject({ code: 'ERR_1603' });
+  });
+
   it('rejects non-image uploads', async () => {
     const service = new AppearanceLogoService(
       { countDocuments: jest.fn().mockReturnValue({ exec: jest.fn().mockResolvedValue(0) }), create: jest.fn() } as never,

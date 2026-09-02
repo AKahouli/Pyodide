@@ -79,7 +79,6 @@ export enum ErrorCode {
   APPEARANCE_LOGO_INVALID_DIMENSIONS = 'ERR_1604',
   APPEARANCE_LOGO_TOO_LARGE = 'ERR_1605',
   APPEARANCE_LOGO_BUILTIN_PROTECTED = 'ERR_1606',
-  APPEARANCE_LOGO_IN_USE = 'ERR_1607',
   APPEARANCE_LOGO_LIMIT_REACHED = 'ERR_1608',
 
   // Usage/Plan errors (1700-1799)
@@ -519,7 +518,6 @@ export const ErrorMessages: Record<ErrorCode, string> = {
   [ErrorCode.APPEARANCE_LOGO_INVALID_DIMENSIONS]: 'Logo dimensions are not compatible with the sidebar slot.',
   [ErrorCode.APPEARANCE_LOGO_TOO_LARGE]: 'Logo file exceeds the maximum allowed size.',
   [ErrorCode.APPEARANCE_LOGO_BUILTIN_PROTECTED]: 'Built-in logos cannot be modified or deleted.',
-  [ErrorCode.APPEARANCE_LOGO_IN_USE]: 'This logo is assigned to a color theme and cannot be deleted.',
   [ErrorCode.APPEARANCE_LOGO_LIMIT_REACHED]: 'Maximum number of custom logos reached.',
 
   [ErrorCode.USAGE_LIMIT_EXCEEDED]: 'Usage limit exceeded. Please upgrade your plan or wait for the limit to reset.',
