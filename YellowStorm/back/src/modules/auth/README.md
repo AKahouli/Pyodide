@@ -316,7 +316,7 @@ Approve and reject live on the **user admin API** (not this auth module):
 | Approve | `inactive` → `active` | `approved` | confirmation (best-effort) |
 | Reject | stays `inactive` | `rejected` | none |
 
-Re-approve already `approved` / re-reject already `rejected` → 200 no-op. Approving a rejected account is allowed (recovery). UsersPage Valider/Refuser is Super Admin only; email deep-links open the confirmation dialog (`decision=approve` or `decision=reject`).
+Re-approve already `approved` / re-reject already `rejected` → 200 no-op. Approving a rejected account is allowed (recovery). UsersPage Valider/Refuser is Super Admin only. The Super Admin notice email links to `/#/admin/users` (the full users list).
 
 ### Account access gates
 
@@ -342,14 +342,13 @@ After the verification email, `AuthService.register()` calls `RegistrationApprov
 
 Recipients: users with role `super_admin` and `status: active`. One email per recipient (other Super Admin addresses are not exposed in To/CC).
 
-Email links (hash router; Super Admin must already be signed in):
+Email link (hash router; Super Admin must already be signed in):
 
 ```
-{APP_FRONTEND_URL}/#/admin/users?status=inactive&review={userId}&decision=approve
-{APP_FRONTEND_URL}/#/admin/users?status=inactive&review={userId}&decision=reject
+{APP_FRONTEND_URL}/#/admin/users
 ```
 
-These open the admin users page. They are **not** one-click approve/reject tokens.
+This opens the admin users list. It is **not** a one-click approve/reject token.
 
 `RegistrationApprovalService.approveRegistration()` / `rejectRegistration()` run from `AdminUserController` (permission `*`). Approve sends a best-effort confirmation email to the applicant (`{APP_FRONTEND_URL}/#/`). Mail failure does not roll back the approval.
 
@@ -871,13 +870,14 @@ Sent after the verification email to every **active** user with the `super_admin
 Subject: New registration request - YelloStorm
 
 Contains:
-- Applicant email, user id, requested-at (ISO UTC)
-- Approve and Reject buttons/links to /#/admin/users?status=inactive&review={userId}&decision=...
+- Applicant email
+- Requested at in Europe/Paris as `DD/MM/YYYY à HH:mm` (not ISO)
+- Button/link to /#/admin/users (full users list)
 - Notice that the Super Admin must be signed in
 - Plain text fallback
 ```
 
-Links are deep-links into the admin UI, not public action tokens. If there is no `super_admin` role or no active Super Admin users, the service logs a warning and skips sending.
+The link opens the admin users page. It is not a public action token. If there is no `super_admin` role or no active Super Admin users, the service logs a warning and skips sending.
 
 ### Registration Approved (user confirmation)
 
