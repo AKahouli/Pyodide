@@ -1,5 +1,5 @@
-import { isAppearanceLogoMime } from '../constants/appearance-logo.constants';
 import {
+  isAppearanceLogoMime,
   isUnsafeSvg,
   readAppearanceLogoDimensions,
   sniffAppearanceLogoMime,

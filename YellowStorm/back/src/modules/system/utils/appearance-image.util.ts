@@ -1,8 +1,29 @@
-import { APPEARANCE_LOGO_CONSTRAINTS, isAppearanceLogoMime, normalizeAppearanceLogoMime } from '../constants/appearance-logo.constants';
+import { APPEARANCE_LOGO_ALLOWED_MIMES, APPEARANCE_LOGO_CONSTRAINTS } from '../constants/appearance-logo.constants';
 
 export interface ImageDimensions {
   width: number;
   height: number;
+}
+
+export function normalizeAppearanceLogoMime(mime: string): string {
+  const normalized = mime.trim().toLowerCase();
+  if (normalized === 'image/jpg') {
+    return 'image/jpeg';
+  }
+  if (normalized === 'image/x-png') {
+    return 'image/png';
+  }
+  if (normalized === 'image/vnd.microsoft.icon') {
+    return 'image/x-icon';
+  }
+  return normalized;
+}
+
+export function isAppearanceLogoMime(mime: string | null | undefined): mime is string {
+  if (!mime) {
+    return false;
+  }
+  return (APPEARANCE_LOGO_ALLOWED_MIMES as readonly string[]).includes(normalizeAppearanceLogoMime(mime));
 }
 
 const PNG_SIGNATURE = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);

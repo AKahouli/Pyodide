@@ -10,12 +10,12 @@ import {
   APPEARANCE_SETTINGS_KEY,
   BUILTIN_APPEARANCE_LOGO_IDS,
   BUILTIN_APPEARANCE_LOGOS,
-  isAppearanceLogoMime,
 } from '../constants/appearance-logo.constants';
 import type { AppearanceLogo as AppearanceLogoDto } from '../interfaces/appearance.interface';
 import { AppearanceLogo, AppearanceLogoDocument } from '../schemas/appearance-logo.schema';
 import { AppearanceValue, SystemSetting, SystemSettingDocument } from '../schemas/system-setting.schema';
 import {
+  isAppearanceLogoMime,
   isUnsafeSvg,
   readAppearanceLogoDimensions,
   sniffAppearanceLogoMime,
