@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, type KeyboardEvent } from 'react';
 import { Pencil, Plus, Trash2 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -37,6 +37,21 @@ export function LogoLibrarySection({ logos, selectedLogoId, assigning, onSelectL
 
   const customLogos = logos.filter((logo) => logo.kind === 'custom');
 
+  const onLogoKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
+    const index = logos.findIndex((item) => item.id === selectedLogoId);
+    if (index < 0 || logos.length === 0) {
+      return;
+    }
+    if (event.key === 'ArrowRight' || event.key === 'ArrowDown') {
+      event.preventDefault();
+      onSelectLogo(logos[(index + 1) % logos.length].id);
+    }
+    if (event.key === 'ArrowLeft' || event.key === 'ArrowUp') {
+      event.preventDefault();
+      onSelectLogo(logos[(index - 1 + logos.length) % logos.length].id);
+    }
+  };
+
   const handleSaved = (saved: AppearanceLogo) => {
     const exists = logos.some((item) => item.id === saved.id);
     const next = exists ? logos.map((item) => (item.id === saved.id ? saved : item)) : [...logos, saved];
@@ -67,6 +82,7 @@ export function LogoLibrarySection({ logos, selectedLogoId, assigning, onSelectL
         <Button
           type='button'
           variant='outline'
+          disabled={assigning}
           onClick={() => {
             setEditing(null);
             setDialogOpen(true);
@@ -76,7 +92,7 @@ export function LogoLibrarySection({ logos, selectedLogoId, assigning, onSelectL
         </Button>
       </div>
 
-      <div role='radiogroup' aria-label={t('appearance.logo.library')} className='grid gap-3'>
+      <div role='radiogroup' aria-label={t('appearance.logo.library')} onKeyDown={onLogoKeyDown} className='grid gap-3'>
         {logos.map((logo) => {
           const selected = logo.id === selectedLogoId;
           return (
@@ -119,13 +135,20 @@ export function LogoLibrarySection({ logos, selectedLogoId, assigning, onSelectL
                     size='icon'
                     variant='ghost'
                     aria-label={t('appearance.logo.edit')}
+                    disabled={assigning}
                     onClick={() => {
                       setEditing(logo);
                       setDialogOpen(true);
                     }}>
                     <Pencil className='h-4 w-4' />
                   </Button>
-                  <Button type='button' size='icon' variant='ghost' aria-label={t('appearance.logo.delete')} onClick={() => setDeleting(logo)}>
+                  <Button
+                    type='button'
+                    size='icon'
+                    variant='ghost'
+                    aria-label={t('appearance.logo.delete')}
+                    disabled={assigning}
+                    onClick={() => setDeleting(logo)}>
                     <Trash2 className='h-4 w-4' />
                   </Button>
                 </div>

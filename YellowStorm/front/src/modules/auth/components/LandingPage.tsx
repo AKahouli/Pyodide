@@ -7,6 +7,7 @@ import { AppBrandLogo } from '@/components/AppBrandLogo';
 import { StarsBackground } from '@/modules/conversation/effects/stars-background';
 import { useModuleTranslation } from '@/modules/localization';
 import { useAuth } from '../useAuth';
+import { AuthScrollShell } from './AuthScrollShell';
 import { useAuthModalStore } from '../store';
 import { getAuthProviders } from '../api';
 import { ProviderIcon } from './ProviderIcon';
@@ -38,7 +39,7 @@ export function LandingPage() {
   }
 
   return (
-    <div className='relative min-h-screen w-full overflow-hidden'>
+    <AuthScrollShell>
       {/* hidden on mobile */}
       <StarsBackground shootingStars={true} />
 
@@ -51,7 +52,7 @@ export function LandingPage() {
         </div>
       </div>
       {/* Main content - centered vertically, left aligned */}
-      <main className='relative z-10 flex min-h-screen flex-col md:items-start items-center px-6 md:px-16 lg:px-24'>
+      <main className='relative z-10 flex min-h-full flex-col md:items-start items-center px-6 md:px-16 lg:px-24'>
         {/* Content Wrapper - takes available space and centers content vertically */}
         <div className='flex-1 flex flex-col justify-center items-center md:items-start w-full'>
           <div className='w-full max-w-100 space-y-10'>
@@ -143,6 +144,6 @@ export function LandingPage() {
 
       {/* Auth Modals */}
       <AuthModals />
-    </div>
+    </AuthScrollShell>
   );
 }

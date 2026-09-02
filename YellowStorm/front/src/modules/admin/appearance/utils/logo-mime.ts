@@ -17,7 +17,7 @@ export function isAllowedLogoFile(file: File): boolean {
   if (file.type) {
     return (APPEARANCE_LOGO_ALLOWED_MIMES as readonly string[]).includes(normalizeLogoMime(file.type));
   }
-  return /\.(png|jpe?g|webp|svg)$/i.test(file.name);
+  return /\.(png|jpe?g|webp)$/i.test(file.name);
 }
 
 export function validateLogoSourceDimensions(width: number, height: number): boolean {

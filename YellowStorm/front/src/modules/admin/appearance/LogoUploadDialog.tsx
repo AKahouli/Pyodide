@@ -27,9 +27,17 @@ interface SizeHint {
   height: number;
 }
 
+const ISSUE_KEYS: Record<LogoFileIssue, ModuleTranslationKey<'admin'>> = {
+  type: 'appearance.logo.validation.type',
+  unreadable: 'appearance.logo.validation.unreadable',
+  size: 'appearance.logo.validation.size',
+  dimensions: 'appearance.logo.validation.dimensions',
+};
+
 export function LogoUploadDialog({ open, onOpenChange, logo, onSaved }: LogoUploadDialogProps) {
   const { t } = useModuleTranslation('admin');
   const inputRef = useRef<HTMLInputElement>(null);
+  const previewUrlRef = useRef<string | null>(null);
   const [name, setName] = useState('');
   const [file, setFile] = useState<File | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
@@ -38,32 +46,32 @@ export function LogoUploadDialog({ open, onOpenChange, logo, onSaved }: LogoUplo
   const [issue, setIssue] = useState<LogoFileIssue | null>(null);
   const [saving, setSaving] = useState(false);
 
-  useEffect(() => {
-    if (!open) {
-      return;
+  const revokePreview = () => {
+    if (previewUrlRef.current) {
+      URL.revokeObjectURL(previewUrlRef.current);
+      previewUrlRef.current = null;
     }
-    setName(logo?.name ?? '');
-    resetFileState();
-  }, [open, logo]);
-
-  useEffect(() => {
-    return () => {
-      if (previewUrl) {
-        URL.revokeObjectURL(previewUrl);
-      }
-    };
-  }, [previewUrl]);
+  };
 
   const resetFileState = () => {
-    if (previewUrl) {
-      URL.revokeObjectURL(previewUrl);
-    }
+    revokePreview();
     setFile(null);
     setPreviewUrl(null);
     setOriginalSize(null);
     setOutputSize(null);
     setIssue(null);
   };
+
+  useEffect(() => {
+    if (!open) {
+      resetFileState();
+      return;
+    }
+    setName(logo?.name ?? '');
+    resetFileState();
+  }, [open, logo]);
+
+  useEffect(() => () => revokePreview(), []);
 
   const handleFile = async (next: File | null) => {
     resetFileState();
@@ -75,10 +83,12 @@ export function LogoUploadDialog({ open, onOpenChange, logo, onSaved }: LogoUplo
       setIssue(prepared.issue);
       return;
     }
+    const url = URL.createObjectURL(prepared.fitted.file);
+    previewUrlRef.current = url;
     setOriginalSize({ width: prepared.original.width, height: prepared.original.height });
     setOutputSize({ width: prepared.fitted.width, height: prepared.fitted.height });
     setFile(prepared.fitted.file);
-    setPreviewUrl(URL.createObjectURL(prepared.fitted.file));
+    setPreviewUrl(url);
     if (!name.trim()) {
       setName(next.name.replace(/\.[^.]+$/, ''));
     }
@@ -95,11 +105,19 @@ export function LogoUploadDialog({ open, onOpenChange, logo, onSaved }: LogoUplo
     if (!canSubmit) {
       return;
     }
+    if (!logo && !file) {
+      return;
+    }
     setSaving(true);
     try {
-      const saved = logo
-        ? await updateAppearanceLogo(logo.id, { name: name.trim(), file: file ?? undefined })
-        : await createAppearanceLogo(file as File, name.trim());
+      let saved: AppearanceLogo;
+      if (logo) {
+        saved = await updateAppearanceLogo(logo.id, { name: name.trim(), file: file ?? undefined });
+      } else if (!file) {
+        return;
+      } else {
+        saved = await createAppearanceLogo(file, name.trim());
+      }
       showSuccess(t(logo ? 'appearance.logo.updated' : 'appearance.logo.created'));
       onSaved(saved);
       onOpenChange(false);
@@ -147,7 +165,7 @@ export function LogoUploadDialog({ open, onOpenChange, logo, onSaved }: LogoUplo
               event.target.value = '';
             }}
           />
-          {issue ? <p className='text-sm text-destructive'>{t(`appearance.logo.validation.${issue}` as ModuleTranslationKey<'admin'>)}</p> : null}
+          {issue ? <p className='text-sm text-destructive'>{t(ISSUE_KEYS[issue])}</p> : null}
 
           <div className='space-y-2'>
             <p className='text-sm font-medium'>{t('appearance.logo.preview')}</p>

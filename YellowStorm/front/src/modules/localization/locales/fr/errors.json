@@ -46,7 +46,6 @@
   "ERR_1604": "Les dimensions du logo ne conviennent pas à la barre latérale. Utilisez un format large jusqu’à 448×96 px.",
   "ERR_1605": "Le fichier logo est trop volumineux. Taille maximale : 512 Ko.",
   "ERR_1606": "Les logos intégrés ne peuvent pas être modifiés ni supprimés.",
-  "ERR_1607": "Ce logo est associé à un thème couleur. Réassignez-le avant de le supprimer.",
   "ERR_1608": "Vous avez atteint le nombre maximal de logos personnalisés.",
   "ERR_1700": "Limite d'utilisation dépassée. Mettez votre offre à niveau ou attendez la réinitialisation.",
   "ERR_1701": "Limite de fréquence atteinte. Veuillez ralentir vos requêtes.",
