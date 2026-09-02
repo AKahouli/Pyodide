@@ -19,27 +19,6 @@ export const APPEARANCE_LOGO_CONSTRAINTS = {
 
 export const APPEARANCE_LOGO_ALLOWED_MIMES = ['image/png', 'image/jpeg', 'image/webp', 'image/svg+xml'] as const;
 
-export function normalizeAppearanceLogoMime(mime: string): string {
-  const normalized = mime.trim().toLowerCase();
-  if (normalized === 'image/jpg') {
-    return 'image/jpeg';
-  }
-  if (normalized === 'image/x-png') {
-    return 'image/png';
-  }
-  if (normalized === 'image/vnd.microsoft.icon') {
-    return 'image/x-icon';
-  }
-  return normalized;
-}
-
-export function isAppearanceLogoMime(mime: string | null | undefined): mime is string {
-  if (!mime) {
-    return false;
-  }
-  return (APPEARANCE_LOGO_ALLOWED_MIMES as readonly string[]).includes(normalizeAppearanceLogoMime(mime));
-}
-
 export const BUILTIN_APPEARANCE_LOGOS = [
   { id: 'yellowmind', name: 'Yellowmind' },
   { id: 'kpmg', name: 'KPMG' },
