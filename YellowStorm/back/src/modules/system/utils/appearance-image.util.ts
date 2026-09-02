@@ -84,11 +84,6 @@ export function readAppearanceLogoDimensions(buffer: Buffer, mimeType: string): 
   return null;
 }
 
-export function isUnsafeSvg(buffer: Buffer): boolean {
-  const text = buffer.toString('utf8');
-  return /<script[\s>]/i.test(text) || /on[a-z]+\s*=/i.test(text) || /<foreignObject[\s>]/i.test(text);
-}
-
 export function validateAppearanceLogoDimensions(dimensions: ImageDimensions): boolean {
   const { width, height } = dimensions;
   if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) {

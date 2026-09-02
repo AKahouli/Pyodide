@@ -1,6 +1,6 @@
-import { ApiProperty } from '@nestjs/swagger';
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
-import { IsIn, IsObject, IsString, ValidateNested } from 'class-validator';
+import { IsBoolean, IsIn, IsObject, IsOptional, IsString, ValidateNested } from 'class-validator';
 import type { ColorTheme } from '../interfaces/appearance.interface';
 
 export class AppearanceThemeConfigDto {
@@ -45,4 +45,9 @@ export class SetAppearanceSettingsDto {
   @ValidateNested()
   @Type(() => AppearanceThemesDto)
   themes!: AppearanceThemesDto;
+
+  @ApiPropertyOptional({ description: 'When true, copies defaultColorTheme onto every user document' })
+  @IsOptional()
+  @IsBoolean()
+  applyToAllUsers?: boolean;
 }

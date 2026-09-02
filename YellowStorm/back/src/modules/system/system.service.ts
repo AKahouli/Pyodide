@@ -114,6 +114,7 @@ export class SystemService implements OnApplicationBootstrap {
   private playbookSettingsCache: AdminPlaybookSettings | null = null;
   private corsSettingsCache: CorsSettingsValue | null = null;
   private lastCacheUpdate = 0;
+  private lastAppearanceCacheUpdate = 0;
   private lastRegistrationCacheUpdate = 0;
   private lastPlaybookSettingsCacheUpdate = 0;
   private lastCorsCacheUpdate = 0;
@@ -356,11 +357,16 @@ export class SystemService implements OnApplicationBootstrap {
 
   async getAppearanceSettings(): Promise<AppearanceSettings> {
     const now = Date.now();
-    if (this.appearanceCache && now - this.lastCacheUpdate < CACHE_TTL_MS) {
+    if (this.appearanceCache && now - this.lastAppearanceCacheUpdate < CACHE_TTL_MS) {
       return this.withLogos(this.appearanceCache);
     }
 
     return this.withLogos(await this.refreshAppearanceCache());
+  }
+
+  invalidateAppearanceCache(): void {
+    this.appearanceCache = null;
+    this.lastAppearanceCacheUpdate = 0;
   }
 
   async setAppearanceSettings(settings: AppearanceThemeSettings): Promise<AppearanceSettings> {
@@ -386,7 +392,7 @@ export class SystemService implements OnApplicationBootstrap {
       defaultColorTheme: settings.defaultColorTheme,
       themes: settings.themes,
     };
-    this.lastCacheUpdate = Date.now();
+    this.lastAppearanceCacheUpdate = Date.now();
     return { ...this.appearanceCache, logos };
   }
 
@@ -588,7 +594,7 @@ export class SystemService implements OnApplicationBootstrap {
         this.appearanceCache = DEFAULT_APPEARANCE;
       }
 
-      this.lastCacheUpdate = Date.now();
+      this.lastAppearanceCacheUpdate = Date.now();
       return this.appearanceCache;
     } catch (error) {
       this.logger.error('Failed to refresh appearance cache', {
@@ -649,25 +655,30 @@ export class SystemService implements OnApplicationBootstrap {
   }
 
   private async withLogos(settings: AppearanceThemeSettings): Promise<AppearanceSettings> {
+    const remapUnknown = (themes: AppearanceThemeSettings['themes'], validIds: Set<string>) => {
+      const next = { ...themes };
+      for (const theme of APPEARANCE_COLOR_THEMES) {
+        if (!validIds.has(next[theme].logo)) {
+          next[theme] = { ...next[theme], logo: 'yellowmind' };
+        }
+      }
+      return next;
+    };
+
     try {
       const logos = await this.appearanceLogoService.listPublic();
       const validIds = new Set(logos.map((logo) => logo.id));
-      const themes = { ...settings.themes };
-      for (const theme of APPEARANCE_COLOR_THEMES) {
-        if (!validIds.has(themes[theme].logo)) {
-          themes[theme] = { ...themes[theme], logo: 'yellowmind' };
-        }
-      }
-      return { defaultColorTheme: settings.defaultColorTheme, themes, logos };
+      return { defaultColorTheme: settings.defaultColorTheme, themes: remapUnknown(settings.themes, validIds), logos };
     } catch (error) {
       this.logger.warn('Failed to load appearance logos', { error: (error as Error).message });
+      const logos = [
+        { id: 'yellowmind', name: 'Yellowmind', kind: 'builtin' as const },
+        { id: 'kpmg', name: 'KPMG', kind: 'builtin' as const },
+      ];
       return {
         defaultColorTheme: settings.defaultColorTheme,
-        themes: settings.themes,
-        logos: [
-          { id: 'yellowmind', name: 'Yellowmind', kind: 'builtin' },
-          { id: 'kpmg', name: 'KPMG', kind: 'builtin' },
-        ],
+        themes: remapUnknown(settings.themes, new Set(logos.map((logo) => logo.id))),
+        logos,
       };
     }
   }

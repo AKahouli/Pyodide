@@ -218,7 +218,10 @@ export class SystemController {
     @Req() req: Request,
   ): Promise<AppearanceSettings> {
     const result = await this.systemService.setAppearanceSettings(body);
-    await this.systemService.applyAppearanceToAllUsers(body.defaultColorTheme);
+    const applyToAllUsers = body.applyToAllUsers === true;
+    if (applyToAllUsers) {
+      await this.systemService.applyAppearanceToAllUsers(body.defaultColorTheme);
+    }
 
     this.auditLogService.logSuccess({
       actorId: user._id.toString(),
@@ -227,6 +230,7 @@ export class SystemController {
       metadata: {
         defaultColorTheme: body.defaultColorTheme,
         themes: body.themes,
+        applyToAllUsers,
       },
       ipAddress: req.ip,
       userAgent: req.headers['user-agent'],

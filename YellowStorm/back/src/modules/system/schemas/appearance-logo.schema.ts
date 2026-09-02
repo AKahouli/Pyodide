@@ -28,12 +28,12 @@ export const AppearanceLogoSchema = SchemaFactory.createForClass(AppearanceLogo)
 
 AppearanceLogoSchema.set('toJSON', {
   virtuals: true,
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  transform: (_doc: any, ret: any) => {
-    ret.id = String(ret._id);
-    delete ret._id;
-    delete ret.__v;
-    delete ret.data;
-    return ret;
+  transform: (_doc, ret) => {
+    const json = ret as unknown as Record<string, unknown>;
+    json.id = String(json._id);
+    delete json._id;
+    delete json.__v;
+    delete json.data;
+    return json;
   },
 });

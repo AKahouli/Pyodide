@@ -131,7 +131,6 @@ async function bootstrap() {
         },
       },
       crossOriginEmbedderPolicy: false,
-      crossOriginResourcePolicy: { policy: 'cross-origin' },
     }),
   );
 
