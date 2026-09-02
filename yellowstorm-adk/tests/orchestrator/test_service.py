@@ -1422,6 +1422,8 @@ def test_a_step_result_keeps_the_answer_not_the_models_reasoning():
     ev.get_function_calls.return_value = []
     ev.get_function_responses.return_value = []
     ev.long_running_tool_ids = None
+    ev.error_message = None   # a successful event carries no error
+    ev.error_code = None
     ev.actions = MagicMock(state_delta={})
 
     asyncio.run(service._apply_event("sess1", plan, ev, {"s1": "s1"}, set()))

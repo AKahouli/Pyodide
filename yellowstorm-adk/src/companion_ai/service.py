@@ -1571,9 +1571,46 @@ class OrchestratorService:
             return await self._drive_loop(runner, session_id, user_id, plan, name_to_step,
                                           new_message, model=model, connectors=connectors,
                                           executor_prompt=executor_prompt)
+        except asyncio.CancelledError:
+            # A supersede / StopSession, not a failure — StopSession's own path
+            # marks the session cancelled. Let it propagate untouched.
+            raise
+        except Exception as exc:  # noqa: BLE001 — re-raised after failing loudly
+            # A model / tool / transport error raised out of the drive. Without
+            # this the turn aborts, _finalize never runs, and the read-model is
+            # left stuck: the session stays 'running' and the in-flight step shows
+            # a phantom 'completed'/'pending' with no error (proven — an executor
+            # model 401 left the session 'running' forever). Fail loud so the
+            # client sees a terminal state and a new message re-plans instead of
+            # routing to converse on a phantom-live session.
+            await self._fail_turn(session_id, plan, exc)
+            raise
         finally:
             if self._active.get(session_id) is plan:
                 self._active.pop(session_id, None)
+
+    async def _fail_turn(self, session_id: str, plan: Plan, exc: BaseException) -> None:
+        """Record an aborted turn as failed in the read-model (see
+        _drive_until_quiescent). A step still RUNNING when the turn blew up is the
+        one that failed — mark it failed with the error; pending steps never ran,
+        so leave them, but the session and plan go 'failed' so nothing is left
+        phantom-'running'. Best-effort: a projection error here must never mask
+        the original exception."""
+        err = f"{type(exc).__name__}: {exc}"[:500]
+        try:
+            for s in plan.steps:
+                if s.status is Status.RUNNING:
+                    s.status = Status.FAILED
+                    s.error = err
+                    await self._project(self._rm and self._rm.set_step_status(
+                        session_id, s.id, Status.FAILED.value, blocked_reason=err))
+            plan.status = Status.FAILED
+            await self._project(self._rm and self._rm.upsert_plan(
+                session_id, plan.id, plan.title, plan.goal, Status.FAILED.value))
+            await self._project(self._rm and self._rm.set_session_status(session_id, "failed"))
+            logger.warning("[worky] turn failed → session=%s marked failed (%s)", session_id, err)
+        except Exception:  # noqa: BLE001 — never mask the real failure
+            logger.exception("[worky] _fail_turn projection failed session=%s", session_id)
 
     async def _drive_loop(self, runner, session_id, user_id, plan, name_to_step,
                           new_message, *, model, connectors, executor_prompt):
@@ -1998,6 +2035,20 @@ class OrchestratorService:
                         session_id, step_id, step.wave)
             await self._project(self._rm and self._rm.set_step_status(
                 session_id, step_id, "running"))
+        # A model/tool error ADK reports as an EVENT (not a raise) is a
+        # final_response with empty content — is_output below would then mark the
+        # step 'completed' with an empty result (seen live: an executor model 401
+        # left the step falsely 'completed'). Catch it first and mark the step
+        # FAILED with the error, so the failing step reads correctly.
+        err = getattr(ev, "error_message", None) or getattr(ev, "error_code", None)
+        if err:
+            step.status = Status.FAILED
+            step.error = str(err)[:500]
+            logger.warning("[worky] 9. step FAILED session=%s step=%s err=%s",
+                           session_id, step_id, step.error)
+            await self._project(self._rm and self._rm.set_step_status(
+                session_id, step_id, "failed", blocked_reason=step.error))
+            return
         if is_output:
             step.status = Status.COMPLETED
             # Keep the LAST text part, not the first. A reasoning model emits its
