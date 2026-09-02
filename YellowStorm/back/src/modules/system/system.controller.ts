@@ -8,6 +8,7 @@ import { RateLimitSkip } from '../rate-limiter';
 import { MaintenanceStatus } from './interfaces/maintenance.interface';
 import { RegistrationStatus } from './interfaces/registration.interface';
 import { AppearanceSettings } from './interfaces/appearance.interface';
+import { SetAppearanceSettingsDto } from './dto/set-appearance-settings.dto';
 import { CorsSettingsValue } from './schemas/system-setting.schema';
 import { RequirePermissions, PermissionsGuard, Permissions, AuditLogService } from '../authorization';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
@@ -212,12 +213,15 @@ export class SystemController {
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Set appearance settings' })
   async setAppearanceSettings(
-    @Body() body: AppearanceSettings,
+    @Body() body: SetAppearanceSettingsDto,
     @CurrentUser() user: UserDocument,
     @Req() req: Request,
   ): Promise<AppearanceSettings> {
     const result = await this.systemService.setAppearanceSettings(body);
-    await this.systemService.applyAppearanceToAllUsers(body.defaultColorTheme);
+    const applyToAllUsers = body.applyToAllUsers === true;
+    if (applyToAllUsers) {
+      await this.systemService.applyAppearanceToAllUsers(body.defaultColorTheme);
+    }
 
     this.auditLogService.logSuccess({
       actorId: user._id.toString(),
@@ -226,6 +230,7 @@ export class SystemController {
       metadata: {
         defaultColorTheme: body.defaultColorTheme,
         themes: body.themes,
+        applyToAllUsers,
       },
       ipAddress: req.ip,
       userAgent: req.headers['user-agent'],

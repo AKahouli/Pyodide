@@ -31,6 +31,7 @@ import type {
   CorsSettings,
   SetCorsSettingsRequest,
   AppearanceSettings,
+  AppearanceLogo,
   PlanResponse,
   CreatePlanRequest,
   UpdatePlanRequest,
@@ -260,17 +261,61 @@ export async function setCorsSettings(data: SetCorsSettingsRequest): Promise<Cor
 
 export async function getAppearanceSettings(): Promise<AppearanceSettings> {
   const response = await apiClient.get<ApiResponse<AppearanceSettings>>(
-    `${API_ENDPOINTS.system.maintenance.replace('/maintenance', '/appearance')}`
+    API_ENDPOINTS.system.appearance,
   );
   return response.data.data;
 }
 
-export async function setAppearanceSettings(data: AppearanceSettings): Promise<AppearanceSettings> {
+export async function setAppearanceSettings(
+  data: AppearanceSettings,
+  options?: { applyToAllUsers?: boolean },
+): Promise<AppearanceSettings> {
   const response = await apiClient.post<ApiResponse<AppearanceSettings>>(
-    `${API_ENDPOINTS.system.maintenance.replace('/maintenance', '/appearance')}`,
-    data
+    API_ENDPOINTS.system.appearance,
+    {
+      defaultColorTheme: data.defaultColorTheme,
+      themes: data.themes,
+      applyToAllUsers: options?.applyToAllUsers === true,
+    },
   );
   return response.data.data;
+}
+
+export async function createAppearanceLogo(file: File, name?: string): Promise<AppearanceLogo> {
+  const formData = new FormData();
+  formData.append('file', file);
+  if (name) {
+    formData.append('name', name);
+  }
+  const response = await apiClient.post<ApiResponse<AppearanceLogo>>(
+    API_ENDPOINTS.system.appearanceLogos,
+    formData,
+    { headers: { 'Content-Type': undefined } },
+  );
+  return response.data.data;
+}
+
+export async function updateAppearanceLogo(
+  id: string,
+  data: { name?: string; file?: File },
+): Promise<AppearanceLogo> {
+  const formData = new FormData();
+  if (data.name) {
+    formData.append('name', data.name);
+  }
+  if (data.file) {
+    formData.append('file', data.file);
+  }
+  const response = await apiClient.patch<ApiResponse<AppearanceLogo>>(
+    API_ENDPOINTS.system.appearanceLogo(id),
+    formData,
+    { headers: { 'Content-Type': undefined } },
+  );
+  return response.data.data;
+}
+
+export async function deleteAppearanceLogo(id: string): Promise<void> {
+  await apiClient.delete(API_ENDPOINTS.system.appearanceLogo(id));
 }
 
 // Plans API

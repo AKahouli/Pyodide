@@ -41,7 +41,7 @@ export class AppearanceThemeValue {
   @Prop({ required: true })
   labelKey!: string;
 
-  @Prop({ required: true, enum: ['yellowmind', 'kpmg'] })
+  @Prop({ required: true })
   logo!: string;
 }
 
