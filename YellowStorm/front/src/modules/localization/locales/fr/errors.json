@@ -27,7 +27,7 @@
   "ERR_1113": "Votre session a été révoquée. Veuillez vous reconnecter.",
   "ERR_1200": "Utilisateur introuvable.",
   "ERR_1201": "Un compte existe déjà avec cet email.",
-  "ERR_1202": "Votre compte est inactif en attente de validation par un administrateur.",
+  "ERR_1202": "Votre demande d’accès est en attente de validation. L’accès à la plateforme sera disponible une fois votre demande validée.",
   "ERR_1300": "Agent introuvable.",
   "ERR_1301": "Cet agent est actuellement indisponible.",
   "ERR_1302": "Vous avez atteint votre limite d'agents.",

@@ -24,6 +24,8 @@ describe('registration pending admin email', () => {
     expect(content.subject).toContain('YelloStorm');
     expect(content.html).toContain('jane@acme.io');
     expect(content.html).toContain('02/09/2026 à 16:21');
+    expect(content.html).toContain('#f093fb');
+    expect(content.html).toContain('#f8f9fa');
     expect(content.html).toContain(usersAdminUrl);
     expect(content.html).not.toContain('User ID');
     expect(content.html).not.toContain('2026-09-02T14:21:14.350Z');

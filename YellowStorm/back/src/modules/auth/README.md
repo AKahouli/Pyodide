@@ -915,7 +915,7 @@ Contains:
 Sent when login detected from new IP:
 
 ```
-Subject: 🔔 New login to your YelloStorm account
+Subject: 🔔 New login to your YellowMind account
 
 Contains:
 - Login timestamp

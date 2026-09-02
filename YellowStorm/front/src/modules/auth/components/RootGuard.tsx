@@ -4,6 +4,7 @@
  * - Shows landing page for guests
  * - Shows app layout for authenticated users
  * - Redirects to profile completion if needed
+ * - Shows a full-screen pending-approval page until Super Admin validation
  */
 
 import * as React from 'react';
@@ -14,7 +15,7 @@ import { SidebarProvider, SidebarInset, SidebarTriggerMobile } from '@/component
 import { AppSidebar } from '@/modules/sidebar';
 import { useAuth } from '../useAuth';
 import { LandingPage } from './LandingPage';
-import { InactiveAccountBanner } from './InactiveAccountBanner';
+import { PendingApprovalPage } from './PendingApprovalPage';
 import { NewConversationPage } from '@/modules/conversation';
 import { useModelsStore } from '@/modules/models';
 import { useConversationStream } from '@/modules/conversation/hooks/useConversationStream';
@@ -103,10 +104,14 @@ export function RootGuard() {
     return <Navigate to='/complete-profile' replace />;
   }
 
+  if (pendingApproval) {
+    return <PendingApprovalPage onLogout={() => void logout()} />;
+  }
+
   // Fully authenticated - show app layout
   const isIndexRoute = location.pathname === '/';
 
-  const appShell = (
+  return (
     <SidebarProvider>
       <AppSidebar />
       <SidebarInset className='bg-transparent'>
@@ -117,19 +122,5 @@ export function RootGuard() {
       </SidebarInset>
       {platformCopilotEnabled && <PlatformCopilotMascot />}
     </SidebarProvider>
-  );
-
-  if (!pendingApproval) {
-    return appShell;
-  }
-
-  return (
-    <div className='flex min-h-svh flex-col'>
-      <InactiveAccountBanner onLogout={() => void logout()} />
-      <div className='relative min-h-0 flex-1'>
-        <div className='pointer-events-none min-h-full select-none'>{appShell}</div>
-        <div className='absolute inset-0 z-40' aria-hidden />
-      </div>
-    </div>
   );
 }

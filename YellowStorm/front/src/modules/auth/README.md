@@ -10,7 +10,7 @@ The auth module implements a secure authentication flow with:
 - Email verification flow
 - Forgot password / reset password flow
 - Profile completion flow
-- Pending Super Admin approval banner (inactive users can sign in, then the app is blocked until approval)
+- Pending Super Admin approval page (inactive users can sign in, then a full-screen wait page blocks the app until approval)
 - Automatic token refresh on 401 responses
 
 ## Architecture
@@ -27,8 +27,8 @@ src/modules/auth/
 ├── test-utils/
 │   └── makeAuthState.ts # shared auth state factory for tests
 ├── components/
-│   ├── InactiveAccountBanner.tsx
-│   ├── InactiveAccountBanner.test.tsx
+│   ├── PendingApprovalPage.tsx
+│   ├── PendingApprovalPage.test.tsx
 │   ├── RootGuard.tsx           # Route guard for "/"
 │   ├── RootGuard.test.tsx      # Root guard routing tests
 │   ├── LandingPage.tsx         # Landing page for guests

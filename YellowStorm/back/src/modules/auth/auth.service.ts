@@ -853,11 +853,11 @@ This link will expire in 24 hours. If you didn't create an account with ${this.a
 </head>
 <body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; padding: 20px;">
   <div style="background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%); padding: 30px; border-radius: 10px 10px 0 0;">
-    <h1 style="color: white; margin: 0; font-size: 24px;">${this.appName} Security Alert</h1>
+    <h1 style="color: white; margin: 0; font-size: 24px;">YellowMind Security Alert</h1>
   </div>
   <div style="background: #ffffff; padding: 30px; border: 1px solid #e0e0e0; border-top: none; border-radius: 0 0 10px 10px;">
     <h2 style="color: #f5576c; margin-top: 0;">🔔 New Login Detected</h2>
-    <p>We noticed a new sign-in to your ${this.appName} account from a location we haven't seen before.</p>
+    <p>We noticed a new sign-in to your YellowMind account from a location we haven't seen before.</p>
 
     <div style="background: #f8f9fa; padding: 20px; border-radius: 8px; margin: 20px 0;">
       <table style="width: 100%; border-collapse: collapse;">
@@ -885,15 +885,15 @@ This link will expire in 24 hours. If you didn't create an account with ${this.a
     </ul>
 
     <hr style="border: none; border-top: 1px solid #e0e0e0; margin: 20px 0;">
-    <p style="color: #999; font-size: 12px;">This is an automated security notification from ${this.appName}. If you have any concerns, please contact our support team.</p>
+    <p style="color: #999; font-size: 12px;">This is an automated security notification from YellowMind. If you have any concerns, please contact our support team.</p>
   </div>
 </body>
 </html>`;
 
     const text = `
-New Login Alert - ${this.appName}
+New Login Alert - YellowMind
 
-We noticed a new sign-in to your ${this.appName} account from a location we haven't seen before.
+We noticed a new sign-in to your YellowMind account from a location we haven't seen before.
 
 Login Details:
 - Time: ${loginTime}
@@ -907,12 +907,12 @@ If you recognize this login, you can ignore this email. If you don't recognize t
 - Review your active sessions in account settings
 - Enable additional security measures if available
 
-This is an automated security notification from ${this.appName}. If you have any concerns, please contact our support team.
+This is an automated security notification from YellowMind. If you have any concerns, please contact our support team.
 `;
 
     const result = await this.emailService.send({
       to: email,
-      subject: `🔔 New login to your ${this.appName} account`,
+      subject: `🔔 New login to your YellowMind account`,
       html,
       text,
       priority: 'high',

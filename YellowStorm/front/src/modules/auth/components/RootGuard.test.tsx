@@ -117,7 +117,7 @@ describe('RootGuard', () => {
     expect(screen.queryByText('platform copilot mascot')).not.toBeInTheDocument();
   });
 
-  it('shows a pending-approval banner and skips model fetch for inactive users', async () => {
+  it('shows a dedicated pending-approval page and skips the app shell for inactive users', async () => {
     const logout = vi.fn();
     useAuthMock.mockReturnValue(
       makeAuthState({
@@ -129,12 +129,15 @@ describe('RootGuard', () => {
 
     renderWithRouter(<RootGuard />);
 
-    expect(screen.getByRole('alert')).toHaveTextContent('pendingApproval.banner');
+    expect(screen.getByRole('alertdialog')).toHaveTextContent('pendingApproval.message');
+    expect(screen.getByRole('button', { name: 'pendingApproval.logout' })).toBeInTheDocument();
+    expect(screen.queryByTestId('sidebar-provider')).not.toBeInTheDocument();
+    expect(screen.queryByText('new conversation page')).not.toBeInTheDocument();
     expect(fetchModelsMock).not.toHaveBeenCalled();
     expect(getFeatureVisibilityMock).not.toHaveBeenCalled();
   });
 
-  it('does not show the pending-approval banner on the profile-completion redirect', async () => {
+  it('does not show the pending-approval page on the profile-completion redirect', async () => {
     useAuthMock.mockReturnValue(
       makeAuthState({
         isAuthenticated: true,
@@ -151,6 +154,6 @@ describe('RootGuard', () => {
     );
 
     await waitFor(() => expect(screen.getByText('complete profile page')).toBeInTheDocument());
-    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument();
   });
 });
