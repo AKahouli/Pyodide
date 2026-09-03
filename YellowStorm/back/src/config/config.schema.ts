@@ -282,7 +282,7 @@ export const configValidationSchema = Joi.object({
   APP_DATA_MAX_ROW_BODY_BYTES: Joi.number().min(1024).max(1_048_576).default(65_536),
   APP_DATA_DEFAULT_PAGE_SIZE: Joi.number().min(1).max(500).default(50),
   APP_DATA_MAX_PAGE_SIZE: Joi.number().min(1).max(1000).default(200),
-  APP_DATA_PUBLIC_RATE_LIMIT_PER_MINUTE: Joi.number().min(1).max(10_000).default(120),
+  APP_DATA_PUBLIC_RATE_LIMIT_PER_MINUTE: Joi.number().min(1).max(10_000).default(600),
   APP_DATA_STATEMENT_TIMEOUT_MS: Joi.number().min(1000).max(300_000).default(30_000),
   APP_DATA_END_USER_AUTH_ENABLED: Joi.boolean().default(true),
   APP_DATA_END_USER_JWT_TTL: Joi.string().default('7d'),
