@@ -52,6 +52,7 @@ export default registerAs('worky', () => ({
   electricUrl: process.env.WORKY_ELECTRIC_URL || 'http://electric:3000/v1/shape',
   // Shared secret appended as `&secret=<...>` to every Electric shape request.
   electricSecret: process.env.ELECTRIC_SECRET || '',
+  electricSessionsTable: process.env.WORKY_ELECTRIC_SESSIONS_TABLE || 'sessions',
   electricMessagesTable: process.env.WORKY_ELECTRIC_MESSAGES_TABLE || 'messages',
   electricPlansTable: process.env.WORKY_ELECTRIC_PLANS_TABLE || 'plans',
   electricPlanStepsTable: process.env.WORKY_ELECTRIC_PLAN_STEPS_TABLE || 'plan_steps',
