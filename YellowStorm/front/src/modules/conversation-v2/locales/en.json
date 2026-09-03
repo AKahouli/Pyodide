@@ -163,8 +163,11 @@
     }
   },
   "versionHistory": {
-    "title": "Version History",
+    "title": "Versions",
+    "subtitle": "Pick a finalized version to preview or deploy",
+    "open": "Finalized versions",
     "finalized": "Finalized",
+    "latest": "Latest",
     "preview": "Preview this version",
     "deploy": "Deploy this version",
     "active": "Active",

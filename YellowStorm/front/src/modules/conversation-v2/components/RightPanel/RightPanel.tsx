@@ -9,8 +9,8 @@ import { isRuntimePreviewVisible } from '../../runtime/runtime.types';
 import { ToolDetailDispatch } from './tool-views/ToolDetailDispatch';
 import { ApplicationComponentView } from './ApplicationComponentView';
 import { AppBuildProgressPanel } from './AppBuildProgressPanel';
-import { VersionHistoryPanel } from './VersionHistoryPanel';
 import { AppViewModeToggle, DeployControls } from './DeployControls';
+import { HistoricalPreviewBanner, VersionSwitcher } from './VersionHistoryPanel';
 import { AppDataPanel } from './AppDataPanel';
 
 const RIGHT_PANEL_STORAGE_KEY = 'conversation-v2-right-panel-width';
@@ -145,11 +145,16 @@ export function RightPanel() {
               </span>
             )}
           </div>
-          <div className='min-w-0 justify-self-center px-0.5'>
+          <div className='min-w-0 max-w-[10rem] justify-self-center overflow-hidden px-0.5 @max-[480px]/right-panel:hidden'>
             {hasPreview && showNodepod && applicationComponent ? <AppViewModeToggle /> : null}
           </div>
           <div className='flex min-w-0 shrink-0 items-center justify-self-end gap-0.5'>
-            {hasPreview && showNodepod && applicationComponent && <DeployControls />}
+            {hasPreview && showNodepod && applicationComponent && (
+              <>
+                <VersionSwitcher />
+                <DeployControls />
+              </>
+            )}
             <Button variant='ghost' size='icon-sm' aria-label={t('rightPanel.close')} onClick={close}>
               <XIcon className='size-4' />
             </Button>
@@ -166,7 +171,7 @@ export function RightPanel() {
                   )}
                   aria-hidden={showDataTab || undefined}
                 >
-                  <VersionHistoryPanel />
+                  <HistoricalPreviewBanner />
                   <ApplicationComponentView
                     title={applicationComponent?.title}
                     filesTree={applicationComponent?.filesTree}

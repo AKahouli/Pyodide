@@ -50,7 +50,7 @@
     "empty": "Sélectionnez un outil pour l'inspecter.",
     "jumpToLive": "Revenir au direct",
     "tabCode": "Code",
-    "tabPreview": "Aperçu",
+    "tabPreview": "Aperçus",
     "tabData": "Données",
     "resizeHandle": "Glisser pour redimensionner l'aperçu"
   },
@@ -163,14 +163,17 @@
     }
   },
   "versionHistory": {
-    "title": "Historique des versions",
+    "title": "Versions",
+    "subtitle": "Choisir une version finalisée à prévisualiser ou déployer",
+    "open": "Versions finalisées",
     "finalized": "Finalisée",
+    "latest": "Dernière",
     "preview": "Prévisualiser cette version",
     "deploy": "Déployer cette version",
     "active": "Active",
     "empty": "Aucune version finalisée",
     "loading": "Chargement des versions…",
-    "previewBanner": "Prévisualisation de {{revisionId}} — l'agent continue sur la dernière version",
+    "previewBanner": "Aperçu de {{revisionId}} — l'agent continue sur la dernière version",
     "returnToLatest": "Revenir à la dernière"
   },
   "deploy": {

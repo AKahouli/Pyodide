@@ -1,7 +1,10 @@
-import { render, screen } from '@testing-library/react';
+import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
-import { VersionHistoryPanel } from './VersionHistoryPanel';
+import { HistoricalPreviewBanner, VersionSwitcher } from './VersionHistoryPanel';
+
+const previewFinalizedVersion = vi.fn();
+const deploy = vi.fn().mockResolvedValue(undefined);
 
 vi.mock('../../store', () => ({
   useConversationV2Store: (selector: (s: unknown) => unknown) =>
@@ -20,8 +23,8 @@ vi.mock('../../store', () => ({
       ],
       previewRevisionId: 'rev_7',
       loadingFinalizedVersions: false,
-      previewFinalizedVersion: vi.fn(),
-      deploy: vi.fn().mockResolvedValue(undefined),
+      previewFinalizedVersion,
+      deploy,
       deployStatus: 'idle',
     }),
 }));
@@ -39,22 +42,35 @@ vi.mock('@/lib/notifications', () => ({
   showError: vi.fn(),
 }));
 
-describe('VersionHistoryPanel', () => {
-  it('renders version history rows and historical preview banner', () => {
-    render(<VersionHistoryPanel />);
+describe('VersionSwitcher', () => {
+  it('renders a compact trigger with the active revision', () => {
+    render(<VersionSwitcher />);
 
-    expect(screen.getByText('versionHistory.title')).toBeInTheDocument();
-    expect(screen.getByText('rev_12')).toBeInTheDocument();
-    expect(screen.getByText('rev_7')).toBeInTheDocument();
-    expect(screen.getByText('versionHistory.previewBanner:rev_7')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'versionHistory.open' })).toHaveTextContent('rev_7');
+    expect(screen.getByText('2')).toBeInTheDocument();
   });
 
-  it('shows preview action for non-active versions', async () => {
+  it('opens the version list in a popover and allows preview', async () => {
     const user = userEvent.setup();
-    render(<VersionHistoryPanel />);
+    render(<VersionSwitcher />);
 
-    await user.click(screen.getByRole('button', { name: 'versionHistory.preview' }));
-    const { useConversationV2Store } = await import('../../store');
-    expect(useConversationV2Store).toBeDefined();
+    await user.click(screen.getByRole('button', { name: 'versionHistory.open' }));
+
+    const dialog = screen.getByRole('dialog');
+    expect(within(dialog).getByText('versionHistory.title')).toBeInTheDocument();
+    expect(within(dialog).getByText('rev_12')).toBeInTheDocument();
+    expect(within(dialog).getByText('rev_7')).toBeInTheDocument();
+
+    await user.click(within(dialog).getByRole('button', { name: 'versionHistory.preview' }));
+    expect(previewFinalizedVersion).toHaveBeenCalledWith('rev_12');
+  });
+});
+
+describe('HistoricalPreviewBanner', () => {
+  it('shows a slim banner while previewing a historical revision', () => {
+    render(<HistoricalPreviewBanner />);
+
+    expect(screen.getByText('versionHistory.previewBanner:rev_7')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'versionHistory.returnToLatest' })).toBeInTheDocument();
   });
 });
