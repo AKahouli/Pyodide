@@ -259,9 +259,10 @@ class CompanionAiServicer(pb_grpc.CompanionAiServicer):
                         request.session_id, run_id)
         except asyncio.CancelledError:
             raise
-        except Exception:
+        except Exception as exc:
             logger.exception("[worky] converse turn failed (session=%s run=%s)",
                              request.session_id, run_id)
+            await self._svc.fail_session(request.session_id, exc)
 
     def _forget_running(self, session_id: str):
         """Done-callback that drops the session's task ref only if it's still the
@@ -343,8 +344,9 @@ class CompanionAiServicer(pb_grpc.CompanionAiServicer):
         except asyncio.CancelledError:
             logger.info("RunTask turn superseded/cancelled (session=%s)", request.session_id)
             raise
-        except Exception:
+        except Exception as exc:
             logger.exception("RunTask turn failed (session=%s run=%s)", request.session_id, run_id)
+            await self._svc.fail_session(request.session_id, exc)
 
     async def GetSession(self, request: pb.GetSessionRequest, context) -> pb.GetSessionResponse:
         if self._rm is None:
@@ -542,6 +544,7 @@ class CompanionAiServicer(pb_grpc.CompanionAiServicer):
             logger.info("[worky] DeliverMailReply turn superseded/cancelled (session=%s)",
                         session_id)
             raise
-        except Exception:
+        except Exception as exc:
             logger.exception("[worky] DeliverMailReply turn failed (session=%s step=%s)",
                              session_id, wait["step_id"])
+            await self._svc.fail_session(session_id, exc)

@@ -171,15 +171,45 @@ def test_plan_turn_fails_the_session_on_an_empty_planner_response():
     service._make_plan = empty_plan
 
     posted = {}
-    async def capture_msg(session_id, role, content):
+    async def capture_err(session_id, content, title="x"):
         posted["content"] = content
-    service._add_message = capture_msg
+    service._add_error_message = capture_err
 
     asyncio.run(service.plan_turn(session_id="s", user_id="u", message="search X and email Y", model="m"))
 
     assert calls["n"] == 2, f"planner should be retried once (got {calls['n']} calls)"
-    assert (posted.get("content") or "").strip(), "must post a message naming the cause"
+    assert (posted.get("content") or "").strip(), "must post an ERROR naming the cause"
     rm.set_session_status.assert_awaited_with("s", "failed")   # fail, not complete
+
+
+def test_fail_session_surfaces_a_planner_error_and_fails_a_running_session():
+    """A planner LLM error (e.g. RateLimitError) raises OUTSIDE the drive, so the
+    session is left 'running' with nothing shown — fail_session must post the
+    cause as a chat error and mark the session failed."""
+    rm = MagicMock(snapshot=AsyncMock(return_value={"session": {"status": "running"}}),
+                   add_message=AsyncMock(), add_message_component=AsyncMock(),
+                   set_session_status=AsyncMock())
+    service = svc.OrchestratorService(MagicMock(), rm, planner_model="m")
+
+    asyncio.run(service.fail_session("s", RuntimeError("Weekly usage limit reached")))
+
+    rm.add_message.assert_awaited()  # the error message was posted
+    rm.add_message_component.assert_awaited()  # ...as an error component
+    rm.set_session_status.assert_awaited_with("s", "failed")
+
+
+def test_fail_session_is_idempotent_when_the_drive_already_failed():
+    """A drive-phase error already went through _fail_turn (session='failed' +
+    message posted); the top-level net must NOT post a duplicate."""
+    rm = MagicMock(snapshot=AsyncMock(return_value={"session": {"status": "failed"}}),
+                   add_message=AsyncMock(), add_message_component=AsyncMock(),
+                   set_session_status=AsyncMock())
+    service = svc.OrchestratorService(MagicMock(), rm, planner_model="m")
+
+    asyncio.run(service.fail_session("s", RuntimeError("boom")))
+
+    rm.add_message.assert_not_awaited()
+    rm.set_session_status.assert_not_awaited()
 
 
 def test_plan_turn_keeps_a_genuine_direct_reply_completed():

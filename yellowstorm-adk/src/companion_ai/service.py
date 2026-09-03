@@ -1107,6 +1107,22 @@ class OrchestratorService:
         await self._project(self._rm and self._rm.add_message(
             uuid.uuid4().hex, session_id, role, content))
 
+    async def _add_error_message(self, session_id: str, content: str,
+                                 title: str = "This task couldn't be completed") -> None:
+        """Surface a failure in the chat as an ERROR — an assistant message
+        carrying an `error` message-component ({title, content}), the same shape
+        the main chat module uses, so the client renders a destructive card
+        instead of a normal reply. The plain-text content is kept on the message
+        too, for consumers that don't read components (WhatsApp/voice)."""
+        if not content:
+            return
+        msg_id = uuid.uuid4().hex
+        await self._project(self._rm and self._rm.add_message(
+            msg_id, session_id, "assistant", content))
+        await self._project(self._rm and self._rm.add_message_component(
+            session_id, msg_id, uuid.uuid4().hex, "error",
+            {"title": title, "content": content}))
+
     @staticmethod
     def _assistant_answer(plan: Plan) -> str:
         """The chat reply for a completed plan: the results of its terminal steps
@@ -1175,7 +1191,8 @@ class OrchestratorService:
                           "— impossible de traiter cette demande.")
                 logger.warning("[worky] 5. empty plan after retry → session=%s FAILED (%s)",
                                session_id, reason)
-                await self._add_message(session_id, "assistant", reason)
+                await self._add_error_message(session_id, reason,
+                                              title="Échec de la planification")
                 await self._project(self._rm and self._rm.set_session_status(session_id, "failed"))
             return plan
 
@@ -1621,6 +1638,29 @@ class OrchestratorService:
             if self._active.get(session_id) is plan:
                 self._active.pop(session_id, None)
 
+    async def fail_session(self, session_id: str, exc: BaseException) -> None:
+        """Top-level safety net for a turn that raised OUTSIDE the drive — most
+        importantly the PLANNER LLM call (e.g. a RateLimitError), which happens
+        before any graph is built, so _drive_until_quiescent's _fail_turn never
+        runs. Without this the session is left 'running' and the UI hangs on
+        'assistant is typing' forever with nothing shown (seen live: planner
+        glm-5.3-go weekly-limit rate error). Surface the cause in the chat and
+        fail the session. Idempotent: if the drive already failed it, do nothing
+        (so a drive-phase error isn't double-posted)."""
+        if self._rm is None:
+            return
+        try:
+            snap = await self._rm.snapshot(session_id)
+            if snap and snap["session"].get("status") == "failed":
+                return  # already surfaced by _fail_turn
+            err = f"{type(exc).__name__}: {exc}"[:500]
+            await self._add_error_message(session_id, err)
+            await self._project(self._rm.set_session_status(session_id, "failed"))
+            logger.warning("[worky] turn raised outside the drive → session=%s failed (%s)",
+                           session_id, err)
+        except Exception:  # noqa: BLE001 — never mask the real failure
+            logger.exception("[worky] fail_session projection failed session=%s", session_id)
+
     async def _fail_turn(self, session_id: str, plan: Plan, exc: BaseException) -> None:
         """Record an aborted turn as failed in the read-model (see
         _drive_until_quiescent). A step still RUNNING when the turn blew up is the
@@ -1630,6 +1670,10 @@ class OrchestratorService:
         the original exception."""
         err = f"{type(exc).__name__}: {exc}"[:500]
         try:
+            # Surface the failure in the chat so the user sees WHY the task
+            # stopped, not just a silently-'failed' session. Every turn error
+            # (model/tool/transport) routes through here.
+            await self._add_error_message(session_id, err)
             for s in plan.steps:
                 if s.status is Status.RUNNING:
                     s.status = Status.FAILED
@@ -1780,7 +1824,15 @@ class OrchestratorService:
                 s.status = Status.COMPLETED
         plan.status = scheduler.derive_status(plan)
         logger.info("[worky] 10. derive final status session=%s → %s", session_id, plan.status.value)
+        # A step that failed via an ADK error EVENT (e.g. an LLM error) doesn't
+        # raise, so it never reaches _fail_turn — surface its error in the chat
+        # here, appended to whatever partial results did complete.
         await self._add_message(session_id, "assistant", self._assistant_answer(plan))
+        failed = [s for s in plan.steps if s.status is Status.FAILED]
+        if failed:
+            errs = "\n".join(f"• {s.title or s.id}: {s.error or 'failed'}" for s in failed)
+            await self._add_error_message(session_id, errs,
+                                          title="Some steps couldn't be completed")
         await self._project(self._rm and self._rm.upsert_plan(
             session_id, plan.id, plan.title, plan.goal, plan.status.value))
         await self._project(self._rm and self._rm.set_session_status(
