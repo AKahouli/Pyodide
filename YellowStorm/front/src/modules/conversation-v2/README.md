@@ -82,7 +82,7 @@ Users **cannot** edit generated sources in this panel — Source is inspection o
 | **Nodepod** | Browser VFS via presigned URL downloads | During generation (live) |
 | **Deployed** | Production URL from `deployedUrl` | After publish |
 
-The toggle in `DeployControls` switches between Nodepod (local dev) and
+The centered Preview/Deploy switch in `AppViewModeToggle` switches between Nodepod (local dev) and
 deployed (production) iframes.
 
 ## Runtime Browser Host
@@ -279,7 +279,8 @@ streamingStateCache: Map<string, SessionSlice>;
 - The per-user pipe routes by `sessionId`: events for other sessions accumulate in
   `streamingStateCache` (via `handleStreamEvent`), switching sessions hydrates from it.
 - `setDeployState` updates `deployedUrl` only — it does **not** overwrite Nodepod source
-  fields, and flips `appViewMode` to `'deployed'` when opening an already-deployed session.
+  fields, and does **not** change `appViewMode` (sessions open in Preview / Nodepod by
+  default; `deploy()` flips to Deployed after a successful publish).
 - Runtime status never stores `ticket` / `mcpToken` / sandbox IDs (see BrowserRuntimeHost).
 
 ### Session reducer
@@ -332,9 +333,8 @@ streamingStateCache: Map<string, SessionSlice>;
 │  │ │   page.tsx   │                                  │ │ │
 │  │ │ package.json │                                  │ │ │
 │  │ └──────────────┴──────────────────────────────────┘ │ │
-│  │ ┌─ DeployControls ────────────────────────────────┐ │ │
-│  │ │ [Publish] [Nodepod|Deployed] [Share]             │ │ │
-│  │ └─────────────────────────────────────────────────┘ │ │
+│  │ ┌─ Header: [Code|Preview|Data]  [Preview|Deployed]  [Share][Update] │ │
+│  │ └───────────────────────────────────────────────────────────────────┘ │ │
 │  └────────────────────────────────────────────────────┘ │
 └────────────────────────────────────────────────────────┘
 ```
@@ -347,7 +347,7 @@ The panel has two `rightPanelMode` values (`tool` and `app`), plus an inner
 | Mode | Content | When |
 |---|---|---|
 | **Tool** | `ToolDetailDispatch` (tool call details for the selected tool) | Selecting a tool call in the timeline |
-| **App — Preview / Source** | `ApplicationComponentView`: `AppSourceFileTree` + read-only `AppSourceFileViewer`, or Nodepod (live) / Deployed iframe | After `application_component`; Nodepod↔Deployed toggle in DeployControls |
+| **App — Preview / Source** | `ApplicationComponentView`: `AppSourceFileTree` + read-only `AppSourceFileViewer`, or Nodepod (live) / Deployed iframe | After `application_component`; centered Preview↔Deploy switch in `AppViewModeToggle` |
 | **App — Data** | `AppDataPanel` (production database dev/prod tables + rows) | App data tab when the app has an app-data store |
 
 Selecting a file in the tree switches the main pane to **Source** (read-only).
@@ -582,7 +582,7 @@ tool views, deploy controls).
 | `AppSourceFileViewer.tsx` | Read-only code viewer |
 | `AppBuildProgressPanel.tsx` | Build progress stepper |
 | `AppDataPanel.tsx` | App-data store browse: dev/prod environments, tables, rows |
-| `DeployControls.tsx` | Publish/Update, Nodepod↔Deployed toggle, Share |
+| `DeployControls.tsx` | Publish/Update, Share; `AppViewModeToggle` for Preview↔Deploy |
 | `ShareDeployDialog.tsx` | User search + email share dialog |
 
 ### components/RightPanel/tool-views/

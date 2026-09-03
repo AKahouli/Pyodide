@@ -637,19 +637,11 @@ export const useConversationV2Store = create<State & Actions>()(
       setWorkspaceIds: (ids) => set({ workspaceIds: ids }, false, 'setWorkspaceIds'),
       setDeployState: ({ deployStatus, deployedUrl, lastDeployedAt }) =>
         set(
-          (s) => ({
+          {
             deployStatus,
             deployedUrl,
             ...(lastDeployedAt !== undefined ? { lastDeployedAt } : {}),
-            // Opening a session that already has a live URL → show deployed iframe.
-            // Nodepod preview keeps booting in the background for instant switch-back.
-            ...(deployStatus === 'deployed' &&
-            deployedUrl &&
-            s.appViewMode === 'nodepod' &&
-            !s.deployedUrl
-              ? { appViewMode: 'deployed' as const }
-              : {}),
-          }),
+          },
           false,
           'setDeployState',
         ),
