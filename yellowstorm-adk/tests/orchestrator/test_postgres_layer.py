@@ -116,6 +116,28 @@ async def test_readmodel_roundtrip(pool):
     print("ok  read-model: session/plan/steps/messages project + read back")
 
 
+@pytest.mark.asyncio(loop_scope="module")
+async def test_error_message_component_projects_with_its_json_data(pool):
+    """A failed turn attaches an `error` component to its chat message so the
+    client renders a destructive card (same shape as the main chat module)."""
+    import json
+    rm = readmodel.ReadModel(pool, schema=SCHEMA)
+    await readmodel.init_schema(pool, SCHEMA)
+    sid = "sess_err"
+    await rm.add_message("me1", sid, "assistant", "boom: model 401")
+    await rm.add_message_component(sid, "me1", "c1", "error",
+                                   {"title": "This task couldn't be completed",
+                                    "content": "boom: model 401"})
+    async with pool.acquire() as con:
+        row = await con.fetchrow(
+            f'SELECT type, data FROM "{SCHEMA}".message_components '
+            f'WHERE session_id=$1 AND component_id=$2', sid, "c1")
+    assert row["type"] == "error"
+    data = row["data"] if isinstance(row["data"], dict) else json.loads(row["data"])
+    assert data["content"] == "boom: model 401" and data["title"]
+    print("ok  read-model: error component projects with {title, content}")
+
+
 async def test_outstanding_interrupts_are_tracked_per_step(pool):
     """Several steps can be parked at once, each with its own interrupt id, and
     the set survives across runs — ADK only reports an interrupt on the run that
