@@ -14,6 +14,7 @@ import { WorkyMessageComponent, WorkyMessageComponentDocument } from '../schemas
 import { WorkyPlanStepComponent, WorkyPlanStepComponentDocument } from '../schemas/worky-plan-step-component.schema';
 import { WorkyPlanStepArtifact, WorkyPlanStepArtifactDocument } from '../schemas/worky-plan-step-artifact.schema';
 import {
+  PgSessionRow,
   PgMessageRow,
   PgPlanRow,
   PgPlanStepRow,
@@ -26,6 +27,7 @@ import {
   mapPlan,
   mapPlanStep,
   isKnownPlanStepStatus,
+  isTerminalSessionStatus,
   mapMessageComponent,
   mapPlanStepComponent,
   mapPlanStepArtifact,
@@ -71,6 +73,11 @@ export class WorkyElectricConsumerService implements OnModuleInit, OnModuleDestr
   }
 
   async onModuleInit(): Promise<void> {
+    await this.subscribe(
+      'sessions',
+      this.config.get<string>('worky.electricSessionsTable')!,
+      (m) => this.handleSessions(m),
+    );
     await this.subscribe(
       'messages',
       this.config.get<string>('worky.electricMessagesTable')!,
@@ -344,6 +351,59 @@ export class WorkyElectricConsumerService implements OnModuleInit, OnModuleDestr
     }
   }
 
+  /**
+   * Session lifecycle. The turn/session runs async behind the RunTask ack, so
+   * the frontend only learns it ENDED from here: when the session status goes
+   * terminal (completed | failed | canceled | stopped) we emit `stream.terminal`
+   * so the "manager is working" flag clears and the Stop button releases. The
+   * gRPC path emits this nowhere else (every other `stream.terminal` emitter is
+   * in the unused HTTP-runtime path), which is why a failed planner turn left
+   * the button hanging. Non-terminal statuses (running/blocked/waiting) are
+   * ignored — the plan/step shapes carry those live updates. `error:true` on
+   * 'failed' lets the UI flag it; the cause itself is already in the chat as an
+   * `error` message-component.
+   */
+  async handleSessions(messages: unknown[]): Promise<void> {
+    for (const m of messages as any[]) {
+      if (isControlMessage(m)) {
+        if (this.debug) {
+          this.logger.debug('[worky-electric] control', { shape: 'sessions', headers: m.headers });
+        }
+        continue;
+      }
+      if (!isChangeMessage(m)) continue;
+      if (m.headers.operation === 'delete') continue;
+      try {
+        const row = m.value as unknown as PgSessionRow;
+        if (!isTerminalSessionStatus(row.status)) continue;
+        const target = await this.streamService.findByAiSessionId(row.id);
+        if (!target) {
+          this.logger.warn('[worky-electric] unknown session', { shape: 'sessions', sid: row.id });
+          continue;
+        }
+        this.logger.log('[worky-electric] session terminal → stream.terminal', {
+          sid: row.id, status: row.status, streamId: target.streamId });
+        this.events.emit(target.ownerUserId, target.streamId, {
+          type: 'stream.terminal',
+          emittedAt: Date.now(),
+          payload: { error: row.status.toLowerCase() === 'failed', source: `session-${row.status}` },
+        });
+        if (this.debug) {
+          this.logger.debug('[worky-electric] applied', {
+            shape: 'sessions',
+            streamId: target.streamId,
+            ownerUserId: target.ownerUserId,
+            eventType: 'stream.terminal',
+            status: row.status,
+          });
+        }
+      } catch (err) {
+        this.logger.error('Failed to process session row', { error: (err as Error).message });
+        continue;
+      }
+    }
+  }
+
   async handlePlans(messages: unknown[]): Promise<void> {
     for (const m of messages as any[]) {
       if (isControlMessage(m)) {
@@ -417,6 +477,20 @@ export class WorkyElectricConsumerService implements OnModuleInit, OnModuleDestr
           )
           .exec();
         this.events.emit(target.ownerUserId, target.streamId, event);
+        // An `error` component is only ever attached to a failed turn's message
+        // (service._add_error_message), so its arrival means the turn is over.
+        // Emit `stream.terminal` here too — this shape is PROVEN to sync (the
+        // error card renders), whereas the `sessions` shape may not be published
+        // in every deployment. Clears the "working" flag / releases the Stop button.
+        if ((row.type || '').toLowerCase() === 'error') {
+          this.logger.log('[worky-electric] error component → stream.terminal', {
+            sid: row.session_id, streamId: target.streamId });
+          this.events.emit(target.ownerUserId, target.streamId, {
+            type: 'stream.terminal',
+            emittedAt: Date.now(),
+            payload: { error: true, source: 'error-component' },
+          });
+        }
       } catch (err) {
         this.logger.error('Failed to process message_component row', { error: (err as Error).message });
         continue;

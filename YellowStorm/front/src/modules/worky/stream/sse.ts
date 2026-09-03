@@ -120,8 +120,24 @@ export function subscribeToStreamEvents(
               shouldReconnect = false;
               emitTerminal({ source: 'sse-error-frame', ...parsed });
             } else {
-              const type = (eventName as WorkyEventType) || 'stream.updated';
-              onEvent({ type, data: parsed });
+              // The backend (NestJS @Sse) serializes each frame as
+              // `data: {type, data}` WITHOUT an SSE `event:` name line, so
+              // `eventName` is empty and the real type/payload are nested inside
+              // `parsed`. Unwrap them so typed handlers route correctly — without
+              // this, every event fell through to the 'stream.updated' default
+              // and e.g. `stream.terminal` never cleared the working flag / Stop
+              // button. Only unwrap when there's no explicit event name AND
+              // `parsed.type` is a string (the wrapped shape); a named frame's
+              // payload is used as-is (its own `type` field is payload data).
+              const wrappedType =
+                !eventName && typeof (parsed as { type?: unknown }).type === 'string'
+                  ? ((parsed as { type: string }).type as WorkyEventType)
+                  : null;
+              const type = (eventName as WorkyEventType) || wrappedType || 'stream.updated';
+              const eventData = wrappedType
+                ? ((parsed as { data?: Record<string, unknown> }).data ?? {})
+                : parsed;
+              onEvent({ type, data: eventData });
             }
             eventName = '';
             dataLines = [];
