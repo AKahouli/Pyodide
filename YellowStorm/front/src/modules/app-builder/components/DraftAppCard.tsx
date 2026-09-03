@@ -14,6 +14,7 @@ import { useModuleTranslation } from '@/modules/localization';
 import type { AppViewMode } from '../hooks/useAppBuilderFilters';
 import type { DraftApp } from '../types';
 import { DeleteDraftAppButton } from './DeleteDraftAppButton';
+import { AppRevisionMeta } from './AppRevisionMeta';
 
 interface DraftAppCardProps {
   app: DraftApp;
@@ -111,6 +112,7 @@ export const DraftAppCard = memo(function DraftAppCard({
         <p className='mt-0.5 text-[11px] text-muted-foreground'>
           {t('card.updatedAt', { date: new Date(app.lastUpdatedAt).toLocaleString() })}
         </p>
+        <AppRevisionMeta revision={app} showDeployedRevision={false} />
       </div>
     </>
   );

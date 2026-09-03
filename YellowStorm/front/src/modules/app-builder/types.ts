@@ -8,7 +8,14 @@ export type AppCatalogItem =
 
 export type DraftDeployStatus = 'idle' | 'deploying' | 'error';
 
-export interface DeployedApp {
+export interface AppRevisionCatalogFields {
+  lastDeployedRevisionId: string | null;
+  latestFinalizedRevisionId: string | null;
+  latestFinalizedAt: string | null;
+  finalizedVersionCount: number;
+}
+
+export interface DeployedApp extends AppRevisionCatalogFields {
   sessionId: string;
   title: string;
   deployedUrl: string;
@@ -19,7 +26,7 @@ export interface DeployedApp {
   canOpenConversation?: boolean;
 }
 
-export interface DraftApp {
+export interface DraftApp extends AppRevisionCatalogFields {
   sessionId: string;
   title: string;
   lastUpdatedAt: string;

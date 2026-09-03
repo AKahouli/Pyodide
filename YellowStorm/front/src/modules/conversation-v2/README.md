@@ -173,6 +173,23 @@ Used for:
 - Tracking pending mutations for the mutation lock.
 - Providing file content for `read`/`search` without hitting VFS.
 
+### Version History (finalized revisions)
+
+Each successful MCP `finalize` creates a **stable version** row (Mongo
+`app_finalized_revisions`) and an `application_component` SSE event with
+`revision_id`.
+
+- **UI**: [`VersionHistoryPanel`](components/RightPanel/VersionHistoryPanel.tsx)
+  exposes a compact header `VersionSwitcher` popover (newest first) with Preview
+  and Deploy actions, plus a slim `HistoricalPreviewBanner` when viewing an older
+  revision — so the NodePod preview keeps full height under the Aperçus / Données tabs.
+- **Preview-only**: selecting an older version calls `syncHostRevisionSources`
+  without changing the agent binding (`latestRevisionId`).
+- **Deploy whitelist**: only finalized revision ids are accepted by
+  `POST …/deploy` (default = latest finalized, not binding latest).
+- **API**: `GET …/finalized-versions` hydrates from Mongo with lazy backfill
+  from persisted `application_component` events.
+
 ## Event shape
 
 From SSE / replay ([`interfaces/events.ts`](interfaces/events.ts)). Every event carries a

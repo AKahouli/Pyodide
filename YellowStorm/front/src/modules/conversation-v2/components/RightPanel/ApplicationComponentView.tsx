@@ -104,7 +104,7 @@ export function ApplicationComponentView({
   const appViewMode = useConversationV2Store((s) => s.appViewMode);
   const deployedUrl = useConversationV2Store((s) => s.deployedUrl);
   const workspaceRevisionId = useConversationV2Store(
-    (s) => s.applicationComponent?.workspaceRevisionId,
+    (s) => s.previewRevisionId ?? s.applicationComponent?.workspaceRevisionId,
   );
   // The host is long-lived in ConversationV2SessionPage; this hook subscribes.
   const { status, previewUrl, error, files, retry, previewIframeRef } = useNodepodPreview({

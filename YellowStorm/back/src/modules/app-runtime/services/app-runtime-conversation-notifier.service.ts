@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { ConversationV2StreamService } from '@modules/conversation-v2/services/conversation-v2-stream.service';
 import type { AppRuntimeBinding } from '../schemas/app-runtime-binding.schema';
 import type { FilesTreeNode } from '@modules/conversation-v2/types/conversation-v2.types';
+import { RuntimeFinalizedRevisionService } from './runtime-finalized-revision.service';
 
 function countFileTreeNodes(node: unknown): number {
   if (!node || typeof node !== 'object') return 0;
@@ -44,6 +45,7 @@ export class AppRuntimeConversationNotifierService {
   constructor(
     @Inject(forwardRef(() => ConversationV2StreamService))
     private readonly streamService: ConversationV2StreamService,
+    private readonly finalizedRevisions: RuntimeFinalizedRevisionService,
   ) {}
 
   async notifyFinalize(
@@ -61,15 +63,28 @@ export class AppRuntimeConversationNotifierService {
     const cephPath =
       typeof result.cephManifestPath === 'string' ? result.cephManifestPath : undefined;
     const filesTree = normalizeFilesTree(result.fileTree);
+    const fileCount = filesTree ? countFileTreeNodes(filesTree) : undefined;
+    const eventId = randomUUID();
+    const timestamp = Math.floor(Date.now() / 1000);
+
+    await this.finalizedRevisions.record({
+      workspaceId: binding.workspaceId,
+      revisionId,
+      title,
+      eventId,
+      finalizedAt: new Date(timestamp * 1000),
+      fileCount: fileCount ?? null,
+      cephManifestPath: cephPath ?? null,
+    });
 
     await this.streamService.publishApplicationComponent(binding.userId, binding.workspaceId, {
-      event_id: randomUUID(),
-      timestamp: Math.floor(Date.now() / 1000),
+      event_id: eventId,
+      timestamp,
       url: 'nodepod://preview',
       title,
       ceph_path: cephPath,
       files_tree: filesTree,
-      file_count: filesTree ? countFileTreeNodes(filesTree) : undefined,
+      file_count: fileCount,
       revision_id: revisionId,
     });
 

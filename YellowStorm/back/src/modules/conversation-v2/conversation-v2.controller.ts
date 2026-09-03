@@ -18,12 +18,16 @@ import {
 import { Types } from 'mongoose';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { ConfigService } from '@nestjs/config';
-import { isSystemStarterRevisionId } from '@modules/app-runtime/constants/starter-revisions';
 import * as grpc from '@grpc/grpc-js';
 import { Public } from '@modules/auth/decorators/public.decorator';
 import { CurrentUser } from '@modules/auth/decorators/current-user.decorator';
 import { ConversationV2GrpcClientService } from './services/conversation-v2.grpc-client.service';
 import { ConversationV2SessionService } from './services/conversation-v2-session.service';
+import type {
+  AppRevisionCatalogFields,
+  DeployedAppSummary,
+  DraftAppSummary,
+} from './services/conversation-v2-session.service';
 import { ConversationV2ShareService } from './services/conversation-v2-share.service';
 import { ConversationV2OwnerGuard } from './guards/conversation-v2-owner.guard';
 import { ConversationV2SessionAccessGuard } from './guards/conversation-v2-session-access.guard';
@@ -54,6 +58,7 @@ import { normalizeAppSourceCephPrefix } from './utils/normalize-app-source-ceph-
 import { RuntimeTicketService } from '@modules/app-runtime/services/runtime-ticket.service';
 import { RuntimeRevisionService } from '@modules/app-runtime/services/runtime-revision.service';
 import { RuntimeBindingService } from '@modules/app-runtime/services/runtime-binding.service';
+import { RuntimeFinalizedRevisionService } from '@modules/app-runtime/services/runtime-finalized-revision.service';
 import type { RuntimeTicketResult } from '@modules/app-runtime/types/app-runtime-protocol';
 
 interface AuthUser { id: string; }
@@ -83,6 +88,7 @@ export class ConversationV2Controller {
     private readonly runtimeTickets: RuntimeTicketService,
     private readonly runtimeRevisions: RuntimeRevisionService,
     private readonly runtimeBindings: RuntimeBindingService,
+    private readonly finalizedRevisions: RuntimeFinalizedRevisionService,
   ) {}
 
   @Post('sessions')
@@ -166,30 +172,9 @@ export class ConversationV2Controller {
   /** Owned deployed, shared, and draft apps for the current user (App Builder). */
   @Get('apps')
   async listDeployedApps(@CurrentUser() user: AuthUser): Promise<{
-    deployed: {
-      sessionId: string;
-      title: string;
-      deployedUrl: string;
-      lastDeployedAt: string | null;
-      source: 'owned' | 'shared';
-      shareId: string | null;
-      canOpenConversation: boolean;
-    }[];
-    shared: {
-      sessionId: string;
-      title: string;
-      deployedUrl: string;
-      lastDeployedAt: string | null;
-      source: 'owned' | 'shared';
-      shareId: string | null;
-      canOpenConversation: boolean;
-    }[];
-    drafts: {
-      sessionId: string;
-      title: string;
-      lastUpdatedAt: string;
-      deployStatus: 'idle' | 'deploying' | 'error';
-    }[];
+    deployed: DeployedAppSummary[];
+    shared: DeployedAppSummary[];
+    drafts: DraftAppSummary[];
   }> {
     const [deployed, shared, drafts] = await Promise.all([
       this.sessions.listDeployedApps(user.id),
@@ -197,10 +182,22 @@ export class ConversationV2Controller {
       this.sessions.listDraftApps(user.id),
     ]);
     const ownedIds = new Set(deployed.map((app) => app.sessionId));
+    const filteredShared = shared.filter((app) => !ownedIds.has(app.sessionId));
+    const revisionBySession = await this.buildRevisionCatalogBySessionId([
+      ...deployed,
+      ...filteredShared,
+      ...drafts,
+    ]);
     return {
-      deployed,
-      shared: shared.filter((app) => !ownedIds.has(app.sessionId)),
-      drafts,
+      deployed: deployed.map((app) =>
+        this.applyRevisionCatalog(app, revisionBySession.get(app.sessionId), true),
+      ),
+      shared: filteredShared.map((app) =>
+        this.applyRevisionCatalog(app, revisionBySession.get(app.sessionId), true),
+      ),
+      drafts: drafts.map((app) =>
+        this.applyRevisionCatalog(app, revisionBySession.get(app.sessionId), false),
+      ),
     };
   }
 
@@ -450,6 +447,30 @@ export class ConversationV2Controller {
     }
   }
 
+  @Get('sessions/:id/finalized-versions')
+  @UseGuards(ConversationV2SessionAccessGuard)
+  @RequireConversationSessionPermission(ConversationV2SessionPermissions.SESSION_READ)
+  async listFinalizedVersions(
+    @CurrentConversationSession() session: ConversationV2ResolvedSession,
+    @Param('id') sessionPointerId: string,
+  ): Promise<{
+    items: Array<{
+      revisionId: string;
+      title: string;
+      finalizedAt: string;
+      fileCount?: number;
+    }>;
+    latestRevisionId: string | null;
+  }> {
+    const workspaceId = this.requireWorkspaceId(session);
+    await this.finalizedRevisions.backfillFromEvents(sessionPointerId, workspaceId);
+    const items = await this.finalizedRevisions.listByWorkspace(workspaceId);
+    return {
+      items,
+      latestRevisionId: items[0]?.revisionId ?? null,
+    };
+  }
+
   @Post('sessions/:id/deploy')
   @HttpCode(HttpStatus.OK)
   @UseGuards(ConversationV2OwnerGuard)
@@ -471,13 +492,19 @@ export class ConversationV2Controller {
     await this.sessions.setDeployState(ownerId, id, { deployStatus: 'deploying' });
 
     let deployedUrl: string;
+    let revisionId: string;
     try {
-      const revisionId = await this.resolveDeployRevisionId(pointer.aiSessionId, body.revisionId);
-      if (!revisionId) {
+      const resolvedRevisionId = await this.resolveDeployRevisionId(
+        pointer.aiSessionId,
+        id,
+        body.revisionId,
+      );
+      if (!resolvedRevisionId) {
         throw new BadRequestException(
           'No finalized revision is available to deploy. Wait until the app is ready.',
         );
       }
+      revisionId = resolvedRevisionId;
       const result = await this.deployment.deploy(pointer.aiSessionId, revisionId);
       deployedUrl = result.url;
     } catch (err) {
@@ -494,6 +521,7 @@ export class ConversationV2Controller {
       deployedUrl,
       deployedAppTitle,
       lastDeployedAt,
+      lastDeployedRevisionId: revisionId,
     });
     await this.appShares.syncDeployMetadata(id, {
       title: deployedAppTitle || 'Untitled app',
@@ -755,17 +783,68 @@ export class ConversationV2Controller {
 
   private async resolveDeployRevisionId(
     aiSessionId: string,
+    sessionPointerId: string,
     requestedRevisionId?: string,
   ): Promise<string | undefined> {
-    const trimmed = requestedRevisionId?.trim();
-    if (trimmed) return trimmed;
+    await this.finalizedRevisions.backfillFromEvents(sessionPointerId, aiSessionId);
 
-    const binding = await this.runtimeBindings.findByWorkspaceId(aiSessionId);
-    const latest = binding?.latestRevisionId?.trim();
-    if (!latest || isSystemStarterRevisionId(latest)) {
-      return undefined;
+    const trimmed = requestedRevisionId?.trim();
+    if (trimmed) {
+      await this.finalizedRevisions.assertFinalized(aiSessionId, trimmed);
+      return trimmed;
     }
-    return latest;
+
+    return (await this.finalizedRevisions.resolveLatestFinalized(aiSessionId)) ?? undefined;
+  }
+
+  private async buildRevisionCatalogBySessionId(
+    apps: Array<{ sessionId: string }>,
+  ): Promise<Map<string, AppRevisionCatalogFields>> {
+    const sessionIds = apps.map((app) => app.sessionId);
+    const contexts = await this.sessions.resolveRevisionContextBySessionIds(sessionIds);
+    const workspaceIds = [
+      ...new Set(
+        [...contexts.values()]
+          .map((ctx) => ctx.aiSessionId)
+          .filter((id): id is string => !!id),
+      ),
+    ];
+    const finalizedByWorkspace =
+      await this.finalizedRevisions.summarizeByWorkspaces(workspaceIds);
+
+    const revisionBySession = new Map<string, AppRevisionCatalogFields>();
+    for (const sessionId of sessionIds) {
+      const context = contexts.get(sessionId);
+      const workspaceId = context?.aiSessionId;
+      const finalized = workspaceId ? finalizedByWorkspace.get(workspaceId) : undefined;
+      revisionBySession.set(sessionId, {
+        lastDeployedRevisionId: context?.lastDeployedRevisionId ?? null,
+        latestFinalizedRevisionId: finalized?.latestRevisionId ?? null,
+        latestFinalizedAt: finalized?.latestFinalizedAt ?? null,
+        finalizedVersionCount: finalized?.versionCount ?? 0,
+      });
+    }
+    return revisionBySession;
+  }
+
+  private applyRevisionCatalog<T extends { sessionId: string }>(
+    app: T,
+    revision: AppRevisionCatalogFields | undefined,
+    includeDeployedRevision: boolean,
+  ): T & AppRevisionCatalogFields {
+    const catalog = revision ?? {
+      lastDeployedRevisionId: null,
+      latestFinalizedRevisionId: null,
+      latestFinalizedAt: null,
+      finalizedVersionCount: 0,
+    };
+    return {
+      ...app,
+      ...catalog,
+      lastDeployedRevisionId: includeDeployedRevision
+        ? catalog.lastDeployedRevisionId
+        : null,
+    };
   }
 
   private translateGrpcError(err: unknown): never {

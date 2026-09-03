@@ -162,6 +162,18 @@
       "more": "More actions"
     }
   },
+  "versionHistory": {
+    "title": "Versions",
+    "subtitle": "Pick a finalized version to preview or deploy",
+    "open": "Finalized versions",
+    "finalized": "Finalized",
+    "latest": "Latest",
+    "preview": "Preview this version",
+    "deploy": "Deploy this version",
+    "active": "Active",
+    "empty": "No finalized versions yet",
+    "loading": "Loading versions…"
+  },
   "deploy": {
     "publish": "Deploy",
     "publishing": "Deploying…",

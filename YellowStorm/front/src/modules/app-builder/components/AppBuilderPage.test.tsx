@@ -3,6 +3,7 @@ import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { DeployedApp, DraftApp } from '../types';
+import { emptyRevisionCatalog } from '../test-fixtures';
 
 const listAppsMock = vi.hoisted(() => vi.fn());
 const removeAppMock = vi.hoisted(() => vi.fn());
@@ -42,6 +43,7 @@ const mockDeployed: DeployedApp[] = [
     lastDeployedAt: '2026-07-17T10:00:00.000Z',
     source: 'owned',
     shareId: null,
+    ...emptyRevisionCatalog,
   },
 ];
 
@@ -53,6 +55,7 @@ const mockShared: DeployedApp[] = [
     lastDeployedAt: '2026-07-16T10:00:00.000Z',
     source: 'shared',
     shareId: 'share-2',
+    ...emptyRevisionCatalog,
   },
 ];
 
@@ -62,6 +65,7 @@ const mockDrafts: DraftApp[] = [
     title: 'Draft app',
     lastUpdatedAt: '2026-07-15T10:00:00.000Z',
     deployStatus: 'idle',
+    ...emptyRevisionCatalog,
   },
 ];
 
