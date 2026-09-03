@@ -131,7 +131,7 @@ only persists the user echo and registers the background stream before returning
 
 | Field | Type | Description |
 |---|---|---|
-| `message` | `string` | Required, 1..16384 chars |
+| `message` | `string` | Required, 1..30000 chars |
 | `model` | `string?` | Optional full LiteLLM model id (e.g. `azure/gpt-4.1`); overrides the default chain |
 | `clientEventId` | `UUID?` | Client UUID so the SSE frame replaces the optimistic echo instead of duplicating it |
 | `skillIds` | `string[]?` | Skill ids to enable for the turn |
@@ -722,7 +722,7 @@ for that session.
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `conversationV2.maxMessageLength` | `16384` | Max chars per message |
+| `conversationV2.maxMessageLength` | `30000` | Max chars per message |
 | `conversationV2.maxConcurrentStreams` | `5` | Max concurrent streams per user |
 | `conversationV2.maxSseConnections` | `5` | Max SSE connections per user |
 | `conversationV2.sseHeartbeatMs` | `15000` | SSE heartbeat interval |
