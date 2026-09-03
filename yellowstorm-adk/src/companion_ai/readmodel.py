@@ -98,6 +98,22 @@ async def init_schema(pool: asyncpg.Pool, schema: str = "public") -> None:
                 content    TEXT,
                 created_at TIMESTAMPTZ NOT NULL DEFAULT now()
             )""")
+        # Rich components of a chat message (the client's `message_components`
+        # Electric shape). One message → many components; the client joins on
+        # message_id and renders each `type` (text|error|chart|…) with its own
+        # widget. We use it for the `error` component so a failed turn renders as
+        # a destructive card, the same as the main chat module — see service._add_error_message.
+        await con.execute(f"""
+            CREATE TABLE IF NOT EXISTS {_q(schema,'message_components')} (
+                session_id   TEXT NOT NULL,
+                message_id   TEXT NOT NULL,   -- joins messages(id)
+                component_id TEXT NOT NULL,
+                ordinal      INTEGER NOT NULL DEFAULT 0,
+                type         TEXT NOT NULL,   -- ComponentType: text|error|chart|…
+                data         JSONB NOT NULL DEFAULT '{{}}'::jsonb,
+                created_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
+                PRIMARY KEY (session_id, component_id)
+            )""")
         # Internal (not published to Electric): which step is waiting on which
         # email reply. The token travels in the outbound mail and comes back on
         # the reply; this is what turns it into (session, step, interrupt).
@@ -288,6 +304,20 @@ class ReadModel:
                 INSERT INTO {_q(self._schema,'messages')} (id,session_id,role,content)
                 VALUES ($1,$2,$3,$4) ON CONFLICT (id) DO NOTHING
             """, message_id, session_id, role, content)
+
+    async def add_message_component(self, session_id: str, message_id: str, component_id: str,
+                                    type: str, data: dict, ordinal: int = 0) -> None:
+        """Attach one rich component to a chat message (the `message_components`
+        shape). `data` is stored as JSONB — the client's component mapper reads
+        it by `type` (e.g. an `error` component's {title, content})."""
+        import json
+        async with self._pool.acquire() as con:
+            await con.execute(f"""
+                INSERT INTO {_q(self._schema,'message_components')}
+                    (session_id,message_id,component_id,ordinal,type,data)
+                VALUES ($1,$2,$3,$4,$5,$6::jsonb)
+                ON CONFLICT (session_id, component_id) DO NOTHING
+            """, session_id, message_id, component_id, ordinal, type, json.dumps(data))
 
     async def add_step_artifact(self, session_id: str, step_id: str, *, file_path: str,
                                 filename: str, artifact_kind: Optional[str] = None,

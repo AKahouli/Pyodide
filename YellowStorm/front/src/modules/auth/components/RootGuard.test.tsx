@@ -16,6 +16,9 @@ vi.mock('@/modules/models', () => ({
 vi.mock('@/modules/conversation/hooks/useConversationStream', () => ({
   useConversationStream: vi.fn(),
 }));
+vi.mock('@/modules/conversation-v2/useStream', () => ({
+  useConversationV2StreamConnection: vi.fn(),
+}));
 vi.mock('@/modules/sidebar', () => ({ AppSidebar: () => <div data-testid='app-sidebar' /> }));
 vi.mock('@/modules/conversation', () => ({ NewConversationPage: () => <div>new conversation page</div> }));
 vi.mock('@/components/ui/sidebar', () => ({
@@ -24,6 +27,9 @@ vi.mock('@/components/ui/sidebar', () => ({
   SidebarTriggerMobile: () => <button type='button'>trigger</button>,
 }));
 vi.mock('@/modules/auth/components/LandingPage', () => ({ LandingPage: () => <div>landing page</div> }));
+vi.mock('@/modules/conversation/effects/stars-background', () => ({
+  StarsBackground: () => <div data-testid='stars-bg' />,
+}));
 vi.mock('@/modules/admin', () => ({
   DEFAULT_FEATURE_VISIBILITY: { platformCopilot: false },
   getFeatureVisibility: getFeatureVisibilityMock,
@@ -112,5 +118,61 @@ describe('RootGuard', () => {
 
     await waitFor(() => expect(getFeatureVisibilityMock).toHaveBeenCalled());
     expect(screen.queryByText('platform copilot mascot')).not.toBeInTheDocument();
+  });
+
+  it('shows a dedicated pending-approval page and skips the app shell for inactive users', async () => {
+    const logout = vi.fn();
+    useAuthMock.mockReturnValue(
+      makeAuthState({
+        isAuthenticated: true,
+        logout,
+        user: { status: 'inactive' } as never,
+      }),
+    );
+
+    renderWithRouter(<RootGuard />);
+
+    expect(screen.getByRole('status')).toHaveTextContent('pendingApproval.message');
+    expect(screen.getByRole('heading')).toHaveTextContent('pendingApproval.welcomePrefix');
+    expect(screen.getByRole('button', { name: 'pendingApproval.logout' })).toBeInTheDocument();
+    expect(screen.queryByTestId('sidebar-provider')).not.toBeInTheDocument();
+    expect(screen.queryByText('new conversation page')).not.toBeInTheDocument();
+    expect(fetchModelsMock).not.toHaveBeenCalled();
+    expect(getFeatureVisibilityMock).not.toHaveBeenCalled();
+  });
+
+  it('shows declined copy when the inactive user was rejected', () => {
+    useAuthMock.mockReturnValue(
+      makeAuthState({
+        isAuthenticated: true,
+        user: { status: 'inactive', registrationApproval: 'rejected' } as never,
+      }),
+    );
+
+    renderWithRouter(<RootGuard />);
+
+    expect(screen.getByRole('status')).toHaveTextContent('pendingApproval.messageRejected');
+    expect(screen.getByText('pendingApproval.steps.access.statusRejected')).toBeInTheDocument();
+    expect(screen.queryByText('pendingApproval.message')).not.toBeInTheDocument();
+  });
+
+  it('does not show the pending-approval page on the profile-completion redirect', async () => {
+    useAuthMock.mockReturnValue(
+      makeAuthState({
+        isAuthenticated: true,
+        requiresProfileCompletion: true,
+        user: { status: 'inactive' } as never,
+      }),
+    );
+
+    renderWithRouter(
+      <Routes>
+        <Route path='/' element={<RootGuard />} />
+        <Route path='/complete-profile' element={<div>complete profile page</div>} />
+      </Routes>,
+    );
+
+    await waitFor(() => expect(screen.getByText('complete profile page')).toBeInTheDocument());
+    expect(screen.queryByRole('status')).not.toBeInTheDocument();
   });
 });

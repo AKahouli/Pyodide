@@ -3,6 +3,7 @@
  */
 
 import type { LucideIcon } from 'lucide-react';
+import type { ColorTheme } from '@/contexts/ThemeContext';
 import type { ModuleTranslationKey } from '@/modules/localization';
 import type {
   AgentConnectorActionSelection,
@@ -211,18 +212,29 @@ export interface SetCorsSettingsRequest {
   origins: CorsOriginEntry[];
 }
 
-export type AdminColorTheme = 'default' | 'yellow' | 'orange' | 'blue';
+export type AdminColorTheme = ColorTheme;
+export type AdminThemeLogo = string;
 
-export type AdminThemeLogo = 'yellowmind' | 'kpmg';
+export interface AppearanceLogo {
+  id: string;
+  name: string;
+  kind: 'builtin' | 'custom';
+  contentType?: string;
+  width?: number;
+  height?: number;
+  url?: string;
+  updatedAt?: string;
+}
 
 export interface AppearanceThemeConfig {
   labelKey: string;
-  logo: AdminThemeLogo;
+  logo: string;
 }
 
 export interface AppearanceSettings {
   defaultColorTheme: AdminColorTheme;
   themes: Record<AdminColorTheme, AppearanceThemeConfig>;
+  logos: AppearanceLogo[];
 }
 
 // Plan Types
@@ -746,6 +758,8 @@ export const PERMISSION_GROUPS: PermissionGroup[] = [
 
 export type UserStatus = 'active' | 'inactive' | 'suspended';
 
+export type RegistrationApproval = 'pending' | 'approved' | 'rejected';
+
 export interface AdminUserResponse {
   id: string;
   email: string;
@@ -757,6 +771,7 @@ export interface AdminUserResponse {
     company?: string;
   };
   status: UserStatus;
+  registrationApproval?: RegistrationApproval;
   plan?: {
     id: string;
     slug: string;

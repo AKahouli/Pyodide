@@ -104,7 +104,7 @@ export class ConversationV2StreamService implements OnModuleDestroy {
     sessionId: string,
     req: StartStreamRequest,
   ): Promise<void> {
-    const max = this.config.get<number>('conversationV2.maxMessageLength') ?? 16384;
+    const max = this.config.get<number>('conversationV2.maxMessageLength') ?? 30000;
     if (!req.message || req.message.length === 0 || req.message.length > max) {
       throw new BadRequestException(`message must be 1..${max} chars`);
     }

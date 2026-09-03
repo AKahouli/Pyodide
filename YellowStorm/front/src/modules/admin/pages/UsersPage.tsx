@@ -2,7 +2,8 @@
  * UsersPage - User management with listing, filtering, and actions
  */
 
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useRef } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { Users, Loader2, AlertCircle, RefreshCw, Search, UserX, UserCheck, Shield, CreditCard, ChevronLeft, ChevronRight, MoreHorizontal, Mail, MailCheck, CheckCircle2, XCircle, X, Plus } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -17,8 +18,10 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel,
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog';
 import { Checkbox } from '@/components/ui/checkbox';
-import { getAdminUsers, suspendUser, activateUser, assignPlanToUser, getAllPlans, getActiveRoles, assignRoleToUser, unassignRoleFromUser } from '../api';
+import { getAdminUsers, getAdminUserById, suspendUser, activateUser, approveRegistration, rejectRegistration, assignPlanToUser, getAllPlans, getActiveRoles, assignRoleToUser, unassignRoleFromUser } from '../api';
 import type { AdminUserResponse, AdminUserListParams, UserStatus, PlanResponse, RoleResponse } from '../types';
+import { usePermissions } from '../hooks/usePermissions';
+import { getUserAccountMenuActions, isSuperAdmin, parseRegistrationReviewSearch, stripRegistrationReviewParams, type UserAccountMenuActions } from './user-registration-review';
 import { useModuleTranslation } from '@/modules/localization';
 import type { ModuleTranslationKey, TranslationParams } from '@/modules/localization';
 
@@ -80,9 +83,59 @@ function renderStatusBadge(status: UserStatus, translate: AdminTranslate) {
   }
 }
 
+function UserAccountMenuItems({
+  actions,
+  t,
+  onApprove,
+  onReject,
+  onActivate,
+  onSuspend,
+}: {
+  actions: UserAccountMenuActions;
+  t: AdminTranslate;
+  onApprove: () => void;
+  onReject: () => void;
+  onActivate: () => void;
+  onSuspend: () => void;
+}) {
+  return (
+    <>
+      {actions.showApprove && (
+        <DropdownMenuItem onClick={onApprove}>
+          <UserCheck className='mr-2 h-4 w-4' />
+          {t('users.dropdown.approveRegistration')}
+        </DropdownMenuItem>
+      )}
+      {actions.showReject && (
+        <DropdownMenuItem onClick={onReject} className='text-destructive'>
+          <UserX className='mr-2 h-4 w-4' />
+          {t('users.dropdown.rejectRegistration')}
+        </DropdownMenuItem>
+      )}
+      {actions.showActivate && (
+        <DropdownMenuItem onClick={onActivate}>
+          <UserCheck className='mr-2 h-4 w-4' />
+          {t('users.dropdown.activate')}
+        </DropdownMenuItem>
+      )}
+      {actions.showSuspend && (
+        <DropdownMenuItem onClick={onSuspend} className='text-destructive'>
+          <UserX className='mr-2 h-4 w-4' />
+          {t('users.dropdown.suspend')}
+        </DropdownMenuItem>
+      )}
+    </>
+  );
+}
+
 export function UsersPage() {
   const { t, language } = useModuleTranslation('admin');
   const { t: tCommon } = useModuleTranslation('common');
+  const { hasPermission } = usePermissions();
+  const superAdmin = isSuperAdmin(hasPermission);
+  const [searchParams, setSearchParams] = useSearchParams();
+  const initialReview = parseRegistrationReviewSearch(searchParams);
+  const reviewHandled = useRef(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [users, setUsers] = useState<AdminUserResponse[]>([]);
@@ -94,7 +147,7 @@ export function UsersPage() {
   const [limit] = useState(20);
   const [search, setSearch] = useState('');
   const [searchInput, setSearchInput] = useState('');
-  const [statusFilter, setStatusFilter] = useState<UserStatus | 'all'>('all');
+  const [statusFilter, setStatusFilter] = useState<UserStatus | 'all'>(initialReview.statusFilter ?? 'all');
   const [emailVerifiedFilter, setEmailVerifiedFilter] = useState<'all' | 'true' | 'false'>('all');
 
   // Data for modals
@@ -105,6 +158,8 @@ export function UsersPage() {
   const [selectedUser, setSelectedUser] = useState<AdminUserResponse | null>(null);
   const [showSuspendDialog, setShowSuspendDialog] = useState(false);
   const [showActivateDialog, setShowActivateDialog] = useState(false);
+  const [showApproveDialog, setShowApproveDialog] = useState(false);
+  const [showRejectDialog, setShowRejectDialog] = useState(false);
   const [showPlanDialog, setShowPlanDialog] = useState(false);
   const [showRolesDialog, setShowRolesDialog] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -191,6 +246,52 @@ export function UsersPage() {
     setShowActivateDialog(true);
   };
 
+  const openApproveDialog = (user: AdminUserResponse) => {
+    setSelectedUser(user);
+    setShowApproveDialog(true);
+  };
+
+  const openRejectDialog = (user: AdminUserResponse) => {
+    setSelectedUser(user);
+    setShowRejectDialog(true);
+  };
+
+  useEffect(() => {
+    if (reviewHandled.current || loading) return;
+    const review = parseRegistrationReviewSearch(searchParams);
+    const reviewUserId = review.reviewUserId;
+    if (!reviewUserId) return;
+    if (!superAdmin) {
+      reviewHandled.current = true;
+      return;
+    }
+
+    const openReviewDialog = async () => {
+      reviewHandled.current = true;
+      let user = users.find((candidate) => candidate.id === reviewUserId);
+      if (!user) {
+        try {
+          user = await getAdminUserById(reviewUserId);
+        } catch (err) {
+          toast.error(t('users.toasts.review.error'), {
+            description: err instanceof Error ? err.message : t('users.errors.unknown'),
+          });
+          setSearchParams(stripRegistrationReviewParams(searchParams), { replace: true });
+          return;
+        }
+      }
+
+      if (review.decision === 'reject') {
+        openRejectDialog(user);
+      } else {
+        openApproveDialog(user);
+      }
+      setSearchParams(stripRegistrationReviewParams(searchParams), { replace: true });
+    };
+
+    void openReviewDialog();
+  }, [loading, users, searchParams, superAdmin, t, setSearchParams]);
+
   const openPlanDialog = (user: AdminUserResponse) => {
     setSelectedUser(user);
     setSelectedPlanId(user.plan?.id || '');
@@ -236,6 +337,54 @@ export function UsersPage() {
       setShowActivateDialog(false);
     } catch (err) {
       toast.error(t('users.toasts.activate.error'), {
+        description: err instanceof Error ? err.message : t('users.errors.unknown'),
+      });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleApproveRegistration = async () => {
+    if (!selectedUser) return;
+    setSaving(true);
+
+    try {
+      await approveRegistration(selectedUser.id);
+      setUsers((prev) =>
+        prev.map((u) =>
+          u.id === selectedUser.id ? { ...u, status: 'active' as UserStatus, registrationApproval: 'approved' } : u,
+        ),
+      );
+      toast.success(t('users.toasts.approveRegistration.title'), {
+        description: t('users.toasts.approveRegistration.description', { email: selectedUser.email }),
+      });
+      setShowApproveDialog(false);
+    } catch (err) {
+      toast.error(t('users.toasts.approveRegistration.error'), {
+        description: err instanceof Error ? err.message : t('users.errors.unknown'),
+      });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleRejectRegistration = async () => {
+    if (!selectedUser) return;
+    setSaving(true);
+
+    try {
+      await rejectRegistration(selectedUser.id);
+      setUsers((prev) =>
+        prev.map((u) =>
+          u.id === selectedUser.id ? { ...u, status: 'inactive' as UserStatus, registrationApproval: 'rejected' } : u,
+        ),
+      );
+      toast.success(t('users.toasts.rejectRegistration.title'), {
+        description: t('users.toasts.rejectRegistration.description', { email: selectedUser.email }),
+      });
+      setShowRejectDialog(false);
+    } catch (err) {
+      toast.error(t('users.toasts.rejectRegistration.error'), {
         description: err instanceof Error ? err.message : t('users.errors.unknown'),
       });
     } finally {
@@ -435,6 +584,12 @@ export function UsersPage() {
                       <TableCell className='hidden md:table-cell'>
                         <div className='flex flex-col gap-1'>
                           {renderStatusBadge(user.status, t)}
+                          {user.status === 'inactive' && user.registrationApproval === 'pending' && (
+                            <span className='text-xs text-muted-foreground'>{t('users.approval.pending')}</span>
+                          )}
+                          {user.status === 'inactive' && user.registrationApproval === 'rejected' && (
+                            <span className='text-xs text-muted-foreground'>{t('users.approval.rejected')}</span>
+                          )}
                           {user.profileComplete ? (
                             <span className='text-xs text-green-600 flex items-center gap-1'>
                               <CheckCircle2 className='h-3 w-3' /> {t('users.profile.complete')}
@@ -489,17 +644,14 @@ export function UsersPage() {
                               {t('users.dropdown.manageRoles')}
                             </DropdownMenuItem>
                             <DropdownMenuSeparator />
-                            {user.status === 'suspended' ? (
-                              <DropdownMenuItem onClick={() => openActivateDialog(user)}>
-                                <UserCheck className='mr-2 h-4 w-4' />
-                                {t('users.dropdown.activate')}
-                              </DropdownMenuItem>
-                            ) : (
-                              <DropdownMenuItem onClick={() => openSuspendDialog(user)} className='text-destructive'>
-                                <UserX className='mr-2 h-4 w-4' />
-                                {t('users.dropdown.suspend')}
-                              </DropdownMenuItem>
-                            )}
+                            <UserAccountMenuItems
+                              actions={getUserAccountMenuActions(user, superAdmin)}
+                              t={t}
+                              onApprove={() => openApproveDialog(user)}
+                              onReject={() => openRejectDialog(user)}
+                              onActivate={() => openActivateDialog(user)}
+                              onSuspend={() => openSuspendDialog(user)}
+                            />
                           </DropdownMenuContent>
                         </DropdownMenu>
                       </TableCell>
@@ -569,6 +721,52 @@ export function UsersPage() {
                 </>
               ) : (
                 t('users.modals.activate.action')
+              )}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* Approve registration dialog */}
+      <AlertDialog open={showApproveDialog} onOpenChange={setShowApproveDialog}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{t('users.modals.approveRegistration.title')}</AlertDialogTitle>
+            <AlertDialogDescription>{t('users.modals.approveRegistration.description', { email: selectedUser?.email ?? '' })}</AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={saving}>{tCommon('actionCancel')}</AlertDialogCancel>
+            <AlertDialogAction onClick={handleApproveRegistration} disabled={saving}>
+              {saving ? (
+                <>
+                  <Loader2 className='mr-2 h-4 w-4 animate-spin' />
+                  {t('users.modals.approveRegistration.loading')}
+                </>
+              ) : (
+                t('users.modals.approveRegistration.action')
+              )}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* Reject registration dialog */}
+      <AlertDialog open={showRejectDialog} onOpenChange={setShowRejectDialog}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{t('users.modals.rejectRegistration.title')}</AlertDialogTitle>
+            <AlertDialogDescription>{t('users.modals.rejectRegistration.description', { email: selectedUser?.email ?? '' })}</AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={saving}>{tCommon('actionCancel')}</AlertDialogCancel>
+            <AlertDialogAction onClick={handleRejectRegistration} disabled={saving} className='bg-destructive hover:bg-destructive/90'>
+              {saving ? (
+                <>
+                  <Loader2 className='mr-2 h-4 w-4 animate-spin' />
+                  {t('users.modals.rejectRegistration.loading')}
+                </>
+              ) : (
+                t('users.modals.rejectRegistration.action')
               )}
             </AlertDialogAction>
           </AlertDialogFooter>

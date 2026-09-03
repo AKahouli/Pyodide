@@ -3,7 +3,7 @@ import { IsArray, IsOptional, IsString, MaxLength, Matches, MinLength } from 'cl
 export class SendMessageQueryDto {
   @IsString()
   @MinLength(1)
-  @MaxLength(16384)
+  @MaxLength(30000)
   message!: string;
 
   @IsOptional()
@@ -75,7 +75,7 @@ export class SendMessageQueryDto {
 export class SendMessageBodyDto {
   @IsString()
   @MinLength(1)
-  @MaxLength(16384)
+  @MaxLength(30000)
   message!: string;
 
   @IsOptional()

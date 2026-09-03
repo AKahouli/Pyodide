@@ -25,6 +25,8 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { useModuleTranslation } from '@/modules/localization';
+import { useAuth } from '@/modules/auth';
+import { isPendingAdminApproval } from '@/modules/auth/utils/isPendingAdminApproval';
 import {
   useProjects,
   useProjectStore,
@@ -167,6 +169,8 @@ const ProjectRow = memo(function ProjectRow({ project, onRename, onDelete, insid
 
 export const ProjectsSection = memo(function ProjectsSection() {
   const { t } = useModuleTranslation('sidebar');
+  const { user } = useAuth();
+  const pendingApproval = isPendingAdminApproval(user);
   const projects = useProjects();
   const fetchProjects = useProjectStore((s) => s.fetchProjects);
   const createProject = useProjectStore((s) => s.createProject);
@@ -183,9 +187,10 @@ export const ProjectsSection = memo(function ProjectsSection() {
   const [deleteTarget, setDeleteTarget] = useState<Project | null>(null);
 
   useEffect(() => {
+    if (pendingApproval) return;
     fetchProjects();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [pendingApproval]);
 
   useEffect(() => {
     if (typeof window !== 'undefined') {

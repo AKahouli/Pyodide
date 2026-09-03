@@ -26,7 +26,7 @@ lives in tenant schemas; Nodepod/microVM runtimes execute code only.
 | `APP_DATA_DATA_TAB_ENABLED` | `false` | Owner Data tab |
 | `APP_DATA_END_USER_AUTH_ENABLED` | `true` | App end-user register/login + PROD grant enforcement |
 | `APP_DATA_END_USER_JWT_TTL` | `7d` | JWT lifetime for app users |
-| `APP_DATA_PUBLIC_RATE_LIMIT_PER_MINUTE` | `120` | Public CRUD rate limit (via `@RateLimit`, keyed by IP + `appDataId`) |
+| `APP_DATA_PUBLIC_RATE_LIMIT_PER_MINUTE` | `600` | Public GET rate limit (via `@RateLimit`, keyed by IP + `appDataId` + table). Writes stay at 120/min. |
 | `APP_DATA_PUBLIC_BASE_URL_PROD` | (none) | Required in production deploys for App Data public URL |
 
 ## App end-user auth (generated apps)

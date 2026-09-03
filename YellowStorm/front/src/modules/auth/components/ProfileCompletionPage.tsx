@@ -16,11 +16,12 @@ import { Form, FormControl, FormDescription, FormField, FormItem, FormLabel, For
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { Checkbox } from '@/components/ui/checkbox';
-import { Icons, AppLogo } from '@/components/icons';
+import { AppBrandLogo } from '@/components/AppBrandLogo';
 import { StarsBackground } from '@/modules/conversation/effects/stars-background';
 import { appConfig } from '@/config/app';
 import { useModuleTranslation } from '@/modules/localization';
 import { useAuth } from '../useAuth';
+import { AuthScrollShell } from './AuthScrollShell';
 
 type ProfileFormValues = {
   firstName: string;
@@ -126,13 +127,13 @@ export function ProfileCompletionPage() {
     }
   };
   return (
-    <div className='relative min-h-screen w-full overflow-hidden'>
+    <AuthScrollShell>
       <StarsBackground shootingStars={false} />
 
       {/* Header */}
       <div className='absolute top-6 left-6 right-6 z-20 flex items-center justify-between'>
         <NavLink to='/' className='flex items-center'>
-          <AppLogo className='h-12 w-56' />
+          <AppBrandLogo className='h-12 w-56' />
         </NavLink>
         <Button variant='ghost' size='sm' onClick={handleLogout} className='text-neutral-400 hover:text-white hover:bg-neutral-800'>
           <LogOut className='h-4 w-4 mr-2' />
@@ -140,7 +141,7 @@ export function ProfileCompletionPage() {
         </Button>
       </div>
       {/* Main content */}
-      <main className='relative z-10 flex min-h-screen flex-col items-center justify-center px-6 py-16'>
+      <main className='relative z-10 flex min-h-full flex-col items-center justify-center px-6 py-24'>
         <Card className='w-full max-w-lg bg-neutral-900/90 border-neutral-800'>
           <CardHeader className='text-center'>
             <div className='mx-auto mb-4'>
@@ -292,6 +293,6 @@ export function ProfileCompletionPage() {
           </CardContent>
         </Card>
       </main>
-    </div>
+    </AuthScrollShell>
   );
 }

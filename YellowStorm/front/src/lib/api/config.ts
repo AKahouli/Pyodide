@@ -84,6 +84,9 @@ export const API_ENDPOINTS = {
     maintenance: '/experimental/system/maintenance',
     registration: '/experimental/system/registration',
     appearance: '/experimental/system/appearance',
+    appearanceLogos: '/experimental/system/appearance/logos',
+    appearanceLogo: (id: string) => `/experimental/system/appearance/logos/${id}`,
+    appearanceLogoFile: (id: string) => `/experimental/system/appearance/logos/${id}/file`,
     cors: '/experimental/system/cors',
     features: '/experimental/system/features',
   },
@@ -310,6 +313,8 @@ export const API_ENDPOINTS = {
     byId: (id: string) => `/admin/users/${id}`,
     suspend: (id: string) => `/admin/users/${id}/suspend`,
     activate: (id: string) => `/admin/users/${id}/activate`,
+    approveRegistration: (id: string) => `/admin/users/${id}/approve-registration`,
+    rejectRegistration: (id: string) => `/admin/users/${id}/reject-registration`,
     assignPlan: (id: string) => `/admin/users/${id}/assign-plan`,
   },
   auditLogs: {

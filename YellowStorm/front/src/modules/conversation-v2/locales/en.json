@@ -182,8 +182,9 @@
     "open": "Open in new tab",
     "viewUrl": "View deployed URL",
     "menu": "Deployment options",
-    "switchToNodepod": "Back to Nodepod preview",
-    "switchToDeployed": "Show deployed app",
+    "modeSwitch": "Preview or Deployed view",
+    "modePreview": "Preview",
+    "modeDeploy": "Deployed",
     "embedUnavailable": "This app cannot be embedded here"
   },
   "share": {

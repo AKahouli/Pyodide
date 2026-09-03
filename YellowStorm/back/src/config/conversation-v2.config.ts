@@ -15,7 +15,7 @@ export default registerAs('conversationV2', () => ({
     10,
   ),
   maxMessageLength: Number.parseInt(
-    process.env.CONVERSATION_V2_MAX_MESSAGE_LENGTH || '16384',
+    process.env.CONVERSATION_V2_MAX_MESSAGE_LENGTH || '30000',
     10,
   ),
   grpcMaxMessageBytes: Number.parseInt(

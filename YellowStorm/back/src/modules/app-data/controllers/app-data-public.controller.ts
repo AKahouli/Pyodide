@@ -28,26 +28,33 @@ import {
 import { normalizeAppDataRowBody } from '../utils/app-data-row-body.util';
 import { parseAppDataEnvironment, parsePositiveInt } from '../utils/app-data-request.util';
 
-const PUBLIC_CRUD_RATE_LIMIT = Number.parseInt(
-  process.env.APP_DATA_PUBLIC_RATE_LIMIT_PER_MINUTE || '120',
+const PUBLIC_CRUD_READ_LIMIT = Number.parseInt(
+  process.env.APP_DATA_PUBLIC_RATE_LIMIT_PER_MINUTE || '600',
   10,
 );
+const PUBLIC_CRUD_WRITE_LIMIT = 120;
 
-@Public()
-@SkipResponseWrap()
-@ApiTags('App Data Public API')
-@Controller('app-data/public/:appDataId/:environment')
-@RateLimit({
-  limit: Number.isFinite(PUBLIC_CRUD_RATE_LIMIT) ? PUBLIC_CRUD_RATE_LIMIT : 120,
+function publicCrudLimit(value: number, fallback: number): number {
+  return Number.isFinite(value) && value > 0 ? value : fallback;
+}
+
+const PUBLIC_CRUD_READ_RATE_LIMIT = {
+  limit: publicCrudLimit(PUBLIC_CRUD_READ_LIMIT, 600),
   windowMs: 60_000,
   keyPrefix: 'app-data:public:crud',
-})
+} as const;
+
+const PUBLIC_CRUD_WRITE_RATE_LIMIT = {
+  limit: PUBLIC_CRUD_WRITE_LIMIT,
+  windowMs: 60_000,
+  keyPrefix: 'app-data:public:crud',
+} as const;
 
 @Public()
 @SkipResponseWrap()
 @ApiTags('App Data Public API')
 @Controller('app-data/public/:appDataId/:environment')
-@RateLimit({ limit: 120, windowMs: 60_000, keyPrefix: 'app-data:public:crud' })
+@RateLimit(PUBLIC_CRUD_READ_RATE_LIMIT)
 export class AppDataPublicController {
   private readonly logger = new Logger(AppDataPublicController.name);
 
@@ -155,6 +162,7 @@ export class AppDataPublicController {
   }
 
   @Post('tables/:table/rows')
+  @RateLimit(PUBLIC_CRUD_WRITE_RATE_LIMIT)
   async insert(
     @Param('appDataId') appDataId: string,
     @Param('environment') environment: AppDataEnvironment,
@@ -185,6 +193,7 @@ export class AppDataPublicController {
   }
 
   @Patch('tables/:table/rows/:id')
+  @RateLimit(PUBLIC_CRUD_WRITE_RATE_LIMIT)
   async update(
     @Param('appDataId') appDataId: string,
     @Param('environment') environment: AppDataEnvironment,
@@ -217,6 +226,7 @@ export class AppDataPublicController {
   }
 
   @Delete('tables/:table/rows/:id')
+  @RateLimit(PUBLIC_CRUD_WRITE_RATE_LIMIT)
   async remove(
     @Param('appDataId') appDataId: string,
     @Param('environment') environment: AppDataEnvironment,

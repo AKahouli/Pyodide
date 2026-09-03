@@ -10,6 +10,7 @@ import {
   type PromptInputMessage,
 } from '@/components/ai-elements/prompt-input';
 import { cn } from '@/lib/utils';
+import { UsageLimitBanner } from '@/modules/usage';
 import { useUsage } from '@/modules/usage/UsageContext';
 import {
   useConversationStore,
@@ -235,6 +236,7 @@ export function NewConversationPage() {
           <div className='mt-3'>
             {mode === 'chat' ? (
               <>
+                {isLimitExceeded ? <UsageLimitBanner /> : null}
                 <Input
                   onSubmit={handleSubmit}
                   status={isSending ? 'submitted' : 'ready'}
@@ -284,11 +286,14 @@ export function NewConversationPage() {
                 <SelectedConnectorRepo />
               </>
             ) : (
-              <AgentComposer
-                onSubmit={handleAgentSubmit}
-                disabled={isSending}
-                placeholder={t('newConversation.agentPlaceholder')}
-              />
+              <>
+                {isLimitExceeded ? <UsageLimitBanner /> : null}
+                <AgentComposer
+                  onSubmit={handleAgentSubmit}
+                  disabled={isSending || isLimitExceeded}
+                  placeholder={limitPlaceholder ?? t('newConversation.agentPlaceholder')}
+                />
+              </>
             )}
           </div>
         </div>

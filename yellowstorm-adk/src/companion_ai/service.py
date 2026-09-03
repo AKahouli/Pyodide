@@ -1083,6 +1083,7 @@ class OrchestratorService:
             tools=self._tools_for(connectors, session_id, user_id),
             tools_for_step=tools_for_step,
             instruction_for_step=instruction_for_step,
+            context_for_step=self._dep_results_context(plan),
             custom_instruction=executor_prompt,
             replay_completed=replay_completed)
         factory_holder.append(factory)
@@ -1105,6 +1106,22 @@ class OrchestratorService:
             return
         await self._project(self._rm and self._rm.add_message(
             uuid.uuid4().hex, session_id, role, content))
+
+    async def _add_error_message(self, session_id: str, content: str,
+                                 title: str = "This task couldn't be completed") -> None:
+        """Surface a failure in the chat as an ERROR — an assistant message
+        carrying an `error` message-component ({title, content}), the same shape
+        the main chat module uses, so the client renders a destructive card
+        instead of a normal reply. The plain-text content is kept on the message
+        too, for consumers that don't read components (WhatsApp/voice)."""
+        if not content:
+            return
+        msg_id = uuid.uuid4().hex
+        await self._project(self._rm and self._rm.add_message(
+            msg_id, session_id, "assistant", content))
+        await self._project(self._rm and self._rm.add_message_component(
+            session_id, msg_id, uuid.uuid4().hex, "error",
+            {"title": title, "content": content}))
 
     @staticmethod
     def _assistant_answer(plan: Plan) -> str:
@@ -1140,10 +1157,43 @@ class OrchestratorService:
                                      requester=requester)
         logger.info("[worky] 5. planner LLM → Plan session=%s title=%r steps=%d",
                     session_id, plan.title, len(plan.steps))
+        # A genuine direct reply (CASE A) has an ANSWER. Zero steps AND an empty
+        # answer is a broken/empty planner response, not chit-chat — seen live:
+        # glm-5.3-go returned {steps:[], answer:"", ops:[{op:"find_human_agents"}]}
+        # for "search solana and email Imed", so the turn silently 'completed'
+        # having done and said nothing. Retry the planner once on a fresh session
+        # (a flaky planner often succeeds on the second try); if it's STILL empty,
+        # tell the user rather than posting an empty reply.
+        if not plan.steps and not (plan.answer or "").strip():
+            logger.warning("[worky] 5. empty plan (0 steps, no answer) — retrying planner once session=%s",
+                           session_id)
+            plan = await self._make_plan(
+                session_id, user_id, message,
+                planner_model=planner_model, planner_prompt=planner_prompt,
+                planner_connectors=planner_connectors,
+                plan_session=f"{session_id}_plan_retry_{uuid.uuid4().hex[:6]}",
+                requester=requester)
+            logger.info("[worky] 5. planner retry → steps=%d answer=%s",
+                        len(plan.steps), bool((plan.answer or "").strip()))
         if not plan.steps:
-            logger.info("[worky] 5. direct reply (no plan) → session=%s completed", session_id)
-            await self._add_message(session_id, "assistant", plan.answer or "")
-            await self._project(self._rm and self._rm.set_session_status(session_id, "completed"))
+            answer = (plan.answer or "").strip()
+            if answer:
+                # A genuine direct reply (CASE A): it has an answer — complete.
+                logger.info("[worky] 5. direct reply (no plan) → session=%s completed", session_id)
+                await self._add_message(session_id, "assistant", answer)
+                await self._project(self._rm and self._rm.set_session_status(session_id, "completed"))
+            else:
+                # Still empty after the retry — the planner failed to produce a plan
+                # (0 steps, no answer). FAIL the turn with the cause instead of
+                # silently 'completing' on nothing, so the client sees a real error.
+                reason = ("Échec de la planification : le planificateur n'a produit aucun "
+                          "plan (0 étape, réponse vide), même après une nouvelle tentative "
+                          "— impossible de traiter cette demande.")
+                logger.warning("[worky] 5. empty plan after retry → session=%s FAILED (%s)",
+                               session_id, reason)
+                await self._add_error_message(session_id, reason,
+                                              title="Échec de la planification")
+                await self._project(self._rm and self._rm.set_session_status(session_id, "failed"))
             return plan
 
         # Stamp the client's executor onto every non-persona step once, here —
@@ -1570,9 +1620,73 @@ class OrchestratorService:
             return await self._drive_loop(runner, session_id, user_id, plan, name_to_step,
                                           new_message, model=model, connectors=connectors,
                                           executor_prompt=executor_prompt)
+        except asyncio.CancelledError:
+            # A supersede / StopSession, not a failure — StopSession's own path
+            # marks the session cancelled. Let it propagate untouched.
+            raise
+        except Exception as exc:  # noqa: BLE001 — re-raised after failing loudly
+            # A model / tool / transport error raised out of the drive. Without
+            # this the turn aborts, _finalize never runs, and the read-model is
+            # left stuck: the session stays 'running' and the in-flight step shows
+            # a phantom 'completed'/'pending' with no error (proven — an executor
+            # model 401 left the session 'running' forever). Fail loud so the
+            # client sees a terminal state and a new message re-plans instead of
+            # routing to converse on a phantom-live session.
+            await self._fail_turn(session_id, plan, exc)
+            raise
         finally:
             if self._active.get(session_id) is plan:
                 self._active.pop(session_id, None)
+
+    async def fail_session(self, session_id: str, exc: BaseException) -> None:
+        """Top-level safety net for a turn that raised OUTSIDE the drive — most
+        importantly the PLANNER LLM call (e.g. a RateLimitError), which happens
+        before any graph is built, so _drive_until_quiescent's _fail_turn never
+        runs. Without this the session is left 'running' and the UI hangs on
+        'assistant is typing' forever with nothing shown (seen live: planner
+        glm-5.3-go weekly-limit rate error). Surface the cause in the chat and
+        fail the session. Idempotent: if the drive already failed it, do nothing
+        (so a drive-phase error isn't double-posted)."""
+        if self._rm is None:
+            return
+        try:
+            snap = await self._rm.snapshot(session_id)
+            if snap and snap["session"].get("status") == "failed":
+                return  # already surfaced by _fail_turn
+            err = f"{type(exc).__name__}: {exc}"[:500]
+            await self._add_error_message(session_id, err)
+            await self._project(self._rm.set_session_status(session_id, "failed"))
+            logger.warning("[worky] turn raised outside the drive → session=%s failed (%s)",
+                           session_id, err)
+        except Exception:  # noqa: BLE001 — never mask the real failure
+            logger.exception("[worky] fail_session projection failed session=%s", session_id)
+
+    async def _fail_turn(self, session_id: str, plan: Plan, exc: BaseException) -> None:
+        """Record an aborted turn as failed in the read-model (see
+        _drive_until_quiescent). A step still RUNNING when the turn blew up is the
+        one that failed — mark it failed with the error; pending steps never ran,
+        so leave them, but the session and plan go 'failed' so nothing is left
+        phantom-'running'. Best-effort: a projection error here must never mask
+        the original exception."""
+        err = f"{type(exc).__name__}: {exc}"[:500]
+        try:
+            # Surface the failure in the chat so the user sees WHY the task
+            # stopped, not just a silently-'failed' session. Every turn error
+            # (model/tool/transport) routes through here.
+            await self._add_error_message(session_id, err)
+            for s in plan.steps:
+                if s.status is Status.RUNNING:
+                    s.status = Status.FAILED
+                    s.error = err
+                    await self._project(self._rm and self._rm.set_step_status(
+                        session_id, s.id, Status.FAILED.value, blocked_reason=err))
+            plan.status = Status.FAILED
+            await self._project(self._rm and self._rm.upsert_plan(
+                session_id, plan.id, plan.title, plan.goal, Status.FAILED.value))
+            await self._project(self._rm and self._rm.set_session_status(session_id, "failed"))
+            logger.warning("[worky] turn failed → session=%s marked failed (%s)", session_id, err)
+        except Exception:  # noqa: BLE001 — never mask the real failure
+            logger.exception("[worky] _fail_turn projection failed session=%s", session_id)
 
     async def _drive_loop(self, runner, session_id, user_id, plan, name_to_step,
                           new_message, *, model, connectors, executor_prompt):
@@ -1710,7 +1824,15 @@ class OrchestratorService:
                 s.status = Status.COMPLETED
         plan.status = scheduler.derive_status(plan)
         logger.info("[worky] 10. derive final status session=%s → %s", session_id, plan.status.value)
+        # A step that failed via an ADK error EVENT (e.g. an LLM error) doesn't
+        # raise, so it never reaches _fail_turn — surface its error in the chat
+        # here, appended to whatever partial results did complete.
         await self._add_message(session_id, "assistant", self._assistant_answer(plan))
+        failed = [s for s in plan.steps if s.status is Status.FAILED]
+        if failed:
+            errs = "\n".join(f"• {s.title or s.id}: {s.error or 'failed'}" for s in failed)
+            await self._add_error_message(session_id, errs,
+                                          title="Some steps couldn't be completed")
         await self._project(self._rm and self._rm.upsert_plan(
             session_id, plan.id, plan.title, plan.goal, plan.status.value))
         await self._project(self._rm and self._rm.set_session_status(
@@ -1765,7 +1887,19 @@ class OrchestratorService:
                         text = p.text
         data = _extract_json(text)
         steps = []
+        seen_ids: set = set()
         for s in data.get("steps", []):
+            # A flaky planner (observed live with glm-5.3-go) can emit the same
+            # step twice or a blank id. Both collapse to one row under
+            # _namespace_step_ids and trip scheduler.validate ("duplicate step
+            # ids"), which aborts the WHOLE turn so nothing is projected and the
+            # session hangs 'running'. Drop the offender and keep the plan.
+            sid = s.get("id")
+            if not sid or sid in seen_ids:
+                logger.warning("[worky] planner emitted a %s step id %r — dropping it (session=%s)",
+                               "duplicate" if sid in seen_ids else "blank", sid, session_id)
+                continue
+            seen_ids.add(sid)
             assignee_id = assignee_name = assignee_role = None
             if s.get("assignee"):
                 # Trust the API's resolution, not whatever the planner echoed
@@ -1776,16 +1910,81 @@ class OrchestratorService:
                     assignee_name = matches[0].get("name") or s["assignee"]
                     assignee_id = matches[0].get("id") or assignee_name
                     assignee_role = matches[0].get("role")
-            steps.append(Step(id=s["id"], title=s.get("title", ""),
+            steps.append(Step(id=sid, title=s.get("title", ""),
                               description=s.get("description", ""),
                               kind=s.get("kind", "execute"), question=s.get("question"),
                               depends_on=list(s.get("depends_on", [])),
                               is_persona=bool(assignee_name),
                               assignee=assignee_id, assignee_name=assignee_name,
                               assignee_role=assignee_role))
-        return Plan(title=data.get("title", ""), goal=data.get("goal", ""),
+        # Prune deps validate() would also reject: a self-dep or a reference to a
+        # step the planner never emitted (or that we just dropped). A dangling dep
+        # is meaningless work-ordering, so drop it rather than abort the turn.
+        kept = {s.id for s in steps}
+        for s in steps:
+            s.depends_on = [d for d in s.depends_on if d in kept and d != s.id]
+        plan = Plan(title=data.get("title", ""), goal=data.get("goal", ""),
                     answer=data.get("answer") or None, steps=steps,
                     ops=[dict(o) for o in data.get("ops", []) if o.get("step_id")])
+        self._namespace_step_ids(plan)
+        return plan
+
+    @staticmethod
+    def _namespace_step_ids(plan: Plan) -> None:
+        """Prefix every step id with this plan's id, in place (deps too).
+
+        Step ids come verbatim from the planner (see _make_plan: Step(id=s["id"])),
+        which labels them s1, s2, … on EVERY turn — it can't see prior turns. But
+        the read-model keys plan_steps by (session_id, step_id) and one session is
+        reused across turns, so a later turn's bare s1/s2 collided with an earlier,
+        already-EXECUTED turn's rows and overwrote their title/description in place
+        (upsert's ON CONFLICT rewrites content but not status/result → a finished
+        step the user watched complete silently relabelled to the new message's
+        task). Namespacing by the per-turn plan.id makes ids unique across turns;
+        depends_on is remapped the same way so intra-plan wiring is unchanged.
+        node_name() sanitises the id for ADK anyway, so the prefix is transparent
+        downstream. converse's _inject_steps re-ids to fresh uuids regardless, so
+        this only has to fix the plan_turn path — the one that reuses the session.
+        """
+        if not plan.steps:
+            return
+        idmap = {s.id: f"{plan.id}_{s.id}" for s in plan.steps}
+        for s in plan.steps:
+            s.id = idmap[s.id]
+            s.depends_on = [idmap.get(d, d) for d in s.depends_on]
+
+    @staticmethod
+    def _dep_results_context(plan: Plan):
+        """Per-step hook handing a step the RESULTS of the completed steps it
+        depends_on, so a downstream step can actually use upstream output.
+
+        `depends_on` is ordering only: each step runs as its own ADK node on its
+        own branch and normally sees nothing but its own description (proven — a
+        step asked to echo an upstream secret returned NONE). But the orchestrator
+        holds every completed step's result on the live Plan, so we read it fresh
+        at model-call time and inject just the DIRECT dependencies' results — not
+        the whole plan, so a step still never learns its siblings' tasks (that
+        leak is exactly what the isolation was built to prevent).
+        """
+        by_id = {s.id: s for s in plan.steps}
+
+        def ctx(step: Step) -> Optional[str]:
+            blocks = []
+            for dep_id in step.depends_on:
+                dep = by_id.get(dep_id)
+                if dep and dep.status is Status.COMPLETED and (dep.result or "").strip():
+                    r = dep.result.strip()
+                    # ponytail: flat cap per dependency; summarise upstream if a
+                    # step ever needs to lean on a result larger than this.
+                    if len(r) > 4000:
+                        r = r[:4000] + "\n[…tronqué]"
+                    blocks.append(f"— Étape « {dep.title or dep.id} » :\n{r}")
+            if not blocks:
+                return None
+            return ("Résultats des étapes précédentes dont dépend la tienne "
+                    "(sers-t'en, ne les refais pas) :\n\n" + "\n\n".join(blocks))
+
+        return ctx
 
     def _build_planner_model(self, model_name: Optional[str] = None):
         # Always has the find_human_agents discovery tool now.
@@ -1920,6 +2119,20 @@ class OrchestratorService:
                         session_id, step_id, step.wave)
             await self._project(self._rm and self._rm.set_step_status(
                 session_id, step_id, "running"))
+        # A model/tool error ADK reports as an EVENT (not a raise) is a
+        # final_response with empty content — is_output below would then mark the
+        # step 'completed' with an empty result (seen live: an executor model 401
+        # left the step falsely 'completed'). Catch it first and mark the step
+        # FAILED with the error, so the failing step reads correctly.
+        err = getattr(ev, "error_message", None) or getattr(ev, "error_code", None)
+        if err:
+            step.status = Status.FAILED
+            step.error = str(err)[:500]
+            logger.warning("[worky] 9. step FAILED session=%s step=%s err=%s",
+                           session_id, step_id, step.error)
+            await self._project(self._rm and self._rm.set_step_status(
+                session_id, step_id, "failed", blocked_reason=step.error))
+            return
         if is_output:
             step.status = Status.COMPLETED
             # Keep the LAST text part, not the first. A reasoning model emits its

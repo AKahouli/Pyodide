@@ -116,6 +116,28 @@ async def test_readmodel_roundtrip(pool):
     print("ok  read-model: session/plan/steps/messages project + read back")
 
 
+@pytest.mark.asyncio(loop_scope="module")
+async def test_error_message_component_projects_with_its_json_data(pool):
+    """A failed turn attaches an `error` component to its chat message so the
+    client renders a destructive card (same shape as the main chat module)."""
+    import json
+    rm = readmodel.ReadModel(pool, schema=SCHEMA)
+    await readmodel.init_schema(pool, SCHEMA)
+    sid = "sess_err"
+    await rm.add_message("me1", sid, "assistant", "boom: model 401")
+    await rm.add_message_component(sid, "me1", "c1", "error",
+                                   {"title": "This task couldn't be completed",
+                                    "content": "boom: model 401"})
+    async with pool.acquire() as con:
+        row = await con.fetchrow(
+            f'SELECT type, data FROM "{SCHEMA}".message_components '
+            f'WHERE session_id=$1 AND component_id=$2', sid, "c1")
+    assert row["type"] == "error"
+    data = row["data"] if isinstance(row["data"], dict) else json.loads(row["data"])
+    assert data["content"] == "boom: model 401" and data["title"]
+    print("ok  read-model: error component projects with {title, content}")
+
+
 async def test_outstanding_interrupts_are_tracked_per_step(pool):
     """Several steps can be parked at once, each with its own interrupt id, and
     the set survives across runs — ADK only reports an interrupt on the run that
@@ -145,6 +167,131 @@ async def test_outstanding_interrupts_are_tracked_per_step(pool):
     await rm.set_step_status(sid, "b", "completed", result="BBB")
     assert await rm.outstanding_interrupts(sid) == [], "no step should be parked once both answered"
     print("ok  read-model: interrupts tracked per step, cleared independently")
+
+
+async def test_new_message_does_not_mutate_executed_steps(pool):
+    """Regression: a follow-up message reuses the session, and the planner labels
+    its steps s1, s2, … on EVERY turn (it can't see prior turns). Because
+    plan_steps is keyed by (session_id, step_id), a later turn's bare s1/s2 used
+    to collide with an earlier, already-EXECUTED turn's rows and overwrite their
+    title/description in place. _namespace_step_ids prefixes ids by plan.id; this
+    proves the executed rows survive a second turn untouched. Drives the real
+    OrchestratorService helpers (namespacing + row projection)."""
+    from src.companion_ai.service import OrchestratorService
+    from src.companion_ai.plan import Plan, Step
+
+    rm = readmodel.ReadModel(pool, schema=SCHEMA)
+    await readmodel.init_schema(pool, SCHEMA)
+    sid = "sess_replan"
+    await rm.ensure_session(sid, "u1", None, "running")
+
+    async def project(plan):
+        OrchestratorService._namespace_step_ids(plan)
+        await rm.upsert_plan(sid, plan.id, plan.title, plan.goal, "running")
+        await rm.upsert_steps(sid, [OrchestratorService._step_row(i, s)
+                                    for i, s in enumerate(plan.steps)])
+
+    # ---- turn 1: planner emits s1,s2; they run and complete ----
+    planA = Plan(id="planA", title="Prospection", goal="g1", steps=[
+        Step(id="s1", title="Rechercher les comptes", description="find accounts"),
+        Step(id="s2", title="Rediger le plan", description="write plan", depends_on=["s1"])])
+    await project(planA)
+    assert [s.id for s in planA.steps] == ["planA_s1", "planA_s2"]
+    assert planA.steps[1].depends_on == ["planA_s1"]          # deps remapped consistently
+    for s in planA.steps:
+        await rm.set_step_status(sid, s.id, "completed", result=f"done:{s.title}")
+
+    # ---- turn 2: a brand-new message; planner AGAIN labels its steps s1,s2 ----
+    planB = Plan(id="planB", title="Deplacement", goal="g2", steps=[
+        Step(id="s1", title="Reserver un vol", description="book flight"),
+        Step(id="s2", title="Envoyer email", description="send email", depends_on=["s1"])])
+    await project(planB)
+
+    # ---- the executed turn-1 rows must be UNTOUCHED, turn-2 rows are separate ----
+    async with pool.acquire() as con:
+        rows = {r["step_id"]: r for r in await con.fetch(
+            f'SELECT * FROM "{SCHEMA}".plan_steps WHERE session_id=$1', sid)}
+    assert set(rows) == {"planA_s1", "planA_s2", "planB_s1", "planB_s2"}, set(rows)
+    assert rows["planA_s1"]["title"] == "Rechercher les comptes"
+    assert rows["planA_s1"]["status"] == "completed"
+    assert rows["planA_s1"]["result"] == "done:Rechercher les comptes"
+    assert rows["planA_s2"]["title"] == "Rediger le plan"
+    assert rows["planB_s1"]["title"] == "Reserver un vol" and rows["planB_s1"]["status"] == "pending"
+    print("ok  re-plan: namespaced ids keep executed steps intact (no cross-turn collision)")
+
+
+async def test_a_failed_turn_marks_the_session_and_running_step_failed(pool):
+    """A model/tool error raised out of the drive must NOT leave the session stuck
+    'running' with a phantom step (proven live: an executor model 401 left the
+    session 'running' forever, one step falsely 'completed'). _drive_until_quiescent's
+    fail-safe marks the running step + session 'failed' so the client sees a
+    terminal state and a new message re-plans instead of routing to converse."""
+    from src.companion_ai.service import OrchestratorService
+    from src.companion_ai.plan import Plan, Step, Status
+
+    rm = readmodel.ReadModel(pool, schema=SCHEMA)
+    await readmodel.init_schema(pool, SCHEMA)
+    sid = "sess_failturn"
+    await rm.ensure_session(sid, "u1", None, "running")
+    plan = Plan(id="pf", title="t", goal="g", steps=[
+        Step(id="a", title="Running one", status=Status.RUNNING),
+        Step(id="b", title="Pending one", status=Status.PENDING, depends_on=["a"])])
+    await rm.upsert_plan(sid, plan.id, plan.title, plan.goal, "running")
+    await rm.upsert_steps(sid, [OrchestratorService._step_row(i, s) for i, s in enumerate(plan.steps)])
+
+    svc = OrchestratorService(lambda *a, **k: None, rm, planner_model="x")
+
+    async def boom(*a, **k):
+        raise RuntimeError("model 401 Unauthorized")
+    svc._drive_loop = boom  # make the drive blow up like a failing model
+
+    with pytest.raises(RuntimeError):
+        await svc._drive_until_quiescent(None, sid, "u1", plan, {}, None,
+                                         model="m", connectors=[], executor_prompt=None)
+
+    snap = await rm.snapshot(sid)
+    assert snap["session"]["status"] == "failed", snap["session"]["status"]
+    assert snap["plan"]["status"] == "failed", snap["plan"]["status"]  # plan terminal too
+    rows = {x["step_id"]: x for x in snap["steps"]}
+    assert rows["a"]["status"] == "failed", rows["a"]["status"]        # running -> failed
+    assert "RuntimeError" in (rows["a"]["blocked_reason"] or "")       # with the error recorded
+    assert rows["b"]["status"] == "pending"                            # never ran; left as-is
+    print("ok  failed turn: session + plan + running step marked failed (not stuck 'running')")
+
+
+async def test_apply_event_marks_step_failed_on_an_error_event(pool):
+    """When ADK reports a model/tool error as an EVENT (a final_response with no
+    content), the step must be marked 'failed', not 'completed' with an empty
+    result (the false-completion seen live on an executor model 401)."""
+    from src.companion_ai.service import OrchestratorService
+    from src.companion_ai.plan import Plan, Step, Status
+
+    class _NI:
+        def __init__(self, path): self.path = path; self.output_for = None
+    class _Ev:  # minimal ADK-event stand-in _apply_event reads
+        def __init__(self, path, error_message):
+            self.node_info = _NI(path); self.error_message = error_message
+            self.error_code = None; self.content = None; self.long_running_tool_ids = None
+        def is_final_response(self): return True
+        def get_function_calls(self): return []
+        def get_function_responses(self): return []
+
+    rm = readmodel.ReadModel(pool, schema=SCHEMA)
+    await readmodel.init_schema(pool, SCHEMA)
+    sid = "sess_errev"
+    await rm.ensure_session(sid, "u1", None, "running")
+    plan = Plan(id="pe", steps=[Step(id="s1", title="A")])
+    await rm.upsert_steps(sid, [OrchestratorService._step_row(0, plan.steps[0])])
+
+    svc = OrchestratorService(lambda *a, **k: None, rm, planner_model="x")
+    await svc._apply_event(sid, plan, _Ev("wf@1/node1@1", "AuthenticationError: 401 Unauthorized"),
+                           {"node1": "s1"}, set())
+
+    assert plan.steps[0].status is Status.FAILED
+    row = (await rm.snapshot(sid))["steps"][0]
+    assert row["status"] == "failed", row["status"]
+    assert "401" in (row["blocked_reason"] or "")
+    print("ok  _apply_event: error event -> step failed (not falsely completed)")
 
 
 async def test_a_reply_claims_its_wait_exactly_once(pool):

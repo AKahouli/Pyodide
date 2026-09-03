@@ -133,6 +133,22 @@ export function mapPlan(row: PgPlanRow, streamId: string): { set: Record<string,
   };
 }
 
+// Session statuses that mean the turn/session is OVER. The gRPC path never
+// emits a `stream.terminal` SSE frame on its own (all such emitters live in the
+// unused HTTP-runtime path), so the frontend's "working" flag would never clear
+// and the Stop button would hang. handleSessions watches for these and emits the
+// terminal frame. 'canceled'/'cancelled' both appear (legacy spelling).
+const TERMINAL_SESSION_STATUSES = new Set([
+  'completed',
+  'failed',
+  'canceled',
+  'cancelled',
+  'stopped',
+]);
+export function isTerminalSessionStatus(status: string): boolean {
+  return TERMINAL_SESSION_STATUSES.has((status || '').toLowerCase());
+}
+
 /** Electric jsonb may arrive parsed or as a JSON string — normalize to an object. */
 function normalizeJson(value: unknown): Record<string, unknown> {
   if (typeof value === 'string') {

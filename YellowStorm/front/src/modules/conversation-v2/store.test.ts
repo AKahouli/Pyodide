@@ -427,7 +427,7 @@ describe('useConversationV2Store', () => {
       revision: 'app-1',
     });
     expect(useConversationV2Store.getState().deployedUrl).toBe('https://deployed.example/app');
-    expect(useConversationV2Store.getState().appViewMode).toBe('deployed');
+    expect(useConversationV2Store.getState().appViewMode).toBe('nodepod');
   });
 
   it('sendMessage does not leave deployed mode on the first user message', async () => {

@@ -4,7 +4,7 @@ import { ConfigService } from '@nestjs/config';
 import { Model, Types } from 'mongoose';
 import * as bcrypt from 'bcrypt';
 import * as crypto from 'crypto';
-import { User, UserDocument, UserStatus } from './schemas/user.schema';
+import { RegistrationApproval, User, UserDocument, UserStatus } from './schemas/user.schema';
 import { LoggerService } from '../logger';
 import {
   CreateUserData,
@@ -19,6 +19,7 @@ import {
 import { ErrorCode } from '../exceptions/constants/error-codes';
 import { escapeRegex } from '../../common/utils';
 import { HumainAgentService } from '../humain-agent/humain-agent.service';
+import { RegistrationApprovalService } from './registration-approval.service';
 
 interface UserSearchResult {
   id: string;
@@ -48,6 +49,7 @@ export class UserService {
     private readonly logger: LoggerService,
     private readonly configService: ConfigService,
     private readonly humainAgentService: HumainAgentService,
+    private readonly registrationApprovalService: RegistrationApprovalService,
   ) {
     this.logger.setContext(UserService.name);
     this.passwordResetExpiryHours = this.configService.get<number>('auth.passwordResetExpiry', 1);
@@ -78,6 +80,8 @@ export class UserService {
       emailVerificationExpiry: data.emailVerified ? undefined : emailVerificationExpiry,
       profile: data.profile || {},
       microsoftAccountId: data.microsoftAccountId,
+      status: UserStatus.INACTIVE,
+      registrationApproval: RegistrationApproval.PENDING,
     });
 
     await user.save();
@@ -222,6 +226,9 @@ export class UserService {
       throw new BadRequestException('Privacy policy must be accepted');
     }
 
+    const shouldNotifySuperAdmins =
+      !user.profileComplete && user.registrationApproval === RegistrationApproval.PENDING;
+
     const now = new Date();
 
     user.profile.firstName = data.firstName;
@@ -249,6 +256,21 @@ export class UserService {
       role: user.profile.role,
       description: user.profile.description,
     });
+
+    if (shouldNotifySuperAdmins) {
+      try {
+        await this.registrationApprovalService.notifySuperAdminsOfRegistration({
+          userId,
+          email: user.email,
+          requestedAt: now,
+        });
+      } catch (error) {
+        this.logger.warn('Failed to notify super admins of registration', {
+          userId,
+          error: (error as Error).message,
+        });
+      }
+    }
 
     return user;
   }

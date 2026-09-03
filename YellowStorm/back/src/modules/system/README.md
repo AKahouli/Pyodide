@@ -10,6 +10,7 @@ The system module provides system-wide configuration and maintenance mode contro
 - [Directory Structure](#directory-structure)
 - [Data Model](#data-model)
 - [Maintenance Mode](#maintenance-mode)
+- [Appearance](#appearance)
 - [Global Guard](#global-guard)
 - [API Endpoints](#api-endpoints)
 - [Caching Strategy](#caching-strategy)
@@ -27,6 +28,7 @@ The system module provides:
 - **Path Whitelisting**: Certain paths always bypass maintenance (health checks, status endpoints)
 - **Decorator-Based Bypass**: Mark specific endpoints to skip maintenance checks
 - **Cached Status**: In-memory caching for high-performance status checks
+- **Appearance**: Global color palettes plus a custom sidebar logo library stored in MongoDB
 - **Audit Logging**: All maintenance changes are logged for accountability
 
 ---
@@ -93,18 +95,29 @@ The system module provides:
 system/
 ├── index.ts                          # Module exports
 ├── system.module.ts                  # NestJS module (Global)
-├── system.controller.ts              # API endpoints
+├── system.controller.ts              # Maintenance, registration, appearance, CORS
 ├── system.service.ts                 # Business logic with caching
+├── controllers/
+│   └── appearance-logo.controller.ts # Custom logo upload / download / delete
+├── services/
+│   └── appearance-logo.service.ts    # Logo CRUD, validation, theme unassign
+├── constants/
+│   └── appearance-logo.constants.ts  # Slot size, MIME list, builtins (data only)
+├── utils/
+│   └── appearance-image.util.ts      # MIME sniff, dimensions, SVG safety
 ├── guards/
 │   └── maintenance.guard.ts          # Global maintenance guard
 ├── decorators/
 │   └── skip-maintenance.decorator.ts # Bypass decorator
 ├── schemas/
-│   └── system-setting.schema.ts      # MongoDB schema
+│   ├── system-setting.schema.ts      # MongoDB schema
+│   └── appearance-logo.schema.ts     # Custom logo binary documents
 ├── interfaces/
-│   └── maintenance.interface.ts      # TypeScript interfaces
+│   ├── maintenance.interface.ts      # TypeScript interfaces
+│   └── appearance.interface.ts       # Palettes + logo catalog
 ├── dto/
-│   └── set-maintenance.dto.ts        # Validation DTO
+│   ├── set-maintenance.dto.ts        # Validation DTO
+│   └── set-appearance-settings.dto.ts
 └── exceptions/
     └── maintenance.exception.ts      # Custom 503 exception
 ```
@@ -207,6 +220,48 @@ When the frontend receives a 503 with `code: 'MAINTENANCE_MODE'`, it should:
 2. Display the `message` from the response
 3. Show `estimatedEndAt` if provided
 4. Poll `/experimental/system/maintenance` to detect when maintenance ends
+
+---
+
+## Appearance
+
+Appearance settings live in `system_settings` under the key `appearance_settings`. Custom logos are stored separately in `appearance_logos` (binary `data` is `select: false`). Built-in ids `yellowmind` and `kpmg` are never persisted as files.
+
+### Layout
+
+| Path | Responsibility |
+|---|---|
+| `constants/appearance-logo.constants.ts` | Slot 224×48, constraints, allowed MIMEs, builtin ids (data only) |
+| `utils/appearance-image.util.ts` | MIME sniff/normalize, dimension read, slot validation |
+| `services/appearance-logo.service.ts` | Upload parse, CRUD, unassign-from-themes on delete |
+| `controllers/appearance-logo.controller.ts` | Public file GET; admin POST/PATCH/DELETE |
+| `system.service.ts` | Palette settings + `logos` catalog on GET; rejects unknown logo ids on POST |
+
+### Upload rules
+
+The backend does **not** resize images (`sharp` is not used). The SPA contain-fits to a PNG before upload. The API still validates:
+
+- Types: `image/png`, `image/jpeg`, `image/webp` (sniffed from bytes). SVG is rejected (`ERR_1603`).
+- Stored file ≤ 512 KB; multipart source ≤ 8 MB
+- Native size between 80×24 and 448×96, aspect 1.2–10
+- At most 20 custom logos
+- Built-in ids cannot be updated or deleted
+- Deleting a custom logo remaps any theme using it to `yellowmind`
+
+Helmet defaults `Cross-Origin-Resource-Policy` to `same-origin`. The public file GET sets `Cross-Origin-Resource-Policy: cross-origin` so the SPA `<img>` can load the logo. Any legacy SVG blob is served as `application/octet-stream` with `Content-Disposition: attachment`.
+
+`POST /experimental/system/appearance` accepts optional `applyToAllUsers`. When `true`, `defaultColorTheme` is copied onto every user document. Logo-only saves must send `applyToAllUsers: false` (or omit it).
+
+### Error codes
+
+| Code | When |
+|---|---|
+| `ERR_1602` | Logo id not found |
+| `ERR_1603` | Not an allowed image (including SVG) |
+| `ERR_1604` | Dimensions incompatible with the sidebar slot |
+| `ERR_1605` | File larger than 512 KB |
+| `ERR_1606` | Built-in logo cannot be modified |
+| `ERR_1608` | Custom logo limit reached |
 
 ---
 
@@ -336,6 +391,32 @@ Set maintenance mode. **Requires `SYSTEM_MAINTENANCE` permission**.
 | `enabled` | Required, boolean |
 | `message` | Optional, string, max 500 characters |
 | `estimatedEndAt` | Optional, ISO 8601 date string |
+
+### GET /experimental/system/appearance
+
+Public. Returns the global palette, per-theme logo ids, and the logo catalog (builtins + custom metadata, no binary).
+
+**Decorators:** `@Public()`, `@SkipMaintenance()`, `@RateLimitSkip()`
+
+### POST /experimental/system/appearance
+
+Requires `SYSTEM_MAINTENANCE`. Body is `defaultColorTheme`, `themes` (each theme has `labelKey` and `logo`), and optional `applyToAllUsers`. Logo ids must exist in the catalog. When `applyToAllUsers` is true, every user document is updated to that palette.
+
+### GET /experimental/system/appearance/logos/:id/file
+
+Public binary download for a **custom** logo. Built-in ids return 404. Sets `Content-Type`, `Cache-Control: public, max-age=300`, `X-Content-Type-Options: nosniff`, and `Cross-Origin-Resource-Policy: cross-origin`.
+
+### POST /experimental/system/appearance/logos
+
+Requires `SYSTEM_MAINTENANCE`. Multipart `file` + optional `name`.
+
+### PATCH /experimental/system/appearance/logos/:id
+
+Requires `SYSTEM_MAINTENANCE`. Optional `name` and/or replacement `file`.
+
+### DELETE /experimental/system/appearance/logos/:id
+
+Requires `SYSTEM_MAINTENANCE`. Unassigns the logo from themes, then deletes the document.
 
 ---
 

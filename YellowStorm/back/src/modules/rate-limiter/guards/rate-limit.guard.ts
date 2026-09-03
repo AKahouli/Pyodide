@@ -61,8 +61,12 @@ export class RateLimitGuard implements CanActivate {
     const userId = request.user?.sub ?? request.user?.id;
     const ip = getClientIp(request);
     const endpoint = `${request.method}:${context.getClass().name}:${context.getHandler().name}`;
-    const appDataId = request.params?.appDataId;
-    const scopedEndpoint = appDataId ? `${endpoint}:${appDataId}` : endpoint;
+    const params = request.params ?? {};
+    // App Data dashboards fan out one list/get per table; sharing one bucket
+    // across tables trips 429s on first paint. Scope by app + table when present.
+    const scopedEndpoint = [endpoint, params.appDataId, params.table]
+      .filter((part): part is string => Boolean(part))
+      .join(':');
 
     return this.rateLimiterService.generateKey(userId, ip, scopedEndpoint);
   }

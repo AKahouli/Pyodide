@@ -31,9 +31,9 @@ export default registerAs('appData', () => ({
   defaultPageSize: parseInt(process.env.APP_DATA_DEFAULT_PAGE_SIZE || '50', 10),
   /** Hard cap on page size. */
   maxPageSize: parseInt(process.env.APP_DATA_MAX_PAGE_SIZE || '200', 10),
-  /** Public API rate limit per appDataId+IP (requests per minute). */
+  /** Public API GET rate limit per appDataId+IP+table (requests per minute). */
   publicRateLimitPerMinute: parseInt(
-    process.env.APP_DATA_PUBLIC_RATE_LIMIT_PER_MINUTE || '120',
+    process.env.APP_DATA_PUBLIC_RATE_LIMIT_PER_MINUTE || '600',
     10,
   ),
   /** Statement timeout for tenant DDL/DML (ms). */

@@ -9,7 +9,7 @@ import { CheckCircle2, XCircle, Loader2, Mail } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
-import { Icons, AppLogo } from '@/components/icons';
+import { AppBrandLogo } from '@/components/AppBrandLogo';
 import { StarsBackground } from '@/modules/conversation/effects/stars-background';
 import { useModuleTranslation } from '@/modules/localization';
 import type { TranslationParams } from '@/modules/localization';
@@ -17,6 +17,7 @@ import { useAuth } from '../useAuth';
 import { resendVerificationByToken } from '../api';
 import { getErrorCode, getErrorMessage } from '../utils/errorHelpers';
 import { StatusSection } from './StatusSection';
+import { AuthScrollShell } from './AuthScrollShell';
 
 const REDIRECT_DELAY = 30;
 
@@ -110,18 +111,18 @@ export function EmailVerificationPage() {
   const handleGoToLogin = () => navigate('/');
 
   return (
-    <div className='relative min-h-screen w-full overflow-hidden'>
+    <AuthScrollShell>
       <StarsBackground shootingStars={false} />
 
       {/* Header */}
       <div className='absolute top-6 left-6 z-20'>
         <NavLink to='/' className='flex items-center'>
-          <AppLogo className='h-12 w-56' />
+          <AppBrandLogo className='h-12 w-56' />
         </NavLink>
       </div>
 
       {/* Main content */}
-      <main className='relative z-10 flex min-h-screen flex-col items-center justify-center px-6'>
+      <main className='relative z-10 flex min-h-full flex-col items-center justify-center px-6 py-24'>
         <Card className='w-full max-w-md bg-neutral border-neutral-800'>
           {status === 'verifying' && <StatusSection icon={<Loader2 className='h-12 w-12 animate-spin text-primary' />} title={t('verification.title')} description={t('verification.description')} />}
 
@@ -186,6 +187,6 @@ export function EmailVerificationPage() {
           )}
         </Card>
       </main>
-    </div>
+    </AuthScrollShell>
   );
 }

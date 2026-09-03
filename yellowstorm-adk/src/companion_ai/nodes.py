@@ -559,6 +559,7 @@ def make_llm_node_factory(
     custom_instruction: Optional[str] = None,
     tools_for_step: Optional[Callable[[Step, List], List]] = None,
     instruction_for_step: Optional[Callable[[Step], Optional[str]]] = None,
+    context_for_step: Optional[Callable[[Step], Optional[str]]] = None,
     replay_completed: bool = False,
 ) -> NodeFactory:
     """Build a NodeFactory that creates one LlmAgent per step.
@@ -641,7 +642,15 @@ def make_llm_node_factory(
             identity=identity, do_this_line="", description="")).strip()
         # Read lazily off the live step so a converse "modify" of a still-pending
         # step's description is picked up when the node fires, no rebuild needed.
-        task_text = lambda: f"{do_this_line}\n{step.description}"
+        # context_for_step (if given) prepends the RESULTS of the completed steps
+        # this one depends_on: depends_on is ordering only, and ADK branch
+        # isolation otherwise leaves a downstream step blind to upstream output
+        # (a step asked to echo an upstream secret returned NONE). Read lazily too,
+        # so it reflects results produced earlier in THIS same drive pass.
+        def task_text():
+            body = f"{do_this_line}\n{step.description}"
+            ctx = context_for_step(step) if context_for_step else None
+            return f"{ctx}\n\n{body}" if ctx else body
         # A dynamic delegate's description is ALREADY the message to relay to
         # assignee_name (composed by the caller, typically second-person:
         # "Hi Firas — ... Do you confirm?") — not an open question this step
