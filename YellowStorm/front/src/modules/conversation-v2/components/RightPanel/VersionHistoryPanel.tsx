@@ -75,7 +75,7 @@ export function VersionSwitcher() {
                 className={cn(
                   'h-8 max-w-[9.5rem] gap-1.5 px-2 text-xs font-medium',
                   '@max-[520px]/right-panel:max-w-none @max-[520px]/right-panel:px-1.5',
-                  isHistorical && 'border-amber-500/40 bg-amber-500/10 text-amber-950 dark:text-amber-100',
+                  isHistorical && 'bg-primary/10 text-foreground',
                 )}
                 aria-label={t('versionHistory.open')}
               >
@@ -149,38 +149,5 @@ export function VersionSwitcher() {
         </ul>
       </PopoverContent>
     </Popover>
-  );
-}
-
-/** Thin contextual bar when previewing a non-latest finalized revision. */
-export function HistoricalPreviewBanner() {
-  const { t } = useConversationV2Translation();
-  const finalizedVersions = useConversationV2Store((s) => s.finalizedVersions);
-  const previewRevisionId = useConversationV2Store((s) => s.previewRevisionId);
-  const previewFinalizedVersion = useConversationV2Store((s) => s.previewFinalizedVersion);
-
-  const latestRevisionId = resolveLatestFinalizedRevisionId(finalizedVersions);
-  const isPreviewingHistorical =
-    !!previewRevisionId &&
-    !!latestRevisionId &&
-    previewRevisionId !== latestRevisionId;
-
-  if (!isPreviewingHistorical) return null;
-
-  return (
-    <div className='flex h-8 shrink-0 items-center justify-between gap-2 border-b border-amber-500/20 bg-amber-500/10 px-3 text-xs text-amber-900 dark:text-amber-200'>
-      <span className='min-w-0 truncate'>
-        {t('versionHistory.previewBanner', { revisionId: previewRevisionId ?? '' })}
-      </span>
-      <Button
-        type='button'
-        variant='ghost'
-        size='sm'
-        className='h-6 shrink-0 px-2 text-xs'
-        onClick={() => latestRevisionId && previewFinalizedVersion(latestRevisionId)}
-      >
-        {t('versionHistory.returnToLatest')}
-      </Button>
-    </div>
   );
 }

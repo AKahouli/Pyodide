@@ -1,7 +1,7 @@
 import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
-import { HistoricalPreviewBanner, VersionSwitcher } from './VersionHistoryPanel';
+import { VersionSwitcher } from './VersionHistoryPanel';
 
 const previewFinalizedVersion = vi.fn();
 const deploy = vi.fn().mockResolvedValue(undefined);
@@ -63,14 +63,5 @@ describe('VersionSwitcher', () => {
 
     await user.click(within(dialog).getByRole('button', { name: 'versionHistory.preview' }));
     expect(previewFinalizedVersion).toHaveBeenCalledWith('rev_12');
-  });
-});
-
-describe('HistoricalPreviewBanner', () => {
-  it('shows a slim banner while previewing a historical revision', () => {
-    render(<HistoricalPreviewBanner />);
-
-    expect(screen.getByText('versionHistory.previewBanner:rev_7')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'versionHistory.returnToLatest' })).toBeInTheDocument();
   });
 });

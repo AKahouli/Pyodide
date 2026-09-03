@@ -172,9 +172,7 @@
     "deploy": "Deploy this version",
     "active": "Active",
     "empty": "No finalized versions yet",
-    "loading": "Loading versions…",
-    "previewBanner": "Previewing {{revisionId}} — the agent continues on the latest version",
-    "returnToLatest": "Return to latest"
+    "loading": "Loading versions…"
   },
   "deploy": {
     "publish": "Deploy",
