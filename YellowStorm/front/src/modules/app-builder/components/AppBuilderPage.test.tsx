@@ -240,6 +240,7 @@ describe('AppBuilderPage', () => {
       lastDeployedAt: '2026-07-17T10:00:00.000Z',
       source: 'owned',
       shareId: null,
+      ...emptyRevisionCatalog,
     }));
 
     listAppsMock.mockResolvedValueOnce({
@@ -268,6 +269,7 @@ describe('AppBuilderPage', () => {
       lastDeployedAt: '2026-07-17T10:00:00.000Z',
       source: 'owned',
       shareId: null,
+      ...emptyRevisionCatalog,
     }));
 
     listAppsMock.mockResolvedValueOnce({
