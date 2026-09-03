@@ -35,6 +35,7 @@ export interface User {
   profile: UserProfile;
   consents: UserConsents;
   status: 'active' | 'inactive' | 'suspended';
+  registrationApproval?: 'pending' | 'approved' | 'rejected';
   plan: Plan;
   permissions?: string[];
   roleNames?: string[];

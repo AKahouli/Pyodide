@@ -7,6 +7,7 @@ import { UserService } from '../../user/user.service';
 import { AuthService } from '../auth.service';
 import { UnauthorizedException } from '../../exceptions';
 import { ErrorCode } from '../../exceptions/constants/error-codes';
+import { getAccountAccessDenial } from '../../user/utils/assert-account-accessible';
 
 @Injectable()
 export class JwtStrategy extends PassportStrategy(Strategy, 'jwt') {
@@ -54,8 +55,9 @@ export class JwtStrategy extends PassportStrategy(Strategy, 'jwt') {
       throw new UnauthorizedException(ErrorCode.USER_NOT_FOUND, 'User not found');
     }
 
-    if (user.status === 'suspended') {
-      throw new UnauthorizedException(ErrorCode.AUTH_ACCOUNT_SUSPENDED, 'Account is suspended');
+    const accessDenial = getAccountAccessDenial(user.status);
+    if (accessDenial) {
+      throw new UnauthorizedException(accessDenial.code, accessDenial.message);
     }
 
     // Attach JWT payload data to user for use in guards

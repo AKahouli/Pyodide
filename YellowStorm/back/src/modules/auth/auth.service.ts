@@ -8,7 +8,11 @@ import * as crypto from 'crypto';
 import { UAParser } from 'ua-parser-js';
 import { Session, SessionDocument } from './schemas/session.schema';
 import { UserService } from '../user/user.service';
-import { UserDocument, UserStatus } from '../user/schemas/user.schema';
+import { UserDocument } from '../user/schemas/user.schema';
+import {
+  assertAccountAccessible,
+  getAccountAccessDenial,
+} from '../user/utils/assert-account-accessible';
 import { LoggerService } from '../logger';
 import { EmailService } from '../email';
 import { UsageService } from '../usage';
@@ -143,10 +147,7 @@ export class AuthService {
       throw new UnauthorizedException(ErrorCode.INVALID_CREDENTIALS, 'Invalid email or password');
     }
 
-    // Check if account is suspended
-    if (user.status === UserStatus.SUSPENDED) {
-      throw new ForbiddenException(ErrorCode.AUTH_ACCOUNT_SUSPENDED, 'Account is suspended');
-    }
+    assertAccountAccessible(user);
 
     // Validate password
     const isPasswordValid = await this.userService.validatePassword(user, dto.password);
@@ -234,6 +235,7 @@ export class AuthService {
               }
             : undefined,
           status: user.status,
+          registrationApproval: user.registrationApproval,
           permissions,
           roleNames,
         },
@@ -378,9 +380,10 @@ export class AuthService {
       throw new UnauthorizedException(ErrorCode.USER_NOT_FOUND, 'User not found');
     }
 
-    if (user.status === UserStatus.SUSPENDED) {
+    const accessDenial = getAccountAccessDenial(user.status);
+    if (accessDenial) {
       await this.invalidateAllUserSessions(user._id.toString());
-      throw new ForbiddenException(ErrorCode.AUTH_ACCOUNT_SUSPENDED, 'Account is suspended');
+      throw new ForbiddenException(accessDenial.code, accessDenial.message);
     }
 
     // Invalidate old session (token rotation)
@@ -760,7 +763,7 @@ This link will expire in ${this.passwordResetExpiryHours} hour${this.passwordRes
     <h1 style="color: white; margin: 0; font-size: 24px;">${this.appName}</h1>
   </div>
   <div style="background: #ffffff; padding: 30px; border: 1px solid #e0e0e0; border-top: none; border-radius: 0 0 10px 10px;">
-    <h2 style="color: #333; margin-top: 0;">Verify Your Email Address</h2>
+    <h2 style="color: #667eea; margin-top: 0;">Verify Your Email Address</h2>
     <p>Thank you for registering with ${this.appName}. Please click the button below to verify your email address:</p>
     <div style="text-align: center; margin: 30px 0;">
       <a href="${verificationUrl}" style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 14px 28px; text-decoration: none; border-radius: 5px; font-weight: bold; display: inline-block;">Verify Email</a>
@@ -835,11 +838,11 @@ This link will expire in 24 hours. If you didn't create an account with ${this.a
   <title>New Login Alert</title>
 </head>
 <body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; padding: 20px;">
-  <div style="background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%); padding: 30px; border-radius: 10px 10px 0 0;">
+  <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: 30px; border-radius: 10px 10px 0 0;">
     <h1 style="color: white; margin: 0; font-size: 24px;">${this.appName} Security Alert</h1>
   </div>
   <div style="background: #ffffff; padding: 30px; border: 1px solid #e0e0e0; border-top: none; border-radius: 0 0 10px 10px;">
-    <h2 style="color: #f5576c; margin-top: 0;">🔔 New Login Detected</h2>
+    <h2 style="color: #667eea; margin-top: 0;">🔔 New Login Detected</h2>
     <p>We noticed a new sign-in to your ${this.appName} account from a location we haven't seen before.</p>
 
     <div style="background: #f8f9fa; padding: 20px; border-radius: 8px; margin: 20px 0;">

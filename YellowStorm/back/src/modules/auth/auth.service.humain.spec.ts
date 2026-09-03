@@ -63,7 +63,9 @@ describe('AuthService human-agent creation', () => {
     const user = buildUser();
     const { service, humainAgentService } = build(user);
 
-    await service.register({ email: 'jane@acme.io', password: 'Str0ng!pass' } as never);
+    await expect(
+      service.register({ email: 'jane@acme.io', password: 'Str0ng!pass' } as never),
+    ).resolves.toMatchObject({ userId: user._id.toString() });
 
     expect(humainAgentService.ensureForUser).toHaveBeenCalledWith(
       expect.objectContaining({ userId: user._id.toString(), email: user.email }),

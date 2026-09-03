@@ -42,6 +42,7 @@ export interface LoginResponse {
       startedAt?: Date;
     };
     status: string;
+    registrationApproval?: string;
     permissions: string[];
     roleNames: string[];
   };

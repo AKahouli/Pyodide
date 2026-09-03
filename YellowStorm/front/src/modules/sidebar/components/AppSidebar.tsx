@@ -60,6 +60,8 @@ import { AppBuilderButton } from '@/modules/app-builder';
 import { AdminButton, DEFAULT_FEATURE_VISIBILITY, getFeatureVisibility } from '@/modules/admin';
 import type { FeatureVisibility } from '@/modules/admin';
 import { usePermissions } from '@/modules/admin/hooks/usePermissions';
+import { useAuth } from '@/modules/auth';
+import { isPendingAdminApproval } from '@/modules/auth/utils/isPendingAdminApproval';
 import { useModuleTranslation } from '@/modules/localization';
 import { useProjectStore } from '@/modules/project';
 import { CreateProjectDialog } from '@/modules/project';
@@ -241,6 +243,8 @@ export const AppSidebar = memo(function AppSidebar() {
   const navigate = useNavigate();
   const location = useLocation();
   const { t } = useModuleTranslation('sidebar');
+  const { user } = useAuth();
+  const pendingApproval = isPendingAdminApproval(user);
   const { hasAnyPermission } = usePermissions();
   const canOpenGovernance = hasAnyPermission(['governance.read', 'governance.*', '*']);
   const canOpenSemanticModels = hasAnyPermission(['semantic_models.read', 'semantic_models.*', '*']);
@@ -253,6 +257,7 @@ export const AppSidebar = memo(function AppSidebar() {
   });
 
   useEffect(() => {
+    if (pendingApproval) return;
     let active = true;
     getFeatureVisibility()
       .then((value) => {
@@ -262,7 +267,7 @@ export const AppSidebar = memo(function AppSidebar() {
     return () => {
       active = false;
     };
-  }, []);
+  }, [pendingApproval]);
 
   const historyConversations = useHistoryConversations();
   const conversationsLoading = useConversationsLoading();
@@ -336,12 +341,14 @@ export const AppSidebar = memo(function AppSidebar() {
   }, [activeGroup]);
 
   useEffect(() => {
+    if (pendingApproval) return;
     fetchConversations({ reset: true, limit: DEFAULT_CONVERSATIONS_LIMIT });
     fetchV2Pointers({ reset: true });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [pendingApproval]);
 
   useEffect(() => {
+    if (pendingApproval) return;
     const handle = setTimeout(() => {
       const trimmed = historySearch.trim();
       fetchConversations({
@@ -353,7 +360,7 @@ export const AppSidebar = memo(function AppSidebar() {
     }, 300);
     return () => clearTimeout(handle);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [historySearch]);
+  }, [historySearch, pendingApproval]);
 
   const handleLoadMore = useCallback(() => {
     const trimmed = historySearch.trim();

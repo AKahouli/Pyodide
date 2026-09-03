@@ -19,13 +19,14 @@ import {
 } from '@nestjs/swagger';
 import { Request } from 'express';
 import { UserService } from './user.service';
+import { RegistrationApprovalService } from './registration-approval.service';
 import { UsageService } from '../usage/usage.service';
 import { AuthorizationService } from '../authorization/authorization.service';
 import { AuditLogService } from '../authorization/services/audit-log.service';
 import { RequirePermissions } from '../authorization/decorators/require-permissions.decorator';
 import { PermissionsGuard } from '../authorization/guards/permissions.guard';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
-import { UserDocument, UserStatus } from './schemas/user.schema';
+import { RegistrationApproval, UserDocument, UserStatus } from './schemas/user.schema';
 import { Permissions } from '../authorization/constants/permissions';
 import {
   AdminListUsersQueryDto,
@@ -47,6 +48,7 @@ import { escapeRegex } from '../../common/utils';
 export class AdminUserController {
   constructor(
     private readonly userService: UserService,
+    private readonly registrationApprovalService: RegistrationApprovalService,
     private readonly usageService: UsageService,
     private readonly authorizationService: AuthorizationService,
     private readonly auditLogService: AuditLogService,
@@ -210,6 +212,62 @@ export class AdminUserController {
     return { message: 'User activated successfully' };
   }
 
+  @Post(':id/approve-registration')
+  @HttpCode(HttpStatus.OK)
+  @RequirePermissions(Permissions.SUPER_ADMIN)
+  @ApiOperation({ summary: 'Approve a pending classic registration (Super Admin only)' })
+  @ApiParam({ name: 'id', description: 'User ID' })
+  @ApiResponse({ status: 200, description: 'Registration approved' })
+  @ApiResponse({ status: 404, description: 'User not found' })
+  async approveRegistration(
+    @Param('id') id: string,
+    @CurrentUser() actor: UserDocument,
+    @Req() req: Request,
+  ): Promise<{ message: string }> {
+    const result = await this.registrationApprovalService.approveRegistration(id);
+
+    this.auditLogService.logSuccess({
+      actorId: actor._id.toString(),
+      actorEmail: actor.email,
+      action: 'users.approve_registration',
+      targetId: id,
+      targetType: 'User',
+      metadata: { targetEmail: result.email, changed: result.changed },
+      ipAddress: req.ip,
+      userAgent: req.headers['user-agent'],
+    });
+
+    return { message: 'Registration approved' };
+  }
+
+  @Post(':id/reject-registration')
+  @HttpCode(HttpStatus.OK)
+  @RequirePermissions(Permissions.SUPER_ADMIN)
+  @ApiOperation({ summary: 'Reject a pending classic registration (Super Admin only)' })
+  @ApiParam({ name: 'id', description: 'User ID' })
+  @ApiResponse({ status: 200, description: 'Registration rejected' })
+  @ApiResponse({ status: 404, description: 'User not found' })
+  async rejectRegistration(
+    @Param('id') id: string,
+    @CurrentUser() actor: UserDocument,
+    @Req() req: Request,
+  ): Promise<{ message: string }> {
+    const result = await this.registrationApprovalService.rejectRegistration(id);
+
+    this.auditLogService.logSuccess({
+      actorId: actor._id.toString(),
+      actorEmail: actor.email,
+      action: 'users.reject_registration',
+      targetId: id,
+      targetType: 'User',
+      metadata: { targetEmail: result.email, changed: result.changed },
+      ipAddress: req.ip,
+      userAgent: req.headers['user-agent'],
+    });
+
+    return { message: 'Registration rejected' };
+  }
+
   @Post(':id/assign-plan')
   @HttpCode(HttpStatus.OK)
   @RequirePermissions(Permissions.USERS_ASSIGN_PLAN)
@@ -274,6 +332,7 @@ export class AdminUserController {
         company: profile.company,
       },
       status: user.status as UserStatus,
+      registrationApproval: user.registrationApproval as RegistrationApproval | undefined,
       plan: user.planId
         ? {
             id: (user.planId as { toString(): string }).toString(),

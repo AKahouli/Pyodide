@@ -11,13 +11,14 @@ import type { StreamSSEEvent, StreamingComponent } from '../types';
  * Should be called on conversation pages where streaming is needed.
  */
 export function useConversationStream() {
-  const { isAuthenticated } = useAuth();
+  const { isAuthenticated, user } = useAuth();
   const { fetchUsageStatus } = useUsage();
   const fetchUsageRef = useRef(fetchUsageStatus);
   fetchUsageRef.current = fetchUsageStatus;
+  const pendingApproval = user?.status === 'inactive';
 
   useEffect(() => {
-    if (!isAuthenticated) return;
+    if (!isAuthenticated || pendingApproval) return;
 
     const handleVisibilityChange = () => {
       if (document.hidden) return;
@@ -88,5 +89,5 @@ export function useConversationStream() {
       conversationStreamService.disconnect();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isAuthenticated]);
+  }, [isAuthenticated, pendingApproval]);
 }

@@ -21,6 +21,14 @@ describe('usePermissions', () => {
     expect(result.current.hasPermission('anything.random')).toBe(true);
   });
 
+  it('does not treat users.* as Super Admin', () => {
+    useAuthMock.mockReturnValue({ user: { permissions: ['users.*'] } });
+    const { result } = renderHook(() => usePermissions());
+
+    expect(result.current.hasPermission('*')).toBe(false);
+    expect(result.current.hasPermission('users.activate')).toBe(true);
+  });
+
   it('supports any/all checks and defaults to empty permissions', () => {
     useAuthMock.mockReturnValue({ user: { permissions: ['users.read', 'plans.create'] } });
     const { result, rerender } = renderHook(() => usePermissions());

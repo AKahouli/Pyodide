@@ -14,10 +14,11 @@ import { useAuth } from '@/modules/auth';
  * in its background cache.
  */
 export function useConversationV2StreamConnection() {
-  const { isAuthenticated } = useAuth();
+  const { isAuthenticated, user } = useAuth();
+  const pendingApproval = user?.status === 'inactive';
 
   useEffect(() => {
-    if (!isAuthenticated) return;
+    if (!isAuthenticated || pendingApproval) return;
 
     conversationV2StreamService.connect();
     const handleVisibilityChange = () => {
@@ -39,5 +40,5 @@ export function useConversationV2StreamConnection() {
       unsubscribe();
       conversationV2StreamService.disconnect();
     };
-  }, [isAuthenticated]);
+  }, [isAuthenticated, pendingApproval]);
 }
