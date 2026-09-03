@@ -10,7 +10,7 @@ The auth module implements a secure authentication flow with:
 - Email verification flow
 - Forgot password / reset password flow
 - Profile completion flow
-- Pending Super Admin approval page (inactive users can sign in, then a full-screen wait page blocks the app until approval)
+- Pending Super Admin approval page (inactive users can sign in, then a full-screen wait page blocks the app until approval; a rejected request shows declined access instead of “upcoming”)
 - Automatic token refresh on 401 responses
 
 ## Architecture
@@ -356,6 +356,7 @@ interface User {
     company?: string;
   };
   status: "active" | "inactive" | "suspended";
+  registrationApproval?: "pending" | "approved" | "rejected";
 }
 ```
 

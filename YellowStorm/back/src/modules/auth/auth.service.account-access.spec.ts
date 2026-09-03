@@ -70,9 +70,6 @@ describe('AuthService account access', () => {
     const workspaceInitializer = {
       getOrCreatePersonalWorkspace: jest.fn().mockResolvedValue(undefined),
     };
-    const registrationApprovalService = {
-      notifySuperAdminsOfRegistration: jest.fn().mockResolvedValue(undefined),
-    };
     const service = new AuthService(
       sessionModel as never,
       userService as never,
@@ -85,7 +82,6 @@ describe('AuthService account access', () => {
       systemService as never,
       workspaceInitializer as never,
       humainAgentService as never,
-      registrationApprovalService as never,
     );
     return { service, sessionModel, userService };
   };

@@ -77,6 +77,7 @@ export interface UserResponse {
   status: UserStatus;
   consents: IUserConsents;
   plan?: IUserPlan;
+  registrationApproval?: RegistrationApproval;
   permissions?: string[];
   roleNames?: string[];
 }

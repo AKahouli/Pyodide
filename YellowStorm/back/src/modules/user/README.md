@@ -332,6 +332,7 @@ New users must complete their profile before accessing full application features
 1. Required information is collected (name, company)
 2. Privacy policy is explicitly accepted
 3. Data sharing preference is recorded
+4. Super Admins are notified for classic signups still `pending` (best-effort)
 
 ### Required Fields
 
@@ -547,6 +548,7 @@ Returns the authenticated user's profile with permissions.
     "startedAt": "2024-01-01T00:00:00Z"
   },
   "status": "active",
+  "registrationApproval": "approved",
   "permissions": ["conversations.create", "workspaces.read"],
   "roleNames": ["user"]
 }
@@ -567,6 +569,8 @@ Update profile fields. Only provided fields are updated.
 ### POST /users/me/complete-profile
 
 Complete profile with all required fields. Privacy policy must be accepted.
+
+For a classic signup still `registrationApproval: pending`, this is when Super Admins are notified (best-effort). OAuth users and already-complete profiles do not trigger the notice.
 
 **Request:**
 ```json
@@ -679,7 +683,7 @@ Super Admin only (`*`). Sets `status: active` and `registrationApproval: approve
 
 ### POST /admin/users/:id/reject-registration
 
-Super Admin only (`*`). Leaves `status: inactive` and sets `registrationApproval: rejected`. No email is sent. Re-rejecting an already rejected user is a 200 no-op.
+Super Admin only (`*`). Leaves `status: inactive` and sets `registrationApproval: rejected`. Sends a best-effort information email. Re-rejecting an already rejected user is a 200 no-op.
 
 **Response:**
 ```json
@@ -886,6 +890,7 @@ interface UserResponse {
   consents: IUserConsents;
   plan?: IUserPlan;
   status: UserStatus;
+  registrationApproval?: RegistrationApproval;
   permissions?: string[];   // From JWT payload
   roleNames?: string[];     // From JWT payload
 }

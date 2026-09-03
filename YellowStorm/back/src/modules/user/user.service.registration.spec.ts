@@ -34,6 +34,7 @@ describe('UserService classic registration status', () => {
       logger as never,
       configService as never,
       { ensureForUser: jest.fn(), syncFromProfile: jest.fn() } as never,
+      { notifySuperAdminsOfRegistration: jest.fn() } as never,
     );
   };
 

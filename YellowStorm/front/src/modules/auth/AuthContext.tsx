@@ -206,6 +206,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
     const poll = () => {
       void refreshUser().catch(() => undefined);
     };
+    poll();
     const interval = window.setInterval(poll, 15_000);
     const onVisibility = () => {
       if (!document.hidden) {
@@ -213,10 +214,12 @@ export function AuthProvider({ children }: AuthProviderProps) {
       }
     };
     document.addEventListener('visibilitychange', onVisibility);
+    window.addEventListener('focus', poll);
 
     return () => {
       window.clearInterval(interval);
       document.removeEventListener('visibilitychange', onVisibility);
+      window.removeEventListener('focus', poll);
     };
   }, [state.isAuthenticated, state.user?.status, refreshUser]);
 

@@ -16,6 +16,7 @@ import {
   buildLoginUrl,
   buildRegistrationApprovedEmail,
 } from './templates/registration-approved.email';
+import { buildRegistrationRejectedEmail } from './templates/registration-rejected.email';
 
 const SUPER_ADMIN_ROLE = 'super_admin';
 
@@ -80,6 +81,7 @@ export class RegistrationApprovalService {
 
     user.registrationApproval = RegistrationApproval.REJECTED;
     await user.save();
+    await this.sendAccessDeclinedEmail(user.email);
     return this.toDecisionResult(user, true);
   }
 
@@ -196,18 +198,38 @@ export class RegistrationApprovalService {
   }
 
   private async sendAccessActivatedEmail(email: string): Promise<void> {
+    await this.sendApplicantEmail(
+      email,
+      buildRegistrationApprovedEmail({
+        appName: this.appName,
+        loginUrl: buildLoginUrl(this.frontendUrl),
+      }),
+      'registration approval email',
+    );
+  }
+
+  private async sendAccessDeclinedEmail(email: string): Promise<void> {
+    await this.sendApplicantEmail(
+      email,
+      buildRegistrationRejectedEmail({
+        appName: this.appName,
+        loginUrl: buildLoginUrl(this.frontendUrl),
+      }),
+      'registration rejection email',
+    );
+  }
+
+  private async sendApplicantEmail(
+    email: string,
+    content: { subject: string; html: string; text: string },
+    logLabel: string,
+  ): Promise<void> {
     try {
       if (!this.emailService.isAvailable()) {
-        this.logger.warn('Email service not available, skipping registration approval email', {
-          email,
-        });
+        this.logger.warn(`Email service not available, skipping ${logLabel}`, { email });
         return;
       }
 
-      const content = buildRegistrationApprovedEmail({
-        appName: this.appName,
-        loginUrl: buildLoginUrl(this.frontendUrl),
-      });
       const result = await this.emailService.send({
         to: email,
         subject: content.subject,
@@ -215,13 +237,10 @@ export class RegistrationApprovalService {
         text: content.text,
       });
       if (!result.success) {
-        this.logger.error('Failed to send registration approval email', {
-          email,
-          error: result.error,
-        });
+        this.logger.error(`Failed to send ${logLabel}`, { email, error: result.error });
       }
     } catch (error) {
-      this.logger.error('Failed to send registration approval email', {
+      this.logger.error(`Failed to send ${logLabel}`, {
         email,
         error: (error as Error).message,
       });

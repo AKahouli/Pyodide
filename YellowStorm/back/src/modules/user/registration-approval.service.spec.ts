@@ -227,7 +227,7 @@ describe('RegistrationApprovalService decisions', () => {
     expect(logger.error).toHaveBeenCalled();
   });
 
-  it('rejects an inactive pending user without sending email', async () => {
+  it('rejects an inactive pending user and sends a decision email', async () => {
     const user = makeUserDoc();
     const { service, emailService } = makeDecisionService(user);
 
@@ -239,18 +239,37 @@ describe('RegistrationApprovalService decisions', () => {
       registrationApproval: RegistrationApproval.REJECTED,
     });
     expect(user.save).toHaveBeenCalled();
-    expect(emailService.send).not.toHaveBeenCalled();
+    expect(emailService.send).toHaveBeenCalledTimes(1);
+    expect(emailService.send.mock.calls[0][0].to).toBe('jane@acme.io');
+    expect(emailService.send.mock.calls[0][0].subject).toContain('declined');
+    expect(emailService.send.mock.calls[0][0].html).toContain('http://localhost:5173/#/');
+  });
+
+  it('still rejects when the decision email fails', async () => {
+    const user = makeUserDoc();
+    const { service, logger } = makeDecisionService(user, {
+      success: false,
+      error: 'smtp down',
+      attempts: 1,
+    });
+
+    await expect(service.rejectRegistration(userId.toString())).resolves.toMatchObject({
+      changed: true,
+      registrationApproval: RegistrationApproval.REJECTED,
+    });
+    expect(logger.error).toHaveBeenCalled();
   });
 
   it('is a no-op when the registration is already rejected', async () => {
     const user = makeUserDoc({ registrationApproval: RegistrationApproval.REJECTED });
-    const { service } = makeDecisionService(user);
+    const { service, emailService } = makeDecisionService(user);
 
     const result = await service.rejectRegistration(userId.toString());
 
     expect(result.changed).toBe(false);
     expect(user.status).toBe(UserStatus.INACTIVE);
     expect(user.save).not.toHaveBeenCalled();
+    expect(emailService.send).not.toHaveBeenCalled();
   });
 
   it('does not approve a suspended account', async () => {

@@ -43,7 +43,6 @@ describe('AuthService human-agent creation', () => {
     const authorizationService = { getUserPermissions: jest.fn().mockResolvedValue([]), getUserRoleNames: jest.fn().mockResolvedValue([]) };
     const systemService = { isRegistrationEnabled: jest.fn().mockReturnValue(true) };
     const workspaceInitializer = { getOrCreatePersonalWorkspace: jest.fn().mockResolvedValue(undefined) };
-    const registrationApprovalService = { notifySuperAdminsOfRegistration: jest.fn().mockResolvedValue(undefined) };
     const service = new AuthService(
       makeSessionModel() as never,
       userService as never,
@@ -56,23 +55,19 @@ describe('AuthService human-agent creation', () => {
       systemService as never,
       workspaceInitializer as never,
       humainAgentService as never,
-      registrationApprovalService as never,
     );
-    return { service, humainAgentService, userService, registrationApprovalService };
+    return { service, humainAgentService, userService };
   };
 
   it('creates a human agent on register', async () => {
     const user = buildUser();
-    const { service, humainAgentService, registrationApprovalService } = build(user);
+    const { service, humainAgentService } = build(user);
 
     await expect(
       service.register({ email: 'jane@acme.io', password: 'Str0ng!pass' } as never),
     ).resolves.toMatchObject({ userId: user._id.toString() });
 
     expect(humainAgentService.ensureForUser).toHaveBeenCalledWith(
-      expect.objectContaining({ userId: user._id.toString(), email: user.email }),
-    );
-    expect(registrationApprovalService.notifySuperAdminsOfRegistration).toHaveBeenCalledWith(
       expect.objectContaining({ userId: user._id.toString(), email: user.email }),
     );
   });
@@ -86,15 +81,5 @@ describe('AuthService human-agent creation', () => {
     expect(humainAgentService.ensureForUser).toHaveBeenCalledWith(
       expect.objectContaining({ userId: user._id.toString(), email: user.email, firstName: 'Jane', role: 'PM' }),
     );
-  });
-
-  it('completes registration when super admin notification fails', async () => {
-    const user = buildUser();
-    const { service, registrationApprovalService } = build(user);
-    registrationApprovalService.notifySuperAdminsOfRegistration.mockRejectedValue(new Error('smtp down'));
-
-    await expect(
-      service.register({ email: 'jane@acme.io', password: 'Str0ng!pass' } as never),
-    ).resolves.toMatchObject({ userId: user._id.toString() });
   });
 });

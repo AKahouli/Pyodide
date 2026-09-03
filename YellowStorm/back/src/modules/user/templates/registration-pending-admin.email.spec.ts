@@ -22,9 +22,16 @@ describe('registration pending admin email', () => {
 
     expect(usersAdminUrl).toBe('http://localhost:5173/#/admin/users');
     expect(content.subject).toContain('YelloStorm');
+    expect(content.html).toContain('YelloStorm');
+    expect(content.text).toContain('YelloStorm');
     expect(content.html).toContain('jane@acme.io');
     expect(content.html).toContain('02/09/2026 à 16:21');
-    expect(content.html).toContain('#f093fb');
+    expect(content.html).toContain('#667eea');
+    expect(content.html).toContain('#764ba2');
+    expect(content.html).toContain('Open users page');
+    expect(content.html).toContain('bgcolor="#667eea"');
+    expect(content.html).toContain('background-color: #667eea');
+    expect(content.html).toContain('color: #ffffff');
     expect(content.html).toContain('#f8f9fa');
     expect(content.html).toContain(usersAdminUrl);
     expect(content.html).not.toContain('User ID');

@@ -12,9 +12,13 @@ describe('registration approved email', () => {
     });
 
     expect(loginUrl).toBe('http://localhost:5173/#/');
-    expect(content.subject).toContain('YelloStorm');
+    expect(content.subject).toBe('Your account has been approved - YelloStorm');
+    expect(content.html).toContain('YelloStorm');
+    expect(content.html).toContain('#667eea');
+    expect(content.html).toContain('#764ba2');
     expect(content.html).toContain(loginUrl);
     expect(content.html).toContain('Your account is now active');
+    expect(content.text).toContain('YelloStorm');
     expect(content.text).toContain(loginUrl);
   });
 

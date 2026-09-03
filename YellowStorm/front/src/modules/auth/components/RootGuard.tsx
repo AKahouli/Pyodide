@@ -105,7 +105,12 @@ export function RootGuard() {
   }
 
   if (pendingApproval) {
-    return <PendingApprovalPage onLogout={() => void logout()} />;
+    return (
+      <PendingApprovalPage
+        onLogout={() => void logout()}
+        rejected={user?.registrationApproval === 'rejected'}
+      />
+    );
   }
 
   // Fully authenticated - show app layout

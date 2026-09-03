@@ -55,13 +55,6 @@ The authentication module provides:
 │           │              │    JwtService    │                                │
 │           │              │ (Token Signing)  │                                │
 │           │              └──────────────────┘                                │
-│           │                       │                                          │
-│           │                       ▼                                          │
-│           │              ┌──────────────────────────────┐                    │
-│           │              │ RegistrationApprovalService  │                    │
-│           │              │ (UserModule — Super Admin    │                    │
-│           │              │  registration notice)        │                    │
-│           │              └──────────────────────────────┘                    │
 │           │                                                                  │
 │           ▼                                                                  │
 │  ┌──────────────────┐    ┌──────────────────┐    ┌──────────────────┐       │
@@ -182,12 +175,13 @@ auth/
    ├── UsageService.getDefaultPlan() - get free plan
    ├── UserService.assignPlan() - assign to new user
    ├── Send verification email (best-effort)
-   └── RegistrationApprovalService.notifySuperAdminsOfRegistration() (best-effort)
 3. Return { message, userId }
 4. User clicks email link
 5. GET /auth/verify-email?token=xxx
 6. UserService.verifyEmail() - mark emailVerified: true
    (status and registrationApproval are unchanged)
+7. User signs in and POST /users/me/complete-profile
+   └── RegistrationApprovalService.notifySuperAdminsOfRegistration() (best-effort)
 ```
 
 New OAuth users are not in this flow (`createOAuthUser` still defaults to `active`). Completing email verification does **not** activate the account.
@@ -300,7 +294,7 @@ Classic email/password signups wait for Super Admin review. Completing email ver
 | `status` | `inactive` (explicit) | schema default `active` |
 | `registrationApproval` | `pending` | omitted |
 | Email verification | required before login | already verified by provider |
-| Super Admin notice | yes, after verification email | no |
+| Super Admin notice | yes, after complete-profile | no |
 
 Approve and reject live on the **user admin API** (not this auth module):
 
@@ -314,7 +308,7 @@ Approve and reject live on the **user admin API** (not this auth module):
 | Action | `status` | `registrationApproval` | User email |
 |--------|----------|------------------------|------------|
 | Approve | `inactive` → `active` | `approved` | confirmation (best-effort) |
-| Reject | stays `inactive` | `rejected` | none |
+| Reject | stays `inactive` | `rejected` | decline notice (best-effort) |
 
 Re-approve already `approved` / re-reject already `rejected` → 200 no-op. Approving a rejected account is allowed (recovery). UsersPage Valider/Refuser is Super Admin only. The Super Admin notice email links to `/#/admin/users` (the full users list).
 
@@ -329,7 +323,7 @@ Re-approve already `approved` / re-reject already `rejected` → 200 no-op. Appr
 | `JwtStrategy.validate()` | Allowed | Unauthorized |
 | OAuth login of an **existing** linked user | Allowed | Forbidden |
 
-Inactive classic users can sign in and call `/auth/*` plus `/users/me*`. `AccountApprovalGuard` (global, after JWT) returns `ERR_1202` on every other API until Super Admin approval.
+Inactive classic users can sign in and call `/auth/*` plus `/users/me*`. `AccountApprovalGuard` (global, after JWT) returns `ERR_1202` on every other API until Super Admin approval. Login and `GET /users/me` include `registrationApproval` so the pending-approval page can show a declined state when Super Admin rejected the request (step 3 **Refusé**).
 
 Helper messages:
 
@@ -338,7 +332,7 @@ Helper messages:
 
 ### Super Admin notification (best-effort)
 
-After the verification email, `AuthService.register()` calls `RegistrationApprovalService.notifySuperAdminsOfRegistration()`. Failures never fail registration (SMTP down, send error, missing role, or no recipients → log/warn).
+After `POST /users/me/complete-profile`, `UserService.completeProfile()` calls `RegistrationApprovalService.notifySuperAdminsOfRegistration()` for classic users still `pending`. Failures never fail profile completion (SMTP down, send error, missing role, or no recipients → log/warn). Registration and email verification do **not** send this notice. OAuth profile completion does not send it.
 
 Recipients: users with role `super_admin` and `status: active`. One email per recipient (other Super Admin addresses are not exposed in To/CC).
 
@@ -350,7 +344,7 @@ Email link (hash router; Super Admin must already be signed in):
 
 This opens the admin users list. It is **not** a one-click approve/reject token.
 
-`RegistrationApprovalService.approveRegistration()` / `rejectRegistration()` run from `AdminUserController` (permission `*`). Approve sends a best-effort confirmation email to the applicant (`{APP_FRONTEND_URL}/#/`). Mail failure does not roll back the approval.
+`RegistrationApprovalService.approveRegistration()` / `rejectRegistration()` run from `AdminUserController` (permission `*`). Approve and reject each send a best-effort information email to the applicant (`{APP_FRONTEND_URL}/#/`). Mail failure does not roll back the decision.
 
 ---
 
@@ -864,7 +858,7 @@ Verifying the address does not change `status` or `registrationApproval`.
 
 ### Super Admin Registration Notice
 
-Sent after the verification email to every **active** user with the `super_admin` role (best-effort; never fails registration):
+Sent after the applicant completes their profile (`POST /users/me/complete-profile`) to every **active** user with the `super_admin` role (best-effort; never fails profile completion). Not sent at registration or on OAuth profile completion:
 
 ```
 Subject: New registration request - YelloStorm
@@ -893,7 +887,21 @@ Contains:
 - Plain text fallback
 ```
 
-Rejection does not send mail to the applicant.
+### Registration Declined (user information)
+
+Sent after Super Admin rejection (best-effort; mail failure does not roll back `registrationApproval: rejected`):
+
+```
+Subject: Your registration request was declined - YelloStorm
+
+Contains:
+- Notice that the access request was declined
+- Sign-in button/link to /#/ (status page while inactive)
+- Hint to contact a Super Admin if it looks like a mistake
+- Plain text fallback
+```
+
+Re-rejecting an already rejected user does not send another email.
 
 ### Password Reset Email
 

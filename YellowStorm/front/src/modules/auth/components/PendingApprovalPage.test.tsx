@@ -42,4 +42,15 @@ describe('PendingApprovalPage', () => {
     await userEvent.click(screen.getByRole('button', { name: 'pendingApproval.logout' }));
     expect(onLogout).toHaveBeenCalledTimes(1);
   });
+
+  it('shows declined access when Super Admin rejected the request', () => {
+    render(<PendingApprovalPage onLogout={vi.fn()} rejected />);
+
+    expect(screen.getByText('pendingApproval.steps.validation.statusDone')).toBeInTheDocument();
+    expect(screen.getByText('pendingApproval.steps.access.statusRejected')).toBeInTheDocument();
+    expect(screen.getByText('pendingApproval.messageRejected')).toBeInTheDocument();
+    expect(screen.queryByText('pendingApproval.message')).not.toBeInTheDocument();
+    expect(screen.queryByText('pendingApproval.emailHint')).not.toBeInTheDocument();
+    expect(screen.queryByText('pendingApproval.steps.access.status')).not.toBeInTheDocument();
+  });
 });

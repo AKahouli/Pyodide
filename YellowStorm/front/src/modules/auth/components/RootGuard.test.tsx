@@ -141,6 +141,21 @@ describe('RootGuard', () => {
     expect(getFeatureVisibilityMock).not.toHaveBeenCalled();
   });
 
+  it('shows declined copy when the inactive user was rejected', () => {
+    useAuthMock.mockReturnValue(
+      makeAuthState({
+        isAuthenticated: true,
+        user: { status: 'inactive', registrationApproval: 'rejected' } as never,
+      }),
+    );
+
+    renderWithRouter(<RootGuard />);
+
+    expect(screen.getByRole('status')).toHaveTextContent('pendingApproval.messageRejected');
+    expect(screen.getByText('pendingApproval.steps.access.statusRejected')).toBeInTheDocument();
+    expect(screen.queryByText('pendingApproval.message')).not.toBeInTheDocument();
+  });
+
   it('does not show the pending-approval page on the profile-completion redirect', async () => {
     useAuthMock.mockReturnValue(
       makeAuthState({

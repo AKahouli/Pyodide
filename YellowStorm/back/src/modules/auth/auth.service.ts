@@ -8,7 +8,6 @@ import * as crypto from 'crypto';
 import { UAParser } from 'ua-parser-js';
 import { Session, SessionDocument } from './schemas/session.schema';
 import { UserService } from '../user/user.service';
-import { RegistrationApprovalService } from '../user/registration-approval.service';
 import { UserDocument } from '../user/schemas/user.schema';
 import {
   assertAccountAccessible,
@@ -52,7 +51,6 @@ export class AuthService {
     @Inject(forwardRef(() => WorkspaceInitializerService))
     private readonly workspaceInitializer: WorkspaceInitializerService,
     private readonly humainAgentService: HumainAgentService,
-    private readonly registrationApprovalService: RegistrationApprovalService,
   ) {
     this.logger.setContext(AuthService.name);
     this.bcryptRounds = this.configService.get<number>('auth.bcryptRounds', 12);
@@ -128,19 +126,6 @@ export class AuthService {
 
     // Send verification email
     await this.sendVerificationEmail(user.email, user.emailVerificationToken!);
-
-    try {
-      await this.registrationApprovalService.notifySuperAdminsOfRegistration({
-        userId: user._id.toString(),
-        email: user.email,
-        requestedAt: user.createdAt,
-      });
-    } catch (error) {
-      this.logger.warn('Failed to notify super admins of registration', {
-        userId: user._id,
-        error: (error as Error).message,
-      });
-    }
 
     return {
       message: 'Registration successful. Please check your email to verify your account.',
@@ -250,6 +235,7 @@ export class AuthService {
               }
             : undefined,
           status: user.status,
+          registrationApproval: user.registrationApproval,
           permissions,
           roleNames,
         },
@@ -777,7 +763,7 @@ This link will expire in ${this.passwordResetExpiryHours} hour${this.passwordRes
     <h1 style="color: white; margin: 0; font-size: 24px;">${this.appName}</h1>
   </div>
   <div style="background: #ffffff; padding: 30px; border: 1px solid #e0e0e0; border-top: none; border-radius: 0 0 10px 10px;">
-    <h2 style="color: #333; margin-top: 0;">Verify Your Email Address</h2>
+    <h2 style="color: #667eea; margin-top: 0;">Verify Your Email Address</h2>
     <p>Thank you for registering with ${this.appName}. Please click the button below to verify your email address:</p>
     <div style="text-align: center; margin: 30px 0;">
       <a href="${verificationUrl}" style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 14px 28px; text-decoration: none; border-radius: 5px; font-weight: bold; display: inline-block;">Verify Email</a>
@@ -852,12 +838,12 @@ This link will expire in 24 hours. If you didn't create an account with ${this.a
   <title>New Login Alert</title>
 </head>
 <body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; padding: 20px;">
-  <div style="background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%); padding: 30px; border-radius: 10px 10px 0 0;">
-    <h1 style="color: white; margin: 0; font-size: 24px;">YellowMind Security Alert</h1>
+  <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: 30px; border-radius: 10px 10px 0 0;">
+    <h1 style="color: white; margin: 0; font-size: 24px;">${this.appName} Security Alert</h1>
   </div>
   <div style="background: #ffffff; padding: 30px; border: 1px solid #e0e0e0; border-top: none; border-radius: 0 0 10px 10px;">
-    <h2 style="color: #f5576c; margin-top: 0;">🔔 New Login Detected</h2>
-    <p>We noticed a new sign-in to your YellowMind account from a location we haven't seen before.</p>
+    <h2 style="color: #667eea; margin-top: 0;">🔔 New Login Detected</h2>
+    <p>We noticed a new sign-in to your ${this.appName} account from a location we haven't seen before.</p>
 
     <div style="background: #f8f9fa; padding: 20px; border-radius: 8px; margin: 20px 0;">
       <table style="width: 100%; border-collapse: collapse;">
@@ -885,15 +871,15 @@ This link will expire in 24 hours. If you didn't create an account with ${this.a
     </ul>
 
     <hr style="border: none; border-top: 1px solid #e0e0e0; margin: 20px 0;">
-    <p style="color: #999; font-size: 12px;">This is an automated security notification from YellowMind. If you have any concerns, please contact our support team.</p>
+    <p style="color: #999; font-size: 12px;">This is an automated security notification from ${this.appName}. If you have any concerns, please contact our support team.</p>
   </div>
 </body>
 </html>`;
 
     const text = `
-New Login Alert - YellowMind
+New Login Alert - ${this.appName}
 
-We noticed a new sign-in to your YellowMind account from a location we haven't seen before.
+We noticed a new sign-in to your ${this.appName} account from a location we haven't seen before.
 
 Login Details:
 - Time: ${loginTime}
@@ -907,12 +893,12 @@ If you recognize this login, you can ignore this email. If you don't recognize t
 - Review your active sessions in account settings
 - Enable additional security measures if available
 
-This is an automated security notification from YellowMind. If you have any concerns, please contact our support team.
+This is an automated security notification from ${this.appName}. If you have any concerns, please contact our support team.
 `;
 
     const result = await this.emailService.send({
       to: email,
-      subject: `🔔 New login to your YellowMind account`,
+      subject: `🔔 New login to your ${this.appName} account`,
       html,
       text,
       priority: 'high',

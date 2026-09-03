@@ -111,7 +111,7 @@ describe('AuthProvider', () => {
       expiresIn: 3600,
       user: inactiveUser,
     });
-    authApiMock.getCurrentUser.mockResolvedValue({ ...baseUser, status: 'active' });
+    authApiMock.getCurrentUser.mockResolvedValue(inactiveUser);
 
     const { result } = renderHook(() => useAuth(), {
       wrapper: AuthProvider,
@@ -122,6 +122,7 @@ describe('AuthProvider', () => {
     await act(async () => {
       await result.current.login({ email: 'user@example.com', password: testPassword });
     });
+    await waitFor(() => expect(authApiMock.getCurrentUser).toHaveBeenCalled());
     expect(result.current.user?.status).toBe('inactive');
 
     const poll = setIntervalSpy.mock.calls.find((call) => call[1] === 15_000)?.[0] as
@@ -129,11 +130,27 @@ describe('AuthProvider', () => {
       | undefined;
     expect(poll).toBeTypeOf('function');
 
+    authApiMock.getCurrentUser.mockResolvedValue({ ...baseUser, status: 'active' });
     await act(async () => {
       poll?.();
     });
 
     await waitFor(() => expect(result.current.user?.status).toBe('active'));
     setIntervalSpy.mockRestore();
+  });
+
+  it('replaces a stale local user with registrationApproval from getCurrentUser on refresh', async () => {
+    const staleUser = { ...baseUser, status: 'inactive' as const, registrationApproval: 'pending' as const };
+    const rejectedUser = { ...baseUser, status: 'inactive' as const, registrationApproval: 'rejected' as const };
+    localStorage.setItem(AUTH_STORAGE_KEYS.accessToken, 'access-token');
+    localStorage.setItem(AUTH_STORAGE_KEYS.user, JSON.stringify(staleUser));
+    authApiMock.getCurrentUser.mockResolvedValue(rejectedUser);
+
+    const { result } = renderHook(() => useAuth(), {
+      wrapper: AuthProvider,
+    });
+
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
+    expect(result.current.user?.registrationApproval).toBe('rejected');
   });
 });

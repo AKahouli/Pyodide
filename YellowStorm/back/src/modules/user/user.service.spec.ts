@@ -1,5 +1,6 @@
 import { Types } from 'mongoose';
 import { UserService } from './user.service';
+import { RegistrationApproval } from './schemas/user.schema';
 
 describe('UserService human-agent sync', () => {
   const makeUserDoc = () => ({
@@ -20,13 +21,15 @@ describe('UserService human-agent sync', () => {
       ensureForUser: jest.fn().mockResolvedValue(undefined),
       syncFromProfile: jest.fn().mockResolvedValue(undefined),
     };
+    const registrationApprovalService = { notifySuperAdminsOfRegistration: jest.fn().mockResolvedValue(undefined) };
     const service = new UserService(
       userModel as never,
       logger as never,
       configService as never,
       humainAgentService as never,
+      registrationApprovalService as never,
     );
-    return { service, humainAgentService };
+    return { service, humainAgentService, registrationApprovalService };
   };
 
   it('persists role/description and syncs the human agent on completeProfile', async () => {
@@ -79,6 +82,7 @@ describe('UserService human-agent sync', () => {
       logger as never,
       configService as never,
       {} as never,
+      { notifySuperAdminsOfRegistration: jest.fn() } as never,
     );
 
     await expect(service.findSummaryById(userDoc._id.toString())).resolves.toEqual({
@@ -86,5 +90,83 @@ describe('UserService human-agent sync', () => {
       email: 'jane@acme.io',
     });
     expect(select).toHaveBeenCalledWith('email');
+  });
+
+  it('notifies super admins when a pending classic user completes their profile', async () => {
+    const userDoc = {
+      ...makeUserDoc(),
+      registrationApproval: RegistrationApproval.PENDING,
+    };
+    const { service, registrationApprovalService } = makeService(userDoc);
+
+    await service.completeProfile(userDoc._id.toString(), {
+      firstName: 'Jane',
+      lastName: 'Doe',
+      company: 'Acme',
+      privacyPolicy: true,
+      dataSharing: false,
+    });
+
+    expect(registrationApprovalService.notifySuperAdminsOfRegistration).toHaveBeenCalledWith(
+      expect.objectContaining({
+        userId: userDoc._id.toString(),
+        email: 'jane@acme.io',
+      }),
+    );
+  });
+
+  it('does not notify super admins for OAuth profile completion', async () => {
+    const userDoc = makeUserDoc();
+    const { service, registrationApprovalService } = makeService(userDoc);
+
+    await service.completeProfile(userDoc._id.toString(), {
+      firstName: 'Jane',
+      lastName: 'Doe',
+      company: 'Acme',
+      privacyPolicy: true,
+      dataSharing: false,
+    });
+
+    expect(registrationApprovalService.notifySuperAdminsOfRegistration).not.toHaveBeenCalled();
+  });
+
+  it('does not notify super admins again when the profile is already complete', async () => {
+    const userDoc = {
+      ...makeUserDoc(),
+      profileComplete: true,
+      registrationApproval: RegistrationApproval.PENDING,
+    };
+    const { service, registrationApprovalService } = makeService(userDoc);
+
+    await service.completeProfile(userDoc._id.toString(), {
+      firstName: 'Jane',
+      lastName: 'Doe',
+      company: 'Acme',
+      privacyPolicy: true,
+      dataSharing: false,
+    });
+
+    expect(registrationApprovalService.notifySuperAdminsOfRegistration).not.toHaveBeenCalled();
+  });
+
+  it('completes the profile when super admin notification fails', async () => {
+    const userDoc = {
+      ...makeUserDoc(),
+      registrationApproval: RegistrationApproval.PENDING,
+    };
+    const { service, registrationApprovalService } = makeService(userDoc);
+    registrationApprovalService.notifySuperAdminsOfRegistration.mockRejectedValue(
+      new Error('smtp down'),
+    );
+
+    await expect(
+      service.completeProfile(userDoc._id.toString(), {
+        firstName: 'Jane',
+        lastName: 'Doe',
+        company: 'Acme',
+        privacyPolicy: true,
+        dataSharing: false,
+      }),
+    ).resolves.toMatchObject({ profileComplete: true });
   });
 });
