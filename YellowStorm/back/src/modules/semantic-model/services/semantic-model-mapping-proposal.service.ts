@@ -123,7 +123,9 @@ export class SemanticModelMappingProposalService {
       const { data } = await axios.post<SemanticModelMappingPlan>(
         `${adkUrl}/semantic-model/mappings/generate`,
         { modelId, graphDesignerCanvas: graph as SemanticGraph, searchTasks, existingEntities },
-        { headers: { 'Content-Type': 'application/json', 'x-api-key': apiKey }, timeout: this.config.get<number>('semanticModel.mappingTimeoutMs') ?? 1_800_000 },
+        // No timeout: mapping is driven by the async build orchestrator with heartbeat.
+        // LLM extraction + native search can legitimately take many minutes on large corpora.
+        { headers: { 'Content-Type': 'application/json', 'x-api-key': apiKey }, timeout: 0 },
       );
       return { modelId, generatedAt: new Date().toISOString(), search: search.summary, plan: data, proposals: [], _evidenceTasks: search.tasks };
     } catch (error) {
@@ -170,28 +172,39 @@ export class SemanticModelMappingProposalService {
 
     const graph = await this.graphCommands.getGraph(userId, modelId);
 
-    // Build reference → source document map from stored evidence tasks
+    // Build reference → source document map from stored evidence tasks.
+    // Each entry also carries the workspaceId so records can be traced back
+    // to their originating workspaces (a record can come from multiple
+    // documents across multiple workspaces).
     const evidenceTasks: SemanticModelEvidenceSearchTask[] = job.evidenceTasks ?? [];
-    const refToDoc = new Map<string, { sourceDocumentId: string; fileName: string }>();
+    const refToDoc = new Map<string, { sourceDocumentId: string; fileName: string; workspaceId: string }>();
     for (const task of evidenceTasks) {
+      const entry = { sourceDocumentId: task.sourceDocumentId, fileName: task.fileName, workspaceId: task.workspaceId };
       for (const ev of task.evidence) {
-        if (ev.reference) refToDoc.set(ev.reference, { sourceDocumentId: task.sourceDocumentId, fileName: task.fileName });
+        if (ev.reference) refToDoc.set(ev.reference, entry);
       }
-      refToDoc.set(task.bindingId, { sourceDocumentId: task.sourceDocumentId, fileName: task.fileName });
+      refToDoc.set(task.bindingId, entry);
     }
 
     const buildValues = (node: typeof nodes[0]): Record<string, unknown> => {
       const values: Record<string, unknown> = {};
       for (const attr of node.attributes) values[attr.key] = attr.value;
       const sourceDocs = new Map<string, string>();
+      const sourceWorkspaces = new Set<string>();
       for (const ref of node.evidenceReferences ?? []) {
         const doc = refToDoc.get(ref);
-        if (doc) sourceDocs.set(doc.sourceDocumentId, doc.fileName);
+        if (!doc) continue;
+        sourceDocs.set(doc.sourceDocumentId, doc.fileName);
+        if (doc.workspaceId) sourceWorkspaces.add(doc.workspaceId);
       }
       values['_source_document_id'] = sourceDocs.size > 0 ? [...sourceDocs.keys()][0] : null;
       values['_source_file_name'] = sourceDocs.size > 0 ? [...sourceDocs.values()][0] : null;
       values['_source_document_ids'] = [...sourceDocs.keys()];
       values['_source_file_names'] = [...sourceDocs.values()];
+      // Workspace traceability: a record can originate from one or many workspaces.
+      // Store the full list; keep _source_workspace_id as a convenience shortcut to the first one.
+      values['_source_workspace_ids'] = [...sourceWorkspaces];
+      values['_source_workspace_id'] = sourceWorkspaces.size > 0 ? [...sourceWorkspaces][0] : null;
       return values;
     };
 
