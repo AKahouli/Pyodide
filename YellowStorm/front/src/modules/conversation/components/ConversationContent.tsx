@@ -10,6 +10,7 @@ import { UserMessageActions } from './UserMessageActions';
 import { EditableUserMessage } from './EditableUserMessage';
 import { BranchNavigation } from './BranchNavigation';
 import { ConversationAssistantBubble } from './activity/ConversationAssistantBubble';
+import { OutlineAnchorScroller } from './outline/OutlineAnchorScroller';
 import { MessageAttachments } from './MessageAttachments';
 import { MessageReliabilityCard } from './MessageReliabilityCard';
 import { getAnswerComponents, getAnswerEvaluation, getDefaultAnswerVersion } from '../utils/answer-version';
@@ -115,7 +116,7 @@ const MemoizedMessageBubble = memo(function MemoizedMessageBubble({ message, isL
   if (!isUser && !hasPersistedContent) return null;
 
   return (
-    <div className='group/msg'>
+    <div className='group/msg' id={`message-${message.id}`}>
       {isUser && message.attachedFiles && message.attachedFiles.length > 0 && <MessageAttachments files={message.attachedFiles} />}
       <MessageProvider isLastAiMessage={isLastAiMessage} isStreaming={false}>
         {isUser && isEditing
@@ -246,7 +247,7 @@ export function ConversationContent() {
           {messages.length === 0 && !isAwaitingFirstChunk && !messagesLoading ? <ChatConversationEmptyState /> : messages.map((message) => <MemoizedMessageBubble key={message.id} message={message} isLastAiMessage={message.id === lastAiMessageId} isLastUserMessage={message.id === lastUserMessageId} conversationId={currentConversationId!} choiceInteractions={choiceInteractions} />)}
 
           {(showStreamingActivity || (isActiveStream && streamingComponents.length > 0)) && (
-            <div className='group/msg animate-in fade-in-0 duration-300'>
+            <div className='group/msg animate-in fade-in-0 duration-300' id={`message-${streamingMessageId || 'streaming'}`}>
               <MessageProvider isStreaming={true} isLastAiMessage={true}>
                 <ConversationAssistantBubble conversationId={currentConversationId || ''} messageId={streamingMessageId || 'streaming'} components={streamingComponents} isStreaming showWorking={showStreamingActivity && streamingComponents.length === 0} choiceInteractions={choiceInteractions} onComponentAction={handleStreamingAction} onSubmitQuestions={handleStreamingQuestions} />
               </MessageProvider>
@@ -254,6 +255,7 @@ export function ConversationContent() {
           )}
           </div>
         </ChatConversationContent>
+        <OutlineAnchorScroller />
         <ChatScrollButton className='bottom-3 left-auto right-3 z-10 translate-x-0' />
       </ChatConversation>
     </>

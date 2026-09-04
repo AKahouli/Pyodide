@@ -4,6 +4,7 @@ import { useConversationStore, useCurrentConversation, useConversationLoading } 
 import { ConversationHeader } from './components/ConversationHeader';
 import { ConversationContent } from './components/ConversationContent';
 import { ConversationInput } from './components/ConversationInput';
+import { ConversationOutlineRail } from './components/outline/ConversationOutlineRail';
 import { StreamErrorDialog } from './components/StreamErrorDialog';
 import { NotFound } from './components/NotFound';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -152,6 +153,7 @@ export function ConversationPage() {
  
   return (
     <div className='relative flex flex-1 min-h-0 w-full'>
+      <ConversationOutlineRail />
       <div className='flex flex-col flex-1 min-w-0 max-w-6xl mx-auto'>
         <ConversationHeader />
         <GovernedConversationBanner conversation={currentConversation} />

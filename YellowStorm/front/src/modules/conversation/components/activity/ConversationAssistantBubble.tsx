@@ -1,6 +1,6 @@
-import { useEffect, useId, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useId, useRef, useState, type ReactNode } from 'react';
 import { AlertTriangle, Bot, CheckCircle2, ChevronRight, Download, Eye, FileText, Loader2, RotateCcw, XCircle } from 'lucide-react';
-import { AIMessageContent } from '@/components/ai-elements/ai-message-content';
+import { AIMessageContent, type MarkdownHeadingInfo } from '@/components/ai-elements/ai-message-content';
 import { CodeBlockCopyButton } from '@/components/ai-elements/code-block';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { cn } from '@/lib/utils';
@@ -13,6 +13,7 @@ import { mapConversationComponentsToContentParts } from '../../utils';
 import { formatActivityDuration, humanizeToolTitle, resolveToolDescription, resolveToolDisplayKey, resolveToolFallbackName, resolveToolRequest, resolveToolResponse, resolveToolShortName, resolveToolSummary, sanitizeActivityActorName, sanitizeActivityDetail, sanitizeActivityFilename, sanitizeActivitySummary, sanitizeAssistantDisplayText } from '../../utils/tool-activity';
 import type { ChoiceComponentAction } from '@/components/ai-elements/choice/ChoicePartRenderer';
 import { useConversationSettings } from '../../hooks/useConversationSettings';
+import { useConversationUiStore } from '../../uiStore';
 import { ResizableActivityPane } from './ResizableActivityPane';
 
 interface NarrativeProps {
@@ -371,6 +372,33 @@ export function ConversationAssistantBubble(props: Readonly<NarrativeProps>) {
   const settings = useConversationSettings();
   const activityPaneRef = useRef<HTMLDivElement>(null);
   const redactSensitiveText = settings?.redactSensitiveText !== false;
+  const messageId = props.messageId;
+
+  // Document outline: merge headings reported by each rendered answer chunk and
+  // publish them keyed by message id; clear on unmount or message swap. The set
+  // of live answer-batch keys is rebuilt every render: publishOutline prunes
+  // keys that no longer exist, and the signature effect re-publishes when the
+  // batch layout changes, so headings from vanished answer chunks (or a whole
+  // answer replaced by activity-only content) never linger.
+  const outlinePartsRef = useRef(new Map<number, MarkdownHeadingInfo[]>());
+  const liveOutlineKeysRef = useRef(new Set<number>());
+  liveOutlineKeysRef.current = new Set<number>();
+  const publishOutline = useCallback(() => {
+    for (const key of [...outlinePartsRef.current.keys()]) {
+      if (!liveOutlineKeysRef.current.has(key)) outlinePartsRef.current.delete(key);
+    }
+    const merged = [...outlinePartsRef.current.entries()].sort(([a], [b]) => a - b).flatMap(([, headings]) => headings);
+    useConversationUiStore.getState().setOutlineHeadings(messageId, merged);
+  }, [messageId]);
+  const registerOutlinePart = useCallback((partKey: number, headings: MarkdownHeadingInfo[]) => {
+    outlinePartsRef.current.set(partKey, headings);
+    publishOutline();
+  }, [publishOutline]);
+  useEffect(() => {
+    return () => {
+      useConversationUiStore.getState().clearOutlineHeadings(messageId);
+    };
+  }, [messageId]);
   const useOriginalAnswer = !props.answerComponents || props.answerComponents === props.components;
   const source = useOriginalAnswer
     ? props.components
@@ -400,7 +428,11 @@ export function ConversationAssistantBubble(props: Readonly<NarrativeProps>) {
       part.type === 'text' ? { ...part, content: sanitizeAssistantDisplayText(part.content, redactSensitiveText) } : part,
     );
     if (props.isStreaming && parts.at(-1)?.type === 'text') (parts.at(-1) as { showCursor?: boolean }).showCursor = true;
-    if (parts.length) answerNodes.push(<AIMessageContent key={`answer-${answerNodes.length}`} parts={parts} isStreaming={props.isStreaming} onComponentAction={props.onComponentAction} onSubmitQuestions={props.onSubmitQuestions} choiceInteractions={props.choiceInteractions} taskDisplay='activity' redactTaskDiagnostics={redactSensitiveText} citationScope={{ conversationId: props.conversationId, messageId: props.messageId }} />);
+    if (parts.length) {
+      const outlinePartKey = answerNodes.length;
+      liveOutlineKeysRef.current.add(outlinePartKey);
+      answerNodes.push(<AIMessageContent key={`answer-${outlinePartKey}`} parts={parts} isStreaming={props.isStreaming} onComponentAction={props.onComponentAction} onSubmitQuestions={props.onSubmitQuestions} choiceInteractions={props.choiceInteractions} taskDisplay='activity' redactTaskDiagnostics={redactSensitiveText} citationScope={{ conversationId: props.conversationId, messageId: props.messageId }} onOutlineHeadings={(headings) => registerOutlinePart(outlinePartKey, headings)} />);
+    }
     answerBatch = [];
   };
   source.forEach((component) => {
@@ -409,6 +441,12 @@ export function ConversationAssistantBubble(props: Readonly<NarrativeProps>) {
     if (projected) answerBatch.push(projected);
   });
   flush();
+  // Reconcile the published snapshot whenever the set of live answer chunks
+  // changes (e.g. an answer replaced by activity-only content).
+  const liveOutlineSignature = [...liveOutlineKeysRef.current].sort((a, b) => a - b).join(',');
+  useEffect(() => {
+    publishOutline();
+  }, [liveOutlineSignature, publishOutline]);
   activityComponents.forEach((component, index) => {
     if (component.type === 'agentActivity') activityNodes.push(<AgentActivityRow key={component.id || index} data={component.data as AgentActivityData} isStreaming={props.isStreaming} redactSensitiveText={redactSensitiveText} />);
     if (component.type === 'toolActivity') {

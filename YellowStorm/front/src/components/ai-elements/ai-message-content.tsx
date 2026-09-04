@@ -33,6 +33,7 @@ import { Separator } from '../ui/separator';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '../ui/dialog';
 import { rehypeCitationMarkers } from '@/lib/rehype-citation-markers';
 import { remarkAssistantCitationLinks } from '@/lib/remark-assistant-citation-links';
+import { applyOutlineHeadingOverrides, type MarkdownHeadingInfo } from './ai-message-outline';
 
 // ============================================================================
 // Message Content Part Types
@@ -203,6 +204,9 @@ export interface ToolActivityPart {
 
 export type MessageContentPart = TextPart | CodePart | AgentActivityPart | QueuePart | PlanPart | CheckpointPart | ChartPart | ChoicePart | TaskPart | ErrorPart | SourcesPart | SandboxPart | WebPreviewPart | ArtifactPart | CitationPart | ToolActivityPart;
 
+/** A markdown heading rendered inside a message, registered for the document outline. */
+export type { MarkdownHeadingInfo } from './ai-message-outline';
+
 // ============================================================================
 // AIMessageContent Component
 // ============================================================================
@@ -218,6 +222,12 @@ export type AIMessageContentProps = HTMLAttributes<HTMLDivElement> & {
   showTaskDiagnostics?: boolean;
   redactTaskDiagnostics?: boolean;
   citationScope?: { conversationId: string; messageId: string };
+  /**
+   * Called after render with every markdown heading (h1–h6) rendered by this
+   * content, in document order. Consumers use it to build a document outline;
+   * when omitted, heading registration is skipped entirely.
+   */
+  onOutlineHeadings?: (headings: MarkdownHeadingInfo[]) => void;
 };
 
 type TaskActivityStep = {
@@ -237,7 +247,7 @@ function redactDiagnosticText(value: string): string {
 /**
  * AIMessageContent - Renders structured AI message content using ai-sdk components
  */
-export const AIMessageContent = ({ parts, className, isStreaming = false, onComponentAction, onSubmitQuestions, choiceInteractions, taskDisplay = 'raw', showTaskDiagnostics = true, redactTaskDiagnostics = true, citationScope, ...props }: AIMessageContentProps) => {
+export const AIMessageContent = ({ parts, className, isStreaming = false, onComponentAction, onSubmitQuestions, choiceInteractions, taskDisplay = 'raw', showTaskDiagnostics = true, redactTaskDiagnostics = true, citationScope, onOutlineHeadings, ...props }: AIMessageContentProps) => {
   const choicePrompts = new Set(parts.filter((part): part is ChoicePart => part.type === 'choice' && part.status === 'ready').map((part) => part.prompt.trim()).filter(Boolean));
   const hasTask = parts.some((part) => part.type === 'task');
   const taskActivity: TaskActivityStep[] = [];
@@ -245,6 +255,25 @@ export const AIMessageContent = ({ parts, className, isStreaming = false, onComp
     if (part.type === 'text' && choicePrompts.has(part.content.trim())) return false;
     return !(taskDisplay === 'activity' && hasTask && part.type === 'toolActivity');
   });
+
+  // Outline aggregation: every rendered text part reports its own headings;
+  // merge them here into one ordered snapshot so the consumer receives the
+  // complete set for this content. Part keys that no longer exist (a text part
+  // was removed or hidden) are pruned so their headings never linger.
+  const outlinePartsRef = useRef(new Map<number, MarkdownHeadingInfo[]>());
+  const textPartIndexes = useMemo(() => visibleParts.map((part, index) => part.type === 'text' ? index : -1).filter((index) => index >= 0), [visibleParts]);
+  const publishMergedOutline = useCallback((updatedKey: number | null, headings?: MarkdownHeadingInfo[]) => {
+    const map = outlinePartsRef.current;
+    for (const key of [...map.keys()]) {
+      if (!textPartIndexes.includes(key)) map.delete(key);
+    }
+    if (updatedKey !== null && headings) map.set(updatedKey, headings);
+    onOutlineHeadings?.([...map.entries()].sort(([a], [b]) => a - b).flatMap(([, partHeadings]) => partHeadings));
+  }, [onOutlineHeadings, textPartIndexes]);
+  useEffect(() => {
+    if (!onOutlineHeadings) return;
+    publishMergedOutline(null);
+  }, [textPartIndexes, onOutlineHeadings, publishMergedOutline]);
 
   const pendingChoiceParts = visibleParts.filter(
     (part): part is ChoicePart => part.type === 'choice' && part.status === 'ready' && !choiceInteractions?.has(part.componentId),
@@ -265,7 +294,7 @@ export const AIMessageContent = ({ parts, className, isStreaming = false, onComp
       {visibleParts.map((part, index) => {
         if (part.type === 'choice' && groupedChoiceIds.has(part.componentId)) return null;
         return (
-          <AIMessagePart key={part.type === 'choice' ? `choice:${part.componentId}` : index} part={part} isStreaming={isStreaming} onComponentAction={onComponentAction} choiceInteractions={choiceInteractions} taskDisplay={taskDisplay} taskActivity={taskActivity} showTaskDiagnostics={showTaskDiagnostics} redactTaskDiagnostics={redactTaskDiagnostics} citationScope={citationScope} />
+          <AIMessagePart key={part.type === 'choice' ? `choice:${part.componentId}` : index} part={part} partIndex={index} isStreaming={isStreaming} onComponentAction={onComponentAction} choiceInteractions={choiceInteractions} taskDisplay={taskDisplay} taskActivity={taskActivity} showTaskDiagnostics={showTaskDiagnostics} redactTaskDiagnostics={redactTaskDiagnostics} citationScope={citationScope} onOutlineHeadings={onOutlineHeadings ? (partHeadings) => publishMergedOutline(index, partHeadings) : undefined} />
         );
       })}
     </div>
@@ -278,6 +307,7 @@ export const AIMessageContent = ({ parts, className, isStreaming = false, onComp
 
 type AIMessagePartProps = {
   part: MessageContentPart;
+  partIndex: number;
   isStreaming?: boolean;
   onComponentAction?: (action: ChoiceComponentAction) => Promise<void>;
   choiceInteractions?: Map<string, ChoiceInteractionMetadata>;
@@ -286,12 +316,17 @@ type AIMessagePartProps = {
   showTaskDiagnostics?: boolean;
   redactTaskDiagnostics?: boolean;
   citationScope?: { conversationId: string; messageId: string };
+  onOutlineHeadings?: (headings: MarkdownHeadingInfo[]) => void;
 };
 
-const AIMessagePart = ({ part, isStreaming = false, onComponentAction, choiceInteractions, taskDisplay = 'raw', taskActivity = [], showTaskDiagnostics = true, redactTaskDiagnostics = true, citationScope }: AIMessagePartProps) => {
+const AIMessagePart = ({ part, partIndex, isStreaming = false, onComponentAction, choiceInteractions, taskDisplay = 'raw', taskActivity = [], showTaskDiagnostics = true, redactTaskDiagnostics = true, citationScope, onOutlineHeadings }: AIMessagePartProps) => {
   switch (part.type) {
-    case 'text':
-      return <TextPartRenderer content={part.content} showCursor={part.showCursor} citations={part.citations} citationScope={citationScope} />;
+    case 'text': {
+      // Anchor ids must be globally unique across messages: scope them by the
+      // owning message id plus the part index.
+      const outlineKey = onOutlineHeadings ? `${citationScope?.messageId ?? 'msg'}-${partIndex}`.replace(/[^a-zA-Z0-9_-]/g, '-') : undefined;
+      return <TextPartRenderer content={part.content} showCursor={part.showCursor} citations={part.citations} citationScope={citationScope} outlineKey={outlineKey} onOutlineHeadings={onOutlineHeadings} />;
+    }
     case 'code':
       return <CodePartRenderer content={part.content} language={part.language} filename={part.filename} />;
     case 'agentActivity':
@@ -358,14 +393,14 @@ const markdownComponents: React.ComponentProps<typeof ReactMarkdown>['components
   li({ children }) {
     return <li className='my-0 leading-relaxed'>{children}</li>;
   },
-  h1({ children }) {
-    return <h1 className='text-xl font-bold mb-3 mt-6 first:mt-0'>{children}</h1>;
+  h1({ node: _node, children, ...props }) {
+    return <h1 className='text-xl font-bold mb-3 mt-6 first:mt-0' {...props}>{children}</h1>;
   },
-  h2({ children }) {
-    return <h2 className='text-lg font-bold mb-3 mt-5 first:mt-0'>{children}</h2>;
+  h2({ node: _node, children, ...props }) {
+    return <h2 className='text-lg font-bold mb-3 mt-5 first:mt-0' {...props}>{children}</h2>;
   },
-  h3({ children }) {
-    return <h3 className='text-base font-bold mb-2 mt-4 first:mt-0'>{children}</h3>;
+  h3({ node: _node, children, ...props }) {
+    return <h3 className='text-base font-bold mb-2 mt-4 first:mt-0' {...props}>{children}</h3>;
   },
   hr() {
     return <hr className='my-8 border-t-2 border-muted-foreground/80' />;
@@ -395,8 +430,14 @@ function normalizeCitationReference(reference?: string): string | undefined {
   return reference?.trim().replace(/^\[|\]$/g, '').trim() || undefined;
 }
 
+function getCitationDisplayName(citation: CitationData, fallback: string): string {
+  const source = citation.fileName ||
+    (citation.sourceType === 'image' ? citation.path || citation.source : citation.source || citation.path);
+  return source?.split(/[\\/]/).filter(Boolean).at(-1) || fallback;
+}
+
 function getCitationTriggerLabel(citation: CitationData, fallback: string): string {
-  return normalizeCitationReference(citation.reference) || citation.source || fallback;
+  return normalizeCitationReference(citation.reference) || getCitationDisplayName(citation, fallback);
 }
 
 async function openCitationSource(
@@ -442,7 +483,7 @@ async function openCitationSource(
 }
 
 // Text Part with Markdown support
-const TextPartRenderer = ({ content, showCursor, citations, citationScope }: { content: string; showCursor?: boolean; citations?: CitationData[]; citationScope?: { conversationId: string; messageId: string } }) => {
+const TextPartRenderer = ({ content, showCursor, citations, citationScope, outlineKey, onOutlineHeadings }: { content: string; showCursor?: boolean; citations?: CitationData[]; citationScope?: { conversationId: string; messageId: string }; outlineKey?: string; onOutlineHeadings?: (headings: MarkdownHeadingInfo[]) => void }) => {
   // Split citations: those with a reference AND a matching [n] marker in the text are inline
   // (rendered at [n] positions by rehype), all others are trailing (rendered as badges after text).
   // This ensures citations with a reference but no matching marker are not silently lost.
@@ -486,9 +527,34 @@ const TextPartRenderer = ({ content, showCursor, citations, citationScope }: { c
     };
   }, [citationScope, hasInline]);
 
+  // Outline registration: when enabled, wrap heading overrides to assign stable
+  // DOM ids and collect heading metadata during the render pass, then publish
+  // the committed pass via effect. Rebuilt every render so streaming updates
+  // stay fresh; ids derive from heading position, keeping them stable across
+  // re-renders with unchanged content.
+  const outlineEnabled = Boolean(onOutlineHeadings && outlineKey);
+  const collectedOutlineRef = useRef<MarkdownHeadingInfo[]>([]);
+  let componentsForRender = componentsWithCite;
+  if (outlineEnabled) {
+    const collected: MarkdownHeadingInfo[] = [];
+    componentsForRender = applyOutlineHeadingOverrides(componentsWithCite as Record<string, unknown>, outlineKey!, collected);
+    collectedOutlineRef.current = collected;
+  }
+  // Heading wrappers run when ReactMarkdown's children render, i.e. after this
+  // component's render body — so the collected list is only complete by effect
+  // time. React StrictMode (and any render replay) invokes the wrappers twice
+  // per pass while only the last invocation's elements are committed, so keep
+  // only entries whose anchors exist in the committed DOM. Redundant publishes
+  // are absorbed by the consumer store's equality guard, which also makes the
+  // StrictMode effect replay (clear → re-publish) safe.
+  useEffect(() => {
+    if (!outlineEnabled) return;
+    onOutlineHeadings?.(collectedOutlineRef.current.filter((heading) => document.getElementById(heading.id) !== null));
+  }, [content, hasInline, outlineEnabled, onOutlineHeadings]);
+
   return (
     <div className={cn(showCursor && "[&>*:last-child]:after:content-[''] [&>*:last-child]:after:inline-block [&>*:last-child]:after:w-[3px] [&>*:last-child]:after:h-4 [&>*:last-child]:after:bg-foreground [&>*:last-child]:after:ml-0.5 [&>*:last-child]:after:animate-pulse [&>*:last-child]:after:align-text-bottom", hasTrailing && '[&>*:nth-last-child(2)]:not(:where(ul, ol, pre)):inline [&>*:nth-last-child(2)]:not(:where(ul, ol, pre)):mb-0')}>
-      <ReactMarkdown remarkPlugins={remarkPlugins} rehypePlugins={hasInline ? rehypeCitationPlugins : undefined} components={componentsWithCite}>
+      <ReactMarkdown remarkPlugins={remarkPlugins} rehypePlugins={hasInline ? rehypeCitationPlugins : undefined} components={componentsForRender}>
         {content}
       </ReactMarkdown>
       {hasTrailing && <CitationsInline citations={trailingCitations} citationScope={citationScope} />}
@@ -518,7 +584,7 @@ const SingleInlineCitation = ({ citation: c, citationScope }: { citation: Citati
           <InlineCitationCarousel>
             <InlineCitationCarouselContent>
               <InlineCitationCarouselItem>
-                <InlineCitationSource title={c.source || tCommon('ai.citations.defaultSource')} description={c.page ? tCommon('ai.citations.page', { page: c.page }) : undefined} />
+                <InlineCitationSource title={getCitationDisplayName(c, tCommon('ai.citations.defaultSource'))} description={c.page ? tCommon('ai.citations.page', { page: c.page }) : undefined} />
                 {c.pageContent && <InlineCitationQuote>{c.pageContent}</InlineCitationQuote>}
               </InlineCitationCarouselItem>
             </InlineCitationCarouselContent>
@@ -554,7 +620,7 @@ const CitationsInline = ({ citations, citationScope }: { citations: CitationData
               <InlineCitationCarousel>
                 <InlineCitationCarouselContent>
                   <InlineCitationCarouselItem>
-                    <InlineCitationSource title={c.source || tCommon('ai.citations.defaultSource')} description={c.page ? tCommon('ai.citations.page', { page: c.page }) : undefined} />
+                    <InlineCitationSource title={getCitationDisplayName(c, tCommon('ai.citations.defaultSource'))} description={c.page ? tCommon('ai.citations.page', { page: c.page }) : undefined} />
                     {c.pageContent && <InlineCitationQuote>{c.pageContent}</InlineCitationQuote>}
                   </InlineCitationCarouselItem>
                 </InlineCitationCarouselContent>
