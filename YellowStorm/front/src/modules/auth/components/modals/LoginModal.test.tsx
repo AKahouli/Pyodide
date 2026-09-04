@@ -53,8 +53,8 @@ describe('LoginModal', () => {
     expect(screen.queryByRole('button', { name: 'login.createOne' })).not.toBeInTheDocument();
   });
 
-  it('shows inactive account error when login returns ERR_1202', async () => {
-    loginMock.mockRejectedValue({ code: 'ERR_1202' });
+  it('shows the suspended account error when login returns ERR_1110', async () => {
+    loginMock.mockRejectedValue({ code: 'ERR_1110' });
 
     render(<LoginModal open onOpenChange={vi.fn()} onSwitchToRegister={vi.fn()} onForgotPassword={vi.fn()} />);
 
@@ -63,7 +63,7 @@ describe('LoginModal', () => {
     await userEvent.click(screen.getByRole('button', { name: 'login.submit' }));
 
     await waitFor(() => {
-      expect(screen.getByText('login.error.inactive')).toBeInTheDocument();
+      expect(screen.getByText('login.error.suspended')).toBeInTheDocument();
     });
   });
 });

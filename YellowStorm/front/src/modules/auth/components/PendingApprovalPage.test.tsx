@@ -42,4 +42,22 @@ describe('PendingApprovalPage', () => {
     await userEvent.click(screen.getByRole('button', { name: 'pendingApproval.logout' }));
     expect(onLogout).toHaveBeenCalledTimes(1);
   });
+
+  it('renders the rejected variant without the email hint', () => {
+    render(<PendingApprovalPage onLogout={vi.fn()} status='rejected' />);
+
+    expect(screen.getByRole('status')).toHaveTextContent('pendingApproval.messageRejected');
+    expect(screen.getByText('pendingApproval.steps.validation.statusDone')).toBeInTheDocument();
+    expect(screen.getByText('pendingApproval.steps.access.statusRejected')).toBeInTheDocument();
+    expect(screen.queryByText('pendingApproval.emailHint')).not.toBeInTheDocument();
+  });
+
+  it('renders the approved variant with step 3 marked as done', () => {
+    render(<PendingApprovalPage onLogout={vi.fn()} status='approved' />);
+
+    expect(screen.getByRole('status')).toHaveTextContent('pendingApproval.messageApproved');
+    expect(screen.getByText('pendingApproval.steps.validation.statusDone')).toBeInTheDocument();
+    expect(screen.getByText('pendingApproval.steps.access.statusDone')).toBeInTheDocument();
+    expect(screen.queryByText('pendingApproval.emailHint')).not.toBeInTheDocument();
+  });
 });

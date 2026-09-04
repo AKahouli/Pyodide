@@ -250,6 +250,7 @@ export class AuthService {
               }
             : undefined,
           status: user.status,
+          registrationApproval: user.registrationApproval,
           permissions,
           roleNames,
         },

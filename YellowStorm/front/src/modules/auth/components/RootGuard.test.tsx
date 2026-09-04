@@ -174,6 +174,20 @@ describe('RootGuard', () => {
     expect(getFeatureVisibilityMock).not.toHaveBeenCalled();
   });
 
+  it('shows the rejected variant of the pending-approval page when the registration was declined', () => {
+    useAuthMock.mockReturnValue(
+      makeAuthState({
+        isAuthenticated: true,
+        user: { status: 'inactive', registrationApproval: 'rejected' } as never,
+      }),
+    );
+
+    renderWithRouter(<RootGuard />);
+
+    expect(screen.getByRole('status')).toHaveTextContent('pendingApproval.messageRejected');
+    expect(screen.getByText('pendingApproval.steps.access.statusRejected')).toBeInTheDocument();
+  });
+
   it('does not show the pending-approval page on the profile-completion redirect', async () => {
     useAuthMock.mockReturnValue(
       makeAuthState({
@@ -192,5 +206,30 @@ describe('RootGuard', () => {
 
     await waitFor(() => expect(screen.getByText('complete profile page')).toBeInTheDocument());
     expect(screen.queryByRole('status')).not.toBeInTheDocument();
+  });
+
+  it('shows the approved step-3 status after the account is accepted and then reveals the app shell', async () => {
+    const renderGuard = () => <MemoryRouter initialEntries={['/']}><RootGuard /></MemoryRouter>;
+    useAuthMock.mockReturnValue(
+      makeAuthState({ isAuthenticated: true, user: { status: 'inactive' } as never }),
+    );
+
+    const { rerender } = render(renderGuard());
+    expect(screen.getByRole('status')).toHaveTextContent('pendingApproval.message');
+    expect(screen.queryByTestId('sidebar-provider')).not.toBeInTheDocument();
+
+    // Admin approves: polling flips the persisted user to active.
+    useAuthMock.mockReturnValue(
+      makeAuthState({ isAuthenticated: true, user: { status: 'active' } as never }),
+    );
+    rerender(renderGuard());
+
+    expect(screen.getByRole('status')).toHaveTextContent('pendingApproval.messageApproved');
+    expect(screen.getByText('pendingApproval.steps.access.statusDone')).toBeInTheDocument();
+
+    await waitFor(
+      () => expect(screen.getByTestId('sidebar-provider')).toBeInTheDocument(),
+      { timeout: 4000 },
+    );
   });
 });

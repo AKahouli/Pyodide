@@ -23,6 +23,7 @@ import { useConversationV2StreamConnection } from '@/modules/conversation-v2/use
 import { usePlaybookStreamGlobal } from '@/modules/playbook/services/playbookStreamService';
 import { DEFAULT_FEATURE_VISIBILITY, getFeatureVisibility } from '@/modules/admin';
 import { PlatformCopilotMascot } from '@/modules/platform-copilot';
+import { isPendingAdminApproval } from '../utils/isPendingAdminApproval';
 
 export function RootGuard() {
   const {
@@ -35,10 +36,41 @@ export function RootGuard() {
   } = useAuth();
   const location = useLocation();
   const fetchModels = useModelsStore((state) => state.fetchModels);
-  const pendingApproval = user?.status === 'inactive';
+  const pendingApproval = isPendingAdminApproval(user);
   const [platformCopilotEnabled, setPlatformCopilotEnabled] = React.useState(
     DEFAULT_FEATURE_VISIBILITY.platformCopilot,
   );
+
+  const wasPendingRef = React.useRef(pendingApproval);
+  const [justApproved, setJustApproved] = React.useState(false);
+  const approvedTimerRef = React.useRef<number | undefined>(undefined);
+
+  React.useLayoutEffect(() => {
+    const wasPending = wasPendingRef.current;
+    wasPendingRef.current = pendingApproval;
+
+    if (wasPending && !pendingApproval && user?.status !== 'inactive') {
+      // Approval picked up by polling. Show the completed step-3 state briefly
+      // before revealing the app shell, so the status updates without a refresh.
+      setJustApproved(true);
+      if (approvedTimerRef.current !== undefined) {
+        window.clearTimeout(approvedTimerRef.current);
+      }
+      approvedTimerRef.current = window.setTimeout(() => {
+        setJustApproved(false);
+        approvedTimerRef.current = undefined;
+      }, 2500);
+    } else if (pendingApproval) {
+      setJustApproved(false);
+    }
+
+    return () => {
+      if (approvedTimerRef.current !== undefined) {
+        window.clearTimeout(approvedTimerRef.current);
+        approvedTimerRef.current = undefined;
+      }
+    };
+  }, [pendingApproval, user?.status]);
 
   // Keep SSE connections alive at app level so streaming persists across
   // navigation. v2 uses its own per-user pipe (one connection for all
@@ -50,13 +82,13 @@ export function RootGuard() {
 
   // Initialize models when authenticated
   React.useEffect(() => {
-    if (isAuthenticated && !requiresEmailVerification && !requiresProfileCompletion && !pendingApproval) {
+    if (isAuthenticated && !requiresEmailVerification && !requiresProfileCompletion && !pendingApproval && !justApproved) {
       fetchModels();
     }
-  }, [isAuthenticated, requiresEmailVerification, requiresProfileCompletion, pendingApproval, fetchModels]);
+  }, [isAuthenticated, requiresEmailVerification, requiresProfileCompletion, pendingApproval, justApproved, fetchModels]);
 
   React.useEffect(() => {
-    if (!isAuthenticated || requiresEmailVerification || requiresProfileCompletion || pendingApproval) {
+    if (!isAuthenticated || requiresEmailVerification || requiresProfileCompletion || pendingApproval || justApproved) {
       setPlatformCopilotEnabled(false);
       return;
     }
@@ -69,7 +101,7 @@ export function RootGuard() {
         if (active) setPlatformCopilotEnabled(false);
       });
     return () => { active = false; };
-  }, [isAuthenticated, requiresEmailVerification, requiresProfileCompletion, pendingApproval]);
+  }, [isAuthenticated, requiresEmailVerification, requiresProfileCompletion, pendingApproval, justApproved]);
 
   // Still loading auth state - show spinner to prevent flash of wrong content
   if (isLoading) {
@@ -95,8 +127,19 @@ export function RootGuard() {
     return <Navigate to='/complete-profile' replace />;
   }
 
-  if (pendingApproval) {
-    return <PendingApprovalPage onLogout={() => void logout()} />;
+  if (pendingApproval || justApproved) {
+    const status = justApproved
+      ? 'approved'
+      : user?.registrationApproval === 'rejected'
+        ? 'rejected'
+        : 'pending';
+
+    return (
+      <PendingApprovalPage
+        onLogout={() => void logout()}
+        status={status}
+      />
+    );
   }
 
   // Fully authenticated - show app layout

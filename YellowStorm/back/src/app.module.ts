@@ -42,7 +42,7 @@ import { EmailModule } from './modules/email';
 
 // Feature Modules
 import { HealthModule } from './modules/health';
-import { UserModule } from './modules/user';
+import { UserModule, AccountApprovalGuard } from './modules/user';
 import { AuthModule, JwtAuthGuard } from './modules/auth';
 import { AuthorizationModule } from './modules/authorization';
 import { SystemModule } from './modules/system';
@@ -159,6 +159,10 @@ import { SemanticModelModule } from './modules/semantic-model/semantic-model.mod
     {
       provide: APP_GUARD,
       useClass: JwtAuthGuard,
+    },
+    {
+      provide: APP_GUARD,
+      useClass: AccountApprovalGuard,
     },
   ],
 })

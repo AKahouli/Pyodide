@@ -53,7 +53,7 @@ describe('AuthService account access', () => {
     };
     const jwtService = { sign: jest.fn().mockReturnValue('signed.jwt.token') };
     const configService = { get: jest.fn((_key: string, def: unknown) => def) };
-    const logger = { setContext: jest.fn(), log: jest.fn(), warn: jest.fn(), error: jest.fn() };
+    const logger = { setContext: jest.fn(), log: jest.fn(), warn: jest.fn(), error: jest.fn(), debug: jest.fn() };
     const emailService = { isAvailable: jest.fn().mockReturnValue(false) };
     const usageService = {
       getDefaultPlan: jest.fn().mockResolvedValue({
@@ -90,8 +90,8 @@ describe('AuthService account access', () => {
     return { service, sessionModel, userService };
   };
 
-  it('rejects login for inactive users with USER_INACTIVE', async () => {
-    const user = buildUser({ status: UserStatus.INACTIVE });
+  it('allows login for inactive users pending Super Admin approval', async () => {
+    const user = buildUser({ status: UserStatus.INACTIVE, profileComplete: false });
     const { service, userService } = build(user);
 
     await expect(
@@ -100,8 +100,12 @@ describe('AuthService account access', () => {
         '127.0.0.1',
         'jest-agent',
       ),
-    ).rejects.toMatchObject({ code: ErrorCode.USER_INACTIVE });
-    expect(userService.validatePassword).not.toHaveBeenCalled();
+    ).resolves.toMatchObject({
+      loginResponse: expect.objectContaining({
+        user: expect.objectContaining({ status: UserStatus.INACTIVE }),
+      }),
+    });
+    expect(userService.validatePassword).toHaveBeenCalled();
   });
 
   it('rejects login for suspended users with AUTH_ACCOUNT_SUSPENDED', async () => {
@@ -117,7 +121,7 @@ describe('AuthService account access', () => {
     ).rejects.toMatchObject({ code: ErrorCode.AUTH_ACCOUNT_SUSPENDED });
   });
 
-  it('rejects refresh for inactive users and invalidates sessions', async () => {
+  it('refreshes tokens for inactive users without invalidating sessions', async () => {
     const user = buildUser({ status: UserStatus.INACTIVE });
     const { service, sessionModel } = build(user);
     const sessionId = new Types.ObjectId();
@@ -128,11 +132,14 @@ describe('AuthService account access', () => {
       expiresAt: new Date(Date.now() + 60_000),
       refreshTokenHash: 'hash',
       tokenFamily: 'family-1',
+      save: jest.fn().mockResolvedValue(undefined),
     });
 
     await expect(
       service.refreshTokens(`${sessionId.toString()}.token`, '127.0.0.1', 'jest-agent'),
-    ).rejects.toMatchObject({ code: ErrorCode.USER_INACTIVE });
-    expect(sessionModel.updateMany).toHaveBeenCalled();
+    ).resolves.toMatchObject({
+      accessToken: 'signed.jwt.token',
+    });
+    expect(sessionModel.updateMany).not.toHaveBeenCalled();
   });
 });
