@@ -110,6 +110,9 @@ describe('ConversationAssistantBubble', () => {
     expect(bubble.querySelector('[data-activity-pane]')).toHaveStyle({ minHeight: '80px', maxHeight: '320px' });
     expect(bubble.querySelector('[data-activity-pane]')).toHaveAttribute('data-auto-sized', 'true');
     expect(bubble.querySelector('[data-activity-pane]')).toHaveClass('overflow-y-auto');
+    expect(bubble.querySelector('[data-activity-pane]')).not.toHaveClass('overscroll-contain');
+    expect(within(desktop).getByRole('button', { name: /Compare selected files/ })).toHaveClass('min-h-10');
+    expect(desktop).not.toHaveClass('space-y-1');
     expect(bubble.querySelector('[data-activity-pane]')).not.toContainElement(nodes.at(-1) as HTMLElement);
   });
 
@@ -375,6 +378,58 @@ describe('ConversationAssistantBubble', () => {
     expect(answer).toHaveTextContent('Revenue was 33.9 million euros.');
     expect(answer).not.toHaveTextContent(firstSummary);
     expect(answer).not.toHaveTextContent(secondSummary);
+  });
+
+  it('removes replayed reasoning when persisted activity previews are truncated', () => {
+    const firstPreview = 'I am inspecting the complete financial report and comparing every relevant ratio before preparing the final response for the user...';
+    const secondPreview = 'I am validating the supporting citations and checking every reported figure before I provide the final documented conclusion...';
+    render(<ConversationAssistantBubble
+      conversationId='conversation-1'
+      messageId='message-1'
+      isStreaming={false}
+      components={[
+        { id: 'activity-1', type: 'agentActivity', data: { summary: firstPreview, detail: firstPreview, status: 'completed' } },
+        { id: 'activity-2', type: 'agentActivity', data: { summary: secondPreview, detail: secondPreview, status: 'completed' } },
+        { id: 'answer', type: 'text', data: { content: `${firstPreview.slice(0, -3)} with additional details.${secondPreview.slice(0, -3)} with the final checks.# Confirmed answer\nRevenue was 33.9 million euros.` } },
+      ]}
+    />);
+
+    expect(screen.getByRole('heading', { name: 'Confirmed answer' })).toBeInTheDocument();
+    expect(screen.getByText('Revenue was 33.9 million euros.')).toBeInTheDocument();
+    expect(screen.queryByText(/additional details/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/final checks/)).not.toBeInTheDocument();
+  });
+
+  it('preserves a legitimate answer that begins with a truncated activity preview', () => {
+    const preview = 'I am summarizing the verified financial evidence and its implications before presenting the complete documented answer to the user...';
+    const introduction = `${preview.slice(0, -3)} with important context that belongs in the answer.`;
+    render(<ConversationAssistantBubble
+      conversationId='conversation-1'
+      messageId='message-1'
+      isStreaming={false}
+      components={[
+        { id: 'activity-1', type: 'agentActivity', data: { summary: preview, detail: preview, status: 'completed' } },
+        { id: 'answer', type: 'text', data: { content: `${introduction}\n## Results\nRevenue was 33.9 million euros.` } },
+      ]}
+    />);
+
+    expect(screen.getByText(new RegExp(introduction.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')))).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Results' })).toBeInTheDocument();
+  });
+
+  it('preserves an ambiguous truncated replay followed by a plain-text answer', () => {
+    const preview = 'I am reviewing the evidence carefully before writing a concise response based only on the supplied and verified financial documents...';
+    render(<ConversationAssistantBubble
+      conversationId='conversation-1'
+      messageId='message-1'
+      isStreaming={false}
+      components={[
+        { id: 'activity-1', type: 'agentActivity', data: { summary: preview, detail: preview, status: 'completed' } },
+        { id: 'answer', type: 'text', data: { content: `${preview.slice(0, -3)} with more reasoning.The final answer is 42.` } },
+      ]}
+    />);
+
+    expect(screen.getByText(/with more reasoning\.The final answer is 42\./)).toBeInTheDocument();
   });
 
   it('keeps a short final answer that matches a short activity detail', () => {

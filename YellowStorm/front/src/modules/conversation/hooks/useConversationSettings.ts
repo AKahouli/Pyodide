@@ -7,6 +7,15 @@ let cached: { value: ConversationSettings; expiresAt: number } | null = null;
 let pending: Promise<ConversationSettings> | null = null;
 const listeners = new Set<(value: ConversationSettings | null) => void>();
 
+function settingsEqual(left: ConversationSettings | null, right: ConversationSettings | null): boolean {
+  if (!left || !right) return left === right;
+  return left.redactSensitiveText === right.redactSensitiveText
+    && left.updatedAt === right.updatedAt
+    && Object.entries(left.composerSuggestions).every(([key, value]) =>
+      right.composerSuggestions[key as keyof ConversationSettings['composerSuggestions']] === value,
+    );
+}
+
 function notify(value: ConversationSettings | null): void {
   listeners.forEach((listener) => listener(value));
 }
@@ -39,7 +48,7 @@ export function useConversationSettings() {
   useEffect(() => {
     let cancelled = false;
     const update = (value: ConversationSettings | null) => {
-      if (!cancelled) setSettings(value);
+      if (!cancelled) setSettings((current) => settingsEqual(current, value) ? current : value);
     };
     const refresh = () => {
       if (cached && cached.expiresAt > Date.now()) return;

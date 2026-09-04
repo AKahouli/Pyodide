@@ -623,13 +623,30 @@ class StreamingEventProcessor:
                     await self._handle_ui_tool_response(part.function_response, current_message_id, q)
 
             elif event.is_final_response() and event.content and event.content.parts:
+                final_text = "".join(
+                    str(getattr(item, "text", "") or "")
+                    for item in event.content.parts
+                    if getattr(item, "thought", False) is not True
+                )
                 if guarded_output:
-                    final_text = "".join(str(getattr(item, "text", "") or "") for item in event.content.parts)
                     accumulated_manager_text = final_text
-                    if final_text:
-                        current_agent = await self._handle_text_event(
-                            final_text, current_message_id, q, manager_agent, current_agent
-                        )
+                    final_text_to_emit = final_text
+                elif final_text.startswith(accumulated_manager_text):
+                    final_text_to_emit = final_text[len(accumulated_manager_text):]
+                    accumulated_manager_text = final_text
+                elif final_text and final_text not in accumulated_manager_text:
+                    final_text_to_emit = final_text
+                    accumulated_manager_text += final_text
+                else:
+                    final_text_to_emit = ""
+                if final_text_to_emit:
+                    current_agent = await self._handle_text_event(
+                        final_text_to_emit,
+                        current_message_id,
+                        q,
+                        manager_agent,
+                        current_agent,
+                    )
                 await self._handle_final_response(current_message_id, q)
 
         return (

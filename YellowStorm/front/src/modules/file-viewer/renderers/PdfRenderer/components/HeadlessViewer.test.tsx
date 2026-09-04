@@ -1,5 +1,5 @@
 import { fireEvent, render, screen } from '@testing-library/react';
-import type { ImgHTMLAttributes, ReactNode } from 'react';
+import type { CSSProperties, ImgHTMLAttributes, ReactNode } from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import { HeadlessViewer } from './HeadlessViewer';
 
@@ -31,7 +31,9 @@ vi.mock('@embedpdf/plugin-scroll/react', () => ({ Scroller: ({ renderPage }: { r
 vi.mock('@embedpdf/plugin-render/react', () => ({ RenderLayer: ({ documentId: _documentId, pageIndex: _pageIndex, ...props }: ImgHTMLAttributes<HTMLImageElement> & { documentId: string; pageIndex: number }) => <img {...props} /> }));
 vi.mock('@embedpdf/plugin-interaction-manager/react', () => ({
   GlobalPointerProvider: ({ children }: { children: ReactNode }) => <>{children}</>,
-  PagePointerProvider: ({ children }: { children: ReactNode }) => <>{children}</>,
+  PagePointerProvider: ({ children, style }: { children: ReactNode; style?: CSSProperties }) => (
+    <div data-testid='page-pointer-provider' style={style}>{children}</div>
+  ),
 }));
 vi.mock('@embedpdf/plugin-selection/react', () => ({ SelectionLayer: () => <div>selection-layer</div> }));
 vi.mock('@embedpdf/plugin-annotation/react', () => ({ AnnotationLayer: () => <div>annotation-layer</div> }));
@@ -80,6 +82,7 @@ describe('HeadlessViewer', () => {
     expect(writeText).toHaveBeenCalledWith('hello\nworld');
     expect(registryRef.current.has('tab-1')).toBe(true);
     expect(screen.getByRole('img', { name: 'pdf.pageAria' })).toBeInTheDocument();
+    expect(screen.getByTestId('page-pointer-provider')).toHaveStyle({ width: '100%', height: '100%' });
 
     unmount();
     expect(registryRef.current.has('tab-1')).toBe(false);

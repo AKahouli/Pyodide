@@ -74,7 +74,7 @@ export function ResizableActivityPane({ children, paneRef, resizeLabel }: Readon
         ref={paneRef}
         data-activity-pane
         data-auto-sized={manualHeight === undefined || undefined}
-        className='overflow-y-auto overscroll-contain pr-2'
+        className='overflow-y-auto pr-2'
         style={manualHeight === undefined ? { minHeight: MIN_HEIGHT, maxHeight: AUTO_MAX_HEIGHT } : { height: manualHeight }}
       >
         {children}

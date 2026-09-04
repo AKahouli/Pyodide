@@ -80,12 +80,38 @@ function resolveAgentActivityPreview(data: AgentActivityData, redactSensitiveTex
 function stripReasoningReplayPrefix(component: MessageComponent, reasoningTexts: readonly string[]): MessageComponent | undefined {
   if (component.type !== 'text' || typeof component.data.content !== 'string') return component;
   let content = component.data.content;
-  let replay: string | undefined;
-  do {
+  let strippedReplayCount = 0;
+  while (content) {
     content = content.trimStart();
-    replay = reasoningTexts.find((text) => content.startsWith(text));
-    if (replay) content = content.slice(replay.length);
-  } while (replay);
+    const replay = reasoningTexts.find((text) => content.startsWith(text));
+    if (replay) {
+      content = content.slice(replay.length);
+      strippedReplayCount += 1;
+      continue;
+    }
+
+    const truncatedReplayIndex = reasoningTexts.findIndex((text) => {
+      const prefix = text.replace(/(?:\.{3}|…)$/, '').trimEnd();
+      return prefix.length < text.length && content.startsWith(prefix);
+    });
+    if (truncatedReplayIndex < 0) break;
+
+    const truncatedReplay = reasoningTexts[truncatedReplayIndex];
+    const prefixLength = truncatedReplay.replace(/(?:\.{3}|…)$/, '').trimEnd().length;
+    const nextReplayIndex = reasoningTexts.slice(truncatedReplayIndex + 1).reduce((earliest, text) => {
+      const prefix = text.replace(/(?:\.{3}|…)$/, '').trimEnd();
+      const index = prefix ? content.indexOf(prefix, prefixLength) : -1;
+      return index >= 0 && (earliest < 0 || index < earliest) ? index : earliest;
+    }, -1);
+    const headingIndex = strippedReplayCount > 0
+      ? content.slice(prefixLength).search(/(?<=[.!?])#{1,6}\s/)
+      : -1;
+    const answerIndex = headingIndex >= 0 ? prefixLength + headingIndex : -1;
+    const boundary = [nextReplayIndex, answerIndex].filter((index) => index >= 0).sort((left, right) => left - right)[0];
+    if (boundary === undefined) break;
+    content = content.slice(boundary);
+    strippedReplayCount += 1;
+  }
   return content.trim() ? { ...component, data: { ...component.data, content } } : undefined;
 }
 
@@ -215,7 +241,7 @@ function ToolRow({ component, redactSensitiveText, onRetry }: Readonly<{ compone
   return (
     <Collapsible open={open} onOpenChange={setOpen}>
       <CollapsibleTrigger asChild>
-        <button type='button' aria-label={rowAriaLabel} className='group flex min-h-12 w-full items-center gap-2 rounded-lg border border-transparent px-2 py-1 text-left text-sm text-muted-foreground transition-colors hover:bg-muted/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring data-[state=open]:border-border/70 data-[state=open]:bg-muted/55'>
+        <button type='button' aria-label={rowAriaLabel} className='group flex min-h-10 w-full items-center gap-2 rounded-lg border border-transparent px-2 py-0.5 text-left text-sm text-muted-foreground transition-colors hover:bg-muted/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring data-[state=open]:border-border/70 data-[state=open]:bg-muted/55'>
           {row}
         </button>
       </CollapsibleTrigger>
@@ -234,7 +260,7 @@ function AgentActivityRow({ data, isStreaming, redactSensitiveText }: Readonly<{
   return (
     <Collapsible>
       <CollapsibleTrigger asChild>
-        <button type='button' aria-label={t('stream.activity.agentRowAria', { description: summary, status: statusLabel })} className='group flex min-h-12 w-full items-center gap-2 rounded-lg border border-transparent px-2 py-1 text-left text-sm text-muted-foreground transition-colors hover:bg-muted/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring data-[state=open]:border-border/70 data-[state=open]:bg-muted/55'>
+        <button type='button' aria-label={t('stream.activity.agentRowAria', { description: summary, status: statusLabel })} className='group flex min-h-10 w-full items-center gap-2 rounded-lg border border-transparent px-2 py-0.5 text-left text-sm text-muted-foreground transition-colors hover:bg-muted/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring data-[state=open]:border-border/70 data-[state=open]:bg-muted/55'>
           <span data-agent-activity-spinner={active || undefined} aria-hidden='true'>{statusIcon(data.status, active)}</span>
           <span data-agent-summary className='min-w-0 flex-1 truncate font-medium leading-5 text-foreground'>{summary}</span>
           {duration && <span className='shrink-0 tabular-nums'>- {duration}</span>}
@@ -438,7 +464,7 @@ export function ConversationAssistantBubble(props: Readonly<NarrativeProps>) {
         : props.showWorking && <div data-mobile-working className='flex items-center gap-2 text-sm text-muted-foreground md:hidden'><Loader2 className='size-4 animate-spin text-primary' />{t('stream.activity.usingTools')}</div>}
       {activityNodes.length > 0 && (
         <ResizableActivityPane paneRef={activityPaneRef} resizeLabel={t('stream.activity.resizePaneAria')}>
-          <div data-desktop-activity className='space-y-1'>{activityNodes}</div>
+          <div data-desktop-activity>{activityNodes}</div>
         </ResizableActivityPane>
       )}
       {answerNodes.length > 0 && <div data-answer-content className={cn('space-y-2', activityNodes.length > 0 && 'mt-4 border-t pt-4')}>{answerNodes}</div>}

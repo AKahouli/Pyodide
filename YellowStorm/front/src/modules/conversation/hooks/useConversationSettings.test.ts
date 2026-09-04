@@ -33,6 +33,17 @@ describe('useConversationSettings', () => {
     expect(result.current?.redactSensitiveText).toBe(true);
   });
 
+  it('keeps the same settings reference when a refresh is unchanged', () => {
+    const value = { composerSuggestions, redactSensitiveText: true };
+    setCachedConversationSettings(value);
+    const { result } = renderHook(() => useConversationSettings());
+    const initial = result.current;
+
+    act(() => setCachedConversationSettings({ composerSuggestions: { ...composerSuggestions }, redactSensitiveText: true }));
+
+    expect(result.current).toBe(initial);
+  });
+
   it('keeps the last confirmed setting while refreshing an expired cache', async () => {
     vi.useFakeTimers();
     let resolveRefresh: (value: { composerSuggestions: typeof composerSuggestions; redactSensitiveText: boolean }) => void = () => undefined;

@@ -53,6 +53,13 @@ def _function_call_event(narration, partial, narration_on_tool=False):
   )
 
 
+def _text_chunks(queue):
+  return [
+    call.args[0]["chunk"] for call in queue.put.await_args_list
+    if isinstance(call.args[0], dict) and "chunk" in call.args[0]
+  ]
+
+
 class TestStreamingEventProcessor:
   @pytest.fixture
   def processor(self):
@@ -304,6 +311,83 @@ class TestStreamingEventProcessor:
     payload_history = json.dumps([call.args[0] for call in queue.put.await_args_list], default=str)
     assert result == ""
     assert "unsafe partial" not in payload_history
+
+  @pytest.mark.asyncio
+  async def test_unguarded_output_emits_terminal_only_final_text(self, processor):
+    queue = AsyncMock()
+    events = [_usage_event("Visible answer", is_final=True)]
+
+    async def fake_stream():
+      for event in events:
+        yield event
+
+    agent_runner = MagicMock()
+    agent_runner.run_async.return_value = fake_stream()
+    with patch("src.smart_rag.engines.multi_agent.streaming_processor.types.Content"), patch(
+      "src.smart_rag.engines.multi_agent.streaming_processor.types.Part"
+    ), patch("src.smart_rag.engines.multi_agent.streaming_processor.RunConfig"):
+      result = await processor.process_streaming_events(
+        session_id="terminal-only", user_prompt="Hi",
+        manager_agent=SimpleNamespace(id="mgr-1", name="Team Manager"),
+        agent_runner=agent_runner, q=queue,
+      )
+
+    assert result == "Visible answer"
+    assert _text_chunks(queue) == ["Visible answer"]
+
+  @pytest.mark.asyncio
+  @pytest.mark.parametrize(("streamed", "final", "expected_chunks"), [
+    ("Visible answer", "Visible answer", ["Visible answer"]),
+    ("Visible ", "Visible answer", ["Visible ", "answer"]),
+  ])
+  async def test_unguarded_output_reconciles_cumulative_final_text(
+    self, processor, streamed, final, expected_chunks,
+  ):
+    queue = AsyncMock()
+
+    async def fake_stream():
+      yield _usage_event(streamed)
+      yield _usage_event(final, is_final=True)
+
+    agent_runner = MagicMock()
+    agent_runner.run_async.return_value = fake_stream()
+    with patch("src.smart_rag.engines.multi_agent.streaming_processor.types.Content"), patch(
+      "src.smart_rag.engines.multi_agent.streaming_processor.types.Part"
+    ), patch("src.smart_rag.engines.multi_agent.streaming_processor.RunConfig"):
+      result = await processor.process_streaming_events(
+        session_id="cumulative-final", user_prompt="Hi",
+        manager_agent=SimpleNamespace(id="mgr-1", name="Team Manager"),
+        agent_runner=agent_runner, q=queue,
+      )
+
+    assert result == final
+    assert _text_chunks(queue) == expected_chunks
+
+  @pytest.mark.asyncio
+  async def test_unguarded_final_response_excludes_thought_parts(self, processor):
+    queue = AsyncMock()
+    event = _usage_event("", is_final=True)
+    event.content.parts = [
+      SimpleNamespace(text="Internal reasoning", thought=True, function_call=None, function_response=None),
+      SimpleNamespace(text="Visible answer", thought=False, function_call=None, function_response=None),
+    ]
+
+    async def fake_stream():
+      yield event
+
+    agent_runner = MagicMock()
+    agent_runner.run_async.return_value = fake_stream()
+    with patch("src.smart_rag.engines.multi_agent.streaming_processor.types.Content"), patch(
+      "src.smart_rag.engines.multi_agent.streaming_processor.types.Part"
+    ), patch("src.smart_rag.engines.multi_agent.streaming_processor.RunConfig"):
+      result = await processor.process_streaming_events(
+        session_id="thought-final", user_prompt="Hi",
+        manager_agent=SimpleNamespace(id="mgr-1", name="Team Manager"),
+        agent_runner=agent_runner, q=queue,
+      )
+
+    assert result == "Visible answer"
+    assert _text_chunks(queue) == ["Visible answer"]
 
   @pytest.mark.asyncio
   async def test_process_streaming_events_with_image_input(self, processor):
