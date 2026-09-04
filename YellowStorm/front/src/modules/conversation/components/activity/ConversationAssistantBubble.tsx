@@ -5,7 +5,7 @@ import { CodeBlockCopyButton } from '@/components/ai-elements/code-block';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { cn } from '@/lib/utils';
 import { showError } from '@/lib/notifications';
-import { openFileViewerFromUrl } from '@/modules/file-viewer';
+import { openFileViewerFromUrlLoader } from '@/modules/file-viewer';
 import { useModuleTranslation } from '@/modules/localization';
 import { getArtifactDownloadUrl } from '../../api';
 import type { AgentActivityData, ArtifactActivityData, ChoiceInteractionMetadata, MessageComponent, ToolActivityData } from '../../types';
@@ -258,8 +258,15 @@ function ArtifactRow({ conversationId, messageId, data, enabled }: Readonly<{ co
     if (!enabled || loadingAction) return;
     setLoadingAction('view');
     try {
-      const { viewUrl } = await getArtifactDownloadUrl(conversationId, messageId, data.artifactId);
-      openFileViewerFromUrl(viewUrl, filename, data.mimeType || 'application/octet-stream');
+      await openFileViewerFromUrlLoader(
+        JSON.stringify([conversationId, messageId, data.artifactId]),
+        filename,
+        data.mimeType || 'application/octet-stream',
+        async () => {
+          const { viewUrl } = await getArtifactDownloadUrl(conversationId, messageId, data.artifactId);
+          return { url: viewUrl };
+        },
+      );
     } catch {
       showError(t('stream.activity.artifactError'));
     } finally {
@@ -434,7 +441,7 @@ export function ConversationAssistantBubble(props: Readonly<NarrativeProps>) {
           <div data-desktop-activity className='space-y-1'>{activityNodes}</div>
         </ResizableActivityPane>
       )}
-      {answerNodes.length > 0 && <div data-answer-content className={cn('space-y-2', activityNodes.length > 0 && 'mt-3 border-t pt-3')}>{answerNodes}</div>}
+      {answerNodes.length > 0 && <div data-answer-content className={cn('space-y-2', activityNodes.length > 0 && 'mt-4 border-t pt-4')}>{answerNodes}</div>}
     </div>
   );
 }

@@ -57,6 +57,18 @@ class TestBaseFactoryExtended:
         assert agent.name == "DiagramAgent"
         assert agent.model == "no_tool_llm"
 
+    def test_web_preview_disables_model_retries(self, agent_factory):
+        agent_factory.set_web_preview_tool_config({
+            "instructions": "Return complete HTML.",
+            "description": "Generate a web preview.",
+        })
+
+        agent_factory.create_web_preview_tool("gpt-4o")
+
+        agent_factory.llm_factory.create_no_tool_calls_llm.assert_called_once_with(
+            "gpt-4o", temperature=0.0, num_retries=0
+        )
+
     def test_html_diagram_agent_preserves_omitted_temperature(self, agent_factory):
         agent_factory.create_agent(
             name="DiagramAgent",

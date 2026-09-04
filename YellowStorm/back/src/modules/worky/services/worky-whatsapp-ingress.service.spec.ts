@@ -7,6 +7,7 @@ import { WorkyStream } from '../schemas/worky-stream.schema';
 import { WorkyPlanningService } from './worky-planning.service';
 import { WorkySttService } from './worky-stt.service';
 import { WorkyWhatsAppIngressService } from './worky-whatsapp-ingress.service';
+import { WorkyTurnKickoffService } from './worky-turn-kickoff.service';
 
 describe('WorkyWhatsAppIngressService', () => {
   let service: WorkyWhatsAppIngressService;
@@ -15,8 +16,8 @@ describe('WorkyWhatsAppIngressService', () => {
   const streams = { findById: jest.fn() };
   const planning = {
     appendOwnerMessage: jest.fn(),
-    startTurn: jest.fn(),
   };
+  const kickoff = { kickoff: jest.fn() };
   const stt = { transcribe: jest.fn() };
   const configService = {
     get: jest.fn((key: string, defaultValue?: unknown) => {
@@ -49,6 +50,7 @@ describe('WorkyWhatsAppIngressService', () => {
         WorkyWhatsAppIngressService,
         { provide: getModelToken(WorkyStream.name), useValue: streams },
         { provide: WorkyPlanningService, useValue: planning },
+        { provide: WorkyTurnKickoffService, useValue: kickoff },
         { provide: WorkySttService, useValue: stt },
         { provide: ConfigService, useValue: configService },
         { provide: LoggerService, useValue: logger },
@@ -75,9 +77,12 @@ describe('WorkyWhatsAppIngressService', () => {
     expect(planning.appendOwnerMessage).toHaveBeenCalledWith(userId, streamId, {
       content: 'Bonjour Worky',
     });
-    expect(planning.startTurn).toHaveBeenCalledWith(
-      expect.objectContaining({ content: 'Bonjour Worky' }),
-    );
+    expect(kickoff.kickoff).toHaveBeenCalledWith({
+      streamId,
+      userId,
+      content: 'Bonjour Worky',
+      turnId: undefined,
+    });
   });
 
   it('ingestAudioMessage drops empty transcription', async () => {

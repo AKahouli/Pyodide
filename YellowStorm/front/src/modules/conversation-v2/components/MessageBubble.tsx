@@ -3,7 +3,7 @@ import { BotIcon } from 'lucide-react';
 import { Streamdown } from 'streamdown';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
-import { openFileViewerFromUrl, getMimeTypeFromFilename } from '@/modules/file-viewer';
+import { openFileViewerFromUrlLoader, getMimeTypeFromFilename } from '@/modules/file-viewer';
 import { conversationV2Api } from '../api';
 import { useConversationV2Store } from '../store';
 import type { AgentEvent, FileInfo } from '../types';
@@ -84,7 +84,6 @@ function AttachmentChip({ file, canOpen = true }: { file: FileInfo; canOpen?: bo
     if (!canOpen || loading) return;
     setLoading(true);
     try {
-      const { url } = await conversationV2Api.getFileSignedUrl(file.path);
       // Prefer filename-derived MIME — the AI service often leaves content_type
       // empty or sets `application/octet-stream`, which falls through to the
       // UnsupportedRenderer even for .txt/.md/.json the viewer can clearly handle.
@@ -93,7 +92,16 @@ function AttachmentChip({ file, canOpen = true }: { file: FileInfo; canOpen?: bo
       // Mutually exclusive with the tool-detail right panel; both occupy the
       // right side and would collide otherwise.
       closeRightPanel();
-      openFileViewerFromUrl(url, file.name, mimeType, { displayMode: 'sidebar' });
+      await openFileViewerFromUrlLoader(
+        file.path,
+        file.name,
+        mimeType,
+        async () => {
+          const { url } = await conversationV2Api.getFileSignedUrl(file.path);
+          return { url };
+        },
+        { displayMode: 'sidebar' },
+      );
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Unknown error';
       toast.error('Failed to open file', { description: message });

@@ -34,6 +34,15 @@ beforeAll(() => {
     unobserve = vi.fn();
     disconnect = vi.fn();
   });
+  vi.stubGlobal('ResizeObserver', class {
+    constructor(private readonly callback: ResizeObserverCallback) {}
+    observe = (target: Element) => this.callback([{
+      target,
+      contentRect: { width: 800, height: 250 },
+    } as ResizeObserverEntry], this as unknown as ResizeObserver);
+    unobserve = vi.fn();
+    disconnect = vi.fn();
+  });
 });
 
 describe('AIMessageContent charts', () => {
@@ -333,6 +342,26 @@ describe('AIMessageContent charts', () => {
     expect(screen.getByText('Before chart')).toBeInTheDocument();
     expect(screen.getByRole('figure', { name: 'Revenue trend' })).toBeInTheDocument();
     expect(screen.getByText('After chart')).toBeInTheDocument();
+  });
+
+  it('renders fallback-colored bars when yAxisKey is not a data field', async () => {
+    const parts: MessageContentPart[] = [{
+      type: 'chart',
+      title: 'Revenue by period',
+      kind: 'bar',
+      data: [{ period: 'T1', 'net revenue': 42 }],
+      config: {},
+      xAxisKey: 'period',
+      yAxisKey: 'amount_M€',
+      series: [{ dataKey: 'net revenue', label: 'Net revenue' }],
+    }];
+
+    const { container } = render(<AIMessageContent parts={parts} />);
+
+    expect(container.querySelectorAll('.recharts-responsive-container')).toHaveLength(1);
+    await waitFor(() => {
+      expect(container.querySelector('.recharts-bar-rectangle path')).toHaveAttribute('fill', 'var(--chart-1)');
+    }, { timeout: 3000 });
   });
 
   it('renders a no-data state for empty chart payloads', () => {

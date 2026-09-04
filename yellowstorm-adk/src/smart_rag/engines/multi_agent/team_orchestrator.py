@@ -35,7 +35,7 @@ def get_in_memory_session_service():
 from src.smart_rag.infrastructure.processing.plugin import CleanSessionPlugin
 
 from src.smart_rag.tools.utilities.tool_utils import extract_tool_names
-from src.smart_rag.engines.multi_agent.config import langfuse_client, AgentTeamConfig
+from src.smart_rag.engines.multi_agent.config import AgentTeamConfig
 from src.smart_rag.agents.core.helpers import AgentHelper
 from src.smart_rag.agents.core.document_helpers import DocumentHelpers
 from src.smart_rag.engines.multi_agent.streaming_processor import StreamingEventProcessor
@@ -412,7 +412,7 @@ Do not render charts for single values or non-numeric content.
             'prompt': ''
         }
     def make_delegate_function(self, agent_name: str, q: Optional[asyncio.Queue[dict]] = None,
-                               search_web: Optional[bool] = False, parent_span=None) -> Any:
+                               search_web: Optional[bool] = False) -> Any:
         """Create a delegate function for the agent.
         
         Creates a callable function that can be used to delegate tasks to a
@@ -422,15 +422,14 @@ Do not render charts for single values or non-numeric content.
             agent_name (str): Name of the agent to create delegation function for.
             q (Optional[asyncio.Queue[dict]]): Queue for streaming responses.
             search_web (Optional[bool]): Whether the agent should have web search capabilities.
-            parent_span: Langfuse span for tracking delegation operations.
         
         Returns:
             Any: Callable function that can be used to delegate tasks to the specified agent.
         """
-        return self.delegation_factory.make_delegate_function(agent_name, q, search_web, parent_span)
+        return self.delegation_factory.make_delegate_function(agent_name, q, search_web)
 
     async def run_agent_team(self, user_prompt: str, manager_prompt: str,  session_id: str, manager_memory:bool,
-                             q: Optional[asyncio.Queue[dict]] = None, manager_temperature: float=None, parent_trace=None,  image_input: Optional[List[Dict]] = None, original_agents: Optional[List] = None) -> None:
+                             q: Optional[asyncio.Queue[dict]] = None, manager_temperature: float=None, image_input: Optional[List[Dict]] = None, original_agents: Optional[List] = None) -> None:
         """Run the agent team based on user prompt.
 
         Orchestrates the execution of the entire agent team to handle a user query.
@@ -443,7 +442,6 @@ Do not render charts for single values or non-numeric content.
             session_id (str): Unique identifier for the current session.
             manager_memory (bool): Whether to save manager conversation to memory.
             q (Optional[asyncio.Queue[dict]]): Queue for streaming responses to client.
-            parent_trace: Langfuse trace for tracking the entire operation.
             image_input (Optional[List[Dict]]): List of images in format [{"label": "base64..."}, ...].
 
         Returns:
@@ -454,28 +452,6 @@ Do not render charts for single values or non-numeric content.
                 tracking spans with failure information.
         """
         logger.info(f"Starting agent team execution - session_id: {session_id}, agent_count: {len(self.agent_repository.get_all_agents())}")
-
-        # Get consolidated document tree info for manager
-        consolidated_doc_info = ""
-        if self.agent_repository.has_search_agents() or self.agent_repository.has_code_interpreter():
-            consolidated_doc_info = self.document_helper._get_consolidated_document_tree_info_for_manager(
-                self.config,
-                self.agent_repository.get_all_agents()
-            )
-
-        # Create span for agent team execution
-        team_execution_span = langfuse_client.span(
-            trace_id=session_id,
-            parent_observation_id=parent_trace.id if parent_trace else None,
-            name="Manager",
-            input={
-                "user_prompt": user_prompt,
-                "image_input": True if image_input else False,
-                "manager_prompt": manager_prompt,
-                "agent_count": len(self.agent_repository.get_all_agents()),
-                "available_documents_for_all_agents": consolidated_doc_info if consolidated_doc_info else "No documents available",
-            },
-        )
 
         try:
             # Get citation manager for this session FIRST before creating any tools
@@ -641,14 +617,8 @@ Do not render charts for single values or non-numeric content.
             runner_duration = time.time() - runner_start
             logger.info(f"[FREEZE DEBUG] Runner created in {runner_duration:.3f}s")
             # Process streaming events and capture the manager response
-            manager_response = await self.streaming_processor.process_streaming_events( session_id, user_prompt, manager_agent, agent_runner, q, team_execution_span, image_input
+            manager_response = await self.streaming_processor.process_streaming_events( session_id, user_prompt, manager_agent, agent_runner, q, image_input=image_input
             )
-
-            # Explicitly flush to ensure traces are sent to Langfuse
-            try:
-                langfuse_client.flush()
-            except Exception as e:
-                logger.exception(f"Failed to flush Langfuse client: {str(e)}")
 
             logger.info(f"Agent team execution completed successfully - session_id: {session_id}")
 
@@ -678,17 +648,6 @@ Do not render charts for single values or non-numeric content.
 
         except Exception as e:
             logger.exception(f"Error running agent team: {str(e)}")
-            team_execution_span.event(
-                name="error",
-                output={
-                    "error_message": str(e),
-                    "error_type": "agent_team_execution_error"
-                }
-            )
-            team_execution_span.update(output={
-                "execution_completed": False,
-                "error": str(e)
-            })
             if q:
                 # Send error component
                 import uuid
@@ -714,7 +673,7 @@ Do not render charts for single values or non-numeric content.
 
     async def run_single_agent(self, user_prompt: str, session_id: str,
                                q: Optional[asyncio.Queue[dict]] = None,
-                               parent_trace=None, image_input: Optional[List[Dict]] = None,
+                               image_input: Optional[List[Dict]] = None,
                                task_summary: Optional[str] = None) -> Optional[str]:
         """Run a single specialized agent directly, with no manager/delegation.
 
@@ -728,23 +687,11 @@ Do not render charts for single values or non-numeric content.
             user_prompt (str): The user query to answer.
             session_id (str): Unique identifier for the current session.
             q (Optional[asyncio.Queue[dict]]): Queue for streaming responses.
-            parent_trace: Langfuse span/trace for observability.
             image_input (Optional[List[Dict]]): Images to pass to the agent.
 
         Returns:
             Optional[str]: The agent's final response text, if any.
         """
-        single_agent_span = langfuse_client.span(
-            trace_id=session_id,
-            parent_observation_id=parent_trace.id if parent_trace else None,
-            name="SingleAgent",
-            input={
-                "user_prompt": user_prompt,
-                "image_input": bool(image_input),
-                "agent_count": len(self.agent_repository.get_all_agents()),
-            },
-        )
-
         try:
             # Citation manager must exist before tools are created (mirrors run_agent_team)
             from src.smart_rag.infrastructure.session.citation_manager import get_citation_manager
@@ -773,7 +720,7 @@ Do not render charts for single values or non-numeric content.
             # Reuse the delegation factory's full agent-creation path (prompt
             # enrichment, memory, attached images, MCP, connectors, all tools).
             agent, toolkit = await self.delegation_factory._create_agent_with_error_handling(
-                agent_config, agent_name, normalized_name, "", single_agent_span, False, self.citation_manager
+                agent_config, agent_name, normalized_name, "", False, self.citation_manager
             )
             if agent is None:
                 raise RuntimeError(f"Failed to create single agent: {agent_name}")
@@ -785,7 +732,6 @@ Do not render charts for single values or non-numeric content.
                 temporary_child_tool = make_temporary_child_agent_tool(
                     self,
                     agent_config,
-                    single_agent_span,
                     image_input=image_input,
                 )
                 agent.tools = [temporary_child_tool]
@@ -832,11 +778,6 @@ Do not render charts for single values or non-numeric content.
                     agent_name, mcp_used, q, generated_files
                 )
 
-            try:
-                langfuse_client.flush()
-            except Exception as e:
-                logger.exception(f"Failed to flush Langfuse client: {str(e)}")
-
             # Persist citation state after the final response
             try:
                 if self.citation_manager:
@@ -845,7 +786,6 @@ Do not render charts for single values or non-numeric content.
             except Exception as e:
                 logger.error(f"[SINGLE_AGENT] Failed to save citation manager state: {str(e)}")
 
-            single_agent_span.update(output={"execution_completed": True})
             logger.info(f"Single-agent execution completed successfully - session_id: {session_id}")
 
             if q:
@@ -856,7 +796,6 @@ Do not render charts for single values or non-numeric content.
 
         except Exception as e:
             logger.exception(f"Error running single agent: {str(e)}")
-            single_agent_span.update(output={"execution_completed": False, "error": str(e)})
             if q:
                 import uuid
                 error_component = {

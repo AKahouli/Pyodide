@@ -14,7 +14,6 @@ This engine handles complex multi-agent team interactions and orchestration.
 # from .workflow_processor import run_agent_team_logic
 # from .team_orchestrator import AutoAgentGenerationTeam
 # from .streaming_processor import StreamingEventProcessor
-# from .config import langfuse_client, AgentTeamConfig
 
 __all__ = [
     'workflow_processor',

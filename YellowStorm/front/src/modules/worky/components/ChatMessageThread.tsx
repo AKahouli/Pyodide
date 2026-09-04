@@ -86,7 +86,7 @@ export function ChatMessageThread({
         : messages.map((message) => ({ kind: 'message' as const, message })),
     [messages, pendingClarifications, showClarifications],
   );
-  const hasContent = messages.length > 0 || showClarifications;
+  const hasContent = messages.length > 0 || showClarifications || streaming;
   const activityLabels = {
     title: t('messages.activity.title'),
     reasoning: t('messages.activity.reasoning'),
@@ -111,11 +111,6 @@ export function ChatMessageThread({
         <h3 className='text-[10px] font-semibold uppercase tracking-wide text-muted-foreground'>
           {t('messages.title')}
         </h3>
-        {streaming ? (
-          <span className='text-[10px] italic text-muted-foreground'>
-            {t('messages.streamingLabel')}
-          </span>
-        ) : null}
       </header>
       {hasContent ? (
         <MessageProvider fileViewerDisplayMode='floating'>
@@ -163,6 +158,30 @@ export function ChatMessageThread({
                 />
               ),
             )}
+            {streaming ? (
+              <article
+                role='status'
+                data-testid='worky-message-thinking'
+                className='w-full min-w-0 text-sm text-muted-foreground'
+              >
+                <div className='mb-1.5 flex items-center gap-2 text-[11px] font-medium'>
+                  <Bot className='size-3.5' aria-hidden='true' />
+                  {t('messages.role.manager')}
+                </div>
+                <div className='flex items-center gap-2 rounded-2xl rounded-tl-sm border border-border/60 bg-muted/40 px-4 py-3'>
+                  <span>{t('stream.working')}</span>
+                  <span className='flex items-center gap-1' aria-hidden='true'>
+                    {[0, 1, 2].map((index) => (
+                      <span
+                        key={index}
+                        className='size-1.5 animate-bounce rounded-full bg-current motion-reduce:animate-none'
+                        style={{ animationDelay: `${index * 150}ms` }}
+                      />
+                    ))}
+                  </span>
+                </div>
+              </article>
+            ) : null}
           </ChatConversationContent>
           <ChatScrollButton />
         </ChatConversation>

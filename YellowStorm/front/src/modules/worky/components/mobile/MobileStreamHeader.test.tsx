@@ -16,10 +16,6 @@ vi.mock('@/modules/localization', () => ({
 
 vi.mock('../../query/hooks', () => ({
   useStream: () => ({ data: { title: 'Q3 Market Expansion', status: 'active' } }),
-  // Consumed by useStopSession (stop button in the mobile header).
-  useStopTurn: () => ({ mutate: vi.fn(), isPending: false }),
-  usePauseTurn: () => ({ mutate: vi.fn(), isPending: false }),
-  useResumeTurn: () => ({ mutate: vi.fn(), isPending: false }),
 }));
 vi.mock('../../agents/useStreamAgents', () => ({
   useStreamAgents: () => ({ agents: [{ key: 'a' }, { key: 'b' }, { key: 'c' }, { key: 'd' }], ungrouped: [] }),

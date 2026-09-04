@@ -141,9 +141,7 @@ class TestStreamingEventProcessor:
     agent_runner.run_async.return_value = fake_stream()
     with patch("src.smart_rag.engines.multi_agent.streaming_processor.types.Content"), patch(
       "src.smart_rag.engines.multi_agent.streaming_processor.types.Part"
-    ), patch("src.smart_rag.engines.multi_agent.streaming_processor.RunConfig"), patch(
-      "src.smart_rag.engines.multi_agent.streaming_processor.langfuse_client"
-    ):
+    ), patch("src.smart_rag.engines.multi_agent.streaming_processor.RunConfig"):
       result = await processor.process_streaming_events(
         session_id="thoughts",
         user_prompt="Hi",
@@ -157,13 +155,57 @@ class TestStreamingEventProcessor:
       if isinstance(call.args[0], dict) and call.args[0].get("component", {}).get("type") == "agent_activity"
     ]
     first_span = activity_events[:4]
-    assert result == "Visible answer"
+    assert result == ""
     assert [event["action"] for event in activity_events] == ["add", "update", "update", "update"]
     assert len({event["component"]["id"] for event in first_span}) == 1
     assert [event["component"]["data"]["detail"] for event in first_span] == [
       "The", "The user", "The user just", "The user just said",
     ]
     assert len({event["component"]["data"]["started_at"] for event in first_span}) == 1
+
+  @pytest.mark.asyncio
+  async def test_manager_result_excludes_text_before_tool_call(self, processor):
+    queue = AsyncMock()
+    events = [
+      _usage_event("Before tool"),
+      _usage_event(
+        None,
+        function_call=SimpleNamespace(id="call-1", name="search", args={"q": "docs"}),
+      ),
+      SimpleNamespace(
+        content=SimpleNamespace(parts=[SimpleNamespace(
+          text=None,
+          thought=False,
+          function_call=None,
+          function_response=SimpleNamespace(
+            id="call-1", name="search", response={"matches": 1}, is_error=False,
+          ),
+        )]),
+        usage_metadata=None,
+        is_final_response=MagicMock(return_value=False),
+      ),
+      _usage_event("After tool"),
+      _usage_event("After tool", is_final=True),
+    ]
+
+    async def fake_stream():
+      for event in events:
+        yield event
+
+    agent_runner = MagicMock()
+    agent_runner.run_async.return_value = fake_stream()
+    with patch("src.smart_rag.engines.multi_agent.streaming_processor.types.Content"), patch(
+      "src.smart_rag.engines.multi_agent.streaming_processor.types.Part"
+    ), patch("src.smart_rag.engines.multi_agent.streaming_processor.RunConfig"):
+      result = await processor.process_streaming_events(
+        session_id="tool-result",
+        user_prompt="Hi",
+        manager_agent=SimpleNamespace(id="mgr-1", name="Team Manager"),
+        agent_runner=agent_runner,
+        q=queue,
+      )
+
+    assert result == "After tool"
 
   @pytest.mark.asyncio
   @pytest.mark.parametrize(("partial", "narration", "narration_on_tool", "expected_narration"), [
@@ -185,9 +227,7 @@ class TestStreamingEventProcessor:
     agent_runner.run_async.return_value = fake_stream()
     with patch("src.smart_rag.engines.multi_agent.streaming_processor.types.Content"), patch(
       "src.smart_rag.engines.multi_agent.streaming_processor.types.Part"
-    ), patch("src.smart_rag.engines.multi_agent.streaming_processor.RunConfig"), patch(
-      "src.smart_rag.engines.multi_agent.streaming_processor.langfuse_client"
-    ):
+    ), patch("src.smart_rag.engines.multi_agent.streaming_processor.RunConfig"):
       await processor.process_streaming_events(
         session_id="narration",
         user_prompt="Hi",
@@ -355,12 +395,9 @@ class TestStreamingEventProcessor:
 
     agent_runner = MagicMock()
     agent_runner.run_async.return_value = fake_stream()
-    mock_langfuse = MagicMock()
     with patch("src.smart_rag.engines.multi_agent.streaming_processor.types.Content"), patch(
       "src.smart_rag.engines.multi_agent.streaming_processor.types.Part"
-    ), patch("src.smart_rag.engines.multi_agent.streaming_processor.RunConfig"), patch(
-      "src.smart_rag.engines.multi_agent.streaming_processor.langfuse_client", mock_langfuse
-    ):
+    ), patch("src.smart_rag.engines.multi_agent.streaming_processor.RunConfig"):
       await processor.process_streaming_events(
         session_id="sess-tools",
         user_prompt="search twice",
@@ -393,11 +430,6 @@ class TestStreamingEventProcessor:
     assert "/mnt/workspace" in tool_events[0]["component"]["data"]["params_json"]
     assert "Bearer private" not in tool_events[0]["component"]["data"]["params_json"]
     assert "private-signature" not in tool_events[0]["component"]["data"]["params_json"]
-    telemetry_call = next(call for call in mock_langfuse.event.call_args_list if call.kwargs.get("name") == "search")
-    assert telemetry_call.kwargs["input"]["arguments"]["path"] == "/mnt/workspace"
-    assert telemetry_call.kwargs["input"]["arguments"]["url"] == "https://user:[REDACTED]@example.test/private/report"
-    assert telemetry_call.kwargs["input"]["arguments"]["signed_url"] == "https://storage.example/private/report?X-Amz-Credential=[REDACTED]&X-Amz-Signature=[REDACTED]"
-    assert telemetry_call.kwargs["input"]["arguments"]["authorization"] == "[REDACTED]"
     assert [event["component"]["data"].get("result_json") for event in tool_events] == [
       None, None, '{"matches":1,"url":"ws://sandbox.internal/session/abc123","detail":"api_token=[REDACTED]"}', '{"matches":2}',
     ]
@@ -432,12 +464,9 @@ class TestStreamingEventProcessor:
 
     agent_runner = MagicMock()
     agent_runner.run_async.return_value = fake_stream()
-    mock_langfuse = MagicMock()
     with patch("src.smart_rag.engines.multi_agent.streaming_processor.types.Content"), patch(
       "src.smart_rag.engines.multi_agent.streaming_processor.types.Part"
-    ), patch("src.smart_rag.engines.multi_agent.streaming_processor.RunConfig"), patch(
-      "src.smart_rag.engines.multi_agent.streaming_processor.langfuse_client", mock_langfuse
-    ):
+    ), patch("src.smart_rag.engines.multi_agent.streaming_processor.RunConfig"):
       await processor.process_streaming_events(
         session_id="conversation-1",
         user_prompt="create a PDF",

@@ -10,7 +10,6 @@ structlog==25.4.0
 elasticsearch==9.1.0
 pymupdf>=1.24.1
 openai>=2.45,<3
-langfuse==2.60.10
 linkup-sdk== 0.2.8
 redis==5.0.8
 PyJWT==2.10.1

@@ -211,6 +211,9 @@ import { PlaybookAssistantAttachmentService } from './assistant/playbook-assista
     ConversationModule,
   ],
   controllers: [
+    // The stream controller must register before PlaybookFlowController so the
+    // static GET /playbooks/stream route is not shadowed by GET /playbooks/:id.
+    PlaybookFlowStreamController,
     PlaybookFlowMailWebhookController,
     PlaybookFlowTemplateController,
     PlaybookFlowExecutionController,
@@ -222,7 +225,6 @@ import { PlaybookAssistantAttachmentService } from './assistant/playbook-assista
     PlaybookFlowOutputFormatController,
     PlaybookFlowAdvisorController,
     PlaybookFlowExecutionAdvisorController,
-    PlaybookFlowStreamController,
     PlaybookFlowPromptTemplateController,
     PlaybookFlowSettingsController,
     PlaybookFlowHitlController,

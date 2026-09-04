@@ -107,7 +107,8 @@ describe('file-viewer store', () => {
     const newer = createDeferred<{ url: string }>();
     const load = vi.fn()
       .mockImplementationOnce(() => older.promise)
-      .mockImplementationOnce(() => newer.promise);
+      .mockImplementationOnce(() => newer.promise)
+      .mockResolvedValueOnce({ url: 'https://example.test/refreshed.pdf' });
 
     const first = useFileViewerStore.getState().openFileFromUrlLoader(
       'citation-1', 'report.pdf', 'application/pdf', load,
@@ -128,6 +129,8 @@ describe('file-viewer store', () => {
       url: 'https://example.test/newer.pdf',
       isLoading: false,
     });
+    await expect(useFileViewerStore.getState().refreshTabUrl('loader:citation-1'))
+      .resolves.toBe('https://example.test/refreshed.pdf');
   });
 
   it('ignores an older rejection after a reopened tab succeeds', async () => {
@@ -202,6 +205,42 @@ describe('file-viewer store', () => {
       url: 'https://example.test/file.pdf',
       urlExpiresAt: '2026-08-23T13:00:00.000Z',
     });
+  });
+
+  it('refreshes a loader-backed document with a newly signed URL', async () => {
+    const load = vi.fn()
+      .mockResolvedValueOnce({ url: 'https://example.test/first.docx' })
+      .mockResolvedValueOnce({ url: 'https://example.test/refreshed.docx' });
+    await useFileViewerStore.getState().openFileFromUrlLoader(
+      'artifact-1', 'report.docx', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', load,
+    );
+
+    const refreshedUrl = await useFileViewerStore.getState().refreshTabUrl('loader:artifact-1');
+
+    expect(refreshedUrl).toBe('https://example.test/refreshed.docx');
+    expect(load).toHaveBeenCalledTimes(2);
+    expect(useFileViewerStore.getState().tabs[0].url).toBe(refreshedUrl);
+  });
+
+  it('ignores a refresh completion after closing and reopening a loader tab', async () => {
+    const olderRefresh = createDeferred<{ url: string }>();
+    const olderLoader = vi.fn()
+      .mockResolvedValueOnce({ url: 'https://example.test/initial.docx' })
+      .mockImplementationOnce(() => olderRefresh.promise);
+    await useFileViewerStore.getState().openFileFromUrlLoader(
+      'artifact-1', 'report.docx', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', olderLoader,
+    );
+
+    const refreshing = useFileViewerStore.getState().refreshTabUrl('loader:artifact-1');
+    useFileViewerStore.getState().closeTab('loader:artifact-1');
+    await useFileViewerStore.getState().openFileFromUrlLoader(
+      'artifact-1', 'report.docx', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      vi.fn().mockResolvedValue({ url: 'https://example.test/reopened.docx' }),
+    );
+    olderRefresh.resolve({ url: 'https://example.test/stale.docx' });
+
+    await expect(refreshing).resolves.toBeNull();
+    expect(useFileViewerStore.getState().tabs[0].url).toBe('https://example.test/reopened.docx');
   });
 
   it('keeps citation bbox in pending navigation', () => {

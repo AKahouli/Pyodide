@@ -349,7 +349,6 @@ export enum ErrorCode {
   WORKY_STREAM_NOT_FOUND = 'ERR_3500',
   WORKY_STREAM_FORBIDDEN = 'ERR_3501',
   WORKY_STREAM_INVALID_STATE = 'ERR_3502',
-  WORKY_RUNTIME_UNAVAILABLE = 'ERR_3503',
   WORKY_SERVICE_AUTH_FAILED = 'ERR_3504',
   WORKY_IDEMPOTENCY_REPLAY = 'ERR_3505',
   // Part 2
@@ -693,7 +692,6 @@ export const ErrorMessages: Record<ErrorCode, string> = {
   [ErrorCode.WORKY_STREAM_NOT_FOUND]: 'Worky stream not found.',
   [ErrorCode.WORKY_STREAM_FORBIDDEN]: 'You do not have access to this Worky stream.',
   [ErrorCode.WORKY_STREAM_INVALID_STATE]: 'Worky stream is not in a state that allows this operation.',
-  [ErrorCode.WORKY_RUNTIME_UNAVAILABLE]: 'Worky runtime is currently unavailable.',
   [ErrorCode.WORKY_SERVICE_AUTH_FAILED]: 'Worky service authentication failed.',
   [ErrorCode.WORKY_IDEMPOTENCY_REPLAY]: 'Worky callback has already been processed.',
   [ErrorCode.WORKY_INVALID_PLAN_DELTA]: 'The plan delta is invalid.',

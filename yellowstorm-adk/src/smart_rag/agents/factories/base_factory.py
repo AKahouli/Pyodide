@@ -128,6 +128,7 @@ class AgentFactory:
             name="generate_web_preview",
             description=self.web_preview_tool_config["description"],
             temperature=temperature,
+            num_retries=0,
         )
         return AgentTool(preview_agent, skip_summarization=False)
 
@@ -790,6 +791,7 @@ class AgentFactory:
         name: Optional[str] = "HtmlAgent",
         description: Optional[str] = None,
         temperature: Optional[float] = 0.0,
+        num_retries: Optional[int] = None,
     ) -> Agent:
         """Create a visualizer agent capable of generating HTML.
         Args:
@@ -803,7 +805,11 @@ class AgentFactory:
         if not instructions:
             instructions = self.diagram_tool_config["instructions"]
 
-        model = self.llm_factory.create_no_tool_calls_llm(chatbot_name, temperature=temperature)
+        model = self.llm_factory.create_no_tool_calls_llm(
+            chatbot_name,
+            temperature=temperature,
+            **({"num_retries": num_retries} if num_retries is not None else {}),
+        )
         return self._build_agent({
             "name": name,
             "description": description or "",

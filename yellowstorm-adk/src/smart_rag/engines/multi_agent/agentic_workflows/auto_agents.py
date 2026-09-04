@@ -4,7 +4,6 @@ from typing import List, Dict, Any
 from src.logger.logging import get_logger
 from src.schema.chatbot_schema import RunAgentTeamRequest
 from src.smart_rag.agents.core.document_helpers import DocumentHelpers
-from src.smart_rag.engines.multi_agent.config import langfuse_client
 from src.smart_rag.engines.multi_agent.team_orchestrator import AutoAgentGenerationTeam
 
 logger = get_logger("api.routers.agentic_rag.auto_agents_workflow")
@@ -12,30 +11,17 @@ logger = get_logger("api.routers.agentic_rag.auto_agents_workflow")
 
 
 async def handle_no_agents_workflow(team: AutoAgentGenerationTeam,
-                                     user_request: RunAgentTeamRequest, q: asyncio.Queue[dict], main_trace) -> None:
+                                     user_request: RunAgentTeamRequest, q: asyncio.Queue[dict]) -> None:
     """Handle workflow when no agents are provided.
     Args:
         team (AutoAgentGenerationTeam): The agent team instance.
         user_request (RunAgentTeamRequest): The user request containing details.
         q (asyncio.Queue[dict]): The queue for streaming responses.
-        main_trace: The main trace for langfuse logging.
     Returns:
         None
 
     """
     logger.info(f"[AUTO WORKFLOW] Starting auto agents workflow - session_id: {user_request.session_id}")
-
-    # Create span for agent suggestion generation
-    suggestion_span = langfuse_client.span(
-        trace_id=user_request.session_id,
-        parent_observation_id=main_trace.id,
-        name="agent_suggestion_generation",
-        input={
-            "user_message": user_request.message,
-            "available_agents_provided": user_request.available_agents,
-            "workflow_type": "auto agents"
-        },
-    )
 
     try:
         for agent in user_request.agents:
@@ -78,12 +64,6 @@ async def handle_no_agents_workflow(team: AutoAgentGenerationTeam,
         if not all_agents:
             logger.warning(f"Failed to generate suggestions after {max_retries} attempts")
             all_agents = []  # Set to empty list to continue with existing agents only
-            suggestion_span.update(output={
-                "suggestions_generated": False,
-                "error": f"No agent suggestions could be generated after {max_retries} attempts",
-                "attempts_made": max_retries,
-                "continuing_with_existing_agents": len(existing_agents) > 0
-            })
             if len(existing_agents) == 0:
                 await team._message_helper._send_suggestions(q, user_request.session_id,
                                                                [])
@@ -116,49 +96,29 @@ async def handle_no_agents_workflow(team: AutoAgentGenerationTeam,
 
         logger.info(f"[AUTO WORKFLOW] Separated {len(new_suggestions)} new suggestions from {len(all_agents)} total agents - session_id: {user_request.session_id}")
 
-        suggestion_span.update(output={
-            "suggestions_generated": True,
-            "total_agents_count": len(all_agents),
-            "new_suggestions_count": len(new_suggestions),
-            "existing_agents_count": len(existing_agents),
-            "suggestions": new_suggestions
-        })
-
         # Send only new suggestions (not existing agents) to the client
         await team._message_helper._send_suggestions(q, user_request.session_id, new_suggestions)
 
         logger.info(f"[AUTO WORKFLOW] Starting team execution with {len(all_agents)} total agents - session_id: {user_request.session_id}")
         all_agents_for_execution = existing_agents + all_agents
-        await _run_team_with_suggestions(team, user_request, all_agents_for_execution, q, main_trace)
+        await _run_team_with_suggestions(team, user_request, all_agents_for_execution, q)
         logger.info(f"[AUTO WORKFLOW] Completed auto agents workflow - session_id: {user_request.session_id}")
 
     except Exception as e:
         logger.error(f"[AUTO WORKFLOW] Error in auto agents workflow - session_id: {user_request.session_id}: {str(e)}")
-        suggestion_span.event(
-            name="error",
-            output={
-                "error_message": str(e),
-                "error_type": "suggestion_generation_error"
-            },
-        )
-        suggestion_span.update(output={
-            "suggestions_generated": False,
-            "error": str(e)
-        })
 
 
 
 
 async def _run_team_with_suggestions(team: AutoAgentGenerationTeam,
                                      user_request: RunAgentTeamRequest,
-                                     suggestions: List[Dict[str, Any]], q: asyncio.Queue[dict], main_trace) -> None:
+                                     suggestions: List[Dict[str, Any]], q: asyncio.Queue[dict]) -> None:
     """Run team with generated suggestions.
     Args:
         team (AutoAgentGenerationTeam): The agent team instance.
         user_request (RunAgentTeamRequest): The user request containing details.
         suggestions (List[Dict[str, Any]]): The list of suggested agents.
         q (asyncio.Queue[dict]): The queue for streaming responses.
-        main_trace: The main trace for langfuse logging.
     Returns:
         None
 
@@ -181,19 +141,6 @@ async def _run_team_with_suggestions(team: AutoAgentGenerationTeam,
     html_prompt=team.agent_helper.get_html_prompt_from_agents(suggestions, fallback_html_agent_prompt)
 
     response_format_for_html_agents=team.prompt_processor.extract_prompts(user_request.manager_prompt)[8]
-
-    # Create span for team execution with suggestions
-    execution_span = langfuse_client.span(
-        trace_id=session_id,
-        parent_observation_id=main_trace.id,
-        name="manager_creation_with_suggestions",
-        input={
-            "user_message": user_request.message,
-            "manager_prompt": manager_prompt,
-            "suggested_agents": [s.get('name', 'unnamed') for s in suggestions],
-            "suggestion_count": len(suggestions)
-        },
-    )
 
     try:
         logger.info(f"[AUTO WORKFLOW] Preparing team execution with {len(suggestions)} agents - session_id: {session_id}")
@@ -253,38 +200,18 @@ async def _run_team_with_suggestions(team: AutoAgentGenerationTeam,
         # Create user prompt for manager
         manager_user_prompt = f"Handle this request: '{user_request.message}'. Call the appropriate agent using the delegate functions available to you."
 
-        # Log details about the enhanced prompt and suggestions
-        execution_span.event(
-            name="manager_prompt_enhanced",
-            output={
-                "enhanced_prompt_length": len(enhanced_manager_prompt),
-                "available_agents": [s.get('name', 'unnamed') for s in suggestions],
-                "merged_documents_count": len(merged_brain_documents)
-            },
-        )
-
         team.agent_helper.pre_agent_run_config(report_writer_prompt, html_prompt,suggestions,user_request.chatbot_name, response_format_for_html_agents)
         team.agent_repository.set_agents(suggestions)
         # Run the agent team
-        await team.run_agent_team(manager_user_prompt, enhanced_manager_prompt, session_id, manager_memory, q, manager_temperature
-                                  , user_request.search_web, image_input)
-
-        # Mark execution span as completed
-        execution_span.update(output={
-            "team_execution_completed": True,
-            "suggestions_used": len(suggestions)
-        })
+        await team.run_agent_team(
+            manager_user_prompt,
+            enhanced_manager_prompt,
+            session_id,
+            manager_memory,
+            q=q,
+            manager_temperature=manager_temperature,
+            image_input=image_input,
+        )
 
     except Exception as e:
         logger.error(f"Error running team with suggestions: {str(e)}")
-        execution_span.event(
-            name="error",
-            output={
-                "error_message": str(e),
-                "error_type": "team_execution_error"
-            },
-        )
-        execution_span.update(output={
-            "team_execution_completed": False,
-            "error": str(e)
-        })

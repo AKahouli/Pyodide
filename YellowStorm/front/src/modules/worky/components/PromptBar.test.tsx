@@ -20,11 +20,6 @@ interface SendCallbacks {
 const sendCalls: SendInput[] = [];
 let nextError: Error | null = null;
 let lastMutate: ((input: SendInput, callbacks?: SendCallbacks) => void) | null = null;
-// The composer swaps the send button for a stop button while a run streams.
-// Tests flip this to render/exercise that path.
-let streamingValue = false;
-const stopMutateMock = vi.fn();
-
 vi.mock('../query/hooks', () => ({
   useSendMessage: () => ({
     mutate: (input: SendInput, callbacks?: SendCallbacks) => {
@@ -42,13 +37,10 @@ vi.mock('../query/hooks', () => ({
     },
     isPending: false,
   }),
-  // Consumed by useStopSession (via PromptBar). Capture the stop request.
-  useStopTurn: () => ({ mutate: stopMutateMock, isPending: false }),
   useStream: () => ({ data: undefined }),
 }));
 
 vi.mock('../store', () => ({
-  useWorkyStreaming: () => streamingValue,
   useWorkyStore: (selector: (s: {
     setStreamError: (v: string | null) => void;
     beginTurn: (turnId: string) => void;
@@ -81,8 +73,6 @@ describe('PromptBar composer', () => {
     sendCalls.length = 0;
     lastMutate = null;
     nextError = null;
-    streamingValue = false;
-    stopMutateMock.mockClear();
     setStreamErrorMock.mockClear();
     beginTurnMock.mockClear();
     finishTurnMock.mockClear();
@@ -192,11 +182,10 @@ describe('PromptBar composer', () => {
     });
   });
 
-  it('keeps send available while streaming so the active plan can be amended', () => {
-    streamingValue = true;
+  it('keeps send available while the active plan is running', () => {
     render(
       <TestProviders>
-        <PromptBar streamId={STREAM_ID} status='active' />
+        <PromptBar streamId={STREAM_ID} status='active' sessionStatus='running' />
       </TestProviders>,
     );
 

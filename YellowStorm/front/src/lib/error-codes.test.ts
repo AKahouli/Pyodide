@@ -10,3 +10,9 @@ describe('conversation branch error messages', () => {
     expect(getErrorMessage(code)).toBe(message);
   });
 });
+
+describe('playbook validation error messages', () => {
+  it('preserves the strict flow validation error code', () => {
+    expect(getErrorMessage(ErrorCode.PLAYBOOK_FLOW_VALIDATION_FAILED)).toBe('Correct the highlighted workflow issues before saving.');
+  });
+});

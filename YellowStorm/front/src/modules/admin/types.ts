@@ -1045,6 +1045,7 @@ export interface PlaybookExecutionAdminSettings {
   pythonWorkerPoolSize: number;
   pythonWorkerMaxInflight: number;
   maxToolIterations: number;
+  maxSandboxCallsPerStep: number;
   graphCacheEnabled: boolean;
   graphCacheMaxEntries: number;
   graphCacheTtlSeconds: number;

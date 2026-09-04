@@ -75,9 +75,6 @@ class Settings(BaseSettings):
     APPLICATION_INSIGHTS_LOG_CONFIG_PATH: str = "./src/logger/app_insight_logging.json"
     GOOGLE_API_USE_CLIENT_CERTIFICATE: bool = False
 
-    LANGFUSE_HOST: str
-    LANGFUSE_SECRET_KEY: str
-    LANGFUSE_PUBLIC_KEY: str
     # Authentication to get token
     AUTH_USERNAME: str
     AUTH_PASSWORD: str
@@ -475,39 +472,6 @@ class Settings(BaseSettings):
                 "RUN_CODE_RUNTIME_API_KEY is required when RUN_CODE_ENABLED is true"
             )
         return self
-
-    @field_validator("LANGFUSE_HOST", mode="before")
-    @classmethod
-    def validate_langfuse_host(cls, v):
-        if not v or v.strip() == "":
-            raise ValueError("LANGFUSE_HOST is required and cannot be empty")
-
-        try:
-            parsed = urlparse(v)
-            if not parsed.scheme or not parsed.netloc:
-                raise ValueError(
-                    "LANGFUSE_HOST must be a valid URL with scheme and domain"
-                )
-            if parsed.scheme not in ("http", "https"):
-                raise ValueError("LANGFUSE_HOST must use http or https scheme")
-        except Exception:
-            raise ValueError("LANGFUSE_HOST must be a valid URL")
-
-        return v
-
-    @field_validator("LANGFUSE_SECRET_KEY", mode="before")
-    @classmethod
-    def validate_langfuse_secret_key(cls, v):
-        if not v or v.strip() == "":
-            raise ValueError("LANGFUSE_SECRET_KEY is required and cannot be empty")
-        return v
-
-    @field_validator("LANGFUSE_PUBLIC_KEY", mode="before")
-    @classmethod
-    def validate_langfuse_public_key(cls, v):
-        if not v or v.strip() == "":
-            raise ValueError("LANGFUSE_PUBLIC_KEY is required and cannot be empty")
-        return v
 
     @field_validator("AUTH_USERNAME", mode="before")
     @classmethod

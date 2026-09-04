@@ -23,7 +23,7 @@ import { cn } from '@/lib/utils';
 import { apiClient, ApiResponse } from '@/lib/api';
 import { formatFileSize, getFileTypeLabel } from '@/modules/workspace/utils';
 import {
-  openFileViewerFromUrl,
+  openFileViewerFromUrlLoader,
   getMimeTypeFromFilename,
   useFileViewerStore,
 } from '@/modules/file-viewer';
@@ -127,11 +127,19 @@ export function FilesSheet({ readOnly: _readOnly = false }: { readOnly?: boolean
 
   const openFile = async (doc: WorkspaceDocumentRow) => {
     try {
-      const { url } = await conversationV2Api.getFileSignedUrl(doc.path);
       const mimeType =
         getMimeTypeFromFilename(doc.originalName) ?? doc.mimeType ?? 'application/octet-stream';
       closeFileViewer();
-      openFileViewerFromUrl(url, doc.originalName, mimeType, { displayMode: 'floating' });
+      await openFileViewerFromUrlLoader(
+        doc.path,
+        doc.originalName,
+        mimeType,
+        async () => {
+          const { url } = await conversationV2Api.getFileSignedUrl(doc.path);
+          return { url };
+        },
+        { displayMode: 'floating' },
+      );
     } catch {
       /* swallow — surfaced via the file-viewer's own error state if needed */
     }

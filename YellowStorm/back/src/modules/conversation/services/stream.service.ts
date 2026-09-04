@@ -98,9 +98,6 @@ interface StreamTerminalCoordinator {
   cancelIdleTimeout?: () => void;
 }
 
-// Log every Nth chunk to avoid overwhelming logs
-const CHUNK_LOG_INTERVAL = 10;
-
 @Injectable()
 export class StreamService implements OnModuleInit, OnModuleDestroy {
   private chatbotClient: any;
@@ -792,8 +789,14 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
 
     const timeoutMs = this.configService.get<number>('conversation.grpcTimeoutMs', 120000);
     this.logger.debug(
-      `GRPC request Prepared with an idle timeout of ${timeoutMs}ms (rpc=${useSingleAgent ? 'RunSingleAgent' : 'RunAgentTeam'})`,
-      grpcRequest,
+      'gRPC request prepared',
+      {
+        streamKey,
+        conversationId,
+        messageId,
+        rpc: builtRequest.rpc,
+        timeoutMs,
+      },
       logOpts,
     );
     try {
@@ -1235,7 +1238,6 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
       let totalOutputTokens = 0;
       let latestModelRequestTelemetry: { usedTokens: number; contextWindow: number; model: string } | undefined;
       let chunkCount = 0;
-      let lastLoggedChunk = 0;
       const startTime = Date.now();
       let timeToFirstChunk: number | null = null;
       let timeToFirstToken: number | null = null;
@@ -1284,6 +1286,7 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
         if (terminal.started) return;
         // Reset idle timeout on each chunk received
         resetIdleTimeout();
+        if (chunk.action === 'heartbeat') return;
         chunkCount++;
         // Capture time to first chunk
 
@@ -1296,23 +1299,6 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
           const action = chunk.action;
           const comp = chunk.component;
           const guardrailDecision = this.parseGuardrailDecision(chunk.metadata?.guardrail_decision_json);
-
-          // Sample logging to avoid overwhelming logs
-          if (chunkCount - lastLoggedChunk >= CHUNK_LOG_INTERVAL) {
-            this.logger.debug(
-              'Stream chunks received',
-              {
-                streamKey,
-                chunkCount,
-                hasComponent: !!comp,
-                hasUsage: !!chunk.usage,
-                inputTokens: totalInputTokens,
-                outputTokens: totalOutputTokens,
-              },
-              logOpts,
-            );
-            lastLoggedChunk = chunkCount;
-          }
 
           if (comp && comp.id && (action === 'add' || action === 'update' || action === 'delete')) {
             if (action === 'delete') {
@@ -2317,6 +2303,7 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
 
       call.on('data', (chunk: { action?: string; component?: Record<string, unknown> }) => {
         resetIdleTimeout();
+        if (chunk.action === 'heartbeat') return;
         chunkCount++;
 
         const action = chunk.action;

@@ -4,14 +4,14 @@ import { ConversationAssistantBubble } from './ConversationAssistantBubble';
 
 const mocks = vi.hoisted(() => ({
   getArtifactDownloadUrl: vi.fn(),
-  openFileViewerFromUrl: vi.fn(),
+  openFileViewerFromUrlLoader: vi.fn(async (_key, _fileName, _mimeType, load) => load()),
   showError: vi.fn(),
   writeClipboard: vi.fn(),
   redactSensitiveText: true,
 }));
 
 vi.mock('../../api', () => ({ getArtifactDownloadUrl: mocks.getArtifactDownloadUrl }));
-vi.mock('@/modules/file-viewer', () => ({ openFileViewerFromUrl: mocks.openFileViewerFromUrl }));
+vi.mock('@/modules/file-viewer', () => ({ openFileViewerFromUrlLoader: mocks.openFileViewerFromUrlLoader }));
 vi.mock('@/lib/notifications', () => ({ showError: mocks.showError }));
 vi.mock('../../hooks/useConversationSettings', () => ({
   useConversationSettings: () => ({ redactSensitiveText: mocks.redactSensitiveText }),
@@ -772,7 +772,12 @@ describe('ConversationAssistantBubble', () => {
     />);
 
     fireEvent.click(screen.getByRole('button', { name: 'View' }));
-    await waitFor(() => expect(mocks.openFileViewerFromUrl).toHaveBeenCalledWith('https://storage.example/view', 'report.pdf', 'application/pdf'));
+    await waitFor(() => expect(mocks.openFileViewerFromUrlLoader).toHaveBeenCalledWith(
+      JSON.stringify(['conversation-1', 'message-1', 'opaque-1']),
+      'report.pdf',
+      'application/pdf',
+      expect.any(Function),
+    ));
 
     fireEvent.click(screen.getByRole('button', { name: 'Download' }));
     await waitFor(() => expect(anchorClick).toHaveBeenCalled());

@@ -64,6 +64,37 @@ export function getVisibleExecutionStatus(execution?: PlaybookExecution | null):
   return execution.status;
 }
 
+const ACTIVE_EXECUTION_STATUSES: ReadonlySet<NonNullable<PlaybookExecution['status']>> = new Set([
+  'queued',
+  'running',
+  'interrupted',
+  'pending_approval',
+]);
+
+export function isActiveExecutionStatus(status: PlaybookExecution['status'] | null | undefined): boolean {
+  return Boolean(status && ACTIVE_EXECUTION_STATUSES.has(status));
+}
+
+/**
+ * Fallback polling cadence per execution state. Running/queued executions are
+ * short-lived and poll fast; waiting states (interrupted, pending approval)
+ * can last hours, so they poll slowly to avoid sustained request load.
+ */
+export function getExecutionPollIntervalMs(status: PlaybookExecution['status'] | null | undefined): number {
+  switch (status) {
+    case 'running':
+      return 2000;
+    case 'queued':
+      return 5000;
+    case 'interrupted':
+      return 15000;
+    case 'pending_approval':
+      return 15000;
+    default:
+      return 2000;
+  }
+}
+
 export function hasPendingJudgeEvaluations(execution?: PlaybookExecution | null): boolean {
   if (!execution) return false;
   return execution.taskResults.some((taskResult) => taskResult.judgeStatus === 'evaluating');

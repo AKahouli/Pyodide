@@ -33,6 +33,7 @@ describe('playbook ui store', () => {
 
   it('owns the durable assistant preview lifecycle', () => {
     usePlaybookUiStore.getState().setAssistantOperation({
+      playbookId: 'playbook-1',
       id: 'advisor-1',
       target: 'advisor_preview',
       baseDefinitionRevision: 7,
@@ -40,6 +41,7 @@ describe('playbook ui store', () => {
     });
 
     expect(usePlaybookUiStore.getState()).toMatchObject({
+      assistantOperationPlaybookId: 'playbook-1',
       assistantOperationId: 'advisor-1',
       assistantOperationTarget: 'advisor_preview',
       assistantBaseDefinitionRevision: 7,
@@ -51,6 +53,7 @@ describe('playbook ui store', () => {
 
     usePlaybookUiStore.getState().clearAssistantOperation();
     expect(usePlaybookUiStore.getState()).toMatchObject({
+      assistantOperationPlaybookId: null,
       assistantOperationId: null,
       assistantOperationTarget: null,
       assistantBaseDefinitionRevision: null,

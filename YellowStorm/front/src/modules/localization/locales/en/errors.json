@@ -108,6 +108,7 @@
   "ERR_2507": "Playbook execution timed out due to inactivity.",
   "ERR_2508": "Playbook has no tasks to execute.",
   "ERR_2509": "Failed to generate playbook. Please try again.",
+  "ERR_2522": "Correct the highlighted workflow issues before saving.",
   "ERR_2700": "Project not found.",
   "ERR_2701": "A project with this name already exists.",
   "ERR_2702": "You do not have access to this project.",

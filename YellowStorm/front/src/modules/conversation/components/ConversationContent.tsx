@@ -233,7 +233,7 @@ export function ConversationContent() {
     <>
       <ChatConversation className='flex-1 min-h-0'>
         <ChatConversationContent className='py-6'>
-          <div ref={contentRef}>
+          <div ref={contentRef} className='space-y-6 md:space-y-7'>
           {/* Load trigger - hidden during initial load to prevent immediate firing */}
           {hasMore && !messagesLoading && <TopLoadTrigger onTrigger={handleLoadMore} disabled={loadingOlder} />}
 

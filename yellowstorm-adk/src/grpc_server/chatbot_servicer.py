@@ -48,6 +48,8 @@ from src.grpc_server.conversation_session_seed import (
 logger = get_logger(__name__)
 app_settings = get_settings()
 
+STREAM_HEARTBEAT_INTERVAL_SECONDS = 2.0
+
 _MESSAGE_TO_DICT_OPTIONS: Dict[str, Any] = {
     "preserving_proto_field_name": True,
     "always_print_fields_with_no_presence": True,
@@ -403,10 +405,17 @@ class ChatbotServicer(
 
             # Stream chunks from queue
             while True:
-                get_task = asyncio.create_task(queue.get())
-                done, pending = await asyncio.wait(
-                    [get_task, bg_task], return_when=asyncio.FIRST_COMPLETED
+                if get_task is None:
+                    get_task = asyncio.create_task(queue.get())
+                done, _ = await asyncio.wait(
+                    [get_task, bg_task],
+                    timeout=STREAM_HEARTBEAT_INTERVAL_SECONDS,
+                    return_when=asyncio.FIRST_COMPLETED,
                 )
+
+                if not done:
+                    yield self._build_stream_heartbeat_chunk(request.conversation_id)
+                    continue
 
                 # Check if background task finished first
                 if bg_task in done:
@@ -493,7 +502,7 @@ class ChatbotServicer(
             )
             return
 
-        except (asyncio.CancelledError, GeneratorExit):
+        except (asyncio.CancelledError, GeneratorExit) as cancellation:
             # Client cancelled the stream (e.g., call.cancel() was called, or client disconnected)
             logger.info(
                 f"[gRPC] Client cancelled stream - conversation_id: {request.conversation_id}, "
@@ -506,9 +515,6 @@ class ChatbotServicer(
                     await get_task
                 except asyncio.CancelledError:
                     logger.debug("[gRPC] Queue get task cancelled successfully")
-                    current = asyncio.current_task()
-                    if current is not None and current.cancelling() > 0:
-                        raise
                 except Exception as cleanup_error:
                     logger.warning(
                         f"[gRPC] Error during queue get task cleanup: {cleanup_error}"
@@ -521,9 +527,6 @@ class ChatbotServicer(
                     await bg_task
                 except asyncio.CancelledError:
                     logger.debug("[gRPC] Background task cancelled successfully")
-                    current = asyncio.current_task()
-                    if current is not None and current.cancelling() > 0:
-                        raise
                 except Exception as cleanup_error:
                     logger.warning(
                         f"[gRPC] Error during background task cleanup: {cleanup_error}"
@@ -544,7 +547,10 @@ class ChatbotServicer(
                 f"[gRPC] Stream cancellation cleanup complete - drained {drained} queued chunks"
             )
 
-            # Return normally - gRPC will handle setting CANCELLED status
+            if isinstance(cancellation, asyncio.CancelledError):
+                raise cancellation
+
+            # GeneratorExit is complete after owned tasks have stopped.
             return
 
         except Exception as e:
@@ -645,10 +651,17 @@ class ChatbotServicer(
             )
 
             while True:
-                get_task = asyncio.create_task(queue.get())
-                done, pending = await asyncio.wait(
-                    [get_task, bg_task], return_when=asyncio.FIRST_COMPLETED
+                if get_task is None:
+                    get_task = asyncio.create_task(queue.get())
+                done, _ = await asyncio.wait(
+                    [get_task, bg_task],
+                    timeout=STREAM_HEARTBEAT_INTERVAL_SECONDS,
+                    return_when=asyncio.FIRST_COMPLETED,
                 )
+
+                if not done:
+                    yield self._build_stream_heartbeat_chunk(request.conversation_id)
+                    continue
 
                 if bg_task in done:
                     exception = bg_task.exception()
@@ -699,7 +712,7 @@ class ChatbotServicer(
             )
             return
 
-        except (asyncio.CancelledError, GeneratorExit):
+        except (asyncio.CancelledError, GeneratorExit) as cancellation:
             logger.info(
                 f"[gRPC] Client cancelled single-agent stream - conversation_id: {request.conversation_id}"
             )
@@ -708,9 +721,7 @@ class ChatbotServicer(
                 try:
                     await get_task
                 except asyncio.CancelledError:
-                    current = asyncio.current_task()
-                    if current is not None and current.cancelling() > 0:
-                        raise
+                    pass
                 except Exception as cleanup_error:
                     logger.warning(f"[gRPC] Error during queue get task cleanup: {cleanup_error}")
             if bg_task is not None and not bg_task.done():
@@ -718,11 +729,11 @@ class ChatbotServicer(
                 try:
                     await bg_task
                 except asyncio.CancelledError:
-                    current = asyncio.current_task()
-                    if current is not None and current.cancelling() > 0:
-                        raise
+                    pass
                 except Exception as cleanup_error:
                     logger.warning(f"[gRPC] Error during background task cleanup: {cleanup_error}")
+            if isinstance(cancellation, asyncio.CancelledError):
+                raise cancellation
             return
 
         except Exception as e:
@@ -760,6 +771,14 @@ class ChatbotServicer(
             },
             "metadata": {"message_id": message_id},
         })
+
+    @staticmethod
+    def _build_stream_heartbeat_chunk(message_id: str) -> "chatbot_pb2.StreamChunk":
+        """Keep an active application stream alive without emitting UI content."""
+        return chatbot_pb2.StreamChunk(
+            action="heartbeat",
+            metadata=chatbot_pb2.Metadata(message_id=message_id),
+        )
 
     def _convert_agent(self, pb_agent: "chatbot_pb2.Agent") -> AgentSuggestion:
         """Convert protobuf Agent (V2) to internal V1 AgentSuggestion Pydantic model.

@@ -32,6 +32,7 @@ import {
   mapPlanStepComponent,
   mapPlanStepArtifact,
 } from '../electric/worky-electric.mapper';
+import { WorkyWhatsAppDeliveryService } from './worky-whatsapp-delivery.service';
 
 /**
  * Nest-side `ShapeStream` consumer that mirrors the manager's Postgres rows
@@ -68,6 +69,7 @@ export class WorkyElectricConsumerService implements OnModuleInit, OnModuleDestr
     @InjectModel(WorkyMessageComponent.name) private readonly messageComponentModel: Model<WorkyMessageComponentDocument>,
     @InjectModel(WorkyPlanStepComponent.name) private readonly planStepComponentModel: Model<WorkyPlanStepComponentDocument>,
     @InjectModel(WorkyPlanStepArtifact.name) private readonly planStepArtifactModel: Model<WorkyPlanStepArtifactDocument>,
+    private readonly whatsappDelivery: WorkyWhatsAppDeliveryService,
   ) {
     this.logger.setContext(WorkyElectricConsumerService.name);
   }
@@ -262,10 +264,20 @@ export class WorkyElectricConsumerService implements OnModuleInit, OnModuleDestr
         .exec();
       if (adopted) return adopted;
     }
+    const update: Record<string, unknown> = { $set };
+    if (set.role === 'manager') {
+      update.$setOnInsert = {
+        whatsappDelivery: {
+          status: 'pending',
+          attempts: 0,
+          nextAttemptAt: new Date(),
+        },
+      };
+    }
     return this.messageModel
       .findOneAndUpdate(
         { streamId: streamOid, externalId: row.id },
-        { $set },
+        update,
         { upsert: true, new: true, setDefaultsOnInsert: true },
       )
       .exec();
@@ -273,6 +285,7 @@ export class WorkyElectricConsumerService implements OnModuleInit, OnModuleDestr
 
   async handleMessages(messages: unknown[]): Promise<void> {
     for (const m of messages as any[]) {
+      if (this.destroyed) return;
       if (isControlMessage(m)) {
         if (this.debug) {
           this.logger.debug('[worky-electric] control', { shape: 'messages', headers: m.headers });
@@ -281,7 +294,7 @@ export class WorkyElectricConsumerService implements OnModuleInit, OnModuleDestr
       }
       if (!isChangeMessage(m)) continue;
       if (m.headers.operation === 'delete') continue; // manager tombstones out of scope
-      try {
+      await this.retryProjection('messages', async () => {
         const row = m.value as unknown as PgMessageRow;
         if (this.debug) {
           this.logger.debug('[worky-electric] row', {
@@ -294,7 +307,7 @@ export class WorkyElectricConsumerService implements OnModuleInit, OnModuleDestr
         const target = await this.streamService.findByAiSessionId(row.session_id);
         if (!target) {
           this.logger.warn('[worky-electric] unknown session', { shape: 'messages', sid: row.session_id });
-          continue;
+          return;
         }
         const streamOid = this.toStreamOid(target.streamId);
         const { set, event } = mapMessage(row, target.streamId);
@@ -306,6 +319,14 @@ export class WorkyElectricConsumerService implements OnModuleInit, OnModuleDestr
           ...event,
           payload: { ...event.payload, id: String(doc?._id ?? row.id) },
         });
+        if (set.role === 'manager' && doc?._id) {
+          void this.whatsappDelivery.attempt(doc._id as Types.ObjectId).catch((error) => {
+            this.logger.warn('[worky-electric] immediate WhatsApp delivery attempt failed', {
+              messageId: doc._id.toString(),
+              error: error instanceof Error ? error.message : String(error),
+            });
+          });
+        }
         if (this.debug) {
           this.logger.debug('[worky-electric] applied', {
             shape: 'messages',
@@ -316,10 +337,7 @@ export class WorkyElectricConsumerService implements OnModuleInit, OnModuleDestr
             set,
           });
         }
-      } catch (err) {
-        this.logger.error('Failed to process message row', { error: (err as Error).message });
-        continue;
-      }
+      });
     }
   }
 

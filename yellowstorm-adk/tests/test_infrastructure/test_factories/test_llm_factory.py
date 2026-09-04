@@ -51,6 +51,23 @@ class TestLLMFactory:
         assert result == mock_llm
         mock_litellm.assert_called_once()
 
+    @pytest.mark.parametrize("model_name", ["test-model", "ollama/test-model"])
+    def test_create_no_tool_calls_llm_forwards_zero_retries(self, monkeypatch, model_name):
+        mock_litellm = MagicMock()
+        _install_lite_llm_mock(monkeypatch, mock_litellm)
+
+        LLMFactory.create_no_tool_calls_llm(model_name, num_retries=0)
+
+        assert mock_litellm.call_args.kwargs["num_retries"] == 0
+
+    def test_create_no_tool_calls_llm_omits_retries_by_default(self, monkeypatch):
+        mock_litellm = MagicMock()
+        _install_lite_llm_mock(monkeypatch, mock_litellm)
+
+        LLMFactory.create_no_tool_calls_llm("test-model")
+
+        assert "num_retries" not in mock_litellm.call_args.kwargs
+
     @pytest.mark.parametrize(
         "factory_method",
         [

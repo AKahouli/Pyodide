@@ -21,7 +21,6 @@ from google.adk.agents.run_config import StreamingMode
 from google.genai import types
 
 from src.logger.logging import get_logger
-from src.smart_rag.engines.multi_agent.config import langfuse_client
 from src.smart_rag.engines.helpers import (
     build_content_with_images,
     coerce_to_dict,
@@ -112,7 +111,6 @@ class StreamingEventProcessor:
         manager_agent: Any,
         agent_runner,
         q: Optional[asyncio.Queue[dict]] = None,
-        team_execution_span=None,
         image_input: Optional[List] = None,
     ) -> str:
         """Process streaming events from the manager agent.
@@ -127,7 +125,6 @@ class StreamingEventProcessor:
             manager_agent (Any): The manager agent handling the session.
             agent_runner: Runner for executing agent operations.
             q (Optional[asyncio.Queue[dict]]): Queue for streaming responses to client.
-            team_execution_span: Langfuse span for tracking team execution metrics.
 
         Returns:
             str: The accumulated manager text from the entire conversation
@@ -230,7 +227,6 @@ class StreamingEventProcessor:
                     manager_agent,
                     message_id,
                     q,
-                    team_execution_span,
                     delegation_count,
                     accumulated_manager_text,
                     current_agent,
@@ -248,11 +244,8 @@ class StreamingEventProcessor:
                 with contextlib.suppress(Exception):
                     await aclose()
 
-        # Complete final generation span
         if guarded_output and not validated_final_received:
             accumulated_manager_text = ""
-        if team_execution_span:
-            team_execution_span.update(output=accumulated_manager_text)
 
         # Log completion of streaming with token usage
         logger.info(
@@ -271,7 +264,6 @@ class StreamingEventProcessor:
         manager_agent: Any,
         message_id: str,
         q: Optional[asyncio.Queue[dict]] = None,
-        manager_generation_span=None,
         delegation_count: int = 0,
         accumulated_manager_text: str = "",
         current_agent: str = None,
@@ -284,14 +276,13 @@ class StreamingEventProcessor:
 
         Processes individual parts of streaming events, including text content,
         function calls, and function responses. Updates tracking variables and
-        creates Langfuse events for monitoring.
+        creates client-facing stream events.
 
         Args:
             event: The streaming event containing content parts.
             manager_agent (Any): The manager agent processing the event.
             message_id (str): Current message identifier.
             q (Optional[asyncio.Queue[dict]]): Queue for streaming responses.
-            manager_generation_span: Langfuse span for tracking generation.
             delegation_count (int): Current count of agent delegations.
             accumulated_manager_text (str): Text accumulated from manager responses.
             current_agent (str): Currently active agent name for delegation tracking.
@@ -390,11 +381,7 @@ class StreamingEventProcessor:
 
             # Track function calls to agents
             elif part.function_call:
-                # Complete current generation span
-                if manager_generation_span:
-                    manager_generation_span.update(output=accumulated_manager_text)
-                    accumulated_manager_text = ""
-
+                accumulated_manager_text = ""
                 delegation_count += 1
                 func_name = part.function_call.name
                 tool_args = dict(part.function_call.args or {})
@@ -545,16 +532,6 @@ class StreamingEventProcessor:
                         and current_agent != real_agent_name
                     ):
                         current_agent = real_agent_name
-
-                # Create manager function delegation event (following smart_rag_helper pattern)
-                function_delegation_event = langfuse_client.event(
-                    name=func_name,
-                    input={
-                        "function_name": func_name,
-                        "arguments": sanitize_tool_result_value(tool_args),
-                        "delegation_order": delegation_count,
-                    },
-                )
 
             elif part.function_response:
                 func_name = part.function_response.name

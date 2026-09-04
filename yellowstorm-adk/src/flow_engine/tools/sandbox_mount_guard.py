@@ -6,11 +6,15 @@ from collections.abc import Awaitable, Callable
 from typing import Any
 
 
-MAX_SANDBOX_CALLS_PER_STEP = 8
-SANDBOX_CALL_LIMIT_MESSAGE = (
-    "Error: Code Interpreter sandbox call limit reached (8 per step). "
-    "Finish with available results or report the step as blocked."
-)
+DEFAULT_SANDBOX_CALLS_PER_STEP = 30
+MAX_SANDBOX_CALLS_PER_STEP = 100
+
+
+def sandbox_call_limit_message(limit: int) -> str:
+    return (
+        f"Error: Code Interpreter sandbox call limit reached ({limit} per step). "
+        "Finish with available results or report the step as blocked."
+    )
 
 
 class SandboxMountValidationError(RuntimeError):
@@ -18,10 +22,14 @@ class SandboxMountValidationError(RuntimeError):
 
 
 class SandboxCallBudget:
-    def __init__(self, limit: int = MAX_SANDBOX_CALLS_PER_STEP) -> None:
-        self._limit = limit
+    def __init__(self, limit: int = DEFAULT_SANDBOX_CALLS_PER_STEP) -> None:
+        self._limit = min(MAX_SANDBOX_CALLS_PER_STEP, max(1, int(limit)))
         self._count = 0
         self._lock = asyncio.Lock()
+
+    @property
+    def limit_message(self) -> str:
+        return sandbox_call_limit_message(self._limit)
 
     async def try_acquire(self) -> bool:
         async with self._lock:
@@ -41,7 +49,7 @@ class SandboxMountGuard:
         self._available_actions = available_actions
         self._create_started = False
         self._ready = asyncio.Event()
-        self._failure: BaseException | None = None
+        self._failure: str | None = None
 
     async def create_validated(
         self,
@@ -68,8 +76,14 @@ class SandboxMountGuard:
                 missing = await self._missing_inputs(call)
             if missing:
                 aliases = ", ".join(missing)
+                recreation_error = (
+                    f"Sandbox recreation failed: {created}\n"
+                    if _validation_failed(created)
+                    else ""
+                )
                 raise SandboxMountValidationError(
-                    f"Required sandbox inputs were not mounted after one recreation: {aliases}"
+                    f"{recreation_error}Required sandbox inputs were not mounted "
+                    f"after one recreation: {aliases}"
                 )
 
             if isinstance(created, str):
@@ -77,7 +91,7 @@ class SandboxMountGuard:
                 return f"{created}\nValidated sandbox inputs: {paths}"
             return created
         except BaseException as exc:
-            self._failure = exc
+            self._failure = str(exc)
             raise
         finally:
             self._ready.set()
@@ -91,7 +105,7 @@ class SandboxMountGuard:
         if self._failure is not None:
             raise SandboxMountValidationError(
                 "Sandbox input validation did not complete successfully"
-            ) from self._failure
+            )
 
     def allows_discovery(self, action: str, params: dict[str, Any]) -> bool:
         if action != "file_list":
@@ -126,5 +140,11 @@ def _validation_failed(response: Any) -> bool:
     normalized = text.strip().lower()
     return not normalized or normalized.startswith(("error", "connector action")) or any(
         marker in normalized
-        for marker in ("no such file or directory", "cannot access", "file not found")
+        for marker in (
+            "no such file or directory",
+            "cannot access",
+            "file not found",
+            "sandbox acquire failed",
+            "create_failed",
+        )
     )

@@ -3,7 +3,6 @@ import asyncio
 from src.logger.logging import get_logger
 from src.schema.chatbot_schema import RunAgentTeamRequest
 from src.smart_rag.agents.core.document_helpers import DocumentHelpers
-from src.smart_rag.engines.multi_agent.config import langfuse_client
 from src.smart_rag.engines.multi_agent.team_orchestrator import AutoAgentGenerationTeam
 from src.corrective_replay import build_corrective_replay_user_message
 
@@ -13,32 +12,16 @@ async def handle_agents_provided_workflow(
         team: AutoAgentGenerationTeam,
         user_request: RunAgentTeamRequest,
         q: asyncio.Queue[dict],
-        main_trace
 ) -> None:
     """Handle workflow when agents are provided.
     Args:
         team (AutoAgentGenerationTeam): The agent team instance.
         user_request (RunAgentTeamRequest): The user request containing details.
         q (asyncio.Queue[dict]): The queue for streaming responses.
-        main_trace: The main trace for langfuse logging.
     Returns:
         None
         """
     logger.info(f"[MANUAL WORKFLOW] Starting manual agents workflow - session_id: {user_request.session_id}")
-
-    # create span for agent team execution with provided agents
-    agent_provided_span= langfuse_client.span(
-        trace_id=user_request.session_id,
-        parent_observation_id=main_trace.id,
-        name="agent_team_execution_with_provided_agents",
-        input={
-            "user_message": user_request.message,
-            "manager_prompt": user_request.manager_prompt,
-            "agents_provided": len(user_request.agents),
-            "workflow_type": "agents_provided"
-        },
-    )
-
 
     # Extract necessary prompts and session details
     session_id = user_request.session_id
@@ -97,16 +80,6 @@ async def handle_agents_provided_workflow(
         for agent_dict in filtered_agents:
             agent_data = team.agent_helper._prepare_agent_data(agent_dict, user_request, team)
             team.agent_repository.add_agent(agent_data)
-            agent_provided_span.event(
-                name="agent_added",
-                output={
-                    "agent_name": agent_data.get('name', 'unnamed'),
-                    "description": agent_data.get('description', ''),
-                    "tools": agent_data.get('tools', []),
-                    "has_tools": bool(agent_data.get('tools')),
-                    "merged_documents_count": len(merged_brain_documents),
-                },
-            )
 
         logger.info(f"[MANUAL WORKFLOW] Added {len(filtered_agents)} agents to team - session_id: {user_request.session_id}")
 
@@ -162,10 +135,9 @@ async def _run_provided_agent_team(team, user_request, manager_prompt, session_i
         enhanced_manager_prompt,
         session_id,
         manager_memory,
-        q,
-        manager_temperature,
-        None,
-        image_input,
-        user_request.agents,
+        q=q,
+        manager_temperature=manager_temperature,
+        image_input=image_input,
+        original_agents=user_request.agents,
     )
 

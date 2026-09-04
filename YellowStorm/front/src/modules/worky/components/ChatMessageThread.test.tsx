@@ -62,6 +62,26 @@ describe('ChatMessageThread', () => {
     expect(screen.getByText('messages.empty')).toBeInTheDocument();
   });
 
+  it('renders an animated manager thinking row while a turn is active', () => {
+    mockedUseMessages.mockReturnValue([]);
+    mockedUseStore.mockImplementation(
+      (selector: (s: { streaming: boolean; pendingClarifications: [] }) => unknown) =>
+        selector({ streaming: true, pendingClarifications: [] }),
+    );
+
+    render(
+      <TestProviders>
+        <ChatMessageThread />
+      </TestProviders>,
+    );
+
+    const thinking = screen.getByTestId('worky-message-thinking');
+    expect(thinking).toHaveAttribute('role', 'status');
+    expect(thinking).toHaveTextContent('stream.working');
+    expect(thinking.querySelectorAll('.animate-bounce')).toHaveLength(3);
+    expect(screen.queryByText('messages.empty')).not.toBeInTheDocument();
+  });
+
   it('renders each persisted message as an owner/manager conversation bubble', () => {
     mockedUseMessages.mockReturnValue([
       {
@@ -113,14 +133,6 @@ describe('ChatMessageThread', () => {
         createdAt: '2026-06-21T10:30:05.000Z',
       },
     ]);
-    // `streaming` may still be true here (e.g. set optimistically by the
-    // composer) — it must not resurrect a partial-token bubble now that
-    // manager replies arrive as complete `message.appended` rows.
-    mockedUseStore.mockImplementation(
-      (selector: (s: { streaming: boolean; pendingClarifications: [] }) => unknown) =>
-        selector({ streaming: true, pendingClarifications: [] }),
-    );
-
     render(
       <TestProviders>
         <ChatMessageThread />
@@ -131,7 +143,7 @@ describe('ChatMessageThread', () => {
     expect(
       screen.getByText('Here is the complete reply, delivered as one row.'),
     ).toBeInTheDocument();
-    expect(screen.queryByTestId('worky-message-streaming')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('worky-message-thinking')).not.toBeInTheDocument();
   });
 
   it('renders manager components when present, not the plain content fallback', () => {

@@ -328,7 +328,7 @@ function WorkyStreamBody({ streamId }: { streamId: string }): JSX.Element {
 
   return (
     <div className='flex h-full w-full flex-col overflow-hidden'>
-      <WorkyTopBar streamId={streamId} sessionStatus={executiveModel.session?.status} />
+      <WorkyTopBar streamId={streamId} />
       <div className='flex min-h-0 flex-1 overflow-hidden'>
       <main
         data-testid='worky-stream-main'

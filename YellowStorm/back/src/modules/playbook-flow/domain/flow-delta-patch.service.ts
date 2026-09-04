@@ -111,8 +111,8 @@ export class FlowDeltaPatchService {
       .filter((node): node is FlowNode => Boolean(node));
     const sanitizedGraph = this.graphSanitizer.sanitize({
       nodes,
-      controlEdges: (controlEdgesPatch ?? flow.controlEdges) as ControlEdge[],
-      dataBindings: (dataBindingsPatch ?? flow.dataBindings) as DataBinding[],
+      controlEdges: (controlEdgesPatch ?? flow.controlEdges.map((edge) => this.toPlainGraphEntry<ControlEdge>(edge))) as ControlEdge[],
+      dataBindings: (dataBindingsPatch ?? flow.dataBindings.map((binding) => this.toPlainGraphEntry<DataBinding>(binding))) as DataBinding[],
     });
 
     const normalizedWorkspaces = this.workspacePolicy.normalizeWorkspaces(fields?.workspaces ?? flow.workspaces);
@@ -135,5 +135,13 @@ export class FlowDeltaPatchService {
     const maybeDocument = node as FlowNode & { toObject?: () => FlowNode };
     // Mongoose subdocuments do not expose schema paths through object spread.
     return maybeDocument.toObject ? maybeDocument.toObject() : { ...node };
+  }
+
+  private toPlainGraphEntry<T>(entry: T): T {
+    const maybeDocument = entry as T & { toObject?: () => T };
+    // Mongoose subdocuments expose schema fields through prototype getters, so
+    // own-property checks (e.g. isCompleteDataBinding on constantValue) fail
+    // unless the entry is converted to a plain object first.
+    return maybeDocument.toObject ? maybeDocument.toObject() : { ...entry };
   }
 }

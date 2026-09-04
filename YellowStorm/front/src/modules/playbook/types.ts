@@ -896,7 +896,7 @@ export type PlaybookIntentConstructionEvent =
   | { type: 'data_binding_delta'; constructionId: string; playbookId: string; sequence: number; createdAt: string; suggestion: PlaybookIntentSuggestion }
   | { type: 'completed'; constructionId: string; playbookId: string; sequence: number; createdAt: string; model: string; finalSuggestionCount: number }
   | { type: 'cancelled'; constructionId: string; playbookId: string; sequence: number; createdAt: string; reason?: string }
-  | { type: 'failed'; constructionId: string; playbookId: string; sequence: number; createdAt: string; message: string; recoverable: boolean }
+  | { type: 'failed'; constructionId: string; playbookId: string; sequence: number; createdAt: string; message: string; recoverable: boolean; failureKind?: 'strict_validation' }
   | { type: 'cancelled'; constructionId: string; playbookId: string; sequence: number; createdAt: string; reason?: string };
 
 export interface ToolBindingAction {
@@ -2538,6 +2538,14 @@ export interface PlaybookState {
   pendingAutosaveAfterCurrent: boolean;
   autosaveBackoffUntil: number | null;
   lastSaveReason: 'autosave' | 'manual' | 'route-leave' | null;
+  lastCompletedAssistantOperationId: string | null;
+  lastCompletedAssistantOperationRevision: number | null;
+  canonicalAssistantSaveSnapshot: {
+    operationId: string;
+    playbookId: string;
+    payload: UpdatePlaybookData;
+    dirtyVersion: number;
+  } | null;
   currentExecution: PlaybookExecution | null;
   currentExecutionLoading: boolean;
   executionCache: Record<string, PlaybookExecution>;

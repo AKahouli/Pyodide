@@ -16,6 +16,9 @@ vi.mock('@/modules/models', () => ({
 vi.mock('@/modules/conversation/hooks/useConversationStream', () => ({
   useConversationStream: vi.fn(),
 }));
+vi.mock('@/modules/playbook/services/playbookStreamService', () => ({
+  usePlaybookStreamGlobal: vi.fn(),
+}));
 vi.mock('@/modules/sidebar', () => ({ AppSidebar: () => <div data-testid='app-sidebar' /> }));
 vi.mock('@/modules/conversation', () => ({ NewConversationPage: () => <div>new conversation page</div> }));
 vi.mock('@/components/ui/sidebar', () => ({
@@ -100,6 +103,35 @@ describe('RootGuard', () => {
     getFeatureVisibilityMock.mockResolvedValue({ platformCopilot: true });
 
     renderWithRouter(<RootGuard />);
+
+    await waitFor(() => expect(screen.getByText('platform copilot mascot')).toBeInTheDocument());
+  });
+
+  it('hides Platform Copilot inside a Worky stream without hiding it on other Worky routes', async () => {
+    useAuthMock.mockReturnValue(makeAuthState({ isAuthenticated: true }));
+    getFeatureVisibilityMock.mockResolvedValue({ platformCopilot: true });
+
+    const { unmount } = renderWithRouter(
+      <Routes>
+        <Route path='/' element={<RootGuard />}>
+          <Route path='worky/:streamId' element={<div>worky stream</div>} />
+        </Route>
+      </Routes>,
+      ['/worky/stream-1/'],
+    );
+
+    await waitFor(() => expect(getFeatureVisibilityMock).toHaveBeenCalled());
+    expect(screen.queryByText('platform copilot mascot')).not.toBeInTheDocument();
+    unmount();
+
+    renderWithRouter(
+      <Routes>
+        <Route path='/' element={<RootGuard />}>
+          <Route path='worky/:streamId/report' element={<div>worky report</div>} />
+        </Route>
+      </Routes>,
+      ['/worky/stream-1/report'],
+    );
 
     await waitFor(() => expect(screen.getByText('platform copilot mascot')).toBeInTheDocument());
   });

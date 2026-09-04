@@ -21,7 +21,7 @@ import { Button } from '@/components/ui/button';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { PlayIcon, CheckCircle2, Circle, ListTodo, AlertTriangle, Loader2, Bot, Eye, Download, FileText, XCircle, Maximize, Minimize } from 'lucide-react';
 import type { BundledLanguage } from 'shiki';
-import { Area, AreaChart, Bar, BarChart, CartesianGrid, Cell, ComposedChart, Label, Line, LineChart, Pie, PieChart, ResponsiveContainer, Scatter, ScatterChart, XAxis, YAxis, ZAxis } from 'recharts';
+import { Area, AreaChart, Bar, BarChart, CartesianGrid, Cell, ComposedChart, Label, Line, LineChart, Pie, PieChart, Scatter, ScatterChart, XAxis, YAxis, ZAxis } from 'recharts';
 import { ChartContainer, ChartLegend, ChartLegendContent, ChartTooltip, ChartTooltipContent } from '@/components/ui/chart';
 import type { ChartConfig } from '@/components/ui/chart';
 import type { ChartComponentData } from '@/modules/conversation/types';
@@ -855,6 +855,16 @@ const ChartPartRenderer = ({ title, kind, data, config, xAxisKey, yAxisKey, name
     return <div className='my-4 rounded-xl border bg-card p-4 text-sm text-muted-foreground'>{tCommon('ai.chart.noData')}</div>;
   }
 
+  const resolvedConfig: ChartConfig = Object.fromEntries(
+    Object.entries(config).map(([key, item]) => [key, { label: item.label }]),
+  );
+  const seriesColors = series.map((item, index) => {
+    const color = item.color || config[item.dataKey]?.color || `var(--chart-${(index % 5) + 1})`;
+    resolvedConfig[item.dataKey] = {
+      label: config[item.dataKey]?.label || item.label || formatLabel(item.dataKey),
+    };
+    return color;
+  });
   const showPieLegend = showLegend && kind === 'pie';
 
   const chartContent = (() => {
@@ -864,11 +874,11 @@ const ChartPartRenderer = ({ title, kind, data, config, xAxisKey, yAxisKey, name
           <LineChart accessibilityLayer data={data}>
             {showGrid && <CartesianGrid vertical={false} />}
             <XAxis dataKey={xAxisKey} tickLine={false} tickMargin={10} />
-            <YAxis dataKey={yAxisKey} />
+            <YAxis />
             <ChartTooltip content={<ChartTooltipContent hideLabel />} />
             {showLegend && <ChartLegend content={<ChartLegendContent />} />}
-            {series.map((s) => (
-              <Line key={s.dataKey} type='monotone' dataKey={s.dataKey} stroke={`var(--color-${s.dataKey})`} dot={false} />
+            {series.map((s, index) => (
+              <Line key={s.dataKey} type='monotone' dataKey={s.dataKey} stroke={seriesColors[index]} dot={false} />
             ))}
           </LineChart>
         );
@@ -877,11 +887,11 @@ const ChartPartRenderer = ({ title, kind, data, config, xAxisKey, yAxisKey, name
           <BarChart accessibilityLayer data={data} layout={layout}>
             {showGrid && <CartesianGrid vertical={layout !== 'vertical'} horizontal={layout === 'vertical'} />}
             {layout === 'vertical' ? <XAxis type='number' tickLine={false} axisLine={false} /> : <XAxis dataKey={xAxisKey} tickLine={false} tickMargin={10} />}
-            {layout === 'vertical' ? <YAxis type='category' dataKey={xAxisKey} tickLine={false} axisLine={false} width={90} /> : <YAxis dataKey={yAxisKey} />}
+            {layout === 'vertical' ? <YAxis type='category' dataKey={xAxisKey} tickLine={false} axisLine={false} width={90} /> : <YAxis />}
             <ChartTooltip content={<ChartTooltipContent hideLabel />} />
             {showLegend && <ChartLegend content={<ChartLegendContent />} />}
-            {series.map((s) => (
-              <Bar key={s.dataKey} dataKey={s.dataKey} fill={`var(--color-${s.dataKey})`} radius={4} minPointSize={2} stackId={stacked ? 'stack' : undefined} />
+            {series.map((s, index) => (
+              <Bar key={s.dataKey} dataKey={s.dataKey} fill={seriesColors[index]} radius={4} minPointSize={2} stackId={stacked ? 'stack' : undefined} />
             ))}
           </BarChart>
         );
@@ -890,11 +900,11 @@ const ChartPartRenderer = ({ title, kind, data, config, xAxisKey, yAxisKey, name
           <AreaChart accessibilityLayer data={data}>
             {showGrid && <CartesianGrid vertical={false} />}
             <XAxis dataKey={xAxisKey} tickLine={false} tickMargin={10} />
-            <YAxis dataKey={yAxisKey} />
+            <YAxis />
             <ChartTooltip content={<ChartTooltipContent hideLabel />} />
             {showLegend && <ChartLegend content={<ChartLegendContent />} />}
-            {series.map((s) => (
-              <Area key={s.dataKey} type='monotone' dataKey={s.dataKey} fill={`var(--color-${s.dataKey})`} stroke={`var(--color-${s.dataKey})`} stackId={stacked ? 'stack' : undefined} />
+            {series.map((s, index) => (
+              <Area key={s.dataKey} type='monotone' dataKey={s.dataKey} fill={seriesColors[index]} stroke={seriesColors[index]} stackId={stacked ? 'stack' : undefined} />
             ))}
           </AreaChart>
         );
@@ -922,7 +932,7 @@ const ChartPartRenderer = ({ title, kind, data, config, xAxisKey, yAxisKey, name
             {zAxisKey && <ZAxis type='number' dataKey={zAxisKey} range={[60, 200]} />}
             <ChartTooltip content={<ChartTooltipContent hideLabel />} />
             {showLegend && <ChartLegend content={<ChartLegendContent />} />}
-            <Scatter name={title || tCommon('ai.chart.scatterSeries')} data={data} fill={`var(--color-${series[0]?.dataKey || 'chart'})`} />
+            <Scatter name={title || tCommon('ai.chart.scatterSeries')} data={data} fill={seriesColors[0] || 'var(--chart-1)'} />
           </ScatterChart>
         );
       case 'composed':
@@ -930,18 +940,18 @@ const ChartPartRenderer = ({ title, kind, data, config, xAxisKey, yAxisKey, name
           <ComposedChart accessibilityLayer data={data}>
             {showGrid && <CartesianGrid vertical={false} />}
             <XAxis dataKey={xAxisKey} tickLine={false} tickMargin={10} />
-            <YAxis dataKey={yAxisKey} />
+            <YAxis />
             <ChartTooltip content={<ChartTooltipContent hideLabel />} />
             {showLegend && <ChartLegend content={<ChartLegendContent />} />}
-            {series.map((s) => {
+            {series.map((s, index) => {
               const resolvedKind = s.kind || 'bar';
               if (resolvedKind === 'line') {
-                return <Line key={s.dataKey} type='monotone' dataKey={s.dataKey} stroke={`var(--color-${s.dataKey})`} dot={false} />;
+                return <Line key={s.dataKey} type='monotone' dataKey={s.dataKey} stroke={seriesColors[index]} dot={false} />;
               }
               if (resolvedKind === 'area') {
-                return <Area key={s.dataKey} type='monotone' dataKey={s.dataKey} fill={`var(--color-${s.dataKey})`} stroke={`var(--color-${s.dataKey})`} />;
+                return <Area key={s.dataKey} type='monotone' dataKey={s.dataKey} fill={seriesColors[index]} stroke={seriesColors[index]} />;
               }
-              return <Bar key={s.dataKey} dataKey={s.dataKey} fill={`var(--color-${s.dataKey})`} radius={4} minPointSize={2} />;
+              return <Bar key={s.dataKey} dataKey={s.dataKey} fill={seriesColors[index]} radius={4} minPointSize={2} />;
             })}
           </ComposedChart>
         );
@@ -958,10 +968,8 @@ const ChartPartRenderer = ({ title, kind, data, config, xAxisKey, yAxisKey, name
         </div>
       )}
       <div className='p-4'>
-        <ChartContainer config={config} className='aspect-auto h-[250px] w-full min-w-0'>
-          <ResponsiveContainer width='100%' height='100%'>
-            {chartContent}
-          </ResponsiveContainer>
+        <ChartContainer config={resolvedConfig} className='aspect-auto h-[250px] w-full min-w-0'>
+          {chartContent}
         </ChartContainer>
       </div>
     </div>

@@ -199,18 +199,256 @@ describe('playbook store', () => {
     expect(usePlaybookStore.getState().isDirty).toBe(false);
   });
 
+  it('blocks ordinary persistence while a canonical assistant operation is pending', async () => {
+    const playbook = makePlaybook({ id: 'p1', name: 'Generated draft' });
+    usePlaybookStore.setState({ currentPlaybook: playbook, isDirty: true, dirtyVersion: 1 });
+    usePlaybookUiStore.getState().setAssistantOperation({
+      playbookId: 'p1',
+      id: 'operation-1',
+      target: 'canonical',
+      baseDefinitionRevision: 0,
+      status: 'ready',
+    });
+
+    await usePlaybookStore.getState().updatePlaybook('p1', { name: 'Direct save' });
+    await usePlaybookStore.getState().saveCurrentPlaybook({ reason: 'manual' });
+
+    expect(apiMock.updatePlaybook).not.toHaveBeenCalled();
+    expect(usePlaybookStore.getState().isDirty).toBe(true);
+  });
+
+  it('allows the matching canonical assistant operation to persist', async () => {
+    const playbook = makePlaybook({ id: 'p1', name: 'Generated draft', definitionRevision: 0 });
+    apiMock.updatePlaybook.mockResolvedValueOnce(makePlaybook({
+      id: 'p1',
+      name: 'Generated draft',
+      definitionRevision: 1,
+    }));
+    usePlaybookStore.setState({
+      currentPlaybook: playbook,
+      isDirty: true,
+      dirtyVersion: 1,
+      lastSavedPayloadHashByPlaybookId: { p1: 'outdated' },
+    });
+    usePlaybookUiStore.getState().setAssistantOperation({
+      playbookId: 'p1',
+      id: 'operation-1',
+      target: 'canonical',
+      baseDefinitionRevision: 0,
+      status: 'ready',
+    });
+
+    await usePlaybookStore.getState().saveCurrentPlaybook({
+      assistantOperationId: 'operation-1',
+      expectedDefinitionRevision: 0,
+    });
+
+    expect(apiMock.updatePlaybook).toHaveBeenCalledTimes(1);
+    expect(apiMock.updatePlaybook).toHaveBeenCalledWith('p1', expect.objectContaining({
+      assistantOperationId: 'operation-1',
+      expectedDefinitionRevision: 0,
+    }));
+    expect(usePlaybookStore.getState()).toMatchObject({
+      lastCompletedAssistantOperationId: 'operation-1',
+      lastCompletedAssistantOperationRevision: 1,
+    });
+  });
+
+  it('waits for an in-flight save before persisting the matching canonical operation', async () => {
+    let resolveOrdinarySave!: (value: ReturnType<typeof makePlaybook>) => void;
+    apiMock.updatePlaybook
+      .mockImplementationOnce(() => new Promise((resolve) => { resolveOrdinarySave = resolve; }))
+      .mockResolvedValueOnce(makePlaybook({ id: 'p1', name: 'Generated draft', definitionRevision: 2 }));
+    const playbook = makePlaybook({ id: 'p1', name: 'Before generation', definitionRevision: 0 });
+    usePlaybookStore.setState({
+      currentPlaybook: playbook,
+      isDirty: true,
+      dirtyVersion: 1,
+      lastSavedPayloadHashByPlaybookId: { p1: 'outdated' },
+    });
+
+    const ordinarySave = usePlaybookStore.getState().saveCurrentPlaybook({ reason: 'manual' });
+    usePlaybookStore.setState((state) => ({
+      currentPlaybook: state.currentPlaybook ? { ...state.currentPlaybook, name: 'Generated draft' } : null,
+      isDirty: true,
+      dirtyVersion: 2,
+    }));
+    usePlaybookUiStore.getState().setAssistantOperation({
+      playbookId: 'p1',
+      id: 'operation-1',
+      target: 'canonical',
+      baseDefinitionRevision: 1,
+      status: 'ready',
+    });
+
+    const canonicalSave = usePlaybookStore.getState().saveCurrentPlaybook({
+      assistantOperationId: 'operation-1',
+      expectedDefinitionRevision: 1,
+    });
+    expect(apiMock.updatePlaybook).toHaveBeenCalledTimes(1);
+
+    resolveOrdinarySave(makePlaybook({ id: 'p1', name: 'Before generation', definitionRevision: 1 }));
+    await ordinarySave;
+    await canonicalSave;
+
+    expect(apiMock.updatePlaybook).toHaveBeenCalledTimes(2);
+    expect(apiMock.updatePlaybook).toHaveBeenLastCalledWith('p1', expect.objectContaining({
+      assistantOperationId: 'operation-1',
+      expectedDefinitionRevision: 1,
+      name: 'Generated draft',
+    }));
+    expect(usePlaybookStore.getState().lastCompletedAssistantOperationId).toBe('operation-1');
+  });
+
+  it('retries the immutable canonical payload and preserves edits made after an ambiguous failure', async () => {
+    const playbook = makePlaybook({ id: 'p1', name: 'Generated draft', definitionRevision: 0 });
+    const lostResponse = new Error('Response lost after commit');
+    apiMock.updatePlaybook
+      .mockRejectedValueOnce(lostResponse)
+      .mockResolvedValueOnce(makePlaybook({ id: 'p1', name: 'Generated draft', definitionRevision: 1 }));
+    usePlaybookStore.setState({
+      currentPlaybook: playbook,
+      isDirty: true,
+      dirtyVersion: 1,
+      lastSavedPayloadHashByPlaybookId: { p1: 'outdated' },
+    });
+    usePlaybookUiStore.getState().setAssistantOperation({
+      playbookId: 'p1',
+      id: 'operation-1',
+      target: 'canonical',
+      baseDefinitionRevision: 0,
+      status: 'ready',
+    });
+    const options = { assistantOperationId: 'operation-1', expectedDefinitionRevision: 0 };
+
+    await usePlaybookStore.getState().saveCurrentPlaybook(options);
+    expect(usePlaybookStore.getState()).toMatchObject({
+      lastCompletedAssistantOperationId: null,
+      canonicalAssistantSaveSnapshot: expect.objectContaining({ operationId: 'operation-1' }),
+    });
+    usePlaybookStore.setState((state) => ({
+      currentPlaybook: state.currentPlaybook ? { ...state.currentPlaybook, name: 'Edited after failure' } : null,
+      isDirty: true,
+      dirtyVersion: 2,
+    }));
+    await usePlaybookStore.getState().saveCurrentPlaybook(options);
+
+    expect(apiMock.updatePlaybook).toHaveBeenCalledTimes(2);
+    expect(apiMock.updatePlaybook.mock.calls[0][1]).toEqual(apiMock.updatePlaybook.mock.calls[1][1]);
+    expect(apiMock.updatePlaybook).toHaveBeenLastCalledWith('p1', expect.objectContaining({
+      name: 'Generated draft',
+      assistantOperationId: 'operation-1',
+    }));
+    expect(usePlaybookStore.getState()).toMatchObject({
+      currentPlaybook: expect.objectContaining({ name: 'Edited after failure', definitionRevision: 1 }),
+      isDirty: true,
+      lastCompletedAssistantOperationId: 'operation-1',
+      canonicalAssistantSaveSnapshot: null,
+    });
+  });
+
+  it('retains the immutable canonical payload when a successful response does not advance the revision', async () => {
+    const playbook = makePlaybook({ id: 'p1', name: 'Generated draft', definitionRevision: 0 });
+    apiMock.updatePlaybook
+      .mockResolvedValueOnce(makePlaybook({ id: 'p1', name: 'Generated draft', definitionRevision: 0 }))
+      .mockResolvedValueOnce(makePlaybook({ id: 'p1', name: 'Generated draft', definitionRevision: 1 }));
+    usePlaybookStore.setState({
+      currentPlaybook: playbook,
+      isDirty: true,
+      dirtyVersion: 1,
+      lastSavedPayloadHashByPlaybookId: { p1: 'outdated' },
+    });
+    usePlaybookUiStore.getState().setAssistantOperation({
+      playbookId: 'p1',
+      id: 'operation-1',
+      target: 'canonical',
+      baseDefinitionRevision: 0,
+      status: 'ready',
+    });
+    const options = { assistantOperationId: 'operation-1', expectedDefinitionRevision: 0 };
+
+    await usePlaybookStore.getState().saveCurrentPlaybook(options);
+    expect(usePlaybookStore.getState()).toMatchObject({
+      lastCompletedAssistantOperationId: null,
+      canonicalAssistantSaveSnapshot: expect.objectContaining({ operationId: 'operation-1' }),
+    });
+    usePlaybookStore.setState((state) => ({
+      currentPlaybook: state.currentPlaybook ? { ...state.currentPlaybook, name: 'Edited after response' } : null,
+      isDirty: true,
+      dirtyVersion: 2,
+    }));
+    await usePlaybookStore.getState().saveCurrentPlaybook(options);
+
+    expect(apiMock.updatePlaybook).toHaveBeenCalledTimes(2);
+    expect(apiMock.updatePlaybook.mock.calls[0][1]).toEqual(apiMock.updatePlaybook.mock.calls[1][1]);
+    expect(apiMock.updatePlaybook).toHaveBeenLastCalledWith('p1', expect.objectContaining({
+      name: 'Generated draft',
+      assistantOperationId: 'operation-1',
+    }));
+    expect(usePlaybookStore.getState()).toMatchObject({
+      currentPlaybook: expect.objectContaining({ name: 'Edited after response', definitionRevision: 1 }),
+      isDirty: true,
+      lastCompletedAssistantOperationId: 'operation-1',
+      canonicalAssistantSaveSnapshot: null,
+    });
+  });
+
+  it('captures corrected edits after a canonical save is definitively rejected by strict validation', async () => {
+    const validationError = new Error('Router cycle has no terminal exit route');
+    const playbook = makePlaybook({ id: 'p1', name: 'Generated draft', definitionRevision: 0 });
+    apiMock.updatePlaybook
+      .mockRejectedValueOnce(validationError)
+      .mockResolvedValueOnce(makePlaybook({ id: 'p1', name: 'Corrected draft', definitionRevision: 1 }));
+    parseApiErrorMock.mockReturnValue({
+      code: 'ERR_2522',
+      message: validationError.message,
+      statusCode: 400,
+      requiresReAuth: false,
+      raw: validationError,
+    });
+    usePlaybookStore.setState({
+      currentPlaybook: playbook,
+      isDirty: true,
+      dirtyVersion: 1,
+      lastSavedPayloadHashByPlaybookId: { p1: 'outdated' },
+    });
+    usePlaybookUiStore.getState().setAssistantOperation({
+      playbookId: 'p1',
+      id: 'operation-1',
+      target: 'canonical',
+      baseDefinitionRevision: 0,
+      status: 'ready',
+    });
+    const options = { assistantOperationId: 'operation-1', expectedDefinitionRevision: 0 };
+
+    await expect(usePlaybookStore.getState().saveCurrentPlaybook(options)).rejects.toBe(validationError);
+    expect(usePlaybookStore.getState()).toMatchObject({
+      currentPlaybook: expect.objectContaining({ name: 'Generated draft' }),
+      isDirty: true,
+      canonicalAssistantSaveSnapshot: null,
+    });
+
+    usePlaybookStore.setState((state) => ({
+      currentPlaybook: state.currentPlaybook ? { ...state.currentPlaybook, name: 'Corrected draft' } : null,
+      isDirty: true,
+      dirtyVersion: 2,
+    }));
+    await usePlaybookStore.getState().saveCurrentPlaybook(options);
+
+    expect(apiMock.updatePlaybook.mock.calls[0][1]).toEqual(expect.objectContaining({ name: 'Generated draft' }));
+    expect(apiMock.updatePlaybook.mock.calls[1][1]).toEqual(expect.objectContaining({ name: 'Corrected draft' }));
+    expect(usePlaybookStore.getState()).toMatchObject({
+      currentPlaybook: expect.objectContaining({ name: 'Corrected draft', definitionRevision: 1 }),
+      isDirty: false,
+      lastCompletedAssistantOperationId: 'operation-1',
+    });
+  });
+
   it('coalesces autosaves while a save is already in flight', async () => {
     let resolveSave: ((value: Awaited<ReturnType<typeof apiMock.updatePlaybook>>) => void) | undefined;
     apiMock.updatePlaybook.mockImplementationOnce(() => new Promise((resolve) => {
       resolveSave = resolve as (value: Awaited<ReturnType<typeof apiMock.updatePlaybook>>) => void;
     }));
-    apiMock.updatePlaybook.mockResolvedValueOnce(makePlaybook({
-      id: 'p1',
-      name: 'Queued save',
-      definitionRevision: 1,
-      updatedAt: '2026-05-29T20:30:00.000Z',
-    }));
-
     const playbook = makePlaybook({ id: 'p1', name: 'Queued save' });
     apiMock.getPlaybook.mockResolvedValueOnce(playbook);
     await usePlaybookStore.getState().fetchPlaybook('p1');
@@ -236,7 +474,8 @@ describe('playbook store', () => {
     await firstSave;
     await Promise.resolve();
 
-    expect(apiMock.updatePlaybook).toHaveBeenCalledTimes(2);
+    expect(apiMock.updatePlaybook).toHaveBeenCalledTimes(1);
+    expect(usePlaybookStore.getState()).toMatchObject({ isDirty: true, isSaving: false });
   });
 
   it('falls back to full save when delta patch is disabled by the backend', async () => {
@@ -470,7 +709,7 @@ describe('playbook store', () => {
       }),
       activeReplays: {},
     } as any);
-    parseApiErrorMock.mockImplementationOnce(() => ({
+    parseApiErrorMock.mockImplementation(() => ({
       code: 'ERR_1005',
       message: 'Conflict',
       statusCode: 409,
@@ -486,11 +725,14 @@ describe('playbook store', () => {
       lastSavedPayloadHashByPlaybookId: { p1: 'outdated' },
     });
 
-    await usePlaybookStore.getState().saveCurrentPlaybook({ reason: 'autosave' });
+    await expect(usePlaybookStore.getState().saveCurrentPlaybook({ reason: 'autosave' })).rejects.toMatchObject({
+      isAxiosError: true,
+    });
 
     expect(apiMock.updatePlaybook).toHaveBeenCalledTimes(1);
     expect(apiMock.getFlow).toHaveBeenCalledWith('p1', { view: 'base' });
     expect(usePlaybookStore.getState().isDirty).toBe(true);
+    expect(toastMock.error).not.toHaveBeenCalled();
   });
 
   it('propagates manual revision conflicts after settling save state', async () => {

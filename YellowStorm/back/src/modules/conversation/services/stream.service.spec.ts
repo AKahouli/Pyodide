@@ -591,6 +591,50 @@ describe('StreamService guardrail metadata buffering', () => {
     }
   });
 
+  it('uses heartbeat chunks only to reset the idle timeout', async () => {
+    jest.useFakeTimers();
+    try {
+      const call = Object.assign(new EventEmitter(), { cancel: jest.fn() });
+      const completeAIMessage = jest.fn().mockResolvedValue(undefined);
+      const broadcastToConversation = jest.fn().mockResolvedValue(undefined);
+      const streamKey = 'user-1:conversation-1:message-1';
+      const service = Object.create(StreamService.prototype) as StreamService;
+      Object.assign(service as object, {
+        chatbotClient: { RunAgentTeam: jest.fn().mockReturnValue(call) },
+        activeCalls: new Map(),
+        activeStreams: new Map([['user-1', new Set(['conversation-1'])]]),
+        componentBuffers: new Map([[streamKey, new Map()]]),
+        streamRevisions: new Map([[streamKey, 0]]),
+        streamUsage: new Map([[streamKey, { inputTokens: 0, outputTokens: 0, model: '' }]]),
+        streamExecutionLeases: new Map([[streamKey, 'lease-1']]),
+        streamTerminalCoordinators: new Map(),
+        configService: { get: jest.fn() },
+        messageService: { completeAIMessage },
+        usageService: { recordUsage: jest.fn().mockResolvedValue(undefined) },
+        responseReliabilityService: { schedule: jest.fn().mockResolvedValue(undefined) },
+        streamGateway: { broadcastToConversation },
+        logger: { debug: jest.fn(), error: jest.fn(), warn: jest.fn() },
+      });
+
+      const execution = (service as any).executeGrpcStream(
+        'user-1', 'conversation-1', 'message-1', streamKey, {}, 10, ['user-1'],
+      ) as Promise<void>;
+      await jest.advanceTimersByTimeAsync(9);
+      call.emit('data', { action: 'heartbeat', metadata: { message_id: 'conversation-1' } });
+      await jest.advanceTimersByTimeAsync(9);
+
+      expect(call.cancel).not.toHaveBeenCalled();
+      expect(broadcastToConversation).not.toHaveBeenCalled();
+      expect(completeAIMessage).not.toHaveBeenCalled();
+
+      call.emit('end');
+      await execution;
+      expect(completeAIMessage).toHaveBeenCalledWith(expect.objectContaining({ components: [] }));
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
   it('keeps the original lease until stop persistence finishes during an end race', async () => {
     const call = Object.assign(new EventEmitter(), { cancel: jest.fn() });
     let finishPersistence: () => void = () => undefined;

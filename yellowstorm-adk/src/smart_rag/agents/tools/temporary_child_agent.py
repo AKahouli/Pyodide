@@ -10,7 +10,6 @@ from src.temporary_child_summary import (
     record_temporary_child_result,
     record_temporary_child_start,
 )
-from src.smart_rag.engines.multi_agent.config import langfuse_client
 
 logger = get_logger("api.smart_rag.temporary_child_agent")
 
@@ -111,7 +110,6 @@ def should_enable_temporary_child_agent_tool(agent_config: Dict[str, Any]) -> bo
 def make_temporary_child_agent_tool(
     team: Any,
     parent_agent_config: Dict[str, Any],
-    parent_span: Any,
     image_input: Optional[list] = None,
 ) -> Any:
     """Build an ADK tool that lets a parent mono agent run temporary children."""
@@ -144,13 +142,6 @@ def make_temporary_child_agent_tool(
         child_config = _build_child_config(parent_agent_config, task_description, counter["count"])
         child_name = child_config["name"]
         normalized_name = team.agent_helper.normalize_agent_name(child_name)
-        child_span = langfuse_client.span(
-            trace_id=team.config.session_id,
-            parent_observation_id=parent_span.id if parent_span else None,
-            name=f"temporary_child_{counter['count']}",
-            input={"task_description": task_description, "parent_agent": parent_agent_config.get("name")},
-        )
-
         logger.info(
             "[TEMP CHILD] Creating temporary child agent parent=%s child=%s count=%s/%s session=%s",
             parent_agent_config.get("id"),
@@ -173,7 +164,6 @@ def make_temporary_child_agent_tool(
             child_name,
             normalized_name,
             expected_output,
-            child_span,
             False,
             team.citation_manager,
         )
@@ -195,7 +185,6 @@ def make_temporary_child_agent_tool(
             task_description,
             expected_output,
             expected_output,
-            child_span,
             child_queue,
             child_name,
             child_config.get("id", "no_id"),

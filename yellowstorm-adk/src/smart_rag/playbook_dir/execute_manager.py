@@ -11,7 +11,6 @@ from src.config.settings import get_settings
 from src.logger.logging import get_logger
 from src.schema.playbook import RunPlaybookStepRequest
 from src.smart_rag.infrastructure.processing.plugin import CleanSessionPlugin
-from src.smart_rag.engines.multi_agent.config import langfuse_client
 from src.smart_rag.agents.core.helpers import AgentHelper
 from src.smart_rag.agents.core.document_helpers import DocumentHelpers
 from src.smart_rag.agents.core.repository import AgentRepository
@@ -171,26 +170,6 @@ class PlaybookManagerExecutor:
 
             # Step 1: Set up agents in repository for delegation
             self.agent_repository.set_agents(all_agents)
-
-            # Step 2: Get consolidated document tree info for manager
-            consolidated_doc_info = ""
-            if self.agent_repository.has_search_agents():
-                consolidated_doc_info = self.document_helper._get_consolidated_document_tree_info_for_manager(
-                    self.config,
-                    all_agents
-                )
-
-            # Step 3: Create span for manager execution (Langfuse tracking)
-            manager_span = langfuse_client.span(
-                trace_id=session_id,
-                name="Manager_Reexecution",
-                input={
-                    "manager_name": request.manager_agent.name,
-                    "session_id": session_id,
-                    "agent_count": len(all_agents),
-                    "available_documents": consolidated_doc_info if consolidated_doc_info else "No documents available",
-                },
-            )
 
             # Step 4: Prepare manager prompt
             manager_prompt = request.manager_agent.prompt
@@ -361,7 +340,6 @@ class PlaybookManagerExecutor:
                         manager_agent,
                         agent_runner,
                         queue,
-                        manager_span
                     ),
                     timeout=MANAGER_EXECUTION_TIMEOUT
                 )
@@ -369,14 +347,6 @@ class PlaybookManagerExecutor:
                 error_msg = f"Manager execution timeout after {MANAGER_EXECUTION_TIMEOUT}s"
                 logger.error(f"[PLAYBOOK MANAGER] {error_msg}")
                 raise TimeoutError(error_msg)
-
-            # Step 13: Flush Langfuse
-            try:
-                langfuse_client.flush()
-            except Exception as e:
-                logger.warning(
-                    f"[PLAYBOOK MANAGER] Failed to flush Langfuse client (non-critical): {str(e)}"
-                )
 
             logger.info(
                 f"[PLAYBOOK MANAGER] Manager execution completed - "

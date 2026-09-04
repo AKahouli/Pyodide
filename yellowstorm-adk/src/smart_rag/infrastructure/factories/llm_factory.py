@@ -152,7 +152,12 @@ class LLMFactory:
             raise
 
     @staticmethod
-    def create_no_tool_calls_llm(model_name: str, temperature=0.0,max_completion_tokens=20000) -> 'LiteLlm':
+    def create_no_tool_calls_llm(
+        model_name: str,
+        temperature=0.0,
+        max_completion_tokens=20000,
+        num_retries: int | None = None,
+    ) -> 'LiteLlm':
         """Create an LLM instance without tool calls."""
         try:
             import litellm
@@ -172,6 +177,7 @@ class LLMFactory:
                     **({"temperature": model_temperature} if temperature is not None else {}),
                     max_completion_tokens=max_completion_tokens,
                     **({"reasoning_effort": reasoning_effort} if reasoning_effort else {}),
+                    **({"num_retries": num_retries} if num_retries is not None else {}),
                 )
                 logger.info(f"Successfully created Ollama no-tool-calls LLM for model: {model_name}")
             else:
@@ -184,6 +190,7 @@ class LLMFactory:
                     **({"temperature": model_temperature} if temperature is not None else {}),
                     max_completion_tokens=max_completion_tokens,
                     **({"reasoning_effort": reasoning_effort} if reasoning_effort else {}),
+                    **({"num_retries": num_retries} if num_retries is not None else {}),
                 )
                 logger.info(f"Successfully created LiteLLM proxy no-tool-calls LLM for model: {model_name}")
             return llm

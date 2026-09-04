@@ -166,6 +166,7 @@ export class PlaybookFlowIntentConstructionService {
     const cancellationWatcher = this.watchDurableCancellation(job);
     const startedAt = Date.now();
     let llmCalls = 0;
+    let failureKind: 'strict_validation' | undefined;
     try {
       await this.emit(job, { type: 'progress', constructionId: job.id, playbookId: job.flowId, phase: 'planning', message: 'Planning workflow construction' });
       let raw = await this.requestBlueprint(job, context);
@@ -181,6 +182,14 @@ export class PlaybookFlowIntentConstructionService {
         suggestions = this.buildBlueprintSuggestions(raw, context);
       }
       if (this.isBlockedConstruction(suggestions)) {
+        const blockedDrafts = suggestions.filter((suggestion) => suggestion.kind === 'workflow_plan'
+          && suggestion.changes.length > 0
+          && (suggestion.validationStatus === 'blocked'
+            || suggestion.diagnostics?.some((diagnostic) => diagnostic.severity === 'error') === true));
+        if (blockedDrafts.length > 0) {
+          await this.emitBlockedSuggestions(job, blockedDrafts);
+          failureKind = 'strict_validation';
+        }
         throw new Error(`Workflow construction failed strict validation after one repair attempt: ${this.formatBlockingDiagnostics(this.blockingDiagnostics(suggestions))}`);
       }
       await this.emitSuggestions(job, suggestions);
@@ -194,7 +203,7 @@ export class PlaybookFlowIntentConstructionService {
       job.status = 'failed';
       const message = error instanceof Error ? error.message : 'Intent construction failed';
       this.logger.error(`playbook_intent_construction_failed constructionId=${job.id} playbookId=${job.flowId} llmCalls=${llmCalls} durationMs=${Date.now() - startedAt} message=${message}`);
-      await this.emit(job, { type: 'failed', constructionId: job.id, playbookId: job.flowId, message, recoverable: true });
+      await this.emit(job, { type: 'failed', constructionId: job.id, playbookId: job.flowId, message, recoverable: true, ...(failureKind ? { failureKind } : {}) });
       this.scheduleCleanup(job);
     } finally {
       if (cancellationWatcher) clearInterval(cancellationWatcher);
@@ -327,6 +336,18 @@ export class PlaybookFlowIntentConstructionService {
       await this.waitForNextDelta(job.abortController.signal);
     }
     return Math.max(emittedDeltaCount, deltas.length);
+  }
+
+  private async emitBlockedSuggestions(job: PlaybookIntentConstructionJob, suggestions: PlaybookIntentSuggestion[]): Promise<void> {
+    for (const suggestion of suggestions) {
+      if (job.abortController.signal.aborted) return;
+      await this.emit(job, {
+        type: 'node_delta',
+        constructionId: job.id,
+        playbookId: job.flowId,
+        suggestion,
+      });
+    }
   }
 
   private async *readChatCompletionStream(stream: AsyncIterable<Buffer | string>): AsyncGenerator<string> {

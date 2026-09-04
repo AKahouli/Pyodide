@@ -23,6 +23,7 @@ from google.genai import types
 
 from src.smart_rag.infrastructure.monitoring import TraceRecorder
 from src.smart_rag.infrastructure.processing import PromptProcessor
+from src.smart_rag.infrastructure.processing.plugin import CleanSessionPlugin
 from src.smart_rag.messaging import MessageTransformer, StreamingFormatter
 from src.smart_rag.engines.helpers import build_content_with_images, coerce_to_dict
 from src.smart_rag.messaging.ui_tool_component_registry import UI_TOOL_COMPONENT_REGISTRY
@@ -343,7 +344,7 @@ class AgentRunner:
             agent_id: The ID of the agent.
 
         Returns:
-            Tuple containing final result, list of MCP tools used, and execution summary (for langfuse tracing).
+            Tuple containing the final result, MCP tools used, execution summary, and generated files.
         """
         recorder = TraceRecorder(agent_name=agent_name, agent_type=agent_type)
         agent_role = (
@@ -364,7 +365,12 @@ class AgentRunner:
         seen_tool_component_ids: set[str] = set()
         thought_activity_tracker = ThoughtActivityTracker()
 
-        runner = Runner(agent=agent, app_name=APP_NAME, session_service=session_helper)
+        runner = Runner(
+            agent=agent,
+            app_name=APP_NAME,
+            session_service=session_helper,
+            plugins=[CleanSessionPlugin()],
+        )
         guarded_output = agent_tree_has_output_guardrail(agent)
 
         stream = runner.run_async(
@@ -1036,12 +1042,17 @@ class AgentRunner:
             q: Queue for streaming events.
             agent_id: The ID of the agent.
         Returns:
-            Tuple containing final result, False (no MCP tools), and execution summary (for langfuse tracing).
+            Tuple containing the final result, False (no MCP tools), execution summary, and generated files.
         """
         recorder = TraceRecorder(agent_name=agent.name, agent_type="html")
         accumulated_text = ""
         guarded_output = agent_tree_has_output_guardrail(agent)
-        runner = Runner(agent=agent, app_name=APP_NAME, session_service=session_helper)
+        runner = Runner(
+            agent=agent,
+            app_name=APP_NAME,
+            session_service=session_helper,
+            plugins=[CleanSessionPlugin()],
+        )
 
         stream = runner.run_async(
             user_id=user_id,

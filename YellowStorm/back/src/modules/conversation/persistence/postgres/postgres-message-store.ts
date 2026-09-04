@@ -492,47 +492,54 @@ export class PostgresMessageStore implements MessageStore {
   }
 
   async failStaleReliability(cutoff: Date): Promise<MessageRecord[]> {
-    const withoutHeartbeat = await this.db.execute(sql`
-      WITH candidates AS (
-        SELECT id FROM conversation.messages
-        WHERE reliability_evaluation->>'status' = 'pending'
-          AND reliability_evaluation_heartbeat_at IS NULL
-          AND COALESCE(NULLIF(reliability_evaluation->>'requestedAt', '')::timestamptz, updated_at) < ${cutoff}
-        ORDER BY COALESCE(NULLIF(reliability_evaluation->>'requestedAt', '')::timestamptz, updated_at), id
-        LIMIT 1000 FOR UPDATE SKIP LOCKED
-      )
-      UPDATE conversation.messages m
-      SET reliability_evaluation = jsonb_set(jsonb_set(m.reliability_evaluation, '{status}', '"failed"'), '{failureCode}', '"stale_pending_after_restart"') || jsonb_build_object('evaluatedAt', ${new Date().toISOString()}),
-          updated_at = now()
-      FROM candidates c
-      WHERE m.id = c.id
-      RETURNING m.*
-    `);
-    const remaining = 1000 - withoutHeartbeat.rows.length;
-    if (remaining === 0) {
-      return withoutHeartbeat.rows.map((row) =>
-        mapPostgresMessage(row as typeof schema.messages.$inferSelect),
-      );
-    }
-    const withStaleHeartbeat = await this.db.execute(sql`
-      WITH candidates AS (
-        SELECT id FROM conversation.messages
-        WHERE reliability_evaluation->>'status' = 'pending'
-          AND reliability_evaluation_heartbeat_at < ${cutoff}
-        ORDER BY reliability_evaluation_heartbeat_at, id
-        LIMIT ${remaining} FOR UPDATE SKIP LOCKED
-      )
-      UPDATE conversation.messages m
-      SET reliability_evaluation = jsonb_set(jsonb_set(m.reliability_evaluation, '{status}', '"failed"'), '{failureCode}', '"stale_pending_after_restart"') || jsonb_build_object('evaluatedAt', ${new Date().toISOString()}),
-          reliability_evaluation_heartbeat_at = NULL,
-          updated_at = now()
-      FROM candidates c
-      WHERE m.id = c.id
-      RETURNING m.*
-    `);
-    return [...withoutHeartbeat.rows, ...withStaleHeartbeat.rows].map((row) =>
-      mapPostgresMessage(row as typeof schema.messages.$inferSelect),
-    );
+    const evaluatedAt = new Date().toISOString();
+    return this.db.transaction(async (tx) => {
+      const withoutHeartbeat = await tx.execute<{ id: string }>(sql`
+        WITH candidates AS (
+          SELECT id FROM conversation.messages
+          WHERE reliability_evaluation->>'status' = 'pending'
+            AND reliability_evaluation_heartbeat_at IS NULL
+            AND COALESCE(NULLIF(reliability_evaluation->>'requestedAt', '')::timestamptz, updated_at) < ${cutoff}
+          ORDER BY COALESCE(NULLIF(reliability_evaluation->>'requestedAt', '')::timestamptz, updated_at), id
+          LIMIT 1000 FOR UPDATE SKIP LOCKED
+        )
+        UPDATE conversation.messages m
+        SET reliability_evaluation = jsonb_set(jsonb_set(m.reliability_evaluation, '{status}', '"failed"'), '{failureCode}', '"stale_pending_after_restart"') || jsonb_build_object('evaluatedAt', ${evaluatedAt}::text),
+            updated_at = now()
+        FROM candidates c
+        WHERE m.id = c.id
+        RETURNING m.id
+      `);
+      const updatedIds = withoutHeartbeat.rows.map((row) => row.id);
+      const remaining = 1000 - updatedIds.length;
+
+      if (remaining > 0) {
+        const withStaleHeartbeat = await tx.execute<{ id: string }>(sql`
+          WITH candidates AS (
+            SELECT id FROM conversation.messages
+            WHERE reliability_evaluation->>'status' = 'pending'
+              AND reliability_evaluation_heartbeat_at < ${cutoff}
+            ORDER BY reliability_evaluation_heartbeat_at, id
+            LIMIT ${remaining} FOR UPDATE SKIP LOCKED
+          )
+          UPDATE conversation.messages m
+          SET reliability_evaluation = jsonb_set(jsonb_set(m.reliability_evaluation, '{status}', '"failed"'), '{failureCode}', '"stale_pending_after_restart"') || jsonb_build_object('evaluatedAt', ${evaluatedAt}::text),
+              reliability_evaluation_heartbeat_at = NULL,
+              updated_at = now()
+          FROM candidates c
+          WHERE m.id = c.id
+          RETURNING m.id
+        `);
+        updatedIds.push(...withStaleHeartbeat.rows.map((row) => row.id));
+      }
+
+      if (!updatedIds.length) return [];
+      const rows = await tx
+        .select()
+        .from(schema.messages)
+        .where(inArray(schema.messages.id, updatedIds));
+      return rows.map(mapPostgresMessage);
+    });
   }
 
   async touchPendingReliability(ids: string[], now: Date): Promise<void> {

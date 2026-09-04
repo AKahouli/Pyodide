@@ -1,5 +1,7 @@
 """Tests for SingleAgentService."""
 
+import asyncio
+
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch, Mock
 from google.genai import types
@@ -333,14 +335,9 @@ class TestSingleAgentService:
     async def test_execute_single_agent_success(self, mock_single_agent_request, mock_session_helper, mock_adk_agent, mock_queue):
         """Test successful single agent execution."""
         with patch('src.smart_rag.core.single_agent_service.SessionHelper') as mock_session_helper_class, \
-             patch.object(SingleAgentService, '_create_agent_from_request', return_value=mock_adk_agent), \
-             patch('src.smart_rag.core.single_agent_service.langfuse_client') as mock_langfuse:
+             patch.object(SingleAgentService, '_create_agent_from_request', return_value=mock_adk_agent):
 
             mock_session_helper_class.return_value = mock_session_helper
-            mock_trace = MagicMock()
-            mock_trace.id = "trace_123"
-            mock_langfuse.trace.return_value = mock_trace
-            mock_langfuse.span.return_value = MagicMock()
 
             service = SingleAgentService()
 
@@ -355,8 +352,7 @@ class TestSingleAgentService:
     @pytest.mark.asyncio
     async def test_execute_single_agent_no_agent_created(self, mock_single_agent_request, mock_queue):
         """Test execution when agent creation fails."""
-        with patch.object(SingleAgentService, '_create_agent_from_request', return_value=None), \
-             patch('src.smart_rag.core.single_agent_service.langfuse_client'):
+        with patch.object(SingleAgentService, '_create_agent_from_request', return_value=None):
 
             service = SingleAgentService()
 
@@ -368,8 +364,7 @@ class TestSingleAgentService:
     @pytest.mark.asyncio
     async def test_execute_single_agent_handles_exception(self, mock_single_agent_request, mock_queue):
         """Test execution handles exceptions and sends error message."""
-        with patch('src.smart_rag.core.single_agent_service.SessionHelper') as mock_session_helper_class, \
-             patch('src.smart_rag.core.single_agent_service.langfuse_client'):
+        with patch('src.smart_rag.core.single_agent_service.SessionHelper') as mock_session_helper_class:
 
             mock_session_helper_class.side_effect = Exception("Session creation failed")
 
@@ -394,8 +389,7 @@ class TestSingleAgentService:
     async def test_cleanup_called_on_exception(self, mock_single_agent_request, mock_session_helper, mock_queue):
         """Test that session cleanup is called even when exception occurs."""
         with patch('src.smart_rag.core.single_agent_service.SessionHelper') as mock_session_helper_class, \
-             patch.object(SingleAgentService, '_create_agent_from_request') as mock_create_agent, \
-             patch('src.smart_rag.core.single_agent_service.langfuse_client'):
+             patch.object(SingleAgentService, '_create_agent_from_request') as mock_create_agent:
 
             mock_session_helper_class.return_value = mock_session_helper
             mock_create_agent.side_effect = Exception("Test exception")
@@ -414,6 +408,38 @@ class TestSingleAgentService:
 
         assert service1 is not service2
         assert service1.llm_factory is not service2.llm_factory
+
+    @pytest.mark.asyncio
+    async def test_same_session_requests_do_not_overlap(self, mock_single_agent_request):
+        first_entered = asyncio.Event()
+        release_first = asyncio.Event()
+        active_calls = 0
+        max_active_calls = 0
+
+        async def execute(_request, _queue):
+            nonlocal active_calls, max_active_calls
+            active_calls += 1
+            max_active_calls = max(max_active_calls, active_calls)
+            if not first_entered.is_set():
+                first_entered.set()
+                await release_first.wait()
+            active_calls -= 1
+
+        first_service = SingleAgentService()
+        second_service = SingleAgentService()
+        with patch.object(SingleAgentService, '_execute_single_agent', side_effect=execute):
+            first = asyncio.create_task(
+                first_service.execute_single_agent(mock_single_agent_request, MagicMock())
+            )
+            await first_entered.wait()
+            second = asyncio.create_task(
+                second_service.execute_single_agent(mock_single_agent_request, MagicMock())
+            )
+            await asyncio.sleep(0)
+            release_first.set()
+            await asyncio.gather(first, second)
+
+        assert max_active_calls == 1
 
     @pytest.mark.asyncio
     async def test_agent_with_calculator_tool(self, mock_single_agent_request_no_tools, mock_llm_factory):

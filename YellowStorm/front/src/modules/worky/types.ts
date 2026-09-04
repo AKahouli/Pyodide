@@ -308,23 +308,6 @@ export interface WorkyPendingClarification {
   createdAt?: string;
 }
 
-export interface WorkyStartValidationIssue {
-  code: string;
-  message: string;
-  taskIds?: string[];
-}
-
-export type WorkyStartOutcome = 'fully_executable' | 'partially_executable' | 'globally_blocked';
-
-export interface WorkyStartValidation {
-  outcome: WorkyStartOutcome;
-  readyTaskIds: string[];
-  blockedTaskIds: string[];
-  issues: WorkyStartValidationIssue[];
-  snapshotId: string | null;
-  executionPlanVersion: number | null;
-}
-
 export type WorkyGovernanceLevel = 'off' | 'notify' | 'approval' | 'hard_block';
 
 export interface WorkyGovernancePolicy {

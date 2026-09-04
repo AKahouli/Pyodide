@@ -21,6 +21,7 @@
   "nav.chat": "Chat",
   "nav.voice": "Parler au Chief of Staff",
   "voice.manager": "Chief of Staff",
+  "voice.dragInstructions": "Faites glisser la commande Chief of Staff pour la déplacer, ou utilisez les touches fléchées lorsqu'elle est sélectionnée.",
   "voice.tapToTalk": "Appuyez sur le micro pour parler",
   "voice.listening": "À l'écoute…",
   "voice.thinking": "Réflexion…",

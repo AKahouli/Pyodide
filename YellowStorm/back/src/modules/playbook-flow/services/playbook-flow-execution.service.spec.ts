@@ -927,6 +927,7 @@ describe('PlaybookFlowExecutionService lifecycle handling', () => {
         pythonWorkerPoolSize: 3,
         pythonWorkerMaxInflight: 2,
         maxToolIterations: 25,
+        maxSandboxCallsPerStep: 16,
         graphCacheEnabled: false,
         graphCacheMaxEntries: 64,
         graphCacheTtlSeconds: 120,
@@ -978,6 +979,7 @@ describe('PlaybookFlowExecutionService lifecycle handling', () => {
       max_hitl_rounds: 0,
       graph_cache_enabled: false,
       max_tool_iterations: 25,
+      max_sandbox_calls_per_step: 16,
     });
   });
 

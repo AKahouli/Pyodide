@@ -31,7 +31,7 @@ from src.infrastructure.run_code import (
     build_run_code_context_from_sources,
 )
 from src.flow_engine.tools.sandbox_mount_guard import (
-    SANDBOX_CALL_LIMIT_MESSAGE,
+    DEFAULT_SANDBOX_CALLS_PER_STEP,
     SandboxCallBudget,
     SandboxMountGuard,
     SandboxMountValidationError,
@@ -592,6 +592,7 @@ def create_langchain_tools(
     run_code_sources: Optional[List[Dict[str, Any]]] = None,
     execution_id: str = "",
     sandbox_inputs: Optional[List[Dict[str, str]]] = None,
+    max_sandbox_calls_per_step: int = DEFAULT_SANDBOX_CALLS_PER_STEP,
 ) -> Tuple[List[StructuredTool], ToolResultCollector]:
     """Create LangChain StructuredTool instances from a playbook agent config.
 
@@ -668,6 +669,7 @@ def create_langchain_tools(
             workspace_paths=workspace_paths,
             execution_id=execution_id,
             sandbox_inputs=sandbox_inputs,
+            max_sandbox_calls_per_step=max_sandbox_calls_per_step,
         )
 
     tool_configs = agent_config.get("tools", [])
@@ -1730,6 +1732,7 @@ def _create_connector_mcp_tools(
     workspace_paths: Optional[List[str]] = None,
     execution_id: str = "",
     sandbox_inputs: Optional[List[Dict[str, str]]] = None,
+    max_sandbox_calls_per_step: int = DEFAULT_SANDBOX_CALLS_PER_STEP,
 ) -> List[StructuredTool]:
     """Create LangChain tools from step-level connector bindings via MCP.
 
@@ -1740,7 +1743,7 @@ def _create_connector_mcp_tools(
         return []
 
     tools: List[StructuredTool] = []
-    sandbox_call_budget = SandboxCallBudget()
+    sandbox_call_budget = SandboxCallBudget(max_sandbox_calls_per_step)
     for binding in bindings:
         connector_id = binding.get("connector_id", "")
         connector_name = binding.get("connector_name") or connector_id
@@ -1859,7 +1862,7 @@ def _create_connector_mcp_tools(
                             merged_params.pop(filename_param, None)
                     _last_mcp_actual_args.set(dict(merged_params))
                     if call_budget is not None and not await call_budget.try_acquire():
-                        return SANDBOX_CALL_LIMIT_MESSAGE
+                        return call_budget.limit_message
                     try:
                         if not su:
                             return (
@@ -1995,8 +1998,12 @@ def _create_connector_mcp_tools(
                                 tool_name=ak,
                             )
                         return response
-                    except SandboxMountValidationError:
-                        raise
+                    except SandboxMountValidationError as e:
+                        logger.warning(
+                            "MCP sandbox mount validation failed",
+                            tool=tn,
+                        )
+                        return f"Error: {e}"
                     except Exception as e:
                         logger.error("MCP tool execution failed", tool=tn, error=str(e))
                         return f"Connector action '{ak}' failed: {str(e)}"

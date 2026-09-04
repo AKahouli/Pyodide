@@ -52,7 +52,6 @@ export function WorkyMobileStream({
       <MobileStreamHeader
         streamId={streamId}
         onBack={() => navigate('/worky')}
-        sessionStatus={model.session?.status}
       />
       {/* pb keeps the last agent card clear of the nav's raised voice button. */}
       <div className="min-h-0 flex-1 overflow-y-auto px-4 pt-1 pb-8">

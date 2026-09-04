@@ -7,7 +7,7 @@
  */
 
 import * as React from 'react';
-import { Outlet, Navigate, useLocation } from 'react-router-dom';
+import { matchPath, Outlet, Navigate, useLocation } from 'react-router-dom';
 import { Loader2 } from 'lucide-react';
 
 import { SidebarProvider, SidebarInset, SidebarTriggerMobile } from '@/components/ui/sidebar';
@@ -18,6 +18,7 @@ import { NewConversationPage } from '@/modules/conversation';
 import { useModelsStore } from '@/modules/models';
 import { useConversationStream } from '@/modules/conversation/hooks/useConversationStream';
 import { useConversationV2StreamConnection } from '@/modules/conversation-v2/useStream';
+import { usePlaybookStreamGlobal } from '@/modules/playbook/services/playbookStreamService';
 import { DEFAULT_FEATURE_VISIBILITY, getFeatureVisibility } from '@/modules/admin';
 import { PlatformCopilotMascot } from '@/modules/platform-copilot';
 
@@ -34,6 +35,8 @@ export function RootGuard() {
   // conversation-v2 sessions) so multiple conversations can stream at once.
   useConversationStream();
   useConversationV2StreamConnection();
+  // Playbook execution events drive live canvas step statuses during runs.
+  usePlaybookStreamGlobal(isAuthenticated);
 
   // Initialize models when authenticated
   React.useEffect(() => {
@@ -89,7 +92,9 @@ export function RootGuard() {
   // (`/worky/:streamId`): it floats over the stream chat. It stays visible on
   // the Worky dashboard (`/worky`), the stream report (`/worky/:id/report`) and
   // everywhere else.
-  const isWorkyStreamRoute = /^\/worky\/[^/]+$/.test(location.pathname);
+  const isWorkyStreamRoute = Boolean(
+    matchPath({ path: '/worky/:streamId', end: true }, location.pathname),
+  );
 
   return (
     <SidebarProvider>
@@ -100,7 +105,7 @@ export function RootGuard() {
         </header>
         <div className='flex flex-1 min-h-0 flex-col items-center  overflow-hidden'>{isIndexRoute ? <NewConversationPage /> : <Outlet />}</div>
       </SidebarInset>
-      {platformCopilotEnabled && <PlatformCopilotMascot />}
+      {platformCopilotEnabled && !isWorkyStreamRoute && <PlatformCopilotMascot />}
     </SidebarProvider>
   );
 }

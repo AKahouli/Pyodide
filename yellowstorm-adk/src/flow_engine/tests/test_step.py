@@ -1236,6 +1236,7 @@ async def test_run_step_uses_state_workspace_when_node_inputs_are_resolved(monke
             "execution_id": "exec-1",
             "flow_id": "flow-1",
             "inputs": {"__playbook_workspace_ids": ["workspace-1"]},
+            "max_sandbox_calls_per_step": 16,
             "task_outputs": {},
             "iterations": {},
             "router_decisions": {},
@@ -1247,6 +1248,7 @@ async def test_run_step_uses_state_workspace_when_node_inputs_are_resolved(monke
     )
 
     assert captured_kwargs["output_workspace_id"] == "workspace-1"
+    assert captured_kwargs["max_sandbox_calls_per_step"] == 16
 
 
 @pytest.mark.anyio

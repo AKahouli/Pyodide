@@ -18,7 +18,7 @@ let mountedConversationPages = 0;
 function ConversationLoadingShell({ label }: Readonly<{ label: string }>) {
   return (
     <div className='relative flex min-h-0 w-full flex-1' role='status' aria-label={label} aria-busy='true'>
-      <div className='mx-auto flex min-w-0 max-w-4xl flex-1 flex-col'>
+      <div className='mx-auto flex min-w-0 max-w-6xl flex-1 flex-col'>
         <div data-loading-header className='flex h-[68px] shrink-0 items-center gap-3 border-b border-border/50 px-3 md:h-[60px] md:px-4' aria-hidden='true'>
           <Skeleton className='size-11 rounded-md motion-reduce:animate-none md:size-9' />
           <Skeleton className='h-5 w-36 motion-reduce:animate-none sm:w-52' />
@@ -152,7 +152,7 @@ export function ConversationPage() {
  
   return (
     <div className='relative flex flex-1 min-h-0 w-full'>
-      <div className='flex flex-col flex-1 min-w-0 max-w-4xl mx-auto'>
+      <div className='flex flex-col flex-1 min-w-0 max-w-6xl mx-auto'>
         <ConversationHeader />
         <GovernedConversationBanner conversation={currentConversation} />
         <ConversationContent />

@@ -30,6 +30,7 @@ export interface PlaybookExecutionAdminSettings {
   pythonWorkerPoolSize: number;
   pythonWorkerMaxInflight: number;
   maxToolIterations: number;
+  maxSandboxCallsPerStep: number;
   graphCacheEnabled: boolean;
   graphCacheMaxEntries: number;
   graphCacheTtlSeconds: number;
@@ -69,6 +70,7 @@ export const DEFAULT_PLAYBOOK_EXECUTION_SETTINGS: PlaybookExecutionAdminSettings
   pythonWorkerPoolSize: 8,
   pythonWorkerMaxInflight: 4,
   maxToolIterations: 40,
+  maxSandboxCallsPerStep: 30,
   graphCacheEnabled: false,
   graphCacheMaxEntries: 128,
   graphCacheTtlSeconds: 900,
@@ -129,6 +131,7 @@ export function normalizePlaybookExecutionSettings(
     pythonWorkerPoolSize: boundedInteger(value?.pythonWorkerPoolSize, defaults.pythonWorkerPoolSize, 1, 100),
     pythonWorkerMaxInflight: boundedInteger(value?.pythonWorkerMaxInflight, defaults.pythonWorkerMaxInflight, 1, 20),
     maxToolIterations: boundedInteger(value?.maxToolIterations, defaults.maxToolIterations, 1, 500),
+    maxSandboxCallsPerStep: boundedInteger(value?.maxSandboxCallsPerStep, defaults.maxSandboxCallsPerStep, 1, 100),
     graphCacheEnabled: typeof value?.graphCacheEnabled === 'boolean' ? value.graphCacheEnabled : defaults.graphCacheEnabled,
     graphCacheMaxEntries: boundedInteger(value?.graphCacheMaxEntries, defaults.graphCacheMaxEntries, 1, 10000),
     graphCacheTtlSeconds: boundedInteger(value?.graphCacheTtlSeconds, defaults.graphCacheTtlSeconds, 1, 86400),

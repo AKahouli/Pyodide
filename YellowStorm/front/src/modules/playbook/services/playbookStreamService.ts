@@ -585,6 +585,7 @@ function teardown() {
   stopLeaderWatch();
   stopLeaderHeartbeat();
   pendingStepUpdates.clear();
+  pendingIteratorChildStepUpdates.clear();
 
   if (channel) {
     channel.onmessage = null;
@@ -606,10 +607,16 @@ if (typeof window !== 'undefined') {
 
 // ===== React hook =====
 
-/** Mount once at app level (RootGuard). Starts/stops the shared SSE lifecycle. */
-export function usePlaybookStreamGlobal() {
+/**
+ * Mount once at app level (RootGuard). Starts/stops the shared SSE lifecycle.
+ * `enabled` must track authentication: without a token the leader would idle
+ * without connecting and never recover once the user logs in, because the
+ * module role is independent of auth state.
+ */
+export function usePlaybookStreamGlobal(enabled = true) {
   useEffect(() => {
+    if (!enabled) return undefined;
     init();
     return () => teardown();
-  }, []);
+  }, [enabled]);
 }

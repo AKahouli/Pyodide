@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { buildIntentEdgeOptions, buildOverviewResultNodeIds, canAppendIntentEdge, canRunPlaybookInputContract, getInitialPlaybookPageMode, getPlaybookInputRevisionSyncAction, getPlaybookInputRevisionSyncRequest, getScopedConstructionDiagnostics, hydrateAssistantOperationHandoff, isPlaybookRouteCurrent, isTaskConfiguredForExecution, loadLatestPlaybookAssistantHistory, pruneUnreachableDataBindings, recoverPlaybookInputConfigurationConflict, remapRouterConditionSourceNodes, replacePlaybookInputBinding, resolveDiagnosticNodeId, resolveIntentNodeSemantics, runPlaybookInputRevisionSync, savePlaybookInputConfiguration, shouldApplyInitialAutoLayout, shouldAutoLayoutAfterConstruction, shouldBlockCanvasMutationShortcut, shouldClearConstructionDiagnostics, shouldConsumeAssistantOperationHandoff, shouldEnableCanvasNodeDragging, shouldRenderPlaybookAssistant, shouldUsePlaybookMcpAssistant, updateScopedConstructionDiagnostics, type PlaybookInputRevisionSyncState } from './PlaybookCanvasPage';
+import { buildIntentEdgeOptions, buildOverviewResultNodeIds, canAppendIntentEdge, canRunPlaybookInputContract, didCanonicalAssistantCommitSucceed, getInitialPlaybookPageMode, getPlaybookInputRevisionSyncAction, getPlaybookInputRevisionSyncRequest, getScopedConstructionDiagnostics, hydrateAssistantOperationHandoff, isPlaybookRouteCurrent, isTaskConfiguredForExecution, loadLatestPlaybookAssistantHistory, pruneUnreachableDataBindings, recoverPlaybookInputConfigurationConflict, remapRouterConditionSourceNodes, replacePlaybookInputBinding, resolveDiagnosticNodeId, resolveIntentNodeSemantics, runPlaybookInputRevisionSync, savePlaybookInputConfiguration, shouldApplyInitialAutoLayout, shouldAutoLayoutAfterConstruction, shouldBlockAssistantNavigation, shouldBlockCanvasMutationShortcut, shouldClearConstructionDiagnostics, shouldConsumeAssistantOperationHandoff, shouldEnableCanvasNodeDragging, shouldPauseAssistantPersistence, shouldRenderPlaybookAssistant, shouldUsePlaybookMcpAssistant, updateScopedConstructionDiagnostics, type PlaybookInputRevisionSyncState } from './PlaybookCanvasPage';
 import { resolveCanvasNodeSelection } from '../utils/playbook-canvas-selection';
 import { buildCanvasJudgeStateMap, hasPendingJudgeEvaluations } from '../utils/playbook-canvas-status';
 import { makeExecution } from '../test-utils';
@@ -371,6 +371,36 @@ describe('hydrateAssistantOperationHandoff', () => {
   });
 });
 
+describe('canonical assistant commit completion', () => {
+  it('recognizes backend success from its revision even when newer local edits remain dirty', () => {
+    expect(didCanonicalAssistantCommitSucceed('operation-1', 'operation-1', 7, 8)).toBe(true);
+  });
+
+  it('keeps the operation retryable when persistence does not advance its revision', () => {
+    expect(didCanonicalAssistantCommitSucceed('operation-1', 'operation-1', 7, 7)).toBe(false);
+    expect(didCanonicalAssistantCommitSucceed('operation-1', 'operation-1', 7, undefined)).toBe(false);
+  });
+
+  it('does not mistake an unrelated save revision for canonical operation success', () => {
+    expect(didCanonicalAssistantCommitSucceed('operation-1', null, 7, 8)).toBe(false);
+    expect(didCanonicalAssistantCommitSucceed('operation-1', 'operation-2', 7, 8)).toBe(false);
+  });
+
+  it('blocks navigation only while the current Playbook owns the pending operation', () => {
+    expect(shouldBlockAssistantNavigation('playbook-1', 'playbook-1', 'canonical', 'applying')).toBe(true);
+    expect(shouldBlockAssistantNavigation('playbook-1', 'playbook-1', 'canonical', 'ready')).toBe(true);
+    expect(shouldBlockAssistantNavigation('playbook-1', 'playbook-2', 'canonical', 'ready')).toBe(false);
+    expect(shouldBlockAssistantNavigation('playbook-1', 'playbook-1', 'canonical', 'idle')).toBe(false);
+    expect(shouldBlockAssistantNavigation('playbook-1', 'playbook-1', 'advisor_preview', 'ready')).toBe(false);
+  });
+
+  it('pauses persistence for an owned advisor preview without blocking unrelated Playbooks', () => {
+    expect(shouldPauseAssistantPersistence('playbook-1', 'playbook-1', 'ready')).toBe(true);
+    expect(shouldPauseAssistantPersistence('playbook-1', 'playbook-2', 'ready')).toBe(false);
+    expect(shouldPauseAssistantPersistence('playbook-1', 'playbook-1', 'idle')).toBe(false);
+  });
+});
+
 describe('buildCanvasJudgeStateMap', () => {
   it('prefers an evaluated iteration over a stale evaluating iteration for the same task', () => {
     const taskResults = [
@@ -580,6 +610,10 @@ describe('construction diagnostics lifecycle', () => {
   it('clears diagnostics from failed and cancelled constructions', () => {
     expect(shouldClearConstructionDiagnostics('failed', false, 'idle')).toBe(true);
     expect(shouldClearConstructionDiagnostics('cancelled', false, 'idle')).toBe(true);
+  });
+
+  it('retains failed construction diagnostics while a canonical draft awaits correction', () => {
+    expect(shouldClearConstructionDiagnostics('failed', true, 'ready')).toBe(false);
   });
 });
 

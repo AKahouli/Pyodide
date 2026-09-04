@@ -495,11 +495,6 @@
     background: transparent;
   }
 
-  /* Fix for @cyntler/react-doc-viewer DOCX renderer height issue */
-  #proxy-renderer,
-  #msdoc-renderer {
-    height: 100% !important;
-  }
 }
 
 /* Move the sonner toast close button to the right side (defaults to top-left).

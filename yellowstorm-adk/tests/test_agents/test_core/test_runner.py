@@ -7,6 +7,7 @@ from datetime import datetime
 from google.genai import types
 
 from src.smart_rag.agents.core.runner import AgentRunner
+from src.smart_rag.infrastructure.processing.plugin import CleanSessionPlugin
 from src.smart_rag.tools.utilities.connector_tools import (
     _register_connector_response_sources,
 )
@@ -237,7 +238,7 @@ class TestAgentRunner:
             [],
         )
 
-        with patch('src.smart_rag.agents.core.runner.Runner', return_value=mock_runner_instance):
+        with patch('src.smart_rag.agents.core.runner.Runner', return_value=mock_runner_instance) as runner_class:
             result = await agent_runner._run_standard_agent(
                 agent=mock_agent,
                 agent_name="TestAgent",
@@ -256,6 +257,7 @@ class TestAgentRunner:
         assert result[0] == "Final response"
         assert result[1] == []
         assert isinstance(result[2], dict)
+        assert isinstance(runner_class.call_args.kwargs["plugins"][0], CleanSessionPlugin)
 
     @pytest.mark.asyncio
     async def test_guarded_standard_agent_never_emits_unvalidated_partial_text(self):
@@ -616,7 +618,7 @@ class TestAgentRunner:
         mock_runner_instance.run_async = mock_run_async
         mock_streaming_formatter.format_streaming_event.return_value = {"type": "chunk"}
 
-        with patch('src.smart_rag.agents.core.runner.Runner', return_value=mock_runner_instance):
+        with patch('src.smart_rag.agents.core.runner.Runner', return_value=mock_runner_instance) as runner_class:
             result = await agent_runner._run_html_agent(
                 agent=mock_agent,
                 session_helper=mock_session_helper,
@@ -630,6 +632,7 @@ class TestAgentRunner:
         assert result[0] == "html was generated successfully and sent to the user"
         assert result[1] == []
         assert isinstance(result[2], dict)
+        assert isinstance(runner_class.call_args.kwargs["plugins"][0], CleanSessionPlugin)
 
     @pytest.mark.asyncio
     async def test_handle_function_call(self):

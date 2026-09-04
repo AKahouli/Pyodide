@@ -490,7 +490,7 @@ message Usage {
 }
 
 message StreamChunk {
-    string action = 1;           // "add", "update", or "delete"
+    string action = 1;           // "add", "update", "delete", or component-free "heartbeat"
     Component component = 2;     // The component data (optional if only sending usage)
     Metadata metadata = 3;       // Metadata about the chunk
     Usage usage = 4;             // Token usage data (optional)

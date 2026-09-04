@@ -13,7 +13,6 @@ import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import { useStream, useStreams } from '../../query/hooks';
 import { NewStreamDialog } from '../NewStreamDialog';
-import { CompanionExecutionControls } from '../executive/CompanionExecutionControls';
 
 /**
  * Desktop Worky top bar: logo + wordmark and the stream switcher. The switcher
@@ -23,7 +22,7 @@ import { CompanionExecutionControls } from '../executive/CompanionExecutionContr
  * Stream search lives on the landing dashboard only. Budget is shown by
  * `WorkyActivityRail`, so it is not duplicated here.
  */
-export function WorkyTopBar({ streamId, sessionStatus }: { streamId: string; sessionStatus?: string | null }): JSX.Element {
+export function WorkyTopBar({ streamId }: { streamId: string }): JSX.Element {
   const { t } = useModuleTranslation('worky');
   const navigate = useNavigate();
   const { data: stream } = useStream(streamId);
@@ -85,10 +84,6 @@ export function WorkyTopBar({ streamId, sessionStatus }: { streamId: string; ses
         >
           <Plus className="size-4" />
         </Button>
-      </div>
-
-      <div className='ml-auto'>
-        <CompanionExecutionControls streamId={streamId} sessionStatus={sessionStatus} />
       </div>
 
       <NewStreamDialog open={createOpen} onOpenChange={setCreateOpen} />

@@ -1,9 +1,9 @@
 /**
  * Worky (Chief of Staff) — REST client.
  *
- * Part 1: stream lifecycle CRUD (list, get, create, patch).
+ * Part 1: stream CRUD (list, get, create, patch).
  * Part 2: messages, board, plan-delta relay, interaction respond.
- * Part 3: execution lifecycle (start/pause/resume/stop), task ops,
+ * Part 3: orchestrator turn controls, task ops,
  *   governance admin.
  * Part 4: budget, reports, memory (deferred).
  */
@@ -24,7 +24,6 @@ import type {
   WorkyMemoryProposal,
   WorkyMessage,
   PaginatedStreams,
-  WorkyStartValidation,
   WorkyStream,
   WorkyStreamQueryParams,
   WorkyTask,
@@ -140,80 +139,6 @@ export async function respondInteraction(
     cancel: options.cancel ?? false,
     approve: options.approve,
   });
-  return unwrap(response);
-}
-
-export async function startStream(streamId: string): Promise<WorkyStartValidation> {
-  const response = await apiClient.post<ApiResponse<WorkyStartValidation>>(
-    API_ENDPOINTS.worky.streamStart(streamId),
-  );
-  return unwrap(response);
-}
-
-export async function pauseStream(
-  streamId: string,
-  reason?: string,
-): Promise<{ ok: true }> {
-  const response = await apiClient.post<ApiResponse<{ ok: true }>>(
-    API_ENDPOINTS.worky.streamPause(streamId),
-    { reason },
-  );
-  return unwrap(response);
-}
-
-export async function resumeStream(
-  streamId: string,
-  reason?: string,
-): Promise<{ ok: true }> {
-  const response = await apiClient.post<ApiResponse<{ ok: true }>>(
-    API_ENDPOINTS.worky.streamResume(streamId),
-    { reason },
-  );
-  return unwrap(response);
-}
-
-export async function stopStream(
-  streamId: string,
-  reason?: string,
-): Promise<{ ok: true }> {
-  const response = await apiClient.delete<ApiResponse<{ ok: true }>>(
-    API_ENDPOINTS.worky.streamStop(streamId),
-    { data: { reason } },
-  );
-  return unwrap(response);
-}
-
-/**
- * Cancel the running orchestrator turn via the StopSession RPC.
- * Unlike stopStream (which tears down the stream lifecycle), this just
- * stops the in-flight Manager turn.
- */
-export async function stopTurn(streamId: string): Promise<{ stopped: boolean }> {
-  const response = await apiClient.post<ApiResponse<{ stopped: boolean }>>(
-    API_ENDPOINTS.worky.streamStopTurn(streamId),
-  );
-  return unwrap(response);
-}
-
-/**
- * Pause the running orchestrator turn via the PauseSession RPC.
- * Non-terminal — the plan is kept and continues when the next message is sent.
- */
-export async function pauseTurn(streamId: string): Promise<{ paused: boolean }> {
-  const response = await apiClient.post<ApiResponse<{ paused: boolean }>>(
-    API_ENDPOINTS.worky.streamPauseTurn(streamId),
-  );
-  return unwrap(response);
-}
-
-/**
- * Resume a paused orchestrator session — continues the remaining steps via a
- * RunTask (no new owner message).
- */
-export async function resumeTurn(streamId: string): Promise<{ resumed: boolean }> {
-  const response = await apiClient.post<ApiResponse<{ resumed: boolean }>>(
-    API_ENDPOINTS.worky.streamResumeTurn(streamId),
-  );
   return unwrap(response);
 }
 

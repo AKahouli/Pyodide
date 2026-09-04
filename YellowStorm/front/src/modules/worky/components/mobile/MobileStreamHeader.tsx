@@ -3,20 +3,17 @@ import { ChevronLeft } from 'lucide-react';
 import { useModuleTranslation } from '@/modules/localization';
 import { useStream } from '../../query/hooks';
 import { useStreamAgents } from '../../agents/useStreamAgents';
-import { CompanionExecutionControls } from '../executive/CompanionExecutionControls';
 
 /**
  * Mobile app bar: back, the stream title with an "N agents · Status" subtitle,
- * and controls for the active Companion execution.
+ * without duplicating the bottom navigation controls.
  */
 export function MobileStreamHeader({
   streamId,
   onBack,
-  sessionStatus,
 }: {
   streamId: string;
   onBack: () => void;
-  sessionStatus?: string | null;
 }): JSX.Element {
   const { t } = useModuleTranslation('worky');
   const { data: stream } = useStream(streamId);
@@ -39,7 +36,6 @@ export function MobileStreamHeader({
         <div className="truncate text-lg font-bold text-foreground">{stream?.title ?? ''}</div>
         <div className="truncate text-xs text-muted-foreground">{subtitle}</div>
       </div>
-      <CompanionExecutionControls streamId={streamId} sessionStatus={sessionStatus} compact />
     </div>
   );
 }

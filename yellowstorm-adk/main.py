@@ -6,6 +6,9 @@ from contextlib import asynccontextmanager
 from importlib.metadata import version
 from os import getenv
 
+# ADK 2.3 serializes full LLM payloads synchronously on the event loop by default.
+os.environ["ADK_CAPTURE_MESSAGE_CONTENT_IN_SPANS"] = "false"
+
 from fastapi.exceptions import RequestValidationError
 from src.middleware import add_middleware
 #from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor

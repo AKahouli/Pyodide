@@ -71,28 +71,3 @@ export interface IWorkyStreamListResult {
     statusCounts: Record<string, number>;
   };
 }
-
-/**
- * Generic ack shape returned by the internal-callback controller. Every
- * `/worky/internal/*` endpoint responds with this — `applied: true` is a
- * stub for Part 1; Parts 2/3/4 replace it with the actual outcome.
- */
-export interface IWorkyCallbackAck {
-  applied: boolean;
-  replay: boolean;
-  eventId: string;
-  receivedAt: string;
-}
-
-/**
- * Plan-delta specific ack. The runtime reads `resultPlanVersion` so the
- * next planning turn can use the new version as its `basePlanVersion`.
- */
-export interface IWorkyPlanDeltaAck extends IWorkyCallbackAck {
-  resultPlanVersion: number;
-  planDeltaId: string;
-  createdTaskIds: string[];
-  updatedTaskIds: string[];
-  cancelledTaskIds: string[];
-  clarificationIds: string[];
-}

@@ -740,7 +740,7 @@
                 <ul>
                     <li>Azure storage/account secrets must be non-empty strings.</li>
                     <li><code>DATABASE_URL</code> must start with supported schemes (PostgreSQL, MySQL, SQLite, MSSQL, Oracle).</li>
-                    <li>URL fields (<code>API_URL</code>, <code>LITELLM_API_BASE_URL</code>, <code>EXCEL_MCP_URL</code>, <code>LANGFUSE_HOST</code>) are parsed with <code>urlparse</code> to guarantee scheme and host.</li>
+                    <li>URL fields (<code>API_URL</code>, <code>LITELLM_API_BASE_URL</code>, and <code>EXCEL_MCP_URL</code>) are parsed with <code>urlparse</code> to guarantee scheme and host.</li>
                     <li>Numeric constraints on <code>REDIS_PORT</code>, concurrency limits, and similar toggles.</li>
                 </ul>
             </details>
@@ -878,7 +878,7 @@
     <section class="module" id="module-traditional-engine">
         <header>
             <h2>Traditional RAG Engine &ndash; <a class="anchor" href="#module-traditional-engine">smart_rag/engines/traditional</a></h2>
-            <p>Single-agent retrieval augmented generation with hierarchical prompt orchestration and Langfuse tracing.</p>
+            <p>Single-agent retrieval augmented generation with hierarchical prompt orchestration.</p>
         </header>
         <article class="element" id="class-smartaragorchestrator">
             <h3><code>SmartRAGOrchestrator</code></h3>
@@ -890,7 +890,7 @@
                     <li>Constructs document and brain trees from request payloads for search tooling.</li>
                     <li>Creates delegation functions for search, operator, report writer, and HTML agents using <code>DelegationTools</code>.</li>
                     <li>Initialises a manager agent with delegation tools, runs it via <code>SessionHelper</code>, and streams SSE events through <code>StreamingFormatter</code>.</li>
-                    <li>Emits Langfuse traces for orchestration spans and ensures resources are cleaned up.</li>
+                    <li>Ensures runtime resources are cleaned up.</li>
                 </ul>
             </details>
             <p><strong><code>chat_smart_rag(user_request, queue)</code></strong> orchestrates the entire lifecycle, pushing structured streaming events onto the queue and terminating with a final <code>end_of_message</code> chunk.</p>
@@ -966,7 +966,7 @@
         </article>
         <article class="element" id="class-agentrunner">
             <h3><code>AgentRunner</code></h3>
-            <p>Executes Google ADK agents, streams intermediate events, and records Langfuse traces.</p>
+            <p>Executes Google ADK agents and streams intermediate events.</p>
             <details>
                 <summary>Primary methods</summary>
                 <ul>
@@ -1001,7 +1001,7 @@
         </article>
         <article class="element" id="class-agentdelegationfactory">
             <h3><code>AgentDelegationFactory</code></h3>
-            <p>Generates asynchronous delegate functions that the manager agent can call to execute specialised agents while maintaining Langfuse trace hierarchies.</p>
+            <p>Generates asynchronous delegate functions that the manager agent can call to execute specialised agents.</p>
             <details>
                 <summary>Important methods</summary>
                 <ul>
@@ -1067,7 +1067,7 @@
         </article>
         <article class="element" id="function-process-execution-summary">
             <h3><code>process_execution_summary(execution_summary, delegation_span)</code></h3>
-            <p>Iterates over execution flow entries, routing them to <code>process_execution_step</code> and attaching detailed Langfuse events.</p>
+            <p>Iterates over execution flow entries and routes them to <code>process_execution_step</code>.</p>
         </article>
         <article class="element" id="function-process-execution-step">
             <h3><code>process_execution_step(step, delegation_span)</code></h3>
@@ -1075,7 +1075,7 @@
         </article>
         <article class="element" id="function-add-function-execution-event">
             <h3><code>add_function_execution_event(step, delegation_span)</code></h3>
-            <p>Emits Langfuse events for tool calls, ensuring input arguments and outputs are captured.</p>
+            <p>Processes tool-call input arguments and outputs.</p>
         </article>
         <article class="element" id="function-update-span-with-result">
             <h3><code>update_span_with_execution_result(delegation_span, result, execution_summary, agent_name)</code></h3>
@@ -1128,7 +1128,7 @@
         </header>
         <article class="element" id="class-delegationtools">
             <h3><code>DelegationTools</code></h3>
-            <p>Builds predefined delegate coroutines for search, operator, report writer, and HTML agents. Each delegate manages Langfuse spans, streams queue updates, and handles MCP file uploads or errors.</p>
+            <p>Builds predefined delegate coroutines for search, operator, report writer, and HTML agents. Each delegate streams queue updates and handles MCP file uploads or errors.</p>
             <details>
                 <summary>Delegate responsibilities</summary>
                 <ul>
@@ -1256,11 +1256,11 @@
     <section class="module" id="module-monitoring">
         <header>
             <h2>Monitoring &amp; Tracing &ndash; <a class="anchor" href="#module-monitoring">smart_rag/infrastructure/monitoring</a></h2>
-            <p>Integrates Langfuse tracing and exposes helper utilities to capture agent execution flow.</p>
+            <p>Exposes helper utilities to capture agent execution flow.</p>
         </header>
         <article class="element" id="class-tracerecorder">
             <h3><code>TraceRecorder</code></h3>
-            <p>Aggregates text chunks, function calls, responses, and errors for each agent, producing structured execution summaries consumed by Langfuse spans.</p>
+            <p>Aggregates text chunks, function calls, responses, and errors for each agent into structured execution summaries.</p>
             <details>
                 <summary>Notable methods</summary>
                 <ul>
@@ -1269,7 +1269,7 @@
                     <li><code>_get_timestamp</code>: Supplies timestamps for recorded events.</li>
                 </ul>
             </details>
-            <p>The module also initialises a reusable <code>langfuse_client</code> and OTEL exporter headers derived from settings.</p>
+            <p>The module also provides execution tracing helpers.</p>
         </article>
     </section>
     <section class="module" id="module-tools-common">
@@ -1452,7 +1452,7 @@
     <section class="module" id="module-multi-agent-config">
         <header>
             <h2>Multi-agent Configuration &ndash; <a class="anchor" href="#module-multi-agent-config">smart_rag/engines/multi_agent/config.py</a></h2>
-            <p>Holds multi-agent constants, Langfuse client initialisation, and dataclasses for agent team configuration.</p>
+            <p>Holds multi-agent constants and dataclasses for agent team configuration.</p>
         </header>
         <article class="element" id="class-agentteamconfig">
             <h3><code>AgentTeamConfig</code></h3>
@@ -1466,7 +1466,7 @@
         </header>
         <article class="element" id="function-run-agent-team-logic">
             <h3><code>run_agent_team_logic(user_request, q)</code></h3>
-            <p>Entry point for multi-agent requests: creates a Langfuse trace, initialises dependencies, builds configuration, constructs the auto-agent team, and invokes <code>execute_workflow</code>. Marks traces as success or failure and flushes Langfuse buffers.</p>
+            <p>Entry point for multi-agent requests: initialises dependencies, builds configuration, constructs the auto-agent team, and invokes <code>execute_workflow</code>.</p>
         </article>
         <article class="element" id="function-execute-workflow">
             <h3><code>execute_workflow(team, user_request, q, main_trace)</code></h3>
@@ -1482,13 +1482,13 @@
                     <li><code>get_agent_id_by_name</code>, <code>has_search_agents</code>, <code>get_document_tree_info</code>: Convenience accessors for agent metadata.</li>
                     <li><code>get_agent_suggestions</code>: Invokes suggestion generator, enriches suggestions with brain data, updates repository, and returns aggregated agents.</li>
                     <li><code>make_delegate_function</code>: Forwards to <code>AgentDelegationFactory</code>.</li>
-                    <li><code>run_agent_team(user_prompt, manager_prompt, session_id, q, parent_trace)</code>: Creates manager agent tools, initialises sessions, processes streaming events, and flushes Langfuse traces.</li>
+                    <li><code>run_agent_team(user_prompt, manager_prompt, session_id, q)</code>: Creates manager agent tools, initialises sessions, and processes streaming events.</li>
                 </ul>
             </details>
         </article>
         <article class="element" id="class-streamingeventprocessor">
             <h3><code>StreamingEventProcessor</code></h3>
-            <p>Consumes streaming events from the manager agent, emits SSE payloads, tracks delegations, and updates Langfuse spans with generated text.</p>
+            <p>Consumes streaming events from the manager agent, emits SSE payloads, and tracks delegations.</p>
             <details>
                 <summary>Methods</summary>
                 <ul>
@@ -1516,7 +1516,7 @@
         </article>
         <article class="element" id="function-run-team-with-suggestions">
             <h3><code>_run_team_with_suggestions(team, user_request, suggestions, q, main_trace)</code></h3>
-            <p>Enhances manager prompts with suggested agents, runs the agent team, and records Langfuse events for prompt enrichment and execution outcomes.</p>
+            <p>Enhances manager prompts with suggested agents and runs the agent team.</p>
         </article>
         <article class="element" id="function-handle-agents-provided-workflow">
             <h3><code>handle_agents_provided_workflow(team, user_request, q, main_trace)</code></h3>

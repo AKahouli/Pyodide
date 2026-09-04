@@ -23,8 +23,7 @@ interface PromptBarProps {
  * model override to configure.
  *
  * Voice input lives in the centre voice dock (the realtime concierge), so the
- * old in-composer dictation mic was removed — the send button doubles as a
- * stop control while a run is streaming.
+ * old in-composer dictation mic was removed.
  */
 export function PromptBar({
   streamId,

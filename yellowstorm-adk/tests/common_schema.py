@@ -41,9 +41,6 @@ class MockSettings(BaseModel):
     APPLICATIONINSIGHTS_CONNECTION_STRING: Optional[str] = None
     APPLICATION_INSIGHTS_LOG_CONFIG_PATH: str = "./src/logger/mock_app_insight_logging.json"
 
-    LANGFUSE_HOST: str = "https://mock_langfuse_host"
-    LANGFUSE_SECRET_KEY: str = "mock_langfuse_secret_key"
-    LANGFUSE_PUBLIC_KEY: str = "mock_langfuse_public_key"
     # Authentication to get token
     AUTH_USERNAME: str = "mock_user"
     AUTH_PASSWORD: str = "mock_password"
