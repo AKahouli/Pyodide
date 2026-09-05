@@ -1,3 +1,6 @@
+import { existsSync } from 'node:fs';
+import { readFile } from 'node:fs/promises';
+import * as path from 'node:path';
 import { Inject, Injectable, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import { ConfigType } from '@nestjs/config';
 import { Pool, PoolClient, QueryResult, QueryResultRow } from 'pg';
@@ -5,6 +8,13 @@ import semanticModelConfig from '@config/semantic-model.config';
 import { LoggerService } from '@modules/logger';
 import { ServiceUnavailableException } from '@modules/exceptions';
 import { ErrorCode } from '@modules/exceptions/constants/error-codes';
+
+const BOOTSTRAP_SCRIPT_CANDIDATES = [
+  // Prod / dev with nest-cli assets copying scripts into dist
+  path.join('..', '..', '..', '..', 'scripts', 'semantic-model', '000_deploy_all.sql'),
+  // Fallback: back/ project root (when running from dist without assets copy, or from src via ts-node)
+  path.join('..', '..', '..', '..', '..', 'scripts', 'semantic-model', '000_deploy_all.sql'),
+];
 
 @Injectable()
 export class SemanticModelDatabaseService implements OnModuleInit, OnModuleDestroy {
@@ -18,7 +28,7 @@ export class SemanticModelDatabaseService implements OnModuleInit, OnModuleDestr
     this.logger.setContext(SemanticModelDatabaseService.name);
   }
 
-  onModuleInit(): void {
+  async onModuleInit(): Promise<void> {
     if (!this.config.enabled) return;
     this.pool = new Pool({
       host: this.config.host,
@@ -34,6 +44,30 @@ export class SemanticModelDatabaseService implements OnModuleInit, OnModuleDestr
     this.pool.on('error', (error) => {
       this.logger.error('Semantic Model PostgreSQL pool error', { error: error.message });
     });
+    await this.bootstrapSchema();
+  }
+
+  private async bootstrapSchema(): Promise<void> {
+    const scriptPath = this.resolveBootstrapScriptPath();
+    const sql = await readFile(scriptPath, 'utf8');
+    const client = await this.getPool().connect();
+    try {
+      await client.query(sql);
+      this.logger.log(`Semantic Model schema bootstrapped from ${scriptPath}`);
+    } finally {
+      client.release();
+    }
+  }
+
+  private resolveBootstrapScriptPath(): string {
+    const attempts = BOOTSTRAP_SCRIPT_CANDIDATES.map((relative) => path.resolve(__dirname, relative));
+    const found = attempts.find((candidate) => existsSync(candidate));
+    if (!found) {
+      throw new Error(
+        `Semantic Model bootstrap SQL not found. Tried: ${attempts.join(', ')}`,
+      );
+    }
+    return found;
   }
 
   async onModuleDestroy(): Promise<void> {

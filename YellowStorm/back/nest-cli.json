@@ -4,7 +4,13 @@
   "sourceRoot": "src",
   "compilerOptions": {
     "deleteOutDir": true,
-    "assets": ["**/*.proto", "**/*.pem", "**/*.crt", "**/*.cert"],
+    "assets": [
+      "**/*.proto",
+      "**/*.pem",
+      "**/*.crt",
+      "**/*.cert",
+      { "include": "../scripts/**/*.sql", "outDir": "dist" }
+    ],
     "watchAssets": true,
     "plugins": [
       {
