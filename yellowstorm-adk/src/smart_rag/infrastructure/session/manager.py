@@ -1,7 +1,6 @@
 """Helpers for managing ADK sessions."""
 import asyncio
 import uuid
-import time
 from typing import Any, Dict, List, Optional
 from threading import Lock
 
@@ -30,31 +29,18 @@ async def get_shared_engine(db_url: str):
     """Get or create shared SQLAlchemy engine"""
     global _shared_engine
 
-    start_time = time.time()
-
     # Fast path: engine already exists
     if _shared_engine is not None:
-        logger.info(f"[FREEZE DEBUG] get_shared_engine returning existing engine (fast path) in {time.time() - start_time:.3f}s")
         return _shared_engine
 
-    # Slow path: create engine
-    logger.info("[FREEZE DEBUG] get_shared_engine: engine doesn't exist, waiting for lock...")
-    lock_start = time.time()
     async with _engine_lock:
-        lock_duration = time.time() - lock_start
-        logger.info(f"[FREEZE DEBUG] get_shared_engine: acquired lock after {lock_duration:.2f}s")
-
         # Double-check pattern
         if _shared_engine is None:
             try:
-                logger.info("[FREEZE DEBUG] Creating shared database engine for parallel access...")
-                create_start = time.time()
-
                 # Ensure DB URL uses async driver
                 async_db_url = db_url
                 if db_url.startswith("postgresql://"):
                     async_db_url = db_url.replace("postgresql://", "postgresql+asyncpg://", 1)
-                    logger.info(f"[FREEZE DEBUG] Converting DB URL to use asyncpg driver")
 
                 _shared_engine = create_async_engine(
                     async_db_url,
@@ -67,16 +53,10 @@ async def get_shared_engine(db_url: str):
                         "server_settings": {"statement_timeout": "10000"},  # 10 seconds in ms
                     },
                 )
-                create_duration = time.time() - create_start
-                logger.info(f"[FREEZE DEBUG] Shared async database engine created in {create_duration:.2f}s")
             except Exception as e:
                 logger.error(f"Failed to create shared database engine: {str(e)}")
                 raise
-        else:
-            logger.info("[FREEZE DEBUG] Engine was created by another request while we waited for lock")
 
-    total_duration = time.time() - start_time
-    logger.info(f"[FREEZE DEBUG] get_shared_engine completed in {total_duration:.2f}s")
     return _shared_engine
 
 
@@ -234,31 +214,17 @@ class SessionHelper:
             Exception: If session initialization fails
         """
         try:
-            start_time = time.time()
-            logger.info(f"[FREEZE DEBUG] init_session STARTED for user {self.user_id}")
-
             # Shared warmed service: engine creation and prepare_tables() are
             # paid once per process, not per request.
-            service_start = time.time()
-            logger.info("[FREEZE DEBUG] Acquiring shared instrumented session service")
             self.session_service = await get_shared_database_session_service()
-            service_duration = time.time() - service_start
-            logger.info(f"[FREEZE DEBUG] Shared session service acquired in {service_duration:.2f}s")
 
             self.session_id = session_id or f"session-{uuid.uuid4()}"
-            logger.info(f"[FREEZE DEBUG] Session ID: {self.session_id}")
 
             # Extract agent metadata and tools
-            extract_start = time.time()
             system_prompt, agent_name = self._extract_agent_metadata(agent)
             tools_info = self._extract_tools_info(agent)
-            extract_duration = time.time() - extract_start
-            logger.info(f"[FREEZE DEBUG] Agent metadata extracted in {extract_duration:.2f}s")
 
             # Create or retrieve session - calls _find_existing_session
-            set_session_start = time.time()
-            logger.info(f"[FREEZE DEBUG] Calling set_session() - will call _find_existing_session()")
-
             extra_state = {}
             if hasattr(agent, "_mcp_search_state"):
                 extra_state.update(agent._mcp_search_state)
@@ -269,27 +235,18 @@ class SessionHelper:
                 tools_info=tools_info,
                 extra_state=extra_state
             )
-            set_session_duration = time.time() - set_session_start
-            logger.info(f"[FREEZE DEBUG] set_session() completed in {set_session_duration:.2f}s")
 
             # Initialize runner with clean session plugin
-            runner_start = time.time()
             self.runner = Runner(
                 agent=agent,
                 app_name=APP_NAME,
                 session_service=self.session_service,
                 plugins=[CleanSessionPlugin()],
             )
-            runner_duration = time.time() - runner_start
-            logger.info(f"[FREEZE DEBUG] Runner created in {runner_duration:.2f}s")
-
-            total_duration = time.time() - start_time
-            logger.info(f"[FREEZE DEBUG] init_session COMPLETED in {total_duration:.2f}s")
 
             return self.session_id
         except Exception as e:
-            total_duration = time.time() - start_time
-            logger.error(f"[FREEZE DEBUG] init_session FAILED after {total_duration:.2f}s for user {self.user_id}: {str(e)}")
+            logger.error(f"init_session failed for user {self.user_id}: {str(e)}")
             raise
 
     def _build_session_state(
@@ -333,23 +290,15 @@ class SessionHelper:
         Returns:
             Optional[Session]: Existing session if found, None otherwise
         """
-        start_time = time.time()
         try:
-            logger.info(f"[FREEZE DEBUG] _find_existing_session STARTED for session {self.session_id}, user {self.user_id}")
             result = await self.session_service.get_session(
                 app_name=APP_NAME,
                 user_id=self.user_id,
                 session_id=self.session_id
             )
-            duration = time.time() - start_time
-            if result:
-                logger.info(f"[FREEZE DEBUG] _find_existing_session FOUND existing session in {duration:.3f}s")
-            else:
-                logger.info(f"[FREEZE DEBUG] _find_existing_session NO session found in {duration:.3f}s")
             return result
         except Exception as e:
-            duration = time.time() - start_time
-            logger.error(f"[FREEZE DEBUG] _find_existing_session FAILED after {duration:.3f}s for session {self.session_id}, user {self.user_id}: {str(e)}")
+            logger.error(f"Failed to find existing session {self.session_id} for user {self.user_id}: {str(e)}")
             return None
 
     async def set_session(

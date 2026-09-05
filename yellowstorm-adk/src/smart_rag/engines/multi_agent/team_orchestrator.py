@@ -9,7 +9,6 @@ Classes:
 """
 
 import asyncio
-import time
 from typing import Dict, Any, Optional, List, Union, Tuple
 from src.smart_rag.infrastructure.model_parameters import resolve_model_config
 from src.smart_rag.infrastructure.monitoring.conversation_latency import (
@@ -518,18 +517,12 @@ Do not render charts for single values or non-numeric content.
             _mark_first_model_agent_ready()
             self.current_queue = q
 
-            # Session initialization with freeze debugging
-            session_init_start = time.time()
-            logger.info(f"[FREEZE DEBUG] Creating DatabaseSessionService for session {session_id}, user {self.config.user_id}")
-            db_service_start = time.time()
+            # Session initialization (timings live in the structured
+            # conversation_latency_diag.* logs, not ad hoc lines).
             _mark_session_stage("mark_session_service_init_start")
             data_base_session = await get_shared_database_session_service()
             _mark_session_stage("mark_session_service_init_end")
-            db_service_duration = time.time() - db_service_start
-            logger.info(f"[FREEZE DEBUG] DatabaseSessionService created in {db_service_duration:.3f}s")
 
-            get_session_start = time.time()
-            logger.info(f"[FREEZE DEBUG] Calling get_session() with app_name=manager_app, user_id={self.config.user_id}")
             using_database_session = True
             _mark_session_stage("mark_session_lookup_start")
             try:
@@ -539,69 +532,45 @@ Do not render charts for single values or non-numeric content.
                 exsiting_session = None
                 data_base_session = get_in_memory_session_service()()
                 logger.warning(
-                    "[FREEZE DEBUG] Database session lookup failed, using in-memory session for this run - session_id=%s error=%s",
+                    "Database session lookup failed, using in-memory session for this run - session_id=%s error=%s",
                     session_id,
                     str(e),
                 )
             _mark_session_stage("mark_session_lookup_end")
-            get_session_duration = time.time() - get_session_start
-
-            if exsiting_session:
-                logger.info(f"[FREEZE DEBUG] Existing session found in {get_session_duration:.3f}s for session {session_id}")
-            else:
-                logger.info(f"[FREEZE DEBUG] No existing session found in {get_session_duration:.3f}s for session {session_id}")
 
             def extract_tools_info( agent: Any) -> List[Dict[str, str]]:
                 """Extract tools information from agent.
 
                 Args:
-                    agent: The agent object containing tools
+                    agent: The agent object containing tools information
 
                 Returns:
                     List[Dict[str, str]]: List of dictionaries containing tool name, description, and prompt
                 """
-                extract_start = time.time()
-                logger.info(f"[FREEZE DEBUG] extract_tools_info STARTED for session {session_id}")
                 tools_info = []
                 try:
                     if not (hasattr(agent, 'tools') and agent.tools):
-                        logger.info(f"[FREEZE DEBUG] extract_tools_info: No tools found on agent")
                         return tools_info
 
                     for tool in agent.tools:
                         tool_data = self._extract_tool_data(tool)
                         tools_info.append(tool_data)
 
-                    if tools_info:
-                        logger.info(f"[FREEZE DEBUG] Extracted {len(tools_info)} tools from agent")
-
                 except Exception as e:
-                    logger.error(f"[FREEZE DEBUG] Failed to extract tools info from agent: {str(e)}")
+                    logger.error(f"Failed to extract tools info from agent: {str(e)}")
 
-                extract_duration = time.time() - extract_start
-                logger.info(f"[FREEZE DEBUG] extract_tools_info COMPLETED in {extract_duration:.3f}s")
                 return tools_info
             if not exsiting_session:
-                logger.info(f"[FREEZE DEBUG] No existing session, creating new session for session {session_id}")
-                metadata_start = time.time()
                 agent_name=getattr(manager_agent, 'name', "unknown") if hasattr(manager_agent, 'name') else "unknown"
                 system_prompt=getattr(manager_agent, 'instruction', None) if hasattr(manager_agent, 'instruction') else None
-                logger.info(f"[FREEZE DEBUG] Extracted agent metadata: name={agent_name}, has_prompt={system_prompt is not None}")
-
-                logger.info(f"[FREEZE DEBUG] Calling extract_tools_info() for agent {agent_name}")
                 tools_info_result = extract_tools_info(manager_agent)
-                metadata_duration = time.time() - metadata_start
-                logger.info(f"[FREEZE DEBUG] Agent metadata and tools extracted in {metadata_duration:.3f}s")
 
                 state= {
                     "system_prompt": system_prompt,
                     "agent_name": agent_name,
                     "tools_info": tools_info_result,
                 }
-                logger.info(f"[FREEZE DEBUG] Session state prepared with {len(tools_info_result)} tools")
 
-                create_session_start = time.time()
-                logger.info(f"[FREEZE DEBUG] Calling create_session() for session {session_id}")
                 _mark_session_stage("mark_session_create_seed_start")
                 try:
                     await data_base_session.create_session(app_name="manager_app", user_id=self.config.user_id,
@@ -612,21 +581,14 @@ Do not render charts for single values or non-numeric content.
                         await data_base_session.create_session(app_name="manager_app", user_id=self.config.user_id,
                                                                session_id=session_id,state=state)
                         logger.warning(
-                            "[FREEZE DEBUG] Database session creation failed, using in-memory session for this run - session_id=%s error=%s",
+                            "Database session creation failed, using in-memory session for this run - session_id=%s error=%s",
                             session_id,
                             str(e),
                         )
                     else:
                         raise
                 _mark_session_stage("mark_session_create_seed_end")
-                create_session_duration = time.time() - create_session_start
-                logger.info(f"[FREEZE DEBUG] create_session() COMPLETED in {create_session_duration:.3f}s")
 
-            session_init_duration = time.time() - session_init_start
-            logger.info(f"[FREEZE DEBUG] Total session initialization completed in {session_init_duration:.3f}s")
-
-            runner_start = time.time()
-            logger.info(f"[FREEZE DEBUG] Creating Runner for session {session_id}")
             _mark_session_stage("mark_runner_construction_start")
             agent_runner=get_adk_runner()(
                 agent=manager_agent,
@@ -635,8 +597,6 @@ Do not render charts for single values or non-numeric content.
                 plugins=[CleanSessionPlugin()],
             )
             _mark_session_stage("mark_runner_construction_end")
-            runner_duration = time.time() - runner_start
-            logger.info(f"[FREEZE DEBUG] Runner created in {runner_duration:.3f}s")
             # Process streaming events and capture the manager response
             manager_response = await self.streaming_processor.process_streaming_events( session_id, user_prompt, manager_agent, agent_runner, q, image_input=image_input
             )
