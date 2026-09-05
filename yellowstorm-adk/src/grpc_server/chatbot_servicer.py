@@ -444,6 +444,7 @@ class ChatbotServicer(
         _mark_latency_stage("mark_request_payload_ready")
         logger.info(
             _grpc_in_log_message("RunAgentTeam request received", request_payload),
+            request_id=request.latency_trace_context.request_id,
             user_id=request.user_context.user_id,
             username=request.user_context.username,
             conversation_id=request.conversation_id,
@@ -714,11 +715,14 @@ class ChatbotServicer(
             }
         logger.info(
             _grpc_in_log_message("RunSingleAgent request received", request_payload),
+            request_id=request.latency_trace_context.request_id,
             user_id=request.user_context.user_id,
             username=request.user_context.username,
             conversation_id=request.conversation_id,
             query_length=len(request.query or ""),
+            agent_id=request.agent.id,
             agent_name=request.agent.name,
+            model=request.agent.chatbot.model,
             workspace_count=len(request.workspace_context),
             attached_file_count=len(request.attached_files),
             previous_attached_file_count=len(request.previous_attached_files),
