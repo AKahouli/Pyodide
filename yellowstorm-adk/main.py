@@ -135,8 +135,8 @@ async def lifespan(app: FastAPI):
         logger.info("Initializing shared ADK database session service...")
         session_service = await get_shared_database_session_service()
         logger.info(
-            "Shared ADK database session service ready",
-            engine_id=id(session_service.db_engine),
+            "Shared ADK database session service ready (engine_id=%s)",
+            id(session_service.db_engine),
         )
     except Exception as e:
         # Keep starting: the provider retries lazily on the first request.
