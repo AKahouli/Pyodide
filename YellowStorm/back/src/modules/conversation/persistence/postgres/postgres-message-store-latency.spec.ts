@@ -74,6 +74,35 @@ describe('PostgresMessageStore.updateFrontendLatency', () => {
     );
   });
 
+  it('preserves a nested ADK pre-provider breakdown through the frontend-paint merge', async () => {
+    const breakdown = {
+      protobufToDictMs: 14,
+      requestLoggingMs: 412,
+      adkRuntimePreModelMs: 848,
+    };
+    const withBreakdown = {
+      ...serverMetrics,
+      adkPreProviderMs: 2370,
+      adkPreProviderBreakdown: breakdown,
+    };
+    const currentRow = makeRow({ requestId: 'req-1', latencyMetrics: withBreakdown });
+    const updatedRow = makeRow({
+      requestId: 'req-1',
+      latencyMetrics: { ...withBreakdown, ...patch },
+    });
+    const { tx, updateBuilder } = makeTx(currentRow, updatedRow);
+    const store = new PostgresMessageStore(makeDb(tx));
+
+    const result = await store.updateFrontendLatency(currentRow.id as string, 'req-1', patch);
+
+    expect(result?.latencyMetrics?.adkPreProviderBreakdown).toEqual(breakdown);
+    expect(updateBuilder.set).toHaveBeenCalledWith(
+      expect.objectContaining({
+        latencyMetrics: expect.objectContaining({ adkPreProviderBreakdown: breakdown }),
+      }),
+    );
+  });
+
   it('is idempotent once a frontend paint value exists', async () => {
     const currentRow = makeRow({ requestId: 'req-1', latencyMetrics: { ...serverMetrics, frontendRenderMs: 99 } });
     const { tx, updateBuilder } = makeTx(currentRow, null);

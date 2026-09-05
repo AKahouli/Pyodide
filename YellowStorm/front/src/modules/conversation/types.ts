@@ -118,12 +118,27 @@ export interface ReliabilityRerunResponse {
 
 export type ConversationLatencyQuality = 'ok' | 'partial' | 'clock-skew';
 
+/** ADK-local monotonic breakdown of `adkPreProviderMs`. Diagnostic only. */
+export interface AdkPreProviderBreakdownV1 {
+  protobufToDictMs?: number;
+  requestLoggingMs?: number;
+  requestConversionMs?: number;
+  workflowDispatchMs?: number;
+  sessionLockWaitMs?: number;
+  orchestrationSetupMs?: number;
+  agentToolPreparationMs?: number;
+  sessionRunnerSetupMs?: number;
+  adkRuntimePreModelMs?: number;
+}
+
 export interface ConversationLatencyMetricsV1 {
   schemaVersion: 1;
   /** adk.request_received - backend.received (cross-clock). */
   backendPreAdkMs?: number;
   /** llm.request_start - adk.request_received (monotonic, ADK-local). */
   adkPreProviderMs?: number;
+  /** Diagnostic children of adkPreProviderMs; absent on historical messages. */
+  adkPreProviderBreakdown?: AdkPreProviderBreakdownV1;
   /** llm.first_delta - llm.request_start (monotonic, ADK-local). */
   providerTtftMs?: number;
   /** adk.first_delta_forwarded - llm.first_delta (monotonic, ADK-local). */

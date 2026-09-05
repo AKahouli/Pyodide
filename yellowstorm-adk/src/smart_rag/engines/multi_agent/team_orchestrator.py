@@ -12,6 +12,16 @@ import asyncio
 import time
 from typing import Dict, Any, Optional, List, Union, Tuple
 from src.smart_rag.infrastructure.model_parameters import resolve_model_config
+from src.smart_rag.infrastructure.monitoring.conversation_latency import (
+    get_current_conversation_latency_trace,
+)
+
+
+def _mark_first_model_agent_ready() -> None:
+    """Stamp the pre-provider milestone for the first model-facing agent."""
+    trace = get_current_conversation_latency_trace()
+    if trace is not None:
+        trace.mark_first_model_agent_ready()
 
 
 
@@ -503,6 +513,7 @@ Do not render charts for single values or non-numeric content.
             manager_agent = self.manager_factory.create_manager_agent(enriched_manager_prompt, tools,
                                                                       self.delegation_factory, manager_temperature,
                                                                       manager_specific_tools=manager_tools)
+            _mark_first_model_agent_ready()
             self.current_queue = q
 
             # Session initialization with freeze debugging
@@ -724,6 +735,7 @@ Do not render charts for single values or non-numeric content.
             )
             if agent is None:
                 raise RuntimeError(f"Failed to create single agent: {agent_name}")
+            _mark_first_model_agent_ready()
 
             if should_enable_temporary_child_agent_tool(agent_config):
                 agent.instruction = (

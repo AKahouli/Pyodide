@@ -1,5 +1,6 @@
 import type {
   AdkLatencyTracePayload,
+  AdkPreProviderBreakdownV1,
   ConversationLatencyMetricsV1,
   ConversationLatencyStartContext,
   StreamChunkLatencyData,
@@ -23,6 +24,33 @@ export function parseAdkLatencyTrace(chunk: unknown): AdkLatencyTracePayload | n
   if (!trace || typeof trace !== 'object') return null;
   const payload = trace as AdkLatencyTracePayload;
   return isFiniteNumber(payload.adk_request_received_epoch_ms) ? payload : null;
+}
+
+/**
+ * Parse and sanitize the diagnostic ADK pre-provider breakdown. Each child is
+ * validated independently; a trace without a breakdown (historical messages)
+ * or with no surviving child yields undefined. Breakdown children never affect
+ * the top-level quality, which is owned by the six primary metrics.
+ */
+export function parseAdkPreProviderBreakdown(
+  raw: AdkLatencyTracePayload['adk_pre_provider_breakdown'],
+): AdkPreProviderBreakdownV1 | undefined {
+  if (!raw || typeof raw !== 'object') return undefined;
+  const children = {
+    protobufToDictMs: sanitizeMonotonicDurationMs(raw.protobuf_to_dict_ms),
+    requestLoggingMs: sanitizeMonotonicDurationMs(raw.request_logging_ms),
+    requestConversionMs: sanitizeMonotonicDurationMs(raw.request_conversion_ms),
+    workflowDispatchMs: sanitizeMonotonicDurationMs(raw.workflow_dispatch_ms),
+    sessionLockWaitMs: sanitizeMonotonicDurationMs(raw.session_lock_wait_ms),
+    orchestrationSetupMs: sanitizeMonotonicDurationMs(raw.orchestration_setup_ms),
+    agentToolPreparationMs: sanitizeMonotonicDurationMs(raw.agent_tool_preparation_ms),
+    sessionRunnerSetupMs: sanitizeMonotonicDurationMs(raw.session_runner_setup_ms),
+    adkRuntimePreModelMs: sanitizeMonotonicDurationMs(raw.adk_runtime_pre_model_ms),
+  } satisfies AdkPreProviderBreakdownV1;
+  const breakdown = Object.fromEntries(
+    Object.entries(children).filter(([, v]) => v !== undefined),
+  ) as AdkPreProviderBreakdownV1;
+  return Object.keys(breakdown).length > 0 ? breakdown : undefined;
 }
 
 /**
@@ -68,6 +96,8 @@ export function computeServerLatencyMetrics(
       : undefined,
   );
   markMonotonic('adkPreProviderMs', trace.adk_pre_provider_ms);
+  const breakdown = parseAdkPreProviderBreakdown(trace.adk_pre_provider_breakdown);
+  if (breakdown) metrics.adkPreProviderBreakdown = breakdown;
   markMonotonic('providerTtftMs', trace.provider_ttft_ms);
   markMonotonic('adkForwardingMs', trace.adk_forwarding_ms);
   markCrossClock(

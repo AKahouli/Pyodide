@@ -84,6 +84,87 @@ class TestConversationLatencyTrace:
         assert _make_trace().build_latency_trace_proto(chatbot_pb2) is None
 
 
+class TestPreProviderBreakdown:
+    def _trace_with_milestones(self, offsets_ms) -> ConversationLatencyTrace:
+        """Build a trace with synthetic milestone offsets from request received."""
+        trace = _make_trace()
+        base_ns = 1_000_000_000
+        trace.adk_request_received_perf_ns = base_ns
+        pp = trace.pre_provider
+        (
+            pp.request_payload_ready_perf_ns,
+            pp.request_log_done_perf_ns,
+            pp.internal_request_ready_perf_ns,
+            pp.session_lock_wait_start_perf_ns,
+            pp.session_lock_acquired_perf_ns,
+            pp.orchestration_ready_perf_ns,
+            pp.first_model_agent_ready_perf_ns,
+            pp.runner_invoked_perf_ns,
+            trace.llm_request_start_perf_ns,
+        ) = [base_ns + int(ms * 1_000_000) for ms in offsets_ms]
+        return trace
+
+    def test_markers_are_first_write_wins(self):
+        trace = _make_trace()
+        trace.mark_request_payload_ready()
+        first = trace.pre_provider.request_payload_ready_perf_ns
+        time.sleep(0.001)
+        trace.mark_request_payload_ready()
+        assert trace.pre_provider.request_payload_ready_perf_ns == first
+
+    def test_complete_chain_children_and_parent(self):
+        trace = self._trace_with_milestones([10, 110, 130, 135, 140, 170, 500, 700, 1000])
+        breakdown = trace.build_pre_provider_breakdown()
+        assert breakdown == {
+            "protobuf_to_dict_ms": 10.0,
+            "request_logging_ms": 100.0,
+            "request_conversion_ms": 20.0,
+            "workflow_dispatch_ms": 5.0,
+            "session_lock_wait_ms": 5.0,
+            "orchestration_setup_ms": 30.0,
+            "agent_tool_preparation_ms": 330.0,
+            "session_runner_setup_ms": 200.0,
+            "adk_runtime_pre_model_ms": 300.0,
+        }
+        assert abs(sum(breakdown.values()) - trace.adk_pre_provider_ms()) < 1
+        # Parent stays independently derived (t9 - t0), never the sum.
+        assert trace.adk_pre_provider_ms() == 1000.0
+
+    def test_proto_carries_nested_breakdown(self):
+        trace = self._trace_with_milestones([10, 110, 130, 135, 140, 170, 500, 700, 1000])
+        trace.mark_llm_first_delta()
+        trace_pb = trace.build_latency_trace_proto(chatbot_pb2)
+        assert trace_pb.HasField("adk_pre_provider_breakdown")
+        assert trace_pb.adk_pre_provider_breakdown.request_logging_ms == 100.0
+        assert trace_pb.adk_pre_provider_breakdown.adk_runtime_pre_model_ms == 300.0
+
+    def test_partial_chain_omits_missing_children(self):
+        trace = _make_trace()
+        trace.adk_request_received_perf_ns = 1_000_000_000
+        trace.pre_provider.request_payload_ready_perf_ns = 1_000_000_000
+        trace.pre_provider.request_log_done_perf_ns = 1_050_000_000
+        # Later milestones missing → only the covered stage appears.
+        breakdown = trace.build_pre_provider_breakdown()
+        assert breakdown == {"protobuf_to_dict_ms": 0.0, "request_logging_ms": 50.0}
+
+    def test_no_breakdown_fields_before_model_start(self):
+        trace = _make_trace()
+        trace.claim_first_model_call()
+        # Servicer never stamps a trace before milestones are set.
+        assert trace.build_pre_provider_breakdown() == {}
+
+    def test_out_of_order_marker_is_omitted(self):
+        trace = _make_trace()
+        base_ns = 1_000_000_000
+        trace.adk_request_received_perf_ns = base_ns
+        # request_log_done set but payload_ready missing → first stage omitted;
+        # request_conversion also omitted (needs log_done → internal pair intact).
+        trace.pre_provider.request_log_done_perf_ns = base_ns + 50_000_000
+        trace.pre_provider.internal_request_ready_perf_ns = base_ns + 60_000_000
+        breakdown = trace.build_pre_provider_breakdown()
+        assert breakdown == {"request_conversion_ms": 10.0}
+
+
 class TestContextVarLifecycle:
     def test_set_and_reset(self):
         token = start_conversation_latency_trace("rq", "am", 5.0)

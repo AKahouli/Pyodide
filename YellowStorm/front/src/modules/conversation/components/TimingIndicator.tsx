@@ -41,6 +41,22 @@ const LATENCY_ROWS = [
   { key: 'frontendRenderMs', labelKey: 'latency.frontendRender' },
 ] as const satisfies ReadonlyArray<{ key: keyof ConversationLatencyMetricsV1; labelKey: string }>;
 
+/** Diagnostic children of adkPreProviderMs, rendered indented under that row. */
+const ADK_PRE_PROVIDER_CHILD_ROWS = [
+  { key: 'protobufToDictMs', labelKey: 'latency.adkBreakdown.protobufToDict' },
+  { key: 'requestLoggingMs', labelKey: 'latency.adkBreakdown.requestLogging' },
+  { key: 'requestConversionMs', labelKey: 'latency.adkBreakdown.requestConversion' },
+  { key: 'workflowDispatchMs', labelKey: 'latency.adkBreakdown.workflowDispatch' },
+  { key: 'sessionLockWaitMs', labelKey: 'latency.adkBreakdown.sessionLockWait' },
+  { key: 'orchestrationSetupMs', labelKey: 'latency.adkBreakdown.orchestrationSetup' },
+  { key: 'agentToolPreparationMs', labelKey: 'latency.adkBreakdown.agentToolPreparation' },
+  { key: 'sessionRunnerSetupMs', labelKey: 'latency.adkBreakdown.sessionRunnerSetup' },
+  { key: 'adkRuntimePreModelMs', labelKey: 'latency.adkBreakdown.adkRuntimePreModel' },
+] as const satisfies ReadonlyArray<{
+  key: keyof NonNullable<ConversationLatencyMetricsV1['adkPreProviderBreakdown']>;
+  labelKey: string;
+}>;
+
 function hasLatencyMetrics(metrics: ConversationLatencyMetricsV1 | undefined): boolean {
   if (!metrics) return false;
   return LATENCY_ROWS.some(({ key }) => metrics[key] !== undefined);
@@ -106,13 +122,28 @@ export const TimingIndicator = memo(function TimingIndicator({ timeToFirstChunk,
             <TooltipContent>{t('latency.openDetails')}</TooltipContent>
           </Tooltip>
         </TooltipProvider>
-        <PopoverContent side='top' align='start' className='w-72'>
+        <PopoverContent side='top' align='start' className='w-80'>
           <div className='text-xs font-medium mb-1'>{t('latency.title')}</div>
           <div className='text-xs grid grid-cols-2 gap-x-3 gap-y-0.5'>
             {LATENCY_ROWS.map(({ key, labelKey }) => (
               <div key={key} className='col-span-2 grid grid-cols-2 gap-x-3 gap-y-0.5'>
                 <span className='text-muted-foreground'>{t(labelKey)}</span>
                 <span>{formatLatencyValue(latencyMetrics[key] as number | undefined)}</span>
+                {key === 'adkPreProviderMs' && latencyMetrics.adkPreProviderBreakdown && (
+                  <div className='col-span-2 ml-3 border-l border-border pl-2'>
+                    {ADK_PRE_PROVIDER_CHILD_ROWS.map(({ key: childKey, labelKey: childLabelKey }) => (
+                      <div key={childKey} className='grid grid-cols-2 gap-x-3 gap-y-0.5 text-[11px]'>
+                        <span className='text-muted-foreground/80'>
+                          <span aria-hidden='true'>↳ </span>
+                          <span>{t(childLabelKey)}</span>
+                        </span>
+                        <span className='text-muted-foreground'>
+                          {formatLatencyValue(latencyMetrics.adkPreProviderBreakdown?.[childKey])}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
             ))}
           </div>

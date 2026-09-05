@@ -24,17 +24,26 @@ from src.smart_rag.infrastructure.session.execution_lock import (
     PERSISTED_SESSION_APP_NAME,
     session_execution_lock,
 )
+from src.smart_rag.infrastructure.monitoring.conversation_latency import (
+    get_current_conversation_latency_trace,
+)
 
 
 logger = get_logger("api.routers.agentic_rag")
 
 async def run_agent_team_logic(user_request: RunAgentTeamRequest, q: asyncio.Queue[dict]) -> None:
     """Serialize workflows that write the same persisted ADK session."""
+    trace = get_current_conversation_latency_trace()
+    if trace is not None:
+        trace.mark_session_lock_wait_start()
+
     async with session_execution_lock(
         PERSISTED_SESSION_APP_NAME,
         user_request.user_id,
         user_request.session_id,
     ):
+        if trace is not None:
+            trace.mark_session_lock_acquired()
         await _run_agent_team_logic(user_request, q)
 
 
@@ -63,6 +72,9 @@ async def _run_agent_team_logic(user_request: RunAgentTeamRequest, q: asyncio.Qu
         dependencies = initialize_dependencies()
         config = create_team_config(user_request)
         team = create_team(config, dependencies)
+        trace = get_current_conversation_latency_trace()
+        if trace is not None:
+            trace.mark_orchestration_ready()
 
         logger.info(f"[ORCHESTRATOR] Team initialized, executing workflow - session_id: {user_request.session_id}")
         await execute_workflow(team, user_request, q)

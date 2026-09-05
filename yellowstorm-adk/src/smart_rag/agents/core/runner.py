@@ -22,6 +22,7 @@ from src.guardrails.adapters.google_adk import agent_tree_has_output_guardrail
 from google.genai import types
 
 from src.smart_rag.infrastructure.monitoring import TraceRecorder
+from src.smart_rag.infrastructure.monitoring.conversation_latency import get_current_conversation_latency_trace
 from src.smart_rag.infrastructure.processing import PromptProcessor
 from src.smart_rag.infrastructure.processing.plugin import CleanSessionPlugin
 from src.smart_rag.messaging import MessageTransformer, StreamingFormatter
@@ -42,6 +43,13 @@ from src.smart_rag.tool_activity_presenter import (
 from src.smart_rag.thought_activity_tracker import ThoughtActivityTracker
 
 logger = get_logger("api.smart_rag.agentic_rag.AgentRunner")
+
+
+def _mark_runner_invoked() -> None:
+    """Stamp the pre-provider milestone immediately before ``Runner.run_async``."""
+    trace = get_current_conversation_latency_trace()
+    if trace is not None:
+        trace.mark_runner_invoked()
 APP_NAME = "manager_app"
 _STATE_KEY_CONNECTOR_TEXT_SOURCES = "_connector_text_sources"
 _STATE_KEY_CONNECTOR_IMAGE_SOURCES = "_connector_image_sources"
@@ -373,6 +381,7 @@ class AgentRunner:
         )
         guarded_output = agent_tree_has_output_guardrail(agent)
 
+        _mark_runner_invoked()
         stream = runner.run_async(
             user_id=user_id,
             session_id=session_id,
@@ -1054,6 +1063,7 @@ class AgentRunner:
             plugins=[CleanSessionPlugin()],
         )
 
+        _mark_runner_invoked()
         stream = runner.run_async(
             user_id=user_id,
             session_id=session_id,

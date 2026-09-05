@@ -515,6 +515,23 @@ message LatencyTrace {
     double adk_pre_provider_ms = 8;
     double provider_ttft_ms = 9;
     double adk_forwarding_ms = 10;
+
+    // Diagnostic children of adk_pre_provider_ms (ADK-local monotonic clock).
+    AdkPreProviderBreakdown adk_pre_provider_breakdown = 11;
+}
+
+// Diagnostic breakdown of adk_pre_provider_ms. The parent remains
+// independently derived; absent stages stay 0 on the wire (proto3 doubles).
+message AdkPreProviderBreakdown {
+    double protobuf_to_dict_ms = 1;
+    double request_logging_ms = 2;
+    double request_conversion_ms = 3;
+    double workflow_dispatch_ms = 4;
+    double session_lock_wait_ms = 5;
+    double orchestration_setup_ms = 6;
+    double agent_tool_preparation_ms = 7;
+    double session_runner_setup_ms = 8;
+    double adk_runtime_pre_model_ms = 9;
 }
 
 message StreamChunk {

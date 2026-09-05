@@ -86,4 +86,81 @@ describe('TimingIndicator', () => {
     await user.click(screen.getByRole('button', { name: 'latency.openDetails' }));
     expect(screen.getByText('latency.clockSkew')).toBeInTheDocument();
   });
+
+  it('renders the full ADK pre-provider breakdown under its parent row', async () => {
+    const user = userEvent.setup();
+    render(
+      <TimingIndicator
+        latencyMetrics={{
+          ...fullMetrics,
+          adkPreProviderBreakdown: {
+            protobufToDictMs: 14,
+            requestLoggingMs: 412,
+            requestConversionMs: 36,
+            workflowDispatchMs: 8,
+            sessionLockWaitMs: 0,
+            orchestrationSetupMs: 31,
+            agentToolPreparationMs: 814,
+            sessionRunnerSetupMs: 207,
+            adkRuntimePreModelMs: 848,
+          },
+        }}
+      />,
+    );
+    await user.click(screen.getByRole('button', { name: 'latency.openDetails' }));
+    expect(screen.getByText('latency.adkBreakdown.protobufToDict')).toBeInTheDocument();
+    expect(screen.getByText('latency.adkBreakdown.requestLogging')).toBeInTheDocument();
+    expect(screen.getByText('latency.adkBreakdown.requestConversion')).toBeInTheDocument();
+    expect(screen.getByText('latency.adkBreakdown.workflowDispatch')).toBeInTheDocument();
+    expect(screen.getByText('latency.adkBreakdown.sessionLockWait')).toBeInTheDocument();
+    expect(screen.getByText('latency.adkBreakdown.orchestrationSetup')).toBeInTheDocument();
+    expect(screen.getByText('latency.adkBreakdown.agentToolPreparation')).toBeInTheDocument();
+    expect(screen.getByText('latency.adkBreakdown.sessionRunnerSetup')).toBeInTheDocument();
+    expect(screen.getByText('latency.adkBreakdown.adkRuntimePreModel')).toBeInTheDocument();
+    expect(screen.getByText('412 ms')).toBeInTheDocument();
+    expect(screen.getByText('848 ms')).toBeInTheDocument();
+  });
+
+  it('keeps the six-row historical layout when no breakdown exists', async () => {
+    const user = userEvent.setup();
+    render(<TimingIndicator latencyMetrics={fullMetrics} />);
+    await user.click(screen.getByRole('button', { name: 'latency.openDetails' }));
+    expect(screen.queryByText('latency.adkBreakdown.requestLogging')).not.toBeInTheDocument();
+  });
+
+  it('renders em-dash for missing breakdown children in a partial breakdown', async () => {
+    const user = userEvent.setup();
+    render(
+      <TimingIndicator
+        latencyMetrics={{
+          ...fullMetrics,
+          adkPreProviderBreakdown: { requestLoggingMs: 412 },
+        }}
+      />,
+    );
+    await user.click(screen.getByRole('button', { name: 'latency.openDetails' }));
+    expect(screen.getByText('412 ms')).toBeInTheDocument();
+    // fullMetrics defines all six primary rows, so only the 8 missing
+    // breakdown children render an em-dash.
+    expect(screen.getAllByText('—').length).toBe(8);
+  });
+
+  it('shows breakdown children alongside the clock-skew warning', async () => {
+    const user = userEvent.setup();
+    render(
+      <TimingIndicator
+        latencyMetrics={{
+          schemaVersion: 1,
+          backendPreAdkMs: -3,
+          adkPreProviderMs: 60,
+          quality: 'clock-skew',
+          adkPreProviderBreakdown: { adkRuntimePreModelMs: 30 },
+        }}
+      />,
+    );
+    await user.click(screen.getByRole('button', { name: 'latency.openDetails' }));
+    expect(screen.getByText('latency.clockSkew')).toBeInTheDocument();
+    expect(screen.getByText('latency.adkBreakdown.adkRuntimePreModel')).toBeInTheDocument();
+    expect(screen.getByText('30 ms')).toBeInTheDocument();
+  });
 });

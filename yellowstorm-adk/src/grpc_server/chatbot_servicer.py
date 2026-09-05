@@ -77,6 +77,18 @@ def _grpc_in_log_message(label: str, payload: Dict[str, Any]) -> str:
     return f"[gRPC IN] {label} request_json={_json_log_payload(payload)}"
 
 
+def _mark_latency_stage(marker: str) -> None:
+    """Stamp a pre-provider latency milestone when a trace is installed.
+
+    Only a ContextVar lookup + null check + scalar write; must stay free of
+    I/O, logging, and serialization.
+    """
+    trace = get_current_conversation_latency_trace()
+    if trace is None:
+        return
+    getattr(trace, marker)()
+
+
 def _grpc_skill_summaries(skills: Any) -> List[Dict[str, Any]]:
     summaries = []
     for skill in skills or []:
@@ -422,6 +434,7 @@ class ChatbotServicer(
         except BaseException:
             self._reset_latency_trace(latency_trace_token)
             raise
+        _mark_latency_stage("mark_request_payload_ready")
         logger.info(
             _grpc_in_log_message("RunAgentTeam request received", request_payload),
             user_id=request.user_context.user_id,
@@ -434,6 +447,9 @@ class ChatbotServicer(
             attached_file_count=len(request.attached_files),
             previous_attached_file_count=len(request.previous_attached_files),
         )
+        # Marker must sit after logger.info so the stage includes the
+        # synchronous JSON formatting and logger execution overhead.
+        _mark_latency_stage("mark_request_log_done")
 
         logger.info(f"[gRPC] RunAgentTeam request from user_id: {request.user_context.user_id}, username: {request.user_context.username}, conversation_id: {request.conversation_id}, agent_mode: {request.agent_mode}")
         username = request.user_context.username or 'unknown'
@@ -446,6 +462,7 @@ class ChatbotServicer(
         try:
             # Convert protobuf request to internal V1 Pydantic model (for backward compatibility)
             internal_request = await self._convert_agent_team_request_v2(request)
+            _mark_latency_stage("mark_internal_request_ready")
 
             if internal_request.correction_replay_context:
                 yield chatbot_pb2.StreamChunk(
@@ -680,6 +697,7 @@ class ChatbotServicer(
         except BaseException:
             self._reset_latency_trace(latency_trace_token)
             raise
+        _mark_latency_stage("mark_request_payload_ready")
         replay_context = request_payload.get("correction_replay_context")
         if isinstance(replay_context, dict):
             request_payload["correction_replay_context"] = {
@@ -698,6 +716,9 @@ class ChatbotServicer(
             attached_file_count=len(request.attached_files),
             previous_attached_file_count=len(request.previous_attached_files),
         )
+        # Marker must sit after logger.info so the stage includes the
+        # synchronous JSON formatting and logger execution overhead.
+        _mark_latency_stage("mark_request_log_done")
 
         username = request.user_context.username or "unknown"
         user_token = set_user_context(request.user_context.user_id, username)
@@ -707,6 +728,7 @@ class ChatbotServicer(
 
         try:
             internal_request = await self._convert_single_agent_request(request)
+            _mark_latency_stage("mark_internal_request_ready")
 
             if internal_request.correction_replay_context:
                 yield chatbot_pb2.StreamChunk(

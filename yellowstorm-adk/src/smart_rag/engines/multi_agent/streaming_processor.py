@@ -44,6 +44,14 @@ from src.smart_rag.thought_activity_tracker import ThoughtActivityTracker
 logger = get_logger("api.routers.agentic_rag.StreamingEventProcessor")
 
 
+def _mark_runner_invoked() -> None:
+    """Stamp the pre-provider milestone immediately before the manager run."""
+    from src.smart_rag.infrastructure.monitoring.conversation_latency import get_current_conversation_latency_trace
+    trace = get_current_conversation_latency_trace()
+    if trace is not None:
+        trace.mark_runner_invoked()
+
+
 class StreamingEventProcessor:
     """Handles processing of streaming events from manager agents.
 
@@ -157,6 +165,7 @@ class StreamingEventProcessor:
         event_count = 0
         guarded_output = agent_tree_has_output_guardrail(manager_agent)
         validated_final_received = False
+        _mark_runner_invoked()
         stream = agent_runner.run_async(
             user_id=self.config.user_id,
             session_id=session_id,

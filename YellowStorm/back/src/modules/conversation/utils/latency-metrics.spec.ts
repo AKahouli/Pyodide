@@ -92,6 +92,78 @@ describe('computeServerLatencyMetrics', () => {
     );
     expect(metrics.adkPreProviderMs).toBeUndefined();
   });
+
+  it('carries a nested snake_case breakdown into the metrics', () => {
+    const { metrics, quality } = computeServerLatencyMetrics(
+      startContext,
+      tracePayload({
+        adk_pre_provider_breakdown: {
+          protobuf_to_dict_ms: 14,
+          request_logging_ms: 412,
+          request_conversion_ms: 36,
+          workflow_dispatch_ms: 8,
+          session_lock_wait_ms: 0,
+          orchestration_setup_ms: 31,
+          agent_tool_preparation_ms: 814,
+          session_runner_setup_ms: 207,
+          adk_runtime_pre_model_ms: 848,
+        },
+      }),
+      1705,
+    );
+    expect(metrics.adkPreProviderBreakdown).toEqual({
+      protobufToDictMs: 14,
+      requestLoggingMs: 412,
+      requestConversionMs: 36,
+      workflowDispatchMs: 8,
+      sessionLockWaitMs: 0,
+      orchestrationSetupMs: 31,
+      agentToolPreparationMs: 814,
+      sessionRunnerSetupMs: 207,
+      adkRuntimePreModelMs: 848,
+    });
+    expect(quality).toBe('ok');
+  });
+
+  it('omits invalid breakdown children but keeps valid ones', () => {
+    const { metrics } = computeServerLatencyMetrics(
+      startContext,
+      tracePayload({
+        adk_pre_provider_breakdown: {
+          protobuf_to_dict_ms: -5,
+          request_logging_ms: 70_000,
+          request_conversion_ms: 20,
+        },
+      }),
+      1705,
+    );
+    expect(metrics.adkPreProviderBreakdown).toEqual({ requestConversionMs: 20 });
+  });
+
+  it('drops a breakdown with no surviving children', () => {
+    const { metrics } = computeServerLatencyMetrics(
+      startContext,
+      tracePayload({ adk_pre_provider_breakdown: { protobuf_to_dict_ms: Number.NaN } }),
+      1705,
+    );
+    expect(metrics.adkPreProviderBreakdown).toBeUndefined();
+  });
+
+  it('keeps quality ok for a historical trace without a breakdown', () => {
+    const { metrics, quality } = computeServerLatencyMetrics(startContext, tracePayload(), 1705);
+    expect(metrics.adkPreProviderBreakdown).toBeUndefined();
+    expect(quality).toBe('ok');
+  });
+
+  it('does not let a missing breakdown downgrade quality and keeps it under clock-skew', () => {
+    const { metrics, quality } = computeServerLatencyMetrics(
+      startContext,
+      tracePayload({ adk_request_received_epoch_ms: 1000 - 400 }),
+      1705,
+    );
+    expect(quality).toBe('clock-skew');
+    expect(metrics.adkPreProviderBreakdown).toBeUndefined();
+  });
 });
 
 describe('buildStreamChunkLatencyData', () => {

@@ -35,6 +35,22 @@ MAX_PLAUSIBLE_STAGE_MS = 60_000.0
 
 
 @dataclass
+class AdkPreProviderMilestones:
+    """First-write-wins monotonic milestones between gRPC entry and the first
+    model adapter invocation. All values are ``time.perf_counter_ns`` stamps on
+    the same clock as the parent markers."""
+
+    request_payload_ready_perf_ns: Optional[int] = None
+    request_log_done_perf_ns: Optional[int] = None
+    internal_request_ready_perf_ns: Optional[int] = None
+    session_lock_wait_start_perf_ns: Optional[int] = None
+    session_lock_acquired_perf_ns: Optional[int] = None
+    orchestration_ready_perf_ns: Optional[int] = None
+    first_model_agent_ready_perf_ns: Optional[int] = None
+    runner_invoked_perf_ns: Optional[int] = None
+
+
+@dataclass
 class ConversationLatencyTrace:
     """Mutable, request-scoped timing state. Marker writes are first-write-wins."""
 
@@ -55,6 +71,8 @@ class ConversationLatencyTrace:
     adk_first_delta_forwarded_perf_ns: Optional[int] = None
 
     first_model_call_claimed: bool = False
+
+    pre_provider: AdkPreProviderMilestones = field(default_factory=AdkPreProviderMilestones)
 
     def claim_first_model_call(self) -> bool:
         """Synchronous first-write-wins claim of the turn's primary model call."""
@@ -78,6 +96,40 @@ class ConversationLatencyTrace:
             self.adk_first_delta_forwarded_perf_ns = time.perf_counter_ns()
             self.adk_first_delta_forwarded_epoch_ms = time.time_ns() / 1_000_000
 
+    # Pre-provider diagnostic milestones (diagnostic only; never gate behavior).
+
+    def mark_request_payload_ready(self) -> None:
+        if self.pre_provider.request_payload_ready_perf_ns is None:
+            self.pre_provider.request_payload_ready_perf_ns = time.perf_counter_ns()
+
+    def mark_request_log_done(self) -> None:
+        if self.pre_provider.request_log_done_perf_ns is None:
+            self.pre_provider.request_log_done_perf_ns = time.perf_counter_ns()
+
+    def mark_internal_request_ready(self) -> None:
+        if self.pre_provider.internal_request_ready_perf_ns is None:
+            self.pre_provider.internal_request_ready_perf_ns = time.perf_counter_ns()
+
+    def mark_session_lock_wait_start(self) -> None:
+        if self.pre_provider.session_lock_wait_start_perf_ns is None:
+            self.pre_provider.session_lock_wait_start_perf_ns = time.perf_counter_ns()
+
+    def mark_session_lock_acquired(self) -> None:
+        if self.pre_provider.session_lock_acquired_perf_ns is None:
+            self.pre_provider.session_lock_acquired_perf_ns = time.perf_counter_ns()
+
+    def mark_orchestration_ready(self) -> None:
+        if self.pre_provider.orchestration_ready_perf_ns is None:
+            self.pre_provider.orchestration_ready_perf_ns = time.perf_counter_ns()
+
+    def mark_first_model_agent_ready(self) -> None:
+        if self.pre_provider.first_model_agent_ready_perf_ns is None:
+            self.pre_provider.first_model_agent_ready_perf_ns = time.perf_counter_ns()
+
+    def mark_runner_invoked(self) -> None:
+        if self.pre_provider.runner_invoked_perf_ns is None:
+            self.pre_provider.runner_invoked_perf_ns = time.perf_counter_ns()
+
     @staticmethod
     def _monotonic_ms(start_ns: Optional[int], end_ns: Optional[int]) -> Optional[float]:
         if start_ns is None or end_ns is None:
@@ -95,6 +147,33 @@ class ConversationLatencyTrace:
 
     def adk_forwarding_ms(self) -> Optional[float]:
         return self._monotonic_ms(self.llm_first_delta_perf_ns, self.adk_first_delta_forwarded_perf_ns)
+
+    def build_pre_provider_breakdown(self) -> dict:
+        """Derive the nine diagnostic children of ``adk_pre_provider_ms``.
+
+        Each child is independently computed from consecutive monotonic
+        milestones; missing or implausible stages are omitted (never zeroed) so
+        the parent stays independently derived as ``t9 - t0``.
+        """
+        pp = self.pre_provider
+        t0 = self.adk_request_received_perf_ns
+        stages = [
+            ("protobuf_to_dict_ms", t0, pp.request_payload_ready_perf_ns),
+            ("request_logging_ms", pp.request_payload_ready_perf_ns, pp.request_log_done_perf_ns),
+            ("request_conversion_ms", pp.request_log_done_perf_ns, pp.internal_request_ready_perf_ns),
+            ("workflow_dispatch_ms", pp.internal_request_ready_perf_ns, pp.session_lock_wait_start_perf_ns),
+            ("session_lock_wait_ms", pp.session_lock_wait_start_perf_ns, pp.session_lock_acquired_perf_ns),
+            ("orchestration_setup_ms", pp.session_lock_acquired_perf_ns, pp.orchestration_ready_perf_ns),
+            ("agent_tool_preparation_ms", pp.orchestration_ready_perf_ns, pp.first_model_agent_ready_perf_ns),
+            ("session_runner_setup_ms", pp.first_model_agent_ready_perf_ns, pp.runner_invoked_perf_ns),
+            ("adk_runtime_pre_model_ms", pp.runner_invoked_perf_ns, self.llm_request_start_perf_ns),
+        ]
+        breakdown: dict = {}
+        for name, start_ns, end_ns in stages:
+            value = self._monotonic_ms(start_ns, end_ns)
+            if value is not None:
+                breakdown[name] = value
+        return breakdown
 
     def build_latency_trace_proto(self, chatbot_pb2: "chatbot_pb2"):
         """Build the ``chatbot_pb2.LatencyTrace`` envelope for the gRPC chunk.
@@ -125,6 +204,10 @@ class ConversationLatencyTrace:
             trace_pb.provider_ttft_ms = ttft
         if forwarding is not None:
             trace_pb.adk_forwarding_ms = forwarding
+        breakdown = self.build_pre_provider_breakdown()
+        if breakdown:
+            for name, value in breakdown.items():
+                setattr(trace_pb.adk_pre_provider_breakdown, name, value)
         return trace_pb
 
 
