@@ -56,7 +56,8 @@ export class SemanticModelOntologyGenerationService {
         },
         {
           headers: { 'Content-Type': 'application/json', 'x-api-key': apiKey },
-          timeout: this.smConfig.ontologyTimeoutMs,
+          // No timeout: ontology generation runs inside the async build orchestrator with heartbeat.
+          timeout: 0,
         },
       );
       if (!data || typeof data.ontologyDefinition !== 'object' || Array.isArray(data.ontologyDefinition)

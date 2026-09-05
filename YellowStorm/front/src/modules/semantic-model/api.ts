@@ -1,7 +1,7 @@
 import { apiClient } from '@/lib/api/client';
 import { API_ENDPOINTS } from '@/lib/api/config';
 import type { ApiResponse } from '@/lib/api/client';
-import type { AgeGraphEdge, AgeGraphNode, KnowledgeBinding, MappingProposalJob, Paginated, SemanticEvidenceSearchResponse, SemanticGraph, SemanticGraphOperation, SemanticModel, SemanticModelMappingProposalResponse, SemanticModelMember, SemanticModelShareResult, SemanticModelShareRole, SemanticVersion, ValidationIssue } from './types';
+import type { AgeGraphEdge, AgeGraphNode, KnowledgeBinding, MappingProposalJob, Paginated, SemanticBuildApplyMode, SemanticBuildJob, SemanticBuildStatus, SemanticEvidenceSearchResponse, SemanticGraph, SemanticGraphOperation, SemanticModel, SemanticModelMappingProposalResponse, SemanticModelMember, SemanticModelShareResult, SemanticModelShareRole, SemanticVersion, ValidationIssue } from './types';
 
 const unwrap = <T>(response: { data: ApiResponse<T> }): T => response.data.data;
 
@@ -68,6 +68,26 @@ export const semanticModelApi = {
   async getAgeGraph(id: string): Promise<{ nodes: AgeGraphNode[]; edges: AgeGraphEdge[] }> {
     return unwrap(await apiClient.get<ApiResponse<{ nodes: AgeGraphNode[]; edges: AgeGraphEdge[] }>>(
       API_ENDPOINTS.semanticModels.ageGraph(id),
+    ));
+  },
+  async startBuild(
+    id: string,
+    businessRequirements: string[],
+    applyMode: SemanticBuildApplyMode = 'replace',
+  ): Promise<{ buildId: string; status: SemanticBuildStatus }> {
+    return unwrap(await apiClient.post<ApiResponse<{ buildId: string; status: SemanticBuildStatus }>>(
+      API_ENDPOINTS.semanticModels.builds(id),
+      { businessRequirements, applyMode },
+    ));
+  },
+  async getBuild(id: string, buildId: string): Promise<SemanticBuildJob> {
+    return unwrap(await apiClient.get<ApiResponse<SemanticBuildJob>>(
+      API_ENDPOINTS.semanticModels.build(id, buildId),
+    ));
+  },
+  async getLatestBuild(id: string): Promise<SemanticBuildJob | null> {
+    return unwrap(await apiClient.get<ApiResponse<SemanticBuildJob | null>>(
+      API_ENDPOINTS.semanticModels.latestBuild(id),
     ));
   },
   async bindings(id: string): Promise<KnowledgeBinding[]> {

@@ -252,6 +252,23 @@ export class GenerateSemanticModelOntologyDto {
   businessRequirements: string[] = [];
 }
 
+export class StartSemanticModelBuildDto {
+  @ApiProperty({ type: [String], maxItems: 50, required: false, default: [] })
+  @IsOptional()
+  @IsArray()
+  @ArrayMinSize(0)
+  @ArrayMaxSize(50)
+  @IsString({ each: true })
+  @MinLength(1, { each: true })
+  @MaxLength(4000, { each: true })
+  businessRequirements: string[] = [];
+
+  @ApiPropertyOptional({ enum: ['replace', 'incremental'], default: 'replace' })
+  @IsOptional()
+  @IsIn(['replace', 'incremental'])
+  applyMode: 'replace' | 'incremental' = 'replace';
+}
+
 export class UpdateBusinessRequirementsDto {
   @ApiProperty()
   @Type(() => Number)

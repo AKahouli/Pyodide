@@ -214,6 +214,32 @@ export interface MappingProposalJob {
   error?: string;
 }
 
+export type SemanticBuildStatus = 'running' | 'completed' | 'failed';
+export type SemanticBuildStep = 'ontology' | 'mapping' | 'apply';
+export type SemanticBuildStepStatus = 'pending' | 'running' | 'completed' | 'failed' | 'skipped';
+export type SemanticBuildApplyMode = 'replace' | 'incremental';
+
+export interface SemanticBuildJob {
+  buildId: string;
+  modelId: string;
+  startedBy: string;
+  status: SemanticBuildStatus;
+  currentStep: SemanticBuildStep | null;
+  ontologyStatus: SemanticBuildStepStatus;
+  mappingStatus: SemanticBuildStepStatus;
+  applyStatus: SemanticBuildStepStatus;
+  applyMode: SemanticBuildApplyMode;
+  mappingJobId: string | null;
+  graphWarning: string | null;
+  error: string | null;
+  startedAt: string;
+  ontologyCompletedAt: string | null;
+  mappingCompletedAt: string | null;
+  applyCompletedAt: string | null;
+  completedAt: string | null;
+  lastHeartbeatAt: string;
+}
+
 export interface SemanticModelMappingProposalResponse {
   modelId: string;
   generatedAt: string;

@@ -45,6 +45,8 @@ import { SemanticModelCanvas } from "../components/editor/SemanticModelCanvas";
 import { SemanticModelInspector } from "../components/editor/SemanticModelInspector";
 import { SemanticModelGraphViewer } from "../components/editor/SemanticModelGraphViewer";
 import { SemanticModelValidateDialog } from "../components/editor/SemanticModelValidateDialog";
+import { SemanticModelBuildProgressBanner } from "../components/editor/SemanticModelBuildProgressBanner";
+import { isBuildActive, useSemanticBuildJob } from "../hooks/use-semantic-build-job";
 import { VersionsPanel } from "../components/versions/VersionsPanel";
 import { useKnowledgeLinking } from "../hooks/use-knowledge-linking";
 import { useSemanticGraph, useSemanticModel } from "../query/hooks";
@@ -107,6 +109,8 @@ export function SemanticModelEditorPage() {
     model.data?.role !== "viewer" &&
     Boolean(model.data?.currentDraftVersionId);
   const canValidate = isSemanticGraphSaved({ graph, pending, saveStatus });
+  const buildJob = useSemanticBuildJob(modelId);
+  const buildActive = isBuildActive(buildJob.data);
 
   useEffect(() => {
     if (
@@ -395,6 +399,12 @@ export function SemanticModelEditorPage() {
           )}
         </div>
       </header>
+      {modelId && (
+        <SemanticModelBuildProgressBanner
+          modelId={modelId}
+          onRetry={() => setValidateOpen(true)}
+        />
+      )}
       <main className="relative flex min-h-0 flex-1">
         {versionsOpen && (
           <VersionsPanel
@@ -435,6 +445,8 @@ export function SemanticModelEditorPage() {
                 size="lg"
                 className="shadow-lg"
                 onClick={() => setValidateOpen(true)}
+                disabled={buildActive}
+                title={buildActive ? t("build.alreadyRunning") : undefined}
               >
                 <Zap className="mr-2 h-4 w-4" />
                 {t("validate.button")}
@@ -517,10 +529,6 @@ export function SemanticModelEditorPage() {
           open={validateOpen}
           onOpenChange={setValidateOpen}
           modelId={modelId}
-          onSuccess={() => {
-            hydratedVersionRef.current = null;
-            void graphQuery.refetch().then(() => setGraphViewerOpen(true));
-          }}
         />
       )}
       {modelId && (

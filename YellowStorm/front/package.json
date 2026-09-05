@@ -23,7 +23,7 @@
     "@anthropic-ai/sdk": "^0.72.1",
     "@cyntler/react-doc-viewer": "^1.17.1",
     "@dagrejs/dagre": "^2.0.4",
-    "@embedpdf/react-pdf-viewer": "^2.4.0",
+    "@embedpdf/react-pdf-viewer": "^2.15.0",
     "@hookform/resolvers": "^3.3.2",
     "@iconify/react": "^6.0.2",
     "@novnc/novnc": "^1.7.0",

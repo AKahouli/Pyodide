@@ -151,10 +151,11 @@ class NodeResolver:
         if len(nodes) < 2:
             return nodes, []
 
-        # Mandatory: merge extraction fragments from the same source document.
-        # Each (binding × document) search call produces one partial node — they
-        # MUST be merged before cross-document dedup runs.
-        nodes, same_doc_groups = self._merge_same_document_nodes(nodes)
+        # Same-document merge intentionally skipped: a document containing
+        # multiple instances of the same concept (e.g. one Contract with three
+        # Annexes) must produce distinct nodes. Cross-document dedup below
+        # still handles the case where two docs mention the same real entity.
+        same_doc_groups: list[dict[str, Any]] = []
 
         if len(nodes) < 2:
             return nodes, same_doc_groups

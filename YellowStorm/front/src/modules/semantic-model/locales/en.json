@@ -32,5 +32,24 @@
   "graphViewer": { "button": "View graph", "title": "Knowledge Graph", "empty": "No records in the graph yet. Run the pipeline first.", "loading": "Loading graph…", "retry": "Retry", "noAttributes": "No attributes defined.", "missingValue": "Missing data" },
   "validate": { "button": "Validate", "title": "Build the Graph", "description": "Generates the ontology, runs the mapping, and applies the results to the graph. Business requirements are optional.", "requirements": "Business requirements (optional)", "requirementsPlaceholder": "One requirement per line…", "launch": "Launch", "stepOntology": "Generate ontology", "stepMapping": "Run mapping", "stepApply": "Apply to graph", "done": "Graph built successfully.", "close": "Close" },
   "enrichment": { "title": "Fill the Blanks", "description": "Business Records with missing attributes. Fill them in before publishing the model.", "allComplete": "All records are complete — no missing attributes.", "fillValue": "Enter a value…", "missingValue": "Missing", "applyEnrichment": "Done — back to Mapping" },
+  "build": {
+    "runningTitle": "Build in progress…",
+    "runningDescription": "You can keep working or navigate away — the build finishes in the background.",
+    "completedTitle": "Graph built successfully",
+    "completedDescription": "The graph has been updated with the new records.",
+    "failedTitle": "Build failed",
+    "failedGeneric": "The build could not complete. See details below.",
+    "stepOntology": "Ontology",
+    "stepMapping": "Mapping",
+    "stepApply": "Apply",
+    "stepStatus": { "pending": "Pending", "running": "Running", "completed": "Completed", "failed": "Failed", "skipped": "Skipped" },
+    "startedBy": "Started by",
+    "startedAt": "Started {{when}}",
+    "dismiss": "Dismiss",
+    "retry": "Retry",
+    "alreadyRunning": "A build is already running for this model.",
+    "started": "Build launched in the background.",
+    "startError": "Could not start the build."
+  },
   "workspace": { "eyebrow": "Workspace business map", "title": "Semantic Model", "description": "Give the documents in this workspace a shared business structure.", "documents": "Back to documents", "defaultDescription": "This automatic model always includes the workspace Documents collection.", "openDefault": "Open automatic model", "otherModels": "Other connected models", "otherModelsDescription": "Models that also use knowledge from this workspace.", "browse": "Browse models", "noOtherModels": "No other model uses this workspace yet.", "loadError": "Semantic Models could not be loaded" }
 }

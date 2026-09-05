@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+import unicodedata
 from typing import Any
 
 
@@ -15,7 +16,12 @@ _PLACEHOLDER_VALUES = {
 def normalize_for_match(value: Any) -> str:
     if value is None:
         return ""
-    return " ".join(str(value).split()).casefold()
+    # Strip diacritics so accented and non-accented forms match ("Élodie" == "Elodie").
+    # Critical for French corpora where the same entity is often spelled both ways
+    # across documents.
+    normalized = unicodedata.normalize("NFKD", str(value))
+    stripped = "".join(ch for ch in normalized if not unicodedata.combining(ch))
+    return " ".join(stripped.split()).casefold()
 
 
 def is_meaningful_value(value: Any) -> bool:

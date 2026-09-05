@@ -14,6 +14,7 @@ import {
   PublishSemanticModelDto,
   SemanticModelQueryDto,
   SemanticRecordQueryDto,
+  StartSemanticModelBuildDto,
   UpdateBindingDto,
   UpdateSemanticModelDto,
 } from '../dto';
@@ -28,6 +29,7 @@ import { SemanticModelOntologyGenerationService } from '../services/semantic-mod
 import { SemanticModelCorpusPreparationService } from '../services/semantic-model-corpus-preparation.service';
 import { SemanticModelEvidenceSearchService } from '../services/semantic-model-evidence-search.service';
 import { SemanticModelMappingProposalService } from '../services/semantic-model-mapping-proposal.service';
+import { SemanticModelBuildOrchestratorService } from '../services/semantic-model-build-orchestrator.service';
 
 @ApiTags('Semantic Models')
 @ApiBearerAuth()
@@ -44,6 +46,7 @@ export class SemanticModelController {
     private readonly corpusPreparation: SemanticModelCorpusPreparationService,
     private readonly evidenceSearch: SemanticModelEvidenceSearchService,
     private readonly mappingProposals: SemanticModelMappingProposalService,
+    private readonly builds: SemanticModelBuildOrchestratorService,
     private readonly shares: SemanticModelShareService,
   ) {}
 
@@ -168,6 +171,31 @@ export class SemanticModelController {
   @RequirePermissions([Permissions.SEMANTIC_MODELS_READ,Permissions.SEMANTIC_MODELS_ALL],'any')
   getAgeGraph(@CurrentUser() user: UserDocument,@Param('modelId') modelId: string) {
     return this.mappingProposals.getAgeGraph(user._id.toString(), modelId);
+  }
+
+  @Post(':modelId/builds')
+  @HttpCode(HttpStatus.ACCEPTED)
+  @ApiOperation({ summary: 'Start an async build (ontology + mapping + apply). Returns a buildId immediately for polling.' })
+  @RequirePermissions([Permissions.SEMANTIC_MODELS_UPDATE,Permissions.SEMANTIC_MODELS_ALL],'any')
+  startBuild(@CurrentUser() user: UserDocument,@Param('modelId') modelId: string,@Body() dto: StartSemanticModelBuildDto) {
+    return this.builds.startAsync(user._id.toString(), modelId, {
+      businessRequirements: dto.businessRequirements ?? [],
+      applyMode: dto.applyMode ?? 'replace',
+    });
+  }
+
+  @Get(':modelId/builds/latest')
+  @ApiOperation({ summary: 'Get the most recent build for this model (any status). Used by the UI banner to reattach polling after reload.' })
+  @RequirePermissions([Permissions.SEMANTIC_MODELS_READ,Permissions.SEMANTIC_MODELS_ALL],'any')
+  getLatestBuild(@CurrentUser() user: UserDocument,@Param('modelId') modelId: string) {
+    return this.builds.getLatestBuild(user._id.toString(), modelId);
+  }
+
+  @Get(':modelId/builds/:buildId')
+  @ApiOperation({ summary: 'Poll the status and per-step progress of a build job.' })
+  @RequirePermissions([Permissions.SEMANTIC_MODELS_READ,Permissions.SEMANTIC_MODELS_ALL],'any')
+  getBuild(@CurrentUser() user: UserDocument,@Param('modelId') modelId: string,@Param('buildId') buildId: string) {
+    return this.builds.getBuild(user._id.toString(), modelId, buildId);
   }
 
 

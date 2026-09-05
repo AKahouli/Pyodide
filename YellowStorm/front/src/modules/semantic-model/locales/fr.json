@@ -28,4 +28,23 @@
   ,"graphViewer": { "button": "Voir le graphe", "title": "Modélisation graphique", "empty": "Aucun enregistrement dans le graphe. Lancez d'abord le pipeline.", "loading": "Chargement du graphe…", "retry": "Réessayer", "noAttributes": "Aucun attribut défini.", "missingValue": "Donnée manquante" }
   ,"validate": { "button": "Valider", "title": "Construire le graphe", "description": "Génère l'ontologie, lance le mapping et applique les résultats dans le graphe. Les exigences métier sont optionnelles.", "requirements": "Exigences métier (optionnel)", "requirementsPlaceholder": "Une exigence par ligne…", "launch": "Lancer", "stepOntology": "Générer l'ontologie", "stepMapping": "Lancer le mapping", "stepApply": "Appliquer au graphe", "done": "Graphe construit avec succès.", "close": "Fermer" }
   ,"enrichment": { "title": "Remplir les blancs", "description": "Donn\u00e9es m\u00e9tier avec attributs manquants. Compl\u00e9tez-les avant de publier le mod\u00e8le.", "allComplete": "Toutes les donn\u00e9es sont compl\u00e8tes \u2014 aucun attribut manquant.", "fillValue": "Saisir une valeur\u2026", "missingValue": "Manquant", "applyEnrichment": "Termin\u00e9 \u2014 retour au mapping" }
+  ,"build": {
+    "runningTitle": "Construction en cours\u2026",
+    "runningDescription": "Vous pouvez continuer \u00e0 travailler ou naviguer, la construction se termine en arri\u00e8re-plan.",
+    "completedTitle": "Graphe construit avec succ\u00e8s",
+    "completedDescription": "Le graphe a \u00e9t\u00e9 mis \u00e0 jour avec les nouveaux enregistrements.",
+    "failedTitle": "Construction \u00e9chou\u00e9e",
+    "failedGeneric": "La construction n'a pas pu aboutir. Consultez les d\u00e9tails ci-dessous.",
+    "stepOntology": "Ontologie",
+    "stepMapping": "Mapping",
+    "stepApply": "Application",
+    "stepStatus": { "pending": "En attente", "running": "En cours", "completed": "Termin\u00e9", "failed": "\u00c9chec", "skipped": "Ignor\u00e9" },
+    "startedBy": "D\u00e9marr\u00e9e par",
+    "startedAt": "Lanc\u00e9e {{when}}",
+    "dismiss": "Fermer",
+    "retry": "Relancer",
+    "alreadyRunning": "Une construction est d\u00e9j\u00e0 en cours pour ce mod\u00e8le.",
+    "started": "Construction lanc\u00e9e en arri\u00e8re-plan.",
+    "startError": "Impossible de lancer la construction."
+  }
 }

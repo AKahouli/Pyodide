@@ -324,5 +324,48 @@ ALTER TABLE semantic_model.memberships
 
 
 -- =============================================================================
+-- 008 — Table des builds (orchestration ontology + mapping + apply)
+-- =============================================================================
+
+CREATE TABLE IF NOT EXISTS semantic_model.build_runs (
+  id                    UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+  model_id              UUID        NOT NULL REFERENCES semantic_model.models(id) ON DELETE CASCADE,
+  started_by            TEXT        NOT NULL,
+  status                TEXT        NOT NULL DEFAULT 'running'
+                                    CHECK (status IN ('running', 'completed', 'failed')),
+  current_step          TEXT        CHECK (current_step IN ('ontology', 'mapping', 'apply') OR current_step IS NULL),
+  ontology_status       TEXT        NOT NULL DEFAULT 'pending'
+                                    CHECK (ontology_status IN ('pending', 'running', 'completed', 'failed', 'skipped')),
+  mapping_status        TEXT        NOT NULL DEFAULT 'pending'
+                                    CHECK (mapping_status IN ('pending', 'running', 'completed', 'failed', 'skipped')),
+  apply_status          TEXT        NOT NULL DEFAULT 'pending'
+                                    CHECK (apply_status IN ('pending', 'running', 'completed', 'failed', 'skipped')),
+  business_requirements JSONB       NOT NULL DEFAULT '[]'::jsonb,
+  apply_mode            TEXT        NOT NULL DEFAULT 'replace'
+                                    CHECK (apply_mode IN ('replace', 'incremental')),
+  mapping_job_id        UUID,
+  graph_warning         TEXT,
+  error                 TEXT,
+  started_at            TIMESTAMPTZ NOT NULL DEFAULT now(),
+  ontology_completed_at TIMESTAMPTZ,
+  mapping_completed_at  TIMESTAMPTZ,
+  apply_completed_at    TIMESTAMPTZ,
+  completed_at          TIMESTAMPTZ,
+  last_heartbeat_at     TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS build_runs_model_id_idx
+  ON semantic_model.build_runs (model_id, started_at DESC);
+
+CREATE UNIQUE INDEX IF NOT EXISTS build_runs_one_active_per_model_uidx
+  ON semantic_model.build_runs (model_id)
+  WHERE status = 'running';
+
+CREATE INDEX IF NOT EXISTS build_runs_heartbeat_active_idx
+  ON semantic_model.build_runs (last_heartbeat_at)
+  WHERE status = 'running';
+
+
+-- =============================================================================
 -- FIN
 -- =============================================================================

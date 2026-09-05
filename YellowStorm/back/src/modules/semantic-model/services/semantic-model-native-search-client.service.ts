@@ -71,7 +71,10 @@ export class SemanticModelNativeSearchClient {
               Authorization: `Bearer ${this.config.nativeSearchAuthToken}`,
               'Content-Type': 'application/json',
             },
-            timeout: this.config.evidenceSearchTimeoutMs,
+            // No timeout: the semantic-model pipeline is a background job driven by the
+            // build orchestrator + heartbeat. Native search can legitimately take a long time
+            // for large evidence sets.
+            timeout: 0,
           },
         );
         return this.parseSections(data);
@@ -158,7 +161,10 @@ export class SemanticModelNativeSearchClient {
               Authorization: `Bearer ${this.config.nativeSearchAuthToken}`,
               'Content-Type': 'application/json',
             },
-            timeout: this.config.evidenceSearchTimeoutMs,
+            // No timeout: the semantic-model pipeline is a background job driven by the
+            // build orchestrator + heartbeat. Native search can legitimately take a long time
+            // for large evidence sets.
+            timeout: 0,
           },
         );
         return this.parseBatchResults(data, requests.length);

@@ -16,7 +16,13 @@ from typing import Any
 
 from .utils import is_meaningful_value, normalize_evidence
 
-_FILE_EXTENSION_RE = re.compile(r"\.\w{2,5}$", re.IGNORECASE)
+# Whitelist of known document/file extensions. The previous generic regex
+# `\.\w{2,5}$` produced too many false positives on legitimate labels like
+# "CTR-2024.001" (contract number) or "Article 3.14" (paragraph reference).
+_FILE_EXTENSION_RE = re.compile(
+    r"\.(pdf|docx?|xlsx?|pptx?|txt|md|html?|json|xml|csv|odt|ods|rtf|eml|msg|zip|tar|gz)$",
+    re.IGNORECASE,
+)
 
 logger = logging.getLogger(__name__)
 
