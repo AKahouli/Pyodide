@@ -216,3 +216,17 @@ class TestStatementClassification:
         assert diag._classify_statement("SELECT * FROM sessions") == "session_row"
         assert diag._classify_statement("CREATE TABLE alembic_version") == "metadata"
         assert diag._classify_statement("SELECT 1") == "other"
+
+
+class TestInstrumentedServiceContract:
+    def test_prepare_tables_override_tracks_adk_public_api(self):
+        # ADK 2.8.0 renamed the private `_prepare_tables` to the public
+        # `prepare_tables`. If the override drifts from the upstream name the
+        # instrumentation silently stops recording `prepare_tables_ms`.
+        from google.adk.sessions import DatabaseSessionService
+        from src.smart_rag.infrastructure.monitoring.instrumented_database_session_service import (
+            InstrumentedDatabaseSessionService,
+        )
+
+        assert "prepare_tables" in vars(InstrumentedDatabaseSessionService)
+        assert "_prepare_tables" not in vars(DatabaseSessionService)
