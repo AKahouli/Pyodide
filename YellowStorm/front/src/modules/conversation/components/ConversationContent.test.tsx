@@ -1,14 +1,14 @@
 import { render, screen } from '@testing-library/react';
 import type { ReactNode } from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { Message } from '../types';
+import type { Message, MessageComponent } from '../types';
 import { ConversationContent } from './ConversationContent';
 
 vi.mock('@/components/ai-elements/chat-conversation', () => ({
   ChatConversation: ({ children }: { children: ReactNode }) => <div>{children}</div>,
   ChatConversationContent: ({ children }: { children: ReactNode }) => <div>{children}</div>,
-  ChatMessageBubble: () => <div>bubble</div>,
-  ChatScrollButton: () => <button type='button'>scroll</button>,
+  ChatMessageBubble: ({ footerActions }: { footerActions?: ReactNode }) => <div>bubble{footerActions}</div>,
+  ChatScrollButton: ({ className }: { className?: string }) => <button type='button' className={className}>scroll</button>,
   ChatConversationEmptyState: () => <div>empty-state</div>,
 }));
 
@@ -23,12 +23,15 @@ vi.mock('./BranchNavigation', () => ({ BranchNavigation: () => <div>branch-nav</
 vi.mock('./LoadingIndicator', () => ({ LoadingIndicator: ({ activity }: { activity: string }) => <div>loading-{activity}</div> }));
 vi.mock('./MessageReliabilityCard', () => ({ MessageReliabilityCard: () => <div>reliability-card</div> }));
 vi.mock('./MessageAttachments', () => ({ MessageAttachments: () => <div>attachments</div> }));
+vi.mock('./outline/OutlineAnchorScroller', () => ({ OutlineAnchorScroller: () => null }));
 
 const storeState = {
   isStreaming: false,
-  streamingComponents: [],
+  streamingComponents: [] as MessageComponent[],
   streamingConversationId: null as string | null,
+  streamingMessageId: null as string | null,
   awaitingConversationId: null as string | null,
+  sendMessage: vi.fn(),
   loadMoreMessages: vi.fn(),
   messagesLoading: false,
   currentConversationId: 'conv-1',
@@ -55,20 +58,25 @@ describe('ConversationContent', () => {
   beforeEach(() => {
     displayMessages = [];
     isAwaitingFirstChunk = false;
+    storeState.isStreaming = false;
+    storeState.streamingComponents = [];
+    storeState.streamingConversationId = null;
+    storeState.streamingMessageId = null;
     storeState.awaitingConversationId = null;
   });
 
   it('renders empty state when there are no messages', () => {
     render(<ConversationContent />);
     expect(screen.getByText('empty-state')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'scroll' })).toHaveClass('right-3', 'left-auto', 'translate-x-0');
   });
 
   it('shows activity before the first stream chunk arrives', () => {
     isAwaitingFirstChunk = true;
     storeState.awaitingConversationId = 'conv-1';
     render(<ConversationContent />);
-    expect(screen.getByText('loading-thinking')).toBeInTheDocument();
-    expect(screen.getByTestId('inline-stream-activity')).toBeInTheDocument();
+    expect(screen.getAllByRole('status')).not.toHaveLength(0);
+    expect(screen.getByTestId('conversation-assistant-bubble')).toBeInTheDocument();
     isAwaitingFirstChunk = false;
     storeState.awaitingConversationId = null;
   });
@@ -85,7 +93,6 @@ describe('ConversationContent', () => {
       id: 'ai-no-tool', conversationId: 'conv-1', conversationType: 'ai', createdAt: '2026-07-28T00:00:00.000Z',
       components: [
         { type: 'text', data: { content: 'Hello' } },
-        { type: 'chainOfThought', data: { steps: ['Responded directly'] } },
       ],
       reliabilityEvaluation: { status: 'insufficient_evidence' },
     }];
@@ -100,7 +107,7 @@ describe('ConversationContent', () => {
       id: 'ai-with-tool', conversationId: 'conv-1', conversationType: 'ai', createdAt: '2026-07-28T00:00:00.000Z',
       components: [
         { type: 'text', data: { content: 'Hello' } },
-        { type: 'toolInfo', data: { title: 'Search' } },
+        { type: 'toolActivity', data: { title: 'Search' } },
       ],
       reliabilityEvaluation: { status: 'insufficient_evidence' },
     }];
@@ -108,6 +115,16 @@ describe('ConversationContent', () => {
     render(<ConversationContent />);
 
     expect(screen.getByText('reliability-card')).toBeInTheDocument();
+  });
+
+  it('places user actions in the message metadata footer', () => {
+    displayMessages = [{
+      id: 'user-1', conversationId: 'conv-1', conversationType: 'user', content: 'Question', createdAt: '2026-07-28T00:00:00.000Z',
+    }];
+
+    render(<ConversationContent />);
+
+    expect(screen.getByText('user-actions')).toBeInTheDocument();
   });
 
   it('shows the rerun surface for a completed text answer without a tool call', () => {
@@ -120,5 +137,23 @@ describe('ConversationContent', () => {
     render(<ConversationContent />);
 
     expect(screen.getByText('reliability-card')).toBeInTheDocument();
+  });
+
+  it('animates only the dedicated live assistant bubble', () => {
+    displayMessages = [{
+      id: 'ai-complete', conversationId: 'conv-1', conversationType: 'ai', isComplete: true, createdAt: '2026-07-28T00:00:00.000Z',
+      components: [{ id: 'tool-complete', type: 'toolActivity', data: { toolName: 'run_code', summary: 'Completed work', renderKind: 'run_code', status: 'completed', actorName: 'Completed Agent' } }],
+    }];
+    storeState.isStreaming = true;
+    storeState.streamingConversationId = 'conv-1';
+    storeState.streamingMessageId = 'ai-live';
+    storeState.streamingComponents = [{ id: 'tool-live', type: 'toolActivity', data: { toolName: 'run_code', summary: 'Current work', renderKind: 'run_code', status: 'running', actorName: 'Live Agent' } }];
+
+    const { container } = render(<ConversationContent />);
+
+    expect(screen.getAllByText('Completed Agent')).not.toHaveLength(0);
+    expect(screen.getAllByText('Live Agent')).not.toHaveLength(0);
+    expect(container.querySelectorAll('[data-agent-activity][data-active="true"]')).toHaveLength(1);
+    expect(container.querySelectorAll('[data-agent-scan]')).toHaveLength(2);
   });
 });

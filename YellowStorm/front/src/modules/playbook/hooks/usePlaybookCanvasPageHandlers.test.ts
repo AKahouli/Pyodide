@@ -17,6 +17,13 @@ vi.mock('../utils/playbookImport', () => ({
   },
 }));
 
+const openPanelMock = vi.hoisted(() => vi.fn());
+vi.mock('../../platform-copilot/platformCopilotPanelStore', () => ({
+  usePlatformCopilotPanelStore: {
+    getState: () => ({ openPanel: openPanelMock }),
+  },
+}));
+
 import { readPlaybookDefinitionFile } from '../utils/playbookImport';
 
 describe('usePlaybookCanvasPageHandlers', () => {
@@ -24,6 +31,7 @@ describe('usePlaybookCanvasPageHandlers', () => {
   const setNodeReflectionEnabled = vi.fn();
   const setAdvisorScoringMode = vi.fn();
   const setAdvisorAutopilotEnabled = vi.fn();
+  const fitCanvasToNodes = vi.fn();
   const setNodes = vi.fn();
   const setEdges = vi.fn();
   const setPendingImport = vi.fn();
@@ -67,6 +75,7 @@ describe('usePlaybookCanvasPageHandlers', () => {
     playbook = makePlaybook(),
     pageMode = 'design',
     designerOpen = false,
+    waitingForHumanInput = false,
     nodeReflectionEnabled = true,
     advisorScoringMode = 'llm',
     advisorAutopilotEnabled = false,
@@ -78,8 +87,9 @@ describe('usePlaybookCanvasPageHandlers', () => {
     playbook?: Playbook | null;
     pageMode?: 'design' | 'run';
     designerOpen?: boolean;
+    waitingForHumanInput?: boolean;
     nodeReflectionEnabled?: boolean;
-    advisorScoringMode?: 'llm' | 'heuristic';
+    advisorScoringMode?: 'heuristic' | 'llm';
     advisorAutopilotEnabled?: boolean;
     pendingImport?: PlaybookDefinitionExport | null;
     fileInputRef?: { current: HTMLInputElement | null };
@@ -94,6 +104,7 @@ describe('usePlaybookCanvasPageHandlers', () => {
         advisorAutopilotEnabled,
         pageMode,
         designerOpen,
+        waitingForHumanInput,
         confirmRemoveAllMessage: 'Remove all tasks?',
         workspaceRequiredError: 'At least one workspace is required',
         importReadErrorMessage: 'Cannot read import file',
@@ -102,6 +113,7 @@ describe('usePlaybookCanvasPageHandlers', () => {
         setNodeReflectionEnabled,
         setAdvisorScoringMode,
         setAdvisorAutopilotEnabled,
+        fitCanvasToNodes,
         setNodes,
         setEdges,
         setPendingImport,
@@ -134,6 +146,7 @@ describe('usePlaybookCanvasPageHandlers', () => {
     setNodeReflectionEnabled.mockClear();
     setAdvisorScoringMode.mockClear();
     setAdvisorAutopilotEnabled.mockClear();
+    fitCanvasToNodes.mockClear();
     setNodes.mockClear();
     setEdges.mockClear();
     setPendingImport.mockClear();
@@ -230,6 +243,7 @@ describe('usePlaybookCanvasPageHandlers', () => {
     expect(autoLayoutSpy).toHaveBeenCalledWith(playbook.tasks, playbook.edges);
     expect(setNodes).toHaveBeenCalledWith(tasksToNodes(layoutedTasks));
     expect(updateTasks).toHaveBeenCalledWith(layoutedTasks);
+    expect(fitCanvasToNodes).toHaveBeenCalledOnce();
 
     autoLayoutSpy.mockRestore();
   });
@@ -357,22 +371,34 @@ describe('usePlaybookCanvasPageHandlers', () => {
     confirmSpy.mockRestore();
   });
 
-  it('toggles copilot, switches to design mode, and closes editor when opening from run mode', () => {
+  it('opens the global Yellowmind assistant from the toolbar instead of the local designer', () => {
+    openPanelMock.mockClear();
     const { result } = buildHandler({ pageMode: 'run', designerOpen: false });
 
     act(() => {
       result.current.handleToggleCopilot();
     });
 
-    expect(setCopilotMode).toHaveBeenCalledWith('design');
-    expect(setPageMode).toHaveBeenCalledWith('design');
-    expect(setExecutionPanelCollapsed).toHaveBeenCalledWith(true);
-    expect(setExecutionPanelOpen).toHaveBeenCalledWith(false);
-    expect(setDesignerOpen).toHaveBeenCalledWith(true);
-    expect(setEditorOpen).toHaveBeenCalledWith(false);
+    expect(openPanelMock).toHaveBeenCalledTimes(1);
+    expect(setCopilotMode).not.toHaveBeenCalled();
+    expect(setDesignerOpen).not.toHaveBeenCalled();
+    expect(setEditorOpen).not.toHaveBeenCalled();
   });
 
-  it('switches run mode and closes design/editor panels', () => {
+  it('opens the native HITL decision panel when an interrupt is pending', () => {
+    openPanelMock.mockClear();
+    const { result } = buildHandler({ designerOpen: false, waitingForHumanInput: true });
+
+    act(() => {
+      result.current.handleToggleCopilot();
+    });
+
+    expect(openPanelMock).not.toHaveBeenCalled();
+    expect(setCopilotMode).toHaveBeenCalledWith('interrupt');
+    expect(setDesignerOpen).toHaveBeenCalledWith(true);
+  });
+
+  it('switches run mode and closes the execution panel', () => {
     const { result } = buildHandler({ pageMode: 'design', designerOpen: true });
 
     act(() => {
@@ -380,12 +406,12 @@ describe('usePlaybookCanvasPageHandlers', () => {
     });
 
     expect(setPageMode).toHaveBeenCalledWith('run');
-    expect(setDesignerOpen).toHaveBeenCalledWith(false);
     expect(setExecutionPanelCollapsed).toHaveBeenCalledWith(false);
     expect(setExecutionPanelOpen).toHaveBeenCalledWith(true);
+    expect(setDesignerOpen).not.toHaveBeenCalled();
   });
 
-  it('opens the designer assistant when switching to design mode', () => {
+  it('switching to design mode no longer opens the local designer panel', () => {
     const { result } = buildHandler({ designerOpen: true });
 
     act(() => {
@@ -394,8 +420,8 @@ describe('usePlaybookCanvasPageHandlers', () => {
 
     expect(setExecutionPanelCollapsed).toHaveBeenCalledWith(true);
     expect(setExecutionPanelOpen).toHaveBeenCalledWith(false);
-    expect(setCopilotMode).toHaveBeenCalledWith('design');
-    expect(setDesignerOpen).toHaveBeenCalledWith(true);
+    expect(setCopilotMode).not.toHaveBeenCalled();
+    expect(setDesignerOpen).not.toHaveBeenCalled();
   });
 
   it('saves the new playbook name when blurred with changes', () => {

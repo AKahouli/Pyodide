@@ -15,15 +15,51 @@ describe('component-mapper text extraction', () => {
     });
   });
 
-  it('prefers reasoning over empty default text oneof (proto-loader defaults)', () => {
+  it('prefers agent activity over empty default text oneof (proto-loader defaults)', () => {
     const comp = {
       id: 'comp-2',
       text: { content: '' },
-      reasoning: { content: 'Thinking step' },
+      agent_activity: { summary: 'Preparing sources', status: 'running' },
     };
 
-    expect(getComponentType(comp)).toBe('reasoning');
-    expect(extractComponentData(comp).data.content).toBe('Thinking step');
+    expect(getComponentType(comp)).toBe('agentActivity');
+    expect(extractComponentData(comp).data.summary).toBe('Preparing sources');
+  });
+
+  it('uses the oneof discriminator for display-safe agent activity with an empty summary', () => {
+    const comp = {
+      id: 'comp-2-empty',
+      data: 'agent_activity',
+      text: { content: '' },
+      agent_activity: { summary: '', status: 'completed' },
+      tool_activity: { tool_name: '', status: '' },
+    };
+
+    expect(getComponentType(comp)).toBe('agentActivity');
+    expect(extractComponentData(comp)).toEqual({
+      type: 'agentActivity',
+      data: { summary: '', status: 'completed' },
+    });
+  });
+
+  it('maps full agent reasoning detail and execution timestamps', () => {
+    expect(extractComponentData({
+      data: 'agent_activity',
+      agent_activity: {
+        summary: 'Inspecting reports',
+        detail: 'Full private reasoning',
+        status: 'completed',
+        started_at: '2026-08-27T10:00:00Z',
+      },
+    })).toEqual({
+      type: 'agentActivity',
+      data: {
+        summary: 'Inspecting reports',
+        detail: 'Full private reasoning',
+        status: 'completed',
+        startedAt: '2026-08-27T10:00:00Z',
+      },
+    });
   });
 
   it('supports legacy component.type + component.data shape from ADK formatter', () => {
@@ -39,13 +75,13 @@ describe('component-mapper text extraction', () => {
     });
   });
 
-  it('aggregates text and reasoning for plain-text reply', () => {
+  it('excludes agent activity from plain-text replies', () => {
     const reply = aggregateTextFromComponents([
-      { type: 'reasoning', data: { content: 'Plan: ' } },
+      { type: 'agentActivity', data: { summary: 'Preparing answer', status: 'completed' } },
       { type: 'text', data: { content: 'Answer.' } },
     ]);
 
-    expect(reply).toBe('Plan: Answer.');
+    expect(reply).toBe('Answer.');
   });
 });
 
@@ -276,25 +312,69 @@ describe('component-mapper choice extraction', () => {
     expect(result.data).toMatchObject({ questionId: 'q1', selectionMode: 'multiple', submitBehavior: 'explicit', labels: { submit: 'Continue' }, progress: { current: 1, total: 2 } });
   });
 
-  it('maps tool arguments and terminal status from the toolInfo proto component', () => {
+  it('maps full tool activity metadata from the proto component', () => {
     expect(extractComponentData({
       id: 'tool-1',
-      tool_info: {
-        title: 'search_documents',
+      tool_activity: {
+        tool_name: 'search_documents',
         status: 'completed',
-        params: '{"query":"contract"}',
+        params_json: '{"query":"contract"}',
         result_json: '{"matches":2}',
         started_at: '2026-07-21T10:13:42Z',
+        primary_input: 'return normalize(input);',
+        primary_input_language: 'typescript',
       },
     })).toEqual({
-      type: 'toolInfo',
+      type: 'toolActivity',
       data: {
-        title: 'search_documents',
+        toolName: 'search_documents',
         status: 'completed',
-        params: '{"query":"contract"}',
+        paramsJson: '{"query":"contract"}',
         resultJson: '{"matches":2}',
         startedAt: '2026-07-21T10:13:42Z',
+        primaryInput: 'return normalize(input);',
+        primaryInputLanguage: 'typescript',
       },
     });
+  });
+
+  it('preserves optional tool presentation metadata absence on terminal updates', () => {
+    const running = extractComponentData({
+      tool_activity: {
+        tool_name: 'search_documents',
+        status: 'running',
+        summary: 'Find the relevant financial reports',
+        render_kind: 'search',
+      },
+    });
+    const completed = extractComponentData({
+      tool_activity: {
+        tool_name: 'search_documents',
+        status: 'completed',
+        result_json: '{"matches":2}',
+      },
+    });
+
+    expect(running.data).toMatchObject({
+      summary: 'Find the relevant financial reports',
+      renderKind: 'search',
+    });
+    expect(completed.data).not.toHaveProperty('summary');
+    expect(completed.data).not.toHaveProperty('renderKind');
+  });
+
+  it('retains tool payloads for conditional sanitization at the output boundary', () => {
+    const result = extractComponentData({
+      id: 'tool-private',
+      tool_activity: {
+        tool_name: 'code_interpreter_shell_exec',
+        status: 'completed',
+        params_json: '{"command":"cat /etc/yellowstorm/config"}',
+        result_json: '{"stdout":"DB_PASSWORD=short-value"}',
+      },
+    });
+
+    expect(result.data.paramsJson).toContain('/etc/yellowstorm');
+    expect(result.data.resultJson).toContain('short-value');
   });
 });

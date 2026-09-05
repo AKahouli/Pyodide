@@ -31,7 +31,7 @@ export class UpdateAgentDto {
   @IsString()
   @MinLength(1)
   @MaxLength(100)
-  @Matches(/^[a-z0-9]+(?:-[a-z0-9]+)*$/, { message: 'Slug must contain only lowercase letters, numbers, and hyphens' })
+  @Matches(/^[a-z0-9]+(?:[-_][a-z0-9]+)*$/, { message: 'Slug must contain only lowercase letters, numbers, hyphens, and underscores' })
   slug?: string;
 
   @ApiPropertyOptional({ description: 'Agent type ID (MongoDB ObjectId)' })

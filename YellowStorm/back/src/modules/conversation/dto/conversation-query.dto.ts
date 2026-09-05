@@ -3,12 +3,27 @@ import { Type, Transform } from 'class-transformer';
 import { ApiPropertyOptional } from '@nestjs/swagger';
 
 export class ConversationQueryDto {
+  @ApiPropertyOptional({ enum: ['legacy', 'cursor'], default: 'legacy' })
+  @IsOptional()
+  @IsIn(['legacy', 'cursor'])
+  mode?: 'legacy' | 'cursor';
+
+  @ApiPropertyOptional({ description: 'Opaque cursor returned by a previous cursor-mode request' })
+  @IsOptional()
+  @IsString()
+  cursor?: string;
+
+  @ApiPropertyOptional({ enum: ['chat', 'platform_copilot'], description: 'Filter by conversation runtime purpose' })
+  @IsOptional()
+  @IsIn(['chat', 'platform_copilot'])
+  runtimePurpose?: 'chat' | 'platform_copilot';
+
   @ApiPropertyOptional({ minimum: 1, default: 1 })
   @IsOptional()
   @Type(() => Number)
   @IsInt()
   @Min(1)
-  page?: number = 1;
+  page?: number;
 
   @ApiPropertyOptional({ minimum: 1, maximum: 100, default: 20 })
   @IsOptional()

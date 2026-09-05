@@ -172,7 +172,7 @@ class TestStreamingFormatterExtended:
     )
 
     # Search notifications are intentionally suppressed (tool progress is shown
-    # via the tool_info component instead), so search functions return None.
+    # via the tool_activity component instead), so search functions return None.
     assert doc_event is None
     assert "Calculating" in calc_event["chunk"]
     assert none_event is None

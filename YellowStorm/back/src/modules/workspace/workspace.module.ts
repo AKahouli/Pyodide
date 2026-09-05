@@ -2,24 +2,12 @@ import { Module, forwardRef } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
 import { ConfigModule } from '@nestjs/config';
 import { Workspace, WorkspaceSchema } from './schemas/workspace.schema';
-import {
-  WorkspaceShare,
-  WorkspaceShareSchema,
-} from './schemas/workspace-share.schema';
-import {
-  Conversation,
-  ConversationSchema,
-} from '../conversation/schemas/conversation.schema';
+import { WorkspaceShare, WorkspaceShareSchema } from './schemas/workspace-share.schema';
+import { ConversationPersistenceModule } from '../conversation/persistence/conversation-persistence.module';
 import { Flow, FlowSchema } from '../playbook-flow/schemas/playbook-flow.schema';
 import { WorkspaceDoc, WorkspaceDocumentSchema } from './schemas/workspace-document.schema';
-import {
-  WorkspaceSetting,
-  WorkspaceSettingSchema,
-} from './schemas/workspace-setting.schema';
-import {
-  UploadSession,
-  UploadSessionSchema,
-} from './schemas/upload-session.schema';
+import { WorkspaceSetting, WorkspaceSettingSchema } from './schemas/workspace-setting.schema';
+import { UploadSession, UploadSessionSchema } from './schemas/upload-session.schema';
 import { WorkspaceController } from './workspace.controller';
 import { WorkspaceSettingController } from './workspace-setting.controller';
 import { WorkspaceDocumentController } from './workspace-document.controller';
@@ -36,11 +24,8 @@ import { UrlToPdfClientService } from './services/url-to-pdf-client.service';
 import { WebsiteCrawlerService } from './services/website-crawler.service';
 import { WorkspaceArtifactCleanupService } from './services/workspace-artifact-cleanup.service';
 import { GuardedUrlDownloaderService } from './services/guarded-url-downloader.service';
-import {
-  WorkspaceOwnerGuard,
-  WorkspaceAccessGuard,
-  WritePermissionGuard,
-} from './guards';
+import { RunCodeSourceScopeService } from './services/run-code-source-scope.service';
+import { WorkspaceOwnerGuard, WorkspaceAccessGuard, WritePermissionGuard } from './guards';
 import { InternalServiceGuard } from '../auth/guards/internal-service.guard';
 import { AuthModule } from '../auth/auth.module';
 import { LoggerModule } from '../logger';
@@ -62,7 +47,6 @@ import { SemanticModelModule } from '../semantic-model/semantic-model.module';
       { name: WorkspaceDoc.name, schema: WorkspaceDocumentSchema },
       { name: WorkspaceSetting.name, schema: WorkspaceSettingSchema },
       { name: UploadSession.name, schema: UploadSessionSchema },
-      { name: Conversation.name, schema: ConversationSchema },
       { name: Flow.name, schema: FlowSchema },
     ]),
     forwardRef(() => AuthModule),
@@ -74,6 +58,7 @@ import { SemanticModelModule } from '../semantic-model/semantic-model.module';
     LoggerModule,
     IntegrationEventsModule,
     forwardRef(() => SemanticModelModule),
+    ConversationPersistenceModule,
   ],
   controllers: [
     WorkspaceController,
@@ -98,6 +83,7 @@ import { SemanticModelModule } from '../semantic-model/semantic-model.module';
     UrlToPdfClientService,
     WorkspaceArtifactCleanupService,
     GuardedUrlDownloaderService,
+    RunCodeSourceScopeService,
   ],
   exports: [
     MongooseModule,
@@ -108,6 +94,7 @@ import { SemanticModelModule } from '../semantic-model/semantic-model.module';
     WorkspaceShareService,
     WorkspaceAccessGuard,
     WritePermissionGuard,
+    RunCodeSourceScopeService,
   ],
 })
 export class WorkspaceModule {}

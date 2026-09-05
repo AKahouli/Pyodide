@@ -55,6 +55,12 @@ export enum UserStatus {
   SUSPENDED = 'suspended',
 }
 
+export enum RegistrationApproval {
+  PENDING = 'pending',
+  APPROVED = 'approved',
+  REJECTED = 'rejected',
+}
+
 @Schema({
   timestamps: true,
   collection: 'users',
@@ -132,6 +138,13 @@ export class User extends Document {
     default: UserStatus.ACTIVE,
   })
   status!: UserStatus;
+
+  /** Set on classic registration; omitted for OAuth and pre-existing users. */
+  @Prop({
+    type: String,
+    enum: RegistrationApproval,
+  })
+  registrationApproval?: RegistrationApproval;
 
   // Timestamps (auto-generated)
   createdAt!: Date;

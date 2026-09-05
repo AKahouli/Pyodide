@@ -100,19 +100,7 @@ describe('PlaybookFlowReplayBaselineService', () => {
       preserveOutputFormat: false,
     });
 
-    const current = service.buildCurrentReplayFingerprints({
-      inputContext: { query: 'hello' },
-      flowSnapshot: { nodes: [{ id: 'task-1' }] },
-      nodeSnapshot: {
-        id: 'task-1',
-        modelId: 'gpt-4o-mini',
-        metadata: { agent_model: 'gpt-4o-mini' },
-      },
-      outputContract: baseline.outputContract,
-    });
-
     expect(baseline.fingerprints.toolConfigHash).toBeNull();
-    expect(current.toolConfigHash).toBeNull();
   });
 
   it('extracts markdown section contracts conservatively', () => {
@@ -176,57 +164,6 @@ describe('PlaybookFlowReplayBaselineService', () => {
     });
 
     expect(result).toBeNull();
-  });
-
-  it('builds current replay fingerprints from comparable execution context', () => {
-    const result = service.buildCurrentReplayFingerprints({
-      inputContext: { brief: 'hello' },
-      flowSnapshot: { nodes: [{ id: 'task-1', metadata: { version: 1 } }] },
-      nodeSnapshot: { id: 'task-1', modelId: 'gpt-4o-mini', metadata: { agent_model: 'gpt-4o-mini', agent_tools: ['search'] } },
-      outputContract: null,
-    });
-
-    expect(result.inputContextHash).toBeTruthy();
-    expect(result.flowSnapshotHash).toBeTruthy();
-    expect(result.nodeSnapshotHash).toBeTruthy();
-    expect(result.modelConfigHash).toBeTruthy();
-  });
-
-  it('keeps baseline and current fingerprints aligned when runtime-only agent metadata is excluded', () => {
-    const baseline = service.buildValidatedReplayBaseline({
-      taskId: 'task-1',
-      referenceExecutionId: 'exec-1',
-      referenceExecutionNumber: 1,
-      mode: 'replay_flex',
-      flowSnapshot: {
-        nodes: [{ id: 'task-1', modelId: '', metadata: { assignedAgentId: 'agent-1' } }],
-        controlEdges: [],
-        dataBindings: [],
-        settings: {},
-      },
-      nodeSnapshot: { id: 'task-1', modelId: '', metadata: { assignedAgentId: 'agent-1' } },
-      taskResult: {
-        output: 'ok',
-        toolTrace: [],
-        reasoningChain: [],
-      },
-      preserveOutputFormat: false,
-    });
-
-    const current = service.buildCurrentReplayFingerprints({
-      flowSnapshot: {
-        nodes: [{ id: 'task-1', modelId: '', metadata: { assignedAgentId: 'agent-1' } }],
-        controlEdges: [],
-        dataBindings: [],
-        settings: {},
-      },
-      nodeSnapshot: { id: 'task-1', modelId: '', metadata: { assignedAgentId: 'agent-1' } },
-      outputContract: baseline.outputContract,
-    });
-
-    expect(current.nodeSnapshotHash).toBe(baseline.fingerprints.nodeSnapshotHash);
-    expect(current.flowSnapshotHash).toBe(baseline.fingerprints.flowSnapshotHash);
-    expect(current.modelConfigHash).toBe(baseline.fingerprints.modelConfigHash);
   });
 
   it('captures reusable HITL memory snapshots for the validated task iteration', () => {

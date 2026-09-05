@@ -138,26 +138,23 @@ export class AgentTypeService {
     slug: string,
     data: { name: string; defaultPrompt?: string; isActive?: boolean },
   ): Promise<IAgentTypeResponse> {
-    const existing = await this.agentTypeModel.findOne({ slug }).lean().exec();
-    if (existing) {
-      const promptCount = await this.agentTypePromptModel
-        .countDocuments({ agentType: existing._id })
-        .exec();
-      return this.toResponse(existing, promptCount);
-    }
-    const created = await this.agentTypeModel.create({
-      name: data.name,
-      slug,
-      defaultPrompt: data.defaultPrompt ?? '',
-      skills: [],
-      isActive: data.isActive ?? true,
-    });
-    this.logger.log('Agent type seeded', {
-      agentTypeId: created._id.toString(),
-      slug,
-      name: data.name,
-    });
-    return this.toResponse(created, 0);
+    const agentType = await this.agentTypeModel.findOneAndUpdate(
+      { slug },
+      {
+        $setOnInsert: {
+          name: data.name,
+          slug,
+          defaultPrompt: data.defaultPrompt ?? '',
+          skills: [],
+          isActive: data.isActive ?? true,
+        },
+      },
+      { upsert: true, new: true, setDefaultsOnInsert: true },
+    ).lean().exec();
+    const promptCount = await this.agentTypePromptModel
+      .countDocuments({ agentType: agentType._id })
+      .exec();
+    return this.toResponse(agentType, promptCount);
   }
 
   async findAllActive(): Promise<IAgentTypeResponse[]> {

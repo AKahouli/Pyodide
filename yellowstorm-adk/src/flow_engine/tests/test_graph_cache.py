@@ -134,3 +134,16 @@ def test_snapshot_hash_ignores_runtime_session_id():
     }
 
     assert snapshot_hash(first_snapshot) == snapshot_hash(second_snapshot)
+
+
+def test_reconfigure_clears_entries_when_policy_changes():
+    cache = CompiledGraphCache(max_entries=2, ttl_seconds=10)
+
+    async def run_test():
+        await cache.get_or_compile({"nodes": [{"id": "node-1"}]}, lambda snapshot: snapshot)
+        cache.reconfigure(max_entries=4, ttl_seconds=20)
+
+    asyncio.run(run_test())
+    assert cache.size == 0
+    assert cache.max_entries == 4
+    assert cache.ttl_seconds == 20

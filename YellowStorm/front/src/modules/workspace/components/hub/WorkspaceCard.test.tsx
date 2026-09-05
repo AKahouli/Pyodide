@@ -1,7 +1,12 @@
 import { render, screen } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
 import { WorkspaceCard } from './WorkspaceCard';
 import type { WorkspaceHubItem } from '../../hooks/useWorkspaceHubFilters';
+
+vi.mock('@/modules/localization', () => ({
+  useModuleTranslation: () => ({ t: (key: string) => key }),
+}));
 
 function makeItem(overrides: Partial<WorkspaceHubItem> = {}): WorkspaceHubItem {
   return {
@@ -33,12 +38,11 @@ describe('WorkspaceCard', () => {
       />,
     );
 
-    expect(screen.queryByTitle('Paramètres')).not.toBeInTheDocument();
-    expect(screen.queryByTitle('Partager')).not.toBeInTheDocument();
-    expect(screen.queryByTitle('Supprimer le workspace')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'hub.card.actions' })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'hub.card.open' })).toBeInTheDocument();
   });
 
-  it('shows settings/share/delete actions for an owned, non-read-only item', () => {
+  it('keeps owned workspace actions in one accessible menu', async () => {
     const workspace = makeItem({ isShared: false, isReadOnly: false, isPersonal: false });
 
     render(
@@ -51,8 +55,17 @@ describe('WorkspaceCard', () => {
       />,
     );
 
-    expect(screen.getByTitle('Paramètres')).toBeInTheDocument();
-    expect(screen.getByTitle('Partager')).toBeInTheDocument();
-    expect(screen.getByTitle('Supprimer le workspace')).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: 'hub.card.actions' }));
+    expect(await screen.findByRole('menuitem', { name: 'hub.card.settings' })).toBeInTheDocument();
+    expect(screen.getByRole('menuitem', { name: 'hub.card.share' })).toBeInTheDocument();
+    expect(screen.getByRole('menuitem', { name: 'hub.card.delete' })).toBeInTheDocument();
+  });
+
+  it('opens the workspace from a named primary control', async () => {
+    const onOpen = vi.fn();
+    render(<WorkspaceCard workspace={makeItem()} onOpen={onOpen} />);
+
+    await userEvent.click(screen.getByRole('button', { name: 'hub.card.open' }));
+    expect(onOpen).toHaveBeenCalledWith('ws-1');
   });
 });

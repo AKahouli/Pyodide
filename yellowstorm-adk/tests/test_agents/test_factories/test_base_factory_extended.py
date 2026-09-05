@@ -28,19 +28,19 @@ def agent_factory():
 
 
 class TestBaseFactoryExtended:
-    def test_resolve_connector_workspace_id_prefers_document(self):
+    def test_resolve_connector_workspace_id_prefers_selected_conversation_workspace(self):
         workspace_id = AgentFactory._resolve_connector_workspace_id(
             "conversation-brain",
             [{"workspace_id": "doc-workspace"}],
         )
-        assert workspace_id == "doc-workspace"
-
-    def test_resolve_connector_workspace_id_falls_back(self):
-        workspace_id = AgentFactory._resolve_connector_workspace_id(
-            "conversation-brain",
-            [{"filename": "doc.pdf"}],
-        )
         assert workspace_id == "conversation-brain"
+
+    def test_resolve_connector_workspace_id_falls_back_to_document(self):
+        workspace_id = AgentFactory._resolve_connector_workspace_id(
+            None,
+            [{"workspace_id": "doc-workspace"}],
+        )
+        assert workspace_id == "doc-workspace"
 
     def test_create_html_diagram_tool(self, agent_factory):
         with patch.object(agent_factory, "create_html_diagram_agent", return_value=MagicMock()):
@@ -56,6 +56,18 @@ class TestBaseFactoryExtended:
         assert isinstance(agent, Agent)
         assert agent.name == "DiagramAgent"
         assert agent.model == "no_tool_llm"
+
+    def test_web_preview_disables_model_retries(self, agent_factory):
+        agent_factory.set_web_preview_tool_config({
+            "instructions": "Return complete HTML.",
+            "description": "Generate a web preview.",
+        })
+
+        agent_factory.create_web_preview_tool("gpt-4o")
+
+        agent_factory.llm_factory.create_no_tool_calls_llm.assert_called_once_with(
+            "gpt-4o", temperature=0.0, num_retries=0
+        )
 
     def test_html_diagram_agent_preserves_omitted_temperature(self, agent_factory):
         agent_factory.create_agent(

@@ -39,6 +39,43 @@ function edgeProps(
 }
 
 describe('playbook edge visibility', () => {
+  it('restarts remounted edge markers at the global animation phase', () => {
+    const beginElementAt = vi.fn();
+    const originalBeginElementAt = Object.getOwnPropertyDescriptor(SVGElement.prototype, 'beginElementAt');
+    Object.defineProperty(SVGElement.prototype, 'beginElementAt', {
+      configurable: true,
+      value: beginElementAt,
+    });
+    const now = vi.spyOn(Date, 'now').mockReturnValueOnce(2500).mockReturnValueOnce(4000);
+
+    try {
+      const firstRender = render(
+        <svg>
+          <AiEdge.Animated {...edgeProps('animated-first')} />
+        </svg>,
+      );
+
+      expect(firstRender.container.querySelector('animateMotion')).toHaveAttribute('begin', 'indefinite');
+      expect(beginElementAt).toHaveBeenLastCalledWith(-0.5);
+
+      firstRender.unmount();
+      render(
+        <svg>
+          <AiEdge.Animated {...edgeProps('animated-second')} />
+        </svg>,
+      );
+
+      expect(beginElementAt).toHaveBeenLastCalledWith(-0);
+    } finally {
+      now.mockRestore();
+      if (originalBeginElementAt) {
+        Object.defineProperty(SVGElement.prototype, 'beginElementAt', originalBeginElementAt);
+      } else {
+        delete (SVGElement.prototype as SVGElement & { beginElementAt?: unknown }).beginElementAt;
+      }
+    }
+  });
+
   it('uses a bold stroke while preserving sequential execution colors', () => {
     render(
       <svg>

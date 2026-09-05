@@ -20,6 +20,8 @@ const conversationVisibleComponentTypes = new Set([
   'sandbox',
   'webPreview',
   'artifact',
+  'agentActivity',
+  'toolActivity',
   'citation',
   'choice',
 ]);
@@ -32,7 +34,7 @@ function getComponentType(component: MessageComponent): string {
 
 /**
  * Projects structured agent output into the user-facing transcript. Internal
- * reasoning, tool calls, and unrecognised payloads are never chat content.
+ * Activity remains structured UI content; unrecognised payloads are never chat content.
  */
 export function mapConversationComponentsToContentParts(components: MessageComponent[]): MessageContentPart[] {
   return mapComponentsToContentParts(components.filter((component) => conversationVisibleComponentTypes.has(getComponentType(component))));
@@ -40,7 +42,7 @@ export function mapConversationComponentsToContentParts(components: MessageCompo
 
 export function getConversationStreamActivity(components: MessageComponent[]): ConversationStreamActivity {
   const componentTypes = components.map(getComponentType);
-  if (componentTypes.includes('toolInfo')) return 'usingTools';
+  if (componentTypes.includes('toolActivity')) return 'usingTools';
   if (componentTypes.some((type) => type === 'text' || type === 'code')) return 'responding';
   return 'thinking';
 }
@@ -100,14 +102,27 @@ export function formatTimingMs(ms: number | undefined): string {
 }
 
 /**
+ * Builds the readable display text for a user message. Choice answers prefer
+ * the canonical per-interaction displayText (readable) over the raw canonical
+ * JSON that is persisted as message.content.
+ */
+export function getUserMessageDisplayText(msg: Message): string {
+  if (msg.interactions?.length) {
+    const displayTexts = msg.interactions.map((interaction) => interaction.displayText).filter(Boolean);
+    return displayTexts.length ? displayTexts.join(', ') : msg.content || '';
+  }
+  return msg.interaction?.type === 'choice' && msg.interaction.displayText
+    ? msg.interaction.displayText
+    : msg.content || '';
+}
+
+/**
  * Maps a backend Message to the frontend ChatMessage format
  */
 export function messageToChat(msg: Message): ChatMessage {
   let content: string | MessageContentPart[];
   if (msg.conversationType === 'user') {
-    content = msg.interaction?.type === 'choice' && msg.interaction.displayText
-      ? msg.interaction.displayText
-      : msg.content || '';
+    content = getUserMessageDisplayText(msg);
   } else {
     content = mapConversationComponentsToContentParts(msg.components || []);
   }
@@ -136,6 +151,7 @@ function buildCitationData(data: Record<string, unknown>): {
   parentId: string;
   sourceType: 'text' | 'image';
   source: string;
+  fileName?: string;
   externalId: string;
   page: string;
   pageContent: string;
@@ -157,6 +173,7 @@ function buildCitationData(data: Record<string, unknown>): {
     parentId: (data.parentId as string) || (data.parent_id as string) || '',
     sourceType,
     source: (sourceData.source as string) || (sourceData.fileName as string) || (sourceData.file_name as string) || '',
+    fileName: (sourceData.fileName as string) || (sourceData.file_name as string) || undefined,
     externalId: (sourceData.externalId as string) || (sourceData.external_id as string) || '',
     page: (sourceData.page as string) || '',
     pageContent: (sourceData.highlightText as string) || (sourceData.highlight_text as string) || (sourceData.pageContent as string) || (sourceData.page_content as string) || (sourceData.content as string) || '',
@@ -171,14 +188,13 @@ function buildCitationData(data: Record<string, unknown>): {
   };
 }
 
-function findTextPartByReference(parts: MessageContentPart[], reference?: string): number | undefined {
+function findTextPartsByReference(parts: MessageContentPart[], reference?: string): number[] {
   const ref = reference?.trim().replace(/^\[|\]$/g, '').trim();
   if (!ref) {
-    return undefined;
+    return [];
   }
 
-  const index = parts.findIndex((part) => part.type === 'text' && part.content.includes(`[${ref}]`));
-  return index >= 0 ? index : undefined;
+  return parts.flatMap((part, index) => part.type === 'text' && part.content.includes(`[${ref}]`) ? [index] : []);
 }
 
 function attachCitation(parts: MessageContentPart[], index: number, citation: ReturnType<typeof buildCitationData>): boolean {
@@ -210,11 +226,16 @@ function mapSingleComponent(comp: MessageComponent): MessageContentPart {
         language: (data.language as string) || '',
         filename: (data.filename as string) || undefined,
       };
-    case 'reasoning':
+    case 'agentActivity':
       return {
-        type: 'reasoning',
-        content: (data.content as string) || '',
-        duration: data.duration != null ? (data.duration as number) : undefined,
+        type: 'agentActivity',
+        summary: (data.summary as string) || '',
+        status: (data.status as 'running' | 'completed') || 'running',
+        startedAt: (data.startedAt as string) || undefined,
+        completedAt: (data.completedAt as string) || undefined,
+        durationMs: data.durationMs != null ? Number(data.durationMs) : undefined,
+        actorId: (data.actorId as string) || undefined,
+        actorName: (data.actorName as string) || undefined,
       };
     case 'plan':
       return {
@@ -275,21 +296,27 @@ function mapSingleComponent(comp: MessageComponent): MessageContentPart {
     case 'artifact':
       return {
         type: 'artifact',
-        filePath: (data.filePath as string) || (data.file_path as string) || '',
+        filePath: '',
         filename: (data.filename as string) || '',
       };
-    case 'toolInfo':
+    case 'toolActivity':
       return {
-        type: 'toolInfo',
-        title: (data.title as string) || '',
-        status: (data.status as 'running' | 'completed' | 'failed') || 'running',
-        params: (data.params as string) || '',
+        type: 'toolActivity',
+        toolName: (data.toolName as string) || '',
+        summary: (data.summary as string) || '',
+        renderKind: (data.renderKind as import('./types').ToolRenderKind) || 'generic',
+        status: (data.status as 'running' | 'completed' | 'failed' | 'stopped') || 'running',
+        displayKey: (data.displayKey as string) || undefined,
+        fallbackDisplayName: (data.fallbackDisplayName as string) || undefined,
+        paramsJson: (data.paramsJson as string) || undefined,
+        resultJson: (data.resultJson as string) || undefined,
         startedAt: (data.startedAt as string) || undefined,
-      };
-    case 'chainOfThought':
-      return {
-        type: 'chainOfThought',
-        steps: (data.steps as string[]) || [],
+        completedAt: (data.completedAt as string) || undefined,
+        durationMs: data.durationMs != null ? Number(data.durationMs) : undefined,
+        actorId: (data.actorId as string) || undefined,
+        actorName: (data.actorName as string) || undefined,
+        primaryInput: (data.primaryInput as string) || undefined,
+        primaryInputLanguage: (data.primaryInputLanguage as string) || undefined,
       };
     default:
       return { type: 'text', content: (data.content as string) || '' };
@@ -337,14 +364,22 @@ export function mapComponentsToContentParts(components: MessageComponent[]): Mes
     const data = comp.data || {};
     const parentId = data.parentId as string;
     const citation = buildCitationData(data);
+    const attachedIndices = new Set<number>();
 
     if (parentId && idToIndex.has(parentId)) {
-      if (attachCitation(parts, idToIndex.get(parentId)!, citation)) {
-        continue;
+      const parentIndex = idToIndex.get(parentId)!;
+      if (attachCitation(parts, parentIndex, citation)) {
+        attachedIndices.add(parentIndex);
       }
     }
-    const referenceMatchIndex = findTextPartByReference(parts, citation.reference);
-    if (referenceMatchIndex !== undefined && attachCitation(parts, referenceMatchIndex, citation)) {
+
+    for (const referenceMatchIndex of findTextPartsByReference(parts, citation.reference)) {
+      if (!attachedIndices.has(referenceMatchIndex) && attachCitation(parts, referenceMatchIndex, citation)) {
+        attachedIndices.add(referenceMatchIndex);
+      }
+    }
+
+    if (attachedIndices.size > 0) {
       continue;
     }
     // Fallback: standalone citation part
@@ -557,8 +592,6 @@ export function componentsToMarkdown(components: MessageComponent[]): string {
           const content = (data.content as string) || '';
           return `\`\`\`${lang}\n${content}\n\`\`\``;
         }
-        case 'reasoning':
-          return `> ${(data.content as string) || ''}`;
         case 'plan': {
           const title = (data.title as string) || '';
           const steps = (data.steps as string[]) || [];

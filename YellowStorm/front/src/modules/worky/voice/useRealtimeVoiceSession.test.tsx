@@ -4,7 +4,11 @@ import type { GeminiLiveHandlers } from './geminiLiveClient';
 
 // --- Module mocks (transport, api, side-effects) -------------------------
 const createVoiceSession = vi.fn(async (..._a: unknown[]) => ({ wsUrl: 'wss://x', setup: {}, expiresAt: 'z' }));
-vi.mock('../api', () => ({ createVoiceSession: (...a: unknown[]) => createVoiceSession(...a) }));
+const voiceTranscript = vi.fn(async (..._a: unknown[]) => undefined);
+vi.mock('../api', () => ({
+  createVoiceSession: (...a: unknown[]) => createVoiceSession(...a),
+  voiceTranscript: (...a: unknown[]) => voiceTranscript(...a),
+}));
 
 const openCalls: GeminiLiveHandlers[] = [];
 const fakeConn = () => ({
@@ -21,7 +25,8 @@ vi.mock('./geminiLiveClient', () => ({
 }));
 
 vi.mock('./milestoneInjector', () => ({ attachMilestoneInjector: () => () => undefined }));
-vi.mock('./toolCallRelay', () => ({ handleToolCall: vi.fn(async () => ({ id: 'c', name: 'n', response: {} })) }));
+const handleToolCall = vi.fn(async (..._a: unknown[]) => ({ id: 'c', name: 'n', response: {} as Record<string, unknown> }));
+vi.mock('./toolCallRelay', () => ({ handleToolCall: (...a: unknown[]) => handleToolCall(...a) }));
 vi.mock('./voiceSettings', () => ({ useVoiceSettings: () => ({}) }));
 
 import { useRealtimeVoiceSession } from './useRealtimeVoiceSession';
@@ -61,6 +66,9 @@ describe('useRealtimeVoiceSession', () => {
   beforeEach(() => {
     openCalls.length = 0;
     createVoiceSession.mockClear();
+    voiceTranscript.mockClear();
+    handleToolCall.mockClear();
+    handleToolCall.mockResolvedValue({ id: 'c', name: 'n', response: {} });
     stubAudio();
   });
   afterEach(() => vi.unstubAllGlobals());
@@ -106,5 +114,64 @@ describe('useRealtimeVoiceSession', () => {
 
     expect(openCalls).toHaveLength(2);
     expect(createVoiceSession).toHaveBeenCalledTimes(2);
+  });
+
+  it('auto-dispatches the spoken request on hang-up when dispatch_task never fired', async () => {
+    const { result } = renderHook(() => useRealtimeVoiceSession('s1'));
+    await act(async () => { result.current.start(); });
+    await flush();
+
+    // User speaks (transcript arrives as fragments), then hangs up without the
+    // concierge dispatching — the accumulated request must be dispatched.
+    await act(async () => {
+      openCalls[0].onInputTranscript?.('book a ');
+      openCalls[0].onInputTranscript?.('meeting');
+    });
+    await act(async () => { result.current.stop(); await flush(); });
+
+    const dispatch = handleToolCall.mock.calls.find((c: any[]) => c[1]?.name === 'dispatch_task');
+    expect(dispatch).toBeTruthy();
+    expect((dispatch as any[])[1].args.message).toBe('book a meeting');
+    expect(voiceTranscript).not.toHaveBeenCalled(); // dispatch succeeded, no fallback
+  });
+
+  it('falls back to saving the transcript when the hang-up dispatch fails', async () => {
+    handleToolCall.mockResolvedValue({ id: 'c', name: 'n', response: { error: 'boom' } });
+    const { result } = renderHook(() => useRealtimeVoiceSession('s1'));
+    await act(async () => { result.current.start(); });
+    await flush();
+
+    await act(async () => { openCalls[0].onInputTranscript?.('book a meeting'); });
+    await act(async () => { result.current.stop(); await flush(); });
+
+    expect(voiceTranscript).toHaveBeenCalledWith('s1', 'owner', 'book a meeting');
+  });
+
+  it('does not auto-dispatch a one-word ack on hang-up', async () => {
+    const { result } = renderHook(() => useRealtimeVoiceSession('s1'));
+    await act(async () => { result.current.start(); });
+    await flush();
+
+    await act(async () => { openCalls[0].onInputTranscript?.('ok'); });
+    await act(async () => { result.current.stop(); await flush(); });
+
+    expect(handleToolCall.mock.calls.some((c: any[]) => c[1]?.name === 'dispatch_task')).toBe(false);
+    expect(voiceTranscript).not.toHaveBeenCalled();
+  });
+
+  it('does not auto-dispatch on hang-up when dispatch_task already ran', async () => {
+    const { result } = renderHook(() => useRealtimeVoiceSession('s1'));
+    await act(async () => { result.current.start(); });
+    await flush();
+
+    await act(async () => { openCalls[0].onInputTranscript?.('book a meeting'); });
+    await act(async () => {
+      await openCalls[0].onToolCall?.([{ id: 'c1', name: 'dispatch_task', args: {} }]);
+    });
+    handleToolCall.mockClear();
+    await act(async () => { result.current.stop(); await flush(); });
+
+    expect(handleToolCall).not.toHaveBeenCalled();
+    expect(voiceTranscript).not.toHaveBeenCalled();
   });
 });

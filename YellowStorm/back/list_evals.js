@@ -1,11 +1,14 @@
 const mongoose = require('mongoose');
 const Schema = mongoose.Schema;
+require('dotenv').config();
 
 async function listEvals() {
   try {
+    const uri = process.env.MONGODB_URI;
+    if (!uri) throw new Error('MONGODB_URI is required');
     const evalSchema = new Schema({ scenarioName: String, status: String, results: Array, createdAt: Date }, { collection: 'evaluations', strict: false });
     console.log('Connecting to remote DB...');
-    await mongoose.connect('mongodb://root:47U9QDO7R0jq@173.208.208.93:3006/yellowstorm?authSource=admin');
+    await mongoose.connect(uri);
     const Eval = mongoose.model('Evaluation', evalSchema);
     const evals = await Eval.find().sort({ createdAt: -1 }).limit(10);
     console.log('--- RECENT EVALS ---');

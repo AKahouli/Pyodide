@@ -1,6 +1,6 @@
 import copy
 import uuid
-from typing import Optional, Any
+from typing import Any, Optional
 
 from google.adk.agents import InvocationContext
 from google.adk.events import Event
@@ -14,57 +14,102 @@ def make_empty_function_response_event(
         session,
         call_event: Event,
         *,
-        response_dict: Optional[dict[str, any]] = None,
+        response_dict: Optional[dict[str, Any]] = None,
         will_continue: Optional[bool] = False,
-        scheduling: Optional[Any] = None
+        scheduling: Optional[Any] = None,
+        call_ids: Optional[set[str]] = None,
 ) -> Event:
     """
     Given a call_event that contains a FunctionCall in one of its parts,
     create a new Event where that part is replaced by a FunctionResponse
     (empty or minimal response). Preserve metadata from the call where needed.
     """
-    # Deep copy so we don’t mutate the original
+    # Deep copy so we don't mutate the original event or its metadata.
     ev = copy.deepcopy(call_event)
 
     # Assign a new event ID
     ev.id = str(uuid.uuid4())
 
-    # Assign a fresh timestamp right after the session's last update
-    # Make sure you reference the session (self.session) and it has a last_update_time
-    base = getattr(session, "last_update_time", None)
-
+    # Keep recovery responses ordered after the latest persisted event.
+    base = getattr(session, "last_update_time", None) or ev.timestamp
     ev.timestamp = base + 1e-6
 
     # Build new parts list
     new_parts = []
     for part in ev.content.parts:
-        if getattr(part, "function_call", None) is not None:
-            func_call = part.function_call
-            # Build the response
-            func_resp = FunctionResponse(
-                id=func_call.id,
-                name=func_call.name,
-                response=response_dict if response_dict is not None else { 'result':'the user has stopped the request '},
-                will_continue=will_continue,
-                scheduling=scheduling,
-                parts=None,
-            )
-            # Create a Part with the function_response
-            new_part = Part(
-                function_response=func_resp,
-                text=getattr(part, "text", None),
-                # You might also carry over `author`, etc. depending on your class
-            )
-        else:
-            # This part wasn’t a function_call, keep as is
-            new_part = part
-
-        new_parts.append(new_part)
+        func_call = getattr(part, "function_call", None)
+        if func_call is None or (call_ids is not None and func_call.id not in call_ids):
+            continue
+        func_resp = FunctionResponse(
+            id=func_call.id,
+            name=func_call.name,
+            response=response_dict if response_dict is not None else {
+                "error": "The previous tool call was interrupted and is no longer available."
+            },
+            will_continue=will_continue,
+            scheduling=scheduling,
+            parts=None,
+        )
+        new_parts.append(Part(function_response=func_resp))
 
     # Replace content.parts
     ev.content = Content(parts=new_parts, role='user')
 
     return ev
+
+
+def _function_response_ids(events) -> set[str]:
+    return {
+        part.function_response.id
+        for event in events
+        if event.content and hasattr(event.content, "parts")
+        for part in event.content.parts
+        if getattr(part, "function_response", None)
+    }
+
+
+async def _append_recovery_response(
+        invocation_context: InvocationContext,
+        session,
+        call_event: Event,
+        missing_ids: set[str],
+):
+    session_service = invocation_context.session_service
+    outstanding_ids = missing_ids - _function_response_ids(session.events)
+    while outstanding_ids:
+        response_event = make_empty_function_response_event(
+            session,
+            call_event,
+            call_ids=outstanding_ids,
+        )
+        try:
+            await session_service.append_event(session, response_event)
+            return session
+        except ValueError:
+            get_session = getattr(session_service, "get_session", None)
+            if not callable(get_session):
+                raise
+
+            refreshed = await get_session(
+                app_name=session.app_name,
+                user_id=session.user_id,
+                session_id=session.id,
+            )
+            if refreshed is None:
+                raise
+
+            previous_revision = getattr(session, "_storage_update_marker", None)
+            current_revision = getattr(refreshed, "_storage_update_marker", None)
+            if previous_revision == current_revision:
+                raise
+
+            session = refreshed
+            invocation_context.session = refreshed
+            outstanding_ids -= _function_response_ids(refreshed.events)
+
+    return session
+
+
 async def clean_session_case_bad_request(invocation_context: InvocationContext, user_message) -> Optional[dict]:
     session = getattr(invocation_context, "session", None)
     session_service = getattr(invocation_context, "session_service", None)
@@ -74,8 +119,8 @@ async def clean_session_case_bad_request(invocation_context: InvocationContext, 
 
     events = session.events
 
-    # Map all function_call IDs to detect missing responses
-    calls = {}
+    # Keep event order so parallel dangling calls are reconciled deterministically.
+    calls = []
     responses = set()
 
     for event in events:
@@ -83,33 +128,27 @@ async def clean_session_case_bad_request(invocation_context: InvocationContext, 
             continue
         for part in event.content.parts:
             if getattr(part, "function_call", None):
-                calls[part.function_call.id] = event
+                calls.append((part.function_call.id, event))
             elif getattr(part, "function_response", None):
                 responses.add(part.function_response.id)
 
-    # Find calls with no response
-    missing_ids = [fid for fid in calls if fid not in responses]
-    if not missing_ids:
+    missing_by_event = {}
+    for call_id, event in calls:
+        if call_id not in responses:
+            missing_by_event.setdefault(id(event), (event, set()))[1].add(call_id)
+
+    if not missing_by_event:
         return None
 
-    # Only handle the most recent missing one
-    missing_id = missing_ids[-1]
-    call_event = calls[missing_id]
-
-    # Check if we already created an empty response for it
-    if any(
-        getattr(p, "function_response", None)
-        and getattr(p.function_response, "id", None) == missing_id
-        for e in events
-        if e.content and hasattr(e.content, "parts")
-        for p in e.content.parts
-    ):
-        return None  # already has one
-
-    empty_resp = make_empty_function_response_event(session, call_event)
-
     if session_service:
-        await session_service.append_event(session, empty_resp)
+        active_session = session
+        for call_event, missing_ids in missing_by_event.values():
+            active_session = await _append_recovery_response(
+                invocation_context,
+                active_session,
+                call_event,
+                missing_ids,
+            )
 
     return None
 

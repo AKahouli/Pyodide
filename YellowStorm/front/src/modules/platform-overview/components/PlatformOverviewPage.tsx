@@ -38,6 +38,7 @@ interface GoalPath {
   actionKey: OverviewKey;
   to: string;
   icon: LucideIcon;
+  accessRule?: AccessRule;
 }
 
 interface SupportingLink {
@@ -103,12 +104,13 @@ const goalPaths: GoalPath[] = [
     icon: Workflow,
   },
   {
-    titleKey: 'goal.coordinate.title',
-    descriptionKey: 'goal.coordinate.description',
-    chainKey: 'goal.coordinate.chain',
-    actionKey: 'goal.coordinate.action',
-    to: '/worky',
-    icon: Briefcase,
+    titleKey: 'goal.govern.title',
+    descriptionKey: 'goal.govern.description',
+    chainKey: 'goal.govern.chain',
+    actionKey: 'goal.govern.action',
+    to: '/governance',
+    icon: ShieldCheck,
+    accessRule: 'governance',
   },
 ];
 
@@ -133,22 +135,15 @@ const journeySteps: JourneyStep[] = [
     },
   },
   {
-    titleKey: 'journey.agents.title',
-    descriptionKey: 'journey.agents.description',
-    actionKey: 'journey.agents.action',
-    to: '/agents',
-    icon: Bot,
-    supportingLink: {
-      labelKey: 'journey.agents.authorizations',
-      to: '/apps',
-    },
-  },
-  {
-    titleKey: 'journey.playbooks.title',
-    descriptionKey: 'journey.playbooks.description',
-    actionKey: 'journey.playbooks.action',
+    titleKey: 'journey.automate.title',
+    descriptionKey: 'journey.automate.description',
+    actionKey: 'journey.automate.action',
     to: '/playbooks',
     icon: Workflow,
+    supportingLink: {
+      labelKey: 'journey.automate.agentNetwork',
+      to: '/agents',
+    },
   },
   {
     titleKey: 'journey.governance.title',
@@ -190,9 +185,9 @@ const atlasDomains: AtlasDomain[] = [
     ],
   },
   {
-    titleKey: 'atlas.intelligence.title',
-    descriptionKey: 'atlas.intelligence.description',
-    relationshipKey: 'atlas.intelligence.relationship',
+    titleKey: 'atlas.automate.title',
+    descriptionKey: 'atlas.automate.description',
+    relationshipKey: 'atlas.automate.relationship',
     capabilities: [
       {
         titleKey: 'atlas.agents.title',
@@ -212,13 +207,6 @@ const atlasDomains: AtlasDomain[] = [
         to: '/groups',
         icon: Building2,
       },
-    ],
-  },
-  {
-    titleKey: 'atlas.orchestration.title',
-    descriptionKey: 'atlas.orchestration.description',
-    relationshipKey: 'atlas.orchestration.relationship',
-    capabilities: [
       {
         titleKey: 'atlas.worky.title',
         descriptionKey: 'atlas.worky.description',
@@ -230,6 +218,18 @@ const atlasDomains: AtlasDomain[] = [
         descriptionKey: 'atlas.playbooks.description',
         to: '/playbooks',
         icon: Workflow,
+      },
+      {
+        titleKey: 'atlas.connectedApps.title',
+        descriptionKey: 'atlas.connectedApps.description',
+        to: '/apps',
+        icon: KeyRound,
+      },
+      {
+        titleKey: 'atlas.marketplace.title',
+        descriptionKey: 'atlas.marketplace.description',
+        to: '/app-market',
+        icon: Store,
       },
     ],
   },
@@ -244,18 +244,6 @@ const atlasDomains: AtlasDomain[] = [
         to: '/governance',
         icon: ShieldCheck,
         accessRule: 'governance',
-      },
-      {
-        titleKey: 'atlas.connectedApps.title',
-        descriptionKey: 'atlas.connectedApps.description',
-        to: '/apps',
-        icon: KeyRound,
-      },
-      {
-        titleKey: 'atlas.marketplace.title',
-        descriptionKey: 'atlas.marketplace.description',
-        to: '/app-market',
-        icon: Store,
       },
     ],
   },
@@ -334,12 +322,9 @@ export function PlatformOverviewPage() {
                   <div className='mt-5 divide-y overflow-hidden rounded-2xl border bg-background/70'>
                     {goalPaths.map((goal) => {
                       const GoalIcon = goal.icon;
-                      return (
-                        <Link
-                          key={goal.titleKey}
-                          to={goal.to}
-                          className='group grid gap-3 p-4 transition-colors hover:bg-accent/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring sm:grid-cols-[auto_1fr_auto] sm:items-center'
-                        >
+                      const goalAccessible = canAccess(goal.accessRule);
+                      const content = (
+                        <>
                           <div className='flex size-9 items-center justify-center rounded-lg border bg-card'>
                             <GoalIcon className='size-4 text-primary' aria-hidden='true' />
                           </div>
@@ -349,9 +334,30 @@ export function PlatformOverviewPage() {
                             <p className='mt-2 text-xs font-medium text-foreground'>{t(goal.chainKey)}</p>
                           </div>
                           <span className='flex items-center gap-1 text-sm font-semibold text-foreground'>
-                            {t(goal.actionKey)}
-                            <ArrowRight className='size-4 transition-transform group-hover:translate-x-0.5' aria-hidden='true' />
+                            {goalAccessible ? t(goal.actionKey) : t('access.restricted')}
+                            {goalAccessible && <ArrowRight className='size-4 transition-transform group-hover:translate-x-0.5' aria-hidden='true' />}
                           </span>
+                        </>
+                      );
+
+                      if (!goalAccessible) {
+                        return (
+                          <div
+                            key={goal.titleKey}
+                            className='grid gap-3 p-4 opacity-70 sm:grid-cols-[auto_1fr_auto] sm:items-center'
+                          >
+                            {content}
+                          </div>
+                        );
+                      }
+
+                      return (
+                        <Link
+                          key={goal.titleKey}
+                          to={goal.to}
+                          className='group grid gap-3 p-4 transition-colors hover:bg-accent/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring sm:grid-cols-[auto_1fr_auto] sm:items-center'
+                        >
+                          {content}
                         </Link>
                       );
                     })}
@@ -487,8 +493,7 @@ export function PlatformOverviewPage() {
           <div className='mx-auto w-full max-w-7xl px-4 pb-44 pt-6 sm:px-6 sm:pb-36 lg:px-8'>
             <section aria-labelledby='platform-atlas-title'>
               <div className='max-w-3xl'>
-                <p className='text-sm font-semibold uppercase tracking-[0.16em] text-primary'>{t('atlas.eyebrow')}</p>
-                <h1 id='platform-atlas-title' className='mt-3 text-balance text-3xl font-semibold tracking-[-0.035em] sm:text-4xl'>
+                <h1 id='platform-atlas-title' className='text-balance text-3xl font-semibold tracking-[-0.035em] sm:text-4xl'>
                   {t('atlas.title')}
                 </h1>
                 <p className='mt-4 text-pretty text-base leading-7 text-muted-foreground'>{t('atlas.description')}</p>
@@ -506,8 +511,7 @@ export function PlatformOverviewPage() {
                       <MessageCircle className='size-5' aria-hidden='true' />
                     </div>
                     <div className='min-w-0 flex-1'>
-                      <p className='text-xs font-semibold uppercase tracking-[0.14em] text-primary'>{t('atlas.conversation.eyebrow')}</p>
-                      <h2 className='mt-1 text-lg font-semibold'>{t('atlas.conversation.title')}</h2>
+                      <h2 className='text-lg font-semibold'>{t('atlas.conversation.title')}</h2>
                       <p className='mt-1 text-sm leading-5 text-muted-foreground'>{t('atlas.conversation.description')}</p>
                     </div>
                     <ArrowRight className='size-5 shrink-0 transition-transform group-hover:translate-x-0.5' aria-hidden='true' />
@@ -521,7 +525,7 @@ export function PlatformOverviewPage() {
                   </span>
                 </div>
 
-                <div className='relative grid gap-4 lg:grid-cols-2'>
+                <div className='relative grid items-start gap-4 lg:grid-cols-3'>
                   {atlasDomains.map((domain, domainIndex) => (
                     <section
                       key={domain.titleKey}
@@ -530,9 +534,6 @@ export function PlatformOverviewPage() {
                     >
                       <div className='border-b bg-muted/35 p-5 sm:p-6'>
                         <div className='flex items-center gap-3'>
-                          <span className='text-xs font-semibold tabular-nums text-primary' aria-hidden='true'>
-                            {String(domainIndex + 1).padStart(2, '0')}
-                          </span>
                           <span className='h-px flex-1 bg-border' aria-hidden='true' />
                           <span className='text-xs font-semibold text-muted-foreground'>{t(domain.relationshipKey)}</span>
                         </div>

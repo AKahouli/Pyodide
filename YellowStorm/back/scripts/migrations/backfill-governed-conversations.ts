@@ -13,12 +13,10 @@ async function main(): Promise<void> {
   const db = mongoose.connection.db!;
   const scopes = await db.collection('governance_scopes').countDocuments({ audience: { $exists: false } });
   const revisions = await db.collection('governance_deployment_revisions').countDocuments({ allowedAgentIds: { $exists: false } });
-  const conversations = await db.collection('conversations').countDocuments({ runtimeMode: { $exists: false } });
-  console.log(JSON.stringify({ dryRun, scopes, revisions, conversations }));
+  console.log(JSON.stringify({ dryRun, scopes, revisions }));
   if (!dryRun) {
     await db.collection('governance_scopes').updateMany({ audience: { $exists: false } }, { $set: { audience: { mode: 'restricted', userIds: [], groupIds: [] } } });
     await db.collection('governance_deployment_revisions').updateMany({ allowedAgentIds: { $exists: false } }, [{ $set: { allowedAgentIds: ['$agentId'] } }]);
-    await db.collection('conversations').updateMany({ runtimeMode: { $exists: false } }, { $set: { runtimeMode: 'standard' } });
   }
   await mongoose.disconnect();
 }

@@ -23,7 +23,6 @@ export interface ReplayFlexDriftAssessment {
   argumentShapeMatch: number | null;
   reasoningMatch: number | null;
   outputFormatMatch: number | null;
-  contextDrift: number | null;
   dataDrift: number | null;
   driftFindings: ReplayDriftFinding[];
   blockedBy: string[];
@@ -57,8 +56,6 @@ export function averageReplayScores(scores: Array<number | null | undefined>): n
 }
 
 export function deriveReplayFlexDriftAssessment(params: {
-  confidenceScore: number;
-  invalidationReasons: string[];
   driftPolicy: ReplayDriftPolicy | null;
   baselineIntentKey: string | null;
   observedIntentKey: string | null;
@@ -73,7 +70,6 @@ export function deriveReplayFlexDriftAssessment(params: {
   structuralDriftReasons: string[];
   semanticMatch: FlowTaskSemanticMatch | null;
 }): ReplayFlexDriftAssessment {
-  const contextDrift = normalizeReplayScore(params.confidenceScore);
   const dataDrift = normalizeReplayScore(params.semanticMatch?.matchScore ?? null);
   const alignedObservedTools = alignObservedToolCalls(params.baselineToolCalls, params.observedToolTrace);
   const toolSequenceMatch = scoreToolSequenceMatch(
@@ -93,16 +89,6 @@ export function deriveReplayFlexDriftAssessment(params: {
   );
   const findings: ReplayDriftFinding[] = [];
 
-  if (contextDrift !== null && contextDrift < WARNING_THRESHOLD) {
-    findings.push({
-      category: 'context',
-      severity: contextDrift < FAIL_THRESHOLD ? 'fail' : 'warning',
-      reason: 'confidence_below_threshold',
-    });
-  }
-  for (const reason of params.invalidationReasons) {
-    findings.push({ category: 'context', severity: 'warning', reason });
-  }
   addIntentFinding(findings, params.baselineIntentKey, params.observedIntentKey, params.driftPolicy?.requireSameIntent ?? false);
   addAdditionalToolsFinding(
     findings,
@@ -147,7 +133,6 @@ export function deriveReplayFlexDriftAssessment(params: {
   }
 
   const replayConfidence = averageReplayScores([
-    contextDrift,
     toolSequenceMatch,
     argumentShapeMatch,
     reasoningMatch,
@@ -165,7 +150,6 @@ export function deriveReplayFlexDriftAssessment(params: {
     argumentShapeMatch,
     reasoningMatch,
     outputFormatMatch: normalizeReplayScore(params.outputFormatMatch),
-    contextDrift,
     dataDrift,
     driftFindings: findings,
     blockedBy,

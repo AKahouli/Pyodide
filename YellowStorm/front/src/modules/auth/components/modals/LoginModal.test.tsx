@@ -52,4 +52,18 @@ describe('LoginModal', () => {
 
     expect(screen.queryByRole('button', { name: 'login.createOne' })).not.toBeInTheDocument();
   });
+
+  it('shows the suspended account error when login returns ERR_1110', async () => {
+    loginMock.mockRejectedValue({ code: 'ERR_1110' });
+
+    render(<LoginModal open onOpenChange={vi.fn()} onSwitchToRegister={vi.fn()} onForgotPassword={vi.fn()} />);
+
+    await userEvent.type(screen.getByLabelText('login.email.label'), 'user@example.com');
+    await userEvent.type(screen.getByLabelText('login.password.label'), testPassword);
+    await userEvent.click(screen.getByRole('button', { name: 'login.submit' }));
+
+    await waitFor(() => {
+      expect(screen.getByText('login.error.suspended')).toBeInTheDocument();
+    });
+  });
 });

@@ -62,6 +62,20 @@ class CompiledGraphCache:
     def size(self) -> int:
         return len(self._entries)
 
+    def reconfigure(self, *, max_entries: int, ttl_seconds: int) -> None:
+        max_entries = max(1, int(max_entries))
+        ttl_seconds = max(1, int(ttl_seconds))
+        if max_entries == self.max_entries and ttl_seconds == self.ttl_seconds:
+            return
+        self.max_entries = max_entries
+        self.ttl_seconds = ttl_seconds
+        self._entries.clear()
+        self._locks.clear()
+
+    def clear(self) -> None:
+        self._entries.clear()
+        self._locks.clear()
+
     async def get_or_compile(
         self,
         snapshot: dict[str, Any],

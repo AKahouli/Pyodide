@@ -55,6 +55,9 @@ interface WorkyState {
   resetAssistantText: () => void;
 
   streaming: boolean;
+  activeTurnId: string | null;
+  beginTurn: (turnId: string) => void;
+  finishTurn: (turnId: string) => void;
   setStreaming: (streaming: boolean) => void;
 
   lastPlanVersion: number | null;
@@ -80,6 +83,7 @@ const initialState = {
   pendingClarifications: [] as WorkyBoardResponse['pendingClarifications'],
   assistantText: '',
   streaming: false,
+  activeTurnId: null as string | null,
   lastPlanVersion: null as number | null,
   lastDeltaToast: null as { summary: string; at: number } | null,
   streamError: null as string | null,
@@ -114,7 +118,13 @@ export const useWorkyStore = create<WorkyState>()(
       setMessages: (messages) => {
         const seen = new Set<string>();
         const deduped = messages.filter((m) => (seen.has(m.id) ? false : (seen.add(m.id), true)));
-        set({ messages: deduped });
+        set((state) => ({
+          messages: deduped,
+          ...(state.activeTurnId &&
+          deduped.some((m) => m.role === 'manager' && m.turnId === state.activeTurnId)
+            ? { streaming: false, activeTurnId: null }
+            : {}),
+        }));
       },
       // Idempotent by id: the backend both returns the saved owner message
       // (which `useSendMessage` writes into the React Query cache, and the
@@ -122,16 +132,28 @@ export const useWorkyStore = create<WorkyState>()(
       // over SSE, so it would otherwise be appended twice until the next
       // refetch collapsed it. Also covers SSE replays after a reconnect.
       appendMessage: (message) =>
-        set((state) =>
-          state.messages.some((m) => m.id === message.id)
-            ? {}
-            : { messages: [...state.messages, message] },
-        ),
+        set((state) => {
+          if (state.messages.some((m) => m.id === message.id)) return {};
+          const completesTurn =
+            message.role === 'manager' &&
+            typeof message.turnId === 'string' &&
+            message.turnId === state.activeTurnId;
+          return {
+            messages: [...state.messages, message],
+            ...(completesTurn ? { streaming: false, activeTurnId: null } : {}),
+          };
+        }),
       setPendingClarifications: (pendingClarifications) => set({ pendingClarifications }),
       appendAssistantToken: (text) =>
         set((state) => ({ assistantText: state.assistantText + text })),
       resetAssistantText: () => set({ assistantText: '' }),
-      setStreaming: (streaming) => set({ streaming }),
+      beginTurn: (activeTurnId) => set({ activeTurnId, streaming: true }),
+      finishTurn: (turnId) =>
+        set((state) =>
+          state.activeTurnId === turnId ? { activeTurnId: null, streaming: false } : {},
+        ),
+      setStreaming: (streaming) =>
+        set((state) => ({ streaming, activeTurnId: streaming ? state.activeTurnId : null })),
       setLastPlanVersion: (lastPlanVersion) => set({ lastPlanVersion }),
       setLastDeltaToast: (lastDeltaToast) => set({ lastDeltaToast }),
       setStreamError: (streamError) => set({ streamError }),

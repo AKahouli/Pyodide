@@ -357,4 +357,57 @@ describe('callGrpcRun router config serialization', () => {
       }).skills,
     }));
   });
+
+  it('serializes the concrete inference fallback resolved for a model-less planner', async () => {
+    const executionSettingsResolver = {
+      resolve: jest.fn().mockResolvedValue({
+        maxSandboxCallsPerStep: 16,
+        dynamicReasoningEnabled: true,
+        dynamicReasoning: {
+          plannerAgentId: 'planner-1',
+          maxWorkNodes: 6,
+          maxParallelism: 3,
+          maxDepth: 1,
+          maxRepairAttempts: 1,
+        },
+      }),
+      resolvePlanner: jest.fn().mockResolvedValue({
+        agentId: 'planner-1',
+        agentTypeSlug: 'general_assistant',
+        agentRevision: 'revision-1',
+        model: 'azure/fallback-model',
+        temperature: 0.2,
+        instruction: 'Plan safely',
+        omitTemperature: true,
+      }),
+    };
+    const { service, agentService } = createExecutionServiceForTests({ executionSettingsResolver });
+    const run = jest.fn().mockReturnValue({ on: jest.fn() });
+    (service as any).playbookFlowClient = { Run: run };
+    agentService.buildGrpcAgentsForPlaybook.mockResolvedValue([]);
+
+    await (service as any).callGrpcRun('exec-1', 'flow-1', 'owner-1', {}, {}, {
+      nodes: [{ id: 'step-1', kind: 'step', dynamicReasoning: { enabled: true } }],
+      controlEdges: [],
+      dataBindings: [],
+      settings: { inferenceModelId: 'fallback-model' },
+    });
+
+    expect(executionSettingsResolver.resolvePlanner).toHaveBeenCalledWith(
+      'planner-1',
+      { inferenceModelId: 'fallback-model' },
+    );
+    expect(run).toHaveBeenCalledWith(expect.objectContaining({
+      settings: expect.objectContaining({
+        runtime_settings: expect.objectContaining({
+          max_sandbox_calls_per_step: 16,
+        }),
+        playbook_planner: expect.objectContaining({
+          model: 'azure/fallback-model',
+          agent_type_slug: 'general_assistant',
+          omit_temperature: true,
+        }),
+      }),
+    }));
+  });
 });

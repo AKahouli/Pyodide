@@ -5,6 +5,8 @@ export interface CreateConversationData {
   participants?: { email: string; job?: string }[];
   ownerJob?: string;
   projectId?: string;
+  runtimePurpose?: 'chat' | 'platform_copilot';
+  creationRequestId?: string;
 }
 
 export interface UpdateConversationData {
@@ -20,6 +22,8 @@ export interface UpdateConversationData {
 }
 
 export interface ConversationQueryParams {
+  mode?: 'legacy' | 'cursor';
+  cursor?: string;
   page?: number;
   limit?: number;
   search?: string;
@@ -28,6 +32,31 @@ export interface ConversationQueryParams {
   isArchived?: boolean;
   projectId?: string | 'none';
   searchScope?: 'title' | 'fulltext';
+  runtimePurpose?: 'chat' | 'platform_copilot';
+}
+
+export interface ConversationSummaryResponse {
+  id: string;
+  title: string;
+  createdBy: string;
+  ownerName?: string;
+  messageCount: number;
+  lastMessageAt?: string;
+  isArchived: boolean;
+  isShared: boolean;
+  isGroup: boolean;
+  unseenMentionCount: number;
+  projectId?: string | null;
+  runtimeMode: 'standard' | 'governed';
+  runtimePurpose: 'chat' | 'platform_copilot';
+  pinnedAgentId?: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CursorPaginatedConversations {
+  conversations: ConversationSummaryResponse[];
+  pagination: { mode: 'cursor'; limit: number; hasMore: boolean; nextCursor: string | null };
 }
 
 export interface GroupMember {
@@ -77,6 +106,8 @@ export interface ConversationResponse {
   groupMeta?: GroupConversationMeta;
   projectId?: string | null;
   runtimeMode: 'standard' | 'governed';
+  runtimePurpose: 'chat' | 'platform_copilot';
+  pinnedAgentId?: string | null;
   governanceContext?: {
     programId: string;
     scopeId: string;

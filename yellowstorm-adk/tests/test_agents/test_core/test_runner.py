@@ -7,6 +7,7 @@ from datetime import datetime
 from google.genai import types
 
 from src.smart_rag.agents.core.runner import AgentRunner
+from src.smart_rag.infrastructure.processing.plugin import CleanSessionPlugin
 from src.smart_rag.tools.utilities.connector_tools import (
     _register_connector_response_sources,
 )
@@ -79,7 +80,7 @@ class TestAgentRunner:
             assert result == ("Test result", [], {}, [])
             mock_session_helper.create_session.assert_called_once()
             mock_run_standard.assert_called_once()
-            mock_prompt_processor.extract_task_description.assert_called_once_with("Test message")
+            mock_prompt_processor.extract_task_description.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_run_agent_tool_prefers_explicit_task_summary(self):
@@ -107,14 +108,7 @@ class TestAgentRunner:
             )
 
         mock_prompt_processor.extract_task_description.assert_not_called()
-        mock_streaming_formatter.format_streaming_event.assert_called_once_with(
-            agent_id="agent_123",
-            agent_name="Smart Agent",
-            agent_type="agent",
-            chunk="Profitability",
-            message_id=ANY,
-            content_type="description",
-        )
+        mock_streaming_formatter.format_streaming_event.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_run_agent_tool_html_agent(self):
@@ -244,7 +238,7 @@ class TestAgentRunner:
             [],
         )
 
-        with patch('src.smart_rag.agents.core.runner.Runner', return_value=mock_runner_instance):
+        with patch('src.smart_rag.agents.core.runner.Runner', return_value=mock_runner_instance) as runner_class:
             result = await agent_runner._run_standard_agent(
                 agent=mock_agent,
                 agent_name="TestAgent",
@@ -263,6 +257,7 @@ class TestAgentRunner:
         assert result[0] == "Final response"
         assert result[1] == []
         assert isinstance(result[2], dict)
+        assert isinstance(runner_class.call_args.kwargs["plugins"][0], CleanSessionPlugin)
 
     @pytest.mark.asyncio
     async def test_guarded_standard_agent_never_emits_unvalidated_partial_text(self):
@@ -386,7 +381,16 @@ class TestAgentRunner:
         mock_queue.put.assert_any_call({"type": "chunk"})
 
     @pytest.mark.asyncio
-    async def test_run_standard_agent_with_function_call(self):
+    @pytest.mark.parametrize(("narration_partial", "narration", "narration_on_tool", "expected_narration"), [
+        (True, "I'll inspect the selected file.", False, []),
+        (False, "I'll inspect the selected file.", False, ["I'll inspect the selected file."]),
+        (None, "I'll inspect the selected file.", False, ["I'll inspect the selected file."]),
+        (False, "start", False, []),
+        (False, "Inspect the selected file.", True, []),
+    ])
+    async def test_run_standard_agent_with_function_call(
+        self, narration_partial, narration, narration_on_tool, expected_narration,
+    ):
         """Test running standard agent with function calls."""
         mock_event_extractor = MagicMock()
         mock_message_transformer = MagicMock()
@@ -409,28 +413,48 @@ class TestAgentRunner:
         mock_queue.include_tool_results = True
 
         # Mock event with function call
-        mock_event = MagicMock()
-        mock_event.content = MagicMock()
-        mock_event.content.parts = [MagicMock()]
-        mock_event.content.parts[0].text = None
-        mock_event.content.parts[0].function_response = None
-        mock_event.content.parts[0].function_call = MagicMock()
-        mock_event.content.parts[0].function_call.name = "test_function"
-        mock_event.content.parts[0].function_call.id = "call-1"
-        mock_event.content.parts[0].function_call.args = {"arg1": "value1"}
-        mock_event.is_final_response.return_value = False
+        thought_event = MagicMock()
+        thought_event.content = MagicMock()
+        visible_narration = MagicMock(text=narration, thought=False, function_call=None, function_response=None)
+        hidden_thoughts = [
+            MagicMock(text=text, thought=True, function_call=None, function_response=None)
+            for text in ["Private", " chain", " of", " thought"]
+        ]
+        function_call = MagicMock(text=narration if narration_on_tool else None, thought=False, function_response=None)
+        function_call.function_call = MagicMock()
+        function_call.function_call.name = "run_code"
+        function_call.function_call.id = "call-1"
+        function_call.function_call.args = {
+            "code": "print('safe')",
+            "language": "python",
+            "_display_purpose": "Calculate the requested result",
+        }
+        thought_event.content.parts = hidden_thoughts
+        thought_event.partial = True
+        thought_event.is_final_response.return_value = False
+
+        function_event = MagicMock()
+        function_event.content = MagicMock()
+        function_event.content.parts = [function_call] if narration_on_tool else [visible_narration, function_call]
+        function_event.partial = narration_partial
+        function_event.is_final_response.return_value = False
 
         # Matching function response transitions the same tool component.
         mock_response_event = MagicMock()
         mock_response_event.content = MagicMock()
         mock_response_event.content.parts = [MagicMock()]
-        mock_response_event.content.parts[0].text = None
+        mock_response_event.content.parts[0].text = "raw tool output"
+        mock_response_event.content.parts[0].thought = False
         mock_response_event.content.parts[0].function_call = None
         mock_response_event.content.parts[0].function_response = MagicMock()
-        mock_response_event.content.parts[0].function_response.name = "test_function"
+        mock_response_event.content.parts[0].function_response.name = "run_code"
         mock_response_event.content.parts[0].function_response.id = "call-1"
         mock_response_event.content.parts[0].function_response.is_error = False
-        mock_response_event.content.parts[0].function_response.response = {}
+        mock_response_event.content.parts[0].function_response.response = {
+            "result": "VNC: ws://sandbox.internal/session/abc123",
+            "authorization": "Bearer private",
+            "message": "Cookie: session=private",
+        }
         mock_response_event.is_final_response.return_value = False
 
         # Mock final event
@@ -444,7 +468,8 @@ class TestAgentRunner:
 
         # Mock Runner class
         async def mock_run_async(*args, **kwargs):
-            yield mock_event
+            yield thought_event
+            yield function_event
             yield mock_response_event
             yield mock_final_event
 
@@ -455,7 +480,8 @@ class TestAgentRunner:
              patch.object(agent_runner, '_handle_function_call', new_callable=AsyncMock) as mock_handle_func, \
              patch.object(agent_runner, '_handle_final_response', new_callable=AsyncMock) as mock_handle_final, \
              patch.object(agent_runner, '_handle_ui_tool_response', new_callable=AsyncMock, return_value=False), \
-             patch.object(agent_runner, '_handle_structured_tool_response', new_callable=AsyncMock):
+             patch.object(agent_runner, '_handle_structured_tool_response', new_callable=AsyncMock), \
+             patch('src.smart_rag.agents.core.runner.record_temporary_child_tool_call') as mock_record_child:
             mock_handle_final.return_value = "Final response"
 
             result = await agent_runner._run_standard_agent(
@@ -470,26 +496,71 @@ class TestAgentRunner:
                 task_order="1",
                 toolkit=None,
                 mcp_tools_used=[],
-                agent_id="agent_123"
+                agent_id="agent_123",
+                agent_config={
+                    "_is_temporary_child_agent": True,
+                    "agent_params": {"temporary_child_summary_session_id": "summary-session"},
+                },
             )
 
             mock_handle_func.assert_called_once()
+            assert mock_record_child.call_args.kwargs["args"] == {
+                "code": "print('safe')",
+                "language": "python",
+            }
             assert result[0] == "Final response"
+            assert "raw tool output" not in [
+                call.kwargs.get("chunk")
+                for call in mock_streaming_formatter.format_streaming_event.call_args_list
+            ]
+            component_types = [call.kwargs["component_type"] for call in mock_streaming_formatter.format_component_event.call_args_list]
+            assert component_types[:len(expected_narration) + 5] == [
+                *(["agent_activity"] * (len(expected_narration) + 4)),
+                "tool_activity",
+            ]
+            activity_events = [
+                call.kwargs
+                for call in mock_streaming_formatter.format_component_event.call_args_list
+                if call.kwargs["component_type"] == "agent_activity"
+            ]
+            assert [event["component_data"]["summary"] for event in activity_events] == [
+                "Private",
+                "Private chain",
+                "Private chain of",
+                "Private chain of thought",
+                *expected_narration,
+            ]
+            assert [event["action"] for event in activity_events] == [
+                "add", "update", "update", "update",
+                *(["add"] if expected_narration else []),
+            ]
+            thought_events = activity_events[:4]
+            assert len({event["component_id"] for event in thought_events}) == 1
+            assert thought_events[-1]["component_data"]["detail"] == "Private chain of thought"
+            assert len({event["component_data"]["started_at"] for event in thought_events}) == 1
             tool_events = [
                 call.kwargs
                 for call in mock_streaming_formatter.format_component_event.call_args_list
-                if call.kwargs["component_type"] == "tool_info"
+                if call.kwargs["component_type"] == "tool_activity"
             ]
             started_at = tool_events[0]["component_data"].pop("started_at")
             assert datetime.fromisoformat(started_at.replace("Z", "+00:00")).tzinfo is not None
             assert tool_events == [
                 {
                     "agent_id": "agent_123",
-                    "component_type": "tool_info",
+                    "component_type": "tool_activity",
                     "component_data": {
-                        "title": "test_function",
+                        "tool_name": "run_code",
                         "status": "running",
-                        "params": '{"arg1": "value1"}',
+                        "params_json": '{"code":"print(\'safe\')","language":"python"}',
+                        "display_key": "runCode",
+                        "fallback_display_name": "",
+                        "summary": "Calculate the requested result",
+                        "render_kind": "run_code",
+                        "actor_id": "agent_123",
+                        "actor_name": "TestAgent",
+                        "primary_input": "print('safe')",
+                        "primary_input_language": "python",
                     },
                     "message_id": "session_123",
                     "component_id": "tool-agent_123-call-1",
@@ -497,11 +568,13 @@ class TestAgentRunner:
                 },
                 {
                     "agent_id": "agent_123",
-                    "component_type": "tool_info",
+                    "component_type": "tool_activity",
                     "component_data": {
-                        "title": "test_function",
+                        "tool_name": "run_code",
                         "status": "completed",
-                        "result_json": "{}",
+                        "completed_at": ANY,
+                        "duration_ms": ANY,
+                        "result_json": '{"result":"VNC: ws://sandbox.internal/session/abc123","authorization":"[REDACTED]","message":"Cookie: [REDACTED]"}',
                     },
                     "message_id": "session_123",
                     "component_id": "tool-agent_123-call-1",
@@ -545,7 +618,7 @@ class TestAgentRunner:
         mock_runner_instance.run_async = mock_run_async
         mock_streaming_formatter.format_streaming_event.return_value = {"type": "chunk"}
 
-        with patch('src.smart_rag.agents.core.runner.Runner', return_value=mock_runner_instance):
+        with patch('src.smart_rag.agents.core.runner.Runner', return_value=mock_runner_instance) as runner_class:
             result = await agent_runner._run_html_agent(
                 agent=mock_agent,
                 session_helper=mock_session_helper,
@@ -559,6 +632,7 @@ class TestAgentRunner:
         assert result[0] == "html was generated successfully and sent to the user"
         assert result[1] == []
         assert isinstance(result[2], dict)
+        assert isinstance(runner_class.call_args.kwargs["plugins"][0], CleanSessionPlugin)
 
     @pytest.mark.asyncio
     async def test_handle_function_call(self):

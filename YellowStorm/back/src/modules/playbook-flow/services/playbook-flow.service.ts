@@ -2,7 +2,7 @@ import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
-import { Flow, FlowDocument } from '../schemas/playbook-flow.schema';
+import { ControlEdge, DataBinding, Flow, FlowDocument } from '../schemas/playbook-flow.schema';
 import { FlowExecution, FlowExecutionDocument } from '../schemas/playbook-flow-execution.schema';
 import { CreatePlaybookFlowDto } from '../dto/create-playbook-flow.dto';
 import { PatchPlaybookFlowDeltaDto } from '../dto/patch-playbook-flow-delta.dto';
@@ -236,13 +236,19 @@ export class PlaybookFlowService implements OnModuleInit {
     return [];
   }
 
-  async create(ownerId: string, dto: CreatePlaybookFlowDto, options?: { assistantOperationId?: string }): Promise<IFlowResponse> {
+  async create(ownerId: string, dto: CreatePlaybookFlowDto, options?: {
+    assistantOperationId?: string;
+    generationProvenance?: {
+      source: 'conversation_handoff'; handoffVersion: 1; sourceConversationId: string;
+      sourceTargetMessageId: string; displayedAnswerVersion: string; canonicalPathFingerprint: string;
+      contextFingerprint: string; assistantRequestId: string; acceptedBy: string; acceptedAt: Date;
+      confirmedWorkspaceIds: string[];
+    };
+  }): Promise<IFlowResponse> {
     const nodes = dto.nodes || [];
     const controlEdges = dto.controlEdges || [];
     const dataBindings = dto.dataBindings || [];
     const workspaces = this.workspacePolicy.normalizeWorkspaces(dto.workspaces);
-
-    this.workspacePolicy.ensureWorkspaceSelection(workspaces);
 
     this.validatorService.validate(nodes as any, controlEdges as any, dataBindings as any, { allowDraftRouters: true });
 
@@ -251,6 +257,7 @@ export class PlaybookFlowService implements OnModuleInit {
     const flow = new this.flowModel({
       ownerId,
       ...(options?.assistantOperationId ? { assistantOperationId: options.assistantOperationId } : {}),
+      ...(options?.generationProvenance ? { generationProvenance: options.generationProvenance } : {}),
       schemaVersion: 1,
       name: resolvedName,
       description: dto.description,
@@ -289,6 +296,16 @@ export class PlaybookFlowService implements OnModuleInit {
     const flow = await this.flowModel.findOne({ ownerId, assistantOperationId }).exec();
     if (!flow) return null;
     return this.responseAssembler.toBaseFlowResponse(flow);
+  }
+
+  async removeAssistantDraftIfUnchanged(ownerId: string, playbookId: string, assistantOperationId: string, expectedDefinitionRevision: number): Promise<boolean> {
+    const result = await this.flowModel.deleteOne({
+      _id: playbookId,
+      ownerId,
+      assistantOperationId,
+      definitionRevision: expectedDefinitionRevision,
+    }).exec();
+    return result.deletedCount === 1;
   }
 
   async findAll(ownerId: string, query: PlaybookFlowQueryDto): Promise<IFlowListResponse> {
@@ -500,6 +517,33 @@ export class PlaybookFlowService implements OnModuleInit {
     return this.responseAssembler.toBaseFlowResponse(flow);
   }
 
+  async persistSanitizedExecutionGraph(
+    flowId: string,
+    ownerId: string,
+    expectedDefinitionRevision: number,
+    controlEdges: ControlEdge[],
+    dataBindings: DataBinding[],
+  ): Promise<number> {
+    const revisionFilter = expectedDefinitionRevision === 0
+      ? { $or: [{ definitionRevision: 0 }, { definitionRevision: { $exists: false } }] }
+      : { definitionRevision: expectedDefinitionRevision };
+    const saved = await this.flowModel.findOneAndUpdate(
+      { _id: flowId, ownerId, ...revisionFilter },
+      {
+        $set: { controlEdges, dataBindings },
+        $inc: { definitionRevision: 1 },
+      },
+      { new: true, runValidators: true },
+    );
+    if (!saved) {
+      throw new ConflictException(
+        ErrorCode.CONFLICT,
+        'Playbook changed while preparing execution. Retry with the latest version.',
+      );
+    }
+    return saved.definitionRevision ?? expectedDefinitionRevision + 1;
+  }
+
   async update(
     flowId: string,
     ownerId: string,
@@ -563,12 +607,6 @@ export class PlaybookFlowService implements OnModuleInit {
     if (dto.hitlPolicy !== undefined) existing.hitlPolicy = dto.hitlPolicy as any;
     if (dto.hitlBlockers !== undefined) existing.hitlBlockers = dto.hitlBlockers as any[];
     if (dto.nodes !== undefined) {
-      const dsNodes = (dto.nodes as any[]).filter((n: any) => n.deepSearch);
-      if (dsNodes.length > 0) {
-        this.logger.warn(`[deep-search-debug] PATCH received ${dsNodes.length} node(s) with deepSearch=true: ${dsNodes.map((n: any) => n.id).join(',')}`);
-      } else {
-        this.logger.warn(`[deep-search-debug] PATCH received ${dto.nodes.length} nodes, NONE have deepSearch=true`);
-      }
       existing.nodes = dto.nodes as any[];
     }
     if (dto.controlEdges !== undefined) existing.controlEdges = dto.controlEdges as any[];
@@ -579,9 +617,6 @@ export class PlaybookFlowService implements OnModuleInit {
     if (dto.advisorAutopilotTargetScore !== undefined) existing.advisorAutopilotTargetScore = dto.advisorAutopilotTargetScore;
     if (dto.advisorAutopilotMaxTurns !== undefined) existing.advisorAutopilotMaxTurns = dto.advisorAutopilotMaxTurns;
     const normalizedWorkspaces = this.workspacePolicy.normalizeWorkspaces(dto.workspaces ?? existing.workspaces);
-    if (dto.workspaces !== undefined || existing.workspaces.length > 1) {
-      this.workspacePolicy.ensureWorkspaceSelection(normalizedWorkspaces);
-    }
     existing.workspaces = normalizedWorkspaces;
 
     const sanitizedGraph = this.graphSanitizer.sanitize({
@@ -834,8 +869,6 @@ export class PlaybookFlowService implements OnModuleInit {
   ): Promise<IFlowResponse> {
     const normalizedWorkspaces = this.workspacePolicy.normalizeWorkspaces(workspaces);
 
-    this.workspacePolicy.ensureWorkspaceSelection(normalizedWorkspaces);
-
     this.validatorService.validate(nodes as any, controlEdges as any, dataBindings as any, { allowDraftRouters: true });
 
     const flow = new this.flowModel({
@@ -871,7 +904,6 @@ export class PlaybookFlowService implements OnModuleInit {
       if (update.controlEdges) existing.controlEdges = update.controlEdges;
       if (update.dataBindings) existing.dataBindings = update.dataBindings;
       existing.workspaces = this.workspacePolicy.normalizeWorkspaces(existing.workspaces);
-      this.workspacePolicy.ensureWorkspaceSelection(existing.workspaces);
 
       const sanitizedGraph = this.graphSanitizer.sanitize({
         nodes: existing.nodes as any,

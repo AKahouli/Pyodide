@@ -19,104 +19,13 @@
 | UI primitives | Radix UI + shadcn/ui wrappers under `src/components/ui/` |
 | Styling | Tailwind CSS v4 + `class-variance-authority` + `clsx` + `tailwind-merge` |
 | Icons | `lucide-react` + custom `Icons` map in `src/components/icons.tsx` |
-| i18n | `i18next` + `react-i18next` (lazy namespace loading) |Identifying Playbook State Management
-terminal:powershell
- wwhat stack are we using for state managment in playbook ?
-12:05 PM
-In the playbook module, we use a layered state management stack as documented in the 
-
-FRONTEND_GUIDELINES.md
-:
-
-Zustand (v5):
-Used as the default local module/UI state store.
-Defined in 
-
-store.ts
- and 
-
-uiStore.ts
-.
-TanStack Query (v5):
-Used for server-state caching, fetching, cache invalidation, and mutations under the query/ subdirectory.
-XState (v5):
-Used for orchestration of complex stateful lifecycles (e.g., execution lifecycles, autosave coordination, stream lifecycles) under the machines/ subdirectory.
-React Context:
-Provides client scope mapping, such as PlaybookQueryProvider.
-Migration and feature coexistence between these layers (e.g., Zustand vs. TanStack Query / XState) are controlled by the local flags configured in 
-
-features.ts
- (see 
-
-playbookFeatures
-).
-
-Summary of Actions
-Read and verified state management guidelines in 
-
-FRONTEND_GUIDELINES.md
-.
-Checked the playbook module structure using list_dir to confirm files such as 
-
-store.ts
- and 
-
-uiStore.ts
-.
-Verified the state migration feature flags in 
-
-features.ts
-.
-12:05 PM
-by implementing elerticsql is trhere any chance to reduce the app complexity and improve reliability and maintainbility
-12:07 PM
-Implementing a full client-side integration of ElectricSQL (subscribing directly from the React frontend rather than using NestJS as an intermediate mirror) offers significant potential to reduce application complexity, improve reliability, and enhance maintainability.
-
-Here is an analysis of how this architectural shift would impact the application.
-
-1. Reducing App Complexity
-Currently, the system uses a CDC (Change Data Capture) hybrid mirror architecture as described in the 
-
-Worky gRPC Manager + Electric SQL Sync Plan
-:
-
-Python/Postgres (ADK Agent) 
-   └── [ElectricSQL Shape Stream] 
-           └── NestJS WorkyElectricConsumerService 
-                   └── [Mapper & MongoDB Upsert] 
-                           └── MongoDB 
-                                   └── [NestJS SSE Broadcast] 
-                                           └── Frontend (SSE Listener -> TanStack Query Refetch -> MongoDB Read API)
-By allowing the React client to subscribe directly to ElectricSQL's HTTP Shape Streams:
-
-Eliminate NestJS Mirroring Layer: We could delete the 
-
-WorkyElectricConsumerService
-, Mongoose schemas (WorkyTask, WorkyMessage, WorkyPlanProjection), and mapper files.
-Eliminate Custom SSE Channels: You would no longer need to manage custom SSE connection logic and event dispatchers for UI synchronization.
-Fewer Data Hops: The data pipeline simplifies from a 7-step process to a direct sync channel: Postgres (Python ADK) -> ElectricSQL -> React Client.
-2. Improving Reliability
-Network & Offline Resilience: ElectricSQL handles connection drops, exponential backoff, and offset-resuming out of the box. In case of network timeout issues (like the Mongo and gRPC timeout errors seen in your terminal logs), a local-first client will seamlessly resume the shape stream from its last acknowledged offset as soon as connection is restored.
-Reduced Database Serialization Overhead: Storing Postgres rows, mapping them, and then re-upserting them into MongoDB creates multiple points of serialization failure. Removing the Mongo persistence step on the read-path reduces write bottlenecks on the database.
-3. Improving Maintainability
-Single Source of Truth: Postgres remains the sole database schema for Worky session states. A schema change on the Python ADK side would propagate directly to the frontend types without needing updates to NestJS contract/mapper files.
-Less Backend Boilerplate: No need to write or maintain REST read endpoints (like /worky/board or /worky/messages), nor shape stream cursor-persistence tables in MongoDB (WorkyElectricCursor).
-Key Trade-offs & Caveats to Consider
-Write Path Stays RPC-Based: ElectricSQL simplifies the read (sync) path, but the write path (e.g. user messages, execution commands like start/pause) must still pass through a NestJS/gRPC gateway for authorization, validation, and agent kickoff.
-Access Control & Scoping: Direct frontend sync requires configuring Electric shapes to dynamically filter rows based on the logged-in user's session identifier (typically verified using a proxy or JWT middleware), preventing users from reading other sessions.
-ElectricSQL Versioning: ElectricSQL v1.0 recently pivoted to focus on lightweight HTTP-based Shape Streams, which can easily map into TanStack Query or custom React state. This avoids the bundle size and setup complexity (e.g. OPFS/Wasm headers) of the previous SQLite-in-Wasm local-first client.
-Summary of Actions
-Analyzed the existing 
-
-WorkyElectricConsumerService
- sync mechanisms.
-Assessed the architectural trade-offs of the current Postgres $\rightarrow$ Electric $\rightarrow$ Mongo $\rightarrow$ SSE 
+| i18n | `i18next` + `react-i18next` (lazy namespace loading) |
 | Toasts | `sonner` via `@/lib/notifications` wrapper |
 | Streaming | Native `EventSource` SSE, fetch + `ReadableStream` SSE, singleton services, BroadcastChannel leader-election, per-session hooks |
 | Charts / tables / graphs / flow | `recharts`, `@tanstack/react-table`, `@xyflow/react`, `@dagrejs/dagre` |
 | Virtualization | `virtua` |
 | AI / LLM UI | Vercel AI SDK (`ai`), `@anthropic-ai/sdk`, `streamdown`, `react-markdown`, `shiki`, `tokenlens` |
-| Realtime sockets | `socket.io-client` for WhatsApp pairing flows only |
+| Realtime sockets | `socket.io-client` for WhatsApp pairing, browser sessions, and the browser-hosted app runtime |
 | Document viewers | `@embedpdf/react-pdf-viewer`, `@cyntler/react-doc-viewer`, `@novnc/novnc` |
 | Animation / interaction | `motion`, `cmdk`, `react-resizable-panels`, `embla-carousel-react` |
 | Testing | Vitest 2 + React Testing Library + `jest-dom` |
@@ -139,7 +48,7 @@ src/
 ├── contexts/               # React Context providers (not Zustand): Theme
 ├── providers/              # CombinedProvider (composes all app-wide providers)
 ├── hooks/                  # Cross-cutting hooks (use-mobile, useTheme)
-├── config/                 # Static app/menu config + shared runtime rollout feature flags (dataRoomFeatures, governedConversationFeatures)
+├── config/                 # Static app/menu config + shared build-time rollout flags (dataRoomFeatures, governedConversationFeatures)
 ├── lib/api/                # axios client, config, endpoint registry
 ├── lib/api-error.ts        # parseApiError / handleApiError
 ├── lib/use-api-action.ts   # generic async action hook
@@ -153,7 +62,7 @@ src/
 └── utils/                  # App-wide utilities (prefer lib/)
 ```
 
-**Path alias:** always import via `@/...` — **never** `../../../`.
+**Imports:** use `@/...` for cross-module and root-shared imports. Relative imports are appropriate within the same module, but must not climb out of the owning module to reach another module or `src/lib` (for example, never use `../../../lib/...`).
 
 ```ts
 import { apiClient } from '@/lib/api/client';
@@ -182,9 +91,9 @@ import { useConversationStore } from '@/modules/conversation';
 └── test-utils.ts      # Module test fixtures / factories — optional
 ```
 
-**Barrel rules:** Export **only** the public surface (pages, store hook, public types). Other modules import from `@/modules/<name>`, never from internals.
+**Barrel rules:** Export **only** the public surface (pages, store hook, public types). Cross-module consumers import from `@/modules/<name>`, never from internals. Code inside the same module should import its sibling implementation directly rather than routing back through its own barrel.
 
-Current modules include: `admin`, `agent`, `auth`, `connected-app`, `connector`, `conversation`, `conversation-v2`, `file-viewer`, `governance`, `groups`, `localization`, `models`, `notifications`, `playbook`, `profile`, `project`, `sidebar`, `skill`, `team`, `usage`, `workspace`, `worky`. When adding a new module, follow the closest sibling by domain and keep the barrel export limited to the public surface.
+Representative current modules include: `admin`, `agent`, `app-marketplace`, `auth`, `connected-app`, `connector`, `conversation`, `conversation-v2`, `file-viewer`, `governance`, `groups`, `localization`, `models`, `notifications`, `platform-copilot`, `platform-overview`, `playbook`, `profile`, `project`, `semantic-model`, `sidebar`, `skill`, `team`, `usage`, `workspace`, `worky`. This list is descriptive, not an exhaustive registry; verify `src/modules/`. When adding a module, follow the closest sibling by domain and keep the barrel export limited to the public surface.
 
 ```ts
 export { ConversationPage } from './ConversationPage';
@@ -196,7 +105,7 @@ export type { Conversation, Message } from './types';
 
 ## 4. Routing
 
-`src/Router.tsx` — `createHashRouter`, lazy-load heavy pages (`React.lazy` + `<Suspense>`), guard routes with existing guards (`RootGuard`, `AdminGuard`, `PermissionGuard`). Do **not** roll a new guard — extend an existing one. Hash routing is deliberate (static hosting behind nginx).
+`src/Router.tsx` — `createHashRouter`, lazy-load heavy pages (`React.lazy` + `<Suspense>`), guard routes with existing guards (`RootGuard`, `AdminGuard`, `PermissionGuard`). Do **not** roll a new guard — extend an existing one. Hash routing is deliberate (static hosting behind nginx). The router may import a route module directly when needed to preserve a lazy-loading boundary; do not use that exception to reach into non-route module internals.
 
 ---
 
@@ -206,7 +115,7 @@ The frontend uses a **layered state architecture**. The legacy/default layer is 
 
 ### Zustand (default for module state)
 
-One `store.ts` per module, always with `devtools({ name: '<module>-store' })`. Keep `initialState` as a `const` for resets and tests. Use `useShallow` when selecting multiple fields:
+New or materially modified Zustand stores use `devtools({ name: '<module>-store' })` and keep an exported `initialState` constant for resets and tests. Existing stores that predate this convention are migration debt, not examples to copy. Use `useShallow` when selecting multiple fields:
 
 ```ts
 const { playbooks, loading } = usePlaybookStore(
@@ -238,18 +147,18 @@ Gated behind feature flags (e.g. `xstateExecutionEnabled`, `xstateAutosaveEnable
 
 ### Feature flags — two layers
 
-The frontend has two distinct feature-flag layers. Do not mix them.
+The frontend has two distinct feature-flag layers. Do not mix them. Both layers currently use Vite build-time environment substitution unless a separate `MY_APP_*` runtime placeholder is explicitly implemented.
 
 **Shared cross-module rollout flags** live in `src/config/` as frozen objects backed by `import.meta.env.VITE_*`:
 
 - `src/config/dataRoomFeatures.ts` exposes `VITE_DATA_ROOM_*` flags (e.g. `governanceEnabled`, `decisionFlowArtifactsEnabled`).
 - `src/config/governedConversationFeatures.ts` exposes governed-conversation rollout flags.
 
-These are consumed across module boundaries (e.g. `workspace` reads Data Room flags, `governance` reads governed-conversation flags). Treat them as cross-module contracts: changing a default or removing a flag requires tracing every consumer. They are **runtime values read at boot**, not compile-time constants — Vite does not tree-shake them away in production builds.
+These are consumed across module boundaries (e.g. `workspace` reads Data Room flags, `governance` reads governed-conversation flags). Treat them as cross-module contracts: changing a default or removing a flag requires tracing every consumer. Vite replaces `import.meta.env.VITE_*` expressions during the production build; these values cannot be changed when the built container starts.
 
-**Module-local state-migration flags** live in `<module>/features.ts` (currently only `playbook`). These gate staged migrations between Zustand and TanStack Query / XState. They are also runtime-env-backed (`VITE_PLAYBOOK_* === 'true'`), despite earlier documentation describing them as compile-time `const` booleans — Vite does not eliminate them.
+**Module-local state-migration flags** live in `<module>/features.ts` (currently `playbook`, with a separate app-runtime rollout switch under `conversation-v2`). These gate staged migrations between Zustand and TanStack Query / XState. They are also build-time `VITE_*` values.
 
-When adding a flag: shared rollouts go in `src/config/<domain>Features.ts`; state-layer migrations go in `<module>/features.ts`. Declare the `VITE_*` env key in `src/vite-env.d.ts` and document it in the deployment env template.
+When adding a flag: shared rollouts go in `src/config/<domain>Features.ts`; state-layer migrations go in `<module>/features.ts`. Declare the `VITE_*` env key in `src/vite-env.d.ts`, document how the build receives it, and list it in the deployment env template. If operations must change the value without rebuilding the image, use an explicit `MY_APP_*` placeholder handled by `env.sh` instead of `import.meta.env`.
 
 Example shared rollout pattern from `dataRoomFeatures.ts`:
 
@@ -286,6 +195,8 @@ const { execute, isLoading, error } = useApiAction(api.updateProfile, {
 ```
 
 Options: `showErrorToast` (default `true` — set `false` for inline form errors), `showSuccessToast`, `onSuccess`, `onError`, `onReAuthRequired`. Prefer over hand-rolled `try/catch + useState`.
+
+Direct `fetch` is allowed only when the shared Axios semantics are inappropriate: presigned object-storage transfers, fetch-based SSE/manual stream readers, external MCP/JSON-RPC calls, the generated widget runtime, and maintenance polling that must bypass the maintenance interceptor. Keep these calls in a module API/service/helper rather than a component where feasible. Check `response.ok`, define cancellation and retry behavior where applicable, validate configurable endpoint origins/protocols, and document intentional fail-open or fail-closed error handling. Ordinary YellowStorm REST calls still use `apiClient` and `API_ENDPOINTS`.
 
 ---
 
@@ -367,7 +278,7 @@ Always go through `@/lib/notifications`: `showSuccess`, `showError`, `showWarnin
 
 ## 12. Streaming (SSE)
 
-Six streaming patterns coexist depending on module requirements:
+Seven streaming patterns coexist depending on module requirements:
 
 ### Pattern 1: Singleton EventSource Service (conversation, notifications)
 
@@ -391,7 +302,7 @@ Events are tagged with their `sessionId`; the Zustand store renders the current 
 
 `worky/stream/sse.ts` uses `fetch` with a `ReadableStream` reader instead of `EventSource` because the stream needs custom headers and tighter retry control. Keep parsing, reconnect, and abort logic in the module stream helper; components subscribe through module hooks.
 
-### Pattern 5: Socket.IO Pairing Channels
+### Pattern 5: Socket.IO WhatsApp Pairing Channels
 
 `socket.io-client` is used for WhatsApp QR pairing flows in `agent`, `admin`, and `worky`. Do not use Socket.IO for generic app realtime until an event schema and backend gateway contract are agreed.
 
@@ -403,16 +314,23 @@ Events are tagged with their `sessionId`; the Zustand store renders the current 
 
 Ack messages use raw strings (`BUSY`, `BAD_REQUEST`, `NO_SESSION`), not the global error envelope; handle them in the hook, do not try to route them through `handleApiError`.
 
+### Pattern 7: Socket.IO Browser-Hosted App Runtime
+
+`BrowserRuntimeClient` connects to `/app-runtime` for Conversation V2 application previews. It authenticates with a one-shot runtime ticket obtained through the authenticated REST API, not the access token. `BrowserRuntimeHost` owns registration, heartbeat, revision rehydration, and tool execution for the browser-hosted runtime.
+
+The shared protocol events are `runtime.register`, `runtime.heartbeat`, `runtime.rehydrate`, `tool.invoke`, `tool.progress`, `tool.completed`, and `tool.failed`. Keep event names and payloads aligned with `back/src/modules/app-runtime/types/app-runtime-protocol.ts`. Do not create a second app-runtime socket owner or reuse the one-shot ticket after connection.
+
 ### Rules (all patterns)
 
 - Never open ad-hoc `new EventSource` in a component (use the module's service/hook)
 - Never hand-roll SSE parsing in a component; use the module stream helper (`conversation-v2/useStream`, `worky/stream/sse.ts`, or service singleton)
-- Never open ad-hoc `io()` Socket.IO connections in a component; use the module's hook (`useBrowserSession`, WhatsApp pairing hooks)
+- Never open ad-hoc `io()` Socket.IO connections in a component; use the owning module's hook or service (`useBrowserSession`, WhatsApp pairing hooks, `BrowserRuntimeClient`)
 - Token refresh integration mandatory where applicable
 - Always clean up on unmount / disconnect
 - Cap per-user connections (backend enforces, frontend handles eviction with `TOO_MANY_TABS`)
 - For ordered streams, preserve and store the backend `sequence` cursor so clients can resume without duplicate events.
 - For the browser-session Socket.IO namespace, keep the client viewport constants in sync with the backend (see Pattern 6).
+- For the app-runtime namespace, preserve one-shot ticket authentication, registration-before-tools, heartbeat, and revision rehydration semantics (see Pattern 7).
 
 ---
 
@@ -446,7 +364,7 @@ Vitest + React Testing Library + `jest-dom`. Colocate tests: `X.test.tsx` next t
 - Discriminated unions for event streams, action payloads, node types.
 - Prefer `as const` objects over `enum`, **except** for error codes (parity with backend).
 - `Readonly<Props>` for provider/component props that must not be mutated.
-- No default exports for components — named exports keep lazy-load shims explicit.
+- Use named exports for components by default. Route-only modules may use a default export when loaded directly by `React.lazy`; otherwise keep the explicit named-export shim so the public symbol remains visible.
 
 ---
 
@@ -466,9 +384,16 @@ Vitest + React Testing Library + `jest-dom`. Colocate tests: `X.test.tsx` next t
 
 ## 17. Environment & Configuration
 
-Read env via `import.meta.env.VITE_*` only. Production uses **runtime injection**: literal placeholder `'MY_APP_VITE_API_URL'` in the build, replaced by `env.sh` at container start. New runtime-configurable values follow the same pattern. Never commit secrets — frontend has none.
+Frontend configuration has two distinct delivery mechanisms:
 
-Every `VITE_*` key read in code must be declared in `src/vite-env.d.ts` and listed in the deployment env template. The current declarations only cover Playbook flags; Data Room (`VITE_DATA_ROOM_*`) and governed-conversation (`VITE_GOVERNED_CONVERSATION_*`) flags are read from `src/config/*Features.ts` but not yet declared — fix this when touching those files, do not replicate the drift.
+| Kind | Mechanism | Change time |
+|------|-----------|-------------|
+| Local and build-time flags | `import.meta.env.VITE_*` | Vite build |
+| Production API/socket URLs and other runtime settings | Literal `MY_APP_*` placeholders replaced by `env.sh` | Container startup |
+
+Vite substitutes `import.meta.env.VITE_*` while building. The production Dockerfile does not copy the repository `.env`, so a production flag must be supplied by the build environment or deliberately converted to a runtime placeholder. `env.sh` only replaces literals beginning with `MY_APP_`; it cannot update an already compiled `VITE_*` expression. Never put secrets in either mechanism — frontend configuration is public to the browser.
+
+Every `VITE_*` key read in code must be declared in `src/vite-env.d.ts` and listed in the deployment/build env template. Current debt extends beyond Data Room and governed-conversation flags: API/socket/app URLs, Worky MCP, Conversation V2 app runtime, and several Playbook migration flags are also undeclared or undocumented. Fix this when touching those areas; do not replicate the drift.
 
 ---
 
@@ -494,7 +419,7 @@ Lazy-load route pages. `useShallow` for multi-field Zustand selectors. Memoise e
 | `motion` | Animation — use instead of `framer-motion` |
 | `@embedpdf/react-pdf-viewer`, `@cyntler/react-doc-viewer` | PDF/document viewers |
 | `@novnc/novnc` (`RFB`) | Live remote-browser viewer over a signed VNC URL (conversation-v2 `BrowserToolView`, `useVncSession`) — **not** a document viewer. `viewOnly` toggles takeover; `VM_UNAVAILABLE` falls back to a screenshot. Treat as a realtime session, not a static embed. |
-| `socket.io-client` | WhatsApp QR pairing channels **and** the `/browser-session` interactive web-import namespace (Pattern 6) |
+| `socket.io-client` | WhatsApp QR pairing channels, `/browser-session` interactive web import (Pattern 6), and `/app-runtime` browser-hosted execution (Pattern 7) |
 | `cmdk` | Command menu primitives |
 | `react-resizable-panels` | Split pane layouts |
 | `d3` | Custom visualisation where `recharts` is insufficient |
@@ -539,23 +464,23 @@ There is no separate React widget app on the frontend. The widget is **generated
 
 ## 21. Pre-PR Checklist
 
-- [ ] Module anatomy followed (§3). Public surface exported via barrel only.
+- [ ] Module anatomy followed (§3). Cross-module imports use public barrels; any direct router import is a route-only lazy-loading boundary.
 - [ ] All user-facing strings in both `en.json` and `fr.json`, accessed via `useModuleTranslation`.
-- [ ] No hardcoded API paths — everything through `API_ENDPOINTS`.
+- [ ] No hardcoded YellowStorm REST paths — use `API_ENDPOINTS`; non-REST protocol URLs follow the documented §6 exceptions.
 - [ ] API calls in components via `useApiAction` (or justified exception).
-- [ ] Zustand store: `devtools({ name: '…' })`, `initialState` exported.
+- [ ] New or materially modified Zustand store: `devtools({ name: '…' })`, `initialState` exported.
 - [ ] If using TanStack Query: hooks in `query/hooks/`, mutation actions in `query/mutationActions.ts`, keys in `query/queryKeys.ts`.
-- [ ] If adding or changing streaming: use an existing module pattern (singleton, BroadcastChannel, per-session hook, fetch stream helper, or Socket.IO pairing) and preserve sequence/resume semantics where present.
+- [ ] If adding or changing streaming/realtime behavior: use an existing module pattern (singleton, BroadcastChannel, per-session hook, fetch stream helper, or sanctioned Socket.IO channel) and preserve sequence/resume semantics where present.
 - [ ] If using XState: machines in `machines/<domain>/`, feature-flag gated alongside legacy path.
 - [ ] If adding a state migration path (Zustand → Query/XState): gate behind a feature flag in `features.ts`.
-- [ ] No new axios instance, no direct `toast` import, no `new EventSource` in components.
+- [ ] No new axios instance, no direct `toast` import, no `new EventSource` in components; any direct `fetch` matches a documented protocol exception in §6.
 - [ ] `cn()` for className merging; variants via CVA.
 - [ ] Errors surfaced (toast or inline); error codes from `ErrorCode` enum.
 - [ ] Autosaved editors store editable data in one draft/form state object; no editable field is saved only through an ad-hoc dependency list.
 - [ ] Backend error codes mirrored in `src/lib/error-codes.ts` and EN + FR `errors.json` (see §13 parity rule).
-- [ ] Every `VITE_*` env key read in code is declared in `src/vite-env.d.ts` and listed in the deployment env template.
+- [ ] Every `VITE_*` env key read in code is declared in `src/vite-env.d.ts`, supplied at build time, and listed in the deployment/build env template; runtime-configurable values use explicit `MY_APP_*` placeholders.
 - [ ] Shared rollout flags live in `src/config/*Features.ts`; module state-migration flags live in `<module>/features.ts` — not mixed.
-- [ ] If touching streaming: conversation-v2 connection hook mounted exactly once at the app shell; browser-session viewport constants match backend (Pattern 6).
+- [ ] If touching streaming/realtime behavior: conversation-v2 connection hook mounted exactly once at the app shell; browser-session viewport constants match backend (Pattern 6); app-runtime ticket and registration semantics remain aligned (Pattern 7).
 - [ ] If touching the widget template (`agent/constants/widget-template.ts`): changes must work as standalone vanilla JS, no React/JSX.
 - [ ] Tests colocated, `vi.mock` for axios client. `npm test` + `npm run build` pass.
 - [ ] Commit: `<type>(<scope>): <subject>` (conventional commit).
@@ -564,10 +489,10 @@ There is no separate React widget app on the frontend. The widget is **generated
 
 ## 22. Anti-Patterns
 
-- Creating a second axios instance or calling `fetch` directly for backend calls.
+- Creating a second axios instance or calling `fetch` directly for ordinary YellowStorm REST calls outside the documented §6 exceptions.
 - Importing `toast` from `sonner` instead of `@/lib/notifications`.
 - Hardcoded strings in JSX (`<Button>Save</Button>`).
-- Relative imports climbing `../../../`.
+- Relative imports climbing out of the owning module to reach another module or root-shared code.
 - Cross-module imports reaching into internals (`@/modules/playbook/components/Foo/Bar`).
 - New React Context for per-feature state (use Zustand).
 - Global singletons for service state other than the documented SSE services.

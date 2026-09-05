@@ -14,6 +14,12 @@ export class PlaybookAssistantOperation {
   @Prop({ required: true, type: String, index: true })
   ownerId!: string;
 
+  @Prop({ required: false, type: String, default: null, index: true })
+  requestId?: string | null;
+
+  @Prop({ required: true, type: String, enum: ['construction', 'generation'], default: 'construction' })
+  operationKind!: 'construction' | 'generation';
+
   @Prop({ required: true, type: String, enum: ['designer', 'mcp', 'advisor'], default: 'designer' })
   origin!: 'designer' | 'mcp' | 'advisor';
 

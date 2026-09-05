@@ -559,7 +559,6 @@ export function ExecutionStepDetail({
   const [evaluationExecutions, setEvaluationExecutions] = useState<PlaybookEvaluationExecution[]>([]);
   const [isSavingEvaluationBaseline, setIsSavingEvaluationBaseline] = useState(false);
   const [selectedStepExecutionId, setSelectedStepExecutionId] = useState<string | null>(null);
-  const [stepReplayModeValue, setStepReplayModeValue] = useState<'live' | 'replay_strict' | 'replay_flex' | 'replay_adaptive'>('live');
   const [selectedEvaluationId, setSelectedEvaluationId] = useState<string | null>(null);
   const [comparisonEvaluationId, setComparisonEvaluationId] = useState<string | null>(null);
   const [selectedJudgeHistoryId, setSelectedJudgeHistoryId] = useState<string | null>(null);
@@ -594,9 +593,9 @@ export function ExecutionStepDetail({
     return execution.taskResults.filter((r) => r.taskId === step.taskId).length;
   }, [step?.taskId, execution?.taskResults]);
   const showIterationSelector = iterationCount > 1;
-  useEffect(() => {
-    setStepReplayModeValue(currentTask?.stepReplayMode ?? 'live');
-  }, [currentTask?.id, currentTask?.stepReplayMode]);
+  const executionStepMode = step
+    ? execution?.stepExecutionModes?.[step.taskId] ?? execution?.executionMode ?? 'live'
+    : 'live';
   const evaluationHistory = step?.evaluationHistory || [];
   const judgeHistory = step?.judgeHistory || [];
   const advisorOptimizationHistory = step?.advisorOptimizationHistory || [];
@@ -792,9 +791,8 @@ export function ExecutionStepDetail({
   }, [execution?.playbookId, step?.taskId, currentTask?.taskType, fetchEvaluationExecutions]);
 
   const isBaselineExecution = !!(execution?.id && baselineReplay?.referenceExecutionId && execution.id === baselineReplay.referenceExecutionId);
-  const replayBadgeVersion = currentTask?.activeReplayVersion ?? replaySource?.validationVersion ?? baselineReplay?.validationVersion ?? null;
-  const showReplayBadge = Boolean(currentTask?.hasValidatedReplay || currentTask?.isSavingReplayBaseline || replayBadgeVersion);
-  const isReplayBadgeBusy = Boolean(currentTask?.isSavingReplayBaseline);
+  const replayBadgeVersion = replaySource?.validationVersion ?? replayPlanning?.validationVersion ?? null;
+  const showReplayBadge = Boolean(replayBadgeVersion);
   const showOutputFormatBadge = Boolean(
     currentTask?.hasOutputFormatTemplate
     || currentTask?.isCapturingOutputFormat
@@ -1207,6 +1205,12 @@ export function ExecutionStepDetail({
   }, [portInspection, execution, inputPortEntries]);
 
   const selectedStepExecutionText = getPreferredStepResultText(selectedStepExecution);
+  const selectedStepComponents = selectedStepExecution?.components || [];
+  const selectedStepArtifactComponents = selectedStepComponents.filter((component) => component.type === 'artifact');
+  const selectedStepNonArtifactComponents = selectedStepComponents.filter((component) => component.type !== 'artifact');
+  const supplementalStepComponents = selectedStepExecutionText && !isHtmlResultText(selectedStepExecutionText)
+    ? selectedStepArtifactComponents
+    : selectedStepComponents;
   const comparisonCandidates = evaluationHistory.filter((entry) => entry.id !== selectedEvaluation?.id);
   const comparisonEvaluation = comparisonCandidates.find((entry) => entry.id === comparisonEvaluationId) || comparisonCandidates[0] || null;
   const semanticMatchToDisplay = selectedEvaluation?.semanticMatch || step?.semanticMatch || null;
@@ -1264,9 +1268,8 @@ export function ExecutionStepDetail({
             <h2 className="text-lg font-semibold">{stepTitle}</h2>
             {showReplayBadge && (
               <span className="inline-flex items-center gap-1 rounded-full border border-amber-500/30 bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-700">
-                {isReplayBadgeBusy && <Loader2 className="h-3 w-3 animate-spin" />}
                 {replayBadgeVersion
-                  ? t('detail.badges.replayBaseline', { version: replayBadgeVersion })
+                  ? t('detail.badges.replayUsed', { version: replayBadgeVersion })
                   : t('detail.badges.baseline')}
               </span>
             )}
@@ -1291,30 +1294,10 @@ export function ExecutionStepDetail({
               </span>
             )}
             <div className="ml-auto flex items-center gap-1.5">
-              <span className="whitespace-nowrap text-xs text-muted-foreground">{t('detail.stepMode')}</span>
-              <Select
-                value={stepReplayModeValue}
-                onValueChange={(v) => {
-                  const nextMode = v as 'live' | 'replay_strict' | 'replay_flex' | 'replay_adaptive';
-                  setStepReplayModeValue(nextMode);
-                  onStepReplayModeChange?.(step.taskId, nextMode);
-                }}
-              >
-                <SelectTrigger className="h-7 w-[130px] text-xs">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="live">{t('execution.mode.live')}</SelectItem>
-                  <SelectItem value="replay_strict">{t('execution.mode.replayStrict')}</SelectItem>
-                  <SelectItem value="replay_flex">{t('execution.mode.replayFlex')}</SelectItem>
-                  <SelectItem value="replay_adaptive">{t('execution.mode.replayAdaptive')}</SelectItem>
-                </SelectContent>
-              </Select>
-              {!hasReplayBaseline && (
-                <span className="text-[10px] text-muted-foreground" title={t('detail.noBaselineHint')}>
-                  {t('detail.noBaseline')}
-                </span>
-              )}
+              <span className="whitespace-nowrap text-xs text-muted-foreground">{t('detail.executionModeUsed')}</span>
+              <Badge variant="outline" className="h-7 text-xs">
+                {t(getExecutionModeLabelKey(executionStepMode) as any)}
+              </Badge>
               {stepExecutions.length > 0 && (
                 <>
                   <span className="mx-1 h-4 w-px bg-border" />
@@ -1500,12 +1483,12 @@ export function ExecutionStepDetail({
                     {selectedStepExecutionText && (() => {
                       const isHtml = isHtmlResultText(selectedStepExecutionText);
                       const parts = isHtml
-                        ? [{ type: 'webPreview' as const, content: selectedStepExecutionText }]
-                        : mapComponentsToContentParts(buildResultComponentsWithText(
-                            selectedStepExecutionText,
-                            selectedStepExecution?.components,
-                            step.taskId,
-                          ) as never);
+                         ? [{ type: 'webPreview' as const, content: selectedStepExecutionText }]
+                         : mapComponentsToContentParts(buildResultComponentsWithText(
+                             selectedStepExecutionText,
+                             selectedStepNonArtifactComponents,
+                             step.taskId,
+                           ) as never);
                       return (
                         <div
                           data-testid="step-result-markdown"
@@ -1520,10 +1503,9 @@ export function ExecutionStepDetail({
                         </div>
                       );
                     })()}
-                    {(!selectedStepExecutionText || isHtmlResultText(selectedStepExecutionText))
-                      && selectedStepExecution?.components && selectedStepExecution.components.length > 0 && (
+                    {supplementalStepComponents.length > 0 && (
                       <div className="prose prose-sm max-w-none dark:prose-invert">
-                        <StepComponents components={selectedStepExecution.components} taskId={step.taskId} />
+                        <StepComponents components={supplementalStepComponents} taskId={step.taskId} executionId={execution?.id} />
                       </div>
                     )}
                   </>
@@ -1578,6 +1560,7 @@ export function ExecutionStepDetail({
                               portName={group.portName}
                               portKind={group.portKind}
                               artifacts={group.artifacts}
+                              executionId={execution?.id}
                               onInspectArtifact={(artifact) => handlePortInspection([artifact], artifact.filename || group.portName, artifact.artifactKind, step.taskId)}
                             />
                           ))}
@@ -1593,6 +1576,7 @@ export function ExecutionStepDetail({
                               portName={entry.sourceLabel ? `${entry.portName} ← ${entry.sourceLabel}` : entry.portName}
                               portKind={entry.portKind}
                               artifacts={entry.artifacts}
+                              executionId={execution?.id}
                               defaultOpen={false}
                               onInspectArtifact={entry.artifacts.length > 0 ? (artifact) => handlePortInspection([artifact], entry.portName, entry.portKind, step.taskId) : undefined}
                             />

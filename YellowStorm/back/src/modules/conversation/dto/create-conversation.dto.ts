@@ -1,4 +1,4 @@
-import { IsOptional, IsString, MaxLength, IsArray, IsMongoId, IsEmail, ValidateNested } from 'class-validator';
+import { IsOptional, IsString, MaxLength, IsArray, IsMongoId, IsEmail, ValidateNested, IsIn, IsUUID } from 'class-validator';
 import { ApiPropertyOptional } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
 
@@ -12,6 +12,16 @@ export class ParticipantDto {
 }
 
 export class CreateConversationDto {
+  @ApiPropertyOptional({ enum: ['chat', 'platform_copilot'], default: 'chat' })
+  @IsOptional()
+  @IsIn(['chat', 'platform_copilot'])
+  runtimePurpose?: 'chat' | 'platform_copilot';
+
+  @ApiPropertyOptional({ description: 'Idempotency identity for creating a distinct platform-copilot conversation', format: 'uuid' })
+  @IsOptional()
+  @IsUUID('4')
+  creationRequestId?: string;
+
   @ApiPropertyOptional({ maxLength: 200, default: 'New Conversation' })
   @IsOptional()
   @IsString()

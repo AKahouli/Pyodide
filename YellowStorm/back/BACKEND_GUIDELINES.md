@@ -16,10 +16,10 @@
 | Scheduling | `@nestjs/schedule` |
 | Health | Custom (not `@nestjs/terminus` — see §19) |
 | gRPC | `@grpc/grpc-js` + `@grpc/proto-loader` (client to Python ADK) |
-| Realtime | SSE via RxJS `Observable<MessageEvent>`, manual SSE, HTTP fetch streams, Socket.IO for WhatsApp pairing |
+| Realtime | SSE via RxJS `Observable<MessageEvent>`, manual SSE, HTTP fetch streams, Socket.IO for WhatsApp pairing, browser sessions, and app runtime |
 | Storage | S3/Ceph via `@aws-sdk/client-s3` + presigned URLs; legacy Azure Blob dependency may exist |
 | Email | `nodemailer` (SMTP) or Microsoft Graph (`@azure/msal-node`) |
-| AI runtimes | gRPC ADK services, Worky FastAPI runtime over HTTP SSE, MCP via `@modelcontextprotocol/sdk` |
+| AI runtimes | gRPC ADK services, MCP via `@modelcontextprotocol/sdk` |
 | WhatsApp | `@whiskeysockets/baileys`, `socket.io`, `qrcode` |
 | Relational storage | `pg` for memory-cards/Postgres-backed features |
 | Security | `helmet`, `compression`, `cookie-parser` |
@@ -40,7 +40,7 @@ back/src/
 └── modules/                    # Feature modules (auth, conversation-v2, playbook-flow, worky, …)
 ```
 
-Current modules include: `agent`, `agent-type`, `analytics`, `auth`, `auth-provider`, `authorization`, `browser-session`, `chat-completion`, `classifier`, `connected-app`, `connector`, `conversation`, `conversation-v2`, `database`, `document`, `email`, `evaluation`, `exceptions`, `governance`, `guardrails`, `health`, `indexing`, `integration-events`, `knowledge-intelligence`, `logger`, `memory-cards`, `models`, `notifications`, `playbook-flow`, `project`, `rate-limiter`, `request-context`, `response`, `skill`, `system`, `team`, `telegram`, `tool`, `usage`, `user`, `user-group`, `whatsapp`, `widget-chat`, `workspace`, `workspace-artifact`, `workspace-web-import`, `worky`. Use the actual module name `playbook-flow`; do not create a parallel `playbook` module. `workspace-web-import` is currently a scaffolding stub (empty `dto/`, `interfaces/`, `schemas/`); do not assume it has runtime behavior until it is implemented.
+Representative current modules include: `agent`, `agent-type`, `analytics`, `app-data`, `app-runtime`, `auth`, `auth-provider`, `authorization`, `browser-session`, `chat-completion`, `classifier`, `connected-app`, `connector`, `conversation`, `conversation-v2`, `database`, `document`, `email`, `evaluation`, `exceptions`, `governance`, `guardrails`, `health`, `humain-agent`, `indexing`, `integration-events`, `knowledge-intelligence`, `logger`, `memory-cards`, `models`, `notifications`, `playbook-flow`, `postgres`, `project`, `rate-limiter`, `request-context`, `response`, `semantic-model`, `skill`, `system`, `team`, `telegram`, `tool`, `usage`, `user`, `user-group`, `whatsapp`, `widget-chat`, `workspace`, `workspace-artifact`, `workspace-web-import`, `worky`. This list is descriptive, not an exhaustive registry; verify `src/modules/` and `app.module.ts`. New playbook work belongs in `playbook-flow`. A legacy `playbook` directory remains but is not root-loaded; do not extend it or create another parallel playbook module. `workspace-web-import` is currently a scaffolding stub (empty `dto/`, `interfaces/`, `schemas/`); do not assume it has runtime behavior until it is implemented.
 
 **Path aliases** (`@/*`, `@modules/*`, `@common/*`, `@config/*`) — **never** `../../../`:
 
@@ -110,7 +110,7 @@ Or `ConfigService` for one-off values. **Never** read `process.env` directly in 
 
 All env vars go through Joi validation in `src/config/config.schema.ts`. The app refuses to boot with missing required vars. Production requires `JWT_SECRET`, `ENCRYPTION_KEY`, `MONGODB_URI`, storage + email secrets.
 
-**Existing config namespaces:** `app`, `auth`, `jwt`, `database`, `email`, `storage`, `logging`, `health`, `notifications`, `workspace`, `indexing`, `conversation`, `conversation-v2`, `litellm`, `playbook-flow`, `telegram`, `microsoft`, `a2aAdmin`, `grpcSecurity`, `grpcSecurityV2`, `whatsapp`, `worky`, `memoryCards`, `browserSession`, `dataRoom`, `governedConversations`.
+**Root-loaded config namespaces:** `app`, `jwt`, `auth`, `microsoft`, `health`, `workspace`, `litellm`, `conversation`, `conversation-v2`, `appRuntime`, `appData`, `playbook-flow`, `grpcSecurity`, `grpcSecurityV2`, `telegram`, `whatsapp`, `worky`, `memoryCards`, `dataRoom`, `governedConversations`, `semanticModel`. Additional namespaces may be owned by feature modules; verify their `ConfigModule.forFeature(...)` registration rather than assuming root availability.
 
 Keep `src/config/*.config.ts`, `src/config/config.schema.ts`, `src/config/index.ts`, and `ConfigModule.forRoot({ load: [...] })` in sync. A config namespace loaded in `app.module.ts` but not exported from `src/config/index.ts` is a drift smell; a file exported but not loaded is likely dead code.
 
@@ -122,7 +122,7 @@ All config keys read in services must be declared in the corresponding `<name>.c
 
 **Load lifecycle:** most namespaces are root-loaded in `app.module.ts`. A small number are feature-loaded inside the owning module's imports (currently `browserSession` in `browser-session.module.ts`). When introducing a namespace, decide explicitly whether it must be available app-wide (root-load) or only when the owning module is registered (feature-load), and document that choice at the registration site so consumers do not assume availability when the feature module is absent.
 
-**Namespace parity (load + Joi + export):** every loaded namespace must satisfy all three: (a) every env-derived key it reads must be present in `config.schema.ts` Joi validation, (b) it must be exported from `src/config/index.ts`, (c) it must be loaded exactly once. Existing drift (`browserSession` reads env keys without Joi entries; `governedConversationsConfig` and `browserSessionConfig` are not re-exported from the barrel) must be fixed when the surrounding area is touched — do not replicate the drift elsewhere.
+**Namespace parity (load + Joi + export):** every loaded namespace must satisfy all three: (a) every env-derived key it reads must be present in `config.schema.ts` Joi validation, (b) it must be exported from `src/config/index.ts`, (c) it must be loaded exactly once. Current debt: `browserSession` reads env keys without Joi entries, and `appRuntimeConfig`, `memoryCardsConfig`, `governedConversationsConfig`, and `browserSessionConfig` are not re-exported from the barrel. Fix this debt when touching those areas; do not treat it as an approved pattern.
 
 `dataRoom` and `governedConversations` are rollout-gate namespaces consumed across module boundaries (governance, workspace, knowledge-intelligence). Treat their flags as cross-module contracts: changing a flag's default or removing it requires tracing every consumer, not just the owning module.
 
@@ -245,7 +245,7 @@ Query: `?page=1&limit=10` (shared `PaginationDto`). Response wraps items + `pagi
 
 ## 10. gRPC & Microservices
 
-**Proto files** in `src/modules/<module>/proto/`. Currently four proto files:
+**Proto files** live in `src/modules/<module>/proto/`. Currently five proto files:
 
 | Module | File | Service | RPCs |
 |--------|------|---------|------|
@@ -253,14 +253,15 @@ Query: `?page=1&limit=10` (shared `PaginationDto`). Response wraps items + `pagi
 | `conversation` | `chatbot.proto` | Messages only | — (shared types) |
 | `conversation-v2` | `conversation.proto` | `ConversationV2` | 7 RPCs |
 | `playbook-flow` | `playbook-flow.proto` | `PlaybookFlowRuntime` | 5 RPCs |
+| `worky` | `companion_ai.proto` | Companion AI orchestrator | Worky orchestration |
 
-Any `.proto` change must be mirrored in `yellowstorm-adk/grpc/proto/`.
+Any `.proto` consumed by YellowStorm ADK must be mirrored in `yellowstorm-adk/grpc/proto/` and changed on both sides in one change set. The current ADK tree mirrors `a2a_admin.proto`, `chatbot.proto`, `playbook-flow.proto`, and `companion_ai.proto`; it does not contain `conversation.proto`. Treat that absence as unresolved ownership/contract debt: verify the Conversation V2 server owner before changing the proto, and add the ADK mirror if ADK is the receiver.
 
-**Post-build:** every backend `.proto` file must be available from `dist/`. `nest-cli.json` copies proto assets, and `package.json`'s `postbuild` also copies selected proto files (`chatbot.proto`, `playbook-flow.proto` at the time of this guideline update). When adding a new proto file, verify both mechanisms and update `postbuild` when runtime path resolution depends on it.
+**Packaging:** every backend `.proto` needed at runtime must be available from a standalone `dist/` artifact and from the production image. `nest-cli.json` declares `**/*.proto`; `package.json`'s `postbuild` explicitly copies `chatbot.proto`, `conversation.proto`, `playbook-flow.proto`, and `companion_ai.proto`; the Dockerfile explicitly copies all five proto directories. `a2a_admin.proto` is currently omitted from the explicit `postbuild` copy and was absent from a standalone local `dist/` after `npm run build`, although Docker compensates for it. Fix that build-artifact gap before relying on `dist/` outside the Docker image. When adding a proto, verify Nest assets, `postbuild`, the Docker image, and runtime path resolution.
 
 **Backend acts as gRPC client** for ADK-backed services. Clients are built in services (e.g. `PlaybookFlowRuntimeClientService`, `ConversationV2ClientService`) via `OnModuleInit` using `@grpc/grpc-js` + `@grpc/proto-loader`.
 
-**Worky exception:** Worky uses a separate FastAPI runtime over HTTP SSE and internal callback endpoints, not gRPC/proto. New AI-service integrations may use this pattern only when stream shape, callback auth, retry, and audit behavior are explicitly documented.
+Worky uses the gRPC ADK orchestrator and Electric projections. Keep its sender, receiver, and projection contracts aligned when changing the orchestration flow.
 
 **Streams:** Map gRPC stream events to RxJS `Observable`/`Subject`. Always handle `error`, `end`, disconnect. Translate gRPC codes to domain error codes — never leak raw gRPC codes to frontend.
 
@@ -339,17 +340,23 @@ Current SSE endpoints and pipes use these serving patterns:
 - Do not open WebSocket gateways without agreeing on event schema with the frontend team.
 - `compression()` middleware is incompatible with SSE (buffering breaks streaming). It is disabled in `main.ts` — do not re-enable without verifying all SSE endpoints.
 
-Worky governance is backend-owned. The runtime calls back through `POST /worky/internal/streams/{id}/governance/check`; resolution uses stream override, workspace policy, then default level. Every governance evaluation must write an audit event.
+Worky governance is backend-owned; resolution uses stream override, workspace policy, then default level. Every governance evaluation must write an audit event.
 
 ### Socket.IO namespace: `/browser-session` (browser-session module)
 
-The second sanctioned Socket.IO usage (alongside WhatsApp pairing). JWT handshake via `socket.request`, one in-memory session per socket, events `start` / `input` / `navigate` (client → server) and `frame` / `navigated` / `blocked` / `closed` (server → client). Runtime is a Playwright/CDP relay: `Page.screencastFrame` emits base64 JPEG frames that the gateway forwards as `frame` events; input/navigation events are replayed to Playwright. Sessions expire on idle/max timers and are destroyed on socket disconnect.
+A sanctioned Socket.IO usage alongside WhatsApp pairing and app runtime. JWT handshake via `socket.request`, one in-memory session per socket, events `start` / `input` / `navigate` (client → server) and `frame` / `navigated` / `blocked` / `closed` (server → client). Runtime is a Playwright/CDP relay: `Page.screencastFrame` emits base64 JPEG frames that the gateway forwards as `frame` events; input/navigation events are replayed to Playwright. Sessions expire on idle/max timers and are destroyed on socket disconnect.
 
 **Hard cross-boundary invariant:** the configured 1280×720 (16:9) viewport must match the frontend `VIEWPORT_W/H` constants in `front/src/modules/workspace/hooks/useBrowserSession.ts` so streamed input coordinates map correctly. Change both sides in the same change set.
 
 **Ack protocol uses raw strings, not the global error envelope:** `BUSY`, `BAD_REQUEST`, `NO_SESSION`, etc. Any new ack string must be added to the frontend consumer in the same change.
 
 **Security controls are mandatory, not optional:** URL safety is checked before launch and before every navigation; routed main-document requests are validated; popups are closed and downloads cancelled. Do not bypass these checks when extending the engine — surface new unsafe patterns through the existing guard points.
+
+### Socket.IO namespace: `/app-runtime` (app-runtime module)
+
+The browser-hosted application runtime connects through `AppRuntimeGateway` using a one-shot runtime ticket, not the user JWT. The consumed ticket scopes the socket to one user, workspace, binding, and runtime session and cannot be replayed. One current runtime connection is registered per workspace; replacement or disconnect fails pending tools and returns the binding to its waiting state.
+
+The protocol is defined in `app-runtime/types/app-runtime-protocol.ts`: `runtime.register`, `runtime.heartbeat`, `runtime.rehydrate`, `tool.invoke`, `tool.progress`, `tool.completed`, and `tool.failed`. The ticket decides socket ownership; never trust workspace or runtime identifiers from event payloads without matching them to the consumed ticket. Keep event names, payloads, capability negotiation, heartbeat persistence, and the frontend `BrowserRuntimeClient`/`BrowserRuntimeHost` consumers aligned.
 
 ### Widget manual SSE (widget-chat module)
 
@@ -416,7 +423,7 @@ Jest 29 + `@nestjs/testing`. Tests colocated as `*.spec.ts`. Run: `npm test`, `n
 ## 21. TypeScript Conventions
 
 - `strict: true`, `noImplicitAny: true`, `strictNullChecks: true`.
-- **Named exports only** (no `export default` — gRPC/ESM boundaries behave better).
+- Use named exports by default; gRPC/ESM boundaries must not depend on ambiguous default imports. Nest `registerAs()` configuration factories are the established exception and may use default exports.
 - `type` for DTO shapes, payload objects, config types. `interface` for service contracts and public module surfaces. `enum` (string-valued) for error codes and API-boundary enums; `as const` for internal static maps.
 - Mongoose document types: `HydratedDocument<T>`, exported as `<Name>Document`.
 - `!` for required schema props, `?` for optional. No `any` — prefer `unknown` + narrowing.
@@ -455,7 +462,7 @@ Changes crossing the boundary require paired updates:
 | New ordered event stream | Frontend store/query cursor handling (`sequence` or equivalent) |
 | Cookie attrs change | CORS + `credentials` + `sameSite` must match |
 | Versioning / prefix change | `VITE_API_URL` / `env.sh` |
-| New `.proto` field or file | `yellowstorm-adk/grpc/proto/` mirror + `postbuild` copy in `package.json` |
+| New `.proto` field or file | Mirror in `yellowstorm-adk/grpc/proto/` when ADK consumes it; verify standalone `dist/`, Docker packaging, and both runtime sides |
 
 **Frozen contracts:** response envelope, error envelope, and pagination shape. Do not alter silently.
 
@@ -514,8 +521,8 @@ When adding a new producer: add the versioned contract, gate emission on a `data
 - [ ] Exceptions thrown from `@modules/exceptions` with proper `ErrorCode`.
 - [ ] Mongoose schema: `timestamps`, indexes, `toJSON` transform (`_id` → `id`).
 - [ ] Tests colocated as `*.spec.ts`; `npm test` passes.
-- [ ] Proto changes mirrored in ADK, `postbuild` copies, contract validated.
-- [ ] Proto files: all backend proto files (`a2a_admin.proto`, `chatbot.proto`, `conversation.proto`, `playbook-flow.proto`, plus new ones) copied in `postbuild`.
+- [ ] Proto changes mirrored in ADK when applicable; standalone `dist/`, Docker packaging, and both runtime sides validated.
+- [ ] Proto packaging: all backend proto files (`a2a_admin.proto`, `chatbot.proto`, `conversation.proto`, `playbook-flow.proto`, `companion_ai.proto`, plus new ones) exist in standalone `dist/` and the production image; update `postbuild` and Docker copies as required.
 - [ ] `google.protobuf.Struct` fields wrapped with `toGrpcStruct()` — never assign a plain JS object.
 - [ ] Frontend contract items synced per §23.
 - [ ] Backend error codes mirrored in `front/src/lib/error-codes.ts` and EN+FR error locales.

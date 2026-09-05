@@ -37,12 +37,10 @@ class TestDelegationFactoryExtended:
     @pytest.mark.asyncio
     async def test_create_agent_with_error_handling_missing_config(self):
         factory = _factory()
-        span = MagicMock()
         agent, toolkit = await factory._create_agent_with_error_handling(
-            None, "Missing", "missing", "1", span, False, MagicMock()
+            None, "Missing", "missing", "1", False, MagicMock()
         )
         assert agent is None
-        span.update.assert_called()
 
     @pytest.mark.asyncio
     async def test_create_agent_with_error_handling_success(self):
@@ -74,7 +72,6 @@ class TestDelegationFactoryExtended:
                 "SearchAgent",
                 "search_agent",
                 "1",
-                MagicMock(),
                 False,
                 MagicMock(),
             )
@@ -87,7 +84,6 @@ class TestDelegationFactoryExtended:
         factory.agent_runner.run_agent_tool = AsyncMock(
             return_value=("ok", [], {"execution_flow": [], "execution_statistics": {}}, [])
         )
-        span = MagicMock()
         with patch(
             "src.smart_rag.agents.factories.delegation_factory.InMemorySessionService",
             return_value=MagicMock(),
@@ -98,7 +94,6 @@ class TestDelegationFactoryExtended:
                 "task",
                 "expected",
                 "1",
-                span,
                 AsyncMock(),
                 "SearchAgent",
                 "agent-1",
@@ -110,7 +105,6 @@ class TestDelegationFactoryExtended:
     async def test_execute_agent_with_error_handling_failure(self):
         factory = _factory()
         factory.agent_runner.run_agent_tool = AsyncMock(side_effect=RuntimeError("boom"))
-        span = MagicMock()
         with patch(
             "src.smart_rag.agents.factories.delegation_factory.InMemorySessionService",
             return_value=MagicMock(),
@@ -121,14 +115,12 @@ class TestDelegationFactoryExtended:
             "task",
             "expected",
             "1",
-            span,
             AsyncMock(),
             "SearchAgent",
                 "agent-1",
                 None,
             )
         assert result is None
-        span.event.assert_called()
 
     @pytest.mark.asyncio
     async def test_delegate_execution_with_images(self):
@@ -142,10 +134,8 @@ class TestDelegationFactoryExtended:
         factory.agent_repository.get_agent_id_by_name.return_value = "a1"
         factory._create_agent_with_error_handling = AsyncMock(return_value=(MagicMock(), MagicMock()))
         factory._execute_agent_with_error_handling = AsyncMock(return_value="done")
-        with patch("src.smart_rag.agents.factories.delegation_factory.langfuse_client") as mock_lf:
-            mock_lf.span.return_value = MagicMock()
-            delegate = factory.make_delegate_function("SearchAgent", AsyncMock(), False, MagicMock())
-            result = await delegate("task ##original_expected_output##table##/original_expected_output##", "1", True)
+        delegate = factory.make_delegate_function("SearchAgent", AsyncMock(), False)
+        result = await delegate("task ##original_expected_output##table##/original_expected_output##", "1", True)
         assert result == "done"
         kwargs = factory._execute_agent_with_error_handling.await_args.kwargs
         assert kwargs["image_input"] is not None
@@ -174,10 +164,8 @@ class TestDelegationFactoryExtended:
             side_effect=["child evidence", "parent result"]
         )
 
-        with patch("src.smart_rag.agents.factories.delegation_factory.langfuse_client") as mock_lf:
-            mock_lf.span.return_value = MagicMock()
-            delegate = factory.make_delegate_function("SearchAgent", AsyncMock(), False, MagicMock())
-            result = await delegate("parent task", "expected output")
+        delegate = factory.make_delegate_function("SearchAgent", AsyncMock(), False)
+        result = await delegate("parent task", "expected output")
 
         assert result == "parent result"
         assert mock_agent.tools

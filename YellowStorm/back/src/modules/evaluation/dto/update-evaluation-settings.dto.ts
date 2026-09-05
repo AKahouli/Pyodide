@@ -6,23 +6,20 @@ import {
   IsInt,
   IsOptional,
   IsString,
-  Max,
   MaxLength,
   Min,
   ValidateNested,
 } from 'class-validator';
 
 export class UpdateResponseCorrectionSettingsDto {
-  @ApiProperty({ minimum: 0, maximum: 100 })
+  @ApiProperty({ minimum: 0 })
   @IsInt()
   @Min(0)
-  @Max(100)
   threshold!: number;
 
-  @ApiProperty({ minimum: 1, maximum: 3 })
+  @ApiProperty({ minimum: 1 })
   @IsInt()
   @Min(1)
-  @Max(3)
   maxAttempts!: number;
 
   @ApiProperty({ minimum: 10000 })
@@ -66,22 +63,19 @@ export class UpdateResponseReliabilitySettingsDto {
   @MaxLength(100)
   judgeModelId!: string | null;
 
-  @ApiProperty({ minimum: 1, maximum: 10 })
+  @ApiProperty({ minimum: 1 })
   @IsInt()
   @Min(1)
-  @Max(10)
   maxConcurrentEvaluations!: number;
 
-  @ApiProperty({ minimum: 5000, maximum: 600000 })
+  @ApiProperty({ minimum: 5000 })
   @IsInt()
   @Min(5000)
-  @Max(600000)
   timeoutMs!: number;
 
-  @ApiProperty({ minimum: 1, maximum: 10 })
+  @ApiProperty({ minimum: 1 })
   @IsInt()
   @Min(1)
-  @Max(10)
   maxFindings!: number;
 
   @ApiProperty({ type: UpdateResponseCorrectionSettingsDto })

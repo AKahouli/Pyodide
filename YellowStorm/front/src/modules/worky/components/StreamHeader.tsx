@@ -55,9 +55,6 @@ export function StreamHeader({ streamId, onRename }: StreamHeaderProps): JSX.Ele
             {stream.title}
           </button>
         )}
-        <div className='text-xs text-muted-foreground'>
-          {t('header.planVersion', { version: stream.currentPlanVersion })}
-        </div>
       </div>
     </header>
   );

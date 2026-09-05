@@ -1,11 +1,8 @@
-import { Injectable, Inject, forwardRef } from '@nestjs/common';
-import { InjectModel } from '@nestjs/mongoose';
-import { Model, Types } from 'mongoose';
+import { Inject, Injectable, Optional } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Cron, CronExpression } from '@nestjs/schedule';
-import { Conversation, ConversationDocument } from '../schemas/conversation.schema';
-import { Message, MessageDocument } from '../schemas/message.schema';
-import { SharedConversation, SharedConversationDocument } from '../schemas/shared-conversation.schema';
+import { InjectModel } from '@nestjs/mongoose';
+import { Model } from 'mongoose';
 import { User, UserDocument } from '../../user/schemas/user.schema';
 import {
   CreateConversationData,
@@ -16,131 +13,214 @@ import {
   GroupConversationMeta,
 } from '../interfaces/conversation.interface';
 import { LoggerService } from '../../logger';
-import { NotFoundException, ForbiddenException, BadRequestException } from '../../exceptions';
+import {
+  NotFoundException,
+  ForbiddenException,
+  BadRequestException,
+  ServiceUnavailableException,
+} from '../../exceptions';
 import { ErrorCode } from '../../exceptions/constants/error-codes';
 import { AgentRepository } from '../../agent/repositories/agent.repository';
+import {
+  PLATFORM_COPILOT,
+  PLATFORM_COPILOT_AGENT_SLUG,
+} from '../../agent/constants/platform-copilot.constants';
+import { FeatureVisibilityService } from '../../system/feature-visibility.service';
 import { WorkspaceService } from '../../workspace/workspace.service';
 import { WorkspaceDocumentService } from '../../workspace/workspace-document.service';
-import { MessageService } from './message.service';
 import { EmailService } from '../../email/email.service';
-import { DocumentQueryParams, PaginatedDocuments } from '../../workspace/interfaces/workspace-document.interface';
-import { escapeRegex } from '../../../common/utils';
+import {
+  DocumentQueryParams,
+  PaginatedDocuments,
+} from '../../workspace/interfaces/workspace-document.interface';
+import {
+  CONVERSATION_STORE,
+  type ConversationRecord,
+  type ConversationStore,
+} from '../persistence/conversation-store';
+import { newOwnedId } from '../persistence/owned-id';
+import { PG_POOL } from '../../postgres/postgres.constants';
+import type { Pool, PoolClient } from 'pg';
 
 @Injectable()
 export class ConversationService {
   private isCleaningUp = false;
 
   constructor(
-    @InjectModel(Conversation.name)
-    private readonly conversationModel: Model<ConversationDocument>,
-    @InjectModel(Message.name)
-    private readonly messageModel: Model<MessageDocument>,
-    @InjectModel(SharedConversation.name)
-    private readonly sharedConversationModel: Model<SharedConversationDocument>,
-    @InjectModel(User.name)
-    private readonly userModel: Model<UserDocument>,
+    @Inject(CONVERSATION_STORE) private readonly conversationStore: ConversationStore,
+    @InjectModel(User.name) private readonly userModel: Model<UserDocument>,
     private readonly logger: LoggerService,
     private readonly configService: ConfigService,
     private readonly workspaceService: WorkspaceService,
     private readonly workspaceDocumentService: WorkspaceDocumentService,
-    @Inject(forwardRef(() => MessageService))
-    private readonly messageService: MessageService,
     private readonly emailService: EmailService,
     private readonly agentRepository: AgentRepository,
+    private readonly featureVisibility: FeatureVisibilityService,
+    @Optional() @Inject(PG_POOL) private readonly postgresPool?: Pool,
   ) {
     this.logger.setContext('ConversationService');
   }
 
-  async create(
-    userId: string,
-    data: CreateConversationData,
-  ): Promise<ConversationResponse> {
-
-    let groupMeta: GroupConversationMeta | undefined;
-    const emailsToInvite = data.participants?.map(p => p.email) || data.participantEmails;
-    
-    if (emailsToInvite?.length) {
-      groupMeta = await this.buildGroupMetadata(emailsToInvite, userId, data.participants, data.ownerJob);
+  async create(userId: string, data: CreateConversationData): Promise<ConversationResponse> {
+    if (data.runtimePurpose === PLATFORM_COPILOT) {
+      return this.createOrReusePlatformCopilot(userId, data.creationRequestId);
     }
-
-    const conversation = await this.conversationModel.create({
-      title: data.title || (groupMeta ? 'New Group Conversation' : 'New Conversation'),
-      createdBy: new Types.ObjectId(userId),
-      workspaces: data.workspaces?.map((id) => new Types.ObjectId(id)) || [],
-      messages: [],
-      messageCount: 0,
-      isArchived: false,
-      isShared: false,
-      ...(groupMeta ? { groupMeta } : {}),
-      ...(data.projectId ? { projectId: new Types.ObjectId(data.projectId) } : {}),
-    });
-
-    this.logger.log('Conversation created', {
-      conversationId: conversation._id,
-      userId,
-    });
-
-    if (groupMeta) {
-      const owner = await this.userModel.findById(userId).lean().exec();
-      const ownerName = owner?.profile ? `${owner.profile.firstName} ${owner.profile.lastName}` : owner?.email;
-
-      this.sendGroupInvitations(
-        emailsToInvite!,
-        conversation._id.toString(),
-        conversation.title,
-        ownerName || 'Someone',
-      ).catch(err => {
-        this.logger.error('Failed to send group invitations', {
-          conversationId: conversation._id,
-          error: err.message,
-        });
-      });
+    if (data.creationRequestId) {
+      throw new BadRequestException(
+        undefined,
+        'creationRequestId is only supported for platform-copilot conversations',
+      );
     }
- 
-    return this.findById(conversation._id.toString());
+    const emails =
+      data.participants?.map((participant) => participant.email) ?? data.participantEmails;
+    const group = await this.buildGroupMetadata(emails, userId, data.participants, data.ownerJob);
+    const record = await this.conversationStore.create({
+      id: newOwnedId(),
+      title: data.title || (group ? 'New Group Conversation' : 'New Conversation'),
+      createdBy: userId,
+      workspaces: data.workspaces ?? [],
+      projectId: data.projectId,
+      isGroup: Boolean(group),
+      members: group?.members.map((member) => ({
+        userId: member.userId,
+        joinedAt: new Date(member.joinedAt),
+        status: member.status,
+        job: member.job,
+        mentions: [],
+      })),
+      invitedUsers: group?.invitedUsers.map((invite) => ({
+        ...invite,
+        invitedAt: new Date(invite.invitedAt),
+      })),
+    });
+    if (group && emails?.length) await this.sendInitialInvitations(record, emails, userId);
+    this.logger.log('Conversation created', { conversationId: record.id, userId });
+    return this.mapToResponse(record);
   }
 
-  async createGoverned(userId: string, data: {
-    title: string;
-    requestId: string;
-    programId: string;
-    scopeId: string;
-    deploymentId: string;
-    revisionId: string;
-    revisionNumber: number;
-    primaryAgentId: string;
-    allowedAgentIds: string[];
-    workspaceIds: string[];
-  }): Promise<ConversationResponse> {
-    const existing = await this.conversationModel.findOne({ createdBy: new Types.ObjectId(userId), governedCreationRequestId: data.requestId }).lean().exec();
+  async assertPlatformCopilotAgent(pinnedAgentId?: string | null): Promise<string> {
+    const visibility = await this.featureVisibility.getVisibility();
+    if (!visibility.platformCopilot) {
+      throw new ServiceUnavailableException(
+        ErrorCode.AGENT_UNAVAILABLE,
+        'Yellowmind is currently unavailable',
+      );
+    }
+    const activeAgentId = await this.agentRepository.findActiveDefaultIdBySlugAndType(
+      PLATFORM_COPILOT_AGENT_SLUG,
+      PLATFORM_COPILOT,
+    );
+    if (!activeAgentId || (pinnedAgentId && pinnedAgentId !== activeAgentId)) {
+      throw new ServiceUnavailableException(
+        ErrorCode.AGENT_UNAVAILABLE,
+        'Yellowmind is currently unavailable',
+      );
+    }
+    return activeAgentId;
+  }
+
+  async resolvePlatformCopilotAgent(conversation: {
+    id?: string;
+    pinnedAgentId?: string | null;
+    taggedAgentIds?: string[];
+  }): Promise<string> {
+    return this.assertPlatformCopilotAgent(conversation.pinnedAgentId);
+  }
+
+  private async createOrReusePlatformCopilot(
+    userId: string,
+    requestedCreationId?: string,
+  ): Promise<ConversationResponse> {
+    if (requestedCreationId) {
+      const requested = await this.conversationStore.findByPlatformCreationRequest(
+        userId,
+        requestedCreationId,
+      );
+      if (requested) {
+        await this.resolvePlatformCopilotAgent(requested);
+        return this.mapToResponse(requested);
+      }
+    }
+    const pinnedAgentId = await this.assertPlatformCopilotAgent();
+    if (!requestedCreationId) {
+      const existing = await this.conversationStore.findLatestPlatformConversation(
+        userId,
+        pinnedAgentId,
+      );
+      if (existing) return this.mapToResponse(existing);
+    }
+    const requestId = requestedCreationId ?? `initial:${pinnedAgentId}`;
+    try {
+      return this.mapToResponse(
+        await this.conversationStore.create({
+          id: newOwnedId(),
+          title: 'Yellowmind',
+          createdBy: userId,
+          runtimePurpose: PLATFORM_COPILOT,
+          platformCopilotCreationRequestId: requestId,
+          pinnedAgentId,
+          taggedAgentIds: [pinnedAgentId],
+        }),
+      );
+    } catch (error: unknown) {
+      if (this.isUniqueViolation(error)) {
+        const raced = await this.conversationStore.findByPlatformCreationRequest(userId, requestId);
+        if (raced) return this.mapToResponse(raced);
+      }
+      throw error;
+    }
+  }
+
+  async createGoverned(
+    userId: string,
+    data: {
+      title: string;
+      requestId: string;
+      programId: string;
+      scopeId: string;
+      deploymentId: string;
+      revisionId: string;
+      revisionNumber: number;
+      primaryAgentId: string;
+      allowedAgentIds: string[];
+      workspaceIds: string[];
+    },
+  ): Promise<ConversationResponse> {
+    const existing = await this.conversationStore.findByGovernedCreationRequest(
+      userId,
+      data.requestId,
+    );
     if (existing) return this.mapToResponse(existing);
     try {
-      const conversation = await this.conversationModel.create({
+      const record = await this.conversationStore.create({
+        id: newOwnedId(),
         title: data.title,
-        createdBy: new Types.ObjectId(userId),
+        createdBy: userId,
         runtimeMode: 'governed',
         governedCreationRequestId: data.requestId,
         governanceContext: {
-          programId: new Types.ObjectId(data.programId),
-          scopeId: new Types.ObjectId(data.scopeId),
-          deploymentId: new Types.ObjectId(data.deploymentId),
-          revisionId: new Types.ObjectId(data.revisionId),
+          programId: data.programId,
+          scopeId: data.scopeId,
+          deploymentId: data.deploymentId,
+          revisionId: data.revisionId,
           revisionNumber: data.revisionNumber,
-          pinnedAt: new Date(),
-          runtimeDefinition: { primaryAgentId: data.primaryAgentId, allowedAgentIds: data.allowedAgentIds, workspaceIds: data.workspaceIds },
+          pinnedAt: new Date().toISOString(),
+          runtimeDefinition: {
+            primaryAgentId: data.primaryAgentId,
+            allowedAgentIds: data.allowedAgentIds,
+            workspaceIds: data.workspaceIds,
+          },
         },
-        workspaces: data.workspaceIds.map((id) => new Types.ObjectId(id)),
-        taggedAgentIds: [new Types.ObjectId(data.primaryAgentId)],
-        messages: [],
-        messageCount: 0,
-        isArchived: false,
-        isShared: false,
+        workspaces: data.workspaceIds,
+        taggedAgentIds: [data.primaryAgentId],
       });
-      this.logger.log('Governed conversation created', { conversationId: conversation._id.toString(), userId, scopeId: data.scopeId, revisionId: data.revisionId });
-      return this.mapToResponse(conversation);
+      return this.mapToResponse(record);
     } catch (error: unknown) {
-      if (typeof error === 'object' && error !== null && 'code' in error && (error as { code?: number }).code === 11000) {
-        const raced = await this.conversationModel.findOne({ createdBy: new Types.ObjectId(userId), governedCreationRequestId: data.requestId }).lean().exec();
+      if (this.isUniqueViolation(error)) {
+        const raced = await this.conversationStore.findByGovernedCreationRequest(
+          userId,
+          data.requestId,
+        );
         if (raced) return this.mapToResponse(raced);
       }
       throw error;
@@ -148,104 +228,72 @@ export class ConversationService {
   }
 
   async findById(conversationId: string): Promise<ConversationResponse> {
-    const conversation = await this.conversationModel
-      .findOne({
-        _id: conversationId,
-        initializationStatus: { $nin: ['pending', 'seeding', 'cleanup_pending'] },
-      })
-      .lean()
-      .exec();
-
-    if (!conversation) {
-      throw new NotFoundException(
-        ErrorCode.CHAT_NOT_FOUND,
-        'Conversation not found',
-      );
-    }
-
-    if (conversation.groupMeta?.isGroup) {
-      await this.conversationModel.populate(conversation, [
-        { path: 'createdBy', select: 'profile email' },
-        { path: 'groupMeta.members.userId', select: 'profile email' },
-      ]);
-    }
-
-    return this.mapToResponse(conversation);
+    const record = await this.conversationStore.findById(conversationId);
+    if (!record) throw new NotFoundException(ErrorCode.CHAT_NOT_FOUND, 'Conversation not found');
+    return this.mapToResponse(record);
   }
 
   async findAllByUser(
     userId: string,
     params: ConversationQueryParams,
-  ): Promise<PaginatedConversations> {
-    const {
-      page = 1,
-      limit = 20,
-      search,
-      sortBy = 'lastMessageAt',
-      sortOrder = 'desc',
-      isArchived,
-      projectId,
-      searchScope,
-    } = params;
-
-    const skip = (page - 1) * limit;
-
-    const query: Record<string, unknown> = {
-      initializationStatus: { $nin: ['pending', 'seeding', 'cleanup_pending'] },
-      $or: [
-        { createdBy: new Types.ObjectId(userId) },
-        { 'groupMeta.members.userId': new Types.ObjectId(userId) },
-      ],
-    };
-
-    if (isArchived !== undefined) {
-      query.isArchived = isArchived;
-    }
-
-    if (projectId === 'none') {
-      query.projectId = { $in: [null, undefined] };
-    } else if (projectId) {
-      query.projectId = new Types.ObjectId(projectId);
-    }
-
-    if (search) {
-      const escaped = escapeRegex(search);
-      if (searchScope === 'fulltext') {
-        // Match by title OR by message content of conversations the user can see
-        const matchingConvIds = await this.messageModel.distinct('conversationId', {
-          content: { $regex: escaped, $options: 'i' },
-        });
-
-        query.$and = [
-          {
-            $or: [
-              { title: { $regex: escaped, $options: 'i' } },
-              { _id: { $in: matchingConvIds } },
-            ],
-          },
-        ];
-      } else {
-        query.title = { $regex: escaped, $options: 'i' };
+  ): Promise<PaginatedConversations | import('../interfaces/conversation.interface').CursorPaginatedConversations> {
+    if ((params.mode ?? 'legacy') === 'cursor') {
+      if (params.page !== undefined) {
+        throw new BadRequestException(ErrorCode.VALIDATION_ERROR, 'page is not valid in cursor mode');
       }
-    }
-
-    const sort: Record<string, 1 | -1> = {
-      [sortBy]: sortOrder === 'asc' ? 1 : -1,
-    };
-
-    const [conversations, total] = await Promise.all([
-      this.conversationModel.find(query).sort(sort).skip(skip).limit(limit).lean().exec(),
-      this.conversationModel.countDocuments(query),
-    ]);
-
-    return {
-      conversations: conversations.map((c) => this.mapToResponse(c)),
-      pagination: {
-        page,
+      const limit = params.limit ?? 50;
+      const result = await this.conversationStore.listCursor({
+        userId,
         limit,
-        total,
-        totalPages: Math.ceil(total / limit),
-      },
+        cursor: params.cursor,
+        search: params.search,
+        sortBy: params.sortBy ?? 'lastMessageAt',
+        sortOrder: params.sortOrder ?? 'desc',
+        isArchived: params.isArchived,
+        projectId: params.projectId,
+        searchScope: params.searchScope,
+        runtimePurpose: params.runtimePurpose,
+      });
+      const users = await this.usersById(result.records.map((record) => record.createdBy));
+      return {
+        conversations: result.records.map((record) => ({
+          ...record,
+          ownerName: this.userName(users.get(record.createdBy)),
+          lastMessageAt: record.lastMessageAt?.toISOString(),
+          createdAt: record.createdAt.toISOString(),
+          updatedAt: record.updatedAt.toISOString(),
+        })),
+        pagination: { mode: 'cursor', limit, hasMore: result.hasMore, nextCursor: result.nextCursor },
+      };
+    }
+    if (params.cursor !== undefined) {
+      throw new BadRequestException(ErrorCode.VALIDATION_ERROR, 'cursor requires cursor mode');
+    }
+    const page = params.page ?? 1;
+    const limit = params.limit ?? 20;
+    const result = await this.conversationStore.list({
+      userId,
+      page,
+      limit,
+      search: params.search,
+      sortBy: params.sortBy ?? 'lastMessageAt',
+      sortOrder: params.sortOrder ?? 'desc',
+      isArchived: params.isArchived,
+      projectId: params.projectId,
+      searchScope: params.searchScope,
+      runtimePurpose: params.runtimePurpose,
+    });
+    const users = await this.usersById(
+      result.records.flatMap((record) => [
+        record.createdBy,
+        ...record.members.map((member) => member.userId),
+      ]),
+    );
+    return {
+      conversations: await Promise.all(
+        result.records.map((record) => this.mapToResponse(record, users)),
+      ),
+      pagination: { page, limit, total: result.total, totalPages: Math.ceil(result.total / limit) },
     };
   }
 
@@ -254,512 +302,213 @@ export class ConversationService {
     userId: string,
     data: UpdateConversationData,
   ): Promise<ConversationResponse> {
-    const conversation = await this.conversationModel.findById(conversationId);
-
-    if (!conversation) {
-      throw new NotFoundException(
-        ErrorCode.CHAT_NOT_FOUND,
-        'Conversation not found',
-      );
-    }
-
-    if (conversation.createdBy.toString() !== userId) {
+    const current = await this.requireOwned(conversationId, userId);
+    if (
+      current.runtimeMode === 'governed' &&
+      [
+        data.workspaces,
+        data.skillIds,
+        data.taggedAgents,
+        data.participantEmails,
+        data.participants,
+      ].some((value) => value !== undefined)
+    ) {
       throw new ForbiddenException(
         ErrorCode.CHAT_FORBIDDEN,
-        'You do not have access to this conversation',
+        'The approved assistants, knowledge, and participants of a governed conversation cannot be changed',
       );
     }
-
-    if (conversation.runtimeMode === 'governed' && (data.workspaces !== undefined || data.skillIds !== undefined || data.taggedAgents !== undefined || data.participantEmails !== undefined || data.participants !== undefined)) {
-      throw new ForbiddenException(ErrorCode.CHAT_FORBIDDEN, 'The approved assistants, knowledge, and participants of a governed conversation cannot be changed');
-    }
-
-    if (data.title !== undefined) {
-      conversation.title = data.title;
-    }
-
-    if (data.isArchived !== undefined) {
-      conversation.isArchived = data.isArchived;
-    }
-
-    if (data.workspaces !== undefined) {
-      conversation.workspaces = data.workspaces.map((id) => new Types.ObjectId(id));
-    }
-
-    if (data.skillIds !== undefined) {
-      conversation.selectedSkills = data.skillIds.map((id) => new Types.ObjectId(id));
-    }
-
-    if (data.projectId !== undefined) {
-      conversation.projectId = data.projectId ? new Types.ObjectId(data.projectId) : null;
-    }
-
-    if (data.isFirstMessage !== undefined) {
-      conversation.isFirstMessage = data.isFirstMessage;
-    }
-
-    if (data.taggedAgents !== undefined) {
-      if (!conversation.groupMeta) {
-        conversation.groupMeta = {
-          isGroup: false,
-          members: [
-            {
-              userId: new Types.ObjectId(userId),
-              joinedAt: new Date(),
-              status: 'owner',
-            },
-          ],
-          invitedUsers: [],
-        };
+    let invitedUsers = current.invitedUsers;
+    let isGroup = current.isGroup;
+    let members: ConversationRecord['members'] | undefined;
+    const participantEmails =
+      data.participants?.map((participant) => participant.email) ?? data.participantEmails ?? [];
+    if (participantEmails.length) {
+      const additions = await this.newInvites(
+        current,
+        participantEmails,
+        data.participants,
+      );
+      invitedUsers = [...invitedUsers, ...additions];
+      isGroup = true;
+      if (!current.isGroup) {
+        members = [
+          {
+            userId,
+            joinedAt: new Date(),
+            status: 'owner',
+            mentions: [],
+          },
+        ];
       }
-      conversation.groupMeta.taggedAgents = data.taggedAgents.map((id) => new Types.ObjectId(id));
+      if (additions.length) {
+        const owner = await this.userModel.findById(userId).lean().exec();
+        void this.sendGroupInvitations(
+          additions.map((invite) => invite.email),
+          conversationId,
+          current.title,
+          this.userName(owner) ?? 'Someone',
+        );
+      }
     }
-
-    // Handle new participant invitations
-    if ((data.participantEmails && data.participantEmails.length > 0) || (data.participants && data.participants.length > 0)) {
-      await this.handleGroupInvitations(conversation, data.participantEmails || [], userId, data.participants);
-    }
-
-    await conversation.save();
-
-    this.logger.log('Conversation updated', {
-      conversationId: conversation._id,
-      userId,
+    const updated = await this.conversationStore.updateOwned(conversationId, userId, {
+      title: data.title,
+      isArchived: data.isArchived,
+      workspaces: data.workspaces,
+      selectedSkills: data.skillIds,
+      projectId: data.projectId,
+      isFirstMessage: data.isFirstMessage,
+      groupTaggedAgentIds: data.taggedAgents,
+      members,
+      invitedUsers,
+      isGroup,
     });
-
-    return this.mapToResponse(conversation);
+    if (!updated) throw new NotFoundException(ErrorCode.CHAT_NOT_FOUND, 'Conversation not found');
+    return this.mapToResponse(updated);
   }
 
   async delete(conversationId: string, userId: string): Promise<void> {
-    const conversation = await this.conversationModel.findById(conversationId);
-
-    if (!conversation) {
-      throw new NotFoundException(
-        ErrorCode.CHAT_NOT_FOUND,
-        'Conversation not found',
-      );
+    const current = await this.requireOwned(conversationId, userId);
+    if (current.systemWorkspaceId) {
+      await this.workspaceDocumentService.deleteAllByWorkspace(current.systemWorkspaceId);
+      await this.workspaceService.deleteSystemWorkspace(current.systemWorkspaceId);
     }
-
-    if (conversation.createdBy.toString() !== userId) {
-      throw new ForbiddenException(
-        ErrorCode.CHAT_FORBIDDEN,
-        'You do not have access to this conversation',
-      );
-    }
-
-    // 1. Delete all messages
-    const deletedMessages = await this.messageService.deleteByConversation(conversationId);
-
-    // 2. Delete shared conversations referencing this conversation
-    await this.sharedConversationModel.deleteMany({
-      originalConversationId: new Types.ObjectId(conversationId),
-    });
-
-    // 3. Delete system workspace (documents + blobs + workspace record)
-    if (conversation.systemWorkspaceId) {
-      const wsId = conversation.systemWorkspaceId.toString();
-      await this.workspaceDocumentService.deleteAllByWorkspace(wsId);
-      await this.workspaceService.deleteSystemWorkspace(wsId);
-    }
-
-    // 4. Delete conversation record
-    await this.conversationModel.deleteOne({ _id: conversationId });
-
-    this.logger.log('Conversation deleted with cascade', {
-      conversationId,
-      userId,
-      deletedMessages,
-      hadSystemWorkspace: !!conversation.systemWorkspaceId,
-    });
+    const deleted = await this.conversationStore.deleteOwned(conversationId, userId);
+    if (!deleted) throw new NotFoundException(ErrorCode.CHAT_NOT_FOUND, 'Conversation not found');
+    this.logger.log('Conversation deleted with cascade', { conversationId, userId });
   }
 
-  async ensureSystemWorkspace(
-    userId: string,
-    conversationId: string,
-  ): Promise<string> {
-    const conversation = await this.conversationModel.findById(conversationId);
-
-    if (!conversation) {
-      throw new NotFoundException(
-        ErrorCode.CHAT_NOT_FOUND,
-        'Conversation not found',
-      );
-    }
-
-    if (conversation.systemWorkspaceId) {
-      return conversation.systemWorkspaceId.toString();
-    }
-
+  async ensureSystemWorkspace(userId: string, conversationId: string): Promise<string> {
+    const current = await this.conversationStore.findById(conversationId, true);
+    if (!current) throw new NotFoundException(ErrorCode.CHAT_NOT_FOUND, 'Conversation not found');
+    if (current.systemWorkspaceId) return current.systemWorkspaceId;
     const allocatedStorage = this.configService.get<number>(
       'conversation.systemWorkspaceStorageBytes',
       52428800,
     );
-
     try {
       const workspace = await this.workspaceService.createSystemWorkspace(
         userId,
         conversationId,
         allocatedStorage,
       );
-
-      conversation.systemWorkspaceId = new Types.ObjectId(workspace.id);
-      await conversation.save();
-
-      this.logger.log('System workspace created for conversation', {
-        conversationId,
-        workspaceId: workspace.id,
-      });
-
+      await this.conversationStore.setSystemWorkspace(conversationId, workspace.id);
       return workspace.id;
-    } catch (err: any) {
-      // Handle race condition: another concurrent request already created the workspace
-      if (err?.code === 11000) {
-        this.logger.log('System workspace race condition, fetching existing', {
-          conversationId,
-        });
-        const refreshed = await this.conversationModel.findById(conversationId);
-        if (refreshed?.systemWorkspaceId) {
-          return refreshed.systemWorkspaceId.toString();
-        }
-        // Workspace was created but not yet linked — look it up by name
-        const existing = await this.workspaceService.findSystemWorkspace(
-          userId,
-          conversationId,
-        );
-        if (existing) {
-          await this.conversationModel.findByIdAndUpdate(conversationId, {
-            systemWorkspaceId: new Types.ObjectId(existing.id),
-          });
-          return existing.id;
-        }
+    } catch (error: unknown) {
+      const existing = await this.workspaceService.findSystemWorkspace(userId, conversationId);
+      if (existing) {
+        await this.conversationStore.setSystemWorkspace(conversationId, existing.id);
+        return existing.id;
       }
-      throw err;
+      throw error;
     }
   }
 
-  async joinGroup(conversationId: string, userId: string, email: string): Promise<ConversationResponse> {
-    const conversationData = await this.conversationModel.findOne({
-      _id: new Types.ObjectId(conversationId),
-      'groupMeta.isGroup': true,
-      'groupMeta.invitedUsers.email': email.toLowerCase(),
-    }).lean().exec();
-
-    if (!conversationData) {
+  async joinGroup(conversationId: string, userId: string, email: string) {
+    const record = await this.conversationStore.joinGroup(
+      conversationId,
+      userId,
+      email,
+      new Date(),
+    );
+    if (!record) {
       throw new NotFoundException(
         ErrorCode.CHAT_NOT_FOUND,
         'Conversation not found or invitation missing',
       );
     }
-
-    const invitedUser = conversationData.groupMeta?.invitedUsers.find(
-      u => u.email.toLowerCase() === email.toLowerCase()
-    );
-
-    const updated = await this.conversationModel.findOneAndUpdate(
-      {
-        _id: new Types.ObjectId(conversationId),
-        'groupMeta.isGroup': true,
-        'groupMeta.invitedUsers.email': email.toLowerCase(),
-        'groupMeta.members.userId': { $ne: new Types.ObjectId(userId) },
-      },
-      {
-        $pull: { 'groupMeta.invitedUsers': { email: email.toLowerCase() } },
-        $push: {
-          'groupMeta.members': {
-            userId: new Types.ObjectId(userId),
-            joinedAt: new Date(),
-            status: 'member',
-            job: invitedUser?.job,
-          },
-        },
-        $set: { lastMessageAt: new Date() },
-      },
-      { new: true }
-    ).populate('createdBy', 'profile email').lean().exec();
-
-    this.logger.log('User joined group conversation', {
-      conversationId,
-      userId,
-      job: invitedUser?.job,
-    });
-
-    if (!updated) {
-       // User might already be a member
-       return this.findById(conversationId);
-    }
-
-    return this.mapToResponse(updated);
+    return this.mapToResponse(record);
   }
 
-  async removeMember(conversationId: string, userId: string, memberId: string): Promise<ConversationResponse> {
-    const conversation = await this.conversationModel.findById(conversationId);
-
-    if (!conversation) {
-      throw new NotFoundException(
-        ErrorCode.CHAT_NOT_FOUND,
-        'Conversation not found',
-      );
-    }
-
-    if (conversation.createdBy.toString() !== userId) {
-      throw new ForbiddenException(
-        ErrorCode.CHAT_FORBIDDEN,
-        'Only the owner can remove members',
-      );
-    }
-
-    if (!conversation.groupMeta?.isGroup) {
-      throw new BadRequestException(
-        undefined,
-        'Conversation is not a group',
-      );
-    }
-
-    const updated = await this.conversationModel.findOneAndUpdate(
-      { _id: new Types.ObjectId(conversationId) },
-      {
-        $pull: {
-          'groupMeta.members': { userId: new Types.ObjectId(memberId) }
-        }
-      },
-      { new: true }
-    ).populate('createdBy', 'profile email').lean().exec();
-
-    this.logger.log('User removed from group conversation', {
-      conversationId,
-      userId,
-      removedMemberId: memberId,
-    });
-
-    return this.mapToResponse(updated);
+  async removeMember(conversationId: string, userId: string, memberId: string) {
+    const current = await this.requireOwned(conversationId, userId);
+    if (!current.isGroup) throw new BadRequestException(undefined, 'Conversation is not a group');
+    const updated = await this.conversationStore.removeMember(conversationId, memberId);
+    return this.mapToResponse(updated!);
   }
 
-  async updateMemberJob(conversationId: string, userId: string, memberId: string, job: string): Promise<ConversationResponse> {
-    const conversation = await this.conversationModel.findById(conversationId);
-
-    if (!conversation) {
-      throw new NotFoundException(
-        ErrorCode.CHAT_NOT_FOUND,
-        'Conversation not found',
-      );
-    }
-
-    if (conversation.createdBy.toString() !== userId) {
-      throw new ForbiddenException(
-        ErrorCode.CHAT_FORBIDDEN,
-        'Only the owner can update member roles',
-      );
-    }
-
-    if (!conversation.groupMeta?.isGroup) {
-      throw new BadRequestException(
-        undefined,
-        'Conversation is not a group',
-      );
-    }
-
-    const updated = await this.conversationModel.findOneAndUpdate(
-      { 
-        _id: new Types.ObjectId(conversationId),
-        'groupMeta.members.userId': new Types.ObjectId(memberId)
-      },
-      {
-        $set: {
-          'groupMeta.members.$.job': job
-        }
-      },
-      { new: true }
-    ).populate('createdBy', 'profile email').lean().exec();
-
-    if (!updated) {
-      throw new NotFoundException(undefined, 'Member not found in conversation');
-    }
-
+  async updateMemberJob(conversationId: string, userId: string, memberId: string, job: string) {
+    const current = await this.requireOwned(conversationId, userId);
+    if (!current.isGroup) throw new BadRequestException(undefined, 'Conversation is not a group');
+    const updated = await this.conversationStore.updateMemberJob(conversationId, memberId, job);
+    if (!updated) throw new NotFoundException(undefined, 'Member not found in conversation');
     return this.mapToResponse(updated);
   }
 
   async updateLastMessageAt(conversationId: string): Promise<void> {
-    await this.conversationModel.findByIdAndUpdate(conversationId, {
-      lastMessageAt: new Date(),
-      $inc: { messageCount: 1 },
-    });
+    await this.conversationStore.touchMessage(conversationId);
   }
 
   async updateTaggedAgents(conversationId: string, agentIds: string[]): Promise<void> {
-    if (!agentIds || agentIds.length === 0) return;
-
-    const conversation = await this.conversationModel.findById(conversationId);
-    if (!conversation || !conversation.groupMeta?.isGroup) return;
-
-    const existingAgentIds = new Set(
-      conversation.groupMeta.taggedAgents?.map((id) => id.toString()) || []
-    );
-
-    const newAgentIds = agentIds.filter((id) => !existingAgentIds.has(id));
-
-    if (newAgentIds.length > 0) {
-      await this.conversationModel.findByIdAndUpdate(conversationId, {
-        $addToSet: {
-          'groupMeta.taggedAgents': {
-            $each: newAgentIds.map((id) => new Types.ObjectId(id)),
-          },
-        },
-      });
-      this.logger.log('Persistent tagged agents updated for group conversation', {
-        conversationId,
-        newAgentIds,
-      });
-    }
+    if (agentIds.length)
+      await this.conversationStore.addGroupTaggedAgents(conversationId, agentIds);
   }
 
-  /**
-   * Replaces conversation sticky routing agents with the latest @mention set.
-   * Call only when the user tagged agents on the current turn (full replace, not merge).
-   */
   async replaceTaggedAgentIds(conversationId: string, agentIds: string[]): Promise<void> {
-    if (!agentIds.length) {
-      return;
-    }
-
-    await this.conversationModel.findByIdAndUpdate(conversationId, {
-      $set: {
-        taggedAgentIds: agentIds.map((id) => new Types.ObjectId(id)),
-      },
-    });
+    await this.conversationStore.replaceTaggedAgentIds(conversationId, agentIds);
   }
 
-  async getGroupMembers(conversationId: string): Promise<any[]> {
-    const conversation = await this.conversationModel
-      .findById(conversationId)
-      .select('groupMeta.members groupMeta.isGroup')
-      .populate('groupMeta.members.userId')
-      .lean()
-      .exec();
-
-    if (!conversation) {
-      throw new NotFoundException(
-        ErrorCode.CHAT_NOT_FOUND,
-        'Conversation not found',
-      );
-    }
-
-    if (!conversation.groupMeta?.isGroup) {
-      return [];
-    }
-
-    return conversation.groupMeta.members.map((m: any) => {
-      const user = m.userId || {};
-      let name = '';
-      if (user?.profile) {
-        name = `${user.profile.firstName || ''} ${user.profile.lastName || ''}`.trim();
-      } else if (user?.email) {
-        name = user.email.split('@')[0];
-      }
-
+  async getGroupMembers(conversationId: string): Promise<Record<string, unknown>[]> {
+    const record = await this.conversationStore.findById(conversationId, true);
+    if (!record) throw new NotFoundException(ErrorCode.CHAT_NOT_FOUND, 'Conversation not found');
+    if (!record.isGroup) return [];
+    const users = await this.usersById(record.members.map((member) => member.userId));
+    return record.members.map((member) => {
+      const user = users.get(member.userId);
       return {
-        ...user,
-        id: user?._id?.toString() || m.userId?.toString(),
-        name,
+        id: member.userId,
+        name: this.userName(user),
         email: user?.email,
-        role: m.status, // 'owner' or 'member'
-        job: m.job,
-        joinedAt: m.joinedAt,
+        role: member.status,
+        job: member.job,
+        joinedAt: member.joinedAt,
       };
     });
   }
 
-  async getTaggedAgents(conversationId: string): Promise<any[]> {
-    const conversation = await this.conversationModel
-      .findById(conversationId)
-      .select('groupMeta.taggedAgents groupMeta.isGroup')
-      .lean()
-      .exec();
-
-    if (!conversation) {
-      throw new NotFoundException(
-        ErrorCode.CHAT_NOT_FOUND,
-        'Conversation not found',
-      );
-    }
-
-    if (!conversation.groupMeta?.isGroup) {
-      return [];
-    }
-
-    const taggedAgentIds = (conversation.groupMeta.taggedAgents || []).map((agentId) => String(agentId));
-    const agents = await this.agentRepository.findByIds(taggedAgentIds);
-    // Map _id -> id, matching the previous populated Agent shape.
-    return agents.map((agent) => {
-      const ret: Record<string, unknown> = { ...agent, id: agent._id };
-      delete ret._id;
-      return ret;
-    });
+  async getTaggedAgents(conversationId: string): Promise<Record<string, unknown>[]> {
+    const record = await this.conversationStore.findById(conversationId, true);
+    if (!record) throw new NotFoundException(ErrorCode.CHAT_NOT_FOUND, 'Conversation not found');
+    if (!record.isGroup) return [];
+    return (await this.agentRepository.findByIds(record.groupTaggedAgentIds)).map((agent) => ({
+      ...agent,
+      id: agent._id,
+      _id: undefined,
+    }));
   }
 
-  /**
-   * Internal method to update conversation without ownership check.
-   * Used by system services like StreamService for name generation.
-   */
   async updateConversationInternal(
     conversationId: string,
     data: UpdateConversationData,
   ): Promise<void> {
-    const updateData: Record<string, unknown> = {};
-    if (data.title !== undefined) updateData.title = data.title;
-    if (data.isArchived !== undefined) updateData.isArchived = data.isArchived;
-    if (data.isFirstMessage !== undefined) updateData.isFirstMessage = data.isFirstMessage;
-
-    await this.conversationModel.findByIdAndUpdate(conversationId, updateData);
-  }
-
-  async addMessageRef(conversationId: string, messageId: string): Promise<void> {
-    await this.conversationModel.findByIdAndUpdate(conversationId, {
-      $push: { messages: new Types.ObjectId(messageId) },
+    await this.conversationStore.updateInternal(conversationId, {
+      title: data.title,
+      isArchived: data.isArchived,
+      isFirstMessage: data.isFirstMessage,
     });
   }
 
-  async getConversationDocument(conversationId: string): Promise<ConversationDocument> {
-    const conversation = await this.conversationModel.findById(conversationId);
+  async addMessageRef(_conversationId: string, _messageId: string): Promise<void> {}
 
-    if (!conversation) {
-      throw new NotFoundException(
-        ErrorCode.CHAT_NOT_FOUND,
-        'Conversation not found',
-      );
-    }
-
-    return conversation;
+  async getConversationDocument(conversationId: string): Promise<ConversationRecord> {
+    const record = await this.conversationStore.findById(conversationId, true);
+    if (!record) throw new NotFoundException(ErrorCode.CHAT_NOT_FOUND, 'Conversation not found');
+    return record;
   }
 
   async getWorkspaceDocuments(
     conversationId: string,
     params: DocumentQueryParams,
   ): Promise<PaginatedDocuments> {
-    const conversation = await this.conversationModel.findById(conversationId).lean().exec();
-
-    if (!conversation) {
-      throw new NotFoundException(
-        ErrorCode.CHAT_NOT_FOUND,
-        'Conversation not found',
-      );
-    }
-
-    const workspaceIds = (conversation.workspaces || [])
-      .map((w) => w.toString())
-      .filter((id) => id !== conversation.systemWorkspaceId?.toString());
-
-    if (workspaceIds.length === 0) {
+    const record = await this.conversationStore.findById(conversationId, true);
+    if (!record) throw new NotFoundException(ErrorCode.CHAT_NOT_FOUND, 'Conversation not found');
+    const workspaceIds = record.workspaces.filter((id) => id !== record.systemWorkspaceId);
+    if (!workspaceIds.length) {
       return {
         documents: [],
-        pagination: {
-          page: 1,
-          limit: params.limit || 20,
-          total: 0,
-          totalPages: 0,
-        },
+        pagination: { page: 1, limit: params.limit || 20, total: 0, totalPages: 0 },
       };
     }
-
     return this.workspaceDocumentService.findByMultipleWorkspaces(workspaceIds, params);
   }
 
@@ -767,74 +516,75 @@ export class ConversationService {
   async cleanupOrphanedConversations(): Promise<void> {
     if (this.isCleaningUp) return;
     this.isCleaningUp = true;
-    const startTime = Date.now();
-
+    let lockClient: PoolClient | undefined;
+    let lockHeld = false;
     try {
-      const thresholdHours = this.configService.get<number>(
+      if (this.postgresPool) {
+        lockClient = await this.postgresPool.connect();
+        const lockResult = await lockClient.query<{ acquired: boolean }>(
+          'SELECT pg_try_advisory_lock(hashtext($1)) AS acquired',
+          ['conversation:orphan-cleanup:v1'],
+        );
+        lockHeld = lockResult.rows[0]?.acquired === true;
+        if (!lockHeld) return;
+      }
+      const hours = this.configService.get<number>(
         'conversation.orphanedConversationThresholdHours',
         24,
       );
-      const cutoff = new Date(Date.now() - thresholdHours * 60 * 60 * 1000);
-
-      const orphaned = await this.conversationModel
-        .find({
-          messageCount: 0,
-          isFirstMessage: true,
-          isShared: false,
-          createdAt: { $lt: cutoff },
-        })
-        .limit(50);
-
-      if (orphaned.length === 0) return;
-
-      this.logger.log('Starting orphaned conversation cleanup', {
-        count: orphaned.length,
-        thresholdHours,
-      });
-
-      let cleaned = 0;
-      let failed = 0;
-
-      for (const conversation of orphaned) {
+      const cutoff = new Date(Date.now() - hours * 60 * 60 * 1000);
+      for (const record of await this.conversationStore.findOrphaned(cutoff, 50)) {
         try {
-          // Delete messages (safety — should be 0)
-          await this.messageService.deleteByConversation(
-            conversation._id.toString(),
-          );
-
-          // Delete system workspace + documents + blobs
-          if (conversation.systemWorkspaceId) {
-            const wsId = conversation.systemWorkspaceId.toString();
-            await this.workspaceDocumentService.deleteAllByWorkspace(wsId);
-            await this.workspaceService.deleteSystemWorkspace(wsId);
+          if (record.systemWorkspaceId) {
+            await this.workspaceDocumentService.deleteAllByWorkspace(record.systemWorkspaceId);
+            await this.workspaceService.deleteSystemWorkspace(record.systemWorkspaceId);
           }
-
-          // Delete conversation record
-          await this.conversationModel.deleteOne({ _id: conversation._id });
-          cleaned++;
-        } catch (err) {
-          failed++;
+          await this.conversationStore.deleteOwned(record.id, record.createdBy);
+        } catch (error: unknown) {
           this.logger.warn('Failed to cleanup orphaned conversation', {
-            conversationId: conversation._id,
-            error: err instanceof Error ? err.message : 'Unknown error',
+            conversationId: record.id,
+            error: error instanceof Error ? error.message : 'Unknown error',
           });
         }
       }
-
-      this.logger.log('Orphaned conversation cleanup completed', {
-        cleaned,
-        failed,
-        durationMs: Date.now() - startTime,
-      });
-    } catch (err) {
-      this.logger.error('Orphaned conversation cleanup failed', {
-        error: err instanceof Error ? err.message : 'Unknown error',
-      });
     } finally {
+      if (lockClient) {
+        if (lockHeld) {
+          try {
+            await lockClient.query('SELECT pg_advisory_unlock(hashtext($1))', [
+              'conversation:orphan-cleanup:v1',
+            ]);
+          } catch (error) {
+            this.logger.warn('Failed to release orphan cleanup advisory lock', {
+              error: error instanceof Error ? error.message : 'Unknown error',
+            });
+          }
+        }
+        lockClient.release();
+      }
       this.isCleaningUp = false;
     }
   }
 
+  async markMentionSeen(conversationId: string, userId: string, messageId: string) {
+    await this.conversationStore.markMentionSeen(conversationId, userId, messageId, new Date());
+  }
+
+  async addMention(conversationId: string, userId: string, messageId: string) {
+    await this.conversationStore.addMention(conversationId, userId, messageId);
+  }
+
+  private async requireOwned(id: string, userId: string): Promise<ConversationRecord> {
+    const record = await this.conversationStore.findById(id, true);
+    if (!record) throw new NotFoundException(ErrorCode.CHAT_NOT_FOUND, 'Conversation not found');
+    if (record.createdBy !== userId) {
+      throw new ForbiddenException(
+        ErrorCode.CHAT_FORBIDDEN,
+        'You do not have access to this conversation',
+      );
+    }
+    return record;
+  }
 
   private async buildGroupMetadata(
     participantEmails: string[] | undefined,
@@ -842,236 +592,156 @@ export class ConversationService {
     participants?: { email: string; job?: string }[],
     ownerJob?: string,
   ): Promise<GroupConversationMeta | undefined> {
-    if (!participantEmails?.length && !ownerJob) {
-      return undefined;
-    }
-
-    const filteredEmails = participantEmails?.filter(Boolean) || [];
-    const participantMap = new Map(participants?.map(p => [p.email.toLowerCase(), p.job]));
-
-    // Efficiently identify which invited emails already correspond to registered users
-    const existingUsers = await this.userModel
-      .find({ email: { $in: filteredEmails } })
-      .select('_id email')
+    if (!participantEmails?.length && !ownerJob) return undefined;
+    const emails = participantEmails?.filter(Boolean) ?? [];
+    const participantMap = new Map(
+      participants?.map((participant) => [participant.email.toLowerCase(), participant.job]),
+    );
+    const existing = await this.userModel
+      .find({ email: { $in: emails } })
+      .select('email')
       .lean()
       .exec();
-
-    const registeredEmailSet = new Set(existingUsers.map((u) => u.email));
-    const now = new Date();
-
+    const registered = new Set(existing.map((user) => user.email.toLowerCase()));
+    const now = new Date().toISOString();
     return {
       isGroup: true,
-      members: [
-        {
-          userId: ownerId,
-          joinedAt: now.toISOString(),
-          status: 'owner',
-          job: ownerJob,
-        },
-      ],
-      invitedUsers: filteredEmails.map((email) => ({
+      members: [{ userId: ownerId, joinedAt: now, status: 'owner', job: ownerJob }],
+      invitedUsers: emails.map((email) => ({
         email,
-        status: registeredEmailSet.has(email) ? 'Confirmed' : 'Guest',
-        invitedAt: now.toISOString(),
+        status: registered.has(email.toLowerCase()) ? 'Confirmed' : 'Guest',
+        invitedAt: now,
         job: participantMap.get(email.toLowerCase()),
       })),
     };
   }
 
-  async markMentionSeen(conversationId: string, userId: string, messageId: string): Promise<void> {
-    await this.conversationModel.updateOne(
-      {
-        _id: new Types.ObjectId(conversationId),
-        'groupMeta.members.userId': new Types.ObjectId(userId),
-        'groupMeta.members.mentions.messageId': new Types.ObjectId(messageId),
-      },
-      {
-        $set: {
-          'groupMeta.members.$[member].mentions.$[mention].seenAt': new Date(),
-        },
-      },
-      {
-        arrayFilters: [
-          { 'member.userId': new Types.ObjectId(userId) },
-          { 'mention.messageId': new Types.ObjectId(messageId) },
-        ],
-      },
-    );
-  }
-
-  async addMention(conversationId: string, userId: string, messageId: string): Promise<void> {
-    await this.conversationModel.updateOne(
-      {
-        _id: new Types.ObjectId(conversationId),
-        'groupMeta.members.userId': new Types.ObjectId(userId),
-      },
-      {
-        $push: {
-          'groupMeta.members.$.mentions': {
-            messageId: new Types.ObjectId(messageId),
-          },
-        },
-      },
-    );
-  }
-
-  private mapToResponse(conversation: any): ConversationResponse {
-    const toStr = (v: any) => v?.toString?.() ?? v;
-    const toISO = (v: any) => (v instanceof Date ? v.toISOString() : v);
- 
-    const rawGroupMeta = conversation.groupMeta;
-    const groupMeta: GroupConversationMeta | undefined = (rawGroupMeta && rawGroupMeta.isGroup)
+  private async mapToResponse(
+    record: ConversationRecord,
+    users?: Map<string, Pick<UserDocument, 'email' | 'profile'>>,
+  ): Promise<ConversationResponse> {
+    const resolvedUsers =
+      users ??
+      (await this.usersById(
+        record.isGroup
+          ? [record.createdBy, ...record.members.map((member) => member.userId)]
+          : [record.createdBy],
+      ));
+    const owner = resolvedUsers.get(record.createdBy);
+    const governance = record.governanceContext as ConversationResponse['governanceContext'];
+    const provenance = record.branchProvenance
       ? {
-        isGroup: true,
-        members:
-          rawGroupMeta.members?.map((m: any) => {
-            const memberUser = m.userId && typeof m.userId === 'object' ? m.userId : null;
-            let name: string | undefined;
-            let email: string | undefined;
-
-            if (memberUser) {
-              email = memberUser.email;
-              if (memberUser.profile?.firstName) {
-                name = `${memberUser.profile.firstName} ${memberUser.profile.lastName || ''}`.trim();
-              }
-            }
-
-            return {
-              userId: toStr(m.userId?._id || m.userId),
-              joinedAt: toISO(m.joinedAt),
-              status: m.status,
-              name: name || (email ? email.split('@')[0] : undefined),
-              email,
-              job: m.job,
-              mentions: m.mentions?.map((mn: any) => ({
-                messageId: toStr(mn.messageId),
-                seenAt: toISO(mn.seenAt),
-              })),
-            };
-          }) || [],
-        invitedUsers:
-          rawGroupMeta.invitedUsers?.map((u: any) => ({
-            email: u.email,
-            status: u.status,
-            invitedAt: toISO(u.invitedAt),
-            job: u.job,
-          })) || [],
-        taggedAgents: rawGroupMeta.taggedAgents?.map((id: any) => toStr(id)) || [],
-      }
+          sourceConversationId: record.branchProvenance.sourceConversationId,
+          sourceTargetMessageId: record.branchProvenance.sourceTargetMessageId,
+          branchedAt: record.branchProvenance.branchedAt,
+        }
       : undefined;
-    let ownerName: string | undefined;
-    // Check if createdBy is populated (has profile or email)
-    if (conversation.createdBy && typeof conversation.createdBy === 'object') {
-      const creator = conversation.createdBy as any;
-      if (creator.profile?.firstName) {
-        ownerName = `${creator.profile.firstName} ${creator.profile.lastName || ''}`.trim();
-      } else if (creator.email) {
-        ownerName = creator.email;
-      }
-    }
-
     return {
-      id: toStr(conversation._id),
-      title: conversation.title,
-      createdBy: toStr(conversation.createdBy?._id || conversation.createdBy),
-      ownerName,
-      workspaces: conversation.workspaces?.map((w: any) => toStr(w)) || [],
-      selectedSkills: conversation.selectedSkills?.map((s: any) => toStr(s)) || [],
-      taggedAgentIds: conversation.taggedAgentIds?.map((id: any) => toStr(id)) || [],
-      systemWorkspaceId: toStr(conversation.systemWorkspaceId),
-      lastMessageAt: toISO(conversation.lastMessageAt),
-      messageCount: conversation.messageCount,
-      isArchived: conversation.isArchived,
-      isShared: conversation.isShared,
-      sharedFrom: toStr(conversation.sharedFrom),
-      createdAt: toISO(conversation.createdAt),
-      updatedAt: toISO(conversation.updatedAt),
-      groupMeta,
-      projectId: conversation.projectId ? toStr(conversation.projectId) : null,
-      runtimeMode: conversation.runtimeMode ?? 'standard',
-      governanceContext: conversation.governanceContext ? {
-        programId: toStr(conversation.governanceContext.programId),
-        scopeId: toStr(conversation.governanceContext.scopeId),
-        deploymentId: toStr(conversation.governanceContext.deploymentId),
-        revisionId: toStr(conversation.governanceContext.revisionId),
-        revisionNumber: conversation.governanceContext.revisionNumber,
-        pinnedAt: toISO(conversation.governanceContext.pinnedAt),
-        runtimeDefinition: conversation.governanceContext.runtimeDefinition,
-      } : undefined,
-      branchProvenance: conversation.branchProvenance ? {
-        sourceConversationId: toStr(conversation.branchProvenance.sourceConversationId),
-        sourceTargetMessageId: toStr(conversation.branchProvenance.sourceTargetMessageId),
-        branchedAt: toISO(conversation.branchProvenance.branchedAt),
-      } : undefined,
+      id: record.id,
+      title: record.title,
+      createdBy: record.createdBy,
+      ownerName: this.userName(owner),
+      workspaces: record.workspaces,
+      selectedSkills: record.selectedSkills,
+      taggedAgentIds: record.taggedAgentIds,
+      systemWorkspaceId: record.systemWorkspaceId,
+      lastMessageAt: record.lastMessageAt?.toISOString(),
+      messageCount: record.messageCount,
+      isArchived: record.isArchived,
+      isShared: record.isShared,
+      sharedFrom: record.sharedFrom,
+      createdAt: record.createdAt.toISOString(),
+      updatedAt: record.updatedAt.toISOString(),
+      groupMeta: record.isGroup
+        ? {
+            isGroup: true,
+            members: record.members.map((member) => {
+              const user = resolvedUsers.get(member.userId);
+              return {
+                userId: member.userId,
+                joinedAt: member.joinedAt.toISOString(),
+                status: member.status,
+                name: this.userName(user),
+                email: user?.email,
+                job: member.job,
+                mentions: member.mentions.map((mention) => ({
+                  messageId: mention.messageId,
+                  seenAt: mention.seenAt?.toISOString(),
+                })),
+              };
+            }),
+            invitedUsers: record.invitedUsers.map((invite) => ({
+              ...invite,
+              invitedAt: invite.invitedAt.toISOString(),
+            })),
+            taggedAgents: record.groupTaggedAgentIds,
+          }
+        : undefined,
+      projectId: record.projectId ?? null,
+      runtimeMode: record.runtimeMode,
+      runtimePurpose: record.runtimePurpose,
+      pinnedAgentId: record.pinnedAgentId ?? null,
+      governanceContext: governance,
+      branchProvenance: provenance,
     };
   }
 
-  private async handleGroupInvitations(
-    conversation: any,
-    participantEmails: string[],
-    userId: string,
-    participants?: { email: string; job?: string }[],
-  ): Promise<void> {
-    if (!conversation.groupMeta) {
-      conversation.groupMeta = {
-        isGroup: true,
-        members: [{
-          userId: new Types.ObjectId(userId),
-          joinedAt: new Date(),
-          status: 'owner',
-        }],
-        invitedUsers: [],
-      };
-    }
-
-    const participantMap = new Map(participants?.map(p => [p.email.toLowerCase(), p.job]));
-    const existingEmails = new Set([
-      ...conversation.groupMeta.invitedUsers.map((u: { email: string }) => u.email.toLowerCase()),
-    ]);
-
-    // Populating members to check their emails
-    const populatedConversation = await this.conversationModel
-      .findById(conversation._id)
-      .populate('groupMeta.members.userId', 'email')
+  private async usersById(
+    ids: string[],
+  ): Promise<Map<string, Pick<UserDocument, 'email' | 'profile'>>> {
+    const unique = [...new Set(ids)];
+    if (!unique.length) return new Map();
+    const users = await this.userModel
+      .find({ _id: { $in: unique } })
+      .select('email profile')
       .lean()
       .exec();
+    return new Map(users.map((user) => [user._id.toString(), user]));
+  }
 
-    const memberEmails = new Set(
-      populatedConversation?.groupMeta?.members
-        ?.map((m: any) => m.userId?.email?.toLowerCase())
-        .filter(Boolean) || []
+  private userName(
+    user?: { email?: string; profile?: { firstName?: string; lastName?: string } } | null,
+  ) {
+    const fullName = `${user?.profile?.firstName ?? ''} ${user?.profile?.lastName ?? ''}`.trim();
+    return fullName || user?.email;
+  }
+
+  private async newInvites(
+    record: ConversationRecord,
+    participantEmails: string[],
+    participants?: { email: string; job?: string }[],
+  ) {
+    const users = await this.usersById(record.members.map((member) => member.userId));
+    const occupied = new Set([
+      ...record.invitedUsers.map((invite) => invite.email.toLowerCase()),
+      ...[...users.values()].map((user) => user.email.toLowerCase()),
+    ]);
+    const jobs = new Map(
+      participants?.map((participant) => [participant.email.toLowerCase(), participant.job]),
     );
-
-    const newEmails = participantEmails
-      .map(e => e.trim().toLowerCase())
-      .filter(e => e && !existingEmails.has(e) && !memberEmails.has(e));
-
-    if (newEmails.length > 0) {
-      const newInvites = newEmails.map(email => ({
+    return participantEmails
+      .map((email) => email.trim().toLowerCase())
+      .filter((email) => email && !occupied.has(email))
+      .map((email) => ({
         email,
         status: 'Guest' as const,
         invitedAt: new Date(),
-        job: participantMap.get(email),
+        job: jobs.get(email),
       }));
+  }
 
-      conversation.groupMeta.invitedUsers.push(...newInvites);
-
-      // Send invitations
-      const owner = await this.userModel.findById(userId).lean().exec();
-      const ownerName = owner?.profile ? `${owner.profile.firstName} ${owner.profile.lastName}` : owner?.email;
-
-      this.sendGroupInvitations(
-        newEmails,
-        conversation._id.toString(),
-        conversation.title,
-        ownerName || 'Someone',
-      ).catch(err => {
-        this.logger.error('Failed to send additional group invitations', {
-          conversationId: conversation._id,
-          error: err.message,
-        });
-      });
-    }
+  private async sendInitialInvitations(
+    record: ConversationRecord,
+    emails: string[],
+    userId: string,
+  ) {
+    const owner = await this.userModel.findById(userId).lean().exec();
+    void this.sendGroupInvitations(
+      emails,
+      record.id,
+      record.title,
+      this.userName(owner) ?? 'Someone',
+    );
   }
 
   private async sendGroupInvitations(
@@ -1082,25 +752,18 @@ export class ConversationService {
   ): Promise<void> {
     const frontendUrl = this.configService.get<string>('app.frontendUrl');
     const conversationUrl = `${frontendUrl}/#/conversation/${conversationId}`;
-
     await this.emailService.sendBulk({
       emails: emails.map((email) => ({
         to: email,
         subject: `Invitation to group conversation: ${title}`,
-        html: `
-          <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #eee; border-radius: 10px;">
-            <h2 style="color: #333;">You've been invited!</h2>
-            <p><strong>${invitedBy}</strong> has invited you to join a new group conversation on YellowStorm.</p>
-            <div style="background: #f9f9f9; padding: 15px; border-radius: 5px; margin: 20px 0;">
-              <p style="margin: 0;"><strong>Conversation:</strong> ${title}</p>
-            </div>
-            <a href="${conversationUrl}" style="display: inline-block; background: #ea580c; color: white; padding: 12px 24px; text-decoration: none; border-radius: 5px; font-weight: bold;">Join the Conversation</a>
-            <p style="margin-top: 30px; font-size: 12px; color: #777;">If the button doesn't work, copy and paste this link: <br> ${conversationUrl}</p>
-          </div>
-        `,
-        text: `${invitedBy} has invited you to join a new group conversation: ${title} on YellowStorm.\n\nJoin here: ${conversationUrl}`,
+        html: `<p><strong>${invitedBy}</strong> invited you to <strong>${title}</strong>.</p><p><a href="${conversationUrl}">Join the conversation</a></p>`,
+        text: `${invitedBy} invited you to ${title}. Join here: ${conversationUrl}`,
       })),
       stopOnError: false,
     });
+  }
+
+  private isUniqueViolation(error: unknown): boolean {
+    return Boolean(error && typeof error === 'object' && 'code' in error && error.code === '23505');
   }
 }

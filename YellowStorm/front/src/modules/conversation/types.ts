@@ -46,6 +46,8 @@ export interface Conversation {
   groupMeta?: GroupConversationMeta;
   projectId?: string | null;
   runtimeMode?: 'standard' | 'governed';
+  runtimePurpose?: 'chat' | 'platform_copilot';
+  pinnedAgentId?: string | null;
   governanceContext?: { programId: string; scopeId: string; deploymentId: string; revisionId: string; revisionNumber: number; pinnedAt: string; runtimeDefinition: { primaryAgentId: string; allowedAgentIds: string[]; workspaceIds: string[] } };
   branchProvenance?: { sourceConversationId: string; sourceTargetMessageId: string; branchedAt: string };
 }
@@ -67,6 +69,7 @@ export interface ComposerSuggestionSettings {
 
 export interface ConversationSettings {
   composerSuggestions: ComposerSuggestionSettings;
+  redactSensitiveText?: boolean;
   updatedAt?: string;
 }
 
@@ -109,6 +112,67 @@ export interface ReliabilityEvaluation {
 export interface ReliabilityRerunResponse {
   messageId: string;
   reliabilityEvaluation: ReliabilityEvaluation;
+}
+
+// ===== End-to-end latency instrumentation =====
+
+export type ConversationLatencyQuality = 'ok' | 'partial' | 'clock-skew';
+
+/** ADK-local monotonic breakdown of `adkPreProviderMs`. Diagnostic only. */
+export interface AdkPreProviderBreakdownV1 {
+  protobufToDictMs?: number;
+  requestLoggingMs?: number;
+  requestConversionMs?: number;
+  workflowDispatchMs?: number;
+  sessionLockWaitMs?: number;
+  orchestrationSetupMs?: number;
+  agentToolPreparationMs?: number;
+  sessionRunnerSetupMs?: number;
+  adkRuntimePreModelMs?: number;
+}
+
+export interface ConversationLatencyMetricsV1 {
+  schemaVersion: 1;
+  /** adk.request_received - backend.received (cross-clock). */
+  backendPreAdkMs?: number;
+  /** llm.request_start - adk.request_received (monotonic, ADK-local). */
+  adkPreProviderMs?: number;
+  /** Diagnostic children of adkPreProviderMs; absent on historical messages. */
+  adkPreProviderBreakdown?: AdkPreProviderBreakdownV1;
+  /** llm.first_delta - llm.request_start (monotonic, ADK-local). */
+  providerTtftMs?: number;
+  /** adk.first_delta_forwarded - llm.first_delta (monotonic, ADK-local). */
+  adkForwardingMs?: number;
+  /** backend.first_delta_written - adk.first_delta_forwarded (cross-clock). */
+  backendForwardingMs?: number;
+  /** frontend.first_chunk_painted - backend.first_delta_written (cross-clock). */
+  frontendRenderMs?: number;
+  /** Diagnostic only: paint minus SSE arrival, browser-monotonic. Not a primary UI row. */
+  browserRenderOnlyMs?: number;
+  quality?: ConversationLatencyQuality;
+}
+
+/** One-time latency envelope carried by the first model-derived stream_chunk. */
+export interface StreamChunkLatencyData {
+  schemaVersion: 1;
+  requestId: string;
+  assistantMessageId: string;
+  backendFirstDeltaWrittenEpochMs: number;
+  metrics: Omit<
+    ConversationLatencyMetricsV1,
+    'schemaVersion' | 'frontendRenderMs' | 'browserRenderOnlyMs'
+  >;
+  quality: ConversationLatencyQuality;
+}
+
+/** Payload for the idempotent frontend-paint reporting endpoint. */
+export interface ReportFrontendLatencyPayload {
+  schemaVersion: 1;
+  requestId: string;
+  frontendFirstChunkPaintedEpochMs: number;
+  frontendRenderMs: number;
+  browserRenderOnlyMs?: number;
+  quality: ConversationLatencyQuality;
 }
 
 export type ResponseCorrectionStatus = 'queued' | 'correcting' | 're_evaluating' | 'corrected' | 'failed' | 'abstained' | 'human_review_required';
@@ -177,9 +241,11 @@ export interface Message {
   content?: string;
   components?: MessageComponent[];
   interaction?: ChoiceInteractionMetadata;
+  interactions?: ChoiceInteractionMetadata[];
   attachedFileIds?: string[];
   attachedFiles?: AttachedFile[];
   modelId?: string;
+  reasoningEffort?: string;
   /** Agents used for this turn (mentions or sticky reuse from backend). */
   agentIds?: string[];
   memberIds?: string[];
@@ -193,9 +259,15 @@ export interface Message {
   isComplete?: boolean;
   inputTokens?: number;
   outputTokens?: number;
+  modelRequestTelemetry?: {
+    usedTokens: number;
+    contextWindow: number;
+    model: string;
+  };
   durationMs?: number;
   timeToFirstChunk?: number;
   timeToFirstToken?: number;
+  latencyMetrics?: ConversationLatencyMetricsV1;
   parentMessageId?: string; // Reference to the message being replied to
   reliabilityEvaluation?: ReliabilityEvaluation;
   correctionWorkflow?: ResponseCorrectionWorkflow;
@@ -254,9 +326,76 @@ export interface ChoiceInteractionMetadata {
   selectedOptions: Array<{ optionId: string; label: string; value?: string }>; customAnswer?: string; dismissed?: boolean; displayText?: string;
 }
 
+export interface ConversationSummary {
+  id: string;
+  title: string;
+  createdBy: string;
+  ownerName?: string;
+  messageCount: number;
+  lastMessageAt?: string;
+  isArchived: boolean;
+  isShared: boolean;
+  isGroup: boolean;
+  unseenMentionCount: number;
+  projectId?: string | null;
+  runtimeMode: 'standard' | 'governed';
+  runtimePurpose: 'chat' | 'platform_copilot';
+  pinnedAgentId?: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface SafeExecutionSummary { summary: string; status: string; actorLabel?: string }
+export interface SafePlanStep { label: string; status?: string }
+export interface SafeActionIdentity { name: string; label?: string; kind?: string; status?: string; summary?: string }
+export interface SafeResourceReference { kind: 'workspace' | 'document' | 'connector' | 'agent' | 'skill' | 'citation' | 'artifact'; id?: string; label: string }
+export interface ConversationPlaybookPreviewV1 {
+  goal?: string;
+  answerOutline?: string;
+  executionSummaries: SafeExecutionSummary[];
+  planSteps: SafePlanStep[];
+  actions: SafeActionIdentity[];
+  resources: SafeResourceReference[];
+  omissions: Record<string, number>;
+}
+export interface PrepareConversationPlaybookHandoffV1 {
+  contractVersion: 1;
+  targetMessageId: string;
+  activeBranches: Record<string, string>;
+  branchSelectionFingerprint: string;
+  displayedAnswerVersion: DisplayedAnswerVersion;
+  creationRequestId: string;
+}
+export interface PreparedConversationPlaybookHandoffV1 {
+  contractVersion: 1;
+  status: 'prepared';
+  handoffId: string;
+  platformConversationId: string;
+  suggestedPrompt: string;
+  expiresAt: string;
+  preview: ConversationPlaybookPreviewV1;
+  provenance: { sourceConversationId: string; targetMessageId: string; displayedAnswerVersion: string; canonicalPathFingerprint: string; contextFingerprint: string };
+}
+
+export type ToolRenderKind = 'run_code' | 'search' | 'read' | 'write' | 'file' | 'web' | 'generic';
+export interface AgentActivityData extends Record<string, unknown> {
+  summary: string; detail?: string; status: 'running' | 'completed'; startedAt?: string; completedAt?: string; durationMs?: number;
+  actorId?: string; actorName?: string;
+}
+export interface ToolActivityData extends Record<string, unknown> {
+  toolName: string; displayKey?: string; fallbackDisplayName?: string; summary: string; renderKind: ToolRenderKind;
+  status: 'running' | 'completed' | 'failed' | 'stopped'; paramsJson?: string; resultJson?: string;
+  startedAt?: string; completedAt?: string; durationMs?: number; actorId?: string; actorName?: string;
+  primaryInput?: string; primaryInputLanguage?: string;
+}
+export interface ArtifactActivityData extends Record<string, unknown> {
+  artifactId: string; filename: string; artifactKind?: string; mimeType?: string; sizeBytes?: number;
+  producerToolId?: string; availability: 'pending' | 'ready' | 'failed';
+}
+
 export interface MessageComponent {
   id?: string;
-  type: 'text' | 'code' | 'reasoning' | 'plan' | 'queue' | 'checkpoint' | 'chart' | 'task' | 'error' | 'sources' | 'sandbox' | 'webPreview' | 'artifact' | 'citation' | 'toolInfo' | 'chainOfThought' | 'choice';
+  type: 'text' | 'code' | 'agentActivity' | 'plan' | 'queue' | 'checkpoint' | 'chart' | 'task' | 'error' | 'sources' | 'sandbox' | 'webPreview' | 'artifact' | 'citation' | 'toolActivity' | 'choice';
   data: Record<string, unknown> | ChartComponentData | ChoiceComponentData;
 }
 
@@ -265,17 +404,36 @@ export interface StreamingComponent extends MessageComponent {
 }
 
 export interface ConversationListParams {
+  mode?: 'legacy' | 'cursor';
+  cursor?: string;
   page?: number;
   limit?: number;
   search?: string;
   isArchived?: boolean;
   projectId?: string | 'none';
   searchScope?: 'title' | 'fulltext';
+  runtimePurpose?: 'chat' | 'platform_copilot';
+  sortBy?: 'lastMessageAt' | 'createdAt' | 'title';
+  sortOrder?: 'asc' | 'desc';
+}
+
+export interface CreateConversationPayload {
+  title?: string;
+  workspaces?: string[];
+  participantEmails?: string[];
+  participants?: Array<{ email: string; job?: string }>;
+  ownerJob?: string;
+  projectId?: string;
+  runtimePurpose?: 'chat' | 'platform_copilot';
+  creationRequestId?: string;
 }
 
 export interface MessageListParams {
+  mode?: 'legacy' | 'cursor';
+  cursor?: string;
   page?: number;
   limit?: number;
+  conversationType?: 'user' | 'ai';
 }
 
 export interface PaginatedResponse<T> {
@@ -284,15 +442,21 @@ export interface PaginatedResponse<T> {
   page: number;
   limit: number;
   totalPages: number;
+  hasMore?: boolean;
+  nextCursor?: string | null;
+  branchesByQuestion?: Record<string, Message[]>;
 }
 
 export interface SendMessagePayload {
+  requestId?: string;
+  playbookHandoffId?: string;
   content: string;
   attachedFileIds?: string[];
   attachedFiles?: AttachedFile[];
   webSearchEnabled?: boolean;
   deepSearchEnabled?: boolean;
   modelId?: string;
+  reasoningEffort?: string;
   agentIds?: string[];
   memberIds?: string[];
   /** Mentioned team IDs; the backend expands each into its agents at send time. */
@@ -301,6 +465,20 @@ export interface SendMessagePayload {
   connectorRepo?: { connectorId: string; connectorName: string; repoId: string; repoName: string; repoUrl?: string };
   skillIds?: string[];
   interaction?: ChoiceInteractionMetadata;
+  interactions?: ChoiceInteractionMetadata[];
+  clientContext?: ConversationClientContextV1;
+}
+
+export interface ConversationClientContextV1 {
+  contextVersion: 1;
+  route: string;
+  module: 'playbooks' | 'executions' | 'other';
+  surface: string;
+  entity?: { type: 'playbook' | 'execution' | 'task'; id: string };
+  selection?: { type: 'playbook' | 'execution' | 'task'; id: string };
+  availableActions: string[];
+  hasUnsavedChanges: boolean;
+  locale: string;
 }
 
 export interface CreateReportPayload {
@@ -314,11 +492,22 @@ export interface StreamStartEvent {
   messageId: string;
 }
 
+export interface ActiveStreamSnapshot {
+  conversationId: string;
+  messageId: string;
+  revision: number;
+  components: StreamingComponent[];
+}
+
 export interface StreamChunkEvent {
   conversationId: string;
+  messageId?: string;
+  revision?: number;
   action: 'add' | 'update' | 'delete';
   component: StreamingComponent;
   metadata?: Record<string, unknown>;
+  /** One-time latency envelope on the first model-derived chunk only. */
+  latency?: StreamChunkLatencyData;
 }
 
 export interface StreamCompleteEvent {
@@ -329,10 +518,13 @@ export interface StreamCompleteEvent {
     outputTokens: number;
     durationMs: number;
   };
+  /** First five server-side metrics; the browser contributes the sixth. */
+  latencyMetrics?: ConversationLatencyMetricsV1;
 }
 
 export interface StreamErrorEvent {
   conversationId: string;
+  messageId: string;
   errorCode: string;
   message: string;
 }

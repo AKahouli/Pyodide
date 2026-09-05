@@ -5,6 +5,7 @@ import { ConnectorTransferAdapter } from './interfaces/connector-transfer.interf
 import { ConnectorService } from './connector.service';
 import { M365TransferAdapter } from './adapters/m365-transfer.adapter';
 import { WorkspaceDocumentService } from '../workspace/workspace-document.service';
+import { WorkspaceShareService } from '../workspace/workspace-share.service';
 import { DocumentService } from '../document/document.service';
 import { stripLeadingTrailingChar } from '@common/utils';
 
@@ -37,6 +38,7 @@ export class ConnectorTransferService {
     @Inject('ConnectorAuthService')
     private readonly auth: ConnectorAuthService,
     private readonly workspaceDocService: WorkspaceDocumentService,
+    private readonly workspaceShareService: WorkspaceShareService,
     private readonly documentService: DocumentService,
     private readonly logger: LoggerService,
     private readonly m365Adapter: M365TransferAdapter,
@@ -53,10 +55,9 @@ export class ConnectorTransferService {
     this.adapters.set(provider, adapter);
   }
 
-  private async resolveAdapter(connectorId: string): Promise<{
+  private async resolveAdapter(connectorId: string, userId: string): Promise<{
     adapter: ConnectorTransferAdapter;
     authHeaders: Record<string, string>;
-    userId: string;
     connectorSlug: string;
   }> {
     const connector = await this.connectorService.findById(connectorId);
@@ -72,7 +73,6 @@ export class ConnectorTransferService {
       );
     }
 
-    const userId = connector.createdBy.toString();
     const auth = await this.auth.resolveRuntimeAuth(userId, {
       authSourceType: connector.authSourceType,
       connectedAppKey: connector.connectedAppKey,
@@ -87,7 +87,7 @@ export class ConnectorTransferService {
       );
     }
 
-    return { adapter, authHeaders: auth.headers, userId, connectorSlug: connector.slug };
+    return { adapter, authHeaders: auth.headers, connectorSlug: connector.slug };
   }
 
   private sanitizePathSegment(value: string): string {
@@ -132,9 +132,10 @@ export class ConnectorTransferService {
       mimeType?: string;
     },
   ): Promise<ImportTransferResult> {
+    await this.workspaceShareService.assertUserHasWriteAccess(callerUserId, workspaceId);
+
     try {
-      const { adapter, authHeaders, userId } = await this.resolveAdapter(connectorId);
-      const resolvedUserId = callerUserId || userId;
+      const { adapter, authHeaders } = await this.resolveAdapter(connectorId, callerUserId);
       const mode = options.mode || 'file';
 
       if (options.flatten === false) {
@@ -199,7 +200,7 @@ export class ConnectorTransferService {
             : (candidate.mimeType || mimeType);
           const doc = await this.workspaceDocService.uploadSmallFile(
             workspaceId,
-            resolvedUserId,
+            callerUserId,
             buffer,
             finalFilename,
             finalMimeType,
@@ -273,7 +274,7 @@ export class ConnectorTransferService {
     options?: { filename?: string },
   ): Promise<TransferResult> {
     try {
-      const { adapter, authHeaders } = await this.resolveAdapter(connectorId);
+      const { adapter, authHeaders } = await this.resolveAdapter(connectorId, callerUserId);
 
       this.logger.log('Exporting workspace document to connector', {
         connectorId,

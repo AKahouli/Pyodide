@@ -98,6 +98,7 @@ sys.modules.pop("src.flow_engine.nodes.step_hitl_handlers", None)
 sys.modules.pop("src.flow_engine.nodes.step_hitl_blockers", None)
 from src.flow_engine.nodes.step_prompt import build_step_prompt
 from src.flow_engine.nodes.step_result import finalize_step_result
+from src.skills.runtime import inject_tool_skill_instructions
 
 
 @pytest.fixture
@@ -175,6 +176,36 @@ async def test_run_step_applies_generated_work_node_output_contract(monkeypatch)
     assert result["task_outputs"][("parent", 0)]["output"] == "final"
 
 
+@pytest.mark.anyio
+async def test_run_step_re_raises_execution_failure(monkeypatch):
+    emitted = []
+
+    async def _fail_execute_step(*_args, **_kwargs):
+        raise RuntimeError("tool failed")
+
+    monkeypatch.setattr("src.flow_engine.nodes.step._execute_step", _fail_execute_step)
+    monkeypatch.setattr("src.flow_engine.nodes.step.get_stream_writer", lambda: emitted.append)
+
+    with pytest.raises(RuntimeError, match="tool failed"):
+        await run_step(
+            node_id="step-1",
+            node_config={"label": "Step 1"},
+            state={
+                "execution_id": "exec-1",
+                "flow_id": "flow-1",
+                "inputs": {},
+                "task_outputs": {},
+                "iterations": {},
+                "router_decisions": {},
+                "errors": [],
+                "pending_approval": None,
+                "cancelled": False,
+            },
+        )
+
+    assert [event["type"] for event in emitted].count("NodeFailed") == 1
+
+
 def test_available_file_context_leaves_filename_choice_to_model():
     context = _build_available_file_context(["Dragged.pdf", "Deep-search.pdf"])
 
@@ -182,6 +213,28 @@ def test_available_file_context_leaves_filename_choice_to_model():
     assert "Only send file_name or file_names when that tool declares the parameter" in context
     assert "Preserve filenames exactly" in context
     assert '"file_names": []' in _build_available_file_context([])
+
+
+def test_tool_skill_instructions_are_preloaded_for_matching_tool():
+    prompt = inject_tool_skill_instructions(
+        "Base prompt",
+        [
+            {
+                "name": "code-interpreter",
+                "instructions": "Use exact mounted paths and avoid package installation.",
+            },
+            {
+                "name": "logical-search-paddle",
+                "instructions": "Load only when document retrieval is needed.",
+            },
+        ],
+        {"code interpreter"},
+    )
+
+    assert '<active_skill name="code-interpreter">' in prompt
+    assert "Use exact mounted paths and avoid package installation." in prompt
+    assert '<active_skill name="logical-search-paddle">' not in prompt
+    assert "Load only when document retrieval is needed." not in prompt
 
 
 def test_temporary_child_instruction_requires_one_child_not_two():
@@ -687,6 +740,20 @@ async def test_run_step_executes_bound_tools(monkeypatch):
             "metadata": {
                 "agent_name": "Research agent",
                 "agent_tools": [{"name": "calculator", "description": "Math helper"}],
+                "skills": [{
+                    "name": "calculator",
+                    "description": "Use the calculator safely.",
+                    "instructions": "Make one calculation per tool call.",
+                }, {
+                    "name": "code-interpreter",
+                    "description": "Use the configured sandbox connector.",
+                    "instructions": "Use exact mounted paths and avoid package installation.",
+                }],
+                "connector_bindings": [{
+                    "connector_id": "connector-1",
+                    "connector_name": "Code Interpreter",
+                    "connector_slug": "code-interpreter",
+                }],
             },
         },
         state={
@@ -704,6 +771,14 @@ async def test_run_step_executes_bound_tools(monkeypatch):
 
     assert len(calls) == 2
     assert calls[0]["tools"][0]["function"]["name"] == "calculator"
+    assert any(
+        "<active_skill name=\"calculator\">" in message.get("content", "")
+        and "Make one calculation per tool call." in message.get("content", "")
+        and "<active_skill name=\"code-interpreter\">" in message.get("content", "")
+        and "Use exact mounted paths and avoid package installation." in message.get("content", "")
+        for message in calls[0]["messages"]
+        if message.get("role") == "system"
+    )
     assert any(message.get("role") == "tool" and message.get("content") == "4" for message in calls[1]["messages"])
     assert result["task_outputs"][("step-1", 0)]["output"] == "The answer is 4."
     assert events[-1]["type"] == "NodeCompleted"
@@ -1161,6 +1236,7 @@ async def test_run_step_uses_state_workspace_when_node_inputs_are_resolved(monke
             "execution_id": "exec-1",
             "flow_id": "flow-1",
             "inputs": {"__playbook_workspace_ids": ["workspace-1"]},
+            "max_sandbox_calls_per_step": 16,
             "task_outputs": {},
             "iterations": {},
             "router_decisions": {},
@@ -1172,134 +1248,7 @@ async def test_run_step_uses_state_workspace_when_node_inputs_are_resolved(monke
     )
 
     assert captured_kwargs["output_workspace_id"] == "workspace-1"
-
-
-@pytest.mark.anyio
-async def test_run_step_deep_search_merges_dragged_and_returned_files(monkeypatch):
-    captured_factory_kwargs = {}
-    captured_search = {}
-    captured_completion = {}
-
-    def _fake_create_langchain_tools(**kwargs):
-        captured_factory_kwargs.update(kwargs)
-        return [], None
-
-    async def _fake_search(query, workspace_id):
-        captured_search.update(query=query, workspace_id=workspace_id)
-        return {
-            "workspace_id": workspace_id,
-            "status": "ROUTED",
-            "total_files": 3,
-            "files": {
-                "required": [
-                    {
-                        "file_name": "DOC-1-cv_kevin_diallo.PDF",
-                        "routing_decision": "ROUTE",
-                        "search_for": ["candidate CV"],
-                        "reason": "Candidate matches.",
-                    },
-                    {
-                        "file_name": "contract.pdf",
-                        "routing_decision": "ROUTE",
-                        "search_for": ["contractual penalties"],
-                        "reason": "Contract matches.",
-                    },
-                ],
-                "optional": [
-                    {
-                        "file_name": "annex.pdf",
-                        "routing_decision": "ROUTE",
-                        "search_for": ["penalty schedule"],
-                        "reason": "Annex matches.",
-                    },
-                ],
-            },
-        }
-
-    class _Chunk:
-        def __init__(self, token):
-            self.choices = [SimpleNamespace(delta=SimpleNamespace(content=token))]
-
-    class _Stream:
-        def __aiter__(self):
-            self._iter = iter([_Chunk("done")])
-            return self
-
-        async def __anext__(self):
-            try:
-                return next(self._iter)
-            except StopIteration as exc:
-                raise StopAsyncIteration from exc
-
-    async def _fake_acompletion(*args, **kwargs):
-        captured_completion.update(kwargs)
-        return _Stream()
-
-    monkeypatch.setattr("src.flow_engine.nodes.step.litellm.acompletion", _fake_acompletion)
-    monkeypatch.setattr("src.flow_engine.deep_search.search_relevant_documents", _fake_search)
-    fake_factory_module = types.ModuleType("src.flow_engine.tools")
-    fake_factory_module.create_langchain_tools = _fake_create_langchain_tools
-    monkeypatch.setitem(sys.modules, "src.flow_engine.tools", fake_factory_module)
-
-    await run_step(
-        node_id="step-1",
-        node_config={
-            "label": "Research penalties",
-            "description": "Find the contractual penalties",
-            "metadata": {
-                "agent_name": "Document agent",
-                "deep_search": True,
-            },
-        },
-        state={
-            "execution_id": "exec-1",
-            "flow_id": "flow-1",
-            "inputs": {
-                "query": "What penalties apply to late delivery?",
-                "__playbook_default_workspace_id": "workspace-default",
-            },
-            "task_outputs": {},
-            "iterations": {},
-            "router_decisions": {},
-            "errors": [],
-            "pending_approval": None,
-            "cancelled": False,
-        },
-        node_inputs={
-            "default": {
-                "workspaceId": "workspace-1",
-                "path": "user/workspace/doc-1/CV_Kevin_Diallo.pdf",
-                "kind": "document",
-                "id": "doc-1",
-                "metadata": {
-                    "documentId": "doc-1",
-                    "workspaceId": "workspace-1",
-                    "filepath": "user/workspace/doc-1/CV_Kevin_Diallo.pdf",
-                    "filename": "doc-1-CV_Kevin_Diallo.pdf",
-                },
-                "name": "CV_Kevin_Diallo.pdf",
-            }
-        },
-    )
-
-    assert captured_search["query"] == "What penalties apply to late delivery?"
-    assert captured_search["workspace_id"] == "workspace-1"
-    assert captured_factory_kwargs["input_files"] == [
-        "doc-1-CV_Kevin_Diallo.pdf",
-        "contract.pdf",
-        "annex.pdf",
-    ]
-    assert captured_factory_kwargs["deep_search"] is False
-    llm_prompt = "\n".join(
-        str(message.get("content") or "")
-        for message in captured_completion["messages"]
-    )
-    assert "<deep_search_routing_plan>" in llm_prompt
-    assert '"file_name": "contract.pdf"' in llm_prompt
-    assert '"search_for": ["contractual penalties"]' in llm_prompt
-    assert '"required": [' in llm_prompt
-    assert '"optional": [' in llm_prompt
-    assert "Decide which exact file_name or file_names" in llm_prompt
+    assert captured_kwargs["max_sandbox_calls_per_step"] == 16
 
 
 @pytest.mark.anyio
@@ -1443,7 +1392,6 @@ async def test_run_step_injects_fresh_human_context_into_same_resumed_prompt(mon
         hitl_policy,
         hitl_blockers,
         human_context,
-        deep_search=False,
     ):
         captured_execute["node_description"] = node_description
         captured_execute["human_context"] = human_context

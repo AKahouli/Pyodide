@@ -266,10 +266,6 @@ export class FlowNodeDto {
   @IsObject()
   metadata?: Record<string, unknown>;
 
-  @IsOptional()
-  @IsBoolean()
-  deepSearch?: boolean;
-
   @ApiPropertyOptional({ type: DynamicReasoningConfigDto })
   @IsOptional()
   @ValidateNested()

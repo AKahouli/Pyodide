@@ -29,12 +29,14 @@ export interface TaskInputPort {
 
 export interface TaskArtifact {
   portId: string;
+  artifactId?: string;
   artifactKind: ArtifactKind;
   content?: string;
   url?: string;
   filename?: string;
   mimeType?: string;
   size?: number;
+  availability?: string;
   metadata?: Record<string, unknown>;
 }
 
@@ -372,7 +374,6 @@ export interface PlaybookTask {
   expectedResult?: string | null;
   disableAdvisorEvaluation?: boolean;
   advisorOptimizedAt?: string | null;
-  deepSearch?: boolean;
   dynamicReasoning?: { enabled: boolean };
 }
 
@@ -633,6 +634,15 @@ export type PlaybookIntentWorkflowChange =
       statePath: string;
     }
   | {
+      type: 'create_data_binding';
+      targetTaskId: string | null;
+      targetNodeRef: string | null;
+      targetIteratorNodeRef?: string | null;
+      targetPort: string;
+      sourceKind: 'trigger';
+      triggerPath: string;
+    }
+  | {
       type: 'delete_data_binding';
       targetTaskId: string | null;
       targetNodeRef: string | null;
@@ -686,6 +696,34 @@ export interface PlaybookIntentWorkflowPlanSuggestion {
 }
 
 export type PlaybookIntentSuggestion = PlaybookIntentSingleChangeSuggestion | PlaybookIntentWorkflowPlanSuggestion;
+
+export type PlaybookInputScope = 'runtime' | 'configuration';
+export type PlaybookInputSourceKind = 'upload' | 'workspace' | 'document' | 'folder' | 'url' | 'manual';
+
+export interface PlaybookInputDescriptor {
+  id: string;
+  taskId: string;
+  taskTitle: string;
+  portId: string;
+  label: string;
+  artifactKind: ArtifactKind;
+  required: true;
+  scope: PlaybookInputScope;
+  binding: { kind: DataBindingSourceKind | 'missing'; triggerPath?: string };
+  acceptedSources: PlaybookInputSourceKind[];
+  readiness: 'runtime_required' | 'configuration_required' | 'configured' | 'invalid';
+  configuredSource?: { kind: PlaybookInputSourceKind; label: string; resourceId?: string } | null;
+}
+
+export interface PlaybookInputContract {
+  playbookId: string;
+  definitionRevision: number;
+  graphValid: boolean;
+  configurationReady: boolean;
+  runtimeInputCount: number;
+  invalidInputCount: number;
+  inputs: PlaybookInputDescriptor[];
+}
 
 export interface IntentSuggestionHistoryEntry {
   id: string;
@@ -758,9 +796,26 @@ export type PlaybookIntentDesignResponse = (
       assumptions: string[];
       riskFlags: string[];
     }
+  | {
+      status: 'ready_to_construct';
+      detectedIntent: string;
+      assumptions: string[];
+      riskFlags: string[];
+    }
 ) & {
   lastTrace?: PlaybookIntentTraceEntry;
+  requestId?: string;
+  assessmentId?: string;
+  continuationId?: string | null;
+  definitionRevision?: number;
 };
+
+export interface PlaybookClarificationAnswer {
+  questionId: string;
+  choice?: string;
+  text?: string;
+  resource?: { kind: 'workspace' | 'document'; id: string };
+}
 
 export type PlaybookIntentTraceStage = 'intent.analyze' | 'intent.design_assessment';
 
@@ -797,11 +852,38 @@ export interface PlaybookAssistantTurnRequest {
   expectedDefinitionRevision: number;
   selectedTaskId?: string;
   executionId?: string;
+  requestId?: string;
+  conversationId?: string;
+  attachmentIds?: string[];
+  continuationId?: string;
+  answers?: PlaybookClarificationAnswer[];
 }
 
 export interface PlaybookAssistantTurnResponse {
+  requestId: string;
+  conversationId: string;
   answer: string;
+  assessment: PlaybookIntentDesignResponse | null;
   operation: PlaybookIntentConstructionStartResponse | null;
+}
+
+export interface PlaybookAssistantMessage {
+  messageId: string;
+  role: 'user' | 'assistant';
+  content: string;
+  operationId: string | null;
+  createdAt: string | null;
+}
+
+export interface PlaybookAssistantHistory {
+  conversationId: string | null;
+  messages: PlaybookAssistantMessage[];
+}
+
+export interface PlaybookAssistantAttachmentUpload {
+  attachmentId: string;
+  uploadUrl: string;
+  expiresAt: string;
 }
 
 export type PlaybookIntentConstructionStatus = 'idle' | 'starting' | 'streaming' | 'completed' | 'failed' | 'cancelled';
@@ -814,7 +896,7 @@ export type PlaybookIntentConstructionEvent =
   | { type: 'data_binding_delta'; constructionId: string; playbookId: string; sequence: number; createdAt: string; suggestion: PlaybookIntentSuggestion }
   | { type: 'completed'; constructionId: string; playbookId: string; sequence: number; createdAt: string; model: string; finalSuggestionCount: number }
   | { type: 'cancelled'; constructionId: string; playbookId: string; sequence: number; createdAt: string; reason?: string }
-  | { type: 'failed'; constructionId: string; playbookId: string; sequence: number; createdAt: string; message: string; recoverable: boolean }
+  | { type: 'failed'; constructionId: string; playbookId: string; sequence: number; createdAt: string; message: string; recoverable: boolean; failureKind?: 'strict_validation' }
   | { type: 'cancelled'; constructionId: string; playbookId: string; sequence: number; createdAt: string; reason?: string };
 
 export interface ToolBindingAction {
@@ -1078,7 +1160,6 @@ export interface Playbook {
   controlEdges?: ControlEdge[];
   dataBindings?: DataBinding[];
   settings?: FlowSettings;
-  deepSearch?: boolean;
 }
 
 export interface CloneShareResult {
@@ -1481,6 +1562,18 @@ export interface DynamicReasoningStreamUpdate {
   [key: string]: unknown;
 }
 
+export interface PlaybookExecutionSnapshotNode {
+  id: string;
+  kind?: string;
+  label?: string;
+  metadata?: Record<string, unknown>;
+}
+
+export interface PlaybookExecutionSnapshot {
+  nodes?: PlaybookExecutionSnapshotNode[];
+  [key: string]: unknown;
+}
+
 export interface PlaybookExecution {
   id: string;
   playbookId: string;
@@ -1544,6 +1637,7 @@ export interface PlaybookExecution {
   startedAt: string | null;
   completedAt: string | null;
   singleStepTaskId: string | null;
+  snapshot?: PlaybookExecutionSnapshot | null;
   playbookSnapshot: Record<string, unknown> | null;
   totalInputTokens: number;
   totalOutputTokens: number;
@@ -1555,7 +1649,6 @@ export interface PlaybookExecution {
   routerDecisions?: RouterDecision[];
   dynamicReasoningAttempts?: DynamicReasoningAttempt[];
   playbookExecutionSettings?: Record<string, unknown>;
-  deepSearch?: boolean;
   createdAt: string;
   updatedAt: string;
 }
@@ -1580,7 +1673,7 @@ export interface PlaybookExecutionSummary {
 
 export type ReplayMode = 'replay_strict' | 'replay_flex' | 'replay_adaptive';
 
-export type ReplayRunVerdict = 'pass' | 'warning' | 'fail' | 'skipped' | 'unknown';
+export type ReplayRunVerdict = 'pass' | 'warning' | 'fail' | 'unknown';
 export type ReplaySignalEvaluationStatus = 'not_evaluated' | 'not_applicable' | 'passed' | 'warning' | 'failed';
 
 export type ReplayPostRunVerdict = 'match' | 'minor_drift' | 'major_drift' | 'not_comparable';
@@ -1640,12 +1733,6 @@ export interface ReplayRunReport {
   replayId: string;
   validationVersion: number;
   mode: ReplayMode;
-  applied: boolean;
-  confidenceScore: number;
-  appliedSections: string[];
-  skippedSections: string[];
-  invalidationReasons: string[];
-  confidenceFactors: Record<string, number>;
   outputContractEvaluated: boolean;
   outputContractPassed: boolean;
   structuralDriftScore: number | null;
@@ -2142,7 +2229,6 @@ export interface CreatePlaybookData {
   name: string;
   description?: string;
   workspaces?: string[];
-  deepSearch?: boolean;
 }
 
 export interface GeneratePlaybookData {
@@ -2232,7 +2318,6 @@ export interface UpdatePlaybookData {
   clientMutationId?: string;
   assistantOperationId?: string;
   assistantOperationTarget?: 'canonical' | 'advisor_preview';
-  deepSearch?: boolean;
 }
 
 export interface ExecutePlaybookData {
@@ -2453,6 +2538,14 @@ export interface PlaybookState {
   pendingAutosaveAfterCurrent: boolean;
   autosaveBackoffUntil: number | null;
   lastSaveReason: 'autosave' | 'manual' | 'route-leave' | null;
+  lastCompletedAssistantOperationId: string | null;
+  lastCompletedAssistantOperationRevision: number | null;
+  canonicalAssistantSaveSnapshot: {
+    operationId: string;
+    playbookId: string;
+    payload: UpdatePlaybookData;
+    dirtyVersion: number;
+  } | null;
   currentExecution: PlaybookExecution | null;
   currentExecutionLoading: boolean;
   executionCache: Record<string, PlaybookExecution>;
@@ -2735,7 +2828,7 @@ export interface PlaybookActions {
   updateFlow: (id: string, data: any, idempotencyKey?: string) => Promise<any>;
   deleteFlow: (id: string) => Promise<void>;
   cloneFlow: (id: string) => Promise<any>;
-  startFlowExecutionAction: (flowId: string, inputContext?: Record<string, unknown>, idempotencyKey?: string) => Promise<any>;
+  startFlowExecutionAction: (flowId: string, inputContext?: Record<string, unknown>, idempotencyKey?: string, options?: ExecutePlaybookData) => Promise<any>;
   fetchFlowExecutions: (flowId: string) => Promise<any>;
   fetchFlowExecution: (executionId: string) => Promise<any>;
   cancelFlowExecutionAction: (executionId: string) => Promise<void>;
@@ -2872,7 +2965,6 @@ export interface FlowNode {
   retryPolicy?: RetryPolicy;
   hitlPolicy?: HitlPolicy;
   modelId?: string;
-  deepSearch?: boolean;
   dynamicReasoning?: { enabled: boolean };
   metadata?: Record<string, unknown>;
 }
@@ -2986,7 +3078,6 @@ export interface UpdateFlowData {
   advisorAutopilotEnabled?: boolean;
   advisorAutopilotTargetScore?: number;
   advisorAutopilotMaxTurns?: number;
-  deepSearch?: boolean;
   expectedDefinitionRevision?: number;
   expectedUpdatedAt?: string;
   clientMutationId?: string;
@@ -3015,7 +3106,6 @@ export interface PlaybookDeltaPatchFields {
   advisorAutopilotTargetScore?: number;
   advisorAutopilotMaxTurns?: number;
   workspaces?: string[];
-  deepSearch?: boolean;
 }
 
 export interface PatchPlaybookFlowDeltaData {

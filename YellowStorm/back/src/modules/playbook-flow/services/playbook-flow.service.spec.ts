@@ -33,6 +33,44 @@ describe('PlaybookFlowService', () => {
     idempotencyService.reserveSave.mockResolvedValue({ type: 'reserved' });
   });
 
+  describe('persistSanitizedExecutionGraph', () => {
+    it('atomically scopes graph cleanup to the owner and loaded revision', async () => {
+      const flowModel = {
+        findOneAndUpdate: jest.fn().mockResolvedValue({ definitionRevision: 8 }),
+      };
+      const service = Object.create(PlaybookFlowService.prototype) as PlaybookFlowService;
+      (service as any).flowModel = flowModel;
+
+      await expect(service.persistSanitizedExecutionGraph(
+        'flow-1',
+        'owner-1',
+        7,
+        [{ id: 'edge-1', source: 'a', target: 'b' } as any],
+        [],
+      )).resolves.toBe(8);
+
+      expect(flowModel.findOneAndUpdate).toHaveBeenCalledWith(
+        { _id: 'flow-1', ownerId: 'owner-1', definitionRevision: 7 },
+        {
+          $set: {
+            controlEdges: [{ id: 'edge-1', source: 'a', target: 'b' }],
+            dataBindings: [],
+          },
+          $inc: { definitionRevision: 1 },
+        },
+        { new: true, runValidators: true },
+      );
+    });
+
+    it('rejects cleanup when the loaded revision lost the compare-and-swap race', async () => {
+      const service = Object.create(PlaybookFlowService.prototype) as PlaybookFlowService;
+      (service as any).flowModel = { findOneAndUpdate: jest.fn().mockResolvedValue(null) };
+
+      await expect(service.persistSanitizedExecutionGraph('flow-1', 'owner-1', 7, [], []))
+        .rejects.toThrow('Playbook changed while preparing execution.');
+    });
+  });
+
   it('findOneBase returns the flow without replay enrichment', async () => {
     const flowDocument = {
       ownerId: 'user-1',
@@ -898,6 +936,36 @@ describe('PlaybookFlowService', () => {
     });
   });
 
+  it('creates a Playbook without a default workspace', async () => {
+    const flowModel = Object.assign(jest.fn().mockImplementation((payload: Record<string, unknown>) => {
+      const document = {
+        ...payload,
+        toJSON: jest.fn().mockReturnValue({ id: 'flow-new', ...payload }),
+        save: jest.fn(),
+      };
+      document.save.mockResolvedValue(document);
+      return document;
+    }), { exists: jest.fn().mockResolvedValue(false) });
+    const service = new PlaybookFlowService(
+      flowModel as any,
+      {} as any,
+      { validate: jest.fn() } as any,
+      {} as any,
+      {} as any,
+      new FlowWorkspacePolicyService(),
+      { sanitize: jest.fn((graph) => graph) } as any,
+      { buildPatchedGraph: jest.fn() } as any,
+      idempotencyService as any,
+      { get: jest.fn().mockReturnValue(true) } as any,
+      playbookShareService as any,
+    );
+
+    const result = await service.create('user-1', { name: 'Workspace-free draft' });
+
+    expect((flowModel as jest.Mock).mock.calls[0][0].workspaces).toEqual([]);
+    expect(result.workspaces).toEqual([]);
+  });
+
   it('createWithNodesAndEdges seeds smart HITL defaults by default', async () => {
     const executionModel = {} as any;
     const flowModel = Object.assign(
@@ -921,7 +989,7 @@ describe('PlaybookFlowService', () => {
       { validate: jest.fn() } as any,
       {} as any,
       {} as any,
-      { normalizeWorkspaces: (workspaces: string[]) => workspaces, ensureWorkspaceSelection: () => undefined } as any,
+      new FlowWorkspacePolicyService(),
       { sanitize: jest.fn((graph) => graph) } as any,
       { buildPatchedGraph: jest.fn() } as any,
       idempotencyService as any,
@@ -932,6 +1000,7 @@ describe('PlaybookFlowService', () => {
     await service.createWithNodesAndEdges('user-1', 'Base', '', [], [], [], []);
 
     const created = (flowModel as jest.Mock).mock.calls[0][0];
+    expect(created.workspaces).toEqual([]);
     expect(created.hitlPolicy).toMatchObject({ mode: 'auto', sensitivity: 'balanced' });
     expect(Array.isArray(created.hitlBlockers)).toBe(true);
     expect(created.hitlBlockers).toEqual([]);
@@ -986,7 +1055,6 @@ describe('PlaybookFlowService', () => {
       {} as any,
       {
         normalizeWorkspaces: (workspaces: string[]) => workspaces,
-        ensureWorkspaceSelection: () => undefined,
       } as any,
       { sanitize: jest.fn((graph) => graph) } as any,
       { buildPatchedGraph: jest.fn() } as any,

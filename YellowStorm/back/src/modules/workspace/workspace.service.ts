@@ -1,4 +1,4 @@
-import { Injectable, OnModuleInit } from '@nestjs/common';
+import { Inject, Injectable, OnModuleInit } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import { Workspace, WorkspaceDocument } from './schemas/workspace.schema';
@@ -7,9 +7,9 @@ import {
   WorkspaceShareDocument,
 } from './schemas/workspace-share.schema';
 import {
-  Conversation,
-  ConversationDocument,
-} from '../conversation/schemas/conversation.schema';
+  CONVERSATION_STORE,
+  type ConversationStore,
+} from '../conversation/persistence/conversation-store';
 import { AgentRepository } from '../agent/repositories/agent.repository';
 import { Flow, FlowDocument } from '../playbook-flow/schemas/playbook-flow.schema';
 import {
@@ -30,6 +30,7 @@ import {
 } from '../exceptions';
 import { ErrorCode } from '../exceptions/constants/error-codes';
 import { escapeRegex } from '../../common/utils';
+import type { RunCodeWorkspaceMetadata } from './interfaces/run-code-source.interface';
 
 @Injectable()
 export class WorkspaceService implements OnModuleInit {
@@ -38,8 +39,8 @@ export class WorkspaceService implements OnModuleInit {
     private readonly workspaceModel: Model<WorkspaceDocument>,
     @InjectModel(WorkspaceShare.name)
     private readonly shareModel: Model<WorkspaceShareDocument>,
-    @InjectModel(Conversation.name)
-    private readonly conversationModel: Model<ConversationDocument>,
+    @Inject(CONVERSATION_STORE)
+    private readonly conversationStore: ConversationStore,
     private readonly agentRepository: AgentRepository,
     @InjectModel(Flow.name)
     private readonly playbookModel: Model<FlowDocument>,
@@ -491,7 +492,10 @@ export class WorkspaceService implements OnModuleInit {
   ): Promise<WorkspaceResponse> {
     const workspace = await this.workspaceModel.findById(workspaceId).exec();
     if (!workspace) {
-      throw new NotFoundException(ErrorCode.WORKSPACE_NOT_FOUND, 'Workspace not found');
+      throw new NotFoundException(
+        ErrorCode.WORKSPACE_NOT_FOUND,
+        'Workspace not found',
+      );
     }
     if (workspace.createdBy.toString() !== ownerId) {
       throw new ForbiddenException(
@@ -547,10 +551,7 @@ export class WorkspaceService implements OnModuleInit {
     await this.shareModel.deleteMany({ workspaceId: new Types.ObjectId(workspaceId) });
 
     // Remove workspace reference from all conversations
-    await this.conversationModel.updateMany(
-      { workspaces: new Types.ObjectId(workspaceId) },
-      { $pull: { workspaces: new Types.ObjectId(workspaceId) } },
-    );
+    await this.conversationStore.removeWorkspaceFromAll(workspaceId);
 
     // Remove workspace reference from all agents' knowledge bases
     await this.agentRepository.pullKnowledgeBaseFromAll(workspaceId);
@@ -708,6 +709,30 @@ export class WorkspaceService implements OnModuleInit {
     return pathById;
   }
 
+  async getRunCodeSourceMetadataByIds(
+    workspaceIds: string[],
+  ): Promise<Record<string, RunCodeWorkspaceMetadata>> {
+    if (workspaceIds.length === 0) return {};
+    const validIds = workspaceIds.filter((id) => Types.ObjectId.isValid(id));
+    if (validIds.length === 0) return {};
+    const docs = await this.workspaceModel
+      .find({ _id: { $in: validIds.map((id) => new Types.ObjectId(id)) } })
+      .select('name alias createdBy storagePrefix')
+      .lean()
+      .exec();
+    const metadata: Record<string, RunCodeWorkspaceMetadata> = {};
+    for (const doc of docs) {
+      const workspaceId = doc._id.toString();
+      metadata[workspaceId] = {
+        workspaceId,
+        name: doc.name,
+        alias: doc.alias,
+        cephPrefix: `${doc.createdBy.toString()}/${doc.storagePrefix}`,
+      };
+    }
+    return metadata;
+  }
+
   /**
    * Resolve a single workspaceId to its `{ownerUserId, storagePrefix}` pair.
    * Used by the upload services to build object keys rooted under the
@@ -766,10 +791,7 @@ export class WorkspaceService implements OnModuleInit {
     const workspace = await this.workspaceModel.findById(workspaceId);
 
     if (!workspace) {
-      throw new NotFoundException(
-        ErrorCode.WORKSPACE_NOT_FOUND,
-        'Workspace not found',
-      );
+      throw new NotFoundException(ErrorCode.WORKSPACE_NOT_FOUND, 'Workspace not found');
     }
 
     return workspace;

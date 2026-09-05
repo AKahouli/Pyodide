@@ -49,6 +49,11 @@ from src.flow_engine.runtime.checkpoint_fork import (
 )
 from src.flow_engine.nodes.human_approval import normalize_approval_resume
 from src.flow_engine.state import ExecutionState
+from src.flow_engine.tools.sandbox_mount_guard import (
+    DEFAULT_SANDBOX_CALLS_PER_STEP,
+    MAX_SANDBOX_CALLS_PER_STEP,
+)
+from src.flow_engine.workers.pool import ExecutionLimiter
 from src.temporary_child_summary import pop_temporary_child_summary
 
 logger = get_logger(__name__)
@@ -57,6 +62,49 @@ compiled_graph_cache = CompiledGraphCache(
     max_entries=app_settings.PLAYBOOK_GRAPH_CACHE_MAX_ENTRIES,
     ttl_seconds=app_settings.PLAYBOOK_GRAPH_CACHE_TTL_SECONDS,
 )
+execution_limiter = ExecutionLimiter(
+    app_settings.PLAYBOOK_PYTHON_WORKER_POOL_SIZE * app_settings.PLAYBOOK_PYTHON_WORKER_MAX_INFLIGHT,
+)
+
+def _sandbox_call_limit(settings: Any) -> int:
+    if settings is None or not settings.HasField("runtime_settings"):
+        return DEFAULT_SANDBOX_CALLS_PER_STEP
+    value = int(getattr(settings.runtime_settings, "max_sandbox_calls_per_step", 0) or 0)
+    if value <= 0:
+        return DEFAULT_SANDBOX_CALLS_PER_STEP
+    return min(value, MAX_SANDBOX_CALLS_PER_STEP)
+
+
+async def _apply_runtime_settings(settings: Any) -> None:
+    if settings is None or not settings.HasField("runtime_settings"):
+        return
+    runtime = settings.runtime_settings
+    integer_fields = {
+        "PLAYBOOK_MAX_CONCURRENT_PER_USER": (runtime.max_concurrent_per_user, 1, 100),
+        "PLAYBOOK_EXECUTION_QUEUE_MAX_DEPTH": (runtime.execution_queue_max_depth, 0, 500),
+        "PLAYBOOK_MAX_PARALLELISM_PER_EXECUTION": (runtime.max_parallelism_per_execution, 1, 20),
+        "PLAYBOOK_RECURSION_LIMIT_DEFAULT": (runtime.recursion_limit_default, 1, 200),
+        "PLAYBOOK_RECURSION_LIMIT_MAX": (runtime.recursion_limit_max, 1, 500),
+        "PLAYBOOK_MAX_HITL_ROUNDS": (runtime.max_hitl_rounds, 0, 100),
+        "PLAYBOOK_PYTHON_WORKER_POOL_SIZE": (runtime.python_worker_pool_size, 1, 100),
+        "PLAYBOOK_PYTHON_WORKER_MAX_INFLIGHT": (runtime.python_worker_max_inflight, 1, 20),
+        "PLAYBOOK_MAX_TOOL_ITERATIONS": (runtime.max_tool_iterations, 1, 500),
+        "PLAYBOOK_GRAPH_CACHE_MAX_ENTRIES": (runtime.graph_cache_max_entries, 1, 10000),
+        "PLAYBOOK_GRAPH_CACHE_TTL_SECONDS": (runtime.graph_cache_ttl_seconds, 1, 86400),
+    }
+    for name, (value, minimum, maximum) in integer_fields.items():
+        setattr(app_settings, name, min(maximum, max(minimum, int(value))))
+    cache_enabled = bool(runtime.graph_cache_enabled)
+    if cache_enabled != app_settings.PLAYBOOK_GRAPH_CACHE_ENABLED:
+        compiled_graph_cache.clear()
+    app_settings.PLAYBOOK_GRAPH_CACHE_ENABLED = cache_enabled
+    compiled_graph_cache.reconfigure(
+        max_entries=app_settings.PLAYBOOK_GRAPH_CACHE_MAX_ENTRIES,
+        ttl_seconds=app_settings.PLAYBOOK_GRAPH_CACHE_TTL_SECONDS,
+    )
+    await execution_limiter.resize(
+        app_settings.PLAYBOOK_PYTHON_WORKER_POOL_SIZE * app_settings.PLAYBOOK_PYTHON_WORKER_MAX_INFLIGHT,
+    )
 
 
 def _seed_task_outputs(request: Any) -> tuple[dict[tuple[str, int], Any], dict[str, int]]:
@@ -195,6 +243,9 @@ class PlaybookFlowRuntimeServicer:
         initial_resume_input = _pop_initial_resume_input(input_context)
         hitl_memory = _pop_runtime_hitl_memory(input_context)
 
+        await _apply_runtime_settings(request.settings)
+        await execution_limiter.acquire()
+        runtime_slot_acquired = True
         graph = None
         active = None
 
@@ -258,6 +309,7 @@ class PlaybookFlowRuntimeServicer:
                     request.settings.playbook_planner,
                     preserving_proto_field_name=True,
                 ) if request.settings.HasField("playbook_planner") else {},
+                "max_sandbox_calls_per_step": _sandbox_call_limit(request.settings),
             }
 
             config = {"configurable": {"thread_id": execution_id}}
@@ -331,6 +383,8 @@ class PlaybookFlowRuntimeServicer:
             yield _build_event(EVENT_EXECUTION_FAILED, execution_id, "", {"error": str(exc)}, 0)
         finally:
             self._active_executions.pop(execution_id, None)
+            if runtime_slot_acquired:
+                await execution_limiter.release()
 
     async def ValidateAndRepairPlan(self, request: Any, context: grpc.aio.ServicerContext) -> Any:
         from src.flow_engine.dynamic_reasoning.models import DynamicReasoningPolicy, GeneratedExecutionPlan
@@ -463,6 +517,9 @@ class PlaybookFlowRuntimeServicer:
         hitl_memory = _pop_runtime_hitl_memory(input_context)
 
         active = None
+        await _apply_runtime_settings(request.settings)
+        await execution_limiter.acquire()
+        runtime_slot_acquired = True
 
         try:
             checkpointer = get_checkpointer()
@@ -507,7 +564,11 @@ class PlaybookFlowRuntimeServicer:
                     target_node_id=target_node_id,
                     target_iteration=target_iteration,
                 ),
-                {"execution_id": execution_id, "hitl_memory": hitl_memory or []},
+                {
+                    "execution_id": execution_id,
+                    "hitl_memory": hitl_memory or [],
+                    "max_sandbox_calls_per_step": _sandbox_call_limit(request.settings),
+                },
             )
             replay_config = fork_result.config
 
@@ -595,6 +656,8 @@ class PlaybookFlowRuntimeServicer:
             yield _build_event(EVENT_EXECUTION_FAILED, execution_id, "", {"error": str(exc)}, 0)
         finally:
             self._active_executions.pop(execution_id, None)
+            if runtime_slot_acquired:
+                await execution_limiter.release()
 
 
 def _pop_initial_resume_input(input_context: dict[str, Any]) -> Command[Any] | None:

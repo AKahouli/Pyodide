@@ -1,15 +1,5 @@
 import time
 
-class MockLangfuse:
-    def trace(self, **kwargs): return self
-    def span(self, **kwargs): return self
-    def event(self, **kwargs): return self
-    def update(self, **kwargs): return self
-    def flush(self, **kwargs): pass
-    def __getattr__(self, name): return lambda *args, **kwargs: self
-
-langfuse_client = MockLangfuse()
-
 class TraceRecorder:
     def __init__(self, agent_name=None, agent_type=None):
         self.agent_name = agent_name

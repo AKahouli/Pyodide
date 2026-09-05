@@ -1,12 +1,12 @@
-import { useCallback, useMemo } from 'react';
+import { useCallback, useEffect, useMemo, useRef } from 'react';
 import { toast } from 'sonner';
-import { X, Reply, Search } from 'lucide-react';
+import { BrainCircuit, ChevronDown, X, Reply, Search } from 'lucide-react';
 import Input from '@/components/ai-elements/input';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import { PromptInputButton } from '@/components/ai-elements/prompt-input';
 import type { PromptInputMessage } from '@/components/ai-elements/prompt-input';
-import { useConversationStore, useIsAwaitingFirstChunk, useInputDisabled, useReplyingToMessage, useSelectedWorkspaceIds, useDeepSearchEnabled, useSetDeepSearchEnabled } from '../store';
+import { useConversationStore, useIsAwaitingFirstChunk, useInputDisabled, useReplyingToMessage, useSelectedWorkspaceIds, useSetSelectedWorkspaceIds, useDeepSearchEnabled, useSetDeepSearchEnabled, useSelectedModelId, useSelectedReasoningEffort, useSetSelectedReasoningEffort } from '../store';
 import { UsageLimitBanner } from '@/modules/usage';
 import { useUsage } from '@/modules/usage/UsageContext';
 import { useConversationFileUpload } from '../hooks/useConversationFileUpload';
@@ -15,6 +15,9 @@ import { useModuleTranslation } from '@/modules/localization';
 import { useAuth } from '@/modules/auth/useAuth';
 import { ComposerSuggestionChips } from './ComposerSuggestionChips';
 import { SelectedConnectorRepo } from './SelectedConnectorRepo';
+import { ContextMeter } from './ContextMeter';
+import { useDefaultModel, useModels } from '@/modules/models';
+import { DropdownMenu, DropdownMenuContent, DropdownMenuLabel, DropdownMenuRadioGroup, DropdownMenuRadioItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 
 interface ConversationInputProps {
   conversationId: string;
@@ -31,15 +34,70 @@ export function ConversationInput({ conversationId }: ConversationInputProps) {
   const isStreaming = useConversationStore((s) => s.isStreaming);
   const inputDisabled = useInputDisabled();
   const selectedWorkspaceIds = useSelectedWorkspaceIds();
+  const setSelectedWorkspaceIds = useSetSelectedWorkspaceIds();
   const currentConversation = useConversationStore((s) => s.currentConversation);
   const governedMode = currentConversation?.runtimeMode === 'governed';
+  const platformCopilot = currentConversation?.runtimePurpose === 'platform_copilot';
   const { status: usageStatus } = useUsage();
   const { t } = useModuleTranslation('conversation');
   const { user } = useAuth();
   const deepSearchEnabled = useDeepSearchEnabled();
   const setDeepSearchEnabled = useSetDeepSearchEnabled();
+  const selectedModelId = useSelectedModelId();
+  const selectedReasoningEffort = useSelectedReasoningEffort();
+  const setSelectedReasoningEffort = useSetSelectedReasoningEffort();
+  const models = useModels();
+  const defaultModel = useDefaultModel();
+  const selectedModel = models.find((model) => model.id === selectedModelId) ?? defaultModel ?? models[0];
+  const reasoningEfforts = selectedModel?.supportsReasoning ? (selectedModel.reasoning?.efforts ?? []) : [];
+  const effectiveReasoningEffort = reasoningEfforts.some((effort) => effort.id === selectedReasoningEffort)
+    ? selectedReasoningEffort
+    : selectedModel?.reasoning?.defaultEffort;
+  const latestContextTelemetry = useConversationStore((state) => {
+    for (let index = state.messages.length - 1; index >= 0; index -= 1) {
+      const message = state.messages[index];
+      if (message.conversationType === 'ai' && message.modelRequestTelemetry) return message.modelRequestTelemetry;
+    }
+    return undefined;
+  });
 
   const isLimitExceeded = usageStatus?.isLimitExceeded ?? false;
+  const workspacePersistenceQueue = useRef<Promise<void>>(Promise.resolve());
+  const persistedWorkspaceIds = useRef<string[]>(currentConversation?.workspaces ?? []);
+  const persistedWorkspaceConversationId = useRef<string | null>(currentConversation?.id === conversationId ? conversationId : null);
+
+  useEffect(() => {
+    if (currentConversation?.id === conversationId && persistedWorkspaceConversationId.current !== conversationId) {
+      persistedWorkspaceIds.current = currentConversation.workspaces ?? [];
+      persistedWorkspaceConversationId.current = conversationId;
+    }
+  }, [conversationId, currentConversation?.id, currentConversation?.workspaces]);
+
+  const persistWorkspaceSelection = useCallback((workspaceIds: string[]) => {
+    if (governedMode) return;
+
+    workspacePersistenceQueue.current = workspacePersistenceQueue.current
+      .then(async () => {
+        const persistedIds = persistedWorkspaceIds.current;
+        const selectionChanged = workspaceIds.length !== persistedIds.length
+          || workspaceIds.some((id) => !persistedIds.includes(id));
+        if (!selectionChanged) return;
+
+        try {
+          await updateConversation(conversationId, { workspaces: workspaceIds });
+          persistedWorkspaceIds.current = workspaceIds;
+        } catch (error) {
+          const currentSelection = useConversationStore.getState().selectedWorkspaceIds;
+          const failedSelectionIsCurrent = currentSelection.length === workspaceIds.length
+            && currentSelection.every((id) => workspaceIds.includes(id));
+          if (failedSelectionIsCurrent) {
+            setSelectedWorkspaceIds(persistedIds);
+          }
+          throw error;
+        }
+      })
+      .catch(() => undefined);
+  }, [conversationId, governedMode, setSelectedWorkspaceIds, updateConversation]);
 
   const membersToTag = useMemo(() => {
     if (!currentConversation?.groupMeta?.isGroup || !user?.id) return undefined;
@@ -84,12 +142,16 @@ export function ConversationInput({ conversationId }: ConversationInputProps) {
   );
 
   const handleSubmit = useCallback(
-    async (message: PromptInputMessage, modelId: string, agentIds?: string[], memberIds?: string[], _workspaceIds?: string[], connectorRepo?: { connectorId: string; connectorName: string; repoId: string; repoName: string; repoUrl?: string }, teamIds?: string[]) => {
+    async (message: PromptInputMessage, modelId: string, agentIds?: string[], memberIds?: string[], workspaceIds?: string[], connectorRepo?: { connectorId: string; connectorName: string; repoId: string; repoName: string; repoUrl?: string }, teamIds?: string[]) => {
       if (!message.text?.trim() && !completedFileIds.length) return;
 
-      const persistedWorkspaceIds = currentConversation?.workspaces ?? [];
-      if (!governedMode && (selectedWorkspaceIds.length !== persistedWorkspaceIds.length || selectedWorkspaceIds.some((id) => !persistedWorkspaceIds.includes(id)))) {
-        await updateConversation(conversationId, { workspaces: selectedWorkspaceIds });
+      await workspacePersistenceQueue.current;
+      const submittedWorkspaceIds = workspaceIds ?? selectedWorkspaceIds;
+      const persistedIds = persistedWorkspaceIds.current;
+      if (!governedMode && (submittedWorkspaceIds.length !== persistedIds.length || submittedWorkspaceIds.some((id) => !persistedIds.includes(id)))) {
+        await updateConversation(conversationId, { workspaces: submittedWorkspaceIds });
+        persistedWorkspaceIds.current = submittedWorkspaceIds;
+        setSelectedWorkspaceIds(submittedWorkspaceIds);
       }
 
       // Build optimistic attachedFiles from the upload hook state
@@ -112,6 +174,9 @@ export function ConversationInput({ conversationId }: ConversationInputProps) {
         agentIds: agentIds?.length ? agentIds : undefined,
         memberIds: memberIds?.length ? memberIds : undefined,
         teamIds: teamIds?.length ? teamIds : undefined,
+        ...(!governedMode && !platformCopilot && !agentIds?.length && !memberIds?.length && !teamIds?.length && effectiveReasoningEffort
+          ? { reasoningEffort: effectiveReasoningEffort }
+          : {}),
         parentMessageId: replyingToMessage?.id,
         connectorRepo: governedMode ? undefined : (connectorRepo ?? useConversationStore.getState().selectedConnectorRepo ?? undefined),
         skillIds: !governedMode && useConversationStore.getState().selectedSkillIds.length
@@ -122,7 +187,7 @@ export function ConversationInput({ conversationId }: ConversationInputProps) {
       clearAll();
       clearReplyingTo();
     },
-    [completedFileIds, uploadFiles, sendMessage, conversationId, clearAll, clearReplyingTo, replyingToMessage?.id, currentConversation?.workspaces, governedMode, selectedWorkspaceIds, updateConversation, deepSearchEnabled],
+    [completedFileIds, uploadFiles, sendMessage, conversationId, clearAll, clearReplyingTo, replyingToMessage?.id, governedMode, platformCopilot, selectedWorkspaceIds, setSelectedWorkspaceIds, updateConversation, deepSearchEnabled, effectiveReasoningEffort],
   );
 
   const senderDisplayName = useMemo(() => {
@@ -201,21 +266,47 @@ export function ConversationInput({ conversationId }: ConversationInputProps) {
         members={membersToTag}
         autoMention={autoMention}
         showWorkspaceSelect={!governedMode}
+        onWorkspaceSelectionChange={persistWorkspaceSelection}
         preserveWorkspaceSelectionOnSubmit
         showModelSelector
         governedMode={governedMode}
         enableTeamMentions={!governedMode}
         extraTools={
-          <PromptInputButton
-            type="button"
-            onClick={() => setDeepSearchEnabled(!deepSearchEnabled)}
-            className={cn(deepSearchEnabled && 'bg-primary/10 text-primary')}
-            title={t('input.deepSearch')}
-            aria-label={t('input.deepSearch')}
-            aria-pressed={deepSearchEnabled}
-          >
-            <Search className="h-4 w-4" />
-          </PromptInputButton>
+          <>
+            <PromptInputButton
+              type='button'
+              onClick={() => setDeepSearchEnabled(!deepSearchEnabled)}
+              className={cn(deepSearchEnabled && 'bg-primary/10 text-primary')}
+              title={t('input.deepSearch')}
+              aria-label={t('input.deepSearch')}
+              aria-pressed={deepSearchEnabled}
+            >
+              <Search className='h-4 w-4' />
+            </PromptInputButton>
+            {!governedMode && !platformCopilot && reasoningEfforts.length > 0 && (
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <PromptInputButton type='button' aria-label={t('input.reasoning.label')}>
+                    <BrainCircuit className='h-4 w-4' />
+                    <span className='hidden sm:inline'>
+                      {reasoningEfforts.find((effort) => effort.id === effectiveReasoningEffort)?.name ?? t('input.reasoning.label')}
+                    </span>
+                    <ChevronDown className='h-3 w-3 opacity-60' />
+                  </PromptInputButton>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align='start'>
+                  <DropdownMenuLabel>{t('input.reasoning.label')}</DropdownMenuLabel>
+                  <DropdownMenuRadioGroup value={effectiveReasoningEffort ?? undefined} onValueChange={setSelectedReasoningEffort}>
+                    {reasoningEfforts.map((effort) => (
+                      <DropdownMenuRadioItem key={effort.id} value={effort.id} title={effort.description}>
+                        {effort.name}
+                      </DropdownMenuRadioItem>
+                    ))}
+                  </DropdownMenuRadioGroup>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            )}
+          </>
         }
         belowTextarea={
           <ComposerSuggestionChips
@@ -225,7 +316,10 @@ export function ConversationInput({ conversationId }: ConversationInputProps) {
           />
         }
       />
-      {!governedMode && <SelectedConnectorRepo />}
+      <div className='mt-2 flex min-h-5 items-center justify-between gap-3 px-1'>
+        {!governedMode && <SelectedConnectorRepo />}
+        {latestContextTelemetry && <ContextMeter {...latestContextTelemetry} />}
+      </div>
     </div>
   );
 }

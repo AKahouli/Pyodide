@@ -92,12 +92,18 @@ export class PlaybookAssistantOperationService implements OnModuleInit, OnModule
     origin?: 'designer' | 'mcp' | 'advisor';
     target?: 'canonical' | 'advisor_preview';
     applyTarget?: 'current_playbook' | 'new_playbook';
+    requestId?: string;
+    operationKind?: 'construction' | 'generation';
+    createdPlaybookId?: string;
   }): Promise<void> {
     await this.operationModel.create({
       ...input,
       origin: input.origin ?? 'designer',
       target: input.target ?? 'canonical',
       applyTarget: input.applyTarget ?? 'current_playbook',
+      requestId: input.requestId ?? null,
+      operationKind: input.operationKind ?? 'construction',
+      createdPlaybookId: input.createdPlaybookId ?? null,
       disposition: 'pending',
       status: 'queued',
       lastSequence: 0,
@@ -288,7 +294,21 @@ export class PlaybookAssistantOperationService implements OnModuleInit, OnModule
     target: 'canonical' | 'advisor_preview',
   ) {
     const operation = await this.getOperation(playbookId, ownerId, operationId);
-    if (operation.target !== target || operation.status !== 'completed' || operation.disposition === 'discarded' || operation.disposition === 'reverted') {
+    const failureIndex = (operation.events ?? []).findIndex((event) => event.type === 'failed' && event.failureKind === 'strict_validation');
+    const hasRetainedBlockedDraft = failureIndex > 0 && (operation.events ?? [])
+      .slice(0, failureIndex)
+      .some((event) => {
+        if (event.type !== 'node_delta' && event.type !== 'edge_delta' && event.type !== 'data_binding_delta') return false;
+        const suggestion = event.suggestion as { kind?: string; validationStatus?: string; changes?: unknown[] } | undefined;
+        return suggestion?.kind === 'workflow_plan'
+          && suggestion.validationStatus === 'blocked'
+          && Array.isArray(suggestion.changes)
+          && suggestion.changes.length > 0;
+      });
+    const isStrictValidationDraft = target === 'canonical'
+      && operation.status === 'failed'
+      && hasRetainedBlockedDraft;
+    if (operation.target !== target || (operation.status !== 'completed' && !isStrictValidationDraft) || operation.disposition === 'discarded' || operation.disposition === 'reverted') {
       throw new ConflictException(ErrorCode.CONFLICT, 'Assistant operation is not ready to commit');
     }
     if (dto.expectedDefinitionRevision !== operation.baseDefinitionRevision) {
@@ -365,12 +385,9 @@ export class PlaybookAssistantOperationService implements OnModuleInit, OnModule
       ...dto,
       expectedDefinitionRevision: operation.baseDefinitionRevision,
       clientMutationId: `assistant-operation-${operationId}`,
-    }, {
-      allowUnboundRequiredPorts: true,
-      allowIncompleteNodeOutputBindings: true,
     });
     await this.operationModel.updateOne(
-      { operationId, playbookId, ownerId, status: 'completed' },
+      { operationId, playbookId, ownerId, status: isStrictValidationDraft ? 'failed' : 'completed' },
       { $set: { disposition: 'applied', committedRevision: result.definitionRevision, committedAt: new Date(), expiresAt: this.expiresAt() } },
     ).exec();
     this.logger.log(`playbook_assistant_operation_committed operationId=${operationId} playbookId=${playbookId} target=${target} revision=${result.definitionRevision}`);

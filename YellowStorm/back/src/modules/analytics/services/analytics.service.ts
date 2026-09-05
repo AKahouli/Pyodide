@@ -36,11 +36,7 @@ export class AnalyticsService {
 
     this.logger.log('Fetching user analytics', { dateFrom, dateTo, groupBy });
 
-    return this.userAnalyticsService.getUserAnalytics(
-      fromDate,
-      toDate,
-      groupBy,
-    );
+    return this.userAnalyticsService.getUserAnalytics(fromDate, toDate, groupBy);
   }
 
   /**
@@ -56,8 +52,7 @@ export class AnalyticsService {
 
     this.logger.log('Fetching usage analytics', { dateFrom, dateTo, groupBy });
 
-    const consentingUserIds =
-      await this.userAnalyticsService.getConsentingUserIds();
+    const consentingUserIds = await this.userAnalyticsService.getConsentingUserIds();
 
     return this.usageAnalyticsService.getUsageAnalytics(
       consentingUserIds,
@@ -84,11 +79,10 @@ export class AnalyticsService {
       groupBy,
     });
 
-    const consentingUserIds =
-      await this.userAnalyticsService.getConsentingUserIds();
+    const consentingUserIds = await this.userAnalyticsService.getConsentingUserIds();
 
     return this.conversationAnalyticsService.getConversationAnalytics(
-      consentingUserIds,
+      consentingUserIds.map((id) => id.toString()),
       fromDate,
       toDate,
       groupBy,
@@ -98,20 +92,16 @@ export class AnalyticsService {
   /**
    * Get quality analytics
    */
-  async getQualityAnalytics(
-    dateFrom?: string,
-    dateTo?: string,
-  ): Promise<QualityAnalyticsResponse> {
+  async getQualityAnalytics(dateFrom?: string, dateTo?: string): Promise<QualityAnalyticsResponse> {
     const fromDate = dateFrom ? new Date(dateFrom) : undefined;
     const toDate = dateTo ? new Date(dateTo) : undefined;
 
     this.logger.log('Fetching quality analytics', { dateFrom, dateTo });
 
-    const consentingUserIds =
-      await this.userAnalyticsService.getConsentingUserIds();
+    const consentingUserIds = await this.userAnalyticsService.getConsentingUserIds();
 
     return this.conversationAnalyticsService.getQualityAnalytics(
-      consentingUserIds,
+      consentingUserIds.map((id) => id.toString()),
       fromDate,
       toDate,
     );
@@ -120,10 +110,7 @@ export class AnalyticsService {
   /**
    * Get summary dashboard analytics
    */
-  async getSummaryAnalytics(
-    dateFrom?: string,
-    dateTo?: string,
-  ): Promise<SummaryAnalyticsResponse> {
+  async getSummaryAnalytics(dateFrom?: string, dateTo?: string): Promise<SummaryAnalyticsResponse> {
     const fromDate = dateFrom ? new Date(dateFrom) : undefined;
     const toDate = dateTo ? new Date(dateTo) : undefined;
 
@@ -146,38 +133,28 @@ export class AnalyticsService {
 
     // Calculate verified percentage
     const totalUsers =
-      userAnalytics.verificationStatus.verified +
-      userAnalytics.verificationStatus.unverified;
+      userAnalytics.verificationStatus.verified + userAnalytics.verificationStatus.unverified;
     const verifiedPercentage =
       totalUsers > 0
-        ? Math.round(
-            (userAnalytics.verificationStatus.verified / totalUsers) * 10000,
-          ) / 100
+        ? Math.round((userAnalytics.verificationStatus.verified / totalUsers) * 10000) / 100
         : 0;
 
     // Find top model by usage
     const topModel =
-      usageAnalytics.tokensByModel.length > 0
-        ? usageAnalytics.tokensByModel[0].model
-        : null;
+      usageAnalytics.tokensByModel.length > 0 ? usageAnalytics.tokensByModel[0].model : null;
 
     // Calculate new conversations this period
-    const newConversationsThisPeriod =
-      conversationAnalytics.conversationsOverTime.reduce(
-        (sum, point) => sum + point.count,
-        0,
-      );
+    const newConversationsThisPeriod = conversationAnalytics.conversationsOverTime.reduce(
+      (sum, point) => sum + point.count,
+      0,
+    );
 
     // Calculate like percentage
     const totalFeedback =
-      qualityAnalytics.feedbackDistribution.likes +
-      qualityAnalytics.feedbackDistribution.dislikes;
+      qualityAnalytics.feedbackDistribution.likes + qualityAnalytics.feedbackDistribution.dislikes;
     const likePercentage =
       totalFeedback > 0
-        ? Math.round(
-            (qualityAnalytics.feedbackDistribution.likes / totalFeedback) *
-              10000,
-          ) / 100
+        ? Math.round((qualityAnalytics.feedbackDistribution.likes / totalFeedback) * 10000) / 100
         : 0;
 
     return {

@@ -29,14 +29,13 @@ class TestWorkflowProcessor:
         team = MagicMock()
         request = _team_request("auto")
         queue = AsyncMock()
-        trace = MagicMock()
 
         with patch(
             "src.smart_rag.engines.multi_agent.workflow_processor.handle_no_agents_workflow",
             new_callable=AsyncMock,
         ) as mock_auto:
-            await execute_workflow(team, request, queue, trace)
-        mock_auto.assert_awaited_once_with(team, request, queue, trace)
+            await execute_workflow(team, request, queue)
+        mock_auto.assert_awaited_once_with(team, request, queue)
         assert queue.include_tool_results is True
 
     @pytest.mark.asyncio
@@ -44,28 +43,26 @@ class TestWorkflowProcessor:
         team = MagicMock()
         request = _team_request("manual")
         queue = AsyncMock()
-        trace = MagicMock()
 
         with patch(
             "src.smart_rag.engines.multi_agent.workflow_processor.handle_agents_provided_workflow",
             new_callable=AsyncMock,
         ) as mock_manual:
-            await execute_workflow(team, request, queue, trace)
-        mock_manual.assert_awaited_once_with(team, request, queue, trace)
+            await execute_workflow(team, request, queue)
+        mock_manual.assert_awaited_once_with(team, request, queue)
 
     @pytest.mark.asyncio
     async def test_execute_workflow_routes_mono_mode(self):
         team = MagicMock()
         request = _team_request("mono")
         queue = AsyncMock()
-        trace = MagicMock()
 
         with patch(
             "src.smart_rag.engines.multi_agent.workflow_processor.handle_single_agent_workflow",
             new_callable=AsyncMock,
         ) as mock_mono:
-            await execute_workflow(team, request, queue, trace)
-        mock_mono.assert_awaited_once_with(team, request, queue, trace)
+            await execute_workflow(team, request, queue)
+        mock_mono.assert_awaited_once_with(team, request, queue)
 
     @pytest.mark.asyncio
     async def test_run_agent_team_logic_success(self):
@@ -85,15 +82,10 @@ class TestWorkflowProcessor:
         ), patch(
             "src.smart_rag.engines.multi_agent.workflow_processor.execute_workflow",
             new_callable=AsyncMock,
-        ) as mock_execute, patch(
-            "src.smart_rag.engines.multi_agent.workflow_processor.langfuse_client",
-        ) as mock_langfuse:
-            mock_langfuse.trace.return_value = MagicMock(id="trace-1")
-            mock_langfuse.flush = MagicMock()
+        ) as mock_execute:
             await run_agent_team_logic(request, queue)
 
         mock_execute.assert_awaited_once()
-        mock_langfuse.flush.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_run_agent_team_logic_sends_error_on_failure(self):
@@ -115,10 +107,7 @@ class TestWorkflowProcessor:
             "src.smart_rag.engines.multi_agent.workflow_processor.execute_workflow",
             new_callable=AsyncMock,
             side_effect=RuntimeError("orchestration failed"),
-        ), patch(
-            "src.smart_rag.engines.multi_agent.workflow_processor.langfuse_client",
-        ) as mock_langfuse:
-            mock_langfuse.trace.return_value = MagicMock(id="trace-1")
+        ):
             await run_agent_team_logic(request, queue)
 
         team._message_helper._send_error_message.assert_awaited_once()

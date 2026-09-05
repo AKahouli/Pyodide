@@ -1,6 +1,6 @@
-import { forwardRef, useCallback, useEffect, useId, useImperativeHandle, useLayoutEffect, useRef, useState } from 'react';
+import { Fragment, forwardRef, useCallback, useEffect, useId, useImperativeHandle, useLayoutEffect, useRef, useState } from 'react';
 import type { PointerEvent as ReactPointerEvent, RefObject } from 'react';
-import { ChevronDown, GripVertical, LayoutGrid, Plus, Redo2, Undo2, Cable, FolderOpen, PanelLeftClose, PanelLeftOpen, Loader2, Download, Wand2, Trash2, GitBranch, Hand, DatabaseZap, Copy, Scissors, ClipboardPaste, Sparkles, Search } from 'lucide-react';
+import { ChevronDown, GripVertical, LayoutGrid, Plus, Redo2, Undo2, Cable, FolderOpen, PanelLeftClose, PanelLeftOpen, Loader2, Download, Wand2, Trash2, GitBranch, Hand, DatabaseZap, Copy, Scissors, ClipboardPaste, Sparkles, MoreHorizontal } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import {
@@ -15,6 +15,7 @@ import { useModuleTranslation } from '@/modules/localization';
 
 import { PORT_COLORS } from '../utils/port-colors';
 import { usePlaybookStore } from '../store';
+import { usePlatformCopilotPanelStore } from '../../platform-copilot/platformCopilotPanelStore';
 import type { InterruptType, TaskTemplate } from '../types';
 
 interface Props {
@@ -55,8 +56,6 @@ interface Props {
   minTopOffset?: number;
   minLeftOffset?: number;
   avoidRectPadding?: number;
-  deepSearch?: boolean;
-  onToggleDeepSearch?: () => void;
 }
 
 export interface PlaybookCanvasFloatingToolbarHandle {
@@ -110,10 +109,9 @@ export const PlaybookCanvasFloatingToolbar = forwardRef<PlaybookCanvasFloatingTo
   minTopOffset = 0,
   minLeftOffset = DEFAULT_POSITION.x,
   avoidRectPadding = 12,
-  deepSearch = false,
-  onToggleDeepSearch,
 }: Props, ref) {
   const { t } = useModuleTranslation('playbook');
+  const yellowmindOpen = usePlatformCopilotPanelStore((s) => s.open);
   const flowNodeTemplates = usePlaybookStore((s) => s.flowNodeTemplates);
   const flowNodeTemplatesLoading = usePlaybookStore((s) => s.flowNodeTemplatesLoading);
   const fetchFlowNodeTemplates = usePlaybookStore((s) => s.fetchFlowNodeTemplates);
@@ -316,7 +314,7 @@ export const PlaybookCanvasFloatingToolbar = forwardRef<PlaybookCanvasFloatingTo
       : interruptType === 'clarification'
         ? t('interrupt.clarificationTitle')
         : t('interrupt.approvalTitle')
-    : t('toolbar.designer');
+    : t('toolbar.yellowmind');
 
   const actionButtons = [
     {
@@ -387,20 +385,8 @@ export const PlaybookCanvasFloatingToolbar = forwardRef<PlaybookCanvasFloatingTo
       icon: Wand2,
       onClick: onToggleDesigner,
       disabled: false,
-      active: designerOpen,
+      active: designerOpen || yellowmindOpen,
       hidden: !onToggleDesigner,
-    },
-    {
-      key: 'deepSearch',
-      label: deepSearch ? t('floatingToolbar.deepSearchDisable') : t('floatingToolbar.deepSearchEnable'),
-      icon: Search,
-      onClick: onToggleDeepSearch,
-      disabled,
-      active: deepSearch,
-      activeClassName: deepSearch
-        ? 'bg-amber-500/15 text-amber-600 hover:bg-amber-500/20 border-amber-500/40'
-        : '',
-      hidden: !onToggleDeepSearch,
     },
     {
       key: 'removeAll',
@@ -435,24 +421,28 @@ export const PlaybookCanvasFloatingToolbar = forwardRef<PlaybookCanvasFloatingTo
       hidden: !onPasteClipboard,
     },
   ];
+  const primaryActionKeys = new Set(['undo', 'redo', 'layout', 'designer']);
+  const visibleActions = actionButtons.filter((action) => !action.hidden);
+  const primaryActions = visibleActions.filter((action) => primaryActionKeys.has(action.key));
+  const overflowActions = visibleActions.filter((action) => !primaryActionKeys.has(action.key));
 
   return (
     <div
       ref={toolbarRef}
-      className="pointer-events-auto absolute z-20"
+      className="pointer-events-auto absolute z-30 max-h-[calc(100%-2rem)]"
       style={{ left: position.x, top: position.y }}
     >
       <div
         className={cn(
-          'flex rounded-xl border bg-background/95 shadow-lg backdrop-blur supports-[backdrop-filter]:bg-background/80',
-          collapsed ? 'items-center px-2 py-2' : 'flex-col p-2',
+          'flex max-h-[min(32rem,calc(100vh-10rem))] rounded-xl border bg-background/95 shadow-lg backdrop-blur supports-[backdrop-filter]:bg-background/80',
+          collapsed ? 'items-center px-2 py-2' : 'flex-col overflow-y-auto p-2',
         )}
         role="toolbar"
         aria-orientation={collapsed ? 'horizontal' : 'vertical'}
         aria-labelledby={titleId}
       >
         <div className={cn('flex items-center gap-1', collapsed ? 'pr-1' : 'mb-2 justify-between')}>
-          <span id={titleId} className="px-1 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+          <span id={titleId} className={cn('px-1 text-[11px] font-medium uppercase tracking-wide text-muted-foreground', collapsed && 'sr-only')}>
             {t('toolbar.canvasTools')}
           </span>
           <div className="flex items-center gap-1">
@@ -460,7 +450,7 @@ export const PlaybookCanvasFloatingToolbar = forwardRef<PlaybookCanvasFloatingTo
               type="button"
               variant="ghost"
               size="icon"
-              className="h-7 w-7 cursor-grab active:cursor-grabbing"
+              className="h-11 w-11 cursor-grab active:cursor-grabbing sm:h-10 sm:w-10"
               onPointerDown={startDragging}
               aria-label={t('toolbar.moveCanvasToolbar')}
               title={t('toolbar.moveCanvasToolbar')}
@@ -471,7 +461,7 @@ export const PlaybookCanvasFloatingToolbar = forwardRef<PlaybookCanvasFloatingTo
               type="button"
               variant="ghost"
               size="icon"
-              className="h-7 w-7"
+              className="h-11 w-11 sm:h-10 sm:w-10"
               onClick={() => setCollapsed((value) => !value)}
               aria-label={collapsed ? t('toolbar.expandCanvasToolbar') : t('toolbar.collapseCanvasToolbar')}
               title={collapsed ? t('toolbar.expandCanvasToolbar') : t('toolbar.collapseCanvasToolbar')}
@@ -489,7 +479,7 @@ export const PlaybookCanvasFloatingToolbar = forwardRef<PlaybookCanvasFloatingTo
               size="sm"
               onClick={onAddStep}
               disabled={disabled}
-              className={cn('h-9', collapsed ? 'rounded-r-none border-r-0 px-2' : 'w-full rounded-b-none px-3 justify-start border-b-0')}
+              className={cn('h-11 sm:h-10', collapsed ? 'w-11 rounded-r-none border-r-0 px-0 sm:w-10' : 'w-full rounded-b-none px-3 justify-start border-b-0')}
               aria-label={collapsed ? t('toolbar.addBlankStep') : undefined}
               title={collapsed ? t('toolbar.addBlankStep') : undefined}
             >
@@ -504,7 +494,7 @@ export const PlaybookCanvasFloatingToolbar = forwardRef<PlaybookCanvasFloatingTo
                   variant="outline"
                   size="sm"
                   disabled={disabled}
-                  className={cn('h-9', collapsed ? 'rounded-l-none px-1.5' : 'w-full rounded-t-none px-3 justify-between')}
+                  className={cn('h-11 sm:h-10', collapsed ? 'w-11 rounded-l-none px-0 sm:w-10' : 'w-full rounded-t-none px-3 justify-between')}
                   aria-label={t('toolbar.tasks')}
                   title={collapsed ? t('toolbar.tasks') : undefined}
                 >
@@ -552,21 +542,19 @@ export const PlaybookCanvasFloatingToolbar = forwardRef<PlaybookCanvasFloatingTo
             </DropdownMenu>
           </div>
 
-          {actionButtons.filter((a) => !a.hidden).map((action) => {
+          {primaryActions.map((action) => {
             const Icon = action.icon;
-            const useCustomActive = Boolean(action.activeClassName);
             return (
               <Button
                 key={action.key}
                 type="button"
-                variant={useCustomActive ? 'outline' : (action.active ? 'default' : 'outline')}
+                variant={action.active ? 'default' : 'outline'}
                 size="sm"
                 onClick={action.onClick}
                 disabled={action.disabled}
                 className={cn(
-                  'h-9',
-                  collapsed ? 'w-9 px-0' : 'w-full justify-start px-3',
-                  useCustomActive && action.active ? action.activeClassName : '',
+                  'h-11 sm:h-10',
+                  collapsed ? 'w-11 px-0 sm:w-10' : 'w-full justify-start px-3',
                 )}
                 aria-label={collapsed ? action.label : undefined}
                 title={collapsed ? action.label : undefined}
@@ -578,6 +566,43 @@ export const PlaybookCanvasFloatingToolbar = forwardRef<PlaybookCanvasFloatingTo
               </Button>
             );
           })}
+          {overflowActions.length > 0 && (
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className={cn('h-11 sm:h-10', collapsed ? 'w-11 px-0 sm:w-10' : 'w-full justify-start px-3')}
+                  aria-label={t('toolbar.moreActions')}
+                  title={collapsed ? t('toolbar.moreActions') : undefined}
+                >
+                  <MoreHorizontal className="h-4 w-4 shrink-0" />
+                  {!collapsed && <span className="ml-2 truncate">{t('toolbar.moreActions')}</span>}
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="start" side="right" className="max-h-[min(28rem,calc(100vh-2rem))] w-60 overflow-y-auto">
+                {overflowActions.map((action, index) => {
+                  const Icon = action.icon;
+                  const showDestructiveSeparator = action.key === 'removeAll' && index > 0;
+                  return (
+                    <Fragment key={action.key}>
+                      {showDestructiveSeparator && <DropdownMenuSeparator />}
+                      <DropdownMenuItem
+                        onClick={action.onClick}
+                        disabled={action.disabled}
+                        className={cn(action.key === 'removeAll' && 'text-destructive focus:text-destructive')}
+                      >
+                        <Icon className="mr-2 h-4 w-4" />
+                        <span className="flex-1">{action.label}</span>
+                        {action.active && <span className="h-2 w-2 rounded-full bg-primary" aria-hidden="true" />}
+                      </DropdownMenuItem>
+                    </Fragment>
+                  );
+                })}
+              </DropdownMenuContent>
+            </DropdownMenu>
+          )}
         </div>
       </div>
     </div>

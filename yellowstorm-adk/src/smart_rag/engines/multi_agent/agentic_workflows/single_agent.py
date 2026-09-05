@@ -11,7 +11,6 @@ import asyncio
 from src.logger.logging import get_logger
 from src.schema.chatbot_schema import RunAgentTeamRequest
 from src.smart_rag.agents.core.document_helpers import DocumentHelpers
-from src.smart_rag.engines.multi_agent.config import langfuse_client
 from src.smart_rag.engines.multi_agent.team_orchestrator import AutoAgentGenerationTeam
 from src.corrective_replay import build_corrective_replay_user_message
 
@@ -22,7 +21,6 @@ async def handle_single_agent_workflow(
         team: AutoAgentGenerationTeam,
         user_request: RunAgentTeamRequest,
         q: asyncio.Queue[dict],
-        main_trace
 ) -> None:
     """Handle the mono-agent workflow (single agent, no manager/delegation).
 
@@ -32,23 +30,12 @@ async def handle_single_agent_workflow(
         user_request (RunAgentTeamRequest): The user request. Carries exactly one
             agent in ``agents`` and ``agent_mode == 'mono'``.
         q (asyncio.Queue[dict]): The queue for streaming responses.
-        main_trace: The main trace for langfuse logging.
 
     Returns:
         None
     """
     session_id = user_request.session_id
     logger.info(f"[MONO WORKFLOW] Starting single-agent workflow - session_id: {session_id}")
-
-    single_agent_span = langfuse_client.span(
-        trace_id=session_id,
-        parent_observation_id=main_trace.id,
-        name="single_agent_execution",
-        input={
-            "user_message": user_request.message,
-            "workflow_type": "mono",
-        },
-    )
 
     try:
         # Exactly one agent is expected. Ignore any manager agent defensively.
@@ -75,15 +62,6 @@ async def handle_single_agent_workflow(
 
         agent_data = team.agent_helper._prepare_agent_data(agents[0], user_request, team)
         team.agent_repository.add_agent(agent_data)
-        single_agent_span.event(
-            name="agent_added",
-            output={
-                "agent_name": agent_data.get('name', 'unnamed'),
-                "tools": agent_data.get('tools', []),
-                "has_tools": bool(agent_data.get('tools')),
-            },
-        )
-
         image_input = user_request.image_input if hasattr(user_request, 'image_input') else None
         await team.run_single_agent(
             user_prompt=build_corrective_replay_user_message(
@@ -92,7 +70,6 @@ async def handle_single_agent_workflow(
             ),
             session_id=session_id,
             q=q,
-            parent_trace=single_agent_span,
             image_input=image_input,
             task_summary=user_request.task_summary,
         )
@@ -100,5 +77,4 @@ async def handle_single_agent_workflow(
 
     except Exception as e:
         logger.exception(f"[MONO WORKFLOW] Error in single-agent workflow - session_id: {session_id}: {str(e)}")
-        single_agent_span.update(output={"execution_completed": False, "error": str(e)})
         await team._message_helper._send_error_message(q, session_id, str(e))

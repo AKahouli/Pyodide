@@ -3,7 +3,8 @@ from collections.abc import AsyncIterator
 
 import httpx
 
-from auth import actor_context
+from auth import require_actor_context
+from contracts import PlaybookMcpResultV1, failure_result
 
 
 class PlaybookBackendError(RuntimeError):
@@ -13,14 +14,14 @@ class PlaybookBackendError(RuntimeError):
         self.status_code = status_code
         self.details = details
 
-    def as_result(self) -> dict[str, Any]:
-        return {
-            "status": "error",
-            "code": self.code,
-            "message": str(self),
-            "retryable": self.status_code in (409, 429, 502, 503, 504),
-            "details": self.details,
-        }
+    def as_result(self) -> PlaybookMcpResultV1:
+        return failure_result(
+            self.code,
+            str(self),
+            self.status_code,
+            require_actor_context().correlation_id,
+            self.details,
+        )
 
 
 class YellowStormPlaybookClient:
@@ -104,11 +105,9 @@ class YellowStormPlaybookClient:
 
     @staticmethod
     def _actor_headers() -> dict[str, str]:
-        context = actor_context.get()
-        if context is None:
-            return {}
+        context = require_actor_context()
         return {
-            "X-YellowStorm-Tenant-Id": context.tenant_id,
+            "X-YellowStorm-User-Id": context.user_id,
             "X-YellowStorm-Agent-Id": context.agent_id,
             "X-YellowStorm-Conversation-Id": context.conversation_id,
             "X-Correlation-Id": context.correlation_id,

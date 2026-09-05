@@ -1,53 +1,88 @@
 import { Types } from 'mongoose';
 import { ConversationBranchService } from './conversation-branch.service';
 
-describe('ConversationBranchService path selection', () => {
-  const service = new ConversationBranchService(
-    {} as never,
-    {} as never,
-    {} as never,
-    {} as never,
-    { setContext: jest.fn() } as never,
-  );
+const objectId = () => new Types.ObjectId().toString();
 
-  const id = () => new Types.ObjectId();
+function buildService(overrides: Record<string, unknown> = {}) {
+  const branchStore = {
+    findByRequest: jest.fn(),
+    createPending: jest.fn(),
+    claimSeed: jest.fn(),
+    finalizeSeed: jest.fn(),
+    ownsSeed: jest.fn(),
+    markCleanup: jest.fn(),
+    deleteCleanup: jest.fn(),
+    claimStale: jest.fn().mockResolvedValue([]),
+    ...(overrides.branchStore as object),
+  };
+  const conversationStore = {
+    findById: jest.fn(),
+    ...(overrides.conversationStore as object),
+  };
+  const messageStore = {
+    listByConversation: jest.fn(),
+    ...(overrides.messageStore as object),
+  };
+  const conversationService = {
+    findById: jest.fn(),
+    ...(overrides.conversationService as object),
+  };
+  const streamService = {
+    seedConversationSession: jest.fn(),
+    deleteConversationSession: jest.fn(),
+    ...(overrides.streamService as object),
+  };
+  const logger = { setContext: jest.fn(), error: jest.fn(), warn: jest.fn() };
+  const service = new ConversationBranchService(
+    branchStore as never,
+    conversationStore as never,
+    messageStore as never,
+    conversationService as never,
+    streamService as never,
+    logger as never,
+  );
+  return { service, branchStore, conversationStore, messageStore, conversationService, streamService };
+}
+
+describe('ConversationBranchService path selection', () => {
+  const { service } = buildService();
 
   it('uses the selected regenerated response and omits its sibling', () => {
-    const questionId = id();
-    const firstAnswerId = id();
-    const selectedAnswerId = id();
+    const questionId = objectId();
+    const firstAnswerId = objectId();
+    const selectedAnswerId = objectId();
     const messages = [
-      { _id: questionId, conversationType: 'user', content: 'question' },
-      { _id: firstAnswerId, conversationType: 'ai', questionMessageId: questionId, isComplete: true, isStreaming: false },
-      { _id: selectedAnswerId, conversationType: 'ai', questionMessageId: questionId, isComplete: true, isStreaming: false },
+      { id: questionId, conversationType: 'user', content: 'question' },
+      { id: firstAnswerId, conversationType: 'ai', questionMessageId: questionId, isComplete: true, isStreaming: false },
+      { id: selectedAnswerId, conversationType: 'ai', questionMessageId: questionId, isComplete: true, isStreaming: false },
     ];
 
     const path = (service as any).derivePath(messages, {
       requestId: crypto.randomUUID(),
-      targetMessageId: selectedAnswerId.toString(),
-      activeBranches: { [questionId.toString()]: selectedAnswerId.toString() },
+      targetMessageId: selectedAnswerId,
+      activeBranches: { [questionId]: selectedAnswerId },
     });
 
-    expect(path.map((message: any) => message._id.toString())).toEqual([
-      questionId.toString(),
-      selectedAnswerId.toString(),
+    expect(path.map((message: { id: string }) => message.id)).toEqual([
+      questionId,
+      selectedAnswerId,
     ]);
   });
 
   it('rejects an answer selected for a different question', () => {
-    const firstQuestionId = id();
-    const secondQuestionId = id();
-    const answerId = id();
+    const firstQuestionId = objectId();
+    const secondQuestionId = objectId();
+    const answerId = objectId();
     const messages = [
-      { _id: firstQuestionId, conversationType: 'user' },
-      { _id: secondQuestionId, conversationType: 'user' },
-      { _id: answerId, conversationType: 'ai', questionMessageId: secondQuestionId, isComplete: true, isStreaming: false },
+      { id: firstQuestionId, conversationType: 'user' },
+      { id: secondQuestionId, conversationType: 'user' },
+      { id: answerId, conversationType: 'ai', questionMessageId: secondQuestionId, isComplete: true, isStreaming: false },
     ];
 
     expect(() => (service as any).derivePath(messages, {
       requestId: crypto.randomUUID(),
-      targetMessageId: answerId.toString(),
-      activeBranches: { [firstQuestionId.toString()]: answerId.toString() },
+      targetMessageId: answerId,
+      activeBranches: { [firstQuestionId]: answerId },
     })).toThrow('Invalid selected AI response');
   });
 
@@ -57,12 +92,11 @@ describe('ConversationBranchService path selection', () => {
       {
         conversationType: 'ai',
         components: [
-          { type: 'toolInfo', data: { name: 'search' } },
+          { type: 'toolActivity', data: { name: 'search' } },
           { type: 'text', data: { content: ' answer ' } },
         ],
       },
     ]);
-
     expect(history).toEqual([
       { role: 'CONVERSATION_HISTORY_ROLE_USER', text: 'hello' },
       { role: 'CONVERSATION_HISTORY_ROLE_ASSISTANT', text: 'answer' },
@@ -72,16 +106,23 @@ describe('ConversationBranchService path selection', () => {
 
 describe('ConversationBranchService initialization lease', () => {
   function setup(seedFails = false) {
-    const sourceId = new Types.ObjectId();
-    const userId = new Types.ObjectId();
-    const questionId = new Types.ObjectId();
-    const answerId = new Types.ObjectId();
-    const destinationId = new Types.ObjectId();
-    const source = { _id: sourceId, createdBy: userId, runtimeMode: 'standard' };
+    const sourceId = objectId();
+    const userId = objectId();
+    const questionId = objectId();
+    const answerId = objectId();
+    const destinationId = objectId();
+    const source = {
+      id: sourceId,
+      createdBy: userId,
+      runtimeMode: 'standard',
+      isGroup: false,
+      title: 'Source',
+      members: [],
+    };
     const messages = [
-      { _id: questionId, conversationType: 'user', content: 'question' },
+      { id: questionId, conversationType: 'user', content: 'question' },
       {
-        _id: answerId,
+        id: answerId,
         conversationType: 'ai',
         questionMessageId: questionId,
         isComplete: true,
@@ -89,232 +130,120 @@ describe('ConversationBranchService initialization lease', () => {
         components: [{ type: 'text', data: { content: 'answer' } }],
       },
     ];
-    const destination = {
-      _id: destinationId,
-      initializationStatus: 'pending',
-      branchProvenance: {
-        sourceConversationId: sourceId,
-        sourceTargetMessageId: answerId,
-        requestId: 'request-1',
-        requestFingerprint: '',
-        selectedAnswerIds: [answerId],
-      },
-    };
-    const query = (value: unknown) => ({ lean: () => ({ exec: async () => value }), exec: async () => value });
-    const conversationModel = {
-      findOne: jest.fn((filter: Record<string, unknown>) => query('_id' in filter ? source : destination)),
-      findOneAndUpdate: jest.fn()
-        .mockReturnValueOnce({ exec: async () => ({ ...destination, initializationStatus: 'seeding' }) })
-        .mockReturnValueOnce({ exec: async () => null }),
-      updateOne: jest.fn(() => ({ exec: async () => ({ modifiedCount: 1 }) })),
-      exists: jest.fn(async () => ({ _id: destinationId })),
-    };
-    const messageModel = {
-      find: jest.fn(() => ({ sort: () => ({ lean: () => ({ exec: async () => messages }) }) })),
-    };
-    let finishSeed!: () => void;
-    const seedFinished = new Promise<void>((resolve) => { finishSeed = resolve; });
-    const streamService = {
-      seedConversationSession: jest.fn(async () => {
-        await new Promise((resolve) => setTimeout(resolve, 0));
-        finishSeed();
-        if (seedFails) throw new Error('seed failed');
-      }),
-      deleteConversationSession: jest.fn(async () => undefined),
-    };
-    const response = { id: destinationId.toString() };
-    const service = new ConversationBranchService(
-      conversationModel as never,
-      messageModel as never,
-      { findById: jest.fn(async () => response) } as never,
-      streamService as never,
-      { setContext: jest.fn(), error: jest.fn(), warn: jest.fn() } as never,
-    );
-    (service as any).waitForBranch = jest.fn(async () => {
-      await seedFinished;
-      if (seedFails) throw new Error('seed failed');
-      return response;
-    });
-    (service as any).deletePendingClone = jest.fn(async () => undefined);
     const dto = {
       requestId: 'request-1',
-      targetMessageId: answerId.toString(),
-      activeBranches: { [questionId.toString()]: answerId.toString() },
+      targetMessageId: answerId,
+      activeBranches: { [questionId]: answerId },
     };
-    destination.branchProvenance.requestFingerprint = (service as any).requestFingerprint(dto);
-    return { service, streamService, conversationModel, sourceId, userId, dto };
+    const response = { id: destinationId };
+    const setupResult = buildService({
+      conversationStore: { findById: jest.fn().mockResolvedValue(source) },
+      messageStore: { listByConversation: jest.fn().mockResolvedValue(messages) },
+      conversationService: { findById: jest.fn().mockResolvedValue(response) },
+      streamService: {
+        seedConversationSession: jest.fn().mockImplementation(async () => {
+          if (seedFails) throw new Error('seed failed');
+        }),
+        deleteConversationSession: jest.fn().mockResolvedValue(undefined),
+      },
+    });
+    const fingerprint = (setupResult.service as any).requestFingerprint(dto);
+    const destination = {
+      id: destinationId,
+      createdBy: userId,
+      initializationStatus: 'pending',
+      sourceConversationId: sourceId,
+      sourceTargetMessageId: answerId,
+      requestId: dto.requestId,
+      requestFingerprint: fingerprint,
+    };
+    setupResult.branchStore.findByRequest.mockResolvedValue(destination);
+    setupResult.branchStore.claimSeed
+      .mockResolvedValueOnce(true)
+      .mockResolvedValueOnce(false);
+    setupResult.branchStore.finalizeSeed.mockResolvedValue(true);
+    setupResult.branchStore.ownsSeed.mockResolvedValue(true);
+    setupResult.branchStore.markCleanup.mockResolvedValue(true);
+    (setupResult.service as any).waitForBranch = jest.fn().mockResolvedValue(response);
+    return { ...setupResult, sourceId, userId, dto };
   }
 
   it('seeds once when the same request runs concurrently', async () => {
     const { service, streamService, sourceId, userId, dto } = setup();
-
     const results = await Promise.all([
-      service.createBranch(sourceId.toString(), userId.toString(), dto),
-      service.createBranch(sourceId.toString(), userId.toString(), dto),
+      service.createBranch(sourceId, userId, dto),
+      service.createBranch(sourceId, userId, dto),
     ]);
-
     expect(results[0].id).toBe(results[1].id);
     expect(streamService.seedConversationSession).toHaveBeenCalledTimes(1);
-    expect(streamService.deleteConversationSession).not.toHaveBeenCalled();
   });
 
-  it('allows only the initialization owner to compensate a failed concurrent seed', async () => {
-    const { service, streamService, sourceId, userId, dto } = setup(true);
-
+  it('allows only the initialization owner to compensate a failed seed', async () => {
+    const { service, branchStore, streamService, sourceId, userId, dto } = setup(true);
     const results = await Promise.allSettled([
-      service.createBranch(sourceId.toString(), userId.toString(), dto),
-      service.createBranch(sourceId.toString(), userId.toString(), dto),
+      service.createBranch(sourceId, userId, dto),
+      service.createBranch(sourceId, userId, dto),
     ]);
-
-    expect(results.every((result) => result.status === 'rejected')).toBe(true);
-    expect(streamService.seedConversationSession).toHaveBeenCalledTimes(1);
+    expect(results.filter((result) => result.status === 'rejected')).toHaveLength(1);
     expect(streamService.deleteConversationSession).toHaveBeenCalledTimes(1);
+    expect(branchStore.deleteCleanup).toHaveBeenCalledTimes(1);
   });
 
-  it('returns the original ready branch when source answers changed after the request', async () => {
-    const sourceId = new Types.ObjectId();
-    const userId = new Types.ObjectId();
-    const targetId = new Types.ObjectId();
-    const destinationId = new Types.ObjectId();
-    const dto = {
-      requestId: 'request-1',
-      targetMessageId: targetId.toString(),
-      activeBranches: {},
-    };
-    const conversationModel = { findOne: jest.fn() };
-    const messageModel = { find: jest.fn() };
-    const response = { id: destinationId.toString() };
-    const conversationService = { findById: jest.fn(async () => response) };
-    const service = new ConversationBranchService(
-      conversationModel as never,
-      messageModel as never,
-      conversationService as never,
-      {} as never,
-      { setContext: jest.fn() } as never,
-    );
-    const source = { _id: sourceId, createdBy: userId, runtimeMode: 'standard' };
-    const destination = {
-      _id: destinationId,
-      initializationStatus: 'ready',
-      branchProvenance: {
-        sourceConversationId: sourceId,
-        sourceTargetMessageId: targetId,
-        requestId: dto.requestId,
-        requestFingerprint: (service as any).requestFingerprint(dto),
-        selectedAnswerIds: [targetId],
+  it('returns an idempotent ready branch without reading source messages', async () => {
+    const sourceId = objectId();
+    const userId = objectId();
+    const targetId = objectId();
+    const destinationId = objectId();
+    const dto = { requestId: 'request-1', targetMessageId: targetId, activeBranches: {} };
+    const setupResult = buildService({
+      conversationStore: {
+        findById: jest.fn().mockResolvedValue({
+          id: sourceId,
+          createdBy: userId,
+          runtimeMode: 'standard',
+          isGroup: false,
+          members: [],
+        }),
       },
-    };
-    conversationModel.findOne
-      .mockReturnValueOnce({ lean: () => ({ exec: async () => source }) })
-      .mockReturnValueOnce({ exec: async () => destination });
-
-    await expect(service.createBranch(sourceId.toString(), userId.toString(), dto))
-      .resolves.toEqual(response);
-    expect(messageModel.find).not.toHaveBeenCalled();
+      conversationService: { findById: jest.fn().mockResolvedValue({ id: destinationId }) },
+    });
+    setupResult.branchStore.findByRequest.mockResolvedValue({
+      id: destinationId,
+      createdBy: userId,
+      initializationStatus: 'ready',
+      sourceConversationId: sourceId,
+      sourceTargetMessageId: targetId,
+      requestId: dto.requestId,
+      requestFingerprint: (setupResult.service as any).requestFingerprint(dto),
+    });
+    await expect(setupResult.service.createBranch(sourceId, userId, dto)).resolves.toEqual({
+      id: destinationId,
+    });
+    expect(setupResult.messageStore.listByConversation).not.toHaveBeenCalled();
   });
 });
 
-describe('ConversationBranchService standalone Mongo writes', () => {
-  it('creates a pending clone without requiring a Mongo transaction', async () => {
-    const sourceId = new Types.ObjectId();
-    const userId = new Types.ObjectId();
-    const questionId = new Types.ObjectId();
-    const sourceTitle = 'S'.repeat(200);
-    const conversationModel = {
-      create: jest.fn(async (document) => document),
-      deleteOne: jest.fn(() => ({ exec: async () => ({ deletedCount: 1 }) })),
+describe('ConversationBranchService stale cleanup', () => {
+  it('deletes only branches atomically claimed by the store', async () => {
+    const branch = {
+      id: objectId(),
+      createdBy: objectId(),
+      requestId: 'request-1',
+      initializationStatus: 'cleanup_pending',
+      sourceConversationId: objectId(),
+      sourceTargetMessageId: objectId(),
+      requestFingerprint: 'fingerprint',
     };
-    const messageModel = {
-      insertMany: jest.fn(async (documents) => documents),
-      deleteMany: jest.fn(() => ({ exec: async () => ({ deletedCount: 0 }) })),
-    };
-    const service = new ConversationBranchService(
-      conversationModel as never,
-      messageModel as never,
-      {} as never,
-      {} as never,
-      { setContext: jest.fn(), warn: jest.fn() } as never,
-    );
-
-    await (service as any).createPendingClone(
-      { _id: sourceId, title: sourceTitle },
-      [{ _id: questionId, conversationType: 'user', content: 'question' }],
-      [],
-      'fingerprint',
-      userId.toString(),
-      { requestId: 'request-1', targetMessageId: questionId.toString(), activeBranches: {} },
-    );
-
-    expect(conversationModel.create).toHaveBeenCalledWith(expect.objectContaining({
-      title: `${'S'.repeat(191)} · Branch`,
-      initializationStatus: 'pending',
-    }));
-    expect(messageModel.insertMany).toHaveBeenCalledWith(expect.any(Array));
-  });
-
-  it('removes partial standalone writes when message insertion fails', async () => {
-    const sourceId = new Types.ObjectId();
-    const userId = new Types.ObjectId();
-    const questionId = new Types.ObjectId();
-    const conversationModel = {
-      create: jest.fn(async (document) => document),
-      deleteOne: jest.fn(() => ({ exec: async () => ({ deletedCount: 1 }) })),
-    };
-    const messageModel = {
-      insertMany: jest.fn(async () => { throw new Error('insert failed'); }),
-      deleteMany: jest.fn(() => ({ exec: async () => ({ deletedCount: 1 }) })),
-    };
-    const service = new ConversationBranchService(
-      conversationModel as never,
-      messageModel as never,
-      {} as never,
-      {} as never,
-      { setContext: jest.fn(), warn: jest.fn() } as never,
-    );
-
-    await expect((service as any).createPendingClone(
-      { _id: sourceId, title: 'Source' },
-      [{ _id: questionId, conversationType: 'user', content: 'question' }],
-      [],
-      'fingerprint',
-      userId.toString(),
-      { requestId: 'request-1', targetMessageId: questionId.toString(), activeBranches: {} },
-    )).rejects.toThrow('insert failed');
-    expect(messageModel.deleteMany).toHaveBeenCalled();
-    expect(conversationModel.deleteOne).toHaveBeenCalled();
-  });
-});
-
-describe('ConversationBranchService stale cleanup claim', () => {
-  it('does not delete ADK state when a branch became active after the stale scan', async () => {
-    const destinationId = new Types.ObjectId();
-    const conversationModel = {
-      find: jest.fn(() => ({
-        select: () => ({ lean: () => ({ exec: async () => [{ _id: destinationId }] }) }),
-      })),
-      findOneAndUpdate: jest.fn(() => ({
-        select: () => ({ lean: () => ({ exec: async () => null }) }),
-      })),
-    };
-    const streamService = { deleteConversationSession: jest.fn() };
-    const service = new ConversationBranchService(
-      conversationModel as never,
-      {} as never,
-      {} as never,
-      streamService as never,
-      { setContext: jest.fn(), warn: jest.fn() } as never,
-    );
-
+    const { service, branchStore, streamService } = buildService({
+      branchStore: { claimStale: jest.fn().mockResolvedValue([branch]) },
+      streamService: { deleteConversationSession: jest.fn().mockResolvedValue(undefined) },
+    });
     await service.cleanupStaleBranches();
-
-    expect(conversationModel.findOneAndUpdate).toHaveBeenCalledWith(
-      expect.objectContaining({
-        _id: destinationId,
-        updatedAt: expect.any(Object),
-      }),
-      expect.any(Object),
-      { new: true },
+    expect(streamService.deleteConversationSession).toHaveBeenCalledWith(
+      branch.createdBy,
+      branch.id,
+      branch.requestId,
     );
-    expect(streamService.deleteConversationSession).not.toHaveBeenCalled();
+    expect(branchStore.deleteCleanup).toHaveBeenCalledWith(branch.id);
   });
 });

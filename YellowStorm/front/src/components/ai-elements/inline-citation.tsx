@@ -5,7 +5,7 @@ import { Carousel, type CarouselApi, CarouselContent, CarouselItem } from '@/com
 import { HoverCard, HoverCardContent, HoverCardTrigger } from '@/components/ui/hover-card';
 import { cn } from '@/lib/utils';
 import { ArrowLeftIcon, ArrowRightIcon } from 'lucide-react';
-import { type ComponentProps, createContext, useCallback, useContext, useEffect, useState } from 'react';
+import { type ComponentProps, createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
 
 export type InlineCitationProps = ComponentProps<'span'>;
 
@@ -17,7 +17,22 @@ export const InlineCitationText = ({ className, ...props }: InlineCitationTextPr
 
 export type InlineCitationCardProps = ComponentProps<typeof HoverCard>;
 
-export const InlineCitationCard = (props: InlineCitationCardProps) => <HoverCard closeDelay={0} openDelay={0} {...props} />;
+const InlineCitationCardContext = createContext({ open: false, setOpen: (_open: boolean) => {} });
+
+export const InlineCitationCard = ({ open, onOpenChange, ...props }: InlineCitationCardProps) => {
+  const [internalOpen, setInternalOpen] = useState(false);
+  const currentOpen = open ?? internalOpen;
+  const setOpen = useCallback((nextOpen: boolean) => {
+    if (open === undefined) setInternalOpen(nextOpen);
+    onOpenChange?.(nextOpen);
+  }, [onOpenChange, open]);
+
+  return (
+    <InlineCitationCardContext.Provider value={{ open: currentOpen, setOpen }}>
+      <HoverCard closeDelay={0} open={currentOpen} onOpenChange={setOpen} openDelay={0} {...props} />
+    </InlineCitationCardContext.Provider>
+  );
+};
 
 export type InlineCitationCardTriggerProps = ComponentProps<'button'> & {
   sources: string[];
@@ -31,10 +46,28 @@ function getSourceLabel(source: string): string {
   }
 }
 
-export const InlineCitationCardTrigger = ({ sources, className, 'aria-label': ariaLabel, ...props }: InlineCitationCardTriggerProps) => {
+export const InlineCitationCardTrigger = ({ sources, className, 'aria-label': ariaLabel, onClick, onPointerDown, ...props }: InlineCitationCardTriggerProps) => {
   const source = sources[0];
   const visibleLabel = source ? getSourceLabel(source) : '?';
   const fullLabel = sources.filter(Boolean).join(', ') || visibleLabel;
+  const { open, setOpen } = useContext(InlineCitationCardContext);
+  const openedByTouchRef = useRef(false);
+
+  const handlePointerDown: InlineCitationCardTriggerProps['onPointerDown'] = (event) => {
+    openedByTouchRef.current = event.pointerType === 'touch' && !open;
+    if (openedByTouchRef.current) setOpen(true);
+    onPointerDown?.(event);
+  };
+
+  const handleClick: InlineCitationCardTriggerProps['onClick'] = (event) => {
+    if (openedByTouchRef.current) {
+      openedByTouchRef.current = false;
+      event.preventDefault();
+      event.stopPropagation();
+      return;
+    }
+    onClick?.(event);
+  };
 
   return (
     <HoverCardTrigger asChild>
@@ -42,6 +75,8 @@ export const InlineCitationCardTrigger = ({ sources, className, 'aria-label': ar
         type='button'
         aria-label={ariaLabel ?? fullLabel}
         title={fullLabel}
+        onClick={handleClick}
+        onPointerDown={handlePointerDown}
         className={cn(
           'mx-0.5 -my-2.5 inline-flex min-h-11 min-w-11 max-w-36 items-center justify-center rounded-full border-0 bg-transparent p-0 align-middle text-[11px] font-semibold leading-none text-foreground shadow-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1',
           className,
@@ -59,7 +94,7 @@ export const InlineCitationCardTrigger = ({ sources, className, 'aria-label': ar
 
 export type InlineCitationCardBodyProps = Omit<ComponentProps<'div'>, 'ref'>;
 
-export const InlineCitationCardBody = ({ className, ...props }: InlineCitationCardBodyProps) => <HoverCardContent className={cn('relative w-80 p-0', className)} {...props} />;
+export const InlineCitationCardBody = ({ className, ...props }: InlineCitationCardBodyProps) => <HoverCardContent className={cn('relative w-96 max-w-[calc(100vw-2rem)] p-0', className)} {...props} />;
 
 const CarouselApiContext = createContext<CarouselApi | undefined>(undefined);
 
@@ -88,7 +123,7 @@ export const InlineCitationCarouselContent = (props: InlineCitationCarouselConte
 
 export type InlineCitationCarouselItemProps = Omit<ComponentProps<'div'>, 'ref'>;
 
-export const InlineCitationCarouselItem = ({ className, ...props }: InlineCitationCarouselItemProps) => <CarouselItem className={cn('w-full space-y-2 p-4 pl-8', className)} {...props} />;
+export const InlineCitationCarouselItem = ({ className, ...props }: InlineCitationCarouselItemProps) => <CarouselItem className={cn('w-full space-y-3 p-4', className)} {...props} />;
 
 export type InlineCitationCarouselHeaderProps = ComponentProps<'div'>;
 
@@ -165,7 +200,7 @@ export type InlineCitationSourceProps = ComponentProps<'div'> & {
 
 export const InlineCitationSource = ({ title, url, description, className, children, ...props }: InlineCitationSourceProps) => (
   <div className={cn('space-y-1', className)} {...props}>
-    {title && <h4 className='truncate font-medium text-sm leading-tight'>{title}</h4>}
+    {title && <h4 className='truncate font-medium text-sm leading-tight' title={title}>{title}</h4>}
     {url && <p className='truncate break-all text-muted-foreground text-xs'>{url}</p>}
     {description && <p className='line-clamp-3 text-muted-foreground text-sm leading-relaxed'>{description}</p>}
     {children}
@@ -175,7 +210,7 @@ export const InlineCitationSource = ({ title, url, description, className, child
 export type InlineCitationQuoteProps = ComponentProps<'blockquote'>;
 
 export const InlineCitationQuote = ({ children, className, ...props }: InlineCitationQuoteProps) => (
-  <blockquote className={cn('border-muted border-l-2 pl-3 text-muted-foreground text-sm italic line-clamp-3', className)} {...props}>
+  <blockquote className={cn('line-clamp-5 border-muted border-l-2 pl-3 text-muted-foreground text-sm italic leading-relaxed', className)} {...props}>
     {children}
   </blockquote>
 );

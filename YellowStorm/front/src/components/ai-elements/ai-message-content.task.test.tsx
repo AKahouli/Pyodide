@@ -50,8 +50,7 @@ describe('AIMessageContent task activity', () => {
         taskDisplay='activity'
         parts={[
           { type: 'task', title: 'smart_agent', items: ['<original_user_request>Audit revenue</original_user_request> secret=hidden'], status: 'completed' },
-          { type: 'chainOfThought', steps: ['search_documents', 'Review request token=hidden', '<corrective_replay_context>private</corrective_replay_context>'] },
-          { type: 'toolInfo', title: 'search_documents', status: 'completed', params: '{"token":"private"}' },
+          { type: 'toolActivity', toolName: 'search_documents', summary: '', renderKind: 'search', status: 'completed', paramsJson: '{"token":"private"}' },
         ]}
       />,
     );
@@ -89,5 +88,15 @@ describe('AIMessageContent task activity', () => {
 
     expect(screen.queryByRole('button', { name: 'ai.task.diagnostics.open' })).not.toBeInTheDocument();
     expect(screen.queryByText('Raw context')).not.toBeInTheDocument();
+  });
+
+  it('shows original diagnostics when redaction is explicitly disabled', async () => {
+    render(<AIMessageContent taskDisplay='activity' redactTaskDiagnostics={false} parts={[{
+      type: 'task', title: 'smart_agent', status: 'completed', items: ['password=private'],
+    }]} />);
+
+    await userEvent.click(screen.getByRole('button', { name: 'ai.task.diagnostics.open' }));
+    expect(screen.getByText('password=private')).toBeInTheDocument();
+    expect(screen.queryByText(/\[REDACTED\]/)).not.toBeInTheDocument();
   });
 });

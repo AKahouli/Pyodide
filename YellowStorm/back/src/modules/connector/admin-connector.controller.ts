@@ -127,7 +127,6 @@ export class AdminConnectorController {
     const inspectionHeaders = isTrustedPlaybookConnector
       ? {
           ...resolvedAuthHeaders,
-          'X-YellowStorm-Tenant-Id': 'default',
           'X-YellowStorm-User-Id': user._id.toString(),
           'X-YellowStorm-Agent-Id': 'admin-connector-inspector',
           'X-YellowStorm-Conversation-Id': 'admin-connector-inspection',

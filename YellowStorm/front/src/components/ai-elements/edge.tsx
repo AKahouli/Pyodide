@@ -1,9 +1,12 @@
+import { useLayoutEffect, useRef } from 'react';
 import { BaseEdge, type EdgeProps, getBezierPath, getSimpleBezierPath } from '@xyflow/react';
 
 type RoutedEdgeProps = EdgeProps & {
   sourceHandle?: string;
   targetHandle?: string;
 };
+
+const EDGE_ANIMATION_DURATION_MS = 2000;
 
 const Temporary = ({ id, sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition }: EdgeProps) => {
   const [edgePath] = getSimpleBezierPath({
@@ -28,6 +31,7 @@ const Temporary = ({ id, sourceX, sourceY, targetX, targetY, sourcePosition, tar
 };
 
 const Animated = ({ id, sourceX, sourceY, sourcePosition, targetX, targetY, targetPosition, markerEnd, style }: RoutedEdgeProps) => {
+  const animationRef = useRef<SVGAnimateMotionElement>(null);
   const [edgePath] = getBezierPath({
     sourceX,
     sourceY,
@@ -36,6 +40,19 @@ const Animated = ({ id, sourceX, sourceY, sourcePosition, targetX, targetY, targ
     targetY,
     targetPosition,
   });
+
+  useLayoutEffect(() => {
+    const animation = animationRef.current;
+    if (!animation) return;
+
+    const phaseSeconds = (Date.now() % EDGE_ANIMATION_DURATION_MS) / 1000;
+    if (typeof animation.beginElementAt === 'function') {
+      animation.beginElementAt(-phaseSeconds);
+      return;
+    }
+
+    animation.setAttribute('begin', '0s');
+  }, []);
 
   return (
     <>
@@ -50,7 +67,13 @@ const Animated = ({ id, sourceX, sourceY, sourcePosition, targetX, targetY, targ
         }}
       />
       <circle fill='var(--primary)' r='4'>
-        <animateMotion dur='2s' path={edgePath} repeatCount='indefinite' />
+        <animateMotion
+          ref={animationRef}
+          begin='indefinite'
+          dur='2s'
+          path={edgePath}
+          repeatCount='indefinite'
+        />
       </circle>
     </>
   );

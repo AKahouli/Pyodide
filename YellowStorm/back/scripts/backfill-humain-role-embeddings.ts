@@ -14,21 +14,36 @@ dotenv.config({ path: path.resolve(__dirname, '..', '.env') });
 const dryRun = process.argv.includes('--dry-run');
 const reembedAll = process.argv.includes('--all');
 
+function embeddingDimension(): number {
+  const dimensions = Number(process.env.EMBEDDING_DIMENSION || '2560');
+  if (!Number.isInteger(dimensions) || dimensions <= 0) {
+    throw new Error('EMBEDDING_DIMENSION must be a positive integer');
+  }
+  return dimensions;
+}
+
 async function embed(text: string): Promise<number[] | null> {
   const base = (process.env.LITELLM_API_URL || '').replace(/\/$/, '');
   if (!base) throw new Error('LITELLM_API_URL is required');
-  const model = process.env.EMBEDDING_MODEL || 'text-embedding-3-large';
-  const dimensions = Number(process.env.EMBEDDING_DIMENSION || '3072');
+  const model = process.env.EMBEDDING_MODEL || 'qwen3-embedding';
+  const dimensions = embeddingDimension();
   const res = await axios.post(
     `${base}/v1/embeddings`,
-    { model, input: text, dimensions },
+    { model, input: text },
     { headers: { Authorization: `Bearer ${process.env.LITELLM_API_KEY || ''}` }, timeout: 30000 },
   );
   const vec = res.data?.data?.[0]?.embedding;
-  return Array.isArray(vec) ? vec : null;
+  if (!Array.isArray(vec) || vec.length !== dimensions || !vec.every((value) => typeof value === 'number' && Number.isFinite(value))) {
+    throw new Error(`LiteLLM returned an invalid embedding vector (expected ${dimensions} dimensions)`);
+  }
+  return vec;
 }
 
 async function main(): Promise<void> {
+  embeddingDimension();
+  if (!dryRun) {
+    await embed('Embedding compatibility check');
+  }
   const pool = new Pool({
     host: process.env.POSTGRES_HOST,
     port: Number(process.env.POSTGRES_PORT || '5432'),

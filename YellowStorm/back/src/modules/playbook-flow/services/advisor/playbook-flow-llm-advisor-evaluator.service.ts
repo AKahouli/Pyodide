@@ -58,7 +58,7 @@ export class PlaybookFlowLlmAdvisorEvaluatorService {
       temperature: 0,
       response_format: { type: 'json_object' },
       messages: prompt.messages,
-    }, { timeout: 45000 });
+    }, { timeout: 345000 });
 
     const content = this.extractContent(response.data);
     const judgeResult = this.mapper.mapLlmJudgeResult(content);

@@ -77,40 +77,44 @@ export class WorkyTurnContextService {
    * missing default agent must not fail the turn. We log and send whatever
    * resolves; the orchestrator falls back to its own defaults for the rest.
    */
+  async resolveWorkyAgentsStrict(userId: string): Promise<unknown[]> {
+    const [plannerType, executorType] = await Promise.all([
+      this.agentTypeService.findBySlug(WORKY_PLANNER_AGENT_TYPE_SLUG),
+      this.agentTypeService.findBySlug(WORKY_EXECUTOR_AGENT_TYPE_SLUG),
+    ]);
+    if (!plannerType || !executorType) {
+      this.logger.warn('[worky-orchestrator] planner/executor agent type missing; sending none', {
+        plannerType: plannerType?.id ?? null,
+        executorType: executorType?.id ?? null,
+      });
+    }
+
+    const [plannerAgent, executorAgent] = await Promise.all([
+      plannerType ? this.agentService.findDefaultByAgentType(plannerType.id) : null,
+      executorType ? this.agentService.findDefaultByAgentType(executorType.id) : null,
+    ]);
+
+    const agentIds = [plannerAgent?.id, executorAgent?.id].filter(Boolean) as string[];
+    if (agentIds.length === 0) {
+      this.logger.warn('[worky-orchestrator] no default planner/executor agents resolved; sending none', {
+        userId,
+      });
+      return [];
+    }
+    if (agentIds.length < 2) {
+      this.logger.warn('[worky-orchestrator] only one default worky agent resolved', {
+        userId,
+        plannerAgent: plannerAgent?.id ?? null,
+        executorAgent: executorAgent?.id ?? null,
+      });
+    }
+
+    return this.agentService.buildGrpcAgentsForPlaybook(userId, agentIds);
+  }
+
   async resolveWorkyAgents(userId: string): Promise<unknown[]> {
     try {
-      const [plannerType, executorType] = await Promise.all([
-        this.agentTypeService.findBySlug(WORKY_PLANNER_AGENT_TYPE_SLUG),
-        this.agentTypeService.findBySlug(WORKY_EXECUTOR_AGENT_TYPE_SLUG),
-      ]);
-      if (!plannerType || !executorType) {
-        this.logger.warn('[worky-orchestrator] planner/executor agent type missing; sending none', {
-          plannerType: plannerType?.id ?? null,
-          executorType: executorType?.id ?? null,
-        });
-      }
-
-      const [plannerAgent, executorAgent] = await Promise.all([
-        plannerType ? this.agentService.findDefaultByAgentType(plannerType.id) : null,
-        executorType ? this.agentService.findDefaultByAgentType(executorType.id) : null,
-      ]);
-
-      const agentIds = [plannerAgent?.id, executorAgent?.id].filter(Boolean) as string[];
-      if (agentIds.length === 0) {
-        this.logger.warn('[worky-orchestrator] no default planner/executor agents resolved; sending none', {
-          userId,
-        });
-        return [];
-      }
-      if (agentIds.length < 2) {
-        this.logger.warn('[worky-orchestrator] only one default worky agent resolved', {
-          userId,
-          plannerAgent: plannerAgent?.id ?? null,
-          executorAgent: executorAgent?.id ?? null,
-        });
-      }
-
-      return await this.agentService.buildGrpcAgentsForPlaybook(userId, agentIds);
+      return await this.resolveWorkyAgentsStrict(userId);
     } catch (err) {
       this.logger.warn('[worky-orchestrator] worky agent resolution failed; sending none', {
         userId,
@@ -123,24 +127,25 @@ export class WorkyTurnContextService {
   /** Per-user connectors worky needs (see WORKY_CONNECTOR_SLUGS).
    *  Auth resolved by ConnectorService; failures are non-fatal (send none) --
    *  a turn or resume must not fail just because connector lookup did. */
+  async resolveConnectorsStrict(userId: string): Promise<unknown[]> {
+    const found = (
+      await Promise.all(WORKY_CONNECTOR_SLUGS.map((slug) => this.connectorService.findBySlug(slug)))
+    ).filter(Boolean);
+    if (found.length) {
+      if (found.some((connector) => connector!.slug === WORKY_MAIL_CONNECTOR_SLUG)) {
+        this.ensureMailSubscription(userId);
+      }
+      return this.connectorService.findByIdsForGrpc(
+        found.map((connector) => connector!.id),
+        userId,
+      );
+    }
+    return [];
+  }
+
   async resolveConnectors(userId: string): Promise<unknown[]> {
     try {
-      const found = (
-        await Promise.all(WORKY_CONNECTOR_SLUGS.map((slug) => this.connectorService.findBySlug(slug)))
-      ).filter(Boolean);
-      if (found.length) {
-        // Tied to the mail connector by name, not to "some Microsoft connector
-        // is present": sharepoint and teams are Graph too, and arming the mail
-        // webhook off either of them would subscribe a mailbox whose send_email
-        // tool the plan never had.
-        if (found.some((c) => c!.slug === WORKY_MAIL_CONNECTOR_SLUG)) {
-          this.ensureMailSubscription(userId);
-        }
-        return await this.connectorService.findByIdsForGrpc(
-          found.map((c) => c!.id),
-          userId,
-        );
-      }
+      return await this.resolveConnectorsStrict(userId);
     } catch (err) {
       this.logger.warn('[worky-orchestrator] connector resolution failed; sending none', {
         error: (err as Error).message,

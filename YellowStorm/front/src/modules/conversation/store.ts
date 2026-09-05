@@ -9,12 +9,45 @@ import * as api from './api';
 import { getStreamErrorMessage } from './utils';
 import { conversationStreamService } from './stream';
 import { translateConversation } from './translation';
-import type { Conversation, Message, StreamingComponent, SendMessagePayload, CreateReportPayload, StreamStartEvent, StreamChunkEvent, StreamCompleteEvent, StreamErrorEvent, ConversationNameGeneratedEvent, SSEConnectionStatus, MessageCreatedEvent, MessageUpdatedEvent } from './types';
+import { computeFrontendLatency, mergeLatencyMetrics, type FrontendPaintComputation } from './utils/latency-paint';
+import { createLatencyPaintController, type PendingLatencyPaint } from './store-latency';
+import type { Conversation, ConversationSummary, Message, MessageComponent, StreamingComponent, SendMessagePayload, CreateReportPayload, StreamStartEvent, StreamChunkEvent, StreamCompleteEvent, StreamErrorEvent, ConversationNameGeneratedEvent, SSEConnectionStatus, MessageCreatedEvent, MessageUpdatedEvent, StreamChunkLatencyData } from './types';
+
+export type { PendingLatencyPaint };
+
+/** Shared first-paint lifecycle for the latency instrumentation. */
+const latencyPaint = createLatencyPaintController();
 
 export const DEFAULT_CONVERSATIONS_LIMIT = 12;
 const DEFAULT_MESSAGES_LIMIT = 5;
 let currentConversationRequestSequence = 0;
 let currentMessagesRequestSequence = 0;
+let conversationListRequestSequence = 0;
+let currentStreamRevision = 0;
+let currentRevisionStreamKey: string | null = null;
+let receivedCurrentStreamStart = false;
+let pendingRecoveryChunks: BufferedStreamChunk[] = [];
+let pendingStreamReconcileTimer: ReturnType<typeof setTimeout> | null = null;
+let pendingStreamReconcileAttempts = 0;
+let pendingStreamReconcileInFlight = false;
+let pendingStreamReconcileTarget: string | null = null;
+const PENDING_STREAM_RECONCILE_INTERVAL_MS = 2_000;
+const MAX_PENDING_STREAM_RECONCILE_ATTEMPTS = 150;
+
+type BufferedStreamChunk = {
+  action: 'add' | 'update' | 'delete';
+  component: StreamingComponent;
+  revision?: number;
+};
+
+/**
+ * Attach the browser-computed sixth latency metric to a persisted message.
+ * Never overwrites an already-present frontend value. Delegates to the shared
+ * controller; kept as a wrapper for the message merge call sites.
+ */
+function withPendingLatency(message: Message): Message {
+  return latencyPaint.mergeIntoMessage(message);
+}
 
 // ===== Streaming Helper Functions =====
 
@@ -27,21 +60,27 @@ interface CachedStreamingState {
 }
 
 /**
+ * Runtime-only first-paint tracking for the latency instrumentation.
+ * Set when the one-time latency envelope chunk arrives; never persisted.
+ * The lifecycle lives in ./store-latency and is shared with the store actions.
+ */
+
+/**
  * Apply an array of chunk actions to a components array, returning a new array.
  * Used both by the buffer flush callback (current conversation) and by direct
  * cache updates (background conversations).
  */
 export function applyChunksToComponents(
   components: StreamingComponent[],
-  chunks: Array<{ action: 'add' | 'update' | 'delete'; component: StreamingComponent }>,
+  chunks: BufferedStreamChunk[],
 ): StreamingComponent[] {
   let result = [...components];
   for (const { action, component } of chunks) {
     if (action === 'add') {
       const existingIndex = result.findIndex((item) => item.id === component.id);
-      if (component.type === 'toolInfo' && existingIndex >= 0) {
+      if (component.type === 'toolActivity' && existingIndex >= 0) {
         const existing = result[existingIndex];
-        result[existingIndex] = { ...existing, data: mergeStreamingData('toolInfo', existing.data, component.data) };
+        result[existingIndex] = { ...existing, data: mergeStreamingData('toolActivity', existing.data, component.data) };
       } else {
         result.push({ ...component, data: initializeStreamingData(component.type, component.data) });
       }
@@ -51,7 +90,7 @@ export function applyChunksToComponents(
         if (comp.id !== component.id) return comp;
         return { ...comp, data: mergeStreamingData(comp.type, comp.data, component.data) };
       });
-      if (!hasExisting && component.type === 'toolInfo') {
+      if (!hasExisting && component.type === 'toolActivity') {
         result.push({ ...component, data: initializeStreamingData(component.type, component.data) });
       }
     } else if (action === 'delete') {
@@ -68,17 +107,17 @@ export function applyChunksToComponents(
  * If the queue grows too large the drain speed increases to prevent lag.
  */
 class StreamingBuffer {
-  private queue: Array<{ action: 'add' | 'update' | 'delete'; component: StreamingComponent }> = [];
+  private queue: BufferedStreamChunk[] = [];
   private drainTimer: ReturnType<typeof setTimeout> | null = null;
-  private flushCallback: ((chunks: Array<{ action: 'add' | 'update' | 'delete'; component: StreamingComponent }>) => void) | null = null;
+  private flushCallback: ((chunks: BufferedStreamChunk[]) => void) | null = null;
   private readonly BASE_INTERVAL_MS = 30; // Base ms between each chunk render
 
-  setFlushCallback(callback: (chunks: Array<{ action: 'add' | 'update' | 'delete'; component: StreamingComponent }>) => void) {
+  setFlushCallback(callback: (chunks: BufferedStreamChunk[]) => void) {
     this.flushCallback = callback;
   }
 
-  addChunk(action: 'add' | 'update' | 'delete', component: StreamingComponent) {
-    this.queue.push({ action, component });
+  addChunk(action: 'add' | 'update' | 'delete', component: StreamingComponent, revision?: number) {
+    this.queue.push({ action, component, revision });
 
     // Safety cap: if queue grew too large (e.g. tab was backgrounded), flush everything
     if (this.queue.length > 500) {
@@ -101,6 +140,10 @@ class StreamingBuffer {
   clear() {
     this.queue = [];
     this.cancelDrain();
+  }
+
+  discardThrough(revision: number) {
+    this.queue = this.queue.filter((chunk) => chunk.revision === undefined || chunk.revision > revision);
   }
 
   // --- internals ---
@@ -140,6 +183,35 @@ class StreamingBuffer {
 }
 
 const streamingBuffer = new StreamingBuffer();
+
+function cancelPendingStreamReconciliation(): void {
+  if (pendingStreamReconcileTimer) clearTimeout(pendingStreamReconcileTimer);
+  pendingStreamReconcileTimer = null;
+  pendingStreamReconcileAttempts = 0;
+  pendingStreamReconcileInFlight = false;
+  pendingStreamReconcileTarget = null;
+}
+
+function schedulePendingStreamReconciliation(reconcile: () => Promise<void>): void {
+  if (pendingStreamReconcileTimer || pendingStreamReconcileAttempts >= MAX_PENDING_STREAM_RECONCILE_ATTEMPTS) return;
+  pendingStreamReconcileTimer = setTimeout(() => {
+    pendingStreamReconcileTimer = null;
+    void reconcile();
+  }, PENDING_STREAM_RECONCILE_INTERVAL_MS);
+}
+
+function isImmediateStreamingComponent(component: StreamingComponent): boolean {
+  return component.type === 'agentActivity' || component.type === 'toolActivity' || component.type === 'artifact';
+}
+
+function hasErrorComponent(message: { components?: Array<{ type: string }> }): boolean {
+  return message.components?.some((component) => component.type === 'error') === true;
+}
+
+function isTransientReconciliationError(error: unknown): boolean {
+  const status = parseApiError(error).statusCode;
+  return status === 0 || status === 408 || status === 425 || status === 429 || status >= 500;
+}
 
 function upsertMessage(messages: Message[], message: Message): { messages: Message[]; inserted: boolean } {
   const index = messages.findIndex((candidate) => candidate.id === message.id);
@@ -219,19 +291,21 @@ function initializeStreamingData(type: string, data: Record<string, unknown>): R
  */
 function mergeStreamingData(type: string, existing: Record<string, unknown>, incoming: Record<string, unknown>): Record<string, unknown> {
   switch (type) {
-    case 'text':
-    case 'reasoning': {
+    case 'text': {
       if (incoming.guardrailDecision) {
         return { ...existing, ...incoming };
       }
       // Append content for streaming text types
       const existingContent = (existing.content as string) || '';
       const newContent = (incoming.content as string) || '';
+      const sentenceGap = /[.!?][\])"']?$/.test(existingContent) && /^\p{Lu}/u.test(newContent) ? ' ' : '';
       return {
         ...existing,
-        content: existingContent + newContent,
+        content: existingContent + sentenceGap + newContent,
       };
     }
+    case 'agentActivity':
+      return { ...existing, ...incoming };
     case 'code': {
       // Append content, preserve language/filename from first chunk
       const existingContent = (existing.content as string) || '';
@@ -250,22 +324,29 @@ function mergeStreamingData(type: string, existing: Record<string, unknown>, inc
     case 'task':
     case 'error':
     case 'citation':
-    case 'chainOfThought':
       // Charts and other structured components replace the full payload on update.
       return { ...incoming };
-    case 'toolInfo':
+    case 'toolActivity':
       // Terminal tool updates only include status. Retain the arguments from
       // the initial event so the live debug pane matches persisted history.
       const existingStatus = (existing.status as string) || 'running';
       const incomingStatus = (incoming.status as string) || existingStatus;
-      const existingIsTerminal = existingStatus === 'completed' || existingStatus === 'failed';
+      const existingIsTerminal = existingStatus === 'completed' || existingStatus === 'failed' || existingStatus === 'stopped';
       const merged: Record<string, unknown> = {
         ...existing,
         ...incoming,
-        title: (incoming.title as string) || (existing.title as string) || '',
+        toolName: (incoming.toolName as string) || (existing.toolName as string) || '',
         status: existingIsTerminal ? existingStatus : incomingStatus,
-        params: (incoming.params as string) || (existing.params as string) || '',
+        paramsJson: (incoming.paramsJson as string) || (existing.paramsJson as string) || '',
         startedAt: (incoming.startedAt as string) || (existing.startedAt as string) || '',
+        ...(incoming.summary || existing.summary ? {
+          summary: (incoming.summary as string) || (existing.summary as string),
+        } : {}),
+        ...(incoming.renderKind || existing.renderKind ? { renderKind: (
+          existing.renderKind && existing.renderKind !== 'generic'
+            ? existing.renderKind
+            : incoming.renderKind || existing.renderKind || 'generic'
+        ) } : {}),
       };
       return merged;
     case 'chart': {
@@ -326,8 +407,10 @@ function mergeStreamingData(type: string, existing: Record<string, unknown>, inc
 interface ConversationState {
   // Conversation list - flat array for simpler CRUD
   conversations: Conversation[];
+  conversationSummaries: ConversationSummary[];
   conversationsTotal: number;
   conversationsHasMore: boolean;
+  conversationsCursor: string | null;
   conversationsLoading: boolean;
   historyPanelOpen: boolean;
 
@@ -342,6 +425,7 @@ interface ConversationState {
   messagesLoading: boolean;
   messagesLoadingOlder: boolean;
   messagesHasMore: boolean;
+  messagesCursor: string | null;
 
   // Streaming state
   streamingConversationId: string | null;
@@ -350,10 +434,16 @@ interface ConversationState {
   streamingComponents: StreamingComponent[];
   isStreaming: boolean;
 
+  // Latency instrumentation first-paint tracking (runtime-only, not persisted)
+  pendingLatencyPaint: PendingLatencyPaint | null;
+
   // Send state
   isAwaitingFirstChunk: boolean;
   awaitingConversationId: string | null;
   pendingAssistantMessageId: string | null;
+  pendingTerminalErrorKey: string | null;
+  earlyStreamErrors: Map<string, StreamErrorEvent>;
+  inFlightSendConversations: Set<string>;
   optimisticMessages: Message[];
 
   // SSE connection state
@@ -372,6 +462,7 @@ interface ConversationState {
 
   // Model selection
   selectedModelId: string | null;
+  selectedReasoningEffort: string | null;
 
   // Workspace selection
   selectedWorkspaceIds: string[];
@@ -442,6 +533,8 @@ interface ConversationState {
   onStreamChunk: (event: StreamChunkEvent) => void;
   onStreamComplete: (event: StreamCompleteEvent) => void;
   onStreamError: (event: StreamErrorEvent) => void;
+  recordLatencyFirstPaint: () => void;
+  reportPendingLatency: (conversationId: string, messageId: string) => void;
   onConversationNameGenerated: (event: ConversationNameGeneratedEvent) => void;
   onMessageCreated: (event: MessageCreatedEvent) => void;
   onMessageUpdated: (event: MessageUpdatedEvent) => void;
@@ -463,6 +556,7 @@ interface ConversationState {
 
   // Model selection
   setSelectedModelId: (modelId: string | null) => void;
+  setSelectedReasoningEffort: (effort: string | null) => void;
 
   // Workspace selection
   setSelectedWorkspaceIds: (workspaceIds: string[]) => void;
@@ -485,13 +579,17 @@ interface ConversationState {
   clearAll: () => void;
 }
 
+let lastConversationListParams: Parameters<ConversationState['fetchConversations']>[0] = {};
+
 export const useConversationStore = create<ConversationState>()(
   devtools(
     (set, get) => ({
       // Initial state - flat array for conversations
       conversations: [],
+      conversationSummaries: [],
       conversationsTotal: 0,
       conversationsHasMore: false,
+      conversationsCursor: null,
       conversationsLoading: false,
       projectConversations: {},
       projectConversationsLoading: {},
@@ -506,16 +604,21 @@ export const useConversationStore = create<ConversationState>()(
       messagesLoading: false,
       messagesLoadingOlder: false,
       messagesHasMore: false,
+      messagesCursor: null,
 
       streamingConversationId: null,
       streamingMessageId: null,
       streamingQuestionMessageId: null,
       streamingComponents: [],
       isStreaming: false,
+      pendingLatencyPaint: null,
 
       isAwaitingFirstChunk: false,
       awaitingConversationId: null,
       pendingAssistantMessageId: null,
+      pendingTerminalErrorKey: null,
+      earlyStreamErrors: new Map(),
+      inFlightSendConversations: new Set(),
       optimisticMessages: [],
 
       sseStatus: 'disconnected' as SSEConnectionStatus,
@@ -530,6 +633,7 @@ export const useConversationStore = create<ConversationState>()(
       inputDisabled: false,
 
       selectedModelId: null,
+      selectedReasoningEffort: null,
       selectedWorkspaceIds: [],
       selectedConnectorRepo: null,
       deepSearchEnabled: false,
@@ -544,30 +648,31 @@ export const useConversationStore = create<ConversationState>()(
       // ===== Conversation Actions =====
 
       fetchConversations: async (params?: { reset?: boolean; limit?: number; search?: string; projectId?: string | 'none'; searchScope?: 'title' | 'fulltext' }) => {
+        const requestSequence = ++conversationListRequestSequence;
         const reset = params?.reset ?? false;
         const limit = params?.limit || DEFAULT_CONVERSATIONS_LIMIT;
+        lastConversationListParams = { ...params, reset: true };
 
         if (reset) {
-          set({ conversations: [], conversationsLoading: true });
+          set({ conversationsCursor: null, conversationsLoading: true });
         } else {
           set({ conversationsLoading: true });
         }
 
         try {
           const state = get();
-          const offset = reset ? 0 : state.conversations.length;
-          const page = Math.floor(offset / limit) + 1;
-
           const result = await api.fetchConversations({
-            page,
+            mode: 'cursor',
+            cursor: reset ? undefined : state.conversationsCursor ?? undefined,
             limit,
             search: params?.search,
             projectId: params?.projectId,
             searchScope: params?.searchScope,
           });
+          if (requestSequence !== conversationListRequestSequence) return;
 
           set((s) => {
-            const combined = reset ? result.items : [...s.conversations, ...result.items];
+            const combined = reset ? result.items : [...s.conversationSummaries, ...result.items];
 
             // Dedupe by ID (safety for edge cases)
             const seen = new Set<string>();
@@ -578,13 +683,15 @@ export const useConversationStore = create<ConversationState>()(
             });
 
             return {
-              conversations: deduped,
-              conversationsTotal: result.total,
-              conversationsHasMore: result.items.length === limit && deduped.length < result.total,
+              conversationSummaries: deduped,
+              conversationsTotal: deduped.length,
+              conversationsHasMore: result.hasMore ?? false,
+              conversationsCursor: result.nextCursor ?? null,
               conversationsLoading: false,
             };
           });
         } catch (err) {
+          if (requestSequence !== conversationListRequestSequence) return;
           set({ conversationsLoading: false });
           toast.error(translateConversation('toasts.conversation.loadListError'));
           console.error('[ConversationStore] fetchConversations error:', err);
@@ -618,6 +725,16 @@ export const useConversationStore = create<ConversationState>()(
           set((s) => {
             const next: Partial<ConversationState> = {
               conversations: [conversation, ...s.conversations],
+              conversationSummaries: [
+                {
+                  ...conversation,
+                  isGroup: Boolean(conversation.groupMeta?.isGroup),
+                  unseenMentionCount: 0,
+                  runtimeMode: conversation.runtimeMode ?? 'standard',
+                  runtimePurpose: conversation.runtimePurpose ?? 'chat',
+                },
+                ...s.conversationSummaries,
+              ],
               conversationsTotal: s.conversationsTotal + 1,
             };
             if (conversation.projectId && s.projectConversations[conversation.projectId]) {
@@ -628,6 +745,7 @@ export const useConversationStore = create<ConversationState>()(
             }
             return next;
           });
+          void get().fetchConversations(lastConversationListParams);
 
           return conversation;
         } catch (err) {
@@ -638,11 +756,15 @@ export const useConversationStore = create<ConversationState>()(
 
       updateConversation: async (id, data) => {
         const previousConversations = get().conversations;
+        const previousSummaries = get().conversationSummaries;
         const previousProjectConversations = get().projectConversations;
 
         // Optimistic update — also reflect in any project list that contains it
         set((s) => ({
           conversations: s.conversations.map((c) => (c.id === id ? { ...c, ...data } : c)),
+          conversationSummaries: s.conversationSummaries.map((c) =>
+            c.id === id ? { ...c, ...data } : c,
+          ),
           projectConversations: mapProjectLists(s.projectConversations, (c) =>
             c.id === id ? { ...c, ...data } : c,
           ),
@@ -653,13 +775,17 @@ export const useConversationStore = create<ConversationState>()(
           const updated = await api.updateConversation(id, data);
           set((s) => ({
             conversations: s.conversations.map((c) => (c.id === id ? updated : c)),
+            conversationSummaries: s.conversationSummaries.map((c) =>
+              c.id === id ? { ...c, ...updated } : c,
+            ),
             projectConversations: mapProjectLists(s.projectConversations, (c) =>
               c.id === id ? updated : c,
             ),
             currentConversation: s.currentConversation?.id === id ? updated : s.currentConversation,
           }));
+          void get().fetchConversations(lastConversationListParams);
         } catch (err) {
-          set({ conversations: previousConversations, projectConversations: previousProjectConversations });
+          set({ conversations: previousConversations, conversationSummaries: previousSummaries, projectConversations: previousProjectConversations });
           toast.error(translateConversation('toasts.conversation.updateError'));
           throw err;
         }
@@ -668,6 +794,7 @@ export const useConversationStore = create<ConversationState>()(
       moveConversationToProject: async (id, projectId) => {
         const state = get();
         const previousConversations = state.conversations;
+        const previousSummaries = state.conversationSummaries;
         const previousProjectConversations = state.projectConversations;
 
         // Find the conversation in any list to capture its current shape
@@ -683,6 +810,9 @@ export const useConversationStore = create<ConversationState>()(
 
         set((s) => ({
           conversations: s.conversations.map((c) => (c.id === id ? { ...c, projectId } : c)),
+          conversationSummaries: s.conversationSummaries.map((c) =>
+            c.id === id ? { ...c, projectId } : c,
+          ),
           projectConversations: rebalanceProjectLists(
             s.projectConversations,
             id,
@@ -698,6 +828,9 @@ export const useConversationStore = create<ConversationState>()(
           const updated = await api.updateConversation(id, { projectId });
           set((s) => ({
             conversations: s.conversations.map((c) => (c.id === id ? updated : c)),
+            conversationSummaries: s.conversationSummaries.map((c) =>
+              c.id === id ? { ...c, ...updated } : c,
+            ),
             projectConversations: rebalanceProjectLists(
               s.projectConversations,
               id,
@@ -708,8 +841,9 @@ export const useConversationStore = create<ConversationState>()(
             currentConversation:
               s.currentConversation?.id === id ? updated : s.currentConversation,
           }));
+          void get().fetchConversations(lastConversationListParams);
         } catch (err) {
-          set({ conversations: previousConversations, projectConversations: previousProjectConversations });
+          set({ conversations: previousConversations, conversationSummaries: previousSummaries, projectConversations: previousProjectConversations });
           toast.error(translateConversation('toasts.conversation.updateError'));
           throw err;
         }
@@ -721,6 +855,9 @@ export const useConversationStore = create<ConversationState>()(
           const { [projectId]: _removedLoading, ...remainingLoading } = s.projectConversationsLoading;
           return {
             conversations: s.conversations.map((c) =>
+              c.projectId === projectId ? { ...c, projectId: null } : c,
+            ),
+            conversationSummaries: s.conversationSummaries.map((c) =>
               c.projectId === projectId ? { ...c, projectId: null } : c,
             ),
             projectConversations: remainingLists,
@@ -736,12 +873,14 @@ export const useConversationStore = create<ConversationState>()(
       deleteConversation: async (id) => {
         const state = get();
         const previousConversations = state.conversations;
+        const previousSummaries = state.conversationSummaries;
         const previousProjectConversations = state.projectConversations;
         const previousTotal = state.conversationsTotal;
 
         // Optimistic removal from both lists
         set((s) => ({
           conversations: s.conversations.filter((c) => c.id !== id),
+          conversationSummaries: s.conversationSummaries.filter((c) => c.id !== id),
           projectConversations: filterProjectLists(s.projectConversations, (c) => c.id !== id),
           conversationsTotal: Math.max(0, s.conversationsTotal - 1),
           currentConversation: s.currentConversation?.id === id ? null : s.currentConversation,
@@ -750,9 +889,11 @@ export const useConversationStore = create<ConversationState>()(
 
         try {
           await api.deleteConversation(id);
+          void get().fetchConversations(lastConversationListParams);
         } catch (err) {
           set({
             conversations: previousConversations,
+            conversationSummaries: previousSummaries,
             projectConversations: previousProjectConversations,
             conversationsTotal: previousTotal,
           });
@@ -769,6 +910,7 @@ export const useConversationStore = create<ConversationState>()(
           conversationLoading: false,
           selectedSkillIds: cached?.selectedSkills ?? [],
           selectedModelId: selections?.modelId ?? null,
+          selectedReasoningEffort: null,
           selectedWorkspaceIds: selections?.workspaceIds ?? cached?.workspaces ?? [],
         });
       },
@@ -779,7 +921,8 @@ export const useConversationStore = create<ConversationState>()(
         set({
           conversationLoading: true,
           currentConversationId: id,
-          ...(isSwitchingConversation ? { selectedModelId: null } : {}),
+          currentConversation: null,
+          ...(isSwitchingConversation ? { selectedModelId: null, selectedReasoningEffort: null } : {}),
         });
         try {
           const conversation = await api.fetchConversation(id);
@@ -802,12 +945,28 @@ export const useConversationStore = create<ConversationState>()(
       // ===== Message Actions =====
 
       fetchMessages: async (conversationId) => {
+        cancelPendingStreamReconciliation();
         const requestSequence = ++currentMessagesRequestSequence;
-        set({ messagesLoading: true, messages: [] });
+        const existingStream = get();
+        if (!existingStream.isStreaming || existingStream.streamingConversationId !== conversationId) {
+          currentRevisionStreamKey = null;
+          currentStreamRevision = 0;
+          receivedCurrentStreamStart = false;
+          pendingRecoveryChunks = [];
+        }
+        set({
+          messagesLoading: true,
+          messagesLoadingOlder: false,
+          messages: [],
+          messagesHasMore: false,
+          messagesCursor: null,
+          branchCache: new Map(),
+          activeBranches: new Map(),
+        });
 
         try {
           const result = await api.fetchMessages(conversationId, {
-            page: 1,
+            mode: 'cursor',
             limit: DEFAULT_MESSAGES_LIMIT,
           });
           if (requestSequence !== currentMessagesRequestSequence || get().currentConversationId !== conversationId) return;
@@ -816,47 +975,51 @@ export const useConversationStore = create<ConversationState>()(
 
           // Find the last user message's modelId
           let lastUserModelId: string | null = null;
+          let lastUserReasoningEffort: string | null = null;
           for (let i = messages.length - 1; i >= 0; i--) {
             if (messages[i].conversationType === 'user' && messages[i].modelId) {
               lastUserModelId = messages[i].modelId!;
+              lastUserReasoningEffort = messages[i].reasoningEffort ?? null;
               break;
             }
           }
 
-          // Fetch branches for all user messages that have answers, in parallel.
-          // This prevents the loader from disappearing before branches are ready.
-          const userMsgsWithAnswers = messages.filter((m) => m.conversationType === 'user' && m.answerMessageId);
-
-          const branchResults = await Promise.allSettled(
-            userMsgsWithAnswers.map((m) =>
-              api.fetchBranches(conversationId, m.id).then((branches) => ({
-                userMessageId: m.id,
-                branches,
-              })),
-            ),
-          );
+          const [activeStream] = await Promise.all([
+            api.fetchActiveStream(conversationId).catch((err) => {
+              console.error('[ConversationStore] active stream recovery error:', err);
+              return null;
+            }),
+          ]);
           if (requestSequence !== currentMessagesRequestSequence || get().currentConversationId !== conversationId) return;
 
           const newBranchCache = new Map(get().branchCache);
           const newActiveBranches = new Map(get().activeBranches);
-          for (const result of branchResults) {
-            if (result.status === 'fulfilled') {
-              const { userMessageId, branches } = result.value;
-              newBranchCache.set(userMessageId, branches);
-              if (!newActiveBranches.has(userMessageId) && branches.length > 0) {
-                newActiveBranches.set(userMessageId, branches[branches.length - 1].id);
-              }
+          for (const [userMessageId, branches] of Object.entries(result.branchesByQuestion ?? {})) {
+            newBranchCache.set(userMessageId, branches);
+            if (!newActiveBranches.has(userMessageId) && branches.length > 0) {
+              newActiveBranches.set(userMessageId, branches[branches.length - 1].id);
             }
           }
 
-          set({
-            messages,
-            messagesTotal: result.total || 0,
-            messagesHasMore: (result.totalPages || 1) > 1,
-            messagesLoading: false,
-            ...(lastUserModelId ? { selectedModelId: lastUserModelId } : {}),
-            branchCache: newBranchCache,
-            activeBranches: newActiveBranches,
+          let hydratedMessages = messages;
+          set((s) => {
+            const completedDuringHydration = s.messages.filter((message) => message.isComplete === true);
+            const completedById = new Map(completedDuringHydration.map((message) => [message.id, message]));
+            hydratedMessages = messages.map((message) => completedById.get(message.id) ?? message);
+            for (const message of completedDuringHydration) {
+              if (!hydratedMessages.some((candidate) => candidate.id === message.id)) hydratedMessages.push(message);
+            }
+            return {
+              messages: hydratedMessages,
+              messagesTotal: Math.max(result.total || 0, hydratedMessages.length),
+              messagesHasMore: result.hasMore ?? (result.totalPages || 1) > 1,
+              messagesCursor: result.nextCursor ?? null,
+              messagesLoading: false,
+              ...(lastUserModelId ? { selectedModelId: lastUserModelId } : {}),
+              ...(lastUserModelId ? { selectedReasoningEffort: lastUserReasoningEffort } : {}),
+              branchCache: newBranchCache,
+              activeBranches: newActiveBranches,
+            };
           });
 
           // Restore cached streaming state if this conversation is still streaming
@@ -869,7 +1032,7 @@ export const useConversationStore = create<ConversationState>()(
             // A terminal SSE event may have been missed while this conversation
             // was in the background. Persistence wins over stale live cache.
             const persistedMessage = cachedState.streamingMessageId
-              ? messages.find((message) => message.id === cachedState.streamingMessageId)
+              ? hydratedMessages.find((message) => message.id === cachedState.streamingMessageId)
               : undefined;
             if (persistedMessage?.isComplete) {
               streamingBuffer.clear();
@@ -880,9 +1043,12 @@ export const useConversationStore = create<ConversationState>()(
                 streamingQuestionMessageId: null,
                 streamingComponents: [],
                 isAwaitingFirstChunk: false,
-                awaitingConversationId: null,
-                pendingAssistantMessageId: null,
-                streamingStateCache: newCache,
+                 awaitingConversationId: null,
+                 pendingAssistantMessageId: null,
+                 pendingTerminalErrorKey: hasErrorComponent(persistedMessage)
+                   ? `${conversationId}:${persistedMessage.id}`
+                   : null,
+                 streamingStateCache: newCache,
               });
               return;
             }
@@ -906,10 +1072,72 @@ export const useConversationStore = create<ConversationState>()(
               streamingMessageId: cachedState.streamingMessageId || null,
               streamingQuestionMessageId: cachedState.streamingQuestionMessageId,
               streamingComponents: cachedState.streamingComponents,
-                isAwaitingFirstChunk: cachedState.isAwaitingFirstChunk,
-                awaitingConversationId: cachedState.isAwaitingFirstChunk ? conversationId : null,
-                streamingStateCache: newCache,
+              isAwaitingFirstChunk: cachedState.isAwaitingFirstChunk,
+              awaitingConversationId: cachedState.isAwaitingFirstChunk ? conversationId : null,
+              streamingStateCache: newCache,
             });
+          } else if (activeStream) {
+            const placeholder = hydratedMessages.find((message) => message.id === activeStream.messageId);
+            const current = get();
+            const alreadyLive = receivedCurrentStreamStart
+              && current.isStreaming
+              && current.streamingConversationId === conversationId
+              && current.streamingMessageId === activeStream.messageId;
+
+            if (!placeholder?.isComplete && !alreadyLive) {
+              streamingBuffer.setFlushCallback((chunks) => {
+                set((s) => ({
+                  streamingComponents: applyChunksToComponents(s.streamingComponents, chunks),
+                  ...(s.isAwaitingFirstChunk && chunks.length > 0
+                    ? { isAwaitingFirstChunk: false, awaitingConversationId: null }
+                    : {}),
+                }));
+              });
+
+              const snapshotRevision = activeStream.revision ?? 0;
+              const newerChunks = pendingRecoveryChunks.filter((chunk) =>
+                chunk.revision === undefined || chunk.revision > snapshotRevision,
+              );
+              pendingRecoveryChunks = [];
+              set(() => {
+                const components = applyChunksToComponents(activeStream.components, newerChunks);
+                return {
+                  isStreaming: true,
+                  streamingConversationId: conversationId,
+                  streamingMessageId: activeStream.messageId,
+                  streamingQuestionMessageId: placeholder?.questionMessageId ?? null,
+                  pendingAssistantMessageId: activeStream.messageId,
+                  streamingComponents: components,
+                  isAwaitingFirstChunk: components.length === 0,
+                  awaitingConversationId: components.length === 0 ? conversationId : null,
+                };
+              });
+              const snapshotKey = `${conversationId}:${activeStream.messageId}`;
+              if (currentRevisionStreamKey !== snapshotKey) currentStreamRevision = 0;
+              currentRevisionStreamKey = snapshotKey;
+              currentStreamRevision = Math.max(currentStreamRevision, snapshotRevision);
+              receivedCurrentStreamStart = true;
+              streamingBuffer.discardThrough(snapshotRevision);
+              streamingBuffer.flush();
+            }
+          }
+
+          const pendingMessage = activeStream
+            ? hydratedMessages.find((message) => message.id === activeStream.messageId)
+            : [...hydratedMessages].reverse().find((message) =>
+              message.conversationType === 'ai' && message.isStreaming === true && message.isComplete !== true,
+            );
+          if (pendingMessage && !pendingMessage.isComplete) {
+            const state = get();
+            if (state.streamingMessageId !== pendingMessage.id) {
+              set({
+                isStreaming: true,
+                streamingConversationId: conversationId,
+                streamingMessageId: pendingMessage.id,
+                pendingAssistantMessageId: pendingMessage.id,
+              });
+            }
+            await get().reconcilePendingStream();
           }
         } catch (err) {
           if (requestSequence !== currentMessagesRequestSequence || get().currentConversationId !== conversationId) return;
@@ -927,26 +1155,40 @@ export const useConversationStore = create<ConversationState>()(
         }
 
         set({ messagesLoadingOlder: true });
+        const conversationId = state.currentConversationId;
+        const requestSequence = currentMessagesRequestSequence;
 
         try {
-          // Calculate next page based on current message count
-          const currentPage = Math.ceil(state.messages.length / DEFAULT_MESSAGES_LIMIT);
-          const nextPage = currentPage + 1;
-
-          const result = await api.fetchMessages(state.currentConversationId, {
-            page: nextPage,
+          const result = await api.fetchMessages(conversationId, {
+            mode: 'cursor',
+            cursor: state.messagesCursor ?? undefined,
             limit: DEFAULT_MESSAGES_LIMIT,
           });
+          if (
+            requestSequence !== currentMessagesRequestSequence ||
+            get().currentConversationId !== conversationId
+          ) return;
 
           set((s) => {
             // Prepend older messages, dedupe by ID
             const existingIds = new Set(s.messages.map((m) => m.id));
             const newMessages = (result.items || []).filter((m) => !existingIds.has(m.id));
+            const branchCache = new Map(s.branchCache);
+            const activeBranches = new Map(s.activeBranches);
+            for (const [userMessageId, branches] of Object.entries(result.branchesByQuestion ?? {})) {
+              branchCache.set(userMessageId, branches);
+              if (!activeBranches.has(userMessageId) && branches.length > 0) {
+                activeBranches.set(userMessageId, branches[branches.length - 1].id);
+              }
+            }
 
             return {
               messages: [...newMessages, ...s.messages], // Prepend older
-              messagesHasMore: nextPage < (result.totalPages || 1),
+              messagesHasMore: result.hasMore ?? false,
+              messagesCursor: result.nextCursor ?? null,
               messagesLoadingOlder: false,
+              branchCache,
+              activeBranches,
             };
           });
         } catch (err) {
@@ -963,18 +1205,26 @@ export const useConversationStore = create<ConversationState>()(
           conversationId,
           conversationType: 'user',
           content: payload.content,
+          modelId: payload.modelId,
+          reasoningEffort: payload.reasoningEffort,
           interaction: payload.interaction,
+          interactions: payload.interactions,
           attachedFileIds: payload.attachedFileIds,
           attachedFiles: payload.attachedFiles,
           createdAt: new Date().toISOString(),
         };
 
         // Optimistic add
-        set((s) => ({
-          isAwaitingFirstChunk: !payload.memberIds?.length,
-          awaitingConversationId: !payload.memberIds?.length ? conversationId : null,
-          optimisticMessages: [...s.optimisticMessages, optimisticMsg],
-        }));
+        set((s) => {
+          const inFlightSendConversations = new Set(s.inFlightSendConversations);
+          inFlightSendConversations.add(conversationId);
+          return {
+            isAwaitingFirstChunk: !payload.memberIds?.length,
+            awaitingConversationId: !payload.memberIds?.length ? conversationId : null,
+            optimisticMessages: [...s.optimisticMessages, optimisticMsg],
+            inFlightSendConversations,
+          };
+        });
 
         // Persist the conversation's skill selection (covers new conversations,
         // where toggles happened before the conversation existed).
@@ -1007,6 +1257,8 @@ export const useConversationStore = create<ConversationState>()(
               s.currentConversation?.id === conversationId &&
               (prevTagged?.length !== nextTaggedAgentIds.length ||
                 nextTaggedAgentIds.some((agentId, i) => agentId !== prevTagged?.[i]));
+            const inFlightSendConversations = new Set(s.inFlightSendConversations);
+            inFlightSendConversations.delete(conversationId);
 
             return {
               messages: alreadyExists ? s.messages : [...s.messages, result.userMessage],
@@ -1017,8 +1269,17 @@ export const useConversationStore = create<ConversationState>()(
                 ? { ...s.currentConversation!, taggedAgentIds: nextTaggedAgentIds }
                 : s.currentConversation,
               pendingAssistantMessageId: result.aiMessageId ?? s.pendingAssistantMessageId,
+              inFlightSendConversations,
             };
           });
+
+          const earlyError = get().earlyStreamErrors.get(conversationId);
+          if (earlyError) {
+            const earlyStreamErrors = new Map(get().earlyStreamErrors);
+            earlyStreamErrors.delete(conversationId);
+            set({ earlyStreamErrors });
+            if (earlyError.messageId === result.aiMessageId) get().onStreamError(earlyError);
+          }
         } catch (err) {
           // Rollback optimistic message
           const apiError = parseApiError(err);
@@ -1026,6 +1287,12 @@ export const useConversationStore = create<ConversationState>()(
             isAwaitingFirstChunk: false,
             awaitingConversationId: null,
             optimisticMessages: s.optimisticMessages.filter((m) => m.id !== tempId),
+            earlyStreamErrors: new Map(
+              [...s.earlyStreamErrors].filter(([errorConversationId]) => errorConversationId !== conversationId),
+            ),
+            inFlightSendConversations: new Set(
+              [...s.inFlightSendConversations].filter((sendConversationId) => sendConversationId !== conversationId),
+            ),
           }));
 
           // Handle MODEL_INACTIVE error - refresh models and clear selection
@@ -1036,7 +1303,7 @@ export const useConversationStore = create<ConversationState>()(
             // Refresh models list to get updated active models
             useModelsStore.getState().refreshModels();
             // Clear selected model so it falls back to default
-            set({ selectedModelId: null });
+            set({ selectedModelId: null, selectedReasoningEffort: null });
           } else {
             toast.error(translateConversation('toasts.messages.sendError'), { description: apiError.message });
           }
@@ -1081,7 +1348,7 @@ export const useConversationStore = create<ConversationState>()(
               description: translateConversation('toasts.model.unavailableDescription'),
             });
             useModelsStore.getState().refreshModels();
-            set({ selectedModelId: null });
+            set({ selectedModelId: null, selectedReasoningEffort: null });
           } else {
             toast.error(translateConversation('toasts.messages.regenerateError'), { description: apiError.message });
           }
@@ -1182,7 +1449,9 @@ export const useConversationStore = create<ConversationState>()(
       },
 
       onStreamStart: (event) => {
+        cancelPendingStreamReconciliation();
         const state = get();
+        const eventStreamKey = `${event.conversationId}:${event.messageId}`;
 
         if (event.conversationId !== state.currentConversationId) {
           // Background conversation — track in cache
@@ -1206,6 +1475,10 @@ export const useConversationStore = create<ConversationState>()(
         }
 
         // Current conversation — clear any pending chunks from previous stream
+        currentRevisionStreamKey = `${event.conversationId}:${event.messageId}`;
+        currentStreamRevision = 0;
+        receivedCurrentStreamStart = true;
+        pendingRecoveryChunks = [];
         streamingBuffer.clear();
 
         // Set up the flush callback to batch-apply chunks
@@ -1226,9 +1499,12 @@ export const useConversationStore = create<ConversationState>()(
           streamingConversationId: event.conversationId,
           streamingMessageId: event.messageId,
           pendingAssistantMessageId: event.messageId,
+          ...(state.pendingTerminalErrorKey !== eventStreamKey ? { pendingTerminalErrorKey: null } : {}),
           streamingComponents: [],
           inputDisabled: false,
+          pendingLatencyPaint: null,
         });
+        latencyPaint.clear();
       },
 
       onStreamChunk: (event) => {
@@ -1250,20 +1526,124 @@ export const useConversationStore = create<ConversationState>()(
           return;
         }
 
+        // Latency instrumentation: the first model-derived chunk carries the
+        // one-time envelope; record its browser arrival for the paint metric.
+        if (event.latency) {
+          const captured = latencyPaint.capture({
+            conversationId: event.conversationId,
+            firstChunkReceivedPerfMs: performance.now(),
+            latency: event.latency,
+          });
+          if (captured) set({ pendingLatencyPaint: captured });
+        }
+
+        if (event.revision !== undefined) {
+          const messageId = event.messageId ?? state.streamingMessageId ?? '';
+          const streamKey = `${event.conversationId}:${messageId}`;
+          if (currentRevisionStreamKey !== streamKey) {
+            currentRevisionStreamKey = streamKey;
+            currentStreamRevision = 0;
+            receivedCurrentStreamStart = false;
+          }
+          if (event.revision <= currentStreamRevision) return;
+          currentStreamRevision = event.revision;
+        }
+
+        if (!state.isStreaming || state.streamingConversationId !== event.conversationId) {
+          const placeholder = state.messages.find((message) =>
+            message.conversationType === 'ai' && message.isStreaming === true && message.isComplete !== true,
+          );
+          set({
+            isStreaming: true,
+            streamingConversationId: event.conversationId,
+            streamingMessageId: placeholder?.id ?? null,
+            pendingAssistantMessageId: placeholder?.id ?? null,
+          });
+        }
+
+        if (event.revision !== undefined && !receivedCurrentStreamStart) {
+          pendingRecoveryChunks.push({
+            action: event.action,
+            component: event.component,
+            revision: event.revision,
+          });
+          return;
+        }
+
+        if (isImmediateStreamingComponent(event.component)) {
+          streamingBuffer.flush();
+          set((current) => {
+            const components = applyChunksToComponents(current.streamingComponents, [{ action: event.action, component: event.component }]);
+            return {
+              streamingComponents: components,
+              ...(components.length > 0 && current.isAwaitingFirstChunk
+                ? { isAwaitingFirstChunk: false, awaitingConversationId: null }
+                : {}),
+            };
+          });
+          return;
+        }
+
         // Current conversation — buffer the chunk instead of immediately updating state
-        streamingBuffer.addChunk(event.action, event.component);
+        streamingBuffer.addChunk(event.action, event.component, event.revision);
+      },
+
+      /**
+       * Compute the sixth latency metric after React commit + double rAF.
+       * Called from the paint observer in ConversationContent; one-shot per
+       * stream and a no-op in hidden tabs (browsers throttle rAF there).
+       */
+      recordLatencyFirstPaint: () => {
+        const before = get().pendingLatencyPaint;
+        if (!before || before.measured) return;
+        const visible = typeof document === 'undefined' || document.visibilityState === 'visible';
+        const updated = latencyPaint.measure(performance.now(), performance.timeOrigin, visible);
+        if (!updated || updated === before) return;
+        set({ pendingLatencyPaint: updated });
+        // Completion may already have raced: attach to the persisted message now.
+        set((s) => ({
+          messages: s.messages.map((message) => (message.id === before.messageId ? withPendingLatency(message) : message)),
+        }));
+        // Completion arrived before the paint callback fired — report now.
+        if (updated.completeArrived) {
+          get().reportPendingLatency(before.conversationId, before.messageId);
+        }
+      },
+
+      /** Fire-and-forget persistence of the sixth metric; clears the pending state. */
+      reportPendingLatency: (conversationId: string, messageId: string) => {
+        const payload = latencyPaint.report(conversationId, messageId);
+        if (get().pendingLatencyPaint !== latencyPaint.pending) {
+          set({ pendingLatencyPaint: latencyPaint.pending });
+        }
+        if (!payload) return;
+        api
+          .reportFrontendLatency(conversationId, messageId, payload)
+          .catch((err) => console.error('[ConversationStore] frontend latency report failed:', err));
       },
 
       onStreamComplete: async (event) => {
+        const eventStreamKey = `${event.conversationId}:${event.messageId}`;
+        if (pendingStreamReconcileTarget === eventStreamKey) cancelPendingStreamReconciliation();
+        if (currentRevisionStreamKey === `${event.conversationId}:${event.messageId}`) {
+          currentRevisionStreamKey = null;
+          currentStreamRevision = 0;
+          receivedCurrentStreamStart = false;
+          pendingRecoveryChunks = [];
+        }
+        // Persist the browser-measured sixth metric after completion so the
+        // request never competes with the first-token window.
+        get().reportPendingLatency(event.conversationId, event.messageId);
         const state = get();
 
         if (event.conversationId !== state.currentConversationId) {
           // Background conversation — clean cache, message is now persisted in DB
           const newCache = new Map(get().streamingStateCache);
-          newCache.delete(event.conversationId);
+          if (newCache.get(event.conversationId)?.streamingMessageId === event.messageId) {
+            newCache.delete(event.conversationId);
+          }
           const clearCompletedStream =
-            state.streamingConversationId === event.conversationId ||
-            state.awaitingConversationId === event.conversationId ||
+            state.streamingMessageId === event.messageId ||
             state.pendingAssistantMessageId === event.messageId;
           set({
             streamingStateCache: newCache,
@@ -1298,48 +1678,34 @@ export const useConversationStore = create<ConversationState>()(
           return;
         }
 
-        // Flush any remaining buffered chunks and clear
-        streamingBuffer.flush();
-        streamingBuffer.clear();
-
-        // Move plan component to the top immediately (before API fetch returns),
-        // then chain-of-thought above it so it sits at the very top.
-        set((s) => {
-          const reordered = [...s.streamingComponents];
-
-          const planIndex = reordered.findIndex((c) => c.type === 'plan');
-          if (planIndex > 0) {
-            const [plan] = reordered.splice(planIndex, 1);
-            reordered.unshift(plan);
-          }
-
-          const cotIndex = reordered.findIndex((c) => c.type === 'chainOfThought');
-          if (cotIndex > 0) {
-            const [cot] = reordered.splice(cotIndex, 1);
-            reordered.unshift(cot);
-          }
-
-          if (planIndex <= 0 && cotIndex <= 0) return s;
-          return { streamingComponents: reordered };
-        });
+        const completesActiveStream =
+          state.streamingMessageId === event.messageId || state.pendingAssistantMessageId === event.messageId;
+        if (completesActiveStream) {
+          streamingBuffer.flush();
+          streamingBuffer.clear();
+        }
 
         // completeAIMessage broadcasts the canonical message before stream_complete.
         // Prefer that ordered SSE update; REST is only recovery for a missed update.
         const completedMessage = get().messages.find((message) => message.id === event.messageId && message.isComplete);
         if (completedMessage) {
-          const cleanedCache = new Map(get().streamingStateCache);
-          cleanedCache.delete(event.conversationId);
-          set({
-            isStreaming: false,
-            streamingConversationId: null,
-            streamingMessageId: null,
-            streamingQuestionMessageId: null,
-            streamingComponents: [],
-            isAwaitingFirstChunk: false,
-            awaitingConversationId: null,
-            pendingAssistantMessageId: null,
-            streamingStateCache: cleanedCache,
-          });
+          if (completesActiveStream) {
+            const cleanedCache = new Map(get().streamingStateCache);
+            if (cleanedCache.get(event.conversationId)?.streamingMessageId === event.messageId) {
+              cleanedCache.delete(event.conversationId);
+            }
+            set({
+              isStreaming: false,
+              streamingConversationId: null,
+              streamingMessageId: null,
+              streamingQuestionMessageId: null,
+              streamingComponents: [],
+              isAwaitingFirstChunk: false,
+              awaitingConversationId: null,
+              pendingAssistantMessageId: null,
+              streamingStateCache: cleanedCache,
+            });
+          }
 
           if (completedMessage.questionMessageId) {
             get().fetchBranches(event.conversationId, completedMessage.questionMessageId, true);
@@ -1351,28 +1717,34 @@ export const useConversationStore = create<ConversationState>()(
         // Recover the persisted message if its ordered SSE update was missed.
         try {
           const message = await api.fetchMessage(event.conversationId, event.messageId);
-          let resolvedMessage = message;
+           let resolvedMessage = message;
 
-          set((s) => {
-            resolvedMessage = s.messages.find((candidate) => candidate.id === event.messageId && candidate.isComplete) ?? message;
-            const result = upsertMessage(s.messages, resolvedMessage);
+           set((s) => {
+             resolvedMessage = s.messages.find((candidate) => candidate.id === event.messageId && candidate.isComplete) ?? message;
+             const result = upsertMessage(s.messages, resolvedMessage);
+             const ownsCompletedStream =
+               s.streamingMessageId === event.messageId || s.pendingAssistantMessageId === event.messageId;
 
             // Clean stale cache entry to prevent fetchMessages from restoring it
             const cleanedCache = new Map(s.streamingStateCache);
-            cleanedCache.delete(event.conversationId);
+            if (cleanedCache.get(event.conversationId)?.streamingMessageId === event.messageId) {
+              cleanedCache.delete(event.conversationId);
+            }
 
             return {
               messages: result.messages,
               messagesTotal: result.inserted ? s.messagesTotal + 1 : s.messagesTotal,
-              isStreaming: false,
-              streamingConversationId: null,
-              streamingMessageId: null,
-              streamingQuestionMessageId: null,
-              streamingComponents: [],
-              isAwaitingFirstChunk: false,
-              awaitingConversationId: null,
-              pendingAssistantMessageId: null,
               streamingStateCache: cleanedCache,
+              ...(ownsCompletedStream ? {
+                isStreaming: false,
+                streamingConversationId: null,
+                streamingMessageId: null,
+                streamingQuestionMessageId: null,
+                streamingComponents: [],
+                isAwaitingFirstChunk: false,
+                awaitingConversationId: null,
+                pendingAssistantMessageId: null,
+              } : {}),
             };
           });
 
@@ -1386,33 +1758,78 @@ export const useConversationStore = create<ConversationState>()(
         } catch (err) {
           console.error('[ConversationStore] onStreamComplete fetch error:', err);
           // Still clear streaming state and stale cache entry
-          const cleanedCache = new Map(get().streamingStateCache);
-          cleanedCache.delete(event.conversationId);
-          set({
-            isStreaming: false,
-            streamingConversationId: null,
-            streamingMessageId: null,
-            streamingQuestionMessageId: null,
-            streamingComponents: [],
-            isAwaitingFirstChunk: false,
-            awaitingConversationId: null,
-            pendingAssistantMessageId: null,
-            streamingStateCache: cleanedCache,
-          });
+          const current = get();
+          const ownsCompletedStream =
+            current.streamingMessageId === event.messageId || current.pendingAssistantMessageId === event.messageId;
+          if (ownsCompletedStream) {
+            const cleanedCache = new Map(current.streamingStateCache);
+            if (cleanedCache.get(event.conversationId)?.streamingMessageId === event.messageId) {
+              cleanedCache.delete(event.conversationId);
+            }
+            set({
+              isStreaming: false,
+              streamingConversationId: null,
+              streamingMessageId: null,
+              streamingQuestionMessageId: null,
+              streamingComponents: [],
+              isAwaitingFirstChunk: false,
+              awaitingConversationId: null,
+              pendingAssistantMessageId: null,
+              streamingStateCache: cleanedCache,
+            });
+          }
         }
       },
 
       onStreamError: (event) => {
         const state = get();
+        const eventStreamKey = `${event.conversationId}:${event.messageId}`;
+        // A failed stream keeps at most partial latency data — drop the
+        // browser paint state rather than reporting a misleading value.
+        if (state.pendingLatencyPaint?.messageId === event.messageId) {
+          latencyPaint.clear();
+          set({ pendingLatencyPaint: null });
+        }
+        const cachedStream = state.streamingStateCache.get(event.conversationId);
+        const ownsForegroundStream =
+          state.streamingMessageId === event.messageId || state.pendingAssistantMessageId === event.messageId;
+        const ownsCachedStream = cachedStream?.streamingMessageId === event.messageId;
+        const foregroundMessageId = state.streamingMessageId ?? state.pendingAssistantMessageId;
+        const ownsCompletedError =
+          state.pendingTerminalErrorKey === eventStreamKey &&
+          (!foregroundMessageId || foregroundMessageId === event.messageId);
+        if (!ownsForegroundStream && !ownsCachedStream && !ownsCompletedError) {
+          if (
+            state.inFlightSendConversations.has(event.conversationId) &&
+            !foregroundMessageId
+          ) {
+            const earlyStreamErrors = new Map(state.earlyStreamErrors);
+            earlyStreamErrors.set(event.conversationId, event);
+            set({ earlyStreamErrors });
+          }
+          return;
+        }
+
+        if (pendingStreamReconcileTarget === `${event.conversationId}:${event.messageId}`) {
+          cancelPendingStreamReconciliation();
+        }
+        if (currentRevisionStreamKey === `${event.conversationId}:${event.messageId}`) {
+          currentRevisionStreamKey = null;
+          currentStreamRevision = 0;
+          receivedCurrentStreamStart = false;
+          pendingRecoveryChunks = [];
+        }
 
         if (event.conversationId !== state.currentConversationId) {
           // Background conversation — clean cache
           const newCache = new Map(get().streamingStateCache);
-          newCache.delete(event.conversationId);
-          const clearFailedStream = state.streamingConversationId === event.conversationId || state.awaitingConversationId === event.conversationId;
+          if (newCache.get(event.conversationId)?.streamingMessageId === event.messageId) {
+            newCache.delete(event.conversationId);
+          }
           set({
             streamingStateCache: newCache,
-            ...(clearFailedStream ? {
+            ...(state.pendingTerminalErrorKey === eventStreamKey ? { pendingTerminalErrorKey: null } : {}),
+            ...(ownsForegroundStream ? {
               isStreaming: false,
               streamingConversationId: null,
               streamingMessageId: null,
@@ -1433,7 +1850,9 @@ export const useConversationStore = create<ConversationState>()(
 
         // Clean stale cache entry to prevent fetchMessages from restoring it
         const cleanedCache = new Map(get().streamingStateCache);
-        cleanedCache.delete(event.conversationId);
+        if (cleanedCache.get(event.conversationId)?.streamingMessageId === event.messageId) {
+          cleanedCache.delete(event.conversationId);
+        }
 
         if (errorInfo.isCritical) {
           set({
@@ -1447,6 +1866,7 @@ export const useConversationStore = create<ConversationState>()(
             isAwaitingFirstChunk: false,
             awaitingConversationId: null,
             pendingAssistantMessageId: null,
+            pendingTerminalErrorKey: null,
             streamingStateCache: cleanedCache,
           });
         } else {
@@ -1460,6 +1880,7 @@ export const useConversationStore = create<ConversationState>()(
             isAwaitingFirstChunk: false,
             awaitingConversationId: null,
             pendingAssistantMessageId: null,
+            pendingTerminalErrorKey: null,
             streamingStateCache: cleanedCache,
           });
         }
@@ -1529,30 +1950,76 @@ export const useConversationStore = create<ConversationState>()(
         const state = get();
         if (event.conversationId !== state.currentConversationId) return;
 
+        const completesPendingStream = event.message.isComplete === true && (
+          state.streamingMessageId === event.messageId || state.pendingAssistantMessageId === event.messageId
+        );
+        const completesWithError = completesPendingStream && hasErrorComponent(event.message);
+        if (completesPendingStream) {
+          cancelPendingStreamReconciliation();
+          streamingBuffer.flush();
+          streamingBuffer.clear();
+        }
+
         const existing = state.messages.find((message) => message.id === event.messageId);
-        if (existing) {
-          set((s) => ({
-            messages: s.messages.map((message) => (message.id === event.messageId ? {
-              ...message,
-              ...event.message,
-              reliabilityEvaluation: event.message.reliabilityEvaluation ?? message.reliabilityEvaluation,
-              correctionWorkflow: event.message.correctionWorkflow ?? message.correctionWorkflow,
-            } : message)),
-          }));
+         if (existing) {
+           set((s) => {
+             const cache = new Map(s.streamingStateCache);
+             if (completesPendingStream) cache.delete(event.conversationId);
+              return {
+               messages: s.messages.map((message) => (message.id === event.messageId ? withPendingLatency({
+                 ...message,
+                 ...event.message,
+                  ...(event.message.components ? { components: event.message.components } : {}),
+                 reliabilityEvaluation: event.message.reliabilityEvaluation ?? message.reliabilityEvaluation,
+                 correctionWorkflow: event.message.correctionWorkflow ?? message.correctionWorkflow,
+              }) : message)),
+              ...(completesPendingStream ? {
+                isStreaming: false,
+                streamingConversationId: null,
+                streamingMessageId: null,
+                streamingQuestionMessageId: null,
+                streamingComponents: [],
+                isAwaitingFirstChunk: false,
+                 awaitingConversationId: null,
+                 pendingAssistantMessageId: null,
+                 pendingTerminalErrorKey: completesWithError
+                   ? `${event.conversationId}:${event.messageId}`
+                   : null,
+                 streamingStateCache: cache,
+              } : {}),
+            };
+          });
           return;
         }
 
-        if (event.message.conversationType && event.message.createdAt) {
-          const message = {
-            ...event.message,
-            id: event.messageId,
-            conversationId: event.conversationId,
-          } as Message;
-          set((s) => {
-            const result = upsertMessage(s.messages, message);
+         if (event.message.conversationType && event.message.createdAt) {
+           set((s) => {
+              const message = withPendingLatency({
+                ...event.message,
+                ...(event.message.components ? { components: event.message.components } : {}),
+               id: event.messageId,
+               conversationId: event.conversationId,
+             } as Message);
+             const result = upsertMessage(s.messages, message);
+            const cache = new Map(s.streamingStateCache);
+            if (completesPendingStream) cache.delete(event.conversationId);
             return {
               messages: result.messages,
               messagesTotal: result.inserted ? s.messagesTotal + 1 : s.messagesTotal,
+              ...(completesPendingStream ? {
+                isStreaming: false,
+                streamingConversationId: null,
+                streamingMessageId: null,
+                streamingQuestionMessageId: null,
+                streamingComponents: [],
+                isAwaitingFirstChunk: false,
+                 awaitingConversationId: null,
+                 pendingAssistantMessageId: null,
+                 pendingTerminalErrorKey: completesWithError
+                   ? `${event.conversationId}:${event.messageId}`
+                   : null,
+                 streamingStateCache: cache,
+              } : {}),
             };
           });
           return;
@@ -1578,11 +2045,26 @@ export const useConversationStore = create<ConversationState>()(
         const conversationId = state.streamingConversationId ?? state.awaitingConversationId;
         const messageId = state.streamingMessageId ?? state.pendingAssistantMessageId;
         if (!conversationId || !messageId) return;
+        const target = `${conversationId}:${messageId}`;
+        if (pendingStreamReconcileTarget !== target) {
+          cancelPendingStreamReconciliation();
+          pendingStreamReconcileTarget = target;
+        }
+        if (pendingStreamReconcileInFlight || pendingStreamReconcileAttempts >= MAX_PENDING_STREAM_RECONCILE_ATTEMPTS) return;
+        pendingStreamReconcileInFlight = true;
+        pendingStreamReconcileAttempts += 1;
 
         try {
           const message = await api.fetchMessage(conversationId, messageId);
-          if (!message.isComplete || get().currentConversationId !== conversationId) return;
+          const current = get();
+          const currentMessageId = current.streamingMessageId ?? current.pendingAssistantMessageId;
+          if (current.currentConversationId !== conversationId || currentMessageId !== messageId) return;
+          if (!message.isComplete) {
+            schedulePendingStreamReconciliation(() => get().reconcilePendingStream());
+            return;
+          }
 
+          cancelPendingStreamReconciliation();
           streamingBuffer.flush();
           streamingBuffer.clear();
           set((s) => {
@@ -1600,11 +2082,23 @@ export const useConversationStore = create<ConversationState>()(
               isAwaitingFirstChunk: false,
               awaitingConversationId: null,
               pendingAssistantMessageId: null,
+              pendingTerminalErrorKey: hasErrorComponent(message) ? target : null,
               streamingStateCache: cache,
             };
           });
         } catch (err) {
           console.error('[ConversationStore] pending stream reconciliation error:', err);
+          const current = get();
+          if (
+            current.currentConversationId === conversationId
+            && (current.streamingMessageId ?? current.pendingAssistantMessageId) === messageId
+          ) {
+            if (isTransientReconciliationError(err)) {
+              schedulePendingStreamReconciliation(() => get().reconcilePendingStream());
+            }
+          }
+        } finally {
+          if (pendingStreamReconcileTarget === target) pendingStreamReconcileInFlight = false;
         }
       },
 
@@ -1749,7 +2243,15 @@ export const useConversationStore = create<ConversationState>()(
       // ===== Model Selection =====
 
       setSelectedModelId: (modelId) => {
-        set({ selectedModelId: modelId });
+        const model = modelId ? useModelsStore.getState().models.find((candidate) => candidate.id === modelId) : undefined;
+        set({
+          selectedModelId: modelId,
+          selectedReasoningEffort: model?.reasoning?.defaultEffort ?? null,
+        });
+      },
+
+      setSelectedReasoningEffort: (effort) => {
+        set({ selectedReasoningEffort: effort });
       },
 
       // ===== Workspace Selection =====
@@ -1836,19 +2338,25 @@ export const useConversationStore = create<ConversationState>()(
           isAwaitingFirstChunk: false,
           awaitingConversationId: null,
           pendingAssistantMessageId: null,
+          pendingTerminalErrorKey: null,
+          earlyStreamErrors: new Map(),
+          inFlightSendConversations: new Set(),
           optimisticMessages: [],
           branchCache: new Map(),
           activeBranches: new Map(),
           editingMessageId: null,
           replyingToMessage: null,
           selectedModelId: null,
+          selectedReasoningEffort: null,
         });
       },
 
       clearAll: () => {
         streamingBuffer.clear();
+        latencyPaint.clear();
         set({
           conversations: [],
+          conversationSummaries: [],
           conversationsTotal: 0,
           conversationsHasMore: false,
           conversationsLoading: false,
@@ -1868,9 +2376,13 @@ export const useConversationStore = create<ConversationState>()(
           streamingMessageId: null,
           streamingQuestionMessageId: null,
           streamingComponents: [],
+          pendingLatencyPaint: null,
           isAwaitingFirstChunk: false,
           awaitingConversationId: null,
           pendingAssistantMessageId: null,
+          pendingTerminalErrorKey: null,
+          earlyStreamErrors: new Map(),
+          inFlightSendConversations: new Set(),
           optimisticMessages: [],
           branchCache: new Map(),
           activeBranches: new Map(),
@@ -1881,6 +2393,7 @@ export const useConversationStore = create<ConversationState>()(
           criticalError: null,
           inputDisabled: false,
           selectedModelId: null,
+          selectedReasoningEffort: null,
           streamingStateCache: new Map(),
           typewriterConversationId: null,
           typewriterName: null,
@@ -1911,15 +2424,19 @@ export const useConversationStore = create<ConversationState>()(
 // ===== Selector Hooks =====
 
 const EMPTY_CONVERSATIONS: Conversation[] = [];
+const EMPTY_CONVERSATION_SUMMARIES: ConversationSummary[] = [];
 const EMPTY_MESSAGES: Message[] = [];
 
-export const useConversations = () => useConversationStore((s) => (s.conversations.length === 0 ? EMPTY_CONVERSATIONS : s.conversations));
+export const useConversations = () =>
+  useConversationStore((s) =>
+    s.conversationSummaries.length === 0 ? EMPTY_CONVERSATION_SUMMARIES : s.conversationSummaries,
+  );
 
 export const useHistoryConversations = () =>
   useConversationStore(
     useShallow((s) => {
-      const filtered = s.conversations.filter((c) => !c.projectId);
-      return filtered.length === 0 ? EMPTY_CONVERSATIONS : filtered;
+      const filtered = s.conversationSummaries.filter((c) => !c.projectId);
+      return filtered.length === 0 ? EMPTY_CONVERSATION_SUMMARIES : filtered;
     }),
   );
 
@@ -2038,7 +2555,8 @@ export const useAwaitingConversationId = () => useConversationStore((s) => s.awa
 
 export const useCriticalError = () => useConversationStore((s) => s.criticalError);
 
-export const useInputDisabled = () => useConversationStore((s) => s.inputDisabled);
+export const useInputDisabled = () =>
+  useConversationStore((s) => s.inputDisabled || s.conversationLoading);
 
 export const useMessagesHasMore = () => useConversationStore((s) => s.messagesHasMore);
 
@@ -2053,6 +2571,10 @@ export const useIsInitialLoading = () => useConversationStore((s) => s.conversat
 export const useSelectedModelId = () => useConversationStore((s) => s.selectedModelId);
 
 export const useSetSelectedModelId = () => useConversationStore((s) => s.setSelectedModelId);
+
+export const useSelectedReasoningEffort = () => useConversationStore((s) => s.selectedReasoningEffort);
+
+export const useSetSelectedReasoningEffort = () => useConversationStore((s) => s.setSelectedReasoningEffort);
 
 export const useSelectedWorkspaceIds = () => useConversationStore((s) => s.selectedWorkspaceIds);
 

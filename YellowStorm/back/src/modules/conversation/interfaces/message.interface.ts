@@ -1,9 +1,16 @@
+import type { ConversationLatencyMetricsV1 } from './latency.interface';
+
 export type ConversationType = 'user' | 'ai';
+
+export type {
+  ConversationLatencyMetricsV1,
+  ConversationLatencyQuality,
+} from './latency.interface';
 
 export type ComponentType =
   | 'text'
   | 'code'
-  | 'reasoning'
+  | 'agentActivity'
   | 'plan'
   | 'queue'
   | 'checkpoint'
@@ -15,9 +22,48 @@ export type ComponentType =
   | 'webPreview'
   | 'artifact'
   | 'citation'
-  | 'toolInfo'
-  | 'chainOfThought'
+  | 'toolActivity'
   | 'choice';
+
+export interface AgentActivityData extends Record<string, unknown> {
+  summary: string;
+  detail?: string;
+  status: 'running' | 'completed';
+  startedAt?: string;
+  completedAt?: string;
+  durationMs?: number;
+  actorId?: string;
+  actorName?: string;
+}
+
+export interface ToolActivityData extends Record<string, unknown> {
+  toolName: string;
+  displayKey?: string;
+  fallbackDisplayName?: string;
+  summary: string;
+  renderKind: 'run_code' | 'search' | 'read' | 'write' | 'file' | 'web' | 'generic';
+  status: 'running' | 'completed' | 'failed' | 'stopped';
+  paramsJson?: string;
+  resultJson?: string;
+  startedAt?: string;
+  completedAt?: string;
+  durationMs?: number;
+  actorId?: string;
+  actorName?: string;
+  primaryInput?: string;
+  primaryInputLanguage?: string;
+}
+
+export interface ArtifactActivityData extends Record<string, unknown> {
+  artifactId: string;
+  filename: string;
+  artifactKind?: string;
+  mimeType?: string;
+  sizeBytes?: number;
+  producerToolId?: string;
+  availability: 'pending' | 'ready' | 'failed';
+  storagePath?: string;
+}
 
 export type FeedbackType = 'like' | 'dislike';
 
@@ -60,13 +106,27 @@ export interface ReliabilityEvaluation {
 export type ResponseCorrectionStatus = 'queued' | 'correcting' | 're_evaluating' | 'corrected' | 'failed' | 'abstained' | 'human_review_required';
 export type ActiveAnswerVersion = 'original' | 'corrected' | 'abstention';
 
+export interface ConversationClientContextV1 {
+  contextVersion: 1;
+  route: string;
+  module: 'playbooks' | 'executions' | 'other';
+  surface: string;
+  entity?: { type: 'playbook' | 'execution' | 'task'; id: string };
+  selection?: { type: 'playbook' | 'execution' | 'task'; id: string };
+  availableActions: string[];
+  hasUnsavedChanges: boolean;
+  locale: string;
+}
+
 export interface MessageReplayContext {
+  requestFingerprint?: string;
   content: string;
   taskSummary?: string;
   attachedFileIds: string[];
   webSearchEnabled: boolean;
   deepSearchEnabled: boolean;
   modelId?: string;
+  reasoningEffort?: string;
   agentIds: string[];
   skillIds: string[];
   connectorRepo?: {
@@ -76,6 +136,8 @@ export interface MessageReplayContext {
     repoName: string;
     repoUrl?: string;
   };
+  clientContext?: ConversationClientContextV1;
+  playbookHandoffId?: string;
   governanceOverride?: {
     runtimeMode: 'governed';
     primaryAgentId: string;
@@ -190,23 +252,28 @@ export interface CreateUserMessageData {
   attachedFileIds?: string[];
   webSearchEnabled?: boolean;
   modelId?: string;
+  reasoningEffort?: string;
   agentIds?: string[];
   memberIds?: string[];
   requestId?: string;
   parentMessageId?: string;
   interaction?: Record<string, unknown>;
+  interactions?: Record<string, unknown>[];
   replayContext?: MessageReplayContext;
 }
 
 export interface CreateAIPlaceholderData {
   conversationId: string;
   questionMessageId: string;
+  senderId?: string;
   modelId?: string;
+  reasoningEffort?: string;
   requestId?: string;
 }
 
 export interface CompleteAIMessageData {
   messageId: string;
+  streamExecutionLeaseId?: string;
   components: MessageComponent[];
   inputTokens?: number;
   outputTokens?: number;
@@ -215,12 +282,28 @@ export interface CompleteAIMessageData {
   timeToFirstToken?: number;
   guardrailDecision?: GuardrailDecisionMetadata;
   interaction?: Record<string, unknown>;
+  modelRequestTelemetry?: ModelRequestTelemetry;
+  latencyMetrics?: ConversationLatencyMetricsV1;
+}
+
+export interface ModelRequestTelemetry {
+  usedTokens: number;
+  contextWindow: number;
+  model: string;
 }
 
 export interface MessageQueryParams {
+  mode?: 'legacy' | 'cursor';
+  cursor?: string;
   page?: number;
   limit?: number;
   conversationType?: ConversationType;
+}
+
+export interface CursorPaginatedMessages {
+  messages: MessageResponse[];
+  branchesByQuestion: Record<string, MessageResponse[]>;
+  pagination: { mode: 'cursor'; limit: number; hasMore: boolean; nextCursor: string | null };
 }
 
 export interface AttachedFileResponse {
@@ -242,6 +325,7 @@ export interface MessageResponse {
   attachedFileIds?: string[];
   attachedFiles?: AttachedFileResponse[];
   modelId?: string;
+  reasoningEffort?: string;
   webSearchEnabled: boolean;
   questionMessageId?: string;
   answerMessageId?: string;
@@ -253,14 +337,17 @@ export interface MessageResponse {
   isComplete: boolean;
   inputTokens?: number;
   outputTokens?: number;
+  modelRequestTelemetry?: ModelRequestTelemetry;
   durationMs?: number;
   timeToFirstChunk?: number;
   timeToFirstToken?: number;
+  latencyMetrics?: ConversationLatencyMetricsV1;
   requestId?: string;
   agentIds?: string[];
   memberIds?: string[];
   guardrailDecision?: GuardrailDecisionMetadata;
   interaction?: Record<string, unknown>;
+  interactions?: Record<string, unknown>[];
   reliabilityEvaluation?: ReliabilityEvaluation;
   correctionWorkflow?: ResponseCorrectionWorkflow;
   createdAt: string;

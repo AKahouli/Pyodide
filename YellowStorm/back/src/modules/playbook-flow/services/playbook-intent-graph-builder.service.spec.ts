@@ -23,6 +23,7 @@ function makeContext(overrides: Partial<{
   return {
     existingTaskIds: new Set(overrides.existingTaskIds || []),
     existingTaskTitles: new Map(),
+    existingTaskDescriptions: new Map(),
     existingTaskAgents: new Map(),
     inputPortsByTaskId: new Map((overrides.inputPortsByTaskId || []).map(([k, v]) => [k, new Map(v)])),
     outputPortsByTaskId: new Map((overrides.outputPortsByTaskId || []).map(([k, v]) => [k, new Map(v)])),

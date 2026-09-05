@@ -87,6 +87,7 @@ export class PlaybookIntentSuggestionDiagnosticsService {
   }
 
   private classifyValidation(diagnostics: PlaybookIntentDiagnostic[]): IntentSuggestionValidationStatus {
+    if (diagnostics.some((diagnostic) => diagnostic.severity === 'error')) return 'blocked';
     if (diagnostics.length > 0) return 'valid_with_warnings';
     return 'valid';
   }
@@ -110,7 +111,7 @@ export class PlaybookIntentSuggestionDiagnosticsService {
       allowUnboundRequiredPorts: false,
       allowIncompleteNodeOutputBindings: false,
     }).map((error) => ({
-      severity: 'warning' as const,
+      severity: 'error' as const,
       stage: 'invariant_validator' as const,
       code: `validator_rule_${error.rule}`,
       itemId: `rule:${error.rule}`,
@@ -141,14 +142,25 @@ export class PlaybookIntentSuggestionDiagnosticsService {
 
     for (const change of changes) {
       if (change.type === 'create_edge') {
-        const edge = this.toControlEdge(change, nodeRefToId);
-        if (edge) controlEdges.set(edge.id, edge);
+        // Iterator-scoped edges connect steps inside iterator bodies; the draft graph has no
+        // step nodes, so validating them here produces false rule-2 failures. They are
+        // structurally validated by the blueprint builder and applied into iterator bodies.
+        const scopedEdge = change as { sourceIteratorNodeRef?: string | null; targetIteratorNodeRef?: string | null };
+        if (!scopedEdge.sourceIteratorNodeRef && !scopedEdge.targetIteratorNodeRef) {
+          const edge = this.toControlEdge(change, nodeRefToId);
+          if (edge) controlEdges.set(edge.id, edge);
+        }
       } else if (change.type === 'delete_edge') {
         const edge = this.toControlEdge(change, nodeRefToId);
         if (edge) controlEdges.delete(edge.id);
       } else if (change.type === 'create_data_binding') {
-        const binding = this.toDataBinding(change, nodeRefToId);
-        if (binding) dataBindings.set(binding.id, binding);
+        // Iterator-scoped bindings target steps inside iterator bodies; the draft graph has no
+        // concept of steps, so validating them here produces false rule-7/rule-8 failures.
+        // They are structurally validated by the blueprint builder and resolver.
+        if (!(change as { targetIteratorNodeRef?: string | null }).targetIteratorNodeRef) {
+          const binding = this.toDataBinding(change, nodeRefToId);
+          if (binding) dataBindings.set(binding.id, binding);
+        }
       } else if (change.type === 'delete_data_binding') {
         const targetNode = this.resolveNodeId(change.targetTaskId, change.targetNodeRef, nodeRefToId);
         if (targetNode) dataBindings.delete(this.bindingId(targetNode, change.targetPort));
@@ -228,6 +240,9 @@ export class PlaybookIntentSuggestionDiagnosticsService {
     }
     if (change.sourceKind === 'state') {
       return { id: this.bindingId(targetNode, change.targetPort), targetNode, targetPort: change.targetPort, sourceKind: 'state', statePath: change.statePath } as DataBinding;
+    }
+    if (change.sourceKind === 'trigger') {
+      return { id: this.bindingId(targetNode, change.targetPort), targetNode, targetPort: change.targetPort, sourceKind: 'trigger', triggerPath: change.triggerPath } as DataBinding;
     }
     const sourceNode = this.resolveNodeId(change.sourceTaskId, change.sourceNodeRef, nodeRefToId);
     if (!sourceNode || !change.sourcePort) return null;

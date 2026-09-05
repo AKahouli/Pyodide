@@ -10,9 +10,8 @@ Iteration counter: wraps nodes inside a cycle to:
      If exceeded, write the terminal router label and skip the node body.
   2. Increment ``iterations[node_id]`` on successful completion.
 
-Error routing: wraps every non-router node that has a downstream router
-so that a failure writes ``__error__`` into the nearest router's
-``router_decisions``.
+Error routing: wraps a non-router node that feeds a router directly so
+that a failure writes ``__error__`` into that router's decisions.
 """
 
 from __future__ import annotations
@@ -32,23 +31,22 @@ def build_nearest_router_map(
     raw_edges: list[dict[str, Any]],
     raw_nodes: list[dict[str, Any]],
 ) -> dict[str, str]:
-    """Return ``{node_id: nearest_downstream_router_id}`` for every non-router node."""
+    """Return ``{node_id: router_id}`` for nodes that feed a router directly."""
     node_ids = {n["id"] for n in raw_nodes}
     router_ids = {n["id"] for n in raw_nodes if n.get("kind") == "router"}
 
-    adjacency: dict[str, list[str]] = {nid: [] for nid in node_ids}
+    successors: dict[str, set[str]] = {node_id: set() for node_id in node_ids}
     for edge in raw_edges:
         src, tgt = edge.get("source", ""), edge.get("target", "")
-        if src in adjacency and tgt in node_ids:
-            adjacency[src].append(tgt)
+        if src in successors and tgt in node_ids:
+            successors[src].add(tgt)
 
     result: dict[str, str] = {}
-    for node_id in node_ids:
-        if node_id in router_ids:
-            continue
-        nearest = _bfs_find_router(node_id, adjacency, router_ids)
-        if nearest:
-            result[node_id] = nearest
+    for source, targets in successors.items():
+        if source not in router_ids and len(targets) == 1:
+            target = next(iter(targets))
+            if target in router_ids:
+                result[source] = target
 
     return result
 
@@ -151,26 +149,6 @@ def wrap_node_for_error_routing(
             }
 
     return _wrapped
-
-
-def _bfs_find_router(
-    start: str,
-    adjacency: dict[str, list[str]],
-    router_ids: set[str],
-) -> str | None:
-    visited: set[str] = {start}
-    queue: deque[str] = deque([start])
-
-    while queue:
-        current = queue.popleft()
-        if current != start and current in router_ids:
-            return current
-        for neighbor in adjacency.get(current, []):
-            if neighbor not in visited:
-                visited.add(neighbor)
-                queue.append(neighbor)
-
-    return None
 
 
 def _entrypoints(

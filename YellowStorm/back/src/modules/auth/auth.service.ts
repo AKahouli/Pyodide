@@ -8,7 +8,12 @@ import * as crypto from 'crypto';
 import { UAParser } from 'ua-parser-js';
 import { Session, SessionDocument } from './schemas/session.schema';
 import { UserService } from '../user/user.service';
-import { UserDocument, UserStatus } from '../user/schemas/user.schema';
+import { RegistrationApprovalService } from '../user/registration-approval.service';
+import { UserDocument } from '../user/schemas/user.schema';
+import {
+  assertAccountAccessible,
+  getAccountAccessDenial,
+} from '../user/utils/assert-account-accessible';
 import { LoggerService } from '../logger';
 import { EmailService } from '../email';
 import { UsageService } from '../usage';
@@ -47,6 +52,7 @@ export class AuthService {
     @Inject(forwardRef(() => WorkspaceInitializerService))
     private readonly workspaceInitializer: WorkspaceInitializerService,
     private readonly humainAgentService: HumainAgentService,
+    private readonly registrationApprovalService: RegistrationApprovalService,
   ) {
     this.logger.setContext(AuthService.name);
     this.bcryptRounds = this.configService.get<number>('auth.bcryptRounds', 12);
@@ -123,6 +129,19 @@ export class AuthService {
     // Send verification email
     await this.sendVerificationEmail(user.email, user.emailVerificationToken!);
 
+    try {
+      await this.registrationApprovalService.notifySuperAdminsOfRegistration({
+        userId: user._id.toString(),
+        email: user.email,
+        requestedAt: user.createdAt,
+      });
+    } catch (error) {
+      this.logger.warn('Failed to notify super admins of registration', {
+        userId: user._id,
+        error: (error as Error).message,
+      });
+    }
+
     return {
       message: 'Registration successful. Please check your email to verify your account.',
       userId: user._id.toString(),
@@ -143,10 +162,7 @@ export class AuthService {
       throw new UnauthorizedException(ErrorCode.INVALID_CREDENTIALS, 'Invalid email or password');
     }
 
-    // Check if account is suspended
-    if (user.status === UserStatus.SUSPENDED) {
-      throw new ForbiddenException(ErrorCode.AUTH_ACCOUNT_SUSPENDED, 'Account is suspended');
-    }
+    assertAccountAccessible(user);
 
     // Validate password
     const isPasswordValid = await this.userService.validatePassword(user, dto.password);
@@ -234,6 +250,7 @@ export class AuthService {
               }
             : undefined,
           status: user.status,
+          registrationApproval: user.registrationApproval,
           permissions,
           roleNames,
         },
@@ -378,9 +395,10 @@ export class AuthService {
       throw new UnauthorizedException(ErrorCode.USER_NOT_FOUND, 'User not found');
     }
 
-    if (user.status === UserStatus.SUSPENDED) {
+    const accessDenial = getAccountAccessDenial(user.status);
+    if (accessDenial) {
       await this.invalidateAllUserSessions(user._id.toString());
-      throw new ForbiddenException(ErrorCode.AUTH_ACCOUNT_SUSPENDED, 'Account is suspended');
+      throw new ForbiddenException(accessDenial.code, accessDenial.message);
     }
 
     // Invalidate old session (token rotation)

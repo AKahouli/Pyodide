@@ -43,6 +43,7 @@ import type {
   StepEvaluationHistoryEntry,
   PlaybookPageMode,
   PlaybookUndoSnapshot,
+  ExecutePlaybookData,
   SyncPlaybookMailSubscriptionData,
   TaskTemplate,
   ArtifactKind,
@@ -66,6 +67,7 @@ import { autoLayoutTasks } from './utils/auto-layout';
 import { mergeComponents } from './utils/merge-components';
 import { mergeDynamicReasoningUpdate } from './stream/executionEventMerger';
 import { handleApiError, parseApiError } from '@/lib/api-error';
+import { ErrorCode } from '@/lib/error-codes';
 import { i18nInstance } from '@/modules/localization/i18nInstance';
 import { playbookFeatures } from './features';
 import { usePlaybookUiStore } from './uiStore';
@@ -102,6 +104,23 @@ function tPlaybook(key: string, fallback: string, options?: Record<string, unkno
     return result;
   }
   return fallback;
+}
+
+function isCanonicalAssistantPersistenceLocked(playbookId: string, assistantOperationId?: string): boolean {
+  const assistantState = usePlaybookUiStore.getState();
+  return assistantState.assistantOperationPlaybookId === playbookId
+    && assistantState.assistantOperationTarget === 'canonical'
+    && assistantState.assistantPreviewStatus !== 'idle'
+    && assistantState.assistantOperationId !== assistantOperationId;
+}
+
+function isMatchingCanonicalAssistantOperation(playbookId: string, assistantOperationId?: string): boolean {
+  const assistantState = usePlaybookUiStore.getState();
+  return Boolean(assistantOperationId)
+    && assistantState.assistantOperationPlaybookId === playbookId
+    && assistantState.assistantOperationTarget === 'canonical'
+    && assistantState.assistantPreviewStatus !== 'idle'
+    && assistantState.assistantOperationId === assistantOperationId;
 }
 
 function buildInterruptPayload(data: PlaybookInterruptEvent): InterruptPayload {
@@ -261,6 +280,9 @@ const initialState: PlaybookState = {
   pendingAutosaveAfterCurrent: false,
   autosaveBackoffUntil: null,
   lastSaveReason: null,
+  lastCompletedAssistantOperationId: null,
+  lastCompletedAssistantOperationRevision: null,
+  canonicalAssistantSaveSnapshot: null,
   currentExecution: null,
   currentExecutionLoading: false,
   executionCache: {},
@@ -706,7 +728,6 @@ function getChangedDefinitionFields(previous: UpdateFlowData, current: UpdateFlo
     'advisorAutopilotEnabled',
     'advisorAutopilotTargetScore',
     'advisorAutopilotMaxTurns',
-    'deepSearch',
     'nodes',
     'controlEdges',
     'dataBindings',
@@ -1556,8 +1577,15 @@ const createPlaybookStore: StateCreator<PlaybookStore> = (set, get) => ({
       clearGenerateRetry: () => set({ generateRetryData: null }),
 
       updatePlaybook: async (id, data) => {
+        if (isCanonicalAssistantPersistenceLocked(id, data.assistantOperationId)) return;
         const requestId = get().saveRequestId + 1;
-        const saveStartDirtyVersion = get().dirtyVersion;
+        const canonicalSnapshot = data.assistantOperationId
+          ? get().canonicalAssistantSaveSnapshot
+          : null;
+        const saveStartDirtyVersion = canonicalSnapshot?.operationId === data.assistantOperationId
+          && canonicalSnapshot?.playbookId === id
+          ? canonicalSnapshot.dirtyVersion
+          : get().dirtyVersion;
         const saveStartedAt = performance.now();
         const effectiveData = {
           ...data,
@@ -1683,6 +1711,9 @@ const createPlaybookStore: StateCreator<PlaybookStore> = (set, get) => ({
           const latestState = get();
           const isLatestSaveRequest = latestState.saveRequestId === requestId;
           const hasNewerLocalChanges = latestState.dirtyVersion !== saveStartDirtyVersion;
+          const assistantOperationConfirmed = effectiveData.assistantOperationId
+            && expectedDefinitionRevision !== undefined
+            && playbook.definitionRevision > expectedDefinitionRevision;
           const saveDurationMs = Math.round(performance.now() - saveStartedAt);
 
           set((state) => ({
@@ -1748,6 +1779,13 @@ const createPlaybookStore: StateCreator<PlaybookStore> = (set, get) => ({
               ...state.lastSavedRequestBodyByPlaybookId,
               [id]: savedRequestBody,
             },
+            ...(assistantOperationConfirmed ? {
+              lastCompletedAssistantOperationId: effectiveData.assistantOperationId,
+              lastCompletedAssistantOperationRevision: playbook.definitionRevision,
+              canonicalAssistantSaveSnapshot: state.canonicalAssistantSaveSnapshot?.operationId === effectiveData.assistantOperationId
+                ? null
+                : state.canonicalAssistantSaveSnapshot,
+            } : {}),
           }));
           logPlaybookPerfMetric('playbook_autosave_payload_bytes', {
             mode: effectiveSaveMode,
@@ -1757,11 +1795,9 @@ const createPlaybookStore: StateCreator<PlaybookStore> = (set, get) => ({
               : payloadTelemetry.payloadBytes,
             reason: latestState.lastSaveReason,
           });
-          if (isLatestSaveRequest && latestState.pendingAutosaveAfterCurrent && hasNewerLocalChanges) {
-            void Promise.resolve().then(() => get().saveCurrentPlaybook({ reason: 'autosave' }));
-          }
         } catch (err) {
           const latestState = get();
+          const apiError = parseApiError(err);
           if (latestState.saveRequestId === requestId) {
             const autosaveFailed = latestState.lastSaveReason === 'autosave';
             const nextBackoffMs = autosaveFailed ? getAutosaveRetryDelayMs(latestState.autosaveBackoffUntil) : null;
@@ -1803,6 +1839,17 @@ const createPlaybookStore: StateCreator<PlaybookStore> = (set, get) => ({
           ) {
             toast.warning(tPlaybook('store.toasts.autosaveRetrying', 'Autosave is backing off and will retry shortly'));
             return;
+          }
+          if (effectiveData.assistantOperationId && apiError.code === ErrorCode.PLAYBOOK_FLOW_VALIDATION_FAILED) {
+            set((state) => ({
+              canonicalAssistantSaveSnapshot: state.canonicalAssistantSaveSnapshot?.operationId === effectiveData.assistantOperationId
+                ? null
+                : state.canonicalAssistantSaveSnapshot,
+            }));
+            throw err;
+          }
+          if (apiError.code === ErrorCode.CONFLICT) {
+            throw err;
           }
           const msg = err instanceof Error ? err.message : tPlaybook('store.errors.updateFailed', 'Failed to save');
           toast.error(msg);
@@ -2102,7 +2149,28 @@ const createPlaybookStore: StateCreator<PlaybookStore> = (set, get) => ({
       setPendingAutosaveAfterCurrent: (pending) => set({ pendingAutosaveAfterCurrent: pending }),
 
       saveCurrentPlaybook: async (options) => {
-        const { currentPlaybook, isSaving } = get();
+        let { currentPlaybook, isSaving } = get();
+        if (isSaving) {
+          if (options?.reason !== 'autosave') {
+            await new Promise<void>((resolve) => {
+              const unsubscribe = usePlaybookStore.subscribe((state) => {
+                if (!state.isSaving) {
+                  unsubscribe();
+                  resolve();
+                }
+              });
+              if (!usePlaybookStore.getState().isSaving) {
+                unsubscribe();
+                resolve();
+              }
+            });
+            const latestState = get();
+            if (options?.assistantOperationId
+              && latestState.lastCompletedAssistantOperationId === options.assistantOperationId) return;
+            currentPlaybook = latestState.currentPlaybook;
+            isSaving = latestState.isSaving;
+          }
+        }
         if (isSaving) {
           if (options?.reason === 'autosave') {
             set({ pendingAutosaveAfterCurrent: true });
@@ -2110,10 +2178,28 @@ const createPlaybookStore: StateCreator<PlaybookStore> = (set, get) => ({
           return;
         }
         if (!currentPlaybook) return;
-        const savePayload = buildSavePayload(currentPlaybook, options);
+        if (isCanonicalAssistantPersistenceLocked(currentPlaybook.id, options?.assistantOperationId)) return;
+        let savePayload = buildSavePayload(currentPlaybook, options);
+        if (isMatchingCanonicalAssistantOperation(currentPlaybook.id, options?.assistantOperationId)) {
+          const existingSnapshot = get().canonicalAssistantSaveSnapshot;
+          if (existingSnapshot?.operationId === options?.assistantOperationId
+            && existingSnapshot?.playbookId === currentPlaybook.id) {
+            savePayload = structuredClone(existingSnapshot.payload);
+          } else {
+            set({
+              canonicalAssistantSaveSnapshot: {
+                operationId: options!.assistantOperationId!,
+                playbookId: currentPlaybook.id,
+                payload: structuredClone(savePayload),
+                dirtyVersion: get().dirtyVersion,
+              },
+            });
+          }
+        }
         const payloadTelemetry = api.getPlaybookUpdateTelemetry(savePayload);
         const lastSavedPayloadHash = get().lastSavedPayloadHashByPlaybookId[currentPlaybook.id];
-        const shouldSkipSave = lastSavedPayloadHash === payloadTelemetry.payloadHash;
+        const shouldSkipSave = !options?.assistantOperationId
+          && lastSavedPayloadHash === payloadTelemetry.payloadHash;
 
         logPlaybookPerfMetric('playbook_autosave_skipped_hash_match', {
           playbookId: currentPlaybook.id,
@@ -5361,14 +5447,14 @@ const createPlaybookStore: StateCreator<PlaybookStore> = (set, get) => ({
         }
       },
 
-      startFlowExecutionAction: async (flowId: string, inputContext?: Record<string, unknown>, idempotencyKey?: string) => {
+      startFlowExecutionAction: async (flowId: string, inputContext?: Record<string, unknown>, idempotencyKey?: string, options?: ExecutePlaybookData) => {
         try {
           set((state) => ({
             executingPlaybookIds: [...state.executingPlaybookIds, flowId],
           }));
           const result = playbookFeatures.queryMutationsEnabled
-            ? await startExecutionMutation({ flowId, inputContext, idempotencyKey })
-            : await api.startFlowExecution(flowId, inputContext, idempotencyKey);
+            ? await startExecutionMutation({ flowId, inputContext, idempotencyKey, options })
+            : await api.startFlowExecution(flowId, inputContext, idempotencyKey, options);
           return result;
         } catch (err) {
           set((state) => ({

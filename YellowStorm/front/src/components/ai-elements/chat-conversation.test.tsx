@@ -33,9 +33,11 @@ describe('ChatMessageBubble layout', () => {
 
   it('formats message metadata with the active application language', () => {
     const timestamp = new Date('2026-07-21T10:13:42Z');
-    render(<ChatMessageBubble message={{ id: 'u1', role: 'user', content: 'Question', timestamp, isEdited: true }} />);
+    render(<ChatMessageBubble message={{ id: 'u1', role: 'user', content: 'Question', timestamp, isEdited: true }} footerActions={<button type='button'>Copy</button>} />);
 
-    expect(screen.getByText(new Intl.DateTimeFormat('fr', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }).format(timestamp).replace(' à', ','))).toBeInTheDocument();
+    const actions = screen.getByRole('button', { name: 'Copy' });
+    const formattedTimestamp = screen.getByText(new Intl.DateTimeFormat('fr', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }).format(timestamp).replace(' à', ','));
+    expect(actions.compareDocumentPosition(formattedTimestamp) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(screen.getByText('Modifié')).toBeInTheDocument();
   });
 

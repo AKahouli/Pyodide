@@ -34,7 +34,7 @@ export const DEFAULT_WIDGET_SETTINGS = {
     greetingTitle: 'Bonjour, comment puis-je vous aider ?',
     greetingBody: 'Je peux vous aider a trouver une information, comprendre une demarche ou vous orienter vers le bon service.',
     privacyNotice: 'Ne saisissez pas de donnees sensibles dans le chat.',
-    footerText: 'Propulse par YellowStorm',
+    footerText: 'Powered by Yellowmind',
     footerLinks: [],
     suggestions: [
       {

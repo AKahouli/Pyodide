@@ -50,9 +50,6 @@ vi.mock('@/modules/localization', () => ({
         'replayReport.outcome.consistent.description': 'The result preserved the expected answer structure and required tool steps.',
         'replayReport.outcome.needsReview.title': 'Needs review',
         'replayReport.outcome.needsReview.description': 'The result mostly follows the reference, but one rule needs attention.',
-        'replayReport.outcome.notUsed.title': 'Reference was not used',
-        'replayReport.outcome.notUsed.description': 'The latest run was live because the reference rules could not be applied.',
-        'replayReport.outcome.notUsedWithReason': 'The reference was not used. Reason: {{reason}}',
         'replayReport.outcome.blocked.title': 'Reference blocked',
         'replayReport.outcome.blocked.description': 'The result did not satisfy the reference rules.',
         'replayReport.outcome.pending.title': 'Checking consistency',
@@ -60,13 +57,11 @@ vi.mock('@/modules/localization', () => ({
         'replayReport.outcome.score': 'Score',
         'replayReport.trust.consistent': 'Ready to trust',
         'replayReport.trust.needsReview': 'Review needed',
-        'replayReport.trust.notUsed': 'Reference not used',
         'replayReport.trust.blocked': 'Do not trust yet',
         'replayReport.trust.pending': 'Check in progress',
         'replayReport.rulesChecked': 'Rules checked',
         'replayReport.recommendedFix': 'Recommended fix',
         'replayReport.recommendedActions': 'Recommended actions',
-        'replayReport.action.reviewReference': 'Review why the reference was not used.',
         'replayReport.action.createExpectedFormat': 'Create or edit the expected answer format.',
         'replayReport.action.reviewChanges': 'Review the changed rules before trusting this run.',
         'replayReport.action.updateReference': 'Update the reference after reviewing the latest run.',
@@ -132,7 +127,6 @@ vi.mock('@/modules/localization', () => ({
         'replayReport.findingSeverity.warning': 'Warning',
         'replayReport.findingSeverity.fail': 'Fail',
         'replayReport.section.verdict': 'Replay verdict',
-        'replayReport.section.eligibility': 'Eligibility',
         'replayReport.section.signalStatuses': 'Signal evaluation',
         'replayReport.section.semantic': 'Semantic match',
         'replayReport.section.driftPolicy': 'Drift policy',
@@ -141,21 +135,15 @@ vi.mock('@/modules/localization', () => ({
         'replayReport.verdictValue.warning': 'Warning',
         'replayReport.overallScore': 'replayReport.overallScore',
         'replayReport.overallScoreTooltip': 'Technical overall definition and formula.',
-        'replayReport.applied': 'Applied',
-        'replayReport.skipped': 'Skipped',
         'replayReport.mode': 'replayReport.mode',
         'replayReport.modeValue.replay_flex': 'Replay (Flex)',
         'replayReport.baselineVersion': 'replayReport.baselineVersion',
         'replayReport.replayConfidence': 'Replay confidence',
         'replayReport.verdictReasons': 'Verdict reasons',
-        'replayReport.skippedSummary': 'Skipped summary',
         'replayReport.verdictReason.structuralDriftDetected': 'Structural drift was detected.',
         'replayReport.verdictReason.outputContractFailed': 'The output contract failed.',
         'replayReport.verdictReason.semanticMissingPoints': 'Some expected semantic points are missing.',
         'replayReport.verdictReason.semanticChangedPoints': 'Some semantic points changed.',
-        'replayReport.confidence': 'replayReport.confidence',
-        'replayReport.appliedSections': 'Applied sections',
-        'replayReport.skippedSections': 'Skipped sections',
         'replayReport.observations': 'Observations',
         'replayReport.reason.mismatch': '{{subject}} changed.',
         'replayReport.reasonSubject.nodeSnapshot': 'node snapshot',
@@ -174,7 +162,6 @@ vi.mock('@/modules/localization', () => ({
         'replayReport.outputFormatMatch': 'Output format match',
         'replayReport.outputContractMatch': 'Output contract match',
         'replayReport.dataDrift': 'Semantic preservation',
-        'replayReport.finding.confidenceBelowThreshold': 'Replay confidence drifted.',
         'replayReport.finding.intentNotEvaluated': 'Replay intent could not be evaluated.',
         'replayReport.finding.intentMismatch': 'Replay intent drifted.',
         'replayReport.finding.additionalToolsNotAllowed': 'Additional tools were used but not allowed.',
@@ -194,10 +181,7 @@ vi.mock('@/modules/localization', () => ({
         'replayReport.signalStatus.passed': 'Passed',
         'replayReport.signalStatus.warning': 'Warning',
         'replayReport.signalStatus.failed': 'Failed',
-        'replayReport.signalReason.replayNotApplied': 'Replay was not applied.',
         'replayReport.signalReason.evaluationPending': 'Evaluation is still pending.',
-        'replayReport.signalReason.confidenceBelowThreshold': 'Replay confidence was below the required threshold.',
-        'replayReport.signalReason.requiredContextUnresolved': 'Required replay context could not be resolved for this replay.',
         'replayReport.signalReason.intentNotConfigured': 'No baseline intent was configured for this replay.',
         'replayReport.signalReason.intentNotEvaluated': 'Observed intent was not captured for this replay.',
         'replayReport.signalReason.intentMismatch': 'Observed intent did not match the baseline intent.',
@@ -215,7 +199,6 @@ vi.mock('@/modules/localization', () => ({
         'replayReport.signalReason.semanticScoreBelowThreshold': 'Semantic preservation fell below the expected threshold.',
         'replayReport.signalReason.semanticStaleContextReferences': 'Replay output still referenced stale baseline context.',
         'replayReport.signalReason.semanticUnsupportedClaims': 'Replay output included unsupported claims.',
-        'replayReport.reason.requiredContextUnresolved': 'Required replay context could not be resolved.',
         'replayReport.reason.missingRequiredTool': 'A required tool call was missing.',
         'replayReport.reason.staleContextValueInToolArgs': 'Observed tool arguments still used stale baseline context values.',
         'replayReport.semanticPreserved': 'Preserved points',
@@ -297,12 +280,6 @@ describe('ReplayReportPanel', () => {
             replayId: 'replay-1',
             validationVersion: 3,
             mode: 'replay_flex',
-            applied: true,
-            confidenceScore: 100,
-            appliedSections: ['output_contract'],
-            skippedSections: [],
-            invalidationReasons: ['node_snapshot_mismatch'],
-            confidenceFactors: { nodeSnapshotHash: 30 },
             outputContractEvaluated: true,
             outputContractPassed: true,
             structuralDriftScore: 100,
@@ -393,7 +370,6 @@ describe('ReplayReportPanel', () => {
     expect(screen.getByText('Rules checked')).toBeInTheDocument();
     openAdvancedDiagnostics();
     expect(screen.getByText(/Structural drift was detected./)).toBeInTheDocument();
-    expect(screen.getByText(/node snapshot changed./)).toBeInTheDocument();
     expect(screen.getByText('Replay verdict')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Technical overall definition and formula.' })).toBeInTheDocument();
     expect(screen.getByText('Drift policy')).toBeInTheDocument();
@@ -422,12 +398,6 @@ describe('ReplayReportPanel', () => {
             replayId: 'replay-2',
             validationVersion: 4,
             mode: 'replay_strict',
-            applied: true,
-            confidenceScore: 90,
-            appliedSections: [],
-            skippedSections: [],
-            invalidationReasons: [],
-            confidenceFactors: {},
             outputContractEvaluated: false,
             outputContractPassed: false,
             structuralDriftScore: null,
@@ -517,12 +487,6 @@ describe('ReplayReportPanel', () => {
             replayId: 'replay-3',
             validationVersion: 1,
             mode: 'replay_flex',
-            applied: true,
-            confidenceScore: 88,
-            appliedSections: [],
-            skippedSections: [],
-            invalidationReasons: [],
-            confidenceFactors: {},
             outputContractEvaluated: false,
             outputContractPassed: false,
             structuralDriftScore: null,
@@ -607,12 +571,6 @@ describe('ReplayReportPanel', () => {
           replayId: 'replay-4',
           validationVersion: 1,
           mode: 'replay_flex',
-          applied: true,
-          confidenceScore: 92,
-          appliedSections: [],
-          skippedSections: [],
-          invalidationReasons: [],
-          confidenceFactors: {},
           outputContractEvaluated: true,
           outputContractPassed: true,
           structuralDriftScore: 100,
@@ -732,65 +690,12 @@ describe('ReplayReportPanel', () => {
     expect(screen.getByText('Replay evaluation is not applicable for this step.')).toBeInTheDocument();
   });
 
-  it('shows skipped summary and signal statuses for skipped reports', async () => {
-    apiClientMock.get.mockResolvedValueOnce({
-      data: {
-        data: [{
-          id: 'report-5',
-          executionId: 'exec-5',
-          flowId: 'playbook-1',
-          taskId: 'task-5',
-          replayId: 'replay-5',
-          validationVersion: 1,
-          mode: 'replay_flex',
-          applied: false,
-          confidenceScore: 45,
-          appliedSections: [],
-          skippedSections: ['tool_policy'],
-          invalidationReasons: ['confidence_below_threshold'],
-          confidenceFactors: {},
-          outputContractEvaluated: false,
-          outputContractPassed: false,
-          structuralDriftScore: null,
-          toolPolicyScore: null,
-          verdict: 'skipped',
-          overallScore: null,
-          verdictReasons: ['replay_not_applied'],
-          structuralDriftReasons: [],
-          semanticMatch: null,
-          contextSubstitutionStatus: { status: 'failed', reason: 'confidence_below_threshold' },
-          toolSequenceStatus: { status: 'not_evaluated', reason: 'confidence_below_threshold' },
-          semanticStatus: { status: 'not_evaluated', reason: 'confidence_below_threshold' },
-          createdAt: '2025-01-01T00:00:00.000Z',
-          updatedAt: '2025-01-01T00:00:05.000Z',
-        }],
-      },
-    });
-
-    render(<ReplayReportPanel playbookId="playbook-1" taskId="task-5" executionId="exec-5" execution={null} />);
-
-    await flushAsyncWork();
-
-    expect(screen.getByText('Rules checked')).toBeInTheDocument();
-    expect(screen.getByText('Reference not used')).toBeInTheDocument();
-    expect(screen.getAllByText(/The reference was not used. Reason:/).length).toBeGreaterThan(0);
-    expect(screen.queryByText('What changed')).not.toBeInTheDocument();
-    expect(screen.getByText('Recommended actions')).toBeInTheDocument();
-    expect(screen.getByText('Review why the reference was not used.')).toBeInTheDocument();
-    openAdvancedDiagnostics();
-    expect(screen.getByText('Signal evaluation')).toBeInTheDocument();
-    expect(screen.getByText(/Skipped summary:/)).toBeInTheDocument();
-    expect(screen.getAllByText('Replay confidence was below the required threshold.').length).toBeGreaterThan(0);
-    expect(screen.queryByText('Drift policy')).not.toBeInTheDocument();
-  });
-
   it('renders a consistent reference outcome with keep-reference action', async () => {
     apiClientMock.get.mockResolvedValueOnce({
       data: {
         data: [{
           id: 'report-pass', executionId: 'exec-pass', flowId: 'playbook-1', taskId: 'task-pass', replayId: 'replay-pass',
-          validationVersion: 1, mode: 'replay_flex', applied: true, confidenceScore: 95, appliedSections: [], skippedSections: [],
-          invalidationReasons: [], confidenceFactors: {}, outputContractEvaluated: true, outputContractPassed: true,
+          validationVersion: 1, mode: 'replay_flex', outputContractEvaluated: true, outputContractPassed: true,
           structuralDriftScore: null, toolPolicyScore: null, verdict: 'pass', overallScore: 95, verdictReasons: [],
           structuralDriftReasons: [], semanticMatch: null, createdAt: '2025-01-01T00:00:00.000Z', updatedAt: '2025-01-01T00:00:05.000Z',
         }],
@@ -812,8 +717,7 @@ describe('ReplayReportPanel', () => {
       data: {
         data: [{
           id: 'report-fail', executionId: 'exec-fail', flowId: 'playbook-1', taskId: 'task-fail', replayId: 'replay-fail',
-          validationVersion: 1, mode: 'replay_strict', applied: true, confidenceScore: 95, appliedSections: [], skippedSections: [],
-          invalidationReasons: [], confidenceFactors: {}, outputContractEvaluated: true, outputContractPassed: false,
+          validationVersion: 1, mode: 'replay_strict', outputContractEvaluated: true, outputContractPassed: false,
           structuralDriftScore: null, toolPolicyScore: null, verdict: 'fail', overallScore: 42, verdictReasons: ['output_contract_failed'],
           structuralDriftReasons: [], semanticMatch: null, outputContractStatus: { status: 'failed', reason: 'output_contract_failed' },
           createdAt: '2025-01-01T00:00:00.000Z', updatedAt: '2025-01-01T00:00:05.000Z',
@@ -841,12 +745,6 @@ describe('ReplayReportPanel', () => {
           replayId: 'replay-6',
           validationVersion: 1,
           mode: 'replay_flex',
-          applied: true,
-          confidenceScore: 82,
-          appliedSections: [],
-          skippedSections: [],
-          invalidationReasons: [],
-          confidenceFactors: {},
           outputContractEvaluated: false,
           outputContractPassed: false,
           structuralDriftScore: null,
@@ -907,12 +805,6 @@ describe('ReplayReportPanel', () => {
           replayId: 'replay-1',
           validationVersion: 3,
           mode: 'replay_flex',
-          applied: true,
-          confidenceScore: 100,
-          appliedSections: [],
-          skippedSections: [],
-          invalidationReasons: [],
-          confidenceFactors: {},
           outputContractEvaluated: false,
           outputContractPassed: false,
           structuralDriftScore: null,
@@ -969,9 +861,8 @@ describe('ReplayReportPanel', () => {
       data: {
         data: [{
           id: 'report-1', executionId: 'exec-1', flowId: 'playbook-1', taskId: 'task-1', iteration: 0,
-          replayId: 'replay-1', validationVersion: 3, mode: 'replay_flex', applied: true, confidenceScore: 100,
-          appliedSections: [], skippedSections: [], invalidationReasons: [], confidenceFactors: {},
-          outputContractEvaluated: false, outputContractPassed: false, structuralDriftScore: null, toolPolicyScore: null,
+            replayId: 'replay-1', validationVersion: 3, mode: 'replay_flex',
+            outputContractEvaluated: false, outputContractPassed: false, structuralDriftScore: null, toolPolicyScore: null,
           verdict: 'warning', overallScore: 75, verdictReasons: ['semantic_score_below_pass_threshold'], structuralDriftReasons: [],
           semanticMatch: {
             matchScore: 75, semanticSimilarityScore: 75, evidenceConsistencyScore: 75, judgeScore: 75,
@@ -1047,8 +938,7 @@ describe('ReplayReportPanel', () => {
         data: {
           data: [{
             id: 'report-9', executionId: 'exec-9', flowId: 'playbook-1', taskId: 'task-9', iteration: 0,
-            replayId: 'replay-9', validationVersion: 2, mode: 'replay_flex', applied: true, confidenceScore: 90,
-            appliedSections: [], skippedSections: [], invalidationReasons: [], confidenceFactors: {},
+            replayId: 'replay-9', validationVersion: 2, mode: 'replay_flex',
             outputContractEvaluated: true, outputContractPassed: true, structuralDriftScore: 95, toolPolicyScore: 95,
             verdict: 'warning', overallScore: 84, verdictReasons: ['evaluation_pending'], structuralDriftReasons: [],
             semanticMatch: null, postRunEvaluation: null,
@@ -1060,8 +950,7 @@ describe('ReplayReportPanel', () => {
         data: {
           data: [{
             id: 'report-9', executionId: 'exec-9', flowId: 'playbook-1', taskId: 'task-9', iteration: 0,
-            replayId: 'replay-9', validationVersion: 2, mode: 'replay_flex', applied: true, confidenceScore: 90,
-            appliedSections: [], skippedSections: [], invalidationReasons: [], confidenceFactors: {},
+            replayId: 'replay-9', validationVersion: 2, mode: 'replay_flex',
             outputContractEvaluated: true, outputContractPassed: true, structuralDriftScore: 95, toolPolicyScore: 95,
             verdict: 'warning', overallScore: 84, verdictReasons: ['evaluation_pending'], structuralDriftReasons: [],
             semanticMatch: null,
@@ -1141,8 +1030,7 @@ describe('ReplayReportPanel', () => {
       data: {
         data: [{
           id: 'report-hitl', executionId: 'exec-hitl', flowId: 'playbook-1', taskId: 'task-hitl', iteration: 0,
-          replayId: 'replay-hitl', validationVersion: 2, mode: 'replay_flex', applied: true, confidenceScore: 94,
-          appliedSections: [], skippedSections: [], invalidationReasons: [], confidenceFactors: {},
+          replayId: 'replay-hitl', validationVersion: 2, mode: 'replay_flex',
           outputContractEvaluated: false, outputContractPassed: false, structuralDriftScore: null, toolPolicyScore: null,
           verdict: 'warning', overallScore: 84, verdictReasons: [], structuralDriftReasons: [], semanticMatch: null,
           hitlSummary: {

@@ -80,7 +80,7 @@ class TestTeamOrchestratorExtended2:
         team = _orchestrator()
         delegate = MagicMock()
         team.delegation_factory.make_delegate_function.return_value = delegate
-        result = team.make_delegate_function("SearchAgent", AsyncMock(), False, MagicMock())
+        result = team.make_delegate_function("SearchAgent", AsyncMock(), False)
         assert result is delegate
         team.delegation_factory.make_delegate_function.assert_called_once()
 

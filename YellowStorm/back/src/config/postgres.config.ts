@@ -10,6 +10,10 @@ export interface PostgresConfig {
   maxPoolSize: number;
   idleTimeoutMs: number;
   connectionTimeoutMs: number;
+  statementTimeoutMs: number;
+  idleInTransactionTimeoutMs: number;
+  keepAlive: boolean;
+  applicationName: string;
 }
 
 export default registerAs('postgres', (): PostgresConfig => ({
@@ -22,4 +26,11 @@ export default registerAs('postgres', (): PostgresConfig => ({
   maxPoolSize: Number.parseInt(process.env.POSTGRES_MAX_POOL_SIZE || '10', 10),
   idleTimeoutMs: Number.parseInt(process.env.POSTGRES_IDLE_TIMEOUT || '30000', 10),
   connectionTimeoutMs: Number.parseInt(process.env.POSTGRES_CONNECT_TIMEOUT || '10000', 10),
+  statementTimeoutMs: Number.parseInt(process.env.POSTGRES_STATEMENT_TIMEOUT || '30000', 10),
+  idleInTransactionTimeoutMs: Number.parseInt(
+    process.env.POSTGRES_IDLE_IN_TRANSACTION_TIMEOUT || '30000',
+    10,
+  ),
+  keepAlive: process.env.POSTGRES_KEEPALIVE !== 'false',
+  applicationName: `${process.env.APP_NAME || 'yellostorm-back'}:${process.env.REPLICA_ID || process.env.HOSTNAME || 'local'}`,
 }));

@@ -1,4 +1,8 @@
 import { MessageComponent } from './message.interface';
+import type {
+  ConversationLatencyMetricsV1,
+  StreamChunkLatencyData,
+} from './latency.interface';
 
 export type StreamEventType =
   | 'connected'
@@ -31,9 +35,13 @@ export interface StreamChunkEvent {
   type: 'stream_chunk';
   data: {
     conversationId: string;
+    messageId?: string;
+    revision?: number;
     action: string;
     component: MessageComponent;
     metadata?: Record<string, unknown>;
+    /** One-time latency envelope on the first model-derived chunk only. */
+    latency?: StreamChunkLatencyData;
   };
 }
 
@@ -47,6 +55,8 @@ export interface StreamCompleteEvent {
       outputTokens: number;
       durationMs: number;
     };
+    /** First five server-side metrics; the browser contributes the sixth. */
+    latencyMetrics?: ConversationLatencyMetricsV1;
   };
 }
 
@@ -54,6 +64,7 @@ export interface StreamErrorEvent {
   type: 'stream_error';
   data: {
     conversationId: string;
+    messageId: string;
     errorCode: string;
     message: string;
   };

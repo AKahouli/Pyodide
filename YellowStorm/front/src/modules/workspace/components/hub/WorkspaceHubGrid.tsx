@@ -5,6 +5,7 @@ import type {
   ViewMode,
 } from '../../hooks/useWorkspaceHubFilters';
 import { WorkspaceCard } from './WorkspaceCard';
+import { useModuleTranslation } from '@/modules/localization';
 
 interface WorkspaceHubGridProps {
   groups: WorkspaceHubFilteredGroups;
@@ -23,11 +24,12 @@ export function WorkspaceHubGrid({
   onShare,
   onDelete,
 }: Readonly<WorkspaceHubGridProps>) {
+  const { t } = useModuleTranslation('workspace');
   const sections: Array<{ key: string; title: string; items: WorkspaceHubItem[] }> = [
-    { key: 'personal', title: 'Personnel', items: groups.personal },
-    { key: 'mine', title: 'Mes workspaces', items: groups.mine },
-    { key: 'shared', title: 'Partagés avec moi', items: groups.shared },
-    { key: 'public', title: 'Public', items: groups.public },
+    { key: 'personal', title: t('hub.owner.personal'), items: groups.personal },
+    { key: 'mine', title: t('hub.owner.mine'), items: groups.mine },
+    { key: 'shared', title: t('hub.owner.shared'), items: groups.shared },
+    { key: 'public', title: t('hub.owner.public'), items: groups.public },
   ];
 
   return (
@@ -41,7 +43,7 @@ export function WorkspaceHubGrid({
               </h2>
               <span className="h-px flex-1 bg-border/80" />
               <span className="text-[11px] tabular-nums text-muted-foreground">
-                {section.items.length} workspace{section.items.length === 1 ? '' : 's'}
+                {t(`hub.workspaceCount_${section.items.length === 1 ? 'one' : 'other'}`, { count: section.items.length })}
               </span>
             </header>
             <div

@@ -26,12 +26,17 @@ vi.mock('../voice/VoiceSession', () => ({
   VoiceSession: ({ open }: { open: boolean }) => (open ? <div>voice-session-open</div> : null),
 }));
 vi.mock('./MobileStreamHeader', () => ({ MobileStreamHeader: () => <div>stream-header</div> }));
+vi.mock('../executive/WorkyExecutiveView', () => ({ WorkyExecutiveView: () => <div>Atlas</div> }));
 
 import { useStreamAgents } from '../../agents/useStreamAgents';
 import { WorkyMobileStream } from './WorkyMobileStream';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const asMock = (fn: unknown) => fn as any;
+const model = {
+  plan: null, session: null, health: 'planning' as const, runtimeAsks: [], interactions: [],
+  currentWork: [], delegations: [], summary: { total: 0, completed: 0, active: 0, waitingExternal: 0, needsInput: 0 },
+};
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -59,7 +64,7 @@ describe('WorkyMobileStream', () => {
   it('renders the agent team and the bottom nav', () => {
     render(
       <MemoryRouter>
-        <WorkyMobileStream streamId="s1" approvalFor={null} onApprovalClose={() => {}} />
+        <WorkyMobileStream streamId="s1" approvalFor={null} onApprovalClose={() => {}} model={model} />
       </MemoryRouter>,
     );
     expect(screen.getByText('Atlas')).toBeTruthy();
@@ -70,7 +75,7 @@ describe('WorkyMobileStream', () => {
   it('opens the voice session from the nav voice button', async () => {
     render(
       <MemoryRouter>
-        <WorkyMobileStream streamId="s1" approvalFor={null} onApprovalClose={() => {}} />
+        <WorkyMobileStream streamId="s1" approvalFor={null} onApprovalClose={() => {}} model={model} />
       </MemoryRouter>,
     );
     expect(screen.queryByText('voice-session-open')).toBeNull();

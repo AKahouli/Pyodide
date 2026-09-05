@@ -15,7 +15,6 @@ vi.mock('@/components/ui/tooltip', () => ({
 vi.mock('./RenameDialog', () => ({ RenameDialog: ({ open }: { open: boolean }) => <div>{open ? 'rename-open' : 'rename-closed'}</div> }));
 vi.mock('./DeleteConversationDialog', () => ({ DeleteConversationDialog: ({ open }: { open: boolean }) => <div>{open ? 'delete-open' : 'delete-closed'}</div> }));
 vi.mock('./ShareDialog', () => ({ ShareDialog: ({ open }: { open: boolean }) => <div>{open ? 'share-open' : 'share-closed'}</div> }));
-vi.mock('./WorkspaceManagerSheet', () => ({ WorkspaceManagerSheet: ({ open }: { open: boolean }) => <div>{open ? 'workspace-open' : 'workspace-closed'}</div> }));
 vi.mock('./CreateGroupConversationDialog', () => ({ CreateGroupConversationDialog: () => null }));
 
 vi.mock('../hooks/useTypewriter', () => ({
@@ -43,7 +42,7 @@ vi.mock('../store', () => ({
 }));
 
 describe('ConversationHeader', () => {
-  it('navigates back and opens share/workspace dialogs', async () => {
+  it('navigates back and opens the share dialog without a header workspace selector', async () => {
     render(<ConversationHeader />);
 
     expect(screen.getByText('Conversation title')).toBeInTheDocument();
@@ -51,8 +50,7 @@ describe('ConversationHeader', () => {
     await userEvent.click(screen.getByRole('button', { name: 'header.actions.back' }));
     expect(mockNavigate).toHaveBeenCalledWith('/');
 
-    await userEvent.click(screen.getByRole('button', { name: 'header.tooltips.workspaces' }));
-    expect(screen.getByText('workspace-open')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'header.tooltips.workspaces' })).not.toBeInTheDocument();
 
     await userEvent.click(screen.getByRole('button', { name: 'header.tooltips.share' }));
     expect(screen.getByText('share-open')).toBeInTheDocument();

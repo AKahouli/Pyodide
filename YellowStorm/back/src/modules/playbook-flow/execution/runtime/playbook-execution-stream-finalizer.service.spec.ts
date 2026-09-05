@@ -72,7 +72,7 @@ describe('PlaybookExecutionStreamFinalizerService', () => {
       }),
     });
 
-    const completed = await service.finalizeEndedStream('exec-2', true);
+    const completed = await service.finalizeEndedStream('exec-2');
 
     expect(completed).toBe(true);
     expect(executionModel.updateOne).toHaveBeenCalledWith(
@@ -82,8 +82,8 @@ describe('PlaybookExecutionStreamFinalizerService', () => {
     expect(streamEvents.emitExecutionComplete).toHaveBeenCalledWith('exec-2', 'failed', 'task failed');
   });
 
-  it('marks a replay stream as completed when no failed task fallback is required', async () => {
-    const completed = await service.finalizeEndedStream('exec-3', false);
+  it('marks a replay stream as completed when no failed task exists', async () => {
+    const completed = await service.finalizeEndedStream('exec-3');
 
     expect(completed).toBe(true);
     expect(executionModel.updateOne).toHaveBeenCalledWith(

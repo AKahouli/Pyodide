@@ -23,10 +23,8 @@ class MemoryService:
     """
 
     # Configuration constants
-    _EMBEDDING_DIMS = 3072
     _TEMPERATURE = 0.0
     _MAX_TOKENS = 4000
-    _EMBEDDING_MODEL = "azure/text-embedding-3-large"
     _DEFAULT_MANAGER_LIMIT = 10
     _DEFAULT_AGENT_LIMIT = 10
 
@@ -43,7 +41,18 @@ class MemoryService:
         """
         self._settings = settings or get_settings()
         self._logger = get_logger("api.smart_rag.memory_manager")
+        self._collection_name = self._versioned_collection_name()
         self._config = self._build_config(self._settings.MEMORY_MODEL)
+
+    def _versioned_collection_name(self) -> str:
+        """Keep collections with incompatible vector dimensions isolated."""
+        base_name = self._settings.QDRANT_COLLECTION_NAME
+        if not base_name:
+            raise ValueError("QDRANT_COLLECTION_NAME is required for memory storage")
+        dimensions = self._settings.EMBEDDING_DIMS
+        if not isinstance(dimensions, int) or dimensions <= 0:
+            raise ValueError("EMBEDDING_DIMS must be a positive integer")
+        return f"{base_name}-d{dimensions}"
 
     def _build_config(self, model: str) -> Dict[str, Any]:
         """Build configuration dictionary for mem0.
@@ -60,7 +69,7 @@ class MemoryService:
                     "provider": "qdrant",
                     "config": {
                         "url": self._settings.QDRANT_URL,
-                        "collection_name": self._settings.QDRANT_COLLECTION_NAME,
+                        "collection_name": self._collection_name,
                         "api_key": self._settings.QDRANT_API_KEY,
                         "embedding_model_dims": self._settings.EMBEDDING_DIMS,
                     },
@@ -77,10 +86,9 @@ class MemoryService:
                 "embedder": {
                     "provider": "openai",
                     "config": {
-                        "model": self._EMBEDDING_MODEL,
+                        "model": self._settings.EMBEDDING_MODEL,
                         "api_key": self._settings.LITELLM_API_SECRET_KEY,
                         "openai_base_url": self._settings.LITELLM_API_BASE_URL,
-                        "embedding_dims": self._EMBEDDING_DIMS,
                     },
                 },
             }

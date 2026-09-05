@@ -79,4 +79,39 @@ describe('EvaluationSettingsPage', () => {
       }),
     })));
   });
+
+  it('does not apply maximum values to numeric settings', async () => {
+    vi.mocked(getAdminEvaluationSettings).mockResolvedValue({
+      responseReliability: { ...settings.responseReliability, mode: 'corrective_transparent' },
+    });
+    const { user } = renderWithProviders(<EvaluationSettingsPage />);
+    const concurrency = await screen.findByLabelText('evaluationSettings.concurrency');
+    const timeout = screen.getByLabelText('evaluationSettings.timeout');
+    const findings = screen.getByLabelText('evaluationSettings.maxFindings');
+    const threshold = screen.getByLabelText('evaluationSettings.correction.threshold');
+    const attempts = screen.getByLabelText('evaluationSettings.correction.maxAttempts');
+
+    expect(concurrency).not.toHaveAttribute('max');
+    expect(timeout).not.toHaveAttribute('max');
+    expect(findings).not.toHaveAttribute('max');
+    expect(threshold).not.toHaveAttribute('max');
+    expect(attempts).not.toHaveAttribute('max');
+
+    fireEvent.change(concurrency, { target: { value: '11' } });
+    fireEvent.change(timeout, { target: { value: '121' } });
+    fireEvent.change(findings, { target: { value: '11' } });
+    fireEvent.change(threshold, { target: { value: '101' } });
+    fireEvent.change(attempts, { target: { value: '4' } });
+    expect(screen.getByRole('button', { name: 'evaluationSettings.save' })).toBeEnabled();
+
+    await user.click(screen.getByRole('button', { name: 'evaluationSettings.save' }));
+    await waitFor(() => expect(updateAdminEvaluationSettings).toHaveBeenCalledWith(expect.objectContaining({
+      responseReliability: expect.objectContaining({
+        maxConcurrentEvaluations: 11,
+        timeoutMs: 121000,
+        maxFindings: 11,
+        correction: expect.objectContaining({ threshold: 101, maxAttempts: 4 }),
+      }),
+    })));
+  });
 });

@@ -1,7 +1,7 @@
 import { useState, useCallback, memo } from 'react';
 import { NavLink } from 'react-router-dom';
 import { MoreHorizontal, Pencil, Share, Trash2, Users, FolderPlus, FolderInput, FolderMinus, Plus } from 'lucide-react';
-import { SidebarMenuButton, SidebarMenuAction } from '@/components/ui/sidebar';
+import { SidebarMenuButton, SidebarMenuAction, useSidebar } from '@/components/ui/sidebar';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -64,6 +64,7 @@ export const ConversationItem = memo(function ConversationItem({
   const clearTypewriter = useConversationStore((s) => s.clearTypewriter);
   const currentConversationId = useConversationStore((s) => s.currentConversationId);
   const projects = useProjects();
+  const { isMobile, setOpenMobile } = useSidebar();
 
   // Typewriter effect for newly generated names
   const isTypewriting = typewriterConversationId === id;
@@ -102,7 +103,13 @@ export const ConversationItem = memo(function ConversationItem({
         onDragStart={draggable ? handleDragStart : undefined}
       >
         <SidebarMenuButton asChild tooltip={displayTitle} isActive={resolvedActive}>
-          <NavLink to={resolvedTo} draggable={false}>
+          <NavLink
+            to={resolvedTo}
+            draggable={false}
+            onClick={() => {
+              if (isMobile) setOpenMobile(false);
+            }}
+          >
 
             {isGroup && (
               <div className='relative'>

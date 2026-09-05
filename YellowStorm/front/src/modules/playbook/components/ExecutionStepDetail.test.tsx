@@ -51,7 +51,6 @@ vi.mock('@/modules/localization', () => ({
         'replayReport.postRun.detailsTitle': 'Advanced diagnostics',
         'replayReport.advancedHint': 'Open technical scores and raw judge output.',
         'replayReport.section.verdict': 'Replay verdict',
-        'replayReport.section.eligibility': 'Eligibility',
         'replayReport.section.semantic': 'Semantic match',
         'replayReport.section.structuralTooling': 'Structural & tooling',
         'replayReport.verdictReasons': 'Verdict reasons',
@@ -183,19 +182,63 @@ describe('ExecutionStepDetail', () => {
           components: [{
             type: 'artifact',
             data: {
-              filePath: 'generated/intelligence_artificielle.pdf',
+              artifactId: 'opaque-pdf',
               filename: 'intelligence_artificielle.pdf',
+              availability: 'ready',
             },
           } as any],
         }}
+        execution={{ id: 'exec-1', taskResults: [] } as any}
       />,
     );
 
     expect(screen.getByText('intelligence_artificielle.pdf')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'actionView' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'actionDownload' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'artifacts.view intelligence_artificielle.pdf' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'artifacts.download intelligence_artificielle.pdf' })).toBeInTheDocument();
 
     storeState.currentPlaybook = null;
+  });
+
+  it('shows secure actions for a verified upstream input artifact', () => {
+    storeState.currentPlaybook = {
+      id: 'p1',
+      tasks: [{
+        id: 't1',
+        title: 'Analyze Data',
+        inputPorts: [{ id: 'report', name: 'Report', artifactKind: 'document' }],
+      }],
+      dataBindings: [{
+        targetNode: 't1',
+        targetPort: 'report',
+        sourceNode: 'source-task',
+        sourcePort: 'default',
+      }],
+    };
+
+    render(
+      <ExecutionStepDetail
+        step={baseStep}
+        execution={{
+          id: 'exec-1',
+          taskResults: [{
+            ...baseStep,
+            taskId: 'source-task',
+            nodeTitle: 'Generate PDF',
+            artifacts: [{
+              portId: 'default',
+              artifactId: 'opaque-input-pdf',
+              artifactKind: 'document',
+              filename: 'upstream.pdf',
+              availability: 'ready',
+            }],
+          }],
+        } as any}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: /Report/ }));
+    expect(screen.getByRole('button', { name: 'artifacts.view upstream.pdf' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'artifacts.download upstream.pdf' })).toBeInTheDocument();
   });
 
   it('uses the planner title for generated Dynamic Reasoning steps', () => {
@@ -229,7 +272,7 @@ describe('ExecutionStepDetail', () => {
     expect(screen.queryByText(runtimeTaskId)).not.toBeInTheDocument();
   });
 
-  it('renders replay and output-format badges immediately from task state and opens the format editor', async () => {
+  it('does not present current reference readiness as historical execution evidence', async () => {
     const onOpenOutputFormatEditor = vi.fn();
     storeState.currentPlaybook = {
       id: 'p1',
@@ -268,7 +311,7 @@ describe('ExecutionStepDetail', () => {
       />,
     );
 
-    expect(screen.getByText('detail.badges.replayBaseline')).toBeInTheDocument();
+    expect(screen.queryByText('detail.badges.replayUsed')).not.toBeInTheDocument();
     expect(screen.getByText('detail.badges.outputFormatTemplate')).toBeInTheDocument();
 
     await userEvent.click(screen.getByRole('button', { name: 'detail.badges.outputFormatTemplate' }));
@@ -548,7 +591,7 @@ describe('ExecutionStepDetail', () => {
     expect(screen.queryByText(/cbd665d0-e3b7-4bac-bb1b-4393de74e116/)).not.toBeInTheDocument();
   });
 
-  it('updates the step replay mode selector when the selected task mode changes', () => {
+  it('keeps execution mode provenance read-only when current task configuration changes', () => {
     storeState.currentPlaybook = {
       id: 'p1',
       tasks: [{ id: 't1', stepReplayMode: 'live' }],
@@ -560,8 +603,7 @@ describe('ExecutionStepDetail', () => {
       />,
     );
 
-    const trigger = screen.getByRole('combobox');
-    expect(trigger).toHaveTextContent('execution.mode.live');
+    expect(screen.getByText('execution.modeLabel.liveRun')).toBeInTheDocument();
 
     storeState.currentPlaybook = {
       id: 'p1',
@@ -574,12 +616,12 @@ describe('ExecutionStepDetail', () => {
       />,
     );
 
-    expect(trigger).toHaveTextContent('execution.mode.replayStrict');
+    expect(screen.getByText('execution.modeLabel.liveRun')).toBeInTheDocument();
 
     storeState.currentPlaybook = null;
   });
 
-  it('prefers the live playbook task replay mode over the stale execution snapshot', () => {
+  it('reports the mode captured by the selected execution instead of current task configuration', () => {
     storeState.currentPlaybook = {
       id: 'p1',
       tasks: [{ id: 't1', stepReplayMode: 'replay_flex' }],
@@ -602,6 +644,8 @@ describe('ExecutionStepDetail', () => {
           startedAt: '2025-01-01T00:00:00.000Z',
           completedAt: '2025-01-01T00:00:01.000Z',
           singleStepTaskId: null,
+          executionMode: 'live',
+          stepExecutionModes: { t1: 'replay_strict' },
           playbookSnapshot: { tasks: [{ id: 't1', stepReplayMode: 'live' }] },
           totalInputTokens: 0,
           totalOutputTokens: 0,
@@ -612,7 +656,7 @@ describe('ExecutionStepDetail', () => {
       />,
     );
 
-    expect(screen.getByRole('combobox')).toHaveTextContent('execution.mode.replayFlex');
+    expect(screen.getByText('execution.modeLabel.exactReference')).toBeInTheDocument();
 
     storeState.currentPlaybook = null;
   });
@@ -1766,12 +1810,6 @@ describe('ExecutionStepDetail', () => {
       replayId: 'replay-1',
       validationVersion: 3,
       mode: 'replay_strict',
-      applied: true,
-      confidenceScore: 100,
-      appliedSections: ['output_contract'],
-      skippedSections: [],
-      invalidationReasons: ['node_snapshot_mismatch'],
-      confidenceFactors: { nodeSnapshotHash: 30 },
       outputContractEvaluated: true,
       outputContractPassed: true,
       structuralDriftScore: 100,
@@ -1824,7 +1862,6 @@ describe('ExecutionStepDetail', () => {
     expect((await screen.findAllByText('Reference Check')).length).toBeGreaterThan(0);
     fireEvent.click(screen.getByRole('button', { name: /Advanced diagnostics/i }));
     expect(screen.getByText('Replay verdict')).toBeInTheDocument();
-    expect(screen.getByText('Eligibility')).toBeInTheDocument();
     expect(screen.getByText('Semantic match')).toBeInTheDocument();
     expect(screen.getByText('Structural & tooling')).toBeInTheDocument();
     expect(screen.getByText(/replayReport.verdict: replayReport.verdictValue.warning/)).toBeInTheDocument();
@@ -1833,7 +1870,6 @@ describe('ExecutionStepDetail', () => {
     expect(screen.getAllByText(/Structural drift was detected./).length).toBeGreaterThan(0);
     expect(screen.getByText(/Replay output matches the captured intent/)).toBeInTheDocument();
     expect(screen.getAllByText(/minor citation detail/).length).toBeGreaterThan(0);
-    expect(document.body).toHaveTextContent('node snapshot changed.');
     expect(document.body).toHaveTextContent('Missing required section: Summary.');
   });
 
@@ -2185,7 +2221,7 @@ describe('ExecutionStepDetail', () => {
       />,
     );
 
-    expect(screen.getAllByRole('combobox')).toHaveLength(2);
+    expect(screen.getAllByRole('combobox')).toHaveLength(1);
     expect(screen.getByText(/detail.evaluation.attempt - \| .*2025/)).toBeInTheDocument();
     expect(screen.getAllByText('Latest advisor result.').length).toBeGreaterThan(0);
   });

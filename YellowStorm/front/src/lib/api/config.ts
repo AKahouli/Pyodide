@@ -75,8 +75,10 @@ export const API_ENDPOINTS = {
     check: '/health',
     live: '/health/live',
     ready: '/health/ready',
-    history: '/health/history',
-    stats: '/health/stats',
+    admin: '/admin/health',
+    history: '/admin/health/history',
+    stats: '/admin/health/stats',
+    postgres: '/admin/health/postgres',
   },
   system: {
     maintenance: '/experimental/system/maintenance',
@@ -110,11 +112,11 @@ export const API_ENDPOINTS = {
   adminConversationSettings: {
     base: '/admin/conversation-settings',
     agents: '/admin/conversation-settings/agents',
+    sensitiveTextRedaction: '/admin/conversation-settings/sensitive-text-redaction',
   },
   adminPlaybookSettings: {
     base: '/admin/playbook-settings',
     plannerAgents: '/admin/playbook-settings/planner-agents',
-    suggestorAgents: '/admin/playbook-settings/suggestor-agents',
   },
   adminGuardrails: {
     base: '/admin/guardrails',
@@ -211,14 +213,17 @@ export const API_ENDPOINTS = {
     createGoverned: '/conversations/governed',
     byId: (id: string) => `/conversations/${id}`,
     branch: (id: string) => `/conversations/${id}/branches`,
+    playbookHandoffs: (id: string) => `/conversations/${id}/playbook-handoffs`,
     join: (id: string) => `/conversations/${id}/join`,
     taggedAgents: (id: string) => `/conversations/${id}/tagged-agents`,
     messages: (id: string) => `/conversations/${id}/messages`,
+    activeStream: (id: string) => `/conversations/${id}/active-stream`,
     messageById: (convId: string, msgId: string) => `/conversations/${convId}/messages/${msgId}`,
     feedback: (convId: string, msgId: string) => `/conversations/${convId}/messages/${msgId}/feedback`,
     rerunReliabilityEvaluation: (convId: string, msgId: string) => `/conversations/${convId}/messages/${msgId}/reliability-evaluation/rerun`,
     regenerate: (convId: string, msgId: string) => `/conversations/${convId}/messages/${msgId}/regenerate`,
     stop: (convId: string, msgId: string) => `/conversations/${convId}/messages/${msgId}/stop`,
+    frontendLatency: (convId: string, msgId: string) => `/conversations/${convId}/messages/${msgId}/latency/frontend-paint`,
     branches: (convId: string, msgId: string) => `/conversations/${convId}/messages/${msgId}/branches`,
     report: (convId: string, msgId: string) => `/conversations/${convId}/messages/${msgId}/report`,
     markMentionSeen: (conversationId: string, messageId: string) => `/conversations/${conversationId}/messages/${messageId}/mention-seen`,
@@ -228,7 +233,10 @@ export const API_ENDPOINTS = {
     fileConfirm: (convId: string) => `/conversations/${convId}/files/confirm`,
     fileDelete: (convId: string, docId: string) => `/conversations/${convId}/files/${docId}`,
     stream: '/conversations/stream',
-    artifactUrl: '/conversations/artifact-url',
+    artifactUrl: (conversationId: string, messageId: string, artifactId: string) =>
+      `/conversations/${conversationId}/messages/${messageId}/artifacts/${artifactId}/url`,
+    citationUrl: (conversationId: string, messageId: string) =>
+      `/conversations/${conversationId}/messages/${messageId}/citations/url`,
     composerSuggestions: '/conversations/suggestions',
     settings: '/conversations/settings',
     // Share endpoints
@@ -303,6 +311,8 @@ export const API_ENDPOINTS = {
     byId: (id: string) => `/admin/users/${id}`,
     suspend: (id: string) => `/admin/users/${id}/suspend`,
     activate: (id: string) => `/admin/users/${id}/activate`,
+    approveRegistration: (id: string) => `/admin/users/${id}/approve-registration`,
+    rejectRegistration: (id: string) => `/admin/users/${id}/reject-registration`,
     assignPlan: (id: string) => `/admin/users/${id}/assign-plan`,
   },
   auditLogs: {
@@ -482,16 +492,12 @@ export const API_ENDPOINTS = {
   skills: {
     active: '/skills/active',
   },
-  secondBrain: {
-    turns: '/second-brain/turns',
-    confirm: (confirmationId: string) => `/second-brain/confirmations/${encodeURIComponent(confirmationId)}/confirm`,
-    reject: (confirmationId: string) => `/second-brain/confirmations/${encodeURIComponent(confirmationId)}/reject`,
-  },
   playbooks: {
     list: '/playbooks',
     generate: '/playbooks/generate',
     rewritePrompt: '/playbooks/rewrite-prompt',
     byId: (id: string) => `/playbooks/${id}`,
+    inputContract: (id: string) => `/playbooks/${id}/input-contract`,
     integrationLink: (id: string) => `/playbooks/${id}/integration-link`,
     publicExecute: (token: string) => `/playbooks/public/${token}/execute`,
     execute: (id: string) => `/playbooks/${id}/execute`,
@@ -524,6 +530,9 @@ export const API_ENDPOINTS = {
     outputFormatTemplate: (id: string, taskId: string) => `/playbooks/${id}/tasks/${taskId}/output-format-template`,
     intentDesign: (id: string) => `/playbooks/${id}/intent-design`,
     assistantTurns: (id: string) => `/playbooks/${id}/assistant/turns`,
+    assistantAttachments: (id: string) => `/playbooks/${id}/assistant/attachments`,
+    assistantAttachmentConfirm: (id: string, attachmentId: string) => `/playbooks/${id}/assistant/attachments/${attachmentId}/confirm`,
+    assistantMessages: (id: string) => `/playbooks/${id}/assistant/messages`,
     intentTraces: (id: string) => `/playbooks/${id}/intent-traces`,
     intentConstructions: (id: string) => `/playbooks/${id}/intent-constructions`,
     intentConstruction: (id: string, constructionId: string) => `/playbooks/${id}/intent-constructions/${constructionId}`,
@@ -627,9 +636,9 @@ export const API_ENDPOINTS = {
   playbookFlows: {
     list: '/playbooks',
     byId: (id: string) => `/playbooks/${id}`,
+    inputContract: (id: string) => `/playbooks/${id}/input-contract`,
     delta: (id: string) => `/playbooks/${id}/delta`,
     generate: '/playbooks/generate',
-    fromConversation: '/playbooks/from-conversation',
     rewritePrompt: '/playbooks/rewrite-prompt',
     design: (id: string) => `/playbooks/${id}/design`,
     designOperations: (id: string) => `/playbooks/${id}/design-operations`,
@@ -639,6 +648,8 @@ export const API_ENDPOINTS = {
     execute: (id: string) => `/playbooks/${id}/executions`,
     executions: (id: string) => `/playbooks/${id}/executions`,
     executionDetail: (executionId: string) => `/executions/${executionId}`,
+    executionArtifactAccess: (executionId: string, artifactId: string) => `/executions/${executionId}/artifacts/${artifactId}/access`,
+    artifactContent: '/executions/artifacts/content',
     hitlPolicy: (id: string) => `/playbooks/${id}/hitl/policy`,
     hitlBlockers: (id: string) => `/playbooks/${id}/hitl/blockers`,
     hitlBlocker: (id: string, blockerId: string) => `/playbooks/${id}/hitl/blockers/${blockerId}`,
@@ -694,19 +705,6 @@ export const API_ENDPOINTS = {
     streamEvents: (id: string) => `/worky/streams/${id}/events`,
     streamMessages: (id: string) => `/worky/streams/${id}/messages`,
     streamBoard: (id: string) => `/worky/streams/${id}/board`,
-    streamStart: (id: string) => `/worky/streams/${id}/start`,
-    streamPause: (id: string) => `/worky/streams/${id}/pause`,
-    streamResume: (id: string) => `/worky/streams/${id}/resume`,
-    streamStop: (id: string) => `/worky/streams/${id}`,
-    // Cancels the running orchestrator turn (StopSession RPC), vs streamStop
-    // which tears down the whole stream lifecycle.
-    streamStopTurn: (id: string) => `/worky/streams/${id}/stop`,
-    // Pauses the running orchestrator turn (PauseSession RPC); continue via a
-    // new message. ':id/pause' is the legacy stream pause, hence '-turn'.
-    streamPauseTurn: (id: string) => `/worky/streams/${id}/pause-turn`,
-    // Resumes a paused orchestrator session (continue via RunTask). ':id/resume'
-    // is the legacy stream resume, hence '-turn'.
-    streamResumeTurn: (id: string) => `/worky/streams/${id}/resume-turn`,
     streamDelete: (id: string) => `/worky/streams/${id}/delete`,
     respondInteraction: (id: string) => `/worky/interactions/${id}/respond`,
     taskById: (id: string) => `/worky/tasks/${id}`,

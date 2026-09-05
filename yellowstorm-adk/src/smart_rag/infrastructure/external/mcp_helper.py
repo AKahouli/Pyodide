@@ -16,6 +16,7 @@ from src.logger.logging import get_logger
 from google.adk.tools.mcp_tool.mcp_toolset import MCPToolset
 from google.adk.tools.mcp_tool.mcp_session_manager import SseServerParams
 from google.adk.tools.mcp_tool.mcp_toolset import StreamableHTTPConnectionParams
+from src.smart_rag.infrastructure.external.purpose_aware_mcp import PurposeAwareMcpToolset
 logger = get_logger("api.smart_rag.mcp_helper")
 app_settings = get_settings()
 
@@ -162,7 +163,7 @@ class MCPHelper:
             kwargs = {"connection_params": connection_params}
             if tool_filter is not None:
                 kwargs["tool_filter"] = tool_filter
-            toolset = MCPToolset(**kwargs)
+            toolset = PurposeAwareMcpToolset(**kwargs)
             toolset.mcp_type = mcp_type
             return toolset
         except Exception as e:

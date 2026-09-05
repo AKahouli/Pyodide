@@ -52,7 +52,7 @@ Use vault memory to establish durable feature context, then verify it against li
 
 ## Working Principles
 
-- when it comes to implement multiple tasks, Must ask me choose betwwen : finishing the work until the end without stopping unless you need to ask me for clarification OR Work step by step
+- For requests containing multiple independent tasks, ask whether to complete them end-to-end or proceed one task at a time. Do not ask when the tasks are naturally part of one implementation.
 - State assumptions that affect correctness, scope, safety, or external contracts.
 - Ask only when an unresolved choice would materially change the result.
 - Implement the smallest correct change. Do not add speculative features or abstractions.
@@ -60,7 +60,7 @@ Use vault memory to establish durable feature context, then verify it against li
 - Match established package conventions before introducing a new pattern.
 - Add or update tests for changed behavior and bug fixes when feasible.
 - Comments explain non-obvious intent, invariants, workarounds, or risk. Do not narrate the code.
-- Treat 300-line files and 50-line functions as review triggers, not automatic refactor mandates. Split only along a real responsibility boundary.
+- Aim to keep handwritten source files under 300 lines and functions under 50 lines. Treat these as review thresholds, not hard limits. When changed code crosses a threshold, split only along a clear responsibility boundary; otherwise briefly justify retaining the structure. Exclude generated files, migrations, fixtures, and declarative data.
 - Never hardcode secrets. Never print credentials, tokens, or sensitive payloads.
 - Use the project's i18n layer for user-facing frontend text.
 
@@ -107,7 +107,7 @@ Localized behavior change with no contract, schema, authorization, or cross-modu
 
 Multi-file feature, bug fix, frontend behavior, backend service, or meaningful state change.
 
-- Use `plan` when the task touches three or more files or has multiple plausible implementations.
+- Use `plan` for architectural, ambiguous, high-risk, or genuinely multi-step changes. Do not invoke it solely because a straightforward change touches three or more files.
 - Use `explore` for broad dependency tracing.
 - Implement and run focused tests, build, or lint.
 - Use `frontend-qa` for browser-visible changes.
@@ -194,38 +194,15 @@ The final response states:
 <!-- code-review-graph MCP tools -->
 ## MCP Tools: code-review-graph
 
-**IMPORTANT: This project has a knowledge graph. ALWAYS use the
-code-review-graph MCP tools BEFORE using Grep/Glob/Read to explore
-the codebase.** The graph is faster, cheaper (fewer tokens), and gives
-you structural context (callers, dependents, test coverage) that file
-scanning cannot.
+**IMPORTANT: Use the code-review-graph tools before Grep, Glob, or Read when exploring the codebase.** The graph auto-updates through repository hooks and provides structural context that file scanning cannot.
 
-### When to use graph tools FIRST
+| Task | Use first |
+|---|---|
+| Find code or relationships | `semantic_search_nodes_tool` or `query_graph_tool` |
+| Analyze impact or execution paths | `get_impact_radius_tool` or `get_affected_flows_tool` |
+| Review changes | `detect_changes_tool`, then `get_review_context_tool` when source context is needed |
+| Check test coverage | `query_graph_tool` with `pattern="tests_for"` |
+| Understand architecture | `get_architecture_overview_tool` or `list_communities_tool` |
+| Plan refactoring | `refactor_tool` |
 
-- **Exploring code**: `semantic_search_nodes_tool` or `query_graph_tool` instead of Grep
-- **Understanding impact**: `get_impact_radius_tool` instead of manually tracing imports
-- **Code review**: `detect_changes_tool` + `get_review_context_tool` instead of reading entire files
-- **Finding relationships**: `query_graph_tool` with callers_of/callees_of/imports_of/tests_for
-- **Architecture questions**: `get_architecture_overview_tool` + `list_communities_tool`
-
-Fall back to Grep/Glob/Read **only** when the graph doesn't cover what you need.
-
-### Key Tools
-
-| Tool | Use when |
-| ------ | ---------- |
-| `detect_changes_tool` | Reviewing code changes — gives risk-scored analysis |
-| `get_review_context_tool` | Need source snippets for review — token-efficient |
-| `get_impact_radius_tool` | Understanding blast radius of a change |
-| `get_affected_flows_tool` | Finding which execution paths are impacted |
-| `query_graph_tool` | Tracing callers, callees, imports, tests, dependencies |
-| `semantic_search_nodes_tool` | Finding functions/classes by name or keyword |
-| `get_architecture_overview_tool` | Understanding high-level codebase structure |
-| `refactor_tool` | Planning renames, finding dead code |
-
-### Workflow
-
-1. The graph auto-updates on file changes (via hooks).
-2. Use `detect_changes_tool` for code review.
-3. Use `get_affected_flows_tool` to understand impact.
-4. Use `query_graph_tool` pattern="tests_for" to check coverage.
+Fall back to Grep, Glob, and Read only when the graph does not provide the required information.

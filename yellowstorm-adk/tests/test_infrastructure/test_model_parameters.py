@@ -1,7 +1,13 @@
 import pytest
 from types import SimpleNamespace
 
-from src.smart_rag.infrastructure.model_parameters import normalize_messages_for_model, register_model_input_modalities
+from src.smart_rag.infrastructure.model_parameters import (
+    get_context_window_for_model,
+    get_reasoning_effort_for_model,
+    normalize_messages_for_model,
+    register_model_input_modalities,
+    resolve_model_config,
+)
 
 
 def test_text_only_messages_keep_text_and_tool_linkage_without_mutating_input():
@@ -124,6 +130,17 @@ def test_llm_factory_registers_modalities_from_model_config():
     ]
 
 
+def test_model_config_registers_reasoning_effort_and_context_capacity():
+    model_name = resolve_model_config({
+        "provider": "openai/reasoning-model",
+        "reasoning_effort": "high",
+        "context_window_tokens": 128000,
+    })
+
+    assert get_reasoning_effort_for_model(model_name) == "high"
+    assert get_context_window_for_model("reasoning-model") == 128000
+
+
 @pytest.mark.parametrize(
     ("modalities", "expected_types"),
     [
@@ -191,10 +208,18 @@ async def test_litellm_patch_normalizes_keyword_and_positional_text_only_message
 
     apply_litellm_debug_patch()
 
-    assert await litellm.acompletion("text-boundary-model", messages) == "async-result"
-    assert litellm.completion(model="text-boundary-model", messages=messages) == "sync-result"
+    assert await litellm.acompletion(
+        "text-boundary-model", messages, num_retries=0
+    ) == "async-result"
+    assert litellm.completion(
+        model="text-boundary-model", messages=messages, num_retries=0
+    ) == "sync-result"
     assert calls[0][1] == "azure/text-boundary-model"
     assert "model" not in calls[0][3]
+    assert calls[0][3]["num_retries"] == 0
+    assert calls[0][3]["timeout"] == 300
     assert calls[0][2][0]["content"] == [{"type": "text", "text": "question"}]
     assert calls[1][1] == "azure/text-boundary-model"
     assert calls[1][2][0]["content"] == [{"type": "text", "text": "question"}]
+    assert calls[1][3]["num_retries"] == 0
+    assert calls[1][3]["timeout"] == 300

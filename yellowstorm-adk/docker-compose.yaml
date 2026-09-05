@@ -7,9 +7,40 @@ services:
     restart: always
     env_file:
       - .env
+    environment:
+      RUN_CODE_RUNTIME_URL: http://yellowstorm-code-runtime:8080
+      RUN_CODE_RUNTIME_API_KEY: ${CODE_RUNTIME_API_KEY}
+    depends_on:
+      yellowstorm-code-runtime:
+        condition: service_healthy
     ports:
       - "3017:8001"  # FastAPI/REST endpoint
       - "50051:50051"  # gRPC endpoint
+  yellowstorm-code-runtime:
+    build:
+      context: ../yellowstorm-code-runtime
+    container_name: yellowstorm-code-runtime-dev
+    restart: unless-stopped
+    environment:
+      CODE_RUNTIME_API_KEY: ${CODE_RUNTIME_API_KEY}
+      CEPH_S3_ENDPOINT: ${CEPH_S3_ENDPOINT}
+      CEPH_S3_REGION: ${CEPH_S3_REGION:-us-east-1}
+      CEPH_S3_BUCKET: ${CEPH_S3_BUCKET}
+      CEPH_S3_ACCESS_KEY_ID: ${CEPH_S3_ACCESS_KEY_ID}
+      CEPH_S3_SECRET_ACCESS_KEY: ${CEPH_S3_SECRET_ACCESS_KEY}
+      CEPH_S3_FORCE_PATH_STYLE: ${CEPH_S3_FORCE_PATH_STYLE:-true}
+      RUN_CODE_MEMORY_MB: ${RUN_CODE_MEMORY_MB:-64}
+      RUN_CODE_CPU_TIMEOUT_MS: ${RUN_CODE_CPU_TIMEOUT_MS:-2000}
+      RUN_CODE_WALL_TIMEOUT_MS: ${RUN_CODE_WALL_TIMEOUT_MS:-5000}
+    mem_limit: 128m
+    cpus: 0.5
+    expose:
+      - "8080"
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8080/health/ready').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
   celery-worker-attribute-extraction:
    image: yscrmetachatbot001.azurecr.io/yellowstorm-adk
    container_name: yellowstorm-celery-worker-attr-extract

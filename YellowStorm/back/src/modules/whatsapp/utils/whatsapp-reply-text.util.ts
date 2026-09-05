@@ -16,13 +16,13 @@ export function extractWhatsAppReplyText(components?: MessageComponent[]): strin
     return textBlocks.join('\n').trim();
   }
 
-  const reasoningBlocks = components
-    .filter((component) => component.type === 'reasoning')
-    .map((component) => String(component.data?.content || ''))
+  const activityBlocks = components
+    .filter((component) => component.type === 'agentActivity')
+    .map((component) => String(component.data?.summary || ''))
     .filter(Boolean);
 
-  if (reasoningBlocks.length) {
-    return reasoningBlocks.join('\n').trim();
+  if (activityBlocks.length) {
+    return activityBlocks.join('\n').trim();
   }
 
   const taskBlocks = components

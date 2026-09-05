@@ -72,6 +72,7 @@ describe('usePlaybookCanvasExecutionHandlers', () => {
         makeTask({ id: 'task-3' }),
       ],
       advisorAutopilotEnabled: true,
+      advisorScoringMode: 'heuristic',
       advisorAutopilotTargetScore: 81,
       advisorAutopilotMaxTurns: 5,
     });
@@ -119,6 +120,7 @@ describe('usePlaybookCanvasExecutionHandlers', () => {
       },
       streaming: true,
       runNodeReflection: true,
+      advisorScoringMode: 'heuristic',
       advisorAutopilotEnabled: true,
       advisorAutopilotTargetScore: 81,
       advisorAutopilotMaxTurns: 5,

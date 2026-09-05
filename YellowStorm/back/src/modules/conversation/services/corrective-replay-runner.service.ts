@@ -7,7 +7,7 @@ import { MessageService } from './message.service';
 import { StreamService, type ConversationHistoryEntry } from './stream.service';
 import { CorrectiveReplayPromptBuilder, CORRECTIVE_REPLAY_PROMPT_VERSION } from './corrective-replay-prompt.builder';
 
-const INTERNAL_COMPONENT_TYPES = new Set(['reasoning', 'chainOfThought', 'queue', 'checkpoint', 'toolInfo']);
+const INTERNAL_COMPONENT_TYPES = new Set(['agentActivity', 'queue', 'checkpoint', 'toolActivity']);
 
 export interface CorrectiveReplayResult {
   components: MessageComponent[];
@@ -77,6 +77,7 @@ export class CorrectiveReplayRunnerService {
           prompt.correctionContext,
           { requestId: replayRequestId },
           sessionId,
+          replayRequestId,
         );
       } catch (error) {
         throw new CorrectiveReplayFailure('corrective_replay_request_build_failed', false);
@@ -179,7 +180,7 @@ export class CorrectiveReplayRunnerService {
     const messages = await this.messageService.findAllByConversation(conversationId);
     const history: ConversationHistoryEntry[] = [];
     for (const message of messages) {
-      if (message._id.toString() === questionMessageId) break;
+      if (message.id === questionMessageId) break;
       if (message.conversationType === 'user' && message.content?.trim()) {
         history.push({ role: 'CONVERSATION_HISTORY_ROLE_USER', text: message.content.slice(0, 30_000) });
       } else if (message.conversationType === 'ai') {

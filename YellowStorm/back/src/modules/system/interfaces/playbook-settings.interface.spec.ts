@@ -24,6 +24,39 @@ describe('normalizePlaybookExecutionSettings', () => {
   });
 
   it('normalizes a missing planner selection to null', () => {
-    expect(normalizePlaybookExecutionSettings().dynamicReasoning.plannerAgentId).toBeNull();
+    const result = normalizePlaybookExecutionSettings();
+    expect(result.dynamicReasoning.plannerAgentId).toBeNull();
+    expect(result).toMatchObject({
+      maxHitlRounds: 5,
+      pythonWorkerPoolSize: 8,
+      pythonWorkerMaxInflight: 4,
+      maxToolIterations: 40,
+      maxSandboxCallsPerStep: 30,
+      graphCacheEnabled: false,
+      graphCacheMaxEntries: 128,
+      graphCacheTtlSeconds: 900,
+    });
+  });
+
+  it('bounds dynamic runtime settings', () => {
+    expect(normalizePlaybookExecutionSettings({
+      maxHitlRounds: 1000,
+      pythonWorkerPoolSize: 0,
+      pythonWorkerMaxInflight: 100,
+      maxToolIterations: 0,
+      maxSandboxCallsPerStep: 1000,
+      graphCacheEnabled: true,
+      graphCacheMaxEntries: 20000,
+      graphCacheTtlSeconds: 0,
+    })).toMatchObject({
+      maxHitlRounds: 100,
+      pythonWorkerPoolSize: 1,
+      pythonWorkerMaxInflight: 20,
+      maxToolIterations: 1,
+      maxSandboxCallsPerStep: 100,
+      graphCacheEnabled: true,
+      graphCacheMaxEntries: 10000,
+      graphCacheTtlSeconds: 1,
+    });
   });
 });

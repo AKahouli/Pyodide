@@ -19,6 +19,13 @@ export interface Model {
   isConversationV2Default: boolean;
   omitTemperature: boolean;
   inputModalities: Array<'text' | 'image'>;
+  maxInputTokens: number | null;
+  maxOutputTokens: number | null;
+  supportsReasoning: boolean | null;
+  reasoning?: {
+    efforts: Array<{ id: string; name: string; description?: string }>;
+    defaultEffort?: string;
+  };
 }
 
 export interface ModelsListResponse {
