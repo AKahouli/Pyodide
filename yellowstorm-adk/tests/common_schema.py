@@ -59,6 +59,8 @@ class MockSettings(BaseModel):
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
     ADK_API_KEY: str = "mock_adk_api_key"
     VECTORSTORE_API_KEY: str = "mock_vectorstore_api_key"
+    QDRANT_COLLECTION_NAME: Optional[str] = "mock_qdrant_collection"
+    EMBEDDING_DIMS: int = 2560
     # Ollama
     OLLAMA_API_BASE_URL: Optional[str] = "mock_ollama_api_base_url"
     OLLAMA_API_KEY: Optional[str] = "mock_ollama_api_key"

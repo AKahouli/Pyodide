@@ -125,11 +125,16 @@ def test_native_tool_requires_flag_assignment_and_trusted_context(monkeypatch):
     assert run_code_module.create_run_code_tool({}) is None
     tool = run_code_module.create_run_code_tool(runtime_context)
     assert tool is not None
-    assert set(inspect.signature(tool).parameters) == {"code", "input", "tool_context"}
+    assert set(inspect.signature(tool).parameters) == {
+        "description",
+        "code",
+        "input",
+        "tool_context",
+    }
     declaration = FunctionTool(tool)._get_declaration()
     schema = declaration.parameters_json_schema
     normalized_description = " ".join(declaration.description.split())
-    assert set(schema["properties"]) == {"code", "input"}
+    assert set(schema["properties"]) == {"description", "code", "input"}
     assert len(declaration.description) <= 512
     assert "JSON explicitly" in normalized_description
     assert "/workspace/run" in declaration.description
@@ -152,7 +157,11 @@ async def test_native_tool_normalizes_result_without_exposing_context(monkeypatc
             "userId": "user-1", "runId": "run-1", "sourcePrefixes": []
         })
     })
-    result = await tool("return input;", {"count": 2})
+    result = await tool(
+        description="Count the provided items",
+        code="return input;",
+        input={"count": 2},
+    )
     assert result["result"] == {"count": 2}
     assert captured["context"].userId == "user-1"
     assert captured["code"] == "return input;"

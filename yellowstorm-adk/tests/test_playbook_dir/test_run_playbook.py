@@ -111,6 +111,10 @@ class TestRunPlaybook:
             user_id=playbook_request.user_id,
             session_id=playbook_request.session_id,
             agent_mode="mono",
+            message="team turn",
+        )
+        team_request.model_copy = lambda **kwargs: SimpleNamespace(
+            **{**vars(team_request), **kwargs.get("update", {})}
         )
         with patch(
             "src.smart_rag.engines.multi_agent.workflow_processor._run_agent_team_logic",
