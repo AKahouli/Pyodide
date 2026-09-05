@@ -114,7 +114,14 @@ def _register_sqlalchemy_listeners(profile_target, sync_engine) -> None:
 
     Listeners only accumulate into the ContextVar-active profile, so stale
     registrations on a long-lived engine stay inert outside instrumented calls.
+
+    Registration is idempotent per engine: the shared process-wide engine
+    outlives many services (and tests), and duplicate listeners would multiply
+    the SQL/pool counters for every statement.
     """
+    if getattr(sync_engine, "_yellowmind_latency_listeners_registered", False):
+        return
+
     from sqlalchemy import event
 
     def _before_cursor_execute(conn, cursor, statement, parameters, context, executemany):
@@ -158,6 +165,7 @@ def _register_sqlalchemy_listeners(profile_target, sync_engine) -> None:
     event.listen(sync_engine, "after_cursor_execute", _after_cursor_execute)
     event.listen(sync_engine, "connect", _on_connect)
     event.listen(sync_engine, "checkout", _on_checkout)
+    sync_engine._yellowmind_latency_listeners_registered = True
 
 
 def _emit(event_name: str, level: int, fields: Dict[str, Any]) -> None:

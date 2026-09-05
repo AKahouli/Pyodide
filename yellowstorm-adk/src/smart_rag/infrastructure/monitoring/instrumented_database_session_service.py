@@ -15,6 +15,7 @@ from typing import Optional
 from google.adk.events import Event
 from google.adk.sessions import DatabaseSessionService
 from google.adk.sessions.session import Session
+from sqlalchemy.ext.asyncio import AsyncEngine
 
 from src.smart_rag.infrastructure.monitoring.latency_diagnostics import (
     SessionLookupProfile,
@@ -30,8 +31,20 @@ from src.smart_rag.infrastructure.monitoring.latency_diagnostics import (
 class InstrumentedDatabaseSessionService(DatabaseSessionService):
     """``DatabaseSessionService`` with request-scoped lookup diagnostics."""
 
-    def __init__(self, db_url: str, **kwargs) -> None:
-        super().__init__(db_url, **kwargs)
+    def __init__(
+        self,
+        db_url: Optional[str] = None,
+        db_engine: Optional[AsyncEngine] = None,
+        **kwargs,
+    ) -> None:
+        """Mirror the ADK 2.8 constructor, including engine injection.
+
+        Exactly one of ``db_url`` or ``db_engine`` must be provided; ADK
+        validates this and raises ``ValueError`` otherwise. Passing the
+        process-wide shared engine lets callers keep one pooled engine and a
+        single warmed ``prepare_tables()`` instead of per-request engines.
+        """
+        super().__init__(db_url=db_url, db_engine=db_engine, **kwargs)
         _register_sqlalchemy_listeners(self, self.db_engine.sync_engine)
 
     async def prepare_tables(self) -> None:

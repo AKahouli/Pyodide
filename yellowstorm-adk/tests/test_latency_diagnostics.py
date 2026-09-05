@@ -230,3 +230,63 @@ class TestInstrumentedServiceContract:
 
         assert "prepare_tables" in vars(InstrumentedDatabaseSessionService)
         assert "_prepare_tables" not in vars(DatabaseSessionService)
+
+    @pytest.mark.asyncio
+    async def test_constructor_accepts_injected_engine_and_validates_exclusivity(self):
+        import pytest as _pytest
+        from sqlalchemy.ext.asyncio import create_async_engine
+
+        from src.smart_rag.infrastructure.monitoring.instrumented_database_session_service import (
+            InstrumentedDatabaseSessionService,
+        )
+
+        engine = create_async_engine("sqlite+aiosqlite://")
+        try:
+            service = InstrumentedDatabaseSessionService(db_engine=engine)
+            assert service.db_engine is engine
+            assert service._owns_db_engine is False
+            assert getattr(
+                engine.sync_engine, "_yellowmind_latency_listeners_registered", False
+            )
+
+            with _pytest.raises(ValueError):
+                InstrumentedDatabaseSessionService()
+            with _pytest.raises(ValueError):
+                InstrumentedDatabaseSessionService(
+                    db_url="sqlite+aiosqlite://", db_engine=engine
+                )
+        finally:
+            await engine.dispose()
+
+    @pytest.mark.asyncio
+    async def test_listener_registration_is_idempotent_per_engine(self):
+        from sqlalchemy import text
+        from sqlalchemy.ext.asyncio import create_async_engine
+
+        from src.smart_rag.infrastructure.monitoring.instrumented_database_session_service import (
+            InstrumentedDatabaseSessionService,
+        )
+        from src.smart_rag.infrastructure.monitoring.latency_diagnostics import (
+            SessionLookupProfile,
+            _current_session_lookup_profile,
+        )
+
+        engine = create_async_engine("sqlite+aiosqlite://")
+        try:
+            # Second construction on the same engine must not duplicate
+            # listeners (shared-engine deployments construct once, tests and
+            # hot reload may construct more).
+            InstrumentedDatabaseSessionService(db_engine=engine)
+            InstrumentedDatabaseSessionService(db_engine=engine)
+
+            profile = SessionLookupProfile()
+            token = _current_session_lookup_profile.set(profile)
+            try:
+                async with engine.connect() as conn:
+                    await conn.execute(text("SELECT 1"))
+            finally:
+                _current_session_lookup_profile.reset(token)
+
+            assert profile.sql_query_count == 1
+        finally:
+            await engine.dispose()
