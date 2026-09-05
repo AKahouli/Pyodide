@@ -200,7 +200,7 @@ class AgentFactory:
             top_k (int): Number of top results to return in searches.
             vectorstore_name (str): Name of the vector store to use for searches.
             task_order (Optional[str]): Task order context for searches.
-            mcp_toolset (Optional[MCPToolset]): MCP toolset for Excel operations.
+            mcp_toolset (Optional[MCPToolset]): Pre-built MCP toolset to attach.
             temperature (int): Temperature parameter for the LLM model.
             session_id (Optional[str]): Session ID for microsandbox callbacks.
             brain_documents (Optional[list]): Brain documents for microsandbox file mounting.
