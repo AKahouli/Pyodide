@@ -24,6 +24,13 @@ def _mark_first_model_agent_ready() -> None:
         trace.mark_first_model_agent_ready()
 
 
+def _mark_session_stage(marker: str) -> None:
+    """Stamp a session/runner breakdown milestone by method name (no I/O)."""
+    trace = get_current_conversation_latency_trace()
+    if trace is not None:
+        getattr(trace, marker)()
+
+
 
 # Delayed imports for google.adk to speed up startup
 def get_adk_runner():
@@ -35,8 +42,16 @@ def get_adk_agent():
     return Agent
 
 def get_database_session_service():
-    from google.adk.sessions import DatabaseSessionService
-    return DatabaseSessionService
+    """Session service class for classic Conversation paths.
+
+    Returns the instrumented subclass so session lookups and pre-model session
+    writes are profiled when the latency trace is active; behaviorally identical
+    (and inert) otherwise.
+    """
+    from src.smart_rag.infrastructure.monitoring.instrumented_database_session_service import (
+        InstrumentedDatabaseSessionService,
+    )
+    return InstrumentedDatabaseSessionService
 
 def get_in_memory_session_service():
     from google.adk.sessions import InMemorySessionService
@@ -520,13 +535,16 @@ Do not render charts for single values or non-numeric content.
             session_init_start = time.time()
             logger.info(f"[FREEZE DEBUG] Creating DatabaseSessionService for session {session_id}, user {self.config.user_id}")
             db_service_start = time.time()
+            _mark_session_stage("mark_session_service_init_start")
             data_base_session=get_database_session_service()(db_url=settings.DATABASE_URL)
+            _mark_session_stage("mark_session_service_init_end")
             db_service_duration = time.time() - db_service_start
             logger.info(f"[FREEZE DEBUG] DatabaseSessionService created in {db_service_duration:.3f}s")
 
             get_session_start = time.time()
             logger.info(f"[FREEZE DEBUG] Calling get_session() with app_name=manager_app, user_id={self.config.user_id}")
             using_database_session = True
+            _mark_session_stage("mark_session_lookup_start")
             try:
                 exsiting_session=await data_base_session.get_session(app_name="manager_app",user_id=self.config.user_id,session_id=session_id)
             except OSError as e:
@@ -538,6 +556,7 @@ Do not render charts for single values or non-numeric content.
                     session_id,
                     str(e),
                 )
+            _mark_session_stage("mark_session_lookup_end")
             get_session_duration = time.time() - get_session_start
 
             if exsiting_session:
@@ -596,6 +615,7 @@ Do not render charts for single values or non-numeric content.
 
                 create_session_start = time.time()
                 logger.info(f"[FREEZE DEBUG] Calling create_session() for session {session_id}")
+                _mark_session_stage("mark_session_create_seed_start")
                 try:
                     await data_base_session.create_session(app_name="manager_app", user_id=self.config.user_id,
                                                            session_id=session_id,state=state)
@@ -611,6 +631,7 @@ Do not render charts for single values or non-numeric content.
                         )
                     else:
                         raise
+                _mark_session_stage("mark_session_create_seed_end")
                 create_session_duration = time.time() - create_session_start
                 logger.info(f"[FREEZE DEBUG] create_session() COMPLETED in {create_session_duration:.3f}s")
 
@@ -619,12 +640,14 @@ Do not render charts for single values or non-numeric content.
 
             runner_start = time.time()
             logger.info(f"[FREEZE DEBUG] Creating Runner for session {session_id}")
+            _mark_session_stage("mark_runner_construction_start")
             agent_runner=get_adk_runner()(
                 agent=manager_agent,
                 app_name="manager_app",
                 session_service=data_base_session,
                 plugins=[CleanSessionPlugin()],
             )
+            _mark_session_stage("mark_runner_construction_end")
             runner_duration = time.time() - runner_start
             logger.info(f"[FREEZE DEBUG] Runner created in {runner_duration:.3f}s")
             # Process streaming events and capture the manager response
@@ -765,7 +788,9 @@ Do not render charts for single values or non-numeric content.
             # Persist the mono conversation so memory carries across turns, keyed
             # on the conversation's session_id.
             session_id_for_agent = session_id
+            _mark_session_stage("mark_session_service_init_start")
             session_helper = get_database_session_service()(db_url=settings.DATABASE_URL)
+            _mark_session_stage("mark_session_service_init_end")
             agent_id = self.agent_repository.get_agent_id_by_name(agent_name) or agent_config.get('id', 'no_id')
 
             result, mcp_used, execution_summary, generated_files = await self.agent_runner.run_agent_tool(

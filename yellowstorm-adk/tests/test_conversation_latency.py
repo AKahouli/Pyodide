@@ -165,6 +165,102 @@ class TestPreProviderBreakdown:
         assert breakdown == {"request_conversion_ms": 10.0}
 
 
+class TestSessionRunnerSetupBreakdown:
+    @staticmethod
+    def _pinned_trace() -> ConversationLatencyTrace:
+        trace = _make_trace()
+        base_ns = 1_000_000_000
+        trace.adk_request_received_perf_ns = base_ns
+        return trace
+
+    def test_markers_are_first_write_wins(self):
+        trace = _make_trace()
+        trace.mark_session_service_init_start()
+        first = trace.session_runner_setup.session_service_init_start_perf_ns
+        time.sleep(0.001)
+        trace.mark_session_service_init_start()
+        assert trace.session_runner_setup.session_service_init_start_perf_ns == first
+
+    def test_complete_intervals(self):
+        trace = self._pinned_trace()
+        srs = trace.session_runner_setup
+        base_ns = trace.adk_request_received_perf_ns
+        (srs.session_service_init_start_perf_ns,
+         srs.session_service_init_end_perf_ns,
+         srs.session_lookup_start_perf_ns,
+         srs.session_lookup_end_perf_ns,
+         srs.session_create_seed_start_perf_ns,
+         srs.session_create_seed_end_perf_ns,
+         srs.runner_construction_start_perf_ns,
+         srs.runner_construction_end_perf_ns,
+         trace.pre_provider.runner_invoked_perf_ns) = [
+            base_ns + int(ms * 1_000_000) for ms in (100, 150, 200, 320, 400, 430, 500, 540, 700)
+        ]
+        breakdown = trace.build_session_runner_setup_breakdown()
+        assert breakdown == {
+            "session_service_init_ms": 50.0,
+            "session_lookup_ms": 120.0,
+            "session_create_seed_ms": 30.0,
+            "runner_construction_ms": 40.0,
+            "runner_handoff_ms": 160.0,
+        }
+
+    def test_existing_session_omits_create_seed(self):
+        trace = self._pinned_trace()
+        srs = trace.session_runner_setup
+        base_ns = trace.adk_request_received_perf_ns
+        srs.session_service_init_start_perf_ns = base_ns
+        srs.session_service_init_end_perf_ns = base_ns + 5_000_000
+        srs.session_lookup_start_perf_ns = base_ns + 10_000_000
+        srs.session_lookup_end_perf_ns = base_ns + 130_000_000
+        srs.runner_construction_start_perf_ns = base_ns + 200_000_000
+        srs.runner_construction_end_perf_ns = base_ns + 240_000_000
+        trace.pre_provider.runner_invoked_perf_ns = base_ns + 245_000_000
+        assert trace.build_session_runner_setup_breakdown() == {
+            "session_service_init_ms": 5.0,
+            "session_lookup_ms": 120.0,
+            "runner_construction_ms": 40.0,
+            "runner_handoff_ms": 5.0,
+        }
+
+    def test_handoff_requires_runner_invoked(self):
+        trace = self._pinned_trace()
+        srs = trace.session_runner_setup
+        base_ns = trace.adk_request_received_perf_ns
+        srs.session_service_init_start_perf_ns = base_ns
+        srs.session_service_init_end_perf_ns = base_ns + 5_000_000
+        # runner_invoked never stamped → handoff omitted.
+        assert trace.build_session_runner_setup_breakdown() == {"session_service_init_ms": 5.0}
+
+    def test_implausible_interval_is_omitted(self):
+        trace = self._pinned_trace()
+        srs = trace.session_runner_setup
+        base_ns = trace.adk_request_received_perf_ns
+        # End before start → negative duration → omitted.
+        srs.session_lookup_start_perf_ns = base_ns + 20_000_000
+        srs.session_lookup_end_perf_ns = base_ns + 10_000_000
+        assert trace.build_session_runner_setup_breakdown() == {}
+
+    def test_proto_carries_nested_session_breakdown(self):
+        trace = self._pinned_trace()
+        srs = trace.session_runner_setup
+        base_ns = trace.adk_request_received_perf_ns
+        srs.session_service_init_start_perf_ns = base_ns
+        srs.session_service_init_end_perf_ns = base_ns + 5_000_000
+        srs.session_lookup_start_perf_ns = base_ns + 10_000_000
+        srs.session_lookup_end_perf_ns = base_ns + 130_000_000
+        trace.mark_llm_first_delta()
+        trace_pb = trace.build_latency_trace_proto(chatbot_pb2)
+        assert trace_pb.adk_pre_provider_breakdown.session_runner_setup_breakdown.session_lookup_ms == 120.0
+        assert trace_pb.adk_pre_provider_breakdown.session_runner_setup_breakdown.session_service_init_ms == 5.0
+
+    def test_proto_omits_nested_message_without_session_stages(self):
+        trace = _make_trace()
+        trace.mark_llm_first_delta()
+        trace_pb = trace.build_latency_trace_proto(chatbot_pb2)
+        assert not trace_pb.adk_pre_provider_breakdown.HasField("session_runner_setup_breakdown")
+
+
 class TestContextVarLifecycle:
     def test_set_and_reset(self):
         token = start_conversation_latency_trace("rq", "am", 5.0)

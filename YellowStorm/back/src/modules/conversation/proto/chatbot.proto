@@ -532,6 +532,18 @@ message AdkPreProviderBreakdown {
     double agent_tool_preparation_ms = 7;
     double session_runner_setup_ms = 8;
     double adk_runtime_pre_model_ms = 9;
+
+    // Diagnostic children of session_runner_setup_ms (ADK-local monotonic clock).
+    SessionRunnerSetupBreakdown session_runner_setup_breakdown = 10;
+}
+
+// Diagnostic breakdown of the ADK session/runner preparation stage.
+message SessionRunnerSetupBreakdown {
+    double session_service_init_ms = 1;
+    double session_lookup_ms = 2;
+    double session_create_seed_ms = 3;
+    double runner_construction_ms = 4;
+    double runner_handoff_ms = 5;
 }
 
 message StreamChunk {

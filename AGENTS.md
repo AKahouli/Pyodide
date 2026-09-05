@@ -25,7 +25,8 @@ Package managers:
 
 - Backend/frontend: npm.
 - Python: Poetry. When the `meta` Conda environment is required, prefer non-interactive execution such as `conda run -n meta poetry run pytest`.
-
+- Must always use the conda meta environment before executing a python script.
+ 
 ## Required Guidelines
 
 Before writing or reviewing code, read the guidelines for the affected area:

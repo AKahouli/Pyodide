@@ -53,6 +53,12 @@ import type {
   StreamChunkLatencyData,
 } from '../interfaces/latency.interface';
 import { LatencyEnvelopeTracker } from '../utils/latency-metrics';
+import {
+  beginBackendPreAdkStage,
+  endBackendPreAdkStage,
+  getBackendPreAdkTracker,
+  markGrpcDispatchedForLatency,
+} from '../utils/backend-latency-tracker';
 
 export interface StreamRequest {
   content: string;
@@ -623,6 +629,9 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
     latencyStart?: ConversationLatencyStartContext,
   ): Promise<void> {
     const logOpts: LogOptions = { requestId };
+    // Stream bootstrap: entry (latency setting sample included) until the
+    // agent execution request build starts.
+    beginBackendPreAdkStage('streamBootstrapMs');
     // Admin-managed switch (Admin > Conversation). When off, the trace context
     // is not forwarded to ADK, so no envelope returns and nothing is persisted.
     const latencyInstrumentationEnabled = await this.conversationSettings.isLatencyInstrumentationEnabled();
@@ -766,6 +775,7 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
     });
     assertLeaseOwned();
 
+    endBackendPreAdkStage('streamBootstrapMs');
     const builtRequest = await this.buildAgentExecutionRequest(
       userId,
       conversationId,
@@ -894,16 +904,19 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
     sessionId = conversationId,
     runtimeCorrelationId = sessionId,
   ): Promise<BuiltAgentExecutionRequest> {
+    beginBackendPreAdkStage('conversationContextLoadMs');
     const conversation = await this.conversationService.getConversationDocument(conversationId);
     const systemWorkspaceId = conversation.systemWorkspaceId;
     const groupMembers = conversation.isGroup
       ? await this.conversationService.getGroupMembers(conversationId)
       : [];
+    endBackendPreAdkStage('conversationContextLoadMs');
     const sharedAgentIds = conversation.isGroup ? conversation.groupTaggedAgentIds : [];
     const governanceOverride = request.governanceOverride;
     const requestedGovernedAgentIds = governanceOverride
       ? (request.agentIds.length ? request.agentIds : [governanceOverride.primaryAgentId])
       : undefined;
+    beginBackendPreAdkStage('workspaceAgentResolutionMs');
     const [workspaceContexts, agents] = await Promise.all([
       this.buildWorkspaceContexts(conversationId, logOpts, conversation),
       governanceOverride
@@ -923,6 +936,7 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
           request.reasoningEffort,
         ),
     ]);
+    endBackendPreAdkStage('workspaceAgentResolutionMs');
     if (conversation.runtimePurpose === PLATFORM_COPILOT) {
       const pinnedAgentId = conversation.pinnedAgentId?.toString();
       if (!pinnedAgentId || agents.length !== 1 || agents[0]?.id !== pinnedAgentId) {
@@ -932,6 +946,7 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
         );
       }
     }
+    beginBackendPreAdkStage('supplementalContextAssemblyMs');
     const [, attachedFiles, previousAttachedFiles, skills, currentAttachmentSources] = await Promise.all([
       this.resolveAgentBrainContexts(agents),
       this.buildAttachedFiles(request.attachedFileIds),
@@ -953,6 +968,8 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
         ),
       ],
     );
+    endBackendPreAdkStage('supplementalContextAssemblyMs');
+    beginBackendPreAdkStage('grpcPayloadPreparationMs');
     return this.agentRequestBuilder.build({
       userId,
       username,
@@ -1253,6 +1270,8 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
           backend_received_epoch_ms: latencyStart.backendReceivedEpochMs,
         };
       }
+      endBackendPreAdkStage('grpcPayloadPreparationMs');
+      markGrpcDispatchedForLatency();
       const call = useSingleAgent
         ? this.chatbotClient.RunSingleAgent(grpcRequest, metadata)
         : this.chatbotClient.RunAgentTeam(grpcRequest, metadata);
@@ -1273,9 +1292,19 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
       );
       let latencyMetrics: ConversationLatencyMetricsV1 | undefined;
       const takeLatencyEnvelope = (): StreamChunkLatencyData | undefined => {
+        // Read before take(): the tracker clears the captured trace on take.
+        const backendPreAdk = getBackendPreAdkTracker();
+        const capturedTrace = latencyTracker.capturedTrace;
         const envelope = latencyTracker.take();
         if (envelope) {
           latencyMetrics = { schemaVersion: 1, ...envelope.metrics, quality: envelope.quality };
+          const breakdown = backendPreAdk?.toBreakdown(capturedTrace ?? undefined);
+          if (breakdown) {
+            latencyMetrics.backendPreAdkBreakdown = breakdown;
+            // The first-chunk envelope feeds the live popover too, not just
+            // persistence — carry the breakdown on both.
+            envelope.metrics.backendPreAdkBreakdown = breakdown;
+          }
         }
         return envelope;
       };

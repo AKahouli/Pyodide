@@ -2,7 +2,7 @@
 
 Unlike the manual/auto workflows, there is no manager and no delegation. The one
 provided agent is built with its real tools attached (search, code interpreter,
-web, dataviz, connectors, skills, ...) and executed directly. All tool wiring and
+web, connectors, skills, ...) and executed directly. All tool wiring and
 streaming infrastructure is reused from the multi-agent stack.
 """
 

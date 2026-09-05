@@ -33,6 +33,16 @@ describe('useConversationSettings', () => {
     expect(result.current?.redactSensitiveText).toBe(true);
   });
 
+  it('updates mounted consumers when only the latency switch changes', () => {
+    setCachedConversationSettings({ composerSuggestions, redactSensitiveText: true, latencyInstrumentationEnabled: true });
+    const { result } = renderHook(() => useConversationSettings());
+    expect(result.current?.latencyInstrumentationEnabled).toBe(true);
+
+    act(() => setCachedConversationSettings({ composerSuggestions, redactSensitiveText: true, latencyInstrumentationEnabled: false }));
+
+    expect(result.current?.latencyInstrumentationEnabled).toBe(false);
+  });
+
   it('keeps the same settings reference when a refresh is unchanged', () => {
     const value = { composerSuggestions, redactSensitiveText: true };
     setCachedConversationSettings(value);

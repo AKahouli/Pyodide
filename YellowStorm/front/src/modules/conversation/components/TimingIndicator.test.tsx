@@ -145,6 +145,70 @@ describe('TimingIndicator', () => {
     expect(screen.getAllByText('—').length).toBe(8);
   });
 
+  it('renders the backend pre-ADK breakdown under its parent row', async () => {
+    const user = userEvent.setup();
+    render(
+      <TimingIndicator
+        latencyMetrics={{
+          ...fullMetrics,
+          backendPreAdkBreakdown: {
+            controllerValidationRoutingMs: 42,
+            userMessagePersistenceMs: 12,
+            grpcTransitToAdkMs: 3,
+          },
+        }}
+      />,
+    );
+    await user.click(screen.getByRole('button', { name: 'latency.openDetails' }));
+    expect(screen.getByText('latency.backendBreakdown.controllerValidationRouting')).toBeInTheDocument();
+    expect(screen.getByText('latency.backendBreakdown.grpcTransitToAdk')).toBeInTheDocument();
+    expect(screen.getByText('42 ms')).toBeInTheDocument();
+    expect(screen.getByText('3 ms')).toBeInTheDocument();
+  });
+
+  it('renders session/runner children nested under the session runner setup child', async () => {
+    const user = userEvent.setup();
+    render(
+      <TimingIndicator
+        latencyMetrics={{
+          ...fullMetrics,
+          adkPreProviderBreakdown: {
+            sessionRunnerSetupMs: 1380,
+            sessionRunnerSetupBreakdown: { sessionLookupMs: 120, runnerHandoffMs: 4 },
+          },
+        }}
+      />,
+    );
+    await user.click(screen.getByRole('button', { name: 'latency.openDetails' }));
+    expect(screen.getByText('latency.adkBreakdown.sessionRunnerSetup')).toBeInTheDocument();
+    expect(screen.getByText('latency.sessionRunnerBreakdown.sessionLookup')).toBeInTheDocument();
+    expect(screen.getByText('latency.sessionRunnerBreakdown.runnerHandoff')).toBeInTheDocument();
+    expect(screen.getAllByText('120 ms').length).toBeGreaterThan(0);
+    expect(screen.getByText('1.38 s')).toBeInTheDocument();
+  });
+
+  it('shows a clipboard button in the latency popover', async () => {
+    const user = userEvent.setup();
+    render(<TimingIndicator latencyMetrics={fullMetrics} />);
+    await user.click(screen.getByRole('button', { name: 'latency.openDetails' }));
+    expect(screen.getByRole('button', { name: 'latency.copyDetails' })).toBeInTheDocument();
+  });
+
+  it('hides the latency UI and legacy timing when the admin toggle is off but keeps token usage', () => {
+    render(
+      <TimingIndicator
+        timeToFirstChunk={250}
+        durationMs={1000}
+        inputTokens={120}
+        outputTokens={30}
+        latencyMetrics={fullMetrics}
+        latencyInstrumentationEnabled={false}
+      />,
+    );
+    expect(screen.queryByRole('button', { name: 'latency.openDetails' })).not.toBeInTheDocument();
+    expect(screen.queryByText('250ms')).not.toBeInTheDocument();
+    expect(screen.getByText('timing.compactTokens: 120/30')).toBeInTheDocument();
+  });
   it('shows breakdown children alongside the clock-skew warning', async () => {
     const user = userEvent.setup();
     render(

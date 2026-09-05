@@ -95,14 +95,13 @@ def create_run_code_tool(runtime_context: dict[str, Any]):
         input: Any = None,
         tool_context: ToolContext = None,
     ) -> dict[str, Any]:
-        """Run bounded QuickJS JavaScript for the user-visible objective in description.
-        There is no module loader or Node APIs: never
-        use import, import(), require, or node:*. fs allows list/glob/find/stat/readText,
-        readJson/copy/writeText/writeJson/remove. Discover absolute paths with
-        ``fs.list('/workspace')``; never guess a bare attachment filename.
+        """Run bounded QuickJS JavaScript; objective in description, with
+        no module loader or Node APIs: never import, import(), require, or node:*.
+        fs allows list/glob/find/stat/readText/readJson/copy/writeText/writeJson/remove.
+        Discover absolute paths with ``fs.list('/workspace')``; never guess a bare attachment filename.
         ``/workspace/sources/...`` and ``/workspace/attachments/...`` are read-only;
-        ``/workspace/run`` is writable. Return
-        JSON explicitly. copy handles binary server-side. Use mcp-manus for heavy work."""
+        ``/workspace/run`` is writable. Return JSON explicitly.
+        copy handles binary server-side. Use mcp-manus for heavy work."""
         result = await client.execute(
             code=code,
             input_value=input,

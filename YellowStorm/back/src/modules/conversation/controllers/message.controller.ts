@@ -42,6 +42,12 @@ import { ResolveCitationUrlDto } from '../dto/resolve-citation-url.dto';
 import { ConversationPlaybookHandoffService } from '../services/conversation-playbook-handoff.service';
 import { isMessageRequestIdentityConflict } from '../utils/postgres-error';
 import type { ConversationLatencyStartContext } from '../interfaces/latency.interface';
+import {
+  activateBackendPreAdkTracker,
+  beginBackendPreAdkStage,
+  endBackendPreAdkStage,
+} from '../utils/backend-latency-tracker';
+import { ConversationSettingsService } from '../../system/conversation-settings.service';
 @ApiTags('Messages')
 @Controller('conversations/:conversationId/messages')
 @ApiBearerAuth()
@@ -60,6 +66,7 @@ export class MessageController {
     private readonly responseReliabilityService: ResponseReliabilityService,
     private readonly conversationArtifactService: ConversationArtifactService,
     private readonly playbookHandoffService: ConversationPlaybookHandoffService,
+    private readonly conversationSettings: ConversationSettingsService,
   ) {
     this.logger.setContext('MessageController');
   }
@@ -121,6 +128,10 @@ export class MessageController {
     // request reaches, before fingerprinting, lookups, or log payload building.
     const backendReceivedEpochMs = Date.now();
     const backendReceivedMonoNs = process.hrtime.bigint();
+    // Diagnostic backend pre-ADK breakdown. Gated by the cached admin switch
+    // (sync read) so request entry never blocks on settings DB I/O.
+    activateBackendPreAdkTracker(this.conversationSettings.isLatencyInstrumentationEnabledCached());
+    beginBackendPreAdkStage('controllerValidationRoutingMs');
     const requestId = dto.requestId ?? this.requestContext.getRequestId();
     const requestFingerprint = this.fingerprintTurn(dto);
 
@@ -333,7 +344,9 @@ export class MessageController {
       canonicalTaskSummary = canonicalMulti.taskSummary;
     }
 
-    // Create user message
+    // Controller validation/routing ends where user-message persistence starts.
+    endBackendPreAdkStage('controllerValidationRoutingMs');
+    beginBackendPreAdkStage('userMessagePersistenceMs');
     let userMessage: Awaited<ReturnType<MessageService['createUserMessage']>>;
     try {
       userMessage = await this.messageService.createUserMessage({
@@ -374,6 +387,7 @@ export class MessageController {
           } : undefined,
         },
       });
+      endBackendPreAdkStage('userMessagePersistenceMs');
       if (dto.playbookHandoffId) {
         await this.playbookHandoffService.attachUserMessage(dto.playbookHandoffId, user._id.toString(), userMessage.id);
       }
@@ -421,6 +435,7 @@ export class MessageController {
         );
       }
 
+      beginBackendPreAdkStage('aiPlaceholderPersistenceMs');
       const aiMessage = await this.messageService.createAIPlaceholder({
         conversationId,
         questionMessageId: userMessage.id,
@@ -429,6 +444,7 @@ export class MessageController {
         reasoningEffort: effectiveReasoningEffort,
         requestId,
       });
+      endBackendPreAdkStage('aiPlaceholderPersistenceMs');
       aiMessageId = aiMessage.id;
 
       const latencyStart: ConversationLatencyStartContext = {

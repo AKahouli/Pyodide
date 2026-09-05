@@ -86,6 +86,28 @@ export class ConversationSettingsService implements OnModuleInit {
     return (await this.getSettings()).latencyInstrumentationEnabled !== false;
   }
 
+  /**
+   * Synchronous cached read for request-entry paths that must not block on
+   * settings DB I/O (latency instrumentation sampling). Serves the in-memory
+   * value, triggers an async refresh when stale, and falls back to the default
+   * (enabled) once the cache is too stale to trust.
+   */
+  isLatencyInstrumentationEnabledCached(): boolean {
+    if (this.cache) {
+      const now = Date.now();
+      if (this.cache.expiresAt <= now) {
+        const version = this.cacheVersion;
+        void this.getSettings().catch(() => {
+          if (version === this.cacheVersion) this.cache = null;
+        });
+      }
+      return this.cache.settings.latencyInstrumentationEnabled !== false
+        || now > this.cache.expiresAt + MAX_STALE_MS;
+    }
+    void this.getSettings().catch(() => undefined);
+    return true;
+  }
+
   async updateSettings(
     value: { composerSuggestions: ComposerSuggestionSettings } & {
       redactSensitiveText?: boolean;

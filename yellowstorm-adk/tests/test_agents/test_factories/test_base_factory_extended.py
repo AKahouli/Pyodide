@@ -98,21 +98,15 @@ class TestBaseFactoryExtended:
         assert isinstance(agent, Agent)
         assert mock_tools[0] in agent.tools
 
-    def test_create_agent_with_dataviz_and_formviz(self, agent_factory):
-        with patch(
-            "src.smart_rag.agents.factories.base_factory.MCPHelper.create_toolsets",
-            return_value=[MagicMock()],
-        ) as dataviz:
-            agent = agent_factory.create_agent(
-                name="VizAgent",
-                prompt="Visualize",
-                chatbot_name="gpt-4o",
-                dataviz_tool=True,
-                formviz_tool=True,
-            )
-        dataviz.assert_called_once()
+    def test_create_agent_with_formviz(self, agent_factory):
+        agent = agent_factory.create_agent(
+            name="VizAgent",
+            prompt="Visualize",
+            chatbot_name="gpt-4o",
+            formviz_tool=True,
+        )
         assert isinstance(agent, Agent)
-        assert len(agent.tools) == 2
+        assert len(agent.tools) == 1
 
     def test_create_agent_with_code_interpreter(self, agent_factory):
         with patch(

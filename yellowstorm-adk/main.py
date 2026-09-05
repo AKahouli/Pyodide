@@ -92,6 +92,7 @@ async def lifespan(app: FastAPI):
     runtime_versions = {
         package: version(package)
         for package in (
+            "google-adk",
             "langgraph",
             "langgraph-checkpoint",
             "langgraph-checkpoint-postgres",

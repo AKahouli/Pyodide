@@ -10,6 +10,7 @@ const listeners = new Set<(value: ConversationSettings | null) => void>();
 function settingsEqual(left: ConversationSettings | null, right: ConversationSettings | null): boolean {
   if (!left || !right) return left === right;
   return left.redactSensitiveText === right.redactSensitiveText
+    && left.latencyInstrumentationEnabled === right.latencyInstrumentationEnabled
     && left.updatedAt === right.updatedAt
     && Object.entries(left.composerSuggestions).every(([key, value]) =>
       right.composerSuggestions[key as keyof ConversationSettings['composerSuggestions']] === value,

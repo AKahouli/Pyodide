@@ -26,9 +26,10 @@ interface MessageActionsProps {
   conversationId: string;
   displayedVersion?: DisplayedAnswerVersion;
   className?: string;
+  latencyInstrumentationEnabled?: boolean;
 }
 
-export const MessageActions = memo(function MessageActions({ message, isLastAiMessage, conversationId, displayedVersion = 'original', className }: MessageActionsProps) {
+export const MessageActions = memo(function MessageActions({ message, isLastAiMessage, conversationId, displayedVersion = 'original', className, latencyInstrumentationEnabled }: MessageActionsProps) {
   const updateFeedback = useConversationStore((s) => s.updateFeedback);
   const regenerateMessage = useConversationStore((s) => s.regenerateMessage);
   const setReplyingToMessage = useConversationStore((s) => s.setReplyingToMessage);
@@ -234,7 +235,7 @@ export const MessageActions = memo(function MessageActions({ message, isLastAiMe
             </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
-        {message.isComplete && !message.isStreaming && <TimingIndicator timeToFirstChunk={message.timeToFirstChunk} timeToFirstToken={message.timeToFirstToken} durationMs={message.durationMs} inputTokens={message.inputTokens} outputTokens={message.outputTokens} latencyMetrics={message.latencyMetrics} />}
+        {message.isComplete && !message.isStreaming && <TimingIndicator timeToFirstChunk={message.timeToFirstChunk} timeToFirstToken={message.timeToFirstToken} durationMs={message.durationMs} inputTokens={message.inputTokens} outputTokens={message.outputTokens} latencyMetrics={message.latencyMetrics} latencyInstrumentationEnabled={latencyInstrumentationEnabled} />}
         <div className='ml-auto flex min-w-0 items-center gap-1.5 px-1 text-[11px] text-muted-foreground' aria-label={t('messageActions.generationMetadata', { date: formattedCreatedAt, model: modelName })}>
           <time dateTime={Number.isNaN(createdAt.getTime()) ? undefined : message.createdAt} className='whitespace-nowrap'>{formattedCreatedAt}</time>
           <span aria-hidden='true'>·</span>

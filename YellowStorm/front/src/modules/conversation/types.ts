@@ -70,6 +70,8 @@ export interface ComposerSuggestionSettings {
 export interface ConversationSettings {
   composerSuggestions: ComposerSuggestionSettings;
   redactSensitiveText?: boolean;
+  /** Runtime source of truth for the classic Conversation latency UI. */
+  latencyInstrumentationEnabled?: boolean;
   updatedAt?: string;
 }
 
@@ -118,6 +120,16 @@ export interface ReliabilityRerunResponse {
 
 export type ConversationLatencyQuality = 'ok' | 'partial' | 'clock-skew';
 
+/** ADK-local monotonic breakdown of the `sessionRunnerSetupMs` child. Diagnostic only. */
+export interface SessionRunnerSetupBreakdownV1 {
+  sessionServiceInitMs?: number;
+  sessionLookupMs?: number;
+  sessionCreateSeedMs?: number;
+  runnerConstructionMs?: number;
+  /** Runner constructed → immediately before runner.run_async. */
+  runnerHandoffMs?: number;
+}
+
 /** ADK-local monotonic breakdown of `adkPreProviderMs`. Diagnostic only. */
 export interface AdkPreProviderBreakdownV1 {
   protobufToDictMs?: number;
@@ -129,12 +141,32 @@ export interface AdkPreProviderBreakdownV1 {
   agentToolPreparationMs?: number;
   sessionRunnerSetupMs?: number;
   adkRuntimePreModelMs?: number;
+  sessionRunnerSetupBreakdown?: SessionRunnerSetupBreakdownV1;
+}
+
+/**
+ * Node-local breakdown of `backendPreAdkMs` (backend.received → adk
+ * .request_received). All children except `grpcTransitToAdkMs` are monotonic;
+ * `grpcTransitToAdkMs` is cross-clock and policy-validated. Diagnostic only.
+ */
+export interface BackendPreAdkBreakdownV1 {
+  controllerValidationRoutingMs?: number;
+  userMessagePersistenceMs?: number;
+  aiPlaceholderPersistenceMs?: number;
+  streamBootstrapMs?: number;
+  conversationContextLoadMs?: number;
+  workspaceAgentResolutionMs?: number;
+  supplementalContextAssemblyMs?: number;
+  grpcPayloadPreparationMs?: number;
+  grpcTransitToAdkMs?: number;
 }
 
 export interface ConversationLatencyMetricsV1 {
   schemaVersion: 1;
   /** adk.request_received - backend.received (cross-clock). */
   backendPreAdkMs?: number;
+  /** Diagnostic children of backendPreAdkMs; absent on historical messages. */
+  backendPreAdkBreakdown?: BackendPreAdkBreakdownV1;
   /** llm.request_start - adk.request_received (monotonic, ADK-local). */
   adkPreProviderMs?: number;
   /** Diagnostic children of adkPreProviderMs; absent on historical messages. */

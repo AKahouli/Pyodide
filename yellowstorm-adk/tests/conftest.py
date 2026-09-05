@@ -253,15 +253,6 @@ def mock_mcp_toolset():
     return MagicMock()
 
 
-@pytest.fixture
-def sample_excel_headers():
-    """Sample Excel MCP headers for testing."""
-    return {
-        "Authorization": "Bearer test-token",
-        "Content-Type": "application/json"
-    }
-
-
 @pytest.fixture(scope="function", autouse=True)
 def reset_environment():
     """Reset environment variables for each test."""

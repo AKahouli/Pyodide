@@ -112,6 +112,7 @@ describe('MessageController.sendMessage sticky routing', () => {
       responseReliabilityService as any,
       conversationArtifactService as any,
       playbookHandoffService as any,
+      { isLatencyInstrumentationEnabledCached: jest.fn().mockReturnValue(true) } as any,
     );
   });
 

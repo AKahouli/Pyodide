@@ -133,5 +133,6 @@ class TestAgentSuggestionGenerator:
 
         generator = AgentSuggestionGenerator(mock_processor, mock_factory, dict_without_provider)
 
-        # Should convert to string and use None value
-        assert generator.chatbot_name == "None"
+        # No provider/name key resolves to an empty model identifier, never the
+        # string "None" (production guards against that leaking to the proxy).
+        assert generator.chatbot_name == ""
