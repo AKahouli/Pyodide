@@ -137,6 +137,30 @@ describe('ConversationSettingsService', () => {
     expect(service.shouldRedactSensitiveText()).toBe(true);
   });
 
+  it('serves the cached latency switch synchronously after preload', async () => {
+    findOne.mockReturnValue({ lean: () => ({ exec: jest.fn().mockResolvedValue({ value: { latencyInstrumentationEnabled: false } }) }) });
+    const service = new ConversationSettingsService(model as any, agents as any);
+
+    // Before any cache exists the accessor falls back to the default (enabled)
+    // and must never block on settings I/O.
+    expect(service.isLatencyInstrumentationEnabledCached()).toBe(true);
+
+    await service.onModuleInit();
+
+    expect(service.isLatencyInstrumentationEnabledCached()).toBe(false);
+  });
+
+  it('falls back to the default latency switch once the cache is too stale', async () => {
+    findOne.mockReturnValue({ lean: () => ({ exec: jest.fn().mockRejectedValue(new Error('database unavailable')) }) });
+    const service = new ConversationSettingsService(model as any, agents as any);
+    (service as any).cache = {
+      settings: { ...DEFAULT_CONVERSATION_SETTINGS, latencyInstrumentationEnabled: false },
+      expiresAt: Date.now() - 10_000,
+    };
+
+    expect(service.isLatencyInstrumentationEnabledCached()).toBe(true);
+  });
+
   it('does not let an older successful refresh overwrite an admin update', async () => {
     let resolveRefresh: (value: unknown) => void = () => undefined;
     findOne.mockReturnValue({ lean: () => ({ exec: jest.fn().mockReturnValue(new Promise((resolve) => { resolveRefresh = resolve; })) }) });

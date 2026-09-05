@@ -78,12 +78,21 @@ describe('PostgresMessageStore.updateFrontendLatency', () => {
     const breakdown = {
       protobufToDictMs: 14,
       requestLoggingMs: 412,
+      sessionRunnerSetupMs: 207,
+      sessionRunnerSetupBreakdown: { sessionLookupMs: 120, runnerHandoffMs: 4 },
       adkRuntimePreModelMs: 848,
+    };
+    const backendBreakdown = {
+      controllerValidationRoutingMs: 42,
+      grpcPayloadPreparationMs: 17,
+      grpcTransitToAdkMs: 3,
     };
     const withBreakdown = {
       ...serverMetrics,
       adkPreProviderMs: 2370,
       adkPreProviderBreakdown: breakdown,
+      backendPreAdkMs: 2300,
+      backendPreAdkBreakdown: backendBreakdown,
     };
     const currentRow = makeRow({ requestId: 'req-1', latencyMetrics: withBreakdown });
     const updatedRow = makeRow({
@@ -96,9 +105,13 @@ describe('PostgresMessageStore.updateFrontendLatency', () => {
     const result = await store.updateFrontendLatency(currentRow.id as string, 'req-1', patch);
 
     expect(result?.latencyMetrics?.adkPreProviderBreakdown).toEqual(breakdown);
+    expect(result?.latencyMetrics?.backendPreAdkBreakdown).toEqual(backendBreakdown);
     expect(updateBuilder.set).toHaveBeenCalledWith(
       expect.objectContaining({
-        latencyMetrics: expect.objectContaining({ adkPreProviderBreakdown: breakdown }),
+        latencyMetrics: expect.objectContaining({
+          adkPreProviderBreakdown: breakdown,
+          backendPreAdkBreakdown: backendBreakdown,
+        }),
       }),
     );
   });

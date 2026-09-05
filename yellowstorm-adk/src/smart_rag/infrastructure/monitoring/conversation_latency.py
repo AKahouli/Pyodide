@@ -51,6 +51,56 @@ class AdkPreProviderMilestones:
 
 
 @dataclass
+class SessionRunnerSetupMilestones:
+    """First-write-wins monotonic start/end pairs decomposing the
+    ``session_runner_setup_ms`` pre-provider child. The runner handoff ends at
+    ``runner_invoked`` (immediately before ``run_async``), so it has no end
+    stamp of its own. Diagnostic only."""
+
+    session_service_init_start_perf_ns: Optional[int] = None
+    session_service_init_end_perf_ns: Optional[int] = None
+    session_lookup_start_perf_ns: Optional[int] = None
+    session_lookup_end_perf_ns: Optional[int] = None
+    # Only stamped when the session had to be created/seeded; omitted when the
+    # session already existed rather than fabricating a nonzero duration.
+    session_create_seed_start_perf_ns: Optional[int] = None
+    session_create_seed_end_perf_ns: Optional[int] = None
+    runner_construction_start_perf_ns: Optional[int] = None
+    runner_construction_end_perf_ns: Optional[int] = None
+
+
+@dataclass
+class RunnerPreModelDiagnostics:
+    """Log-only Runner lifecycle milestones and aggregates between
+    ``runner.run_async`` iteration start and the first model adapter entry.
+
+    Never serialized to protobuf or persisted — these exist only long enough
+    to build the ``conversation_latency_diag.runner_pre_model`` structured log.
+    Milestones are ``time.perf_counter_ns`` stamps, first-write-wins."""
+
+    runner_iteration_start_perf_ns: Optional[int] = None
+    before_run_perf_ns: Optional[int] = None
+    user_message_callback_start_perf_ns: Optional[int] = None
+    user_message_callback_end_perf_ns: Optional[int] = None
+    before_agent_perf_ns: Optional[int] = None
+    before_model_perf_ns: Optional[int] = None
+
+    clean_session_ms: Optional[float] = None
+    image_processing_ms: Optional[float] = None
+
+    # Safe machine name captured in before_model_callback for log correlation.
+    agent_name: str = ""
+
+    pre_model_append_event_ms: float = 0.0
+    pre_model_append_event_count: int = 0
+
+    yellowmind_pre_runner_session_lookup_count: int = 0
+    yellowmind_pre_runner_session_lookup_ms: float = 0.0
+    runner_internal_session_lookup_count: int = 0
+    runner_internal_session_lookup_ms: float = 0.0
+
+
+@dataclass
 class ConversationLatencyTrace:
     """Mutable, request-scoped timing state. Marker writes are first-write-wins."""
 
@@ -73,6 +123,21 @@ class ConversationLatencyTrace:
     first_model_call_claimed: bool = False
 
     pre_provider: AdkPreProviderMilestones = field(default_factory=AdkPreProviderMilestones)
+    session_runner_setup: SessionRunnerSetupMilestones = field(default_factory=SessionRunnerSetupMilestones)
+    diagnostics: RunnerPreModelDiagnostics = field(default_factory=RunnerPreModelDiagnostics)
+    session_lookup_sequence: int = 0
+    # Diagnostic-only correlation for the runner_pre_model log; empty until a
+    # run site notes it. Not part of protobuf/UI metrics.
+    session_id: str = ""
+
+    def note_session_id(self, session_id: Optional[str]) -> None:
+        if not self.session_id and session_id:
+            self.session_id = str(session_id)
+
+    def next_session_lookup_sequence(self) -> int:
+        """One-based counter so repeated lookups in one turn are distinguishable."""
+        self.session_lookup_sequence += 1
+        return self.session_lookup_sequence
 
     def claim_first_model_call(self) -> bool:
         """Synchronous first-write-wins claim of the turn's primary model call."""
@@ -130,6 +195,60 @@ class ConversationLatencyTrace:
         if self.pre_provider.runner_invoked_perf_ns is None:
             self.pre_provider.runner_invoked_perf_ns = time.perf_counter_ns()
 
+    # Session/runner diagnostic markers (children of session_runner_setup_ms).
+
+    def _mark_session_stage(self, attr: str) -> None:
+        if getattr(self.session_runner_setup, attr) is None:
+            setattr(self.session_runner_setup, attr, time.perf_counter_ns())
+
+    def mark_session_service_init_start(self) -> None:
+        self._mark_session_stage("session_service_init_start_perf_ns")
+
+    def mark_session_service_init_end(self) -> None:
+        self._mark_session_stage("session_service_init_end_perf_ns")
+
+    def mark_session_lookup_start(self) -> None:
+        self._mark_session_stage("session_lookup_start_perf_ns")
+
+    def mark_session_lookup_end(self) -> None:
+        self._mark_session_stage("session_lookup_end_perf_ns")
+
+    def mark_session_create_seed_start(self) -> None:
+        self._mark_session_stage("session_create_seed_start_perf_ns")
+
+    def mark_session_create_seed_end(self) -> None:
+        self._mark_session_stage("session_create_seed_end_perf_ns")
+
+    def mark_runner_construction_start(self) -> None:
+        self._mark_session_stage("runner_construction_start_perf_ns")
+
+    def mark_runner_construction_end(self) -> None:
+        self._mark_session_stage("runner_construction_end_perf_ns")
+
+    # Runner pre-model diagnostic markers (log only; never in protobuf/UI).
+
+    def _mark_diag_stage(self, attr: str) -> None:
+        if getattr(self.diagnostics, attr) is None:
+            setattr(self.diagnostics, attr, time.perf_counter_ns())
+
+    def mark_runner_iteration_start(self) -> None:
+        self._mark_diag_stage("runner_iteration_start_perf_ns")
+
+    def mark_before_run(self) -> None:
+        self._mark_diag_stage("before_run_perf_ns")
+
+    def mark_user_message_callback_start(self) -> None:
+        self._mark_diag_stage("user_message_callback_start_perf_ns")
+
+    def mark_user_message_callback_end(self) -> None:
+        self._mark_diag_stage("user_message_callback_end_perf_ns")
+
+    def mark_before_agent(self) -> None:
+        self._mark_diag_stage("before_agent_perf_ns")
+
+    def mark_before_model(self) -> None:
+        self._mark_diag_stage("before_model_perf_ns")
+
     @staticmethod
     def _monotonic_ms(start_ns: Optional[int], end_ns: Optional[int]) -> Optional[float]:
         if start_ns is None or end_ns is None:
@@ -175,6 +294,28 @@ class ConversationLatencyTrace:
                 breakdown[name] = value
         return breakdown
 
+    def build_session_runner_setup_breakdown(self) -> dict:
+        """Derive the five diagnostic children of ``session_runner_setup_ms``.
+
+        Each child is an independently validated monotonic interval; the runner
+        handoff ends at ``runner_invoked`` (immediately before ``run_async``).
+        Missing or implausible stages are omitted, never zeroed.
+        """
+        srs = self.session_runner_setup
+        stages = [
+            ("session_service_init_ms", srs.session_service_init_start_perf_ns, srs.session_service_init_end_perf_ns),
+            ("session_lookup_ms", srs.session_lookup_start_perf_ns, srs.session_lookup_end_perf_ns),
+            ("session_create_seed_ms", srs.session_create_seed_start_perf_ns, srs.session_create_seed_end_perf_ns),
+            ("runner_construction_ms", srs.runner_construction_start_perf_ns, srs.runner_construction_end_perf_ns),
+            ("runner_handoff_ms", srs.runner_construction_end_perf_ns, self.pre_provider.runner_invoked_perf_ns),
+        ]
+        breakdown: dict = {}
+        for name, start_ns, end_ns in stages:
+            value = self._monotonic_ms(start_ns, end_ns)
+            if value is not None:
+                breakdown[name] = value
+        return breakdown
+
     def build_latency_trace_proto(self, chatbot_pb2: "chatbot_pb2"):
         """Build the ``chatbot_pb2.LatencyTrace`` envelope for the gRPC chunk.
 
@@ -208,6 +349,10 @@ class ConversationLatencyTrace:
         if breakdown:
             for name, value in breakdown.items():
                 setattr(trace_pb.adk_pre_provider_breakdown, name, value)
+        session_breakdown = self.build_session_runner_setup_breakdown()
+        if session_breakdown:
+            for name, value in session_breakdown.items():
+                setattr(trace_pb.adk_pre_provider_breakdown.session_runner_setup_breakdown, name, value)
         return trace_pb
 
 

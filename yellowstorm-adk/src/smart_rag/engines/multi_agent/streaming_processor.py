@@ -52,6 +52,11 @@ def _mark_runner_invoked() -> None:
         trace.mark_runner_invoked()
 
 
+def _current_latency_trace():
+    from src.smart_rag.infrastructure.monitoring.conversation_latency import get_current_conversation_latency_trace
+    return get_current_conversation_latency_trace()
+
+
 class StreamingEventProcessor:
     """Handles processing of streaming events from manager agents.
 
@@ -173,6 +178,17 @@ class StreamingEventProcessor:
             run_config=RunConfig(streaming_mode=StreamingMode.SSE, max_llm_calls=200),
         )
         should_close_stream = True
+        from src.smart_rag.infrastructure.monitoring.latency_diagnostics import (
+            PHASE_GOOGLE_ADK_RUNNER,
+            reset_latency_diag_phase,
+            set_latency_diag_phase,
+        )
+
+        trace = _current_latency_trace()
+        if trace is not None:
+            trace.note_session_id(session_id)
+            trace.mark_runner_iteration_start()
+        runner_phase_token = set_latency_diag_phase(PHASE_GOOGLE_ADK_RUNNER)
         try:
             async for event in stream:
                 if not event.content or not event.content.parts:
@@ -248,6 +264,7 @@ class StreamingEventProcessor:
             should_close_stream = False
             raise
         finally:
+            reset_latency_diag_phase(runner_phase_token)
             aclose = getattr(stream, "aclose", None)
             if should_close_stream and aclose is not None:
                 with contextlib.suppress(Exception):

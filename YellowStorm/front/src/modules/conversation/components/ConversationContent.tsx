@@ -14,6 +14,7 @@ import { OutlineAnchorScroller } from './outline/OutlineAnchorScroller';
 import { MessageAttachments } from './MessageAttachments';
 import { MessageReliabilityCard } from './MessageReliabilityCard';
 import { useLatencyPaintObserver } from '../hooks/useLatencyPaintObserver';
+import { useConversationSettings } from '../hooks/useConversationSettings';
 import { getAnswerComponents, getAnswerEvaluation, getDefaultAnswerVersion } from '../utils/answer-version';
 import { useModuleTranslation } from '@/modules/localization';
 import type { ChoiceInteractionMetadata, DisplayedAnswerVersion, Message } from '../types';
@@ -66,7 +67,7 @@ function TopLoadTrigger({ onTrigger, disabled }: Readonly<{ onTrigger: () => voi
   return <div ref={ref} className='h-px' aria-hidden='true' />;
 }
 
-const MemoizedMessageBubble = memo(function MemoizedMessageBubble({ message, isLastAiMessage, isLastUserMessage, conversationId, choiceInteractions }: { message: Message; isLastAiMessage: boolean; isLastUserMessage: boolean; conversationId: string; choiceInteractions: Map<string, ChoiceInteractionMetadata> }) {
+const MemoizedMessageBubble = memo(function MemoizedMessageBubble({ message, isLastAiMessage, isLastUserMessage, conversationId, choiceInteractions, latencyInstrumentationEnabled }: { message: Message; isLastAiMessage: boolean; isLastUserMessage: boolean; conversationId: string; choiceInteractions: Map<string, ChoiceInteractionMetadata>; latencyInstrumentationEnabled?: boolean }) {
   const { t } = useModuleTranslation('conversation');
   const policyDefaultVersion = getDefaultAnswerVersion(message);
   const [displayedVersion, setDisplayedVersion] = useState<DisplayedAnswerVersion>(() => policyDefaultVersion);
@@ -128,13 +129,15 @@ const MemoizedMessageBubble = memo(function MemoizedMessageBubble({ message, isL
       </MessageProvider>
       {!isUser && (hasToolCall || hasRerunnableAnswer) && <MessageReliabilityCard conversationId={conversationId} messageId={message.id} evaluation={getAnswerEvaluation(message, displayedVersion)} originalEvaluation={message.reliabilityEvaluation} correctionWorkflow={message.correctionWorkflow} displayedVersion={displayedVersion} onVersionChange={setDisplayedVersion} />}
       {showBranchNav && <BranchNavigation userMessageId={message.questionMessageId!} branches={branches!} activeBranchId={activeBranchId!} />}
-      {message.conversationType === 'ai' && <MessageActions message={displayedMessage} isLastAiMessage={isLastAiMessage} conversationId={conversationId} displayedVersion={displayedVersion} />}
+      {message.conversationType === 'ai' && <MessageActions message={displayedMessage} isLastAiMessage={isLastAiMessage} conversationId={conversationId} displayedVersion={displayedVersion} latencyInstrumentationEnabled={latencyInstrumentationEnabled} />}
     </div>
   );
 });
 
 export function ConversationContent() {
   useLatencyPaintObserver();
+  const settings = useConversationSettings();
+  const latencyInstrumentationEnabled = settings?.latencyInstrumentationEnabled;
   const messages = useDisplayMessages();
   const isStreaming = useConversationStore((s) => s.isStreaming);
   const streamingComponents = useConversationStore((s) => s.streamingComponents);
@@ -246,7 +249,7 @@ export function ConversationContent() {
             </div>
           )}
 
-          {messages.length === 0 && !isAwaitingFirstChunk && !messagesLoading ? <ChatConversationEmptyState /> : messages.map((message) => <MemoizedMessageBubble key={message.id} message={message} isLastAiMessage={message.id === lastAiMessageId} isLastUserMessage={message.id === lastUserMessageId} conversationId={currentConversationId!} choiceInteractions={choiceInteractions} />)}
+          {messages.length === 0 && !isAwaitingFirstChunk && !messagesLoading ? <ChatConversationEmptyState /> : messages.map((message) => <MemoizedMessageBubble key={message.id} message={message} isLastAiMessage={message.id === lastAiMessageId} isLastUserMessage={message.id === lastUserMessageId} conversationId={currentConversationId!} choiceInteractions={choiceInteractions} latencyInstrumentationEnabled={latencyInstrumentationEnabled} />)}
 
           {(showStreamingActivity || (isActiveStream && streamingComponents.length > 0)) && (
             <div className='group/msg animate-in fade-in-0 duration-300' id={`message-${streamingMessageId || 'streaming'}`}>

@@ -1,4 +1,5 @@
 import copy
+import time
 import uuid
 from typing import Any, Optional
 
@@ -8,6 +9,10 @@ from google.adk.plugins.base_plugin import BasePlugin
 from google.genai import types
 from google.genai.types import FunctionResponse, Content, Part
 from typing_extensions import override
+
+from src.smart_rag.infrastructure.monitoring.conversation_latency import (
+    get_current_conversation_latency_trace,
+)
 
 
 def make_empty_function_response_event(
@@ -227,6 +232,41 @@ class CleanSessionPlugin(BasePlugin):
         """Initialize the plugin with counters."""
         super().__init__(name="on_user_message_callback")
 
+    def _trace(self):
+        return get_current_conversation_latency_trace()
+
+    @override
+    async def before_run_callback(
+            self,
+            *,
+            invocation_context: InvocationContext,
+    ) -> Optional[types.Content]:
+        """Log-only diagnostic milestone; never mutates invocation state."""
+        trace = self._trace()
+        if trace is not None:
+            trace.mark_before_run()
+        return None
+
+    @override
+    async def before_agent_callback(self, *, agent, callback_context) -> Optional[types.Content]:
+        trace = self._trace()
+        if trace is not None:
+            trace.mark_before_agent()
+        return None
+
+    @override
+    async def before_model_callback(self, *, callback_context, llm_request) -> Optional[Any]:
+        # Most important pre-model milestone: fires after ADK assembled the
+        # LlmRequest. Only cheap structural counts — never serialized.
+        trace = self._trace()
+        if trace is not None:
+            trace.mark_before_model()
+            if not trace.diagnostics.agent_name:
+                trace.diagnostics.agent_name = str(
+                    getattr(callback_context, "agent_name", "") or ""
+                )
+        return None
+
     @override
     async def on_user_message_callback(
             self,
@@ -237,8 +277,23 @@ class CleanSessionPlugin(BasePlugin):
         """
         Called before a new message is processed.
         """
+        trace = self._trace()
+        if trace is None:
+            await clean_session_case_bad_request(invocation_context, user_message)
+            process_image_inputs(invocation_context)
+            return None
+
+        trace.mark_user_message_callback_start()
+        clean_start_ns = time.perf_counter_ns()
         await clean_session_case_bad_request(invocation_context, user_message)
-        # Process image inputs
+        clean_ms = (time.perf_counter_ns() - clean_start_ns) / 1_000_000
+        image_start_ns = time.perf_counter_ns()
         process_image_inputs(invocation_context)
+        image_ms = (time.perf_counter_ns() - image_start_ns) / 1_000_000
+        # First-write-wins so later turns in a multi-agent run keep first-call timing.
+        if trace.diagnostics.clean_session_ms is None:
+            trace.diagnostics.clean_session_ms = clean_ms
+            trace.diagnostics.image_processing_ms = image_ms
+        trace.mark_user_message_callback_end()
 
         return None

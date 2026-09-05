@@ -149,6 +149,57 @@ describe('computeServerLatencyMetrics', () => {
     expect(metrics.adkPreProviderBreakdown).toBeUndefined();
   });
 
+  it('carries a nested session/runner breakdown under its parent child', () => {
+    const { metrics, quality } = computeServerLatencyMetrics(
+      startContext,
+      tracePayload({
+        adk_pre_provider_breakdown: {
+          session_runner_setup_ms: 1380,
+          session_runner_setup_breakdown: {
+            session_service_init_ms: 5,
+            session_lookup_ms: 120,
+            session_create_seed_ms: 30,
+            runner_construction_ms: 20,
+            runner_handoff_ms: 4,
+          },
+        },
+      }),
+      1705,
+    );
+    expect(metrics.adkPreProviderBreakdown).toEqual({
+      sessionRunnerSetupMs: 1380,
+      sessionRunnerSetupBreakdown: {
+        sessionServiceInitMs: 5,
+        sessionLookupMs: 120,
+        sessionCreateSeedMs: 30,
+        runnerConstructionMs: 20,
+        runnerHandoffMs: 4,
+      },
+    });
+    expect(quality).toBe('ok');
+  });
+
+  it('sanitizes nested session/runner children independently and omits an empty nest', () => {
+    const { metrics } = computeServerLatencyMetrics(
+      startContext,
+      tracePayload({
+        adk_pre_provider_breakdown: {
+          session_runner_setup_ms: 1380,
+          session_runner_setup_breakdown: {
+            session_service_init_ms: -1,
+            session_lookup_ms: 61_000,
+            runner_construction_ms: 12,
+          },
+        },
+      }),
+      1705,
+    );
+    expect(metrics.adkPreProviderBreakdown).toEqual({
+      sessionRunnerSetupMs: 1380,
+      sessionRunnerSetupBreakdown: { runnerConstructionMs: 12 },
+    });
+  });
+
   it('keeps quality ok for a historical trace without a breakdown', () => {
     const { metrics, quality } = computeServerLatencyMetrics(startContext, tracePayload(), 1705);
     expect(metrics.adkPreProviderBreakdown).toBeUndefined();
