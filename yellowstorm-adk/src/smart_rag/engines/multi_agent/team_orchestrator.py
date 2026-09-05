@@ -41,18 +41,6 @@ def get_adk_agent():
     from google.adk import Agent
     return Agent
 
-def get_database_session_service():
-    """Session service class for classic Conversation paths.
-
-    Returns the instrumented subclass so session lookups and pre-model session
-    writes are profiled when the latency trace is active; behaviorally identical
-    (and inert) otherwise.
-    """
-    from src.smart_rag.infrastructure.monitoring.instrumented_database_session_service import (
-        InstrumentedDatabaseSessionService,
-    )
-    return InstrumentedDatabaseSessionService
-
 def get_in_memory_session_service():
     from google.adk.sessions import InMemorySessionService
     return InMemorySessionService
@@ -90,11 +78,10 @@ from src.smart_rag.messaging.component_tracker import ComponentTracker
 
 # Import classes that tests expect to be available at module level
 from src.smart_rag.infrastructure.session.citation_manager import SessionCitationManager
-# Import classes that tests expect to be available at module level
-from src.config.settings import get_settings
+from src.smart_rag.infrastructure.session.manager import (
+    get_shared_database_session_service,
+)
 
-
-settings = get_settings()
 logger = get_logger("api.routers.agentic_rag.AutoAgentGenerationTeam")
 
 
@@ -536,7 +523,7 @@ Do not render charts for single values or non-numeric content.
             logger.info(f"[FREEZE DEBUG] Creating DatabaseSessionService for session {session_id}, user {self.config.user_id}")
             db_service_start = time.time()
             _mark_session_stage("mark_session_service_init_start")
-            data_base_session=get_database_session_service()(db_url=settings.DATABASE_URL)
+            data_base_session = await get_shared_database_session_service()
             _mark_session_stage("mark_session_service_init_end")
             db_service_duration = time.time() - db_service_start
             logger.info(f"[FREEZE DEBUG] DatabaseSessionService created in {db_service_duration:.3f}s")
@@ -789,7 +776,7 @@ Do not render charts for single values or non-numeric content.
             # on the conversation's session_id.
             session_id_for_agent = session_id
             _mark_session_stage("mark_session_service_init_start")
-            session_helper = get_database_session_service()(db_url=settings.DATABASE_URL)
+            session_helper = await get_shared_database_session_service()
             _mark_session_stage("mark_session_service_init_end")
             agent_id = self.agent_repository.get_agent_id_by_name(agent_name) or agent_config.get('id', 'no_id')
 
