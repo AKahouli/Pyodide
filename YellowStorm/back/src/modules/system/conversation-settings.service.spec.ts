@@ -62,9 +62,35 @@ describe('ConversationSettingsService', () => {
     expect(agents.assertActiveDefaultAgent).toHaveBeenCalledWith(value.composerSuggestions.agentId);
     expect(findOneAndUpdate).toHaveBeenCalledWith(
       { key: 'conversation_settings' },
-      { key: 'conversation_settings', value: { ...value, redactSensitiveText: true } },
+      { key: 'conversation_settings', value: { ...value, redactSensitiveText: true, latencyInstrumentationEnabled: true } },
       { upsert: true, new: true, setDefaultsOnInsert: true },
     );
+  });
+
+  it('persists an explicit latency instrumentation change and keeps it when omitted', async () => {
+    findOne.mockReturnValue({ lean: () => ({ exec: jest.fn().mockResolvedValue(null) }) });
+    findOneAndUpdate.mockReturnValue({ lean: () => ({ exec: jest.fn().mockResolvedValue({}) }) });
+    const service = new ConversationSettingsService(model as any, agents as any);
+
+    await expect(
+      service.updateSettings({
+        composerSuggestions: DEFAULT_CONVERSATION_SETTINGS.composerSuggestions,
+        latencyInstrumentationEnabled: false,
+      }),
+    ).resolves.toMatchObject({ latencyInstrumentationEnabled: false });
+    expect(service.isLatencyInstrumentationEnabled()).resolves.toBe(false);
+
+    // Omitted → keeps the persisted value instead of flipping back to default.
+    await expect(
+      service.updateSettings({ composerSuggestions: DEFAULT_CONVERSATION_SETTINGS.composerSuggestions }),
+    ).resolves.toMatchObject({ latencyInstrumentationEnabled: false });
+  });
+
+  it('defaults latency instrumentation to enabled when not persisted', async () => {
+    findOne.mockReturnValue({ lean: () => ({ exec: jest.fn().mockResolvedValue({ value: { redactSensitiveText: false } }) }) });
+    const service = new ConversationSettingsService(model as any, agents as any);
+
+    await expect(service.isLatencyInstrumentationEnabled()).resolves.toBe(true);
   });
 
   it('persists an explicit sensitive text redaction change', async () => {

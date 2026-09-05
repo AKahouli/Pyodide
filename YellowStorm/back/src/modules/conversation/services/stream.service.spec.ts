@@ -37,6 +37,7 @@ describe('StreamService guardrail metadata buffering', () => {
       logger: { debug: jest.fn(), error: jest.fn(), warn: jest.fn() },
       resolveMemberIds: jest.fn().mockResolvedValue(['user-1']),
       buildAgentExecutionRequest: jest.fn().mockResolvedValue({ rpc: 'RunAgentTeam', payload: {} }),
+      conversationSettings: { isLatencyInstrumentationEnabled: jest.fn().mockResolvedValue(true), shouldRedactSensitiveText: jest.fn(() => false) },
     });
     return {
       service, call, releaseStreamExecution, claimStreamExecution, recordUsage,
@@ -318,6 +319,7 @@ describe('StreamService guardrail metadata buffering', () => {
       streamGateway: { broadcastToConversation: jest.fn().mockResolvedValue(undefined) },
       resolveMemberIds: jest.fn().mockResolvedValue(['user-1']),
       buildAgentExecutionRequest: jest.fn().mockResolvedValue({ rpc: 'RunSingleAgent', payload: {} }),
+      conversationSettings: { isLatencyInstrumentationEnabled: jest.fn().mockResolvedValue(true), shouldRedactSensitiveText: jest.fn(() => false) },
       executeGrpcStream,
     });
 
@@ -671,6 +673,7 @@ describe('StreamService guardrail metadata buffering', () => {
       logger: { debug: jest.fn(), error: jest.fn(), warn: jest.fn() },
       resolveMemberIds: jest.fn().mockResolvedValue(['user-1']),
       buildAgentExecutionRequest: jest.fn().mockResolvedValue({ rpc: 'RunAgentTeam', payload: {} }),
+      conversationSettings: { isLatencyInstrumentationEnabled: jest.fn().mockResolvedValue(true), shouldRedactSensitiveText: jest.fn(() => false) },
     });
 
     const started = service.startStream(

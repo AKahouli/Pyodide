@@ -13,6 +13,7 @@ import { ConversationAssistantBubble } from './activity/ConversationAssistantBub
 import { OutlineAnchorScroller } from './outline/OutlineAnchorScroller';
 import { MessageAttachments } from './MessageAttachments';
 import { MessageReliabilityCard } from './MessageReliabilityCard';
+import { useLatencyPaintObserver } from '../hooks/useLatencyPaintObserver';
 import { getAnswerComponents, getAnswerEvaluation, getDefaultAnswerVersion } from '../utils/answer-version';
 import { useModuleTranslation } from '@/modules/localization';
 import type { ChoiceInteractionMetadata, DisplayedAnswerVersion, Message } from '../types';
@@ -133,6 +134,7 @@ const MemoizedMessageBubble = memo(function MemoizedMessageBubble({ message, isL
 });
 
 export function ConversationContent() {
+  useLatencyPaintObserver();
   const messages = useDisplayMessages();
   const isStreaming = useConversationStore((s) => s.isStreaming);
   const streamingComponents = useConversationStore((s) => s.streamingComponents);

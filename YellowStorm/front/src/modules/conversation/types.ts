@@ -114,6 +114,52 @@ export interface ReliabilityRerunResponse {
   reliabilityEvaluation: ReliabilityEvaluation;
 }
 
+// ===== End-to-end latency instrumentation =====
+
+export type ConversationLatencyQuality = 'ok' | 'partial' | 'clock-skew';
+
+export interface ConversationLatencyMetricsV1 {
+  schemaVersion: 1;
+  /** adk.request_received - backend.received (cross-clock). */
+  backendPreAdkMs?: number;
+  /** llm.request_start - adk.request_received (monotonic, ADK-local). */
+  adkPreProviderMs?: number;
+  /** llm.first_delta - llm.request_start (monotonic, ADK-local). */
+  providerTtftMs?: number;
+  /** adk.first_delta_forwarded - llm.first_delta (monotonic, ADK-local). */
+  adkForwardingMs?: number;
+  /** backend.first_delta_written - adk.first_delta_forwarded (cross-clock). */
+  backendForwardingMs?: number;
+  /** frontend.first_chunk_painted - backend.first_delta_written (cross-clock). */
+  frontendRenderMs?: number;
+  /** Diagnostic only: paint minus SSE arrival, browser-monotonic. Not a primary UI row. */
+  browserRenderOnlyMs?: number;
+  quality?: ConversationLatencyQuality;
+}
+
+/** One-time latency envelope carried by the first model-derived stream_chunk. */
+export interface StreamChunkLatencyData {
+  schemaVersion: 1;
+  requestId: string;
+  assistantMessageId: string;
+  backendFirstDeltaWrittenEpochMs: number;
+  metrics: Omit<
+    ConversationLatencyMetricsV1,
+    'schemaVersion' | 'frontendRenderMs' | 'browserRenderOnlyMs'
+  >;
+  quality: ConversationLatencyQuality;
+}
+
+/** Payload for the idempotent frontend-paint reporting endpoint. */
+export interface ReportFrontendLatencyPayload {
+  schemaVersion: 1;
+  requestId: string;
+  frontendFirstChunkPaintedEpochMs: number;
+  frontendRenderMs: number;
+  browserRenderOnlyMs?: number;
+  quality: ConversationLatencyQuality;
+}
+
 export type ResponseCorrectionStatus = 'queued' | 'correcting' | 're_evaluating' | 'corrected' | 'failed' | 'abstained' | 'human_review_required';
 export type ActiveAnswerVersion = 'original' | 'corrected' | 'abstention';
 export type DisplayedAnswerVersion = ActiveAnswerVersion | `attempt:${string}`;
@@ -206,6 +252,7 @@ export interface Message {
   durationMs?: number;
   timeToFirstChunk?: number;
   timeToFirstToken?: number;
+  latencyMetrics?: ConversationLatencyMetricsV1;
   parentMessageId?: string; // Reference to the message being replied to
   reliabilityEvaluation?: ReliabilityEvaluation;
   correctionWorkflow?: ResponseCorrectionWorkflow;
@@ -444,6 +491,8 @@ export interface StreamChunkEvent {
   action: 'add' | 'update' | 'delete';
   component: StreamingComponent;
   metadata?: Record<string, unknown>;
+  /** One-time latency envelope on the first model-derived chunk only. */
+  latency?: StreamChunkLatencyData;
 }
 
 export interface StreamCompleteEvent {
@@ -454,6 +503,8 @@ export interface StreamCompleteEvent {
     outputTokens: number;
     durationMs: number;
   };
+  /** First five server-side metrics; the browser contributes the sixth. */
+  latencyMetrics?: ConversationLatencyMetricsV1;
 }
 
 export interface StreamErrorEvent {

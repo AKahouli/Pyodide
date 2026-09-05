@@ -47,6 +47,12 @@ import { ConversationAgentRequestBuilder, type BuiltAgentExecutionRequest } from
 import { PLATFORM_COPILOT } from '../../agent/constants/platform-copilot.constants';
 import { sanitizePublicComponent } from '../utils/public-component-sanitizer';
 import { ConversationSettingsService } from '../../system/conversation-settings.service';
+import type {
+  ConversationLatencyMetricsV1,
+  ConversationLatencyStartContext,
+  StreamChunkLatencyData,
+} from '../interfaces/latency.interface';
+import { LatencyEnvelopeTracker } from '../utils/latency-metrics';
 
 export interface StreamRequest {
   content: string;
@@ -614,8 +620,12 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
     userEmail: string = '',
     username?: string,
     governanceOverride?: StreamGovernanceOverride,
+    latencyStart?: ConversationLatencyStartContext,
   ): Promise<void> {
     const logOpts: LogOptions = { requestId };
+    // Admin-managed switch (Admin > Conversation). When off, the trace context
+    // is not forwarded to ADK, so no envelope returns and nothing is persisted.
+    const latencyInstrumentationEnabled = await this.conversationSettings.isLatencyInstrumentationEnabled();
 
     this.logger.debug(
       'Stream start requested',
@@ -811,6 +821,8 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
         requestId,
         username,
         useSingleAgent,
+        latencyStart,
+        latencyInstrumentationEnabled,
       );
     } catch (error) {
       this.logger.error(
@@ -1197,6 +1209,8 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
     requestId?: string,
     username?: string,
     useSingleAgent = false,
+    latencyStart?: ConversationLatencyStartContext,
+    latencyInstrumentationEnabled = true,
   ): Promise<void> {
     const logOpts: LogOptions = { requestId };
 
@@ -1228,6 +1242,17 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
       // a RunAgentTeamRequest (carries the `agents` roster + manager). Without
       // this branch a single-agent request hits RunAgentTeam with an empty
       // `agents` list and the ADK rejects it with "No Manager agent was found".
+      // Latency correlation: both request messages carry latency_trace_context.
+      // Gated by the admin setting; when off, ADK installs no trace and the
+      // rest of the chain stays inert.
+      if (latencyInstrumentationEnabled && latencyStart?.assistantMessageId) {
+        grpcRequest.latency_trace_context = {
+          schema_version: 1,
+          request_id: latencyStart.requestId,
+          assistant_message_id: latencyStart.assistantMessageId,
+          backend_received_epoch_ms: latencyStart.backendReceivedEpochMs,
+        };
+      }
       const call = useSingleAgent
         ? this.chatbotClient.RunSingleAgent(grpcRequest, metadata)
         : this.chatbotClient.RunAgentTeam(grpcRequest, metadata);
@@ -1241,6 +1266,19 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
       const startTime = Date.now();
       let timeToFirstChunk: number | null = null;
       let timeToFirstToken: number | null = null;
+      // Latency instrumentation: the ADK attaches its timing envelope to the
+      // first post-model StreamChunk; it is parsed once and forwarded once.
+      const latencyTracker = new LatencyEnvelopeTracker(
+        latencyInstrumentationEnabled ? latencyStart : undefined,
+      );
+      let latencyMetrics: ConversationLatencyMetricsV1 | undefined;
+      const takeLatencyEnvelope = (): StreamChunkLatencyData | undefined => {
+        const envelope = latencyTracker.take();
+        if (envelope) {
+          latencyMetrics = { schemaVersion: 1, ...envelope.metrics, quality: envelope.quality };
+        }
+        return envelope;
+      };
       // Idle timeout - resets every time data is received
       let timeoutHandle: NodeJS.Timeout | null = null;
       terminal.cancelIdleTimeout = () => {
@@ -1272,6 +1310,7 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
                 streamKey,
                 ErrorCode.CHAT_STREAM_TIMEOUT,
                 requestId,
+                latencyMetrics,
               );
             },
             timeoutError,
@@ -1295,6 +1334,10 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
           timeToFirstChunk = Date.now() - startTime;
         }
 
+        // Latency trace detection: capture the envelope; it is stamped onto
+        // the SSE event for this same chunk right before broadcast.
+        latencyTracker.capture(chunk);
+
         try {
           const action = chunk.action;
           const comp = chunk.component;
@@ -1309,10 +1352,18 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
 
               // Send chunk immediately to frontend (only id needed for delete)
               const revision = this.nextStreamRevision(streamKey);
+              const latencyData = takeLatencyEnvelope();
               this.streamGateway.broadcastToConversation(
                 memberIds, {
                 type: 'stream_chunk',
-                data: { conversationId, messageId, revision, action, component: { id: comp.id } as MessageComponent },
+                data: {
+                  conversationId,
+                  messageId,
+                  revision,
+                  action,
+                  component: { id: comp.id } as MessageComponent,
+                  ...(latencyData ? { latency: latencyData } : {}),
+                },
               }).catch((err) => {
                 this.logger.error('Failed to broadcast delete chunk', { error: err.message, streamKey }, logOpts);
               });
@@ -1353,10 +1404,20 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
               // Send chunk immediately to frontend
               const publicComponent = this.sanitizeComponent({ id: comp.id, type, data });
               const revision = this.nextStreamRevision(streamKey);
+              // backend.first_delta_written boundary: stamped immediately
+              // before the first model-derived event enters SSE fan-out.
+              const latencyData = takeLatencyEnvelope();
               this.streamGateway.broadcastToConversation(
                 memberIds, {
                 type: 'stream_chunk',
-                data: { conversationId, messageId, revision, action, component: publicComponent },
+                data: {
+                  conversationId,
+                  messageId,
+                  revision,
+                  action,
+                  component: publicComponent,
+                  ...(latencyData ? { latency: latencyData } : {}),
+                },
               }).catch((err) => {
                 this.logger.error('Failed to broadcast stream chunk', { error: err.message, streamKey }, logOpts);
               });
@@ -1439,7 +1500,25 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
             timeToFirstChunk: timeToFirstChunk ?? undefined,
             timeToFirstToken: timeToFirstToken ?? undefined,
             modelRequestTelemetry: latestModelRequestTelemetry,
+            latencyMetrics,
           });
+
+          if (latencyMetrics) {
+            // Single structured summary per completed request (never per token).
+            this.logger.log('conversation_latency', {
+              event: 'conversation_latency',
+              schemaVersion: latencyMetrics.schemaVersion,
+              requestId,
+              conversationId,
+              messageId,
+              backendPreAdkMs: latencyMetrics.backendPreAdkMs,
+              adkPreProviderMs: latencyMetrics.adkPreProviderMs,
+              providerTtftMs: latencyMetrics.providerTtftMs,
+              adkForwardingMs: latencyMetrics.adkForwardingMs,
+              backendForwardingMs: latencyMetrics.backendForwardingMs,
+              quality: latencyMetrics.quality,
+            }, logOpts);
+          }
 
           // Record usage
           const usageData = this.streamUsage.get(streamKey);
@@ -1486,6 +1565,7 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
                 outputTokens: totalOutputTokens,
                 durationMs,
               },
+              ...(latencyMetrics ? { latencyMetrics } : {}),
             },
           });
 
@@ -1563,6 +1643,7 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
             streamKey,
             errorCode,
             requestId,
+            latencyMetrics,
           ),
           error,
         );
@@ -1577,6 +1658,7 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
     streamKey: string,
     errorCode: ErrorCode,
     requestId?: string,
+    latencyMetrics?: ConversationLatencyMetricsV1,
   ): Promise<void> {
     const logOpts: LogOptions = { requestId };
 
@@ -1626,6 +1708,7 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
         messageId,
         streamExecutionLeaseId: this.streamExecutionLeases.get(streamKey),
         components: Array.from(buffer.values()),
+        latencyMetrics,
       });
     } catch (err) {
       this.logger.error(

@@ -2,6 +2,7 @@ import type {
   CompleteAIMessageData,
   CreateAIPlaceholderData,
   CreateUserMessageData,
+  ConversationLatencyMetricsV1,
   FeedbackType,
   GuardrailDecisionMetadata,
   MessageComponent,
@@ -11,6 +12,7 @@ import type {
   ResponseCorrectionAttempt,
   ResponseCorrectionWorkflow,
 } from '../interfaces/message.interface';
+import type { FrontendLatencyPatch } from '../interfaces/latency.interface';
 
 export const MESSAGE_STORE = Symbol('MESSAGE_STORE');
 
@@ -67,6 +69,7 @@ export interface MessageRecord {
   durationMs?: number;
   timeToFirstChunk?: number;
   timeToFirstToken?: number;
+  latencyMetrics?: ConversationLatencyMetricsV1;
   requestId?: string;
   guardrailDecision?: GuardrailDecisionMetadata;
   interaction?: Record<string, unknown>;
@@ -143,6 +146,17 @@ export interface MessageStore {
   failStaleReliability(cutoff: Date): Promise<MessageRecord[]>;
   touchPendingReliability(ids: string[], now: Date): Promise<void>;
   markStreamFailed(id: string, leaseId?: string): Promise<void>;
+  /**
+   * Merge the browser-reported sixth latency metric into an AI message's
+   * latency_metrics JSONB. Idempotent: an already-accepted frontend paint value
+   * is never overwritten. Returns null when the message does not exist, is not
+   * an AI message, or the requestId does not match the persisted turn.
+   */
+  updateFrontendLatency(
+    messageId: string,
+    requestId: string,
+    patch: FrontendLatencyPatch,
+  ): Promise<MessageRecord | null>;
   cleanupStaleStreams(cutoff: Date): Promise<number>;
   updateUser(
     id: string,

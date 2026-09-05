@@ -9,7 +9,14 @@ import * as api from './api';
 import { getStreamErrorMessage } from './utils';
 import { conversationStreamService } from './stream';
 import { translateConversation } from './translation';
-import type { Conversation, ConversationSummary, Message, MessageComponent, StreamingComponent, SendMessagePayload, CreateReportPayload, StreamStartEvent, StreamChunkEvent, StreamCompleteEvent, StreamErrorEvent, ConversationNameGeneratedEvent, SSEConnectionStatus, MessageCreatedEvent, MessageUpdatedEvent } from './types';
+import { computeFrontendLatency, mergeLatencyMetrics, type FrontendPaintComputation } from './utils/latency-paint';
+import { createLatencyPaintController, type PendingLatencyPaint } from './store-latency';
+import type { Conversation, ConversationSummary, Message, MessageComponent, StreamingComponent, SendMessagePayload, CreateReportPayload, StreamStartEvent, StreamChunkEvent, StreamCompleteEvent, StreamErrorEvent, ConversationNameGeneratedEvent, SSEConnectionStatus, MessageCreatedEvent, MessageUpdatedEvent, StreamChunkLatencyData } from './types';
+
+export type { PendingLatencyPaint };
+
+/** Shared first-paint lifecycle for the latency instrumentation. */
+const latencyPaint = createLatencyPaintController();
 
 export const DEFAULT_CONVERSATIONS_LIMIT = 12;
 const DEFAULT_MESSAGES_LIMIT = 5;
@@ -33,6 +40,15 @@ type BufferedStreamChunk = {
   revision?: number;
 };
 
+/**
+ * Attach the browser-computed sixth latency metric to a persisted message.
+ * Never overwrites an already-present frontend value. Delegates to the shared
+ * controller; kept as a wrapper for the message merge call sites.
+ */
+function withPendingLatency(message: Message): Message {
+  return latencyPaint.mergeIntoMessage(message);
+}
+
 // ===== Streaming Helper Functions =====
 
 /** Cached streaming state for conversations that are streaming in the background. */
@@ -42,6 +58,12 @@ interface CachedStreamingState {
   streamingComponents: StreamingComponent[];
   isAwaitingFirstChunk: boolean;
 }
+
+/**
+ * Runtime-only first-paint tracking for the latency instrumentation.
+ * Set when the one-time latency envelope chunk arrives; never persisted.
+ * The lifecycle lives in ./store-latency and is shared with the store actions.
+ */
 
 /**
  * Apply an array of chunk actions to a components array, returning a new array.
@@ -412,6 +434,9 @@ interface ConversationState {
   streamingComponents: StreamingComponent[];
   isStreaming: boolean;
 
+  // Latency instrumentation first-paint tracking (runtime-only, not persisted)
+  pendingLatencyPaint: PendingLatencyPaint | null;
+
   // Send state
   isAwaitingFirstChunk: boolean;
   awaitingConversationId: string | null;
@@ -508,6 +533,8 @@ interface ConversationState {
   onStreamChunk: (event: StreamChunkEvent) => void;
   onStreamComplete: (event: StreamCompleteEvent) => void;
   onStreamError: (event: StreamErrorEvent) => void;
+  recordLatencyFirstPaint: () => void;
+  reportPendingLatency: (conversationId: string, messageId: string) => void;
   onConversationNameGenerated: (event: ConversationNameGeneratedEvent) => void;
   onMessageCreated: (event: MessageCreatedEvent) => void;
   onMessageUpdated: (event: MessageUpdatedEvent) => void;
@@ -584,6 +611,7 @@ export const useConversationStore = create<ConversationState>()(
       streamingQuestionMessageId: null,
       streamingComponents: [],
       isStreaming: false,
+      pendingLatencyPaint: null,
 
       isAwaitingFirstChunk: false,
       awaitingConversationId: null,
@@ -1474,7 +1502,9 @@ export const useConversationStore = create<ConversationState>()(
           ...(state.pendingTerminalErrorKey !== eventStreamKey ? { pendingTerminalErrorKey: null } : {}),
           streamingComponents: [],
           inputDisabled: false,
+          pendingLatencyPaint: null,
         });
+        latencyPaint.clear();
       },
 
       onStreamChunk: (event) => {
@@ -1494,6 +1524,17 @@ export const useConversationStore = create<ConversationState>()(
             set({ streamingStateCache: newCache });
           }
           return;
+        }
+
+        // Latency instrumentation: the first model-derived chunk carries the
+        // one-time envelope; record its browser arrival for the paint metric.
+        if (event.latency) {
+          const captured = latencyPaint.capture({
+            conversationId: event.conversationId,
+            firstChunkReceivedPerfMs: performance.now(),
+            latency: event.latency,
+          });
+          if (captured) set({ pendingLatencyPaint: captured });
         }
 
         if (event.revision !== undefined) {
@@ -1547,6 +1588,40 @@ export const useConversationStore = create<ConversationState>()(
         streamingBuffer.addChunk(event.action, event.component, event.revision);
       },
 
+      /**
+       * Compute the sixth latency metric after React commit + double rAF.
+       * Called from the paint observer in ConversationContent; one-shot per
+       * stream and a no-op in hidden tabs (browsers throttle rAF there).
+       */
+      recordLatencyFirstPaint: () => {
+        const before = get().pendingLatencyPaint;
+        if (!before || before.measured) return;
+        const visible = typeof document === 'undefined' || document.visibilityState === 'visible';
+        const updated = latencyPaint.measure(performance.now(), performance.timeOrigin, visible);
+        if (!updated || updated === before) return;
+        set({ pendingLatencyPaint: updated });
+        // Completion may already have raced: attach to the persisted message now.
+        set((s) => ({
+          messages: s.messages.map((message) => (message.id === before.messageId ? withPendingLatency(message) : message)),
+        }));
+        // Completion arrived before the paint callback fired — report now.
+        if (updated.completeArrived) {
+          get().reportPendingLatency(before.conversationId, before.messageId);
+        }
+      },
+
+      /** Fire-and-forget persistence of the sixth metric; clears the pending state. */
+      reportPendingLatency: (conversationId: string, messageId: string) => {
+        const payload = latencyPaint.report(conversationId, messageId);
+        if (get().pendingLatencyPaint !== latencyPaint.pending) {
+          set({ pendingLatencyPaint: latencyPaint.pending });
+        }
+        if (!payload) return;
+        api
+          .reportFrontendLatency(conversationId, messageId, payload)
+          .catch((err) => console.error('[ConversationStore] frontend latency report failed:', err));
+      },
+
       onStreamComplete: async (event) => {
         const eventStreamKey = `${event.conversationId}:${event.messageId}`;
         if (pendingStreamReconcileTarget === eventStreamKey) cancelPendingStreamReconciliation();
@@ -1556,6 +1631,9 @@ export const useConversationStore = create<ConversationState>()(
           receivedCurrentStreamStart = false;
           pendingRecoveryChunks = [];
         }
+        // Persist the browser-measured sixth metric after completion so the
+        // request never competes with the first-token window.
+        get().reportPendingLatency(event.conversationId, event.messageId);
         const state = get();
 
         if (event.conversationId !== state.currentConversationId) {
@@ -1706,6 +1784,12 @@ export const useConversationStore = create<ConversationState>()(
       onStreamError: (event) => {
         const state = get();
         const eventStreamKey = `${event.conversationId}:${event.messageId}`;
+        // A failed stream keeps at most partial latency data — drop the
+        // browser paint state rather than reporting a misleading value.
+        if (state.pendingLatencyPaint?.messageId === event.messageId) {
+          latencyPaint.clear();
+          set({ pendingLatencyPaint: null });
+        }
         const cachedStream = state.streamingStateCache.get(event.conversationId);
         const ownsForegroundStream =
           state.streamingMessageId === event.messageId || state.pendingAssistantMessageId === event.messageId;
@@ -1882,13 +1966,13 @@ export const useConversationStore = create<ConversationState>()(
              const cache = new Map(s.streamingStateCache);
              if (completesPendingStream) cache.delete(event.conversationId);
               return {
-               messages: s.messages.map((message) => (message.id === event.messageId ? {
+               messages: s.messages.map((message) => (message.id === event.messageId ? withPendingLatency({
                  ...message,
                  ...event.message,
                   ...(event.message.components ? { components: event.message.components } : {}),
                  reliabilityEvaluation: event.message.reliabilityEvaluation ?? message.reliabilityEvaluation,
                  correctionWorkflow: event.message.correctionWorkflow ?? message.correctionWorkflow,
-              } : message)),
+              }) : message)),
               ...(completesPendingStream ? {
                 isStreaming: false,
                 streamingConversationId: null,
@@ -1910,12 +1994,12 @@ export const useConversationStore = create<ConversationState>()(
 
          if (event.message.conversationType && event.message.createdAt) {
            set((s) => {
-              const message = {
+              const message = withPendingLatency({
                 ...event.message,
                 ...(event.message.components ? { components: event.message.components } : {}),
                id: event.messageId,
                conversationId: event.conversationId,
-             } as Message;
+             } as Message);
              const result = upsertMessage(s.messages, message);
             const cache = new Map(s.streamingStateCache);
             if (completesPendingStream) cache.delete(event.conversationId);
@@ -2269,6 +2353,7 @@ export const useConversationStore = create<ConversationState>()(
 
       clearAll: () => {
         streamingBuffer.clear();
+        latencyPaint.clear();
         set({
           conversations: [],
           conversationSummaries: [],
@@ -2291,6 +2376,7 @@ export const useConversationStore = create<ConversationState>()(
           streamingMessageId: null,
           streamingQuestionMessageId: null,
           streamingComponents: [],
+          pendingLatencyPaint: null,
           isAwaitingFirstChunk: false,
           awaitingConversationId: null,
           pendingAssistantMessageId: null,

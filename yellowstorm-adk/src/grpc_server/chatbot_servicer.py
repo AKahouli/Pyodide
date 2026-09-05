@@ -11,6 +11,8 @@ import os
 import mimetypes
 import tempfile
 import shutil
+import time
+from contextvars import Token
 from google.protobuf import json_format, struct_pb2, timestamp_pb2
 
 import litellm
@@ -43,6 +45,11 @@ from src.flow_engine.advisor.execution_advisor_service import evaluate_task_exec
 from src.grpc_server.conversation_session_seed import (
     ConversationSessionSeedService,
     SessionSeedConflictError,
+)
+from src.smart_rag.infrastructure.monitoring.conversation_latency import (
+    get_current_conversation_latency_trace,
+    reset_conversation_latency_trace,
+    start_conversation_latency_trace,
 )
 
 logger = get_logger(__name__)
@@ -332,6 +339,60 @@ class ChatbotServicer(
             children=summary["children"],
         )
 
+    @staticmethod
+    def _reset_latency_trace(token: Optional[Token]) -> None:
+        """Best-effort ContextVar reset; safe on already-invalid tokens."""
+        if token is None:
+            return
+        try:
+            reset_conversation_latency_trace(token)
+        except Exception:
+            pass  # Token may already be reset or invalid
+
+    def _begin_conversation_latency_trace(self, request: Any) -> Optional[Token]:
+        """Capture ``adk.request_received`` and install the request-scoped trace.
+
+        Must be the first operation of RunAgentTeam/RunSingleAgent — before
+        request serialization/logging — so the pre-provider latency includes
+        that cost. Returns None when the incoming request carries no trace
+        context or the protobuf module is unavailable.
+        """
+        received_epoch_ms = time.time_ns() / 1_000_000
+        received_perf_ns = time.perf_counter_ns()
+        if chatbot_pb2 is None:
+            return None
+        try:
+            trace_ctx = request.latency_trace_context
+            if not trace_ctx.request_id and not trace_ctx.assistant_message_id:
+                return None
+            return start_conversation_latency_trace(
+                request_id=trace_ctx.request_id,
+                assistant_message_id=trace_ctx.assistant_message_id,
+                backend_received_epoch_ms=trace_ctx.backend_received_epoch_ms or None,
+                received_epoch_ms=received_epoch_ms,
+                received_perf_ns=received_perf_ns,
+            )
+        except (AttributeError, ValueError):
+            # Older wire contract without the trace context field.
+            return None
+
+    def _stamp_first_forwarded_latency(self, chunk_pb: Any) -> None:
+        """Attach the one-time LatencyTrace to the first post-model chunk.
+
+        Pre-model activity, heartbeat, and replay-control chunks never reach
+        the stamp: the trace's first-delta marker only exists after the model
+        produced output, and the forwarded marker is first-write-wins.
+        """
+        trace = get_current_conversation_latency_trace()
+        if trace is None or trace.llm_first_delta_perf_ns is None:
+            return
+        if trace.adk_first_delta_forwarded_perf_ns is not None:
+            return
+        trace.mark_adk_first_delta_forwarded()
+        trace_pb = trace.build_latency_trace_proto(chatbot_pb2)
+        if trace_pb is not None:
+            chunk_pb.latency_trace.CopyFrom(trace_pb)
+
     async def RunAgentTeam(
         self,
         request: "chatbot_pb2.RunAgentTeamRequest",
@@ -354,7 +415,13 @@ class ChatbotServicer(
         Yields:
             StreamChunk: Protobuf messages containing text chunks and metadata
         """
-        request_payload = self._serialize_run_agent_team_request(request)
+        # Latency boundary: must precede request serialization/logging below.
+        latency_trace_token = self._begin_conversation_latency_trace(request)
+        try:
+            request_payload = self._serialize_run_agent_team_request(request)
+        except BaseException:
+            self._reset_latency_trace(latency_trace_token)
+            raise
         logger.info(
             _grpc_in_log_message("RunAgentTeam request received", request_payload),
             user_id=request.user_context.user_id,
@@ -488,6 +555,10 @@ class ChatbotServicer(
                     agent_id=chunk_dict.get("metadata", {}).get("agent_id"),
                 )
 
+                # Attach the one-time timing envelope to the first post-model
+                # chunk right before it is handed to gRPC.
+                self._stamp_first_forwarded_latency(chunk_pb)
+
                 # Yield protobuf message
                 yield chunk_pb
 
@@ -583,6 +654,9 @@ class ChatbotServicer(
             # End stream gracefully
             return
         finally:
+            # Clear the request-scoped latency trace before the user context
+            # so a cancelled stream never leaks timing state into the next one.
+            self._reset_latency_trace(latency_trace_token)
             # Clear user context after processing
             try:
                 user_ctx.reset(user_token)
@@ -599,7 +673,13 @@ class ChatbotServicer(
         Shares the same internal service/orchestrator stack as RunAgentTeam by
         converting to an internal RunAgentTeamRequest with ``agent_mode='mono'``.
         """
-        request_payload = _message_to_dict(request)
+        # Latency boundary: must precede request serialization/logging below.
+        latency_trace_token = self._begin_conversation_latency_trace(request)
+        try:
+            request_payload = _message_to_dict(request)
+        except BaseException:
+            self._reset_latency_trace(latency_trace_token)
+            raise
         replay_context = request_payload.get("correction_replay_context")
         if isinstance(replay_context, dict):
             request_payload["correction_replay_context"] = {
@@ -700,7 +780,11 @@ class ChatbotServicer(
                     logger.warning("[gRPC] Dropped unsupported legacy File chunk")
                     continue
 
-                yield self._dict_to_stream_chunk(chunk_dict)
+                chunk_pb = self._dict_to_stream_chunk(chunk_dict)
+                # Attach the one-time timing envelope to the first post-model
+                # chunk right before it is handed to gRPC.
+                self._stamp_first_forwarded_latency(chunk_pb)
+                yield chunk_pb
 
             self._log_temporary_child_summary(
                 request.conversation_id,
@@ -753,6 +837,7 @@ class ChatbotServicer(
             yield self._dict_to_stream_chunk(error_component)
             return
         finally:
+            self._reset_latency_trace(latency_trace_token)
             try:
                 user_ctx.reset(user_token)
             except Exception:

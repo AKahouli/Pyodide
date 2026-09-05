@@ -13,6 +13,7 @@ import {
   ReliabilityEvaluation,
   ResponseCorrectionAttempt,
 } from '../interfaces/message.interface';
+import type { ConversationLatencyMetricsV1, FrontendLatencyPatch } from '../interfaces/latency.interface';
 import { ConversationService } from './conversation.service';
 import { StreamGatewayService } from './stream-gateway.service';
 import { WorkspaceDocumentService } from '../../workspace/workspace-document.service';
@@ -201,6 +202,33 @@ export class MessageService {
     });
 
     return response;
+  }
+
+  /**
+   * Merge the browser-reported sixth latency metric (frontend paint) into an
+   * AI message. Validates ownership boundaries; the store applies the merge
+   * idempotently so duplicate reports never overwrite the accepted value.
+   */
+  async reportFrontendLatency(
+    conversationId: string,
+    messageId: string,
+    requestId: string,
+    patch: FrontendLatencyPatch,
+  ): Promise<MessageResponse> {
+    const message = await this.messageStore.findById(messageId);
+    if (!message || message.conversationId !== conversationId) {
+      throw new NotFoundException(ErrorCode.CHAT_MESSAGE_NOT_FOUND, 'AI message not found');
+    }
+    if (message.conversationType !== 'ai') {
+      throw new BadRequestException(ErrorCode.VALIDATION_ERROR, 'Latency metrics can only be reported for AI messages');
+    }
+    const updated = await this.messageStore.updateFrontendLatency(messageId, requestId, patch);
+    if (!updated) {
+      // Either the turn requestId mismatches or the metric was already accepted.
+      this.logger.debug('Frontend latency report not applied', { conversationId, messageId });
+      return this.mapToResponse(message);
+    }
+    return this.mapToResponse(updated);
   }
 
   private async extractAndNotifyMentions(
@@ -890,6 +918,7 @@ export class MessageService {
       durationMs: message.durationMs,
       timeToFirstChunk: message.timeToFirstChunk,
       timeToFirstToken: message.timeToFirstToken,
+      latencyMetrics: message.latencyMetrics as ConversationLatencyMetricsV1 | undefined,
       requestId: message.requestId,
       guardrailDecision: message.guardrailDecision as any,
       interaction: message.interaction as Record<string, unknown> | undefined,

@@ -15,6 +15,7 @@ describe('MessageController.sendMessage sticky routing', () => {
     findTurnByRequestId: jest.Mock;
     getMessageDocument: jest.Mock;
     findById: jest.Mock;
+    reportFrontendLatency: jest.Mock;
   };
   let streamService: {
     isAvailable: jest.Mock;
@@ -65,6 +66,7 @@ describe('MessageController.sendMessage sticky routing', () => {
       findTurnByRequestId: jest.fn().mockResolvedValue(null),
       getMessageDocument: jest.fn(),
       findById: jest.fn(),
+      reportFrontendLatency: jest.fn().mockResolvedValue({ id: 'ai-1' }),
     };
     streamService = {
       isAvailable: jest.fn().mockReturnValue(true),
@@ -170,6 +172,7 @@ describe('MessageController.sendMessage sticky routing', () => {
         playbookHandoffId,
       }),
       'turn-1', undefined, 'Ada Lovelace', undefined,
+      expect.objectContaining({ schemaVersion: 1 }),
     );
   });
 
@@ -222,6 +225,8 @@ describe('MessageController.sendMessage sticky routing', () => {
       userId.toString(), conversationId, aiMessageId,
       expect.objectContaining({ content: 'Create a lead Playbook', agentIds: [stickyAgentId] }),
       'turn-recovery', undefined, 'Ada Lovelace',
+      undefined,
+      expect.objectContaining({ schemaVersion: 1 }),
     );
   });
 
@@ -251,6 +256,8 @@ describe('MessageController.sendMessage sticky routing', () => {
       userId.toString(), conversationId, aiMessageId,
       expect.objectContaining({ agentIds: [stickyAgentId] }),
       'turn-recovery', undefined, 'Ada Lovelace',
+      undefined,
+      expect.objectContaining({ schemaVersion: 1 }),
     );
   });
 
@@ -296,6 +303,7 @@ describe('MessageController.sendMessage sticky routing', () => {
       undefined,
       'Ada Lovelace',
       undefined,
+      expect.objectContaining({ schemaVersion: 1 }),
     );
   });
 
@@ -322,6 +330,7 @@ describe('MessageController.sendMessage sticky routing', () => {
       undefined,
       'Ada Lovelace',
       undefined,
+      expect.objectContaining({ schemaVersion: 1 }),
     );
   });
 
@@ -406,6 +415,7 @@ describe('MessageController.sendMessage sticky routing', () => {
       undefined,
       'Ada Lovelace',
       undefined,
+      expect.objectContaining({ schemaVersion: 1 }),
     );
   });
 
@@ -453,6 +463,7 @@ describe('MessageController.sendMessage sticky routing', () => {
       undefined,
       'Ada Lovelace',
       undefined,
+      expect.objectContaining({ schemaVersion: 1 }),
     );
   });
 
@@ -467,6 +478,29 @@ describe('MessageController.sendMessage sticky routing', () => {
       userId: userId.toString(),
       requestId: 'req-1',
     });
+  });
+
+  it('forwards the frontend paint report to the message service with route identifiers', async () => {
+    await controller.reportFrontendLatency(conversationId, 'ai-1', {
+      schemaVersion: 1,
+      requestId: 'req-1',
+      frontendFirstChunkPaintedEpochMs: 1_000_500,
+      frontendRenderMs: 80,
+      browserRenderOnlyMs: 20,
+      quality: 'ok',
+    });
+
+    expect(messageService.reportFrontendLatency).toHaveBeenCalledWith(
+      conversationId,
+      'ai-1',
+      'req-1',
+      {
+        frontendFirstChunkPaintedEpochMs: 1_000_500,
+        frontendRenderMs: 80,
+        browserRenderOnlyMs: 20,
+        quality: 'ok',
+      },
+    );
   });
 
   it('regenerates a platform copilot turn without a conversation-level playbook permission gate', async () => {
@@ -572,6 +606,7 @@ describe('MessageController.sendMessage sticky routing', () => {
       undefined,
       'Ada Lovelace',
       undefined,
+      expect.objectContaining({ schemaVersion: 1 }),
     );
   });
 
@@ -603,6 +638,7 @@ describe('MessageController.sendMessage sticky routing', () => {
       undefined,
       'Ada Lovelace',
       undefined,
+      expect.objectContaining({ schemaVersion: 1 }),
     );
   });
 });

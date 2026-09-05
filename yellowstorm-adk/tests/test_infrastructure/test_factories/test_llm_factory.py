@@ -2,7 +2,7 @@
 
 import sys
 from types import SimpleNamespace
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -14,6 +14,13 @@ def _install_lite_llm_mock(monkeypatch, mock_litellm):
         sys.modules,
         "google.adk.models.lite_llm",
         SimpleNamespace(LiteLlm=mock_litellm),
+    )
+    # The factory instantiates the latency-instrumented wrapper; constructor
+    # kwargs are forwarded unchanged, so route the wrapper to the same mock.
+    monkeypatch.setitem(
+        sys.modules,
+        "src.smart_rag.infrastructure.monitoring.instrumented_lite_llm",
+        SimpleNamespace(InstrumentedLiteLlm=mock_litellm),
     )
 
 
@@ -76,9 +83,10 @@ class TestLLMFactory:
             "create_no_tool_calls_llm",
         ],
     )
-    @patch('google.adk.models.lite_llm.LiteLlm')
-    def test_omits_temperature_when_explicitly_none(self, mock_litellm, factory_method):
+    def test_omits_temperature_when_explicitly_none(self, monkeypatch, factory_method):
         """An explicit omission must not become LiteLLM's legacy 0.0 default."""
+        mock_litellm = MagicMock()
+        _install_lite_llm_mock(monkeypatch, mock_litellm)
         getattr(LLMFactory(), factory_method)("test-model", temperature=None)
 
         assert "temperature" not in mock_litellm.call_args.kwargs
@@ -163,3 +171,22 @@ class TestLLMFactory:
         except AttributeError:
             # Method might not exist
             pass
+
+    def test_every_factory_path_instantiates_the_instrumented_llm(self, monkeypatch):
+        """All three creation paths must construct InstrumentedLiteLlm so the
+        conversation latency instrumentation covers every agent boundary."""
+        raw_lite_llm = MagicMock(name="raw LiteLlm")
+        instrumented = MagicMock(name="InstrumentedLiteLlm")
+        _install_lite_llm_mock(monkeypatch, raw_lite_llm)
+        monkeypatch.setitem(
+            sys.modules,
+            "src.smart_rag.infrastructure.monitoring.instrumented_lite_llm",
+            SimpleNamespace(InstrumentedLiteLlm=instrumented),
+        )
+
+        LLMFactory.create_parallel_tool_calls_llm("test-model")
+        LLMFactory.create_no_parallel_tool_calls_llm("test-model")
+        LLMFactory.create_no_tool_calls_llm("test-model")
+
+        assert instrumented.call_count == 3
+        raw_lite_llm.assert_not_called()

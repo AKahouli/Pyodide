@@ -20,6 +20,7 @@ import { SendMessageDto } from '../dto/send-message.dto';
 import { MessageQueryDto } from '../dto/message-query.dto';
 import { MessageFeedbackDto } from '../dto/message-feedback.dto';
 import { UpdateMessageDto } from '../dto/update-message.dto';
+import { ReportFrontendLatencyDto } from '../dto/report-frontend-latency.dto';
 import { ConversationOwnerGuard } from '../guards/conversation-owner.guard';
 import { CurrentUser } from '../../auth/decorators/current-user.decorator';
 import { ServiceUnavailableException, BadRequestException, NotFoundException, ForbiddenException } from '../../exceptions';
@@ -40,6 +41,7 @@ import { ConversationArtifactService } from '../services/conversation-artifact.s
 import { ResolveCitationUrlDto } from '../dto/resolve-citation-url.dto';
 import { ConversationPlaybookHandoffService } from '../services/conversation-playbook-handoff.service';
 import { isMessageRequestIdentityConflict } from '../utils/postgres-error';
+import type { ConversationLatencyStartContext } from '../interfaces/latency.interface';
 @ApiTags('Messages')
 @Controller('conversations/:conversationId/messages')
 @ApiBearerAuth()
@@ -115,6 +117,10 @@ export class MessageController {
     @Param('conversationId') conversationId: string,
     @Body() dto: SendMessageDto,
   ) {
+    // Latency instrumentation boundary: must be the first application code the
+    // request reaches, before fingerprinting, lookups, or log payload building.
+    const backendReceivedEpochMs = Date.now();
+    const backendReceivedMonoNs = process.hrtime.bigint();
     const requestId = dto.requestId ?? this.requestContext.getRequestId();
     const requestFingerprint = this.fingerprintTurn(dto);
 
@@ -425,6 +431,14 @@ export class MessageController {
       });
       aiMessageId = aiMessage.id;
 
+      const latencyStart: ConversationLatencyStartContext = {
+        schemaVersion: 1,
+        requestId,
+        assistantMessageId: aiMessage.id,
+        backendReceivedEpochMs,
+        backendReceivedMonoNs,
+      };
+
       this.logger.log('Starting stream', {
         conversationId,
         userMessageId: userMessage.id,
@@ -455,7 +469,7 @@ export class MessageController {
           workspaceIds: governedRuntime.workspaceIds,
           revisionId: governedRuntime.revisionId,
           scopeId: governedRuntime.scopeId,
-        } : undefined)
+        } : undefined, latencyStart)
         .catch((err) => {
           if ((err as { code?: ErrorCode }).code === ErrorCode.CHAT_ALREADY_STREAMING) return;
           this.logger.error('Stream start failed', {
@@ -528,7 +542,12 @@ export class MessageController {
         agentIds: [pinnedAgentId],
         clientContext: dto.clientContext,
         playbookHandoffId: dto.playbookHandoffId,
-      }, dto.requestId, undefined, this.resolveDisplayName(user)).catch((error: unknown) => {
+      }, dto.requestId, undefined, this.resolveDisplayName(user), undefined, {
+        schemaVersion: 1,
+        requestId: dto.requestId ?? this.requestContext.getRequestId(),
+        assistantMessageId: aiMessageId,
+        backendReceivedEpochMs: Date.now(),
+      }).catch((error: unknown) => {
         if ((error as { code?: ErrorCode }).code === ErrorCode.CHAT_ALREADY_STREAMING) return;
         this.logger.error('Recovered stream start failed', {
           conversationId,
@@ -603,6 +622,29 @@ export class MessageController {
     return this.messageService.updateFeedback(messageId, dto.feedback);
   }
 
+  /**
+   * Idempotent report of the browser-measured sixth latency metric. Called
+   * after stream_complete so it never competes with the first-token window.
+   */
+  @Post(':messageId/latency/frontend-paint')
+  async reportFrontendLatency(
+    @Param('conversationId') conversationId: string,
+    @Param('messageId') messageId: string,
+    @Body() dto: ReportFrontendLatencyDto,
+  ) {
+    return this.messageService.reportFrontendLatency(
+      conversationId,
+      messageId,
+      dto.requestId,
+      {
+        frontendFirstChunkPaintedEpochMs: dto.frontendFirstChunkPaintedEpochMs,
+        frontendRenderMs: dto.frontendRenderMs,
+        browserRenderOnlyMs: dto.browserRenderOnlyMs,
+        quality: dto.quality,
+      },
+    );
+  }
+
   @Patch(':messageId')
   async updateMessage(
     @Param('messageId') messageId: string,
@@ -660,6 +702,8 @@ export class MessageController {
     @Param('conversationId') conversationId: string,
     @Param('messageId') messageId: string,
   ) {
+    // Regenerated answers are new generations with their own latency trace.
+    const backendReceivedEpochMs = Date.now();
     const requestId = this.requestContext.getRequestId();
 
     this.logger.log('Regenerate request received', {
@@ -744,6 +788,12 @@ export class MessageController {
         undefined,
         this.resolveDisplayName(user),
         userMessage.replayContext?.governanceOverride,
+        {
+          schemaVersion: 1,
+          requestId,
+          assistantMessageId: newAiMessage.id,
+          backendReceivedEpochMs,
+        },
       )
       .catch((err) => {
         this.logger.error('Regenerate stream failed', {

@@ -8,6 +8,7 @@ import type {
   MessageComponent,
   ResponseCorrectionAttempt,
 } from '../../interfaces/message.interface';
+import type { FrontendLatencyPatch } from '../../interfaces/latency.interface';
 import { newOwnedId } from '../owned-id';
 import type {
   AiMessageComponentsRecord,
@@ -120,23 +121,29 @@ export class PostgresMessageStore implements MessageStore {
       if (input.streamExecutionLeaseId) {
         conditions.push(eq(schema.messages.streamExecutionLeaseId, input.streamExecutionLeaseId));
       }
-      const [row] = await tx
-        .update(schema.messages)
-        .set({
-          components: input.components,
-          isStreaming: false,
-          isComplete: true,
-          inputTokens: input.inputTokens,
-          outputTokens: input.outputTokens,
-          durationMs: input.durationMs,
-          timeToFirstChunk: input.timeToFirstChunk,
-          timeToFirstToken: input.timeToFirstToken,
-          modelRequestTelemetry: input.modelRequestTelemetry,
-          guardrailDecision: input.guardrailDecision,
-          updatedAt: now,
-        })
-        .where(and(...conditions))
-        .returning();
+    const [row] = await tx
+      .update(schema.messages)
+      .set({
+        components: input.components,
+        isStreaming: false,
+        isComplete: true,
+        inputTokens: input.inputTokens,
+        outputTokens: input.outputTokens,
+        durationMs: input.durationMs,
+        timeToFirstChunk: input.timeToFirstChunk,
+        timeToFirstToken: input.timeToFirstToken,
+        modelRequestTelemetry: input.modelRequestTelemetry,
+        guardrailDecision: input.guardrailDecision,
+        // Shallow JSONB merge: a browser-reported frontend paint metric that
+        // landed first (racing completion) is preserved because the server-side
+        // metrics object never carries that key.
+        latencyMetrics: input.latencyMetrics
+          ? sql`COALESCE(${schema.messages.latencyMetrics}, '{}'::jsonb) || ${JSON.stringify(input.latencyMetrics)}::jsonb`
+          : undefined,
+        updatedAt: now,
+      })
+      .where(and(...conditions))
+      .returning();
       if (!row) return null;
       await tx
         .update(schema.conversations)
@@ -562,6 +569,46 @@ export class PostgresMessageStore implements MessageStore {
       .update(schema.messages)
       .set({ isStreaming: false, isComplete: false, updatedAt: new Date() })
       .where(and(...conditions));
+  }
+
+  async updateFrontendLatency(
+    messageId: string,
+    requestId: string,
+    patch: FrontendLatencyPatch,
+  ): Promise<MessageRecord | null> {
+    return this.db.transaction(async (tx) => {
+      const [current] = await tx
+        .select()
+        .from(schema.messages)
+        .where(eq(schema.messages.id, messageId))
+        .limit(1)
+        .for('update');
+      if (!current || current.conversationType !== 'ai') return null;
+      // Idempotency/correlation: reject when the persisted turn carries a
+      // different requestId; skip entirely once a frontend paint value exists.
+      if (current.requestId && requestId !== current.requestId) return null;
+      const existing = (current.latencyMetrics ?? {}) as Record<string, unknown>;
+      if (
+        existing.frontendRenderMs !== undefined ||
+        existing.frontendFirstChunkPaintedEpochMs !== undefined
+      ) {
+        return mapPostgresMessage(current);
+      }
+      // The worse quality wins so a clock-skew signal cannot be lost to a
+      // later, more optimistic report.
+      const qualityRank: Record<string, number> = { ok: 0, partial: 1, 'clock-skew': 2 };
+      const worstQuality =
+        [existing.quality, patch.quality]
+          .filter((value): value is string => typeof value === 'string' && value in qualityRank)
+          .sort((left, right) => qualityRank[right] - qualityRank[left])[0] ?? patch.quality;
+      const merged = { ...existing, ...patch, quality: worstQuality };
+      const [row] = await tx
+        .update(schema.messages)
+        .set({ latencyMetrics: merged, updatedAt: new Date() })
+        .where(eq(schema.messages.id, messageId))
+        .returning();
+      return row ? mapPostgresMessage(row) : null;
+    });
   }
 
   async cleanupStaleStreams(cutoff: Date): Promise<number> {

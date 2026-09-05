@@ -1,5 +1,5 @@
 import { apiClient, API_ENDPOINTS, ApiResponse } from '@/lib/api';
-import type { ActiveStreamSnapshot, Conversation, ConversationSummary, ConversationSettings, Message, ConversationListParams, MessageListParams, PaginatedResponse, SendMessagePayload, CreateReportPayload, CreateSharePayload, ShareResponse, PublicShareViewResponse, BranchConversationPayload, ReliabilityRerunResponse, CreateConversationPayload, PrepareConversationPlaybookHandoffV1, PreparedConversationPlaybookHandoffV1 } from './types';
+import type { ActiveStreamSnapshot, Conversation, ConversationSummary, ConversationSettings, Message, ConversationListParams, MessageListParams, PaginatedResponse, SendMessagePayload, CreateReportPayload, CreateSharePayload, ShareResponse, PublicShareViewResponse, BranchConversationPayload, ReliabilityRerunResponse, CreateConversationPayload, PrepareConversationPlaybookHandoffV1, PreparedConversationPlaybookHandoffV1, ReportFrontendLatencyPayload } from './types';
 
 // ===== Conversation APIs =====
 
@@ -152,6 +152,15 @@ export async function rerunReliabilityEvaluation(conversationId: string, message
 
 export async function stopStream(conversationId: string, messageId: string): Promise<void> {
   await apiClient.post(API_ENDPOINTS.conversations.stop(conversationId, messageId));
+}
+
+/** Idempotent report of the browser-measured frontend paint latency metric. */
+export async function reportFrontendLatency(conversationId: string, messageId: string, payload: ReportFrontendLatencyPayload): Promise<Message> {
+  const response = await apiClient.post<ApiResponse<Message>>(
+    API_ENDPOINTS.conversations.frontendLatency(conversationId, messageId),
+    payload,
+  );
+  return response.data.data;
 }
 
 export async function regenerateMessage(conversationId: string, messageId: string): Promise<{ aiMessage: Message }> {

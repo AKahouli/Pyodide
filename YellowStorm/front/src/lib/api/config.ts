@@ -223,6 +223,7 @@ export const API_ENDPOINTS = {
     rerunReliabilityEvaluation: (convId: string, msgId: string) => `/conversations/${convId}/messages/${msgId}/reliability-evaluation/rerun`,
     regenerate: (convId: string, msgId: string) => `/conversations/${convId}/messages/${msgId}/regenerate`,
     stop: (convId: string, msgId: string) => `/conversations/${convId}/messages/${msgId}/stop`,
+    frontendLatency: (convId: string, msgId: string) => `/conversations/${convId}/messages/${msgId}/latency/frontend-paint`,
     branches: (convId: string, msgId: string) => `/conversations/${convId}/messages/${msgId}/branches`,
     report: (convId: string, msgId: string) => `/conversations/${convId}/messages/${msgId}/report`,
     markMentionSeen: (conversationId: string, messageId: string) => `/conversations/${conversationId}/messages/${messageId}/mention-seen`,
