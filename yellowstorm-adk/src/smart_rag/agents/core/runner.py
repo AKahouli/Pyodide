@@ -776,21 +776,6 @@ class AgentRunner:
                                 f"[RUNNER] Sending SANDBOX component to client - agent: {agent_name}, component_id: {call_id}"
                             )
 
-                        if func_name == "generate_ui" and q:
-                            # Send UI generation status chunk
-                            ui_chunk = self.streaming_formatter.format_streaming_event(
-                                agent_id=agent_id,
-                                agent_name=agent_name,
-                                agent_type=agent_type,
-                                chunk="generating ui",
-                                message_id=session_id,
-                                content_type="ui",
-                            )
-                            await q.put(ui_chunk)
-                            logger.info(
-                                f"[DATAVIZ] Sent 'generating ui' chunk for tool: {func_name}"
-                            )
-
                         if func_name == "generate_form_viz" and q:
                             # Send form viz generation status chunk
                             ui_chunk = self.streaming_formatter.format_streaming_event(
@@ -824,7 +809,7 @@ class AgentRunner:
                             part.function_response.response, success
                         )
 
-                        # Check if this is a DataViz generate_ui tool response
+                        # Name of the tool this response belongs to
                         func_name = part.function_response.name
 
                         if q:
@@ -899,15 +884,6 @@ class AgentRunner:
                             q,
                         ):
                             continue
-
-                        if func_name == "generate_ui" and q:
-                            await self._handle_dataviz_response(
-                                part.function_response,
-                                agent_name,
-                                agent_type,
-                                session_id,
-                                q,
-                            )
 
                         # Check if this is a generate_form_viz tool response
                         if func_name == "generate_form_viz" and q:
@@ -1479,44 +1455,6 @@ class AgentRunner:
             f"[DIAGRAM REPLACEMENT] Made {replacements_made} replacements, final text length: {len(modified_text)}"
         )
         return modified_text
-
-    async def _handle_dataviz_response(
-        self, function_response, agent_name, agent_type, session_id, q
-    ):
-        """Handle DataViz MCP tool response and send entire response to backend.
-
-        Args:
-            function_response: The function response object from the tool
-            agent_name: The name of the agent
-            agent_type: The type of the agent
-            session_id: The session ID
-            q: Queue for streaming events
-
-        Returns:
-            None
-        """
-        try:
-            logger.info(
-                f"[DATAVIZ] Processing tool response for function: {function_response.name}"
-            )
-
-            # Get the entire response data
-            response_data = function_response.response
-            logger.debug(f"[DATAVIZ] Response type: {type(response_data)}")
-
-            # Send entire function response as UI chunk
-            ui_chunk = self.streaming_formatter.format_streaming_event(
-                agent_name=agent_name,
-                agent_type=agent_type,
-                chunk=json.dumps(response_data),
-                message_id=session_id,
-                content_type="ui",
-            )
-            await q.put(ui_chunk)
-            logger.info(f"[DATAVIZ] Sent tool response as UI chunk to backend")
-
-        except Exception as e:
-            logger.exception(f"[DATAVIZ] Error handling DataViz response: {e}")
 
     async def _handle_formviz_response(
         self, function_response, agent_name, agent_type, session_id, q

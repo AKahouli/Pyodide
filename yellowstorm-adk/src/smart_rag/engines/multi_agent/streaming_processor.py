@@ -451,21 +451,6 @@ class StreamingEventProcessor:
                         action="add",
                     ))
 
-                # Handle dataviz generate_ui function call
-                if func_name == "generate_ui" and q:
-                    ui_chunk = self.streaming_formatter.format_streaming_event(
-                        agent_id="manager",
-                        agent_name="manager",
-                        agent_type="manager",
-                        chunk="generating ui",
-                        message_id=current_message_id,
-                        content_type="ui",
-                    )
-                    await q.put(ui_chunk)
-                    logger.info(
-                        f"[MANAGER DATAVIZ] Sent 'generating ui' chunk for tool: {func_name}"
-                    )
-
                 # Handle generate_form_viz function call
                 if func_name == "generate_form_viz" and q:
                     ui_chunk = self.streaming_formatter.format_streaming_event(
@@ -621,10 +606,6 @@ class StreamingEventProcessor:
                                 component_id=f"artifact-{artifact['artifact_id']}",
                                 action="add",
                             ))
-                if func_name == "generate_ui" and q:
-                    await self._handle_dataviz_response(
-                        part.function_response, current_message_id, q
-                    )
                 if func_name == "generate_form_viz" and q:
                     await self._handle_formviz_response(
                         part.function_response, current_message_id, q
@@ -753,39 +734,6 @@ class StreamingEventProcessor:
         logger.debug(
             f"[AUTO MODE] Final response event received - message_id: {message_id}. Stream will end naturally."
         )
-
-    async def _handle_dataviz_response(
-        self, function_response, message_id: str, q: asyncio.Queue[dict]
-    ) -> None:
-        """Handle DataViz MCP tool response and send entire response to backend.
-
-        Args:
-            function_response: The function response object from the tool
-            message_id: The message ID for the current response
-            q: Queue for streaming events
-
-        Returns:
-            None
-        """
-        import json
-
-        try:
-            # Get the entire response data
-            response_data = function_response.response
-            # Send entire function response as UI chunk
-            ui_chunk = self.streaming_formatter.format_streaming_event(
-                agent_id="manager",
-                agent_name="manager",
-                agent_type="manager",
-                chunk=json.dumps(response_data),
-                message_id=message_id,
-                content_type="ui",
-            )
-            await q.put(ui_chunk)
-            logger.info(f"[MANAGER DATAVIZ] Sent tool response as UI chunk to backend")
-
-        except Exception as e:
-            logger.error(f"[MANAGER DATAVIZ] Error handling dataviz response: {str(e)}")
 
     async def _handle_formviz_response(
         self, function_response, message_id: str, q: asyncio.Queue[dict]

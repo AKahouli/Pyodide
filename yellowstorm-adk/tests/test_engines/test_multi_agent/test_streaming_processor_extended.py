@@ -74,14 +74,6 @@ class TestStreamingProcessorFunctionCalls:
         )
         assert queue.put.await_count >= 1
 
-    @pytest.mark.asyncio
-    async def test_handle_event_parts_generate_ui_call(self, processor):
-        queue = AsyncMock()
-        event = _event_with_function_call("generate_ui")
-        await processor._handle_event_parts(event, None, "msg-1", queue)
-        assert queue.put.await_count == 2
-        assert queue.put.await_args_list[0].args[0]["component"]["type"] == "tool_activity"
-
 
 class TestStreamingProcessorResponses:
     @pytest.mark.asyncio
@@ -100,13 +92,6 @@ class TestStreamingProcessorResponses:
 
         queue.put.assert_awaited_once()
         assert queue.put.call_args.args[0]["component"]["type"] == "web_preview"
-
-    @pytest.mark.asyncio
-    async def test_handle_dataviz_response(self, processor):
-        queue = AsyncMock()
-        response = SimpleNamespace(response={"ui": {"title": "Chart"}})
-        await processor._handle_dataviz_response(response, "msg-1", queue)
-        queue.put.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_handle_formviz_response(self, processor):

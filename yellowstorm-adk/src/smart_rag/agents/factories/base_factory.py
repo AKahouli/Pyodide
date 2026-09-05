@@ -160,8 +160,6 @@ class AgentFactory:
         generate_web_preview: bool = False,
         search_tool: bool = False,
         code_interpreter_tool: bool = False,
-        snowflake_tool: bool = False,
-        dataviz_tool: bool = False,
         formviz_tool: bool = False,
         skills: Optional[List[Dict]] = None,
         doc_tree: Optional[List] = None,
@@ -270,26 +268,6 @@ class AgentFactory:
                 search_web=search_web,
             )
             tools.append(toolkit.perform_web_search)
-
-        # Add snowflake tool if requested
-        if snowflake_tool:
-            mcp_configs = [{"type": "snowflake"}]
-            try:
-                snowflake_toolset = MCPHelper.create_toolsets(mcp_configs)
-                if snowflake_toolset:
-                    tools.extend(snowflake_toolset)
-            except Exception as e:
-                logger.exception(f"Error creating snowflake toolset: {e}")
-
-        # Add dataviz tool if requested
-        if dataviz_tool:
-            mcp_configs = [{"type": "dataviz"}]
-            try:
-                dataviz_toolset = MCPHelper.create_toolsets(mcp_configs)
-                if dataviz_toolset:
-                    tools.extend(dataviz_toolset)
-            except Exception as e:
-                logger.exception(f"Error creating dataviz toolset: {e}")
 
         # Add MCP toolset if provided
         if mcp_toolset:
@@ -586,8 +564,6 @@ class AgentFactory:
         brain_ids: List[str],
         vectorstore_name: str,
         search_web: str = "off",
-        snowflake_tool: bool = False,
-        dataviz_tool: bool = False,
         formviz_tool: bool = False,
         prompt: str = None,
         task_order: Optional[str] = None,
@@ -718,25 +694,6 @@ class AgentFactory:
                 func=standard_search_wrapper, schema=standard_tool_schema
             )
             tools.append(standard_search_tool)
-        # Add snowflake tool if requested
-        if snowflake_tool:
-            mcp_configs = [{"type": "snowflake"}]
-            try:
-                snowflake_toolset = MCPHelper.create_toolsets(mcp_configs)
-                if snowflake_toolset:
-                    tools.extend(snowflake_toolset)
-            except Exception as e:
-                logger.exception(f"Error creating snowflake toolset: {e}")
-
-        # Add dataviz tool if requested
-        if dataviz_tool:
-            mcp_configs = [{"type": "dataviz"}]
-            try:
-                dataviz_toolset = MCPHelper.create_toolsets(mcp_configs)
-                if dataviz_toolset:
-                    tools.extend(dataviz_toolset)
-            except Exception as e:
-                logger.exception(f"Error creating dataviz toolset: {e}")
 
         # Add formviz tool if requested
         if formviz_tool:

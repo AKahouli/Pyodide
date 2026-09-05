@@ -98,7 +98,6 @@ class TestDelegationTools:
         delegation_tools.agent_factory.create_report_writer_agent.assert_called_once_with(
             report_prompt, delegation_tools.user_request.chatbot_name
         )
-        # Note: create_excel_mcp_headers is called as a static method inside the factory, not on the instance
 
     def test_get_agents_exception_handling(self):
         """Test exception handling in get_agents."""
@@ -160,7 +159,6 @@ class TestDelegationTools:
         delegation_tools.agent_factory.create_html_agent.return_value = MagicMock()
         delegation_tools.agent_factory.create_operator_agent.return_value = MagicMock()
         delegation_tools.agent_factory.create_report_writer_agent.return_value = MagicMock()
-        delegation_tools.mcp_helper.create_excel_mcp_headers.return_value = {}
 
         result = delegation_tools.get_agents("vis", "op", "report", "search")
 
@@ -223,7 +221,6 @@ class TestDelegationTools:
         delegation_tools.agent_factory.create_html_agent.return_value = MagicMock()
         delegation_tools.agent_factory.create_operator_agent.return_value = MagicMock()
         delegation_tools.agent_factory.create_report_writer_agent.return_value = MagicMock()
-        delegation_tools.mcp_helper.create_excel_mcp_headers.return_value = {}
 
         # Test with empty prompts
         result1 = delegation_tools.get_agents("", "", "", "")

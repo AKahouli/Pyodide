@@ -63,7 +63,6 @@ class Settings(BaseSettings):
     LITELLM_API_BASE_URL: str
     LITELLM_API_SECRET_KEY: str
     ATTRIBUT_EXTRACT_MODEL: str = "gpt-5.4-mini"
-    EXCEL_MCP_URL: str
     MICROSANDBOX_MCP_URL: Optional[str] = None
     MICROSANDBOX_DOCUMENT_SERVER_URL: Optional[str] = None
     MICROSANDBOX_DOCKER_IMAGE: Optional[str] = None
@@ -135,11 +134,6 @@ class Settings(BaseSettings):
     NEO4J_PASSWORD: Optional[str] = None
     CSRD_BRAIN_ID: Optional[str] = "No_CSRD"
 
-    # SNOWFLAKE
-    SNOWFLAKE_MCP_URL: Optional[str] = None
-
-    # DataViz
-    DATAVIZ_MCP_URL: Optional[str] = None
     DEFAULT_HTML_AGENT_ENABLED: bool = False
 
     # Code Interpreter Backend
@@ -329,25 +323,6 @@ class Settings(BaseSettings):
             raise ValueError("LITELLM_API_SECRET_KEY is required and cannot be empty")
         return v
 
-    @field_validator("EXCEL_MCP_URL", mode="before")
-    @classmethod
-    def validate_excel_mcp_url(cls, v):
-        if not v or v.strip() == "":
-            raise ValueError("EXCEL_MCP_URL is required and cannot be empty")
-
-        try:
-            parsed = urlparse(v)
-            if not parsed.scheme or not parsed.netloc:
-                raise ValueError(
-                    "EXCEL_MCP_URL must be a valid URL with scheme and domain"
-                )
-            if parsed.scheme not in ("http", "https"):
-                raise ValueError("EXCEL_MCP_URL must use http or https scheme")
-        except Exception:
-            raise ValueError("EXCEL_MCP_URL must be a valid URL")
-
-        return v
-
     @field_validator("MICROSANDBOX_MCP_URL", mode="before")
     @classmethod
     def validate_microsandbox_mcp_url(cls, v):
@@ -393,44 +368,6 @@ class Settings(BaseSettings):
     def validate_microsandbox_docker_image(cls, v):
         if not v or v.strip() == "":
             return None
-
-        return v
-
-    @field_validator("SNOWFLAKE_MCP_URL", mode="before")
-    @classmethod
-    def validate_snowflake_mcp_url(cls, v):
-        if not v or v.strip() == "":
-            return None
-
-        try:
-            parsed = urlparse(v)
-            if not parsed.scheme or not parsed.netloc:
-                raise ValueError(
-                    "SNOWFLAKE_MCP_URL must be a valid URL with scheme and domain"
-                )
-            if parsed.scheme not in ("http", "https"):
-                raise ValueError("SNOWFLAKE_MCP_URL must use http or https scheme")
-        except Exception:
-            raise ValueError("SNOWFLAKE_MCP_URL must be a valid URL")
-
-        return v
-
-    @field_validator("DATAVIZ_MCP_URL", mode="before")
-    @classmethod
-    def validate_dataviz_mcp_url(cls, v):
-        if not v or v.strip() == "":
-            return None
-
-        try:
-            parsed = urlparse(v)
-            if not parsed.scheme or not parsed.netloc:
-                raise ValueError(
-                    "DATAVIZ_MCP_URL must be a valid URL with scheme and domain"
-                )
-            if parsed.scheme not in ("http", "https"):
-                raise ValueError("DATAVIZ_MCP_URL must use http or https scheme")
-        except Exception:
-            raise ValueError("DATAVIZ_MCP_URL must be a valid URL")
 
         return v
 

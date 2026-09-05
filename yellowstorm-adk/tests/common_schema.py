@@ -30,7 +30,6 @@ class MockSettings(BaseModel):
     LITELLM_API_BASE_URL: str = "https://mock_litellm_api_base_url"
     LITELLM_API_SECRET_KEY: str = "mock_litellm_api_secret_key"
     ATTRIBUT_EXTRACT_MODEL: str = "gpt-4.1"
-    EXCEL_MCP_URL: str = "https://mock_excel_mcp_url"
     MICROSANDBOX_MCP_URL: Optional[str] = "https://mock_microsandbox_mcp_url"
     MICROSANDBOX_DOCUMENT_SERVER_URL: Optional[str] = "https://mock_microsandbox_document_server_url"
     MICROSANDBOX_DOCKER_IMAGE: Optional[str] = "mock_microsandbox_docker_image"
@@ -96,11 +95,6 @@ class MockSettings(BaseModel):
     NEO4J_PASSWORD: Optional[str] = "mock_neo4j_password"
     CSRD_BRAIN_ID: Optional[str] = "ABC"
 
-    # SNOWFLAKE
-    SNOWFLAKE_MCP_URL: Optional[str] = None
-
-    # DataViz
-    DATAVIZ_MCP_URL: Optional[str] = None
     DEFAULT_HTML_AGENT_ENABLED: bool = False
 
     # Code Interpreter Backend
