@@ -141,15 +141,14 @@ class TestSharedEngine:
     async def test_init_session_success(self, session_helper, mock_agent):
         session_helper.set_session = AsyncMock(return_value=MagicMock())
         with patch(
-            "src.smart_rag.infrastructure.session.manager.get_shared_engine",
+            "src.smart_rag.infrastructure.session.manager.get_shared_database_session_service",
             new_callable=AsyncMock,
-        ), patch(
-            "src.smart_rag.infrastructure.session.manager.PatchedDatabaseSessionService",
-        ) as mock_service_cls, patch(
+            return_value=MagicMock(),
+        ) as mock_provider, patch(
             "src.smart_rag.infrastructure.session.manager.Runner",
         ) as mock_runner_cls:
-            mock_service_cls.return_value = MagicMock()
             mock_runner_cls.return_value = MagicMock()
             session_id = await session_helper.init_session(mock_agent, "sess-init")
         assert session_id == "sess-init"
         session_helper.set_session.assert_awaited_once()
+        assert session_helper.session_service is mock_provider.return_value
