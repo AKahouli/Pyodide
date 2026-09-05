@@ -28,7 +28,6 @@ import { ConversationModule } from '../conversation/conversation.module';
 import { AgentTaskExecutionService } from './services/agent-task-execution.service';
 import { UsageModule } from '../usage/usage.module';
 import { AgentRepositoryModule } from './repositories/agent-repository.module';
-import { AGENT_TASK_EXECUTOR } from '@common/tokens/agent-task-execution.token';
 
 @Module({
   imports: [
@@ -61,7 +60,6 @@ import { AGENT_TASK_EXECUTOR } from '@common/tokens/agent-task-execution.token';
     A2AAdminGrpcClientService,
     A2APublishService,
     AgentTaskExecutionService,
-    AGENT_TASK_EXECUTOR,
   ],
 })
 export class AgentModule {}

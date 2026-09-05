@@ -26,7 +26,7 @@ export class AgentTaskExecutionService {
   private readonly logger = new Logger(AgentTaskExecutionService.name);
   constructor(private readonly config: ConfigService, @Inject(forwardRef(() => StreamService)) private readonly stream: StreamService, private readonly agents: AgentService, private readonly usageService: UsageService) {}
 
-  async runSingleAgentTask(input: { userId: string; username?: string; agentId: string; query: string; attachedFiles: GrpcAttachedFile[]; correlationId: string; conversationId?: string; timeoutMs?: number }): Promise<{ text: string; toolResults: AgentTaskToolResult[]; usage?: { inputTokens: number; outputTokens: number; model?: string } }> {
+  async runSingleAgentTask(input: { userId: string; username?: string; agentId: string; query: string; attachedFiles: GrpcAttachedFile[]; correlationId: string; conversationId?: string; timeoutMs?: number; workspaceContext?: GrpcWorkspaceContext[]; usageEndpoint?: string }): Promise<{ text: string; toolResults: AgentTaskToolResult[]; citations: AgentTaskCitation[]; usage?: { inputTokens: number; outputTokens: number; model?: string } }> {
     await this.agents.assertActiveDefaultAgent(input.agentId);
     if (!(await this.stream.waitForGrpcReady(5_000))) throw new ServiceUnavailableException(ErrorCode.CHAT_GRPC_UNAVAILABLE, 'The AI runtime is unavailable');
     const client = this.stream.getChatbotClient();
@@ -49,7 +49,7 @@ export class AgentTaskExecutionService {
       const metadata = createGrpcMetadata(this.config); metadata.set('user', input.username || 'SYSTEM'); metadata.set('x-correlation-id', input.correlationId);
       const call = client.RunSingleAgent(request, metadata); let text = ''; const textComponents = new Map<string, string>(); const textComponentOrder: string[] = []; const toolResults: AgentTaskToolResult[] = []; const citations: AgentTaskCitation[] = []; let usage: { inputTokens: number; outputTokens: number; model?: string } | undefined; let terminalError = false; let settled = false; const startedAt = Date.now();
       const timer = setTimeout(() => { if (!settled) { settled = true; call.cancel(); reject(new ServiceUnavailableException(ErrorCode.AI_SERVICE_TIMEOUT, 'Decision-flow generation timed out')); } }, timeoutMs);
-      call.on('data', (chunk: { action?: string; component?: { id?: string; text?: { content?: string }; error?: { title?: string; content?: string }; tool_activity?: { tool_name?: string; status?: string; result_json?: string } }; usage?: { input_tokens?: number; output_tokens?: number; model?: string } }) => {
+      call.on('data', (chunk: { action?: string; component?: { id?: string; text?: { content?: string }; error?: { title?: string; content?: string }; tool_activity?: { tool_name?: string; status?: string; result_json?: string }; citation?: { parent_id?: string; text_source?: { source?: string; file_name?: string; page?: string; page_content?: string; workspace_id?: string; reference?: string; highlight_text?: string } } }; usage?: { input_tokens?: number; output_tokens?: number; model?: string } }) => {
         if (chunk.component?.error) terminalError = true;
         const content = chunk.component?.text?.content;
         if (content && (chunk.action === 'add' || chunk.action === 'update')) {
