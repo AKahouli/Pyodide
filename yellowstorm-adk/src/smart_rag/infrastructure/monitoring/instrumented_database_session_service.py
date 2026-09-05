@@ -34,24 +34,24 @@ class InstrumentedDatabaseSessionService(DatabaseSessionService):
         super().__init__(db_url, **kwargs)
         _register_sqlalchemy_listeners(self, self.db_engine.sync_engine)
 
-    async def _prepare_tables(self) -> None:
+    async def prepare_tables(self) -> None:
         """Time the lazy schema/table preparation into the active profile.
 
-        Named ``prepare_tables`` in log fields to match the diagnostic plan;
-        ADK 2.3.0 exposes this phase as the private ``_prepare_tables``.
+        Matches the ADK public ``prepare_tables()`` API (private
+        ``_prepare_tables`` before ADK 2.8.0).
         """
         trace = get_current_conversation_latency_trace()
         if trace is None:
-            await super()._prepare_tables()
+            await super().prepare_tables()
             return
         profile = _current_session_lookup_profile.get()
         if profile is None:
-            await super()._prepare_tables()
+            await super().prepare_tables()
             return
         profile.tables_already_created = bool(getattr(self, "_tables_created", False))
         start_ns = time.perf_counter_ns()
         try:
-            await super()._prepare_tables()
+            await super().prepare_tables()
         finally:
             profile.prepare_tables_ms += max((time.perf_counter_ns() - start_ns) / 1_000_000, 0.0)
 
