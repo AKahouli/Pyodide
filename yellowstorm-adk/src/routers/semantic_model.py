@@ -33,6 +33,7 @@ class GenerateMappingPlanRequest(BaseModel):
     graphDesignerCanvas: dict[str, Any]
     searchTasks: list[dict[str, Any]] = Field(max_length=500)
     existingEntities: list[dict[str, Any]] = Field(default=[], max_length=10_000)
+    manualInstances: list[dict[str, Any]] = Field(default=[], max_length=100)
 
 
 class GenerateMappingPlanResponse(BaseModel):

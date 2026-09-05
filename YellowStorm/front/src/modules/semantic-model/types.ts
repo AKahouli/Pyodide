@@ -218,6 +218,7 @@ export type SemanticBuildStatus = 'running' | 'completed' | 'failed';
 export type SemanticBuildStep = 'ontology' | 'mapping' | 'apply';
 export type SemanticBuildStepStatus = 'pending' | 'running' | 'completed' | 'failed' | 'skipped';
 export type SemanticBuildApplyMode = 'replace' | 'incremental';
+export interface SemanticModelManualInstances { nodeTypeId: string; labels: string[] }
 
 export interface SemanticBuildJob {
   buildId: string;

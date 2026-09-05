@@ -2,7 +2,7 @@ import { useEffect, useRef } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { semanticModelApi } from '../api';
 import { semanticModelQueryKeys } from '../query/queryKeys';
-import type { SemanticBuildApplyMode, SemanticBuildJob } from '../types';
+import type { SemanticBuildApplyMode, SemanticBuildJob, SemanticModelManualInstances } from '../types';
 
 const BUILD_POLL_INTERVAL_MS = 3_000;
 
@@ -49,10 +49,12 @@ export function useStartSemanticBuild(modelId: string | undefined) {
     mutationFn: ({
       businessRequirements,
       applyMode,
+      manualInstances,
     }: {
       businessRequirements: string[];
       applyMode?: SemanticBuildApplyMode;
-    }) => semanticModelApi.startBuild(modelId ?? '', businessRequirements, applyMode ?? 'replace'),
+      manualInstances?: SemanticModelManualInstances[];
+    }) => semanticModelApi.startBuild(modelId ?? '', businessRequirements, applyMode ?? 'replace', manualInstances ?? []),
     onSuccess: () => {
       if (!modelId) return;
       // Refetch the latest build immediately so the banner appears without waiting for the next poll.

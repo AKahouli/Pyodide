@@ -8,6 +8,7 @@ import { SemanticModelMappingJob, SemanticModelMappingPlan, SemanticModelMapping
 import type { SemanticModelEvidenceSearchTask } from '../domain/semantic-model-evidence-search.types';
 import { SemanticGraph } from '../domain/semantic-model.types';
 import { SemanticModelDatabaseService } from '../infrastructure/semantic-model-database.service';
+import type { SemanticModelManualInstances } from '../domain/semantic-model-build.types';
 import { SemanticAgeGraphRepository, type AgeGraphData, type AgeGraphNode } from '../repositories/semantic-age-graph.repository';
 import { SemanticGraphCommandService } from './semantic-graph-command.service';
 import { SemanticModelEvidenceSearchService } from './semantic-model-evidence-search.service';
@@ -26,10 +27,10 @@ export class SemanticModelMappingProposalService {
     private readonly ageGraph: SemanticAgeGraphRepository,
   ) {}
 
-  async startAsync(userId: string, modelId: string): Promise<{ jobId: string; status: 'running' }> {
+  async startAsync(userId: string, modelId: string, manualInstances: SemanticModelManualInstances[] = []): Promise<{ jobId: string; status: 'running' }> {
     await this.models.requireActiveRole(userId, modelId, ['owner', 'editor']);
     const jobId = await this.createRun(modelId);
-    void this.generate(userId, modelId)
+    void this.generate(userId, modelId, manualInstances)
       .then(async (result) => {
         // Store the full evidence tasks in search_summary so applyMappingPlan can resolve source documents later
         await this.updateRun(jobId, { status: 'completed', result, searchSummary: result._evidenceTasks ?? [] });
@@ -92,7 +93,7 @@ export class SemanticModelMappingProposalService {
     }));
   }
 
-  async generate(userId: string, modelId: string): Promise<SemanticModelMappingProposalResponse> {
+  async generate(userId: string, modelId: string, manualInstances: SemanticModelManualInstances[] = []): Promise<SemanticModelMappingProposalResponse> {
     await this.models.requireActiveRole(userId, modelId, ['owner', 'editor']);
     const [graph, search] = await Promise.all([
       this.graphCommands.getGraph(userId, modelId),
@@ -122,7 +123,7 @@ export class SemanticModelMappingProposalService {
     try {
       const { data } = await axios.post<SemanticModelMappingPlan>(
         `${adkUrl}/semantic-model/mappings/generate`,
-        { modelId, graphDesignerCanvas: graph as SemanticGraph, searchTasks, existingEntities },
+        { modelId, graphDesignerCanvas: graph as SemanticGraph, searchTasks, existingEntities, manualInstances },
         // No timeout: mapping is driven by the async build orchestrator with heartbeat.
         // LLM extraction + native search can legitimately take many minutes on large corpora.
         { headers: { 'Content-Type': 'application/json', 'x-api-key': apiKey }, timeout: 0 },

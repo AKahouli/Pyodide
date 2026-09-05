@@ -181,6 +181,7 @@ export class SemanticModelController {
     return this.builds.startAsync(user._id.toString(), modelId, {
       businessRequirements: dto.businessRequirements ?? [],
       applyMode: dto.applyMode ?? 'replace',
+      manualInstances: dto.manualInstances ?? [],
     });
   }
 
