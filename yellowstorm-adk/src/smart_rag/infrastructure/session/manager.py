@@ -18,7 +18,10 @@ logger = get_logger("api.smart_rag.session_helper")
 settings = get_settings()
 APP_NAME = "manager_app"
 DEFAULT_AGENT_NAME = "unknown"
-# Parallel Session Manager - shared engine with async coordination
+# Parallel Session Manager - shared engine with async coordination.
+# NOTE: these module-level locks bind to the first event loop that contends
+# on them; production runs one long-lived loop, so per-test loops in pytest
+# must not contend across resets.
 _shared_engine = None
 _engine_lock = asyncio.Lock()
 _shared_session_service = None
@@ -107,15 +110,18 @@ async def get_shared_database_session_service():
 async def dispose_shared_database_session_service():
     """Clear the shared session service during shutdown.
 
-    The service does not own the shared engine (it was injected via
-    ``db_engine=``), so ``close()`` releases no engine resources; the engine
-    itself is disposed exactly once by :func:`dispose_shared_engine`.
+    Takes the provider lock so a lazily-warming concurrent acquisition
+    cannot publish a service after disposal. The service does not own the
+    shared engine (it was injected via ``db_engine=``), so ``close()``
+    releases no engine resources; the engine itself is disposed exactly
+    once by :func:`dispose_shared_engine`.
     """
     global _shared_session_service
-    service = _shared_session_service
-    _shared_session_service = None
-    if service is not None:
-        await service.close()
+    async with _session_service_lock:
+        service = _shared_session_service
+        _shared_session_service = None
+        if service is not None:
+            await service.close()
 
 
 class SessionHelper:
