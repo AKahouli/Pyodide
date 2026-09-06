@@ -34,10 +34,17 @@ interface ReplayEntry {
  * Per-user replay window: the events this process broadcast to the user
  * recently, retained so a client that reconnects with a cursor can recover
  * what it missed while it had no connection. Bounded by item count and TTL.
+ *
+ * `generation` comes from a process-wide counter, not the buffer itself: when
+ * the sweep deletes an idle user's buffer and a later event recreates it,
+ * `lastSeq` restarts at 1 — without a fresh generation the new event would
+ * reissue a cursor an old event already used, and a client resuming from that
+ * old cursor would silently miss the new window's `stream_start`.
  */
 interface UserReplayBuffer {
   entries: ReplayEntry[];
   lastSeq: number;
+  generation: number;
 }
 
 @Injectable()
@@ -47,6 +54,8 @@ export class StreamGatewayService implements OnModuleDestroy {
 
   /** Cursor namespace — cursors from another process can never be replayed. */
   private readonly bootId = randomUUID();
+  /** Monotonic buffer-generation source; never reused within this process. */
+  private nextReplayGeneration = 0;
   private readonly replayEnabled: boolean;
   private readonly replayMaxEvents: number;
   private readonly replayTtlMs: number;
@@ -231,12 +240,12 @@ export class StreamGatewayService implements OnModuleDestroy {
 
     let buffer = this.replayBuffers.get(userId);
     if (!buffer) {
-      buffer = { entries: [], lastSeq: 0 };
+      buffer = { entries: [], lastSeq: 0, generation: ++this.nextReplayGeneration };
       this.replayBuffers.set(userId, buffer);
     }
     buffer.lastSeq += 1;
     const entry: ReplayEntry = {
-      cursorId: `${this.bootId}:${String(buffer.lastSeq)}`,
+      cursorId: `${this.bootId}:${buffer.generation}:${buffer.lastSeq}`,
       seq: buffer.lastSeq,
       recordedAt: Date.now(),
       event,
@@ -250,19 +259,19 @@ export class StreamGatewayService implements OnModuleDestroy {
 
   /**
    * Frames delivered before the live stream for a client that resumes from a
-   * cursor. Withholds replay and emits `stream_resync_required` when
-   * continuity cannot be proven (unknown cursor namespace, pruned window, or
-   * a cursor older than the retained window) — the client then reconciles
-   * from canonical state instead of silently continuing with gaps.
+   * cursor (`<bootId>:<generation>:<seq>`). Withholds replay and emits
+   * `stream_resync_required` when continuity cannot be proven (unknown cursor
+   * namespace, a generation from a swept-and-recreated buffer window, or a
+   * cursor older than the retained window) — the client then reconciles from
+   * canonical state instead of silently continuing with gaps.
    */
   private buildReplay$(userId: string, lastSeenCursor?: string): Observable<MessageEvent> {
     if (!this.replayEnabled || !lastSeenCursor) return EMPTY;
 
-    const separatorIndex = lastSeenCursor.lastIndexOf(':');
-    const bootId = separatorIndex > 0 ? lastSeenCursor.slice(0, separatorIndex) : '';
-    const seq = separatorIndex > 0
-      ? Number.parseInt(lastSeenCursor.slice(separatorIndex + 1), 10)
-      : Number.NaN;
+    const parts = lastSeenCursor.split(':');
+    const bootId = parts.length === 3 ? parts[0] : '';
+    const generation = parts.length === 3 ? Number.parseInt(parts[1], 10) : Number.NaN;
+    const seq = parts.length === 3 ? Number.parseInt(parts[2], 10) : Number.NaN;
 
     if (bootId !== this.bootId || !Number.isInteger(seq)) {
       return of(
@@ -273,8 +282,9 @@ export class StreamGatewayService implements OnModuleDestroy {
     }
 
     const buffer = this.replayBuffers.get(userId);
-    if (!buffer || seq > buffer.lastSeq) {
-      // No history here, or a cursor this buffer never issued (pruned window).
+    if (!buffer || buffer.generation !== generation || seq > buffer.lastSeq) {
+      // No history here, a cursor from a swept-and-recreated buffer window, or
+      // a cursor this buffer never issued (pruned window).
       return of(
         this.toMessageEvent({
           event: this.buildResyncEvent('cursor_gap', lastSeenCursor, undefined),

@@ -5,11 +5,15 @@ import { translateConversation } from './translation';
 type StreamListener = (event: StreamSSEEvent) => void;
 
 /**
- * Mirrors the backend replay-cursor shape (`<bootId>:<seq>`). Native SSE
- * `lastEventId` values that don't match (e.g. the server's auto-assigned
- * heartbeat counters) must never be stored as a cursor.
+ * Mirrors the backend replay-cursor shape (`<bootId>:<generation>:<seq>`;
+ * two-segment legacy cursors from an older backend are still accepted so a
+ * mixed deployment keeps resuming). Native SSE `lastEventId` values that
+ * don't match (e.g. the server's auto-assigned heartbeat counters) must never
+ * be stored as a cursor. The cursor stays opaque here: parsing happens
+ * server-side, which rejects a foreign namespace or generation with an
+ * explicit `stream_resync_required`.
  */
-const REPLAY_CURSOR_SHAPE = /^[A-Za-z0-9_-]{1,100}:[0-9]{1,15}$/;
+const REPLAY_CURSOR_SHAPE = /^[A-Za-z0-9_-]{1,100}(?::[0-9]{1,15}){1,2}$/;
 
 function safeJsonParse(value: unknown): unknown {
   if (typeof value !== 'string') return value;

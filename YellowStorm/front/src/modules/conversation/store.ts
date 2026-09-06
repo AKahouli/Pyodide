@@ -29,6 +29,23 @@ let currentStreamRevision = 0;
 let currentRevisionStreamKey: string | null = null;
 let receivedCurrentStreamStart = false;
 let pendingRecoveryChunks: BufferedStreamChunk[] = [];
+/**
+ * Forced-resync hold: while a `stream_resync_required` repair fetches the
+ * authoritative snapshot, arriving deltas of the affected conversation are
+ * held here instead of being applied to the (known-stale) live state, then
+ * applied only when newer than the installed snapshot.
+ */
+let resyncHoldActive = false;
+let resyncHoldConversationId: string | null = null;
+let resyncHeldChunks: BufferedStreamChunk[] = [];
+let forcedResyncInFlight = false;
+let missingStartRecoveryInFlight = false;
+/**
+ * Backlog caps: the snapshot repair supersedes anything beyond these bounds,
+ * so the recovery queues can never grow with a long-running stream.
+ */
+const MAX_PENDING_RECOVERY_CHUNKS = 500;
+const MAX_RESYNC_HELD_CHUNKS = 500;
 let pendingStreamReconcileTimer: ReturnType<typeof setTimeout> | null = null;
 let pendingStreamReconcileAttempts = 0;
 let pendingStreamReconcileInFlight = false;
@@ -223,6 +240,12 @@ const streamingBuffer = new StreamingBuffer();
 
 /** Guards against overlapping snapshot repairs when overflow fires repeatedly. */
 let streamSnapshotRepairInFlight = false;
+/**
+ * Bumped by every authoritative snapshot install (forced resync, missing-start
+ * recovery). Older in-flight snapshot fetches compare epochs so a stale fetch
+ * resolving late cannot overwrite a fresher installed state.
+ */
+let snapshotInstallEpoch = 0;
 
 /**
  * Client-metrics window generation: bumped on every send. A deferred
@@ -245,6 +268,7 @@ const CLIENT_METRICS_HIGHLIGHT_GRACE_MS = 250;
  * leaving a gap that only completion reconciliation would heal.
  */
 async function repairStreamingComponentsFromSnapshot(conversationId: string): Promise<void> {
+  const fetchEpoch = snapshotInstallEpoch;
   let snapshot: ActiveStreamSnapshot | null = null;
   try {
     snapshot = await api.fetchActiveStream(conversationId);
@@ -255,6 +279,11 @@ async function repairStreamingComponentsFromSnapshot(conversationId: string): Pr
   if (!snapshot || state.currentConversationId !== conversationId || !state.isStreaming || state.streamingMessageId !== snapshot.messageId) {
     // Stream finished or moved on while fetching — a canonical refetch covers it.
     void state.fetchMessages(conversationId);
+    return;
+  }
+  if (snapshotInstallEpoch !== fetchEpoch) {
+    // A newer authoritative snapshot installed while this fetch was in
+    // flight; it already supersedes this (older) repair snapshot.
     return;
   }
   const snapshotRevision = snapshot.revision ?? 0;
@@ -282,6 +311,166 @@ streamingBuffer.setOverflowCallback(() => {
     streamSnapshotRepairInFlight = false;
   });
 });
+
+/** Standard live flush: batch-apply queued chunks in one store commit per frame. */
+function attachStreamingFlushCallback(): void {
+  streamingBuffer.setFlushCallback((chunks) => {
+    useConversationStore.setState((s) => {
+      const components = applyChunksToComponents(s.streamingComponents, chunks);
+      const nextState: Partial<ConversationState> = { streamingComponents: components };
+      if (components.length > 0 && s.isAwaitingFirstChunk) {
+        nextState.isAwaitingFirstChunk = false; // hide loader once chunks are renderable
+        nextState.awaitingConversationId = null;
+      }
+      return nextState;
+    });
+  });
+}
+
+/**
+ * Install a fetched active-stream snapshot as the canonical live state at its
+ * own revision: deltas at or below the snapshot revision are discarded and
+ * only newer ones apply on top. `receivedCurrentStreamStart` becomes true so
+ * revisioned chunks stop diverting into the recovery backlog. Used by both
+ * the missing-start recovery (cold send that missed `stream_start`) and the
+ * forced resync (proven replay gap).
+ */
+function installActiveStreamSnapshot(
+  conversationId: string,
+  snapshot: ActiveStreamSnapshot,
+  heldChunks: BufferedStreamChunk[],
+  options: { replaceComponents: boolean },
+): void {
+  const snapshotRevision = snapshot.revision ?? 0;
+  const snapshotKey = `${conversationId}:${snapshot.messageId}`;
+  if (currentRevisionStreamKey !== snapshotKey) currentStreamRevision = 0;
+  currentRevisionStreamKey = snapshotKey;
+  currentStreamRevision = Math.max(currentStreamRevision, snapshotRevision);
+  receivedCurrentStreamStart = true;
+  streamingBuffer.discardThrough(snapshotRevision);
+
+  const state = useConversationStore.getState();
+  const newerChunks = heldChunks.filter((chunk) => chunk.revision === undefined || chunk.revision > snapshotRevision);
+  let base = snapshot.components;
+  if (!options.replaceComponents) {
+    // Components created by chunks that arrived during the fetch exist only
+    // locally; the snapshot is the canonical base for everything it contains.
+    const snapshotIds = new Set(snapshot.components.map((component) => component.id));
+    base = [...snapshot.components, ...state.streamingComponents.filter((component) => !snapshotIds.has(component.id))];
+  }
+  const components = applyChunksToComponents(base, newerChunks);
+  attachStreamingFlushCallback();
+  snapshotInstallEpoch += 1;
+  useConversationStore.setState({
+    isStreaming: true,
+    streamingConversationId: conversationId,
+    streamingMessageId: snapshot.messageId,
+    pendingAssistantMessageId: snapshot.messageId,
+    streamingComponents: components,
+    ...(components.length > 0 ? { isAwaitingFirstChunk: false, awaitingConversationId: null } : {}),
+  });
+  streamingBuffer.flush();
+}
+
+/**
+ * A revisioned chunk arrived without an observed `stream_start` — the
+ * immediate-send path can lose the start frame to a not-yet-open SSE pipe on
+ * a cold tab. Recover from the server's active-stream snapshot keyed by the
+ * conversation (no message id needed): the snapshot installs at its own
+ * revision and only newer deltas apply, so progressive rendering no longer
+ * depends on the POST ack or the SSE handshake ordering.
+ */
+async function recoverMissingStreamStart(conversationId: string): Promise<void> {
+  if (missingStartRecoveryInFlight) return;
+  // An in-flight fetchMessages hydration owns snapshot recovery for this
+  // conversation: its active-stream install applies the buffered backlog
+  // itself, and a second concurrent fetch here would race it.
+  if (useConversationStore.getState().messagesLoading) return;
+  missingStartRecoveryInFlight = true;
+  try {
+    const snapshot = await api.fetchActiveStream(conversationId).catch((err: unknown) => {
+      console.warn('[ConversationStore] missing-start snapshot recovery failed', err);
+      return null;
+    });
+    const state = useConversationStore.getState();
+    // The start frame arrived (or the view moved on) while fetching: the
+    // normal event paths own the stream now. A failed fetch keeps the bounded
+    // backlog so the next chunk can retry.
+    if (receivedCurrentStreamStart || state.currentConversationId !== conversationId) {
+      pendingRecoveryChunks = [];
+      return;
+    }
+    if (!snapshot || resyncHoldActive) return;
+    // A terminal event (completion/error) settles the stream while the
+    // snapshot is in flight — the terminal state must win, never be
+    // resurrected as a live-looking stream no event will ever finish.
+    if (!state.isStreaming) {
+      pendingRecoveryChunks = [];
+      return;
+    }
+    const trackedMessageId = state.streamingMessageId ?? state.pendingAssistantMessageId;
+    if (trackedMessageId && trackedMessageId !== snapshot.messageId) {
+      // A different (newer) run owns the pipe; its own events are intact.
+      pendingRecoveryChunks = [];
+      return;
+    }
+    const heldChunks = pendingRecoveryChunks;
+    pendingRecoveryChunks = [];
+    installActiveStreamSnapshot(conversationId, snapshot, heldChunks, { replaceComponents: false });
+  } finally {
+    missingStartRecoveryInFlight = false;
+  }
+}
+
+/**
+ * The server proved a replay discontinuity (`stream_resync_required`). For
+ * the currently live run, the ordinary already-live hydration optimization
+ * must not skip the repair: hold arriving deltas, force-install the
+ * authoritative snapshot, then apply only deltas newer than it. Falls back to
+ * the canonical message reload when no local run is being tracked — never a
+ * partial replay over a proven gap.
+ */
+async function forcedResyncActiveStream(conversationId: string): Promise<void> {
+  if (forcedResyncInFlight) return;
+  forcedResyncInFlight = true;
+  resyncHoldActive = true;
+  resyncHoldConversationId = conversationId;
+  try {
+    const initial = useConversationStore.getState();
+    const wasTrackingRun = (initial.streamingMessageId ?? initial.pendingAssistantMessageId) !== null;
+    const snapshot = await api.fetchActiveStream(conversationId).catch((err: unknown) => {
+      console.warn('[ConversationStore] forced resync snapshot fetch failed', err);
+      return null;
+    });
+    resyncHoldActive = false;
+    resyncHoldConversationId = null;
+    const heldChunks = resyncHeldChunks;
+    resyncHeldChunks = [];
+
+    const state = useConversationStore.getState();
+    if (state.currentConversationId !== conversationId) return;
+    if (!snapshot) {
+      void state.fetchMessages(conversationId);
+      return;
+    }
+    const trackedMessageId = state.streamingMessageId ?? state.pendingAssistantMessageId;
+    if (trackedMessageId === snapshot.messageId) {
+      installActiveStreamSnapshot(conversationId, snapshot, heldChunks, { replaceComponents: true });
+      return;
+    }
+    if (!state.isStreaming && !wasTrackingRun) {
+      // Not tracking any run: the canonical reload is the recovery surface
+      // (it hydrates the active run from the same snapshot).
+      void state.fetchMessages(conversationId);
+    }
+    // A different run is already tracked, or the tracked run completed or
+    // moved on while fetching — those own their canonical state; leave them.
+  } finally {
+    resyncHoldActive = false;
+    resyncHoldConversationId = null;
+    forcedResyncInFlight = false;
+  }
+}
 
 function cancelPendingStreamReconciliation(): void {
   if (pendingStreamReconcileTimer) clearTimeout(pendingStreamReconcileTimer);
@@ -1647,6 +1836,18 @@ export const useConversationStore = create<ConversationState>()(
           if (captured) set({ pendingLatencyPaint: captured });
         }
 
+        // A forced resync is fetching the authoritative snapshot: hold deltas
+        // of the affected conversation so they can be ordered against it
+        // instead of rendering onto the state with the proven gap.
+        if (resyncHoldActive && state.currentConversationId === resyncHoldConversationId) {
+          if (resyncHeldChunks.length >= MAX_RESYNC_HELD_CHUNKS) {
+            resyncHeldChunks = []; // the snapshot supersedes the held span
+          } else {
+            resyncHeldChunks.push({ action: event.action, component: event.component, revision: event.revision });
+          }
+          return;
+        }
+
         if (event.revision !== undefined) {
           const messageId = event.messageId ?? state.streamingMessageId ?? '';
           const streamKey = `${event.conversationId}:${messageId}`;
@@ -1672,11 +1873,19 @@ export const useConversationStore = create<ConversationState>()(
         }
 
         if (event.revision !== undefined && !receivedCurrentStreamStart) {
-          pendingRecoveryChunks.push({
-            action: event.action,
-            component: event.component,
-            revision: event.revision,
-          });
+          // Revisioned content without an observed `stream_start` (cold send
+          // raced the SSE pipe): keep a bounded backlog and recover from the
+          // active-stream snapshot instead of waiting for completion.
+          if (pendingRecoveryChunks.length >= MAX_PENDING_RECOVERY_CHUNKS) {
+            pendingRecoveryChunks = []; // the snapshot supersedes the backlog
+          } else {
+            pendingRecoveryChunks.push({
+              action: event.action,
+              component: event.component,
+              revision: event.revision,
+            });
+          }
+          void recoverMissingStreamStart(event.conversationId);
           return;
         }
 
@@ -2219,15 +2428,16 @@ export const useConversationStore = create<ConversationState>()(
 
       /**
        * The server could not replay a missed event window (cursor gap or
-       * process switch), so SSE history is no longer contiguous. Reconcile
-       * the viewed conversation from canonical state; live events keep
-       * flowing and stay ordered by the existing revision guards.
+       * process switch), so SSE history is no longer contiguous. For the
+       * live run this forces installation of the authoritative active-stream
+       * snapshot (held deltas apply only when newer than it); without a
+       * tracked run it falls back to the canonical message reload.
        */
       onStreamResyncRequired: (event) => {
         console.warn('[ConversationStore] stream resync required', { reason: event.reason });
         const conversationId = get().currentConversationId;
         if (!conversationId) return;
-        void get().fetchMessages(conversationId);
+        void forcedResyncActiveStream(conversationId);
       },
 
       onMentionCreated: (event) => {

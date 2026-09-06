@@ -513,10 +513,22 @@ export async function openCitationSource(
  * change as more text streams in) and everything after it is the active tail.
  * Content below the minimum length is left unsplit — the memoization only
  * pays off once the stable prefix is large.
+ *
+ * Content containing a link/footnote reference definition is never split:
+ * reference definitions are document-scoped (a `[use]` binds to its
+ * `[ref]: url` wherever that line sits), and the two segments are parsed by
+ * independent ReactMarkdown instances, so a boundary between a use and its
+ * definition silently breaks the link regardless of how block-safe the blank
+ * line is.
  */
 const HOT_TAIL_MIN_LENGTH = 2_000;
 /** Tail-segment outline-id offset; stable ids stay below it (see ai-message-outline). */
 const HOT_TAIL_SEQ_BASE = 100_000;
+/** CommonMark link reference definition: up to 3 spaces indent, [label], colon.
+ * A definition indented ≥4 spaces inside a deeply nested list escapes this
+ * check; that residual case re-enables the original cross-segment bug only
+ * for that layout. */
+const LINK_REFERENCE_DEFINITION = /^ {0,3}\[[^\]\n]+\]:/;
 
 export function splitMarkdownAtSafeBoundary(content: string): { stable: string; tail: string } {
   if (content.length <= HOT_TAIL_MIN_LENGTH) return { stable: '', tail: content };
@@ -524,6 +536,7 @@ export function splitMarkdownAtSafeBoundary(content: string): { stable: string; 
   let inFence = false;
   let fenceChar = '';
   let fenceLength = 0;
+  let hasReferenceDefinition = false;
   let lastBoundary = -1;
   let lineStart = 0;
   const boundaries: number[] = [];
@@ -546,12 +559,16 @@ export function splitMarkdownAtSafeBoundary(content: string): { stable: string; 
           // CommonMark closing fence: same char, at least as long, no info string.
           inFence = false;
         }
-      } else if (!inFence && line.trim() === '') {
-        boundaries.push(i + 1);
+      } else {
+        if (!inFence) {
+          if (LINK_REFERENCE_DEFINITION.test(line)) hasReferenceDefinition = true;
+          else if (line.trim() === '') boundaries.push(i + 1);
+        }
       }
       lineStart = i + 1;
     }
   }
+  if (hasReferenceDefinition) return { stable: '', tail: content };
   // A blank line separates blocks only when the next line starts a new block.
   // Indented or list-marker next lines continue the previous construct — but
   // only when a list item actually preceded the blank line (a paragraph

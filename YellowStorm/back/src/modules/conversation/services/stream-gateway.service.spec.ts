@@ -65,7 +65,7 @@ describe('StreamGatewayService', () => {
     const live = collect(gateway.registerConnection('user-1', 'conn-1', disconnect$)!, 1);
     gateway.sendToUser('user-1', chunk(1));
     const [first] = await live;
-    const [bootId, firstSeq] = (first.id as string).split(':');
+    const [bootId, generation, firstSeq] = (first.id as string).split(':');
     expect(firstSeq).toBe('1');
 
     gateway.removeConnection('user-1', 'conn-1');
@@ -82,7 +82,10 @@ describe('StreamGatewayService', () => {
     const frames = await reconnected;
 
     expect(frames.map(contentOf)).toEqual(['chunk-2', 'chunk-3']);
-    expect(frames.map((frame) => frame.id)).toEqual([`${bootId}:2`, `${bootId}:3`]);
+    expect(frames.map((frame) => frame.id)).toEqual([
+      `${bootId}:${generation}:2`,
+      `${bootId}:${generation}:3`,
+    ]);
   });
 
   it('preserves the replay cursor inside the SSE payload when the global response envelope wraps frames', async () => {
@@ -113,7 +116,8 @@ describe('StreamGatewayService', () => {
         .pipe(take(1)),
     );
     const payload = (wrapped as { data: { id?: string; type?: string } }).data;
-    expect(payload.id).toBe(`${(first.id as string).split(':')[0]}:2`);
+    const [bootId, generation] = (first.id as string).split(':');
+    expect(payload.id).toBe(`${bootId}:${generation}:2`);
     expect(payload.type).toBe('stream_chunk');
   });
 
@@ -183,6 +187,33 @@ describe('StreamGatewayService', () => {
       1,
     );
 
+    expect(frames[0].type).toBe('stream_resync_required');
+    expect((frames[0].data as { reason: string }).reason).toBe('cursor_gap');
+  });
+
+  it('emits stream_resync_required for a cursor from a swept buffer instead of replaying the recreated window', async () => {
+    jest.useFakeTimers();
+    gateway = buildGateway({ 'conversation.sseReplayTtlMs': 5000 });
+
+    const live = collect(gateway.registerConnection('user-1', 'conn-1', disconnect$)!, 1);
+    gateway.sendToUser('user-1', chunk(1));
+    const [stale] = await live;
+
+    // Idle TTL: the sweep deletes the user's buffer, and a later event
+    // recreates it with lastSeq restarting at 1.
+    gateway.removeConnection('user-1', 'conn-1');
+    jest.advanceTimersByTime(20_000);
+    gateway.sendToUser('user-1', chunk(2));
+
+    // Without a fresh generation the recreated buffer would treat the old
+    // cursor as current and replay chunk-2 alone — silently omitting the new
+    // window's stream_start. The generation mismatch must force a resync.
+    const frames = await collect(
+      gateway.registerConnection('user-1', 'conn-2', disconnect$, stale.id as string)!,
+      1,
+    );
+
+    expect(frames).toHaveLength(1);
     expect(frames[0].type).toBe('stream_resync_required');
     expect((frames[0].data as { reason: string }).reason).toBe('cursor_gap');
   });

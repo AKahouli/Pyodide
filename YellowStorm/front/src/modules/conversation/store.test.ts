@@ -489,6 +489,207 @@ describe('conversation streaming component updates', () => {
     ]);
   });
 
+  it('recovers progressive content when revisioned chunks arrive before any stream_start', async () => {
+    let resolveSnapshot: (value: Record<string, unknown>) => void = () => undefined;
+    fetchActiveStreamMock.mockImplementation(() => new Promise((resolve) => { resolveSnapshot = resolve; }));
+    useConversationStore.setState({ currentConversationId: 'conv-1' });
+
+    // Cold send: the SSE pipe was not open when the backend emitted
+    // stream_start, so revisioned chunks arrive with no observed start.
+    useConversationStore.getState().onStreamChunk({
+      conversationId: 'conv-1',
+      action: 'add',
+      component: { id: 'text-1', type: 'text', data: { content: 'early ' } },
+      revision: 1,
+    });
+    useConversationStore.getState().onStreamChunk({
+      conversationId: 'conv-1',
+      action: 'update',
+      component: { id: 'text-1', type: 'text', data: { content: 'early tail' } },
+      revision: 2,
+    });
+    // Recovery is keyed by conversation — it works even before the POST ack
+    // has supplied the message id.
+    await vi.waitFor(() => expect(fetchActiveStreamMock).toHaveBeenCalledWith('conv-1'));
+
+    resolveSnapshot({
+      conversationId: 'conv-1',
+      messageId: 'ai-1',
+      revision: 2,
+      components: [{ id: 'text-1', type: 'text', data: { content: 'early tail' } }],
+    });
+
+    await vi.waitFor(() => {
+      expect(useConversationStore.getState()).toMatchObject({
+        isStreaming: true,
+        streamingConversationId: 'conv-1',
+        streamingMessageId: 'ai-1',
+        pendingAssistantMessageId: 'ai-1',
+        isAwaitingFirstChunk: false,
+      });
+    });
+
+    // Post-install deltas apply live instead of re-buffering into recovery.
+    useConversationStore.getState().onStreamChunk({
+      conversationId: 'conv-1',
+      action: 'update',
+      component: { id: 'text-1', type: 'text', data: { content: ' more' } },
+      revision: 3,
+    });
+    await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+
+    expect(useConversationStore.getState().streamingComponents).toEqual([
+      expect.objectContaining({ id: 'text-1', data: { content: 'early tail more' } }),
+    ]);
+  });
+
+  it('forced resync installs the snapshot for a live run instead of skipping it', async () => {
+    let resolveSnapshot: (value: Record<string, unknown>) => void = () => undefined;
+    fetchActiveStreamMock.mockImplementation(() => new Promise((resolve) => { resolveSnapshot = resolve; }));
+    useConversationStore.setState({ currentConversationId: 'conv-1' });
+    useConversationStore.getState().onStreamStart({ conversationId: 'conv-1', messageId: 'ai-1' });
+
+    // Render through revision 2, then miss the 3..250 span.
+    useConversationStore.getState().onStreamChunk({
+      conversationId: 'conv-1',
+      action: 'update',
+      component: { id: 'text-1', type: 'text', data: { content: 'partial' } },
+      revision: 2,
+    });
+    await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+
+    useConversationStore.getState().onStreamResyncRequired({ reason: 'cursor_gap' });
+    await vi.waitFor(() => expect(fetchActiveStreamMock).toHaveBeenCalledWith('conv-1'));
+
+    // Deltas arriving while the snapshot is in flight are held, not applied.
+    useConversationStore.getState().onStreamChunk({
+      conversationId: 'conv-1',
+      action: 'update',
+      component: { id: 'text-1', type: 'text', data: { content: 'HOLD' } },
+      revision: 251,
+    });
+
+    resolveSnapshot({
+      conversationId: 'conv-1',
+      messageId: 'ai-1',
+      revision: 250,
+      components: [{ id: 'text-1', type: 'text', data: { content: 'repaired span' } }],
+    });
+
+    await vi.waitFor(() => {
+      expect(useConversationStore.getState().streamingComponents).toEqual([
+        expect.objectContaining({ id: 'text-1', data: { content: 'repaired spanHOLD' } }),
+      ]);
+    });
+    // The gap was repaired without a disruptive canonical list reload.
+    expect(fetchMessagesMock).not.toHaveBeenCalled();
+
+    // Only deltas newer than the snapshot apply afterwards.
+    useConversationStore.getState().onStreamChunk({
+      conversationId: 'conv-1',
+      action: 'update',
+      component: { id: 'text-1', type: 'text', data: { content: ' tail' } },
+      revision: 252,
+    });
+    await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+
+    expect(useConversationStore.getState().streamingComponents).toEqual([
+      expect.objectContaining({ id: 'text-1', data: { content: 'repaired spanHOLD tail' } }),
+    ]);
+  });
+
+  it('forced resync ignores the snapshot after the user navigated away', async () => {
+    let resolveSnapshot: (value: Record<string, unknown>) => void = () => undefined;
+    fetchActiveStreamMock.mockImplementation(() => new Promise((resolve) => { resolveSnapshot = resolve; }));
+    useConversationStore.setState({ currentConversationId: 'conv-1' });
+    useConversationStore.getState().onStreamStart({ conversationId: 'conv-1', messageId: 'ai-1' });
+
+    useConversationStore.getState().onStreamResyncRequired({ reason: 'cursor_gap' });
+    await vi.waitFor(() => expect(fetchActiveStreamMock).toHaveBeenCalledWith('conv-1'));
+
+    useConversationStore.setState({ currentConversationId: 'conv-2' });
+    resolveSnapshot({
+      conversationId: 'conv-1',
+      messageId: 'ai-1',
+      revision: 9,
+      components: [{ id: 'text-9', type: 'text', data: { content: 'stale' } }],
+    });
+    await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+
+    expect(useConversationStore.getState().streamingComponents).toEqual([]);
+    expect(fetchMessagesMock).not.toHaveBeenCalled();
+  });
+
+  it('forced resync defers to canonical completion that lands during the snapshot fetch', async () => {
+    let resolveSnapshot: (value: Record<string, unknown>) => void = () => undefined;
+    fetchActiveStreamMock.mockImplementation(() => new Promise((resolve) => { resolveSnapshot = resolve; }));
+    useConversationStore.setState({ currentConversationId: 'conv-1' });
+    useConversationStore.getState().onStreamStart({ conversationId: 'conv-1', messageId: 'ai-1' });
+
+    useConversationStore.getState().onStreamResyncRequired({ reason: 'cursor_gap' });
+    await vi.waitFor(() => expect(fetchActiveStreamMock).toHaveBeenCalledWith('conv-1'));
+
+    fetchMessageMock.mockResolvedValue({
+      id: 'ai-1', conversationId: 'conv-1', conversationType: 'ai',
+      isComplete: true, components: [], createdAt: '2026-09-06T00:00:00.000Z',
+    });
+    await useConversationStore.getState().onStreamComplete({ conversationId: 'conv-1', messageId: 'ai-1' });
+    expect(useConversationStore.getState().isStreaming).toBe(false);
+
+    resolveSnapshot({
+      conversationId: 'conv-1',
+      messageId: 'ai-1',
+      revision: 9,
+      components: [{ id: 'text-9', type: 'text', data: { content: 'late snapshot' } }],
+    });
+    await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+
+    // The completion owns the terminal state; the snapshot must not
+    // resurrect the stream or trigger a canonical reload.
+    expect(useConversationStore.getState().isStreaming).toBe(false);
+    expect(useConversationStore.getState().streamingComponents).toEqual([]);
+    expect(fetchMessagesMock).not.toHaveBeenCalled();
+  });
+
+  it('missing-start recovery defers to a terminal event that lands during the snapshot fetch', async () => {
+    let resolveSnapshot: (value: Record<string, unknown>) => void = () => undefined;
+    fetchActiveStreamMock.mockImplementation(() => new Promise((resolve) => { resolveSnapshot = resolve; }));
+    useConversationStore.setState({ currentConversationId: 'conv-1' });
+
+    // Cold send: chunks arrive with no observed start; recovery kicks off.
+    useConversationStore.getState().onStreamChunk({
+      conversationId: 'conv-1',
+      action: 'add',
+      component: { id: 'text-1', type: 'text', data: { content: 'early' } },
+      revision: 1,
+    });
+    await vi.waitFor(() => expect(fetchActiveStreamMock).toHaveBeenCalledWith('conv-1'));
+
+    // The run settles terminally while the snapshot is in flight.
+    fetchMessageMock.mockResolvedValue({
+      id: 'ai-1', conversationId: 'conv-1', conversationType: 'ai',
+      isComplete: true, components: [], createdAt: '2026-09-06T00:00:00.000Z',
+    });
+    useConversationStore.setState({ streamingMessageId: 'ai-1', pendingAssistantMessageId: 'ai-1' });
+    await useConversationStore.getState().onStreamComplete({ conversationId: 'conv-1', messageId: 'ai-1' });
+    expect(useConversationStore.getState().isStreaming).toBe(false);
+
+    resolveSnapshot({
+      conversationId: 'conv-1',
+      messageId: 'ai-1',
+      revision: 5,
+      components: [{ id: 'text-1', type: 'text', data: { content: 'late snapshot' } }],
+    });
+    await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+
+    // The terminal state wins; the snapshot must not resurrect the stream.
+    expect(useConversationStore.getState().isStreaming).toBe(false);
+    expect(useConversationStore.getState().streamingComponents).toEqual([]);
+    expect(useConversationStore.getState().messages).toEqual([
+      expect.objectContaining({ id: 'ai-1', isComplete: true }),
+    ]);
+  });
+
   it('restores an active stream snapshot after refresh and keeps applying live chunks', async () => {
     fetchMessagesMock.mockResolvedValue({
       items: [{

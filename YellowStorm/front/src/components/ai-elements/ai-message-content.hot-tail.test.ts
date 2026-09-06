@@ -97,3 +97,37 @@ describe('splitMarkdownAtSafeBoundary fence/list rules', () => {
     expect(tail).toBe('> A fresh blockquote');
   });
 });
+
+describe('splitMarkdownAtSafeBoundary reference definitions', () => {
+  const base = 'Paragraph one with some prose.\n\n'.repeat(120);
+
+  it('never splits when a link reference definition follows its use', () => {
+    // Reference definitions are document-scoped: a boundary between the use
+    // and its definition would break the link across the two parses.
+    const content = base + 'See [User guide][guide].\n\n[guide]: /manual';
+    const { stable, tail } = splitMarkdownAtSafeBoundary(content);
+    expect(stable).toBe('');
+    expect(tail).toBe(content);
+  });
+
+  it('never splits when a link reference definition precedes its use', () => {
+    const content = base + '[guide]: /manual\n\nSee [User guide][guide].';
+    const { stable, tail } = splitMarkdownAtSafeBoundary(content);
+    expect(stable).toBe('');
+    expect(tail).toBe(content);
+  });
+
+  it('never splits footnote definitions away from their references', () => {
+    const content = base + 'A claim[^1].\n\n[^1]: The source note.';
+    const { stable, tail } = splitMarkdownAtSafeBoundary(content);
+    expect(stable).toBe('');
+    expect(tail).toBe(content);
+  });
+
+  it('ignores definition-like lines inside fenced code', () => {
+    const content = base + '```\n[guide]: /manual\n```\n\nPlain tail';
+    const { stable, tail } = splitMarkdownAtSafeBoundary(content);
+    expect(stable).toBe(base + '```\n[guide]: /manual\n```\n\n');
+    expect(tail).toBe('Plain tail');
+  });
+});

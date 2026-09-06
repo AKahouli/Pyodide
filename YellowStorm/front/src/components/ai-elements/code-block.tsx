@@ -47,7 +47,12 @@ type ShikiModule = typeof import('shiki');
 let shikiModulePromise: Promise<ShikiModule> | null = null;
 
 function loadShiki(): Promise<ShikiModule> {
-  shikiModulePromise ??= import('shiki');
+  shikiModulePromise ??= import('shiki').catch((error) => {
+    // A failed import must not stay cached: keep retrying future blocks with
+    // a fresh load instead of a permanently rejected promise.
+    shikiModulePromise = null;
+    throw error;
+  });
   return shikiModulePromise;
 }
 
@@ -101,38 +106,49 @@ function cachedHighlight(code: string, language: BundledLanguage, showLineNumber
 }
 
 export const CodeBlock = ({ code, language, showLineNumbers = false, isStreaming = false, className, children, ...props }: CodeBlockProps) => {
-  const [html, setHtml] = useState<string>('');
+  // `null` = highlighted HTML for the CURRENT key is not ready (still loading,
+  // or highlighting failed): the plain code stays visible and copyable, so a
+  // pending or failed highlight can never blank the block.
+  const [html, setHtml] = useState<string | null>(null);
 
   useEffect(() => {
     if (isStreaming) return;
     let cancelled = false;
-    cachedHighlight(code, language, showLineNumbers).then((highlighted) => {
-      if (!cancelled) setHtml(highlighted);
-    });
+    setHtml(null); // never keep HTML produced for a previous content key
+    cachedHighlight(code, language, showLineNumbers)
+      .then((highlighted) => {
+        if (!cancelled) setHtml(highlighted);
+      })
+      .catch((error) => {
+        console.error('[CodeBlock] highlighting failed; keeping plain code', error);
+        if (!cancelled) setHtml(null);
+      });
     return () => {
       cancelled = true;
     };
   }, [code, language, showLineNumbers, isStreaming]);
 
+  const showHighlighted = !isStreaming && html !== null;
+
   return (
     <CodeBlockContext.Provider value={{ code }}>
       <div className={cn('group relative w-full overflow-hidden rounded-md border bg-background text-foreground', className)} {...props}>
-        {isStreaming ? (
-          // Streaming placeholder: same geometry (padding, font size, scroll)
-          // as the highlighted block, zero Shiki cost per drain tick.
-          <div className='relative'>
-            <pre className='m-0 overflow-auto bg-background p-4 text-sm text-foreground'>
-              <code className='font-mono text-sm whitespace-pre'>{code}</code>
-            </pre>
-            {children && <div className='absolute top-2 right-2 flex items-center gap-2'>{children}</div>}
-          </div>
-        ) : (
+        {showHighlighted ? (
           <div className='relative'>
             <div
               className='overflow-auto [&>pre]:m-0 [&>pre]:bg-background! [&>pre]:p-4 [&>pre]:text-sm [&_code]:font-mono [&_code]:text-sm'
               // biome-ignore lint/security/noDangerouslySetInnerHtml: "this is needed."
               dangerouslySetInnerHTML={{ __html: html }}
             />
+            {children && <div className='absolute top-2 right-2 flex items-center gap-2'>{children}</div>}
+          </div>
+        ) : (
+          // Streaming placeholder / highlight pending: same geometry (padding,
+          // font size, scroll) as the highlighted block, zero Shiki cost.
+          <div className='relative'>
+            <pre className='m-0 overflow-auto bg-background p-4 text-sm text-foreground'>
+              <code className='font-mono text-sm whitespace-pre'>{code}</code>
+            </pre>
             {children && <div className='absolute top-2 right-2 flex items-center gap-2'>{children}</div>}
           </div>
         )}

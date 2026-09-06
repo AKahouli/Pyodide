@@ -13,13 +13,16 @@ interface RequestWithSseUser extends Request {
 }
 
 /**
- * The reconnect cursor is an opaque replay pointer (`<boot>:<seq>`); it is
- * never a database id, so a strict shape check at this trust boundary is
- * sufficient. Anything malformed is treated as a first connection.
+ * The reconnect cursor is an opaque replay pointer; it is never a database
+ * id, so a strict shape check at this trust boundary is sufficient. Both the
+ * current `<boot>:<generation>:<seq>` shape and the legacy two-segment shape
+ * pass through: the gateway answers a legacy or foreign cursor with an
+ * explicit `stream_resync_required` instead of the client reconnecting
+ * silently cursor-less. Anything malformed is treated as a first connection.
  */
 function parseReplayCursor(raw: string | undefined): string | undefined {
   if (!raw) return undefined;
-  return /^[A-Za-z0-9_-]{1,100}:[0-9]{1,15}$/.test(raw) ? raw : undefined;
+  return /^[A-Za-z0-9_-]{1,100}(?::[0-9]{1,15}){1,2}$/.test(raw) ? raw : undefined;
 }
 
 @ApiTags('Conversation Stream')

@@ -58,4 +58,32 @@ describe('CodeBlock streaming/highlight split', () => {
     // The faster second result wins; the stale first result never renders.
     await waitFor(() => expect(screen.getByText('second')).toBeInTheDocument());
   });
+
+  it('shows plain code until the highlight resolves instead of an empty block', async () => {
+    let resolveHighlight!: (html: string) => void;
+    codeToHtmlMock.mockImplementationOnce(() => new Promise((resolve) => { resolveHighlight = resolve; }));
+    render(<CodeBlock code={'pending code'} language='typescript' />);
+
+    // While the highlight is pending the plain code is already visible —
+    // the block is never blank.
+    expect(screen.getByText('pending code')).toBeInTheDocument();
+    expect(document.querySelector('.shiki')).toBeNull();
+
+    await waitFor(() => expect(codeToHtmlMock).toHaveBeenCalledTimes(1));
+    resolveHighlight('<pre class="shiki">highlighted</pre>');
+    await waitFor(() => expect(document.querySelector('.shiki')).toBeInTheDocument());
+    expect(screen.queryByText('pending code')).not.toBeInTheDocument();
+  });
+
+  it('keeps the plain code readable when highlighting fails', async () => {
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    codeToHtmlMock.mockRejectedValueOnce(new Error('shiki unavailable'));
+    render(<CodeBlock code={'const broken = 1;'} language='typescript' />);
+
+    await waitFor(() => expect(consoleError).toHaveBeenCalled());
+    // After the failure the code is still readable — never blanked.
+    expect(screen.getByText('const broken = 1;')).toBeInTheDocument();
+    expect(document.querySelector('.shiki')).toBeNull();
+    consoleError.mockRestore();
+  });
 });
