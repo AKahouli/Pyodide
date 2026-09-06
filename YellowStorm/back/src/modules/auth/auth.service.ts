@@ -678,7 +678,7 @@ export class AuthService {
     }
 
     const resetUrl = `${this.frontendUrl}/#/reset-password?token=${token}`;
-    const { subject, html, text, attachments } = this.emailTemplateRenderer.render(
+    const { subject, html, text, attachments } = await this.emailTemplateRenderer.render(
       EmailTemplate.PASSWORD_RESET,
       {
         appUrl: this.frontendUrl,
@@ -726,7 +726,7 @@ export class AuthService {
     }
 
     const verificationUrl = `${this.frontendUrl}/#/verify-email?token=${token}`;
-    const { subject, html, text, attachments } = this.emailTemplateRenderer.render(
+    const { subject, html, text, attachments } = await this.emailTemplateRenderer.render(
       EmailTemplate.VERIFY_EMAIL,
       {
         appUrl: this.frontendUrl,
@@ -779,7 +779,7 @@ export class AuthService {
       .filter(Boolean)
       .join(' on ');
 
-    const { subject, html, text, attachments } = this.emailTemplateRenderer.render(
+    const { subject, html, text, attachments } = await this.emailTemplateRenderer.render(
       EmailTemplate.NEW_LOGIN_ALERT,
       {
         appUrl: this.frontendUrl,

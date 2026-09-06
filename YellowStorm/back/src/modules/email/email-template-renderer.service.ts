@@ -3,13 +3,11 @@ import { ConfigService } from '@nestjs/config';
 import { readFileSync, existsSync } from 'fs';
 import { join, dirname, isAbsolute, resolve } from 'path';
 import { LoggerService } from '@modules/logger';
+import { SystemService } from '@modules/system/system.service';
 import { EmailAttachment } from './interfaces/email.interface';
 import {
   EMAIL_TEMPLATES,
   EMAIL_TEMPLATES_DIR,
-  EMAIL_ASSETS_DIR,
-  EMAIL_IMAGES_DIR,
-  LOGO_FILE,
   LOGO_CID,
   EmailTemplate,
 } from './email-template.constants';
@@ -33,35 +31,45 @@ const PLACEHOLDER_PATTERN = /\{\{\s*([\w.]+)\s*\}\}/g;
  * this renderer substitutes them, generates a plain-text alternative and keeps
  * a cache so templates are read from disk once.
  *
- * The header logo is attached inline via `cid:yellowmind-logo` (the most
- * reliable way to display it across mail clients, since remote images and SVG
- * are frequently blocked). Set `email.templates.logoUrl` to use an absolute
- * public URL (e.g. a CDN) instead.
+ * The header logo is shown only when an admin has uploaded one (attached
+ * inline via `cid:yellowmind-logo`, the most reliable way to display it across
+ * mail clients) or when `email.templates.logoUrl` points to an absolute public
+ * URL (e.g. a CDN). Otherwise no logo is rendered.
  */
 @Injectable()
 export class EmailTemplateRenderer {
   public readonly templatesDir: string;
-  public readonly assetsImagesDir: string;
   private readonly cache = new Map<string, string>();
-  private logoAttachment: EmailAttachment | null | undefined;
 
   constructor(
     private readonly configService: ConfigService,
     private readonly logger: LoggerService,
+    private readonly systemService: SystemService,
   ) {
     this.logger.setContext(EmailTemplateRenderer.name);
     this.templatesDir = this.resolveTemplatesDir();
-    this.assetsImagesDir = this.resolveAssetsImagesDir();
   }
 
-  render(templateKey: EmailTemplate, data: Record<string, string>): RenderEmailTemplateResult {
+  async render(
+    templateKey: EmailTemplate,
+    data: Record<string, string>,
+  ): Promise<RenderEmailTemplateResult> {
     const config = EMAIL_TEMPLATES[templateKey];
     if (!config) {
       throw new Error(`Unknown email template key: ${String(templateKey)}`);
     }
 
-    const template = this.loadOnce(config.file);
-    const logo = this.logo();
+    let template = this.loadOnce(config.file);
+    const logo = await this.logo();
+
+    // When no logo is configured, drop the header logo block entirely instead
+    // of emitting a broken `<img src="">` on the dark header background.
+    if (logo.remove) {
+      template = template.replace(
+        /<a\b[^>]*>\s*<img\s+src="\{\{\s*logoSrc\s*\}\}"[^>]*>\s*<\/a>/gi,
+        '',
+      );
+    }
 
     const vars: Record<string, string> = {
       ...data,
@@ -154,45 +162,39 @@ export class EmailTemplateRenderer {
     return join(this.templatesDir, fileName);
   }
 
-  private logo(): { path: string; attachment?: EmailAttachment } {
+  private async logo(): Promise<{
+    path: string;
+    attachment?: EmailAttachment;
+    remove?: boolean;
+  }> {
+    // 1. Admin-configured logo (Appearance page) takes precedence.
+    try {
+      const custom = await this.systemService.getEmailLogo();
+      if (custom) {
+        return {
+          path: `cid:${LOGO_CID}`,
+          attachment: {
+            filename: custom.filename,
+            content: Buffer.from(custom.data, 'base64'),
+            contentType: custom.contentType,
+            cid: LOGO_CID,
+          },
+        };
+      }
+    } catch (error) {
+      this.logger.warn('Failed to load admin email logo', {
+        error: (error as Error).message,
+      });
+    }
+
+    // 2. Absolute public URL override (legacy env escape hatch).
     const configured = this.configService.get<string>('email.templates.logoUrl', '');
     if (/^https?:\/\//i.test(configured)) {
       return { path: configured };
     }
 
-    const attachment = this.loadLogoAttachment();
-    if (attachment) {
-      return { path: `cid:${LOGO_CID}`, attachment };
-    }
-
-    // No public URL configured and the bundled logo is unavailable (e.g. a
-    // missing build asset): degrade gracefully, an error was already logged.
-    return { path: '' };
-  }
-
-  private loadLogoAttachment(): EmailAttachment | null {
-    if (this.logoAttachment !== undefined) {
-      return this.logoAttachment;
-    }
-
-    const filePath = join(this.assetsImagesDir, LOGO_FILE);
-    try {
-      const content = readFileSync(filePath);
-      this.logoAttachment = {
-        filename: LOGO_FILE,
-        content,
-        contentType: 'image/png',
-        cid: LOGO_CID,
-      };
-      return this.logoAttachment;
-    } catch (error) {
-      this.logger.error('Failed to load email logo', {
-        path: filePath,
-        error: (error as Error).message,
-      });
-      this.logoAttachment = null;
-      return null;
-    }
+    // 3. No default logo: omit it rather than embedding a build asset.
+    return { path: '', remove: true };
   }
 
   private resolveTemplatesDir(): string {
@@ -232,44 +234,6 @@ export class EmailTemplateRenderer {
     candidates.push(join(process.cwd(), 'dist', 'modules', 'email', EMAIL_TEMPLATES_DIR));
     candidates.push(join(process.cwd(), 'src', 'modules', 'email', EMAIL_TEMPLATES_DIR));
     candidates.push(resolve(process.cwd(), EMAIL_TEMPLATES_DIR));
-
-    return [...new Set(candidates)];
-  }
-
-  private resolveAssetsImagesDir(): string {
-    const candidates = this.candidateAssetsImagesDirs();
-
-    for (const candidate of candidates) {
-      if (existsSync(join(candidate, LOGO_FILE))) {
-        this.logger.log('Email assets images directory resolved', { path: candidate });
-        return candidate;
-      }
-    }
-
-    this.logger.error('No candidate directory contains the email logo file', { candidates });
-    return join(this.templatesDir, '..', EMAIL_ASSETS_DIR, EMAIL_IMAGES_DIR);
-  }
-
-  private candidateAssetsImagesDirs(): string[] {
-    const candidates = [
-      join(this.templatesDir, '..', EMAIL_ASSETS_DIR, EMAIL_IMAGES_DIR),
-      join(__dirname, EMAIL_ASSETS_DIR, EMAIL_IMAGES_DIR),
-    ];
-
-    const mainEntry = require.main?.filename;
-    if (mainEntry) {
-      candidates.push(
-        join(dirname(mainEntry), 'modules', 'email', EMAIL_ASSETS_DIR, EMAIL_IMAGES_DIR),
-      );
-    }
-
-    candidates.push(
-      join(process.cwd(), 'dist', 'modules', 'email', EMAIL_ASSETS_DIR, EMAIL_IMAGES_DIR),
-    );
-    candidates.push(
-      join(process.cwd(), 'src', 'modules', 'email', EMAIL_ASSETS_DIR, EMAIL_IMAGES_DIR),
-    );
-    candidates.push(resolve(process.cwd(), EMAIL_ASSETS_DIR, EMAIL_IMAGES_DIR));
 
     return [...new Set(candidates)];
   }

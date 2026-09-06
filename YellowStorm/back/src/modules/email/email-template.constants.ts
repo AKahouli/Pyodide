@@ -1,11 +1,5 @@
 export const EMAIL_TEMPLATES_DIR = 'templates';
 
-export const EMAIL_ASSETS_DIR = 'assets';
-
-export const EMAIL_IMAGES_DIR = 'images';
-
-export const LOGO_FILE = 'yellowmind.png';
-
 export const LOGO_CID = 'yellowmind-logo';
 
 export enum EmailTemplate {

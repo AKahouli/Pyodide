@@ -237,6 +237,16 @@ export interface AppearanceSettings {
   logos: AppearanceLogo[];
 }
 
+export interface EmailLogo {
+  filename: string;
+  contentType: string;
+  size: number;
+  updatedAt: string;
+  dataUri: string;
+}
+
+export type EmailLogoResponse = { logo: EmailLogo | null };
+
 // Plan Types
 
 export interface PlanResponse {

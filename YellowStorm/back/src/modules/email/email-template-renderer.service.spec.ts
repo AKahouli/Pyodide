@@ -19,15 +19,40 @@ describe('EmailTemplateRenderer', () => {
     debug: jest.fn(),
   });
 
-  const createRenderer = (logoUrl = '') => {
+  const makeSystemService = (
+    customLogo: {
+      data: string;
+      contentType?: string;
+      filename?: string;
+    } | null = null,
+  ) => ({
+    getEmailLogo: jest.fn().mockResolvedValue(customLogo),
+  });
+
+  const createRenderer = (
+    logoUrl = '',
+    customLogo: { data: string; contentType?: string; filename?: string } | null = null,
+  ) => {
     const config = makeConfig(logoUrl);
     const logger = makeLogger();
+    const systemService = makeSystemService(customLogo);
     return {
-      renderer: new EmailTemplateRenderer(config as never, logger as never),
+      renderer: new EmailTemplateRenderer(
+        config as never,
+        logger as never,
+        systemService as never,
+      ),
       config,
       logger,
+      systemService,
     };
   };
+
+  const verifyEmailData = () => ({
+    appUrl: 'http://localhost:5173',
+    appName: 'YelloStorm',
+    verificationUrl: 'http://localhost:5173/#/verify-email?token=abc',
+  });
 
   beforeAll(() => {
     const templatesDir = join(process.cwd(), 'src', 'modules', 'email', 'templates');
@@ -35,9 +60,9 @@ describe('EmailTemplateRenderer', () => {
     expect(existsSync(join(templatesDir, `${marker}.html`))).toBe(true);
   });
 
-  it('substitutes all variables and adds the current year', () => {
+  it('substitutes all variables and adds the current year', async () => {
     const { renderer } = createRenderer();
-    const result = renderer.render(EmailTemplate.PASSWORD_RESET, {
+    const result = await renderer.render(EmailTemplate.PASSWORD_RESET, {
       appUrl: 'http://localhost:5173',
       appName: 'YelloStorm',
       resetUrl: 'http://localhost:5173/#/reset-password?token=abc123',
@@ -53,9 +78,9 @@ describe('EmailTemplateRenderer', () => {
     expect(result.subject).toContain('Reset your password - YelloStorm');
   });
 
-  it('singularizes the expiry suffix for one hour', () => {
+  it('singularizes the expiry suffix for one hour', async () => {
     const { renderer } = createRenderer();
-    const result = renderer.render(EmailTemplate.PASSWORD_RESET, {
+    const result = await renderer.render(EmailTemplate.PASSWORD_RESET, {
       appUrl: 'http://localhost:5173',
       appName: 'YelloStorm',
       resetUrl: 'http://localhost:5173/#/reset-password?token=abc',
@@ -66,9 +91,9 @@ describe('EmailTemplateRenderer', () => {
     expect(result.html).toContain('This link will expire in 1 hour.');
   });
 
-  it('escapes user-supplied values in the HTML body', () => {
+  it('escapes user-supplied values in the HTML body', async () => {
     const { renderer } = createRenderer();
-    const result = renderer.render(EmailTemplate.REGISTRATION_PENDING_ADMIN, {
+    const result = await renderer.render(EmailTemplate.REGISTRATION_PENDING_ADMIN, {
       appName: 'YelloStorm',
       applicantEmail: 'a&b"c@acme.io',
       requestedAt: '02/09/2026 à 14:00',
@@ -79,9 +104,9 @@ describe('EmailTemplateRenderer', () => {
     expect(result.html).not.toContain('a&b"c@acme.io');
   });
 
-  it('renders the requestedAt date as provided', () => {
+  it('renders the requestedAt date as provided', async () => {
     const { renderer } = createRenderer();
-    const result = renderer.render(EmailTemplate.REGISTRATION_PENDING_ADMIN, {
+    const result = await renderer.render(EmailTemplate.REGISTRATION_PENDING_ADMIN, {
       appName: 'YelloStorm',
       applicantEmail: 'jane@acme.io',
       requestedAt: '02/09/2026 à 14:00',
@@ -92,9 +117,9 @@ describe('EmailTemplateRenderer', () => {
     expect(result.subject).toContain('New registration request');
   });
 
-  it('generates a plain-text version without HTML tags', () => {
+  it('generates a plain-text version without HTML tags', async () => {
     const { renderer } = createRenderer();
-    const result = renderer.render(EmailTemplate.REGISTRATION_APPROVED, {
+    const result = await renderer.render(EmailTemplate.REGISTRATION_APPROVED, {
       appName: 'YelloStorm',
       loginUrl: 'http://localhost:5173/#/',
     });
@@ -104,39 +129,46 @@ describe('EmailTemplateRenderer', () => {
     expect(result.text).toContain('http://localhost:5173/#/');
   });
 
-  it('embeds the bundled logo inline via CID when no absolute logo URL is configured', () => {
+  it('omits the header logo entirely when no custom or absolute logo is set', async () => {
     const { renderer } = createRenderer('');
-    const result = renderer.render(EmailTemplate.VERIFY_EMAIL, {
-      appUrl: 'http://localhost:5173',
-      appName: 'YelloStorm',
-      verificationUrl: 'http://localhost:5173/#/verify-email?token=abc',
-    });
+    const result = await renderer.render(EmailTemplate.VERIFY_EMAIL, verifyEmailData());
 
-    expect(result.html).toContain('src="cid:yellowmind-logo"');
-    expect(result.attachments).toHaveLength(1);
-    expect(result.attachments![0]).toMatchObject({
-      filename: 'yellowmind.png',
-      contentType: 'image/png',
-      cid: 'yellowmind-logo',
-    });
-    expect(result.attachments![0].content).toBeInstanceOf(Buffer);
+    expect(result.html).not.toContain('logoSrc');
+    expect(result.html).not.toContain('<img');
+    expect(result.attachments).toBeUndefined();
   });
 
-  it('uses a configured absolute logo URL and omits the inline attachment', () => {
+  it('uses a configured absolute logo URL and omits the inline attachment', async () => {
     const { renderer } = createRenderer('https://cdn.example.com/yellowmind.png');
-    const result = renderer.render(EmailTemplate.VERIFY_EMAIL, {
-      appUrl: 'http://localhost:5173',
-      appName: 'YelloStorm',
-      verificationUrl: 'http://localhost:5173/#/verify-email?token=abc',
-    });
+    const result = await renderer.render(EmailTemplate.VERIFY_EMAIL, verifyEmailData());
 
     expect(result.html).toContain('src="https://cdn.example.com/yellowmind.png"');
     expect(result.attachments).toBeUndefined();
   });
 
-  it('keeps unknown placeholders in the subject (non-strict)', () => {
+  it('prefers the admin-configured logo over the configured URL', async () => {
+    const customLogo = {
+      data: Buffer.from('fake-png-bytes').toString('base64'),
+      contentType: 'image/png',
+      filename: 'custom-brand.png',
+    };
+    const { renderer } = createRenderer('https://cdn.example.com/yellowmind.png', customLogo);
+    const result = await renderer.render(EmailTemplate.VERIFY_EMAIL, verifyEmailData());
+
+    expect(result.html).toContain('src="cid:yellowmind-logo"');
+    expect(result.attachments).toHaveLength(1);
+    expect(result.attachments![0]).toMatchObject({
+      filename: 'custom-brand.png',
+      contentType: 'image/png',
+      cid: 'yellowmind-logo',
+    });
+    expect(result.attachments![0].content?.toString('utf8')).toBe('fake-png-bytes');
+    expect(result.html).not.toContain('cdn.example.com');
+  });
+
+  it('keeps unknown placeholders in the subject (non-strict)', async () => {
     const { renderer } = createRenderer();
-    const result = renderer.render(EmailTemplate.LINK_OAUTH_ACCOUNT, {
+    const result = await renderer.render(EmailTemplate.LINK_OAUTH_ACCOUNT, {
       appName: 'YelloStorm',
       linkUrl: 'http://localhost:3000/api/v1/auth/providers/link/verify?token=x',
     });
@@ -144,8 +176,10 @@ describe('EmailTemplateRenderer', () => {
     expect(result.subject).toContain('{{providerKey}}');
   });
 
-  it('throws on an unknown template key', () => {
+  it('throws on an unknown template key', async () => {
     const { renderer } = createRenderer();
-    expect(() => renderer.render('nope' as EmailTemplate, {})).toThrow(/Unknown email template/);
+    await expect(
+      renderer.render('nope' as EmailTemplate, {}),
+    ).rejects.toThrow(/Unknown email template/);
   });
 });

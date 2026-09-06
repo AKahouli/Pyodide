@@ -56,7 +56,7 @@ describe('AuthService account access', () => {
     const logger = { setContext: jest.fn(), log: jest.fn(), warn: jest.fn(), error: jest.fn(), debug: jest.fn() };
     const emailService = { isAvailable: jest.fn().mockReturnValue(false) };
     const emailTemplateRenderer = {
-      render: jest.fn().mockReturnValue({ subject: 's', html: '<p>s</p>', text: 's' }),
+      render: jest.fn().mockResolvedValue({ subject: 's', html: '<p>s</p>', text: 's' }),
     };
     const usageService = {
       getDefaultPlan: jest.fn().mockResolvedValue({

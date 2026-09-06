@@ -1,7 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   deletePlan,
+  deleteEmailLogo,
   getAllPlans,
+  getEmailLogo,
   getMaintenanceStatus,
   getPlaybookPlannerAgents,
   getFeatureVisibility,
@@ -10,6 +12,7 @@ import {
   updatePlan,
   updateFeatureVisibility,
   updateSensitiveTextRedaction,
+  uploadEmailLogo,
 } from './api';
 
 const getMock = vi.hoisted(() => vi.fn());
@@ -36,6 +39,7 @@ vi.mock('@/lib/api/config', () => ({
     system: {
       maintenance: '/system/maintenance',
       features: '/system/features',
+      emailLogo: '/system/email-logo',
     },
     usage: {
       plansAll: '/usage/plans/all',
@@ -129,5 +133,32 @@ describe('admin api', () => {
       '/admin/conversation-settings/sensitive-text-redaction',
       { redactSensitiveText: false },
     );
+  });
+
+  it('gets, uploads, and deletes the email logo', async () => {
+    const logo = {
+      filename: 'brand.png',
+      contentType: 'image/png',
+      size: 42,
+      updatedAt: '2026-09-06T00:00:00.000Z',
+      dataUri: 'data:image/png;base64,ZmFrZQ==',
+    };
+    getMock.mockResolvedValue({ data: { data: { logo } } });
+    postMock.mockResolvedValue({ data: { data: { logo } } });
+    deleteMock.mockResolvedValue(undefined);
+
+    await expect(getEmailLogo()).resolves.toEqual(logo);
+    expect(getMock).toHaveBeenCalledWith('/system/email-logo');
+
+    const file = new File(['fake'], 'brand.png', { type: 'image/png' });
+    await expect(uploadEmailLogo(file)).resolves.toEqual(logo);
+    const [url, formData, options] = postMock.mock.calls[0];
+    expect(url).toBe('/system/email-logo');
+    expect(formData).toBeInstanceOf(FormData);
+    expect(formData.get('file')).toBe(file);
+    expect(options.headers['Content-Type']).toBe('multipart/form-data');
+
+    await deleteEmailLogo();
+    expect(deleteMock).toHaveBeenCalledWith('/system/email-logo');
   });
 });

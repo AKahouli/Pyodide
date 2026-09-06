@@ -140,7 +140,7 @@ describe('OAuthFlowService', () => {
     };
 
     const emailTemplateRenderer = {
-      render: jest.fn().mockReturnValue({ subject: 's', html: '<p>s</p>', text: 's' }),
+      render: jest.fn().mockResolvedValue({ subject: 's', html: '<p>s</p>', text: 's' }),
     };
 
     const mockWorkspaceInitializerService = {

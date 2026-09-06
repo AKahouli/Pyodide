@@ -105,7 +105,7 @@ export class RegistrationApprovalService {
     }
 
     const requestedAt = notice.requestedAt ?? new Date();
-    const content = this.emailTemplateRenderer.render(EmailTemplate.REGISTRATION_PENDING_ADMIN, {
+    const content = await this.emailTemplateRenderer.render(EmailTemplate.REGISTRATION_PENDING_ADMIN, {
       appName: this.appName,
       applicantEmail: notice.email,
       requestedAt: this.formatRegistrationRequestedAt(requestedAt),
@@ -232,7 +232,7 @@ export class RegistrationApprovalService {
         return;
       }
 
-      const content = this.emailTemplateRenderer.render(EmailTemplate.REGISTRATION_APPROVED, {
+      const content = await this.emailTemplateRenderer.render(EmailTemplate.REGISTRATION_APPROVED, {
         appName: this.appName,
         loginUrl: this.buildLoginUrl(),
       });

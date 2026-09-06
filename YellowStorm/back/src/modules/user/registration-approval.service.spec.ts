@@ -49,7 +49,11 @@ describe('RegistrationApprovalService', () => {
       warn: jest.fn(),
       error: jest.fn(),
     };
-    const emailTemplateRenderer = new EmailTemplateRenderer(configService as never, logger as never);
+    const emailTemplateRenderer = new EmailTemplateRenderer(
+      configService as never,
+      logger as never,
+      { getEmailLogo: jest.fn().mockResolvedValue(null) } as never,
+    );
     const service = new RegistrationApprovalService(
       userModel as never,
       authorizationService as never,
@@ -161,7 +165,11 @@ describe('RegistrationApprovalService decisions', () => {
         return def;
       }),
     };
-    const emailTemplateRenderer = new EmailTemplateRenderer(configService as never, logger as never);
+    const emailTemplateRenderer = new EmailTemplateRenderer(
+      configService as never,
+      logger as never,
+      { getEmailLogo: jest.fn().mockResolvedValue(null) } as never,
+    );
     const service = new RegistrationApprovalService(
       userModel as never,
       { findRoleByName: jest.fn() } as never,

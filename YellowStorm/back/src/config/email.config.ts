@@ -55,7 +55,9 @@ export default registerAs('email', () => ({
     // Override where the email HTML templates live (absolute or cwd-relative).
     dir: process.env.EMAIL_TEMPLATES_DIR || 'src/modules/email/templates',
     // Absolute URL to a public copy of the header logo (CDN/static host).
-    logoUrl: process.env.EMAIL_LOGO_URL || 'assets/images/yellowmind.png',
+    // Empty by default: no logo is rendered unless an admin uploads one or
+    // this env var is set to a public URL.
+    logoUrl: process.env.EMAIL_LOGO_URL || '',
   },
 
   // Timeouts

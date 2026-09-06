@@ -559,7 +559,7 @@ export class OAuthFlowService {
     const apiPrefix = this.configService.get<string>('app.apiPrefix', 'api');
     const linkUrl = `${this.backendUrl}/${apiPrefix}/v1/auth/providers/link/verify?token=${token}`;
 
-    const { subject, html, text, attachments } = this.emailTemplateRenderer.render(
+    const { subject, html, text, attachments } = await this.emailTemplateRenderer.render(
       EmailTemplate.LINK_OAUTH_ACCOUNT,
       {
         appUrl: this.frontendUrl,
