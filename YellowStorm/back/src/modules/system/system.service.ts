@@ -1,10 +1,10 @@
 import { Injectable, OnApplicationBootstrap } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
-import { SystemSetting, SystemSettingDocument, MaintenanceValue, RegistrationValue, AppearanceValue, CorsSettingsValue } from './schemas/system-setting.schema';
+import { SystemSetting, SystemSettingDocument, MaintenanceValue, RegistrationValue, AppearanceValue, CorsSettingsValue, EmailLogoValue } from './schemas/system-setting.schema';
 import { MaintenanceStatus } from './interfaces/maintenance.interface';
 import { RegistrationStatus } from './interfaces/registration.interface';
-import { AppearanceSettings } from './interfaces/appearance.interface';
+import { AppearanceSettings, AppearanceThemeSettings } from './interfaces/appearance.interface';
 import {
   AdminPlaybookSettings,
   DEFAULT_ADMIN_PLAYBOOK_SETTINGS,
@@ -14,14 +14,20 @@ import {
 } from './interfaces/playbook-settings.interface';
 import { LoggerService } from '../logger';
 import { User, UserDocument } from '../user/schemas/user.schema';
+import { BadRequestException } from '../exceptions';
+import { ErrorCode } from '../exceptions/constants/error-codes';
+import { APPEARANCE_COLOR_THEMES, APPEARANCE_SETTINGS_KEY } from './constants/appearance-logo.constants';
+import { AppearanceLogoService } from './services/appearance-logo.service';
 
 const MAINTENANCE_KEY = 'maintenance_mode';
 const REGISTRATION_KEY = 'registration_settings';
-const APPEARANCE_KEY = 'appearance_settings';
+const APPEARANCE_KEY = APPEARANCE_SETTINGS_KEY;
 const PLAYBOOK_SETTINGS_KEY = 'playbook_settings';
 const CORS_SETTINGS_KEY = 'cors_settings';
+export const EMAIL_LOGO_KEY = 'email_logo';
+export const EMAIL_LOGO_MAX_BYTES = 512 * 1024;
 const CACHE_TTL_MS = 5000; // 5 seconds
-const DEFAULT_APPEARANCE: AppearanceSettings = {
+const DEFAULT_APPEARANCE: AppearanceThemeSettings = {
   defaultColorTheme: 'default',
   themes: {
     default: { labelKey: 'appearance.colorTheme.default', logo: 'yellowmind' },
@@ -31,8 +37,8 @@ const DEFAULT_APPEARANCE: AppearanceSettings = {
   },
 };
 
-function normalizeAppearanceSettings(value: AppearanceValue): AppearanceSettings {
-  const normalizeLogo = (logo?: string): 'yellowmind' | 'kpmg' => (logo === 'kpmg' ? 'kpmg' : 'yellowmind');
+function normalizeAppearanceSettings(value: AppearanceValue): AppearanceThemeSettings {
+  const normalizeLogo = (logo?: string): string => (typeof logo === 'string' && logo.trim() ? logo.trim() : 'yellowmind');
 
   return {
     defaultColorTheme: value.defaultColorTheme as AppearanceSettings['defaultColorTheme'],
@@ -106,13 +112,16 @@ function normalizePlaybookIntentNormalizationLimits(
 export class SystemService implements OnApplicationBootstrap {
   private maintenanceCache: MaintenanceStatus | null = null;
   private registrationCache: RegistrationStatus | null = null;
-  private appearanceCache: AppearanceSettings | null = null;
+  private appearanceCache: AppearanceThemeSettings | null = null;
   private playbookSettingsCache: AdminPlaybookSettings | null = null;
   private corsSettingsCache: CorsSettingsValue | null = null;
+  private emailLogoCache: EmailLogoValue | null = null;
   private lastCacheUpdate = 0;
+  private lastAppearanceCacheUpdate = 0;
   private lastRegistrationCacheUpdate = 0;
   private lastPlaybookSettingsCacheUpdate = 0;
   private lastCorsCacheUpdate = 0;
+  private lastEmailLogoCachedAt = 0;
   private refreshInterval: ReturnType<typeof setInterval> | null = null;
 
   constructor(
@@ -121,6 +130,7 @@ export class SystemService implements OnApplicationBootstrap {
     @InjectModel(User.name)
     private readonly userModel: Model<UserDocument>,
     private readonly logger: LoggerService,
+    private readonly appearanceLogoService: AppearanceLogoService,
   ) {
     this.logger.setContext(SystemService.name);
   }
@@ -349,16 +359,122 @@ export class SystemService implements OnApplicationBootstrap {
     }
   }
 
-  async getAppearanceSettings(): Promise<AppearanceSettings> {
+  // ─── Email Logo ────────────────────────────────────────────────
+
+  /**
+   * Get the admin-configured email logo (cached). Returns null when the
+   * default bundled logo should be used.
+   */
+  async getEmailLogo(): Promise<EmailLogoValue | null> {
     const now = Date.now();
-    if (this.appearanceCache && now - this.lastCacheUpdate < CACHE_TTL_MS) {
-      return this.appearanceCache;
+    if (this.emailLogoCache !== null && now - this.lastEmailLogoCachedAt < CACHE_TTL_MS) {
+      return this.emailLogoCache;
     }
 
-    return this.refreshAppearanceCache();
+    try {
+      const setting = await this.systemSettingModel
+        .findOne({ key: EMAIL_LOGO_KEY })
+        .lean()
+        .exec();
+      this.emailLogoCache = setting && this.isEmailLogoValue(setting.value) ? setting.value : null;
+    } catch (error) {
+      this.logger.error('Failed to load email logo setting', { error: (error as Error).message });
+      this.emailLogoCache = this.emailLogoCache ?? null;
+    }
+
+    this.lastEmailLogoCachedAt = now;
+    return this.emailLogoCache;
   }
 
-  async setAppearanceSettings(settings: AppearanceSettings): Promise<AppearanceSettings> {
+  /**
+   * Store a custom email logo (PNG/JPEG, up to EMAIL_LOGO_MAX_BYTES). The logo
+   * is embedded in all email templates as an inline CID attachment.
+   */
+  async setEmailLogo(
+    logo: { buffer: Buffer; contentType: string; filename: string; size: number },
+    userId?: string,
+  ): Promise<EmailLogoValue> {
+    if (!this.isSupportedEmailLogoContentType(logo.contentType)) {
+      throw new Error(`Unsupported email logo content type: ${logo.contentType}`);
+    }
+    if (logo.size <= 0 || logo.size > EMAIL_LOGO_MAX_BYTES) {
+      throw new Error(`Email logo size must be between 1 and ${EMAIL_LOGO_MAX_BYTES} bytes`);
+    }
+
+    const value: EmailLogoValue = {
+      data: logo.buffer.toString('base64'),
+      contentType: logo.contentType,
+      filename: logo.filename,
+      size: logo.size,
+      updatedAt: new Date(),
+      updatedBy: userId,
+    };
+
+    await this.systemSettingModel.findOneAndUpdate(
+      { key: EMAIL_LOGO_KEY },
+      { key: EMAIL_LOGO_KEY, value },
+      { upsert: true, new: true },
+    );
+
+    this.emailLogoCache = value;
+    this.lastEmailLogoCachedAt = Date.now();
+
+    this.logger.log('Email logo updated', {
+      contentType: value.contentType,
+      size: value.size,
+      updatedBy: userId,
+    });
+
+    return value;
+  }
+
+  /**
+   * Remove the custom email logo so emails fall back to the bundled default.
+   */
+  async clearEmailLogo(userId?: string): Promise<void> {
+    await this.systemSettingModel.deleteOne({ key: EMAIL_LOGO_KEY });
+    this.emailLogoCache = null;
+    this.lastEmailLogoCachedAt = Date.now();
+    this.logger.log('Email logo removed', { updatedBy: userId });
+  }
+
+  private isSupportedEmailLogoContentType(contentType: string): boolean {
+    return contentType === 'image/png' || contentType === 'image/jpeg';
+  }
+
+  private isEmailLogoValue(value: unknown): value is EmailLogoValue {
+    return (
+      typeof value === 'object' &&
+      value !== null &&
+      typeof (value as EmailLogoValue).data === 'string' &&
+      typeof (value as EmailLogoValue).contentType === 'string' &&
+      typeof (value as EmailLogoValue).filename === 'string' &&
+      typeof (value as EmailLogoValue).size === 'number'
+    );
+  }
+
+  async getAppearanceSettings(): Promise<AppearanceSettings> {
+    const now = Date.now();
+    if (this.appearanceCache && now - this.lastAppearanceCacheUpdate < CACHE_TTL_MS) {
+      return this.withLogos(this.appearanceCache);
+    }
+
+    return this.withLogos(await this.refreshAppearanceCache());
+  }
+
+  invalidateAppearanceCache(): void {
+    this.appearanceCache = null;
+    this.lastAppearanceCacheUpdate = 0;
+  }
+
+  async setAppearanceSettings(settings: AppearanceThemeSettings): Promise<AppearanceSettings> {
+    const logos = await this.appearanceLogoService.listPublic();
+    for (const theme of APPEARANCE_COLOR_THEMES) {
+      if (!this.appearanceLogoService.isKnownLogoId(settings.themes[theme].logo, logos)) {
+        throw new BadRequestException(ErrorCode.APPEARANCE_LOGO_NOT_FOUND);
+      }
+    }
+
     const value: AppearanceValue = {
       defaultColorTheme: settings.defaultColorTheme,
       themes: settings.themes,
@@ -370,9 +486,12 @@ export class SystemService implements OnApplicationBootstrap {
       { upsert: true, new: true },
     );
 
-    this.appearanceCache = settings;
-    this.lastCacheUpdate = Date.now();
-    return settings;
+    this.appearanceCache = {
+      defaultColorTheme: settings.defaultColorTheme,
+      themes: settings.themes,
+    };
+    this.lastAppearanceCacheUpdate = Date.now();
+    return { ...this.appearanceCache, logos };
   }
 
   async getPlaybookSettings(): Promise<AdminPlaybookSettings> {
@@ -563,7 +682,7 @@ export class SystemService implements OnApplicationBootstrap {
     }
   }
 
-  private async refreshAppearanceCache(): Promise<AppearanceSettings> {
+  private async refreshAppearanceCache(): Promise<AppearanceThemeSettings> {
     try {
       const setting = await this.systemSettingModel.findOne({ key: APPEARANCE_KEY });
 
@@ -573,7 +692,7 @@ export class SystemService implements OnApplicationBootstrap {
         this.appearanceCache = DEFAULT_APPEARANCE;
       }
 
-      this.lastCacheUpdate = Date.now();
+      this.lastAppearanceCacheUpdate = Date.now();
       return this.appearanceCache;
     } catch (error) {
       this.logger.error('Failed to refresh appearance cache', {
@@ -631,6 +750,35 @@ export class SystemService implements OnApplicationBootstrap {
       'enabled' in value &&
       typeof (value as RegistrationValue).enabled === 'boolean'
     );
+  }
+
+  private async withLogos(settings: AppearanceThemeSettings): Promise<AppearanceSettings> {
+    const remapUnknown = (themes: AppearanceThemeSettings['themes'], validIds: Set<string>) => {
+      const next = { ...themes };
+      for (const theme of APPEARANCE_COLOR_THEMES) {
+        if (!validIds.has(next[theme].logo)) {
+          next[theme] = { ...next[theme], logo: 'yellowmind' };
+        }
+      }
+      return next;
+    };
+
+    try {
+      const logos = await this.appearanceLogoService.listPublic();
+      const validIds = new Set(logos.map((logo) => logo.id));
+      return { defaultColorTheme: settings.defaultColorTheme, themes: remapUnknown(settings.themes, validIds), logos };
+    } catch (error) {
+      this.logger.warn('Failed to load appearance logos', { error: (error as Error).message });
+      const logos = [
+        { id: 'yellowmind', name: 'Yellowmind', kind: 'builtin' as const },
+        { id: 'kpmg', name: 'KPMG', kind: 'builtin' as const },
+      ];
+      return {
+        defaultColorTheme: settings.defaultColorTheme,
+        themes: remapUnknown(settings.themes, new Set(logos.map((logo) => logo.id))),
+        logos,
+      };
+    }
   }
 
   private isAppearanceValue(value: unknown): value is AppearanceValue {

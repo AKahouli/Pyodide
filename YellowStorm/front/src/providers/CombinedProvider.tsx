@@ -4,7 +4,8 @@
  * and improve readability.
  */
 
-import { ReactNode, useEffect, useState } from 'react';
+import { ReactNode, useCallback, useEffect, useState } from 'react';
+import type { ColorTheme } from '@/contexts/ThemeContext';
 import { AuthProvider } from '@/modules/auth';
 import { SettingsModalProvider } from '@/modules/profile';
 import { UsageProvider } from '@/modules/usage/UsageContext';
@@ -13,6 +14,11 @@ import { LocalizationProvider } from '@/modules/localization';
 import { ThemeProvider } from '@/contexts/ThemeContext';
 import { getGlobalAppearanceSettings } from '@/modules/auth/api';
 import { PlaybookQueryProvider } from '@/modules/playbook/query/queryProvider';
+import {
+  APPEARANCE_SETTINGS_UPDATED_EVENT,
+  resolveThemeLogo,
+} from '@/lib/appearance';
+import type { AppearanceSettings } from '@/modules/admin/types';
 
 type CombinedProviderProps = Readonly<{
   children: ReactNode;
@@ -28,77 +34,67 @@ type CombinedProviderProps = Readonly<{
  * - ThemeProvider: handles theme (light/dark)
  * - SettingsModalProvider: handles settings modals
  */
-export function CombinedProvider({ children }: CombinedProviderProps) {
-  function ProviderComponent({ children: providerChildren }: { children: ReactNode }) {
-    const [appearanceSettings, setAppearanceSettings] = useState<{ defaultColorTheme: 'default' | 'yellow' | 'orange' | 'blue'; themes: Record<'default' | 'yellow' | 'orange' | 'blue', { logo: 'yellowmind' | 'kpmg' }> } | null>(null);
+function AppProviders({ children }: { children: ReactNode }) {
+  const [appearanceSettings, setAppearanceSettings] = useState<AppearanceSettings | null>(null);
 
-    const applyAppearanceClass = (colorTheme: 'default' | 'yellow' | 'orange' | 'blue') => {
-      const root = document.documentElement;
-      root.classList.remove('theme-default', 'theme-yellow', 'theme-orange', 'theme-blue', 'theme-yellowsys', 'theme-claude', 'theme-kpmg');
-      if (colorTheme === 'yellow') root.classList.add('theme-yellowsys');
-      if (colorTheme === 'orange') root.classList.add('theme-claude');
-      if (colorTheme === 'blue') root.classList.add('theme-kpmg');
+  useEffect(() => {
+    let isMounted = true;
+
+    getGlobalAppearanceSettings()
+      .then((appearance) => {
+        if (isMounted) {
+          setAppearanceSettings(appearance);
+        }
+      })
+      .catch(() => undefined);
+
+    return () => {
+      isMounted = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    const handleAppearanceSync = (event: Event) => {
+      const detail = (event as CustomEvent<AppearanceSettings | undefined>).detail;
+      if (detail) {
+        setAppearanceSettings(detail);
+        return;
+      }
+      getGlobalAppearanceSettings()
+        .then(setAppearanceSettings)
+        .catch(() => undefined);
     };
 
-    useEffect(() => {
-      let isMounted = true;
+    window.addEventListener(APPEARANCE_SETTINGS_UPDATED_EVENT, handleAppearanceSync);
+    return () => {
+      window.removeEventListener(APPEARANCE_SETTINGS_UPDATED_EVENT, handleAppearanceSync);
+    };
+  }, []);
 
-      getGlobalAppearanceSettings()
-        .then((appearance) => {
-          if (isMounted) {
-            setAppearanceSettings(appearance);
-            applyAppearanceClass(appearance.defaultColorTheme);
-          }
-        })
-        .catch(() => {
-          if (isMounted) {
-            applyAppearanceClass('default');
-          }
-        });
+  const resolveLogoForTheme = useCallback(
+    (colorTheme: ColorTheme) => resolveThemeLogo(appearanceSettings, colorTheme),
+    [appearanceSettings],
+  );
 
-      return () => {
-        isMounted = false;
-      };
-    }, []);
+  return (
+    <LocalizationProvider>
+      <AuthProvider>
+        <PlaybookQueryProvider>
+          <NotificationsProvider>
+            <UsageProvider>
+              <ThemeProvider
+                defaultColorTheme={appearanceSettings?.defaultColorTheme}
+                resolveLogoForTheme={resolveLogoForTheme}>
+                <SettingsModalProvider>{children}</SettingsModalProvider>
+              </ThemeProvider>
+            </UsageProvider>
+          </NotificationsProvider>
+        </PlaybookQueryProvider>
+      </AuthProvider>
+    </LocalizationProvider>
+  );
+}
 
-    useEffect(() => {
-      const handleThemeSync = () => {
-        getGlobalAppearanceSettings()
-          .then((appearance) => {
-            setAppearanceSettings(appearance);
-            applyAppearanceClass(appearance.defaultColorTheme);
-          })
-          .catch(() => {
-            // Keep the current theme if sync fails.
-          });
-      };
-
-      window.addEventListener('storage', handleThemeSync);
-      window.addEventListener('focus', handleThemeSync);
-      return () => {
-        window.removeEventListener('storage', handleThemeSync);
-        window.removeEventListener('focus', handleThemeSync);
-      };
-    }, []);
-
-    return (
-      <LocalizationProvider>
-        <AuthProvider>
-          <PlaybookQueryProvider>
-            <NotificationsProvider>
-              <UsageProvider>
-                <ThemeProvider
-                  defaultColorTheme={appearanceSettings?.defaultColorTheme}
-                  resolveLogoForTheme={(colorTheme) => appearanceSettings?.themes[colorTheme]?.logo ?? 'yellowmind'}>
-                  <SettingsModalProvider>{providerChildren}</SettingsModalProvider>
-                </ThemeProvider>
-              </UsageProvider>
-            </NotificationsProvider>
-          </PlaybookQueryProvider>
-        </AuthProvider>
-      </LocalizationProvider>
-    );
-  }
-
-  return <ProviderComponent>{children}</ProviderComponent>;
+export function CombinedProvider({ children }: CombinedProviderProps) {
+  return <AppProviders>{children}</AppProviders>;
 }

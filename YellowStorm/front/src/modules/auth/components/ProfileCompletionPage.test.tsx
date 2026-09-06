@@ -9,10 +9,8 @@ import { ProfileCompletionPage } from './ProfileCompletionPage';
 const useAuthMock = vi.hoisted(() => vi.fn());
 
 vi.mock('@/modules/auth/useAuth', () => ({ useAuth: useAuthMock }));
-// Avoid icons ↔ ThemeContext ↔ auth barrel circular import during module collection
-vi.mock('@/components/icons', () => ({
-  Icons: { YellowMind: () => <div>logo</div> },
-  AppLogo: ({ className }: { className?: string }) => (
+vi.mock('@/components/AppBrandLogo', () => ({
+  AppBrandLogo: ({ className }: { className?: string }) => (
     <div data-testid='app-logo' className={className}>
       logo
     </div>
@@ -100,5 +98,16 @@ describe('ProfileCompletionPage', () => {
 
     await waitFor(() => expect(logoutMock).toHaveBeenCalledTimes(1));
     await waitFor(() => expect(mockNavigate).toHaveBeenCalledWith('/'));
+  });
+
+  it('allows the form to scroll when it exceeds the viewport', () => {
+    useAuthMock.mockReturnValue(makeAuthState({ isAuthenticated: true, requiresProfileCompletion: true }));
+
+    const { container } = renderPage();
+    const scroller = container.querySelector('.overflow-y-auto');
+
+    expect(scroller).toBeTruthy();
+    expect(scroller).toContainElement(screen.getByRole('main'));
+    expect(screen.getByRole('button', { name: 'profileCompletion.submit' })).toBeInTheDocument();
   });
 });

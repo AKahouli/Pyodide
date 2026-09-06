@@ -1,250 +1,396 @@
-import { useEffect, useContext, useState } from 'react';
-import { Palette, Image, Save, Globe2 } from 'lucide-react';
-import { toast } from 'sonner';
-
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { useContext, useEffect, useRef, useState, type KeyboardEvent } from 'react';
+import { Globe2, Image, Mail, Palette, Save, Trash2, Upload } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { COLOR_THEMES, ThemeProviderContext, type ColorTheme } from '@/contexts/ThemeContext';
+import { parseApiError } from '@/lib/api-error';
+import { showError, showSuccess } from '@/lib/notifications';
+import { useAuth } from '@/modules/auth/useAuth';
 import { useModuleTranslation } from '@/modules/localization';
-import { cn } from '@/lib/utils';
-import { ThemeProviderContext } from '@/contexts/ThemeContext';
-import { Icons } from '@/components/icons';
-import { getAppearanceSettings, setAppearanceSettings } from '../api';
-import { getGlobalAppearanceSettings } from '@/modules/auth/api';
+import type { ModuleTranslationKey } from '@/modules/localization';
+import {
+  deleteEmailLogo,
+  getAppearanceSettings,
+  getEmailLogo,
+  setAppearanceSettings,
+  uploadEmailLogo,
+} from '../api';
+import type { AppearanceLogo, AppearanceSettings, EmailLogo } from '../types';
+import { ColorThemeCard } from '../appearance/ColorThemeCard';
+import { LogoLibrarySection } from '../appearance/LogoLibrarySection';
+import { DEFAULT_LOGO_MAP, FALLBACK_LOGOS } from '../appearance/constants';
+import {
+  appearanceLogoSrc,
+  buildAppearanceSettings,
+  logoMapForAllThemes,
+  logosFromSettings,
+  mapFromSettings,
+  notifyAppearanceSettingsUpdated,
+  replaceMissingLogos,
+} from '../appearance/utils';
 
-type ColorTheme = 'default' | 'yellow' | 'orange' | 'blue';
-type ThemeLogo = 'yellowmind' | 'kpmg';
-
-const COLOR_THEME_SWATCHES: Record<ColorTheme, string> = {
-  default: 'bg-neutral-500',
-  yellow: 'bg-amber-500',
-  orange: 'bg-orange-700',
-  blue: 'bg-blue-600',
-};
-
-const COLOR_THEME_SELECTED_STYLES: Record<ColorTheme, string> = {
-  default: 'border-neutral-500/60 bg-neutral-500/10 ring-neutral-500/20',
-  yellow: 'border-amber-500/60 bg-amber-500/10 ring-amber-500/20',
-  orange: 'border-orange-700/60 bg-orange-700/10 ring-orange-700/20',
-  blue: 'border-blue-600/60 bg-blue-600/10 ring-blue-600/20',
-};
-
-const COLOR_THEMES: { value: ColorTheme; labelKey: string }[] = [
-  { value: 'default', labelKey: 'appearance.colorTheme.default' },
-   { value: 'yellow', labelKey: 'appearance.colorTheme.yellow' },
-   { value: 'orange', labelKey: 'appearance.colorTheme.orange' },
-   { value: 'blue', labelKey: 'appearance.colorTheme.blue' },
-];
-
-const LOGOS: { value: ThemeLogo; label: string }[] = [
-  { value: 'yellowmind', label: 'Yellowmind' },
-  { value: 'kpmg', label: 'KPMG' },
-];
+type LoadState = 'loading' | 'ready' | 'error';
 
 export function AppearancePage() {
   const { t } = useModuleTranslation('admin');
-  const { theme, setColorTheme } = useContext(ThemeProviderContext);
+  const { refreshUser } = useAuth();
+  const { setColorTheme, setLogo } = useContext(ThemeProviderContext);
+  const persistLock = useRef(false);
+  const [loadState, setLoadState] = useState<LoadState>('loading');
+  const [reloadToken, setReloadToken] = useState(0);
   const [selectedTheme, setSelectedTheme] = useState<ColorTheme>('default');
-  const [themeLogoMap, setThemeLogoMap] = useState<Record<ColorTheme, ThemeLogo>>({
-    default: 'yellowmind',
-    yellow: 'yellowmind',
-    orange: 'yellowmind',
-    blue: 'kpmg',
-  });
-  const [savingTheme, setSavingTheme] = useState(false);
+  const [savedTheme, setSavedTheme] = useState<ColorTheme>('default');
+  const [themeLogoMap, setThemeLogoMap] = useState<Record<ColorTheme, string>>(DEFAULT_LOGO_MAP);
+  const [logos, setLogos] = useState<AppearanceLogo[]>(FALLBACK_LOGOS);
+  const [saving, setSaving] = useState(false);
+  const [assigningLogo, setAssigningLogo] = useState(false);
+  const [emailLogo, setEmailLogo] = useState<EmailLogo | null>(null);
+  const [emailLogoFile, setEmailLogoFile] = useState<File | null>(null);
+  const [uploadingEmailLogo, setUploadingEmailLogo] = useState(false);
+  const [resettingEmailLogo, setResettingEmailLogo] = useState(false);
+  const emailLogoInputRef = useRef<HTMLInputElement>(null);
+
+  const applySettings = (settings: AppearanceSettings) => {
+    const nextLogos = logosFromSettings(settings);
+    const nextMap = mapFromSettings(settings);
+    setSelectedTheme(settings.defaultColorTheme);
+    setSavedTheme(settings.defaultColorTheme);
+    setThemeLogoMap(nextMap);
+    setLogos(nextLogos);
+  };
 
   useEffect(() => {
+    let cancelled = false;
+    setLoadState('loading');
     getAppearanceSettings()
       .then((settings) => {
-        setSelectedTheme(settings.defaultColorTheme);
-        setThemeLogoMap(
-          Object.fromEntries(
-            Object.entries(settings.themes).map(([key, value]) => [key, value.logo]),
-          ) as Record<ColorTheme, ThemeLogo>,
-        );
+        if (cancelled) return;
+        applySettings(settings);
+        setLoadState('ready');
       })
       .catch(() => {
-        // Keep defaults if settings cannot be loaded
+        if (!cancelled) {
+          setLoadState('error');
+          showError(t('appearance.actions.loadFailed'));
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [t, reloadToken]);
+
+  useEffect(() => {
+    getEmailLogo()
+      .then(setEmailLogo)
+      .catch(() => {
+        // Keep default state if the logo cannot be loaded
       });
   }, []);
 
-  const selectedLogo = themeLogoMap[selectedTheme];
-  const selectedThemePreviewLogo = selectedTheme === 'orange' || selectedTheme === 'blue' ? 'kpmg' : 'yellowmind';
+  const hasUnsavedTheme = selectedTheme !== savedTheme;
+  const pageReady = loadState === 'ready';
+  const persistBusy = saving || assigningLogo;
 
-  const applyThemeImmediately = (colorTheme: ColorTheme) => {
-    const root = document.documentElement;
-    root.classList.remove('theme-default', 'theme-yellow', 'theme-orange', 'theme-blue', 'theme-yellowsys', 'theme-claude', 'theme-kpmg');
-    if (colorTheme === 'yellow') root.classList.add('theme-yellowsys');
-    if (colorTheme === 'orange') root.classList.add('theme-claude');
-    if (colorTheme === 'blue') root.classList.add('theme-kpmg');
+  const persistAppearance = async () => {
+    if (!pageReady || persistLock.current || persistBusy || !hasUnsavedTheme) {
+      return;
+    }
+    persistLock.current = true;
+    setSaving(true);
+    try {
+      const nextSettings = buildAppearanceSettings(selectedTheme, themeLogoMap, logos);
+      const saved = await setAppearanceSettings(nextSettings, { applyToAllUsers: true });
+      applySettings(saved);
+      setColorTheme(saved.defaultColorTheme);
+      try {
+        await refreshUser();
+      } catch {
+        // Keep the live theme even if /me is unavailable.
+      }
+      notifyAppearanceSettingsUpdated(saved);
+      showSuccess(t('appearance.actions.applied'));
+    } catch (error) {
+      showError(parseApiError(error).message || t('appearance.actions.applyFailed'));
+    } finally {
+      persistLock.current = false;
+      setSaving(false);
+    }
   };
 
-  const saveLogoMapping = async () => {
-    setSavingTheme(true);
+  const persistAssignedLogo = async (logoId: string, catalog: AppearanceLogo[], notifyUser: boolean) => {
+    if (!pageReady || persistLock.current || persistBusy || themeLogoMap[savedTheme] === logoId) {
+      return;
+    }
+    const nextMap = logoMapForAllThemes(logoId);
+    const entry = catalog.find((item) => item.id === logoId);
+    persistLock.current = true;
+    setAssigningLogo(true);
+    setThemeLogoMap(nextMap);
+    setLogo({ id: logoId, url: entry ? appearanceLogoSrc(entry) : undefined, name: entry?.name });
     try {
-      const nextSettings = {
-        defaultColorTheme: selectedTheme,
-        themes: {
-          default: { labelKey: 'appearance.colorTheme.default', logo: themeLogoMap.default },
-          yellow: { labelKey: 'appearance.colorTheme.yellow', logo: themeLogoMap.yellow },
-          orange: { labelKey: 'appearance.colorTheme.orange', logo: themeLogoMap.orange },
-          blue: { labelKey: 'appearance.colorTheme.blue', logo: themeLogoMap.blue },
-        },
-      };
-
-      await setAppearanceSettings(nextSettings);
-      const refreshedSettings = await getGlobalAppearanceSettings();
-      setSelectedTheme(refreshedSettings.defaultColorTheme);
-      setThemeLogoMap(
-        Object.fromEntries(
-          Object.entries(refreshedSettings.themes).map(([key, value]) => [key, value.logo]),
-        ) as Record<ColorTheme, ThemeLogo>,
-      );
-      toast.success(t('appearance.actions.applied'));
-    } catch {
-      toast.error(t('appearance.actions.applyFailed'));
+      const saved = await setAppearanceSettings(buildAppearanceSettings(savedTheme, nextMap, catalog), {
+        applyToAllUsers: false,
+      });
+      applySettings(saved);
+      notifyAppearanceSettingsUpdated(saved);
+      if (notifyUser) {
+        showSuccess(t('appearance.logo.applied'));
+      }
+    } catch (error) {
+      showError(parseApiError(error).message || t('appearance.logo.applyFailed'));
+      getAppearanceSettings().then(applySettings).catch(() => undefined);
     } finally {
-      setSavingTheme(false);
+      persistLock.current = false;
+      setAssigningLogo(false);
+    }
+  };
+
+  const handleLogosChange = (nextLogos: AppearanceLogo[], assignId?: string) => {
+    setLogos(nextLogos);
+    const validIds = new Set(nextLogos.map((logo) => logo.id));
+    if (!validIds.has(themeLogoMap[savedTheme])) {
+      setLogo({ id: 'yellowmind', name: 'Yellowmind' });
+    }
+    setThemeLogoMap((current) => replaceMissingLogos(current, validIds));
+    if (assignId) {
+      void persistAssignedLogo(assignId, nextLogos, false);
+      return;
+    }
+    notifyAppearanceSettingsUpdated();
+  };
+
+  const onThemeKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
+    const index = COLOR_THEMES.findIndex((theme) => theme.value === selectedTheme);
+    if (event.key === 'ArrowRight' || event.key === 'ArrowDown') {
+      event.preventDefault();
+      setSelectedTheme(COLOR_THEMES[(index + 1) % COLOR_THEMES.length].value);
+    }
+    if (event.key === 'ArrowLeft' || event.key === 'ArrowUp') {
+      event.preventDefault();
+      setSelectedTheme(COLOR_THEMES[(index - 1 + COLOR_THEMES.length) % COLOR_THEMES.length].value);
+    }
+  };
+
+  const onEmailLogoFileChange = (file: File | undefined) => {
+    if (!file) return;
+    const isSupported = file.type === 'image/png' || file.type === 'image/jpeg';
+    const isWithinLimit = file.size > 0 && file.size <= 512 * 1024;
+    if (!isSupported || !isWithinLimit) {
+      showError(t('appearance.emailLogo.actions.saveFailed'));
+      return;
+    }
+    setEmailLogoFile(file);
+  };
+
+  const saveEmailLogo = async () => {
+    if (!emailLogoFile) return;
+    setUploadingEmailLogo(true);
+    try {
+      const logo = await uploadEmailLogo(emailLogoFile);
+      setEmailLogo(logo);
+      setEmailLogoFile(null);
+      showSuccess(t('appearance.emailLogo.actions.saved'));
+    } catch {
+      showError(t('appearance.emailLogo.actions.saveFailed'));
+    } finally {
+      setUploadingEmailLogo(false);
+    }
+  };
+
+  const resetEmailLogo = async () => {
+    setResettingEmailLogo(true);
+    try {
+      await deleteEmailLogo();
+      setEmailLogo(null);
+      setEmailLogoFile(null);
+      showSuccess(t('appearance.emailLogo.actions.removeSuccess'));
+    } catch {
+      showError(t('appearance.emailLogo.actions.removeFailed'));
+    } finally {
+      setResettingEmailLogo(false);
     }
   };
 
   return (
     <div className='space-y-6'>
       <div>
-        <h1 className='text-2xl font-bold tracking-tight'>{t('appearance.title')}</h1>
-        <p className='text-muted-foreground'>{t('appearance.description')}</p>
+        <h1 className='text-2xl font-semibold tracking-tight'>{t('appearance.title')}</h1>
+        <p className='text-sm text-muted-foreground'>{t('appearance.description')}</p>
       </div>
 
-      <Card>
-        <CardHeader>
-          <div className='flex items-center gap-3'>
-            <div className='flex h-10 w-10 items-center justify-center rounded-lg bg-muted'>
-              <Palette className='h-5 w-5' />
-            </div>
-            <div>
-              <CardTitle>{t('appearance.colorTheme.label')}</CardTitle>
-              <CardDescription>{t('appearance.colorTheme.description')}</CardDescription>
-            </div>
-          </div>
-        </CardHeader>
-        <CardContent className='space-y-4'>
-          <div className='grid gap-3 sm:grid-cols-2 lg:grid-cols-4'>
-            {COLOR_THEMES.map((themeOption) => (
-              <button
-                key={themeOption.value}
-                type='button'
-                onClick={() => setSelectedTheme(themeOption.value)}
-                className={cn(
-                  'rounded-lg border p-4 text-left transition-colors',
-                  selectedTheme === themeOption.value
-                    ? cn('ring-2 ring-offset-2', COLOR_THEME_SELECTED_STYLES[themeOption.value])
-                    : 'border-border hover:border-primary/40',
-                )}>
-                <div className='flex items-center gap-3'>
-                  <div className={cn('flex h-12 w-28 items-center justify-center rounded-md border bg-background', theme === 'dark' ? 'border-white/10' : 'border-black/10')}>
-                    {themeLogoMap[themeOption.value] === 'kpmg' ? (
-                      <Icons.Kpmg className='max-h-8 w-auto' style={{ color: theme === 'light' ? '#2563eb' : '#ffffff' }} />
-                    ) : (
-                      <Icons.YellowMind className='max-h-8 w-auto' />
-                    )}
-                  </div>
-                  <div className='flex min-w-0 flex-1 items-center gap-3'>
-                    <span className={cn('h-4 w-4 shrink-0 rounded-full border border-background shadow-sm', COLOR_THEME_SWATCHES[themeOption.value])} />
-                    <span className={cn('font-medium', selectedTheme === themeOption.value && 'text-foreground')}>{t(themeOption.labelKey as never)}</span>
-                  </div>
-                </div>
-              </button>
-            ))}
-          </div>
-
-          <div className='flex gap-3'>
-            <Button
-              onClick={async () => {
-                setSavingTheme(true);
-                try {
-                  const nextSettings = {
-                    defaultColorTheme: selectedTheme,
-                    themes: {
-                      default: { labelKey: 'appearance.colorTheme.default', logo: themeLogoMap.default },
-                      yellow: { labelKey: 'appearance.colorTheme.yellow', logo: themeLogoMap.yellow },
-                      orange: { labelKey: 'appearance.colorTheme.orange', logo: themeLogoMap.orange },
-                      blue: { labelKey: 'appearance.colorTheme.blue', logo: themeLogoMap.blue },
-                    },
-                  };
-
-                  await setAppearanceSettings(nextSettings);
-                  const refreshedSettings = await getGlobalAppearanceSettings();
-                  setSelectedTheme(refreshedSettings.defaultColorTheme);
-                  setThemeLogoMap(
-                    Object.fromEntries(
-                      Object.entries(refreshedSettings.themes).map(([key, value]) => [key, value.logo]),
-                    ) as Record<ColorTheme, ThemeLogo>,
-                  );
-                  applyThemeImmediately(nextSettings.defaultColorTheme);
-                  setColorTheme(nextSettings.defaultColorTheme);
-                  toast.success(t('appearance.actions.applied'));
-                } catch {
-                  toast.error(t('appearance.actions.applyFailed'));
-                } finally {
-                  setSavingTheme(false);
-                }
-              }}
-              disabled={savingTheme}
-            >
-              <Globe2 className='mr-2 h-4 w-4' />
-              {savingTheme ? t('appearance.actions.applying') : t('appearance.actions.applyToAll')}
+      {loadState === 'error' ? (
+        <Card>
+          <CardContent className='flex flex-col gap-3 py-6 sm:flex-row sm:items-center sm:justify-between'>
+            <p className='text-sm text-muted-foreground'>{t('appearance.actions.loadFailed')}</p>
+            <Button type='button' variant='outline' onClick={() => setReloadToken((token) => token + 1)}>
+              {t('appearance.actions.retry')}
             </Button>
-          </div>
-        </CardContent>
-      </Card>
-
-      <Card>
-        <CardHeader>
-          <div className='flex items-center gap-3'>
-            <div className='flex h-10 w-10 items-center justify-center rounded-lg bg-muted'>
-              <Image className='h-5 w-5' />
-            </div>
-            <div>
-              <CardTitle>{t('appearance.logo.title')}</CardTitle>
-              <CardDescription>{t('appearance.logo.description')}</CardDescription>
-            </div>
-          </div>
-        </CardHeader>
-        <CardContent className='space-y-4'>
-          <div className='grid gap-3 sm:grid-cols-2'>
-            {LOGOS.map((logo) => (
-              <button
-                key={logo.value}
-                type='button'
-                onClick={() => setThemeLogoMap((current) => ({ ...current, [selectedTheme]: logo.value }))}
-                className={cn(
-                  'rounded-lg border p-4 transition-colors',
-                  selectedLogo === logo.value ? 'border-primary bg-primary/5' : 'border-border hover:border-primary/40',
-                )}>
-                <div className='flex items-center justify-between'>
-                  <span className='font-medium'>{logo.label}</span>
-                  <div className={cn('flex h-10 w-28 items-center justify-center rounded-md border bg-background', theme === 'dark' ? 'border-white/10' : 'border-black/10')}>
-                    {logo.value === 'yellowmind' ? (
-                      <Icons.YellowMind className='max-h-7 w-auto' />
-                    ) : (
-                      <Icons.Kpmg className='max-h-7 w-auto' style={{ color: theme === 'light' ? '#2563eb' : '#ffffff' }} />
-                    )}
-                  </div>
-                  </div>
-                  <p className='mt-2 text-xs text-muted-foreground'>
-                    {selectedTheme} → {logo.label}
+          </CardContent>
+        </Card>
+      ) : (
+        <>
+          <Card>
+            <CardHeader>
+              <div className='flex items-start gap-3'>
+                <div className='flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary'>
+                  <Palette className='h-5 w-5' />
+                </div>
+                <div className='space-y-1'>
+                  <CardTitle>{t('appearance.colorTheme.label')}</CardTitle>
+                  <CardDescription>{t('appearance.colorTheme.description')}</CardDescription>
+                </div>
+              </div>
+            </CardHeader>
+          <CardContent className='space-y-5'>
+            {loadState === 'loading' ? (
+              <p className='text-sm text-muted-foreground'>{t('appearance.actions.loading')}</p>
+            ) : (
+              <>
+                <div
+                  role='radiogroup'
+                  aria-label={t('appearance.colorTheme.label')}
+                  onKeyDown={onThemeKeyDown}
+                  className='grid gap-3 sm:grid-cols-2 xl:grid-cols-4'>
+                  {COLOR_THEMES.map((themeOption) => (
+                    <ColorThemeCard
+                      key={themeOption.value}
+                      value={themeOption.value}
+                      label={t(themeOption.labelKey as ModuleTranslationKey<'admin'>)}
+                      selected={selectedTheme === themeOption.value}
+                      isActive={savedTheme === themeOption.value}
+                      activeLabel={t('appearance.colorTheme.active')}
+                      onSelect={setSelectedTheme}
+                    />
+                  ))}
+                </div>
+                <div className='flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between'>
+                  <p className='text-sm text-muted-foreground'>
+                    {hasUnsavedTheme ? t('appearance.colorTheme.applyHint') : t('appearance.colorTheme.alreadyApplied')}
                   </p>
-                </button>
-            ))}
-          </div>
+                  <Button
+                    onClick={() => void persistAppearance()}
+                    disabled={!pageReady || persistBusy || !hasUnsavedTheme}
+                    className='sm:w-auto'>
+                    <Globe2 className='mr-2 h-4 w-4' />
+                    {saving ? t('appearance.actions.applying') : t('appearance.actions.applyToAll')}
+                  </Button>
+                </div>
+              </>
+            )}
+          </CardContent>
+        </Card>
 
-          <div className='flex gap-3'>
-              <Button variant='outline' onClick={saveLogoMapping} disabled={savingTheme}>
-                <Save className='mr-2 h-4 w-4' />
-                {t('appearance.actions.saveLogo')}
+<Card>
+          <CardHeader>
+            <div className='flex items-start gap-3'>
+              <div className='flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary'>
+                <Image className='h-5 w-5' />
+              </div>
+              <div className='space-y-1'>
+                <CardTitle>{t('appearance.logo.title')}</CardTitle>
+                <CardDescription>{t('appearance.logo.description')}</CardDescription>
+              </div>
+            </div>
+          </CardHeader>
+          <CardContent>
+            {loadState === 'loading' ? (
+              <p className='text-sm text-muted-foreground'>{t('appearance.actions.loading')}</p>
+            ) : (
+              <LogoLibrarySection
+                logos={logos}
+                selectedLogoId={themeLogoMap[savedTheme]}
+                assigning={!pageReady || persistBusy}
+                onSelectLogo={(logoId) => void persistAssignedLogo(logoId, logos, true)}
+                onLogosChange={handleLogosChange}
+              />
+            )}
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <div className='flex items-center gap-3'>
+              <div className='flex h-10 w-10 items-center justify-center rounded-lg bg-muted'>
+                <Mail className='h-5 w-5' />
+              </div>
+              <div>
+                <CardTitle>{t('appearance.emailLogo.title')}</CardTitle>
+                <CardDescription>{t('appearance.emailLogo.description')}</CardDescription>
+              </div>
+            </div>
+          </CardHeader>
+          <CardContent className='space-y-4'>
+            <div>
+              <p className='mb-2 text-sm font-medium'>{t('appearance.emailLogo.current')}</p>
+              <div className='flex h-16 w-40 items-center justify-center rounded-lg border bg-background'>
+                {emailLogo ? (
+                  <img
+                    src={emailLogo.dataUri}
+                    alt={emailLogo.filename}
+                    className='max-h-12 max-w-[9rem] rounded object-contain'
+                  />
+                ) : (
+                  <div className='flex h-12 w-28 items-center justify-center text-xs text-muted-foreground'>
+                    {t('appearance.emailLogo.none')}
+                  </div>
+                )}
+              </div>
+              {!emailLogo && (
+                <p className='mt-2 text-xs text-muted-foreground'>
+                  {t('appearance.emailLogo.none')}
+                </p>
+              )}
+            </div>
+
+            <input
+              ref={emailLogoInputRef}
+              type='file'
+              accept='image/png,image/jpeg'
+              className='hidden'
+              aria-label={t('appearance.emailLogo.chooseFile')}
+              onChange={(event) => onEmailLogoFileChange(event.target.files?.[0])}
+            />
+
+            {emailLogoFile ? (
+              <p className='text-sm text-muted-foreground'>
+                {t('appearance.emailLogo.selected', { name: emailLogoFile.name })}
+              </p>
+            ) : (
+              <p className='text-sm text-muted-foreground'>{t('appearance.emailLogo.dropHint')}</p>
+            )}
+
+            <div className='flex gap-3'>
+              <Button
+                variant='outline'
+                onClick={() => emailLogoInputRef.current?.click()}
+                disabled={uploadingEmailLogo || resettingEmailLogo}>
+                <Upload className='mr-2 h-4 w-4' />
+                {t('appearance.emailLogo.chooseFile')}
               </Button>
-          </div>
-        </CardContent>
-      </Card>
+              <Button
+                onClick={saveEmailLogo}
+                disabled={!emailLogoFile || uploadingEmailLogo || resettingEmailLogo}>
+                <Save className='mr-2 h-4 w-4' />
+                {uploadingEmailLogo
+                  ? t('appearance.emailLogo.actions.saving')
+                  : t('appearance.emailLogo.actions.save')}
+              </Button>
+              {emailLogo && (
+                <Button
+                  variant='destructive'
+                  onClick={resetEmailLogo}
+                  disabled={uploadingEmailLogo || resettingEmailLogo}>
+                  <Trash2 className='mr-2 h-4 w-4' />
+                  {resettingEmailLogo
+                    ? t('appearance.emailLogo.actions.removing')
+                    : t('appearance.emailLogo.actions.remove')}
+                </Button>
+              )}
+            </div>
+          </CardContent>
+        </Card>
+        </>
+      )}
     </div>
   );
 }

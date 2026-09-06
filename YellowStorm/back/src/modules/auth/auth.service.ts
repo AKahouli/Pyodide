@@ -8,14 +8,14 @@ import * as crypto from 'crypto';
 import { UAParser } from 'ua-parser-js';
 import { Session, SessionDocument } from './schemas/session.schema';
 import { UserService } from '../user/user.service';
-import { RegistrationApprovalService } from '../user/registration-approval.service';
+
 import { UserDocument } from '../user/schemas/user.schema';
 import {
   assertAccountAccessible,
   getAccountAccessDenial,
 } from '../user/utils/assert-account-accessible';
 import { LoggerService } from '../logger';
-import { EmailService } from '../email';
+import { EmailService, EmailTemplateRenderer, EmailTemplate } from '../email';
 import { UsageService } from '../usage';
 import { AuthorizationService } from '../authorization/authorization.service';
 import { SystemService } from '../system/system.service';
@@ -44,6 +44,7 @@ export class AuthService {
     private readonly configService: ConfigService,
     private readonly logger: LoggerService,
     private readonly emailService: EmailService,
+    private readonly emailTemplateRenderer: EmailTemplateRenderer,
     @Inject(forwardRef(() => UsageService))
     private readonly usageService: UsageService,
     @Inject(forwardRef(() => AuthorizationService))
@@ -52,7 +53,6 @@ export class AuthService {
     @Inject(forwardRef(() => WorkspaceInitializerService))
     private readonly workspaceInitializer: WorkspaceInitializerService,
     private readonly humainAgentService: HumainAgentService,
-    private readonly registrationApprovalService: RegistrationApprovalService,
   ) {
     this.logger.setContext(AuthService.name);
     this.bcryptRounds = this.configService.get<number>('auth.bcryptRounds', 12);
@@ -128,19 +128,6 @@ export class AuthService {
 
     // Send verification email
     await this.sendVerificationEmail(user.email, user.emailVerificationToken!);
-
-    try {
-      await this.registrationApprovalService.notifySuperAdminsOfRegistration({
-        userId: user._id.toString(),
-        email: user.email,
-        requestedAt: user.createdAt,
-      });
-    } catch (error) {
-      this.logger.warn('Failed to notify super admins of registration', {
-        userId: user._id,
-        error: (error as Error).message,
-      });
-    }
 
     return {
       message: 'Registration successful. Please check your email to verify your account.',
@@ -691,48 +678,23 @@ export class AuthService {
     }
 
     const resetUrl = `${this.frontendUrl}/#/reset-password?token=${token}`;
-
-    const html = `
-<!DOCTYPE html>
-<html>
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Reset Your Password</title>
-</head>
-<body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; padding: 20px;">
-  <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: 30px; border-radius: 10px 10px 0 0;">
-    <h1 style="color: white; margin: 0; font-size: 24px;">${this.appName}</h1>
-  </div>
-  <div style="background: #ffffff; padding: 30px; border: 1px solid #e0e0e0; border-top: none; border-radius: 0 0 10px 10px;">
-    <h2 style="color: #333; margin-top: 0;">Reset Your Password</h2>
-    <p>We received a request to reset your password for your ${this.appName} account. Click the button below to set a new password:</p>
-    <div style="text-align: center; margin: 30px 0;">
-      <a href="${resetUrl}" style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 14px 28px; text-decoration: none; border-radius: 5px; font-weight: bold; display: inline-block;">Reset Password</a>
-    </div>
-    <p style="color: #666; font-size: 14px;">If the button doesn't work, copy and paste this link into your browser:</p>
-    <p style="color: #667eea; font-size: 14px; word-break: break-all;">${resetUrl}</p>
-    <hr style="border: none; border-top: 1px solid #e0e0e0; margin: 20px 0;">
-    <p style="color: #999; font-size: 12px;">This link will expire in ${this.passwordResetExpiryHours} hour${this.passwordResetExpiryHours > 1 ? 's' : ''}. If you didn't request a password reset, you can safely ignore this email — your password will remain unchanged.</p>
-  </div>
-</body>
-</html>`;
-
-    const text = `
-Reset Your Password
-
-We received a request to reset your password for your ${this.appName} account. Click the link below to set a new password:
-
-${resetUrl}
-
-This link will expire in ${this.passwordResetExpiryHours} hour${this.passwordResetExpiryHours > 1 ? 's' : ''}. If you didn't request a password reset, you can safely ignore this email — your password will remain unchanged.
-`;
+    const { subject, html, text, attachments } = await this.emailTemplateRenderer.render(
+      EmailTemplate.PASSWORD_RESET,
+      {
+        appUrl: this.frontendUrl,
+        appName: this.appName,
+        resetUrl,
+        passwordResetExpiryHours: String(this.passwordResetExpiryHours),
+        passwordResetExpirySuffix: this.passwordResetExpiryHours > 1 ? 's' : '',
+      },
+    );
 
     const result = await this.emailService.send({
       to: email,
-      subject: `Reset your password - ${this.appName}`,
+      subject,
       html,
       text,
+      attachments,
       priority: 'high',
     });
 
@@ -764,48 +726,21 @@ This link will expire in ${this.passwordResetExpiryHours} hour${this.passwordRes
     }
 
     const verificationUrl = `${this.frontendUrl}/#/verify-email?token=${token}`;
-
-    const html = `
-<!DOCTYPE html>
-<html>
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Verify Your Email</title>
-</head>
-<body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; padding: 20px;">
-  <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: 30px; border-radius: 10px 10px 0 0;">
-    <h1 style="color: white; margin: 0; font-size: 24px;">${this.appName}</h1>
-  </div>
-  <div style="background: #ffffff; padding: 30px; border: 1px solid #e0e0e0; border-top: none; border-radius: 0 0 10px 10px;">
-    <h2 style="color: #333; margin-top: 0;">Verify Your Email Address</h2>
-    <p>Thank you for registering with ${this.appName}. Please click the button below to verify your email address:</p>
-    <div style="text-align: center; margin: 30px 0;">
-      <a href="${verificationUrl}" style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 14px 28px; text-decoration: none; border-radius: 5px; font-weight: bold; display: inline-block;">Verify Email</a>
-    </div>
-    <p style="color: #666; font-size: 14px;">If the button doesn't work, copy and paste this link into your browser:</p>
-    <p style="color: #667eea; font-size: 14px; word-break: break-all;">${verificationUrl}</p>
-    <hr style="border: none; border-top: 1px solid #e0e0e0; margin: 20px 0;">
-    <p style="color: #999; font-size: 12px;">This link will expire in 24 hours. If you didn't create an account with ${this.appName}, you can safely ignore this email.</p>
-  </div>
-</body>
-</html>`;
-
-    const text = `
-Verify Your Email Address
-
-Thank you for registering with ${this.appName}. Please click the link below to verify your email address:
-
-${verificationUrl}
-
-This link will expire in 24 hours. If you didn't create an account with ${this.appName}, you can safely ignore this email.
-`;
+    const { subject, html, text, attachments } = await this.emailTemplateRenderer.render(
+      EmailTemplate.VERIFY_EMAIL,
+      {
+        appUrl: this.frontendUrl,
+        appName: this.appName,
+        verificationUrl,
+      },
+    );
 
     const result = await this.emailService.send({
       to: email,
-      subject: `Verify your email address - ${this.appName}`,
+      subject,
       html,
       text,
+      attachments,
     });
 
     if (!result.success) {
@@ -844,78 +779,24 @@ This link will expire in 24 hours. If you didn't create an account with ${this.a
       .filter(Boolean)
       .join(' on ');
 
-    const html = `
-<!DOCTYPE html>
-<html>
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>New Login Alert</title>
-</head>
-<body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; padding: 20px;">
-  <div style="background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%); padding: 30px; border-radius: 10px 10px 0 0;">
-    <h1 style="color: white; margin: 0; font-size: 24px;">${this.appName} Security Alert</h1>
-  </div>
-  <div style="background: #ffffff; padding: 30px; border: 1px solid #e0e0e0; border-top: none; border-radius: 0 0 10px 10px;">
-    <h2 style="color: #f5576c; margin-top: 0;">🔔 New Login Detected</h2>
-    <p>We noticed a new sign-in to your ${this.appName} account from a location we haven't seen before.</p>
-
-    <div style="background: #f8f9fa; padding: 20px; border-radius: 8px; margin: 20px 0;">
-      <table style="width: 100%; border-collapse: collapse;">
-        <tr>
-          <td style="padding: 8px 0; color: #666; width: 100px;">Time:</td>
-          <td style="padding: 8px 0; font-weight: 500;">${loginTime}</td>
-        </tr>
-        <tr>
-          <td style="padding: 8px 0; color: #666;">IP Address:</td>
-          <td style="padding: 8px 0; font-weight: 500;">${ipAddress}</td>
-        </tr>
-        <tr>
-          <td style="padding: 8px 0; color: #666;">Device:</td>
-          <td style="padding: 8px 0; font-weight: 500;">${deviceDescription || 'Unknown device'}</td>
-        </tr>
-      </table>
-    </div>
-
-    <p><strong>Was this you?</strong></p>
-    <p>If you recognize this login, you can ignore this email. If you don't recognize this activity, we recommend you:</p>
-    <ul style="color: #666;">
-      <li>Change your password immediately</li>
-      <li>Review your active sessions in account settings</li>
-      <li>Enable additional security measures if available</li>
-    </ul>
-
-    <hr style="border: none; border-top: 1px solid #e0e0e0; margin: 20px 0;">
-    <p style="color: #999; font-size: 12px;">This is an automated security notification from ${this.appName}. If you have any concerns, please contact our support team.</p>
-  </div>
-</body>
-</html>`;
-
-    const text = `
-New Login Alert - ${this.appName}
-
-We noticed a new sign-in to your ${this.appName} account from a location we haven't seen before.
-
-Login Details:
-- Time: ${loginTime}
-- IP Address: ${ipAddress}
-- Device: ${deviceDescription || 'Unknown device'}
-
-Was this you?
-
-If you recognize this login, you can ignore this email. If you don't recognize this activity, we recommend you:
-- Change your password immediately
-- Review your active sessions in account settings
-- Enable additional security measures if available
-
-This is an automated security notification from ${this.appName}. If you have any concerns, please contact our support team.
-`;
+    const { subject, html, text, attachments } = await this.emailTemplateRenderer.render(
+      EmailTemplate.NEW_LOGIN_ALERT,
+      {
+        appUrl: this.frontendUrl,
+        appName: this.appName,
+        loginTime,
+        ipAddress,
+        deviceDescription: deviceDescription || 'Unknown device',
+        securityUrl: `${this.frontendUrl}/#/`,
+      },
+    );
 
     const result = await this.emailService.send({
       to: email,
-      subject: `🔔 New login to your ${this.appName} account`,
+      subject,
       html,
       text,
+      attachments,
       priority: 'high',
     });
 

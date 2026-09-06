@@ -84,8 +84,12 @@ export const API_ENDPOINTS = {
     maintenance: '/experimental/system/maintenance',
     registration: '/experimental/system/registration',
     appearance: '/experimental/system/appearance',
+    appearanceLogos: '/experimental/system/appearance/logos',
+    appearanceLogo: (id: string) => `/experimental/system/appearance/logos/${id}`,
+    appearanceLogoFile: (id: string) => `/experimental/system/appearance/logos/${id}/file`,
     cors: '/experimental/system/cors',
     features: '/experimental/system/features',
+    emailLogo: '/experimental/system/email-logo',
   },
   workspaceUploadSettings: {
     current: '/workspace-settings/uploads',

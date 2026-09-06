@@ -84,7 +84,7 @@ vi.mock('@/components/ui/collapsible', async () => {
   };
 });
 
-vi.mock('@/components/icons', () => ({ Icons: { YellowMind: () => <div>logo</div> }, AppLogo: () => <div>logo</div> }));
+vi.mock('@/components/AppBrandLogo', () => ({ AppBrandLogo: () => <div>logo</div> }));
 vi.mock('@/components/ui/profile-menu', () => ({ ProfileMenu: () => <div>profile-menu</div> }));
 vi.mock('@/components/mode-toggle', () => ({ ModeToggle: () => <div>mode-toggle</div> }));
 vi.mock('@/modules/workspace', () => ({ WorkspaceButton: () => <div>workspace-btn</div> }));

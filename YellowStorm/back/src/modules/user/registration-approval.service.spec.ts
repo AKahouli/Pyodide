@@ -1,5 +1,6 @@
 import { Types } from 'mongoose';
 import { RegistrationApprovalService } from './registration-approval.service';
+import { EmailTemplateRenderer } from '../email';
 import { RegistrationApproval, UserStatus } from './schemas/user.schema';
 import { ErrorCode } from '../exceptions/constants/error-codes';
 
@@ -48,10 +49,16 @@ describe('RegistrationApprovalService', () => {
       warn: jest.fn(),
       error: jest.fn(),
     };
+    const emailTemplateRenderer = new EmailTemplateRenderer(
+      configService as never,
+      logger as never,
+      { getEmailLogo: jest.fn().mockResolvedValue(null) } as never,
+    );
     const service = new RegistrationApprovalService(
       userModel as never,
       authorizationService as never,
       emailService as never,
+      emailTemplateRenderer as never,
       configService as never,
       logger as never,
     );
@@ -151,17 +158,24 @@ describe('RegistrationApprovalService decisions', () => {
       warn: jest.fn(),
       error: jest.fn(),
     };
+    const configService = {
+      get: jest.fn((key: string, def: unknown) => {
+        if (key === 'app.name') return 'YelloStorm';
+        if (key === 'app.frontendUrl') return 'http://localhost:5173';
+        return def;
+      }),
+    };
+    const emailTemplateRenderer = new EmailTemplateRenderer(
+      configService as never,
+      logger as never,
+      { getEmailLogo: jest.fn().mockResolvedValue(null) } as never,
+    );
     const service = new RegistrationApprovalService(
       userModel as never,
       { findRoleByName: jest.fn() } as never,
       emailService as never,
-      {
-        get: jest.fn((key: string, def: unknown) => {
-          if (key === 'app.name') return 'YelloStorm';
-          if (key === 'app.frontendUrl') return 'http://localhost:5173';
-          return def;
-        }),
-      } as never,
+      emailTemplateRenderer as never,
+      configService as never,
       logger as never,
     );
     return { service, userModel, emailService, logger };

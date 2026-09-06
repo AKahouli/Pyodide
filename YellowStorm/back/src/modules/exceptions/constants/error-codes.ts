@@ -74,6 +74,12 @@ export enum ErrorCode {
   // System errors (1600-1699)
   MAINTENANCE_MODE = 'ERR_1600',
   REGISTRATION_DISABLED = 'ERR_1601',
+  APPEARANCE_LOGO_NOT_FOUND = 'ERR_1602',
+  APPEARANCE_LOGO_INVALID_TYPE = 'ERR_1603',
+  APPEARANCE_LOGO_INVALID_DIMENSIONS = 'ERR_1604',
+  APPEARANCE_LOGO_TOO_LARGE = 'ERR_1605',
+  APPEARANCE_LOGO_BUILTIN_PROTECTED = 'ERR_1606',
+  APPEARANCE_LOGO_LIMIT_REACHED = 'ERR_1608',
 
   // Usage/Plan errors (1700-1799)
   USAGE_LIMIT_EXCEEDED = 'ERR_1700',
@@ -507,6 +513,12 @@ export const ErrorMessages: Record<ErrorCode, string> = {
 
   [ErrorCode.MAINTENANCE_MODE]: 'System is under maintenance. Please try again later.',
   [ErrorCode.REGISTRATION_DISABLED]: 'User registration is currently disabled.',
+  [ErrorCode.APPEARANCE_LOGO_NOT_FOUND]: 'Appearance logo not found.',
+  [ErrorCode.APPEARANCE_LOGO_INVALID_TYPE]: 'Logo must be an image.',
+  [ErrorCode.APPEARANCE_LOGO_INVALID_DIMENSIONS]: 'Logo dimensions are not compatible with the sidebar slot.',
+  [ErrorCode.APPEARANCE_LOGO_TOO_LARGE]: 'Logo file exceeds the maximum allowed size.',
+  [ErrorCode.APPEARANCE_LOGO_BUILTIN_PROTECTED]: 'Built-in logos cannot be modified or deleted.',
+  [ErrorCode.APPEARANCE_LOGO_LIMIT_REACHED]: 'Maximum number of custom logos reached.',
 
   [ErrorCode.USAGE_LIMIT_EXCEEDED]: 'Usage limit exceeded. Please upgrade your plan or wait for the limit to reset.',
   [ErrorCode.USAGE_RATE_LIMITED]: 'Rate limit exceeded. Please slow down your requests.',
