@@ -55,6 +55,9 @@ describe('AuthService account access', () => {
     const configService = { get: jest.fn((_key: string, def: unknown) => def) };
     const logger = { setContext: jest.fn(), log: jest.fn(), warn: jest.fn(), error: jest.fn(), debug: jest.fn() };
     const emailService = { isAvailable: jest.fn().mockReturnValue(false) };
+    const emailTemplateRenderer = {
+      render: jest.fn().mockReturnValue({ subject: 's', html: '<p>s</p>', text: 's' }),
+    };
     const usageService = {
       getDefaultPlan: jest.fn().mockResolvedValue({
         _id: new Types.ObjectId(),
@@ -70,9 +73,6 @@ describe('AuthService account access', () => {
     const workspaceInitializer = {
       getOrCreatePersonalWorkspace: jest.fn().mockResolvedValue(undefined),
     };
-    const registrationApprovalService = {
-      notifySuperAdminsOfRegistration: jest.fn().mockResolvedValue(undefined),
-    };
     const service = new AuthService(
       sessionModel as never,
       userService as never,
@@ -80,12 +80,12 @@ describe('AuthService account access', () => {
       configService as never,
       logger as never,
       emailService as never,
+      emailTemplateRenderer as never,
       usageService as never,
       authorizationService as never,
       systemService as never,
       workspaceInitializer as never,
       humainAgentService as never,
-      registrationApprovalService as never,
     );
     return { service, sessionModel, userService };
   };

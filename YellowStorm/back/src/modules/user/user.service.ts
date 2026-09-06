@@ -19,6 +19,7 @@ import {
 import { ErrorCode } from '../exceptions/constants/error-codes';
 import { escapeRegex } from '../../common/utils';
 import { HumainAgentService } from '../humain-agent/humain-agent.service';
+import { RegistrationApprovalService } from './registration-approval.service';
 
 interface UserSearchResult {
   id: string;
@@ -48,6 +49,7 @@ export class UserService {
     private readonly logger: LoggerService,
     private readonly configService: ConfigService,
     private readonly humainAgentService: HumainAgentService,
+    private readonly registrationApprovalService: RegistrationApprovalService,
   ) {
     this.logger.setContext(UserService.name);
     this.passwordResetExpiryHours = this.configService.get<number>('auth.passwordResetExpiry', 1);
@@ -225,6 +227,7 @@ export class UserService {
     }
 
     const now = new Date();
+    const wasProfileComplete = user.profileComplete;
 
     user.profile.firstName = data.firstName;
     user.profile.lastName = data.lastName;
@@ -251,6 +254,23 @@ export class UserService {
       role: user.profile.role,
       description: user.profile.description,
     });
+
+    // The super admin registration notice must be sent only once the applicant
+    // has completed and validated their profile (not at sign-up).
+    if (!wasProfileComplete) {
+      try {
+        await this.registrationApprovalService.notifySuperAdminsOfRegistration({
+          userId,
+          email: user.email,
+          requestedAt: user.createdAt,
+        });
+      } catch (error) {
+        this.logger.warn('Failed to notify super admins of completed registration', {
+          userId,
+          error: (error as Error).message,
+        });
+      }
+    }
 
     return user;
   }

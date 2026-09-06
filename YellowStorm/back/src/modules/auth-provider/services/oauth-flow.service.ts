@@ -11,7 +11,7 @@ import { AuthService } from '@modules/auth/auth.service';
 import { UserService } from '@modules/user/user.service';
 import { UsageService } from '@modules/usage';
 import { AuthorizationService } from '@modules/authorization/authorization.service';
-import { EmailService } from '@modules/email';
+import { EmailService, EmailTemplateRenderer, EmailTemplate } from '@modules/email';
 import { LoggerService } from '@modules/logger';
 import { WorkspaceInitializerService } from '@modules/workspace/workspace-initializer.service';
 import { assertAccountAccessible } from '@modules/user/utils/assert-account-accessible';
@@ -41,6 +41,7 @@ export class OAuthFlowService {
     private readonly usageService: UsageService,
     private readonly authorizationService: AuthorizationService,
     private readonly emailService: EmailService,
+    private readonly emailTemplateRenderer: EmailTemplateRenderer,
     private readonly configService: ConfigService,
     private readonly logger: LoggerService,
     private readonly workspaceInitializer: WorkspaceInitializerService,
@@ -558,47 +559,22 @@ export class OAuthFlowService {
     const apiPrefix = this.configService.get<string>('app.apiPrefix', 'api');
     const linkUrl = `${this.backendUrl}/${apiPrefix}/v1/auth/providers/link/verify?token=${token}`;
 
-    const html = `
-<!DOCTYPE html>
-<html>
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Link Your Account</title>
-</head>
-<body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; padding: 20px;">
-  <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: 30px; border-radius: 10px 10px 0 0;">
-    <h1 style="color: white; margin: 0; font-size: 24px;">${this.appName}</h1>
-  </div>
-  <div style="background: #ffffff; padding: 30px; border: 1px solid #e0e0e0; border-top: none; border-radius: 0 0 10px 10px;">
-    <h2 style="color: #333; margin-top: 0;">Link Your ${providerKey} Account</h2>
-    <p>Someone tried to sign in with ${providerKey} using this email address. If this was you, click the button below to link your ${providerKey} account to your existing ${this.appName} account:</p>
-    <div style="text-align: center; margin: 30px 0;">
-      <a href="${linkUrl}" style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 14px 28px; text-decoration: none; border-radius: 5px; font-weight: bold; display: inline-block;">Link Account</a>
-    </div>
-    <p style="color: #666; font-size: 14px;">If the button doesn't work, copy and paste this link into your browser:</p>
-    <p style="color: #667eea; font-size: 14px; word-break: break-all;">${linkUrl}</p>
-    <hr style="border: none; border-top: 1px solid #e0e0e0; margin: 20px 0;">
-    <p style="color: #999; font-size: 12px;">This link will expire in 24 hours. If you didn't attempt this sign-in, you can safely ignore this email.</p>
-  </div>
-</body>
-</html>`;
-
-    const text = `
-Link Your ${providerKey} Account
-
-Someone tried to sign in with ${providerKey} using this email address. If this was you, click the link below to link your ${providerKey} account to your existing ${this.appName} account:
-
-${linkUrl}
-
-This link will expire in 24 hours. If you didn't attempt this sign-in, you can safely ignore this email.
-`;
+    const { subject, html, text, attachments } = this.emailTemplateRenderer.render(
+      EmailTemplate.LINK_OAUTH_ACCOUNT,
+      {
+        appUrl: this.frontendUrl,
+        appName: this.appName,
+        providerKey,
+        linkUrl,
+      },
+    );
 
     const result = await this.emailService.send({
       to: email,
-      subject: `Link your ${providerKey} account - ${this.appName}`,
+      subject,
       html,
       text,
+      attachments,
     });
 
     if (!result.success) {
