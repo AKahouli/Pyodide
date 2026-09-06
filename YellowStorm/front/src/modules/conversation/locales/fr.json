@@ -1,5 +1,6 @@
 {
   "governedConversation.title": "Conversation gouvernee",
+  "governedConversation.badge": "Gouverné",
   "governedConversation.version": "Configuration approuvee · Version {{number}}",
   "governedConversation.description": "Les assistants et les connaissances sont geres par votre organisation.",
   "governedScopes.headerTitle": "Périmètres gouvernés",

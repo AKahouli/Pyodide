@@ -886,3 +886,42 @@ describe('StreamService guardrail metadata buffering', () => {
     expect(releaseStreamExecution).toHaveBeenCalledTimes(1);
   });
 });
+
+describe('StreamService conversation name generation', () => {
+  const buildService = (grpcError: Error | null, grpcResponse: { conversation_name: string }) => {
+    const service = Object.create(StreamService.prototype) as StreamService;
+    const updateConversationInternal = jest.fn().mockResolvedValue(undefined);
+    const sendToUser = jest.fn();
+    const generateName = jest.fn((_request: unknown, _metadata: unknown, _options: unknown, callback: (err: Error | null, response: { conversation_name: string }) => void) => {
+      callback(grpcError, grpcResponse);
+    });
+    Object.assign(service as object, {
+      modelsService: { getDefaultModel: jest.fn().mockResolvedValue({ litellmModel: 'default-model' }) },
+      conversationService: { updateConversationInternal },
+      streamGateway: { sendToUser },
+      chatbotClient: { GenerateConversationName: generateName },
+      configService: { get: jest.fn((_key: string, fallback: unknown) => fallback) },
+      logger: { log: jest.fn(), debug: jest.fn(), warn: jest.fn(), error: jest.fn() },
+    });
+    return { service, updateConversationInternal, sendToUser, generateName };
+  };
+
+  it('resolves the default model even when the request carries no modelId (governed conversations)', async () => {
+    const { service, generateName, updateConversationInternal, sendToUser } = buildService(null, { conversation_name: 'Excel classification guide' });
+
+    await (service as any).generateConversationName('user-1', 'conversation-1', 'hello', 'user@example.com');
+
+    expect(generateName).toHaveBeenCalledWith(expect.objectContaining({ query: 'hello', model: 'default-model' }), expect.anything(), expect.anything(), expect.any(Function));
+    expect(updateConversationInternal).toHaveBeenCalledWith('conversation-1', { title: 'Excel classification guide' });
+    expect(sendToUser).toHaveBeenCalledWith('user-1', { type: 'conversation_name_generated', data: { conversationId: 'conversation-1', name: 'Excel classification guide' } });
+  });
+
+  it('keeps the default title when name generation fails', async () => {
+    const { service, updateConversationInternal, sendToUser } = buildService(new Error('model is required'), { conversation_name: '' });
+
+    await expect((service as any).generateConversationName('user-1', 'conversation-1', 'hello')).resolves.toBeUndefined();
+
+    expect(updateConversationInternal).not.toHaveBeenCalled();
+    expect(sendToUser).not.toHaveBeenCalled();
+  });
+});

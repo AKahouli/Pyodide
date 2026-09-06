@@ -350,6 +350,7 @@
   "governedScopes.error": "Trusted assistants are temporarily unavailable. Your regular chat is still ready.",
   "governedScopes.retry": "Try again",
   "governedConversation.title": "Governed conversation",
+  "governedConversation.badge": "Governed",
   "governedConversation.version": "Approved configuration · Version {{number}}",
   "governedConversation.description": "Assistants and knowledge are managed by your organization.",
   "reliability.pending": "Checking answer reliability...",

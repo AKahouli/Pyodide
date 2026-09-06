@@ -136,6 +136,10 @@ export class GovernanceScopeOverviewService {
 
   private buildChecks(scope: Record<string, unknown>, documents: Record<string, unknown>[], hasWorkspaceBinding: boolean, draftRevision: Record<string, unknown> | null, latestDryRun: Record<string, unknown> | null, memberships: Record<string, unknown>[], agents: Record<string, unknown>[]): GovernanceScopeOverviewCheck[] {
     const agentIds = Array.isArray(scope.agentIds) ? scope.agentIds : [];
+    const knowledge = scope.knowledge as { sourceMode?: string } | undefined;
+    // LLM-only scopes need no mapped workspaces; legacy scopes without the
+    // knowledge setting keep the workspace-binding requirement.
+    const knowledgeConfigured = knowledge?.sourceMode === 'llm_only' || hasWorkspaceBinding;
     const ownershipAssigned = memberships.some((membership) => membership.status === 'active' && String(membership.role) === 'scope_approver');
     const guardrailsReviewed = agents.length > 0 && agents.every((agent) => this.hasAnyGuardrailEnabled(agent));
     const audience = scope.audience as { mode?: string; userIds?: unknown[]; groupIds?: unknown[] } | undefined;
@@ -147,7 +151,7 @@ export class GovernanceScopeOverviewService {
     return [
       this.check('scope_active', 'Scope active', scope.status === 'active', 'blocking', 'rule'),
       this.check('agents_mapped', 'Agent mapped', agentIds.length > 0, 'blocking', 'agent'),
-      this.check('knowledge_mapped', 'Knowledge mapped', hasWorkspaceBinding, 'blocking', 'workspace'),
+      this.check('knowledge_mapped', 'Knowledge mapped', knowledgeConfigured, 'blocking', 'workspace'),
       this.check('ownership_assigned', 'Ownership assigned', ownershipAssigned, 'blocking', 'rule'),
       this.check('guardrails_reviewed', 'Guardrails reviewed', guardrailsReviewed, 'warning', 'agent'),
       this.check('draft_revision', 'Draft revision exists', Boolean(draftRevision), 'blocking', 'rule'),

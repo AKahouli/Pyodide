@@ -110,10 +110,28 @@ export function ConversationHeader() {
           <ArrowLeft className='h-4 w-4' />
         </Button>
         <div className='flex min-w-0 flex-1 items-center gap-1'>
-          <h1 className='flex min-w-0 items-center gap-2 font-medium text-lg'>
-            {isGoverned && <ShieldCheck className='size-4 shrink-0 text-primary' aria-label={t('governedConversation.title')} />}
+          <h1 className='flex min-w-0 items-center font-medium text-lg'>
             <span className='truncate'>{displayTitle}</span>
           </h1>
+          {isGoverned && conversation.governanceContext && (
+            <TooltipProvider>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <span tabIndex={0} data-governed-badge aria-label={t('governedConversation.description')} className='inline-flex shrink-0 items-center gap-1 rounded-full border border-primary/30 bg-primary/10 px-2 py-0.5 text-xs font-medium text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring'>
+                    <ShieldCheck className='size-3.5' aria-hidden='true' />
+                    {t('governedConversation.badge')}
+                  </span>
+                </TooltipTrigger>
+                <TooltipContent className='max-w-72'>
+                  <div className='grid gap-0.5'>
+                    <p className='font-semibold'>{t('governedConversation.title')}</p>
+                    <p>{t('governedConversation.version', { number: conversation.governanceContext.revisionNumber })}</p>
+                    <p className='text-muted-foreground'>{t('governedConversation.description')}</p>
+                  </div>
+                </TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
+          )}
           <TooltipProvider>
             <Tooltip>
               <TooltipTrigger asChild>

@@ -123,11 +123,11 @@ function AgentActivityRow({ data, isStreaming, redactSensitiveText }: Readonly<{
   return (
     <Collapsible>
       <CollapsibleTrigger asChild>
-        <button type='button' aria-label={t('stream.activity.agentRowAria', { description: summary, status: statusLabel })} className='group flex min-h-10 w-full items-center gap-2 rounded-lg border border-transparent px-2 py-0.5 text-left text-sm text-muted-foreground transition-colors hover:bg-muted/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring data-[state=open]:border-border/70 data-[state=open]:bg-muted/55'>
+        <button type='button' aria-label={t('stream.activity.agentRowAria', { description: summary, status: statusLabel })} className='group flex min-h-7 w-full items-center gap-2 rounded-lg border border-transparent px-2 py-0.5 text-left text-xs text-muted-foreground transition-colors hover:bg-muted/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring data-[state=open]:border-border/70 data-[state=open]:bg-muted/55'>
           <span data-agent-activity-spinner={active || undefined} aria-hidden='true'>{statusIcon(data.status, active)}</span>
-          <span data-agent-summary className='min-w-0 flex-1 truncate font-medium leading-5 text-foreground'>{summary}</span>
+          <span data-agent-summary className='min-w-0 flex-1 truncate font-medium leading-4 text-foreground'>{summary}</span>
           {duration && <span className='shrink-0 tabular-nums'>- {duration}</span>}
-          <ChevronRight className='size-4 shrink-0 transition-transform group-data-[state=open]:rotate-90' aria-hidden='true' />
+          <ChevronRight className='size-3.5 shrink-0 transition-transform group-data-[state=open]:rotate-90' aria-hidden='true' />
         </button>
       </CollapsibleTrigger>
       <CollapsibleContent className='px-1 pb-2 pt-1 sm:px-3'>

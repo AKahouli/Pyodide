@@ -11,7 +11,6 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { useFileViewerStore, FileViewerSidebar } from '@/modules/file-viewer';
 import { useModuleTranslation } from '@/modules/localization';
 import { GroupConversationPage } from './GroupConversationPage';
-import { GovernedConversationBanner } from '@/modules/governance/components/consumer/GovernedConversationBanner';
 
 let pendingMessageCleanup: ReturnType<typeof setTimeout> | null = null;
 let mountedConversationPages = 0;
@@ -160,7 +159,6 @@ export function ConversationPage() {
         <ConversationOutlineRail />
         <div className='flex min-w-0 flex-1 flex-col'>
           <ConversationHeader />
-          <GovernedConversationBanner conversation={currentConversation} />
           <ConversationContent />
           <ConversationInput conversationId={id!} />
           <StreamErrorDialog />

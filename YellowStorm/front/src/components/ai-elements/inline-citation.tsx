@@ -78,12 +78,12 @@ export const InlineCitationCardTrigger = ({ sources, className, 'aria-label': ar
         onClick={handleClick}
         onPointerDown={handlePointerDown}
         className={cn(
-          'mx-0.5 -my-2.5 inline-flex min-h-11 min-w-11 max-w-36 items-center justify-center rounded-full border-0 bg-transparent p-0 align-middle text-[11px] font-semibold leading-none text-foreground shadow-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1',
+          'mx-px -my-2 inline-flex min-h-7 min-w-7 max-w-24 items-center justify-center rounded-full border-0 bg-transparent p-0 align-middle text-[9px] font-semibold leading-none text-foreground shadow-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1',
           className,
         )}
         {...props}
       >
-        <span className={cn(badgeVariants({ variant: 'outline' }), 'inline-flex h-6 min-w-6 max-w-32 items-center justify-center rounded-full border-primary/40 bg-background px-1.5 text-foreground transition-colors hover:bg-primary/10')}>
+        <span className={cn(badgeVariants({ variant: 'outline' }), 'inline-flex h-4 min-w-4 max-w-20 items-center justify-center rounded-full border-primary/40 bg-background px-1 text-foreground transition-colors hover:bg-primary/10')}>
           <span className='truncate'>{visibleLabel}</span>
           {sources.length > 1 && <span className='ml-0.5 shrink-0'>+{sources.length - 1}</span>}
         </span>

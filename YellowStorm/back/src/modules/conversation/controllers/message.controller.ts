@@ -518,7 +518,6 @@ export class MessageController {
         user._id.toString(),
         conversationId,
         canonicalContent,
-        dto.modelId,
         user.email,
       );
     }

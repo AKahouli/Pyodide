@@ -11,8 +11,8 @@ describe('InlineCitationCardTrigger', () => {
     );
 
     const trigger = screen.getByRole('button', { name: '1' });
-    expect(trigger).toHaveClass('min-h-11', 'min-w-11', 'max-w-36', 'text-[11px]');
-    expect(trigger.firstChild).toHaveClass('h-6', 'min-w-6', 'max-w-32');
+    expect(trigger).toHaveClass('min-h-7', 'min-w-7', 'max-w-24', 'text-[9px]');
+    expect(trigger.firstChild).toHaveClass('h-4', 'min-w-4', 'max-w-20');
     expect(trigger).toHaveAttribute('title', '1');
   });
 
@@ -24,7 +24,7 @@ describe('InlineCitationCardTrigger', () => {
       </InlineCitationCard>,
     );
 
-    expect(screen.getByRole('button', { name: source }).firstChild).toHaveClass('max-w-32');
+    expect(screen.getByRole('button', { name: source }).firstChild).toHaveClass('max-w-20');
   });
 
   it('opens the preview on the first touch and invokes the citation on the second touch', async () => {

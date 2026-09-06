@@ -116,7 +116,7 @@ describe('ConversationAssistantBubble', () => {
     expect(bubble.querySelector('[data-activity-pane]')).toHaveAttribute('data-auto-sized', 'true');
     expect(bubble.querySelector('[data-activity-pane]')).toHaveClass('overflow-y-auto');
     expect(bubble.querySelector('[data-activity-pane]')).not.toHaveClass('overscroll-contain');
-    expect(within(desktop).getByRole('button', { name: /Compare selected files/ })).toHaveClass('min-h-10');
+    expect(within(desktop).getByRole('button', { name: /Compare selected files/ })).toHaveClass('min-h-7');
     expect(desktop).not.toHaveClass('space-y-1');
     expect(bubble.querySelector('[data-activity-pane]')).not.toContainElement(nodes.at(-1) as HTMLElement);
   });

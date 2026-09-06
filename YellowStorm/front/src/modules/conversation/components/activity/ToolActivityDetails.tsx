@@ -8,10 +8,10 @@ import type { MessageComponent, ToolActivityData } from '../../types';
 import { formatActivityDuration, formatToolResponsePayload, resolveToolDescription, resolveToolDisplayKey, resolveToolFallbackName, resolveToolRequest, resolveToolResponse, resolveToolShortName, resolveToolSummary } from '../../utils/tool-activity';
 
 export function statusIcon(status: ToolActivityData['status'] | 'running' | 'completed' | 'failed' | 'stopped', active = true) {
-  if (status === 'running') return active ? <Loader2 data-tool-spinner className='size-4 animate-spin text-primary' /> : null;
-  if (status === 'failed') return <XCircle className='size-4 text-destructive' />;
-  if (status === 'stopped') return <AlertTriangle className='size-4 text-amber-600 dark:text-amber-400' />;
-  return <CheckCircle2 className='size-4 text-green-500' />;
+  if (status === 'running') return active ? <Loader2 data-tool-spinner className='size-3.5 animate-spin text-primary' /> : null;
+  if (status === 'failed') return <XCircle className='size-3.5 text-destructive' />;
+  if (status === 'stopped') return <AlertTriangle className='size-3.5 text-amber-600 dark:text-amber-400' />;
+  return <CheckCircle2 className='size-3.5 text-green-500' />;
 }
 
 function formatToolTimestamp(data: ToolActivityData, language: string): { compact: string; full: string; dateTime: string } | undefined {
@@ -205,18 +205,18 @@ export function ToolRow({ conversationId, messageId, component, redactSensitiveT
       <span data-tool-status={data.status} className='shrink-0' aria-hidden='true'>{statusIcon(data.status)}</span>
       <span className='min-w-0 flex-1'>
         {summary
-          ? <span data-tool-summary className='block truncate font-medium leading-5 text-foreground'>{summary}</span>
-          : <span data-tool-name className='block truncate font-medium leading-5 text-foreground'>{label}</span>}
-        {summary && <span data-tool-name className='block truncate text-xs leading-4 text-muted-foreground'>{label}</span>}
+          ? <span data-tool-summary className='block truncate font-medium leading-4 text-foreground'>{summary}</span>
+          : <span data-tool-name className='block truncate font-medium leading-4 text-foreground'>{label}</span>}
+        {summary && <span data-tool-name className='block truncate text-[11px] leading-3 text-muted-foreground'>{label}</span>}
       </span>
       {duration && <span className='shrink-0 tabular-nums'>- {duration}</span>}
-      <ChevronRight className='size-4 shrink-0 transition-transform group-data-[state=open]:rotate-90' aria-hidden='true' />
+      <ChevronRight className='size-3.5 shrink-0 transition-transform group-data-[state=open]:rotate-90' aria-hidden='true' />
     </>
   );
   return (
     <Collapsible open={open} onOpenChange={setOpen}>
       <CollapsibleTrigger asChild>
-        <button type='button' aria-label={rowAriaLabel} className='group flex min-h-10 w-full items-center gap-2 rounded-lg border border-transparent px-2 py-0.5 text-left text-sm text-muted-foreground transition-colors hover:bg-muted/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring data-[state=open]:border-border/70 data-[state=open]:bg-muted/55'>
+        <button type='button' aria-label={rowAriaLabel} className='group flex min-h-7 w-full items-center gap-2 rounded-lg border border-transparent px-2 py-0.5 text-left text-xs text-muted-foreground transition-colors hover:bg-muted/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring data-[state=open]:border-border/70 data-[state=open]:bg-muted/55'>
           {row}
         </button>
       </CollapsibleTrigger>

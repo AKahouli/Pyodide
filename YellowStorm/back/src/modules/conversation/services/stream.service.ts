@@ -2154,11 +2154,10 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
     userId: string,
     conversationId: string,
     query: string,
-    modelId?: string,
     username?: string,
   ): void {
     // Fire and forget - don't await at call site
-    this.generateConversationName(userId, conversationId, query, modelId, username).catch((err) => {
+    this.generateConversationName(userId, conversationId, query, username).catch((err) => {
       this.logger.error('Failed to generate conversation name', {
         conversationId,
         error: (err as Error).message,
@@ -2170,16 +2169,14 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
     userId: string,
     conversationId: string,
     query: string,
-    modelId?: string,
     username?: string,
   ): Promise<void> {
     try {
-      // Resolve modelId to litellmModel from the database
-      let litellmModel = '';
-      if (modelId) {
-        const model = await this.modelsService.getDefaultModel();
-        litellmModel = model?.litellmModel || '';
-      }
+      // Governed conversations send no modelId, so always resolve the
+      // platform default model — an empty model makes the gRPC name
+      // generation fail and the conversation keeps its default title.
+      const model = await this.modelsService.getDefaultModel();
+      const litellmModel = model?.litellmModel || '';
 
       const response = await this.callGenerateNameGrpc(query, litellmModel, username);
       const generatedName = response.conversation_name || 'New Conversation';

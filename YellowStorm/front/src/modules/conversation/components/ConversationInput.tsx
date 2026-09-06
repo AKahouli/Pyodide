@@ -38,6 +38,9 @@ export function ConversationInput({ conversationId }: ConversationInputProps) {
   const currentConversation = useConversationStore((s) => s.currentConversation);
   const governedMode = currentConversation?.runtimeMode === 'governed';
   const platformCopilot = currentConversation?.runtimePurpose === 'platform_copilot';
+  // Sticky tagged agents route untagged AI turns to that agent, so the backend
+  // rejects reasoning effort on those turns even without a fresh mention.
+  const hasStickyTaggedAgents = (currentConversation?.taggedAgentIds?.length ?? 0) > 0;
   const { status: usageStatus } = useUsage();
   const { t } = useModuleTranslation('conversation');
   const { user } = useAuth();
@@ -174,7 +177,7 @@ export function ConversationInput({ conversationId }: ConversationInputProps) {
         agentIds: agentIds?.length ? agentIds : undefined,
         memberIds: memberIds?.length ? memberIds : undefined,
         teamIds: teamIds?.length ? teamIds : undefined,
-        ...(!governedMode && !platformCopilot && !agentIds?.length && !memberIds?.length && !teamIds?.length && effectiveReasoningEffort
+        ...(!governedMode && !platformCopilot && !hasStickyTaggedAgents && !agentIds?.length && !memberIds?.length && !teamIds?.length && effectiveReasoningEffort
           ? { reasoningEffort: effectiveReasoningEffort }
           : {}),
         parentMessageId: replyingToMessage?.id,
@@ -187,7 +190,7 @@ export function ConversationInput({ conversationId }: ConversationInputProps) {
       clearAll();
       clearReplyingTo();
     },
-    [completedFileIds, uploadFiles, sendMessage, conversationId, clearAll, clearReplyingTo, replyingToMessage?.id, governedMode, platformCopilot, selectedWorkspaceIds, setSelectedWorkspaceIds, updateConversation, deepSearchEnabled, effectiveReasoningEffort],
+    [completedFileIds, uploadFiles, sendMessage, conversationId, clearAll, clearReplyingTo, replyingToMessage?.id, governedMode, platformCopilot, hasStickyTaggedAgents, selectedWorkspaceIds, setSelectedWorkspaceIds, updateConversation, deepSearchEnabled, effectiveReasoningEffort],
   );
 
   const senderDisplayName = useMemo(() => {
@@ -283,7 +286,7 @@ export function ConversationInput({ conversationId }: ConversationInputProps) {
             >
               <Search className='h-4 w-4' />
             </PromptInputButton>
-            {!governedMode && !platformCopilot && reasoningEfforts.length > 0 && (
+            {!governedMode && !platformCopilot && !hasStickyTaggedAgents && reasoningEfforts.length > 0 && (
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
                   <PromptInputButton type='button' aria-label={t('input.reasoning.label')}>

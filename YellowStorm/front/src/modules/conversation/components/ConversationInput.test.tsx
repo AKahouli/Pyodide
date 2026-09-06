@@ -8,7 +8,7 @@ const updateConversationMock = vi.hoisted(() => vi.fn().mockResolvedValue(undefi
 const stopStreamMock = vi.hoisted(() => vi.fn());
 const clearAllMock = vi.hoisted(() => vi.fn());
 const currentConversationMock = vi.hoisted(() => ({
-  value: { id: 'conv-1', workspaces: ['ws-1'] } as { id: string; workspaces: string[]; runtimeMode?: 'standard' | 'governed'; runtimePurpose?: 'platform_copilot' },
+  value: { id: 'conv-1', workspaces: ['ws-1'] } as { id: string; workspaces: string[]; runtimeMode?: 'standard' | 'governed'; runtimePurpose?: 'platform_copilot'; taggedAgentIds?: string[] },
 }));
 const workspaceSelectionMock = vi.hoisted(() => ({
   value: ['ws-2'] as string[],
@@ -313,6 +313,8 @@ describe('ConversationInput', () => {
   it('submits reasoning effort only for an untagged standard turn', async () => {
     render(<ConversationInput conversationId='conv-1' />);
 
+    expect(screen.getByRole('button', { name: 'input.reasoning.label' })).toBeInTheDocument();
+
     await userEvent.click(screen.getByRole('button', { name: 'submit-with-reasoning' }));
 
     await waitFor(() => expect(sendMessageMock).toHaveBeenCalledWith(
@@ -331,5 +333,16 @@ describe('ConversationInput', () => {
     await userEvent.click(screen.getByRole('button', { name: 'submit-with-reasoning' }));
     expect(sendMessageMock.mock.calls.at(-1)?.[1]).not.toHaveProperty('reasoningEffort');
     expect(screen.queryByRole('button', { name: 'input.reasoning.label' })).not.toBeInTheDocument();
+  });
+
+  it('hides and omits reasoning effort when sticky tagged agents route the turn', async () => {
+    currentConversationMock.value = { id: 'conv-1', workspaces: ['ws-1'], taggedAgentIds: ['agent-9'] };
+    render(<ConversationInput conversationId='conv-1' />);
+
+    expect(screen.queryByRole('button', { name: 'input.reasoning.label' })).not.toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole('button', { name: 'submit-with-reasoning' }));
+
+    await waitFor(() => expect(sendMessageMock.mock.calls.at(-1)?.[1]).not.toHaveProperty('reasoningEffort'));
   });
 });
