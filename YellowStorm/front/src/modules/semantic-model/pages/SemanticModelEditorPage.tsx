@@ -377,15 +377,6 @@ export function SemanticModelEditorPage() {
                 <DropdownMenuItem onClick={() => setConceptOpen(true)}>
                   {t("concept.add")}
                 </DropdownMenuItem>
-                <DropdownMenuItem
-                  onClick={() => {
-                    setRelationConnection(null);
-                    setRelationOpen(true);
-                  }}
-                  disabled={graph.nodes.length < 2}
-                >
-                  {t("relation.add")}
-                </DropdownMenuItem>
                 <DropdownMenuItem onClick={() => setRecordOpen(true)}>
                   {t("records.add")}
                 </DropdownMenuItem>
@@ -430,17 +421,15 @@ export function SemanticModelEditorPage() {
           />
           {canEdit && graph.nodes.length > 0 && (
             <div className="absolute bottom-5 right-5 z-10 flex gap-2">
-              {graph.records.length > 0 && (
-                <Button
-                  size="lg"
-                  variant="outline"
-                  className="shadow-lg bg-background"
-                  onClick={() => setGraphViewerOpen(true)}
-                >
-                  <Network className="mr-2 h-4 w-4" />
-                  {t("graphViewer.button")}
-                </Button>
-              )}
+              <Button
+                size="lg"
+                variant="outline"
+                className="shadow-lg bg-background"
+                onClick={() => setGraphViewerOpen(true)}
+              >
+                <Network className="mr-2 h-4 w-4" />
+                {t("graphViewer.button")}
+              </Button>
               <Button
                 size="lg"
                 className="shadow-lg"
@@ -536,6 +525,7 @@ export function SemanticModelEditorPage() {
           open={graphViewerOpen}
           onClose={() => setGraphViewerOpen(false)}
           modelId={modelId}
+          canEdit={canEdit}
         />
       )}
       <Dialog open={saveStatus === "conflict"}>

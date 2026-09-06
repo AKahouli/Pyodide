@@ -10,6 +10,7 @@ import {
   CreateSemanticModelDto,
   GenerateSemanticModelOntologyDto,
   GraphOperationsDto,
+  AgeGraphOperationsDto,
   ExpectedModelRevisionDto,
   PublishSemanticModelDto,
   SemanticModelQueryDto,
@@ -171,6 +172,13 @@ export class SemanticModelController {
   @RequirePermissions([Permissions.SEMANTIC_MODELS_READ,Permissions.SEMANTIC_MODELS_ALL],'any')
   getAgeGraph(@CurrentUser() user: UserDocument,@Param('modelId') modelId: string) {
     return this.mappingProposals.getAgeGraph(user._id.toString(), modelId);
+  }
+
+  @Post(':modelId/age-graph/operations')
+  @ApiOperation({ summary: 'Apply safe add/delete node and relationship operations directly to the Apache AGE graph' })
+  @RequirePermissions([Permissions.SEMANTIC_MODELS_UPDATE,Permissions.SEMANTIC_MODELS_ALL],'any')
+  applyAgeGraphOperations(@CurrentUser() user: UserDocument,@Param('modelId') modelId: string,@Body() dto: AgeGraphOperationsDto) {
+    return this.mappingProposals.applyAgeGraphOperations(user._id.toString(), modelId, dto);
   }
 
   @Post(':modelId/builds')

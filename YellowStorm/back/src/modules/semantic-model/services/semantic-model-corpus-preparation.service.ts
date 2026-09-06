@@ -1,7 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { NotFoundException } from '@modules/exceptions';
 import { DocumentResponse } from '@modules/workspace/interfaces/workspace-document.interface';
-import { IndexingStatus } from '@modules/workspace/schemas/workspace-document.schema';
 import { WorkspaceDocumentService } from '@modules/workspace/workspace-document.service';
 import {
   SelectedCorpusBinding,
@@ -124,16 +123,12 @@ export class SemanticModelCorpusPreparationService {
       excluded.push({ bindingId: binding.id, workspaceId: binding.workspaceId, documentId: document.id, reason: 'folder' });
       return [];
     }
-    if (document.indexingStatus !== IndexingStatus.READY) {
-      excluded.push({ bindingId: binding.id, workspaceId: binding.workspaceId, documentId: document.id, reason: 'document_not_indexed' });
-      return [];
-    }
     return [{
       sourceDocumentId: document.id,
       workspaceId: document.workspaceId,
       originalName: document.originalName,
       mimeType: document.mimeType,
-      indexingStatus: 'ready',
+      indexingStatus: document.indexingStatus,
       lastIndexedAt: document.lastIndexedAt,
     }];
   }

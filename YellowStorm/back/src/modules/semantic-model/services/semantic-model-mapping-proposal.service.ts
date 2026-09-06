@@ -6,9 +6,11 @@ import { BadRequestException, ServiceUnavailableException } from '@modules/excep
 import { ErrorCode } from '@modules/exceptions/constants/error-codes';
 import { SemanticModelMappingJob, SemanticModelMappingPlan, SemanticModelMappingProposalResponse } from '../domain/semantic-model-mapping-proposal.types';
 import type { SemanticModelEvidenceSearchTask } from '../domain/semantic-model-evidence-search.types';
-import { SemanticGraph } from '../domain/semantic-model.types';
-import { SemanticModelDatabaseService } from '../infrastructure/semantic-model-database.service';
+import { SemanticGraph, type SemanticGraphOperation, type SemanticNodeType } from '../domain/semantic-model.types';
 import type { SemanticModelManualInstances } from '../domain/semantic-model-build.types';
+import type { SemanticAgeGraphOperation } from '../domain/semantic-age-graph.types';
+import { SemanticModelDatabaseService } from '../infrastructure/semantic-model-database.service';
+import type { AgeGraphOperationsDto } from '../dto';
 import { SemanticAgeGraphRepository, type AgeGraphData, type AgeGraphNode } from '../repositories/semantic-age-graph.repository';
 import { SemanticGraphCommandService } from './semantic-graph-command.service';
 import { SemanticModelEvidenceSearchService } from './semantic-model-evidence-search.service';
@@ -97,7 +99,7 @@ export class SemanticModelMappingProposalService {
     await this.models.requireActiveRole(userId, modelId, ['owner', 'editor']);
     const [graph, search] = await Promise.all([
       this.graphCommands.getGraph(userId, modelId),
-      this.evidenceSearch.search(userId, modelId),
+      this.evidenceSearch.search(userId, modelId, manualInstances),
     ]);
     const adkUrl = (this.config.get<string>('indexing.apiAdk') || 'http://localhost:8001').replace(/\/$/, '');
     const apiKey = this.config.get<string>('indexing.adkApiKey') || '';
@@ -167,7 +169,9 @@ export class SemanticModelMappingProposalService {
     }
 
     const { nodes, edges } = job.result.plan;
-    if (!nodes.length && !edges.length) {
+    // Incremental mode has nothing to apply when the plan is empty. Replace
+    // mode intentionally clears the graph even when extraction found nothing.
+    if (!nodes.length && !edges.length && mode !== 'replace') {
       return { appliedNodeCount: 0, appliedEdgeCount: 0, updatedNodeCount: 0, deletedNodeCount: 0, graphViewerWarning: null };
     }
 
@@ -416,7 +420,7 @@ export class SemanticModelMappingProposalService {
     };
 
     // Read exclusively from AGE — no fallback to relational tables.
-    // Filter by recordMap so stale AGE vertices from previous runs (same model_id, old UUIDs) are ignored.
+    // Keep only AGE vertices that still have a relational record, ignoring stale projections.
     const ageData = await this.ageGraph.readGraph(modelId);
     const nodes: AgeGraphNode[] = ageData.nodes
       .filter((n) => recordMap.has(n.id))
@@ -427,6 +431,148 @@ export class SemanticModelMappingProposalService {
     const liveNodeIds = new Set(nodes.map((n) => n.id));
     const edges = ageData.edges.filter((e) => liveNodeIds.has(e.sourceId) && liveNodeIds.has(e.targetId));
     return { nodes, edges };
+  }
+
+  async applyAgeGraphOperations(userId: string, modelId: string, dto: AgeGraphOperationsDto) {
+    await this.models.requireActiveRole(userId, modelId, ['owner', 'editor']);
+    const graph = await this.graphCommands.getGraph(userId, modelId);
+    const operations = dto.operations.map((operation) => this.parseAgeGraphOperation(operation, graph));
+    const expandedOperations: SemanticGraphOperation[] = [];
+    const deletedRecordIds = new Set<string>();
+    const deletedRelationIds = new Set<string>();
+    for (const operation of operations) {
+      if (operation.type === 'node.delete') {
+        for (const relation of graph.recordRelations) {
+          if ((relation.sourceRecordId === operation.nodeId || relation.targetRecordId === operation.nodeId) && !deletedRelationIds.has(relation.id)) {
+            expandedOperations.push({ type: 'record_relation.delete', id: relation.id });
+            deletedRelationIds.add(relation.id);
+          }
+        }
+        if (!deletedRecordIds.has(operation.nodeId)) {
+          expandedOperations.push({ type: 'record.delete', id: operation.nodeId });
+          deletedRecordIds.add(operation.nodeId);
+        }
+      } else if (operation.type === 'edge.delete') {
+        if (!deletedRelationIds.has(operation.edgeId)) {
+          expandedOperations.push({ type: 'record_relation.delete', id: operation.edgeId });
+          deletedRelationIds.add(operation.edgeId);
+        }
+      } else if (operation.type === 'node.create') {
+        expandedOperations.push({
+          type: 'record.create',
+          entity: { id: randomUUID(), nodeTypeId: operation.nodeTypeId, label: operation.label, values: operation.values, status: 'active', position: { x: 0, y: 0 } },
+        });
+      } else {
+        expandedOperations.push({
+          type: 'record_relation.create',
+          entity: { id: randomUUID(), relationTypeId: operation.relationTypeId, sourceRecordId: operation.sourceId, targetRecordId: operation.targetId, values: {} },
+        });
+      }
+    }
+    await this.graphCommands.apply(userId, modelId, { expectedRevision: graph.revision, operations: expandedOperations } as never);
+    const updatedGraph = await this.graphCommands.getGraph(userId, modelId);
+    await this.ageGraph.dropGraph(modelId);
+    const ageResult = await this.ageGraph.buildGraph(updatedGraph, modelId);
+    const graphViewerWarning = ageResult.failedVertexCount || ageResult.failedEdgeCount
+      ? `Le graphe AGE est incomplet (${ageResult.failedVertexCount} nœud(s) et ${ageResult.failedEdgeCount} relation(s) non écrits).`
+      : null;
+    return {
+      appliedNodeCount: operations.filter((operation) => operation.type === 'node.create').length,
+      appliedEdgeCount: operations.filter((operation) => operation.type === 'edge.create').length,
+      deletedNodeCount: operations.filter((operation) => operation.type === 'node.delete').length,
+      deletedEdgeCount: operations.filter((operation) => operation.type === 'edge.delete').length,
+      graphViewerWarning,
+    };
+  }
+
+  private parseAgeGraphOperation(input: Record<string, unknown>, graph: SemanticGraph): SemanticAgeGraphOperation {
+    const type = input.type;
+    if (type === 'node.create') {
+      const nodeTypeId = this.requireAgeId(input.nodeTypeId, 'nodeTypeId');
+      const nodeType = graph.nodes.find((node) => node.id === nodeTypeId);
+      if (!nodeType || nodeType.systemKey) {
+        throw new BadRequestException(ErrorCode.SEMANTIC_MODEL_VALIDATION_FAILED, 'The selected concept cannot contain records');
+      }
+      return {
+        type,
+        nodeTypeId,
+        label: this.requireAgeText(input.label, 'label'),
+        values: this.requireAgeValues(input.values, nodeType),
+      };
+    }
+    if (type === 'node.delete') {
+      const nodeId = this.requireAgeId(input.nodeId, 'nodeId');
+      if (!graph.records.some((record) => record.id === nodeId)) throw new BadRequestException(ErrorCode.SEMANTIC_MODEL_VALIDATION_FAILED, 'The selected graph node does not exist');
+      return { type, nodeId };
+    }
+    if (type === 'edge.create') {
+      const relationTypeId = this.requireAgeId(input.relationTypeId, 'relationTypeId');
+      const sourceId = this.requireAgeId(input.sourceId, 'sourceId');
+      const targetId = this.requireAgeId(input.targetId, 'targetId');
+      const relation = graph.relations.find((candidate) => candidate.id === relationTypeId);
+      const source = graph.records.find((record) => record.id === sourceId);
+      const target = graph.records.find((record) => record.id === targetId);
+      if (!relation || !source || !target || relation.sourceNodeTypeId !== source.nodeTypeId || relation.targetNodeTypeId !== target.nodeTypeId) {
+        throw new BadRequestException(ErrorCode.SEMANTIC_MODEL_VALIDATION_FAILED, 'The selected records do not follow this relationship');
+      }
+      return {
+        type,
+        relationTypeId,
+        sourceId,
+        targetId,
+      };
+    }
+    if (type === 'edge.delete') {
+      const edgeId = this.requireAgeId(input.edgeId, 'edgeId');
+      if (!graph.recordRelations.some((relation) => relation.id === edgeId)) throw new BadRequestException(ErrorCode.SEMANTIC_MODEL_VALIDATION_FAILED, 'The selected graph relationship does not exist');
+      return { type, edgeId };
+    }
+    throw new BadRequestException(ErrorCode.SEMANTIC_MODEL_VALIDATION_FAILED, 'Unsupported AGE graph operation');
+  }
+
+  private requireAgeText(value: unknown, field: string): string {
+    if (typeof value !== 'string' || !value.trim() || value.length > 200) {
+      throw new BadRequestException(ErrorCode.SEMANTIC_MODEL_VALIDATION_FAILED, `${field} is invalid`);
+    }
+    return value.trim();
+  }
+
+  private requireAgeValues(value: unknown, nodeType: SemanticNodeType): Record<string, unknown> {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) {
+      throw new BadRequestException(ErrorCode.SEMANTIC_MODEL_VALIDATION_FAILED, 'values must be an object');
+    }
+    const input = value as Record<string, unknown>;
+    const allowed = new Set(nodeType.attributes.map((attribute) => attribute.key));
+    const reserved = new Set(['_source_document_id', '_source_file_name', '_source_document_ids']);
+    if (Object.keys(input).some((key) => !allowed.has(key) && !reserved.has(key))) {
+      throw new BadRequestException(ErrorCode.SEMANTIC_MODEL_VALIDATION_FAILED, 'values contains an unknown attribute');
+    }
+    for (const key of reserved) {
+      const current = input[key];
+      if (current !== undefined && typeof current !== 'string' && !(key === '_source_document_ids' && Array.isArray(current) && current.every((item) => typeof item === 'string'))) {
+        throw new BadRequestException(ErrorCode.SEMANTIC_MODEL_VALIDATION_FAILED, `Invalid source document value: ${key}`);
+      }
+    }
+    for (const attribute of nodeType.attributes) {
+      const current = input[attribute.key];
+      if (attribute.required && (current === undefined || current === null || current === '')) {
+        throw new BadRequestException(ErrorCode.SEMANTIC_MODEL_VALIDATION_FAILED, `Required attribute missing: ${attribute.label}`);
+      }
+      if (current !== undefined && current !== null && !['string', 'number', 'boolean'].includes(typeof current)) {
+        throw new BadRequestException(ErrorCode.SEMANTIC_MODEL_VALIDATION_FAILED, `Invalid value for attribute: ${attribute.label}`);
+      }
+      if (typeof current === 'number' && !Number.isFinite(current)) {
+        throw new BadRequestException(ErrorCode.SEMANTIC_MODEL_VALIDATION_FAILED, `Invalid numeric value for attribute: ${attribute.label}`);
+      }
+    }
+    return input;
+  }
+
+  private requireAgeId(value: unknown, field: string): string {
+    if (typeof value !== 'string' || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value)) {
+      throw new BadRequestException(ErrorCode.SEMANTIC_MODEL_VALIDATION_FAILED, `${field} is invalid`);
+    }
+    return value;
   }
 
   private async createRun(modelId: string): Promise<string> {
