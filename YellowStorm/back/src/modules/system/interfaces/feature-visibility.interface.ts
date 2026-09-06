@@ -6,6 +6,7 @@ export interface FeatureVisibility {
   appMarketplace: boolean;
   worky: boolean;
   agents: boolean;
+  semanticModel: boolean;
   platformCopilot: boolean;
 }
 
@@ -17,5 +18,6 @@ export const DEFAULT_FEATURE_VISIBILITY: FeatureVisibility = {
   appMarketplace: true,
   worky: true,
   agents: true,
+  semanticModel: true,
   platformCopilot: false,
 };

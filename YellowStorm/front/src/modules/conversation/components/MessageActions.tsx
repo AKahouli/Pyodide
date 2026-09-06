@@ -1,12 +1,19 @@
-import { memo, useRef, useState } from 'react';
+import { memo, useCallback, useMemo, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
-import { ThumbsUp, ThumbsDown, Copy, RotateCcw, MoreHorizontal, FileText, Flag, GitBranch, Loader2, Workflow } from 'lucide-react';
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+import { ThumbsUp, ThumbsDown, Copy, RotateCcw, MoreHorizontal, FileText, Flag, GitBranch, Loader2, Workflow, BookOpen, Globe, Share2, FileDown } from 'lucide-react';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { toast } from 'sonner';
 import { useModuleTranslation } from '@/modules/localization';
+import { showSuccess, showError } from '@/lib/notifications';
 import { useConversationStore } from '../store';
 import { componentsToMarkdown } from '../utils';
+import { collectMessageCitations, getCitationEntryLabel, isUrlCitation } from '../utils/message-citations';
+import { buildExportFilename } from '../utils/document-export';
+import { downloadBlob, exportBlocksToDocx } from '../utils/docx-export';
+import { openCitationSource, type CitationData } from '@/components/ai-elements/ai-message-content';
+import { useFileViewerDisplayMode } from '@/components/ai-elements/message-context';
 import type { DisplayedAnswerVersion, Message } from '../types';
 import { ReportDialog } from './ReportDialog';
 import { TimingIndicator } from './TimingIndicator';
@@ -39,10 +46,15 @@ export const MessageActions = memo(function MessageActions({ message, isLastAiMe
   const fetchConversations = useConversationStore((s) => s.fetchConversations);
   const isGroup = !!currentConversation?.groupMeta?.isGroup;
   const [reportOpen, setReportOpen] = useState(false);
+  const [sourcesOpen, setSourcesOpen] = useState(false);
   const handoffCreationRequest = useRef<{ fingerprint: string; requestId: string }>();
   const openHandoff = usePlatformCopilotPanelStore((state) => state.openHandoff);
   const [isExportingPdf, setIsExportingPdf] = useState(false);
+  const [isExportingDocx, setIsExportingDocx] = useState(false);
   const { t, language } = useModuleTranslation('conversation');
+  const { t: tCommon } = useModuleTranslation('common');
+  const fileViewerDisplayMode = useFileViewerDisplayMode();
+  const citations = useMemo(() => collectMessageCitations(message.components), [message.components]);
   const generationModelId = message.modelId
     || (message.questionMessageId ? messages.find((candidate) => candidate.id === message.questionMessageId)?.modelId : undefined);
   const model = useModelById(generationModelId || '');
@@ -109,6 +121,35 @@ export const MessageActions = memo(function MessageActions({ message, isLastAiMe
   const handlePdfExportFinish = (ok: boolean) => {
     setIsExportingPdf(false);
     if (!ok) toast.error(t('toasts.message.exportError'));
+  };
+
+  const exportTitle = currentConversation?.title?.trim() || t('exportPdf.untitledConversation');
+
+  const handleOpenSource = useCallback(async (citation: CitationData) => {
+    setSourcesOpen(false);
+    try {
+      await openCitationSource(citation, fileViewerDisplayMode, tCommon('ai.citations.defaultSource'), { conversationId, messageId: message.id });
+    } catch {
+      showError(tCommon('ai.errors.openFileTitle'), { description: tCommon('ai.errors.openFileDescription') });
+    }
+  }, [conversationId, fileViewerDisplayMode, message.id, tCommon]);
+
+  const handleExportDocx = async () => {
+    if (isExportingDocx) return;
+    setIsExportingDocx(true);
+    try {
+      const formattedCreatedAt = Number.isNaN(new Date(message.createdAt).getTime())
+        ? undefined
+        : new Intl.DateTimeFormat(language, { dateStyle: 'medium', timeStyle: 'medium' }).format(new Date(message.createdAt));
+      const markdown = componentsToMarkdown(message.components || []);
+      const blob = await exportBlocksToDocx([{ label: t('export.assistantLabel'), timestamp: formattedCreatedAt, markdown }], exportTitle);
+      downloadBlob(blob, buildExportFilename(exportTitle, 'docx'));
+      showSuccess(t('toasts.export.docxSuccess'));
+    } catch {
+      showError(t('toasts.export.failed'));
+    } finally {
+      setIsExportingDocx(false);
+    }
   };
 
   const handleBranch = () => {
@@ -190,6 +231,67 @@ export const MessageActions = memo(function MessageActions({ message, isLastAiMe
             <TooltipContent>{t('messageActions.copy')}</TooltipContent>
           </Tooltip>
 
+          {citations.length > 0 && (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Popover open={sourcesOpen} onOpenChange={setSourcesOpen}>
+                  <PopoverTrigger asChild>
+                    <Button variant='ghost' size='icon' className='size-11 md:size-7' aria-label={t('messageActions.sources')}>
+                      <BookOpen className='h-3.5 w-3.5' />
+                    </Button>
+                  </PopoverTrigger>
+                  <PopoverContent align='start' className='w-72 max-w-[calc(100vw-2rem)] p-1'>
+                    <p className='px-2 py-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground'>{t('messageActions.sources')}</p>
+                    <div className='max-h-72 overflow-y-auto'>
+                      {citations.map((citation, index) => {
+                        const label = getCitationEntryLabel(citation, tCommon('ai.citations.defaultSource'));
+                        return (
+                          <button
+                            key={`${citation.source}-${index}`}
+                            type='button'
+                            className='flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm hover:bg-accent'
+                            onClick={() => void handleOpenSource(citation)}
+                            title={label}
+                          >
+                            {isUrlCitation(citation)
+                              ? <Globe className='h-3.5 w-3.5 shrink-0 text-muted-foreground' />
+                              : <FileText className='h-3.5 w-3.5 shrink-0 text-muted-foreground' />}
+                            <span className='min-w-0 flex-1 truncate'>{label}</span>
+                            {citation.page && <span className='shrink-0 text-[11px] text-muted-foreground'>{citation.page}</span>}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </PopoverContent>
+                </Popover>
+              </TooltipTrigger>
+              <TooltipContent>{t('messageActions.sources')}</TooltipContent>
+            </Tooltip>
+          )}
+
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button variant='ghost' size='icon' className='size-11 md:size-7' aria-label={t('messageActions.exportAria')}>
+                    <Share2 className='h-3.5 w-3.5' />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align='start'>
+                  <DropdownMenuItem onClick={() => void handleExportDocx()} disabled={isExportingDocx}>
+                    <FileText className='h-3.5 w-3.5 mr-2' />
+                    {t('messageActions.exportDocx')}
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={handleExportPdf}>
+                    <FileDown className='h-3.5 w-3.5 mr-2' />
+                    {t('messageActions.exportPdf')}
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            </TooltipTrigger>
+            <TooltipContent>{t('messageActions.exportAria')}</TooltipContent>
+          </Tooltip>
+
           {isLastAiMessage && (
             <Tooltip>
               <TooltipTrigger asChild>
@@ -225,10 +327,6 @@ export const MessageActions = memo(function MessageActions({ message, isLastAiMe
                 {isPreparingHandoff ? t('messageActions.playbookPreparing') : t('messageActions.playbookHandoff')}
               </DropdownMenuItem>
             )}
-            <DropdownMenuItem disabled>
-              <FileText className='h-3.5 w-3.5 mr-2' />
-              {t('messageActions.export')}
-            </DropdownMenuItem>
             <DropdownMenuItem onClick={() => setReportOpen(true)}>
               <Flag className='h-3.5 w-3.5 mr-2' />
               {t('messageActions.report')}

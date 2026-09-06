@@ -126,10 +126,6 @@ vi.mock('@/modules/usage/UsageContext', () => ({
   useUsage: () => ({ status: { isLimitExceeded: false } }),
 }));
 
-vi.mock('./components/GroupChatButton', () => ({
-  GroupChatButton: () => <div>group-chat-button</div>,
-}));
-
 vi.mock('./components/SelectedConnectorRepo', () => ({
   SelectedConnectorRepo: () => <div>selected-connector-repo</div>,
 }));

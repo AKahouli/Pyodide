@@ -603,7 +603,7 @@ export const AppSidebar = memo(function AppSidebar() {
         >
           <SidebarMenu>
             {featureVisibility.workspace && <WorkspaceButton />}
-            {canOpenSemanticModels && <SemanticModelButton />}
+            {featureVisibility.semanticModel && canOpenSemanticModels && <SemanticModelButton />}
           </SidebarMenu>
         </OutcomeGroup>
 

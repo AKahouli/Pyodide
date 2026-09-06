@@ -93,6 +93,7 @@ describe('admin api', () => {
       appMarketplace: true,
       worky: false,
       agents: true,
+      semanticModel: true,
       platformCopilot: false,
     };
     getMock.mockResolvedValue({ data: { data: visibility } });

@@ -219,6 +219,7 @@ export const API_ENDPOINTS = {
     messages: (id: string) => `/conversations/${id}/messages`,
     activeStream: (id: string) => `/conversations/${id}/active-stream`,
     messageById: (convId: string, msgId: string) => `/conversations/${convId}/messages/${msgId}`,
+    toolResult: (convId: string, msgId: string, componentId: string) => `/conversations/${convId}/messages/${msgId}/tools/${componentId}/result`,
     feedback: (convId: string, msgId: string) => `/conversations/${convId}/messages/${msgId}/feedback`,
     rerunReliabilityEvaluation: (convId: string, msgId: string) => `/conversations/${convId}/messages/${msgId}/reliability-evaluation/rerun`,
     regenerate: (convId: string, msgId: string) => `/conversations/${convId}/messages/${msgId}/regenerate`,

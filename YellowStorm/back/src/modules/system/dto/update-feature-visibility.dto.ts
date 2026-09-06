@@ -33,5 +33,9 @@ export class UpdateFeatureVisibilityDto implements FeatureVisibility {
 
   @ApiProperty()
   @IsBoolean()
+  semanticModel!: boolean;
+
+  @ApiProperty()
+  @IsBoolean()
   platformCopilot!: boolean;
 }

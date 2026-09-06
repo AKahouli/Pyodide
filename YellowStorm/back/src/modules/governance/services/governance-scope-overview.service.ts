@@ -227,7 +227,8 @@ export class GovernanceScopeOverviewService {
   }
 
   private scopeToResponse(doc: Record<string, unknown>): Record<string, unknown> {
-    return { id: String(doc._id), programId: String(doc.programId), parentScopeId: this.optionalId(doc.parentScopeId), name: doc.name, type: doc.type, status: doc.status, agentIds: this.toStrings(doc.agentIds), metadata: doc.metadata ?? {}, createdAt: this.toIso(doc.createdAt), updatedAt: this.toIso(doc.updatedAt) };
+    const knowledge = (doc.knowledge ?? {}) as Record<string, unknown>;
+    return { id: String(doc._id), programId: String(doc.programId), parentScopeId: this.optionalId(doc.parentScopeId), name: doc.name, type: doc.type, status: doc.status, agentIds: this.toStrings(doc.agentIds), metadata: doc.metadata ?? {}, knowledge: { sourceMode: knowledge.sourceMode ?? 'llm_only', webSourcesEnabled: knowledge.webSourcesEnabled ?? false, webAllowedDomains: knowledge.webAllowedDomains ?? [], webBlockedDomains: knowledge.webBlockedDomains ?? [] }, createdAt: this.toIso(doc.createdAt), updatedAt: this.toIso(doc.updatedAt) };
   }
 
   private deploymentToResponse(doc: Record<string, unknown>): Record<string, unknown> {

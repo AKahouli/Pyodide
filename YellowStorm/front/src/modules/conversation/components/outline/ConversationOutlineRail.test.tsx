@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react';
+import { act, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -91,11 +91,36 @@ describe('ConversationOutlineRail', () => {
     expect(screen.getByRole('button', { name: 'Revenue detail' })).toBeInTheDocument();
   });
 
-  it('renders nothing when there are no headings and no questions', () => {
+  it('renders an empty-state hint when there are no headings and no questions', () => {
     useConversationUiStore.setState({ ...initialConversationUiState, outlineHeadingsByMessageId: {} });
     storeMock.messages = [];
     render(<ConversationOutlineRail />);
 
-    expect(screen.queryByRole('navigation')).not.toBeInTheDocument();
+    expect(screen.getByRole('navigation', { name: 'outline.title' })).toBeInTheDocument();
+    expect(screen.getByText('outline.empty')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Revenue detail' })).not.toBeInTheDocument();
+  });
+
+  it('stays mounted with the collapse strip even when empty', () => {
+    useConversationUiStore.setState({ ...initialConversationUiState, outlineCollapsed: true, outlineHeadingsByMessageId: {} });
+    storeMock.messages = [];
+    render(<ConversationOutlineRail />);
+
+    expect(screen.getByRole('button', { name: 'outline.expand' })).toBeInTheDocument();
+  });
+
+  it('never hides itself behind a responsive breakpoint, in both collapse states', () => {
+    const { container, rerender } = render(<ConversationOutlineRail />);
+
+    expect(screen.getByRole('navigation', { name: 'outline.title' })).not.toHaveClass('hidden');
+
+    act(() => {
+      useConversationUiStore.setState({ outlineCollapsed: true }, false);
+    });
+    rerender(<ConversationOutlineRail />);
+
+    const collapsedRail = container.querySelector("[data-outline-rail='collapsed']");
+    expect(collapsedRail).not.toBeNull();
+    expect(collapsedRail).not.toHaveClass('hidden');
   });
 });

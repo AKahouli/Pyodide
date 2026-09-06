@@ -7,12 +7,13 @@ import { ErrorCode } from '@/lib/error-codes';
 import { useModelsStore } from '@/modules/models/store';
 import * as api from './api';
 import { getStreamErrorMessage } from './utils';
+import { insertMessageChronologically } from './utils/message-order';
 import { conversationStreamService } from './stream';
 import { translateConversation } from './translation';
 import { computeFrontendLatency, mergeLatencyMetrics, type FrontendPaintComputation } from './utils/latency-paint';
 import { streamMetrics } from './utils/stream-metrics';
 import { createLatencyPaintController, type PendingLatencyPaint } from './store-latency';
-import type { Conversation, ConversationSummary, Message, MessageComponent, StreamingComponent, SendMessagePayload, CreateReportPayload, StreamStartEvent, StreamChunkEvent, StreamCompleteEvent, StreamErrorEvent, ConversationNameGeneratedEvent, SSEConnectionStatus, MessageCreatedEvent, MessageUpdatedEvent, StreamResyncRequiredEvent, StreamChunkLatencyData } from './types';
+import type { Conversation, ConversationSummary, Message, MessageComponent, StreamingComponent, SendMessagePayload, CreateReportPayload, StreamStartEvent, StreamChunkEvent, StreamCompleteEvent, StreamErrorEvent, ConversationNameGeneratedEvent, SSEConnectionStatus, MessageCreatedEvent, MessageUpdatedEvent, StreamResyncRequiredEvent, StreamChunkLatencyData, ActiveStreamSnapshot } from './types';
 
 export type { PendingLatencyPaint };
 
@@ -219,11 +220,67 @@ class StreamingBuffer {
 }
 
 const streamingBuffer = new StreamingBuffer();
+
+/** Guards against overlapping snapshot repairs when overflow fires repeatedly. */
+let streamSnapshotRepairInFlight = false;
+
+/**
+ * Client-metrics window generation: bumped on every send. A deferred
+ * completion snapshot from the previous turn is dropped when the generation
+ * moved on, so it cannot erase the new turn's freshly recorded counters.
+ */
+let clientMetricsGeneration = 0;
+/**
+ * Generation of the turn whose latency envelope was captured mid-stream —
+ * stable across the completion boundary, unlike the streaming ids which are
+ * nulled as soon as the completion event lands.
+ */
+let clientMetricsTurnGeneration = 0;
+/** Grace window that lets the post-completion code highlight reach the report. */
+const CLIENT_METRICS_HIGHLIGHT_GRACE_MS = 250;
+
+/**
+ * Repair the dropped span mid-stream: adopt the server's active-stream snapshot
+ * (the same canonical component buffer the cold-attach path uses) instead of
+ * leaving a gap that only completion reconciliation would heal.
+ */
+async function repairStreamingComponentsFromSnapshot(conversationId: string): Promise<void> {
+  let snapshot: ActiveStreamSnapshot | null = null;
+  try {
+    snapshot = await api.fetchActiveStream(conversationId);
+  } catch (err) {
+    console.warn('[ConversationStore] active-stream snapshot repair failed; falling back to canonical refetch', err);
+  }
+  const state = useConversationStore.getState();
+  if (!snapshot || state.currentConversationId !== conversationId || !state.isStreaming || state.streamingMessageId !== snapshot.messageId) {
+    // Stream finished or moved on while fetching — a canonical refetch covers it.
+    void state.fetchMessages(conversationId);
+    return;
+  }
+  const snapshotRevision = snapshot.revision ?? 0;
+  streamingBuffer.discardThrough(snapshotRevision);
+  if (currentRevisionStreamKey === `${conversationId}:${snapshot.messageId}`) {
+    currentStreamRevision = Math.max(currentStreamRevision, snapshotRevision);
+  }
+  // Merge instead of replace: the snapshot is the canonical base for every
+  // component it contains, while components created by chunks that arrived
+  // during the fetch only exist locally and keep their applied state.
+  const snapshotIds = new Set(snapshot.components.map((component) => component.id));
+  const localOnly = state.streamingComponents.filter((component) => !snapshotIds.has(component.id));
+  useConversationStore.setState({
+    streamingComponents: [...snapshot.components, ...localOnly],
+  });
+}
+
 streamingBuffer.setOverflowCallback(() => {
-  // Canonical resync: the queue dropped older chunks, so reconcile the
-  // conversation from its snapshot (same path as stream_resync_required).
+  // Canonical mid-stream resync: the queue dropped older chunks, so reconcile
+  // from the server's snapshot (same adoption path as a cold attach).
   const conversationId = useConversationStore.getState().currentConversationId;
-  if (conversationId) void useConversationStore.getState().fetchMessages(conversationId);
+  if (!conversationId || streamSnapshotRepairInFlight) return;
+  streamSnapshotRepairInFlight = true;
+  void repairStreamingComponentsFromSnapshot(conversationId).finally(() => {
+    streamSnapshotRepairInFlight = false;
+  });
 });
 
 function cancelPendingStreamReconciliation(): void {
@@ -1238,7 +1295,10 @@ export const useConversationStore = create<ConversationState>()(
       },
 
       sendMessage: async (conversationId, payload) => {
-        // Each turn owns a fresh client-metrics window (Phase 0 telemetry).
+        // Each turn owns a fresh client-metrics window (Phase 0 telemetry). The
+        // generation bump also invalidates a deferred completion snapshot from
+        // the previous turn so it cannot wipe this turn's early counters.
+        clientMetricsGeneration += 1;
         streamMetrics.reset();
         const tempId = `temp-${Date.now()}`;
         const optimisticMsg: Message = {
@@ -1291,6 +1351,9 @@ export const useConversationStore = create<ConversationState>()(
           // Patch sticky taggedAgentIds when the set actually changes.
           set((s) => {
             const alreadyExists = s.messages.some((m) => m.id === result.userMessage.id);
+            // Insert (not append): SSE may already have delivered AI answers
+            // created after this user message while the POST was in flight.
+            const nextMessages = alreadyExists ? s.messages : insertMessageChronologically(s.messages, result.userMessage);
             const nextTaggedAgentIds = result.userMessage.agentIds?.length
               ? result.userMessage.agentIds
               : undefined;
@@ -1299,12 +1362,12 @@ export const useConversationStore = create<ConversationState>()(
               !!nextTaggedAgentIds &&
               s.currentConversation?.id === conversationId &&
               (prevTagged?.length !== nextTaggedAgentIds.length ||
-                nextTaggedAgentIds.some((agentId, i) => agentId !== prevTagged?.[i]));
+                nextTaggedAgentIds.some((agentId, i) => agentId !== prevTagged[i]));
             const inFlightSendConversations = new Set(s.inFlightSendConversations);
             inFlightSendConversations.delete(conversationId);
 
             return {
-              messages: alreadyExists ? s.messages : [...s.messages, result.userMessage],
+              messages: nextMessages,
               optimisticMessages: s.optimisticMessages.filter((m) => m.id !== tempId),
               messagesTotal: alreadyExists ? s.messagesTotal : s.messagesTotal + 1,
               selectedModelId: payload.modelId || s.selectedModelId,
@@ -1571,7 +1634,11 @@ export const useConversationStore = create<ConversationState>()(
 
         // Latency instrumentation: the first model-derived chunk carries the
         // one-time envelope; record its browser arrival for the paint metric.
+        // The client-metrics generation is stashed alongside: mid-stream it is
+        // stable, and the completion report later uses it to tell "this turn's
+        // window" apart from a newer send's window.
         if (event.latency) {
+          clientMetricsTurnGeneration = clientMetricsGeneration;
           const captured = latencyPaint.capture({
             conversationId: event.conversationId,
             firstChunkReceivedPerfMs: performance.now(),
@@ -1648,12 +1715,22 @@ export const useConversationStore = create<ConversationState>()(
           set({ pendingLatencyPaint: latencyPaint.pending });
         }
         if (!payload) return;
-        // Piggyback the client streaming counters on the accepted report; the
-        // window closes with this turn so the next send starts from zero.
-        const clientMetrics = streamMetrics.snapshotAndReset();
-        api
-          .reportFrontendLatency(conversationId, messageId, clientMetrics ? { ...payload, clientMetrics } : payload)
-          .catch((err) => console.error('[ConversationStore] frontend latency report failed:', err));
+        // The completed message's code highlight runs in a post-completion
+        // effect, after this point — give it a short window to land in the
+        // counters before snapshotting. Paint values come from captured
+        // samples, so the delay does not shift any timing. The deferred
+        // snapshot is keyed to the turn's generation (captured mid-stream with
+        // the envelope, stable across the completion boundary): if a newer
+        // send has opened its own window by fire time, this report drops its
+        // counters instead of erasing the new turn's.
+        const turnGeneration = clientMetricsTurnGeneration;
+        setTimeout(() => {
+          if (turnGeneration !== clientMetricsGeneration) return;
+          const clientMetrics = streamMetrics.snapshotAndReset();
+          api
+            .reportFrontendLatency(conversationId, messageId, clientMetrics ? { ...payload, clientMetrics } : payload)
+            .catch((err) => console.error('[ConversationStore] frontend latency report failed:', err));
+        }, CLIENT_METRICS_HIGHLIGHT_GRACE_MS);
       },
 
       onStreamComplete: async (event) => {
@@ -1970,7 +2047,11 @@ export const useConversationStore = create<ConversationState>()(
           });
 
           return {
-            messages: [...s.messages, event.message],
+            // Chronological insert: this SSE event may arrive before the POST
+            // response that created the triggering user message (see
+            // insertMessageChronologically — appending would render the prompt
+            // after its answer).
+            messages: insertMessageChronologically(s.messages, event.message),
             messagesTotal: s.messagesTotal + 1,
             optimisticMessages,
           };

@@ -1,16 +1,17 @@
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { ConversationAssistantBubble } from './ConversationAssistantBubble';
 
 const mocks = vi.hoisted(() => ({
   getArtifactDownloadUrl: vi.fn(),
+  fetchToolResult: vi.fn(),
   openFileViewerFromUrlLoader: vi.fn(async (_key, _fileName, _mimeType, load) => load()),
   showError: vi.fn(),
   writeClipboard: vi.fn(),
   redactSensitiveText: true,
 }));
 
-vi.mock('../../api', () => ({ getArtifactDownloadUrl: mocks.getArtifactDownloadUrl }));
+vi.mock('../../api', () => ({ getArtifactDownloadUrl: mocks.getArtifactDownloadUrl, fetchToolResult: mocks.fetchToolResult }));
 vi.mock('@/modules/file-viewer', () => ({ openFileViewerFromUrlLoader: mocks.openFileViewerFromUrlLoader }));
 vi.mock('@/lib/notifications', () => ({ showError: mocks.showError }));
 vi.mock('../../hooks/useConversationSettings', () => ({
@@ -43,6 +44,10 @@ vi.mock('@/modules/localization', () => ({
     'stream.activity.requestUnavailable': 'No request data was recorded.',
     'stream.activity.responsePending': 'Waiting for the tool response.',
     'stream.activity.responseUnavailable': 'No response data was recorded.',
+    'stream.activity.viewResponse': 'View response',
+    'stream.activity.responseError': 'The response could not be loaded.',
+    'stream.activity.paneCollapse': 'Collapse activity',
+    'stream.activity.paneExpand': 'Expand activity',
     'stream.activity.retry': 'Retry response',
     'stream.activity.stepProgress': `${options?.current} of ${options?.total} steps`,
     'stream.activity.mobileDetailsAria': `Show all activity steps (${options?.status || ''})`,
@@ -537,7 +542,7 @@ describe('ConversationAssistantBubble', () => {
     expect(container.querySelector('[data-tool-full-description]')).toHaveTextContent('Getting the page count and structure');
     expect(container.querySelector('[data-tool-payload-group]')).toContainElement(screen.getByRole('button', { name: 'Request' }));
     expect(screen.getByRole('button', { name: 'Request' })).toHaveAttribute('aria-expanded', 'false');
-    expect(screen.getByRole('button', { name: 'Response' })).toHaveAttribute('aria-expanded', 'false');
+    expect(screen.getByRole('button', { name: 'View response' })).toHaveAttribute('aria-expanded', 'false');
   });
 
   it('shows the agent name and activity animation while the tool is running', () => {
@@ -610,9 +615,9 @@ describe('ConversationAssistantBubble', () => {
     expect(trigger).toHaveAttribute('aria-expanded', 'true');
     expect(screen.queryByText(/Execution stopped/)).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Request' }));
-    fireEvent.click(screen.getByRole('button', { name: 'Response' }));
+    fireEvent.click(screen.getByRole('button', { name: 'View response' }));
     expect(screen.getByText('Request')).toBeInTheDocument();
-    expect(screen.getByText('Response')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'View response' })).toHaveAttribute('aria-expanded', 'true');
     expect(screen.getByText(/Execution stopped/)).toBeInTheDocument();
     expect(screen.queryByText(/private\.py|507f1f77bcf86cd799439011|print\(|"private"/)).not.toBeInTheDocument();
     expect(screen.getByText(/\[REDACTED\]/)).toBeInTheDocument();
@@ -641,7 +646,7 @@ describe('ConversationAssistantBubble', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Convert the document to PDF, Tool response: Run command (Completed)' }));
     expect(screen.queryByText(/pandoc source\.md -o output\.pdf/)).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Request' }));
-    fireEvent.click(screen.getByRole('button', { name: 'Response' }));
+    fireEvent.click(screen.getByRole('button', { name: 'View response' }));
 
     expect(screen.getByText(/pandoc source\.md -o output\.pdf/)).toBeInTheDocument();
     expect(screen.getByText(/Created output\.pdf/)).toBeInTheDocument();
@@ -669,7 +674,7 @@ describe('ConversationAssistantBubble', () => {
     expect(screen.queryByText(/annual revenue/)).not.toBeInTheDocument();
     expect(screen.queryByText(/"matches": 4/)).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Request' }));
-    fireEvent.click(screen.getByRole('button', { name: 'Response' }));
+    fireEvent.click(screen.getByRole('button', { name: 'View response' }));
     expect(screen.getByText(/annual revenue/)).toBeInTheDocument();
     expect(screen.getByText(/"matches": 4/)).toBeInTheDocument();
   });
@@ -690,11 +695,153 @@ describe('ConversationAssistantBubble', () => {
     />);
 
     fireEvent.click(screen.getByRole('button', { name: 'Read matching files, Tool response: Search (Completed)' }));
-    fireEvent.click(screen.getByRole('button', { name: 'Response' }));
+    fireEvent.click(screen.getByRole('button', { name: 'View response' }));
 
     const payload = container.querySelector('[data-tool-payload="response"]');
     expect(payload).toHaveTextContent('[truncated]');
     expect(payload?.textContent?.length).toBeLessThan(12_100);
+  });
+
+  it('reveals an inline streamed tool response without a network round trip', () => {
+    render(<ConversationAssistantBubble
+      conversationId='conversation-1'
+      messageId='message-1'
+      isStreaming={false}
+      components={[{
+        id: 'tool-search',
+        type: 'toolActivity',
+        data: {
+          toolName: 'perform_standard_search', summary: 'Find revenue', status: 'completed', renderKind: 'search',
+          resultJson: JSON.stringify({ matches: 4 }),
+        },
+      }]}
+    />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Find revenue, Tool response: Search (Completed)' }));
+    fireEvent.click(screen.getByRole('button', { name: 'View response' }));
+
+    expect(screen.getByText(/"matches": 4/)).toBeInTheDocument();
+    expect(mocks.fetchToolResult).not.toHaveBeenCalled();
+  });
+
+  it('pulls the tool response on demand when the payload was not streamed', async () => {
+    mocks.fetchToolResult.mockResolvedValue({ resultJson: JSON.stringify({ matches: 7 }) });
+    render(<ConversationAssistantBubble
+      conversationId='conversation-1'
+      messageId='message-1'
+      isStreaming={false}
+      components={[{
+        id: 'tool-search',
+        type: 'toolActivity',
+        data: { toolName: 'perform_standard_search', summary: 'Find revenue', status: 'completed', renderKind: 'search' },
+      }]}
+    />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Find revenue, Tool response: Search (Completed)' }));
+    expect(screen.queryByText(/"matches": 7/)).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'View response' }));
+
+    await waitFor(() => expect(screen.getByText(/"matches": 7/)).toBeInTheDocument());
+    expect(mocks.fetchToolResult).toHaveBeenCalledWith('conversation-1', 'message-1', 'tool-search');
+  });
+
+  it('reports when an on-demand tool response has no recorded payload', async () => {
+    mocks.fetchToolResult.mockResolvedValue({ resultJson: null });
+    const { container } = render(<ConversationAssistantBubble
+      conversationId='conversation-1'
+      messageId='message-1'
+      isStreaming={false}
+      components={[{
+        id: 'tool-search',
+        type: 'toolActivity',
+        data: { toolName: 'perform_standard_search', summary: 'Find revenue', status: 'completed', renderKind: 'search' },
+      }]}
+    />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Find revenue, Tool response: Search (Completed)' }));
+    fireEvent.click(screen.getByRole('button', { name: 'View response' }));
+
+    await waitFor(() => expect(screen.getByText('No response data was recorded.')).toBeInTheDocument());
+    expect(container.querySelector('[data-tool-payload="response"]')).not.toBeInTheDocument();
+  });
+
+  it('surfaces a load failure for an on-demand tool response', async () => {
+    mocks.fetchToolResult.mockRejectedValue(new Error('network down'));
+    render(<ConversationAssistantBubble
+      conversationId='conversation-1'
+      messageId='message-1'
+      isStreaming={false}
+      components={[{
+        id: 'tool-search',
+        type: 'toolActivity',
+        data: { toolName: 'perform_standard_search', summary: 'Find revenue', status: 'completed', renderKind: 'search' },
+      }]}
+    />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Find revenue, Tool response: Search (Completed)' }));
+    fireEvent.click(screen.getByRole('button', { name: 'View response' }));
+
+    await waitFor(() => expect(screen.getByText('The response could not be loaded.')).toBeInTheDocument());
+  });
+
+  it('renders the activity pane collapsed for completed messages until expanded', () => {
+    const { container } = render(<ConversationAssistantBubble
+      conversationId='conversation-1'
+      messageId='message-1'
+      isStreaming={false}
+      components={[
+        { id: 'tool-1', type: 'toolActivity', data: { toolName: 'search', summary: 'First step', status: 'completed', renderKind: 'search' } },
+        { id: 'tool-2', type: 'toolActivity', data: { toolName: 'search', summary: 'Second step', status: 'completed', renderKind: 'search' } },
+      ]}
+    />);
+
+    const shell = container.querySelector('[data-activity-pane-shell]') as HTMLElement;
+    expect(shell).toHaveAttribute('data-collapsed');
+    const toggle = screen.getByRole('button', { name: 'Expand activity' });
+    expect(toggle).toHaveAttribute('aria-expanded', 'false');
+    fireEvent.click(toggle);
+
+    expect(shell).not.toHaveAttribute('data-collapsed');
+    expect(screen.getByRole('button', { name: 'Collapse activity' })).toHaveAttribute('aria-expanded', 'true');
+  });
+
+  it('keeps the pane open while streaming and collapses it after the answer completes', () => {
+    vi.useFakeTimers();
+    try {
+      const { container, rerender } = render(<ConversationAssistantBubble
+        conversationId='conversation-1'
+        messageId='message-1'
+        isStreaming
+        components={[{ id: 'tool-1', type: 'toolActivity', data: { toolName: 'search', summary: 'First step', status: 'completed', renderKind: 'search' } }]}
+      />);
+      expect(container.querySelector('[data-activity-pane-shell]')).not.toHaveAttribute('data-collapsed');
+
+      rerender(<ConversationAssistantBubble
+        conversationId='conversation-1'
+        messageId='message-1'
+        isStreaming={false}
+        justCompleted
+        components={[{ id: 'tool-1', type: 'toolActivity', data: { toolName: 'search', summary: 'First step', status: 'completed', renderKind: 'search' } }]}
+      />);
+      expect(container.querySelector('[data-activity-pane-shell]')).not.toHaveAttribute('data-collapsed');
+
+      act(() => { vi.advanceTimersByTime(1_000); });
+      expect(container.querySelector('[data-activity-pane-shell]')).toHaveAttribute('data-collapsed');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('marks completed tools with a green check icon', () => {
+    const { container } = render(<ConversationAssistantBubble
+      conversationId='conversation-1'
+      messageId='message-1'
+      isStreaming={false}
+      components={[{ id: 'tool-1', type: 'toolActivity', data: { toolName: 'search', summary: 'First step', status: 'completed', renderKind: 'search' } }]}
+    />);
+
+    const status = container.querySelector('[data-tool-status="completed"]');
+    expect(status?.querySelector('svg')).toHaveClass('text-green-500');
   });
 
   it('shows full tool metadata without repeating response totals on tool rows', async () => {

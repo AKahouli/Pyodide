@@ -433,6 +433,62 @@ describe('new conversation selections', () => {
 });
 
 describe('conversation streaming component updates', () => {
+  it('repairs dropped chunks from the active-stream snapshot on queue overflow', async () => {
+    fetchActiveStreamMock.mockResolvedValue({
+      conversationId: 'conv-1',
+      messageId: 'message-1',
+      revision: 501,
+      components: [{ id: 'text-snap', type: 'text', data: { content: 'Snapshot body' } }],
+    });
+    useConversationStore.setState({
+      currentConversationId: 'conv-1',
+      streamingComponents: [],
+    });
+    useConversationStore.getState().onStreamStart({ conversationId: 'conv-1', messageId: 'message-1' });
+
+    const store = useConversationStore.getState();
+    for (let i = 0; i < 501; i += 1) {
+      store.onStreamChunk({
+        conversationId: 'conv-1',
+        action: 'update',
+        component: { id: 'text-stream', type: 'text', data: { content: `chunk ${i}` } },
+        revision: i + 1,
+      });
+    }
+    // A brand-new component created after the overflow dropped the backlog.
+    store.onStreamChunk({
+      conversationId: 'conv-1',
+      action: 'add',
+      component: { id: 'text-tail', type: 'text', data: { content: 'Tail' } },
+      revision: 503,
+    });
+    await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+    await Promise.resolve();
+    await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+
+    expect(fetchActiveStreamMock).toHaveBeenCalledWith('conv-1');
+    // The snapshot is the canonical base; the live tail applied during the
+    // fetch is preserved as a local-only component after it.
+    const components = useConversationStore.getState().streamingComponents;
+    expect(components).toHaveLength(2);
+    expect(components[0]).toEqual({ id: 'text-snap', type: 'text', data: { content: 'Snapshot body' } });
+    expect(components[1]).toMatchObject({ id: 'text-tail', data: { content: 'Tail' } });
+
+    // The live tail keeps merging onto the repaired base.
+    useConversationStore.getState().onStreamChunk({
+      conversationId: 'conv-1',
+      action: 'update',
+      component: { id: 'text-tail', type: 'text', data: { content: 'Tail grows' } },
+      revision: 504,
+    });
+    await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+
+    expect(useConversationStore.getState().streamingComponents).toEqual([
+      expect.objectContaining({ id: 'text-snap', type: 'text', data: { content: 'Snapshot body' } }),
+      expect.objectContaining({ id: 'text-tail', type: 'text', data: { content: 'TailTail grows' } }),
+    ]);
+  });
+
   it('restores an active stream snapshot after refresh and keeps applying live chunks', async () => {
     fetchMessagesMock.mockResolvedValue({
       items: [{

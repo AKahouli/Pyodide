@@ -715,6 +715,16 @@ export class MessageController {
     return this.messageService.findById(messageId);
   }
 
+  /** On-demand payload for one tool activity; message responses omit tool results. */
+  @Get(':messageId/tools/:componentId/result')
+  async getToolActivityResult(
+    @Param('conversationId') conversationId: string,
+    @Param('messageId') messageId: string,
+    @Param('componentId') componentId: string,
+  ): Promise<{ resultJson: string | null }> {
+    return this.messageService.findToolActivityResult(conversationId, messageId, componentId);
+  }
+
   @Patch(':messageId/feedback')
   async updateFeedback(
     @Param('messageId') messageId: string,

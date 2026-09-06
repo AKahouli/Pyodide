@@ -16,6 +16,7 @@ describe('MessageController.sendMessage sticky routing', () => {
     findTurnByRequestId: jest.Mock;
     getMessageDocument: jest.Mock;
     findById: jest.Mock;
+    findToolActivityResult: jest.Mock;
     reportFrontendLatency: jest.Mock;
   };
   let streamService: {
@@ -81,6 +82,7 @@ describe('MessageController.sendMessage sticky routing', () => {
       findTurnByRequestId: jest.fn().mockResolvedValue(null),
       getMessageDocument: jest.fn(),
       findById: jest.fn(),
+      findToolActivityResult: jest.fn(),
       reportFrontendLatency: jest.fn().mockResolvedValue({ id: 'ai-1' }),
     };
     streamService = {
@@ -142,6 +144,14 @@ describe('MessageController.sendMessage sticky routing', () => {
     expect(conversationArtifactService.resolveCitationUrl).toHaveBeenCalledWith(
       conversationId, 'message-1', { source: 'deepsearch', fileName: 'report.pdf' },
     );
+  });
+
+  it('forwards on-demand tool result lookups with route identifiers', async () => {
+    messageService.findToolActivityResult.mockResolvedValue({ resultJson: '{"ok":true}' });
+
+    await expect(controller.getToolActivityResult(conversationId, 'message-1', 'tool-1'))
+      .resolves.toEqual({ resultJson: '{"ok":true}' });
+    expect(messageService.findToolActivityResult).toHaveBeenCalledWith(conversationId, 'message-1', 'tool-1');
   });
 
   it('forces a platform copilot conversation through its pinned agent', async () => {

@@ -67,7 +67,7 @@ function TopLoadTrigger({ onTrigger, disabled }: Readonly<{ onTrigger: () => voi
   return <div ref={ref} className='h-px' aria-hidden='true' />;
 }
 
-const MemoizedMessageBubble = memo(function MemoizedMessageBubble({ message, isLastAiMessage, isLastUserMessage, conversationId, choiceInteractions, latencyInstrumentationEnabled }: { message: Message; isLastAiMessage: boolean; isLastUserMessage: boolean; conversationId: string; choiceInteractions: Map<string, ChoiceInteractionMetadata>; latencyInstrumentationEnabled?: boolean }) {
+const MemoizedMessageBubble = memo(function MemoizedMessageBubble({ message, isLastAiMessage, isLastUserMessage, conversationId, choiceInteractions, latencyInstrumentationEnabled, justCompleted }: { message: Message; isLastAiMessage: boolean; isLastUserMessage: boolean; conversationId: string; choiceInteractions: Map<string, ChoiceInteractionMetadata>; latencyInstrumentationEnabled?: boolean; justCompleted?: boolean }) {
   const { t } = useModuleTranslation('conversation');
   const policyDefaultVersion = getDefaultAnswerVersion(message);
   const [displayedVersion, setDisplayedVersion] = useState<DisplayedAnswerVersion>(() => policyDefaultVersion);
@@ -125,7 +125,7 @@ const MemoizedMessageBubble = memo(function MemoizedMessageBubble({ message, isL
             ? <EditableUserMessage message={message} conversationId={conversationId} />
           : isUser
             ? <ChatMessageBubble message={chatMessage} isStreaming={isStreaming} footerActions={<UserMessageActions message={message} isLastUserMessage={isLastUserMessage} className='mt-0' />} />
-            : <ConversationAssistantBubble conversationId={conversationId} messageId={message.id} components={message.components || []} answerComponents={activeComponents} isStreaming={false} choiceInteractions={choiceInteractions} onComponentAction={handleComponentAction} onSubmitQuestions={handleSubmitQuestions} onRetry={handleRetry} />}
+            : <ConversationAssistantBubble conversationId={conversationId} messageId={message.id} components={message.components || []} answerComponents={activeComponents} isStreaming={false} justCompleted={justCompleted} choiceInteractions={choiceInteractions} onComponentAction={handleComponentAction} onSubmitQuestions={handleSubmitQuestions} onRetry={handleRetry} />}
       </MessageProvider>
       {!isUser && (hasToolCall || hasRerunnableAnswer) && <MessageReliabilityCard conversationId={conversationId} messageId={message.id} evaluation={getAnswerEvaluation(message, displayedVersion)} originalEvaluation={message.reliabilityEvaluation} correctionWorkflow={message.correctionWorkflow} displayedVersion={displayedVersion} onVersionChange={setDisplayedVersion} />}
       {showBranchNav && <BranchNavigation userMessageId={message.questionMessageId!} branches={branches!} activeBranchId={activeBranchId!} />}
@@ -156,6 +156,28 @@ export function ConversationContent() {
   const choiceInteractions = useMemo(() => buildChoiceInteractionIndex(messages), [messages]);
   const isActiveStream = isStreaming && streamingConversationId === currentConversationId;
   const showStreamingActivity = (isAwaitingFirstChunk && awaitingConversationId === currentConversationId) || isActiveStream;
+
+  // Remember which message the live stream just completed so its bubble can
+  // mount with the activity pane open and animate it closed. The flag is
+  // short-lived: it must not re-trigger on later remounts (branch switches).
+  const [justCompletedMessageId, setJustCompletedMessageId] = useState<string | null>(null);
+  const lastStreamingMessageIdRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (isStreaming) {
+      if (streamingMessageId) lastStreamingMessageIdRef.current = streamingMessageId;
+      return;
+    }
+    const completedId = lastStreamingMessageIdRef.current;
+    if (!completedId) return;
+    lastStreamingMessageIdRef.current = null;
+    setJustCompletedMessageId(completedId);
+    const timer = setTimeout(() => setJustCompletedMessageId(null), 2500);
+    return () => clearTimeout(timer);
+  }, [isStreaming, streamingMessageId]);
+  useEffect(() => {
+    lastStreamingMessageIdRef.current = null;
+    setJustCompletedMessageId(null);
+  }, [currentConversationId]);
 
   // Refs for branch fetching
   const fetchedRef = useRef(new Set<string>());
@@ -249,7 +271,7 @@ export function ConversationContent() {
             </div>
           )}
 
-          {messages.length === 0 && !isAwaitingFirstChunk && !messagesLoading ? <ChatConversationEmptyState /> : messages.map((message) => <MemoizedMessageBubble key={message.id} message={message} isLastAiMessage={message.id === lastAiMessageId} isLastUserMessage={message.id === lastUserMessageId} conversationId={currentConversationId!} choiceInteractions={choiceInteractions} latencyInstrumentationEnabled={latencyInstrumentationEnabled} />)}
+          {messages.length === 0 && !isAwaitingFirstChunk && !messagesLoading ? <ChatConversationEmptyState /> : messages.map((message) => <MemoizedMessageBubble key={message.id} message={message} isLastAiMessage={message.id === lastAiMessageId} isLastUserMessage={message.id === lastUserMessageId} conversationId={currentConversationId!} choiceInteractions={choiceInteractions} latencyInstrumentationEnabled={latencyInstrumentationEnabled} justCompleted={message.id === justCompletedMessageId} />)}
 
           {(showStreamingActivity || (isActiveStream && streamingComponents.length > 0)) && (
             <div className='group/msg animate-in fade-in-0 duration-300' id={`message-${streamingMessageId || 'streaming'}`}>

@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useId, useRef, useState, type ReactNode } from 'react';
-import { AlertTriangle, Bot, CheckCircle2, ChevronRight, Download, Eye, FileText, Loader2, RotateCcw, XCircle } from 'lucide-react';
+import { Bot, ChevronDown, ChevronRight, Download, Eye, FileText, Loader2 } from 'lucide-react';
 import { AIMessageContent, type MarkdownHeadingInfo, type MessageContentPart } from '@/components/ai-elements/ai-message-content';
-import { CodeBlockCopyButton } from '@/components/ai-elements/code-block';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { cn } from '@/lib/utils';
 import { showError } from '@/lib/notifications';
@@ -10,11 +9,12 @@ import { useModuleTranslation } from '@/modules/localization';
 import { getArtifactDownloadUrl } from '../../api';
 import type { AgentActivityData, ArtifactActivityData, ChoiceInteractionMetadata, MessageComponent, ToolActivityData } from '../../types';
 import { mapConversationComponentsToContentParts } from '../../utils';
-import { formatActivityDuration, humanizeToolTitle, resolveToolDescription, resolveToolDisplayKey, resolveToolFallbackName, resolveToolRequest, resolveToolResponse, resolveToolShortName, resolveToolSummary, sanitizeActivityActorName, sanitizeActivityDetail, sanitizeActivityFilename, sanitizeActivitySummary, sanitizeAssistantDisplayText } from '../../utils/tool-activity';
+import { formatActivityDuration, humanizeToolTitle, resolveToolFallbackName, resolveToolSummary, sanitizeActivityActorName, sanitizeActivityDetail, sanitizeActivityFilename, sanitizeActivitySummary, sanitizeAssistantDisplayText } from '../../utils/tool-activity';
 import type { ChoiceComponentAction } from '@/components/ai-elements/choice/ChoicePartRenderer';
 import { useConversationSettings } from '../../hooks/useConversationSettings';
 import { useConversationUiStore } from '../../uiStore';
 import { ResizableActivityPane } from './ResizableActivityPane';
+import { statusIcon, ToolRow } from './ToolActivityDetails';
 
 interface NarrativeProps {
   conversationId: string;
@@ -23,32 +23,16 @@ interface NarrativeProps {
   answerComponents?: readonly MessageComponent[];
   isStreaming: boolean;
   showWorking?: boolean;
+  /** True right after this message's stream completed: the pane starts open, then animates closed. */
+  justCompleted?: boolean;
   choiceInteractions?: Map<string, ChoiceInteractionMetadata>;
   onComponentAction?: (action: ChoiceComponentAction) => Promise<void>;
   onSubmitQuestions?: (actions: ChoiceComponentAction[]) => Promise<void>;
   onRetry?: () => void;
 }
 
-function statusIcon(status: ToolActivityData['status'] | AgentActivityData['status'], active = true) {
-  if (status === 'running') return active ? <Loader2 data-tool-spinner className='size-4 animate-spin text-primary' /> : null;
-  if (status === 'failed') return <XCircle className='size-4 text-destructive' />;
-  if (status === 'stopped') return <AlertTriangle className='size-4 text-amber-600 dark:text-amber-400' />;
-  return <CheckCircle2 className='size-4 text-primary' />;
-}
-
-function formatToolTimestamp(data: ToolActivityData, language: string): { compact: string; full: string; dateTime: string } | undefined {
-  const completedAt = new Date(data.completedAt || '');
-  const startedAt = new Date(data.startedAt || '');
-  const date = !Number.isNaN(completedAt.getTime())
-    ? completedAt
-    : !Number.isNaN(startedAt.getTime()) ? startedAt : undefined;
-  if (!date) return undefined;
-  return {
-    compact: new Intl.DateTimeFormat(language, { hour: '2-digit', minute: '2-digit' }).format(date),
-    full: new Intl.DateTimeFormat(language, { dateStyle: 'medium', timeStyle: 'medium' }).format(date),
-    dateTime: date.toISOString(),
-  };
-}
+/** Grace period between answer completion and the animated pane collapse. */
+const PANE_COLLAPSE_DELAY_MS = 900;
 
 function collapseExactTandem(value: unknown): unknown {
   if (typeof value !== 'string' || value.length % 2 !== 0) return value;
@@ -127,128 +111,6 @@ function projectActivityComponents(components: MessageComponent[], redactSensiti
       .filter((value): value is string => typeof value === 'string' && countLexicalWords(value) > 0);
     return candidates.length > 0 && candidates.every(isStandaloneActivityFragment) ? [] : [normalized];
   });
-}
-
-interface ToolDetailsProps {
-  data: ToolActivityData;
-  redactSensitiveText: boolean;
-  fullToolName: string;
-  summary?: string;
-  compactTimestamp: string;
-  fullTimestamp: string;
-  timestampDateTime?: string;
-  onRetry?: () => void;
-}
-
-function ToolPayload({ label, content, language, kind }: Readonly<{ label: string; content: string; language?: string; kind: 'request' | 'response' }>) {
-  return (
-    <Collapsible>
-      <CollapsibleTrigger asChild>
-        <button type='button' data-tool-payload-trigger={kind} className='group flex min-h-10 w-full items-center gap-2 px-3 text-left text-xs font-medium uppercase tracking-wide text-muted-foreground transition-colors hover:bg-muted/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring'>
-          <ChevronRight className='size-4 shrink-0 transition-transform group-data-[state=open]:rotate-90' aria-hidden='true' />
-          {label}
-        </button>
-      </CollapsibleTrigger>
-      <CollapsibleContent className='px-3 pb-3'>
-        <pre data-tool-payload={kind} data-language={language || undefined} className='max-h-64 overflow-auto whitespace-pre-wrap break-words rounded-md border bg-background/70 p-3 text-xs text-foreground'>{content}</pre>
-      </CollapsibleContent>
-    </Collapsible>
-  );
-}
-
-function ToolDetails({ data, redactSensitiveText, fullToolName, summary, compactTimestamp, fullTimestamp, timestampDateTime, onRetry }: Readonly<ToolDetailsProps>) {
-  const { t } = useModuleTranslation('conversation');
-  const request = resolveToolRequest(data, redactSensitiveText);
-  const response = resolveToolResponse(data, redactSensitiveText);
-  const copyText = [
-    fullToolName,
-    summary ? `${t('stream.activity.description')}: ${summary}` : undefined,
-    `${t('stream.activity.timestamp')}: ${fullTimestamp}`,
-    request ? `${t('stream.activity.request')}:\n${request}` : undefined,
-    response ? `${t('stream.activity.response')}:\n${response}` : undefined,
-  ].filter((value): value is string => Boolean(value)).join('\n\n');
-  return (
-    <CollapsibleContent className='px-1 pb-2 pt-1 sm:px-3'>
-      <div data-tool-detail-card className='rounded-lg border border-border/70 bg-background/55 p-3 shadow-xs'>
-        <div className='flex min-w-0 items-baseline gap-2'>
-          <span className='shrink-0 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground'>{t('stream.activity.toolName')}</span>
-          <span data-tool-full-name className='min-w-0 break-words text-sm font-medium text-foreground'>{fullToolName}</span>
-        </div>
-        {summary && <p data-tool-full-description className='mt-1.5 whitespace-pre-wrap break-words text-sm leading-relaxed text-muted-foreground'>{summary}</p>}
-        <div data-tool-payload-group className='mt-3 divide-y overflow-hidden rounded-md border border-border/70 bg-muted/20'>
-          {request && <ToolPayload label={t('stream.activity.request')} content={request} language={data.primaryInputLanguage} kind='request' />}
-          {!request && <p className='px-3 py-2.5 text-xs text-muted-foreground'>{t('stream.activity.requestUnavailable')}</p>}
-          {response && <ToolPayload label={t('stream.activity.response')} content={response} kind='response' />}
-          {!response && <p className='px-3 py-2.5 text-xs text-muted-foreground'>{data.status === 'running' ? t('stream.activity.responsePending') : t('stream.activity.responseUnavailable')}</p>}
-        </div>
-        <div className='mt-3 flex items-center justify-end gap-2 border-t border-border/60 pt-2.5'>
-          <time data-tool-timestamp dateTime={timestampDateTime} title={fullTimestamp} aria-label={fullTimestamp} className='text-xs tabular-nums text-muted-foreground'>{compactTimestamp}</time>
-          <CodeBlockCopyButton code={copyText} aria-label={t('stream.activity.copyToolDetails')} title={t('stream.activity.copyToolDetails')} className='size-8' />
-        </div>
-        {data.status === 'failed' && onRetry && (
-          <button type='button' onClick={onRetry} className='mt-2 inline-flex min-h-9 items-center gap-2 rounded-md border px-3 text-xs font-medium text-foreground hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring'>
-            <RotateCcw className='size-3.5' aria-hidden='true' />
-            {t('stream.activity.retry')}
-          </button>
-        )}
-      </div>
-    </CollapsibleContent>
-  );
-}
-
-function ToolRow({ component, redactSensitiveText, onRetry }: Readonly<{ component: MessageComponent; redactSensitiveText: boolean; onRetry?: () => void }>) {
-  const { t, language } = useModuleTranslation('conversation');
-  const [open, setOpen] = useState(false);
-  const data = component.data as ToolActivityData;
-  const labels = {
-    runCode: t('stream.activity.tool.runCode'), searchKnowledge: t('stream.activity.tool.searchKnowledge'),
-    searchWeb: t('stream.activity.tool.searchWeb'), search: t('stream.activity.tool.search'),
-    findFiles: t('stream.activity.tool.findFiles'), read: t('stream.activity.tool.read'),
-    write: t('stream.activity.tool.write'), copy: t('stream.activity.tool.copy'),
-    createSandbox: t('stream.activity.tool.createSandbox'), runCommand: t('stream.activity.tool.runCommand'),
-    sendFile: t('stream.activity.tool.sendFile'),
-  } as const;
-  const displayKey = resolveToolDisplayKey(data);
-  const fullToolName = resolveToolFallbackName(data, redactSensitiveText) || t('stream.activity.toolFallback');
-  const shortToolName = resolveToolShortName(data, redactSensitiveText);
-  const label = shortToolName && shortToolName !== fullToolName
-    ? shortToolName
-    : displayKey && displayKey in labels
-      ? labels[displayKey as keyof typeof labels]
-      : shortToolName || t('stream.activity.toolFallback');
-  const summary = resolveToolSummary(data, redactSensitiveText);
-  const description = resolveToolDescription(data, redactSensitiveText);
-  const duration = formatActivityDuration(data.durationMs);
-  const statusLabel = t(`stream.activity.toolStatus.${data.status}`);
-  const rowAriaLabel = summary
-    ? t('stream.activity.toolRowAria', { description: summary, tool: label, status: statusLabel })
-    : t('stream.activity.toolRowAriaFallback', { tool: label, status: statusLabel });
-  const timestamp = formatToolTimestamp(data, language);
-  const compactTimestamp = timestamp?.compact || t('stream.activity.timestampUnavailable');
-  const fullTimestamp = timestamp?.full || t('stream.activity.timestampUnavailable');
-  const row = (
-    <>
-      <span data-tool-status={data.status} className='shrink-0' aria-hidden='true'>{statusIcon(data.status)}</span>
-      <span className='min-w-0 flex-1'>
-        {summary
-          ? <span data-tool-summary className='block truncate font-medium leading-5 text-foreground'>{summary}</span>
-          : <span data-tool-name className='block truncate font-medium leading-5 text-foreground'>{label}</span>}
-        {summary && <span data-tool-name className='block truncate text-xs leading-4 text-muted-foreground'>{label}</span>}
-      </span>
-      {duration && <span className='shrink-0 tabular-nums'>- {duration}</span>}
-      <ChevronRight className='size-4 shrink-0 transition-transform group-data-[state=open]:rotate-90' aria-hidden='true' />
-    </>
-  );
-  return (
-    <Collapsible open={open} onOpenChange={setOpen}>
-      <CollapsibleTrigger asChild>
-        <button type='button' aria-label={rowAriaLabel} className='group flex min-h-10 w-full items-center gap-2 rounded-lg border border-transparent px-2 py-0.5 text-left text-sm text-muted-foreground transition-colors hover:bg-muted/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring data-[state=open]:border-border/70 data-[state=open]:bg-muted/55'>
-          {row}
-        </button>
-      </CollapsibleTrigger>
-      {open && <ToolDetails data={data} redactSensitiveText={redactSensitiveText} fullToolName={fullToolName} summary={description} compactTimestamp={compactTimestamp} fullTimestamp={fullTimestamp} timestampDateTime={timestamp?.dateTime} onRetry={onRetry} />}
-    </Collapsible>
-  );
 }
 
 function AgentActivityRow({ data, isStreaming, redactSensitiveText }: Readonly<{ data: AgentActivityData; isStreaming: boolean; redactSensitiveText: boolean }>) {
@@ -388,6 +250,17 @@ export function ConversationAssistantBubble(props: Readonly<NarrativeProps>) {
   const redactSensitiveText = settings?.redactSensitiveText !== false;
   const messageId = props.messageId;
 
+  // The activity pane stays open while the agent works, then collapses once
+  // the final answer is complete — live via `justCompleted`, which mounts the
+  // completed bubble open and animates it shut, and statically for historical
+  // messages, which render collapsed from the start.
+  const [paneCollapsed, setPaneCollapsed] = useState(!props.isStreaming && props.justCompleted !== true);
+  useEffect(() => {
+    if (props.justCompleted !== true) return;
+    const timer = setTimeout(() => setPaneCollapsed(true), PANE_COLLAPSE_DELAY_MS);
+    return () => clearTimeout(timer);
+  }, [props.justCompleted]);
+
   // Document outline: merge headings reported by each rendered answer chunk and
   // publish them keyed by message id; clear on unmount or message swap. The set
   // of live answer-batch keys is rebuilt every render: publishOutline prunes
@@ -432,9 +305,10 @@ export function ConversationAssistantBubble(props: Readonly<NarrativeProps>) {
       .map((text) => text.trim());
   }))];
   useEffect(() => {
+    if (paneCollapsed) return;
     const pane = activityPaneRef.current;
     if (pane) pane.scrollTop = pane.scrollHeight;
-  }, [activityCount]);
+  }, [activityCount, paneCollapsed]);
   let answerBatch: MessageComponent[] = [];
   const partsCacheRef = useRef(new Map<number, MessageContentPart>());
   const flush = () => {
@@ -474,7 +348,7 @@ export function ConversationAssistantBubble(props: Readonly<NarrativeProps>) {
   activityComponents.forEach((component, index) => {
     if (component.type === 'agentActivity') activityNodes.push(<AgentActivityRow key={component.id || index} data={component.data as AgentActivityData} isStreaming={props.isStreaming} redactSensitiveText={redactSensitiveText} />);
     if (component.type === 'toolActivity') {
-      activityNodes.push(<ToolRow key={component.id || index} component={component} redactSensitiveText={redactSensitiveText} onRetry={props.onRetry} />);
+      activityNodes.push(<ToolRow key={component.id || index} conversationId={props.conversationId} messageId={props.messageId} component={component} redactSensitiveText={redactSensitiveText} onRetry={props.onRetry} />);
     }
     if (component.type === 'artifact') activityNodes.push(<ArtifactRow key={component.id || index} conversationId={props.conversationId} messageId={props.messageId} data={component.data as ArtifactActivityData} enabled={!props.isStreaming} />);
   });
@@ -498,6 +372,18 @@ export function ConversationAssistantBubble(props: Readonly<NarrativeProps>) {
             <span className={cn('relative h-0.5 min-w-8 flex-1 overflow-hidden', props.isStreaming ? 'bg-running/20' : 'bg-border')} aria-hidden='true'>
               {props.isStreaming && <span data-agent-scan className='absolute inset-y-0 left-0 w-1/3 animate-agent-scan bg-gradient-to-r from-transparent via-running to-transparent' />}
             </span>
+            <button
+              type='button'
+              data-activity-pane-toggle
+              aria-expanded={!paneCollapsed}
+              aria-label={paneCollapsed ? t('stream.activity.paneExpand') : t('stream.activity.paneCollapse')}
+              title={paneCollapsed ? t('stream.activity.paneExpand') : t('stream.activity.paneCollapse')}
+              onClick={() => setPaneCollapsed((value) => !value)}
+              className='inline-flex size-7 shrink-0 items-center justify-center gap-1 rounded-md text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring'
+            >
+              <span className='text-xs tabular-nums'>{activityComponents.length}</span>
+              <ChevronDown className={cn('size-4 transition-transform', paneCollapsed && '-rotate-90')} aria-hidden='true' />
+            </button>
           </div>
         <div data-agent-activity-mobile data-active={props.isStreaming || undefined} className='mb-3 flex min-w-0 items-center gap-2 overflow-hidden text-sm text-muted-foreground md:hidden' role={props.isStreaming ? 'status' : undefined}>
           <span className='relative flex size-8 shrink-0 items-center justify-center' aria-hidden='true'>
@@ -525,9 +411,18 @@ export function ConversationAssistantBubble(props: Readonly<NarrativeProps>) {
         ? <MobileActivityTimeline components={activityComponents} nodes={activityNodes} isStreaming={props.isStreaming} />
         : props.showWorking && <div data-mobile-working className='flex items-center gap-2 text-sm text-muted-foreground md:hidden'><Loader2 className='size-4 animate-spin text-primary' />{t('stream.activity.usingTools')}</div>}
       {activityNodes.length > 0 && (
-        <ResizableActivityPane paneRef={activityPaneRef} resizeLabel={t('stream.activity.resizePaneAria')}>
-          <div data-desktop-activity>{activityNodes}</div>
-        </ResizableActivityPane>
+        <div
+          data-activity-pane-shell
+          data-collapsed={paneCollapsed || undefined}
+          className='grid transition-[grid-template-rows] duration-300 ease-in-out motion-reduce:transition-none'
+          style={{ gridTemplateRows: paneCollapsed ? '0fr' : '1fr' }}
+        >
+          <div className={cn('min-h-0 overflow-hidden transition-[visibility] duration-300 motion-reduce:transition-none', paneCollapsed && 'invisible')}>
+            <ResizableActivityPane paneRef={activityPaneRef} resizeLabel={t('stream.activity.resizePaneAria')}>
+              <div data-desktop-activity>{activityNodes}</div>
+            </ResizableActivityPane>
+          </div>
+        </div>
       )}
       {answerNodes.length > 0 && <div data-answer-content className={cn('space-y-2', activityNodes.length > 0 && 'mt-4 border-t pt-4')}>{answerNodes}</div>}
     </div>

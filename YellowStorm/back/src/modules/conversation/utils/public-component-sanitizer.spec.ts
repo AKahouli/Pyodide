@@ -64,6 +64,44 @@ describe('public component sanitizer', () => {
     expect((component.data.content as string).length).toBeGreaterThan(20_000);
   });
 
+  it('serves web preview html verbatim without redaction or bounding', () => {
+    const longHtml = `<html><body><p>${'/workspace/sources/id/report.pdf '.repeat(700)}</p></body></html>`;
+    const component = sanitizePublicComponent({
+      id: 'web-1',
+      type: 'webPreview',
+      data: { content: longHtml },
+    });
+
+    expect(component.data.content).toBe(longHtml);
+    expect((component.data.content as string).length).toBeGreaterThan(20_000);
+    expect(component.data.content).not.toContain('[truncated]');
+    expect(component.data.content).not.toContain('[REDACTED]');
+  });
+
+  it('routes web preview components with non-string content through full sanitization', () => {
+    const component = sanitizePublicComponent({
+      id: 'web-nonstring',
+      type: 'webPreview',
+      data: { content: { password: 'private' } },
+    });
+
+    expect(component.data).toEqual({ content: { password: '[REDACTED]' } });
+  });
+
+  it('strips sentinels from web preview content but redacts its non-content fields', () => {
+    const component = sanitizePublicComponent({
+      id: 'web-mixed',
+      type: 'webPreview',
+      data: {
+        content: 'A YELLOWSTORM_ATTACHMENT_SENTINEL_7 B',
+        paramsJson: '{"password":"private"}',
+      },
+    });
+
+    expect(component.data.content).toBe('A  B');
+    expect(component.data.paramsJson).toBe('{"password":"[REDACTED]"}');
+  });
+
   it('does not classify numeric slash dates as storage paths', () => {
     const component = sanitizePublicComponent({
       id: 'text-date',

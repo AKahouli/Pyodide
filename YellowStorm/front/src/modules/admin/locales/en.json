@@ -990,6 +990,8 @@
   "system.features.items.worky.description": "Show Worky in the sidebar",
   "system.features.items.agents.label": "Agents",
   "system.features.items.agents.description": "Show Agents in the sidebar",
+  "system.features.items.semanticModel.label": "Semantic Model",
+  "system.features.items.semanticModel.description": "Show Semantic Models in the sidebar",
   "system.features.items.platformCopilot.label": "Platform Copilot",
   "system.features.items.platformCopilot.description": "Enable the global Yellowmind Platform Copilot. First-time enablement requires a backend restart so the canonical Agent can be bootstrapped.",
   "system.features.actions.save": "Save features",

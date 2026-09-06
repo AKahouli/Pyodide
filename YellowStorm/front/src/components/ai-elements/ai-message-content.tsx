@@ -463,7 +463,7 @@ function getCitationTriggerLabel(citation: CitationData, fallback: string): stri
   return normalizeCitationReference(citation.reference) || getCitationDisplayName(citation, fallback);
 }
 
-async function openCitationSource(
+export async function openCitationSource(
   citation: CitationData,
   displayMode: ReturnType<typeof useFileViewerDisplayMode>,
   defaultLabel: string,
@@ -556,17 +556,30 @@ export function splitMarkdownAtSafeBoundary(content: string): { stable: string; 
   // Indented or list-marker next lines continue the previous construct — but
   // only when a list item actually preceded the blank line (a paragraph
   // followed by "1. Item" STARTS a list, which is a safe split point).
+  // Blockquote markers hide list context from the raw tests (`> 2. Item`),
+  // so both sides are also tested with the markers stripped; and a quote line
+  // following a list item or another quote line may be lazy continuation
+  // inside that construct, so those boundaries are vetoed too.
+  const startsListMarker = (line: string) => LIST_MARKER.test(line);
+  const isQuoteLine = (line: string) => /^\s*>/.test(line);
+  const listMarkerThroughQuote = (line: string) => LIST_MARKER.test(line.replace(/^\s*(?:>\s?)+/, ''));
   for (let b = boundaries.length - 1; b >= 0; b -= 1) {
     const boundary = boundaries[b];
     const blankLineIndex = lineOffsets.findIndex((offset, index) => offset >= 0 && offset + (lineTexts[index]?.length ?? 0) + 1 === boundary);
     if (blankLineIndex < 0) continue;
     const nextNonBlank = lineTexts.slice(blankLineIndex + 1).find((candidate) => candidate.trim() !== '');
-    if (nextNonBlank === undefined || !LIST_MARKER.test(nextNonBlank)) {
+    if (nextNonBlank === undefined) {
       lastBoundary = boundary;
       break;
     }
     const prevNonBlank = [...lineTexts.slice(0, blankLineIndex)].reverse().find((candidate) => candidate.trim() !== '');
-    if (prevNonBlank === undefined || !LIST_MARKER.test(prevNonBlank.trimEnd())) {
+    const nextContinuesList = startsListMarker(nextNonBlank) || listMarkerThroughQuote(nextNonBlank);
+    if (!nextContinuesList && !(isQuoteLine(nextNonBlank) && prevNonBlank !== undefined && (startsListMarker(prevNonBlank.trimEnd()) || isQuoteLine(prevNonBlank)))) {
+      lastBoundary = boundary;
+      break;
+    }
+    const prevContinuesList = prevNonBlank !== undefined && (startsListMarker(prevNonBlank.trimEnd()) || listMarkerThroughQuote(prevNonBlank));
+    if (!prevContinuesList) {
       lastBoundary = boundary;
       break;
     }
@@ -761,7 +774,7 @@ const CitationsInline = ({ citations, citationScope }: { citations: CitationData
   };
 
   return (
-    <span className='inline-flex flex-wrap gap-1 ml-1'>
+    <span className='inline-flex flex-wrap gap-0 ml-1'>
       {citations.map((c, i) => (
         <InlineCitation key={i}>
           <InlineCitationCard>
@@ -948,7 +961,7 @@ const ToolActivityPartRenderer = ({ part, isStreaming }: { part: ToolActivityPar
     <div className='flex min-h-8 items-center gap-2 text-sm text-muted-foreground'>
       {isStreaming && part.status === 'running' && <Loader2 className='size-4 animate-spin text-primary' aria-hidden='true' />}
       {failed && <XCircle className='size-4 text-destructive' aria-hidden='true' />}
-      {(part.status === 'completed' || part.status === 'stopped') && <CheckCircle2 className='size-4 text-primary' aria-hidden='true' />}
+      {(part.status === 'completed' || part.status === 'stopped') && <CheckCircle2 className='size-4 text-green-500' aria-hidden='true' />}
       <span className='font-medium text-foreground'>{label}</span>
       {part.summary && <span className='truncate'>- {part.summary}</span>}
       {part.durationMs !== undefined && <span className='ml-auto tabular-nums'>{part.durationMs} ms</span>}
@@ -967,7 +980,7 @@ const TaskPartRenderer = ({ title, items, status, isStreaming = false, activity,
     const resolvedStatus = stepStatus ?? (status === 'completed' ? 'completed' : isStreaming && index === (activity?.length ?? 0) - 1 ? 'running' : 'completed');
     if (resolvedStatus === 'failed') return <XCircle className='size-4 shrink-0 text-destructive' />;
     if (resolvedStatus === 'running') return <Loader2 className='size-4 shrink-0 animate-spin text-running motion-reduce:animate-none' />;
-    return <CheckCircle2 className='size-4 shrink-0 text-primary' />;
+    return <CheckCircle2 className='size-4 shrink-0 text-green-500' />;
   };
 
   return (

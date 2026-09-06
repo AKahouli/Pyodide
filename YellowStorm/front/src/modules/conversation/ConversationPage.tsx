@@ -153,13 +153,18 @@ export function ConversationPage() {
  
   return (
     <div className='relative flex flex-1 min-h-0 w-full'>
-      <ConversationOutlineRail />
-      <div className='flex flex-col flex-1 min-w-0 max-w-6xl mx-auto'>
-        <ConversationHeader />
-        <GovernedConversationBanner conversation={currentConversation} />
-        <ConversationContent />
-        <ConversationInput conversationId={id!} />
-        <StreamErrorDialog />
+      {/* Outline rail and thread share one centered wrapper so the rail sits
+          directly against the conversation column instead of the window edge
+          (thread keeps its 72rem cap: 87rem = 72rem + 15rem rail). */}
+      <div className='mx-auto flex min-h-0 w-full max-w-[87rem] items-stretch'>
+        <ConversationOutlineRail />
+        <div className='flex min-w-0 flex-1 flex-col'>
+          <ConversationHeader />
+          <GovernedConversationBanner conversation={currentConversation} />
+          <ConversationContent />
+          <ConversationInput conversationId={id!} />
+          <StreamErrorDialog />
+        </div>
       </div>
       <FileViewerSidebar />
     </div>

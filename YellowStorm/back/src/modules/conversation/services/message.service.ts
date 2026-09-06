@@ -524,6 +524,34 @@ export class MessageService {
     return response;
   }
 
+  /**
+   * On-demand tool activity result: message responses omit `resultJson` so
+   * bulk reads stay small; clients fetch a single tool payload through here.
+   * The payload passes through the same sanitizer as the include-results path.
+   */
+  async findToolActivityResult(conversationId: string, messageId: string, componentId: string): Promise<{ resultJson: string | null }> {
+    const [message, redactSensitiveText] = await Promise.all([
+      this.messageStore.findById(messageId),
+      this.resolveRedactSensitiveText(),
+    ]);
+
+    if (!message || String(message.conversationId) !== String(conversationId)) {
+      throw new NotFoundException(ErrorCode.CHAT_MESSAGE_NOT_FOUND, 'Message not found');
+    }
+
+    const components = Array.isArray(message.components) ? message.components as Array<{ id?: unknown; type?: unknown; data?: Record<string, unknown> }> : [];
+    const component = components.find((candidate) => candidate?.id === componentId && candidate?.type === 'toolActivity');
+    if (!component) {
+      throw new NotFoundException(ErrorCode.CHAT_MESSAGE_NOT_FOUND, 'Tool activity not found');
+    }
+
+    const [publicComponent] = this.publicComponents([component], true, redactSensitiveText) ?? [];
+    const resultJson = typeof publicComponent?.data?.resultJson === 'string' && publicComponent.data.resultJson.trim()
+      ? publicComponent.data.resultJson
+      : null;
+    return { resultJson };
+  }
+
   async updateFeedback(messageId: string, feedback: FeedbackType): Promise<MessageResponse> {
     const existing = await this.messageStore.findById(messageId);
 
@@ -962,7 +990,7 @@ export class MessageService {
       conversationId: toStr(message.conversationId),
       conversationType: message.conversationType as 'user' | 'ai',
       content: message.content,
-      components: this.publicComponents(message.components, true, redactSensitiveText) as any,
+      components: this.publicComponents(message.components, false, redactSensitiveText) as any,
       attachedFileIds: message.attachedFileIds?.map((id: any) => toStr(id)),
       modelId: message.modelId,
       reasoningEffort: message.reasoningEffort,

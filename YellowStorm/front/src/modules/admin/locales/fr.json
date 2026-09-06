@@ -984,6 +984,8 @@
   "system.features.items.worky.description": "Afficher Worky dans la barre latérale",
   "system.features.items.agents.label": "Agents",
   "system.features.items.agents.description": "Afficher les Agents dans la barre latérale",
+  "system.features.items.semanticModel.label": "Modèle sémantique",
+  "system.features.items.semanticModel.description": "Afficher les Modèles sémantiques dans la barre latérale",
   "system.features.items.platformCopilot.label": "Copilote de plateforme",
   "system.features.items.platformCopilot.description": "Activez le copilote global Yellowmind. La première activation nécessite un redémarrage du backend afin de créer l'Agent canonique.",
   "system.features.actions.save": "Enregistrer les fonctionnalités",

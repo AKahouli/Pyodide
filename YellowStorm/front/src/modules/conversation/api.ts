@@ -140,6 +140,12 @@ export async function fetchMessage(conversationId: string, messageId: string): P
   return response.data.data;
 }
 
+/** On-demand payload for one tool activity; message responses omit tool results. */
+export async function fetchToolResult(conversationId: string, messageId: string, componentId: string): Promise<{ resultJson: string | null }> {
+  const response = await apiClient.get<ApiResponse<{ resultJson: string | null }>>(API_ENDPOINTS.conversations.toolResult(conversationId, messageId, componentId));
+  return response.data.data;
+}
+
 export async function updateFeedback(conversationId: string, messageId: string, feedback: 'like' | 'dislike' | null): Promise<Message> {
   const response = await apiClient.patch<ApiResponse<Message>>(API_ENDPOINTS.conversations.feedback(conversationId, messageId), { feedback });
   return response.data.data;

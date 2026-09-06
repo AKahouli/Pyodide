@@ -193,6 +193,7 @@ export interface FeatureVisibility {
   appMarketplace: boolean;
   worky: boolean;
   agents: boolean;
+  semanticModel: boolean;
   platformCopilot: boolean;
 }
 

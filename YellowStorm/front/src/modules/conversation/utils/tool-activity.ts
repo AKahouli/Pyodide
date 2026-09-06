@@ -170,9 +170,14 @@ export function resolveToolRequest(data: Record<string, unknown>, redactSensitiv
 }
 
 export function resolveToolResponse(data: Record<string, unknown>, redactSensitiveText = true): string | undefined {
+  return formatToolResponsePayload(data, asNonEmptyString(data.resultJson), redactSensitiveText);
+}
+
+/** Formats a tool result payload (inline or fetched on demand) for display. */
+export function formatToolResponsePayload(data: Record<string, unknown>, rawResultJson: string | undefined, redactSensitiveText = true): string | undefined {
   return isCodeInterpreterActivity(data)
-    ? resolveCodeInterpreterResponse(data, redactSensitiveText)
-    : formatSanitizedToolText(asNonEmptyString(data.resultJson), redactSensitiveText);
+    ? formatCodeInterpreterPayload(rawResultJson, false, redactSensitiveText)
+    : formatSanitizedToolText(rawResultJson, redactSensitiveText);
 }
 
 export type ToolRenderKind = 'generic' | 'run_code' | 'search' | 'document' | 'file' | 'web';

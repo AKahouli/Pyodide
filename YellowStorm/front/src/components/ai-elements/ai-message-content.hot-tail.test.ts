@@ -68,4 +68,32 @@ describe('splitMarkdownAtSafeBoundary fence/list rules', () => {
     expect(stable).toBe(base);
     expect(tail).toBe('1. First item\n\n2. Second item\n\n3. Third item');
   });
+
+  it('does not split a loose list embedded in blockquote markers', () => {
+    const base = 'Paragraph one with some prose.\n\n'.repeat(120);
+    const content = base + '> 1. First item\n\n> 2. Second item\n\n> 3. Third item';
+    const { stable, tail } = splitMarkdownAtSafeBoundary(content);
+    // Quote markers must not hide the list continuation from the veto.
+    expect(stable).toBe(base);
+    expect(tail).toBe('> 1. First item\n\n> 2. Second item\n\n> 3. Third item');
+  });
+
+  it('does not split between quote lines that continue a list item', () => {
+    const base = 'Paragraph one with some prose.\n\n'.repeat(120);
+    const content = base + '1. Outer item\n   > quoted note\n\n   > more quote';
+    const { stable, tail } = splitMarkdownAtSafeBoundary(content);
+    // The blank line between the two quote lines sits inside the outer list
+    // item's quoted content — splitting there would orphan the second quote.
+    expect(stable).toBe(base);
+    expect(tail).toBe('1. Outer item\n   > quoted note\n\n   > more quote');
+  });
+
+  it('still splits where a paragraph is followed by a quoted block', () => {
+    const base = 'Paragraph one with some prose.\n\n'.repeat(120);
+    const content = base + 'Closing paragraph\n\n> A fresh blockquote';
+    const { stable, tail } = splitMarkdownAtSafeBoundary(content);
+    // A blockquote STARTED after a paragraph is a new block — safe.
+    expect(stable).toBe(base + 'Closing paragraph\n\n');
+    expect(tail).toBe('> A fresh blockquote');
+  });
 });
