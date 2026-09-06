@@ -367,7 +367,7 @@ describe('AIMessageContent charts', () => {
     });
   });
 
-  it('renders a line chart between text parts', () => {
+  it('renders a line chart between text parts', async () => {
     const parts: MessageContentPart[] = [
       { type: 'text', content: 'Before chart' },
       {
@@ -386,7 +386,9 @@ describe('AIMessageContent charts', () => {
     render(<AIMessageContent parts={parts} />);
 
     expect(screen.getByText('Before chart')).toBeInTheDocument();
-    expect(screen.getByRole('figure', { name: 'Revenue trend' })).toBeInTheDocument();
+    // The chart renderer is a lazy boundary; wait for the chunk + render.
+    // The first lazy import in a worker pays the cold transform cost.
+    expect(await screen.findByRole('figure', { name: 'Revenue trend' }, { timeout: 10_000 })).toBeInTheDocument();
     expect(screen.getByText('After chart')).toBeInTheDocument();
   });
 
@@ -404,13 +406,14 @@ describe('AIMessageContent charts', () => {
 
     const { container } = render(<AIMessageContent parts={parts} />);
 
+    await screen.findByRole('figure', { name: 'Revenue by period' });
     expect(container.querySelectorAll('.recharts-responsive-container')).toHaveLength(1);
     await waitFor(() => {
       expect(container.querySelector('.recharts-bar-rectangle path')).toHaveAttribute('fill', 'var(--chart-1)');
     }, { timeout: 3000 });
   });
 
-  it('renders a no-data state for empty chart payloads', () => {
+  it('renders a no-data state for empty chart payloads', async () => {
     const parts: MessageContentPart[] = [
       {
         type: 'chart',
@@ -425,7 +428,7 @@ describe('AIMessageContent charts', () => {
 
     render(<AIMessageContent parts={parts} />);
 
-    expect(screen.getByText('ai.chart.noData')).toBeInTheDocument();
+    expect(await screen.findByText('ai.chart.noData')).toBeInTheDocument();
   });
 
   it('renders a localized error block when chart payload is invalid', () => {

@@ -151,6 +151,69 @@ export class MessageService {
     return response;
   }
 
+  /**
+   * Phase 5 pre-agent reduction: user message + AI placeholder persist in one
+   * store transaction. Applies the same validation and side effects as
+   * createUserMessage, then broadcasts the placeholder creation exactly as
+   * createAIPlaceholder would — preserving event order (user first).
+   */
+  async createUserMessageWithAiPlaceholder(data: CreateUserMessageData & { placeholder: Omit<CreateAIPlaceholderData, 'questionMessageId'> }): Promise<{ userMessage: MessageResponse; aiMessage: MessageResponse }> {
+    const maxLength = this.configService.get<number>('conversation.maxMessageLength', 50000);
+    if (data.content.length > maxLength) {
+      throw new AppException({
+        code: ErrorCode.CHAT_MESSAGE_TOO_LONG,
+        message: `Message exceeds maximum length of ${String(maxLength)} characters`,
+        statusCode: HttpStatus.BAD_REQUEST,
+      });
+    }
+    const maxFiles = this.configService.get<number>('conversation.maxFilesPerMessage', 5);
+    if (data.attachedFileIds && data.attachedFileIds.length > maxFiles) {
+      throw new AppException({
+        code: ErrorCode.CHAT_FILE_UPLOAD_LIMIT,
+        message: `Maximum ${String(maxFiles)} files per message`,
+        statusCode: HttpStatus.BAD_REQUEST,
+      });
+    }
+
+    const { user, placeholder } = await this.messageStore.createUserWithAiPlaceholder({
+      user: data,
+      placeholder: data.placeholder,
+    });
+
+    if (data.agentIds?.length) {
+      await this.conversationService.updateTaggedAgents(data.conversationId, data.agentIds);
+    }
+
+    // mention notification (fire and forget, same as createUserMessage)
+    this.extractAndNotifyMentions(user, data.conversationId).catch((err: unknown) => {
+      this.logger.error('Failed to process mentions', {
+        error: err instanceof Error ? err.message : String(err),
+      });
+    });
+
+    const userResponse = this.mapToResponse(user);
+    if (user.attachedFileIds?.length) {
+      const fileIds = user.attachedFileIds;
+      const fileMap = await this.resolveAttachedFiles(fileIds);
+      userResponse.attachedFiles = fileIds
+        .map((fid) => fileMap.get(fid))
+        .filter((f): f is AttachedFileResponse => !!f);
+    }
+
+    void this.broadcastMessage(data.conversationId, {
+      type: 'message_created',
+      data: { conversationId: data.conversationId, message: userResponse },
+    });
+
+    const placeholderResponse = this.mapToResponse(placeholder);
+    void this.broadcastMessage(data.conversationId, {
+      type: 'message_created',
+      data: { conversationId: data.conversationId, message: placeholderResponse },
+    });
+
+    return { userMessage: userResponse, aiMessage: placeholderResponse };
+  }
+
   async completeAIMessage(data: CompleteAIMessageData): Promise<MessageResponse> {
     this.logger.log('Completing AI message', {
       messageId: data.messageId,

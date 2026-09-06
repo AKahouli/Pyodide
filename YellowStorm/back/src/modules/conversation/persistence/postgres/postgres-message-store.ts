@@ -108,6 +108,82 @@ export class PostgresMessageStore implements MessageStore {
     });
   }
 
+  /**
+   * Single-transaction turn persistence: the user message, the conversation
+   * counters, the AI placeholder, and the question.answerMessageId linkage
+   * commit together (was two awaited round trips).
+   */
+  async createUserWithAiPlaceholder(
+    input: Parameters<MessageStore['createUserWithAiPlaceholder']>[0],
+  ): Promise<{ user: MessageRecord; placeholder: MessageRecord }> {
+    return this.db.transaction(async (tx) => {
+      const now = new Date();
+      const userId = newOwnedId();
+      const [userRow] = await tx
+        .insert(schema.messages)
+        .values({
+          id: userId,
+          conversationId: input.user.conversationId,
+          senderId: input.user.senderId,
+          parentMessageId: input.user.parentMessageId,
+          conversationType: 'user',
+          content: input.user.content,
+          attachedFileIds: input.user.attachedFileIds,
+          webSearchEnabled: input.user.webSearchEnabled ?? false,
+          modelId: input.user.modelId,
+          reasoningEffort: input.user.reasoningEffort,
+          agentIds: input.user.agentIds,
+          memberIds: input.user.memberIds,
+          isStreaming: false,
+          isComplete: true,
+          requestId: input.user.requestId,
+          interaction: input.user.interaction,
+          interactions: input.user.interactions,
+          replayContext: input.user.replayContext,
+          createdAt: now,
+          updatedAt: now,
+        })
+        .returning();
+      await tx
+        .update(schema.conversations)
+        .set({
+          lastMessageAt: now,
+          messageCount: sql`${schema.conversations.messageCount} + 1`,
+          updatedAt: now,
+        })
+        .where(eq(schema.conversations.id, input.user.conversationId));
+      const placeholderId = newOwnedId();
+      const [placeholderRow] = await tx
+        .insert(schema.messages)
+        .values({
+          id: placeholderId,
+          conversationId: input.placeholder.conversationId,
+          conversationType: 'ai',
+          senderId: input.placeholder.senderId,
+          modelId: input.placeholder.modelId,
+          reasoningEffort: input.placeholder.reasoningEffort,
+          questionMessageId: userId,
+          isStreaming: true,
+          isComplete: false,
+          components: [],
+          requestId: input.placeholder.requestId,
+          createdAt: now,
+          updatedAt: now,
+        })
+        .returning();
+      await tx
+        .update(schema.messages)
+        .set({ answerMessageId: placeholderId, updatedAt: now })
+        .where(
+          and(
+            eq(schema.messages.id, userId),
+            isNull(schema.messages.answerMessageId),
+          ),
+        );
+      return { user: mapPostgresMessage(userRow), placeholder: mapPostgresMessage(placeholderRow) };
+    });
+  }
+
   async completeAi(
     input: Parameters<MessageStore['completeAi']>[0],
   ): Promise<MessageRecord | null> {

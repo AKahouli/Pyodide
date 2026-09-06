@@ -185,9 +185,9 @@ describe('MessageService store lifecycle', () => {
       records: [record({
         conversationType: 'ai',
         components: [{
-          id: 'answer',
-          type: 'text',
-          data: { content: 'Stored at owner/runs/private/result.txt' },
+          id: 'tool-1',
+          type: 'toolActivity',
+          data: { paramsJson: '{"path":"owner/runs/private/result.txt"}' },
         }],
       })],
       total: 1,
@@ -195,7 +195,9 @@ describe('MessageService store lifecycle', () => {
 
     const result = await service.findByConversation(conversationId, {});
 
-    expect(result.messages[0].components?.[0].data.content).toContain('[REDACTED]');
+    const paramsJson = result.messages[0].components?.[0].data.paramsJson as string;
+    expect(paramsJson).toContain('[REDACTED]');
+    expect(paramsJson).not.toContain('owner/runs/private');
   });
 
   it('fails closed without hanging when the redaction setting lookup stalls', async () => {
@@ -206,9 +208,9 @@ describe('MessageService store lifecycle', () => {
         records: [record({
           conversationType: 'ai',
           components: [{
-            id: 'answer',
-            type: 'text',
-            data: { content: 'Stored at owner/runs/private/result.txt' },
+            id: 'tool-1',
+            type: 'toolActivity',
+            data: { paramsJson: '{"path":"owner/runs/private/result.txt"}' },
           }],
         })],
         total: 1,
@@ -218,7 +220,9 @@ describe('MessageService store lifecycle', () => {
       await jest.advanceTimersByTimeAsync(1_000);
       const result = await resultPromise;
 
-      expect(result.messages[0].components?.[0].data.content).toContain('[REDACTED]');
+      const paramsJson = result.messages[0].components?.[0].data.paramsJson as string;
+      expect(paramsJson).toContain('[REDACTED]');
+      expect(paramsJson).not.toContain('owner/runs/private');
     } finally {
       jest.useRealTimers();
     }

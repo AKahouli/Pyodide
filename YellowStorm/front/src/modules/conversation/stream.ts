@@ -4,6 +4,13 @@ import { translateConversation } from './translation';
 
 type StreamListener = (event: StreamSSEEvent) => void;
 
+/**
+ * Mirrors the backend replay-cursor shape (`<bootId>:<seq>`). Native SSE
+ * `lastEventId` values that don't match (e.g. the server's auto-assigned
+ * heartbeat counters) must never be stored as a cursor.
+ */
+const REPLAY_CURSOR_SHAPE = /^[A-Za-z0-9_-]{1,100}:[0-9]{1,15}$/;
+
 function safeJsonParse(value: unknown): unknown {
   if (typeof value !== 'string') return value;
   try {
@@ -40,20 +47,23 @@ class ConversationStreamService {
   private connectionId: string | null = null;
   private connectionToken: string | null = null;
   private isEvicted = false;
+  /**
+   * Last replay cursor received from the server. Sent back on reconnect so
+   * the server can replay events missed while disconnected.
+   */
+  private lastSeenCursor: string | null = null;
 
   private readonly maxReconnectAttempts = 10;
   private readonly baseReconnectDelay = 1000;
   private readonly maxReconnectDelay = 60000;
   private readonly heartbeatTimeout = 30000;
   private heartbeatTimer: ReturnType<typeof setTimeout> | null = null;
-  private connectionWaiters = new Set<(connected: boolean) => void>();
 
   connect(): void {
     if (this.isEvicted) return;
 
     const token = localStorage.getItem(AUTH_STORAGE_KEYS.accessToken);
     if (!token) {
-      this.resolveConnectionWaiters(false);
       this.emit({ type: 'connection_failed', data: { reason: translateConversation('sse.connectionErrors.noToken') } });
       return;
     }
@@ -62,20 +72,22 @@ class ConversationStreamService {
     if (this.eventSource) {
       // Another singleton may have refreshed the shared token. Never let the
       // browser keep retrying an EventSource URL carrying the revoked token.
+      // The cursor belongs to the previous identity context — drop it.
       this.eventSource.close();
       this.eventSource = null;
       this.isConnected = false;
       this.connectionId = null;
+      this.lastSeenCursor = null;
     }
 
-    const url = `${API_CONFIG.baseURL}/conversations/stream?token=${encodeURIComponent(token)}`;
+    const cursorParam = this.lastSeenCursor ? `&cursor=${encodeURIComponent(this.lastSeenCursor)}` : '';
+    const url = `${API_CONFIG.baseURL}/conversations/stream?token=${encodeURIComponent(token)}${cursorParam}`;
     try {
       this.eventSource = new EventSource(url);
       this.connectionToken = token;
       this.setupEventHandlers();
     } catch (error) {
       console.error('[ConversationStream] Failed to create EventSource:', error);
-      this.resolveConnectionWaiters(false);
       this.emit({ type: 'connection_failed', data: { reason: translateConversation('sse.connectionErrors.creationFailed') } });
     }
   }
@@ -91,8 +103,8 @@ class ConversationStreamService {
     this.isConnected = false;
     this.connectionId = null;
     this.connectionToken = null;
+    this.lastSeenCursor = null;
     this.reconnectAttempts = 0;
-    this.resolveConnectionWaiters(false);
   }
 
   subscribe(listener: StreamListener): () => void {
@@ -106,23 +118,14 @@ class ConversationStreamService {
     return this.isConnected;
   }
 
-  /** Wait briefly for the shared pipe before starting a new stream-producing request. */
-  waitForConnection(timeoutMs = 2000): Promise<boolean> {
-    const currentToken = localStorage.getItem(AUTH_STORAGE_KEYS.accessToken);
-    if (this.isConnected && this.connectionToken === currentToken) return Promise.resolve(true);
-
-    return new Promise((resolve) => {
-      let timeout: ReturnType<typeof setTimeout>;
-      const settle = (connected: boolean) => {
-        clearTimeout(timeout);
-        this.connectionWaiters.delete(settle);
-        resolve(connected);
-      };
-
-      this.connectionWaiters.add(settle);
-      timeout = setTimeout(() => settle(false), timeoutMs);
-      this.connect();
-    });
+  /**
+   * Non-blocking nudge for the send path. POST must never wait on the SSE
+   * handshake: the server replays whatever the connecting pipe misses.
+   * A no-op when the shared pipe is already connected.
+   */
+  ensureConnected(): void {
+    if (this.isEvicted) return;
+    this.connect();
   }
 
   reconnectWithNewToken(): void {
@@ -160,7 +163,6 @@ class ConversationStreamService {
         this.connectionToken = null;
         if (wasConnected) this.scheduleReconnect();
         else {
-          this.resolveConnectionWaiters(false);
           this.scheduleReconnect();
           this.emit({ type: 'connection_failed', data: { reason: translateConversation('sse.connectionErrors.rejected') } });
         }
@@ -178,11 +180,16 @@ class ConversationStreamService {
       'message_created',
       'message_updated',
       'mention_created',
+      'stream_resync_required',
       'error',
     ];
     for (const type of namedEventTypes) {
       this.eventSource.addEventListener(type, (rawEvent) => {
         const data = safeJsonParse((rawEvent as MessageEvent<string>).data);
+        const payloadCursor = (data as { id?: unknown } | null)?.id;
+        this.captureReplayCursor(
+          typeof payloadCursor === 'string' ? payloadCursor : (rawEvent as MessageEvent<string>).lastEventId,
+        );
         this.handleEvent(type, data);
       });
     }
@@ -191,11 +198,26 @@ class ConversationStreamService {
     this.eventSource.onmessage = (event) => {
       try {
         const parsed = JSON.parse(event.data);
+        this.captureReplayCursor(parsed?.id);
         this.handleEvent(parsed.type, parsed.data);
       } catch (error) {
         console.error('[ConversationStream] Failed to parse SSE event:', error);
       }
     };
+  }
+
+  /**
+   * The replay cursor reaches the client in the frame payload (`id` field of
+   * the JSON body): the global response envelope re-wraps SSE frames, so the
+   * wire carries only auto-numbered `id:` lines and the real cursor survives
+   * inside the serialized frame. On deployments without that envelope the
+   * native `lastEventId` carries it instead. Both sources are accepted only
+   * when they match the cursor shape.
+   */
+  private captureReplayCursor(raw: unknown): void {
+    if (typeof raw === 'string' && REPLAY_CURSOR_SHAPE.test(raw)) {
+      this.lastSeenCursor = raw;
+    }
   }
 
   private resetHeartbeatTimer(): void {
@@ -205,7 +227,7 @@ class ConversationStreamService {
 
     this.heartbeatTimer = setTimeout(() => {
       console.warn('[ConversationStream] Heartbeat timeout, reconnecting...');
-      this.disconnect();
+      this.teardownForReconnect();
       if (typeof document !== 'undefined' && document.hidden) return;
       this.scheduleReconnect();
     }, this.heartbeatTimeout);
@@ -217,7 +239,6 @@ class ConversationStreamService {
       case 'connected':
         this.connectionId = typeof data.connectionId === 'string' ? data.connectionId : null;
         this.isConnected = true;
-        this.resolveConnectionWaiters(true);
         this.resetHeartbeatTimer();
         this.emit({ type, data: { connectionId: this.connectionId ?? '' } });
         break;
@@ -245,6 +266,7 @@ class ConversationStreamService {
       case 'message_created':
       case 'message_updated':
       case 'mention_created':
+      case 'stream_resync_required':
         this.resetHeartbeatTimer();
         this.emit({ type, data } as StreamSSEEvent);
         break;
@@ -255,7 +277,6 @@ class ConversationStreamService {
           this.eventSource?.close();
           this.eventSource = null;
           this.connectionToken = null;
-          this.resolveConnectionWaiters(false);
           this.emit({ type, data: { code: String(data.code), message: typeof data.message === 'string' ? data.message : undefined } });
         }
         break;
@@ -293,11 +314,17 @@ class ConversationStreamService {
     }
   }
 
-  private resolveConnectionWaiters(connected: boolean): void {
-    for (const resolve of this.connectionWaiters) {
-      resolve(connected);
-    }
-    this.connectionWaiters.clear();
+  /**
+   * Tear the pipe down for an error-driven reconnect (heartbeat timeout)
+   * while keeping the replay cursor: the server replays whatever this pipe
+   * missed while it was dead. Only explicit disconnect() drops the cursor.
+   */
+  private teardownForReconnect(): void {
+    this.clearTimers();
+    this.eventSource?.close();
+    this.eventSource = null;
+    this.isConnected = false;
+    this.connectionId = null;
   }
 
   private emit(event: StreamSSEEvent): void {

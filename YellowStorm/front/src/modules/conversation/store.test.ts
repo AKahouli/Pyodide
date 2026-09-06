@@ -9,10 +9,10 @@ const fetchMessageMock = vi.hoisted(() => vi.fn());
 const fetchMessagesMock = vi.hoisted(() => vi.fn());
 const fetchActiveStreamMock = vi.hoisted(() => vi.fn());
 const fetchBranchesMock = vi.hoisted(() => vi.fn());
-const waitForConnectionMock = vi.hoisted(() => vi.fn());
+const ensureConnectedMock = vi.hoisted(() => vi.fn());
 
 vi.mock('./stream', () => ({
-  conversationStreamService: { waitForConnection: waitForConnectionMock },
+  conversationStreamService: { ensureConnected: ensureConnectedMock },
 }));
 
 vi.mock('./api', async (importOriginal) => ({
@@ -35,11 +35,10 @@ beforeEach(() => {
   fetchMessagesMock.mockReset();
   fetchActiveStreamMock.mockReset();
   fetchBranchesMock.mockReset();
-  waitForConnectionMock.mockReset();
+  ensureConnectedMock.mockReset();
   fetchBranchesMock.mockResolvedValue([]);
   fetchActiveStreamMock.mockResolvedValue(null);
   fetchConversationsMock.mockResolvedValue({ items: [], total: 0, page: 1, limit: 12, totalPages: 0 });
-  waitForConnectionMock.mockResolvedValue(true);
   useConversationStore.setState({
     currentConversation: null,
     currentConversationId: null,
@@ -66,9 +65,7 @@ beforeEach(() => {
 });
 
 describe('conversation optimistic messages', () => {
-  it('waits for the app-level SSE handshake before sending a stream-producing message', async () => {
-    let resolveConnection: (connected: boolean) => void = () => undefined;
-    waitForConnectionMock.mockImplementation(() => new Promise((resolve) => { resolveConnection = resolve; }));
+  it('sends the POST immediately while nudging the shared SSE pipe without awaiting it', async () => {
     sendMessageMock.mockResolvedValue({
       userMessage: {
         id: 'message-1',
@@ -79,24 +76,24 @@ describe('conversation optimistic messages', () => {
       },
     });
 
-    const pending = useConversationStore.getState().sendMessage('conv-1', { content: 'hello' });
+    await useConversationStore.getState().sendMessage('conv-1', { content: 'hello' });
 
-    expect(useConversationStore.getState().optimisticMessages).toHaveLength(1);
-    expect(sendMessageMock).not.toHaveBeenCalled();
-
-    resolveConnection(true);
-    await pending;
-
+    expect(ensureConnectedMock).toHaveBeenCalledTimes(1);
     expect(sendMessageMock).toHaveBeenCalledWith('conv-1', { content: 'hello' });
+    // Optimistic message replaced by the persisted user message.
+    expect(useConversationStore.getState().optimisticMessages).toHaveLength(0);
+    expect(useConversationStore.getState().messages).toEqual([
+      expect.objectContaining({ id: 'message-1', content: 'hello' }),
+    ]);
   });
 
-  it('does not send when the app-level SSE handshake cannot be established', async () => {
-    waitForConnectionMock.mockResolvedValue(false);
+  it('refetches canonical messages when the server reports a stream resync', async () => {
+    fetchMessagesMock.mockResolvedValue({ items: [], total: 0, page: 1, limit: 5, totalPages: 0 });
+    useConversationStore.setState({ currentConversationId: 'conv-1' });
 
-    await expect(useConversationStore.getState().sendMessage('conv-1', { content: 'hello' })).rejects.toBeInstanceOf(Error);
+    useConversationStore.getState().onStreamResyncRequired({ reason: 'cursor_gap', lastSeenCursor: 'boot-1:9' });
 
-    expect(sendMessageMock).not.toHaveBeenCalled();
-    expect(useConversationStore.getState().optimisticMessages).toHaveLength(0);
+    await vi.waitFor(() => expect(fetchMessagesMock).toHaveBeenCalledWith('conv-1', expect.anything()));
   });
 
   it('preserves choice interaction display text while the request is pending', async () => {
@@ -260,16 +257,19 @@ describe('conversation workspace selection', () => {
 });
 
 describe('conversation live activity', () => {
-  it('applies reasoning and tool descriptions immediately while answer text remains buffered', () => {
+  const nextFrame = () =>
+    new Promise<void>((resolve) =>
+      typeof requestAnimationFrame === 'function' ? requestAnimationFrame(() => resolve()) : setTimeout(resolve, 0),
+    );
+
+  it('applies activity and answer text in one frame commit', async () => {
     useConversationStore.setState({
       currentConversationId: 'conv-1',
-      isStreaming: true,
-      streamingConversationId: 'conv-1',
-      streamingMessageId: 'message-1',
       isAwaitingFirstChunk: true,
       awaitingConversationId: 'conv-1',
       streamingComponents: [],
     });
+    useConversationStore.getState().onStreamStart({ conversationId: 'conv-1', messageId: 'message-1' });
 
     const store = useConversationStore.getState();
     store.onStreamChunk({
@@ -292,6 +292,7 @@ describe('conversation live activity', () => {
       action: 'add',
       component: { id: 'text-1', type: 'text', data: { content: 'Final answer' } },
     });
+    await nextFrame();
 
     expect(useConversationStore.getState().streamingComponents).toEqual([
       { id: 'activity-1', type: 'agentActivity', data: { summary: '', status: 'completed' } },
@@ -306,12 +307,12 @@ describe('conversation live activity', () => {
           resultJson: '{"ok":true}',
         }),
       },
+      { id: 'text-1', type: 'text', data: { content: 'Final answer' } },
     ]);
     expect(useConversationStore.getState().isAwaitingFirstChunk).toBe(false);
-    useConversationStore.getState().onStreamStart({ conversationId: 'conv-1', messageId: 'message-2' });
   });
 
-  it('flushes earlier text before applying immediate activity and merges reasoning updates', () => {
+  it('coalesces text and activity chunks into one ordered commit per frame', async () => {
     useConversationStore.setState({
       currentConversationId: 'conv-1',
       streamingComponents: [],
@@ -322,6 +323,7 @@ describe('conversation live activity', () => {
     store.onStreamChunk({ conversationId: 'conv-1', action: 'add', component: { id: 'text-1', type: 'text', data: { content: 'First. ' } } });
     store.onStreamChunk({ conversationId: 'conv-1', action: 'add', component: { id: 'tool-1', type: 'toolActivity', data: { toolName: 'search', status: 'running', summary: 'Find sources' } } });
     store.onStreamChunk({ conversationId: 'conv-1', action: 'update', component: { id: 'activity-1', type: 'agentActivity', data: { summary: 'Sources selected', status: 'completed' } } });
+    await nextFrame();
 
     expect(useConversationStore.getState().streamingComponents).toEqual([
       { id: 'activity-1', type: 'agentActivity', data: { summary: 'Sources selected', status: 'completed' } },
@@ -454,6 +456,7 @@ describe('conversation streaming component updates', () => {
       action: 'add',
       component: { id: 'tool-1', type: 'toolActivity', data: { toolName: 'search', status: 'running' } },
     });
+    await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
 
     expect(useConversationStore.getState()).toMatchObject({
       isStreaming: true,
@@ -693,7 +696,7 @@ describe('conversation streaming component updates', () => {
   });
 
   it('deduplicates snapshot text from overlapping sequenced SSE chunks', async () => {
-    vi.useFakeTimers();
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval', 'requestAnimationFrame', 'cancelAnimationFrame'] });
     try {
       fetchMessagesMock.mockResolvedValue({
         items: [{ id: 'ai-1', conversationId: 'conv-1', conversationType: 'ai', components: [], isStreaming: true, isComplete: false }],
@@ -715,7 +718,8 @@ describe('conversation streaming component updates', () => {
         conversationId: 'conv-1', messageId: 'ai-1', revision: 2, action: 'update',
         component: { id: 'text-1', type: 'text', data: { content: 'B' } },
       });
-      await vi.advanceTimersByTimeAsync(31);
+      // The coalescer flushes on the next animation frame (16ms fake tick).
+      await vi.advanceTimersByTimeAsync(16);
 
       expect(useConversationStore.getState().streamingComponents[0]?.data.content).toBe('AB');
     } finally {
@@ -744,6 +748,7 @@ describe('conversation streaming component updates', () => {
       components: [{ id: 'text-1', type: 'text', data: { content: 'Partial' } }],
     });
     await hydration;
+    await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
 
     expect(useConversationStore.getState().streamingComponents).toEqual([
       expect.objectContaining({ id: 'text-1' }),
@@ -979,6 +984,7 @@ describe('conversation streaming component updates', () => {
       isComplete: true, createdAt: '2026-08-31T18:14:58.000Z',
     });
     await oldCompletion;
+    await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
 
     expect(useConversationStore.getState()).toMatchObject({
       isStreaming: true,

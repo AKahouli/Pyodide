@@ -1,3 +1,5 @@
+import type { ClientStreamMetrics } from './utils/stream-metrics';
+
 export interface GroupMember {
   userId: string;
   joinedAt: string;
@@ -205,6 +207,8 @@ export interface ReportFrontendLatencyPayload {
   frontendRenderMs: number;
   browserRenderOnlyMs?: number;
   quality: ConversationLatencyQuality;
+  /** Optional client streaming counters (Phase 0 telemetry); absent when nothing was recorded. */
+  clientMetrics?: ClientStreamMetrics;
 }
 
 export type ResponseCorrectionStatus = 'queued' | 'correcting' | 're_evaluating' | 'corrected' | 'failed' | 'abstained' | 'human_review_required';
@@ -577,6 +581,12 @@ export interface ConversationNameGeneratedEvent {
   name: string;
 }
 
+export interface StreamResyncRequiredEvent {
+  reason: 'cursor_gap' | 'unknown_instance';
+  lastSeenCursor?: string;
+  oldestRetainedCursor?: string;
+}
+
 export type SSEConnectionStatus = 'connecting' | 'connected' | 'disconnected' | 'failed';
 
 export type StreamSSEEvent =
@@ -590,6 +600,7 @@ export type StreamSSEEvent =
   | { type: 'message_created'; data: MessageCreatedEvent }
   | { type: 'message_updated'; data: MessageUpdatedEvent }
   | { type: 'mention_created'; data: { conversationId: string; messageId: string; userId: string } }
+  | { type: 'stream_resync_required'; data: StreamResyncRequiredEvent }
   | { type: 'connection_failed'; data: { reason: string } }
   | { type: 'error'; data: { code?: string; message?: string } };
 

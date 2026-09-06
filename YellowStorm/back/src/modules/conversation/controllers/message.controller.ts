@@ -48,6 +48,17 @@ import {
   endBackendPreAdkStage,
 } from '../utils/backend-latency-tracker';
 import { ConversationSettingsService } from '../../system/conversation-settings.service';
+
+/**
+ * Surfacing a concurrently fetched read at its decision point: rejections are
+ * re-thrown in the original sequential decision order, so parallel prefetching
+ * never changes which error a request observes.
+ */
+function unwrapSettled<T>(result: PromiseSettledResult<T>): T {
+  if (result.status === 'rejected') throw result.reason;
+  return result.value;
+}
+
 @ApiTags('Messages')
 @Controller('conversations/:conversationId/messages')
 @ApiBearerAuth()
@@ -169,12 +180,51 @@ export class MessageController {
       throw new BadRequestException(ErrorCode.BAD_REQUEST, 'Playbook handoffs require a Platform Copilot conversation');
     }
 
-    if (dto.requestId) {
-      const existingTurn = await this.messageService.findTurnByRequestId(
-        conversationId,
-        user._id.toString(),
-        dto.requestId,
+    // Phase 5 pre-agent reduction: the read-only lookups below depend only on
+    // the already-loaded conversation and the DTO — fetch them concurrently,
+    // then apply the original decisions in the original order so error
+    // precedence stays deterministic.
+    const governedConversation = conversation.runtimeMode === 'governed'
+      ? {
+          runtimeMode: conversation.runtimeMode,
+          createdBy: conversation.createdBy.toString(),
+          governanceContext: conversation.governanceContext
+            ? {
+                programId: conversation.governanceContext.programId.toString(),
+                scopeId: conversation.governanceContext.scopeId.toString(),
+                deploymentId: conversation.governanceContext.deploymentId.toString(),
+                revisionId: conversation.governanceContext.revisionId.toString(),
+                revisionNumber: conversation.governanceContext.revisionNumber,
+                runtimeDefinition: conversation.governanceContext.runtimeDefinition,
+              }
+            : undefined,
+        }
+      : undefined;
+    const settle = <T>(promise: Promise<T>): Promise<PromiseSettledResult<T>> =>
+      promise.then(
+        (value): PromiseSettledResult<T> => ({ status: 'fulfilled', value }),
+        (reason: unknown): PromiseSettledResult<T> => ({ status: 'rejected', reason }),
       );
+    const [existingTurnSettled, governedRuntimeSettled, modelValidationSettled, mentionedAgentsSettled, reasoningModelSettled] = await Promise.all([
+      settle(dto.requestId
+        ? this.messageService.findTurnByRequestId(conversationId, user._id.toString(), dto.requestId)
+        : Promise.resolve(undefined)),
+      settle(governedConversation
+        ? this.governedRuntimeService.resolveRuntime(user._id.toString(), governedConversation)
+        : Promise.resolve(undefined)),
+      settle(!governedConversation && !platformCopilot && dto.modelId
+        ? this.modelsService.validateModelActive(dto.modelId, 'chat')
+        : Promise.resolve(undefined)),
+      settle(!platformCopilot
+        ? this.resolveAgentIds(user._id.toString(), dto.agentIds, dto.teamIds)
+        : Promise.resolve(undefined)),
+      settle(dto.reasoningEffort && dto.modelId && !platformCopilot
+        ? this.modelsService.findById(dto.modelId)
+        : Promise.resolve(undefined)),
+    ]);
+
+    if (dto.requestId) {
+      const existingTurn = unwrapSettled(existingTurnSettled);
       if (existingTurn) {
         if (existingTurn.requestFingerprint !== requestFingerprint) {
           throw new ConflictException(
@@ -204,27 +254,15 @@ export class MessageController {
       );
     }
 
-    const governedRuntime = conversation.runtimeMode === 'governed'
-      ? await this.governedRuntimeService.resolveRuntime(user._id.toString(), {
-          runtimeMode: conversation.runtimeMode,
-          createdBy: conversation.createdBy.toString(),
-          governanceContext: conversation.governanceContext
-            ? {
-                programId: conversation.governanceContext.programId.toString(),
-                scopeId: conversation.governanceContext.scopeId.toString(),
-                deploymentId: conversation.governanceContext.deploymentId.toString(),
-                revisionId: conversation.governanceContext.revisionId.toString(),
-                revisionNumber: conversation.governanceContext.revisionNumber,
-                runtimeDefinition: conversation.governanceContext.runtimeDefinition,
-              }
-            : undefined,
-        })
-      : undefined;
+    const governedRuntime = unwrapSettled(governedRuntimeSettled);
     if (governedRuntime) this.governedRuntimeService.assertRuntimeRequestAllowed(governedRuntime, dto);
 
     // Validate model is active for standard conversations only.
     if (!governedRuntime && !platformCopilot && dto.modelId) {
-      const modelValidation = await this.modelsService.validateModelActive(dto.modelId, 'chat');
+      const modelValidation = unwrapSettled(modelValidationSettled);
+      if (!modelValidation) {
+        throw new NotFoundException(ErrorCode.MODEL_NOT_FOUND);
+      }
       if (!modelValidation.valid) {
         if (modelValidation.inactive) {
           this.logger.warn('Attempted to use inactive model', {
@@ -279,11 +317,7 @@ export class MessageController {
       ? [conversation.pinnedAgentId!.toString()]
       : governedRuntime
       ? this.governedRuntimeService.resolveEffectiveAgents(governedRuntime, dto.agentIds)
-      : (await this.resolveAgentIds(
-        user._id.toString(),
-        dto.agentIds,
-        dto.teamIds,
-      )) ?? [];
+      : (unwrapSettled(mentionedAgentsSettled)) ?? [];
     const stickyAgentIds =
       conversation.taggedAgentIds?.map((id) => id.toString()) ?? [];
     const willRunAi = !dto.memberIds?.length;
@@ -302,7 +336,7 @@ export class MessageController {
       if (!dto.modelId) {
         throw new BadRequestException(ErrorCode.BAD_REQUEST, 'A selected model is required when reasoning effort is provided.');
       }
-      const selectedModel = await this.modelsService.findById(dto.modelId);
+      const selectedModel = unwrapSettled(reasoningModelSettled);
       if (!selectedModel?.isActive || selectedModel.supportsReasoning !== true || !selectedModel.reasoning.efforts.some((effort) => effort.id === dto.reasoningEffort)) {
         throw new BadRequestException(ErrorCode.BAD_REQUEST, 'The selected reasoning effort is not supported by this model.');
       }
@@ -348,46 +382,113 @@ export class MessageController {
     endBackendPreAdkStage('controllerValidationRoutingMs');
     beginBackendPreAdkStage('userMessagePersistenceMs');
     let userMessage: Awaited<ReturnType<MessageService['createUserMessage']>>;
+    let aiPlaceholder: Awaited<ReturnType<MessageService['createAIPlaceholder']>> | undefined;
     try {
-      userMessage = await this.messageService.createUserMessage({
-        conversationId,
-        senderId: user._id.toString(),
-        content: canonicalContent,
-        attachedFileIds: dto.attachedFileIds,
-        webSearchEnabled: dto.webSearchEnabled,
-        modelId: dto.modelId,
-        reasoningEffort: effectiveReasoningEffort,
-        agentIds: effectiveAgentIds,
-        memberIds: dto.memberIds,
-        requestId,
-        parentMessageId: dto.parentMessageId,
-        interaction: canonicalInteraction,
-        interactions: canonicalInteractions,
-        replayContext: {
-          requestFingerprint,
+      // Fail fast before ANY persistence when we will need the AI service and
+      // it is unavailable — a cold gRPC no longer leaves an orphan user
+      // message claiming the request id.
+      if (willRunAi && !this.streamService.isAvailable()) {
+        this.logger.warn('AI service unavailable for response', { conversationId });
+        throw new ServiceUnavailableException(
+          ErrorCode.CHAT_GRPC_UNAVAILABLE,
+          'AI service is currently unavailable',
+        );
+      }
+
+      if (willRunAi) {
+        // Single-transaction turn: user message + AI placeholder + linkage.
+        const turn = await this.messageService.createUserMessageWithAiPlaceholder({
+          conversationId,
+          senderId: user._id.toString(),
           content: canonicalContent,
-          taskSummary: canonicalTaskSummary,
-          attachedFileIds: dto.attachedFileIds ?? [],
-          webSearchEnabled: dto.webSearchEnabled ?? false,
-          deepSearchEnabled: dto.deepSearchEnabled ?? false,
+          attachedFileIds: dto.attachedFileIds,
+          webSearchEnabled: dto.webSearchEnabled,
           modelId: dto.modelId,
           reasoningEffort: effectiveReasoningEffort,
-          agentIds: effectiveAgentIds ?? [],
-          skillIds: dto.skillIds ?? [],
-          connectorRepo: dto.connectorRepo,
-          clientContext: dto.clientContext,
-          playbookHandoffId: dto.playbookHandoffId,
-          governanceOverride: governedRuntime ? {
-            runtimeMode: 'governed',
-            primaryAgentId: governedRuntime.primaryAgentId,
-            allowedAgentIds: governedRuntime.allowedAgentIds,
-            workspaceIds: governedRuntime.workspaceIds,
-            revisionId: governedRuntime.revisionId,
-            scopeId: governedRuntime.scopeId,
-          } : undefined,
-        },
-      });
+          agentIds: effectiveAgentIds,
+          memberIds: dto.memberIds,
+          requestId,
+          parentMessageId: dto.parentMessageId,
+          interaction: canonicalInteraction,
+          interactions: canonicalInteractions,
+          replayContext: {
+            requestFingerprint,
+            content: canonicalContent,
+            taskSummary: canonicalTaskSummary,
+            attachedFileIds: dto.attachedFileIds ?? [],
+            webSearchEnabled: dto.webSearchEnabled ?? false,
+            deepSearchEnabled: dto.deepSearchEnabled ?? false,
+            modelId: dto.modelId,
+            reasoningEffort: effectiveReasoningEffort,
+            agentIds: effectiveAgentIds ?? [],
+            skillIds: dto.skillIds ?? [],
+            connectorRepo: dto.connectorRepo,
+            clientContext: dto.clientContext,
+            playbookHandoffId: dto.playbookHandoffId,
+            governanceOverride: governedRuntime ? {
+              runtimeMode: 'governed',
+              primaryAgentId: governedRuntime.primaryAgentId,
+              allowedAgentIds: governedRuntime.allowedAgentIds,
+              workspaceIds: governedRuntime.workspaceIds,
+              revisionId: governedRuntime.revisionId,
+              scopeId: governedRuntime.scopeId,
+            } : undefined,
+          },
+          placeholder: {
+            conversationId,
+            senderId: user._id.toString(),
+            modelId: dto.modelId,
+            reasoningEffort: effectiveReasoningEffort,
+            requestId,
+          },
+        });
+        userMessage = turn.userMessage;
+        aiPlaceholder = turn.aiMessage;
+      } else {
+        userMessage = await this.messageService.createUserMessage({
+          conversationId,
+          senderId: user._id.toString(),
+          content: canonicalContent,
+          attachedFileIds: dto.attachedFileIds,
+          webSearchEnabled: dto.webSearchEnabled,
+          modelId: dto.modelId,
+          reasoningEffort: effectiveReasoningEffort,
+          agentIds: effectiveAgentIds,
+          memberIds: dto.memberIds,
+          requestId,
+          parentMessageId: dto.parentMessageId,
+          interaction: canonicalInteraction,
+          interactions: canonicalInteractions,
+          replayContext: {
+            requestFingerprint,
+            content: canonicalContent,
+            taskSummary: canonicalTaskSummary,
+            attachedFileIds: dto.attachedFileIds ?? [],
+            webSearchEnabled: dto.webSearchEnabled ?? false,
+            deepSearchEnabled: dto.deepSearchEnabled ?? false,
+            modelId: dto.modelId,
+            reasoningEffort: effectiveReasoningEffort,
+            agentIds: effectiveAgentIds ?? [],
+            skillIds: dto.skillIds ?? [],
+            connectorRepo: dto.connectorRepo,
+            clientContext: dto.clientContext,
+            playbookHandoffId: dto.playbookHandoffId,
+            governanceOverride: governedRuntime ? {
+              runtimeMode: 'governed',
+              primaryAgentId: governedRuntime.primaryAgentId,
+              allowedAgentIds: governedRuntime.allowedAgentIds,
+              workspaceIds: governedRuntime.workspaceIds,
+              revisionId: governedRuntime.revisionId,
+              scopeId: governedRuntime.scopeId,
+            } : undefined,
+          },
+        });
+      }
       endBackendPreAdkStage('userMessagePersistenceMs');
+      // The placeholder now persists inside the same transaction; the stage
+      // stays in the breakdown with its true (≈0) cost.
+      beginBackendPreAdkStage('aiPlaceholderPersistenceMs');
+      endBackendPreAdkStage('aiPlaceholderPersistenceMs');
       if (dto.playbookHandoffId) {
         await this.playbookHandoffService.attachUserMessage(dto.playbookHandoffId, user._id.toString(), userMessage.id);
       }
@@ -424,27 +525,11 @@ export class MessageController {
 
     let aiMessageId: string | undefined;
 
-    // Create AI placeholder and start stream
-    if (!dto.memberIds?.length) {
-      // Fail fast if AI service is unavailable when we actually need it
-      if (!this.streamService.isAvailable()) {
-        this.logger.warn('AI service unavailable for response', { conversationId });
-        throw new ServiceUnavailableException(
-          ErrorCode.CHAT_GRPC_UNAVAILABLE,
-          'AI service is currently unavailable',
-        );
-      }
-
-      beginBackendPreAdkStage('aiPlaceholderPersistenceMs');
-      const aiMessage = await this.messageService.createAIPlaceholder({
-        conversationId,
-        questionMessageId: userMessage.id,
-        senderId: user._id.toString(),
-        modelId: dto.modelId,
-        reasoningEffort: effectiveReasoningEffort,
-        requestId,
-      });
-      endBackendPreAdkStage('aiPlaceholderPersistenceMs');
+    // Start stream — the placeholder was persisted with the user message in
+    // the single turn transaction (fail-fast for AI availability ran before
+    // persistence), so the placeholder's presence marks an AI turn.
+    if (aiPlaceholder) {
+      const aiMessage = aiPlaceholder;
       aiMessageId = aiMessage.id;
 
       const latencyStart: ConversationLatencyStartContext = {
@@ -497,7 +582,7 @@ export class MessageController {
     } else {
       this.logger.log('Skipping AI response due to member tags', {
         conversationId,
-        memberTagCount: dto.memberIds.length,
+        memberTagCount: dto.memberIds?.length ?? 0,
       });
     }
 
@@ -657,6 +742,7 @@ export class MessageController {
         frontendRenderMs: dto.frontendRenderMs,
         browserRenderOnlyMs: dto.browserRenderOnlyMs,
         quality: dto.quality,
+        clientMetrics: dto.clientMetrics,
       },
     );
   }

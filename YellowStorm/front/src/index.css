@@ -550,3 +550,13 @@
 .react-flow__node.dragging * {
   transition: none !important;
 }
+
+/* Shiki dual-theme output (code-block.tsx highlights once with the `themes`
+   option): the single HTML carries both themes as CSS variables, light is the
+   default color; dark mode flips them. Only spans that carry Shiki's inline
+   variables are flipped, so transformer-generated spans (line numbers) keep
+   their Tailwind color. Background stays the app token via code-block.tsx. */
+.dark .shiki,
+.dark .shiki span[style] {
+  color: var(--shiki-dark) !important;
+}

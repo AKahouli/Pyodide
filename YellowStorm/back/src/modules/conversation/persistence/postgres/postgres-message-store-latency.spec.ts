@@ -74,8 +74,7 @@ describe('PostgresMessageStore.updateFrontendLatency', () => {
     );
   });
 
-  it('preserves a nested ADK pre-provider breakdown through the frontend-paint merge', async () => {
-    const breakdown = {
+  it('preserves a nested ADK pre-provider breakdown through the frontend-paint merge', async () => {    const breakdown = {
       protobufToDictMs: 14,
       requestLoggingMs: 412,
       sessionRunnerSetupMs: 207,
@@ -112,6 +111,36 @@ describe('PostgresMessageStore.updateFrontendLatency', () => {
           adkPreProviderBreakdown: breakdown,
           backendPreAdkBreakdown: backendBreakdown,
         }),
+      }),
+    );
+  });
+
+  it('persists client streaming counters alongside the paint metric', async () => {
+    const clientMetrics = {
+      clickToPostMs: 12,
+      shikiHighlightCalls: 2,
+      shikiHighlightMs: 34,
+      shikiHighlightMaxChars: 4_200,
+      queueEventsReceived: 180,
+      queueFlushes: 11,
+      queueCoalescedEvents: 180,
+      queueMaxDepth: 24,
+      queueMaxFlushDurationMs: 6,
+      storeCommits: 11,
+    };
+    const currentRow = makeRow({ requestId: 'req-1', latencyMetrics: serverMetrics });
+    const updatedRow = makeRow({
+      requestId: 'req-1',
+      latencyMetrics: { ...serverMetrics, ...patch, clientMetrics },
+    });
+    const { tx, updateBuilder } = makeTx(currentRow, updatedRow);
+    const store = new PostgresMessageStore(makeDb(tx));
+
+    await store.updateFrontendLatency(currentRow.id as string, 'req-1', { ...patch, clientMetrics });
+
+    expect(updateBuilder.set).toHaveBeenCalledWith(
+      expect.objectContaining({
+        latencyMetrics: expect.objectContaining({ clientMetrics }),
       }),
     );
   });

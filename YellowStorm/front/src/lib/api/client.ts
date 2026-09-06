@@ -11,7 +11,6 @@ import axios, {
 import { API_CONFIG, AUTH_STORAGE_KEYS, API_ENDPOINTS } from './config';
 import { notificationsService } from '@/modules/notifications';
 import { conversationStreamService } from '@/modules/conversation/stream';
-import { translateConversation } from '@/modules/conversation/translation';
 import { conversationV2StreamService } from '@/modules/conversation-v2/conversationV2Stream';
 
 // Types
@@ -53,14 +52,9 @@ function isConversationMessageRequest(request: InternalAxiosRequestConfig): bool
 
 async function retryRequestAfterRefresh(request: InternalAxiosRequestConfig): Promise<unknown> {
   if (isConversationMessageRequest(request)) {
-    const streamReady = await conversationStreamService.waitForConnection();
-    if (!streamReady) {
-      return Promise.reject({
-        code: 'ERR_NETWORK',
-        message: translateConversation('sse.connectionErrors.rejected'),
-        statusCode: 503,
-      } satisfies ApiError);
-    }
+    // Never wait on the SSE handshake: the POST proceeds and the server
+    // replays stream events missed by the (re)connecting pipe.
+    conversationStreamService.ensureConnected();
   }
 
   return apiClient(request);

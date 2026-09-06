@@ -130,12 +130,31 @@ export interface StreamChunkLatencyData {
   quality: ConversationLatencyQuality;
 }
 
+/**
+ * Optional client-side streaming counters (click→POST span, Shiki highlight
+ * work, ingestion-queue coalescing) reported alongside the paint metric.
+ * All values are pre-clamped by the client; the DTO re-validates the bounds.
+ */
+export interface ClientStreamMetricsPatch {
+  clickToPostMs?: number;
+  shikiHighlightCalls?: number;
+  shikiHighlightMs?: number;
+  shikiHighlightMaxChars?: number;
+  queueEventsReceived?: number;
+  queueFlushes?: number;
+  queueCoalescedEvents?: number;
+  queueMaxDepth?: number;
+  queueMaxFlushDurationMs?: number;
+  storeCommits?: number;
+}
+
 /** Payload accepted by the idempotent frontend-paint reporting endpoint. */
 export interface FrontendLatencyPatch {
   frontendFirstChunkPaintedEpochMs: number;
   frontendRenderMs: number;
   browserRenderOnlyMs?: number;
   quality: ConversationLatencyQuality;
+  clientMetrics?: ClientStreamMetricsPatch;
 }
 
 /** Upper bound for a plausible single-stage duration in milliseconds. */

@@ -14,7 +14,8 @@ export type StreamEventType =
   | 'conversation_name_generated'
   | 'message_created'
   | 'message_updated'
-  | 'mention_created';
+  | 'mention_created'
+  | 'stream_resync_required';
 
 export interface StreamConnectedEvent {
   type: 'connected';
@@ -104,6 +105,22 @@ export interface MentionCreatedEvent {
   };
 }
 
+/**
+ * Emitted instead of a replay when the server cannot restore event
+ * continuity for a reconnecting client (cursor older than the bounded
+ * replay window, or a cursor issued by another process). The client must
+ * reconcile from canonical conversation state; replay is intentionally
+ * withheld so partial history is never mixed with a resync.
+ */
+export interface StreamResyncRequiredEvent {
+  type: 'stream_resync_required';
+  data: {
+    reason: 'cursor_gap' | 'unknown_instance';
+    lastSeenCursor?: string;
+    oldestRetainedCursor?: string;
+  };
+}
+
 export type StreamEvent =
   | StreamConnectedEvent
   | StreamHeartbeatEvent
@@ -114,7 +131,8 @@ export type StreamEvent =
   | ConversationNameGeneratedEvent
   | MessageCreatedEvent
   | MessageUpdatedEvent
-  | MentionCreatedEvent;
+  | MentionCreatedEvent
+  | StreamResyncRequiredEvent;
 
 export interface InternalSSEConnection {
   connectionId: string;

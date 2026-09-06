@@ -105,10 +105,12 @@ export function sanitizePublicComponent(component: MessageComponent, options: Sa
     const content = component.data.content
       .replace(/\{[^{}\r\n]*"content"\s*:\s*"YELLOWSTORM_ATTACHMENT_SENTINEL_\d+(?:\\n)?"[^{}\r\n]*\}/g, '')
       .replace(/YELLOWSTORM_ATTACHMENT_SENTINEL_\d+(?:\\n)?/g, '');
+    // Answer text is product content, not diagnostics: served without redaction or length bounds.
+    const { content: _rawContent, ...rest } = component.data;
     return {
       id: component.id,
       type: component.type,
-      data: sanitizePublicToolData({ ...component.data, content }, options),
+      data: { ...sanitizePublicToolData(rest, options), content },
     };
   }
   if (component.type === 'agentActivity') {

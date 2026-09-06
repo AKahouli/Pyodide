@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useId, useRef, useState, type ReactNode } from 'react';
 import { AlertTriangle, Bot, CheckCircle2, ChevronRight, Download, Eye, FileText, Loader2, RotateCcw, XCircle } from 'lucide-react';
-import { AIMessageContent, type MarkdownHeadingInfo } from '@/components/ai-elements/ai-message-content';
+import { AIMessageContent, type MarkdownHeadingInfo, type MessageContentPart } from '@/components/ai-elements/ai-message-content';
 import { CodeBlockCopyButton } from '@/components/ai-elements/code-block';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { cn } from '@/lib/utils';
@@ -367,6 +367,20 @@ function MobileActivityTimeline({ components, nodes, isStreaming }: Readonly<{ c
   );
 }
 
+/**
+ * Value equality for projected content parts: unchanged parts keep the
+ * previous object identity across drain ticks so memoized part renderers can
+ * skip re-render (Phase 4 — immutable completed blocks).
+ */
+function sameContentPart(previous: MessageContentPart, next: MessageContentPart): boolean {
+  if (previous.type !== next.type) return false;
+  const left = previous as unknown as Record<string, unknown>;
+  const right = next as unknown as Record<string, unknown>;
+  const keys = Object.keys(left);
+  if (keys.length !== Object.keys(right).length) return false;
+  return keys.every((key) => Object.is(left[key], right[key]));
+}
+
 export function ConversationAssistantBubble(props: Readonly<NarrativeProps>) {
   const { t } = useModuleTranslation('conversation');
   const settings = useConversationSettings();
@@ -422,11 +436,21 @@ export function ConversationAssistantBubble(props: Readonly<NarrativeProps>) {
     if (pane) pane.scrollTop = pane.scrollHeight;
   }, [activityCount]);
   let answerBatch: MessageComponent[] = [];
+  const partsCacheRef = useRef(new Map<number, MessageContentPart>());
   const flush = () => {
     if (!answerBatch.length) return;
-    const parts = mapConversationComponentsToContentParts(answerBatch).map((part) =>
-      part.type === 'text' ? { ...part, content: sanitizeAssistantDisplayText(part.content, redactSensitiveText) } : part,
-    );
+    const previousParts = partsCacheRef.current;
+    const nextCache = new Map<number, MessageContentPart>();
+    const parts = mapConversationComponentsToContentParts(answerBatch).map((part, index) => {
+      const base = part.type === 'text' ? { ...part, content: sanitizeAssistantDisplayText(part.content, redactSensitiveText) } : part;
+      const previous = previousParts.get(index);
+      // Reuse the previous identity when nothing changed so the memoized
+      // AIMessagePart subtree can skip re-render for completed parts.
+      const stable = previous !== undefined && sameContentPart(previous, base) ? previous : base;
+      nextCache.set(index, stable);
+      return stable;
+    });
+    partsCacheRef.current = nextCache;
     if (props.isStreaming && parts.at(-1)?.type === 'text') (parts.at(-1) as { showCursor?: boolean }).showCursor = true;
     if (parts.length) {
       const outlinePartKey = answerNodes.length;

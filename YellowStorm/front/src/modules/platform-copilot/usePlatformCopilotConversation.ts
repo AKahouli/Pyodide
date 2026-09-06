@@ -174,8 +174,9 @@ export function usePlatformCopilotConversation(open: boolean, clientContext: Pla
       : crypto.randomUUID());
     retryRef.current = { fingerprint, requestId };
     try {
-      const connected = await conversationStreamService.waitForConnection();
-      if (!connected) throw new Error('Conversation stream is unavailable');
+      // POST starts immediately; the shared SSE pipe connects in parallel and
+      // the server replays any events missed by the (re)connecting pipe.
+      conversationStreamService.ensureConnected();
       const response = await sendMessage(conversationId, {
         content,
         requestId,

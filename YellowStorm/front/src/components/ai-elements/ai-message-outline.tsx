@@ -38,15 +38,26 @@ type HeadingComponentProps = { node?: unknown; children?: React.ReactNode };
  * (`outline-<outlineKey>-<tag>-<n>`, n unique per key) and collect heading
  * metadata during the render pass. Tags without a base override (h4–h6) are
  * rendered here with their classes — non-outline consumers never see them.
+ *
+ * `options.seqBase` offsets the per-key sequence so multiple markdown
+ * segments of the same part (stable prefix + active tail, see TextPartRenderer)
+ * can never collide: pass distinct bases per segment. Ids are positional
+ * within a segment, so headings keep their id while the segment grows.
  */
-export function applyOutlineHeadingOverrides(components: Record<string, unknown>, outlineKey: string, collected: MarkdownHeadingInfo[]): Record<string, unknown> {
+export function applyOutlineHeadingOverrides(
+  components: Record<string, unknown>,
+  outlineKey: string,
+  collected: MarkdownHeadingInfo[],
+  options?: { seqBase?: number },
+): Record<string, unknown> {
+  const seqBase = options?.seqBase ?? 0;
   const withOutline = { ...components };
   let headingSeq = 0;
   for (const tag of OUTLINE_HEADING_TAGS) {
     const level = Number(tag[1]) as MarkdownHeadingInfo['level'];
     const baseRenderer = components[tag] as ((props: { children?: React.ReactNode; id?: string }) => React.ReactNode) | undefined;
     withOutline[tag] = (headingProps: HeadingComponentProps) => {
-      const id = `outline-${outlineKey}-${tag}-${headingSeq++}`;
+      const id = `outline-${outlineKey}-${tag}-${seqBase + headingSeq++}`;
       collected.push({ id, level, text: extractHastText(headingProps.node).replace(/\s+/g, ' ').trim() });
       if (baseRenderer) return baseRenderer({ children: headingProps.children, id });
       const Tag = tag as keyof React.JSX.IntrinsicElements;

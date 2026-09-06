@@ -1,4 +1,4 @@
-import { Controller, Sse, Req, Header, MessageEvent } from '@nestjs/common';
+import { Controller, Sse, Req, Header, MessageEvent, Query, UnauthorizedException } from '@nestjs/common';
 import { ApiTags } from '@nestjs/swagger';
 import { concat, Observable, of } from 'rxjs';
 import { Request } from 'express';
@@ -12,6 +12,16 @@ interface RequestWithSseUser extends Request {
   sseUser?: JwtPayload;
 }
 
+/**
+ * The reconnect cursor is an opaque replay pointer (`<boot>:<seq>`); it is
+ * never a database id, so a strict shape check at this trust boundary is
+ * sufficient. Anything malformed is treated as a first connection.
+ */
+function parseReplayCursor(raw: string | undefined): string | undefined {
+  if (!raw) return undefined;
+  return /^[A-Za-z0-9_-]{1,100}:[0-9]{1,15}$/.test(raw) ? raw : undefined;
+}
+
 @ApiTags('Conversation Stream')
 @Controller('conversations/stream')
 export class StreamController {
@@ -21,14 +31,20 @@ export class StreamController {
   @Header('X-Accel-Buffering', 'no')
   @Public()
   @StreamAuth()
-  stream(@Req() req: RequestWithSseUser): Observable<MessageEvent> {
-    const user = req.sseUser!;
+  stream(
+    @Req() req: RequestWithSseUser,
+    @Query('cursor') cursor?: string,
+  ): Observable<MessageEvent> {
+    // StreamAuth resolves the token before the handler runs; this guard keeps
+    // the type system honest if the decorator contract is ever bypassed.
+    const user = req.sseUser;
+    if (!user) throw new UnauthorizedException('Missing stream authentication');
     const userId = user.sub;
     const sessionId = user.sessionId || 'unknown';
-    const connectionId = `${userId}:${sessionId}:${Date.now()}`;
+    const connectionId = `${userId}:${sessionId}:${String(Date.now())}`;
 
     // Nest owns @Sse response headers; mutating them here is already too late.
-    req.socket?.setNoDelay(true);
+    req.socket.setNoDelay(true);
 
     const disconnect$ = new Subject<void>();
 
@@ -43,6 +59,7 @@ export class StreamController {
       userId,
       connectionId,
       disconnect$,
+      parseReplayCursor(cursor),
     );
 
     if (!stream$) {

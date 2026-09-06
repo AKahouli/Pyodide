@@ -2,14 +2,21 @@
 
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
+import { streamMetrics } from '@/modules/conversation/utils/stream-metrics';
 import { CheckIcon, CopyIcon } from 'lucide-react';
 import { type ComponentProps, createContext, type HTMLAttributes, useContext, useEffect, useRef, useState } from 'react';
-import { type BundledLanguage, codeToHtml, type ShikiTransformer } from 'shiki';
+import type { BundledLanguage, ShikiTransformer } from 'shiki';
 
 type CodeBlockProps = HTMLAttributes<HTMLDivElement> & {
   code: string;
   language: BundledLanguage;
   showLineNumbers?: boolean;
+  /**
+   * While streaming, the block renders plain monospace text and performs NO
+   * Shiki work; highlighting happens once, after finalization (dual theme in
+   * a single codeToHtml call).
+   */
+  isStreaming?: boolean;
 };
 
 type CodeBlockContextType = {
@@ -34,58 +41,101 @@ const lineNumberTransformer: ShikiTransformer = {
   },
 };
 
-export async function highlightCode(code: string, language: BundledLanguage, showLineNumbers = false) {
-  const transformers: ShikiTransformer[] = showLineNumbers ? [lineNumberTransformer] : [];
+// Shiki is loaded lazily: the conversation route must not pay for the
+// highlighter until a code block actually finalizes (Phase 7 boundary).
+type ShikiModule = typeof import('shiki');
+let shikiModulePromise: Promise<ShikiModule> | null = null;
 
-  return await Promise.all([
-    codeToHtml(code, {
-      lang: language,
-      theme: 'one-light',
-      transformers,
-    }),
-    codeToHtml(code, {
-      lang: language,
-      theme: 'one-dark-pro',
-      transformers,
-    }),
-  ]);
+function loadShiki(): Promise<ShikiModule> {
+  shikiModulePromise ??= import('shiki');
+  return shikiModulePromise;
 }
 
-export const CodeBlock = ({ code, language, showLineNumbers = false, className, children, ...props }: CodeBlockProps) => {
+/**
+ * Single-flight dual-theme highlight. One codeToHtml call emits both themes
+ * via CSS variables (light default; .dark flips them — see index.css),
+ * replacing the previous two-pass light+dark highlighting.
+ */
+async function highlightCode(code: string, language: BundledLanguage, showLineNumbers = false): Promise<string> {
+  const transformers: ShikiTransformer[] = showLineNumbers ? [lineNumberTransformer] : [];
+  const { codeToHtml } = await loadShiki();
+  return codeToHtml(code, {
+    lang: language,
+    themes: { light: 'one-light', dark: 'one-dark-pro' },
+    defaultColor: 'light',
+    transformers,
+  });
+}
+
+// Bounded result cache: finalized code blocks re-render (tab switches, scroll
+// virtualization) without re-paying the highlight. Promise values also dedupe
+// concurrent requests for the same input.
+const HIGHLIGHT_CACHE_LIMIT = 50;
+const highlightCache = new Map<string, Promise<string>>();
+
+function cachedHighlight(code: string, language: BundledLanguage, showLineNumbers: boolean): Promise<string> {
+  const key = `${language}\u0000${showLineNumbers ? '1' : '0'}\u0000${code}`;
+  const cached = highlightCache.get(key);
+  if (cached) {
+    // Refresh insertion order so the oldest key is evicted first.
+    highlightCache.delete(key);
+    highlightCache.set(key, cached);
+    return cached;
+  }
+  const startedAt = performance.now();
+  const pending = highlightCode(code, language, showLineNumbers)
+    .catch((error) => {
+      highlightCache.delete(key);
+      throw error;
+    })
+    .finally(() => {
+      streamMetrics.recordHighlight(code.length, performance.now() - startedAt);
+    });
+  highlightCache.set(key, pending);
+  while (highlightCache.size > HIGHLIGHT_CACHE_LIMIT) {
+    const oldest = highlightCache.keys().next().value;
+    if (oldest === undefined) break;
+    highlightCache.delete(oldest);
+  }
+  return pending;
+}
+
+export const CodeBlock = ({ code, language, showLineNumbers = false, isStreaming = false, className, children, ...props }: CodeBlockProps) => {
   const [html, setHtml] = useState<string>('');
-  const [darkHtml, setDarkHtml] = useState<string>('');
-  const mounted = useRef(false);
 
   useEffect(() => {
-    highlightCode(code, language, showLineNumbers).then(([light, dark]) => {
-      if (!mounted.current) {
-        setHtml(light);
-        setDarkHtml(dark);
-        mounted.current = true;
-      }
+    if (isStreaming) return;
+    let cancelled = false;
+    cachedHighlight(code, language, showLineNumbers).then((highlighted) => {
+      if (!cancelled) setHtml(highlighted);
     });
-
     return () => {
-      mounted.current = false;
+      cancelled = true;
     };
-  }, [code, language, showLineNumbers]);
+  }, [code, language, showLineNumbers, isStreaming]);
 
   return (
     <CodeBlockContext.Provider value={{ code }}>
       <div className={cn('group relative w-full overflow-hidden rounded-md border bg-background text-foreground', className)} {...props}>
-        <div className='relative'>
-          <div
-            className='overflow-auto dark:hidden [&>pre]:m-0 [&>pre]:bg-background! [&>pre]:p-4 [&>pre]:text-foreground! [&>pre]:text-sm [&_code]:font-mono [&_code]:text-sm'
-            // biome-ignore lint/security/noDangerouslySetInnerHtml: "this is needed."
-            dangerouslySetInnerHTML={{ __html: html }}
-          />
-          <div
-            className='hidden overflow-auto dark:block [&>pre]:m-0 [&>pre]:bg-background! [&>pre]:p-4 [&>pre]:text-foreground! [&>pre]:text-sm [&_code]:font-mono [&_code]:text-sm'
-            // biome-ignore lint/security/noDangerouslySetInnerHtml: "this is needed."
-            dangerouslySetInnerHTML={{ __html: darkHtml }}
-          />
-          {children && <div className='absolute top-2 right-2 flex items-center gap-2'>{children}</div>}
-        </div>
+        {isStreaming ? (
+          // Streaming placeholder: same geometry (padding, font size, scroll)
+          // as the highlighted block, zero Shiki cost per drain tick.
+          <div className='relative'>
+            <pre className='m-0 overflow-auto bg-background p-4 text-sm text-foreground'>
+              <code className='font-mono text-sm whitespace-pre'>{code}</code>
+            </pre>
+            {children && <div className='absolute top-2 right-2 flex items-center gap-2'>{children}</div>}
+          </div>
+        ) : (
+          <div className='relative'>
+            <div
+              className='overflow-auto [&>pre]:m-0 [&>pre]:bg-background! [&>pre]:p-4 [&>pre]:text-sm [&_code]:font-mono [&_code]:text-sm'
+              // biome-ignore lint/security/noDangerouslySetInnerHtml: "this is needed."
+              dangerouslySetInnerHTML={{ __html: html }}
+            />
+            {children && <div className='absolute top-2 right-2 flex items-center gap-2'>{children}</div>}
+          </div>
+        )}
       </div>
     </CodeBlockContext.Provider>
   );

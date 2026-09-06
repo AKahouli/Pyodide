@@ -11,6 +11,7 @@ describe('MessageController.sendMessage sticky routing', () => {
   let messageService: {
     createUserMessage: jest.Mock;
     createAIPlaceholder: jest.Mock;
+    createUserMessageWithAiPlaceholder: jest.Mock;
     markStreamFailed: jest.Mock;
     findTurnByRequestId: jest.Mock;
     getMessageDocument: jest.Mock;
@@ -54,14 +55,28 @@ describe('MessageController.sendMessage sticky routing', () => {
   } as any;
 
   beforeEach(() => {
+    const createUserMessageMock = jest.fn().mockResolvedValue({
+      id: new Types.ObjectId().toString(),
+      agentIds: [],
+    });
+    const createAIPlaceholderMock = jest.fn().mockResolvedValue({
+      id: new Types.ObjectId().toString(),
+    });
     messageService = {
-      createUserMessage: jest.fn().mockResolvedValue({
-        id: new Types.ObjectId().toString(),
-        agentIds: [],
-      }),
-      createAIPlaceholder: jest.fn().mockResolvedValue({
-        id: new Types.ObjectId().toString(),
-      }),
+      createUserMessage: createUserMessageMock,
+      createAIPlaceholder: createAIPlaceholderMock,
+      // Compose the merged-turn mock from the two existing mocks so call
+      // assertions on either remain meaningful.
+      createUserMessageWithAiPlaceholder: jest.fn(
+        async (data: { placeholder: Record<string, unknown> }) => {
+          const userMessage = await createUserMessageMock(data);
+          const aiMessage = await createAIPlaceholderMock({
+            ...data.placeholder,
+            questionMessageId: userMessage.id,
+          });
+          return { userMessage, aiMessage };
+        },
+      ),
       markStreamFailed: jest.fn(),
       findTurnByRequestId: jest.fn().mockResolvedValue(null),
       getMessageDocument: jest.fn(),

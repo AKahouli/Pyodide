@@ -15,7 +15,7 @@ const apiClientMock = vi.hoisted(() => {
   return client;
 });
 const reconnectConversationMock = vi.hoisted(() => vi.fn());
-const waitForConversationMock = vi.hoisted(() => vi.fn());
+const ensureConversationPipeMock = vi.hoisted(() => vi.fn());
 const reconnectNotificationsMock = vi.hoisted(() => vi.fn());
 const reconnectConversationV2Mock = vi.hoisted(() => vi.fn());
 
@@ -44,12 +44,8 @@ vi.mock('@/modules/notifications', () => ({
 vi.mock('@/modules/conversation/stream', () => ({
   conversationStreamService: {
     reconnectWithNewToken: reconnectConversationMock,
-    waitForConnection: waitForConversationMock,
+    ensureConnected: ensureConversationPipeMock,
   },
-}));
-
-vi.mock('@/modules/conversation/translation', () => ({
-  translateConversation: (key: string) => key,
 }));
 
 vi.mock('@/modules/conversation-v2/conversationV2Stream', () => ({
@@ -64,14 +60,11 @@ describe('apiClient token refresh', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     localStorage.clear();
-    waitForConversationMock.mockResolvedValue(true);
     apiClientPostMock.mockResolvedValue({ data: { data: { accessToken: 'fresh-token' } } });
     apiClientMock.mockResolvedValue({ data: { success: true } });
   });
 
-  it('waits for the replacement conversation pipe before retrying a message POST', async () => {
-    let resolvePipe: (connected: boolean) => void = () => undefined;
-    waitForConversationMock.mockImplementation(() => new Promise((resolve) => { resolvePipe = resolve; }));
+  it('retries a message POST immediately after refresh while nudging the conversation pipe', async () => {
     const originalRequest = { method: 'post', url: '/conversations/conversation-1/messages', headers: {} };
 
     const retry = responseErrorHandler({
@@ -79,13 +72,10 @@ describe('apiClient token refresh', () => {
       response: { status: 401, data: { error: { code: 'ERR_1003' } } },
     });
 
-    await vi.waitFor(() => expect(reconnectConversationMock).toHaveBeenCalledTimes(1));
-    expect(apiClientMock).not.toHaveBeenCalledWith(originalRequest);
+    await expect(retry).resolves.toEqual({ data: { success: true } });
 
-    resolvePipe(true);
-    await retry;
-
-    expect(waitForConversationMock).toHaveBeenCalledTimes(1);
+    expect(reconnectConversationMock).toHaveBeenCalledTimes(1);
+    expect(ensureConversationPipeMock).toHaveBeenCalledTimes(1);
     expect(apiClientMock).toHaveBeenCalledWith(expect.objectContaining({
       ...originalRequest,
       headers: { Authorization: 'Bearer fresh-token' },

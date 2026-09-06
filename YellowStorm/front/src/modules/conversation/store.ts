@@ -10,8 +10,9 @@ import { getStreamErrorMessage } from './utils';
 import { conversationStreamService } from './stream';
 import { translateConversation } from './translation';
 import { computeFrontendLatency, mergeLatencyMetrics, type FrontendPaintComputation } from './utils/latency-paint';
+import { streamMetrics } from './utils/stream-metrics';
 import { createLatencyPaintController, type PendingLatencyPaint } from './store-latency';
-import type { Conversation, ConversationSummary, Message, MessageComponent, StreamingComponent, SendMessagePayload, CreateReportPayload, StreamStartEvent, StreamChunkEvent, StreamCompleteEvent, StreamErrorEvent, ConversationNameGeneratedEvent, SSEConnectionStatus, MessageCreatedEvent, MessageUpdatedEvent, StreamChunkLatencyData } from './types';
+import type { Conversation, ConversationSummary, Message, MessageComponent, StreamingComponent, SendMessagePayload, CreateReportPayload, StreamStartEvent, StreamChunkEvent, StreamCompleteEvent, StreamErrorEvent, ConversationNameGeneratedEvent, SSEConnectionStatus, MessageCreatedEvent, MessageUpdatedEvent, StreamResyncRequiredEvent, StreamChunkLatencyData } from './types';
 
 export type { PendingLatencyPaint };
 
@@ -101,45 +102,67 @@ export function applyChunksToComponents(
 }
 
 /**
- * Streaming chunk queue with throttled drain.
- * Chunks arrive fast from SSE but are applied ONE at a time at a controlled
- * pace, producing a smooth word-by-word typewriter effect.
- * If the queue grows too large the drain speed increases to prevent lag.
+ * Streaming chunk queue with frame-oriented coalescing.
+ * Chunks arrive fast from SSE; they are applied in ONE store transaction per
+ * animation frame (per-frame batching coalesces consecutive deltas to the
+ * same component). Hidden tabs have no RAF, so a coarse timer takes over and
+ * the queue stays bounded: on overflow the backlog is dropped and canonical
+ * state is refetched instead of freezing the tab with a synchronous flush.
  */
+const MAX_QUEUED_CHUNKS = 500;
+const HIDDEN_TAB_FLUSH_INTERVAL_MS = 250;
+
 class StreamingBuffer {
   private queue: BufferedStreamChunk[] = [];
-  private drainTimer: ReturnType<typeof setTimeout> | null = null;
+  private scheduled = false;
+  private rafId: number | null = null;
+  private hiddenTimer: ReturnType<typeof setTimeout> | null = null;
   private flushCallback: ((chunks: BufferedStreamChunk[]) => void) | null = null;
-  private readonly BASE_INTERVAL_MS = 30; // Base ms between each chunk render
+  private overflowCallback: (() => void) | null = null;
 
   setFlushCallback(callback: (chunks: BufferedStreamChunk[]) => void) {
     this.flushCallback = callback;
   }
 
+  /** Invoked when the bounded queue overflows; the store reconciles from canonical state. */
+  setOverflowCallback(callback: () => void) {
+    this.overflowCallback = callback;
+  }
+
   addChunk(action: 'add' | 'update' | 'delete', component: StreamingComponent, revision?: number) {
+    streamMetrics.recordQueueEnqueue();
     this.queue.push({ action, component, revision });
 
-    // Safety cap: if queue grew too large (e.g. tab was backgrounded), flush everything
-    if (this.queue.length > 500) {
-      this.flush();
+    // Hidden-tab safety cap: rather than an unbounded synchronous flush (the
+    // old >500 behavior), drop the backlog instead of freezing the tab. The
+    // stream continues merging onto the retained tail; there is no mid-stream
+    // replay of the dropped span — completion reconciliation restores the
+    // canonical persisted message.
+    if (this.queue.length > MAX_QUEUED_CHUNKS) {
+      this.queue = [];
+      this.cancelScheduledFlush();
+      const overflow = this.overflowCallback;
+      if (overflow) overflow();
       return;
     }
 
-    this.scheduleDrain();
+    this.scheduleFlush();
   }
 
-  /** Synchronously drain all remaining chunks (used on stream end). */
+  /** Synchronously drain all remaining chunks (used on stream end / terminal events). */
   flush() {
-    this.cancelDrain();
+    this.cancelScheduledFlush();
     if (this.queue.length > 0 && this.flushCallback) {
       const chunks = this.queue.splice(0);
+      const startedAt = performance.now();
       this.flushCallback(chunks);
+      streamMetrics.recordQueueFlush(chunks.length, performance.now() - startedAt, 1);
     }
   }
 
   clear() {
     this.queue = [];
-    this.cancelDrain();
+    this.cancelScheduledFlush();
   }
 
   discardThrough(revision: number) {
@@ -148,41 +171,60 @@ class StreamingBuffer {
 
   // --- internals ---
 
-  private scheduleDrain() {
-    if (this.drainTimer || this.queue.length === 0) return;
-    this.drainTimer = setTimeout(() => this.drainOne(), this.getDrainInterval());
-  }
-
-  /** Adaptive interval: speed up when queue is building to avoid falling behind. */
-  private getDrainInterval(): number {
-    const len = this.queue.length;
-    if (len > 20) return 5;
-    if (len > 10) return 15;
-    return this.BASE_INTERVAL_MS;
-  }
-
-  private drainOne() {
-    this.drainTimer = null;
-    if (this.queue.length === 0 || !this.flushCallback) return;
-
-    // Batch-drain when queue is large to reduce React re-render count
-    const batchSize = this.queue.length > 20 ? 5 : this.queue.length > 10 ? 3 : 1;
-    const chunks = this.queue.splice(0, batchSize);
-    this.flushCallback(chunks);
-
-    // Continue draining if more queued
-    this.scheduleDrain();
-  }
-
-  private cancelDrain() {
-    if (this.drainTimer) {
-      clearTimeout(this.drainTimer);
-      this.drainTimer = null;
+  private scheduleFlush() {
+    if (this.scheduled || this.queue.length === 0) return;
+    this.scheduled = true;
+    const hidden = typeof document !== 'undefined' && document.hidden;
+    if (hidden) {
+      // RAF is suspended while hidden; drain on a coarse timer instead.
+      this.hiddenTimer = setTimeout(() => {
+        this.hiddenTimer = null;
+        this.scheduled = false;
+        this.flushQueued();
+      }, HIDDEN_TAB_FLUSH_INTERVAL_MS);
+    } else if (typeof requestAnimationFrame === 'function') {
+      this.rafId = requestAnimationFrame(() => {
+        this.rafId = null;
+        this.scheduled = false;
+        this.flushQueued();
+      });
+    } else {
+      this.hiddenTimer = setTimeout(() => {
+        this.hiddenTimer = null;
+        this.scheduled = false;
+        this.flushQueued();
+      }, 0);
     }
+  }
+
+  private flushQueued() {
+    if (this.queue.length === 0 || !this.flushCallback) return;
+    const chunks = this.queue.splice(0);
+    const startedAt = performance.now();
+    this.flushCallback(chunks);
+    streamMetrics.recordQueueFlush(chunks.length, performance.now() - startedAt, 1);
+  }
+
+  private cancelScheduledFlush() {
+    if (this.rafId !== null) {
+      cancelAnimationFrame(this.rafId);
+      this.rafId = null;
+    }
+    if (this.hiddenTimer) {
+      clearTimeout(this.hiddenTimer);
+      this.hiddenTimer = null;
+    }
+    this.scheduled = false;
   }
 }
 
 const streamingBuffer = new StreamingBuffer();
+streamingBuffer.setOverflowCallback(() => {
+  // Canonical resync: the queue dropped older chunks, so reconcile the
+  // conversation from its snapshot (same path as stream_resync_required).
+  const conversationId = useConversationStore.getState().currentConversationId;
+  if (conversationId) void useConversationStore.getState().fetchMessages(conversationId);
+});
 
 function cancelPendingStreamReconciliation(): void {
   if (pendingStreamReconcileTimer) clearTimeout(pendingStreamReconcileTimer);
@@ -198,10 +240,6 @@ function schedulePendingStreamReconciliation(reconcile: () => Promise<void>): vo
     pendingStreamReconcileTimer = null;
     void reconcile();
   }, PENDING_STREAM_RECONCILE_INTERVAL_MS);
-}
-
-function isImmediateStreamingComponent(component: StreamingComponent): boolean {
-  return component.type === 'agentActivity' || component.type === 'toolActivity' || component.type === 'artifact';
 }
 
 function hasErrorComponent(message: { components?: Array<{ type: string }> }): boolean {
@@ -538,6 +576,7 @@ interface ConversationState {
   onConversationNameGenerated: (event: ConversationNameGeneratedEvent) => void;
   onMessageCreated: (event: MessageCreatedEvent) => void;
   onMessageUpdated: (event: MessageUpdatedEvent) => void;
+  onStreamResyncRequired: (event: StreamResyncRequiredEvent) => void;
   reconcilePendingStream: () => Promise<void>;
   onMentionCreated: (event: { conversationId: string; messageId: string; userId: string }) => void;
   clearTypewriter: () => void;
@@ -1199,6 +1238,8 @@ export const useConversationStore = create<ConversationState>()(
       },
 
       sendMessage: async (conversationId, payload) => {
+        // Each turn owns a fresh client-metrics window (Phase 0 telemetry).
+        streamMetrics.reset();
         const tempId = `temp-${Date.now()}`;
         const optimisticMsg: Message = {
           id: tempId,
@@ -1237,11 +1278,13 @@ export const useConversationStore = create<ConversationState>()(
         try {
           // Strip attachedFiles (frontend-only for optimistic display) before sending to API
           const { attachedFiles: _, ...apiPayload } = payload;
-          // New conversations can submit before the app-level EventSource handshake finishes.
-          // Keep the optimistic message visible while waiting briefly for stream delivery.
-          if (!await conversationStreamService.waitForConnection()) {
-            throw new Error(translateConversation('sse.connectionErrors.rejected'));
-          }
+          // Phase 0 telemetry: store entry → POST dispatch (no connection wait on this span).
+          const sendStartedAt = performance.now();
+          // POST starts immediately; the shared SSE pipe connects/reconnects in
+          // parallel and the server replays any events it misses — the old
+          // awaited readiness gate is gone by design (replay-safe streaming).
+          conversationStreamService.ensureConnected();
+          streamMetrics.recordClickToPost(performance.now() - sendStartedAt);
           const result = await api.sendMessage(conversationId, apiPayload);
 
           // Replace optimistic message with real user message (with deduplication).
@@ -1570,21 +1613,9 @@ export const useConversationStore = create<ConversationState>()(
           return;
         }
 
-        if (isImmediateStreamingComponent(event.component)) {
-          streamingBuffer.flush();
-          set((current) => {
-            const components = applyChunksToComponents(current.streamingComponents, [{ action: event.action, component: event.component }]);
-            return {
-              streamingComponents: components,
-              ...(components.length > 0 && current.isAwaitingFirstChunk
-                ? { isAwaitingFirstChunk: false, awaitingConversationId: null }
-                : {}),
-            };
-          });
-          return;
-        }
-
-        // Current conversation — buffer the chunk instead of immediately updating state
+        // Immediate components (agent/tool/artifact activity) ride the same
+        // frame queue as text: relative order with content is preserved and
+        // the whole batch lands in one store commit per frame.
         streamingBuffer.addChunk(event.action, event.component, event.revision);
       },
 
@@ -1617,8 +1648,11 @@ export const useConversationStore = create<ConversationState>()(
           set({ pendingLatencyPaint: latencyPaint.pending });
         }
         if (!payload) return;
+        // Piggyback the client streaming counters on the accepted report; the
+        // window closes with this turn so the next send starts from zero.
+        const clientMetrics = streamMetrics.snapshotAndReset();
         api
-          .reportFrontendLatency(conversationId, messageId, payload)
+          .reportFrontendLatency(conversationId, messageId, clientMetrics ? { ...payload, clientMetrics } : payload)
           .catch((err) => console.error('[ConversationStore] frontend latency report failed:', err));
       },
 
@@ -2100,6 +2134,19 @@ export const useConversationStore = create<ConversationState>()(
         } finally {
           if (pendingStreamReconcileTarget === target) pendingStreamReconcileInFlight = false;
         }
+      },
+
+      /**
+       * The server could not replay a missed event window (cursor gap or
+       * process switch), so SSE history is no longer contiguous. Reconcile
+       * the viewed conversation from canonical state; live events keep
+       * flowing and stay ordered by the existing revision guards.
+       */
+      onStreamResyncRequired: (event) => {
+        console.warn('[ConversationStore] stream resync required', { reason: event.reason });
+        const conversationId = get().currentConversationId;
+        if (!conversationId) return;
+        void get().fetchMessages(conversationId);
       },
 
       onMentionCreated: (event) => {

@@ -96,6 +96,15 @@ export interface MessageCursorInput extends Omit<MessagePageInput, 'page'> {
 export interface MessageStore {
   createUser(input: CreateUserMessageData): Promise<MessageRecord>;
   createAiPlaceholder(input: CreateAIPlaceholderData): Promise<MessageRecord>;
+  /**
+   * Persist the user turn message and its AI placeholder in ONE transaction
+   * (single round trip): user insert + conversation counters + placeholder
+   * insert + question.answerMessageId linkage commit or roll back together.
+   */
+  createUserWithAiPlaceholder(input: {
+    user: CreateUserMessageData;
+    placeholder: Omit<CreateAIPlaceholderData, 'questionMessageId'>;
+  }): Promise<{ user: MessageRecord; placeholder: MessageRecord }>;
   completeAi(
     input: CompleteAIMessageData & { guardrailDecision?: GuardrailDecisionMetadata },
   ): Promise<MessageRecord | null>;
