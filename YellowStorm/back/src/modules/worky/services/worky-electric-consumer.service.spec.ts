@@ -10,7 +10,7 @@ const makeService = () => {
     findOneAndUpdate: jest.fn(),
   };
   const planProjectionModel = {
-    findOneAndUpdate: jest.fn(),
+    findOneAndUpdate: jest.fn().mockReturnValue({ exec: () => Promise.resolve({ acknowledged: true }) }),
   };
   const cursorModel = {
     findOne: jest.fn(),
@@ -47,7 +47,6 @@ const makeService = () => {
         'worky.electricUrl': 'http://electric:3000/v1/shape',
         'worky.electricSessionsTable': 'sessions',
         'worky.electricMessagesTable': 'messages',
-        'worky.electricSessionsTable': 'sessions',
         'worky.electricPlansTable': 'plans',
         'worky.electricPlanStepsTable': 'plan_steps',
         'worky.electricMessageComponentsTable': 'message_components',
@@ -667,15 +666,16 @@ describe('WorkyElectricConsumerService.handleSessions', () => {
     );
   });
 
-  it('ignores non-terminal statuses (running/blocked) so a live turn is not killed', async () => {
+  it('emits stream.updated but not stream.terminal for non-terminal statuses (running/blocked)', async () => {
     const { service, streamService, events } = makeService();
+    streamService.findByAiSessionId.mockResolvedValue({ streamId: 'stream-1', ownerUserId: 'owner-1' });
 
     await service.handleSessions([
       { key: '"public"."sessions"/"sess-1"', headers: { operation: 'update' }, value: { id: 'sess-1', user_id: 'u1', status: 'running' } },
       { key: '"public"."sessions"/"sess-1"', headers: { operation: 'update' }, value: { id: 'sess-1', user_id: 'u1', status: 'blocked' } },
     ]);
 
-    expect(events.emit).not.toHaveBeenCalled();
-    expect(streamService.findByAiSessionId).not.toHaveBeenCalled();
+    const emitCalls = events.emit.mock.calls;
+    expect(emitCalls.every((call: unknown[]) => (call[2] as Record<string, unknown>)?.type !== 'stream.terminal')).toBe(true);
   });
 });

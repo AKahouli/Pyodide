@@ -17,7 +17,6 @@ import {
   PgSessionRow,
   PgMessageRow,
   PgPlanRow,
-  PgSessionRow,
   PgPlanStepRow,
   PgMessageComponentRow,
   PgPlanStepComponentRow,
@@ -82,11 +81,6 @@ export class WorkyElectricConsumerService implements OnModuleInit, OnModuleDestr
   }
 
   async onModuleInit(): Promise<void> {
-    await this.subscribe(
-      'sessions',
-      this.config.get<string>('worky.electricSessionsTable')!,
-      (m) => this.handleSessions(m),
-    );
     await this.subscribe(
       'messages',
       this.config.get<string>('worky.electricMessagesTable')!,
@@ -401,20 +395,9 @@ export class WorkyElectricConsumerService implements OnModuleInit, OnModuleDestr
     }
   }
 
-  /**
-   * Session lifecycle. The turn/session runs async behind the RunTask ack, so
-   * the frontend only learns it ENDED from here: when the session status goes
-   * terminal (completed | failed | canceled | stopped) we emit `stream.terminal`
-   * so the "manager is working" flag clears and the Stop button releases. The
-   * gRPC path emits this nowhere else (every other `stream.terminal` emitter is
-   * in the unused HTTP-runtime path), which is why a failed planner turn left
-   * the button hanging. Non-terminal statuses (running/blocked/waiting) are
-   * ignored — the plan/step shapes carry those live updates. `error:true` on
-   * 'failed' lets the UI flag it; the cause itself is already in the chat as an
-   * `error` message-component.
-   */
   async handleSessions(messages: unknown[]): Promise<void> {
     for (const m of messages as any[]) {
+      if (this.destroyed) return;
       if (isControlMessage(m)) {
         if (this.debug) {
           this.logger.debug('[worky-electric] control', { shape: 'sessions', headers: m.headers });
@@ -423,34 +406,40 @@ export class WorkyElectricConsumerService implements OnModuleInit, OnModuleDestr
       }
       if (!isChangeMessage(m)) continue;
       if (m.headers.operation === 'delete') continue;
-      try {
+      await this.retryProjection('sessions', async () => {
         const row = m.value as unknown as PgSessionRow;
-        if (!isTerminalSessionStatus(row.status)) continue;
         const target = await this.streamService.findByAiSessionId(row.id);
         if (!target) {
           this.logger.warn('[worky-electric] unknown session', { shape: 'sessions', sid: row.id });
-          continue;
+          return;
         }
-        this.logger.log('[worky-electric] session terminal → stream.terminal', {
-          sid: row.id, status: row.status, streamId: target.streamId });
-        this.events.emit(target.ownerUserId, target.streamId, {
-          type: 'stream.terminal',
-          emittedAt: Date.now(),
-          payload: { error: row.status.toLowerCase() === 'failed', source: `session-${row.status}` },
-        });
+        const streamOid = this.toStreamOid(target.streamId);
+        const { set, event } = mapSession(row, target.streamId);
+        await this.planProjectionModel
+          .findOneAndUpdate(
+            { streamId: streamOid },
+            { $set: { ...set, streamId: streamOid } },
+            { upsert: true, new: true, setDefaultsOnInsert: true },
+          )
+          .exec();
+        this.events.emit(target.ownerUserId, target.streamId, event);
+        if (isTerminalSessionStatus(row.status)) {
+          this.events.emit(target.ownerUserId, target.streamId, {
+            type: 'stream.terminal',
+            emittedAt: Date.now(),
+            payload: { error: row.status.toLowerCase() === 'failed', source: `session-${row.status}` },
+          });
+        }
         if (this.debug) {
           this.logger.debug('[worky-electric] applied', {
             shape: 'sessions',
             streamId: target.streamId,
             ownerUserId: target.ownerUserId,
-            eventType: 'stream.terminal',
+            eventType: event.type,
             status: row.status,
           });
         }
-      } catch (err) {
-        this.logger.error('Failed to process session row', { error: (err as Error).message });
-        continue;
-      }
+      });
     }
   }
 
@@ -499,33 +488,6 @@ export class WorkyElectricConsumerService implements OnModuleInit, OnModuleDestr
             set,
           });
         }
-      });
-    }
-  }
-
-  async handleSessions(messages: unknown[]): Promise<void> {
-    for (const m of messages as any[]) {
-      if (this.destroyed) return;
-      if (isControlMessage(m)) continue;
-      if (!isChangeMessage(m)) continue;
-      if (m.headers.operation === 'delete') continue;
-      await this.retryProjection('sessions', async () => {
-        const row = m.value as unknown as PgSessionRow;
-        const target = await this.streamService.findByAiSessionId(row.id);
-        if (!target) {
-          this.logger.warn('[worky-electric] unknown session', { shape: 'sessions', sid: row.id });
-          return;
-        }
-        const streamOid = this.toStreamOid(target.streamId);
-        const { set, event } = mapSession(row, target.streamId);
-        await this.planProjectionModel
-          .findOneAndUpdate(
-            { streamId: streamOid },
-            { $set: { ...set, streamId: streamOid } },
-            { upsert: true, new: true, setDefaultsOnInsert: true },
-          )
-          .exec();
-        this.events.emit(target.ownerUserId, target.streamId, event);
       });
     }
   }
