@@ -53,6 +53,7 @@ async def run_step_agent(*, system_prompt: str, user_msg: str, tools: list[Any],
     graph = build_step_agent_graph(tools)
     result = await graph.ainvoke(
         {"messages": [SystemMessage(content=system_prompt), HumanMessage(content=user_msg)], "tool_iterations": 0, "guardrail_blocked": False, "guardrail_reason": ""},
+        config={"recursion_limit": 2 * max(context.max_tool_iterations, 0) + 2},
         context=context,
     )
     last = result["messages"][-1]

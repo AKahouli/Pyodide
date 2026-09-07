@@ -10,6 +10,7 @@ from src.smart_rag.tools.utilities.connector_tools import (
     ConnectorToolContext,
     create_connector_tools,
 )
+from src.smart_rag.infrastructure.external.purpose_aware_mcp import DISPLAY_PURPOSE_KEY
 
 
 def _connector_binding(
@@ -17,11 +18,12 @@ def _connector_binding(
     auth_headers=None,
     fixed_params=None,
     action_key="search",
+    connector_slug="workspace",
 ):
     return {
         "connector_id": "connector-1",
         "connector_name": "Workspace MCP",
-        "connector_slug": "workspace",
+        "connector_slug": connector_slug,
         "mcp_transport_type": "streamable_http",
         "mcp_server_url": "https://example.com/mcp",
         "auth_headers": auth_headers or {},
@@ -46,14 +48,23 @@ def _first_connector_tool(
     brain_documents=None,
     session_id=None,
     action_key="search",
+    connector_slug="workspace",
+    user_id=None,
 ):
     tools = create_connector_tools(
-        [_connector_binding(parameter_schema, auth_headers, fixed_params, action_key)],
+        [_connector_binding(
+            parameter_schema,
+            auth_headers,
+            fixed_params,
+            action_key,
+            connector_slug,
+        )],
         ConnectorToolContext(
             workspace_id=workspace_id,
             workspace_names=workspace_names,
             brain_documents=brain_documents,
             session_id=session_id,
+            user_id=user_id,
         ),
     )
     return tools[-1]
@@ -100,6 +111,35 @@ def test_connector_tool_name_matches_nest_runtime_contract() -> None:
 
     assert tool.name == "workspace_search"
     assert tool.custom_schema["name"] == "workspace_search"
+
+
+def test_connector_tool_declares_display_purpose_but_does_not_forward_it(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured = {}
+
+    async def fake_call_mcp_tool(*args, **kwargs):
+        captured["params"] = args[4]
+        return {"text": "ok"}
+
+    monkeypatch.setattr("src.flow_engine.mcp.call_mcp_tool", fake_call_mcp_tool)
+    tool = _first_connector_tool({
+        "type": "object",
+        "properties": {"query": {"type": "string"}},
+        "required": ["query"],
+    })
+
+    declaration = tool._get_declaration()
+    asyncio.run(tool.func(
+        query="revenue",
+        display_purpose="Find the requested revenue evidence",
+    ))
+
+    assert DISPLAY_PURPOSE_KEY == "display_purpose"
+    assert declaration.parameters.required == ["query", DISPLAY_PURPOSE_KEY]
+    assert declaration.parameters.properties[DISPLAY_PURPOSE_KEY].description
+    assert inspect.signature(tool.func).parameters[DISPLAY_PURPOSE_KEY].default is inspect.Parameter.empty
+    assert captured["params"] == {"query": "revenue"}
 
 
 def test_connector_tool_name_is_openai_safe_and_matches_nest_contract() -> None:
@@ -352,21 +392,26 @@ def test_connector_tool_injects_streamable_http_file_workspace_headers(
         },
         brain_documents=[
             {
-                "filename": "report.pdf",
-                "workspace_id": "workspace-1",
-                "workspace_name": "workspace-alpha",
-            },
-            {
-                "file_name": "budget.xlsx",
+                "file_name": "private-notes.txt",
                 "workspace_id": "workspace-2",
                 "workspace_name": "workspace-beta",
+                "filepath": "user-1/workspace-beta/private-notes.txt",
+            },
+            {
+                "filename": "Search Explanation.docx",
+                "workspace_id": "workspace-1",
+                "workspace_name": "workspace-alpha",
+                "filepath": "user-1/workspace-alpha/Search Explanation.docx",
             },
         ],
         session_id="conversation-1",
+        connector_slug="code-interpreter",
+        user_id="user-1",
     )
 
     asyncio.run(tool.func(query="revenue"))
 
+    assert tool.name == "code-interpreter_search"
     assert captured["params"] == {"query": "revenue", "workspace_id": "workspace-1"}
     assert captured["auth_headers"] == {
         "Authorization": "Bearer token",
@@ -376,7 +421,7 @@ def test_connector_tool_injects_streamable_http_file_workspace_headers(
         "x-conversation-id": "conversation-1",
         # The run's own Ceph folder rides last, so the sandbox mounts somewhere a
         # connector can drop a file mid-run and the code interpreter can read it.
-        "x-workspace-paths": "workspace-alpha,workspace-beta,user-1/system_conversation-1",
+        "x-workspace-paths": "user-1/workspace-alpha,user-1/workspace-beta,user-1/system_conversation-1",
     }
 
 
@@ -504,6 +549,82 @@ def test_connector_tool_injects_single_file_name_header(
     asyncio.run(tool.func(query="revenue"))
 
     assert captured["auth_headers"]["file_name"] == "report.pdf"
+
+
+def test_code_interpreter_mounts_selected_workspace_without_selected_documents(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured = {}
+
+    async def fake_call_mcp_tool(*args, **kwargs):
+        captured["auth_headers"] = kwargs.get("auth_headers")
+        return {"text": "ok"}
+
+    monkeypatch.setattr("src.flow_engine.mcp.call_mcp_tool", fake_call_mcp_tool)
+    tool = _first_connector_tool(
+        {},
+        workspace_id="selected-workspace",
+        auth_headers={"X-User-Id": "user-1"},
+        brain_documents=[
+            {
+                "filename": "private.txt",
+                "workspace_id": "private-workspace",
+                "workspace_name": "private-prefix",
+                "filepath": "private-owner/private-prefix/private.txt",
+            },
+        ],
+        connector_slug="code-interpreter",
+        user_id="user-1",
+    )
+
+    asyncio.run(tool.func())
+
+    assert captured["auth_headers"]["Workspace-Id"] == (
+        "selected-workspace,private-workspace"
+    )
+    assert captured["auth_headers"]["x-workspace-paths"] == (
+        "user-1/selected-workspace,private-owner/private-prefix"
+    )
+
+
+def test_code_interpreter_keeps_selected_root_when_workspace_aliases_collide(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured = {}
+
+    async def fake_call_mcp_tool(*args, **kwargs):
+        captured["auth_headers"] = kwargs.get("auth_headers")
+        return {"text": "ok"}
+
+    monkeypatch.setattr("src.flow_engine.mcp.call_mcp_tool", fake_call_mcp_tool)
+    tool = _first_connector_tool(
+        {},
+        workspace_id="selected-workspace",
+        auth_headers={"X-User-Id": "user-1"},
+        brain_documents=[
+            {
+                "filename": "private.txt",
+                "workspace_id": "private-workspace",
+                "workspace_name": "shared-prefix",
+                "filepath": "private-owner/shared-prefix/private.txt",
+            },
+            {
+                "filename": "requested.txt",
+                "workspace_id": "selected-workspace",
+                "workspace_name": "shared-prefix",
+                "filepath": "user-1/shared-prefix/requested.txt",
+            },
+        ],
+        connector_slug="code-interpreter",
+        user_id="user-1",
+    )
+
+    asyncio.run(tool.func())
+
+    assert captured["auth_headers"]["Workspace-Id"] == (
+        "selected-workspace,private-workspace"
+    )
+    assert captured["auth_headers"]["x-workspace-paths"] == "user-1/shared-prefix"
 
 
 def test_read_section_tool_passes_images_through_with_runtime_tool_context(

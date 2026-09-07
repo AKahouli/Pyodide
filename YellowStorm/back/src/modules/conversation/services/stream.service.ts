@@ -15,7 +15,7 @@ import * as path from 'node:path';
 import { StreamGatewayService } from './stream-gateway.service';
 import { MessageService } from './message.service';
 import { ConversationService } from './conversation.service';
-import { MessageComponent, ComponentType, type CorrectionReplayContext, type MessageReplayContext } from '../interfaces/message.interface';
+import { MessageComponent, ComponentType, type ConversationClientContextV1, type CorrectionReplayContext, type MessageReplayContext } from '../interfaces/message.interface';
 import {
   getComponentType as sharedGetComponentType,
   extractComponentData as sharedExtractComponentData,
@@ -29,6 +29,9 @@ import { ErrorCode } from '../../exceptions/constants/error-codes';
 import { UsageService } from '../../usage';
 import { WorkspaceDocumentService } from '../../workspace/workspace-document.service';
 import { WorkspaceService } from '../../workspace/workspace.service';
+import { WorkspaceShareService } from '../../workspace/workspace-share.service';
+import { RunCodeSourceScopeService } from '../../workspace/services/run-code-source-scope.service';
+import type { RunCodeAttachmentSource } from '../../workspace/interfaces/run-code-source.interface';
 import { DocumentStatus } from '../../workspace/schemas/workspace-document.schema';
 import { AgentService } from '../../agent/agent.service';
 import { IGrpcAgent, IGrpcWorkspaceContext } from '../../agent/interfaces/agent.interface';
@@ -42,6 +45,15 @@ import { randomUUID } from 'node:crypto';
 import { ResponseReliabilityService } from './response-reliability.service';
 import { ConversationAgentRequestBuilder, type BuiltAgentExecutionRequest } from './conversation-agent-request.builder';
 import { SemanticModelService } from '../../semantic-model/services/semantic-model.service';
+import { PLATFORM_COPILOT } from '../../agent/constants/platform-copilot.constants';
+import { sanitizePublicComponent } from '../utils/public-component-sanitizer';
+import { ConversationSettingsService } from '../../system/conversation-settings.service';
+import type {
+  ConversationLatencyMetricsV1,
+  ConversationLatencyStartContext,
+  StreamChunkLatencyData,
+} from '../interfaces/latency.interface';
+import { LatencyEnvelopeTracker } from '../utils/latency-metrics';
 
 export interface StreamRequest {
   content: string;
@@ -51,6 +63,7 @@ export interface StreamRequest {
   deepSearchEnabled?: boolean;
   modelId?: string;
   semanticModelId?: string;
+  reasoningEffort?: string;
   agentIds?: string[];
   connectorRepo?: {
     connectorId: string;
@@ -60,6 +73,8 @@ export interface StreamRequest {
     repoUrl?: string;
   };
   skillIds?: string[];
+  clientContext?: ConversationClientContextV1;
+  playbookHandoffId?: string;
 }
 
 export interface StreamGovernanceOverride {
@@ -76,8 +91,20 @@ export interface ConversationHistoryEntry {
   text: string;
 }
 
-// Log every Nth chunk to avoid overwhelming logs
-const CHUNK_LOG_INTERVAL = 10;
+export interface ActiveStreamSnapshot {
+  conversationId: string;
+  messageId: string;
+  revision: number;
+  components: MessageComponent[];
+}
+
+interface StreamTerminalCoordinator {
+  started: boolean;
+  settlement: Promise<void>;
+  resolve: () => void;
+  reject: (error: unknown) => void;
+  cancelIdleTimeout?: () => void;
+}
 
 @Injectable()
 export class StreamService implements OnModuleInit, OnModuleDestroy {
@@ -87,7 +114,10 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
   private lastCheckedAt?: Date;
   private activeStreams = new Map<string, Set<string>>(); // userId -> Set<conversationId>
   private componentBuffers = new Map<string, Map<string, MessageComponent>>(); // streamKey -> (componentId -> accumulated component)
+  private streamRevisions = new Map<string, number>(); // streamKey -> latest component-buffer revision
   private activeCalls = new Map<string, grpc.ClientReadableStream<any>>(); // streamKey -> gRPC call
+  private streamExecutionLeases = new Map<string, string>(); // streamKey -> durable lease token
+  private streamTerminalCoordinators = new Map<string, StreamTerminalCoordinator>();
   private streamUsage = new Map<
     string,
     { inputTokens: number; outputTokens: number; model: string; modelId?: string }
@@ -103,11 +133,14 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
     @Inject(forwardRef(() => WorkspaceDocumentService))
     private readonly workspaceDocumentService: WorkspaceDocumentService,
     private readonly workspaceService: WorkspaceService,
+    private readonly workspaceShareService: WorkspaceShareService,
+    private readonly runCodeSourceScopeService: RunCodeSourceScopeService,
     private readonly agentService: AgentService,
     private readonly modelsService: ModelsService,
     private readonly skillService: SkillService,
     private readonly responseReliabilityService: ResponseReliabilityService,
     private readonly agentRequestBuilder: ConversationAgentRequestBuilder,
+    private readonly conversationSettings: ConversationSettingsService,
     private readonly semanticModelService: SemanticModelService,
   ) {
     this.logger.setContext('StreamService');
@@ -157,33 +190,34 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
     this.initGrpcClient();
   }
 
-  onModuleDestroy() {
+  async onModuleDestroy(): Promise<void> {
     // Cancel all active gRPC calls
     for (const [, call] of this.activeCalls) {
       call.cancel();
     }
     this.activeCalls.clear();
 
-    // Persist all active buffers
     for (const [streamKey, buffer] of this.componentBuffers) {
-      const [, , messageId] = streamKey.split(':');
+      const [, conversationId, messageId] = streamKey.split(':');
       if (messageId && buffer.size > 0) {
-        this.messageService
-          .completeAIMessage({
+        try {
+          await this.finalizeRunningTools(buffer, 'stopped', conversationId, [], { broadcast: false });
+          await this.messageService.completeAIMessage({
             messageId,
             components: Array.from(buffer.values()),
-          })
-          .catch((err) => {
-            this.logger.error('Failed to persist buffer on shutdown', {
-              messageId,
-              error: (err as Error).message,
-            });
           });
+        } catch (err) {
+          this.logger.error('Failed to persist buffer on shutdown', {
+            messageId,
+            error: (err as Error).message,
+          });
+        }
       }
     }
 
     this.activeStreams.clear();
     this.componentBuffers.clear();
+    this.streamRevisions.clear();
 
     if (this.chatbotClient) {
       grpc.closeClient(this.chatbotClient);
@@ -495,7 +529,7 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
           type: 'document',
           document: {
             filepath: doc.path || '',
-            filename: doc.filename || '',
+            filename: doc.originalName || doc.filename || '',
             workspace_name: this.workspaceNameFromPath(doc.path, doc.workspaceId),
             workspace_id: doc.workspaceId,
             source: doc.path || '',
@@ -589,8 +623,12 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
     userEmail: string = '',
     username?: string,
     governanceOverride?: StreamGovernanceOverride,
+    latencyStart?: ConversationLatencyStartContext,
   ): Promise<void> {
     const logOpts: LogOptions = { requestId };
+    // Admin-managed switch (Admin > Conversation). When off, the trace context
+    // is not forwarded to ADK, so no envelope returns and nothing is persisted.
+    const latencyInstrumentationEnabled = await this.conversationSettings.isLatencyInstrumentationEnabled();
 
     this.logger.debug(
       'Stream start requested',
@@ -609,12 +647,24 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
     );
     if (!this.isGrpcAvailable) {
       this.logger.error('gRPC unavailable', { conversationId, messageId }, logOpts);
-      this.sendErrorEvent(userId, conversationId, ErrorCode.CHAT_GRPC_UNAVAILABLE);
+      await this.sendErrorEvent(userId, conversationId, messageId, ErrorCode.CHAT_GRPC_UNAVAILABLE);
       throw new ServiceUnavailableException(
         ErrorCode.CHAT_GRPC_UNAVAILABLE,
         'AI service is currently unavailable',
       );
     }
+    const leaseId = randomUUID();
+    const leaseDurationMs = 90_000;
+    const claimed = await this.messageService.claimStreamExecution(messageId, leaseId, leaseDurationMs);
+    if (!claimed) {
+      throw new ConflictException(
+        ErrorCode.CHAT_ALREADY_STREAMING,
+        'This response is already streaming',
+      );
+    }
+    let leaseHeartbeat: ReturnType<typeof setInterval> | undefined;
+    let leaseLost = false;
+    try {
     // Check concurrency
     const maxStreams = this.configService.get<number>('conversation.maxConcurrentStreams', 5);
     const userStreams = this.activeStreams.get(userId);
@@ -638,7 +688,7 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
         },
         logOpts,
       );
-      this.sendErrorEvent(userId, conversationId, ErrorCode.CHAT_STREAM_LIMIT);
+      await this.sendErrorEvent(userId, conversationId, messageId, ErrorCode.CHAT_STREAM_LIMIT);
       throw new AppException({
         code: ErrorCode.CHAT_STREAM_LIMIT,
         message: 'Maximum concurrent streams reached',
@@ -649,7 +699,7 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
     // Check if conversation already streaming
     if (userStreams?.has(conversationId)) {
       this.logger.warn('Conversation already streaming', { conversationId }, logOpts);
-      this.sendErrorEvent(userId, conversationId, ErrorCode.CHAT_ALREADY_STREAMING);
+      await this.sendErrorEvent(userId, conversationId, messageId, ErrorCode.CHAT_ALREADY_STREAMING);
       throw new ConflictException(
         ErrorCode.CHAT_ALREADY_STREAMING,
         'This conversation is already streaming',
@@ -663,7 +713,33 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
     this.activeStreams.get(userId)!.add(conversationId);
 
     const streamKey = `${userId}:${conversationId}:${messageId}`;
+    this.streamExecutionLeases.set(streamKey, leaseId);
+    const assertLeaseOwned = () => {
+      if (leaseLost) {
+        throw new ConflictException(ErrorCode.CHAT_ALREADY_STREAMING, 'Stream execution lease was lost');
+      }
+    };
+    leaseHeartbeat = setInterval(() => {
+      void this.messageService.renewStreamExecution(messageId, leaseId, leaseDurationMs)
+        .then((renewed) => {
+          if (!renewed) {
+            leaseLost = true;
+            this.activeCalls.get(streamKey)?.cancel();
+          }
+        })
+        .catch((error: unknown) => {
+          leaseLost = true;
+          this.activeCalls.get(streamKey)?.cancel();
+          this.logger.error('Stream execution lease renewal failed', {
+            conversationId,
+            messageId,
+            error: error instanceof Error ? error.message : String(error),
+          }, logOpts);
+        });
+    }, 30_000);
+    leaseHeartbeat.unref?.();
     this.componentBuffers.set(streamKey, new Map());
+    this.streamRevisions.set(streamKey, 0);
     this.streamUsage.set(streamKey, {
       inputTokens: 0,
       outputTokens: 0,
@@ -683,6 +759,7 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
 
     // Resolve conversation members for broadcasting
     const memberIds = await this.resolveMemberIds(conversationId);
+    assertLeaseOwned();
 
     // Send stream_start event to all members
     await this.streamGateway.broadcastToConversation(
@@ -690,6 +767,7 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
       type: 'stream_start',
       data: { conversationId, messageId },
     });
+    assertLeaseOwned();
 
     const builtRequest = await this.buildAgentExecutionRequest(
       userId,
@@ -705,19 +783,34 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
         agentIds: request.agentIds ?? [],
         skillIds: request.skillIds ?? [],
         connectorRepo: request.connectorRepo,
+        clientContext: request.clientContext,
+        playbookHandoffId: request.playbookHandoffId,
         governanceOverride,
       },
       username,
       undefined,
       logOpts,
+      conversationId,
+      messageId,
     );
+    assertLeaseOwned();
+    if (!await this.messageService.renewStreamExecution(messageId, leaseId, leaseDurationMs)) {
+      leaseLost = true;
+      assertLeaseOwned();
+    }
     const useSingleAgent = builtRequest.rpc === 'RunSingleAgent';
     const grpcRequest = builtRequest.payload;
 
     const timeoutMs = this.configService.get<number>('conversation.grpcTimeoutMs', 120000);
     this.logger.debug(
-      `GRPC request Prepared with an idle timeout of ${timeoutMs}ms (rpc=${useSingleAgent ? 'RunSingleAgent' : 'RunAgentTeam'})`,
-      grpcRequest,
+      'gRPC request prepared',
+      {
+        streamKey,
+        conversationId,
+        messageId,
+        rpc: builtRequest.rpc,
+        timeoutMs,
+      },
       logOpts,
     );
     try {
@@ -732,6 +825,8 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
         requestId,
         username,
         useSingleAgent,
+        latencyStart,
+        latencyInstrumentationEnabled,
       );
     } catch (error) {
       this.logger.error(
@@ -747,6 +842,50 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
       this.cleanupStream(userId, conversationId, streamKey);
       throw error;
     }
+    } catch (error) {
+      if ((error as { code?: ErrorCode }).code !== ErrorCode.CHAT_ALREADY_STREAMING) {
+        await this.messageService.markStreamFailed(messageId, leaseId);
+      }
+      throw error;
+    } finally {
+      if (leaseHeartbeat) clearInterval(leaseHeartbeat);
+      await this.messageService.releaseStreamExecution(messageId, leaseId);
+      for (const [streamKey, activeLeaseId] of this.streamExecutionLeases) {
+        if (activeLeaseId === leaseId) this.streamExecutionLeases.delete(streamKey);
+      }
+    }
+  }
+
+  private async buildRunCodeAttachmentSources(
+    attachedFileIds: string[],
+  ): Promise<RunCodeAttachmentSource[]> {
+    if (attachedFileIds.length === 0) return [];
+    const documents = await this.workspaceDocumentService.findByIds(attachedFileIds);
+    return documents.flatMap((document) =>
+      document.workspaceId && document.path
+        ? [{ workspaceId: document.workspaceId, path: document.path }]
+        : [],
+    );
+  }
+
+  isConversationStreaming(userId: string, conversationId: string): boolean {
+    return this.activeStreams.get(userId)?.has(conversationId) ?? false;
+  }
+
+  getActiveStreamSnapshot(conversationId: string): ActiveStreamSnapshot | null {
+    for (const [streamKey, buffer] of this.componentBuffers) {
+      const [, activeConversationId, messageId] = streamKey.split(':');
+      if (activeConversationId !== conversationId || !messageId) continue;
+
+      return {
+        conversationId,
+        messageId,
+        revision: this.streamRevisions.get(streamKey) ?? 0,
+        components: Array.from(buffer.values(), (component) => this.sanitizeComponent(component)),
+      };
+    }
+
+    return null;
   }
 
   async buildAgentExecutionRequest(
@@ -757,15 +896,14 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
     correctionReplayContext?: CorrectionReplayContext,
     logOpts: LogOptions = {},
     sessionId = conversationId,
+    runtimeCorrelationId = sessionId,
   ): Promise<BuiltAgentExecutionRequest> {
     const conversation = await this.conversationService.getConversationDocument(conversationId);
-    const systemWorkspaceId = conversation.systemWorkspaceId?.toString();
-    const groupMembers = conversation.groupMeta?.isGroup
+    const systemWorkspaceId = conversation.systemWorkspaceId;
+    const groupMembers = conversation.isGroup
       ? await this.conversationService.getGroupMembers(conversationId)
       : [];
-    const sharedAgentIds = conversation.groupMeta?.isGroup
-      ? conversation.groupMeta.taggedAgents?.map((id) => id.toString()) || []
-      : [];
+    const sharedAgentIds = conversation.isGroup ? conversation.groupTaggedAgentIds : [];
     const governanceOverride = request.governanceOverride;
     const requestedGovernedAgentIds = governanceOverride
       ? (request.agentIds.length ? request.agentIds : [governanceOverride.primaryAgentId])
@@ -785,14 +923,44 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
           groupMembers,
           request.connectorRepo?.connectorId,
           semanticSchemaName,
+          conversation.runtimePurpose === PLATFORM_COPILOT ? {
+            conversationId,
+            correlationId: runtimeCorrelationId,
+            playbookHandoffAttached: Boolean(request.playbookHandoffId),
+          } : undefined,
+          request.reasoningEffort,
         ),
     ]);
-    const [, attachedFiles, previousAttachedFiles, skills] = await Promise.all([
+    if (conversation.runtimePurpose === PLATFORM_COPILOT) {
+      const pinnedAgentId = conversation.pinnedAgentId?.toString();
+      if (!pinnedAgentId || agents.length !== 1 || agents[0]?.id !== pinnedAgentId) {
+        throw new ServiceUnavailableException(
+          ErrorCode.AGENT_UNAVAILABLE,
+          'Yellowmind must resolve exactly one pinned platform copilot agent',
+        );
+      }
+    }
+    const [, attachedFiles, previousAttachedFiles, skills, currentAttachmentSources] = await Promise.all([
       this.resolveAgentBrainContexts(agents),
       this.buildAttachedFiles(request.attachedFileIds),
       this.buildPreviousAttachedFiles(systemWorkspaceId, request.attachedFileIds),
       request.skillIds.length ? this.skillService.findByIdsForGrpc(request.skillIds) : Promise.resolve([]),
+      this.buildRunCodeAttachmentSources(request.attachedFileIds),
     ]);
+    await this.attachRunCodeContexts(
+      agents,
+      userId,
+      runtimeCorrelationId,
+      workspaceContexts.map((context) => context.workspace_id),
+      [
+        ...currentAttachmentSources,
+        ...previousAttachedFiles.flatMap((file) =>
+          file.workspace_id && file.filepath
+            ? [{ workspaceId: file.workspace_id, path: file.filepath }]
+            : [],
+        ),
+      ],
+    );
     return this.agentRequestBuilder.build({
       userId,
       username,
@@ -805,6 +973,38 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
       skills,
       correctionReplayContext,
     });
+  }
+
+  private async attachRunCodeContexts(
+    agents: IGrpcAgent[],
+    userId: string,
+    runId: string,
+    selectedWorkspaceIds: string[],
+    attachments: RunCodeAttachmentSource[] = [],
+  ): Promise<void> {
+    const eligibleAgents = agents.filter((agent) =>
+      agent.tools.some((tool) => tool.name === 'run_code'),
+    );
+    if (eligibleAgents.length === 0) return;
+
+    const uniqueAttachmentWorkspaceIds = [...new Set(
+      attachments.map((attachment) => attachment.workspaceId).filter(Boolean),
+    )];
+    await this.workspaceShareService.assertUserHasAccess(
+      userId,
+      [...new Set([...selectedWorkspaceIds.filter(Boolean), ...uniqueAttachmentWorkspaceIds])],
+    );
+    await Promise.all(eligibleAgents.map(async (agent) => {
+      const sources = await this.runCodeSourceScopeService.buildSources(
+        [...new Set([
+          ...selectedWorkspaceIds.filter(Boolean),
+          ...agent.brain_context.map((context) => context.workspace_id).filter(Boolean),
+        ])],
+        attachments,
+      );
+      agent.agent_params ??= { params: {} };
+      agent.agent_params.params.run_code_context_json = JSON.stringify({ userId, runId, sources });
+    }));
   }
 
   executePrivateAgentRequest(
@@ -898,8 +1098,13 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
       streamKey,
     });
 
-    const call = this.activeCalls.get(streamKey);
+    const existingTerminal = this.streamTerminalCoordinators.get(streamKey);
+    if (existingTerminal?.started) {
+      await existingTerminal.settlement;
+      return;
+    }
 
+    const call = this.activeCalls.get(streamKey);
     if (!call) {
       this.logger.warn('No active stream found for stop request', { streamKey });
       throw new AppException({
@@ -909,79 +1114,96 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
       });
     }
 
-    // Remove from activeCalls first to prevent error handler from double-processing
-    this.activeCalls.delete(streamKey);
-
-    // Persist current buffer
-    const buffer = this.componentBuffers.get(streamKey) || new Map();
-    if (buffer.size > 0) {
-        this.logger.debug('Persisting buffer on stop', {
-        streamKey,
-        bufferSize: buffer.size,
-      });
+    const streamExecutionLeaseId = this.streamExecutionLeases.get(streamKey);
+    const claimedTerminal = this.beginStreamTerminal(streamKey, async () => {
       try {
-        await this.messageService.completeAIMessage({
-          messageId,
-          components: Array.from(buffer.values()),
-        });
-      } catch (err) {
-        this.logger.error('Failed to persist buffer on stop', {
-          messageId,
-          error: (err as Error).message,
-        });
-      }
-    } else {
-      await this.messageService.markStreamFailed(messageId);
-    }
-
-    // Record partial usage on stop
-    const usageData = this.streamUsage.get(streamKey);
-    if (usageData && (usageData.inputTokens > 0 || usageData.outputTokens > 0)) {
-        this.logger.debug('Recording partial usage on stop', {
-        streamKey,
-        inputTokens: usageData.inputTokens,
-        outputTokens: usageData.outputTokens,
-      });
-      try {
-        await this.usageService.recordUsage({
-          userId,
-          inputTokens: usageData.inputTokens,
-          outputTokens: usageData.outputTokens,
-          modelName: usageData.model || usageData.modelId || undefined,
+        // Persist current buffer
+        const buffer = this.componentBuffers.get(streamKey) || new Map();
+        await this.finalizeRunningTools(
+          buffer,
+          'stopped',
           conversationId,
-          success: true,
+          await this.resolveMemberIds(conversationId),
+          { streamKey, messageId },
+        );
+        if (buffer.size > 0) {
+          this.logger.debug('Persisting buffer on stop', {
+            streamKey,
+            bufferSize: buffer.size,
+          });
+        }
+        try {
+          await this.messageService.completeAIMessage({
+            messageId,
+            streamExecutionLeaseId,
+            components: Array.from(buffer.values()),
+          });
+        } catch (err) {
+          this.logger.error('Failed to persist buffer on stop', {
+            messageId,
+            error: (err as Error).message,
+          });
+          throw err;
+        }
+
+        // Record partial usage on stop
+        const usageData = this.streamUsage.get(streamKey);
+        if (usageData && (usageData.inputTokens > 0 || usageData.outputTokens > 0)) {
+          this.logger.debug('Recording partial usage on stop', {
+            streamKey,
+            inputTokens: usageData.inputTokens,
+            outputTokens: usageData.outputTokens,
+          });
+          try {
+            await this.usageService.recordUsage({
+              userId,
+              inputTokens: usageData.inputTokens,
+              outputTokens: usageData.outputTokens,
+              modelName: usageData.model || usageData.modelId || undefined,
+              conversationId,
+              success: true,
+            });
+          } catch (err) {
+            this.logger.error('Failed to record usage on stop', {
+              error: (err as Error).message,
+              streamKey,
+            });
+          }
+        }
+
+        // Send stream_complete so frontend treats it as normal completion
+        this.streamGateway.sendToUser(userId, {
+          type: 'stream_complete',
+          data: {
+            conversationId,
+            messageId,
+            usage: {
+              inputTokens: usageData?.inputTokens || 0,
+              outputTokens: usageData?.outputTokens || 0,
+              durationMs: 0,
+            },
+          },
         });
-      } catch (err) {
-        this.logger.error('Failed to record usage on stop', {
-          error: (err as Error).message,
+
+        this.logger.debug('Stream stopped successfully', {
           streamKey,
+          conversationId,
+          messageId,
         });
+      } finally {
+        call.cancel();
+        this.cleanupStream(userId, conversationId, streamKey);
       }
+    });
+    const terminal = this.streamTerminalCoordinators.get(streamKey) ?? existingTerminal;
+    if (!claimedTerminal && !terminal) {
+      throw new AppException({
+        code: ErrorCode.CHAT_STREAM_FAILED,
+        message: 'No active stream found',
+        statusCode: HttpStatus.NOT_FOUND,
+      });
     }
-
-    // Send stream_complete so frontend treats it as normal completion
-    this.streamGateway.sendToUser(userId, {
-      type: 'stream_complete',
-      data: {
-        conversationId,
-        messageId,
-        usage: {
-          inputTokens: usageData?.inputTokens || 0,
-          outputTokens: usageData?.outputTokens || 0,
-          durationMs: 0,
-        },
-      },
-    });
-
-    // Cancel the gRPC call and cleanup
-    call.cancel();
-    this.cleanupStream(userId, conversationId, streamKey);
-
-    this.logger.debug('Stream stopped successfully', {
-      streamKey,
-      conversationId,
-      messageId,
-    });
+    await terminal!.settlement;
   }
 
   private executeGrpcStream(
@@ -995,6 +1217,8 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
     requestId?: string,
     username?: string,
     useSingleAgent = false,
+    latencyStart?: ConversationLatencyStartContext,
+    latencyInstrumentationEnabled = true,
   ): Promise<void> {
     const logOpts: LogOptions = { requestId };
 
@@ -1026,22 +1250,51 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
       // a RunAgentTeamRequest (carries the `agents` roster + manager). Without
       // this branch a single-agent request hits RunAgentTeam with an empty
       // `agents` list and the ADK rejects it with "No Manager agent was found".
+      // Latency correlation: both request messages carry latency_trace_context.
+      // Gated by the admin setting; when off, ADK installs no trace and the
+      // rest of the chain stays inert.
+      if (latencyInstrumentationEnabled && latencyStart?.assistantMessageId) {
+        grpcRequest.latency_trace_context = {
+          schema_version: 1,
+          request_id: latencyStart.requestId,
+          assistant_message_id: latencyStart.assistantMessageId,
+          backend_received_epoch_ms: latencyStart.backendReceivedEpochMs,
+        };
+      }
       const call = useSingleAgent
         ? this.chatbotClient.RunSingleAgent(grpcRequest, metadata)
         : this.chatbotClient.RunAgentTeam(grpcRequest, metadata);
+      const terminal = this.createStreamTerminalCoordinator(streamKey);
       this.activeCalls.set(streamKey, call);
 
       let totalInputTokens = 0;
       let totalOutputTokens = 0;
+      let latestModelRequestTelemetry: { usedTokens: number; contextWindow: number; model: string } | undefined;
       let chunkCount = 0;
-      let lastLoggedChunk = 0;
       const startTime = Date.now();
       let timeToFirstChunk: number | null = null;
       let timeToFirstToken: number | null = null;
-
+      // Latency instrumentation: the ADK attaches its timing envelope to the
+      // first post-model StreamChunk; it is parsed once and forwarded once.
+      const latencyTracker = new LatencyEnvelopeTracker(
+        latencyInstrumentationEnabled ? latencyStart : undefined,
+      );
+      let latencyMetrics: ConversationLatencyMetricsV1 | undefined;
+      const takeLatencyEnvelope = (): StreamChunkLatencyData | undefined => {
+        const envelope = latencyTracker.take();
+        if (envelope) {
+          latencyMetrics = { schemaVersion: 1, ...envelope.metrics, quality: envelope.quality };
+        }
+        return envelope;
+      };
       // Idle timeout - resets every time data is received
       let timeoutHandle: NodeJS.Timeout | null = null;
+      terminal.cancelIdleTimeout = () => {
+        if (timeoutHandle) clearTimeout(timeoutHandle);
+      };
+      void terminal.settlement.then(resolve, reject);
       const resetIdleTimeout = () => {
+        if (terminal.started) return;
         if (timeoutHandle) clearTimeout(timeoutHandle);
         timeoutHandle = setTimeout(() => {
           this.logger.error(
@@ -1053,16 +1306,23 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
             },
             logOpts,
           );
-          call.cancel();
-          this.handleStreamError(
-            userId,
-            conversationId,
-            messageId,
+          const timeoutError = new Error('Stream idle timeout - no data received');
+          this.beginStreamTerminal(
             streamKey,
-            ErrorCode.CHAT_STREAM_TIMEOUT,
-            requestId,
+            async () => {
+              call.cancel();
+              await this.handleStreamError(
+                userId,
+                conversationId,
+                messageId,
+                streamKey,
+                ErrorCode.CHAT_STREAM_TIMEOUT,
+                requestId,
+                latencyMetrics,
+              );
+            },
+            timeoutError,
           );
-          reject(new Error('Stream idle timeout - no data received'));
         }, timeoutMs);
       };
 
@@ -1070,8 +1330,10 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
       resetIdleTimeout();
 
       call.on('data', (chunk: any) => {
+        if (terminal.started) return;
         // Reset idle timeout on each chunk received
         resetIdleTimeout();
+        if (chunk.action === 'heartbeat') return;
         chunkCount++;
         // Capture time to first chunk
 
@@ -1080,27 +1342,14 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
           timeToFirstChunk = Date.now() - startTime;
         }
 
+        // Latency trace detection: capture the envelope; it is stamped onto
+        // the SSE event for this same chunk right before broadcast.
+        latencyTracker.capture(chunk);
+
         try {
           const action = chunk.action;
           const comp = chunk.component;
           const guardrailDecision = this.parseGuardrailDecision(chunk.metadata?.guardrail_decision_json);
-
-          // Sample logging to avoid overwhelming logs
-          if (chunkCount - lastLoggedChunk >= CHUNK_LOG_INTERVAL) {
-            this.logger.debug(
-              'Stream chunks received',
-              {
-                streamKey,
-                chunkCount,
-                hasComponent: !!comp,
-                hasUsage: !!chunk.usage,
-                inputTokens: totalInputTokens,
-                outputTokens: totalOutputTokens,
-              },
-              logOpts,
-            );
-            lastLoggedChunk = chunkCount;
-          }
 
           if (comp && comp.id && (action === 'add' || action === 'update' || action === 'delete')) {
             if (action === 'delete') {
@@ -1110,10 +1359,19 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
               }
 
               // Send chunk immediately to frontend (only id needed for delete)
+              const revision = this.nextStreamRevision(streamKey);
+              const latencyData = takeLatencyEnvelope();
               this.streamGateway.broadcastToConversation(
                 memberIds, {
                 type: 'stream_chunk',
-                data: { conversationId, action, component: { id: comp.id } as MessageComponent },
+                data: {
+                  conversationId,
+                  messageId,
+                  revision,
+                  action,
+                  component: { id: comp.id } as MessageComponent,
+                  ...(latencyData ? { latency: latencyData } : {}),
+                },
               }).catch((err) => {
                 this.logger.error('Failed to broadcast delete chunk', { error: err.message, streamKey }, logOpts);
               });
@@ -1146,16 +1404,28 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
 
               // Capture time to first token when first text/reasoning content appears
               if (timeToFirstToken === null) {
-                if ((type === 'text' || type === 'reasoning') && data?.content) {
+                if (type === 'text' && data?.content) {
                   timeToFirstToken = Date.now() - startTime;
                 }
               }
 
               // Send chunk immediately to frontend
+              const publicComponent = this.sanitizeComponent({ id: comp.id, type, data });
+              const revision = this.nextStreamRevision(streamKey);
+              // backend.first_delta_written boundary: stamped immediately
+              // before the first model-derived event enters SSE fan-out.
+              const latencyData = takeLatencyEnvelope();
               this.streamGateway.broadcastToConversation(
                 memberIds, {
                 type: 'stream_chunk',
-                data: { conversationId, action, component: { id: comp.id, type, data } },
+                data: {
+                  conversationId,
+                  messageId,
+                  revision,
+                  action,
+                  component: publicComponent,
+                  ...(latencyData ? { latency: latencyData } : {}),
+                },
               }).catch((err) => {
                 this.logger.error('Failed to broadcast stream chunk', { error: err.message, streamKey }, logOpts);
               });
@@ -1166,6 +1436,13 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
           if (chunk.usage) {
             totalInputTokens += chunk.usage.input_tokens || 0;
             totalOutputTokens += chunk.usage.output_tokens || 0;
+            if (chunk.usage.input_tokens > 0 && chunk.usage.context_window_tokens > 0 && chunk.usage.model) {
+              latestModelRequestTelemetry = {
+                usedTokens: chunk.usage.input_tokens,
+                contextWindow: chunk.usage.context_window_tokens,
+                model: chunk.usage.model,
+              };
+            }
             const usageData = this.streamUsage.get(streamKey);
             if (usageData) {
               usageData.inputTokens = totalInputTokens;
@@ -1189,14 +1466,7 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
       });
 
       call.on('end', async () => {
-        if (timeoutHandle) clearTimeout(timeoutHandle);
-
-        // If stopStream() already handled this call, don't double-process
-        if (!this.activeCalls.has(streamKey)) {
-          this.logger.debug('Stream already handled by stopStream', { streamKey }, logOpts);
-          resolve();
-          return;
-        }
+        if (terminal.started) return;
 
         const durationMs = Date.now() - startTime;
 
@@ -1212,23 +1482,11 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
           logOpts,
         );
 
-        try {
-          const buffer = this.componentBuffers.get(streamKey) || new Map();
-          const components = Array.from(buffer.values());
-
-          // Move plan component to the top so it appears first in the persisted message
-          const planIndex = components.findIndex((c) => c.type === 'plan');
-          if (planIndex > 0) {
-            const [plan] = components.splice(planIndex, 1);
-            components.unshift(plan);
-          }
-
-          // Chain-of-thought sits above everything (including the plan)
-          const cotIndex = components.findIndex((c) => c.type === 'chainOfThought');
-          if (cotIndex > 0) {
-            const [cot] = components.splice(cotIndex, 1);
-            components.unshift(cot);
-          }
+        this.beginStreamTerminal(streamKey, async () => {
+          try {
+            const buffer = this.componentBuffers.get(streamKey) || new Map();
+            await this.finalizeRunningTools(buffer, 'failed', conversationId, memberIds, { streamKey, messageId });
+            const components = Array.from(buffer.values());
 
           this.logger.debug(
             'Persisting stream components',
@@ -1242,13 +1500,33 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
           // Persist the complete message
           await this.messageService.completeAIMessage({
             messageId,
+            streamExecutionLeaseId: this.streamExecutionLeases.get(streamKey),
             components,
             inputTokens: totalInputTokens,
             outputTokens: totalOutputTokens,
             durationMs,
             timeToFirstChunk: timeToFirstChunk ?? undefined,
             timeToFirstToken: timeToFirstToken ?? undefined,
+            modelRequestTelemetry: latestModelRequestTelemetry,
+            latencyMetrics,
           });
+
+          if (latencyMetrics) {
+            // Single structured summary per completed request (never per token).
+            this.logger.log('conversation_latency', {
+              event: 'conversation_latency',
+              schemaVersion: latencyMetrics.schemaVersion,
+              requestId,
+              conversationId,
+              messageId,
+              backendPreAdkMs: latencyMetrics.backendPreAdkMs,
+              adkPreProviderMs: latencyMetrics.adkPreProviderMs,
+              providerTtftMs: latencyMetrics.providerTtftMs,
+              adkForwardingMs: latencyMetrics.adkForwardingMs,
+              backendForwardingMs: latencyMetrics.backendForwardingMs,
+              quality: latencyMetrics.quality,
+            }, logOpts);
+          }
 
           // Record usage
           const usageData = this.streamUsage.get(streamKey);
@@ -1295,6 +1573,7 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
                 outputTokens: totalOutputTokens,
                 durationMs,
               },
+              ...(latencyMetrics ? { latencyMetrics } : {}),
             },
           });
 
@@ -1311,9 +1590,9 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
             }, logOpts);
           });
 
-          this.cleanupStream(userId, conversationId, streamKey);
+            this.cleanupStream(userId, conversationId, streamKey);
 
-          this.logger.debug(
+            this.logger.debug(
             'Stream completed successfully',
             {
               streamKey,
@@ -1323,32 +1602,24 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
               durationMs,
             },
             logOpts,
-          );
-
-          resolve();
-        } catch (error) {
-          this.logger.error(
-            'Error completing stream',
-            {
-              error: (error as Error).message,
-              streamKey,
-            },
-            logOpts,
-          );
-          this.cleanupStream(userId, conversationId, streamKey);
-          reject(error);
-        }
+            );
+          } catch (error) {
+            this.logger.error(
+              'Error completing stream',
+              {
+                error: (error as Error).message,
+                streamKey,
+              },
+              logOpts,
+            );
+            this.cleanupStream(userId, conversationId, streamKey);
+            throw error;
+          }
+        });
       });
 
       call.on('error', (error: any) => {
-        if (timeoutHandle) clearTimeout(timeoutHandle);
-
-        // If stopStream() already handled this call, don't double-process
-        if (!this.activeCalls.has(streamKey)) {
-          this.logger.debug('Stream error after stopStream handling', { streamKey }, logOpts);
-          resolve();
-          return;
-        }
+        if (terminal.started) return;
 
         this.logger.error(
           'gRPC stream error',
@@ -1371,15 +1642,19 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
             ? ErrorCode.CHAT_GRPC_UNAUTHENTICATED
             : ErrorCode.CHAT_STREAM_FAILED;
 
-        this.handleStreamError(
-          userId,
-          conversationId,
-          messageId,
+        this.beginStreamTerminal(
           streamKey,
-          errorCode,
-          requestId,
+          () => this.handleStreamError(
+            userId,
+            conversationId,
+            messageId,
+            streamKey,
+            errorCode,
+            requestId,
+            latencyMetrics,
+          ),
+          error,
         );
-        reject(error);
       });
     });
   }
@@ -1391,6 +1666,7 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
     streamKey: string,
     errorCode: ErrorCode,
     requestId?: string,
+    latencyMetrics?: ConversationLatencyMetricsV1,
   ): Promise<void> {
     const logOpts: LogOptions = { requestId };
 
@@ -1408,6 +1684,13 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
 
     // Persist partial buffer with an error component appended
     const buffer = this.componentBuffers.get(streamKey) || new Map();
+    await this.finalizeRunningTools(
+      buffer,
+      'failed',
+      conversationId,
+      await this.resolveMemberIds(conversationId),
+      { streamKey, messageId },
+    );
 
     // Add an error component so the message itself shows the error visually
     const errorComponentId = `error-${randomUUID()}`;
@@ -1431,7 +1714,9 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
     try {
       await this.messageService.completeAIMessage({
         messageId,
+        streamExecutionLeaseId: this.streamExecutionLeases.get(streamKey),
         components: Array.from(buffer.values()),
+        latencyMetrics,
       });
     } catch (err) {
       this.logger.error(
@@ -1478,8 +1763,8 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
       }
     }
 
-    // Send error event to user
-    this.sendErrorEvent(userId, conversationId, errorCode);
+    // Keep terminal ownership until the scoped error event has been delivered or logged.
+    await this.sendErrorEvent(userId, conversationId, messageId, errorCode);
     this.cleanupStream(userId, conversationId, streamKey);
 
     this.logger.debug(
@@ -1505,23 +1790,83 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
-  private async sendErrorEvent(userId: string, conversationId: string, errorCode: ErrorCode): Promise<void> {
-    const memberIds = await this.resolveMemberIds(conversationId);
-    await this.streamGateway.broadcastToConversation(
-      memberIds, {
-      type: 'stream_error',
-      data: {
+  private async finalizeRunningTools(
+    buffer: Map<string, MessageComponent>,
+    status: 'failed' | 'stopped',
+    conversationId: string,
+    memberIds: string[],
+    options: { streamKey?: string; messageId?: string; broadcast?: boolean } = {},
+  ): Promise<void> {
+    const completedAt = new Date().toISOString();
+    for (const component of buffer.values()) {
+      if (component.type !== 'toolActivity' || component.data.status !== 'running') continue;
+      const startedAt = typeof component.data.startedAt === 'string' ? Date.parse(component.data.startedAt) : Number.NaN;
+      component.data = {
+        ...component.data,
+        status,
+        completedAt,
+        ...(Number.isFinite(startedAt) ? { durationMs: Math.max(0, Date.now() - startedAt) } : {}),
+      };
+      if (options.broadcast !== false) {
+        const revision = options.streamKey ? this.nextStreamRevision(options.streamKey) : undefined;
+        try {
+          await this.streamGateway.broadcastToConversation(memberIds, {
+            type: 'stream_chunk',
+            data: {
+              conversationId,
+              ...(options.messageId ? { messageId: options.messageId } : {}),
+              ...(revision !== undefined ? { revision } : {}),
+              action: 'update',
+              component: this.sanitizeComponent(component),
+            },
+          });
+        } catch (error) {
+          this.logger.error('Failed to broadcast terminal tool update', {
+            conversationId,
+            messageId: options.messageId,
+            componentId: component.id,
+            error: error instanceof Error ? error.message : String(error),
+          });
+        }
+      }
+    }
+  }
+
+  private async sendErrorEvent(
+    userId: string,
+    conversationId: string,
+    messageId: string,
+    errorCode: ErrorCode,
+  ): Promise<void> {
+    try {
+      const memberIds = await this.resolveMemberIds(conversationId);
+      await this.streamGateway.broadcastToConversation(
+        memberIds, {
+        type: 'stream_error',
+        data: {
+          conversationId,
+          messageId,
+          errorCode,
+          message: this.getErrorMessage(errorCode),
+        },
+      });
+    } catch (error) {
+      this.logger.error('Failed to broadcast stream error', {
+        userId,
         conversationId,
+        messageId,
         errorCode,
-        message: this.getErrorMessage(errorCode),
-      },
-    });
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
   }
 
   private cleanupStream(userId: string, conversationId: string, streamKey: string): void {
     this.activeCalls.delete(streamKey);
     this.componentBuffers.delete(streamKey);
+    this.streamRevisions.delete(streamKey);
     this.streamUsage.delete(streamKey);
+    this.streamTerminalCoordinators.delete(streamKey);
     const userStreams = this.activeStreams.get(userId);
     if (userStreams) {
       userStreams.delete(conversationId);
@@ -1529,6 +1874,41 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
         this.activeStreams.delete(userId);
       }
     }
+  }
+
+  private createStreamTerminalCoordinator(streamKey: string): StreamTerminalCoordinator {
+    let resolve: () => void = () => undefined;
+    let reject: (error: unknown) => void = () => undefined;
+    const settlement = new Promise<void>((resolvePromise, rejectPromise) => {
+      resolve = resolvePromise;
+      reject = rejectPromise;
+    });
+    void settlement.catch(() => undefined);
+    const terminal = { started: false, settlement, resolve, reject };
+    this.streamTerminalCoordinators.set(streamKey, terminal);
+    return terminal;
+  }
+
+  private beginStreamTerminal(
+    streamKey: string,
+    operation: () => Promise<void>,
+    terminalError?: unknown,
+  ): boolean {
+    const terminal = this.streamTerminalCoordinators.get(streamKey);
+    if (!terminal || terminal.started) return false;
+    terminal.started = true;
+    terminal.cancelIdleTimeout?.();
+    void operation().then(
+      () => terminalError === undefined ? terminal.resolve() : terminal.reject(terminalError),
+      (error) => terminal.reject(error),
+    );
+    return true;
+  }
+
+  private nextStreamRevision(streamKey: string): number {
+    const revision = (this.streamRevisions.get(streamKey) ?? 0) + 1;
+    this.streamRevisions.set(streamKey, revision);
+    return revision;
   }
 
   private getComponentType(comp: any): ComponentType {
@@ -1545,7 +1925,7 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
    * - 'update': Merges data into existing component
    *
    * Type-specific behavior:
-   * - text/code/reasoning: Append to content string
+   * - text/code: Append to content string
    * - queue/plan/checkpoint/task: Replace entire data (arrives in one chunk)
    */
   private applyChunkToBuffer(
@@ -1561,7 +1941,7 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
     }
     if (action === 'add') {
       const existing = buffer.get(componentId);
-      if (existing && type === 'toolInfo') {
+      if (existing && type === 'toolActivity') {
         existing.data = this.mergeComponentData(type, existing.data, data);
         return;
       }
@@ -1577,7 +1957,7 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
         if (guardrailDecision) {
           existing.data.guardrailDecision = guardrailDecision;
         }
-      } else if (type === 'toolInfo') {
+      } else if (type === 'toolActivity') {
         const merged = this.mergeComponentData(type, {}, data);
         buffer.set(componentId, { id: componentId, type, data: merged });
       }
@@ -1594,7 +1974,7 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
   ): Record<string, unknown> {
     switch (type) {
       case 'text':
-      case 'reasoning': {
+      {
         if (incoming.guardrailDecision) {
           return { ...existing, ...incoming };
         }
@@ -1606,6 +1986,8 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
           content: existingContent + newContent,
         };
       }
+      case 'agentActivity':
+        return { ...existing, ...incoming };
       case 'code': {
         // Append content, preserve language/filename from first chunk
         const existingContent = (existing.content as string) || '';
@@ -1627,23 +2009,32 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
       case 'webPreview':
       case 'artifact':
       case 'citation':
-      case 'chainOfThought':
       case 'choice':
         // These arrive fully formed - replace with incoming data
         return { ...incoming };
-      case 'toolInfo':
+      case 'toolActivity':
         // The 'update' chunk carries the final status (completed/failed) that
         // supersedes the initial 'running', but params (the tool-call args) are
         // only sent on the initial 'add' — preserve them when the update omits them.
         const existingStatus = (existing.status as string) || 'running';
         const incomingStatus = (incoming.status as string) || existingStatus;
-        const existingIsTerminal = existingStatus === 'completed' || existingStatus === 'failed';
+        const existingIsTerminal = existingStatus === 'completed' || existingStatus === 'failed' || existingStatus === 'stopped';
         return {
-          title: (incoming.title as string) || (existing.title as string) || '',
+          toolName: (incoming.toolName as string) || (existing.toolName as string) || '',
+          displayKey: (incoming.displayKey as string) || (existing.displayKey as string) || '',
+          fallbackDisplayName: (incoming.fallbackDisplayName as string) || (existing.fallbackDisplayName as string) || '',
+          summary: (incoming.summary as string) || (existing.summary as string) || '',
+          renderKind: (incoming.renderKind as string) || (existing.renderKind as string) || 'generic',
           status: existingIsTerminal ? existingStatus : incomingStatus,
-          params: (incoming.params as string) || (existing.params as string) || '',
+          paramsJson: (incoming.paramsJson as string) || (existing.paramsJson as string) || '',
           startedAt: (incoming.startedAt as string) || (existing.startedAt as string) || '',
+          completedAt: (incoming.completedAt as string) || (existing.completedAt as string) || '',
+          durationMs: incoming.durationMs ?? existing.durationMs,
           resultJson: (incoming.resultJson as string) || (existing.resultJson as string) || '',
+          actorId: (incoming.actorId as string) || (existing.actorId as string) || '',
+          actorName: (incoming.actorName as string) || (existing.actorName as string) || '',
+          primaryInput: (incoming.primaryInput as string) || (existing.primaryInput as string) || '',
+          primaryInputLanguage: (incoming.primaryInputLanguage as string) || (existing.primaryInputLanguage as string) || '',
         };
       case 'sandbox':
         // Sandbox: merge code from first chunk with output/error from update
@@ -1914,6 +2305,17 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
       this.buildWorkspaceContexts(params.conversationId, logOpts, conversation),
       this.buildPreviousAttachedFiles(systemWorkspaceId, []),
     ]);
+    await this.attachRunCodeContexts(
+      grpcAgents,
+      params.userId,
+      params.messageId,
+      workspaceContexts.map((context) => context.workspace_id),
+      previousAttachedFiles.flatMap((file) =>
+        file.workspace_id && file.filepath
+          ? [{ workspaceId: file.workspace_id, path: file.filepath }]
+          : [],
+      ),
+    );
 
     const grpcRequest = {
       user_context: { user_id: params.userId, username: params.username || '' },
@@ -1992,6 +2394,7 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
 
       call.on('data', (chunk: { action?: string; component?: Record<string, unknown> }) => {
         resetIdleTimeout();
+        if (chunk.action === 'heartbeat') return;
         chunkCount++;
 
         const action = chunk.action;
@@ -2043,6 +2446,13 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
             reject(error);
           });
       });
+    });
+  }
+
+  private sanitizeComponent(component: MessageComponent): MessageComponent {
+    return sanitizePublicComponent(component, {
+      redactSensitiveText: this.conversationSettings?.shouldRedactSensitiveText() !== false,
+      includeAgentDetail: true,
     });
   }
 }

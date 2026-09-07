@@ -193,6 +193,7 @@ export interface FeatureVisibility {
   appMarketplace: boolean;
   worky: boolean;
   agents: boolean;
+  platformCopilot: boolean;
 }
 
 export interface CorsOriginEntry {
@@ -745,6 +746,8 @@ export const PERMISSION_GROUPS: PermissionGroup[] = [
 
 export type UserStatus = 'active' | 'inactive' | 'suspended';
 
+export type RegistrationApproval = 'pending' | 'approved' | 'rejected';
+
 export interface AdminUserResponse {
   id: string;
   email: string;
@@ -756,6 +759,7 @@ export interface AdminUserResponse {
     company?: string;
   };
   status: UserStatus;
+  registrationApproval?: RegistrationApproval;
   plan?: {
     id: string;
     slug: string;
@@ -960,6 +964,13 @@ export interface AdminModelResponse {
   isConversationV2Default: boolean;
   omitTemperature: boolean;
   inputModalities: ModelInputModality[];
+  maxInputTokens: number | null;
+  maxOutputTokens: number | null;
+  supportsReasoning: boolean | null;
+  reasoning: {
+    efforts: Array<{ id: string; name: string; description?: string }>;
+    defaultEffort?: string;
+  };
 }
 
 export interface AdminModelsListResponse {
@@ -994,6 +1005,8 @@ export interface UpdateModelRequest {
   isActive?: boolean;
   omitTemperature?: boolean;
   inputModalities?: ModelInputModality[];
+  reasoningEfforts?: Array<{ id: string; name: string; description?: string }>;
+  defaultReasoningEffort?: string | null;
 }
 
 export interface SyncModelsResponse {
@@ -1005,7 +1018,6 @@ export interface SyncModelsResponse {
 }
 
 export interface AdminPlaybookSettings {
-  playbookSuggestorAgentId: string | null;
   inferenceModelId: string | null;
   advisorEvaluationModelId: string | null;
   replayEvaluationModelId: string | null;
@@ -1018,7 +1030,6 @@ export interface AdminPlaybookSettings {
     maxIteratorBodySteps: number;
     maxIteratorBodyEdges: number;
   };
-  replayEligibilityConfidenceThreshold: number;
   useDeterministicBlueprintBuilder: boolean;
   playbookExecution: PlaybookExecutionAdminSettings;
 }
@@ -1033,6 +1044,14 @@ export interface PlaybookExecutionAdminSettings {
   maxParallelismPerExecution: number;
   recursionLimitDefault: number;
   recursionLimitMax: number;
+  maxHitlRounds: number;
+  pythonWorkerPoolSize: number;
+  pythonWorkerMaxInflight: number;
+  maxToolIterations: number;
+  maxSandboxCallsPerStep: number;
+  graphCacheEnabled: boolean;
+  graphCacheMaxEntries: number;
+  graphCacheTtlSeconds: number;
   dynamicReasoning: {
     plannerAgentId: string | null;
     maxWorkNodes: number;
@@ -1046,20 +1065,16 @@ export interface PlaybookPlannerAgentOption {
   id: string;
   name: string;
   description?: string;
-  model: string;
+  model: string | null;
 }
 
-export type PlaybookSuggestorAgentOption = PlaybookPlannerAgentOption;
-
 export interface UpdateAdminPlaybookSettingsRequest {
-  playbookSuggestorAgentId?: string | null;
   inferenceModelId?: string | null;
   advisorEvaluationModelId?: string | null;
   replayEvaluationModelId?: string | null;
   nodeSuggestionsMode?: 'auto' | 'manual';
   approvalSuggestionMode?: 'auto' | 'manual';
   intentNormalizationLimits?: Partial<AdminPlaybookSettings['intentNormalizationLimits']>;
-  replayEligibilityConfidenceThreshold?: number;
   useDeterministicBlueprintBuilder?: boolean;
   playbookExecution?: Partial<Omit<PlaybookExecutionAdminSettings, 'dynamicReasoning'>> & {
     dynamicReasoning?: Partial<PlaybookExecutionAdminSettings['dynamicReasoning']>;
@@ -1739,8 +1754,9 @@ export interface ComposerSuggestionSettings {
   requestsPerMinute: number;
   maxOutputTokens: number;
 }
-export interface ConversationSettingsResponse { composerSuggestions: ComposerSuggestionSettings; updatedAt?: string; }
-export type UpdateConversationSettingsRequest = Pick<ConversationSettingsResponse, 'composerSuggestions'>;
+export interface ConversationSettingsResponse { composerSuggestions: ComposerSuggestionSettings; redactSensitiveText?: boolean; latencyInstrumentationEnabled?: boolean; updatedAt?: string; }
+export type UpdateConversationSettingsRequest = Pick<ConversationSettingsResponse, 'composerSuggestions'> & { redactSensitiveText?: boolean; latencyInstrumentationEnabled?: boolean };
+export interface UpdateSensitiveTextRedactionRequest { redactSensitiveText: boolean; }
 export interface ConversationSettingsAgentOption { id: string; name: string; description?: string; agentTypeName?: string; model?: string; }
 
 // ===== Team Auto-Builder =====

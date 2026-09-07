@@ -49,3 +49,45 @@ describe('AgentTypeService.getManyForHydration', () => {
     expect(agentTypeModel.find).not.toHaveBeenCalled();
   });
 });
+
+describe('AgentTypeService.findOrCreateBySlug', () => {
+  it('uses an atomic create-only upsert and returns the canonical type', async () => {
+    const typeId = new Types.ObjectId();
+    const agentType = {
+      _id: typeId,
+      name: 'Platform Copilot',
+      slug: 'platform_copilot',
+      defaultPrompt: 'existing prompt',
+      skills: [],
+      isActive: true,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    };
+    const exec = jest.fn().mockResolvedValue(agentType);
+    const lean = jest.fn().mockReturnValue({ exec });
+    const findOneAndUpdate = jest.fn().mockReturnValue({ lean });
+    const countDocuments = jest.fn().mockReturnValue({ exec: jest.fn().mockResolvedValue(0) });
+    const moduleRef = await Test.createTestingModule({
+      providers: [
+        AgentTypeService,
+        { provide: getModelToken(AgentType.name), useValue: { findOneAndUpdate } },
+        { provide: getModelToken(AgentTypePrompt.name), useValue: { countDocuments } },
+        { provide: SkillService, useValue: {} },
+        { provide: LoggerService, useValue: loggerStub() },
+      ],
+    }).compile();
+
+    const result = await moduleRef.get(AgentTypeService).findOrCreateBySlug('platform_copilot', {
+      name: 'Platform Copilot',
+      defaultPrompt: '',
+      isActive: true,
+    });
+
+    expect(result.id).toBe(typeId.toString());
+    expect(findOneAndUpdate).toHaveBeenCalledWith(
+      { slug: 'platform_copilot' },
+      { $setOnInsert: expect.objectContaining({ slug: 'platform_copilot', name: 'Platform Copilot' }) },
+      { upsert: true, new: true, setDefaultsOnInsert: true },
+    );
+  });
+});

@@ -1,21 +1,41 @@
 import { apiClient, API_ENDPOINTS, ApiResponse } from '@/lib/api';
-import type { Conversation, ConversationSettings, Message, ConversationListParams, MessageListParams, PaginatedResponse, SendMessagePayload, CreateReportPayload, CreateSharePayload, ShareResponse, PublicShareViewResponse, BranchConversationPayload, ReliabilityRerunResponse } from './types';
+import type { ActiveStreamSnapshot, Conversation, ConversationSummary, ConversationSettings, Message, ConversationListParams, MessageListParams, PaginatedResponse, SendMessagePayload, CreateReportPayload, CreateSharePayload, ShareResponse, PublicShareViewResponse, BranchConversationPayload, ReliabilityRerunResponse, CreateConversationPayload, PrepareConversationPlaybookHandoffV1, PreparedConversationPlaybookHandoffV1, ReportFrontendLatencyPayload } from './types';
 
 // ===== Conversation APIs =====
 
-interface BackendPaginatedConversations {
-  conversations: Conversation[];
-  pagination: { page: number; limit: number; total: number; totalPages: number };
+interface BackendPaginatedConversations<T extends Conversation | ConversationSummary> {
+  conversations: T[];
+  pagination:
+    | { page: number; limit: number; total: number; totalPages: number }
+    | { mode: 'cursor'; limit: number; hasMore: boolean; nextCursor: string | null };
 }
 
 interface BackendPaginatedMessages {
   messages: Message[];
-  pagination: { page: number; limit: number; total: number; totalPages: number };
+  branchesByQuestion?: Record<string, Message[]>;
+  pagination:
+    | { page: number; limit: number; total: number; totalPages: number }
+    | { mode: 'cursor'; limit: number; hasMore: boolean; nextCursor: string | null };
 }
 
-export async function fetchConversations(params?: ConversationListParams): Promise<PaginatedResponse<Conversation>> {
-  const response = await apiClient.get<ApiResponse<BackendPaginatedConversations>>(API_ENDPOINTS.conversations.list, { params });
+export function fetchConversations(params: ConversationListParams & { mode: 'cursor' }): Promise<PaginatedResponse<ConversationSummary>>;
+export function fetchConversations(params?: ConversationListParams): Promise<PaginatedResponse<Conversation>>;
+export async function fetchConversations(
+  params?: ConversationListParams,
+): Promise<PaginatedResponse<Conversation | ConversationSummary>> {
+  const response = await apiClient.get<ApiResponse<BackendPaginatedConversations<Conversation | ConversationSummary>>>(API_ENDPOINTS.conversations.list, { params });
   const data = response.data.data;
+  if ('mode' in data.pagination) {
+    return {
+      items: data.conversations,
+      total: data.conversations.length,
+      page: 1,
+      limit: data.pagination.limit,
+      totalPages: data.pagination.hasMore ? 2 : 1,
+      hasMore: data.pagination.hasMore,
+      nextCursor: data.pagination.nextCursor,
+    };
+  }
   return {
     items: data.conversations || [],
     total: data.pagination.total,
@@ -25,7 +45,7 @@ export async function fetchConversations(params?: ConversationListParams): Promi
   };
 }
 
-export async function createConversation(data?: { title?: string; workspaces?: string[]; participantEmails?: string[]; participants?: Array<{ email: string; job?: string }>; ownerJob?: string; projectId?: string }): Promise<Conversation> {
+export async function createConversation(data?: CreateConversationPayload): Promise<Conversation> {
   const response = await apiClient.post<ApiResponse<Conversation>>(API_ENDPOINTS.conversations.create, data || {});
   return response.data.data;
 }
@@ -74,6 +94,18 @@ export async function fetchTaggedAgents(id: string): Promise<any[]> {
 export async function fetchMessages(conversationId: string, params?: MessageListParams): Promise<PaginatedResponse<Message>> {
   const response = await apiClient.get<ApiResponse<BackendPaginatedMessages>>(API_ENDPOINTS.conversations.messages(conversationId), { params });
   const data = response.data.data;
+  if ('mode' in data.pagination) {
+    return {
+      items: data.messages || [],
+      total: data.messages?.length ?? 0,
+      page: 1,
+      limit: data.pagination.limit,
+      totalPages: data.pagination.hasMore ? 2 : 1,
+      hasMore: data.pagination.hasMore,
+      nextCursor: data.pagination.nextCursor,
+      branchesByQuestion: data.branchesByQuestion ?? {},
+    };
+  }
   return {
     items: data.messages || [],
     total: data.pagination.total,
@@ -83,6 +115,11 @@ export async function fetchMessages(conversationId: string, params?: MessageList
   };
 }
 
+export async function fetchActiveStream(conversationId: string): Promise<ActiveStreamSnapshot | null> {
+  const response = await apiClient.get<ApiResponse<ActiveStreamSnapshot | null>>(API_ENDPOINTS.conversations.activeStream(conversationId));
+  return response.data.data;
+}
+
 export async function sendMessage(conversationId: string, payload: SendMessagePayload): Promise<{ userMessage: Message; aiMessageId?: string }> {
   const response = await apiClient.post<ApiResponse<{ userMessage: Message; aiMessageId?: string }>>(API_ENDPOINTS.conversations.messages(conversationId), payload);
   return response.data.data;
@@ -90,6 +127,11 @@ export async function sendMessage(conversationId: string, payload: SendMessagePa
 
 export async function branchConversation(id: string, payload: BranchConversationPayload): Promise<Conversation> {
   const response = await apiClient.post<ApiResponse<Conversation>>(API_ENDPOINTS.conversations.branch(id), payload);
+  return response.data.data;
+}
+
+export async function prepareConversationPlaybookHandoff(id: string, payload: PrepareConversationPlaybookHandoffV1): Promise<PreparedConversationPlaybookHandoffV1> {
+  const response = await apiClient.post<ApiResponse<PreparedConversationPlaybookHandoffV1>>(API_ENDPOINTS.conversations.playbookHandoffs(id), payload);
   return response.data.data;
 }
 
@@ -110,6 +152,15 @@ export async function rerunReliabilityEvaluation(conversationId: string, message
 
 export async function stopStream(conversationId: string, messageId: string): Promise<void> {
   await apiClient.post(API_ENDPOINTS.conversations.stop(conversationId, messageId));
+}
+
+/** Idempotent report of the browser-measured frontend paint latency metric. */
+export async function reportFrontendLatency(conversationId: string, messageId: string, payload: ReportFrontendLatencyPayload): Promise<Message> {
+  const response = await apiClient.post<ApiResponse<Message>>(
+    API_ENDPOINTS.conversations.frontendLatency(conversationId, messageId),
+    payload,
+  );
+  return response.data.data;
 }
 
 export async function regenerateMessage(conversationId: string, messageId: string): Promise<{ aiMessage: Message }> {
@@ -135,8 +186,22 @@ export async function reportMessage(conversationId: string, messageId: string, p
   await apiClient.post(API_ENDPOINTS.conversations.report(conversationId, messageId), payload);
 }
 
-export async function getArtifactDownloadUrl(filePath: string, filename?: string): Promise<{ downloadUrl: string }> {
-  const response = await apiClient.post<ApiResponse<{ downloadUrl: string }>>(API_ENDPOINTS.conversations.artifactUrl, { filePath, filename });
+export async function getArtifactDownloadUrl(conversationId: string, messageId: string, artifactId: string): Promise<{ viewUrl: string; downloadUrl: string }> {
+  const response = await apiClient.post<ApiResponse<{ viewUrl: string; downloadUrl: string }>>(
+    API_ENDPOINTS.conversations.artifactUrl(conversationId, messageId, artifactId),
+  );
+  return response.data.data;
+}
+
+export async function getCitationViewUrl(
+  conversationId: string,
+  messageId: string,
+  citation: { source: string; fileName?: string; reference?: string },
+): Promise<{ url: string; fileName: string; mimeType: string }> {
+  const response = await apiClient.post<ApiResponse<{ url: string; fileName: string; mimeType: string }>>(
+    API_ENDPOINTS.conversations.citationUrl(conversationId, messageId),
+    citation,
+  );
   return response.data.data;
 }
 

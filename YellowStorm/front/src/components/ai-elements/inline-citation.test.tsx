@@ -1,6 +1,6 @@
-import { render, screen } from '@testing-library/react';
-import { describe, expect, it } from 'vitest';
-import { InlineCitationCard, InlineCitationCardTrigger } from './inline-citation';
+import { fireEvent, render, screen } from '@testing-library/react';
+import { describe, expect, it, vi } from 'vitest';
+import { InlineCitationCard, InlineCitationCardBody, InlineCitationCardTrigger } from './inline-citation';
 
 describe('InlineCitationCardTrigger', () => {
   it('renders a compact source button with the complete accessible label', () => {
@@ -25,5 +25,27 @@ describe('InlineCitationCardTrigger', () => {
     );
 
     expect(screen.getByRole('button', { name: source }).firstChild).toHaveClass('max-w-32');
+  });
+
+  it('opens the preview on the first touch and invokes the citation on the second touch', async () => {
+    const onClick = vi.fn();
+    render(
+      <InlineCitationCard>
+        <InlineCitationCardTrigger sources={['2']} onClick={onClick} />
+        <InlineCitationCardBody>Source preview</InlineCitationCardBody>
+      </InlineCitationCard>,
+    );
+    const trigger = screen.getByRole('button', { name: '2' });
+
+    fireEvent.pointerDown(trigger, { pointerType: 'touch' });
+    fireEvent.click(trigger);
+
+    expect(await screen.findByText('Source preview')).toBeInTheDocument();
+    expect(onClick).not.toHaveBeenCalled();
+
+    fireEvent.pointerDown(trigger, { pointerType: 'touch' });
+    fireEvent.click(trigger);
+
+    expect(onClick).toHaveBeenCalledOnce();
   });
 });

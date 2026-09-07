@@ -4,7 +4,7 @@ import { ConfigService } from '@nestjs/config';
 import { Model, Types } from 'mongoose';
 import * as bcrypt from 'bcrypt';
 import * as crypto from 'crypto';
-import { User, UserDocument, UserStatus } from './schemas/user.schema';
+import { RegistrationApproval, User, UserDocument, UserStatus } from './schemas/user.schema';
 import { LoggerService } from '../logger';
 import {
   CreateUserData,
@@ -25,6 +25,11 @@ interface UserSearchResult {
   email: string;
   firstName?: string;
   lastName?: string;
+}
+
+export interface UserSummary {
+  id: string;
+  email: string;
 }
 
 interface SearchUsersParams {
@@ -73,6 +78,8 @@ export class UserService {
       emailVerificationExpiry: data.emailVerified ? undefined : emailVerificationExpiry,
       profile: data.profile || {},
       microsoftAccountId: data.microsoftAccountId,
+      status: UserStatus.INACTIVE,
+      registrationApproval: RegistrationApproval.PENDING,
     });
 
     await user.save();
@@ -118,6 +125,11 @@ export class UserService {
    */
   async findById(id: string): Promise<UserDocument | null> {
     return this.userModel.findById(id);
+  }
+
+  async findSummaryById(id: string): Promise<UserSummary | null> {
+    const user = await this.userModel.findById(id).select('email').lean().exec();
+    return user ? { id: user._id.toString(), email: user.email } : null;
   }
 
   /**

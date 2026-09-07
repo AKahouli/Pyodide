@@ -1,11 +1,4 @@
-"""Stage 3 — Edge detection with Semantica's NERExtractor + RelationExtractor.
-
-Two complementary signals:
-  1. LLM RelationExtractor — finds semantically explicit edges in evidence text.
-  2. Source-document co-occurrence — structural fallback: if two nodes were
-     extracted from the same document they almost certainly relate.
-     Co-occurrence only adds edges the LLM did not already detect.
-"""
+"""Stage 3 — Edge detection with Semantica's NERExtractor + RelationExtractor."""
 
 from __future__ import annotations
 
@@ -113,12 +106,6 @@ class EdgeDetector:
                     logger.exception("Edge detection document blob failed")
 
         logger.info("LLM edges: %d", len(pair_scores))
-
-        # Co-occurrence: add edges for node pairs sharing a source document
-        # that the LLM did not already detect.
-        cooccurrence = self._cooccurrence_edges(relation_types, resolved_nodes)
-        added = sum(1 for k, v in cooccurrence.items() if k not in pair_scores and not pair_scores.update({k: v}))  # type: ignore[func-returns-value]
-        logger.info("Co-occurrence added %d edges (total: %d)", added, len(pair_scores))
 
         return [
             {
@@ -266,32 +253,3 @@ class EdgeDetector:
                 if quote:
                     per_workspace.setdefault(key, []).append(normalize_text(quote))
         return ["\n".join(quotes) for quotes in per_workspace.values() if quotes]
-
-    @staticmethod
-    def _cooccurrence_edges(
-        relation_types: list[dict[str, Any]],
-        resolved_nodes: list[dict[str, Any]],
-    ) -> dict[tuple[str, str, str], float]:
-        """One edge per (src, tgt) node pair sharing a source document."""
-        node_type_map = {n["id"]: n.get("nodeTypeId") for n in resolved_nodes}
-        doc_ids_map = {n["id"]: set(n.get("_sourceDocumentIds") or []) for n in resolved_nodes}
-
-        pair_scores: dict[tuple[str, str, str], float] = {}
-        seen_pairs: set[tuple[str, str]] = set()
-
-        for rel in relation_types:
-            src_type = rel.get("sourceNodeTypeId")
-            tgt_type = rel.get("targetNodeTypeId")
-            src_nodes = [n for n in resolved_nodes if node_type_map.get(n["id"]) == src_type]
-            tgt_nodes = [n for n in resolved_nodes if node_type_map.get(n["id"]) == tgt_type]
-            for src in src_nodes:
-                for tgt in tgt_nodes:
-                    if src["id"] == tgt["id"]:
-                        continue
-                    pair = (src["id"], tgt["id"])
-                    if pair in seen_pairs:
-                        continue
-                    if doc_ids_map[src["id"]] & doc_ids_map[tgt["id"]]:
-                        pair_scores[(rel["id"], src["id"], tgt["id"])] = 0.5
-                        seen_pairs.add(pair)
-        return pair_scores

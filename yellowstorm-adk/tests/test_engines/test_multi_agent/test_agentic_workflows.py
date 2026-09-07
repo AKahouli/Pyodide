@@ -9,6 +9,7 @@ from src.smart_rag.engines.multi_agent.agentic_workflows.auto_agents import (
     handle_no_agents_workflow,
 )
 from src.smart_rag.engines.multi_agent.agentic_workflows.manual_agents import (
+    _run_provided_agent_team,
     handle_agents_provided_workflow,
 )
 from src.smart_rag.engines.multi_agent.agentic_workflows.single_agent import (
@@ -69,12 +70,6 @@ def _mock_team():
     return team
 
 
-def _main_trace():
-    trace = MagicMock()
-    trace.id = "trace-1"
-    return trace
-
-
 class TestAutoAgentsWorkflow:
     @pytest.mark.asyncio
     async def test_handle_no_agents_workflow_generates_and_runs(self):
@@ -86,13 +81,12 @@ class TestAutoAgentsWorkflow:
             prompt="manage",
         )])
         queue = AsyncMock()
-        trace = _main_trace()
 
         with patch(
             "src.smart_rag.engines.multi_agent.agentic_workflows.auto_agents._run_team_with_suggestions",
             new_callable=AsyncMock,
         ) as mock_run:
-            await handle_no_agents_workflow(team, request, queue, trace)
+            await handle_no_agents_workflow(team, request, queue)
 
         team.get_agent_suggestions.assert_awaited()
         team._message_helper._send_suggestions.assert_awaited()
@@ -104,18 +98,38 @@ class TestAutoAgentsWorkflow:
         team.get_agent_suggestions = AsyncMock(return_value=[])
         request = _team_request("auto")
         queue = AsyncMock()
-        trace = _main_trace()
 
         with patch(
             "src.smart_rag.engines.multi_agent.agentic_workflows.auto_agents._run_team_with_suggestions",
             new_callable=AsyncMock,
         ):
-            await handle_no_agents_workflow(team, request, queue, trace)
+            await handle_no_agents_workflow(team, request, queue)
 
         team._message_helper._send_suggestions.assert_awaited()
 
 
 class TestManualAgentsWorkflow:
+    @pytest.mark.asyncio
+    async def test_run_provided_team_uses_current_signature(self):
+        team = _mock_team()
+        request = _team_request("manual", agents=[_worker_agent()])
+        queue = AsyncMock()
+
+        await _run_provided_agent_team(
+            team, request, "manager prompt", request.session_id, 0.2, False, queue
+        )
+
+        team.run_agent_team.assert_awaited_once_with(
+            request.message,
+            "manager prompt",
+            request.session_id,
+            False,
+            q=queue,
+            manager_temperature=0.2,
+            image_input=request.image_input,
+            original_agents=request.agents,
+        )
+
     @pytest.mark.asyncio
     async def test_handle_agents_provided_workflow_runs_team(self):
         team = _mock_team()
@@ -140,7 +154,7 @@ class TestManualAgentsWorkflow:
             )
             mock_docs.update_agents_in_list_by_mapping = MagicMock()
             await handle_agents_provided_workflow(
-                team, request, AsyncMock(), _main_trace()
+                team, request, AsyncMock()
             )
 
         mock_run.assert_awaited_once()
@@ -167,7 +181,7 @@ class TestManualAgentsWorkflow:
             )
             mock_docs.update_agents_in_list_by_mapping = MagicMock()
             await handle_agents_provided_workflow(
-                team, request, AsyncMock(), _main_trace()
+                team, request, AsyncMock()
             )
 
         assert any(t.get("name") == "deep_search" for t in worker.tools)
@@ -190,13 +204,12 @@ class TestSingleAgentWorkflow:
             mock_docs.merge_user_request_brain_documents_into_agents.side_effect = (
                 lambda agents, _req: agents
             )
-            await handle_single_agent_workflow(team, request, AsyncMock(), _main_trace())
+            await handle_single_agent_workflow(team, request, AsyncMock())
 
         mock_run.assert_awaited_once_with(
             user_prompt=request.message,
             session_id=request.session_id,
             q=ANY,
-            parent_trace=ANY,
             image_input=request.image_input,
             task_summary="Profitability",
         )
@@ -211,6 +224,6 @@ class TestSingleAgentWorkflow:
             "src.smart_rag.engines.multi_agent.agentic_workflows.single_agent.DocumentHelpers"
         ) as mock_docs:
             mock_docs.agent_to_dict.return_value = {"agent_type": "manager"}
-            await handle_single_agent_workflow(team, request, AsyncMock(), _main_trace())
+            await handle_single_agent_workflow(team, request, AsyncMock())
 
         team._message_helper._send_error_message.assert_awaited_once()

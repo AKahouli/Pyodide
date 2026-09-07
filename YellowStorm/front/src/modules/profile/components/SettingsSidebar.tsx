@@ -9,6 +9,7 @@ import { cn } from '@/lib/utils';
 import { useModuleTranslation } from '@/modules/localization';
 import type { ModuleTranslationKey } from '@/modules/localization';
 import type { SettingsSection } from '../types';
+import { usePermissions } from '@/modules/admin';
 
 interface NavItem {
   id: SettingsSection;
@@ -32,7 +33,12 @@ type SettingsSidebarProps = Readonly<{
 
 export const SettingsSidebar = memo(function SettingsSidebar({ activeSection, onSelect }: SettingsSidebarProps) {
   const { t } = useModuleTranslation('profile');
-  const items = React.useMemo(() => NAV_ITEMS.map((item) => ({ ...item, label: t(item.labelKey) })), [t]);
+  const { hasPermission } = usePermissions();
+  const canViewHealth = hasPermission('system.maintenance');
+  const items = React.useMemo(
+    () => NAV_ITEMS.filter((item) => item.id !== 'health' || canViewHealth).map((item) => ({ ...item, label: t(item.labelKey) })),
+    [canViewHealth, t],
+  );
 
   return (
     <div className='w-14 md:w-56 border-r bg-muted/30 flex flex-col shrink-0'>

@@ -8,7 +8,13 @@ const updateConversationMock = vi.hoisted(() => vi.fn().mockResolvedValue(undefi
 const stopStreamMock = vi.hoisted(() => vi.fn());
 const clearAllMock = vi.hoisted(() => vi.fn());
 const currentConversationMock = vi.hoisted(() => ({
-  value: { id: 'conv-1', workspaces: ['ws-1'] } as { id: string; workspaces: string[]; runtimeMode?: 'standard' | 'governed' },
+  value: { id: 'conv-1', workspaces: ['ws-1'] } as { id: string; workspaces: string[]; runtimeMode?: 'standard' | 'governed'; runtimePurpose?: 'platform_copilot' },
+}));
+const workspaceSelectionMock = vi.hoisted(() => ({
+  value: ['ws-2'] as string[],
+  set: vi.fn((workspaceIds: string[]) => {
+    workspaceSelectionMock.value = workspaceIds;
+  }),
 }));
 
 vi.mock('@/components/ai-elements/input', () => ({
@@ -16,6 +22,8 @@ vi.mock('@/components/ai-elements/input', () => ({
     onSubmit,
     showWorkspaceSelect,
     preserveWorkspaceSelectionOnSubmit,
+    onWorkspaceSelectionChange,
+    extraTools,
   }: {
     onSubmit: (
       message: { text: string },
@@ -33,10 +41,21 @@ vi.mock('@/components/ai-elements/input', () => ({
     ) => Promise<void>;
     showWorkspaceSelect?: boolean;
     preserveWorkspaceSelectionOnSubmit?: boolean;
+    onWorkspaceSelectionChange?: (workspaceIds: string[]) => void;
+    extraTools?: React.ReactNode;
   }) => (
     <>
       <span>{showWorkspaceSelect ? 'workspace-selector-visible' : 'workspace-selector-hidden'}</span>
       <span>{preserveWorkspaceSelectionOnSubmit ? 'workspace-selection-preserved' : 'workspace-selection-reset'}</span>
+      <button type='button' onClick={() => {
+        workspaceSelectionMock.set(['ws-2']);
+        onWorkspaceSelectionChange?.(['ws-2']);
+      }}>select-workspace</button>
+      <button type='button' onClick={() => {
+        workspaceSelectionMock.set(['ws-3']);
+        onWorkspaceSelectionChange?.(['ws-3']);
+      }}>select-another-workspace</button>
+      {extraTools}
       <button
         type='button'
         onClick={() => {
@@ -56,6 +75,18 @@ vi.mock('@/components/ai-elements/input', () => ({
           );
         }}>
         submit-message
+      </button>
+      <button
+        type='button'
+        onClick={() => void onSubmit({ text: 'hello' }, 'model-1')}
+      >
+        submit-with-reasoning
+      </button>
+      <button
+        type='button'
+        onClick={() => void onSubmit({ text: 'hello' }, 'model-1', undefined, ['member-1'])}
+      >
+        submit-to-member
       </button>
     </>
   ),
@@ -102,6 +133,21 @@ vi.mock('@/modules/auth/useAuth', () => ({
   useAuth: () => ({ user: { id: 'user-1' } }),
 }));
 
+vi.mock('@/modules/models', () => ({
+  useModels: () => [{
+    id: 'model-1',
+    supportsReasoning: true,
+    reasoning: {
+      defaultEffort: 'medium',
+      efforts: [
+        { id: 'medium', name: 'Medium' },
+        { id: 'high', name: 'High' },
+      ],
+    },
+  }],
+  useDefaultModel: () => undefined,
+}));
+
 vi.mock('../store', () => ({
   useConversationStore: Object.assign(
     (selector: (state: Record<string, unknown>) => unknown) =>
@@ -119,10 +165,12 @@ vi.mock('../store', () => ({
           repoName: 'org-name/repo-name',
           repoUrl: 'https://github.com/org-name/repo-name',
         },
+        messages: [],
         currentConversation: currentConversationMock.value,
       }),
     {
       getState: () => ({
+        selectedWorkspaceIds: workspaceSelectionMock.value,
         selectedSkillIds: [],
         selectedConnectorRepo: {
           connectorId: 'connector-1',
@@ -137,9 +185,13 @@ vi.mock('../store', () => ({
   useIsAwaitingFirstChunk: () => false,
   useInputDisabled: () => false,
   useReplyingToMessage: () => null,
-  useSelectedWorkspaceIds: () => ['ws-2'],
+  useSelectedWorkspaceIds: () => workspaceSelectionMock.value,
+  useSetSelectedWorkspaceIds: () => workspaceSelectionMock.set,
   useDeepSearchEnabled: () => false,
   useSetDeepSearchEnabled: () => vi.fn(),
+  useSelectedModelId: () => 'model-1',
+  useSelectedReasoningEffort: () => 'high',
+  useSetSelectedReasoningEffort: () => vi.fn(),
   useSelectedConnectorRepo: () => ({
     connectorId: 'connector-1',
     connectorName: 'GitHub',
@@ -154,6 +206,7 @@ describe('ConversationInput', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     currentConversationMock.value = { id: 'conv-1', workspaces: ['ws-1'] };
+    workspaceSelectionMock.value = ['ws-2'];
   });
 
   it('submits message with uploaded files and clears upload state', async () => {
@@ -193,11 +246,90 @@ describe('ConversationInput', () => {
     });
   });
 
+  it('persists a prompt-bar workspace selection before the next message', async () => {
+    render(<ConversationInput conversationId='conv-1' />);
+
+    await userEvent.click(screen.getByRole('button', { name: 'select-workspace' }));
+
+    await waitFor(() => {
+      expect(updateConversationMock).toHaveBeenCalledWith('conv-1', { workspaces: ['ws-2'] });
+    });
+    expect(sendMessageMock).not.toHaveBeenCalled();
+  });
+
+  it('waits for an in-flight workspace selection before sending a message', async () => {
+    let resolveUpdate: () => void = () => undefined;
+    updateConversationMock.mockImplementationOnce(() => new Promise<void>((resolve) => {
+      resolveUpdate = resolve;
+    }));
+    render(<ConversationInput conversationId='conv-1' />);
+
+    await userEvent.click(screen.getByRole('button', { name: 'select-workspace' }));
+    await userEvent.click(screen.getByRole('button', { name: 'submit-message' }));
+
+    expect(sendMessageMock).not.toHaveBeenCalled();
+    resolveUpdate();
+    await waitFor(() => expect(sendMessageMock).toHaveBeenCalled());
+    expect(updateConversationMock.mock.invocationCallOrder[0]).toBeLessThan(sendMessageMock.mock.invocationCallOrder[0]);
+  });
+
+  it('serializes rapid workspace selections and persists the latest value', async () => {
+    let resolveFirstUpdate: () => void = () => undefined;
+    updateConversationMock
+      .mockImplementationOnce(() => new Promise<void>((resolve) => {
+        resolveFirstUpdate = resolve;
+      }))
+      .mockResolvedValueOnce(undefined);
+    render(<ConversationInput conversationId='conv-1' />);
+
+    await userEvent.click(screen.getByRole('button', { name: 'select-workspace' }));
+    await userEvent.click(screen.getByRole('button', { name: 'select-another-workspace' }));
+
+    expect(updateConversationMock).toHaveBeenCalledTimes(1);
+    resolveFirstUpdate();
+    await waitFor(() => {
+      expect(updateConversationMock).toHaveBeenNthCalledWith(2, 'conv-1', { workspaces: ['ws-3'] });
+    });
+  });
+
+  it('rolls back the prompt-bar selection when persistence fails', async () => {
+    updateConversationMock.mockRejectedValueOnce(new Error('update failed'));
+    render(<ConversationInput conversationId='conv-1' />);
+
+    await userEvent.click(screen.getByRole('button', { name: 'select-workspace' }));
+
+    await waitFor(() => expect(workspaceSelectionMock.set).toHaveBeenLastCalledWith(['ws-1']));
+    expect(sendMessageMock).not.toHaveBeenCalled();
+  });
+
   it('hides the workspace selector for governed conversations', () => {
     currentConversationMock.value = { id: 'conv-1', workspaces: ['ws-1'], runtimeMode: 'governed' };
 
     render(<ConversationInput conversationId='conv-1' />);
 
     expect(screen.getByText('workspace-selector-hidden')).toBeInTheDocument();
+  });
+
+  it('submits reasoning effort only for an untagged standard turn', async () => {
+    render(<ConversationInput conversationId='conv-1' />);
+
+    await userEvent.click(screen.getByRole('button', { name: 'submit-with-reasoning' }));
+
+    await waitFor(() => expect(sendMessageMock).toHaveBeenCalledWith(
+      'conv-1',
+      expect.objectContaining({ modelId: 'model-1', reasoningEffort: 'high' }),
+    ));
+  });
+
+  it('omits reasoning effort for member and platform copilot turns', async () => {
+    const { rerender } = render(<ConversationInput conversationId='conv-1' />);
+    await userEvent.click(screen.getByRole('button', { name: 'submit-to-member' }));
+    expect(sendMessageMock.mock.calls.at(-1)?.[1]).not.toHaveProperty('reasoningEffort');
+
+    currentConversationMock.value = { id: 'conv-1', workspaces: ['ws-1'], runtimePurpose: 'platform_copilot' };
+    rerender(<ConversationInput conversationId='conv-1' />);
+    await userEvent.click(screen.getByRole('button', { name: 'submit-with-reasoning' }));
+    expect(sendMessageMock.mock.calls.at(-1)?.[1]).not.toHaveProperty('reasoningEffort');
+    expect(screen.queryByRole('button', { name: 'input.reasoning.label' })).not.toBeInTheDocument();
   });
 });

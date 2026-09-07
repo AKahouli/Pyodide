@@ -49,6 +49,14 @@ export interface DownloadOptions {
   asBuffer?: boolean;
 }
 
+export interface DocumentReadStream {
+  body: Readable;
+  contentType?: string;
+  contentLength?: number;
+  contentRange?: string;
+  acceptRanges?: string;
+}
+
 export interface SasUrlOptions {
   /** Expiry time in minutes (default: from config) */
   expiryMinutes?: number;
@@ -93,3 +101,4 @@ export interface DocumentInfo {
   lastModified: Date;
   metadata?: Record<string, string>;
 }
+import type { Readable } from 'stream';

@@ -74,6 +74,46 @@ describe('PlaybookFlowReplayReportService', () => {
     expect(result).toEqual([{ id: 'r2', createdAt: '2026-01-02' }, { id: 'r1', createdAt: '2026-01-01' }]);
   });
 
+  it('sanitizes legacy eligibility fields and verdicts from listed reports', async () => {
+    const foundDocs = [
+      {
+        _id: 'r1',
+        createdAt: new Date('2026-01-01'),
+        toJSON: jest.fn().mockReturnValue({
+          id: 'r1',
+          applied: false,
+          confidenceScore: 45,
+          confidenceFactors: { nodeSnapshotHash: 0 },
+          invalidationReasons: ['confidence_below_threshold'],
+          appliedSections: [],
+          skippedSections: ['tool_policy'],
+          verdict: 'skipped',
+          verdictReasons: ['replay_not_applied'],
+          blockedBy: ['confidence_below_threshold'],
+        }),
+      },
+    ];
+    const chain = {
+      sort: jest.fn().mockReturnThis(),
+      skip: jest.fn().mockReturnThis(),
+      limit: jest.fn().mockReturnThis(),
+      exec: jest.fn().mockResolvedValue(foundDocs),
+    };
+    const replayRunReportModel = {
+      find: jest.fn().mockReturnValue(chain),
+    };
+    const service = new PlaybookFlowReplayReportService(replayRunReportModel as any);
+
+    const result = await service.listReports({ flowId: 'flow-1', taskId: 'task-1' });
+
+    expect(result).toEqual([{
+      id: 'r1',
+      verdict: 'unknown',
+      verdictReasons: [],
+      blockedBy: [],
+    }]);
+  });
+
   it('lists reports with optional executionId and iteration filters', async () => {
     const chain = {
       sort: jest.fn().mockReturnThis(),
@@ -101,18 +141,23 @@ describe('PlaybookFlowReplayReportService', () => {
     });
   });
 
-  it('finds the latest replay report lookup for an execution task', async () => {
+  it('finds the latest replay report lookup for an execution task and strips legacy eligibility fields', async () => {
     const replayRunReportModel = {
       findOne: jest.fn(() => ({
         sort: jest.fn().mockReturnValue({
           lean: jest.fn().mockReturnValue({
             exec: jest.fn().mockResolvedValue({
+              _id: 'report-1',
               executionId: 'exec-1',
               flowId: 'flow-1',
               taskId: 'task-1',
               replayId: 'replay-1',
               validationVersion: 2,
               applied: true,
+              confidenceScore: 42,
+              invalidationReasons: ['node_snapshot_mismatch'],
+              verdict: 'skipped',
+              verdictReasons: ['replay_not_applied'],
             }),
           }),
         }),
@@ -121,13 +166,13 @@ describe('PlaybookFlowReplayReportService', () => {
     const service = new PlaybookFlowReplayReportService(replayRunReportModel as any);
 
     await expect(service.findLatestReportForExecutionTask('exec-1', 'task-1')).resolves.toEqual({
+      _id: 'report-1',
       executionId: 'exec-1',
       flowId: 'flow-1',
       taskId: 'task-1',
       iteration: 0,
       replayId: 'replay-1',
       validationVersion: 2,
-      applied: true,
     });
     expect(replayRunReportModel.findOne).toHaveBeenCalledWith({ executionId: 'exec-1', taskId: 'task-1' });
   });

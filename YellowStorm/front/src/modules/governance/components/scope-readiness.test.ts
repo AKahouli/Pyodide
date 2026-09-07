@@ -33,7 +33,7 @@ describe('scope readiness sequence', () => {
     const checks = [
       readinessCheck('ownership_assigned', 'failed'),
       readinessCheck('agents_mapped', 'warning'),
-      readinessCheck('knowledge_mapped', 'passed', 'document'),
+      readinessCheck('knowledge_mapped', 'passed', 'workspace'),
     ];
 
     // Agents precede ownership in the lifecycle regardless of audience feature flag.
@@ -45,7 +45,7 @@ describe('scope readiness sequence', () => {
   });
 
   it('marks Knowledge ready independently from draft preparation', () => {
-    expect(getTabReadinessState('knowledge', overviewWith([readinessCheck('knowledge_mapped', 'passed', 'document')]))).toBe('ready');
+    expect(getTabReadinessState('knowledge', overviewWith([readinessCheck('knowledge_mapped', 'passed', 'workspace')]))).toBe('ready');
   });
 
   it('uses the readiness check rather than a connected workspace to determine usable knowledge', () => {

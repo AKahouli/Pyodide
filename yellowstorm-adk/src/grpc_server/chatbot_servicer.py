@@ -11,6 +11,8 @@ import os
 import mimetypes
 import tempfile
 import shutil
+import time
+from contextvars import Token
 from google.protobuf import json_format, struct_pb2, timestamp_pb2
 
 import litellm
@@ -34,6 +36,7 @@ except ImportError:
     chatbot_pb2_grpc = None
 
 from src.smart_rag.core import AgentTeamService
+from src.smart_rag.tools.infrastructure.common_helpers import CommonHelpers
 from src.evaluation.semantic_match import evaluate_semantic_match
 from src.schema.chatbot_schema import RunAgentTeamRequest, AgentSuggestion
 from src.temporary_child_summary import pop_temporary_child_summary
@@ -43,9 +46,16 @@ from src.grpc_server.conversation_session_seed import (
     ConversationSessionSeedService,
     SessionSeedConflictError,
 )
+from src.smart_rag.infrastructure.monitoring.conversation_latency import (
+    get_current_conversation_latency_trace,
+    reset_conversation_latency_trace,
+    start_conversation_latency_trace,
+)
 
 logger = get_logger(__name__)
 app_settings = get_settings()
+
+STREAM_HEARTBEAT_INTERVAL_SECONDS = 2.0
 
 _MESSAGE_TO_DICT_OPTIONS: Dict[str, Any] = {
     "preserving_proto_field_name": True,
@@ -74,6 +84,18 @@ def _grpc_in_log_message(label: str, payload: Dict[str, Any]) -> str:
     return f"[gRPC IN] {label} request_summary={_json_log_payload(summary)}"
 
 
+def _mark_latency_stage(marker: str) -> None:
+    """Stamp a pre-provider latency milestone when a trace is installed.
+
+    Only a ContextVar lookup + null check + scalar write; must stay free of
+    I/O, logging, and serialization.
+    """
+    trace = get_current_conversation_latency_trace()
+    if trace is None:
+        return
+    getattr(trace, marker)()
+
+
 def _grpc_skill_summaries(skills: Any) -> List[Dict[str, Any]]:
     summaries = []
     for skill in skills or []:
@@ -88,28 +110,6 @@ def _grpc_skill_summaries(skills: Any) -> List[Dict[str, Any]]:
             }
         )
     return summaries
-
-
-def _convert_file_chunk_to_artifact(chunk_dict: Dict[str, Any]) -> Dict[str, Any]:
-    file_data = json.loads(chunk_dict.get("chunk", "{}"))
-    return {
-        "action": "add",
-        "component": {
-            "id": str(uuid.uuid4()),
-            "type": "artifact",
-            "data": {
-                "filename": file_data.get("filename", ""),
-                "file_path": file_data.get("object_key")
-                or file_data.get("azure_path")
-                or file_data.get("file_path")
-                or "",
-            },
-        },
-        "metadata": {
-            "message_id": chunk_dict.get("message_id", ""),
-            "agent_id": chunk_dict.get("agent_id", ""),
-        },
-    }
 
 
 class ChatbotServicer(
@@ -358,6 +358,60 @@ class ChatbotServicer(
             children=summary["children"],
         )
 
+    @staticmethod
+    def _reset_latency_trace(token: Optional[Token]) -> None:
+        """Best-effort ContextVar reset; safe on already-invalid tokens."""
+        if token is None:
+            return
+        try:
+            reset_conversation_latency_trace(token)
+        except Exception:
+            pass  # Token may already be reset or invalid
+
+    def _begin_conversation_latency_trace(self, request: Any) -> Optional[Token]:
+        """Capture ``adk.request_received`` and install the request-scoped trace.
+
+        Must be the first operation of RunAgentTeam/RunSingleAgent — before
+        request serialization/logging — so the pre-provider latency includes
+        that cost. Returns None when the incoming request carries no trace
+        context or the protobuf module is unavailable.
+        """
+        received_epoch_ms = time.time_ns() / 1_000_000
+        received_perf_ns = time.perf_counter_ns()
+        if chatbot_pb2 is None:
+            return None
+        try:
+            trace_ctx = request.latency_trace_context
+            if not trace_ctx.request_id and not trace_ctx.assistant_message_id:
+                return None
+            return start_conversation_latency_trace(
+                request_id=trace_ctx.request_id,
+                assistant_message_id=trace_ctx.assistant_message_id,
+                backend_received_epoch_ms=trace_ctx.backend_received_epoch_ms or None,
+                received_epoch_ms=received_epoch_ms,
+                received_perf_ns=received_perf_ns,
+            )
+        except (AttributeError, ValueError):
+            # Older wire contract without the trace context field.
+            return None
+
+    def _stamp_first_forwarded_latency(self, chunk_pb: Any) -> None:
+        """Attach the one-time LatencyTrace to the first post-model chunk.
+
+        Pre-model activity, heartbeat, and replay-control chunks never reach
+        the stamp: the trace's first-delta marker only exists after the model
+        produced output, and the forwarded marker is first-write-wins.
+        """
+        trace = get_current_conversation_latency_trace()
+        if trace is None or trace.llm_first_delta_perf_ns is None:
+            return
+        if trace.adk_first_delta_forwarded_perf_ns is not None:
+            return
+        trace.mark_adk_first_delta_forwarded()
+        trace_pb = trace.build_latency_trace_proto(chatbot_pb2)
+        if trace_pb is not None:
+            chunk_pb.latency_trace.CopyFrom(trace_pb)
+
     async def RunAgentTeam(
         self,
         request: "chatbot_pb2.RunAgentTeamRequest",
@@ -380,7 +434,14 @@ class ChatbotServicer(
         Yields:
             StreamChunk: Protobuf messages containing text chunks and metadata
         """
-        request_payload = self._serialize_run_agent_team_request(request)
+        # Latency boundary: must precede request serialization/logging below.
+        latency_trace_token = self._begin_conversation_latency_trace(request)
+        try:
+            request_payload = self._serialize_run_agent_team_request(request)
+        except BaseException:
+            self._reset_latency_trace(latency_trace_token)
+            raise
+        _mark_latency_stage("mark_request_payload_ready")
         logger.info(
             _grpc_in_log_message("RunAgentTeam request received", request_payload),
             user_id=request.user_context.user_id,
@@ -393,6 +454,9 @@ class ChatbotServicer(
             attached_file_count=len(request.attached_files),
             previous_attached_file_count=len(request.previous_attached_files),
         )
+        # Marker must sit after logger.info so the stage includes the
+        # synchronous JSON formatting and logger execution overhead.
+        _mark_latency_stage("mark_request_log_done")
 
         logger.info(f"[gRPC] RunAgentTeam request from user_id: {request.user_context.user_id}, username: {request.user_context.username}, conversation_id: {request.conversation_id}, agent_mode: {request.agent_mode}")
         username = request.user_context.username or 'unknown'
@@ -405,12 +469,15 @@ class ChatbotServicer(
         try:
             # Convert protobuf request to internal V1 Pydantic model (for backward compatibility)
             internal_request = await self._convert_agent_team_request_v2(request)
+            _mark_latency_stage("mark_internal_request_ready")
 
             if internal_request.correction_replay_context:
                 yield chatbot_pb2.StreamChunk(
                     action="replay_started",
                     metadata=chatbot_pb2.Metadata(message_id=request.conversation_id),
                 )
+            else:
+                yield self._build_initial_agent_activity_chunk(request.conversation_id)
 
             if internal_request.attached_files:
                 index_task = asyncio.create_task(
@@ -429,10 +496,17 @@ class ChatbotServicer(
 
             # Stream chunks from queue
             while True:
-                get_task = asyncio.create_task(queue.get())
-                done, pending = await asyncio.wait(
-                    [get_task, bg_task], return_when=asyncio.FIRST_COMPLETED
+                if get_task is None:
+                    get_task = asyncio.create_task(queue.get())
+                done, _ = await asyncio.wait(
+                    [get_task, bg_task],
+                    timeout=STREAM_HEARTBEAT_INTERVAL_SECONDS,
+                    return_when=asyncio.FIRST_COMPLETED,
                 )
+
+                if not done:
+                    yield self._build_stream_heartbeat_chunk(request.conversation_id)
+                    continue
 
                 # Check if background task finished first
                 if bg_task in done:
@@ -489,17 +563,9 @@ class ChatbotServicer(
                     await bg_task
                     break
 
-                # Convert old File chunks to artifact components
                 if chunk_dict.get("content_type") == "File":
-                    try:
-                        chunk_dict = _convert_file_chunk_to_artifact(chunk_dict)
-                        logger.info(
-                            "[gRPC] Converted old File chunk to artifact component"
-                        )
-                    except Exception as e:
-                        logger.error(
-                            f"[gRPC] Failed to convert File chunk to artifact: {e}"
-                        )
+                    logger.warning("[gRPC] Dropped unsupported legacy File chunk")
+                    continue
 
                 # Convert dict to protobuf
                 chunk_pb = self._dict_to_stream_chunk(chunk_dict)
@@ -512,6 +578,10 @@ class ChatbotServicer(
                     message_id=chunk_dict.get("metadata", {}).get("message_id"),
                     agent_id=chunk_dict.get("metadata", {}).get("agent_id"),
                 )
+
+                # Attach the one-time timing envelope to the first post-model
+                # chunk right before it is handed to gRPC.
+                self._stamp_first_forwarded_latency(chunk_pb)
 
                 # Yield protobuf message
                 yield chunk_pb
@@ -527,7 +597,7 @@ class ChatbotServicer(
             )
             return
 
-        except (asyncio.CancelledError, GeneratorExit):
+        except (asyncio.CancelledError, GeneratorExit) as cancellation:
             # Client cancelled the stream (e.g., call.cancel() was called, or client disconnected)
             logger.info(
                 f"[gRPC] Client cancelled stream - conversation_id: {request.conversation_id}, "
@@ -540,9 +610,6 @@ class ChatbotServicer(
                     await get_task
                 except asyncio.CancelledError:
                     logger.debug("[gRPC] Queue get task cancelled successfully")
-                    current = asyncio.current_task()
-                    if current is not None and current.cancelling() > 0:
-                        raise
                 except Exception as cleanup_error:
                     logger.warning(
                         f"[gRPC] Error during queue get task cleanup: {cleanup_error}"
@@ -555,9 +622,6 @@ class ChatbotServicer(
                     await bg_task
                 except asyncio.CancelledError:
                     logger.debug("[gRPC] Background task cancelled successfully")
-                    current = asyncio.current_task()
-                    if current is not None and current.cancelling() > 0:
-                        raise
                 except Exception as cleanup_error:
                     logger.warning(
                         f"[gRPC] Error during background task cleanup: {cleanup_error}"
@@ -578,7 +642,10 @@ class ChatbotServicer(
                 f"[gRPC] Stream cancellation cleanup complete - drained {drained} queued chunks"
             )
 
-            # Return normally - gRPC will handle setting CANCELLED status
+            if isinstance(cancellation, asyncio.CancelledError):
+                raise cancellation
+
+            # GeneratorExit is complete after owned tasks have stopped.
             return
 
         except Exception as e:
@@ -611,6 +678,9 @@ class ChatbotServicer(
             # End stream gracefully
             return
         finally:
+            # Clear the request-scoped latency trace before the user context
+            # so a cancelled stream never leaks timing state into the next one.
+            self._reset_latency_trace(latency_trace_token)
             # Clear user context after processing
             try:
                 user_ctx.reset(user_token)
@@ -627,7 +697,14 @@ class ChatbotServicer(
         Shares the same internal service/orchestrator stack as RunAgentTeam by
         converting to an internal RunAgentTeamRequest with ``agent_mode='mono'``.
         """
-        request_payload = _message_to_dict(request)
+        # Latency boundary: must precede request serialization/logging below.
+        latency_trace_token = self._begin_conversation_latency_trace(request)
+        try:
+            request_payload = _message_to_dict(request)
+        except BaseException:
+            self._reset_latency_trace(latency_trace_token)
+            raise
+        _mark_latency_stage("mark_request_payload_ready")
         replay_context = request_payload.get("correction_replay_context")
         if isinstance(replay_context, dict):
             request_payload["correction_replay_context"] = {
@@ -646,6 +723,9 @@ class ChatbotServicer(
             attached_file_count=len(request.attached_files),
             previous_attached_file_count=len(request.previous_attached_files),
         )
+        # Marker must sit after logger.info so the stage includes the
+        # synchronous JSON formatting and logger execution overhead.
+        _mark_latency_stage("mark_request_log_done")
 
         username = request.user_context.username or "unknown"
         user_token = set_user_context(request.user_context.user_id, username)
@@ -655,12 +735,15 @@ class ChatbotServicer(
 
         try:
             internal_request = await self._convert_single_agent_request(request)
+            _mark_latency_stage("mark_internal_request_ready")
 
             if internal_request.correction_replay_context:
                 yield chatbot_pb2.StreamChunk(
                     action="replay_started",
                     metadata=chatbot_pb2.Metadata(message_id=request.conversation_id),
                 )
+            else:
+                yield self._build_initial_agent_activity_chunk(request.conversation_id)
 
             if internal_request.attached_files:
                 index_task = asyncio.create_task(
@@ -677,10 +760,17 @@ class ChatbotServicer(
             )
 
             while True:
-                get_task = asyncio.create_task(queue.get())
-                done, pending = await asyncio.wait(
-                    [get_task, bg_task], return_when=asyncio.FIRST_COMPLETED
+                if get_task is None:
+                    get_task = asyncio.create_task(queue.get())
+                done, _ = await asyncio.wait(
+                    [get_task, bg_task],
+                    timeout=STREAM_HEARTBEAT_INTERVAL_SECONDS,
+                    return_when=asyncio.FIRST_COMPLETED,
                 )
+
+                if not done:
+                    yield self._build_stream_heartbeat_chunk(request.conversation_id)
+                    continue
 
                 if bg_task in done:
                     exception = bg_task.exception()
@@ -716,14 +806,14 @@ class ChatbotServicer(
                     break
 
                 if chunk_dict.get("content_type") == "File":
-                    try:
-                        chunk_dict = _convert_file_chunk_to_artifact(chunk_dict)
-                    except Exception as e:
-                        logger.error(
-                            f"[gRPC] Failed to convert File chunk to artifact: {e}"
-                        )
+                    logger.warning("[gRPC] Dropped unsupported legacy File chunk")
+                    continue
 
-                yield self._dict_to_stream_chunk(chunk_dict)
+                chunk_pb = self._dict_to_stream_chunk(chunk_dict)
+                # Attach the one-time timing envelope to the first post-model
+                # chunk right before it is handed to gRPC.
+                self._stamp_first_forwarded_latency(chunk_pb)
+                yield chunk_pb
 
             self._log_temporary_child_summary(
                 request.conversation_id,
@@ -735,7 +825,7 @@ class ChatbotServicer(
             )
             return
 
-        except (asyncio.CancelledError, GeneratorExit):
+        except (asyncio.CancelledError, GeneratorExit) as cancellation:
             logger.info(
                 f"[gRPC] Client cancelled single-agent stream - conversation_id: {request.conversation_id}"
             )
@@ -744,9 +834,7 @@ class ChatbotServicer(
                 try:
                     await get_task
                 except asyncio.CancelledError:
-                    current = asyncio.current_task()
-                    if current is not None and current.cancelling() > 0:
-                        raise
+                    pass
                 except Exception as cleanup_error:
                     logger.warning(f"[gRPC] Error during queue get task cleanup: {cleanup_error}")
             if bg_task is not None and not bg_task.done():
@@ -754,11 +842,11 @@ class ChatbotServicer(
                 try:
                     await bg_task
                 except asyncio.CancelledError:
-                    current = asyncio.current_task()
-                    if current is not None and current.cancelling() > 0:
-                        raise
+                    pass
                 except Exception as cleanup_error:
                     logger.warning(f"[gRPC] Error during background task cleanup: {cleanup_error}")
+            if isinstance(cancellation, asyncio.CancelledError):
+                raise cancellation
             return
 
         except Exception as e:
@@ -778,12 +866,33 @@ class ChatbotServicer(
             yield self._dict_to_stream_chunk(error_component)
             return
         finally:
+            self._reset_latency_trace(latency_trace_token)
             try:
                 user_ctx.reset(user_token)
             except Exception:
                 pass
 
     # ========== CONVERSION HELPERS ==========
+
+    def _build_initial_agent_activity_chunk(self, message_id: str) -> "chatbot_pb2.StreamChunk":
+        """Emit the initial progress row before model reasoning is available."""
+        return self._dict_to_stream_chunk({
+            "action": "add",
+            "component": {
+                "id": f"activity-{uuid.uuid4()}",
+                "type": "agent_activity",
+                "data": {"summary": "", "status": "completed"},
+            },
+            "metadata": {"message_id": message_id},
+        })
+
+    @staticmethod
+    def _build_stream_heartbeat_chunk(message_id: str) -> "chatbot_pb2.StreamChunk":
+        """Keep an active application stream alive without emitting UI content."""
+        return chatbot_pb2.StreamChunk(
+            action="heartbeat",
+            metadata=chatbot_pb2.Metadata(message_id=message_id),
+        )
 
     def _convert_agent(self, pb_agent: "chatbot_pb2.Agent") -> AgentSuggestion:
         """Convert protobuf Agent (V2) to internal V1 AgentSuggestion Pydantic model.
@@ -932,6 +1041,8 @@ class ChatbotServicer(
             chatbot_name={
                 "provider": pb_agent.chatbot.model,
                 "input_modalities": list(pb_agent.chatbot.input_modalities) or ["text"],
+                **({"reasoning_effort": pb_agent.chatbot.reasoning_effort} if pb_agent.chatbot.reasoning_effort else {}),
+                **({"context_window_tokens": pb_agent.chatbot.context_window_tokens} if pb_agent.chatbot.context_window_tokens > 0 else {}),
             }
             if pb_agent.HasField("chatbot")
             else None,
@@ -1545,14 +1656,17 @@ class ChatbotServicer(
     async def _download_and_encode_images(
         self, filepaths: List[str]
     ) -> List[Dict[str, str]]:
-        """Download images from Azure Datalake to temp files, then base64 encode.
+        """Download chat images from object storage, then base64 encode.
 
-        Uses tempfile.mkdtemp() for per-request isolation. Images are written
-        to disk first so that raw bytes are never held in memory alongside
-        the base64 string, reducing peak memory under concurrency.
+        Routes through CommonHelpers.async_download_from_storage so images
+        resolve from the same store the backend uploads to (Ceph S3 when
+        configured, Azure Data Lake fallback). Uses tempfile.mkdtemp() for
+        per-request isolation. Images are written to disk first so that raw
+        bytes are never held in memory alongside the base64 string, reducing
+        peak memory under concurrency.
 
         Args:
-            filepaths: List of Datalake file paths (e.g., "workspaceId/image.png").
+            filepaths: Object-storage keys (e.g., "workspaceId/image.png").
 
         Returns:
             List of dicts like [{"image 1": "data:image/png;base64,..."}, ...].
@@ -1570,59 +1684,39 @@ class ChatbotServicer(
         tmp_dir = tempfile.mkdtemp()
 
         try:
-            async with DataLakeServiceClient.from_connection_string(
-                app_settings.AZURE_DATALAKE_CONNECTION_STRING
-            ) as service_client:
-                fs_client = service_client.get_file_system_client(
-                    app_settings.AZURE_DATALAKE_FILE_SYSTEM_NAME
-                )
+            helpers = CommonHelpers(file_path=tmp_dir)
 
-                for idx, filepath in enumerate(filepaths, start=1):
-                    try:
-                        file_client = fs_client.get_file_client(filepath)
-                        download = await file_client.download_file()
-                        raw_bytes = await download.readall()
+            for idx, filepath in enumerate(filepaths, start=1):
+                try:
+                    tmp_path = await helpers.async_download_from_storage(filepath)
 
-                        if len(raw_bytes) > app_settings.MAX_IMAGE_SIZE:
-                            logger.warning(
-                                f"[gRPC] Image {filepath} too large ({len(raw_bytes)} bytes), skipping (max {app_settings.MAX_IMAGE_SIZE})"
-                            )
-                            continue
+                    async with aiofiles.open(tmp_path, "rb") as f:
+                        file_bytes = await f.read()
 
-                        # Write to temp file and release raw_bytes from memory
-                        tmp_path = os.path.join(
-                            tmp_dir, f"image_{idx}{os.path.splitext(filepath)[1]}"
+                    if len(file_bytes) > app_settings.MAX_IMAGE_SIZE:
+                        logger.warning(
+                            f"[gRPC] Image {filepath} too large ({len(file_bytes)} bytes), skipping (max {app_settings.MAX_IMAGE_SIZE})"
                         )
-                        async with aiofiles.open(tmp_path, "wb") as f:
-                            await f.write(raw_bytes)
-                        file_size = len(raw_bytes)
-                        del raw_bytes  # free memory before encoding
+                        continue
 
-                        # Read back from disk and encode to base64
-                        async with aiofiles.open(tmp_path, "rb") as f:
-                            file_bytes = await f.read()
-                        b64_data = base64.b64encode(file_bytes).decode("utf-8")
-                        del file_bytes  # free raw bytes immediately
+                    file_size = len(file_bytes)
+                    b64_data = base64.b64encode(file_bytes).decode("utf-8")
+                    del file_bytes  # free raw bytes immediately
 
-                        # Detect MIME type from extension
-                        ext = os.path.splitext(filepath)[1].lower()
-                        mime_type = mimetypes.types_map.get(ext, "image/jpeg")
+                    # Detect MIME type from the original object key extension
+                    ext = os.path.splitext(filepath)[1].lower()
+                    mime_type = mimetypes.types_map.get(ext, "image/jpeg")
 
-                        data_uri = f"data:{mime_type};base64,{b64_data}"
-                        del b64_data  # only keep the final data_uri string
+                    data_uri = f"data:{mime_type};base64,{b64_data}"
+                    del b64_data  # only keep the final data_uri string
 
-                        image_input.append({f"image {idx}": data_uri})
-                        logger.info(
-                            f"[gRPC] Downloaded and encoded image {idx}: {filepath} ({file_size} bytes)"
-                        )
+                    image_input.append({f"image {idx}": data_uri})
+                    logger.info(
+                        f"[gRPC] Downloaded and encoded image {idx}: {filepath} ({file_size} bytes)"
+                    )
 
-                    except Exception as e:
-                        logger.error(f"[gRPC] Failed to download image {filepath}: {e}")
-
-        except Exception as e:
-            logger.error(
-                f"[gRPC] Failed to connect to Azure Datalake for image download: {e}"
-            )
+                except Exception as e:
+                    logger.error(f"[gRPC] Failed to download image {filepath}: {e}")
 
         finally:
             shutil.rmtree(tmp_dir, ignore_errors=True)
@@ -1798,6 +1892,7 @@ class ChatbotServicer(
                     output_tokens=usage_data.get("output_tokens", 0),
                     total_tokens=usage_data.get("total_tokens", 0),
                     model=usage_data.get("model", ""),
+                    context_window_tokens=usage_data.get("context_window_tokens", 0),
                 ),
             )
 
@@ -1890,14 +1985,16 @@ class ChatbotServicer(
                 output_port_id=component_data.get("output_port_id")
                 or component_data.get("outputPortId", ""),
             )
-        elif component_type == "reasoning":
-            component_kwargs["reasoning"] = chatbot_pb2.ReasoningComponent(
-                content=component_data.get("content", "")
+        elif component_type == "agent_activity":
+            agent_activity = chatbot_pb2.AgentActivityComponent(
+                summary=component_data.get("summary", ""),
+                status=component_data.get("status", "running"),
             )
-        elif component_type == "chain_of_thought":
-            component_kwargs["chain_of_thought"] = chatbot_pb2.ChainOfThoughtComponent(
-                steps=[str(step) for step in component_data.get("steps", [])],
-            )
+            for field in ("detail", "started_at", "completed_at", "duration_ms", "actor_id", "actor_name"):
+                value = component_data.get(field)
+                if value is not None and value != "":
+                    setattr(agent_activity, field, value)
+            component_kwargs["agent_activity"] = agent_activity
         elif component_type == "plan":
             # Build PlanComponent with PlanStep objects
             steps = []
@@ -2026,21 +2123,20 @@ class ChatbotServicer(
                 error=component_data.get("error", ""),
                 output_available=component_data.get("output_available", False),
             )
-        elif component_type == "tool_info":
-            tool_info = chatbot_pb2.ToolInfoComponent(
-                title=component_data.get("title", ""),
+        elif component_type == "tool_activity":
+            tool_activity = chatbot_pb2.ToolActivityComponent(
+                tool_name=component_data.get("tool_name", ""),
                 status=component_data.get("status", ""),
             )
-            params = component_data.get("params")
-            if params:
-                tool_info.params = params
-            result_json = component_data.get("result_json")
-            if result_json:
-                tool_info.result_json = result_json
-            started_at = component_data.get("started_at")
-            if started_at:
-                tool_info.started_at = started_at
-            component_kwargs["tool_info"] = tool_info
+            for field in (
+                "params_json", "result_json", "started_at", "completed_at", "duration_ms",
+                "display_key", "fallback_display_name", "summary", "render_kind", "actor_id", "actor_name",
+                "primary_input", "primary_input_language",
+            ):
+                value = component_data.get(field)
+                if value is not None and value != "":
+                    setattr(tool_activity, field, value)
+            component_kwargs["tool_activity"] = tool_activity
         elif component_type == "web_preview":
             component_kwargs["web_preview"] = chatbot_pb2.WebPreviewComponent(
                 content=component_data.get("content", "")
@@ -2058,6 +2154,13 @@ class ChatbotServicer(
                 or component_data.get("artifactKind", ""),
                 mime_type=component_data.get("mime_type")
                 or component_data.get("mimeType", ""),
+                artifact_id=component_data.get("artifact_id")
+                or component_data.get("artifactId", ""),
+                producer_tool_id=component_data.get("producer_tool_id")
+                or component_data.get("producerToolId", ""),
+                size_bytes=component_data.get("size_bytes")
+                or component_data.get("sizeBytes", 0),
+                availability=component_data.get("availability", "ready"),
             )
         elif component_type == "citation":
             # Build CitationComponent with TextSourceData or ImageSourceData
@@ -2538,7 +2641,6 @@ class ChatbotServicer(
                     prompt_overrides=dict(request.prompt_overrides)
                     if getattr(request, "prompt_overrides", None)
                     else {},
-                    deep_search=getattr(request, "deep_search", False),
                 )
             )
             register_task(thread_id, bg_task)

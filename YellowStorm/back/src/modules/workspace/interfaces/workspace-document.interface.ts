@@ -20,6 +20,8 @@ export interface DocumentQueryParams {
   page?: number;
   limit?: number;
   status?: DocumentStatus;
+  /** Semantic corpus preparation needs documents regardless of upload status. */
+  includeAllStatuses?: boolean;
   search?: string;
   sortBy?: 'originalName' | 'createdAt' | 'size';
   sortOrder?: 'asc' | 'desc';

@@ -50,6 +50,7 @@ import { getMaintenanceStatus, setMaintenanceMode, getRegistrationStatus, setReg
 import type { MaintenanceStatus, RegistrationStatus } from '../types';
 import { CorsSettingsCard } from '../components/CorsSettingsCard';
 import { FeatureVisibilityCard } from '../components/FeatureVisibilityCard';
+import { SensitiveTextRedactionCard } from '../components/SensitiveTextRedactionCard';
 import { useModuleTranslation } from '@/modules/localization';
 import type { ModuleTranslationKey, TranslationParams } from '@/modules/localization';
 
@@ -137,7 +138,6 @@ export function SystemPage() {
   };
 
   const fetchStatus = async () => {
-    setLoading(true);
     setError(null);
 
     try {
@@ -301,6 +301,8 @@ export function SystemPage() {
       )}
 
       <FeatureVisibilityCard />
+
+      <SensitiveTextRedactionCard />
 
       {/* Maintenance Mode Card */}
       <Card>

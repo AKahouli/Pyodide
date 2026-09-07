@@ -26,18 +26,24 @@ export interface PlaybookExecutionAdminSettings {
   maxParallelismPerExecution: number;
   recursionLimitDefault: number;
   recursionLimitMax: number;
+  maxHitlRounds: number;
+  pythonWorkerPoolSize: number;
+  pythonWorkerMaxInflight: number;
+  maxToolIterations: number;
+  maxSandboxCallsPerStep: number;
+  graphCacheEnabled: boolean;
+  graphCacheMaxEntries: number;
+  graphCacheTtlSeconds: number;
   dynamicReasoning: DynamicReasoningAdminSettings;
 }
 
 export interface AdminPlaybookSettings {
-  playbookSuggestorAgentId: string | null;
   inferenceModelId: string | null;
   advisorEvaluationModelId: string | null;
   replayEvaluationModelId: string | null;
   nodeSuggestionsMode: SuggestionMode;
   approvalSuggestionMode: SuggestionMode;
   intentNormalizationLimits: PlaybookIntentNormalizationLimits;
-  replayEligibilityConfidenceThreshold: number;
   useDeterministicBlueprintBuilder: boolean;
   playbookExecution: PlaybookExecutionAdminSettings;
 }
@@ -60,6 +66,14 @@ export const DEFAULT_PLAYBOOK_EXECUTION_SETTINGS: PlaybookExecutionAdminSettings
   maxParallelismPerExecution: 5,
   recursionLimitDefault: 25,
   recursionLimitMax: 50,
+  maxHitlRounds: 5,
+  pythonWorkerPoolSize: 8,
+  pythonWorkerMaxInflight: 4,
+  maxToolIterations: 40,
+  maxSandboxCallsPerStep: 30,
+  graphCacheEnabled: false,
+  graphCacheMaxEntries: 128,
+  graphCacheTtlSeconds: 900,
   dynamicReasoning: {
     plannerAgentId: null,
     maxWorkNodes: 6,
@@ -70,14 +84,12 @@ export const DEFAULT_PLAYBOOK_EXECUTION_SETTINGS: PlaybookExecutionAdminSettings
 };
 
 export const DEFAULT_ADMIN_PLAYBOOK_SETTINGS: AdminPlaybookSettings = {
-  playbookSuggestorAgentId: null,
   inferenceModelId: null,
   advisorEvaluationModelId: null,
   replayEvaluationModelId: null,
   nodeSuggestionsMode: 'manual',
   approvalSuggestionMode: 'auto',
   intentNormalizationLimits: DEFAULT_PLAYBOOK_INTENT_NORMALIZATION_LIMITS,
-  replayEligibilityConfidenceThreshold: 70,
   useDeterministicBlueprintBuilder: true,
   playbookExecution: DEFAULT_PLAYBOOK_EXECUTION_SETTINGS,
 };
@@ -115,6 +127,14 @@ export function normalizePlaybookExecutionSettings(
     maxParallelismPerExecution,
     recursionLimitDefault,
     recursionLimitMax,
+    maxHitlRounds: boundedInteger(value?.maxHitlRounds, defaults.maxHitlRounds, 0, 100),
+    pythonWorkerPoolSize: boundedInteger(value?.pythonWorkerPoolSize, defaults.pythonWorkerPoolSize, 1, 100),
+    pythonWorkerMaxInflight: boundedInteger(value?.pythonWorkerMaxInflight, defaults.pythonWorkerMaxInflight, 1, 20),
+    maxToolIterations: boundedInteger(value?.maxToolIterations, defaults.maxToolIterations, 1, 500),
+    maxSandboxCallsPerStep: boundedInteger(value?.maxSandboxCallsPerStep, defaults.maxSandboxCallsPerStep, 1, 100),
+    graphCacheEnabled: typeof value?.graphCacheEnabled === 'boolean' ? value.graphCacheEnabled : defaults.graphCacheEnabled,
+    graphCacheMaxEntries: boundedInteger(value?.graphCacheMaxEntries, defaults.graphCacheMaxEntries, 1, 10000),
+    graphCacheTtlSeconds: boundedInteger(value?.graphCacheTtlSeconds, defaults.graphCacheTtlSeconds, 1, 86400),
     dynamicReasoning: {
       plannerAgentId: typeof value?.dynamicReasoning?.plannerAgentId === 'string'
         ? value.dynamicReasoning.plannerAgentId.trim() || null

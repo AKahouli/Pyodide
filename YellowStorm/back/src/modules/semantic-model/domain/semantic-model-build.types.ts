@@ -3,6 +3,11 @@ export type SemanticModelBuildStep = 'ontology' | 'mapping' | 'apply';
 export type SemanticModelBuildStepStatus = 'pending' | 'running' | 'completed' | 'failed' | 'skipped';
 export type SemanticModelBuildApplyMode = 'replace' | 'incremental';
 
+export interface SemanticModelManualInstances {
+  nodeTypeId: string;
+  labels: string[];
+}
+
 export interface SemanticModelBuildJob {
   buildId: string;
   modelId: string;
@@ -27,6 +32,7 @@ export interface SemanticModelBuildJob {
 export interface SemanticModelBuildStartRequest {
   businessRequirements: string[];
   applyMode: SemanticModelBuildApplyMode;
+  manualInstances?: SemanticModelManualInstances[];
 }
 
 export interface SemanticModelBuildStartResponse {

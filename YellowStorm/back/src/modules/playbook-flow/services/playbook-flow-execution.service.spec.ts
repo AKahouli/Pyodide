@@ -74,30 +74,6 @@ describe('buildGrpcNodeMetadata', () => {
       { id: 'user-rule', createdBy: 'user', enabled: true },
     ]);
   });
-
-  it('emits deep_search: true when node.deepSearch is true', () => {
-    const metadata = buildGrpcNodeMetadata(
-      { deepSearch: true },
-      {},
-    );
-    expect(metadata.deep_search).toBe(true);
-  });
-
-  it('emits deep_search: false when node.deepSearch is false', () => {
-    const metadata = buildGrpcNodeMetadata(
-      { deepSearch: false },
-      {},
-    );
-    expect(metadata.deep_search).toBe(false);
-  });
-
-  it('overrides stale metadata.deep_search: true when toggle is off', () => {
-    const metadata = buildGrpcNodeMetadata(
-      { deepSearch: false, metadata: { deep_search: true } },
-      {},
-    );
-    expect(metadata.deep_search).toBe(false);
-  });
 });
 
 describe('PlaybookFlowExecutionService start preflight', () => {
@@ -132,7 +108,7 @@ describe('PlaybookFlowExecutionService start preflight', () => {
       { reserve: jest.fn(), confirmLink: jest.fn(), release: jest.fn() } as any,
       flowService as any,
       { buildSnapshot: jest.fn().mockReturnValue({ settings: {}, nodes: [], controlEdges: [], dataBindings: [] }) } as any,
-      { validate: jest.fn() } as any,
+      { validate: jest.fn(), collectValidationErrors: jest.fn().mockReturnValue([]) } as any,
       { buildGrpcAgentsForPlaybook: jest.fn() } as any,
       { cacheOwner: jest.fn(), emitExecutionQueued: jest.fn() } as any,
       new PlaybookFlowObservabilityService(
@@ -142,8 +118,6 @@ describe('PlaybookFlowExecutionService start preflight', () => {
       {} as any,
       { resolveReplayArtifacts: async () => new Map() } as any,
       { buildReplayPromptSection: () => '' } as any,
-      { buildCurrentReplayFingerprints: jest.fn() } as any,
-      { evaluateReplayEligibility: jest.fn() } as any,
       { createPreRunReport: jest.fn(), updateStructuralDrift: jest.fn() } as any,
       new PlaybookFlowOutputContractService() as any,
       { validateModelActive: jest.fn().mockResolvedValue({ valid: true, model: null, inactive: false }) } as any,
@@ -154,6 +128,259 @@ describe('PlaybookFlowExecutionService start preflight', () => {
 
     expect(flowService.findOneForExecutionStart).toHaveBeenCalledWith('flow-1', 'owner-1');
     expect(flowService.findOne).not.toHaveBeenCalled();
+  });
+
+  it('rejects missing runtime inputs before reserving idempotency', async () => {
+    const sanitizedDocument = { save: jest.fn() };
+    const flowService = { findById: jest.fn().mockResolvedValue(sanitizedDocument) };
+    const graphSanitizerService = {
+      sanitize: jest.fn().mockReturnValue({
+        nodes: [],
+        controlEdges: [],
+        dataBindings: [],
+        removedOrphanedEdgeCount: 1,
+        removedOrphanedBindingCount: 0,
+        removedStaleBindingCount: 0,
+      }),
+    };
+    const { service, idempotencyService } = createExecutionServiceForTests({ flowService, graphSanitizerService });
+    (service as any).inputContractService = {
+      derive: jest.fn().mockReturnValue({
+        inputs: [{
+          id: 'step-1:brief',
+          taskId: 'step-1',
+          taskTitle: 'Draft report',
+          portId: 'brief',
+          label: 'Brief',
+          artifactKind: 'text',
+          required: true,
+          scope: 'runtime',
+          binding: { kind: 'trigger', triggerPath: 'playbookInputs.brief' },
+          acceptedSources: ['manual'],
+          readiness: 'runtime_required',
+        }],
+      }),
+    };
+
+    await expect(service.start('flow-1', 'owner-1', {}, 'idem-1'))
+      .rejects.toThrow('Required Playbook input Brief is missing.');
+
+    expect(idempotencyService.reserve).not.toHaveBeenCalled();
+    expect(flowService.findById).not.toHaveBeenCalled();
+    expect(sanitizedDocument.save).not.toHaveBeenCalled();
+  });
+
+  it('rejects inaccessible document inputs before reserving idempotency', async () => {
+    const { service, idempotencyService } = createExecutionServiceForTests();
+    (service as any).inputContractService = {
+      derive: jest.fn().mockReturnValue({
+        inputs: [{
+          id: 'step-1:document',
+          taskId: 'step-1',
+          taskTitle: 'Summarize document',
+          portId: 'document',
+          label: 'Document',
+          artifactKind: 'document',
+          required: true,
+          scope: 'runtime',
+          binding: { kind: 'trigger', triggerPath: 'playbookInputs.document' },
+          acceptedSources: ['document'],
+          readiness: 'runtime_required',
+        }],
+      }),
+    };
+    (service as any).workspaceShareService = {
+      assertUserHasAccess: jest.fn().mockRejectedValue(new Error('forbidden')),
+    };
+    (service as any).workspaceDocumentService = { findByIds: jest.fn() };
+
+    await expect(service.start('flow-1', 'owner-1', {
+      playbookInputs: {
+        document: { kind: 'document', id: 'doc-1', workspaceId: 'workspace-1' },
+      },
+    }, 'idem-1')).rejects.toThrow('The selected resource for Document is unavailable or inaccessible.');
+
+    expect(idempotencyService.reserve).not.toHaveBeenCalled();
+  });
+
+  it('fails closed when document authorization services are unavailable', async () => {
+    const { service } = createExecutionServiceForTests();
+    (service as any).inputContractService = {
+      derive: jest.fn().mockReturnValue({
+        inputs: [{
+          id: 'step-1:document',
+          taskId: 'step-1',
+          taskTitle: 'Summarize document',
+          portId: 'document',
+          label: 'Document',
+          artifactKind: 'document',
+          required: true,
+          scope: 'runtime',
+          binding: { kind: 'trigger', triggerPath: 'playbookInputs.document' },
+          acceptedSources: ['document'],
+          readiness: 'runtime_required',
+        }],
+      }),
+    };
+
+    await expect(service.start('flow-1', 'owner-1', {
+      playbookInputs: {
+        document: { kind: 'document', id: 'doc-1', workspaceId: 'workspace-1' },
+      },
+    })).rejects.toThrow('The selected resource for Document is unavailable or inaccessible.');
+  });
+
+  it('revalidates configured destinations with write access before reserving idempotency', async () => {
+    const flowService = {
+      findOneForExecutionStart: jest.fn().mockResolvedValue({
+        id: 'flow-1',
+        nodes: [{
+          id: 'step-1',
+          kind: 'step',
+          label: 'Save report',
+          input: { ports: [{ id: 'destination', label: 'Destination workspace', type: 'document', required: true }] },
+          output: { ports: [] },
+        }],
+        controlEdges: [],
+        dataBindings: [{
+          id: 'binding-1',
+          targetNode: 'step-1',
+          targetPort: 'destination',
+          sourceKind: 'constant',
+          constantValue: { kind: 'workspace', id: 'workspace-1', workspaceId: 'workspace-1' },
+        }],
+        settings: {},
+      }),
+    };
+    const { service, idempotencyService } = createExecutionServiceForTests({ flowService });
+    const workspaceShareService = {
+      assertUserHasAccess: jest.fn(),
+      assertUserHasWriteAccess: jest.fn().mockRejectedValue(new Error('read only')),
+    };
+    (service as any).workspaceShareService = workspaceShareService;
+    (service as any).inputContractService = {
+      derive: jest.fn().mockReturnValue({
+        inputs: [{
+          id: 'step-1:destination',
+          taskId: 'step-1',
+          taskTitle: 'Save report',
+          portId: 'destination',
+          label: 'Destination workspace',
+          artifactKind: 'document',
+          required: true,
+          scope: 'configuration',
+          binding: { kind: 'constant' },
+          acceptedSources: ['workspace'],
+          readiness: 'configured',
+        }],
+      }),
+    };
+
+    await expect(service.start('flow-1', 'owner-1', {}, 'idem-1'))
+      .rejects.toThrow('The selected resource for Destination workspace is unavailable or inaccessible.');
+
+    expect(workspaceShareService.assertUserHasWriteAccess).toHaveBeenCalledWith('owner-1', 'workspace-1');
+    expect(workspaceShareService.assertUserHasAccess).not.toHaveBeenCalled();
+    expect(idempotencyService.reserve).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['primitive', 'workspace-1'],
+    ['unknown resource', { kind: 'bucket', id: 'workspace-1', workspaceId: 'workspace-1' }],
+    ['document resource', { kind: 'document', id: 'doc-1', workspaceId: 'workspace-1' }],
+  ])('rejects a %s configuration destination before authorization and idempotency', async (_label, constantValue) => {
+    const flowService = {
+      findOneForExecutionStart: jest.fn().mockResolvedValue({
+        id: 'flow-1',
+        nodes: [{
+          id: 'step-1', kind: 'step', label: 'Save report',
+          input: { ports: [{ id: 'destination', label: 'Destination workspace', type: 'data', required: true }] },
+          output: { ports: [] },
+        }],
+        controlEdges: [],
+        dataBindings: [{
+          id: 'binding-1', targetNode: 'step-1', targetPort: 'destination',
+          sourceKind: 'constant', constantValue,
+        }],
+        settings: {},
+      }),
+    };
+    const { service, idempotencyService } = createExecutionServiceForTests({ flowService });
+    const workspaceShareService = {
+      assertUserHasAccess: jest.fn(),
+      assertUserHasWriteAccess: jest.fn(),
+    };
+    (service as any).workspaceShareService = workspaceShareService;
+    (service as any).inputContractService = {
+      derive: jest.fn().mockReturnValue({
+        inputs: [{
+          id: 'step-1:destination', taskId: 'step-1', taskTitle: 'Save report',
+          portId: 'destination', label: 'Destination workspace', artifactKind: 'data',
+          required: true, scope: 'configuration', binding: { kind: 'constant' },
+          acceptedSources: ['workspace'], readiness: 'configured',
+        }],
+      }),
+    };
+
+    await expect(service.start('flow-1', 'owner-1', {}, 'idem-1'))
+      .rejects.toThrow('The selected resource for Destination workspace is unavailable or inaccessible.');
+
+    expect(workspaceShareService.assertUserHasWriteAccess).not.toHaveBeenCalled();
+    expect(idempotencyService.reserve).not.toHaveBeenCalled();
+  });
+
+  it('rejects workspace resources whose id does not match their authorized workspace', async () => {
+    const { service, idempotencyService } = createExecutionServiceForTests();
+    const workspaceShareService = { assertUserHasAccess: jest.fn() };
+    (service as any).workspaceShareService = workspaceShareService;
+    (service as any).inputContractService = {
+      derive: jest.fn().mockReturnValue({
+        inputs: [{
+          id: 'step-1:workspace',
+          taskId: 'step-1',
+          taskTitle: 'Read workspace',
+          portId: 'workspace',
+          label: 'Workspace',
+          artifactKind: 'document',
+          required: true,
+          scope: 'runtime',
+          binding: { kind: 'trigger', triggerPath: 'playbookInputs.workspace' },
+          acceptedSources: ['workspace'],
+          readiness: 'runtime_required',
+        }],
+      }),
+    };
+
+    await expect(service.start('flow-1', 'owner-1', {
+      playbookInputs: {
+        workspace: { kind: 'workspace', id: 'workspace-other', workspaceId: 'workspace-1' },
+      },
+    }, 'idem-1')).rejects.toThrow('The selected resource for Workspace is unavailable or inaccessible.');
+
+    expect(workspaceShareService.assertUserHasAccess).not.toHaveBeenCalled();
+    expect(idempotencyService.reserve).not.toHaveBeenCalled();
+  });
+
+  it('persists a shared-write collaborator sanitation with the document owner before idempotency', async () => {
+    const conflict = new Error('revision conflict');
+    const flowService = {
+      findOneForExecutionStart: jest.fn().mockResolvedValue({
+        id: 'flow-1',
+        ownerId: 'document-owner',
+        definitionRevision: 7,
+        nodes: [],
+        controlEdges: [{ id: 'orphan', source: 'missing', target: 'missing' }],
+        dataBindings: [],
+        settings: {},
+      }),
+      persistSanitizedExecutionGraph: jest.fn().mockRejectedValue(conflict),
+    };
+    const { service, idempotencyService } = createExecutionServiceForTests({ flowService });
+
+    await expect(service.start('flow-1', 'owner-1', {}, 'idem-1')).rejects.toThrow('revision conflict');
+
+    expect(flowService.persistSanitizedExecutionGraph).toHaveBeenCalledWith('flow-1', 'document-owner', 7, [], []);
+    expect(idempotencyService.reserve).not.toHaveBeenCalled();
   });
 });
 
@@ -258,7 +485,7 @@ describe('PlaybookFlowExecutionService lifecycle handling', () => {
       idempotencyService as any,
       { findOne: jest.fn().mockResolvedValue({ nodes: [], controlEdges: [], dataBindings: [], settings: {} }) } as any,
       { buildSnapshot: jest.fn().mockReturnValue({ settings: { recursionLimit: 25, maxParallelism: 5 } }) } as any,
-      { validate: jest.fn() } as any,
+      { validate: jest.fn(), collectValidationErrors: jest.fn().mockReturnValue([]) } as any,
       { buildGrpcAgentsForPlaybook: jest.fn() } as any,
       { cacheOwner: jest.fn(), emitExecutionQueued: jest.fn() } as any,
       new PlaybookFlowObservabilityService(
@@ -268,8 +495,6 @@ describe('PlaybookFlowExecutionService lifecycle handling', () => {
       {} as any,
       { resolveReplayArtifacts: async () => new Map() } as any,
       { buildReplayPromptSection: () => '' } as any,
-      { buildCurrentReplayFingerprints: jest.fn() } as any,
-      { evaluateReplayEligibility: jest.fn() } as any,
       { createPreRunReport: jest.fn(), updateStructuralDrift: jest.fn() } as any,
       new PlaybookFlowOutputContractService() as any,
       modelsService as any,
@@ -312,7 +537,7 @@ describe('PlaybookFlowExecutionService lifecycle handling', () => {
       idempotencyService as any,
       { findOne: jest.fn().mockResolvedValue({ nodes: [], controlEdges: [], dataBindings: [], settings: {} }) } as any,
       { buildSnapshot: jest.fn().mockReturnValue({ settings: { recursionLimit: 25, maxParallelism: 5 } }) } as any,
-      { validate: jest.fn() } as any,
+      { validate: jest.fn(), collectValidationErrors: jest.fn().mockReturnValue([]) } as any,
       { buildGrpcAgentsForPlaybook: jest.fn() } as any,
       { cacheOwner: jest.fn(), emitExecutionQueued: jest.fn() } as any,
       new PlaybookFlowObservabilityService(
@@ -322,8 +547,6 @@ describe('PlaybookFlowExecutionService lifecycle handling', () => {
       {} as any,
       { resolveReplayArtifacts: async () => new Map() } as any,
       { buildReplayPromptSection: () => '' } as any,
-      { buildCurrentReplayFingerprints: jest.fn() } as any,
-      { evaluateReplayEligibility: jest.fn() } as any,
       { createPreRunReport: jest.fn(), updateStructuralDrift: jest.fn() } as any,
       new PlaybookFlowOutputContractService() as any,
       { validateModelActive: jest.fn().mockResolvedValue({ valid: true, model: null, inactive: false }) } as any,
@@ -393,7 +616,7 @@ describe('PlaybookFlowExecutionService lifecycle handling', () => {
       idempotencyService as any,
       { findOne: jest.fn().mockResolvedValue({ nodes: [], controlEdges: [], dataBindings: [], settings: {} }) } as any,
       { buildSnapshot: jest.fn().mockReturnValue({ settings: { recursionLimit: 25, maxParallelism: 5 } }) } as any,
-      { validate: jest.fn() } as any,
+      { validate: jest.fn(), collectValidationErrors: jest.fn().mockReturnValue([]) } as any,
       { buildGrpcAgentsForPlaybook: jest.fn() } as any,
       { cacheOwner: jest.fn(), emitExecutionQueued: jest.fn() } as any,
       new PlaybookFlowObservabilityService(
@@ -403,8 +626,6 @@ describe('PlaybookFlowExecutionService lifecycle handling', () => {
       {} as any,
       { resolveReplayArtifacts: async () => new Map() } as any,
       { buildReplayPromptSection: () => '' } as any,
-      { buildCurrentReplayFingerprints: jest.fn() } as any,
-      { evaluateReplayEligibility: jest.fn() } as any,
       { createPreRunReport: jest.fn(), updateStructuralDrift: jest.fn(), findLatestReportForExecutionTask: jest.fn() } as any,
       new PlaybookFlowOutputContractService() as any,
       modelsService as any,
@@ -418,209 +639,6 @@ describe('PlaybookFlowExecutionService lifecycle handling', () => {
     expect(idempotencyService.release).toHaveBeenCalledWith('owner-1', 'idem-1');
   });
 
-  it('uses the model override in replay eligibility fingerprints', async () => {
-    const replayReportService = {
-      createPreRunReport: jest.fn().mockResolvedValue(undefined),
-      updateStructuralDrift: jest.fn().mockResolvedValue(undefined),
-      findLatestReportForExecutionTask: jest.fn().mockResolvedValue(null),
-    };
-    const replayPromptService = { buildReplayPromptSection: jest.fn().mockReturnValue('APPLY_REPLAY') };
-    const replayEligibilityService = {
-      evaluateReplayEligibility: jest.fn().mockReturnValue({
-        applied: true,
-        confidenceScore: 100,
-        confidenceFactors: {},
-        invalidationReasons: [],
-        appliedSections: ['tool_policy'],
-        skippedSections: [],
-      }),
-    };
-    const replayBaselineService = {
-      buildCurrentReplayFingerprints: jest.fn().mockReturnValue({ nodeSnapshotHash: 'node-a' }),
-    };
-    const snapshot = {
-      nodes: [{ id: 'step-1', kind: 'step', metadata: { agent_model: 'baseline-model' } }],
-      controlEdges: [],
-      dataBindings: [],
-      settings: {},
-    };
-    const { service, agentService } = createExecutionServiceForTests({
-      replayArtifactService: {
-        resolveReplayArtifacts: async () => new Map([['step-1', {
-          taskId: 'step-1',
-          replayId: 'replay-1',
-          validationVersion: 3,
-          mode: 'replay_strict',
-          referenceOutput: null,
-          outputFormatGuide: null,
-          toolCalls: [],
-          reasoningChain: [],
-          fingerprints: { nodeSnapshotHash: 'node-a' },
-          behaviorBaseline: null,
-          toolPolicy: null,
-          outputContract: null,
-          replayConfig: { replayOutputFormat: false, replayToolTrace: false, replayReasoningChain: false },
-        }]]) },
-      executionModel: {
-        updateOne: jest.fn(() => ({ exec: jest.fn().mockResolvedValue({ modifiedCount: 0 }) })),
-        findById: jest.fn(() => ({
-          lean: jest.fn().mockReturnValue({
-            exec: jest.fn().mockResolvedValue({ executionMode: 'replay_strict', stepExecutionModes: { 'step-1': 'replay_strict' }, modelIdOverride: 'override-model' }),
-          }),
-        })),
-        findByIdAndUpdate: jest.fn(() => ({ exec: jest.fn().mockResolvedValue(undefined) })),
-      },
-      replayPromptService,
-      replayBaselineService,
-      replayEligibilityService,
-      replayReportService,
-    });
-    const run = jest.fn();
-    (service as any).playbookFlowClient = { Run: run };
-    agentService.buildGrpcAgentsForPlaybook.mockResolvedValue([]);
-
-    await (service as any).callGrpcRun('exec-1', 'flow-1', 'owner-1', snapshot, {}, snapshot);
-
-    expect(replayBaselineService.buildCurrentReplayFingerprints).toHaveBeenCalledWith(expect.objectContaining({
-      nodeSnapshot: expect.objectContaining({
-        modelId: 'override-model',
-        metadata: expect.objectContaining({ agent_model: 'override-model' }),
-      }),
-      flowSnapshot: expect.objectContaining({
-        nodes: [expect.objectContaining({
-          modelId: 'override-model',
-          metadata: {},
-        })],
-      }),
-    }));
-  });
-
-  it('ignores runtime agent enrichment when building replay_flex fingerprints', async () => {
-    const replayReportService = {
-      createPreRunReport: jest.fn().mockResolvedValue(undefined),
-      findLatestReportForExecutionTask: jest.fn().mockResolvedValue(null),
-    };
-    const replayPromptService = { buildReplayPromptSection: jest.fn().mockReturnValue('APPLY_REPLAY') };
-    const replayEligibilityService = {
-      evaluateReplayEligibility: jest.fn().mockReturnValue({
-        applied: true,
-        confidenceScore: 100,
-        confidenceFactors: {
-          nodeSnapshotHash: 30,
-          modelConfigHash: 20,
-          flowSnapshotHash: 5,
-          toolConfigHash: 20,
-          outputContractHash: 15,
-          inputContextHash: 10,
-        },
-        invalidationReasons: [],
-        appliedSections: ['decision_invariants', 'tool_policy'],
-        skippedSections: [],
-      }),
-    };
-    const replayBaselineService = {
-      buildCurrentReplayFingerprints: jest.fn().mockReturnValue({
-        inputContextHash: 'input-a',
-        flowSnapshotHash: 'flow-runtime',
-        nodeSnapshotHash: 'node-runtime',
-        agentConfigHash: null,
-        modelConfigHash: 'model-runtime',
-        toolConfigHash: 'tool-a',
-        outputContractHash: 'contract-a',
-      }),
-    };
-    const snapshot = {
-      settings: {},
-      nodes: [{ id: 'step-1', kind: 'step', metadata: { assignedAgentId: 'agent-1' } }],
-      controlEdges: [],
-      dataBindings: [],
-    };
-    const { service, agentService, replayPromptService: replayPromptSpy, replayBaselineService: replayBaselineSpy, replayReportService: replayReportSpy } = createExecutionServiceForTests({
-      flowService: {
-        findOne: jest.fn().mockResolvedValue({
-          settings: {},
-          nodes: [{ id: 'step-1', kind: 'step', metadata: { assignedAgentId: 'agent-1' } }],
-          controlEdges: [],
-          dataBindings: [],
-        }),
-      },
-      builderService: {
-        buildSnapshot: jest.fn().mockReturnValue(snapshot),
-      },
-      replayArtifactService: {
-        resolveReplayArtifacts: async () => new Map([['step-1', {
-          taskId: 'step-1',
-          replayId: 'replay-1',
-          validationVersion: 3,
-          mode: 'replay_flex',
-          isStale: false,
-          staleReasons: [],
-          referenceOutput: null,
-          outputFormatGuide: null,
-          intentKey: null,
-          intentLabel: null,
-          reasoningOutline: [],
-          stableReasoningRules: [],
-          contextVariableSchema: [],
-          toolTraceTemplate: [],
-          semanticChecklist: [],
-          driftPolicy: null,
-          toolCalls: [],
-          reasoningChain: [],
-          fingerprints: {
-            inputContextHash: 'input-a',
-            flowSnapshotHash: 'flow-baseline',
-            nodeSnapshotHash: 'node-baseline',
-            agentConfigHash: null,
-            modelConfigHash: 'model-baseline',
-            toolConfigHash: 'tool-a',
-            outputContractHash: 'contract-a',
-          },
-          behaviorBaseline: null,
-          toolPolicy: null,
-          outputContract: null,
-          replayConfig: { replayOutputFormat: false, replayToolTrace: false, replayReasoningChain: false },
-        }]]) },
-      executionModel: {
-        updateOne: jest.fn(() => ({ exec: jest.fn().mockResolvedValue({ modifiedCount: 0 }) })),
-        findById: jest.fn(() => ({
-          lean: jest.fn().mockReturnValue({
-            exec: jest.fn().mockResolvedValue({ executionMode: 'replay_flex', stepExecutionModes: { 'step-1': 'replay_flex' }, modelIdOverride: null }),
-          }),
-        })),
-        findByIdAndUpdate: jest.fn(() => ({ exec: jest.fn().mockResolvedValue(undefined) })),
-      },
-      replayPromptService,
-      replayBaselineService,
-      replayEligibilityService,
-      replayReportService,
-    });
-    const run = jest.fn();
-    (service as any).playbookFlowClient = { Run: run };
-    agentService.buildGrpcAgentsForPlaybook.mockResolvedValue([{ id: 'agent-1', name: 'Agent 1', chatbot: { model: 'runtime-model' } }]);
-
-    await (service as any).callGrpcRun('exec-1', 'flow-1', 'owner-1', snapshot, {});
-
-    expect(replayBaselineSpy.buildCurrentReplayFingerprints).toHaveBeenCalledWith(expect.objectContaining({
-      nodeSnapshot: expect.objectContaining({
-        metadata: expect.objectContaining({ assignedAgentId: 'agent-1' }),
-      }),
-      flowSnapshot: expect.objectContaining({
-        nodes: [expect.objectContaining({
-          metadata: expect.objectContaining({ assignedAgentId: 'agent-1' }),
-        })],
-      }),
-    }));
-    expect(replayReportSpy.createPreRunReport).toHaveBeenCalledWith(expect.objectContaining({
-      mode: 'replay_flex',
-      eligibility: expect.objectContaining({
-        applied: true,
-        invalidationReasons: [],
-      }),
-    }));
-    expect(replayPromptSpy.buildReplayPromptSection).toHaveBeenCalled();
-  });
-
   it('persists replay drift for queued node completions before a stream error clears tracking', async () => {
     const replayReportService = {
       createPreRunReport: jest.fn().mockResolvedValue(undefined),
@@ -631,7 +649,6 @@ describe('PlaybookFlowExecutionService lifecycle handling', () => {
         taskId: 'step-1',
         replayId: 'replay-1',
         validationVersion: 2,
-        applied: true,
       }),
     };
     const replayArtifactService = {
@@ -747,7 +764,7 @@ describe('PlaybookFlowExecutionService lifecycle handling', () => {
       idempotencyService as any,
       { findOne: jest.fn().mockResolvedValue({ nodes: [], controlEdges: [], dataBindings: [], settings: {} }) } as any,
       { buildSnapshot: jest.fn().mockReturnValue({ settings: {}, nodes: [], controlEdges: [], dataBindings: [] }) } as any,
-      { validate: jest.fn() } as any,
+      { validate: jest.fn(), collectValidationErrors: jest.fn().mockReturnValue([]) } as any,
       { buildGrpcAgentsForPlaybook: jest.fn() } as any,
       { cacheOwner: jest.fn(), emitExecutionQueued: jest.fn() } as any,
       new PlaybookFlowObservabilityService(
@@ -757,8 +774,6 @@ describe('PlaybookFlowExecutionService lifecycle handling', () => {
       {} as any,
       { resolveReplayArtifacts: async () => new Map() } as any,
       { buildReplayPromptSection: () => '' } as any,
-      { buildCurrentReplayFingerprints: jest.fn() } as any,
-      { evaluateReplayEligibility: jest.fn() } as any,
       { createPreRunReport: jest.fn(), updateStructuralDrift: jest.fn() } as any,
       new PlaybookFlowOutputContractService() as any,
       { validateModelActive: jest.fn().mockResolvedValue({ valid: true, model: null, inactive: false }) } as any,
@@ -901,6 +916,22 @@ describe('PlaybookFlowExecutionService lifecycle handling', () => {
       controlEdges: [],
       dataBindings: [],
       settings: { recursionLimit: 25, maxParallelism: 5 },
+      playbookExecutionSettings: {
+        maxConcurrentPerUser: 7,
+        executionQueueMaxDepth: 0,
+        maxParallelismPerExecution: 6,
+        effectiveExecutionParallelism: 5,
+        recursionLimitDefault: 30,
+        recursionLimitMax: 60,
+        maxHitlRounds: 0,
+        pythonWorkerPoolSize: 3,
+        pythonWorkerMaxInflight: 2,
+        maxToolIterations: 25,
+        maxSandboxCallsPerStep: 16,
+        graphCacheEnabled: false,
+        graphCacheMaxEntries: 64,
+        graphCacheTtlSeconds: 120,
+      },
     };
     const { service, agentService } = createExecutionServiceForTests({
       hitlMemoryModel: {
@@ -940,8 +971,70 @@ describe('PlaybookFlowExecutionService lifecycle handling', () => {
     );
 
     const sentContext = runFromCheckpoint.mock.calls[0][0].input_context.fields;
+    const sentRuntimeSettings = runFromCheckpoint.mock.calls[0][0].settings.runtime_settings;
     expect(sentContext.brief).toEqual(expect.any(Object));
     expect(sentContext.__playbook_hitl_memory.listValue.values).toHaveLength(1);
+    expect(sentRuntimeSettings).toMatchObject({
+      execution_queue_max_depth: 0,
+      max_hitl_rounds: 0,
+      graph_cache_enabled: false,
+      max_tool_iterations: 25,
+      max_sandbox_calls_per_step: 16,
+    });
+  });
+
+  it('preserves Dynamic Reasoning planner state in checkpoint replay requests', async () => {
+    const call = new EventEmitter();
+    const runFromCheckpoint = jest.fn().mockReturnValue(call);
+    const snapshot = {
+      nodes: [{ id: 'step-1', kind: 'step', metadata: {}, dynamicReasoning: { enabled: true } }],
+      controlEdges: [],
+      dataBindings: [],
+      settings: { recursionLimit: 25, maxParallelism: 5 },
+      playbookExecutionSettings: {
+        dynamicReasoningEnabled: true,
+        effectiveExecutionParallelism: 3,
+        recursionLimitMax: 50,
+        dynamicReasoning: {
+          plannerAgentId: 'planner-1',
+          maxWorkNodes: 6,
+          maxParallelism: 3,
+          maxDepth: 1,
+          maxRepairAttempts: 1,
+        },
+      },
+      playbookPlanner: {
+        agentId: 'planner-1',
+        agentTypeSlug: 'general_assistant',
+        model: 'azure/fallback-model',
+        systemPrompt: 'Plan safely',
+        temperature: 0.2,
+        omitTemperature: true,
+        promptHash: 'sha256:test',
+        agentRevision: 'revision-1',
+      },
+    };
+    const { service, agentService } = createExecutionServiceForTests();
+    (service as any).playbookFlowClient = { RunFromCheckpoint: runFromCheckpoint };
+    agentService.buildGrpcAgentsForPlaybook.mockResolvedValue([]);
+
+    await (service as any).callGrpcRunFromCheckpoint(
+      'exec-replay', 'flow-1', 'owner-1', 'exec-source', snapshot, {}, 'step-1', 0,
+    );
+
+    const request = runFromCheckpoint.mock.calls[0][0];
+    expect(request.snapshot.nodes[0].dynamic_reasoning).toEqual({ enabled: true });
+    expect(request.settings.dynamic_reasoning_policy).toEqual({
+      max_work_nodes: 6,
+      max_parallelism: 3,
+      max_depth: 1,
+      max_repair_attempts: 1,
+    });
+    expect(request.settings.playbook_planner).toMatchObject({
+      model: 'azure/fallback-model',
+      agent_type_slug: 'general_assistant',
+      omit_temperature: true,
+    });
   });
 
   it('adds task-scoped connector runtime metadata to replay checkpoints', async () => {

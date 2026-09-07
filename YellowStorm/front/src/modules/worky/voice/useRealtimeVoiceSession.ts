@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { VoiceSessionApi, VoiceState } from './useVoiceSession';
 import { useVoiceSettings } from './voiceSettings';
-import { createVoiceSession } from '../api';
+import { createVoiceSession, voiceTranscript } from '../api';
 import { openGeminiLive, type GeminiLiveConnection } from './geminiLiveClient';
 import { handleToolCall } from './toolCallRelay';
 import { attachMilestoneInjector } from './milestoneInjector';
@@ -38,6 +38,14 @@ export function useRealtimeVoiceSession(streamId: string): VoiceSessionApi {
   // Set when we intentionally tear the session down (hang-up / unmount) so the
   // WS close it triggers is not mistaken for a dropped connection and reconnected.
   const closingRef = useRef(false);
+  // So a spoken request isn't lost when the user hangs up before the concierge
+  // calls dispatch_task: accumulate the user's transcribed speech, and on hang-up
+  // auto-dispatch it — but ONLY if dispatch never fired (when it did, the request
+  // was already sent). Falls back to just saving the transcript if dispatch fails.
+  const dispatchedRef = useRef(false);
+  const userSpeechRef = useRef<string[]>([]);
+  // MCP tool routing from the session envelope, captured so hang-up can dispatch.
+  const toolRoutingRef = useRef<{ endpoints?: Record<string, string>; streamIdTools?: string[] }>({});
 
   const teardown = useCallback(() => {
     closingRef.current = true;
@@ -80,6 +88,7 @@ export function useRealtimeVoiceSession(streamId: string): VoiceSessionApi {
     if (!streamId) return;
     closingRef.current = false;
     const envelope = await createVoiceSession(streamId, handleRef.current);
+    toolRoutingRef.current = { endpoints: envelope.toolEndpoints, streamIdTools: envelope.streamIdTools };
 
     // Only stream mic audio after the server acknowledges setup, so we never
     // push audio into a session Gemini hasn't configured yet. A short fallback
@@ -100,6 +109,9 @@ export function useRealtimeVoiceSession(streamId: string): VoiceSessionApi {
       onToolCall: async (calls) => {
         if (import.meta.env?.DEV) console.log('[voice] toolCall', calls.map((c) => c.name), calls);
         for (const call of calls) {
+          // Once the request is dispatched it's persisted by the dispatch flow,
+          // so the hang-up transcript fallback must not also save it.
+          if (call.name === 'dispatch_task') dispatchedRef.current = true;
           const res = await handleToolCall(streamId, call, envelope.toolEndpoints, envelope.streamIdTools);
           if (import.meta.env?.DEV) console.log('[voice] toolResponse', res);
           connRef.current?.sendToolResponse([res]);
@@ -113,6 +125,9 @@ export function useRealtimeVoiceSession(streamId: string): VoiceSessionApi {
       onInputTranscript: (t) => {
         if (import.meta.env?.DEV) console.log('[voice] you:', t);
         setTranscript((p) => ({ ...p, you: t }));
+        // ponytail: assumes fragments are deltas (join → full text). If Gemini
+        // ever sends cumulative snapshots, de-dup here or split on turnComplete.
+        userSpeechRef.current.push(t);
       },
       onOutputTranscript: (t) => {
         if (import.meta.env?.DEV) console.log('[voice] concierge:', t);
@@ -212,6 +227,8 @@ export function useRealtimeVoiceSession(streamId: string): VoiceSessionApi {
     setError(null);
     handleRef.current = undefined;
     attemptRef.current = 0;
+    dispatchedRef.current = false;
+    userSpeechRef.current = [];
     connect().catch((e) => {
       setError(e instanceof Error ? e.message : String(e));
       setState('idle');
@@ -219,10 +236,33 @@ export function useRealtimeVoiceSession(streamId: string): VoiceSessionApi {
   }, [connect, streamId]);
 
   const stop = useCallback(() => {
+    // Hang-up: if the user voiced a request but the concierge never dispatched it,
+    // dispatch it now through the same MCP path the concierge would use (persists
+    // + runs it in the orchestrator). The dispatch fetch is independent of the WS
+    // we tear down below, so it completes after teardown.
+    const spoken = userSpeechRef.current.join('').trim();
+    userSpeechRef.current = [];
+    // ponytail: 2-word floor skips acks/farewells ("ok", "merci"); swap for an
+    // intent check if chit-chat starts leaking through.
+    if (!dispatchedRef.current && spoken.split(/\s+/).length >= 2) {
+      const { endpoints, streamIdTools } = toolRoutingRef.current;
+      void (async () => {
+        const res = await handleToolCall(
+          streamId,
+          { id: `hangup-${Date.now()}`, name: 'dispatch_task', args: { message: spoken } },
+          endpoints,
+          streamIdTools,
+        );
+        // Dispatch failed — save the transcript so the words aren't lost.
+        if ((res.response as { error?: unknown })?.error) {
+          await voiceTranscript(streamId, 'owner', spoken).catch(() => undefined);
+        }
+      })();
+    }
     teardown();
     setState('idle');
     setLevel(0);
-  }, [teardown]);
+  }, [teardown, streamId]);
 
   const toggleMute = useCallback(() => {
     mutedRef.current = !mutedRef.current;

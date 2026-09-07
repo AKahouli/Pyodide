@@ -243,9 +243,9 @@ export function CreateEditAgentDialog({
   const inheritedSkillIds = agentTypes.find((at) => at.id === selectedAgentTypeId)?.skills || [];
 
   useEffect(() => {
-    if (slugEditedRef.current) return;
+    if (agent || slugEditedRef.current) return;
     setValue('slug', slugifyAgentName(watchedName), { shouldValidate: true });
-  }, [watchedName, setValue]);
+  }, [agent, watchedName, setValue]);
 
   useEffect(() => {
     const validDisabledSkills = watchedDisabledSkills.filter((id) => inheritedSkillIds.includes(id));

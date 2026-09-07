@@ -1,5 +1,5 @@
-import { useContext } from 'react';
-import { type NodeProps, Handle, Position } from '@xyflow/react';
+import { useContext, useEffect } from 'react';
+import { type NodeProps, Handle, Position, useUpdateNodeInternals } from '@xyflow/react';
 import { Hand, Trash2, Copy, Pencil, Scissors, ClipboardPaste } from 'lucide-react';
 import {
   ContextMenu,
@@ -17,9 +17,11 @@ import {
   NodeContent,
 } from '@/components/ai-elements/node';
 import { NodeContextMenuContext } from './PlaybookNode';
+import { PortLabel } from './PortLabel';
 import { useModuleTranslation } from '@/modules/localization';
 import { cn } from '@/lib/utils';
-import type { PlaybookNodeData, HumanApprovalConfig, StepStatus } from '../types';
+import { PORT_COLORS } from '../utils/port-colors';
+import type { ArtifactKind, PlaybookNodeData, HumanApprovalConfig, StepStatus, TaskInputPort, TaskOutputPort } from '../types';
 
 const STATUS_RING: Record<StepStatus, string> = {
   pending: '',
@@ -33,6 +35,19 @@ const STATUS_RING: Record<StepStatus, string> = {
   pending_approval: 'ring-2 ring-yellow-500/60 shadow-md shadow-yellow-500/10',
 };
 
+function getPortTopPercent(index: number, total: number): number {
+  if (total <= 1) return 50;
+  return (100 / (total + 1)) * (index + 1);
+}
+
+function getHandleStyle(kind: ArtifactKind): React.CSSProperties {
+  const colors = PORT_COLORS[kind];
+  return {
+    background: colors?.raw || 'hsl(var(--muted))',
+    border: '2px solid hsl(var(--background))',
+  };
+}
+
 export function HumanApprovalNode({ id, data: rawData, selected }: NodeProps) {
   const data = rawData as unknown as PlaybookNodeData & { humanApprovalConfig?: HumanApprovalConfig };
   const actions = useContext(NodeContextMenuContext);
@@ -45,6 +60,17 @@ export function HumanApprovalNode({ id, data: rawData, selected }: NodeProps) {
     ? 'border-2 border-[#ffcd03] ring-4 ring-inset ring-[#ffcd03]/60 shadow-lg shadow-[#ffcd03]/25'
     : '';
   const pendingClass = isPending ? 'ring-2 ring-yellow-500/60 shadow-md shadow-yellow-500/10 animate-[pulse_4.5s_ease-in-out_infinite]' : '';
+  const inputPorts: TaskInputPort[] = data.inputPorts?.length
+    ? data.inputPorts
+    : [{ id: 'default', name: t('nodeEditor.portDefaultInput'), artifactKind: 'text', required: false }];
+  const outputPorts: TaskOutputPort[] = data.outputPorts?.length
+    ? data.outputPorts
+    : [{ id: 'default', name: t('nodeEditor.portDefaultOutput'), artifactKind: 'text' }];
+  const updateNodeInternals = useUpdateNodeInternals();
+
+  useEffect(() => {
+    updateNodeInternals(id);
+  }, [id, inputPorts.length, outputPorts.length, updateNodeInternals]);
 
   return (
     <ContextMenu>
@@ -53,13 +79,43 @@ export function HumanApprovalNode({ id, data: rawData, selected }: NodeProps) {
           handles={false}
           className={cn('group min-w-[180px]', ringClass, selectedClass, pendingClass)}
         >
-          <Handle
-            id="default"
-            type="target"
-            position={Position.Left}
-            className="!w-3 !h-3"
-            style={{ background: 'hsl(var(--muted))', border: '2px solid hsl(var(--background))' }}
-          />
+          <div className="absolute left-0 inset-y-0 z-10 w-0 pointer-events-none">
+            {inputPorts.map((port, index) => (
+              <div
+                key={port.id}
+                className="absolute left-0 z-10 flex items-center -translate-y-1/2 pointer-events-auto"
+                style={{ top: `${getPortTopPercent(index, inputPorts.length)}%` }}
+              >
+                <PortLabel name={port.name} kind={port.artifactKind} position="left" selected={selected} />
+                <Handle
+                  id={port.id}
+                  type="target"
+                  position={Position.Left}
+                  className="!w-3 !h-3"
+                  style={{ ...getHandleStyle(port.artifactKind), top: 0 }}
+                />
+              </div>
+            ))}
+          </div>
+
+          <div className="absolute right-0 inset-y-0 z-10 w-0 pointer-events-none">
+            {outputPorts.map((port, index) => (
+              <div
+                key={port.id}
+                className="absolute right-0 z-10 flex items-center -translate-y-1/2 pointer-events-auto"
+                style={{ top: `${getPortTopPercent(index, outputPorts.length)}%` }}
+              >
+                <Handle
+                  id={port.id}
+                  type="source"
+                  position={Position.Right}
+                  className="!w-3 !h-3"
+                  style={{ ...getHandleStyle(port.artifactKind), top: 0 }}
+                />
+                <PortLabel name={port.name} kind={port.artifactKind} position="right" selected={selected} />
+              </div>
+            ))}
+          </div>
 
           <NodeHeader className={isPending ? 'bg-yellow-500/10' : ''}>
             <div className="flex items-center gap-2 w-full">
@@ -88,15 +144,6 @@ export function HumanApprovalNode({ id, data: rawData, selected }: NodeProps) {
               </p>
             )}
 
-            <div className="absolute right-0 top-1/2 -translate-y-1/2 z-10 flex items-center">
-              <Handle
-                id="default"
-                type="source"
-                position={Position.Right}
-                className="!w-3 !h-3"
-                style={{ background: 'hsl(var(--muted))', border: '2px solid hsl(var(--background))' }}
-              />
-            </div>
           </NodeContent>
 
           <div className="absolute right-1 top-1 z-20 flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">

@@ -97,9 +97,4 @@ export class CreatePlaybookFlowDto {
   @ApiPropertyOptional()
   @IsOptional()
   advisorAutopilotMaxTurns?: number;
-
-  @ApiPropertyOptional()
-  @IsOptional()
-  @IsBoolean()
-  deepSearch?: boolean;
 }

@@ -36,6 +36,7 @@ def _playbook_default_workspace(context: dict[str, Any]) -> dict[str, str]:
         workspace["workspace_id"] = workspace_id
     if workspace_path:
         workspace["workspace_path"] = workspace_path
+        workspace["sandbox_output_path"] = f"/mnt/workspace/{workspace_path.rsplit('/', 1)[-1]}"
     return workspace
 
 
@@ -101,6 +102,7 @@ def build_step_prompt(
             "",
             "Playbook Default Workspace:",
             json.dumps(playbook_default_workspace, indent=2, default=str),
+            "This is output-only: use it only for generated outputs. Never inspect or use its existing files as input fallback.",
         ])
     if prompt_trigger_context and prompt_trigger_context != prompt_input_context:
         lines.extend([

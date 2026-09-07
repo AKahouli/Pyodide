@@ -9,6 +9,7 @@ import asyncio
 import json
 import os
 import re2 as re
+import time
 import uuid
 from datetime import datetime, timezone
 from urllib.parse import urlparse
@@ -21,14 +22,34 @@ from src.guardrails.adapters.google_adk import agent_tree_has_output_guardrail
 from google.genai import types
 
 from src.smart_rag.infrastructure.monitoring import TraceRecorder
+from src.smart_rag.infrastructure.monitoring.conversation_latency import get_current_conversation_latency_trace
 from src.smart_rag.infrastructure.processing import PromptProcessor
+from src.smart_rag.infrastructure.processing.plugin import CleanSessionPlugin
 from src.smart_rag.messaging import MessageTransformer, StreamingFormatter
 from src.smart_rag.engines.helpers import build_content_with_images, coerce_to_dict
 from src.smart_rag.messaging.ui_tool_component_registry import UI_TOOL_COMPONENT_REGISTRY
-from src.flow_engine.runtime.artifact_routing import infer_artifact_kind
 from src.logger.logging import get_logger
+from src.smart_rag.infrastructure.model_parameters import get_context_window_for_model
+from src.smart_rag.run_code_artifacts import build_run_code_artifacts, build_tool_result_artifacts
+from src.run_workspace import run_workspace_path
+from src.smart_rag.tool_activity_presenter import (
+    present_tool_call,
+    sanitize_activity_summary,
+    sanitize_tool_result_value,
+    serialize_tool_args,
+    serialize_tool_result,
+    tool_args_without_display_purpose,
+)
+from src.smart_rag.thought_activity_tracker import ThoughtActivityTracker
 
 logger = get_logger("api.smart_rag.agentic_rag.AgentRunner")
+
+
+def _mark_runner_invoked() -> None:
+    """Stamp the pre-provider milestone immediately before ``Runner.run_async``."""
+    trace = get_current_conversation_latency_trace()
+    if trace is not None:
+        trace.mark_runner_invoked()
 APP_NAME = "manager_app"
 _STATE_KEY_CONNECTOR_TEXT_SOURCES = "_connector_text_sources"
 _STATE_KEY_CONNECTOR_IMAGE_SOURCES = "_connector_image_sources"
@@ -270,21 +291,6 @@ class AgentRunner:
         else:
             agent_type = "agent"
 
-        task_desc = task_summary.strip() if task_summary and task_summary.strip() else self.prompt_processor.extract_task_description(message)
-        output = self.streaming_formatter.format_streaming_event(
-            agent_id=agent_id,
-            agent_name=agent_name,
-            agent_type=agent_type,
-            chunk=task_desc,
-            message_id=session_id,
-            content_type="description",
-        )
-        logger.info(
-            f"[AGENT RUNNER] Sending agent description to backend - agent_name: {agent_name}, agent_type: {agent_type}, session_id: {session_id}"
-        )
-        await q.put(output)
-
-
         try:
             if agent_type != "html":
                 return await self._run_standard_agent(
@@ -346,7 +352,7 @@ class AgentRunner:
             agent_id: The ID of the agent.
 
         Returns:
-            Tuple containing final result, list of MCP tools used, and execution summary (for langfuse tracing).
+            Tuple containing the final result, MCP tools used, execution summary, and generated files.
         """
         recorder = TraceRecorder(agent_name=agent_name, agent_type=agent_type)
         agent_role = (
@@ -361,18 +367,21 @@ class AgentRunner:
         citation_mapping = {}
         # Track current text component ID for citation parent_id
         current_text_component_id = None
-        # Chain-of-thought: one growing component that collects a tool title per
-        # tool call, appended in place.
-        cot_steps = []                    # ordered list of tool title strings
-        cot_component_id = str(uuid.uuid4())
-        cot_sent = False
         pending_tool_components_by_call_id: Dict[str, List[str]] = {}
         pending_tool_components_by_name: Dict[str, List[str]] = {}
+        pending_tool_metadata: Dict[str, Dict[str, Any]] = {}
         seen_tool_component_ids: set[str] = set()
+        thought_activity_tracker = ThoughtActivityTracker()
 
-        runner = Runner(agent=agent, app_name=APP_NAME, session_service=session_helper)
+        runner = Runner(
+            agent=agent,
+            app_name=APP_NAME,
+            session_service=session_helper,
+            plugins=[CleanSessionPlugin()],
+        )
         guarded_output = agent_tree_has_output_guardrail(agent)
 
+        _mark_runner_invoked()
         stream = runner.run_async(
             user_id=user_id,
             session_id=session_id,
@@ -383,6 +392,18 @@ class AgentRunner:
 
         try:
             async for event in stream:
+                if q and event.usage_metadata:
+                    model_name = event.model_version if getattr(event, "model_version", None) else "unknown"
+                    await q.put({
+                        "usage": {
+                            "input_tokens": event.usage_metadata.prompt_token_count or 0,
+                            "output_tokens": event.usage_metadata.candidates_token_count or 0,
+                            "total_tokens": event.usage_metadata.total_token_count or 0,
+                            "model": model_name,
+                            "context_window_tokens": get_context_window_for_model(model_name) or 0,
+                        },
+                        "metadata": {"message_id": session_id, "agent_id": str(agent_id or "")},
+                    })
                 # Log event for debugging
                 logger.debug(
                     f"Received event for {agent_name}: is_final={event.is_final_response() if hasattr(event, 'is_final_response') else 'N/A'}, has_content={bool(event.content)}, has_parts={bool(event.content.parts) if event.content else False}"
@@ -391,16 +412,89 @@ class AgentRunner:
                 if not event.content or not event.content.parts:
                     continue
 
-                # Skip text parts if event has multiple parts (indicates explanation + function call)
-                has_multiple_parts = len(event.content.parts) > 1
+                has_function_call = any(part.function_call for part in event.content.parts)
 
                 for part in event.content.parts:
+                    is_thought = (
+                        agent_type != "html"
+                        and part.text
+                        and getattr(part, "thought", False) is True
+                        and not part.function_call
+                        and not part.function_response
+                        and not guarded_output
+                    )
+                    if not is_thought and part.text:
+                        thought_activity_tracker.end_for_visible_text()
+                    if part.function_call or part.function_response:
+                        thought_activity_tracker.end_for_tool_boundary()
+
+                    if is_thought:
+                        observed_at = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+                        update = thought_activity_tracker.observe(
+                            part.text,
+                            getattr(event, "partial", None),
+                            observed_at,
+                        )
+                        if q and update:
+                            await q.put(
+                                self.streaming_formatter.format_component_event(
+                                    agent_id=agent_id,
+                                    component_type="agent_activity",
+                                    component_data={
+                                        "summary": sanitize_activity_summary(update.detail),
+                                        "detail": update.detail,
+                                        "status": "completed",
+                                        "started_at": update.started_at,
+                                        "completed_at": observed_at,
+                                        "actor_id": str(agent_id or ""),
+                                        "actor_name": str(agent_name or ""),
+                                    },
+                                    message_id=session_id,
+                                    component_id=update.component_id,
+                                    action=update.action,
+                                )
+                            )
+                        continue
                     if (
                         agent_type != "html"
                         and part.text
                         and getattr(part, "thought", False) is not True
+                        and not part.function_call
+                        and not part.function_response
+                        and has_function_call
+                        and getattr(event, "partial", None) is not True
                         and not event.is_final_response()
-                        and not has_multiple_parts
+                        and not guarded_output
+                        and not thought_activity_tracker.is_standalone_fragment(part.text)
+                    ):
+                        summary = sanitize_activity_summary(part.text)
+                        if summary and q:
+                            observed_at = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+                            await q.put(
+                                self.streaming_formatter.format_component_event(
+                                    agent_id=agent_id,
+                                    component_type="agent_activity",
+                                    component_data={
+                                        "summary": summary,
+                                        "status": "completed",
+                                        "started_at": observed_at,
+                                        "completed_at": observed_at,
+                                        "actor_id": str(agent_id or ""),
+                                        "actor_name": str(agent_name or ""),
+                                    },
+                                    message_id=session_id,
+                                    component_id=f"activity-{uuid.uuid4()}",
+                                    action="add",
+                                )
+                            )
+                        continue
+                    if (
+                        agent_type != "html"
+                        and part.text
+                        and getattr(part, "thought", False) is not True
+                        and not part.function_response
+                        and not event.is_final_response()
+                        and not has_function_call
                         and not guarded_output
                     ):
                         event_text = part.text or ""
@@ -499,22 +593,25 @@ class AgentRunner:
                         recorder.record_function_call(
                             func_name, dict(part.function_call.args), tool_category
                         )
+                        tool_args = dict(part.function_call.args or {})
+                        presentation = present_tool_call(func_name, tool_args)
                         logger.info(
-                            "[TOOL CALL] ADK requested agent_role=%s agent_name=%s agent_id=%s tool_name=%s args=%s",
+                            "[TOOL CALL] ADK requested agent_role=%s agent_name=%s agent_id=%s tool_name=%s argument_keys=%s summary=%s",
                             agent_role,
                             agent_name,
                             agent_id,
                             func_name,
-                            dict(part.function_call.args),
+                            sorted(tool_args),
+                            presentation.summary,
                         )
                         if agent_role == "temporary_child":
                             agent_params = agent_config.get("agent_params", {}) if agent_config else {}
                             child_name = str(agent_id or agent_name)
                             logger.info(
-                                "[TEMP CHILD] Tool call requested child=%s tool_name=%s args=%s",
+                                "[TEMP CHILD] Tool call requested child=%s tool_name=%s argument_keys=%s",
                                 child_name,
                                 func_name,
-                                dict(part.function_call.args),
+                                sorted(tool_args),
                             )
                             record_temporary_child_tool_call(
                                 session_id=str(
@@ -523,12 +620,11 @@ class AgentRunner:
                                 ),
                                 child=child_name,
                                 tool_name=func_name,
-                                args=dict(part.function_call.args),
+                                args=sanitize_tool_result_value(tool_args_without_display_purpose(tool_args)),
                                 status="requested",
                             )
 
                         if q:
-                            tool_args = dict(part.function_call.args or {})
                             raw_call_id = getattr(part.function_call, "id", None)
                             call_id = raw_call_id if isinstance(raw_call_id, str) and raw_call_id else str(uuid.uuid4())
                             actor_id = str(agent_id or agent_name or "agent")
@@ -538,81 +634,39 @@ class AgentRunner:
                             seen_tool_component_ids.add(tool_component_id)
                             pending_tool_components_by_call_id.setdefault(call_id, []).append(tool_component_id)
                             pending_tool_components_by_name.setdefault(func_name, []).append(tool_component_id)
+                            started_at = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+                            pending_tool_metadata[tool_component_id] = {
+                                "started_at": started_at,
+                                "started_monotonic": time.monotonic(),
+                                "presentation": presentation,
+                                "params_json": serialize_tool_args(tool_args),
+                                "actor_id": actor_id,
+                                "actor_name": str(agent_name or ""),
+                            }
                             await q.put(
                                 self.streaming_formatter.format_component_event(
                                     agent_id=agent_id,
-                                    component_type="tool_info",
+                                    component_type="tool_activity",
                                     component_data={
-                                        "title": func_name,
+                                        "tool_name": func_name,
                                         "status": "running",
-                                        "params": json.dumps(tool_args, default=str, sort_keys=True),
-                                        "started_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+                                        "params_json": pending_tool_metadata[tool_component_id]["params_json"],
+                                        "started_at": started_at,
+                                        "display_key": presentation.display_key or "",
+                                        "fallback_display_name": presentation.fallback_display_name or "",
+                                        "summary": presentation.summary,
+                                        "render_kind": presentation.render_kind,
+                                        "actor_id": actor_id,
+                                        "actor_name": str(agent_name or ""),
+                                        **({
+                                            "primary_input": sanitize_tool_result_value(tool_args.get("code", "")),
+                                            "primary_input_language": tool_args.get("language", ""),
+                                        } if func_name == "run_code" else {}),
                                     },
                                     message_id=session_id,
                                     component_id=tool_component_id,
                                     action="add",
                                 )
-                            )
-
-                        # Chain-of-thought: append this tool title as a step
-                        if q:
-                            cot_steps.append(func_name)
-                            await q.put(
-                                self.streaming_formatter.format_component_event(
-                                    agent_id=agent_id,
-                                    component_type="chain_of_thought",
-                                    component_data={"steps": list(cot_steps)},
-                                    message_id=session_id,
-                                    component_id=cot_component_id,
-                                    action="update" if cot_sent else "add",
-                                )
-                            )
-                            cot_sent = True
-                            logger.info(
-                                f"[CHAIN_OF_THOUGHT] Appended step - title: {func_name}, steps: {len(cot_steps)}, agent: {agent_name}"
-                            )
-
-                            if self.streaming_formatter.component_tracker:
-                                self.streaming_formatter.component_tracker.finish_component(agent_id)
-                            current_text_component_id = None
-
-                        # Send newline chunk for visual separation before any tool execution
-                        if q:
-                            # If we have a current text component, update it; otherwise create new one
-                            if current_text_component_id:
-                                newline_chunk = (
-                                    self.streaming_formatter.format_component_event(
-                                        agent_id=agent_id,
-                                        component_type="text",
-                                        component_data={"content": " \n "},
-                                        message_id=session_id,
-                                        action="update",
-                                        component_id=current_text_component_id,
-                                    )
-                                )
-                            else:
-                                newline_chunk = (
-                                    self.streaming_formatter.format_streaming_event(
-                                        agent_id=agent_id,
-                                        agent_name=agent_name,
-                                        agent_type=agent_type,
-                                        chunk=" \n ",
-                                        message_id=session_id,
-                                        content_type="chunk",
-                                    )
-                                )
-                                # Extract component ID if this created a new component
-                                if (
-                                    "component" in newline_chunk
-                                    and "id" in newline_chunk["component"]
-                                ):
-                                    current_text_component_id = newline_chunk[
-                                        "component"
-                                    ]["id"]
-
-                            await q.put(newline_chunk)
-                            logger.info(
-                                f"[RUNNER] Sent newline chunk before {func_name} execution"
                             )
 
                         # Track python_interpreter usage
@@ -634,7 +688,7 @@ class AgentRunner:
                                 and part.function_call.args
                             ):
                                 args_dict = dict(part.function_call.args)
-                                code = args_dict.get("code", "")
+                                code = sanitize_tool_result_value(args_dict.get("code", ""))
 
                             # Use function_call.id as component_id for tracking
                             call_id = (
@@ -737,28 +791,25 @@ class AgentRunner:
                                             break
 
                             if tool_component_id:
+                                metadata = pending_tool_metadata.pop(tool_component_id, {})
                                 result_json = ""
                                 if getattr(q, "include_tool_results", False) and func_name != "generate_web_preview":
-                                    try:
-                                        candidate_result_json = json.dumps(
-                                            part.function_response.response,
-                                            default=str,
-                                            separators=(",", ":"),
-                                        )
-                                        if len(candidate_result_json.encode("utf-8")) <= 65536:
-                                            result_json = candidate_result_json
-                                    except (TypeError, ValueError):
-                                        logger.warning(
-                                            "tool_result_serialization_failed tool=%s",
-                                            func_name,
-                                        )
+                                    result_json = serialize_tool_result(part.function_response.response)
+                                response_payload = part.function_response.response
+                                if func_name == "run_code" and isinstance(response_payload, dict) and response_payload.get("ok") is False:
+                                    success = False
+                                completed_at = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+                                started_monotonic = metadata.get("started_monotonic")
+                                duration_ms = max(0, round((time.monotonic() - started_monotonic) * 1000)) if isinstance(started_monotonic, float) else 0
                                 await q.put(
                                     self.streaming_formatter.format_component_event(
                                         agent_id=agent_id,
-                                        component_type="tool_info",
+                                        component_type="tool_activity",
                                         component_data={
-                                            "title": func_name,
+                                            "tool_name": func_name,
                                             "status": "completed" if success else "failed",
+                                            "completed_at": completed_at,
+                                            "duration_ms": duration_ms,
                                             **({"result_json": result_json} if result_json else {}),
                                         },
                                         message_id=session_id,
@@ -766,6 +817,20 @@ class AgentRunner:
                                         action="update",
                                     )
                                 )
+                                artifacts = build_run_code_artifacts(response_payload, agent_config, tool_component_id) if func_name == "run_code" else build_tool_result_artifacts(
+                                    response_payload,
+                                    tool_component_id,
+                                    run_workspace_path(user_id, session_id),
+                                )
+                                for artifact in artifacts:
+                                    await q.put(self.streaming_formatter.format_component_event(
+                                        agent_id=agent_id,
+                                        component_type="artifact",
+                                        component_data=artifact,
+                                        message_id=session_id,
+                                        component_id=f"artifact-{artifact['artifact_id']}",
+                                        action="add",
+                                    ))
 
                         if q and await self._handle_ui_tool_response(
                             func_name,
@@ -775,28 +840,6 @@ class AgentRunner:
                             q,
                         ):
                             continue
-
-                        response_payload = part.function_response.response
-                        if q and isinstance(response_payload, dict) and response_payload.get("ceph_path"):
-                            ceph_path = response_payload.get("ceph_path", "")
-                            filename = (response_payload.get("path") or ceph_path).rstrip("/").split("/")[-1]
-                            artifact_kind = infer_artifact_kind(filename) or "document"
-                            await q.put(
-                                self.streaming_formatter.format_component_event(
-                                    agent_id=agent_id,
-                                    component_type="artifact",
-                                    component_data={
-                                        "file_path": ceph_path,
-                                        "filename": filename,
-                                        "artifact_kind": artifact_kind,
-                                        "output_port_id": "",
-                                    },
-                                    message_id=session_id,
-                                )
-                            )
-                            logger.info(
-                                f"[ARTIFACT] Ceph file artifact emitted - filename: {filename}, kind: {artifact_kind}, ceph_path: {ceph_path}, agent: {agent_name}"
-                            )
 
                         if func_name == "generate_ui" and q:
                             await self._handle_dataviz_response(
@@ -1008,13 +1051,19 @@ class AgentRunner:
             q: Queue for streaming events.
             agent_id: The ID of the agent.
         Returns:
-            Tuple containing final result, False (no MCP tools), and execution summary (for langfuse tracing).
+            Tuple containing the final result, False (no MCP tools), execution summary, and generated files.
         """
         recorder = TraceRecorder(agent_name=agent.name, agent_type="html")
         accumulated_text = ""
         guarded_output = agent_tree_has_output_guardrail(agent)
-        runner = Runner(agent=agent, app_name=APP_NAME, session_service=session_helper)
+        runner = Runner(
+            agent=agent,
+            app_name=APP_NAME,
+            session_service=session_helper,
+            plugins=[CleanSessionPlugin()],
+        )
 
+        _mark_runner_invoked()
         stream = runner.run_async(
             user_id=user_id,
             session_id=session_id,

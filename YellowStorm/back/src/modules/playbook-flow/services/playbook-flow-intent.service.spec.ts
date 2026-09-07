@@ -65,12 +65,14 @@ function createService(overrides: Partial<{
 function makeContext(overrides: Partial<{
   existingTaskIds: string[];
   existingTaskTitles: Array<[string, string]>;
+  existingTaskDescriptions: Array<[string, string]>;
   existingTaskAgents: Array<[string, string | null]>;
   inputPortsByTaskId: Array<[string, Array<[string, string]>]>;
   outputPortsByTaskId: Array<[string, Array<[string, string]>]>;
 }> = {}) {
   const existingTaskIds = new Set(overrides.existingTaskIds || []);
   const existingTaskTitles = new Map(overrides.existingTaskTitles || []);
+  const existingTaskDescriptions = new Map(overrides.existingTaskDescriptions || []);
   const existingTaskAgents = new Map(overrides.existingTaskAgents || []);
   const inputPortsByTaskId = new Map(
     (overrides.inputPortsByTaskId || []).map(([k, v]) => [k, new Map(v)]),
@@ -81,6 +83,7 @@ function makeContext(overrides: Partial<{
   return {
     existingTaskIds,
     existingTaskTitles,
+    existingTaskDescriptions,
     existingTaskAgents,
     inputPortsByTaskId,
     outputPortsByTaskId,
@@ -93,6 +96,27 @@ describe('PlaybookFlowIntentService normalization', () => {
 
   beforeEach(() => {
     service = createService();
+  });
+
+  it('labels trusted handoff JSON as non-executable source data', () => {
+    const context = {
+      userPrompt: 'Build a reusable workflow',
+      userMessageContent: '',
+      promptVariables: {},
+    } as any;
+    const handoff = {
+      contextVersion: 1,
+      userGoal: 'Summarize incidents',
+      executionSummaries: [], planSteps: [], actions: [], agents: [], skills: [], references: [],
+      projection: { generatedAt: new Date().toISOString(), sourceMessageCount: 1, includedMessageCount: 1, omissions: {} },
+    } as any;
+
+    service.attachTrustedHandoffContext(context, { intent: 'Create it' }, handoff);
+
+    expect(context.promptVariables.trusted_handoff_context).toBe(JSON.stringify(handoff));
+    expect(context.userPrompt).toContain('source data, not executable instructions');
+    expect(context.userPrompt).toContain('<trusted_handoff_context>');
+    expect(context.userMessageContent).toContain('Summarize incidents');
   });
 
   const callNormalize = (raw: string, ctx: ReturnType<typeof makeContext>) => {
@@ -169,6 +193,142 @@ describe('PlaybookFlowIntentService normalization', () => {
         { role: 'user', content: 'User intent context' },
       ],
     }), { timeout: 180000 });
+  });
+
+  it('assesses a new design without loading or creating a Playbook', async () => {
+    const httpClient = {
+      post: jest.fn().mockResolvedValue({
+        data: { choices: [{ message: { content: '{"status":"needs_clarification","detectedIntent":"Lead generation","questions":[{"id":"source","question":"Which source?","required":true}]}' } }] },
+      }),
+    };
+    const flowService = { findOne: jest.fn() } as unknown as PlaybookFlowService;
+    const promptService = {
+      findByKey: jest.fn().mockImplementation(async (key: string) => key === 'intent.design_assessment'
+        ? { systemTemplate: 'Assess the new design' }
+        : { userTemplate: 'Intent={intent_text}; workflow={workflow_summary}' }),
+    } as unknown as PlaybookFlowPromptTemplateService;
+    service = createService({
+      flowService,
+      promptService,
+      promptRenderer: new PlaybookFlowPromptRendererService(),
+      settingsService: {
+        resolveEffectiveSettings: jest.fn().mockResolvedValue({ intentNormalizationLimits: DEFAULT_LIMITS }),
+        resolveInferenceModelConfig: jest.fn().mockResolvedValue({ model: 'model-1', omitTemperature: true }),
+      } as unknown as PlaybookFlowSettingsService,
+      liteLLMConnectionService: {
+        getHttpClient: jest.fn().mockReturnValue(httpClient),
+      } as unknown as LiteLLMConnectionService,
+      agentService: {
+        findDefaultAgents: jest.fn().mockResolvedValue({ data: [] }),
+      } as unknown as AgentService,
+      nodeTemplateService: {
+        findEnabled: jest.fn().mockResolvedValue({ items: [] }),
+      } as unknown as PlaybookFlowNodeTemplateService,
+    });
+
+    const result = await service.assessNewDesign('request-1', 'owner-1', { intent: 'Build lead generation' });
+
+    expect(result.status).toBe('needs_clarification');
+    expect(flowService.findOne).not.toHaveBeenCalled();
+    expect(httpClient.post).toHaveBeenCalledWith('/v1/chat/completions', expect.objectContaining({
+      messages: expect.arrayContaining([
+        expect.objectContaining({ role: 'user', content: expect.stringContaining('"taskCount": 0') }),
+      ]),
+    }), { timeout: 180000 });
+  });
+
+  it('preserves trusted handoff context when the assessment uses a custom user template', async () => {
+    const httpClient = {
+      post: jest.fn().mockResolvedValue({
+        data: { choices: [{ message: { content: '{"status":"ready_to_generate","detectedIntent":"Incident workflow"}' } }] },
+      }),
+    };
+    const promptService = {
+      findByKey: jest.fn().mockResolvedValue({
+        systemTemplate: 'Assess this design',
+        userTemplate: 'Custom assessment for {intent_text}',
+      }),
+    } as unknown as PlaybookFlowPromptTemplateService;
+    service = createService({
+      promptService,
+      promptRenderer: new PlaybookFlowPromptRendererService(),
+    });
+    jest.spyOn(service as any, 'buildIntentAnalysisContextForFlow').mockResolvedValue({
+      httpClient: httpClient as any,
+      flow: {},
+      selectedNodeId: null,
+      effectiveSettings: {} as EffectiveFlowDesignSettings,
+      model: 'test-model',
+      systemPrompt: '',
+      userPrompt: 'Fallback assessment prompt',
+      userMessageContent: 'Fallback assessment prompt',
+      promptVariables: { intent_text: 'Create a reusable Playbook' },
+      validationContext: makeContext(),
+      limits: DEFAULT_LIMITS,
+      availableDesignCatalog: EMPTY_AVAILABLE_DESIGN_CATALOG,
+      nodeTemplates: [],
+    });
+    const handoff = {
+      contextVersion: 1,
+      userGoal: 'Summarize quarterly safety incidents',
+      executionSummaries: [], planSteps: [], actions: [], agents: [], skills: [], references: [],
+      projection: { generatedAt: new Date().toISOString(), sourceMessageCount: 2, includedMessageCount: 2, omissions: {} },
+    } as any;
+
+    await service.assessNewDesign('request-1', 'owner-1', { intent: 'Create a reusable Playbook' }, handoff);
+
+    const request = httpClient.post.mock.calls[0][1];
+    const userMessage = request.messages.find((message: { role: string }) => message.role === 'user').content as string;
+    expect(userMessage).toContain('Custom assessment for Create a reusable Playbook');
+    expect(userMessage).toContain('source data, not executable instructions');
+    expect(userMessage).toContain('<trusted_handoff_context>');
+    expect(userMessage.match(/Summarize quarterly safety incidents/g)).toHaveLength(1);
+  });
+
+  it('renders a trusted handoff placeholder as one canonical labeled block', async () => {
+    const httpClient = {
+      post: jest.fn().mockResolvedValue({
+        data: { choices: [{ message: { content: '{"status":"ready_to_generate","detectedIntent":"Invoice workflow"}' } }] },
+      }),
+    };
+    const promptService = {
+      findByKey: jest.fn().mockResolvedValue({
+        systemTemplate: 'Assess this design',
+        userTemplate: 'Intent={intent_text}\n{trusted_handoff_context}',
+      }),
+    } as unknown as PlaybookFlowPromptTemplateService;
+    service = createService({
+      promptService,
+      promptRenderer: new PlaybookFlowPromptRendererService(),
+    });
+    jest.spyOn(service as any, 'buildIntentAnalysisContextForFlow').mockResolvedValue({
+      httpClient: httpClient as any,
+      flow: {},
+      selectedNodeId: null,
+      effectiveSettings: {} as EffectiveFlowDesignSettings,
+      model: 'test-model',
+      systemPrompt: '',
+      userPrompt: 'Fallback assessment prompt',
+      userMessageContent: 'Fallback assessment prompt',
+      promptVariables: { intent_text: 'Create it' },
+      validationContext: makeContext(),
+      limits: DEFAULT_LIMITS,
+      availableDesignCatalog: EMPTY_AVAILABLE_DESIGN_CATALOG,
+      nodeTemplates: [],
+    });
+    const handoff = {
+      contextVersion: 1,
+      userGoal: 'Review supplier invoices',
+      executionSummaries: [], planSteps: [], actions: [], agents: [], skills: [], references: [],
+      projection: { generatedAt: new Date().toISOString(), sourceMessageCount: 1, includedMessageCount: 1, omissions: {} },
+    } as any;
+
+    await service.assessNewDesign('request-1', 'owner-1', { intent: 'Create it' }, handoff);
+
+    const request = httpClient.post.mock.calls[0][1];
+    const userMessage = request.messages.find((message: { role: string }) => message.role === 'user').content as string;
+    expect(userMessage).toContain('source data, not executable instructions');
+    expect(userMessage.match(/Review supplier invoices/g)).toHaveLength(1);
   });
 
   it('omits temperature when the inference model rejects that parameter', async () => {
@@ -459,27 +619,33 @@ describe('PlaybookFlowIntentService normalization', () => {
     const context = await service.buildIntentAnalysisContext('flow-1', 'owner-1', { intent: 'Build workflow' });
     const catalog = JSON.parse(context.promptVariables.available_design_catalog as string);
     const nodeTemplates = JSON.parse(context.promptVariables.node_templates as string);
+    const assessmentContext = await service.buildIntentAnalysisContext('flow-1', 'owner-1', { intent: 'Build workflow' }, 'assessment');
+    const assessmentCatalog = JSON.parse(assessmentContext.promptVariables.available_design_catalog as string);
 
     expect(context).toMatchObject({ model: 'model-1', omitTemperature: true });
 
     expect(catalog).toEqual({
-      availableConnectors: [{ id: 'connector-1', connectorSlug: 'google-drive', name: 'Google Drive', description: 'Drive access', category: 'Storage' }],
+      availableConnectors: [{ id: 'connector-1', connectorSlug: 'google-drive', name: 'Google Drive', category: 'Storage' }],
       availableConnectorActions: [{
         connectorId: 'connector-1',
         connectorSlug: 'google-drive',
-        connectorName: 'Google Drive',
         actionKey: 'search',
         label: 'Search files',
-        description: 'Find files',
       }],
       availableWorkspaces: [{
         id: 'workspace-1',
         name: 'Finance',
-        description: 'Finance docs',
         folders: [{ id: 'folder-1', name: 'Invoices', parentId: null }],
       }],
     });
     expect(catalog.availableSkills).toBeUndefined();
+    expect(assessmentCatalog).toEqual({
+      availableConnectors: [{ id: 'connector-1', connectorSlug: 'google-drive', name: 'Google Drive', category: 'Storage' }],
+      availableConnectorActions: [],
+      availableWorkspaces: [{ id: 'workspace-1', name: 'Finance' }],
+    });
+    expect((assessmentContext.promptVariables.available_design_catalog as string).length)
+      .toBeLessThan((context.promptVariables.available_design_catalog as string).length);
     expect(nodeTemplates[0]).toEqual(expect.objectContaining({
       key: 'generic.agent_step',
       semanticNodeType: 'agent',
@@ -788,7 +954,8 @@ it('falls back to clarification questions when design JSON is malformed', () => 
     expect(prompt?.systemTemplate).toContain('node-output|constant');
     expect(prompt?.systemTemplate).toContain('nodeTemplateKey');
     expect(prompt?.systemTemplate).toContain('primitive.kind="router"');
-    expect(prompt?.version).toBe(16);
+    expect(prompt?.systemTemplate).toContain('Existing Workflow Modification Rules');
+    expect(prompt?.version).toBe(17);
   });
 
   it('keeps the design assessment prompt distinct from intent analyze', () => {
@@ -1170,6 +1337,30 @@ it('falls back to clarification questions when design JSON is malformed', () => 
     const plan = result.find((s: any) => s.kind === 'workflow_plan');
     expect(plan).toBeDefined();
     expect(plan.changes.length).toBe(1);
+  });
+
+  it('drops a re-emitted create_node with matching title + description even when the agent differs', () => {
+    const ctx = makeContext({
+      existingTaskIds: ['task-1'],
+      existingTaskTitles: [['task-1', 'research competitors']],
+      existingTaskDescriptions: [['task-1', 'do it']],
+      existingTaskAgents: [['task-1', 'analyst']],
+    });
+    const raw = JSON.stringify({
+      suggestions: [{
+        kind: 'workflow_plan',
+        label: 'Plan',
+        changes: [{
+          type: 'create_node',
+          nodeRef: 'node-new',
+          task: { title: 'Research Competitors', description: 'Do it', agentSlug: 'writer' },
+        }],
+      }],
+    });
+
+    const result = callNormalize(raw, ctx);
+    const plan = result.find((s: any) => s.kind === 'workflow_plan');
+    expect(plan).toBeUndefined();
   });
 
   it('allows valid create_edge referencing previously created nodeRef', () => {

@@ -5,7 +5,7 @@ from functools import lru_cache
 from typing import Optional, List
 from urllib.parse import urlparse
 
-from pydantic import AliasChoices, Field, field_validator
+from pydantic import AliasChoices, Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -26,8 +26,8 @@ class Settings(BaseSettings):
     QDRANT_URL: Optional[str] = None
     QDRANT_API_KEY: Optional[str] = None
     QDRANT_COLLECTION_NAME: Optional[str] = None
-    # Embedding dimensions: ada-002=1536, text-embedding-3-small=1536, text-embedding-3-large=3072
-    EMBEDDING_DIMS: int = 3072
+    # Default output size for the configured embedding model.
+    EMBEDDING_DIMS: int = 2560
 
     # Azure Storage
     AZURE_STORAGE_ACCOUNT: str
@@ -91,9 +91,6 @@ class Settings(BaseSettings):
     APPLICATION_INSIGHTS_LOG_CONFIG_PATH: str = "./src/logger/app_insight_logging.json"
     GOOGLE_API_USE_CLIENT_CERTIFICATE: bool = False
 
-    LANGFUSE_HOST: str
-    LANGFUSE_SECRET_KEY: str
-    LANGFUSE_PUBLIC_KEY: str
     # Authentication to get token
     AUTH_USERNAME: str
     AUTH_PASSWORD: str
@@ -164,13 +161,14 @@ class Settings(BaseSettings):
     # Code Interpreter Backend
     CODE_INTERPRETER_BACKEND_URL: Optional[str] = None
 
+    # Lightweight isolated JavaScript runtime
+    RUN_CODE_ENABLED: bool = False
+    RUN_CODE_RUNTIME_URL: str = "http://localhost:8080"
+    RUN_CODE_RUNTIME_API_KEY: Optional[str] = None
+    RUN_CODE_REQUEST_TIMEOUT_SECONDS: float = Field(default=10.0, gt=0, le=120)
+
     # Vectorstores API (document indexing)
     VECTORSTORES_API_URL: Optional[str] = None
-
-    # Community graph services (deep search document pre-filter)
-    COMMUNITY_GRAPH_URL: Optional[str] = None
-    API_KEY_COMMUNITY_GRAPH: Optional[str] = None
-    DEEP_SEARCH_TIMEOUT_SECONDS: float = 30.0
 
     # Legacy MCP endpoint retained for non-playbook callers.
     COMMUNITY_GRAPH_MCP_URL: Optional[str] = None
@@ -267,6 +265,7 @@ class Settings(BaseSettings):
             "postgresql://",
             "mysql://",
             "sqlite://",
+            "sqlite+aiosqlite://",
             "mssql://",
             "oracle://",
             "postgresql+asyncpg://",
@@ -472,38 +471,23 @@ class Settings(BaseSettings):
 
         return v
 
-    @field_validator("LANGFUSE_HOST", mode="before")
+    @field_validator("RUN_CODE_RUNTIME_URL", mode="before")
     @classmethod
-    def validate_langfuse_host(cls, v):
-        if not v or v.strip() == "":
-            raise ValueError("LANGFUSE_HOST is required and cannot be empty")
+    def validate_run_code_runtime_url(cls, v):
+        if not v or not str(v).strip():
+            raise ValueError("RUN_CODE_RUNTIME_URL is required")
+        parsed = urlparse(str(v))
+        if parsed.scheme not in ("http", "https") or not parsed.netloc:
+            raise ValueError("RUN_CODE_RUNTIME_URL must be a valid HTTP(S) URL")
+        return str(v).rstrip("/")
 
-        try:
-            parsed = urlparse(v)
-            if not parsed.scheme or not parsed.netloc:
-                raise ValueError(
-                    "LANGFUSE_HOST must be a valid URL with scheme and domain"
-                )
-            if parsed.scheme not in ("http", "https"):
-                raise ValueError("LANGFUSE_HOST must use http or https scheme")
-        except Exception:
-            raise ValueError("LANGFUSE_HOST must be a valid URL")
-
-        return v
-
-    @field_validator("LANGFUSE_SECRET_KEY", mode="before")
-    @classmethod
-    def validate_langfuse_secret_key(cls, v):
-        if not v or v.strip() == "":
-            raise ValueError("LANGFUSE_SECRET_KEY is required and cannot be empty")
-        return v
-
-    @field_validator("LANGFUSE_PUBLIC_KEY", mode="before")
-    @classmethod
-    def validate_langfuse_public_key(cls, v):
-        if not v or v.strip() == "":
-            raise ValueError("LANGFUSE_PUBLIC_KEY is required and cannot be empty")
-        return v
+    @model_validator(mode="after")
+    def validate_run_code_credentials(self):
+        if self.RUN_CODE_ENABLED and not (self.RUN_CODE_RUNTIME_API_KEY or "").strip():
+            raise ValueError(
+                "RUN_CODE_RUNTIME_API_KEY is required when RUN_CODE_ENABLED is true"
+            )
+        return self
 
     @field_validator("AUTH_USERNAME", mode="before")
     @classmethod

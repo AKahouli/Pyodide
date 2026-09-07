@@ -35,11 +35,18 @@ export class EmbeddingService {
       const apiKey = this.config.get<string>('litellm.apiKey') || '';
       const res = await axios.post(
         `${base}${endpoint}`,
-        { model, input: text, dimensions },
+        { model, input: text },
         { headers: apiKey ? { Authorization: `Bearer ${apiKey}` } : {}, timeout },
       );
       const vec = res.data?.data?.[0]?.embedding;
-      return Array.isArray(vec) ? (vec as number[]) : null;
+      if (!Array.isArray(vec) || vec.length !== dimensions || !vec.every((value) => typeof value === 'number' && Number.isFinite(value))) {
+        this.logger.error('Embedding response has an invalid vector shape', {
+          expectedDimensions: dimensions,
+          actualDimensions: Array.isArray(vec) ? vec.length : null,
+        });
+        return null;
+      }
+      return vec as number[];
     } catch (error) {
       this.logger.error('Embedding request failed', { error: (error as Error).message });
       return null;

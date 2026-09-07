@@ -42,6 +42,8 @@ message AttachedFile {
 message Chatbot {
     string model = 1;  // Full LiteLLM model identifier (e.g., "anthropic/claude-sonnet-4-5", "azure/gpt-4.1")
     repeated string input_modalities = 2; // Supported request inputs: "text", optionally "image"
+    string reasoning_effort = 3; // Optional model-supported effort identifier
+    int32 context_window_tokens = 4; // Authoritative selected-model input capacity when known
 }
 
 message Tool {
@@ -162,6 +164,14 @@ message CorrectionReplayContext {
     string instructions = 4;
 }
 
+// End-to-end latency trace context sent by the backend on conversation turns.
+message LatencyTraceContext {
+    uint32 schema_version = 1;
+    string request_id = 2;
+    string assistant_message_id = 3;
+    double backend_received_epoch_ms = 4;
+}
+
 message RunAgentTeamRequest {
     UserContext user_context = 1;
     string conversation_id = 2;
@@ -177,6 +187,7 @@ message RunAgentTeamRequest {
     string task_summary = 15;                              // Human-readable task UI summary; query remains model input
     CorrectionReplayContext correction_replay_context = 16;
     bool web_search_enabled = 17;
+    LatencyTraceContext latency_trace_context = 20;
 }
 
 // Mono-agent request: a single specialized agent runs directly with its own
@@ -196,6 +207,7 @@ message RunSingleAgentRequest {
     string task_summary = 11;                         // Human-readable task UI summary; query remains model input
     CorrectionReplayContext correction_replay_context = 12;
     bool web_search_enabled = 13;
+    LatencyTraceContext latency_trace_context = 20;
 }
 
 message GenerateConversationNameRequest {
@@ -222,12 +234,15 @@ message CodeComponent {
     string output_port_id = 4;   // Optional target playbook output port
 }
 
-message ReasoningComponent {
-    string content = 1;          // Internal thought process
-}
-
-message ChainOfThoughtComponent {
-    repeated string steps = 1;   // Ordered step titles (e.g. tool names)
+message AgentActivityComponent {
+    string summary = 1;          // Compact progress summary
+    optional string detail = 2;  // Full reasoning text for authenticated conversation viewers
+    string status = 3;           // running | completed
+    optional string started_at = 4;
+    optional string completed_at = 5;
+    optional int64 duration_ms = 6;
+    optional string actor_id = 7;
+    optional string actor_name = 8;
 }
 
 // Task status enum
@@ -275,12 +290,22 @@ message CheckpointComponent {
     string label = 1;            // Checkpoint label
 }
 
-message ToolInfoComponent {
-    string title = 1;            // Tool name / label
-    string status = 2;           // running | completed | failed
-    optional string params = 3;  // JSON object of tool-call arguments {name: value}; omitted when empty
+message ToolActivityComponent {
+    string tool_name = 1;        // Stable machine identity
+    string status = 2;           // running | completed | failed | stopped
+    optional string params_json = 3; // Sanitized JSON tool-call arguments
     optional string result_json = 4; // Bounded structured tool result for trusted backend consumers
     optional string started_at = 5; // RFC 3339 UTC instant captured when the tool call starts
+    optional string completed_at = 6;
+    optional int64 duration_ms = 7;
+    optional string display_key = 8;
+    optional string fallback_display_name = 9;
+    optional string summary = 10;
+    optional string render_kind = 11;
+    optional string actor_id = 12;
+    optional string actor_name = 13;
+    optional string primary_input = 14; // Sanitized first-class display payload, e.g. run_code source
+    optional string primary_input_language = 15;
 }
 
 enum ChartKind {
@@ -342,11 +367,15 @@ message WebPreviewComponent {
 }
 
 message ArtifactComponent {
-    string file_path = 1;        // Path to the generated file
+    string file_path = 1;        // Trusted internal storage path; never public component data
     string filename = 2;         // Name of the generated file
     string output_port_id = 3;   // Optional target playbook output port
     string artifact_kind = 4;    // Optional artifact kind override
     string mime_type = 5;        // Optional file MIME type
+    string artifact_id = 6;      // Opaque browser-safe identity
+    optional string producer_tool_id = 7;
+    optional int64 size_bytes = 8;
+    string availability = 9;     // pending | ready | failed
 }
 
 message TextSourceData {
@@ -434,10 +463,12 @@ message ChoiceComponent {
 // Main Component message using oneof for type safety
 message Component {
     string id = 1;               // Component unique identifier
+    reserved 17;
+    reserved "chain_of_thought";
     oneof data {
         TextComponent text = 2;
         CodeComponent code = 3;
-        ReasoningComponent reasoning = 4;
+        AgentActivityComponent agent_activity = 4;
         PlanComponent plan = 5;
         QueueComponent queue = 6;
         CheckpointComponent checkpoint = 7;
@@ -449,8 +480,7 @@ message Component {
         WebPreviewComponent web_preview = 13;  // HTML/CSS/JS web preview
         ArtifactComponent artifact = 14;  // Generated file artifact
         CitationComponent citation = 15;  // Document citation reference
-        ToolInfoComponent tool_info = 16; // Tool execution status (running/completed/failed)
-        ChainOfThoughtComponent chain_of_thought = 17; // Collapsed list of step titles
+        ToolActivityComponent tool_activity = 16; // Tool execution status (running/completed/failed)
         ChoiceComponent choice = 18;
     }
 }
@@ -466,13 +496,50 @@ message Usage {
     int32 output_tokens = 2;     // Output tokens generated by LLM
     int32 total_tokens = 3;      // Total tokens (input + output)
     string model = 4;            // Model/chatbot name used (e.g., "gpt-4.1")
+    int32 context_window_tokens = 5; // Capacity associated with this individual model request
+}
+
+// ADK-local timing envelope attached to the first post-model StreamChunk.
+// Epoch fields cross process boundaries; the *_ms durations are computed
+// inside ADK from a monotonic clock and are authoritative.
+message LatencyTrace {
+    uint32 schema_version = 1;
+    string request_id = 2;
+    string assistant_message_id = 3;
+
+    double adk_request_received_epoch_ms = 4;
+    double llm_request_start_epoch_ms = 5;
+    double llm_first_delta_epoch_ms = 6;
+    double adk_first_delta_forwarded_epoch_ms = 7;
+
+    double adk_pre_provider_ms = 8;
+    double provider_ttft_ms = 9;
+    double adk_forwarding_ms = 10;
+
+    // Diagnostic children of adk_pre_provider_ms (ADK-local monotonic clock).
+    AdkPreProviderBreakdown adk_pre_provider_breakdown = 11;
+}
+
+// Diagnostic breakdown of adk_pre_provider_ms. The parent remains
+// independently derived; absent stages stay 0 on the wire (proto3 doubles).
+message AdkPreProviderBreakdown {
+    double protobuf_to_dict_ms = 1;
+    double request_logging_ms = 2;
+    double request_conversion_ms = 3;
+    double workflow_dispatch_ms = 4;
+    double session_lock_wait_ms = 5;
+    double orchestration_setup_ms = 6;
+    double agent_tool_preparation_ms = 7;
+    double session_runner_setup_ms = 8;
+    double adk_runtime_pre_model_ms = 9;
 }
 
 message StreamChunk {
-    string action = 1;           // "add", "update", or "delete"
+    string action = 1;           // "add", "update", "delete", or component-free "heartbeat"
     Component component = 2;     // The component data (optional if only sending usage)
     Metadata metadata = 3;       // Metadata about the chunk
     Usage usage = 4;             // Token usage data (optional)
+    LatencyTrace latency_trace = 5; // One-time timing envelope on the first post-model chunk
 }
 
 enum ConversationHistoryRole {

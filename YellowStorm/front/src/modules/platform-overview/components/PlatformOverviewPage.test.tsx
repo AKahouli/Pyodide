@@ -65,9 +65,11 @@ describe('PlatformOverviewPage', () => {
     expect(screen.getByRole('link', { name: /goal.answer.title/ })).toHaveAttribute('href', '/');
     expect(screen.getByRole('link', { name: /goal.knowledge.title/ })).toHaveAttribute('href', '/workspace');
     expect(screen.getByRole('link', { name: /goal.automate.title/ })).toHaveAttribute('href', '/playbooks');
-    expect(screen.getByRole('link', { name: /goal.coordinate.title/ })).toHaveAttribute('href', '/worky');
+    expect(screen.getByRole('heading', { name: 'goal.govern.title' })).toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: /goal.govern.title/ })).not.toBeInTheDocument();
     expect(screen.getByText('goal.answer.chain')).toBeInTheDocument();
-    expect(screen.getByText('goal.coordinate.chain')).toBeInTheDocument();
+    expect(screen.getByText('goal.govern.chain')).toBeInTheDocument();
+    expect(screen.getAllByRole('heading', { level: 3 }).filter((heading) => heading.textContent?.startsWith('journey.'))).toHaveLength(4);
   });
 
   it('presents reliability evidence, direct destinations, and Worky guidance', () => {
@@ -97,7 +99,7 @@ describe('PlatformOverviewPage', () => {
 
     expect(screen.queryByRole('link', { name: 'journey.governance.action' })).not.toBeInTheDocument();
     expect(screen.queryByRole('link', { name: /journey.context.semanticModels/ })).not.toBeInTheDocument();
-    expect(screen.getAllByText('access.restricted')).toHaveLength(2);
+    expect(screen.getAllByText('access.restricted')).toHaveLength(3);
     expect(screen.getByRole('tab', { name: 'lens.atlas' })).toBeInTheDocument();
     expect(screen.queryByRole('tab', { name: 'lens.administration' })).not.toBeInTheDocument();
   });
@@ -140,6 +142,7 @@ describe('PlatformOverviewPage', () => {
     );
 
     expect(screen.getByRole('link', { name: 'journey.governance.action' })).toHaveAttribute('href', '/governance');
+    expect(screen.getByRole('link', { name: /goal.govern.title/ })).toHaveAttribute('href', '/governance');
     expect(screen.getByRole('link', { name: /journey.context.semanticModels/ })).toHaveAttribute('href', '/semantic-models');
 
     await userEvent.click(screen.getByRole('tab', { name: 'lens.atlas' }));

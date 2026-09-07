@@ -38,7 +38,7 @@ describe('PlaybookFlowReplayDriftService', () => {
     return { service, executionModel, hitlMemoryModel: overrides?.hitlMemoryModel, replayReportService, loggerService };
   }
 
-  it('persists a pre-run replay report', async () => {
+  it('persists a pre-run replay report without eligibility gating', async () => {
     const { service, replayReportService } = createService();
 
     await service.createPreRunReport({
@@ -49,14 +49,6 @@ describe('PlaybookFlowReplayDriftService', () => {
       referenceExecutionId: 'baseline-exec-1',
       validationVersion: 2,
       mode: 'replay_strict',
-      eligibility: {
-        applied: false,
-        confidenceScore: 60,
-        confidenceFactors: { nodeSnapshotHash: 0 },
-        invalidationReasons: ['node_snapshot_mismatch'],
-        appliedSections: [],
-        skippedSections: ['decision_invariants'],
-      },
     });
 
     expect(replayReportService.createReport).toHaveBeenCalledWith(expect.objectContaining({
@@ -64,76 +56,22 @@ describe('PlaybookFlowReplayDriftService', () => {
       flowId: 'flow-1',
       taskId: 'task-1',
       replayId: 'replay-1',
-      applied: false,
-      confidenceScore: 60,
-      invalidationReasons: ['node_snapshot_mismatch'],
       outputContractEvaluated: false,
       outputContractPassed: false,
       structuralDriftScore: null,
       toolPolicyScore: null,
-      verdict: 'skipped',
+      verdict: 'unknown',
       overallScore: null,
-      verdictReasons: ['replay_not_applied'],
+      verdictReasons: ['evaluation_pending'],
       structuralDriftReasons: [],
       semanticMatch: null,
-      contextSubstitutionStatus: { status: 'warning', reason: 'replay_not_applied' },
-      semanticStatus: { status: 'not_evaluated', reason: 'replay_not_applied' },
+      contextDrift: null,
+      dataDrift: null,
     }));
-  });
-
-  it('marks skipped reports with a failed context substitution signal when confidence is too low', async () => {
-    const { service, replayReportService } = createService();
-
-    await service.createPreRunReport({
-      executionId: 'exec-1',
-      flowId: 'flow-1',
-      taskId: 'task-1',
-      replayId: 'replay-1',
-      referenceExecutionId: 'baseline-exec-1',
-      validationVersion: 2,
-      mode: 'replay_flex',
-      eligibility: {
-        applied: false,
-        confidenceScore: 45,
-        confidenceFactors: { nodeSnapshotHash: 0 },
-        invalidationReasons: ['confidence_below_threshold'],
-        appliedSections: [],
-        skippedSections: ['tool_policy'],
-      },
-    });
-
-    expect(replayReportService.createReport).toHaveBeenCalledWith(expect.objectContaining({
-      contextSubstitutionStatus: { status: 'failed', reason: 'confidence_below_threshold' },
-      toolSequenceStatus: { status: 'not_evaluated', reason: 'confidence_below_threshold' },
-      semanticStatus: { status: 'not_evaluated', reason: 'confidence_below_threshold' },
-    }));
-  });
-
-  it('marks skipped reports with a failed context substitution signal when required substitutions are unresolved', async () => {
-    const { service, replayReportService } = createService();
-
-    await service.createPreRunReport({
-      executionId: 'exec-1',
-      flowId: 'flow-1',
-      taskId: 'task-1',
-      replayId: 'replay-1',
-      referenceExecutionId: 'baseline-exec-1',
-      validationVersion: 2,
-      mode: 'replay_flex',
-      eligibility: {
-        applied: false,
-        confidenceScore: 92,
-        confidenceFactors: { nodeSnapshotHash: 1 },
-        invalidationReasons: ['required_context_unresolved'],
-        appliedSections: [],
-        skippedSections: ['tool_policy'],
-      },
-    });
-
-    expect(replayReportService.createReport).toHaveBeenCalledWith(expect.objectContaining({
-      contextSubstitutionStatus: { status: 'failed', reason: 'required_context_unresolved' },
-      toolSequenceStatus: { status: 'not_evaluated', reason: 'required_context_unresolved' },
-      semanticStatus: { status: 'not_evaluated', reason: 'required_context_unresolved' },
+    expect(replayReportService.createReport).toHaveBeenCalledWith(expect.not.objectContaining({
+      applied: expect.anything(),
+      confidenceScore: expect.anything(),
+      invalidationReasons: expect.anything(),
     }));
   });
 
@@ -165,14 +103,6 @@ describe('PlaybookFlowReplayDriftService', () => {
       referenceExecutionId: 'baseline-exec-1',
       validationVersion: 2,
       mode: 'replay_flex',
-      eligibility: {
-        applied: true,
-        confidenceScore: 95,
-        confidenceFactors: {},
-        invalidationReasons: [],
-        appliedSections: ['tool_policy'],
-        skippedSections: [],
-      },
     });
 
     expect(replayReportService.createReport).toHaveBeenCalledWith(expect.objectContaining({
@@ -204,10 +134,7 @@ describe('PlaybookFlowReplayDriftService', () => {
       replayReportService: {
         findLatestReportRecord: jest.fn().mockResolvedValue({
           _id: 'report-1',
-          applied: true,
           mode: 'replay_strict',
-          invalidationReasons: [],
-          confidenceScore: 100,
         }),
       },
     });
@@ -307,12 +234,6 @@ describe('PlaybookFlowReplayDriftService', () => {
             replayId: 'replay-1',
             validationVersion: 2,
             mode: 'replay_flex',
-            applied: true,
-            confidenceScore: 91,
-            appliedSections: ['tool_policy'],
-            skippedSections: [],
-            invalidationReasons: [],
-            confidenceFactors: {},
             outputContractEvaluated: true,
             outputContractPassed: true,
             structuralDriftScore: 100,
@@ -327,7 +248,7 @@ describe('PlaybookFlowReplayDriftService', () => {
             argumentShapeMatch: 100,
             reasoningMatch: 100,
             outputFormatMatch: 100,
-            contextDrift: 91,
+            contextDrift: null,
             dataDrift: 99,
             driftFindings: [],
             blockedBy: [],
@@ -344,18 +265,16 @@ describe('PlaybookFlowReplayDriftService', () => {
       overallScore: null,
       semanticMatch: null,
       replayConfidence: null,
-      semanticStatus: { status: 'not_evaluated', reason: 'evaluation_pending' },
+      contextDrift: null,
     }));
   });
 
-  it('updates semanticMatch on a non-applied replay report and re-derives verdict', async () => {
+  it('updates semanticMatch on a replay report and re-derives the verdict from evidence', async () => {
     const { service, replayReportService } = createService({
       replayReportService: {
         findLatestReportRecord: jest.fn().mockResolvedValue({
           _id: 'report-1',
-          applied: false,
           mode: 'replay_flex',
-          invalidationReasons: ['node_snapshot_mismatch'],
           outputContractEvaluated: false,
           outputContractPassed: false,
           structuralDriftScore: null,
@@ -381,10 +300,10 @@ describe('PlaybookFlowReplayDriftService', () => {
       'report-1',
       expect.objectContaining({
         semanticMatch: expect.objectContaining({ matchScore: 88 }),
-        verdict: 'skipped',
-        overallScore: null,
-        verdictReasons: ['replay_not_applied'],
-        semanticStatus: { status: 'not_evaluated', reason: 'replay_not_applied' },
+        verdict: 'pass',
+        overallScore: 88,
+        verdictReasons: [],
+        semanticStatus: { status: 'passed', reason: null },
       }),
     );
   });
@@ -397,26 +316,23 @@ describe('PlaybookFlowReplayDriftService', () => {
     expect(replayReportService.updateReport).not.toHaveBeenCalled();
   });
 
-  it('backfills semantic evidence when the report has applied=true', async () => {
+  it('backfills semantic evidence when a report exists', async () => {
     const { service, replayReportService } = createService({
       replayReportService: {
         findLatestReportRecord: jest.fn().mockResolvedValue({
           _id: 'report-1',
-          applied: true,
           mode: 'replay_strict',
-          invalidationReasons: [],
           outputContractEvaluated: false,
           outputContractPassed: false,
           structuralDriftScore: null,
           toolPolicyScore: null,
           structuralDriftReasons: [],
-          confidenceScore: 100,
           replayConfidence: null,
           toolSequenceMatch: null,
           argumentShapeMatch: null,
           reasoningMatch: null,
           outputFormatMatch: null,
-          contextDrift: 100,
+          contextDrift: null,
           dataDrift: null,
           driftFindings: [],
           blockedBy: [],
@@ -430,15 +346,12 @@ describe('PlaybookFlowReplayDriftService', () => {
   });
 
   describe('Phase 6: observability and evidence hardening', () => {
-    it('logs a WARN and updates report with not_evaluated signals when no evaluation inputs exist', async () => {
+    it('logs a WARN and updates report with a pending verdict when no evaluation inputs exist', async () => {
       const { service, replayReportService, loggerService } = createService({
         replayReportService: {
           findLatestReportRecord: jest.fn().mockResolvedValue({
             _id: 'report-1',
-            applied: true,
             mode: 'replay_strict',
-            invalidationReasons: [],
-            confidenceScore: 85,
           }),
         },
       });
@@ -486,7 +399,7 @@ describe('PlaybookFlowReplayDriftService', () => {
       expect(replayReportService.updateReport).toHaveBeenCalledWith(
         'report-1',
         expect.objectContaining({
-          verdict: 'skipped',
+          verdict: 'unknown',
           overallScore: null,
         }),
       );
@@ -518,16 +431,13 @@ describe('PlaybookFlowReplayDriftService', () => {
         replayReportService: {
           findLatestReportRecord: jest.fn().mockResolvedValue({
             _id: 'report-1',
-            applied: true,
             mode: 'replay_flex',
-            invalidationReasons: [],
-            confidenceScore: 100,
             outputContractEvaluated: false,
             outputContractPassed: false,
             structuralDriftScore: null,
             toolPolicyScore: null,
             structuralDriftReasons: [],
-            contextDrift: 100,
+            contextDrift: null,
             dataDrift: null,
             driftFindings: [],
             blockedBy: [],

@@ -1,7 +1,7 @@
 import { createExecutionServiceForTests } from './playbook-flow-execution.test-support';
 
 describe('callGrpcRun replay planning', () => {
-  it('skips strict replay when eligibility fails and persists a report', async () => {
+  it('applies strict replay even when the baseline node snapshot changed and persists a report', async () => {
     const replayReportService = { createPreRunReport: jest.fn().mockResolvedValue(undefined), updateStructuralDrift: jest.fn().mockResolvedValue(undefined) };
     const replayPromptService = { buildReplayPromptSection: jest.fn().mockReturnValue('SHOULD_NOT_APPLY') };
     const snapshot = {
@@ -35,16 +35,6 @@ describe('callGrpcRun replay planning', () => {
           .mockReturnValueOnce({ lean: jest.fn().mockReturnValue({ exec: jest.fn().mockResolvedValue({ seededTaskOutputs: [] }) }) })
           .mockReturnValue({ lean: jest.fn().mockReturnValue({ exec: jest.fn().mockResolvedValue({ seededTaskOutputs: [] }) }) }),
       },
-      replayEligibilityService: {
-        evaluateReplayEligibility: jest.fn().mockReturnValue({
-          applied: false,
-          confidenceScore: 40,
-          confidenceFactors: { nodeSnapshotHash: 0 },
-          invalidationReasons: ['node_snapshot_mismatch'],
-          appliedSections: [],
-          skippedSections: ['decision_invariants'],
-        }),
-      },
       replayPromptService,
       replayReportService,
     });
@@ -55,8 +45,8 @@ describe('callGrpcRun replay planning', () => {
 
     await (service as any).callGrpcRun('exec-1', 'flow-1', 'owner-1', snapshot, {}, snapshot);
 
-    expect(replayReportService.createPreRunReport).toHaveBeenCalled();
-    expect(replayPromptService.buildReplayPromptSection).not.toHaveBeenCalled();
+    expect(replayReportService.createPreRunReport).toHaveBeenCalledWith(expect.not.objectContaining({ eligibility: expect.anything() }));
+    expect(replayPromptService.buildReplayPromptSection).toHaveBeenCalled();
     expect(run).toHaveBeenCalledWith(expect.objectContaining({
       snapshot: expect.objectContaining({
         nodes: [expect.not.objectContaining({ metadata: expect.objectContaining({ replay_instructions: expect.anything() }) })],
@@ -64,7 +54,7 @@ describe('callGrpcRun replay planning', () => {
     }));
   });
 
-  it('applies adaptive replay when eligibility passes with warnings', async () => {
+  it('applies adaptive replay and persists a report', async () => {
     const replayReportService = { createPreRunReport: jest.fn().mockResolvedValue(undefined), updateStructuralDrift: jest.fn().mockResolvedValue(undefined) };
     const replayPromptService = { buildReplayPromptSection: jest.fn().mockReturnValue('APPLY_REPLAY') };
     const snapshot = {
@@ -97,16 +87,6 @@ describe('callGrpcRun replay planning', () => {
           .mockReturnValueOnce({ lean: jest.fn().mockReturnValue({ exec: jest.fn().mockResolvedValue({ executionMode: 'replay_adaptive' }) }) })
           .mockReturnValueOnce({ lean: jest.fn().mockReturnValue({ exec: jest.fn().mockResolvedValue({ seededTaskOutputs: [] }) }) })
           .mockReturnValue({ lean: jest.fn().mockReturnValue({ exec: jest.fn().mockResolvedValue({ seededTaskOutputs: [] }) }) }),
-      },
-      replayEligibilityService: {
-        evaluateReplayEligibility: jest.fn().mockReturnValue({
-          applied: true,
-          confidenceScore: 75,
-          confidenceFactors: { nodeSnapshotHash: 0 },
-          invalidationReasons: ['node_snapshot_mismatch'],
-          appliedSections: ['decision_invariants'],
-          skippedSections: [],
-        }),
       },
       replayPromptService,
       replayReportService,
@@ -168,16 +148,6 @@ describe('callGrpcRun replay planning', () => {
           .mockReturnValueOnce({ lean: jest.fn().mockReturnValue({ exec: jest.fn().mockResolvedValue({ executionMode: 'live' }) }) })
           .mockReturnValueOnce({ lean: jest.fn().mockReturnValue({ exec: jest.fn().mockResolvedValue({ seededTaskOutputs: [] }) }) })
           .mockReturnValue({ lean: jest.fn().mockReturnValue({ exec: jest.fn().mockResolvedValue({ seededTaskOutputs: [] }) }) }),
-      },
-      replayEligibilityService: {
-        evaluateReplayEligibility: jest.fn().mockReturnValue({
-          applied: true,
-          confidenceScore: 100,
-          confidenceFactors: {},
-          invalidationReasons: [],
-          appliedSections: ['decision_invariants'],
-          skippedSections: [],
-        }),
       },
       replayPromptService,
       replayReportService,
@@ -404,7 +374,7 @@ describe('callGrpcRun replay planning', () => {
     }));
   });
 
-  it('blocks replay flex when required context substitutions are unresolved but still persists replay planning', async () => {
+  it('applies replay flex with unresolved context substitutions and persists replay planning', async () => {
     const replayReportService = { createPreRunReport: jest.fn().mockResolvedValue(undefined), updateStructuralDrift: jest.fn().mockResolvedValue(undefined) };
     const replayPromptService = { buildReplayPromptSection: jest.fn().mockReturnValue('SHOULD_NOT_APPLY') };
     const snapshot = {
@@ -450,16 +420,6 @@ describe('callGrpcRun replay planning', () => {
           .mockReturnValueOnce({ lean: jest.fn().mockReturnValue({ exec: jest.fn().mockResolvedValue({ seededTaskOutputs: [] }) }) })
           .mockReturnValue({ lean: jest.fn().mockReturnValue({ exec: jest.fn().mockResolvedValue({ seededTaskOutputs: [] }) }) }),
       },
-      replayEligibilityService: {
-        evaluateReplayEligibility: jest.fn().mockReturnValue({
-          applied: true,
-          confidenceScore: 96,
-          confidenceFactors: { nodeSnapshotHash: 1 },
-          invalidationReasons: [],
-          appliedSections: ['decision_invariants'],
-          skippedSections: [],
-        }),
-      },
       replayPromptService,
       replayReportService,
     });
@@ -470,13 +430,8 @@ describe('callGrpcRun replay planning', () => {
 
     await (service as any).callGrpcRun('exec-1', 'flow-1', 'owner-1', snapshot, { ticker: 'NVDA' }, snapshot);
 
-    expect(replayReportService.createPreRunReport).toHaveBeenCalledWith(expect.objectContaining({
-      eligibility: expect.objectContaining({
-        applied: false,
-        invalidationReasons: expect.arrayContaining(['required_context_unresolved']),
-      }),
-    }));
-    expect(replayPromptService.buildReplayPromptSection).not.toHaveBeenCalled();
+    expect(replayReportService.createPreRunReport).toHaveBeenCalledWith(expect.not.objectContaining({ eligibility: expect.anything() }));
+    expect(replayPromptService.buildReplayPromptSection).toHaveBeenCalled();
     expect(streamEvents.emitExecutionStart).toHaveBeenCalledWith(
       'exec-1',
       'flow-1',

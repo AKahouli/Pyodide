@@ -19,8 +19,10 @@ import { ConversationQueryDto } from '../dto/conversation-query.dto';
 import { DocumentQueryDto } from '../../workspace/dto/document-query.dto';
 import { ConversationOwnerGuard } from '../guards/conversation-owner.guard';
 import { CurrentUser } from '../../auth/decorators/current-user.decorator';
-import { DocumentService } from '../../document/document.service';
-import { ServiceUnavailableException, BadRequestException } from '../../exceptions';
+import { StreamService } from '../services/stream.service';
+import { PreparePlaybookHandoffDto } from '../dto/prepare-playbook-handoff.dto';
+import { ConversationPlaybookHandoffService } from '../services/conversation-playbook-handoff.service';
+import { RateLimit } from '../../rate-limiter';
 
 @ApiTags('Conversations')
 @Controller('conversations')
@@ -29,7 +31,8 @@ export class ConversationController {
   constructor(
     private readonly conversationService: ConversationService,
     private readonly conversationBranchService: ConversationBranchService,
-    private readonly documentService: DocumentService,
+    private readonly streamService: StreamService,
+    private readonly playbookHandoffService: ConversationPlaybookHandoffService,
   ) {}
 
   @Post()
@@ -38,34 +41,6 @@ export class ConversationController {
     @Body() dto: CreateConversationDto,
   ) {
     return this.conversationService.create(user._id.toString(), dto);
-  }
-
-  @Post('artifact-url')
-  async getArtifactDownloadUrl(
-    @Body() body: { filePath: string; filename?: string },
-  ) {
-    if (!body.filePath) {
-      throw new BadRequestException('File path is required');
-    }
-
-    if (!this.documentService.isAvailable()) {
-      throw new ServiceUnavailableException(
-        undefined,
-        'Document service is currently unavailable',
-      );
-    }
-
-    const contentDisposition = body.filename
-      ? `attachment; filename="${body.filename}"`
-      : undefined;
-
-    const downloadUrl = await this.documentService.generateSasUrl(body.filePath, {
-      expiryMinutes: 60,
-      contentDisposition,
-      checkExists: true,
-    });
-
-    return { downloadUrl };
   }
 
   @Get()
@@ -82,6 +57,12 @@ export class ConversationController {
     return this.conversationService.findById(id);
   }
 
+  @Get(':id/active-stream')
+  @UseGuards(ConversationOwnerGuard)
+  getActiveStream(@Param('id') id: string) {
+    return this.streamService.getActiveStreamSnapshot(id);
+  }
+
   @Post(':id/branches')
   @UseGuards(ConversationOwnerGuard)
   async branch(
@@ -90,6 +71,17 @@ export class ConversationController {
     @Body() dto: BranchConversationDto,
   ) {
     return this.conversationBranchService.createBranch(id, user._id.toString(), dto);
+  }
+
+  @Post(':id/playbook-handoffs')
+  @UseGuards(ConversationOwnerGuard)
+  @RateLimit({ limit: 5, windowMs: 60_000, keyPrefix: 'conversation:playbook-handoff' })
+  async preparePlaybookHandoff(
+    @CurrentUser() user: { _id: string },
+    @Param('id') id: string,
+    @Body() dto: PreparePlaybookHandoffDto,
+  ) {
+    return this.playbookHandoffService.prepare(id, user._id.toString(), dto);
   }
 
   @Post(':id/join')

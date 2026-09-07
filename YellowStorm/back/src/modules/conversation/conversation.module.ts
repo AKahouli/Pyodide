@@ -1,14 +1,6 @@
 import { Module, forwardRef } from '@nestjs/common';
-import { MongooseModule } from '@nestjs/mongoose';
 import { ConfigModule } from '@nestjs/config';
 import { JwtModule } from '@nestjs/jwt';
-
-// Schemas
-import { Conversation, ConversationSchema } from './schemas/conversation.schema';
-import { Message, MessageSchema } from './schemas/message.schema';
-import { Report, ReportSchema } from './schemas/report.schema';
-import { SharedConversation, SharedConversationSchema } from './schemas/shared-conversation.schema';
-import { User, UserSchema } from '../user/schemas/user.schema';
 
 // Controllers
 import { ConversationController } from './controllers/conversation.controller';
@@ -29,6 +21,8 @@ import { ReportService } from './services/report.service';
 import { ComposerSuggestionsService } from './services/composer-suggestions.service';
 import { ChoiceInteractionService } from './services/choice-interaction.service';
 import { ConversationBranchService } from './services/conversation-branch.service';
+import { ConversationPlaybookContextProjectorService } from './services/conversation-playbook-context-projector.service';
+import { ConversationPlaybookHandoffService } from './services/conversation-playbook-handoff.service';
 
 // Guards
 import { ConversationOwnerGuard } from './guards/conversation-owner.guard';
@@ -62,17 +56,14 @@ import { CorrectiveReplayContextService } from './services/corrective-replay-con
 import { CorrectiveReplayPromptBuilder } from './services/corrective-replay-prompt.builder';
 import { CorrectiveReplayRunnerService } from './services/corrective-replay-runner.service';
 import { SemanticModelModule } from '../semantic-model/semantic-model.module';
+import { ConversationArtifactService } from './services/conversation-artifact.service';
+import { UserModule } from '../user/user.module';
+import { ConversationPersistenceModule } from './persistence/conversation-persistence.module';
 
 @Module({
   imports: [
     ConfigModule.forFeature(conversationConfig),
-    MongooseModule.forFeature([
-      { name: Conversation.name, schema: ConversationSchema },
-      { name: Message.name, schema: MessageSchema },
-      { name: Report.name, schema: ReportSchema },
-      { name: SharedConversation.name, schema: SharedConversationSchema },
-      { name: User.name, schema: UserSchema },
-    ]),
+    ConversationPersistenceModule,
     JwtModule.register({}),
     forwardRef(() => AuthModule),
     forwardRef(() => AuthorizationModule),
@@ -87,10 +78,11 @@ import { SemanticModelModule } from '../semantic-model/semantic-model.module';
     EmailModule,
     GovernanceRuntimeModule,
     forwardRef(() => EvaluationModule),
+    UserModule,
     SemanticModelModule,
   ],
   controllers: [
-    StreamController,  // Must be before ConversationController to avoid route conflict with :id param
+    StreamController, // Must be before ConversationController to avoid route conflict with :id param
     ComposerSuggestionsController,
     ConversationController,
     MessageController,
@@ -108,6 +100,8 @@ import { SemanticModelModule } from '../semantic-model/semantic-model.module';
     ComposerSuggestionsService,
     ChoiceInteractionService,
     ConversationBranchService,
+    ConversationPlaybookContextProjectorService,
+    ConversationPlaybookHandoffService,
     ResponseReliabilityService,
     ResponseReliabilityEvidenceBuilder,
     ResponseReliabilityScoringService,
@@ -119,6 +113,7 @@ import { SemanticModelModule } from '../semantic-model/semantic-model.module';
     CorrectiveReplayContextService,
     CorrectiveReplayPromptBuilder,
     CorrectiveReplayRunnerService,
+    ConversationArtifactService,
     ConversationOwnerGuard,
     SseAuthGuard,
     ComposerSuggestionsRateLimitGuard,
@@ -128,6 +123,7 @@ import { SemanticModelModule } from '../semantic-model/semantic-model.module';
     MessageService,
     StreamService,
     StreamGatewayService,
+    ConversationPlaybookHandoffService,
   ],
 })
 export class ConversationModule {}

@@ -36,8 +36,8 @@ export function openFileViewer(
 }
 
 /**
- * Open a file from a direct URL in the file viewer.
- * Used for artifacts and citation sources signed by path.
+ * Open a file from a non-renewable direct URL in the file viewer.
+ * Signed URLs should use openFileViewerFromUrlLoader so they can be refreshed.
  */
 export function openFileViewerFromUrl(
   url: string,
@@ -46,4 +46,15 @@ export function openFileViewerFromUrl(
   options?: FileOpenOptions,
 ) {
   return useFileViewerStore.getState().openFileFromUrl(url, fileName, mimeType, options);
+}
+
+/** Open the viewer immediately while an asynchronous URL resolver runs. */
+export function openFileViewerFromUrlLoader(
+  key: string,
+  fileName: string,
+  mimeType: string,
+  load: () => Promise<{ url: string; fileName?: string; mimeType?: string }>,
+  options?: FileOpenOptions,
+) {
+  return useFileViewerStore.getState().openFileFromUrlLoader(key, fileName, mimeType, load, options);
 }

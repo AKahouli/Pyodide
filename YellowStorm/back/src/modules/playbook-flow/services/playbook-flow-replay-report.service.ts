@@ -14,7 +14,32 @@ export interface ReplayRunReportLookup {
   iteration: number;
   replayId: string;
   validationVersion: number;
-  applied: boolean;
+}
+
+/** Fields removed with the replay eligibility gate; legacy documents may still store them. */
+const LEGACY_ELIGIBILITY_FIELDS = [
+  'applied',
+  'confidenceScore',
+  'confidenceFactors',
+  'invalidationReasons',
+  'appliedSections',
+  'skippedSections',
+] as const;
+
+function sanitizeLegacyReportRecord(record: Record<string, unknown>): Record<string, unknown> {
+  for (const field of LEGACY_ELIGIBILITY_FIELDS) {
+    delete record[field];
+  }
+  if (record.verdict === 'skipped') {
+    record.verdict = 'unknown';
+  }
+  if (Array.isArray(record.verdictReasons)) {
+    record.verdictReasons = (record.verdictReasons as unknown[]).filter((reason) => reason !== 'replay_not_applied');
+  }
+  if (Array.isArray(record.blockedBy)) {
+    record.blockedBy = (record.blockedBy as unknown[]).filter((reason) => reason !== 'confidence_below_threshold');
+  }
+  return record;
 }
 
 @Injectable()
@@ -37,11 +62,12 @@ export class PlaybookFlowReplayReportService {
   }
 
   async findLatestReportRecord(filter: Record<string, unknown>): Promise<Record<string, unknown> | null> {
-    return this.replayRunReportModel
-      .findOne(filter)
-      .sort({ createdAt: -1 })
-      .lean()
-      .exec() as Promise<Record<string, unknown> | null>;
+        const record = await this.replayRunReportModel
+          .findOne(filter)
+          .sort({ createdAt: -1 })
+          .lean()
+          .exec() as Record<string, unknown> | null;
+        return record ? sanitizeLegacyReportRecord(record) : null;
   }
 
   async listReports(params: {
@@ -68,7 +94,7 @@ export class PlaybookFlowReplayReportService {
       .skip(params.offset ?? 0)
       .limit(Math.min(params.limit ?? 20, 50))
       .exec();
-    return docs.map((doc) => doc.toJSON());
+    return docs.map((doc) => sanitizeLegacyReportRecord(doc.toJSON()));
   }
 
   async findLatestScoresForReplays(replayIds: string[]): Promise<Map<string, number>> {
@@ -115,7 +141,6 @@ export class PlaybookFlowReplayReportService {
       iteration: Number(report.iteration ?? 0),
       replayId: report.replayId,
       validationVersion: report.validationVersion,
-      applied: report.applied,
     };
   }
 }

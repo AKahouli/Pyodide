@@ -1,10 +1,12 @@
 const mongoose = require('mongoose');
 const { Schema } = mongoose;
+require('dotenv').config();
 
-const MONGODB_URI = "mongodb://root:47U9QDO7R0jq@173.208.208.93:3006/yellowstorm?authSource=admin";
+const MONGODB_URI = process.env.MONGODB_URI;
 
 async function cleanup() {
     try {
+        if (!MONGODB_URI) throw new Error('MONGODB_URI is required');
         console.log('Connecting to remote MongoDB...');
         await mongoose.connect(MONGODB_URI);
         const Evaluation = mongoose.model('Evaluation', new Schema({}, { strict: false }));

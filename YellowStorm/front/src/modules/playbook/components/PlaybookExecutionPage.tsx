@@ -1,5 +1,5 @@
 import { useEffect, useCallback, useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 
 import { Loader2 } from 'lucide-react';
 import {
@@ -18,6 +18,10 @@ import { useModuleTranslation } from '@/modules/localization';
 export function PlaybookExecutionPage() {
   const { id, executionId } = useParams<{ id: string; executionId: string }>();
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const requestedTaskId = searchParams.get('taskId');
+  const highlightedTaskId = searchParams.get('mascotTask');
+  const focusExecutionStatus = searchParams.get('mascotFocusStatus') === '1';
   const { t } = useModuleTranslation('playbook');
 
   const playbook = useCurrentPlaybook();
@@ -36,6 +40,29 @@ export function PlaybookExecutionPage() {
   const fetchExecution = usePlaybookStore((s) => s.fetchExecution);
   const fetchExecutions = usePlaybookStore((s) => s.fetchExecutions);
   const selectStep = usePlaybookStore((s) => s.selectStep);
+
+  useEffect(() => {
+    if (requestedTaskId) selectStep(requestedTaskId);
+  }, [requestedTaskId, selectStep]);
+
+  useEffect(() => {
+    const next = new URLSearchParams(searchParams);
+    let consumed = false;
+    if (highlightedTaskId) {
+      selectStep(highlightedTaskId);
+      next.delete('mascotTask');
+      consumed = true;
+    }
+    if (focusExecutionStatus) {
+      const status = document.getElementById('playbook-execution-status');
+      if (status) {
+        status.focus();
+        next.delete('mascotFocusStatus');
+        consumed = true;
+      }
+    }
+    if (consumed) setSearchParams(next, { replace: true });
+  }, [execution?.status, focusExecutionStatus, highlightedTaskId, searchParams, selectStep, setSearchParams]);
 
   useEffect(() => {
     if (id) {
@@ -86,7 +113,9 @@ export function PlaybookExecutionPage() {
 
   return (
     <div className="flex flex-col h-full w-full">
-      <ExecutionHeader execution={execution} playbook={playbook} />
+      <div id="playbook-execution-status" tabIndex={-1}>
+        <ExecutionHeader execution={execution} playbook={playbook} />
+      </div>
 
       <div className="flex flex-1 min-h-0">
         <ExecutionStepList

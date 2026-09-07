@@ -1,7 +1,7 @@
-import { memo, useState } from 'react';
+import { memo, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
-import { ThumbsUp, ThumbsDown, Copy, RotateCcw, MoreHorizontal, FileText, Flag, GitBranch, Loader2, Wand2 } from 'lucide-react';
+import { ThumbsUp, ThumbsDown, Copy, RotateCcw, MoreHorizontal, FileText, Flag, GitBranch, Loader2, Workflow } from 'lucide-react';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { toast } from 'sonner';
 import { useModuleTranslation } from '@/modules/localization';
@@ -10,16 +10,13 @@ import { componentsToMarkdown } from '../utils';
 import type { DisplayedAnswerVersion, Message } from '../types';
 import { ReportDialog } from './ReportDialog';
 import { TimingIndicator } from './TimingIndicator';
+import { MessagePdfExport } from './MessagePdfExport';
 import { useNavigate } from 'react-router-dom';
 import { useApiAction } from '@/lib/use-api-action';
-import { branchConversation } from '../api';
+import { branchConversation, prepareConversationPlaybookHandoff } from '../api';
 import { useModelById } from '@/modules/models';
-import { useAuth } from '@/modules/auth';
-import { buildPlaybookFromConversation } from '@/modules/playbook';
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
-import { getAnswerComponents, getDefaultAnswerVersion } from '../utils/answer-version';
+import { playbookFeatures } from '@/modules/playbook/features';
+import { usePlatformCopilotPanelStore } from '@/modules/platform-copilot/platformCopilotPanelStore';
 
 import { cn } from '@/lib/utils';
 
@@ -31,7 +28,7 @@ interface MessageActionsProps {
   className?: string;
 }
 
-export const MessageActions = memo(function MessageActions({ message, isLastAiMessage, conversationId, displayedVersion, className }: MessageActionsProps) {
+export const MessageActions = memo(function MessageActions({ message, isLastAiMessage, conversationId, displayedVersion = 'original', className }: MessageActionsProps) {
   const updateFeedback = useConversationStore((s) => s.updateFeedback);
   const regenerateMessage = useConversationStore((s) => s.regenerateMessage);
   const setReplyingToMessage = useConversationStore((s) => s.setReplyingToMessage);
@@ -41,10 +38,10 @@ export const MessageActions = memo(function MessageActions({ message, isLastAiMe
   const fetchConversations = useConversationStore((s) => s.fetchConversations);
   const isGroup = !!currentConversation?.groupMeta?.isGroup;
   const [reportOpen, setReportOpen] = useState(false);
-  const [buildDialogOpen, setBuildDialogOpen] = useState(false);
-  const [playbookName, setPlaybookName] = useState('');
+  const handoffCreationRequest = useRef<{ fingerprint: string; requestId: string }>();
+  const openHandoff = usePlatformCopilotPanelStore((state) => state.openHandoff);
+  const [isExportingPdf, setIsExportingPdf] = useState(false);
   const { t, language } = useModuleTranslation('conversation');
-  const { user } = useAuth();
   const generationModelId = message.modelId
     || (message.questionMessageId ? messages.find((candidate) => candidate.id === message.questionMessageId)?.modelId : undefined);
   const model = useModelById(generationModelId || '');
@@ -54,23 +51,6 @@ export const MessageActions = memo(function MessageActions({ message, isLastAiMe
     && !message.isStreaming
     && !isGroup
     && currentConversation?.runtimeMode !== 'governed';
-  const permissions = user?.permissions ?? [];
-  const canCreatePlaybook = permissions.includes('*')
-    || permissions.includes('playbook.*')
-    || permissions.includes('playbook.create');
-  const questionMessage = message.questionMessageId
-    ? messages.find((candidate) => candidate.id === message.questionMessageId)
-    : undefined;
-  const selectedAnswerVersion = displayedVersion ?? getDefaultAnswerVersion(message);
-  const canBuildPlaybook = !!currentConversation
-    && currentConversation.createdBy === user?.id
-    && canCreatePlaybook
-    && message.isComplete
-    && !message.isStreaming
-    && message.conversationType === 'ai'
-    && questionMessage?.conversationType === 'user'
-    && !!questionMessage.content?.trim()
-    && selectedAnswerVersion !== 'abstention';
   const { execute: createBranch, isLoading: isBranching } = useApiAction(branchConversation, {
     showSuccessToast: true,
     successMessage: t('toasts.branch.success'),
@@ -79,14 +59,13 @@ export const MessageActions = memo(function MessageActions({ message, isLastAiMe
       navigate(`/conversation/${conversation.id}`);
     },
   });
-  const { execute: buildPlaybook, isLoading: isBuildingPlaybook } = useApiAction(buildPlaybookFromConversation, {
-    showSuccessToast: true,
-    successMessage: t('toasts.playbookBuilt'),
-    onSuccess: ({ id }) => {
-      setBuildDialogOpen(false);
-      navigate(`/playbooks/${id}`);
+  const { execute: prepareHandoff, isLoading: isPreparingHandoff } = useApiAction(prepareConversationPlaybookHandoff, {
+    onSuccess: (handoff) => {
+      handoffCreationRequest.current = undefined;
+      openHandoff(handoff);
     },
   });
+  const canPrepareHandoff = playbookFeatures.mcpAssistantEnabled && message.isComplete && !message.isStreaming;
   const createdAt = new Date(message.createdAt);
   const formattedCreatedAt = Number.isNaN(createdAt.getTime())
     ? t('messageActions.dateUnavailable')
@@ -94,13 +73,11 @@ export const MessageActions = memo(function MessageActions({ message, isLastAiMe
   const modelName = model?.name || generationModelId || t('messageActions.modelUnavailable');
 
   const handleLike = () => {
-    // Don't allow removing feedback (clicking same button twice)
     if (message.feedback === 'like') return;
     updateFeedback(conversationId, message.id, 'like');
   };
 
   const handleDislike = () => {
-    // Don't allow removing feedback (clicking same button twice)
     if (message.feedback === 'dislike') return;
     updateFeedback(conversationId, message.id, 'dislike');
   };
@@ -123,6 +100,16 @@ export const MessageActions = memo(function MessageActions({ message, isLastAiMe
     setReplyingToMessage(message);
   };
 
+  const handleExportPdf = () => {
+    if (isExportingPdf) return;
+    setIsExportingPdf(true);
+  };
+
+  const handlePdfExportFinish = (ok: boolean) => {
+    setIsExportingPdf(false);
+    if (!ok) toast.error(t('toasts.message.exportError'));
+  };
+
   const handleBranch = () => {
     const targetIndex = messages.findIndex((item) => item.id === message.id);
     const prefixIds = new Set(messages.slice(0, targetIndex + 1).map((item) => item.id));
@@ -139,19 +126,37 @@ export const MessageActions = memo(function MessageActions({ message, isLastAiMe
     });
   };
 
-  const handleBuildPlaybook = () => {
-    if (!canBuildPlaybook) return;
-    void buildPlaybook({
-      conversationId,
-      assistantMessageId: message.id,
-      answerVersion: selectedAnswerVersion,
-      ...(playbookName.trim() ? { name: playbookName.trim() } : {}),
+  const handlePlaybookHandoff = async () => {
+    const targetIndex = messages.findIndex((item) => item.id === message.id);
+    const prefixIds = new Set(messages.slice(0, targetIndex + 1).map((item) => item.id));
+    const selected = Object.fromEntries(Array.from(activeBranches.entries()).filter(([questionId, answerId]) => (
+      prefixIds.has(questionId) && prefixIds.has(answerId)
+    )));
+    if (message.questionMessageId) selected[message.questionMessageId] = message.id;
+    const activeBranchEntries = Object.entries(selected).sort(([left], [right]) => left.localeCompare(right));
+    const fingerprintSource = JSON.stringify({
+      contractVersion: 1,
+      targetMessageId: message.id,
+      displayedAnswerVersion: displayedVersion,
+      activeBranches: activeBranchEntries,
+    });
+    const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(fingerprintSource));
+    const branchSelectionFingerprint = Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('');
+    if (handoffCreationRequest.current?.fingerprint !== branchSelectionFingerprint) {
+      handoffCreationRequest.current = {
+        fingerprint: branchSelectionFingerprint,
+        requestId: crypto.randomUUID(),
+      };
+    }
+    void prepareHandoff(conversationId, {
+      contractVersion: 1,
+      targetMessageId: message.id,
+      activeBranches: selected,
+      branchSelectionFingerprint,
+      displayedAnswerVersion: displayedVersion,
+      creationRequestId: handoffCreationRequest.current.requestId,
     });
   };
-
-  const answerPreview = componentsToMarkdown(
-    getAnswerComponents(message, selectedAnswerVersion, ''),
-  );
 
   return (
     <>
@@ -203,18 +208,20 @@ export const MessageActions = memo(function MessageActions({ message, isLastAiMe
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align='start'>
-            {canBuildPlaybook && (
-              <DropdownMenuItem onClick={() => setBuildDialogOpen(true)}>
-                <Wand2 className='h-3.5 w-3.5 mr-2' />
-                {t('messageActions.buildPlaybook')}
-              </DropdownMenuItem>
-            )}
             {canBranch && (
               <DropdownMenuItem onClick={handleBranch} disabled={isBranching}>
                 {isBranching
                   ? <Loader2 className='h-3.5 w-3.5 mr-2 animate-spin' />
                   : <GitBranch className='h-3.5 w-3.5 mr-2' />}
                 {isBranching ? t('messageActions.branching') : t('messageActions.branch')}
+              </DropdownMenuItem>
+            )}
+            {canPrepareHandoff && (
+              <DropdownMenuItem onClick={() => { void handlePlaybookHandoff(); }} disabled={isPreparingHandoff}>
+                {isPreparingHandoff
+                  ? <Loader2 className='h-3.5 w-3.5 mr-2 animate-spin' />
+                  : <Workflow className='h-3.5 w-3.5 mr-2' />}
+                {isPreparingHandoff ? t('messageActions.playbookPreparing') : t('messageActions.playbookHandoff')}
               </DropdownMenuItem>
             )}
             <DropdownMenuItem disabled>
@@ -227,7 +234,7 @@ export const MessageActions = memo(function MessageActions({ message, isLastAiMe
             </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
-        {message.isComplete && !message.isStreaming && <TimingIndicator timeToFirstChunk={message.timeToFirstChunk} timeToFirstToken={message.timeToFirstToken} durationMs={message.durationMs} inputTokens={message.inputTokens} outputTokens={message.outputTokens} />}
+        {message.isComplete && !message.isStreaming && <TimingIndicator timeToFirstChunk={message.timeToFirstChunk} timeToFirstToken={message.timeToFirstToken} durationMs={message.durationMs} inputTokens={message.inputTokens} outputTokens={message.outputTokens} latencyMetrics={message.latencyMetrics} />}
         <div className='ml-auto flex min-w-0 items-center gap-1.5 px-1 text-[11px] text-muted-foreground' aria-label={t('messageActions.generationMetadata', { date: formattedCreatedAt, model: modelName })}>
           <time dateTime={Number.isNaN(createdAt.getTime()) ? undefined : message.createdAt} className='whitespace-nowrap'>{formattedCreatedAt}</time>
           <span aria-hidden='true'>·</span>
@@ -236,58 +243,14 @@ export const MessageActions = memo(function MessageActions({ message, isLastAiMe
       </div>
 
       <ReportDialog open={reportOpen} onOpenChange={setReportOpen} conversationId={conversationId} messageId={message.id} />
-      <Dialog
-        open={buildDialogOpen}
-        onOpenChange={(open) => {
-          if (isBuildingPlaybook) return;
-          setBuildDialogOpen(open);
-          if (!open) setPlaybookName('');
-        }}
-      >
-        <DialogContent className='sm:max-w-2xl'>
-          <DialogHeader>
-            <DialogTitle>{t('buildPlaybookDialog.title')}</DialogTitle>
-            <DialogDescription>{t('buildPlaybookDialog.description')}</DialogDescription>
-          </DialogHeader>
-          <div className='space-y-4'>
-            <div className='space-y-2'>
-              <Label htmlFor={`playbook-name-${message.id}`}>{t('buildPlaybookDialog.nameLabel')}</Label>
-              <Input
-                id={`playbook-name-${message.id}`}
-                value={playbookName}
-                onChange={(event) => setPlaybookName(event.target.value)}
-                maxLength={100}
-                placeholder={t('buildPlaybookDialog.namePlaceholder')}
-                disabled={isBuildingPlaybook}
-              />
-              <p className='text-xs text-muted-foreground'>{t('buildPlaybookDialog.nameHelp')}</p>
-            </div>
-            <div className='grid gap-3 md:grid-cols-2'>
-              <div className='min-w-0 space-y-2'>
-                <p className='text-sm font-medium'>{t('buildPlaybookDialog.userPrompt')}</p>
-                <div className='max-h-48 overflow-y-auto whitespace-pre-wrap rounded-md border bg-muted/30 p-3 text-sm'>
-                  {questionMessage?.content}
-                </div>
-              </div>
-              <div className='min-w-0 space-y-2'>
-                <p className='text-sm font-medium'>{t('buildPlaybookDialog.generatedAnswer')}</p>
-                <div className='max-h-48 overflow-y-auto whitespace-pre-wrap rounded-md border bg-muted/30 p-3 text-sm'>
-                  {answerPreview}
-                </div>
-              </div>
-            </div>
-          </div>
-          <DialogFooter>
-            <Button variant='outline' onClick={() => setBuildDialogOpen(false)} disabled={isBuildingPlaybook}>
-              {t('buildPlaybookDialog.cancel')}
-            </Button>
-            <Button onClick={handleBuildPlaybook} disabled={isBuildingPlaybook}>
-              {isBuildingPlaybook && <Loader2 className='mr-2 h-4 w-4 animate-spin' />}
-              {isBuildingPlaybook ? t('buildPlaybookDialog.building') : t('buildPlaybookDialog.build')}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      {isExportingPdf && (
+        <MessagePdfExport
+          message={message}
+          title={currentConversation?.title?.trim() || t('exportPdf.untitledConversation')}
+          subtitle={`${formattedCreatedAt} · ${modelName}`}
+          onFinish={handlePdfExportFinish}
+        />
+      )}
     </>
   );
 });

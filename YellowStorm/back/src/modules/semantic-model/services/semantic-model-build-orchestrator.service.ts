@@ -169,7 +169,7 @@ export class SemanticModelBuildOrchestratorService implements OnModuleInit, OnMo
       await this.markStepDone(buildId, 'ontology', 'mapping');
 
       // Step 2 — mapping
-      const mappingJob = await this.mappingProposals.startAsync(userId, modelId);
+      const mappingJob = await this.mappingProposals.startAsync(userId, modelId, request.manualInstances ?? []);
       await this.db.query(
         `UPDATE semantic_model.build_runs SET mapping_job_id = $1 WHERE id = $2`,
         [mappingJob.jobId, buildId],

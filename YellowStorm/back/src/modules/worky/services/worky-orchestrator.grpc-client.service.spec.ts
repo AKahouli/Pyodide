@@ -84,6 +84,7 @@ describe('WorkyOrchestratorGrpcClientService', () => {
       const result = await service.runTask('user-1', 'sess-1', 'do the thing', {
         agents,
         connectors: [{ connector_id: 'c1' }],
+        turnId: 'turn-1',
       });
 
       expect(result).toEqual({ sessionId: 'sess-1', accepted: true, runId: 'run-1' });
@@ -94,6 +95,7 @@ describe('WorkyOrchestratorGrpcClientService', () => {
         message: 'do the thing',
         agents,
         connectors: [{ connector_id: 'c1' }],
+        turn_id: 'turn-1',
       });
       expect(req).not.toHaveProperty('planner_model');
       expect(req).not.toHaveProperty('executor_model');

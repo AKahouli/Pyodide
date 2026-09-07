@@ -42,6 +42,7 @@ const visibility = {
   appMarketplace: true,
   worky: true,
   agents: true,
+  platformCopilot: false,
 };
 
 describe('FeatureVisibilityCard', () => {

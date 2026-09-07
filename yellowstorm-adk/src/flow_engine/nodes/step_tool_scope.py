@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+import re
 
 
 @dataclass(frozen=True)
@@ -13,14 +14,17 @@ class StepToolScope:
     code_interpreter_files: list[dict[str, str]]
     workspace_context_mode: str
     mounted_filenames: list[str]
-    # Ceph workspace paths ("user_id/workspace_name") that must be mounted into the
-    # sandbox VM. Derived from wired input documents' workspacePath plus any
-    # playbook-level __playbook_workspace_paths present in the input context.
+    # Ceph workspace paths ("user_id/workspace_name") derived only from wired
+    # input documents and workspaces. The default output mount is added later.
     workspace_ceph_paths: list[str]
+    sandbox_inputs: list[dict[str, str]]
     # Workspace IDs harvested from the file refs wired into this step's input ports.
     # Used to scope connector MCP tools to the dropped file's workspace instead of
     # the playbook-level default, which may belong to a different workspace.
     binding_workspace_ids: list[str]
+    # Canonical descriptor input for run_code. Existing scope fields remain the
+    # compatibility contract for connectors and Code Interpreter.
+    run_code_sources: list[dict[str, Any]]
 
 
 def build_step_tool_scope(
@@ -33,28 +37,88 @@ def build_step_tool_scope(
     code_interpreter_files: list[dict[str, str]] = []
     mounted_filenames: list[str] = []
     workspace_ceph_paths: list[str] = []
+    sandbox_inputs: list[dict[str, str]] = []
     binding_workspace_ids: list[str] = []
     seen_binding_workspace_ids: set[str] = set()
     seen_ceph_paths: set[str] = set()
+    ceph_paths_by_alias: dict[str, str] = {}
+    seen_sandbox_inputs: set[str] = set()
     seen_doc_ids: set[str] = set()
     seen_files: set[tuple[str, str]] = set()
     seen_names: set[str] = set()
+    run_code_sources: dict[str, dict[str, Any]] = {}
+    playbook_run_code_sources: list[tuple[str, str]] = []
     has_port_sources = False
 
-    def _add_ceph_path(raw: Any) -> None:
+    def _add_ceph_path(raw: Any) -> str:
         path = str(raw or "").strip().strip("/")
         # The mount script requires "user_id/workspace_name"; skip anything that
         # is not a real two-segment Ceph path (e.g. bare names or empty values).
-        if "/" not in path or path in seen_ceph_paths:
-            return
+        if "/" not in path:
+            return ""
+        alias = path.rsplit("/", 1)[-1]
+        existing = ceph_paths_by_alias.get(alias)
+        if existing and existing != path:
+            raise ValueError(f"Sandbox workspace alias collision: {alias}")
+        if path in seen_ceph_paths:
+            return alias
+        ceph_paths_by_alias[alias] = path
         seen_ceph_paths.add(path)
         workspace_ceph_paths.append(path)
+        return alias
+
+    def _add_sandbox_input(path: str, kind: str) -> None:
+        if path in seen_sandbox_inputs:
+            return
+        seen_sandbox_inputs.add(path)
+        sandbox_inputs.append({"path": path, "kind": kind})
+
+    def _source_alias(name: Any, workspace_id: str) -> str:
+        alias = re.sub(r"[^a-z0-9]+", "-", str(name or workspace_id).lower()).strip("-")[:64]
+        return alias or f"workspace-{workspace_id[-4:].lower()}"
+
+    def _add_run_code_source(
+        workspace_id: str,
+        workspace_name: str,
+        workspace_path: str,
+        relative_path: str | None = None,
+    ) -> None:
+        workspace_id = workspace_id.strip()
+        workspace_path = workspace_path.strip().strip("/")
+        if not workspace_id or "/" not in workspace_path:
+            return
+        existing = run_code_sources.get(workspace_id)
+        if relative_path is None:
+            run_code_sources[workspace_id] = {
+                "workspaceId": workspace_id,
+                "alias": _source_alias(workspace_name, workspace_id),
+                "cephPrefix": workspace_path,
+                "scope": {"kind": "workspace"},
+            }
+            return
+        if existing and existing["scope"]["kind"] == "workspace":
+            return
+        relative_path = relative_path.strip().strip("/")
+        if not relative_path or any(part in ("", ".", "..") for part in relative_path.split("/")):
+            return
+        if not existing:
+            existing = {
+                "workspaceId": workspace_id,
+                "alias": _source_alias(workspace_name, workspace_id),
+                "cephPrefix": workspace_path,
+                "scope": {"kind": "files", "relativePaths": []},
+            }
+            run_code_sources[workspace_id] = existing
+        paths = existing["scope"]["relativePaths"]
+        if relative_path not in paths:
+            paths.append(relative_path)
+            paths.sort()
 
     # Playbook-level workspace paths: dict {workspace_id: "user_id/workspace_name"}.
     playbook_paths = input_context.get("__playbook_workspace_paths")
     if isinstance(playbook_paths, dict):
-        for value in playbook_paths.values():
-            _add_ceph_path(value)
+        for workspace_id, value in playbook_paths.items():
+            playbook_run_code_sources.append((str(workspace_id), str(value)))
 
     for port_id, port_value in input_context.items():
         if str(port_id).startswith("__"):
@@ -70,11 +134,47 @@ def build_step_tool_scope(
         for ref in refs:
             ref = _hydrate_file_ref(ref, workspace_context)
             ref_workspace_id = str(ref.get("workspace_id") or "").strip()
+            workspace_path = str(ref.get("workspace_path") or "").strip().strip("/")
+            filepath = str(ref.get("filepath") or "").strip().strip("/")
+            kind = str(ref.get("kind") or "").strip().lower()
+            storage_parent = filepath.rsplit("/", 1)[0] if "/" in filepath else ""
+            if kind in ("folder", "workspace"):
+                mount_path = workspace_path
+            elif workspace_path and filepath.startswith(f"{workspace_path}/"):
+                mount_path = workspace_path
+            else:
+                mount_path = storage_parent or workspace_path
+            workspace_alias = _add_ceph_path(mount_path)
+            relative_path = (
+                filepath[len(mount_path) + 1:]
+                if mount_path and filepath.startswith(f"{mount_path}/")
+                else ""
+            )
+            if ref_workspace_id and mount_path and relative_path:
+                _add_run_code_source(
+                    ref_workspace_id,
+                    str(ref.get("workspace_name") or ref_workspace_id),
+                    mount_path,
+                    relative_path,
+                )
             if ref_workspace_id and ref_workspace_id not in seen_binding_workspace_ids:
                 seen_binding_workspace_ids.add(ref_workspace_id)
                 binding_workspace_ids.append(ref_workspace_id)
             document_id = ref.get("document_id", "")
             file_name = _search_file_name(ref, workspace_context)
+
+            if workspace_alias:
+                if kind in ("folder", "workspace"):
+                    _add_sandbox_input(f"/mnt/workspace/{workspace_alias}", "directory")
+                else:
+                    if relative_path and all(
+                        part not in ("", ".", "..")
+                        for part in relative_path.split("/")
+                    ):
+                        _add_sandbox_input(
+                            f"/mnt/workspace/{workspace_alias}/{relative_path}",
+                            "file",
+                        )
 
             search_file_name = file_name or document_id
             if search_file_name:
@@ -103,6 +203,9 @@ def build_step_tool_scope(
     workspace_context_mode = "resolved_inputs_only"
     if not has_port_sources and workspace_context:
         workspace_context_mode = "fallback_playbook"
+    if not has_port_sources:
+        for workspace_id, workspace_path in playbook_run_code_sources:
+            _add_run_code_source(workspace_id, workspace_id, workspace_path)
 
     return StepToolScope(
         workspace_context=[] if has_port_sources else workspace_context,
@@ -112,7 +215,9 @@ def build_step_tool_scope(
         workspace_context_mode=workspace_context_mode,
         mounted_filenames=mounted_filenames,
         workspace_ceph_paths=workspace_ceph_paths,
+        sandbox_inputs=sandbox_inputs,
         binding_workspace_ids=binding_workspace_ids,
+        run_code_sources=list(run_code_sources.values()),
     )
 
 
@@ -120,14 +225,17 @@ def build_sandbox_prompt_note(
     tool_scope: StepToolScope,
     tool_names: set[str],
 ) -> str:
-    if "code interpreter" not in tool_names or not tool_scope.mounted_filenames:
+    if "code interpreter" not in tool_names or not tool_scope.sandbox_inputs:
         return ""
 
-    filenames = ", ".join(tool_scope.mounted_filenames)
+    paths = "\n".join(f"- {item['path']}" for item in tool_scope.sandbox_inputs)
     return (
-        "Python sandbox files are mounted by these exact local filenames only: "
-        f"{filenames}. Use those exact filenames in code. Do not use internal IDs, "
-        "blob paths, or metadata storage filenames as local file paths."
+        "Authoritative sandbox inputs (validated immediately after sandbox creation):\n"
+        f"{paths}\n"
+        "Use only these exact paths as task inputs. Do not rediscover them, scan other "
+        "workspaces, substitute similarly named files, or use internal IDs, metadata storage "
+        "filenames, and storage paths. If validation fails, stop; the runtime handles the "
+        "single allowed retry."
     )
 
 
@@ -266,6 +374,7 @@ def _walk_value(value: Any, refs: list[dict[str, str]]) -> None:
         ref = _file_ref_from_dict(value)
         if ref is not None:
             refs.append(ref)
+            return
         for child in value.values():
             _walk_value(child, refs)
         return

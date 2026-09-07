@@ -1,52 +1,77 @@
 import { Types } from 'mongoose';
 import { MessageService } from './message.service';
 
-describe('MessageService createUserMessage agent tagging', () => {
-  let messageModel: { create: jest.Mock; findById?: jest.Mock; findOne?: jest.Mock; findOneAndUpdate?: jest.Mock };
-  let conversationService: {
-    addMessageRef: jest.Mock;
-    updateLastMessageAt: jest.Mock;
-    updateTaggedAgents: jest.Mock;
-    findById: jest.Mock;
-  };
-  let streamGateway: { broadcastToConversation: jest.Mock };
-  let configService: { get: jest.Mock };
-  let logger: {
-    setContext: jest.Mock;
-    log: jest.Mock;
-    warn: jest.Mock;
-    error: jest.Mock;
-  };
+describe('MessageService store lifecycle', () => {
+  let messageStore: Record<string, jest.Mock>;
+  let conversationService: Record<string, jest.Mock>;
+  let streamGateway: Record<string, jest.Mock>;
+  let conversationSettings: Record<string, jest.Mock>;
   let service: MessageService;
 
   const conversationId = new Types.ObjectId().toString();
   const senderId = new Types.ObjectId().toString();
   const agentId = new Types.ObjectId().toString();
+  const record = (patch: Record<string, unknown> = {}) => ({
+    id: new Types.ObjectId().toString(),
+    conversationId,
+    senderId,
+    conversationType: 'user',
+    content: 'hello',
+    components: [],
+    agentIds: [agentId],
+    webSearchEnabled: false,
+    isEdited: false,
+    isStreaming: false,
+    isComplete: true,
+    createdAt: new Date(),
+    updatedAt: new Date(),
+    ...patch,
+  });
 
   beforeEach(() => {
-    messageModel = {
-      create: jest.fn().mockResolvedValue({
-        _id: new Types.ObjectId(),
-        conversationId: new Types.ObjectId(conversationId),
-        senderId: new Types.ObjectId(senderId),
-        conversationType: 'user',
-        content: 'hello',
-        agentIds: [new Types.ObjectId(agentId)],
-        createdAt: new Date(),
-        updatedAt: new Date(),
-      }),
+    messageStore = {
+      createUser: jest.fn().mockResolvedValue(record()),
+      createAiPlaceholder: jest.fn(),
+      completeAi: jest.fn(),
+      findById: jest.fn(),
+      listPage: jest.fn(),
+      listCursor: jest.fn(),
+      listByConversation: jest.fn(),
+      findBranchesByQuestions: jest.fn(),
+      findTurnByRequestId: jest.fn(),
+      updateFeedback: jest.fn(),
+      updateReliability: jest.fn(),
+      claimStream: jest.fn(),
+      renewStream: jest.fn(),
+      releaseStream: jest.fn(),
+      claimReliability: jest.fn(),
+      updateCorrectionWorkflow: jest.fn(),
+      claimCorrectionRun: jest.fn(),
+      upsertCorrectionAttempt: jest.fn(),
+      failStaleReliability: jest.fn(),
+      touchPendingReliability: jest.fn(),
+      markStreamFailed: jest.fn(),
+      cleanupStaleStreams: jest.fn(),
+      updateUser: jest.fn(),
+      deleteByConversation: jest.fn(),
+      findBranchesByQuestion: jest.fn(),
+      findAiComponents: jest.fn(),
+      findReportMessageById: jest.fn(),
     };
     conversationService = {
-      addMessageRef: jest.fn().mockResolvedValue(undefined),
-      updateLastMessageAt: jest.fn().mockResolvedValue(undefined),
       updateTaggedAgents: jest.fn().mockResolvedValue(undefined),
-      findById: jest.fn().mockResolvedValue({
-        createdBy: senderId,
-        groupMeta: undefined,
-      }),
+      findById: jest.fn().mockResolvedValue({ createdBy: senderId }),
+      addMention: jest.fn(),
     };
-    streamGateway = { broadcastToConversation: jest.fn().mockResolvedValue(undefined) };
-    configService = {
+    streamGateway = {
+      broadcastToConversation: jest.fn().mockResolvedValue(undefined),
+      sendToUser: jest.fn(),
+    };
+    conversationSettings = {
+      shouldRedactSensitiveText: jest.fn().mockReturnValue(true),
+      getSettings: jest.fn().mockResolvedValue({ redactSensitiveText: true }),
+    };
+    const configService = {
       get: jest.fn((key: string, fallback?: unknown) => {
         if (key === 'conversation.maxMessageLength') return 50000;
         if (key === 'conversation.maxFilesPerMessage') return 5;
@@ -54,238 +79,346 @@ describe('MessageService createUserMessage agent tagging', () => {
         return fallback;
       }),
     };
-    logger = {
+    const logger = {
       setContext: jest.fn(),
       log: jest.fn(),
       warn: jest.fn(),
       error: jest.fn(),
     };
-
     service = new MessageService(
-      messageModel as any,
-      conversationService as any,
-      streamGateway as any,
-      {} as any,
-      configService as any,
-      logger as any,
-      {} as any,
+      messageStore as never,
+      conversationService as never,
+      streamGateway as never,
+      {} as never,
+      configService as never,
+      logger as never,
+      {} as never,
+      conversationSettings as never,
     );
-
-    // Avoid async mention side-effects in these unit tests
-    jest
-      .spyOn(service as any, 'extractAndNotifyMentions')
-      .mockResolvedValue(undefined);
+    jest.spyOn(service as any, 'extractAndNotifyMentions').mockResolvedValue(undefined);
   });
 
-  it('persists agentIds on the message and calls updateTaggedAgents', async () => {
+  it('persists neutral agent IDs through the store', async () => {
     const result = await service.createUserMessage({
       conversationId,
       senderId,
       content: 'hello @agent',
       agentIds: [agentId],
     });
-
-    expect(messageModel.create).toHaveBeenCalledWith(
-      expect.objectContaining({
-        agentIds: [expect.any(Types.ObjectId)],
-      }),
-    );
-    expect(conversationService.updateTaggedAgents).toHaveBeenCalledWith(
-      conversationId,
-      [agentId],
+    expect(messageStore.createUser).toHaveBeenCalledWith(
+      expect.objectContaining({ agentIds: [agentId] }),
     );
     expect(result.agentIds).toEqual([agentId]);
   });
 
-  it('does not call updateTaggedAgents when agentIds are absent', async () => {
-    messageModel.create.mockResolvedValueOnce({
-      _id: new Types.ObjectId(),
-      conversationId: new Types.ObjectId(conversationId),
-      senderId: new Types.ObjectId(senderId),
-      conversationType: 'user',
-      content: 'hello',
-      createdAt: new Date(),
-      updatedAt: new Date(),
-    });
-
+  it('updates conversation tags when agent IDs are present', async () => {
     await service.createUserMessage({
       conversationId,
       senderId,
       content: 'hello',
+      agentIds: [agentId],
     });
+    expect(conversationService.updateTaggedAgents).toHaveBeenCalledWith(conversationId, [agentId]);
+  });
 
+  it('does not update conversation tags when agent IDs are absent', async () => {
+    await service.createUserMessage({ conversationId, senderId, content: 'hello' });
     expect(conversationService.updateTaggedAgents).not.toHaveBeenCalled();
   });
 
-  it('includes bounded tool results in authorized message responses', () => {
-    const toolComponent = {
-      id: 'tool-1',
-      data: { title: 'connector', status: 'completed', resultJson: '{"secret":"value"}', params: '{"query":"safe"}' },
-    };
-    // Mongoose subdocuments expose schema paths without making all of them enumerable.
-    Object.defineProperty(toolComponent, 'type', { value: 'toolInfo', enumerable: false });
-    const response = (service as any).mapToResponse({
-      _id: new Types.ObjectId(),
-      conversationId: new Types.ObjectId(conversationId),
+  it('sanitizes bounded tool results in authorized responses', () => {
+    const response = (service as any).mapToResponse(record({
       conversationType: 'ai',
-      components: [toolComponent],
-    });
-
-    expect(response.components[0]).toEqual({
-      id: 'tool-1',
-      type: 'toolInfo',
-      data: { title: 'connector', status: 'completed', resultJson: '{"secret":"value"}', params: '{"query":"safe"}' },
-    });
+      components: [{
+        id: 'tool-1',
+        type: 'toolActivity',
+        data: {
+          toolName: 'connector',
+          status: 'completed',
+          resultJson: '{"secret":"[REDACTED]"}',
+          paramsJson: '{"query":"safe"}',
+        },
+      }],
+    }));
+    expect(response.components[0].data.resultJson).toBe('{"secret":"[REDACTED]"}');
   });
 
-  it('waits for the canonical completion update to broadcast', async () => {
-    let finishBroadcast: () => void = () => undefined;
-    streamGateway.broadcastToConversation.mockImplementationOnce(() => new Promise<void>((resolve) => {
-      finishBroadcast = resolve;
-    }));
-    const messageId = new Types.ObjectId();
-    const document: any = {
-      _id: messageId,
-      conversationId: new Types.ObjectId(conversationId),
+  it('strips persisted artifact paths while preserving activity detail', () => {
+    const response = (service as any).mapToResponse(record({
       conversationType: 'ai',
-      components: [],
-      createdAt: new Date(),
-      save: jest.fn().mockResolvedValue(undefined),
-    };
-    messageModel.findById = jest.fn().mockResolvedValue(document);
+      components: [
+        { id: 'artifact-1', type: 'artifact', data: { artifactId: 'opaque-1', filename: 'report.pdf', storagePath: 'owner/run/report.pdf' } },
+        { id: 'activity-1', type: 'agentActivity', data: { summary: 'Reviewing', detail: 'detail', status: 'completed' } },
+      ],
+    }));
+    expect(response.components).toEqual([
+      { id: 'artifact-1', type: 'artifact', data: { artifactId: 'opaque-1', filename: 'report.pdf' } },
+      { id: 'activity-1', type: 'agentActivity', data: { summary: 'Reviewing', detail: 'detail', status: 'completed' } },
+    ]);
+  });
 
+  it('awaits the current redaction setting when loading persisted messages', async () => {
+    conversationSettings.shouldRedactSensitiveText.mockReturnValue(true);
+    conversationSettings.getSettings.mockResolvedValue({ redactSensitiveText: false });
+    messageStore.listPage.mockResolvedValue({
+      records: [record({
+        conversationType: 'ai',
+        components: [{
+          id: 'answer',
+          type: 'text',
+          data: { content: 'Cover pool au 30/06/2025 — 19 931,3 M€' },
+        }],
+      })],
+      total: 1,
+    });
+
+    const result = await service.findByConversation(conversationId, {});
+
+    expect(conversationSettings.getSettings).toHaveBeenCalled();
+    expect(result.messages[0].components?.[0].data.content)
+      .toBe('Cover pool au 30/06/2025 — 19 931,3 M€');
+  });
+
+  it('fails closed when the current redaction setting cannot be loaded', async () => {
+    conversationSettings.getSettings.mockRejectedValue(new Error('settings unavailable'));
+    messageStore.listPage.mockResolvedValue({
+      records: [record({
+        conversationType: 'ai',
+        components: [{
+          id: 'answer',
+          type: 'text',
+          data: { content: 'Stored at owner/runs/private/result.txt' },
+        }],
+      })],
+      total: 1,
+    });
+
+    const result = await service.findByConversation(conversationId, {});
+
+    expect(result.messages[0].components?.[0].data.content).toContain('[REDACTED]');
+  });
+
+  it('fails closed without hanging when the redaction setting lookup stalls', async () => {
+    jest.useFakeTimers();
+    try {
+      conversationSettings.getSettings.mockReturnValue(new Promise(() => undefined));
+      messageStore.listPage.mockResolvedValue({
+        records: [record({
+          conversationType: 'ai',
+          components: [{
+            id: 'answer',
+            type: 'text',
+            data: { content: 'Stored at owner/runs/private/result.txt' },
+          }],
+        })],
+        total: 1,
+      });
+
+      const resultPromise = service.findByConversation(conversationId, {});
+      await jest.advanceTimersByTimeAsync(1_000);
+      const result = await resultPromise;
+
+      expect(result.messages[0].components?.[0].data.content).toContain('[REDACTED]');
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it('uses the current redaction setting for cursor messages and branches', async () => {
+    conversationSettings.getSettings.mockResolvedValue({ redactSensitiveText: false });
+    const question = record();
+    const answer = record({
+      conversationType: 'ai',
+      components: [{
+        id: 'answer',
+        type: 'text',
+        data: { content: 'Cover pool au 30/06/2025 — 19 931,3 M€' },
+      }],
+    });
+    messageStore.listCursor.mockResolvedValue({
+      records: [question],
+      hasMore: false,
+      nextCursor: undefined,
+    });
+    messageStore.findBranchesByQuestions.mockResolvedValue(
+      new Map([[question.id, [answer]]]),
+    );
+
+    const result = await service.findByConversation(conversationId, { mode: 'cursor' });
+
+    expect('branchesByQuestion' in result && result.branchesByQuestion[question.id][0]
+      .components?.[0].data.content).toBe('Cover pool au 30/06/2025 — 19 931,3 M€');
+  });
+
+  it('uses the current redaction setting when loading a message by id', async () => {
+    conversationSettings.getSettings.mockResolvedValue({ redactSensitiveText: false });
+    const answer = record({
+      conversationType: 'ai',
+      components: [{
+        id: 'answer',
+        type: 'text',
+        data: { content: 'Cover pool au 30/06/2025 — 19 931,3 M€' },
+      }],
+    });
+    messageStore.findById.mockResolvedValue(answer);
+
+    const result = await service.findById(answer.id);
+
+    expect(result.components?.[0].data.content)
+      .toBe('Cover pool au 30/06/2025 — 19 931,3 M€');
+  });
+
+  it('awaits the canonical completion broadcast', async () => {
+    let finishBroadcast: () => void = () => undefined;
+    streamGateway.broadcastToConversation.mockImplementationOnce(
+      () => new Promise<void>((resolve) => { finishBroadcast = resolve; }),
+    );
+    const message = record({
+      conversationType: 'ai',
+      components: [{ id: 'tool-1', type: 'toolActivity', data: { resultJson: '{"secret":true}' } }],
+    });
+    messageStore.completeAi.mockResolvedValue(message);
     let completed = false;
     const completion = service.completeAIMessage({
-      messageId: messageId.toString(),
-      components: [{ id: 'tool-1', type: 'toolInfo', data: { title: 'search', status: 'completed', resultJson: '{"secret":true}', startedAt: '2026-07-29T08:00:00.000Z' } }],
-      inputTokens: 10,
-      outputTokens: 20,
-      durationMs: 1000,
+      messageId: message.id,
+      components: message.components,
     }).then(() => { completed = true; });
-
     await new Promise((resolve) => setImmediate(resolve));
-    expect(streamGateway.broadcastToConversation).toHaveBeenCalledWith(
-      [senderId],
-      expect.objectContaining({
-        type: 'message_updated',
-        data: expect.objectContaining({
-          messageId: messageId.toString(),
-          message: expect.objectContaining({
-            isComplete: true,
-            components: [expect.objectContaining({ data: expect.objectContaining({ resultJson: '{"secret":true}' }) })],
-          }),
-        }),
-      }),
-    );
     expect(completed).toBe(false);
-
     finishBroadcast();
     await completion;
     expect(completed).toBe(true);
   });
 
-  it('atomically claims a completed answer for a reliability rerun', async () => {
-    const messageId = new Types.ObjectId();
-    const document: any = {
-      _id: messageId,
-      conversationId: new Types.ObjectId(conversationId),
+  it('claims a completed answer for a manual reliability rerun', async () => {
+    const message = record({
       conversationType: 'ai',
-      isComplete: true,
-      isStreaming: false,
-      questionMessageId: new Types.ObjectId(),
-      components: [{ id: 'answer', type: 'text', data: { content: 'Answer with a source.' } }],
-      createdAt: new Date(),
-    };
-    messageModel.findOne = jest.fn().mockResolvedValue(document);
-    messageModel.findOneAndUpdate = jest.fn().mockResolvedValue({
-      ...document,
+      questionMessageId: new Types.ObjectId().toString(),
+      components: [{ id: 'answer', type: 'text', data: { content: 'Answer with source.' } }],
+    });
+    const claimed = record({
+      ...message,
       reliabilityEvaluation: { status: 'pending', requestedAt: '2026-07-29T10:00:00.000Z' },
     });
-
-    const result = await service.rerunReliabilityEvaluation(conversationId, messageId.toString());
-
+    messageStore.findById.mockResolvedValue(message);
+    messageStore.claimReliability.mockResolvedValue(claimed);
+    const result = await service.rerunReliabilityEvaluation(conversationId, message.id);
     expect(result.reliabilityEvaluation).toMatchObject({ status: 'pending' });
-    expect(messageModel.findOneAndUpdate).toHaveBeenCalledWith(
-      expect.objectContaining({
-        _id: expect.objectContaining({ toString: expect.any(Function) }),
-        conversationId: expect.objectContaining({ toString: expect.any(Function) }),
-        'reliabilityEvaluation.status': { $ne: 'pending' },
-      }),
-      expect.objectContaining({ $set: expect.objectContaining({ reliabilityEvaluation: expect.objectContaining({ status: 'pending' }) }) }),
-      { new: true },
-    );
-    expect(streamGateway.broadcastToConversation).toHaveBeenCalledWith(
-      [senderId],
-      expect.objectContaining({ type: 'message_updated' }),
+    expect(messageStore.claimReliability).toHaveBeenCalledWith(
+      conversationId,
+      message.id,
+      true,
+      expect.any(String),
     );
   });
 
-  it('uses an absent-evaluation claim for automatic scheduling', async () => {
-    const messageId = new Types.ObjectId();
-    const document: any = {
-      _id: messageId,
-      conversationId: new Types.ObjectId(conversationId),
+  it('uses the automatic reliability claim mode', async () => {
+    const message = record({
       conversationType: 'ai',
-      isComplete: true,
-      isStreaming: false,
-      questionMessageId: new Types.ObjectId(),
-      components: [{ id: 'answer', type: 'text', data: { content: 'Answer with a source.' } }],
-      createdAt: new Date(),
-    };
-    messageModel.findOne = jest.fn().mockResolvedValue(document);
-    messageModel.findOneAndUpdate = jest.fn().mockResolvedValue({
-      ...document,
-      reliabilityEvaluation: { status: 'pending', requestedAt: '2026-07-29T10:00:00.000Z' },
+      questionMessageId: new Types.ObjectId().toString(),
+      components: [{ id: 'answer', type: 'text', data: { content: 'Answer.' } }],
     });
-
-    await service.claimReliabilityEvaluation(conversationId, messageId.toString(), false);
-
-    expect(messageModel.findOneAndUpdate).toHaveBeenCalledWith(
-      expect.objectContaining({ reliabilityEvaluation: { $exists: false } }),
-      expect.anything(),
-      { new: true },
+    messageStore.findById.mockResolvedValue(message);
+    messageStore.claimReliability.mockResolvedValue({
+      ...message,
+      reliabilityEvaluation: { status: 'pending', requestedAt: new Date().toISOString() },
+    });
+    await service.claimReliabilityEvaluation(conversationId, message.id, false);
+    expect(messageStore.claimReliability).toHaveBeenCalledWith(
+      conversationId,
+      message.id,
+      false,
+      expect.any(String),
     );
   });
 
-  it('rejects a correction claim after a manual evaluation claim is pending', async () => {
-    messageModel.findOneAndUpdate = jest.fn().mockResolvedValue(null);
+  it('does not expose reliability state for a message in another conversation', async () => {
+    const message = record({
+      conversationId: new Types.ObjectId().toString(),
+      conversationType: 'ai',
+      questionMessageId: new Types.ObjectId().toString(),
+      components: [{ id: 'answer', type: 'text', data: { content: 'Answer.' } }],
+      reliabilityEvaluation: { status: 'pending', requestedAt: new Date().toISOString() },
+    });
+    messageStore.findById.mockResolvedValue(message);
+    await expect(
+      service.claimReliabilityEvaluation(conversationId, message.id, true),
+    ).rejects.toThrow('Message not found');
+    expect(messageStore.claimReliability).not.toHaveBeenCalled();
+  });
 
-    await expect(service.claimCorrectionRun('message-1', 'correction-run-1', '2026-07-29T10:00:00.000Z')).resolves.toBe(false);
-
-    expect(messageModel.findOneAndUpdate).toHaveBeenCalledWith(
-      expect.objectContaining({
-        _id: 'message-1',
-        'reliabilityEvaluation.status': { $ne: 'pending' },
-      }),
-      expect.anything(),
-      { new: true },
+  it('delegates correction-run ownership to the atomic store operation', async () => {
+    messageStore.claimCorrectionRun.mockResolvedValue(false);
+    await expect(
+      service.claimCorrectionRun('message-1', 'run-1', '2026-07-29T10:00:00.000Z'),
+    ).resolves.toBe(false);
+    expect(messageStore.claimCorrectionRun).toHaveBeenCalledWith(
+      'message-1',
+      'run-1',
+      '2026-07-29T10:00:00.000Z',
+      expect.any(String),
     );
   });
 
-  it('upserts one sanitized correction attempt and protects its terminal decision', async () => {
-    const document: any = {
-      _id: new Types.ObjectId(),
-      conversationId: new Types.ObjectId(conversationId),
+  it('sanitizes a correction attempt before persistence', async () => {
+    const message = record({
       conversationType: 'ai',
       correctionWorkflow: {
-        mode: 'corrective_transparent', status: 'correcting', activeVersion: 'original', threshold: 70,
-        attemptCount: 1, maxAttempts: 1, failureBehavior: 'publish_with_warning', showOriginalAnswer: true,
-        queuedAt: '2026-07-26T00:00:00.000Z', attempts: [],
+        mode: 'corrective_transparent',
+        status: 'correcting',
+        activeVersion: 'original',
+        threshold: 70,
+        attemptCount: 1,
+        maxAttempts: 1,
+        failureBehavior: 'publish_with_warning',
+        showOriginalAnswer: true,
+        queuedAt: '2026-07-26T00:00:00.000Z',
+        attempts: [],
       },
-      save: jest.fn().mockResolvedValue(undefined),
-    };
-    messageModel.findById = jest.fn().mockResolvedValue(document);
-    const base = { attemptId: 'attempt-1', attemptNumber: 1, policyReasons: [], createdAt: '2026-07-26T00:00:01.000Z' };
-
-    await service.upsertCorrectionAttempt('message-1', { ...base, status: 'generating' });
-    await service.upsertCorrectionAttempt('message-1', {
-      ...base, status: 'rejected', decision: 'rejected', policyReasons: ['score_below_threshold'],
-      components: [{ id: 'tool', type: 'toolInfo', data: { title: 'search', resultJson: '{"secret":"value"}' } }],
     });
-    await service.upsertCorrectionAttempt('message-1', { ...base, status: 'generating' });
+    messageStore.upsertCorrectionAttempt.mockResolvedValue(message);
+    await service.upsertCorrectionAttempt('message-1', {
+      attemptId: 'attempt-1',
+      attemptNumber: 1,
+      status: 'rejected',
+      decision: 'rejected',
+      policyReasons: ['score_below_threshold'],
+      createdAt: '2026-07-26T00:00:01.000Z',
+      components: [{ id: 'tool', type: 'toolActivity', data: { title: 'search', resultJson: '{"secret":"value"}' } }],
+    });
+    expect(messageStore.upsertCorrectionAttempt).toHaveBeenCalledWith(
+      'message-1',
+      expect.objectContaining({
+        components: [{ id: 'tool', type: 'toolActivity', data: { title: 'search' } }],
+      }),
+      undefined,
+    );
+  });
 
-    expect(document.correctionWorkflow.attempts).toHaveLength(1);
-    expect(document.correctionWorkflow.attempts[0]).toMatchObject({ status: 'rejected', policyReasons: ['score_below_threshold'] });
-    expect(document.correctionWorkflow.attempts[0].components[0].data).toEqual({ title: 'search' });
+  it('allows only one simulated service instance to claim a stream lease', async () => {
+    messageStore.claimStream.mockResolvedValueOnce(true).mockResolvedValueOnce(false);
+    const messageId = new Types.ObjectId().toString();
+    await expect(Promise.all([
+      service.claimStreamExecution(messageId, 'instance-a', 90_000),
+      service.claimStreamExecution(messageId, 'instance-b', 90_000),
+    ])).resolves.toEqual([true, false]);
+    expect(messageStore.claimStream).toHaveBeenCalledTimes(2);
+  });
+
+  it('passes the durable lease through completion', async () => {
+    const components = [
+      { id: 'tool-1', type: 'toolActivity' as const, data: { status: 'completed' } },
+      { id: 'citation-1', type: 'citation' as const, data: { reference: '[1]' } },
+    ];
+    const message = record({ conversationType: 'ai', components });
+    messageStore.completeAi.mockResolvedValue(message);
+    await service.completeAIMessage({
+      messageId: message.id,
+      streamExecutionLeaseId: 'lease-1',
+      components,
+    });
+    expect(messageStore.completeAi).toHaveBeenCalledWith(
+      expect.objectContaining({ messageId: message.id, streamExecutionLeaseId: 'lease-1', components }),
+    );
   });
 });

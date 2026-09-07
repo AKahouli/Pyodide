@@ -4,9 +4,15 @@ import pytest
 from google.protobuf.json_format import MessageToDict
 
 from src.flow_engine.observability.trace_collector import TraceCollector
+from src.flow_engine.observability.redaction import (
+    MAX_TRACE_KEY_LENGTH,
+    MAX_TRACE_VALUE_DEPTH,
+    MAX_TRACE_VALUE_ITEMS,
+    MAX_TRACE_VALUE_LENGTH,
+)
 
 
-def test_trace_collector_redacts_and_accumulates_usage() -> None:
+def test_trace_collector_preserves_internal_trace_values_and_accumulates_usage() -> None:
     collector = TraceCollector()
 
     collector.record_prompt("initial_request", "gpt-4o-mini", "Bearer secret")
@@ -29,19 +35,52 @@ def test_trace_collector_redacts_and_accumulates_usage() -> None:
     assert payload["llm_prompt_trace"] == [{
         "stage": "initial_request",
         "model": "gpt-4o-mini",
-        "prompt": "Bearer [REDACTED]",
-        "generated_output": "generated Bearer [REDACTED]",
+        "prompt": "Bearer secret",
+        "generated_output": "generated Bearer secret",
     }]
     assert payload["tool_trace"] == [{
         "call_index": 0,
         "tool_name": "search",
-        "args": {"authorization": "[REDACTED]", "query": "hello"},
+        "args": {"authorization": "Bearer abc", "query": "hello"},
         "output_summary": "result",
         "status": "completed",
         "duration_ms": 12,
         "error": None,
     }]
     assert payload["usage"] == {"input_tokens": 5, "output_tokens": 7, "total_tokens": 12, "model": "gpt-4o-mini"}
+
+
+def test_trace_collector_bounds_raw_tool_arguments() -> None:
+    collector = TraceCollector()
+    collector.record_tool_call(
+        tool_name="search",
+        args={f"key-{index}": "x" * (MAX_TRACE_VALUE_LENGTH + 100) for index in range(MAX_TRACE_VALUE_ITEMS + 10)},
+        output_summary=None,
+        status="completed",
+        duration_ms=1,
+    )
+
+    args = collector.build_payload()["tool_trace"][0]["args"]
+    assert len(args) == MAX_TRACE_VALUE_ITEMS
+    assert len(args["key-0"]) == MAX_TRACE_VALUE_LENGTH + 3
+
+
+def test_trace_collector_drops_oversized_keys_and_bounds_depth() -> None:
+    nested = "leaf"
+    for _ in range(MAX_TRACE_VALUE_DEPTH + 2):
+        nested = {"nested": nested}
+    collector = TraceCollector()
+    collector.record_tool_call(
+        tool_name="search",
+        args={"k" * (MAX_TRACE_KEY_LENGTH + 1): "secret", "deep": nested},
+        output_summary=None,
+        status="completed",
+        duration_ms=1,
+    )
+
+    args = collector.build_payload()["tool_trace"][0]["args"]
+    assert list(args) == ["deep"]
+    assert "[TRUNCATED]" in str(args["deep"])
 
 
 @pytest.mark.asyncio
@@ -132,7 +171,7 @@ async def test_run_step_with_tools_records_child_tool_calls_by_child_name(monkey
         args_schema = None
 
         async def ainvoke(self, _args):
-            return "search result"
+            return "Bearer child-secret"
 
     session_id = "flow-child-tool-call-test"
     child_name = "Research Agent:flow_tmp_1"
@@ -184,6 +223,8 @@ async def test_run_step_with_tools_records_child_tool_calls_by_child_name(monkey
     assert output == "Done."
     assert [call["status"] for call in tool_calls] == ["requested", "completed"]
     assert {call["child"] for call in tool_calls} == {child_name}
+    assert tool_calls[-1]["result_preview"] == "Bearer [REDACTED]"
+    assert payload["tool_trace"][0]["output_summary"] == "Bearer child-secret"
     assert payload["tool_trace"][0]["agent_name"] == child_name
     assert payload["tool_trace"][0]["agent_role"] == "temporary_child"
     assert trace_update_count >= 1

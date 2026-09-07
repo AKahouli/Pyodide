@@ -11,7 +11,6 @@ from src.guardrails.config import resolve_effective_guardrails
 from src.guardrails.runtime import GuardrailRuntime
 from src.guardrails.tool_registry import tool_policy
 from src.connector_tool_name import build_connector_tool_name
-from src.guardrails.mascot_tool_policy import evaluate_second_brain_tool, is_second_brain_config
 
 
 def append_callback(existing: Any, callback: Callable[..., Any]) -> list[Callable[..., Any]]:
@@ -177,13 +176,6 @@ def apply_guardrail_callbacks(agent_kwargs: dict[str, Any], agent_config: dict[s
     async def before_tool(tool: Any, args: dict[str, Any], tool_context: Any) -> dict[str, Any] | None:
         tool_name = str(getattr(tool, "name", "") or "")
         metadata = tool_policy(tool_name, {**_configured_tool_metadata(config, tool_name), **(getattr(tool, "metadata", None) or {})})
-        if is_second_brain_config(config):
-            policy_result = await evaluate_second_brain_tool(config, tool_name, args, metadata)
-            if policy_result.get("decision") != "allowed":
-                return {
-                    "status": "confirmation_required" if policy_result.get("decision") == "confirmation_required" else "blocked_by_tool_policy",
-                    **policy_result,
-                }
         decision = await runtime.review_tool_action(
             GuardrailContext(
                 phase="tool_action", runtime_surface="conversation_google_adk",

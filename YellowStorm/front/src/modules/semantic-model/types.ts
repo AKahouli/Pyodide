@@ -45,6 +45,11 @@ export interface SemanticModel {
   updatedAt: string;
 }
 
+export interface SemanticModelManualInstances {
+  nodeTypeId: string;
+  labels: string[];
+}
+
 export interface AttributeDefinition {
   key: string;
   label: string;
@@ -112,6 +117,28 @@ export interface AgeGraphEdge {
   sourceId: string;
   targetId: string;
   properties: Record<string, unknown>;
+}
+
+export type AgeGraphOperation =
+  | { type: 'node.create'; nodeTypeId: string; label: string; values: Record<string, unknown> }
+  | { type: 'node.delete'; nodeId: string }
+  | { type: 'edge.create'; relationTypeId: string; sourceId: string; targetId: string }
+  | { type: 'edge.delete'; edgeId: string };
+
+export interface SemanticCorpusDocument {
+  sourceDocumentId: string;
+  workspaceId: string;
+  originalName: string;
+  indexingStatus?: 'none' | 'pending' | 'processing' | 'ready' | 'failed';
+}
+
+export interface SemanticCorpusBinding {
+  target: { kind: string; id: string | null; label: string };
+  documents: SemanticCorpusDocument[];
+}
+
+export interface SemanticCorpusManifest {
+  bindings: SemanticCorpusBinding[];
 }
 
 export interface SemanticGraph {

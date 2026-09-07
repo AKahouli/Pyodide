@@ -19,15 +19,43 @@
     {
       "idx": 2,
       "version": "7",
-      "when": 1785916711242,
-      "tag": "0002_app_data_init",
+      "when": 1787227200000,
+      "tag": "0002_platform_copilot_identity",
       "breakpoints": true
     },
     {
       "idx": 3,
       "version": "7",
-      "when": 1785916711243,
-      "tag": "0003_app_data_end_users",
+      "when": 1787263200000,
+      "tag": "0003_platform_copilot_agent_slug",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1787306574328,
+      "tag": "0004_platform_copilot_agent_type_slug",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1788071920611,
+      "tag": "0005_conversation",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1788091200000,
+      "tag": "0006_conversation_scalability",
+      "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1788177600000,
+      "tag": "0007_conversation_latency_metrics",
       "breakpoints": true
     }
   ]

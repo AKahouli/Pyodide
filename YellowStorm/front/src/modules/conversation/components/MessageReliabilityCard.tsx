@@ -4,6 +4,7 @@ import {
   CheckCircle2,
   ChevronDown,
   CircleDashed,
+  Info,
   Loader2,
   SearchX,
   ShieldCheck,
@@ -13,6 +14,7 @@ import {
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '@/components/ui/accordion';
 import { Button } from '@/components/ui/button';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { cn } from '@/lib/utils';
 import { useModuleTranslation } from '@/modules/localization';
 import { useApiAction } from '@/lib/use-api-action';
@@ -41,6 +43,17 @@ const groupStyles = {
   partially_supported: 'text-sky-600 dark:text-sky-400',
   supported: 'text-emerald-600 dark:text-emerald-400',
 } as const;
+
+function ReliabilityInfoTooltip({ label, children }: Readonly<{ label: string; children: React.ReactNode }>) {
+  return <Tooltip>
+    <TooltipTrigger asChild>
+      <button type='button' className='inline-flex size-6 shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring' aria-label={label}>
+        <Info className='size-3.5' aria-hidden='true' />
+      </button>
+    </TooltipTrigger>
+    <TooltipContent side='top' className='max-w-72 text-pretty leading-relaxed'>{children}</TooltipContent>
+  </Tooltip>;
+}
 
 interface MessageReliabilityCardProps {
   conversationId?: string;
@@ -110,6 +123,7 @@ export function MessageReliabilityCard({ conversationId, messageId, evaluation, 
       title={t('reliability.title')}
       description={t('reliability.supportedCount', { supported: counts.supported, total: counts.total })}
       score={<ScoreIndicator score={evaluation.score} size='large' />}
+      definition={t('reliability.info.answerReliabilityDefinition')}
     >
       {history}
     </ReliabilityPanel>
@@ -121,18 +135,26 @@ function ClaimGroup({ status, claims }: Readonly<{ status: ReliabilityClaimStatu
   const Icon = groupIcons[status];
   return (
     <AccordionItem value={status} className='rounded-lg border bg-muted/20 px-3 last:border-b'>
-      <AccordionTrigger className='py-3 hover:no-underline'>
-        <span className='flex min-w-0 items-center gap-2'>
-          <Icon className={cn('size-4 shrink-0', groupStyles[status])} aria-hidden='true' />
-          <span className='text-left'>{t(`reliability.groups.${status}`, { count: claims.length })}</span>
-        </span>
-      </AccordionTrigger>
+      <div className='flex items-center gap-1'>
+        <AccordionTrigger className='min-w-0 flex-1 py-3 hover:no-underline'>
+          <span className='flex min-w-0 items-center gap-2'>
+            <Icon className={cn('size-4 shrink-0', groupStyles[status])} aria-hidden='true' />
+            <span className='text-left'>{t(`reliability.groups.${status}`, { count: claims.length })}</span>
+          </span>
+        </AccordionTrigger>
+        <ReliabilityInfoTooltip label={t('reliability.info.groupAria', { group: t(`reliability.groups.${status}`, { count: claims.length }) })}>
+          {t(`reliability.info.groups.${status}`)}
+        </ReliabilityInfoTooltip>
+      </div>
       <AccordionContent className='space-y-2 pb-3'>
         {claims.map((claim, index) => (
           <article key={`${claim.claim}-${index}`} className='rounded-md border bg-background/80 p-3'>
             <div className='flex items-start gap-2'>
               <p className='min-w-0 flex-1 text-sm font-medium leading-relaxed text-foreground'>{claim.claim}</p>
-              {claim.importance === 'critical' && <span className='shrink-0 rounded-full bg-destructive/10 px-2 py-0.5 text-[11px] font-medium text-destructive'>{t('reliability.keyClaim')}</span>}
+              {claim.importance === 'critical' && <span className='flex shrink-0 items-center gap-0.5'>
+                <span className='rounded-full bg-destructive/10 px-2 py-0.5 text-[11px] font-medium text-destructive'>{t('reliability.keyClaim')}</span>
+                <ReliabilityInfoTooltip label={t('reliability.info.keyClaimAria')}>{t('reliability.info.keyClaimDefinition')}</ReliabilityInfoTooltip>
+              </span>}
             </div>
             <p className='mt-1.5 text-xs leading-relaxed text-muted-foreground'>{claim.explanation}</p>
           </article>
@@ -155,21 +177,24 @@ function ScoreIndicator({ score, size = 'small' }: Readonly<{ score: number; siz
     ? `color-mix(in oklch, var(--reliability-positive) ${100 - ((normalizedScore - 71) / 29) * 100}%, var(--reliability-excellent))`
     : `color-mix(in oklch, var(--reliability-critical) ${100 - (normalizedScore / 70) * 100}%, var(--reliability-warning))`;
 
-  return <div
-    role='meter'
-    aria-label={t('reliability.scoreAria', { score: normalizedScore })}
-    aria-valuemin={0}
-    aria-valuemax={100}
-    aria-valuenow={normalizedScore}
-    data-score-band={scoreBand}
-    className={cn('relative shrink-0 text-[var(--reliability-score-color)]', diameterClassName)}
-    style={{ '--reliability-score-color': scoreColor } as CSSProperties}
-  >
-    <svg viewBox='0 0 36 36' className='size-full -rotate-90' aria-hidden='true'>
-      <circle cx='18' cy='18' r={radius} fill='none' stroke='currentColor' strokeWidth='4' className='opacity-25' />
-      <circle cx='18' cy='18' r={radius} fill='none' stroke='currentColor' strokeWidth='4' strokeDasharray={circumference} strokeDashoffset={dashOffset} strokeLinecap='butt' />
-    </svg>
-    <span className={cn('absolute inset-0 flex items-center justify-center font-semibold tabular-nums', textClassName)}>{normalizedScore}</span>
+  return <div className='flex shrink-0 items-center gap-0.5'>
+    <div
+      role='meter'
+      aria-label={t('reliability.scoreAria', { score: normalizedScore })}
+      aria-valuemin={0}
+      aria-valuemax={100}
+      aria-valuenow={normalizedScore}
+      data-score-band={scoreBand}
+      className={cn('relative shrink-0 text-[var(--reliability-score-color)]', diameterClassName)}
+      style={{ '--reliability-score-color': scoreColor } as CSSProperties}
+    >
+      <svg viewBox='0 0 36 36' className='size-full -rotate-90' aria-hidden='true'>
+        <circle cx='18' cy='18' r={radius} fill='none' stroke='currentColor' strokeWidth='4' className='opacity-25' />
+        <circle cx='18' cy='18' r={radius} fill='none' stroke='currentColor' strokeWidth='4' strokeDasharray={circumference} strokeDashoffset={dashOffset} strokeLinecap='butt' />
+      </svg>
+      <span className={cn('absolute inset-0 flex items-center justify-center font-semibold tabular-nums', textClassName)}>{normalizedScore}</span>
+    </div>
+    <ReliabilityInfoTooltip label={t('reliability.info.scoreAria')}>{t('reliability.info.scoreDefinition')}</ReliabilityInfoTooltip>
   </div>;
 }
 
@@ -177,7 +202,10 @@ function LegacyFindings({ findings }: Readonly<{ findings: ReliabilityFinding[] 
   const { t } = useModuleTranslation('conversation');
   return (
     <div className='rounded-lg border bg-muted/20 p-3'>
-      <p className='text-sm font-medium'>{t('reliability.legacyFindings')}</p>
+      <div className='flex items-center gap-1'>
+        <p className='text-sm font-medium'>{t('reliability.legacyFindings')}</p>
+        <ReliabilityInfoTooltip label={t('reliability.info.legacyFindingsAria')}>{t('reliability.info.legacyFindingsDefinition')}</ReliabilityInfoTooltip>
+      </div>
       <ul className='mt-2 space-y-2'>
         {findings.map((finding, index) => <li key={`${finding.claim}-${index}`} className='flex gap-2 text-sm'><AlertTriangle className='mt-0.5 size-4 shrink-0 text-amber-600 dark:text-amber-400' /><span>{finding.explanation}</span></li>)}
       </ul>
@@ -213,7 +241,10 @@ function EvaluationDetails({ evaluation }: Readonly<{ evaluation?: ReliabilityEv
 
   return <div className='max-h-96 space-y-3 overflow-y-auto border-t border-border/60 pt-3 pr-1'>
     {evaluation.label ? <div className='rounded-lg bg-muted/50 p-3'>
-      <p className='text-sm font-medium text-foreground'>{t(`reliability.labels.${evaluation.label}`)}</p>
+      <div className='flex items-center gap-1'>
+        <p className='text-sm font-medium text-foreground'>{t(`reliability.labels.${evaluation.label}`)}</p>
+        <ReliabilityInfoTooltip label={t('reliability.info.verdictAria')}>{t('reliability.info.verdictDefinition')}</ReliabilityInfoTooltip>
+      </div>
       <p className='mt-1 text-sm text-muted-foreground'>{summary}</p>
     </div> : null}
     {groups.length ? <Accordion type='multiple' className='space-y-2'>
@@ -240,7 +271,10 @@ function EvaluationHistory({ workflow, originalEvaluation, fallbackEvaluation, d
   const nextSequence = originalSequence + attempts.length;
   if (!resolvedOriginalEvaluation && !attempts.length && !workflow) return null;
   return <div className='mt-2 space-y-1.5 rounded-lg border bg-muted/20 p-2.5'>
-    <p className='text-xs font-semibold uppercase tracking-wide text-muted-foreground'>{t('reliability.timelineTitle')}</p>
+    <div className='flex items-center gap-1'>
+      <p className='text-xs font-semibold uppercase tracking-wide text-muted-foreground'>{t('reliability.timelineTitle')}</p>
+      <ReliabilityInfoTooltip label={t('reliability.info.historyAria')}>{t('reliability.info.historyDefinition')}</ReliabilityInfoTooltip>
+    </div>
     {workflow ? <WorkflowStatus workflow={workflow} hasAttempts={attempts.length > 0} /> : null}
     {resolvedOriginalEvaluation ? <EvaluationOccurrence
       label={t('reliability.originalEvaluation')}
@@ -404,18 +438,22 @@ function EvaluationOccurrence({ label, sequence, evaluation, fallbackStatus, sel
   </Collapsible>;
 }
 
-function ReliabilityPanel({ action, icon, title, description, score, children }: Readonly<{ action?: React.ReactNode; icon?: React.ReactNode; title: string; description?: string; score?: React.ReactNode; children?: React.ReactNode }>) {
+function ReliabilityPanel({ action, icon, title, description, definition, score, children }: Readonly<{ action?: React.ReactNode; icon?: React.ReactNode; title: string; description?: string; definition?: string; score?: React.ReactNode; children?: React.ReactNode }>) {
   const { t } = useModuleTranslation('conversation');
   const [open, setOpen] = useState(false);
   return (
-    <Collapsible open={open} onOpenChange={setOpen} className={conversationPanelClassName}>
+    <TooltipProvider delayDuration={250}>
+      <Collapsible open={open} onOpenChange={setOpen} className={conversationPanelClassName}>
       <div className='grid min-w-0 grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-x-3 gap-y-2 px-1 md:grid-cols-[auto_minmax(0,1fr)_auto_auto_auto]'>
         <span className='relative col-start-1 row-start-1 flex size-8 shrink-0 items-center justify-center' aria-hidden='true'>
           <span className='absolute inset-1 rounded-full bg-primary/20 ring-1 ring-primary/40' />
           {icon || <ShieldCheck className='size-4 text-primary' />}
         </span>
         <div className='col-start-2 row-start-1 min-w-0'>
-          <p className='text-sm font-medium text-foreground'>{title}</p>
+          <div className='flex items-center gap-1'>
+            <p className='text-sm font-medium text-foreground'>{title}</p>
+            {definition ? <ReliabilityInfoTooltip label={t('reliability.info.answerReliabilityAria')}>{definition}</ReliabilityInfoTooltip> : null}
+          </div>
           {description && <p className='text-xs leading-relaxed text-muted-foreground'>{description}</p>}
         </div>
         {action ? <div className='col-start-2 row-start-2 justify-self-start md:col-start-3 md:row-start-1'>{action}</div> : null}
@@ -425,6 +463,7 @@ function ReliabilityPanel({ action, icon, title, description, score, children }:
         </CollapsibleTrigger> : null}
       </div>
       {children ? <CollapsibleContent>{children}</CollapsibleContent> : null}
-    </Collapsible>
+      </Collapsible>
+    </TooltipProvider>
   );
 }

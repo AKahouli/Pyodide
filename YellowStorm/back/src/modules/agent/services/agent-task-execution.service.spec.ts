@@ -31,8 +31,8 @@ describe('AgentTaskExecutionService', () => {
       call.emit('data', {
         action: 'update',
         component: {
-          tool_info: {
-            title: 'playbook-mcp_start_playbook_construction',
+          tool_activity: {
+            tool_name: 'playbook-mcp_start_playbook_construction',
             status: 'completed',
             result_json: JSON.stringify({ operationId: 'operation-1' }),
           },
@@ -63,7 +63,7 @@ describe('AgentTaskExecutionService', () => {
 
     const resultPromise = service.runSingleAgentTask({ userId: 'user-1', agentId: '507f1f77bcf86cd799439011', query: 'Read', attachedFiles: [], correlationId: 'turn-2' });
     setImmediate(() => {
-      call.emit('data', { component: { tool_info: { title: 'tool', status: 'completed', result_json: '{bad' } } });
+      call.emit('data', { component: { tool_activity: { tool_name: 'tool', status: 'completed', result_json: '{bad' } } });
       call.emit('end');
     });
 

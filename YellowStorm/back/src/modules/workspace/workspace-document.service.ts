@@ -2413,6 +2413,7 @@ export class WorkspaceDocumentService {
       page = 1,
       limit = 100,
       status,
+      includeAllStatuses = false,
       search,
       sortBy = 'originalName',
       sortOrder = 'asc',
@@ -2423,7 +2424,7 @@ export class WorkspaceDocumentService {
     // Build query
     const query: Record<string, unknown> = {
       workspaceId: new Types.ObjectId(workspaceId),
-      status: status || DocumentStatus.COMPLETED,
+      ...(includeAllStatuses ? {} : { status: status || DocumentStatus.COMPLETED }),
     };
 
     if (search) {

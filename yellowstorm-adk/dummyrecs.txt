@@ -199,7 +199,6 @@ langchain-openai==0.3.29
 langchain-text-splitters==0.3.11
 langcodes==3.4.0
 langdetect==1.0.8
-langfuse==2.60.10
 langgraph==1.0.1
 langgraph-checkpoint==3.0.1
 langgraph-checkpoint-sqlite==3.0.3

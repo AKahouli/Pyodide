@@ -1,8 +1,11 @@
-import { Injectable } from '@nestjs/common';
+import { Inject, Injectable } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, FilterQuery, Types } from 'mongoose';
 import { Project, ProjectDocument } from './schemas/project.schema';
-import { Conversation, ConversationDocument } from '../conversation/schemas/conversation.schema';
+import {
+  CONVERSATION_STORE,
+  type ConversationStore,
+} from '../conversation/persistence/conversation-store';
 import { CreateProjectDto } from './dto/create-project.dto';
 import { UpdateProjectDto } from './dto/update-project.dto';
 import { QueryProjectDto } from './dto/query-project.dto';
@@ -17,8 +20,8 @@ export class ProjectService {
   constructor(
     @InjectModel(Project.name)
     private readonly projectModel: Model<ProjectDocument>,
-    @InjectModel(Conversation.name)
-    private readonly conversationModel: Model<ConversationDocument>,
+    @Inject(CONVERSATION_STORE)
+    private readonly conversationStore: ConversationStore,
     private readonly logger: LoggerService,
   ) {
     this.logger.setContext(ProjectService.name);
@@ -61,17 +64,10 @@ export class ProjectService {
 
     if (projects.length === 0) return [];
 
-    const counts = await this.conversationModel.aggregate<{ _id: Types.ObjectId; count: number }>([
-      {
-        $match: {
-          projectId: { $in: projects.map((p) => p._id) },
-          createdBy: new Types.ObjectId(userId),
-        },
-      },
-      { $group: { _id: '$projectId', count: { $sum: 1 } } },
-    ]);
-
-    const countMap = new Map(counts.map((c) => [c._id.toString(), c.count]));
+    const countMap = await this.conversationStore.countByProjects(
+      userId,
+      projects.map((project) => project._id.toString()),
+    );
 
     return projects.map((p) => this.toResponse(p, countMap.get(p._id.toString()) || 0));
   }
@@ -85,10 +81,7 @@ export class ProjectService {
       throw new ForbiddenException(ErrorCode.PROJECT_FORBIDDEN);
     }
 
-    const count = await this.conversationModel.countDocuments({
-      projectId: new Types.ObjectId(projectId),
-      createdBy: new Types.ObjectId(userId),
-    });
+    const count = await this.conversationStore.countByProject(userId, projectId);
 
     return this.toResponse(project, count);
   }
@@ -118,10 +111,7 @@ export class ProjectService {
 
     await project.save();
 
-    const count = await this.conversationModel.countDocuments({
-      projectId: new Types.ObjectId(projectId),
-      createdBy: new Types.ObjectId(userId),
-    });
+    const count = await this.conversationStore.countByProject(userId, projectId);
 
     return this.toResponse(project, count);
   }
@@ -136,17 +126,14 @@ export class ProjectService {
     }
 
     // Detach all conversations so they return to the user's history.
-    const detached = await this.conversationModel.updateMany(
-      { projectId: new Types.ObjectId(projectId), createdBy: new Types.ObjectId(userId) },
-      { $unset: { projectId: '' } },
-    );
+    const conversationsDetached = await this.conversationStore.detachProject(userId, projectId);
 
     await this.projectModel.deleteOne({ _id: project._id });
 
     this.logger.log('Project deleted', {
       projectId,
       userId,
-      conversationsDetached: detached.modifiedCount,
+      conversationsDetached,
     });
   }
 

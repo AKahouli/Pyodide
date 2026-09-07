@@ -261,9 +261,9 @@ export function PlaybookListPage() {
   return (
     <div className="flex flex-col h-full w-full">
       {/* Header */}
-      <div className="flex items-center justify-between px-6 py-4 border-b">
+      <div className="flex flex-wrap items-center justify-between gap-3 border-b px-4 py-4 sm:px-6">
         <h1 className="text-xl font-semibold">{t('list.title')}</h1>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           {playbooks.length > 0 && (
             <Button variant={selectMode ? 'secondary' : 'ghost'} size="sm" onClick={handleToggleSelectMode}>
               <CheckSquare className="h-4 w-4 mr-1.5" />
@@ -291,21 +291,23 @@ export function PlaybookListPage() {
       )}
 
       {/* Search + Filters bar */}
-      <div className="flex items-center gap-2 px-6 py-3 border-b">
+      <div className="flex flex-wrap items-center gap-2 border-b px-4 py-3 sm:px-6">
         {/* Search input */}
-        <div className="relative flex-1 max-w-sm">
+        <div className="relative min-w-full flex-1 sm:min-w-[16rem] sm:max-w-sm">
           <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
           <Input
             value={searchInput}
             onChange={(e) => handleSearchChange(e.target.value)}
             onKeyDown={handleSearchKeyDown}
             placeholder={t('list.searchPlaceholder')}
+            aria-label={t('list.searchPlaceholder')}
             className="pl-9 pr-8"
           />
           {searchInput && (
             <button
               type="button"
               onClick={handleClearSearch}
+              aria-label={t('list.clearSearch')}
               className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
             >
               <X className="h-4 w-4" />
@@ -325,7 +327,7 @@ export function PlaybookListPage() {
             fetchPlaybooks(q);
           }}
         >
-          <SelectTrigger className="w-[170px]">
+          <SelectTrigger aria-label={t('list.sortLabel')} className="min-w-[160px] flex-1 sm:w-[170px] sm:flex-none">
             <ArrowUpDown className="h-3.5 w-3.5 mr-1.5 shrink-0" />
             <SelectValue />
           </SelectTrigger>
@@ -339,7 +341,7 @@ export function PlaybookListPage() {
         </Select>
 
         {/* Sort order toggle */}
-        <Button variant="outline" size="icon" onClick={handleToggleSortOrder} title={t(`list.order.${sortOrder}`)}>
+        <Button aria-label={t(`list.order.${sortOrder}`)} variant="outline" size="icon" onClick={handleToggleSortOrder} title={t(`list.order.${sortOrder}`)}>
           <ArrowUpDown className={`h-4 w-4 transition-transform ${sortOrder === 'asc' ? 'rotate-180' : ''}`} />
         </Button>
 

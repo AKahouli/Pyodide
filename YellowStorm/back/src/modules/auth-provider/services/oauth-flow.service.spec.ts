@@ -319,6 +319,27 @@ describe('OAuthFlowService', () => {
           code: ErrorCode.AUTH_ACCOUNT_SUSPENDED,
         });
       });
+
+      it('should login when linked user is inactive pending approval', async () => {
+        setupCallbackMocks({ sub: 'ms-123', email: 'user@example.com' });
+        providerLinkService.findByProviderUser.mockResolvedValue({
+          userId: MOCK_USER_ID,
+          providerKey: MOCK_PROVIDER_KEY,
+          providerUserId: 'ms-123',
+        });
+        userService.findById.mockResolvedValue({
+          ...mockUser,
+          status: UserStatus.INACTIVE,
+        });
+        providerLinkTokenModel.create.mockResolvedValue({});
+
+        const result = await service.handleCallback(
+          MOCK_PROVIDER_KEY, MOCK_CODE, MOCK_STATE, '127.0.0.1', 'ua',
+        );
+
+        expect(result.type).toBe('login');
+        expect(result.accessToken).toBeDefined();
+      });
     });
 
     describe('decision tree — email exists, not linked', () => {
@@ -442,6 +463,25 @@ describe('OAuthFlowService', () => {
       ).rejects.toMatchObject({
         code: ErrorCode.AUTH_ACCOUNT_SUSPENDED,
       });
+    });
+
+    it('should exchange a temp token for an inactive user pending approval', async () => {
+      providerLinkTokenModel.findOneAndDelete.mockResolvedValue({
+        token: 'temp-token',
+        userId: MOCK_USER_ID,
+        providerKey: '__temp_login__',
+        expiresAt: new Date(Date.now() + 300000),
+      });
+      userService.findById.mockResolvedValue({
+        ...mockUser,
+        status: UserStatus.INACTIVE,
+      });
+      userService.updateLastLogin.mockResolvedValue(undefined);
+
+      const result = await service.exchangeTempToken('temp-token', '127.0.0.1', 'ua');
+
+      expect(result.accessToken).toBe('jwt-token');
+      expect(result.user).toBeDefined();
     });
   });
 

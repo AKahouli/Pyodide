@@ -1,5 +1,5 @@
 import { Type } from 'class-transformer';
-import { IsString, IsOptional, IsBoolean, IsArray, IsMongoId, IsUUID, MaxLength, ValidateNested, IsIn, ArrayMaxSize, ArrayUnique, Matches, IsNotEmpty } from 'class-validator';
+import { IsString, IsOptional, IsBoolean, IsArray, IsMongoId, IsUUID, MaxLength, ValidateNested, IsIn, ArrayMaxSize, ArrayUnique, Matches, IsNotEmpty,IsInt, Min, Max } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 
 class ConnectorRepoDto {
@@ -25,6 +25,23 @@ class ConnectorRepoDto {
   repoUrl?: string;
 }
 
+class ClientContextEntityDto {
+  @IsIn(['playbook', 'execution', 'task']) type!: 'playbook' | 'execution' | 'task';
+  @IsString() @IsNotEmpty() @MaxLength(200) id!: string;
+}
+
+export class ConversationClientContextDto {
+  @IsInt() @Min(1) @Max(1) contextVersion!: 1;
+  @IsString() @MaxLength(1000) route!: string;
+  @IsIn(['playbooks', 'executions', 'other']) module!: 'playbooks' | 'executions' | 'other';
+  @IsString() @MaxLength(100) surface!: string;
+  @IsOptional() @ValidateNested() @Type(() => ClientContextEntityDto) entity?: ClientContextEntityDto;
+  @IsOptional() @ValidateNested() @Type(() => ClientContextEntityDto) selection?: ClientContextEntityDto;
+  @IsArray() @ArrayMaxSize(20) @ArrayUnique() @IsString({ each: true }) @MaxLength(100, { each: true }) availableActions!: string[];
+  @IsBoolean() hasUnsavedChanges!: boolean;
+  @IsString() @MaxLength(35) locale!: string;
+}
+
 export class ChoiceSelectionDto {
   @IsString() @Matches(/^[A-Za-z0-9._-]+$/) @MaxLength(64) optionId!: string;
   @IsString() @MaxLength(160) label!: string;
@@ -44,6 +61,18 @@ export class ChoiceInteractionDto {
 }
 
 export class SendMessageDto {
+  @ApiPropertyOptional({ description: 'Stable identifier for retrying this logical message turn', maxLength: 128 })
+  @IsOptional()
+  @IsString()
+  @Matches(/^[A-Za-z0-9._:-]+$/)
+  @MaxLength(128)
+  requestId?: string;
+
+  @ApiPropertyOptional({ description: 'Opaque prepared Conversation-to-Playbook handoff identifier' })
+  @IsOptional()
+  @IsUUID()
+  playbookHandoffId?: string;
+
   @ApiProperty({ maxLength: 50000 })
   @IsString()
   @MaxLength(50000)
@@ -74,6 +103,13 @@ export class SendMessageDto {
   @IsOptional()
   @IsUUID()
   semanticModelId?: string;
+
+  @ApiPropertyOptional({ description: 'Reasoning effort ID supported by the selected model', maxLength: 50 })
+  @IsOptional()
+  @IsString()
+  @Matches(/^[A-Za-z0-9._-]+$/)
+  @MaxLength(50)
+  reasoningEffort?: string;
 
   @ApiPropertyOptional({ description: 'Mentioned agent IDs', type: [String] })
   @IsOptional()
@@ -115,4 +151,18 @@ export class SendMessageDto {
   @ValidateNested()
   @Type(() => ChoiceInteractionDto)
   interaction?: ChoiceInteractionDto;
+
+  @ApiPropertyOptional({ description: 'Multiple choice answers submitted together in a single turn', type: [ChoiceInteractionDto] })
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(10)
+  @ValidateNested({ each: true })
+  @Type(() => ChoiceInteractionDto)
+  interactions?: ChoiceInteractionDto[];
+
+  @ApiPropertyOptional({ type: ConversationClientContextDto })
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => ConversationClientContextDto)
+  clientContext?: ConversationClientContextDto;
 }

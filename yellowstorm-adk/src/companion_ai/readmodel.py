@@ -96,8 +96,11 @@ async def init_schema(pool: asyncpg.Pool, schema: str = "public") -> None:
                 session_id TEXT NOT NULL,
                 role       TEXT NOT NULL,
                 content    TEXT,
+                turn_id    TEXT,
                 created_at TIMESTAMPTZ NOT NULL DEFAULT now()
             )""")
+        await con.execute(
+            f'ALTER TABLE {_q(schema,"messages")} ADD COLUMN IF NOT EXISTS turn_id TEXT')
         # Internal (not published to Electric): which step is waiting on which
         # email reply. The token travels in the outbound mail and comes back on
         # the reply; this is what turns it into (session, step, interrupt).
@@ -282,12 +285,13 @@ class ReadModel:
                 session_id)
         return [(r["interrupt_id"], r["step_id"]) for r in rows]
 
-    async def add_message(self, message_id: str, session_id: str, role: str, content: str) -> None:
+    async def add_message(self, message_id: str, session_id: str, role: str, content: str,
+                          turn_id: Optional[str] = None) -> None:
         async with self._pool.acquire() as con:
             await con.execute(f"""
-                INSERT INTO {_q(self._schema,'messages')} (id,session_id,role,content)
-                VALUES ($1,$2,$3,$4) ON CONFLICT (id) DO NOTHING
-            """, message_id, session_id, role, content)
+                INSERT INTO {_q(self._schema,'messages')} (id,session_id,role,content,turn_id)
+                VALUES ($1,$2,$3,$4,$5) ON CONFLICT (id) DO NOTHING
+            """, message_id, session_id, role, content, turn_id)
 
     async def add_step_artifact(self, session_id: str, step_id: str, *, file_path: str,
                                 filename: str, artifact_kind: Optional[str] = None,
@@ -324,22 +328,41 @@ class ReadModel:
                                  user_id: str, interrupt_id: Optional[str] = None,
                                  mailbox_app_key: Optional[str] = None,
                                  expected_from: Optional[str] = None,
+                                 conversation_id: Optional[str] = None,
                                  expires_at=None) -> None:
         """Record that `step_id` will wait for a reply carrying `token`.
 
         Written at plan projection, before the mail is sent — the token has to be
         in the outbound mail, and by the time the step parks the mail is long
         gone. `interrupt_id` is unknown until then, so it is bound later by
-        bind_mail_wait_interrupt."""
+        bind_mail_wait_interrupt. `conversation_id` is set on the Teams path (the
+        chat the reply must come from) where the eager sender knows it at send
+        time; mail leaves it NULL."""
         async with self._pool.acquire() as con:
             await con.execute(f"""
                 INSERT INTO {_q(self._schema,'mail_waits')}
                     (token,session_id,step_id,interrupt_id,user_id,mailbox_app_key,
-                     expected_from,expires_at)
-                VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+                     expected_from,conversation_id,expires_at)
+                VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
                 ON CONFLICT (token) DO NOTHING
             """, token, session_id, step_id, interrupt_id, user_id, mailbox_app_key,
-                 expected_from, expires_at)
+                 expected_from, conversation_id, expires_at)
+
+    async def bind_teams_wait_target(self, token: str, conversation_id: str) -> None:
+        """After a Teams message is sent, record the 1:1 chat its reply must come
+        from. Teams carries no routing token in the payload — a reply is
+        correlated by chat identity — so this is what makes the wait claimable by
+        claim_chat_wait. Set once, only while the wait is still open. The chat
+        membership is the trust boundary: only that one person can post to it, so
+        no expected_from sender check is needed (unlike mail's open recipient
+        list)."""
+        if not conversation_id:
+            return
+        async with self._pool.acquire() as con:
+            await con.execute(f"""
+                UPDATE {_q(self._schema,'mail_waits')} SET conversation_id=$2
+                WHERE token=$1 AND status='waiting' AND conversation_id IS NULL
+            """, token, conversation_id)
 
     async def set_mail_wait_expected_from(self, token: str, expected_from: str) -> None:
         """Record who the reply to `token`'s mail is expected from, once the mail
@@ -426,6 +449,55 @@ class ReadModel:
                 RETURNING *
             """, token, addr)
         return dict(row) if row else None
+
+    async def claim_chat_wait(self, conversation_id: str,
+                              reply_from: Optional[str] = None) -> Optional[dict]:
+        """Teams counterpart of claim_mail_wait: atomically claim the wait for a
+        1:1 chat. A Teams reply carries no token — the chat identity IS the
+        correlation — so this keys on `conversation_id` instead. Same claim-once
+        guarantee (Graph retries duplicate notifications) and the same
+        interrupt_id-bound guard (nothing to resume before the step parks).
+
+        FIFO when one chat holds several open questions: a plain Teams reply
+        can't say which message it answers, so the oldest still-waiting one wins.
+        FOR UPDATE SKIP LOCKED keeps concurrent deliveries from claiming the same
+        row twice.
+        """
+        # ponytail: one chat, multiple open questions -> oldest wins; needs a
+        # structural reply-reference (replyToId/messageReference) to disambiguate
+        # — backlog #4. Fine while a chat holds one open question at a time.
+        addr = parseaddr(reply_from or "")[1].lower()
+        async with self._pool.acquire() as con:
+            row = await con.fetchrow(f"""
+                UPDATE {_q(self._schema,'mail_waits')} SET status='matched'
+                WHERE token = (
+                    SELECT token FROM {_q(self._schema,'mail_waits')}
+                    WHERE conversation_id=$1 AND status='waiting' AND interrupt_id IS NOT NULL
+                      AND (expected_from IS NULL
+                           OR $2 = ANY(string_to_array(lower(expected_from), ',')))
+                    ORDER BY created_at ASC
+                    LIMIT 1
+                    FOR UPDATE SKIP LOCKED
+                )
+                RETURNING *
+            """, conversation_id, addr)
+        return dict(row) if row else None
+
+    async def open_chat_waits(self) -> List[dict]:
+        """Every Teams wait that is open AND deliverable, for the backend poller.
+        conversation_id is set once the message is sent (so the chat is known)
+        and interrupt_id once the step parks (so there is something to resume) —
+        both are required before a reply could be delivered, so both gate the
+        list. A claimed wait flips to 'matched' and drops off here, which is what
+        stops the poll for it."""
+        async with self._pool.acquire() as con:
+            rows = await con.fetch(f"""
+                SELECT session_id, user_id, conversation_id
+                FROM {_q(self._schema,'mail_waits')}
+                WHERE status='waiting' AND conversation_id IS NOT NULL
+                  AND interrupt_id IS NOT NULL
+            """)
+        return [dict(r) for r in rows]
 
     async def cancel_mail_waits(self, session_id: str) -> None:
         """Drop this session's outstanding waits — it stopped or finished, so no

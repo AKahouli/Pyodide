@@ -1,6 +1,6 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ChevronLeft, ChevronRight, Layers, Loader2, Plus, Trash2, X } from 'lucide-react';
+import { AlertCircle, ChevronLeft, ChevronRight, Layers, Loader2, Plus, RefreshCw, Trash2, X } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import {
@@ -21,9 +21,11 @@ import {
 import { WorkspaceHubOverview } from './hub/WorkspaceHubOverview';
 import { WorkspaceHubFilters } from './hub/WorkspaceHubFilters';
 import { WorkspaceHubGrid } from './hub/WorkspaceHubGrid';
+import { useModuleTranslation } from '@/modules/localization';
 
 export function WorkspaceHubPage() {
   const navigate = useNavigate();
+  const { t } = useModuleTranslation('workspace');
   const fetchWorkspaces = useWorkspaceStore((s) => s.fetchWorkspaces);
   const fetchSharedWorkspaces = useWorkspaceStore((s) => s.fetchSharedWorkspaces);
   const fetchPublicWorkspaces = useWorkspaceStore((s) => s.fetchPublicWorkspaces);
@@ -37,6 +39,8 @@ export function WorkspaceHubPage() {
   const filters = useWorkspaceHubFilters();
   const minePageSize = 9;
   const [minePage, setMinePage] = useState(1);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [loadAttempt, setLoadAttempt] = useState(0);
 
   const mineTotalPages = Math.max(1, Math.ceil(filters.filteredGroups.mine.length / minePageSize));
 
@@ -51,67 +55,72 @@ export function WorkspaceHubPage() {
   const [deletingWorkspace, setDeletingWorkspace] = useState<WorkspaceHubItem | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
 
-  useEffect(() => {
-    let cancelled = false;
+  const loadAllPages = useCallback(async (isCancelled: () => boolean) => {
+    setLoadError(null);
 
-    const loadAllPages = async () => {
+    const fetchPage = async (fetch: () => Promise<void>) => {
+      useWorkspaceStore.setState({ error: null });
+      await fetch();
+      const error = useWorkspaceStore.getState().error;
+      if (error) throw new Error(error);
+    };
+
+    try {
       // Owned workspaces
-      // The store injects personal workspace into each fetched page, so we
-      // stop based on the *non-personal* (mine) count.
+      // The store injects personal workspace into each fetched page, so stop
+      // based on the non-personal count.
       let page = 1;
       const MAX_PAGES = 50;
       // eslint-disable-next-line no-constant-condition
       while (true) {
-        if (cancelled) return;
-        if (page > MAX_PAGES) return;
+        if (isCancelled() || page > MAX_PAGES) return;
 
-        await fetchWorkspaces(page);
+        await fetchPage(() => fetchWorkspaces(page));
 
         const state = useWorkspaceStore.getState();
         const pageItems = state.workspaces.get(page) ?? [];
-        const mineCount = pageItems.filter((w) => !w.isPersonal).length;
-
-        // Once we reached an empty "mine" page beyond page 1,
-        // additional pages are guaranteed to be empty too.
+        const mineCount = pageItems.filter((workspace) => !workspace.isPersonal).length;
         if (page > 1 && mineCount === 0) break;
         page += 1;
       }
 
-      // Shared workspaces
       page = 1;
       // eslint-disable-next-line no-constant-condition
       while (true) {
-        if (cancelled) return;
-        if (page > MAX_PAGES) return;
+        if (isCancelled() || page > MAX_PAGES) return;
 
-        await fetchSharedWorkspaces(page);
-        const state = useWorkspaceStore.getState();
-        const pageItems = state.sharedWorkspaces.get(page) ?? [];
+        await fetchPage(() => fetchSharedWorkspaces(page));
+        const pageItems = useWorkspaceStore.getState().sharedWorkspaces.get(page) ?? [];
         if (page > 1 && pageItems.length === 0) break;
         page += 1;
       }
 
-      // Public workspaces
       page = 1;
       // eslint-disable-next-line no-constant-condition
       while (true) {
-        if (cancelled) return;
-        if (page > MAX_PAGES) return;
+        if (isCancelled() || page > MAX_PAGES) return;
 
-        await fetchPublicWorkspaces(page);
-        const state = useWorkspaceStore.getState();
-        const pageItems = state.publicWorkspaces.get(page) ?? [];
+        await fetchPage(() => fetchPublicWorkspaces(page));
+        const pageItems = useWorkspaceStore.getState().publicWorkspaces.get(page) ?? [];
         if (page > 1 && pageItems.length === 0) break;
         page += 1;
       }
-    };
+    } catch (error) {
+      if (!isCancelled()) {
+        setLoadError(error instanceof Error ? error.message : t('hub.error.description'));
+      }
+    }
+  }, [fetchPublicWorkspaces, fetchSharedWorkspaces, fetchWorkspaces, t]);
 
-    void loadAllPages();
+  useEffect(() => {
+    let cancelled = false;
+
+    void loadAllPages(() => cancelled);
 
     return () => {
       cancelled = true;
     };
-  }, [fetchWorkspaces, fetchSharedWorkspaces, fetchPublicWorkspaces]);
+  }, [loadAllPages, loadAttempt]);
 
   const handleOpen = (id: string) => navigate(`/workspace/${id}`);
 
@@ -149,21 +158,17 @@ export function WorkspaceHubPage() {
       <header className="relative border-b border-border/60 px-6 pb-6 pt-8 sm:px-10 sm:pb-8 sm:pt-10">
         <div className="mx-auto flex max-w-6xl flex-wrap items-end justify-between gap-6">
           <div className="min-w-0">
-            <div className="mb-3 inline-flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
-              <Layers className="h-3 w-3" />
-              Workspaces
-            </div>
             <h1 className="text-3xl font-semibold tracking-tight sm:text-4xl">
-              Mes workspaces
+              {t('hub.title')}
             </h1>
             <p className="mt-2 max-w-xl text-sm text-muted-foreground">
-              Organisez, classez et indexez vos documents au sein de vos workspaces.
+              {t('hub.description')}
             </p>
           </div>
           <div className="flex flex-shrink-0 items-center gap-2">
             <Button onClick={() => openCreateModal()} className="shadow-sm">
               <Plus className="mr-1.5 h-4 w-4" />
-              Nouveau workspace
+              {t('hub.create')}
             </Button>
           </div>
         </div>
@@ -193,8 +198,7 @@ export function WorkspaceHubPage() {
           {showMinePagination && (
             <div className="flex items-center justify-between rounded-xl border border-border/60 bg-card/40 p-2">
               <div className="text-sm text-muted-foreground">
-                Mes workspaces - Page <span className="font-semibold text-foreground">{minePage}</span> /{' '}
-                <span className="font-semibold text-foreground">{mineTotalPages}</span>
+                {t('hub.pagination.label', { current: minePage, total: mineTotalPages })}
               </div>
               <div className="flex items-center gap-2">
                 <Button
@@ -205,7 +209,7 @@ export function WorkspaceHubPage() {
                   className="gap-2"
                 >
                   <ChevronLeft className="h-4 w-4" />
-                  Prev
+                  {t('hub.pagination.previous')}
                 </Button>
                 <Button
                   variant="outline"
@@ -214,7 +218,7 @@ export function WorkspaceHubPage() {
                   onClick={() => setMinePage((p) => Math.min(mineTotalPages, p + 1))}
                   className="gap-2"
                 >
-                  Next
+                  {t('hub.pagination.next')}
                   <ChevronRight className="h-4 w-4" />
                 </Button>
               </div>
@@ -222,8 +226,21 @@ export function WorkspaceHubPage() {
           )}
 
           {showInitialLoader ? (
-            <div className="flex items-center justify-center py-24">
+            <div className="flex items-center justify-center gap-3 py-24 text-sm text-muted-foreground" role="status">
               <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+              {t('hub.loading')}
+            </div>
+          ) : loadError ? (
+            <div className="flex flex-col items-center justify-center gap-4 rounded-xl border border-border/70 py-16 text-center" role="alert">
+              <AlertCircle className="h-8 w-8 text-destructive" />
+              <div className="max-w-md">
+                <h2 className="font-semibold">{t('hub.error.title')}</h2>
+                <p className="mt-1 text-sm leading-6 text-muted-foreground">{t('hub.error.description')}</p>
+              </div>
+              <Button variant="outline" onClick={() => setLoadAttempt((attempt) => attempt + 1)}>
+                <RefreshCw className="mr-2 h-4 w-4" />
+                {t('hub.error.retry')}
+              </Button>
             </div>
           ) : filters.isEmpty ? (
             <div className="flex flex-col items-center justify-center gap-4 rounded-xl border border-dashed border-border/70 py-20 text-center">
@@ -232,18 +249,18 @@ export function WorkspaceHubPage() {
               </div>
               <p className="max-w-sm text-sm text-muted-foreground">
                 {filters.hasActiveFilters
-                  ? 'Aucun workspace ne correspond à votre recherche.'
-                  : "Vous n'avez pas encore de workspace. Créez-en un pour commencer."}
+                  ? t('hub.empty.filtered')
+                  : t('hub.empty.initial')}
               </p>
               {filters.hasActiveFilters ? (
                 <Button variant="outline" size="sm" onClick={filters.clearAll}>
                   <X className="mr-1.5 h-3.5 w-3.5" />
-                  Effacer les filtres
+                  {t('hub.filters.clearAll')}
                 </Button>
               ) : (
                 <Button size="sm" onClick={() => openCreateModal()}>
                   <Plus className="mr-1.5 h-4 w-4" />
-                  Nouveau workspace
+                  {t('hub.create')}
                 </Button>
               )}
             </div>
@@ -274,16 +291,16 @@ export function WorkspaceHubPage() {
       >
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Supprimer le workspace</AlertDialogTitle>
+            <AlertDialogTitle>{t('hub.delete.title')}</AlertDialogTitle>
             <AlertDialogDescription>
-              Voulez-vous vraiment supprimer définitivement{' '}
-              <strong>{deletingWorkspace?.name}</strong> ainsi que ses{' '}
-              {deletingWorkspace?.documentCount ?? 0} document(s) ? Cette action est
-              irréversible.
+              {t(`hub.delete.description_${(deletingWorkspace?.documentCount ?? 0) === 1 ? 'one' : 'other'}`, {
+                name: deletingWorkspace?.name ?? '',
+                count: deletingWorkspace?.documentCount ?? 0,
+              })}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel disabled={isDeleting}>Annuler</AlertDialogCancel>
+            <AlertDialogCancel disabled={isDeleting}>{t('hub.delete.cancel')}</AlertDialogCancel>
             <AlertDialogAction
               onClick={(e) => {
                 e.preventDefault();
@@ -297,7 +314,7 @@ export function WorkspaceHubPage() {
               ) : (
                 <Trash2 className="mr-2 h-4 w-4" />
               )}
-              Supprimer
+              {isDeleting ? t('hub.delete.deleting') : t('hub.delete.confirm')}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

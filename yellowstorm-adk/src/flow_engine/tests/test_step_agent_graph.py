@@ -9,11 +9,22 @@ from langgraph.types import Command
 from pydantic import BaseModel
 
 from src.flow_engine.agent_runtime import StepRuntimeContext, run_step_agent
-from src.flow_engine.agent_runtime.tool_wrapper import tool_request_fingerprint
+from src.flow_engine.agent_runtime.tool_results import MCP_CONTENT_PARTS_KEY
+from src.flow_engine.agent_runtime.tool_wrapper import _normalize_tool_args, tool_request_fingerprint
+from src.flow_engine.observability.trace_collector import TraceCollector
 
 
 class EchoInput(BaseModel):
     value: str
+
+
+class PathInput(BaseModel):
+    path: str
+    pattern: str
+
+
+class SecretInput(BaseModel):
+    authorization: str
 
 
 class Response:
@@ -85,6 +96,59 @@ async def test_step_agent_routes_model_tool_model(monkeypatch) -> None:
     assert len(calls) == 2
     assert calls[0]["parallel_tool_calls"] is False
     assert any(message.get("role") == "tool" and "echo:hello" in str(message.get("content")) for message in calls[1]["messages"])
+
+
+@pytest.mark.asyncio
+async def test_step_agent_allows_tool_rounds_beyond_default_recursion_limit(monkeypatch) -> None:
+    calls = []
+
+    async def completion(**kwargs):
+        calls.append(kwargs)
+        if len(calls) <= 13:
+            return Response("", [{"id": f"call-{len(calls)}", "function": {"name": "echo", "arguments": '{"value":"hello"}'}}])
+        return Response("final answer")
+
+    async def echo(value: str) -> str:
+        return f"echo:{value}"
+
+    monkeypatch.setattr("src.flow_engine.agent_runtime.model.litellm.acompletion", completion)
+    tool = StructuredTool(name="echo", description="Echo", func=None, coroutine=echo, args_schema=EchoInput)
+    output = await run_step_agent(
+        system_prompt="system",
+        user_msg="user",
+        tools=[tool],
+        context=StepRuntimeContext(model_id="test", tools_enabled=True, max_tool_iterations=20),
+    )
+
+    assert output == "final answer"
+    assert len(calls) == 14
+
+
+@pytest.mark.asyncio
+async def test_step_agent_counts_vision_tool_rounds_toward_limit(monkeypatch) -> None:
+    calls = []
+
+    async def completion(**kwargs):
+        calls.append(kwargs)
+        return Response("", [{"id": f"call-{len(calls)}", "function": {"name": "vision", "arguments": '{"value":"image"}'}}])
+
+    async def vision(value: str) -> dict:
+        return {
+            "content": value,
+            MCP_CONTENT_PARTS_KEY: [{"type": "image", "data": "aW1hZ2U=", "mimeType": "image/png"}],
+        }
+
+    monkeypatch.setattr("src.flow_engine.agent_runtime.model.litellm.acompletion", completion)
+    tool = StructuredTool(name="vision", description="Vision", func=None, coroutine=vision, args_schema=EchoInput)
+    output = await run_step_agent(
+        system_prompt="system",
+        user_msg="user",
+        tools=[tool],
+        context=StepRuntimeContext(model_id="test", tools_enabled=True, max_tool_iterations=3),
+    )
+
+    assert output == "Max tool iterations reached without a final response"
+    assert len(calls) == 3
 
 
 @pytest.mark.asyncio
@@ -209,6 +273,47 @@ def test_parallel_tool_calls_have_independent_request_fingerprints() -> None:
     sibling = tool_request_fingerprint({"id": "call-2", "name": "search", "args": {"q": "one"}}, metadata, context)
     changed = tool_request_fingerprint({"id": "call-1", "name": "search", "args": {"q": "two"}}, metadata, context)
     assert len({first, sibling, changed}) == 3
+
+
+def test_tool_args_unwrap_model_generated_params_for_flat_schema() -> None:
+    tool = StructuredTool(
+        name="file_find",
+        description="Find files",
+        func=lambda path, pattern: f"{path}:{pattern}",
+        args_schema=PathInput,
+    )
+
+    assert _normalize_tool_args(tool, {"params": {"path": "/mnt/workspace", "pattern": "*.docx"}}) == {
+        "path": "/mnt/workspace",
+        "pattern": "*.docx",
+    }
+
+
+@pytest.mark.asyncio
+async def test_tool_wrapper_records_raw_arguments_for_backend_policy(monkeypatch) -> None:
+    responses = [
+        Response("", [{"id": "call-1", "function": {"name": "request", "arguments": '{"authorization":"Bearer abc"}'}}]),
+        Response("complete"),
+    ]
+
+    async def completion(**_kwargs):
+        return responses.pop(0)
+
+    async def request(authorization: str) -> str:
+        return authorization
+
+    monkeypatch.setattr("src.flow_engine.agent_runtime.model.litellm.acompletion", completion)
+    collector = TraceCollector()
+    tool = StructuredTool(name="request", description="Request", func=None, coroutine=request, args_schema=SecretInput)
+
+    await run_step_agent(
+        system_prompt="system",
+        user_msg="user",
+        tools=[tool],
+        context=StepRuntimeContext(model_id="test", tools_enabled=True, trace_collector=collector),
+    )
+
+    assert collector.build_payload()["tool_trace"][0]["args"] == {"authorization": "Bearer abc"}
 
 
 @pytest.mark.asyncio

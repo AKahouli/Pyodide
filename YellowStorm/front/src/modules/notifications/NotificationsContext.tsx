@@ -4,6 +4,7 @@
 
 import * as React from 'react';
 import { useAuth } from '@/modules/auth';
+import { isPendingAdminApproval } from '@/modules/auth/utils/isPendingAdminApproval';
 import { notificationsService, tNotification } from './NotificationsService';
 import * as notificationsApi from './api';
 import { toast } from 'sonner';
@@ -103,7 +104,7 @@ export function NotificationsProvider({
 
   // Subscribe to notification service
   React.useEffect(() => {
-    if (!isAuthenticated || !user) {
+    if (!isAuthenticated || !user || isPendingAdminApproval(user)) {
       notificationsService.disconnect();
       setState({
         notifications: [],
@@ -129,7 +130,7 @@ export function NotificationsProvider({
       unsubscribe();
       notificationsService.disconnect();
     };
-  }, [isAuthenticated, user?.id, handleNotificationEvent]);
+  }, [isAuthenticated, user?.id, user?.status, handleNotificationEvent]);
 
   // Fetch notifications
   const fetchNotifications = async () => {

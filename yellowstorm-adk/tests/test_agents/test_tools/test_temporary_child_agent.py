@@ -25,7 +25,6 @@ class _DelegationFactory:
         agent_name,
         normalized_agent_name,
         expected_output,
-        delegation_span,
         search_web,
         citation_manager,
     ):
@@ -39,7 +38,6 @@ class _DelegationFactory:
         task_description,
         expected_output,
         task_order,
-        delegation_span,
         q,
         agent_name,
         agent_id="no_id",
@@ -74,7 +72,7 @@ async def test_temporary_child_agent_tool_inherits_parent_runtime_config():
         },
     }
     team = _Team()
-    tool = make_temporary_child_agent_tool(team, parent_config, parent_span=None)
+    tool = make_temporary_child_agent_tool(team, parent_config)
     parent_config["agent_params"]["guardrails_json"] = "{}"
 
     result = await tool("Find the deadline", "Return cited facts")
@@ -171,7 +169,7 @@ async def test_child_result_queue_forwards_only_tool_activity():
             forwarded.append(item)
 
     queue = _ChildResultQueue(ActivityQueue())
-    tool_event = {"action": "add", "component": {"id": "tool-child-call", "type": "tool_info", "data": {"title": "search"}}}
+    tool_event = {"action": "add", "component": {"id": "tool-child-call", "type": "tool_activity", "data": {"title": "search"}}}
     await queue.put(tool_event)
     await queue.put({"action": "add", "component": {"id": "text", "type": "text", "data": {"content": "private child text"}}})
 
@@ -189,7 +187,7 @@ async def test_temporary_child_agent_tool_uses_default_for_invalid_limit():
             "max_temporary_child_agents": "invalid",
         },
     }
-    tool = make_temporary_child_agent_tool(_Team(), parent_config, parent_span=None)
+    tool = make_temporary_child_agent_tool(_Team(), parent_config)
 
     result = await tool("Find the deadline")
 

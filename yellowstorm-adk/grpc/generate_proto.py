@@ -27,6 +27,7 @@ OUTPUT_DIR = PROJECT_ROOT / "src" / "grpc_generated"
 PROTO_FILE = PROTO_DIR / "chatbot.proto"
 # A2A admin management RPCs (imports chatbot.proto for the Agent message).
 A2A_ADMIN_PROTO = PROTO_DIR / "a2a_admin.proto"
+PLAYBOOK_FLOW_PROTO = PROTO_DIR / "playbook-flow.proto"
 
 
 def main():
@@ -57,6 +58,7 @@ def main():
         f"--grpc_python_out={OUTPUT_DIR}",
         str(PROTO_FILE),
         str(A2A_ADMIN_PROTO),
+        str(PLAYBOOK_FLOW_PROTO),
     ]
 
     print("\n" + "=" * 60)
@@ -66,7 +68,7 @@ def main():
 
     try:
         # Run protoc
-        result = subprocess.run(
+        subprocess.run(
             cmd,
             check=True,
             capture_output=True,
@@ -80,6 +82,8 @@ def main():
         generated_files = [
             OUTPUT_DIR / "chatbot_pb2.py",
             OUTPUT_DIR / "chatbot_pb2_grpc.py"
+            , OUTPUT_DIR / "playbook_flow_pb2.py"
+            , OUTPUT_DIR / "playbook_flow_pb2_grpc.py"
         ]
 
         print("\n" + "=" * 60)
@@ -131,6 +135,7 @@ _ALLOWED_FILENAMES = {
     "chatbot_pb2.py",
     "chatbot_pb2_grpc.py",
     "playbook_flow_pb2_grpc.py",
+    "playbook_flow_pb2.py",
     "a2a_admin_pb2.py",
     "a2a_admin_pb2_grpc.py",
 }

@@ -41,6 +41,27 @@ describe('WorkyTaskService.projectForBoard', () => {
     expect((lanes.ready[0] as { assigneeKey?: string | null }).assigneeKey).toBeNull();
   });
 
+  it('projects semantic and cached delegation fields with safe defaults', async () => {
+    const service = makeService([
+      {
+        _id: new Types.ObjectId(), streamId, title: 'Ask', lane: 'blocked', kind: 'ask',
+        question: 'Which market?', interruptId: 'ask:1', assigneeName: 'Emmanuel',
+        assigneeRole: 'Senior Business', isPersona: true, isDynamicDelegate: true,
+      },
+      { _id: new Types.ObjectId(), streamId, title: 'Legacy', lane: 'ready' },
+    ]);
+    const lanes = await service.projectForBoard(streamId, new Map());
+    expect(lanes.blocked[0]).toMatchObject({
+      kind: 'ask', question: 'Which market?', interruptId: 'ask:1',
+      assigneeName: 'Emmanuel', assigneeRole: 'Senior Business',
+      isPersona: true, isDynamicDelegate: true,
+    });
+    expect(lanes.ready[0]).toMatchObject({
+      kind: 'execute', question: null, interruptId: null,
+      assigneeName: null, assigneeRole: null, isPersona: false, isDynamicDelegate: false,
+    });
+  });
+
   // Terminal lanes must stay on the board so a stopped/failed run shows its
   // canceled/failed tasks instead of the tasks silently vanishing. The status
   // itself comes from the API via Electric; we only surface it.

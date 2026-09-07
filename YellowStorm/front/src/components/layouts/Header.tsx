@@ -155,7 +155,7 @@ export function Header() {
               <DropdownMenuContent className='w-56' align='end' forceMount>
                 <DropdownMenuLabel className='font-normal'>
                   <div className='flex flex-col space-y-1'>
-                    <p className='text-sm font-medium leading-none'>YellowMind</p>
+                    <p className='text-sm font-medium leading-none'>Yellowmind</p>
                     <p className='text-xs leading-none text-muted-backgroubnd'>yellowmind@yellowsys.fr</p>
                   </div>
                 </DropdownMenuLabel>

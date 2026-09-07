@@ -89,6 +89,7 @@ coverage.xml
 *.py,cover
 .hypothesis/
 .pytest_cache/
+/test.db
 cover/
 
 ############################
@@ -167,3 +168,4 @@ Thumbs.db
 
 # gRPC TLS material — never commit private keys
 grpc/certs/
+$/

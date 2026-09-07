@@ -1,5 +1,6 @@
 """Unit tests for OrchestratorService pure helpers (no ADK/DB/LLM)."""
 import asyncio
+import json
 import os
 import sys
 from unittest.mock import AsyncMock, MagicMock
@@ -10,6 +11,29 @@ import pytest
 
 from src.companion_ai import scheduler, service as svc
 from src.companion_ai.plan import Plan, Status, Step
+
+
+@pytest.mark.asyncio
+async def test_add_message_projects_active_turn_id():
+    rm = MagicMock(add_message=AsyncMock())
+    service = svc.OrchestratorService(MagicMock(), rm, planner_model="m")
+    token = svc.active_turn_id.set("turn-1")
+    try:
+        await service._add_message("session-1", "assistant", "done")
+    finally:
+        svc.active_turn_id.reset(token)
+
+    args = rm.add_message.await_args.args
+    assert args[1:] == ("session-1", "assistant", "done", "turn-1")
+
+
+@pytest.mark.asyncio
+async def test_add_message_propagates_projection_failure():
+    rm = MagicMock(add_message=AsyncMock(side_effect=RuntimeError("database unavailable")))
+    service = svc.OrchestratorService(MagicMock(), rm, planner_model="m")
+
+    with pytest.raises(RuntimeError, match="database unavailable"):
+        await service._add_message("session-1", "assistant", "done")
 
 
 def test_make_plan_extracts_a_plan_when_output_schema_is_combined_with_tools(monkeypatch):
@@ -71,6 +95,54 @@ def test_make_plan_extracts_a_plan_when_output_schema_is_combined_with_tools(mon
     assert [s.id for s in plan.steps] == ["s1", "s2"]
     assert plan.steps[1].assignee_name == "Rabeb"
     assert plan.steps[1].assignee == "rabeb"
+
+
+def _planner_service(monkeypatch, responses):
+    class FakeRunner:
+        def __init__(self):
+            self.session_service = MagicMock(
+                get_session=AsyncMock(return_value=object()),
+                create_session=AsyncMock(),
+            )
+            self.messages = []
+
+        async def run_async(self, **kwargs):
+            self.messages.append(kwargs["new_message"].parts[0].text)
+            event = MagicMock()
+            event.content.parts = [MagicMock(text=json.dumps(responses[len(self.messages) - 1]))]
+            yield event
+
+    runner = FakeRunner()
+    monkeypatch.setattr(svc.nodes, "build_llm", lambda *a, **k: "fake")
+    return svc.OrchestratorService(lambda node, app_name: runner, None, planner_model="fake"), runner
+
+
+def test_make_plan_retries_duplicate_ids_with_a_complete_replacement(monkeypatch):
+    invalid = {"title": "t", "steps": [
+        {"id": "s1", "description": "first"},
+        {"id": "s1", "description": "second", "depends_on": ["s1"]},
+    ]}
+    corrected = {"title": "t", "steps": [
+        {"id": "s1", "description": "first"},
+        {"id": "s2", "description": "second", "depends_on": ["s1"]},
+    ]}
+    service, runner = _planner_service(monkeypatch, [invalid, corrected])
+
+    plan = asyncio.run(service._make_plan("sess", "user", "do work"))
+
+    assert [step.id for step in plan.steps] == ["s1", "s2"]
+    assert len(runner.messages) == 2
+    assert "Every step id must be unique" in runner.messages[1]
+
+
+def test_make_plan_stops_after_one_invalid_correction(monkeypatch):
+    duplicate = {"title": "t", "steps": [{"id": "s1"}, {"id": "s1"}]}
+    service, runner = _planner_service(monkeypatch, [duplicate, duplicate])
+
+    with pytest.raises(ValueError, match="duplicate step ids"):
+        asyncio.run(service._make_plan("sess", "user", "do work"))
+
+    assert len(runner.messages) == 2
 
 
 def test_step_row_shows_the_personas_display_name_before_it_runs():
@@ -1088,6 +1160,22 @@ async def test_inject_steps_registers_a_mail_wait_for_injected_await_reply():
     assert kw["session_id"] == "sess" and kw["step_id"] == live.steps[-1].id
 
 
+async def test_inject_steps_rejects_duplicate_ids_before_mutating_live_plan():
+    rm = MagicMock(upsert_steps=AsyncMock(), register_mail_wait=AsyncMock())
+    service = svc.OrchestratorService(MagicMock(), rm, planner_model="m")
+    original = Step(id="s1", kind="execute", status=Status.RUNNING, wave=3)
+    live = Plan(id="p", executor_id="e", executor_name="W", steps=[original])
+    new = [Step(id="n", description="first"), Step(id="n", description="second")]
+
+    with pytest.raises(ValueError, match="duplicate step ids"):
+        await service._inject_steps("sess", "u", live, new)
+
+    assert live.steps == [original]
+    assert original.wave == 3
+    rm.upsert_steps.assert_not_awaited()
+    rm.register_mail_wait.assert_not_awaited()
+
+
 async def test_apply_ops_cancel_persists_status_via_set_step_status():
     """A cancel op must persist through set_step_status — upsert_steps (what
     _project_step uses) does NOT touch `status` on conflict, so projecting a
@@ -1438,3 +1526,45 @@ def test_with_requester_appends_but_preserves_the_base_prompt():
     assert out.startswith("BASE\n\n") and "r@x.fr" in out
     # no base prompt -> just the context
     assert svc._with_requester(None, {"email": "r@x.fr"}).startswith("You are working for")
+
+
+async def test_concurrent_amends_on_one_session_are_serialized():
+    """Two 'update the plan' messages racing on the same session must NOT plan
+    concurrently: the per-session lock serializes them so the second plans
+    against the first's already-applied steps, not the same stale snapshot.
+    Without the lock both would enter _make_plan at once (max_concurrent == 2)."""
+    rm = MagicMock(upsert_steps=AsyncMock(), set_step_status=AsyncMock(),
+                   register_mail_wait=AsyncMock())
+    service = svc.OrchestratorService(MagicMock(), rm, planner_model="m")
+    live = Plan(id="p", title="t", executor_id="e", executor_name="W",
+                steps=[Step(id="s1", kind="execute", status=Status.RUNNING)])
+    service._active["sess"] = live
+    service._add_message = AsyncMock()
+
+    inside = 0
+    max_concurrent = 0
+    seen_steps_at_plan = []
+
+    async def fake_make_plan(session_id, user_id, message, **kw):
+        nonlocal inside, max_concurrent
+        inside += 1
+        max_concurrent = max(max_concurrent, inside)
+        # how many steps the live plan already has when THIS amend plans
+        seen_steps_at_plan.append(len(service._active["sess"].steps))
+        await asyncio.sleep(0)            # yield: a second coroutine runs here if unlocked
+        await asyncio.sleep(0)
+        inside -= 1
+        return Plan(id="x", steps=[Step(id="n", kind="execute", description="added")])
+
+    service._make_plan = fake_make_plan
+
+    await asyncio.gather(
+        service.converse_turn(session_id="sess", user_id="u", message="A"),
+        service.converse_turn(session_id="sess", user_id="u", message="B"),
+    )
+
+    assert max_concurrent == 1                 # never overlapped -> serialized
+    assert len(live.steps) == 3                # both amends applied (1 orig + 2 injected)
+    # The second amend planned AFTER the first applied its step, so it saw a
+    # bigger plan — proof it wasn't working from the same stale snapshot.
+    assert seen_steps_at_plan == [1, 2]

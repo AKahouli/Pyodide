@@ -42,6 +42,13 @@ export const configValidationSchema = Joi.object({
   POSTGRES_MAX_POOL_SIZE: Joi.number().min(1).max(100).default(10),
   POSTGRES_IDLE_TIMEOUT: Joi.number().min(0).default(30000),
   POSTGRES_CONNECT_TIMEOUT: Joi.number().min(1000).default(10000),
+  POSTGRES_STATEMENT_TIMEOUT: Joi.number().min(1000).max(300000).default(30000),
+  POSTGRES_IDLE_IN_TRANSACTION_TIMEOUT: Joi.number().min(1000).max(300000).default(30000),
+  POSTGRES_KEEPALIVE: Joi.boolean().default(true),
+  REPLICA_ID: Joi.string().max(100).optional(),
+  CONVERSATION_MAX_CLONE_MESSAGES: Joi.number().min(1).max(10000).default(2000),
+  CONVERSATION_MAX_PRIVATE_SHARE_RECIPIENTS: Joi.number().min(1).max(20).default(20),
+  CONVERSATION_CLONE_INSERT_BATCH_SIZE: Joi.number().min(1).max(1000).default(250),
 
   // Semantic Model PostgreSQL / Apache AGE
   SEMANTIC_MODELS_ENABLED: Joi.boolean().default(false),
@@ -78,11 +85,14 @@ export const configValidationSchema = Joi.object({
   SEMANTIC_MODEL_MAPPING_TIMEOUT_MS: Joi.number().min(0).max(7200000).default(0),
 
   // Encryption
-  ENCRYPTION_KEY: Joi.string().hex().length(64).when('NODE_ENV', {
-    is: 'production',
-    then: Joi.required(),
-    otherwise: Joi.optional().allow(''),
-  }),
+  ENCRYPTION_KEY: Joi.string()
+    .hex()
+    .length(64)
+    .when('NODE_ENV', {
+      is: 'production',
+      then: Joi.required(),
+      otherwise: Joi.optional().allow(''),
+    }),
 
   // AI Service
   AI_SERVICE_URL: Joi.string().uri().optional(),
@@ -289,8 +299,8 @@ export const configValidationSchema = Joi.object({
   LITELLM_API_URL: Joi.string().uri().optional(),
   LITELLM_API_KEY: Joi.string().optional(),
   LITELLM_TIMEOUT_MS: Joi.number().min(1000).max(60000).default(10000),
-  EMBEDDING_MODEL: Joi.string().default('text-embedding-3-large'),
-  EMBEDDING_DIMENSION: Joi.number().default(3072),
+  EMBEDDING_MODEL: Joi.string().default('qwen3-embedding'),
+  EMBEDDING_DIMENSION: Joi.number().default(2560),
   LITELLM_HEALTH_CHECK_ENABLED: Joi.boolean().default(true),
   LITELLM_HEALTH_CHECK_INTERVAL_MS: Joi.number().min(10000).max(3600000).default(60000),
   LITELLM_RECONNECT_ENABLED: Joi.boolean().default(true),
@@ -312,6 +322,11 @@ export const configValidationSchema = Joi.object({
   PLAYBOOK_RECURSION_LIMIT_MAX: Joi.number().min(1).max(500).default(50),
   PLAYBOOK_PYTHON_WORKER_POOL_SIZE: Joi.number().min(1).max(100).default(8),
   PLAYBOOK_PYTHON_WORKER_MAX_INFLIGHT: Joi.number().min(1).max(20).default(4),
+  PLAYBOOK_MAX_HITL_ROUNDS: Joi.number().min(0).max(100).default(5),
+  PLAYBOOK_MAX_TOOL_ITERATIONS: Joi.number().min(1).max(500).default(40),
+  PLAYBOOK_GRAPH_CACHE_ENABLED: Joi.boolean().default(false),
+  PLAYBOOK_GRAPH_CACHE_MAX_ENTRIES: Joi.number().min(1).max(10000).default(128),
+  PLAYBOOK_GRAPH_CACHE_TTL_SECONDS: Joi.number().min(1).max(86400).default(900),
   PLAYBOOK_IDEMPOTENCY_TTL_HOURS: Joi.number().min(1).max(168).default(24),
   PLAYBOOK_DELTA_PATCH_ENABLED: Joi.boolean().default(false),
   PLAYBOOK_BASE_READ_SPLIT_ENABLED: Joi.boolean().default(false),
@@ -335,12 +350,7 @@ export const configValidationSchema = Joi.object({
   PLAYBOOK_ASYNC_DESIGN_ENABLED: Joi.boolean().default(false),
   PLAYBOOK_MCP_ASSISTANT_ENABLED: Joi.boolean().default(false),
   PLAYBOOK_MCP_SERVER_URL: Joi.string().uri().default('http://localhost:8025/mcp'),
-  PLAYBOOK_MCP_INGRESS_TOKEN: Joi.string().allow('').when('PLAYBOOK_MCP_CONNECTOR_RECONCILIATION_ENABLED', {
-    is: true,
-    then: Joi.string().min(16).required(),
-    otherwise: Joi.string().allow('').default(''),
-  }),
-  PLAYBOOK_MCP_CONNECTOR_RECONCILIATION_ENABLED: Joi.boolean().default(false),
+  PLAYBOOK_MCP_INGRESS_TOKEN: Joi.string().allow('').default(''),
   PLAYBOOK_MAX_CONCURRENT_GLOBAL_DESIGN_OPERATIONS: Joi.number().min(1).max(100).default(10),
   PLAYBOOK_MAX_CONCURRENT_USER_DESIGN_OPERATIONS: Joi.number().min(1).max(50).default(3),
   // Telegram
@@ -363,7 +373,9 @@ export const configValidationSchema = Joi.object({
   WHATSAPP_CONNECTIVITY_PROBE_TIMEOUT_MS: Joi.number().min(1000).max(60000).default(10000),
   WHATSAPP_PROCESSING_TIMEOUT_MS: Joi.number().min(30000).max(600000).default(180000),
   WHATSAPP_MAX_INBOUND_PER_MINUTE: Joi.number().min(1).max(300).default(30),
-  WHATSAPP_FALLBACK_REPLY: Joi.string().max(500).default('I could not generate a response for this message.'),
+  WHATSAPP_FALLBACK_REPLY: Joi.string()
+    .max(500)
+    .default('I could not generate a response for this message.'),
   WHATSAPP_CIRCUIT_BREAKER_FAILURE_THRESHOLD: Joi.number().min(1).max(20).default(3),
   WHATSAPP_CIRCUIT_BREAKER_COOLDOWN_MS: Joi.number().min(5000).max(300000).default(60000),
 
@@ -378,16 +390,10 @@ export const configValidationSchema = Joi.object({
   LOGGING_MAX_POOL_SIZE: Joi.number().min(1).max(10).default(3),
   LOGGING_DISPLAY_ONLY_CONTEXTS: Joi.string().optional(),
 
-  // Worky (Chief of Staff) — Part 1
-  WORKY_RUNTIME_BASE_URL: Joi.string()
-    .uri()
-    .default('http://worky-adk-runtime:8011'),
-  WORKY_RUNTIME_TIMEOUT_MS: Joi.number().min(1000).max(300000).default(120000),
-  WORKY_SERVICE_TOKEN: Joi.string().min(8).optional(),
+  // Worky (Chief of Staff)
   WORKY_SSE_HEARTBEAT_MS: Joi.number().min(5000).max(60000).default(15000),
   WORKY_MAX_SSE_CONNECTIONS: Joi.number().min(1).max(20).default(5),
   WORKY_DEFAULT_STORAGE_BYTES: Joi.number().min(1048576).default(52428800),
-  WORKY_IDEMPOTENCY_TTL_HOURS: Joi.number().min(1).max(168).default(24),
 
   // Worky — speech-to-text via OpenRouter (OpenAI-compatible transcriptions)
   WORKY_STT_BASE_URL: Joi.string().uri().default('https://openrouter.ai/api'),
@@ -422,4 +428,16 @@ export const configValidationSchema = Joi.object({
     ),
   WORKY_VOICE_TOKEN_TTL_SEC: Joi.number().min(60).max(3600).default(1800),
   WORKY_VOICE_SESSION_START_TTL_SEC: Joi.number().min(30).max(600).default(60),
+
+  // Worky - Electric SQL projection sync
+  WORKY_ELECTRIC_URL: Joi.string().uri().default('http://electric:3000/v1/shape'),
+  ELECTRIC_SECRET: Joi.string().allow('').default(''),
+  WORKY_ELECTRIC_MESSAGES_TABLE: Joi.string().default('messages'),
+  WORKY_ELECTRIC_SESSIONS_TABLE: Joi.string().default('sessions'),
+  WORKY_ELECTRIC_PLANS_TABLE: Joi.string().default('plans'),
+  WORKY_ELECTRIC_PLAN_STEPS_TABLE: Joi.string().default('plan_steps'),
+  WORKY_ELECTRIC_MESSAGE_COMPONENTS_TABLE: Joi.string().default('message_components'),
+  WORKY_ELECTRIC_PLAN_STEP_COMPONENTS_TABLE: Joi.string().default('plan_step_components'),
+  WORKY_ELECTRIC_PLAN_STEP_ARTIFACTS_TABLE: Joi.string().default('plan_step_artifacts'),
+  WORKY_ELECTRIC_DEBUG: Joi.boolean().default(false),
 });

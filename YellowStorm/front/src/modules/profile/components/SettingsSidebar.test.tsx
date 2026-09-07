@@ -7,6 +7,10 @@ vi.mock('@/modules/localization', () => ({
   useModuleTranslation: () => ({ t: (key: string) => key }),
 }));
 
+vi.mock('@/modules/admin', () => ({
+  usePermissions: () => ({ hasPermission: () => true }),
+}));
+
 vi.mock('@/components/ui/button', () => ({
   Button: ({ children, onClick }: { children: ReactNode; onClick?: () => void }) => (
     <button type="button" onClick={onClick}>{children}</button>

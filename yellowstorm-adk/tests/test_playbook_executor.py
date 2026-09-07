@@ -542,8 +542,7 @@ class TestExecuteStepOnly:
     @pytest.mark.asyncio
     async def test_execute_step_only_success(self, executor, mock_playbook_request):
         """Test successful step execution without manager."""
-        with patch('src.smart_rag.playbook_dir.execute_step.AgentDelegationFactory') as MockFactory, \
-             patch('src.smart_rag.playbook_dir.execute_step.langfuse_client'):
+        with patch('src.smart_rag.playbook_dir.execute_step.AgentDelegationFactory') as MockFactory:
 
             # Setup mocks
             mock_delegation_factory = MagicMock()
@@ -570,8 +569,7 @@ class TestExecuteStepOnly:
     @pytest.mark.asyncio
     async def test_execute_step_only_agent_creation_failure(self, executor, mock_playbook_request):
         """Test step execution when agent creation fails."""
-        with patch('src.smart_rag.playbook_dir.execute_step.AgentDelegationFactory') as MockFactory, \
-             patch('src.smart_rag.playbook_dir.execute_step.langfuse_client'):
+        with patch('src.smart_rag.playbook_dir.execute_step.AgentDelegationFactory') as MockFactory:
 
             mock_delegation_factory = MagicMock()
             mock_delegation_factory._create_agent_with_error_handling = AsyncMock(
@@ -590,8 +588,7 @@ class TestExecuteStepOnly:
     @pytest.mark.asyncio
     async def test_execute_step_only_execution_failure(self, executor, mock_playbook_request):
         """Test step execution when agent execution fails."""
-        with patch('src.smart_rag.playbook_dir.execute_step.AgentDelegationFactory') as MockFactory, \
-             patch('src.smart_rag.playbook_dir.execute_step.langfuse_client'):
+        with patch('src.smart_rag.playbook_dir.execute_step.AgentDelegationFactory') as MockFactory:
 
             mock_delegation_factory = MagicMock()
             mock_agent = MagicMock()
@@ -621,7 +618,6 @@ class TestExecuteStepOnly:
     ):
         """Test that step replay reuses a shared citation manager for derived sessions."""
         with patch('src.smart_rag.playbook_dir.execute_step.AgentDelegationFactory') as MockFactory, \
-             patch('src.smart_rag.playbook_dir.execute_step.langfuse_client'), \
              patch('src.smart_rag.playbook_dir.execute_step.get_citation_manager', new=AsyncMock()) as mock_get_citation_manager:
 
             mock_delegation_factory = MagicMock()

@@ -184,6 +184,7 @@ export interface UpdateWorkyStreamData {
  */
 export interface SendWorkyMessageData {
   content: string;
+  turnId: string;
   managerModelId?: string;
   workerModelId?: string;
 }
@@ -194,6 +195,7 @@ export type WorkyMessageRole = 'owner' | 'manager' | 'system';
 
 export interface WorkyMessage {
   id: string;
+  turnId?: string | null;
   role: WorkyMessageRole;
   content: string;
   planDeltaRef: string | null;
@@ -207,6 +209,7 @@ export interface WorkyTask {
   streamId: string;
   /** plan_steps.step_id (Electric source) — what `dependsOnStepIds` entries refer to. */
   externalId: string | null;
+  ordinal?: number | null;
   title: string;
   description: string;
   lane: WorkyBoardLane;
@@ -217,6 +220,14 @@ export interface WorkyTask {
   assigneeId: string | null;
   /** Executor sub-agent that handled this task (Electric plan_steps.assignee). Null when unattributed. */
   assigneeKey?: string | null;
+  /** Companion step semantics. Optional while backend/frontend roll independently. */
+  kind?: string;
+  question?: string | null;
+  interruptId?: string | null;
+  assigneeName?: string | null;
+  assigneeRole?: string | null;
+  isPersona?: boolean;
+  isDynamicDelegate?: boolean;
   actionCategory: WorkyActionCategory;
   dependsOn: string[];
   /** Parallel wave index (plan_steps.wave via Electric); null outside a plan. */
@@ -270,8 +281,21 @@ export interface WorkyTaskResultContent {
 
 export interface WorkyBoardResponse {
   streamId: string;
+  plan?: WorkyPlanSummary | null;
+  session?: WorkyCompanionSessionSummary | null;
   lanes: Record<WorkyBoardLane, WorkyTask[]>;
   pendingClarifications: WorkyPendingClarification[];
+}
+
+export interface WorkyPlanSummary {
+  title: string;
+  goal: string;
+  status: string;
+}
+
+export interface WorkyCompanionSessionSummary {
+  status: string;
+  activeInterruptId: string | null;
 }
 
 export interface WorkyPendingClarification {
@@ -282,23 +306,6 @@ export interface WorkyPendingClarification {
   taskId: string | null;
   blocksTaskIds: string[];
   createdAt?: string;
-}
-
-export interface WorkyStartValidationIssue {
-  code: string;
-  message: string;
-  taskIds?: string[];
-}
-
-export type WorkyStartOutcome = 'fully_executable' | 'partially_executable' | 'globally_blocked';
-
-export interface WorkyStartValidation {
-  outcome: WorkyStartOutcome;
-  readyTaskIds: string[];
-  blockedTaskIds: string[];
-  issues: WorkyStartValidationIssue[];
-  snapshotId: string | null;
-  executionPlanVersion: number | null;
 }
 
 export type WorkyGovernanceLevel = 'off' | 'notify' | 'approval' | 'hard_block';

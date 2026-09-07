@@ -9,6 +9,7 @@ import { PlaybookFlowExecutionAdvisorService } from '../../services/advisor/play
 import { PlaybookFlowObservabilityService } from '../../services/observability/playbook-flow-observability.service';
 import { PlaybookFlowStreamEventsService } from '../../services/playbook-flow-stream-events.service';
 import { PlaybookFlowTokenBufferService } from '../../services/playbook-flow-token-buffer.service';
+import { sanitizePlaybookPublicValue } from '../../utils/playbook-artifact';
 import { fromGrpcValue } from '../grpc/grpc-struct.mapper';
 import { PlaybookExecutionNodeEventHandlerService } from './playbook-execution-node-event-handler.service';
 import { PlaybookExecutionReplayRuntimeService } from './playbook-execution-replay-runtime.service';
@@ -26,6 +27,7 @@ export interface PlaybookRunEventContext {
 @Injectable()
 export class PlaybookExecutionEventHandlerService {
   private readonly logger = new Logger(PlaybookExecutionEventHandlerService.name);
+  private fallbackNodeEventHandler?: PlaybookExecutionNodeEventHandlerService;
 
   constructor(
     @InjectModel(FlowExecution.name)
@@ -82,7 +84,8 @@ export class PlaybookExecutionEventHandlerService {
   }
 
   private getNodeHandler(): PlaybookExecutionNodeEventHandlerService {
-    return this.nodeEventHandler ?? new PlaybookExecutionNodeEventHandlerService(
+    if (this.nodeEventHandler) return this.nodeEventHandler;
+    this.fallbackNodeEventHandler ??= new PlaybookExecutionNodeEventHandlerService(
       this.executionModel,
       this.taskResultModel,
       this.streamEvents,
@@ -91,6 +94,7 @@ export class PlaybookExecutionEventHandlerService {
       this.replayRuntime,
       this.tokenBufferService,
     );
+    return this.fallbackNodeEventHandler;
   }
 
   private async handleRouterDecision(
@@ -179,6 +183,17 @@ export class PlaybookExecutionEventHandlerService {
   private async handleExecutionCompleted(context: PlaybookRunEventContext): Promise<void> {
     const { executionId } = context;
     await this.tokenBufferService?.flushExecution(executionId);
+    this.getNodeHandler().discardExecutionTokens(executionId);
+    const failedTask = await this.taskResultModel
+      .findOne({ executionId, status: 'failed' })
+      .sort({ endedAt: -1 })
+      .lean();
+    if (failedTask) {
+      await this.handleExecutionFailed(context, {
+        error: failedTask.error || 'Execution failed because a task failed',
+      });
+      return;
+    }
     const result = await this.executionModel
       .updateOne(
         { _id: executionId, status: { $nin: TERMINAL_STATUSES as unknown as string[] } },
@@ -201,7 +216,8 @@ export class PlaybookExecutionEventHandlerService {
   ): Promise<void> {
     const { executionId } = context;
     await this.tokenBufferService?.flushExecution(executionId);
-    const errorMessage = String(payload.error || 'Execution failed');
+    this.getNodeHandler().discardExecutionTokens(executionId);
+    const errorMessage = String(sanitizePlaybookPublicValue(payload.error || 'Execution failed'));
     const result = await this.executionModel
       .updateOne(
         { _id: executionId, status: { $nin: TERMINAL_STATUSES as unknown as string[] } },

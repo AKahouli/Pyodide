@@ -216,31 +216,6 @@ describe('PlaybookFlowReplayPromptService', () => {
     expect(flexResult).not.toContain('Preserve the validated tool order.');
   });
 
-  it('returns empty prompt when eligibility says replay is not applied', () => {
-    const artifacts = makeArtifacts({
-      behaviorBaseline: {
-        decisionInvariants: ['Verify evidence before answer.'],
-        qualityChecks: [],
-        knownFailureModes: [],
-        behaviorSummary: '',
-      },
-    });
-
-    const result = service.buildReplayPromptSection({
-      artifacts,
-      eligibility: {
-        applied: false,
-        confidenceScore: 20,
-        confidenceFactors: {},
-        invalidationReasons: ['node_snapshot_mismatch'],
-        appliedSections: [],
-        skippedSections: ['decision_invariants'],
-      },
-    });
-
-    expect(result).toBe('');
-  });
-
   it('includes replay flex planning guidance when provided', () => {
     const artifacts = makeArtifacts({
       intentLabel: 'Summarize earnings change',

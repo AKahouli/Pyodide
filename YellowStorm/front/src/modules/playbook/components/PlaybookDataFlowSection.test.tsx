@@ -160,6 +160,77 @@ describe('PlaybookDataFlowSection', () => {
     ]);
   });
 
+  it('keeps an existing constant binding when applying an emptied constant input', () => {
+    storeState.currentPlaybook = createPlaybook([{
+      id: 'binding-1',
+      targetNode: 'task-1',
+      targetPort: 'input_file',
+      sourceKind: 'constant',
+      constantValue: { kind: 'document', id: 'doc-1', label: 'A.xlsx' },
+    }]);
+
+    render(<PlaybookDataFlowSection targetNodeId="task-1" />);
+    fireEvent.click(screen.getByTitle('dataFlow.changeSource'));
+    fireEvent.change(screen.getByPlaceholderText('dataFlow.constantPlaceholder'), { target: { value: '' } });
+    fireEvent.click(screen.getAllByText('dataFlow.apply')[0]);
+
+    expect(updateDataBindings).not.toHaveBeenCalled();
+  });
+
+  it('keeps an existing constant binding when applying a whitespace-only constant input', () => {
+    storeState.currentPlaybook = createPlaybook([{
+      id: 'binding-1',
+      targetNode: 'task-1',
+      targetPort: 'input_file',
+      sourceKind: 'constant',
+      constantValue: { kind: 'document', id: 'doc-1', label: 'A.xlsx' },
+    }]);
+
+    render(<PlaybookDataFlowSection targetNodeId="task-1" />);
+    fireEvent.click(screen.getByTitle('dataFlow.changeSource'));
+    fireEvent.change(screen.getByPlaceholderText('dataFlow.constantPlaceholder'), { target: { value: '   ' } });
+    fireEvent.click(screen.getAllByText('dataFlow.apply')[0]);
+
+    expect(updateDataBindings).not.toHaveBeenCalled();
+  });
+
+  it('does not create a constant binding when applying an empty value', () => {
+    render(<PlaybookDataFlowSection targetNodeId="task-1" />);
+
+    fireEvent.click(screen.getByText('dataFlow.connectSource'));
+    fireEvent.click(screen.getAllByText('dataFlow.apply')[0]);
+
+    expect(updateDataBindings).not.toHaveBeenCalled();
+  });
+
+  it('does not create a constant binding when applying a whitespace-only value', () => {
+    render(<PlaybookDataFlowSection targetNodeId="task-1" />);
+
+    fireEvent.click(screen.getByText('dataFlow.connectSource'));
+    fireEvent.change(screen.getByPlaceholderText('dataFlow.constantPlaceholder'), { target: { value: '   ' } });
+    fireEvent.click(screen.getAllByText('dataFlow.apply')[0]);
+
+    expect(updateDataBindings).not.toHaveBeenCalled();
+  });
+
+  it('does not create an expression binding when applying an empty expression', () => {
+    render(<PlaybookDataFlowSection targetNodeId="task-1" />);
+
+    fireEvent.click(screen.getByText('dataFlow.connectSource'));
+    fireEvent.click(screen.getAllByText('dataFlow.apply')[1]);
+
+    expect(updateDataBindings).not.toHaveBeenCalled();
+  });
+
+  it('does not create a trigger binding when applying an empty path', () => {
+    render(<PlaybookDataFlowSection targetNodeId="task-1" />);
+
+    fireEvent.click(screen.getByText('dataFlow.connectSource'));
+    fireEvent.click(screen.getAllByText('dataFlow.apply')[2]);
+
+    expect(updateDataBindings).not.toHaveBeenCalled();
+  });
+
   it('adds iterator context input ports while keeping the collection port locked', () => {
     const onInputPortsChange = vi.fn();
 

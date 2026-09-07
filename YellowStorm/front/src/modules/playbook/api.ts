@@ -49,6 +49,8 @@ import type {
   PlaybookIntentConstructionStartResponse,
   PlaybookAssistantTurnRequest,
   PlaybookAssistantTurnResponse,
+  PlaybookAssistantHistory,
+  PlaybookAssistantAttachmentUpload,
   RequestPlaybookNodeAdvisorData,
   PlaybookNodeAdvisorResponse,
   Flow,
@@ -239,7 +241,6 @@ export function sanitizePlaybookUpdate(data: UpdatePlaybookData): UpdatePlaybook
       modelId: task.modelId ?? null,
       expectedResult: task.expectedResult,
       disableAdvisorEvaluation: task.disableAdvisorEvaluation,
-      deepSearch: task.deepSearch,
       dynamicReasoning: task.dynamicReasoning?.enabled ? { enabled: true } : undefined,
     }));
 
@@ -268,7 +269,6 @@ export function sanitizePlaybookUpdate(data: UpdatePlaybookData): UpdatePlaybook
     expectedDefinitionRevision: data.expectedDefinitionRevision,
     expectedUpdatedAt: data.expectedUpdatedAt,
     clientMutationId: data.clientMutationId,
-    deepSearch: data.deepSearch,
   };
 }
 
@@ -304,7 +304,6 @@ function sanitizePlaybookSettings(data: UpdatePlaybookData): UpdatePlaybookData 
     advisorAutopilotEnabled: data.advisorAutopilotEnabled,
     advisorAutopilotTargetScore: data.advisorAutopilotTargetScore,
     advisorAutopilotMaxTurns: data.advisorAutopilotMaxTurns,
-    deepSearch: data.deepSearch,
     expectedDefinitionRevision: data.expectedDefinitionRevision,
     expectedUpdatedAt: data.expectedUpdatedAt,
     clientMutationId: data.clientMutationId,
@@ -325,7 +324,6 @@ export function buildPlaybookUpdateRequestBody(data: UpdatePlaybookData): Record
   if (sanitized.advisorAutopilotEnabled !== undefined) body.advisorAutopilotEnabled = sanitized.advisorAutopilotEnabled;
   if (sanitized.advisorAutopilotTargetScore !== undefined) body.advisorAutopilotTargetScore = sanitized.advisorAutopilotTargetScore;
   if (sanitized.advisorAutopilotMaxTurns !== undefined) body.advisorAutopilotMaxTurns = sanitized.advisorAutopilotMaxTurns;
-  if (sanitized.deepSearch !== undefined) body.deepSearch = sanitized.deepSearch;
   if (sanitized.expectedDefinitionRevision !== undefined) body.expectedDefinitionRevision = sanitized.expectedDefinitionRevision;
   if (sanitized.expectedUpdatedAt !== undefined) body.expectedUpdatedAt = sanitized.expectedUpdatedAt;
   if (sanitized.clientMutationId !== undefined) body.clientMutationId = sanitized.clientMutationId;
@@ -390,7 +388,6 @@ function buildDeltaPatchFields(
     fields.advisorAutopilotMaxTurns = current.advisorAutopilotMaxTurns;
   }
   if (!isEqualByStableStringify(previous.workspaces, current.workspaces)) fields.workspaces = current.workspaces;
-  if (!isEqualByStableStringify(previous.deepSearch, current.deepSearch)) fields.deepSearch = current.deepSearch;
 
   return Object.keys(fields).length > 0 ? fields : undefined;
 }
@@ -865,12 +862,14 @@ function normalizeTaskArtifact(raw: unknown): import('./types').TaskArtifact | n
 
   return {
     portId: toNullableString(record.portId ?? record.port_id) ?? 'default',
+    artifactId: toNullableString(record.artifactId ?? record.artifact_id) ?? undefined,
     artifactKind: (toNullableString(record.artifactKind ?? record.artifact_kind) ?? 'text') as import('./types').ArtifactKind,
     content: toNullableString(record.content) ?? undefined,
-    url: toNullableString(record.url ?? record.ref ?? record.filePath ?? record.file_path) ?? undefined,
     filename: toNullableString(record.filename) ?? undefined,
     mimeType: toNullableString(record.mimeType ?? record.mime_type) ?? undefined,
+    url: toNullableString(record.url) ?? undefined,
     size: toNullableNumber(record.size) ?? undefined,
+    availability: toNullableString(record.availability) ?? undefined,
     metadata: Object.keys(metadata).length > 0 ? metadata : undefined,
   };
 }
@@ -1013,6 +1012,22 @@ function normalizeTaskResult(raw: any, index: number): import('./types').TaskRes
     runtimeSubgraphId: toNullableString(raw.runtimeSubgraphId ?? raw.runtime_subgraph_id) ?? undefined,
     generatedLocalNodeId: toNullableString(raw.generatedLocalNodeId ?? raw.generated_local_node_id) ?? undefined,
     generatedNodeTitle: toNullableString(raw.generatedNodeTitle ?? raw.generated_node_title) ?? undefined,
+  };
+}
+
+export async function requestPlaybookArtifactAccess(
+  executionId: string,
+  artifactId: string,
+  action: 'view' | 'download',
+): Promise<{ url: string; expiresAt: string }> {
+  const response = await apiClient.post<ApiResponse<{ token: string; expiresAt: string }>>(
+    API_ENDPOINTS.playbookFlows.executionArtifactAccess(executionId, artifactId),
+    { action },
+  );
+  const { token, expiresAt } = response.data.data;
+  return {
+    url: `${API_CONFIG.baseURL}${API_ENDPOINTS.playbookFlows.artifactContent}?token=${encodeURIComponent(token)}`,
+    expiresAt,
   };
 }
 
@@ -1190,6 +1205,7 @@ function normalizeExecution(raw: any): PlaybookExecution {
     currentInterruptTaskId: isTerminal ? null : toNullableString(raw.currentInterruptTaskId ?? raw.pendingApproval?.nodeId),
     hitlHistory: normalizedHitlHistory,
     hitlEvents,
+    snapshot: raw.snapshot && typeof raw.snapshot === 'object' ? raw.snapshot : null,
     playbookSnapshot: raw.playbookSnapshot ?? null,
     totalInputTokens: toNullableNumber(raw.totalInputTokens) ?? 0,
     totalOutputTokens: toNullableNumber(raw.totalOutputTokens) ?? 0,
@@ -1408,6 +1424,37 @@ export async function runPlaybookAssistantTurn(
   return response.data.data;
 }
 
+export async function getPlaybookAssistantMessages(
+  playbookId: string,
+  conversationId?: string,
+): Promise<PlaybookAssistantHistory> {
+  const response = await apiClient.get<ApiResponse<PlaybookAssistantHistory>>(
+    API_ENDPOINTS.playbooks.assistantMessages(playbookId),
+    conversationId ? { params: { conversationId } } : undefined,
+  );
+  return response.data.data;
+}
+
+export async function uploadPlaybookAssistantAttachment(
+  playbookId: string,
+  requestId: string,
+  expectedDefinitionRevision: number,
+  file: File,
+): Promise<string> {
+  const initialized = await apiClient.post<ApiResponse<PlaybookAssistantAttachmentUpload>>(
+    API_ENDPOINTS.playbooks.assistantAttachments(playbookId),
+    { requestId, expectedDefinitionRevision, mediaType: file.type, size: file.size },
+  );
+  const { attachmentId, uploadUrl } = initialized.data.data;
+  const uploadResponse = await fetch(uploadUrl, { method: 'PUT', body: file });
+  if (!uploadResponse.ok) throw new Error('Assistant image upload failed');
+  await apiClient.post(
+    API_ENDPOINTS.playbooks.assistantAttachmentConfirm(playbookId, attachmentId),
+    {},
+  );
+  return attachmentId;
+}
+
 export async function fetchPlaybookIntentConstruction(playbookId: string, constructionId: string): Promise<PlaybookIntentConstructionStartResponse> {
   const response = await apiClient.get<ApiResponse<PlaybookIntentConstructionStartResponse>>(
     API_ENDPOINTS.playbooks.intentConstruction(playbookId, constructionId),
@@ -1591,6 +1638,15 @@ export async function executePlaybook(
   id: string,
   data?: ExecutePlaybookData,
 ): Promise<{ executionId: string }> {
+  const payload = buildExecutionRequestPayload(data);
+  const response = await apiClient.post<ApiResponse<{ executionId: string }>>(
+    API_ENDPOINTS.playbookFlows.execute(id),
+    payload,
+  );
+  return response.data.data;
+}
+
+function buildExecutionRequestPayload(data?: ExecutePlaybookData): Record<string, unknown> {
   const payload: Record<string, unknown> = {};
   if (data?.singleStepTaskId) payload.singleStepTaskId = data.singleStepTaskId;
   if (data?.executionMode) payload.executionMode = data.executionMode;
@@ -1601,11 +1657,7 @@ export async function executePlaybook(
   if (data?.runNodeReflection !== undefined) payload.reflectionEnabled = data.runNodeReflection;
   if (data?.advisorScoringMode !== undefined) payload.advisorScoringMode = data.advisorScoringMode;
   if (data?.modelIdOverride) payload.modelIdOverride = data.modelIdOverride;
-  const response = await apiClient.post<ApiResponse<{ executionId: string }>>(
-    API_ENDPOINTS.playbookFlows.execute(id),
-    payload,
-  );
-  return response.data.data;
+  return payload;
 }
 
 export async function getPlaybookIntegrationToken(id: string): Promise<{ token: string }> {
@@ -2307,6 +2359,13 @@ export async function getFlow(id: string, options?: { view?: 'base' | 'enriched'
   return normalizePlaybook(response.data.data);
 }
 
+export async function getPlaybookInputContract(id: string): Promise<import('./types').PlaybookInputContract> {
+  const response = await apiClient.get<ApiResponse<import('./types').PlaybookInputContract>>(
+    API_ENDPOINTS.playbookFlows.inputContract(id),
+  );
+  return response.data.data;
+}
+
 export async function createFlow(data: CreateFlowData): Promise<Flow> {
   const response = await apiClient.post<ApiResponse<Flow>>(
     API_ENDPOINTS.playbookFlows.list,
@@ -2349,23 +2408,13 @@ export async function startFlowExecution(
   flowId: string,
   inputContext?: Record<string, unknown>,
   idempotencyKey?: string,
-  options?: {
-    reflectionEnabled?: boolean;
-    advisorScoringMode?: import('./types').AdvisorScoringMode;
-    advisorAutopilotEnabled?: boolean;
-    advisorAutopilotTargetScore?: number;
-    advisorAutopilotMaxTurns?: number;
-  },
+  options?: ExecutePlaybookData,
 ): Promise<{ executionId: string }> {
   const response = await apiClient.post<ApiResponse<{ executionId: string }>>(
     API_ENDPOINTS.playbookFlows.execute(flowId),
     {
       inputContext,
-      ...(options?.reflectionEnabled !== undefined ? { reflectionEnabled: options.reflectionEnabled } : {}),
-      ...(options?.advisorScoringMode !== undefined ? { advisorScoringMode: options.advisorScoringMode } : {}),
-      ...(options?.advisorAutopilotEnabled !== undefined ? { advisorAutopilotEnabled: options.advisorAutopilotEnabled } : {}),
-      ...(options?.advisorAutopilotTargetScore !== undefined ? { advisorAutopilotTargetScore: options.advisorAutopilotTargetScore } : {}),
-      ...(options?.advisorAutopilotMaxTurns !== undefined ? { advisorAutopilotMaxTurns: options.advisorAutopilotMaxTurns } : {}),
+      ...buildExecutionRequestPayload(options),
     },
     idempotencyKey
       ? { headers: { 'Idempotency-Key': idempotencyKey } }
@@ -2569,20 +2618,6 @@ export async function generateFlow(data: { name: string; prompt: string; workspa
   const response = await apiClient.post<ApiResponse<{ id: string }>>(
     API_ENDPOINTS.playbookFlows.generate,
     data,
-  );
-  return response.data.data;
-}
-
-export async function buildPlaybookFromConversation(data: {
-  conversationId: string;
-  assistantMessageId: string;
-  answerVersion: string;
-  name?: string;
-}): Promise<{ id: string }> {
-  const response = await apiClient.post<ApiResponse<{ id: string }>>(
-    API_ENDPOINTS.playbookFlows.fromConversation,
-    data,
-    { timeout: 0 },
   );
   return response.data.data;
 }

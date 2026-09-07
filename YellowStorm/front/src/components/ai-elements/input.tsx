@@ -85,6 +85,7 @@ interface InputProps {
   mentionAgents?: MentionAgent[];
   enableTeamMentions?: boolean;
   workspaceOptions?: Array<{ id: string; name: string; documentCount: number }>;
+  onWorkspaceSelectionChange?: (workspaceIds: string[]) => void;
   /** Rendered inside PromptInputProvider between the textarea and the footer (e.g. suggestion chips). */
   belowTextarea?: ReactNode;
   /** Rendered inside PromptInputTools, after built-in tools. */
@@ -93,7 +94,7 @@ interface InputProps {
   onTextChange?: (text: string) => void;
 }
 
-const Input = memo(function Input({ onSubmit: externalSubmit, onStop, status: externalStatus, disabled, submitDisabled, placeholder, onFilesAdded, onFileRemoved, uploadingFiles, accept, maxFiles, members, autoMention, showWorkspaceSelect = true, preserveWorkspaceSelectionOnSubmit = false, showModelSelector = false, governedMode = false, mentionAgents, enableTeamMentions = true, workspaceOptions, belowTextarea, extraTools, onTextChange }: InputProps = {}) {
+const Input = memo(function Input({ onSubmit: externalSubmit, onStop, status: externalStatus, disabled, submitDisabled, placeholder, onFilesAdded, onFileRemoved, uploadingFiles, accept, maxFiles, members, autoMention, showWorkspaceSelect = true, preserveWorkspaceSelectionOnSubmit = false, showModelSelector = false, governedMode = false, mentionAgents, enableTeamMentions = true, workspaceOptions, onWorkspaceSelectionChange, belowTextarea, extraTools, onTextChange }: InputProps = {}) {
   const models = useModels();
   const chefs = useChefs();
   const defaultModel = useDefaultModel();
@@ -463,6 +464,11 @@ const Input = memo(function Input({ onSubmit: externalSubmit, onStop, status: ex
 
   const derivedStatus = externalStatus ?? status;
 
+  const handleWorkspaceSelectionChange = useCallback((workspaceIds: string[]) => {
+    setSelectedWorkspaceIds(workspaceIds);
+    onWorkspaceSelectionChange?.(workspaceIds);
+  }, [onWorkspaceSelectionChange, setSelectedWorkspaceIds]);
+
   const handleSubmit = useCallback(
     (message: PromptInputMessage) => {
       // Block submission while an answer is being generated
@@ -596,7 +602,7 @@ const Input = memo(function Input({ onSubmit: externalSubmit, onStop, status: ex
                   />}
                 </PromptInputActionMenuContent>
               </PromptInputActionMenu>
-              {showWorkspaceSelect && <WorkspaceSelect selectedIds={selectedWorkspaceIds} onChange={setSelectedWorkspaceIds} disabled={disabled || submitDisabled || Boolean(selectedSemanticModelId)} workspaceOptions={workspaceOptions} className='size-11 md:size-8' />}
+              {showWorkspaceSelect && <WorkspaceSelect selectedIds={selectedWorkspaceIds} onChange={handleWorkspaceSelectionChange} disabled={disabled || submitDisabled || Boolean(selectedSemanticModelId)} workspaceOptions={workspaceOptions} className='size-11 md:size-8' />}
               {showWorkspaceSelect && <SemanticModelSelect value={selectedSemanticModelId} onChange={setSelectedSemanticModelId} disabled={disabled || submitDisabled} />}
               {extraTools}
                {showModelSelector && !governedMode && models.length > 0 && <ModelSelector onOpenChange={setModelSelectorOpen} open={modelSelectorOpen}>

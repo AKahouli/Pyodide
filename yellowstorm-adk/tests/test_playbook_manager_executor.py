@@ -171,8 +171,7 @@ class TestExecuteManager:
     async def test_execute_manager_success(self, manager_executor, mock_playbook_request):
         """Test successful manager execution."""
         with patch('src.smart_rag.playbook_dir.execute_manager.DatabaseSessionService') as MockSessionService, \
-             patch('src.smart_rag.playbook_dir.execute_manager.Runner') as MockRunner, \
-             patch('src.smart_rag.playbook_dir.execute_manager.langfuse_client') as mock_langfuse:
+             patch('src.smart_rag.playbook_dir.execute_manager.Runner') as MockRunner:
 
             # Setup mocks
             mock_session_service = MagicMock()
@@ -209,11 +208,6 @@ class TestExecuteManager:
                 return_value={"type": "start", "content": "Starting..."}
             )
 
-            # Mock langfuse
-            mock_span = MagicMock()
-            mock_langfuse.span.return_value = mock_span
-            mock_langfuse.flush.return_value = None
-
             queue = asyncio.Queue()
             all_agents = [{"name": "Agent1", "tools": ["search"]}]
 
@@ -234,8 +228,7 @@ class TestExecuteManager:
         mock_playbook_request.manager_agent.save_memory = True
 
         with patch('src.smart_rag.playbook_dir.execute_manager.DatabaseSessionService') as MockSessionService, \
-             patch('src.smart_rag.playbook_dir.execute_manager.Runner') as MockRunner, \
-             patch('src.smart_rag.playbook_dir.execute_manager.langfuse_client') as mock_langfuse:
+             patch('src.smart_rag.playbook_dir.execute_manager.Runner') as MockRunner:
 
             # Setup mocks
             mock_session_service = MagicMock()
@@ -269,9 +262,6 @@ class TestExecuteManager:
                 return_value={"type": "start"}
             )
 
-            mock_langfuse.span.return_value = MagicMock()
-            mock_langfuse.flush.return_value = None
-
             queue = asyncio.Queue()
             all_agents = []
 
@@ -292,8 +282,7 @@ class TestExecuteManager:
     async def test_execute_manager_session_not_found(self, manager_executor, mock_playbook_request):
         """Test manager execution when session doesn't exist (creates new session)."""
         with patch('src.smart_rag.playbook_dir.execute_manager.DatabaseSessionService') as MockSessionService, \
-             patch('src.smart_rag.playbook_dir.execute_manager.Runner') as MockRunner, \
-             patch('src.smart_rag.playbook_dir.execute_manager.langfuse_client') as mock_langfuse:
+             patch('src.smart_rag.playbook_dir.execute_manager.Runner') as MockRunner:
 
             # Setup mocks
             mock_session_service = MagicMock()
@@ -324,9 +313,6 @@ class TestExecuteManager:
                 return_value={"type": "start"}
             )
 
-            mock_langfuse.span.return_value = MagicMock()
-            mock_langfuse.flush.return_value = None
-
             queue = asyncio.Queue()
             result = await manager_executor.execute_manager(
                 request=mock_playbook_request,
@@ -342,15 +328,12 @@ class TestExecuteManager:
     @pytest.mark.asyncio
     async def test_execute_manager_tool_creation_failure(self, manager_executor, mock_playbook_request):
         """Test manager execution when tool creation fails."""
-        with patch('src.smart_rag.playbook_dir.execute_manager.DatabaseSessionService'), \
-             patch('src.smart_rag.playbook_dir.execute_manager.langfuse_client') as mock_langfuse:
+        with patch('src.smart_rag.playbook_dir.execute_manager.DatabaseSessionService'):
 
             manager_executor.agent_repository.has_search_agents = MagicMock(return_value=False)
             manager_executor.agent_tools_manager.create_tools_from_all_agents = MagicMock(
                 side_effect=RuntimeError("Tool creation failed")
             )
-
-            mock_langfuse.span.return_value = MagicMock()
 
             queue = asyncio.Queue()
 
@@ -365,8 +348,7 @@ class TestExecuteManager:
     @pytest.mark.asyncio
     async def test_execute_manager_agent_creation_failure(self, manager_executor, mock_playbook_request):
         """Test manager execution when manager agent creation fails."""
-        with patch('src.smart_rag.playbook_dir.execute_manager.DatabaseSessionService'), \
-             patch('src.smart_rag.playbook_dir.execute_manager.langfuse_client') as mock_langfuse:
+        with patch('src.smart_rag.playbook_dir.execute_manager.DatabaseSessionService'):
 
             manager_executor.agent_repository.has_search_agents = MagicMock(return_value=False)
             manager_executor.agent_tools_manager.create_tools_from_all_agents = MagicMock(
@@ -375,8 +357,6 @@ class TestExecuteManager:
             manager_executor.manager_factory.create_manager_agent = MagicMock(
                 side_effect=ValueError("Agent creation failed")
             )
-
-            mock_langfuse.span.return_value = MagicMock()
 
             queue = asyncio.Queue()
 
@@ -391,8 +371,7 @@ class TestExecuteManager:
     @pytest.mark.asyncio
     async def test_execute_manager_database_connection_failure(self, manager_executor, mock_playbook_request):
         """Test manager execution when database connection fails."""
-        with patch('src.smart_rag.playbook_dir.execute_manager.DatabaseSessionService') as MockSessionService, \
-             patch('src.smart_rag.playbook_dir.execute_manager.langfuse_client') as mock_langfuse:
+        with patch('src.smart_rag.playbook_dir.execute_manager.DatabaseSessionService') as MockSessionService:
 
             MockSessionService.side_effect = SQLAlchemyError("Connection failed")
 
@@ -404,8 +383,6 @@ class TestExecuteManager:
             manager_executor.manager_factory.create_manager_agent = MagicMock(
                 return_value=mock_manager_agent
             )
-
-            mock_langfuse.span.return_value = MagicMock()
 
             queue = asyncio.Queue()
 
@@ -422,8 +399,7 @@ class TestExecuteManager:
     async def test_execute_manager_timeout(self, manager_executor, mock_playbook_request):
         """Test manager execution timeout."""
         with patch('src.smart_rag.playbook_dir.execute_manager.DatabaseSessionService') as MockSessionService, \
-             patch('src.smart_rag.playbook_dir.execute_manager.Runner') as MockRunner, \
-             patch('src.smart_rag.playbook_dir.execute_manager.langfuse_client') as mock_langfuse:
+             patch('src.smart_rag.playbook_dir.execute_manager.Runner') as MockRunner:
 
             # Setup mocks
             mock_session_service = MagicMock()
@@ -451,8 +427,6 @@ class TestExecuteManager:
                 return_value={"type": "start"}
             )
 
-            mock_langfuse.span.return_value = MagicMock()
-
             queue = asyncio.Queue()
 
             # The code wraps TimeoutError in RuntimeError at line 435
@@ -467,8 +441,7 @@ class TestExecuteManager:
     @pytest.mark.asyncio
     async def test_execute_manager_error_sent_to_queue(self, manager_executor, mock_playbook_request):
         """Test that errors are sent to the queue."""
-        with patch('src.smart_rag.playbook_dir.execute_manager.DatabaseSessionService'), \
-             patch('src.smart_rag.playbook_dir.execute_manager.langfuse_client') as mock_langfuse:
+        with patch('src.smart_rag.playbook_dir.execute_manager.DatabaseSessionService'):
 
             manager_executor.agent_repository.has_search_agents = MagicMock(return_value=False)
             manager_executor.agent_tools_manager.create_tools_from_all_agents = MagicMock(
@@ -477,8 +450,6 @@ class TestExecuteManager:
             manager_executor.streaming_formatter.format_streaming_event = MagicMock(
                 return_value={"type": "error", "message": "Error"}
             )
-
-            mock_langfuse.span.return_value = MagicMock()
 
             queue = asyncio.Queue()
 
@@ -499,8 +470,7 @@ class TestExecuteManager:
     async def test_execute_manager_with_document_info(self, manager_executor, mock_playbook_request):
         """Test manager execution with document info."""
         with patch('src.smart_rag.playbook_dir.execute_manager.DatabaseSessionService') as MockSessionService, \
-             patch('src.smart_rag.playbook_dir.execute_manager.Runner') as MockRunner, \
-             patch('src.smart_rag.playbook_dir.execute_manager.langfuse_client') as mock_langfuse:
+             patch('src.smart_rag.playbook_dir.execute_manager.Runner') as MockRunner:
 
             # Setup mocks
             mock_session_service = MagicMock()
@@ -531,9 +501,6 @@ class TestExecuteManager:
                 return_value={"type": "start"}
             )
 
-            mock_langfuse.span.return_value = MagicMock()
-            mock_langfuse.flush.return_value = None
-
             queue = asyncio.Queue()
             result = await manager_executor.execute_manager(
                 request=mock_playbook_request,
@@ -543,5 +510,4 @@ class TestExecuteManager:
             )
 
             assert result == "Result"
-            # Verify document info was retrieved
-            manager_executor.document_helper._get_consolidated_document_tree_info_for_manager.assert_called_once()
+            manager_executor.document_helper._get_consolidated_document_tree_info_for_manager.assert_not_called()

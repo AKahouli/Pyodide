@@ -73,6 +73,11 @@ def _ordered_tool_results(messages: list[BaseMessage]) -> list[BaseMessage]:
     return [*messages[:last_ai + 1], *[message for message in tail if isinstance(message, ToolMessage)], *[message for message in tail if not isinstance(message, ToolMessage)]]
 
 
+def _completed_tool_round(messages: list[BaseMessage]) -> bool:
+    last_ai = max((index for index, message in enumerate(messages) if isinstance(message, AIMessage)), default=-1)
+    return last_ai >= 0 and any(isinstance(message, ToolMessage) for message in messages[last_ai + 1:])
+
+
 def _limit_images(messages: list[dict[str, Any]], limit: int = 50) -> list[dict[str, Any]]:
     remaining = limit
     result = []
@@ -100,7 +105,7 @@ def build_model_node(tools: list[Any]):
     async def model_node(state: StepAgentState, runtime: Runtime[StepRuntimeContext]) -> dict[str, Any]:
         context = runtime.context
         messages = list(state.get("messages") or [])
-        next_iteration = int(state.get("tool_iterations") or 0) + (1 if messages and isinstance(messages[-1], ToolMessage) else 0)
+        next_iteration = int(state.get("tool_iterations") or 0) + (1 if _completed_tool_round(messages) else 0)
         if next_iteration >= context.max_tool_iterations:
             return {"messages": [AIMessage(content="Max tool iterations reached without a final response")], "tool_iterations": next_iteration}
 

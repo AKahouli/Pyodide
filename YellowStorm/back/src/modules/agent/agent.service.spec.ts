@@ -95,7 +95,9 @@ describe('AgentService connector skill inheritance', () => {
       findDefaultByType: jest.fn().mockResolvedValue(null),
       findDefaultByNameActive: jest.fn().mockResolvedValue(null),
       findActiveDefaults: jest.fn().mockResolvedValue([]),
+      findActiveDefaultsByTypeSlug: jest.fn().mockResolvedValue([]),
       existsActiveDefault: jest.fn().mockResolvedValue(false),
+      existsActiveDefaultByTypeSlug: jest.fn().mockResolvedValue(false),
       findActiveDefaultIdBySlug: jest.fn().mockResolvedValue(null),
       countByAgentType: jest.fn().mockResolvedValue(0),
       findByNameAndOwner: jest.fn().mockResolvedValue(null),
@@ -118,8 +120,8 @@ describe('AgentService connector skill inheritance', () => {
     const agentTypeService = {
       resolvePromptsInBatch: jest.fn().mockResolvedValue(new Map()),
       findAllActive: jest.fn().mockResolvedValue([]),
-      getManyForHydration: jest.fn().mockResolvedValue(new Map()),
       findBySlug: jest.fn().mockResolvedValue(null),
+      getManyForHydration: jest.fn().mockResolvedValue(new Map()),
     };
     const modelsService = {
       findById: jest.fn(),
@@ -299,6 +301,116 @@ describe('AgentService connector skill inheritance', () => {
     expect(JSON.parse(result[0].agent_params?.params.guardrails_json as string).classifier)
       .toEqual({ omitTemperature: true });
     expect(result[0].agent_params?.params.temperature).toBe('0');
+  });
+
+  it('exposes every enabled Playbook MCP action to Platform Copilot', async () => {
+    const { service, connectorService, modelsService } = createService();
+    const enabledActions = [
+      'search_playbooks',
+      'open_playbook_context',
+      'get_playbook_summary',
+      'get_task_details',
+      'get_task_dependencies',
+      'validate_playbook',
+      'start_playbook_generation',
+      'modify_playbook',
+      'get_playbook_construction',
+      'start_playbook_execution',
+      'list_recent_executions',
+      'get_playbook_execution',
+      'get_execution_diagnostics',
+      'assess_playbook_request',
+      'continue_playbook_clarification',
+      'start_playbook_construction',
+    ];
+    const streamAgent: IAgentForStream = {
+      id: 'yellowmind', name: 'Yellowmind', agentTypeName: 'Platform Copilot',
+      agentTypeSlug: 'platform_copilot', agentTypeId: 'type-1', role: 'Platform Copilot',
+      description: '', temperature: 0, model: 'model-1', instruction: 'Use start_playbook_generation',
+      ignorePrePrompt: false, knowledgeBases: [], toolIds: [], guardrails: defaultGuardrails,
+      connectorIds: ['playbook-connector'], connectorActionSelections: [], skillIds: [],
+      disabledSkillIds: [], agentTypeSkillIds: [], enable_temporary_child_agents: false,
+      max_temporary_child_agents: 4, isDefault: true, isDefaultForType: true,
+    };
+    const getAgentsForUser = jest.spyOn(service as any, 'getAgentsForUser');
+    jest.spyOn(service as any, 'resolveManager').mockReturnValue(undefined);
+    connectorService.findByIds.mockResolvedValue([{
+      id: 'playbook-connector', name: 'Playbook MCP', slug: 'playbook-mcp',
+      actions: [
+        ...enabledActions.map((key) => ({ key, label: key, isEnabled: true })),
+        { key: 'disabled_action', label: 'disabled_action', isEnabled: false },
+      ],
+      referencedSkillIds: [],
+    }]);
+    modelsService.getGuardrailsClassifierModel.mockResolvedValue(null);
+
+    for (const connectorActionSelections of [
+      [],
+      [{ connectorId: 'playbook-connector', actionKeys: ['search_playbooks', 'disabled_action'] }],
+    ]) {
+      getAgentsForUser.mockResolvedValue([{ ...streamAgent, connectorActionSelections }]);
+      const result = await service.buildAgentsForStream(
+        userId,
+        undefined,
+        ['yellowmind'],
+        undefined,
+        undefined,
+        undefined,
+        { conversationId: 'conversation-1', correlationId: 'message-1', playbookHandoffAttached: true },
+      );
+
+      expect(result[0].tools.map((tool) => tool.name)).toEqual(
+        enabledActions.map((action) => `playbook-mcp_${action}`),
+      );
+      const bindings = JSON.parse(result[0].agent_params?.params.connector_bindings_json as string);
+      expect(bindings[0].actions.map((action: { action_key: string }) => action.action_key)).toEqual(enabledActions);
+      expect(result[0].tools.map((tool) => tool.name)).not.toEqual(
+        expect.arrayContaining(['playbook-mcp_disabled_action']),
+      );
+      expect(result[0].prompt).toContain('[Trusted conversation handoff]');
+      expect(result[0].prompt).toContain('Call start_playbook_generation now');
+      expect(result[0].prompt).not.toContain('conversation-1');
+      expect(result[0].prompt).not.toContain('message-1');
+    }
+  });
+
+  it('injects trusted actor headers into platform copilot connector bindings', async () => {
+    const { service, skillService, connectorService } = createService();
+    const platformAgent: IAgentForStream = {
+      id: 'platform-agent', name: 'Yellowmind', agentTypeName: 'Platform Copilot',
+      agentTypeSlug: 'platform_copilot', agentTypeId: 'type-platform', role: 'Assistant',
+      description: '', temperature: 0, model: 'model-1', instruction: '', ignorePrePrompt: false,
+      knowledgeBases: [], toolIds: [], guardrails: defaultGuardrails, connectorIds: ['playbook-connector'],
+      connectorActionSelections: [], skillIds: [], disabledSkillIds: [], agentTypeSkillIds: [],
+      enable_temporary_child_agents: false, max_temporary_child_agents: 4,
+      isDefault: true, isDefaultForType: false,
+    };
+    jest.spyOn(service as any, 'getAgentsForUser').mockResolvedValue([platformAgent]);
+    connectorService.findByIds.mockResolvedValue([{
+      id: 'playbook-connector', name: 'Playbook', slug: 'playbook',
+      actions: [{ key: 'get_playbook', label: 'Get playbook', isEnabled: true }],
+    }]);
+    skillService.findByIds.mockResolvedValue([]);
+
+    const result = await service.buildAgentsForStream(
+      userId,
+      undefined,
+      ['platform-agent'],
+      undefined,
+      undefined,
+      undefined,
+      { conversationId: 'conversation-1', correlationId: 'message-1' },
+    );
+
+    const [binding] = JSON.parse(result[0].agent_params?.params.connector_bindings_json as string);
+    expect(binding.auth_headers).toEqual(expect.objectContaining({
+      'X-YellowStorm-User-Id': userId,
+      'X-YellowStorm-Agent-Id': 'platform-agent',
+      'X-YellowStorm-Conversation-Id': 'conversation-1',
+      'X-Correlation-Id': 'message-1',
+    }));
+    expect(binding.auth_headers).not.toHaveProperty('X-YellowStorm-Tenant-Id');
+    expect(result[0].prompt).not.toContain('[Trusted conversation handoff]');
   });
 
   it('resolves the mono-agent directly from the DB even though it is not part of the user\'s roster', async () => {
@@ -828,32 +940,28 @@ describe('AgentService connector skill inheritance', () => {
     expect(controlWhitespaceName).toBe('workspace_search__9e54e0e3d98b6a49');
   });
 
-  it('resolves the explicitly selected active playbook planner', async () => {
+  it('resolves an explicitly selected active default agent as the playbook planner', async () => {
     const { service, agentRepository, agentTypeService } = createService();
-    const agentId = new Types.ObjectId();
-    const agentTypeId = new Types.ObjectId();
-    agentTypeService.findBySlug.mockResolvedValue({
-      id: agentTypeId.toString(),
-      slug: 'playbook_planner',
-      isActive: true,
-    });
-    agentRepository.findByIdDefault.mockResolvedValue(
-      makeRecord({
-        _id: agentId.toString(),
-        agentType: agentTypeId.toString(),
-        agentTypeSlug: 'playbook_planner',
-        isActive: true,
-        llmModel: 'planner-model',
-        temperature: 0.2,
-        instruction: 'Plan safely',
-        updatedAt: new Date('2026-08-06T00:00:00.000Z'),
-      }),
-    );
+    const agentId = new Types.ObjectId().toString();
+    const agentTypeId = new Types.ObjectId().toString();
+    agentRepository.findById.mockResolvedValue(makeRecord({
+      _id: agentId,
+      agentType: agentTypeId,
+      isDefault: true,
+      llmModel: 'planner-model',
+      temperature: 0.2,
+      instruction: 'Plan safely',
+      updatedAt: new Date('2026-08-06T00:00:00.000Z'),
+    }));
+    agentTypeService.getManyForHydration.mockResolvedValue(new Map([[
+      agentTypeId,
+      { id: agentTypeId, name: 'General Assistant', slug: 'general_assistant', skills: [] },
+    ]]));
 
-    await expect(service.findPlaybookPlannerById(agentId.toString())).resolves.toEqual({
-      agentTypeId: agentTypeId.toString(),
-      agentTypeSlug: 'playbook_planner',
-      agentId: agentId.toString(),
+    await expect(service.findPlaybookPlannerById(agentId)).resolves.toEqual({
+      agentTypeId,
+      agentTypeSlug: 'general_assistant',
+      agentId,
       agentRevision: '2026-08-06T00:00:00.000Z',
       model: 'planner-model',
       temperature: 0.2,
@@ -861,74 +969,105 @@ describe('AgentService connector skill inheritance', () => {
     });
   });
 
-  it('lists only active playbook planner agents with a configured model', async () => {
-    const { service, agentRepository, agentTypeService } = createService();
-    agentTypeService.findBySlug.mockResolvedValue({ id: 'type-planner', slug: 'playbook_planner', isActive: true });
+  it('lists active default agents regardless of agent type or model configuration', async () => {
+    const { service, agentRepository } = createService();
+    const plannerTypeId = new Types.ObjectId().toString();
     agentRepository.findActiveDefaults.mockResolvedValue([
-      makeRecord({
-        name: 'Planner',
-        description: 'Plans generated tasks',
-        llmModel: ' planner-model ',
-        agentTypeSlug: 'playbook_planner',
-      }),
-      makeRecord({
-        name: 'Other',
-        llmModel: 'other-model',
-        agentTypeSlug: 'simple',
-      }),
+      makeRecord({ name: 'Planner', description: 'Plans generated tasks', llmModel: ' planner-model ', agentType: plannerTypeId, isDefault: true }),
+      makeRecord({ name: 'Other', llmModel: 'other-model', agentType: new Types.ObjectId().toString(), isDefault: true }),
+      makeRecord({ name: 'No Model', llmModel: ' ', agentType: plannerTypeId, isDefault: true }),
     ]);
 
     await expect(service.listPlaybookPlannerAgentOptions()).resolves.toEqual([
       expect.objectContaining({ name: 'Planner', model: 'planner-model' }),
+      expect.objectContaining({ name: 'Other', model: 'other-model' }),
+      expect.objectContaining({ name: 'No Model', model: null }),
     ]);
+  });
+
+  it('resolves a model-less active default agent for inference fallback', async () => {
+    const { service, agentRepository, agentTypeService } = createService();
+    const agentId = new Types.ObjectId().toString();
+    const agentTypeId = new Types.ObjectId().toString();
+    agentRepository.findById.mockResolvedValue(makeRecord({
+      _id: agentId,
+      agentType: agentTypeId,
+      isDefault: true,
+      isActive: true,
+      llmModel: ' ',
+    }));
+    agentTypeService.getManyForHydration.mockResolvedValue(new Map([[
+      agentTypeId,
+      { id: agentTypeId, name: 'Planner', slug: 'general_assistant', skills: [] },
+    ]]));
+
+    await expect(service.findPlaybookPlannerById(agentId)).resolves.toEqual(
+      expect.objectContaining({ agentId, model: null }),
+    );
   });
 
   it('rejects an invalid explicit playbook planner id', async () => {
     const { service, agentRepository } = createService();
 
     await expect(service.findPlaybookPlannerById('invalid')).rejects.toThrow('selected Playbook Planner agent is invalid');
-    expect(agentRepository.findByIdDefault).not.toHaveBeenCalled();
+    expect(agentRepository.findById).not.toHaveBeenCalled();
   });
 
-  it('resolves the explicitly selected active playbook suggestor', async () => {
+  it('rejects technical identity changes for the reserved Platform Copilot Agent', async () => {
     const { service, agentRepository } = createService();
-    const agentId = new Types.ObjectId();
-    const agentTypeId = new Types.ObjectId();
-    agentRepository.findByIdDefault.mockResolvedValue(
-      makeRecord({
-        _id: agentId.toString(),
-        agentType: agentTypeId.toString(),
-        agentTypeSlug: 'general_assistant',
-        isActive: true,
-        llmModel: 'suggestor-model',
-        temperature: 0.1,
-        instruction: 'Find the workflow use case',
-        updatedAt: new Date('2026-08-06T00:00:00.000Z'),
-      }),
-    );
-
-    await expect(service.findPlaybookSuggestorById(agentId.toString())).resolves.toEqual({
-      agentTypeId: agentTypeId.toString(),
-      agentTypeSlug: 'general_assistant',
-      agentId: agentId.toString(),
-      agentRevision: '2026-08-06T00:00:00.000Z',
-      model: 'suggestor-model',
-      temperature: 0.1,
-      instruction: 'Find the workflow use case',
+    const reserved = makeRecord({
+      slug: 'platform-copilot',
+      agentTypeSlug: 'platform_copilot',
+      isDefault: true,
+      isDefaultForType: true,
     });
+    agentRepository.findByIdDefault.mockResolvedValue(reserved);
+
+    await expect(service.updateDefault(reserved._id, { isActive: false }))
+      .rejects.toThrow('technical identity is system-reserved');
+    await expect(service.updateDefault(reserved._id, { slug: 'renamed' }))
+      .rejects.toThrow('technical identity is system-reserved');
+    expect(agentRepository.updateById).not.toHaveBeenCalled();
   });
 
-  it('lists active default agents with a configured model regardless of agent type', async () => {
+  it('rejects deletion of the reserved Platform Copilot Agent', async () => {
     const { service, agentRepository } = createService();
-    agentRepository.findActiveDefaults.mockResolvedValue([
-      makeRecord({ name: 'General Assistant', llmModel: ' general-model ' }),
-      makeRecord({ name: 'Planner', llmModel: 'planner-model' }),
-      makeRecord({ name: 'No Model', llmModel: undefined }),
-    ]);
+    const reserved = makeRecord({
+      slug: 'platform-copilot',
+      agentTypeSlug: 'platform_copilot',
+      isDefault: true,
+      isDefaultForType: true,
+    });
+    agentRepository.findByIdDefault.mockResolvedValue(reserved);
 
-    await expect(service.listPlaybookSuggestorAgentOptions()).resolves.toEqual([
-      expect.objectContaining({ name: 'General Assistant', model: 'general-model' }),
-      expect.objectContaining({ name: 'Planner', model: 'planner-model' }),
-    ]);
+    await expect(service.deleteDefault(reserved._id))
+      .rejects.toThrow('technical identity is system-reserved');
+    expect(agentRepository.deleteById).not.toHaveBeenCalled();
+  });
+
+  it('allows capability edits on the reserved Platform Copilot Agent', async () => {
+    const { service, agentRepository, agentTypeService, skillService, connectorService } = createService();
+    const reserved = makeRecord({
+      slug: 'platform-copilot',
+      agentTypeSlug: 'platform_copilot',
+      isDefault: true,
+      isDefaultForType: true,
+    });
+    const updated = { ...reserved, instruction: 'Admin-managed instruction' };
+    agentRepository.findByIdDefault.mockResolvedValue(reserved);
+    agentRepository.updateById.mockResolvedValue(updated);
+    agentTypeService.getManyForHydration.mockResolvedValue(new Map([[
+      reserved.agentType,
+      { id: reserved.agentType, name: 'Platform Copilot', slug: 'platform_copilot', skills: [] },
+    ]]));
+    skillService.findByIds.mockResolvedValue([]);
+    connectorService.findByIds.mockResolvedValue([]);
+
+    await expect(service.updateDefault(reserved._id, { instruction: 'Admin-managed instruction' }))
+      .resolves.toEqual(expect.objectContaining({ instruction: 'Admin-managed instruction' }));
+    expect(agentRepository.updateById).toHaveBeenCalledWith(
+      reserved._id,
+      expect.objectContaining({ instruction: 'Admin-managed instruction' }),
+    );
   });
 });

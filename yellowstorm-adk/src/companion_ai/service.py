@@ -20,12 +20,16 @@ whose nodes are per-step LlmAgents. Event→step mapping uses node_info.path
 """
 from __future__ import annotations
 
+import asyncio
+from contextvars import ContextVar
 import json
 import logging
 import re
 import uuid
 from datetime import datetime, timedelta, timezone
 from typing import List, Optional, Tuple
+
+active_turn_id: ContextVar[Optional[str]] = ContextVar("worky_active_turn_id", default=None)
 
 from google.adk.agents import LlmAgent
 from google.adk.runners import Runner
@@ -342,6 +346,24 @@ class OrchestratorService:
         # uses it to append steps to a plan mid-flight — the drive loop then runs
         # them on its next pass, exactly as create_task grows a plan.
         self._active: Dict[str, Plan] = {}
+        # One lock per session, serializing concurrent amends (converse_turn) so
+        # they run one at a time and each plans against the plan the previous one
+        # already changed — not from the same stale snapshot, which is what let
+        # two near-simultaneous "update the plan" messages conflict. Structural
+        # tearing is NOT the concern here: the in-memory step mutations are all
+        # await-free blocks (atomic under single-threaded asyncio), and the drive
+        # loop runs a pre-built graph, so it deliberately does NOT take this lock —
+        # plan execution keeps running while amends queue behind each other.
+        self._plan_locks: Dict[str, asyncio.Lock] = {}
+
+    def _plan_lock(self, session_id: str) -> asyncio.Lock:
+        # ponytail: grows one Lock per session, never evicted — fine at this scale;
+        # evict on session finish if the process runs long enough to matter.
+        lock = self._plan_locks.get(session_id)
+        if lock is None:
+            lock = asyncio.Lock()
+            self._plan_locks[session_id] = lock
+        return lock
 
     async def expire_mail_waits(self) -> int:
         """Let down every step whose reply never came: the wait becomes an
@@ -469,6 +491,19 @@ class OrchestratorService:
                     await_step_for.setdefault(dep, s.id)
         rm = self._rm
 
+        def wrap(t, token_provider, mail_on_sent, teams_on_sent):
+            # A send step carries the token/chat of the reply its await sibling
+            # waits on. Mail stamps the token into the message; Teams stamps
+            # nothing (the chat id, learned from the send result, is the
+            # correlation). Every other tool passes through untouched.
+            if nodes.is_send_email_tool(t):
+                return nodes.stamp_send_email_tool(t, token_provider=token_provider,
+                                                   on_sent=mail_on_sent)
+            if nodes.is_send_teams_tool(t):
+                return nodes.record_send_teams_tool(t, token_provider=token_provider,
+                                                    on_sent=teams_on_sent)
+            return t
+
         def tools_for_step(step: Step, tools: List) -> List:
             await_step_id = await_step_for.get(step.id)
             if await_step_id:
@@ -480,9 +515,12 @@ class OrchestratorService:
                 async def on_sent(token, recipients):
                     if recipients:
                         await rm.set_mail_wait_expected_from(token, ",".join(recipients))
-                return [nodes.stamp_send_email_tool(t, token_provider=token_provider, on_sent=on_sent)
-                        if nodes.is_send_email_tool(t) else t
-                        for t in tools]
+                # Teams: bind the wait to the chat the message was sent in; the
+                # chat membership is the trust boundary, so there is no recipient
+                # list to record.
+                async def on_sent_teams(token, chat_id):
+                    await rm.bind_teams_wait_target(token, chat_id)
+                return [wrap(t, token_provider, on_sent, on_sent_teams) for t in tools]
             pending_id = f"__pending__:{step.id}"
 
             # Mint only — pure, no DB. The token has to be in the mail, so
@@ -499,9 +537,14 @@ class OrchestratorService:
                     token, session_id=session_id, step_id=_pending_id,
                     user_id=user_id, expected_from=(",".join(recipients) or None),
                     expires_at=expires_at)
-            return [nodes.stamp_send_email_tool(
-                        t, token_provider=eager_token_provider, on_sent=eager_on_sent)
-                    if nodes.is_send_email_tool(t) else t
+
+            async def eager_on_sent_teams(token, chat_id, _pending_id=pending_id):
+                expires_at = datetime.now(timezone.utc) + timedelta(
+                    hours=self._mail_wait_timeout_hours)
+                await rm.register_mail_wait(
+                    token, session_id=session_id, step_id=_pending_id,
+                    user_id=user_id, conversation_id=chat_id, expires_at=expires_at)
+            return [wrap(t, eager_token_provider, eager_on_sent, eager_on_sent_teams)
                     for t in tools]
 
         return tools_for_step
@@ -1061,10 +1104,12 @@ class OrchestratorService:
 
     async def _add_message(self, session_id: str, role: str, content: str) -> None:
         """Project one chat turn into `messages` (the client's conversation view)."""
-        if not content:
+        if not content or self._rm is None:
             return
-        await self._project(self._rm and self._rm.add_message(
-            uuid.uuid4().hex, session_id, role, content))
+        # Terminal chat projection is the UI completion signal. Let failures
+        # reach the servicer so it can attempt a correlated failure outcome.
+        await self._rm.add_message(
+            uuid.uuid4().hex, session_id, role, content, active_turn_id.get())
 
     @staticmethod
     def _assistant_answer(plan: Plan) -> str:
@@ -1188,45 +1233,52 @@ class OrchestratorService:
         # 3cd66578…). Still an EPHEMERAL planner session (no accumulated history),
         # so it never re-plans the existing work — the context is given
         # explicitly and framed as already-done.
-        live = self._active.get(session_id)
-        amend_message = self._amend_message(live, message) if live is not None else message
-        plan = await self._make_plan(
-            session_id, user_id, amend_message,
-            planner_model=planner_model, planner_prompt=planner_prompt,
-            plan_session=f"{session_id}_conv_{uuid.uuid4().hex[:8]}",
-            requester=requester)
-        live = self._active.get(session_id)  # re-check: may have finished while planning
-        logger.info("[worky] converse ◄ session=%s steps=%d ops=%d live=%s",
-                    session_id, len(plan.steps), len(plan.ops), live is not None)
-        if not plan.steps and not plan.ops:
-            await self._add_message(session_id, "assistant", plan.answer or "")
-        elif live is not None:
-            # Ops (cancel/modify existing pending steps) first, then new steps.
-            op_notes = await self._apply_ops(session_id, live, plan.ops)
-            # Grab titles BEFORE injecting (ids/deps are rewritten in place, but
-            # titles are stable) so the reply names what was added.
-            titles = [s.title or (s.description[:50] + "…" if len(s.description) > 50
-                                  else s.description) for s in plan.steps]
-            n = await self._inject_steps(session_id, user_id, live, plan.steps)
-            # Prefer the planner's own words if it wrote any; otherwise a
-            # content-aware line naming what changed — not a fixed line every time.
-            reply = (plan.answer or "").strip()
-            if not reply:
-                bits = list(op_notes)
-                joined = "; ".join(t for t in titles if t)
-                if joined:
-                    bits.append(f"added: {joined}")
-                elif n:
-                    bits.append(f"added {n} step{'s' if n != 1 else ''}")
-                reply = f"Got it — {'; '.join(bits)}." if bits \
-                    else "Got it — nothing to change there."
-            await self._add_message(session_id, "assistant", reply)
-        else:
-            # The plan finished between the routing check and now — nothing live
-            # to amend. Don't silently drop the request.
-            await self._add_message(
-                session_id, "assistant",
-                "The plan just finished — send that again and I'll start it fresh.")
+        # Serialize amends per session: hold the lock across the WHOLE turn —
+        # read the live plan, plan against it, apply — so a second amend waits and
+        # then plans against the plan that already includes this one's steps,
+        # instead of both planning from the same stale snapshot and conflicting.
+        # The drive loop does NOT take this lock, so plan execution keeps running;
+        # only concurrent amends queue behind each other (asyncio.Lock is FIFO).
+        async with self._plan_lock(session_id):
+            live = self._active.get(session_id)
+            amend_message = self._amend_message(live, message) if live is not None else message
+            plan = await self._make_plan(
+                session_id, user_id, amend_message,
+                planner_model=planner_model, planner_prompt=planner_prompt,
+                plan_session=f"{session_id}_conv_{uuid.uuid4().hex[:8]}",
+                requester=requester)
+            live = self._active.get(session_id)  # re-check: may have finished while planning
+            logger.info("[worky] converse ◄ session=%s steps=%d ops=%d live=%s",
+                        session_id, len(plan.steps), len(plan.ops), live is not None)
+            if not plan.steps and not plan.ops:
+                await self._add_message(session_id, "assistant", plan.answer or "")
+            elif live is not None:
+                # Ops (cancel/modify existing pending steps) first, then new steps.
+                op_notes = await self._apply_ops(session_id, live, plan.ops)
+                # Grab titles BEFORE injecting (ids/deps are rewritten in place, but
+                # titles are stable) so the reply names what was added.
+                titles = [s.title or (s.description[:50] + "…" if len(s.description) > 50
+                                      else s.description) for s in plan.steps]
+                n = await self._inject_steps(session_id, user_id, live, plan.steps)
+                # Prefer the planner's own words if it wrote any; otherwise a
+                # content-aware line naming what changed — not a fixed line every time.
+                reply = (plan.answer or "").strip()
+                if not reply:
+                    bits = list(op_notes)
+                    joined = "; ".join(t for t in titles if t)
+                    if joined:
+                        bits.append(f"added: {joined}")
+                    elif n:
+                        bits.append(f"added {n} step{'s' if n != 1 else ''}")
+                    reply = f"Got it — {'; '.join(bits)}." if bits \
+                        else "Got it — nothing to change there."
+                await self._add_message(session_id, "assistant", reply)
+            else:
+                # The plan finished between the routing check and now — nothing live
+                # to amend. Don't silently drop the request.
+                await self._add_message(
+                    session_id, "assistant",
+                    "The plan just finished — send that again and I'll start it fresh.")
         return plan
 
     @staticmethod
@@ -1283,6 +1335,8 @@ class OrchestratorService:
         """
         if not new_steps:
             return 0
+        if len({s.id for s in new_steps}) != len(new_steps):
+            raise ValueError("plan has duplicate step ids")
         # The plan's frontier: steps nothing currently depends on. Injected steps
         # hang off it so they schedule in a NEW wave AFTER all existing work.
         # Without this, an independent step (no deps) lands in wave 0 alongside
@@ -1302,8 +1356,8 @@ class OrchestratorService:
             if not s.is_persona:
                 s.assignee = live.executor_id
                 s.assignee_name = live.executor_name or DEFAULT_EXECUTOR_LABEL
+        scheduler.validate(Plan(steps=[*live.steps, *new_steps]))
         live.steps.extend(new_steps)
-        scheduler.validate(live)
         scheduler.assign_waves(live)
         for s in new_steps:
             await self._project_step(session_id, live, s)
@@ -1698,37 +1752,56 @@ class OrchestratorService:
         # whatever prompt the agentstore supplies.
         ctx = requester_context(requester)
         planner_message = f"{ctx}\n\n---\nUser's request:\n{message}" if ctx else message
-        text = ""
-        async for ev in runner.run_async(
-            user_id=user_id, session_id=plan_session,
-            new_message=types.Content(role="user", parts=[types.Part(text=planner_message)])):
-            if ev.content and ev.content.parts:
-                for p in ev.content.parts:
-                    if getattr(p, "text", None):
-                        text = p.text
-        data = _extract_json(text)
-        steps = []
-        for s in data.get("steps", []):
-            assignee_id = assignee_name = assignee_role = None
-            if s.get("assignee"):
-                # Trust the API's resolution, not whatever the planner echoed
-                # back — same reasoning as delegate_to_human_agent: an LLM
-                # relaying fields can drift, a fresh lookup can't.
-                matches = await human_agents.search_human_agents(name=s["assignee"])
+        first_validation_error: Optional[ValueError] = None
+        for attempt in range(2):
+            text = ""
+            async for ev in runner.run_async(
+                user_id=user_id, session_id=plan_session,
+                new_message=types.Content(role="user", parts=[types.Part(text=planner_message)])):
+                if ev.content and ev.content.parts:
+                    for p in ev.content.parts:
+                        if getattr(p, "text", None):
+                            text = p.text
+            data = _extract_json(text)
+            raw_steps = data.get("steps", [])
+            steps = [Step(id=s["id"], title=s.get("title", ""),
+                          description=s.get("description", ""),
+                          kind=s.get("kind", "execute"), question=s.get("question"),
+                          depends_on=list(s.get("depends_on", [])))
+                     for s in raw_steps]
+            plan = Plan(title=data.get("title", ""), goal=data.get("goal", ""),
+                        answer=data.get("answer") or None, steps=steps,
+                        ops=[dict(o) for o in data.get("ops", []) if o.get("step_id")])
+            if first_validation_error is not None and not plan.steps:
+                raise ValueError("planner correction returned no executable steps") \
+                    from first_validation_error
+            try:
+                scheduler.validate(plan)
+            except ValueError as exc:
+                if attempt == 1:
+                    raise
+                first_validation_error = exc
+                planner_message = (
+                    "Your previous plan had an invalid dependency graph. Return the complete "
+                    "replacement plan as strict JSON. Every step id must be unique, every "
+                    "depends_on id must identify a step in the replacement, and the graph "
+                    "must have no cycles. Do not return a direct reply or omit any work."
+                )
+                continue
+
+            for step, raw_step in zip(plan.steps, raw_steps):
+                if not raw_step.get("assignee"):
+                    continue
+                # Resolve identities only after the graph is safe to execute.
+                matches = await human_agents.search_human_agents(name=raw_step["assignee"])
                 if matches:
-                    assignee_name = matches[0].get("name") or s["assignee"]
-                    assignee_id = matches[0].get("id") or assignee_name
-                    assignee_role = matches[0].get("role")
-            steps.append(Step(id=s["id"], title=s.get("title", ""),
-                              description=s.get("description", ""),
-                              kind=s.get("kind", "execute"), question=s.get("question"),
-                              depends_on=list(s.get("depends_on", [])),
-                              is_persona=bool(assignee_name),
-                              assignee=assignee_id, assignee_name=assignee_name,
-                              assignee_role=assignee_role))
-        return Plan(title=data.get("title", ""), goal=data.get("goal", ""),
-                    answer=data.get("answer") or None, steps=steps,
-                    ops=[dict(o) for o in data.get("ops", []) if o.get("step_id")])
+                    step.assignee_name = matches[0].get("name") or raw_step["assignee"]
+                    step.assignee = matches[0].get("id") or step.assignee_name
+                    step.assignee_role = matches[0].get("role")
+                    step.is_persona = True
+            return plan
+
+        raise RuntimeError("planner validation retry exhausted")
 
     def _build_planner_model(self, model_name: Optional[str] = None):
         # Always has the find_human_agents discovery tool now.

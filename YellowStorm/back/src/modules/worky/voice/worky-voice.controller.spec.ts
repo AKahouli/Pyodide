@@ -12,7 +12,11 @@ describe('WorkyVoiceController', () => {
   it('POST session returns the minted envelope', async () => {
     tokens.mintSessionToken.mockResolvedValue({ wsUrl: 'wss://x?access_token=t', setup: {}, expiresAt: 'z' });
     const res = await ctrl.createSession(user, { resumptionHandle: 'h1' });
-    expect(tokens.mintSessionToken).toHaveBeenCalledWith({ resumptionHandle: 'h1' });
+    expect(tokens.mintSessionToken).toHaveBeenCalledWith({
+      resumptionHandle: 'h1',
+      prompt: undefined,
+      requester: { name: undefined, email: undefined, role: undefined },
+    });
     expect(res.wsUrl).toContain('access_token=t');
   });
 
@@ -42,7 +46,11 @@ describe('WorkyVoiceController', () => {
     tokens.mintSessionToken.mockResolvedValue({ wsUrl: 'wss://x', setup: {}, expiresAt: 'z' });
     await ctrl.createSession(user, { streamId: 's1', resumptionHandle: 'h1' });
     expect((planning as any).getVoicePrompt).toHaveBeenCalledWith('u1', 's1');
-    expect(tokens.mintSessionToken).toHaveBeenCalledWith({ resumptionHandle: 'h1', prompt: 'Persona Q' });
+    expect(tokens.mintSessionToken).toHaveBeenCalledWith({
+      resumptionHandle: 'h1',
+      prompt: 'Persona Q',
+      requester: { name: undefined, email: undefined, role: undefined },
+    });
   });
 
   it('GET prompt returns default flag when unset', async () => {

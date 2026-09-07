@@ -10,6 +10,13 @@ import {
   hasCycleWithinNodes,
   isNodeInCycle,
 } from '../utils/playbook-flow-validation-graph.util';
+import {
+  isCompleteDataBinding,
+  isManagedPlaybookInputPath,
+  isNonEmptyString,
+  isRouterControlInput,
+  MANAGED_PLAYBOOK_INPUT_PREFIX,
+} from '../utils/playbook-managed-input.util';
 
 export interface PlaybookFlowValidationError {
   rule: number;
@@ -270,17 +277,13 @@ export class PlaybookFlowValidatorService {
   ): ValidationError[] {
     const errors: ValidationError[] = [];
     const nodeIds = requiredBindingNodeIds ? new Set(requiredBindingNodeIds) : undefined;
-    const routerIds = new Set(nodes.filter((node) => node.kind === 'router').map((node) => node.id));
     for (const node of nodes) {
       if (nodeIds && !nodeIds.has(node.id)) continue;
       if (!node.input?.ports) continue;
       for (const port of node.input.ports) {
         if (!port.required) continue;
         const binding = bindings.filter((b) => b.targetNode === node.id && b.targetPort === port.id);
-        const hasRouterControlEdge = edges.some((edge) => edge.kind === 'conditional'
-          && routerIds.has(edge.source)
-          && edge.target === node.id
-          && (edge.targetInputPortId || 'default') === port.id);
+        const hasRouterControlEdge = isRouterControlInput(node.id, port.id, nodes, edges);
         if (binding.length === 0 && !hasRouterControlEdge) {
           errors.push({ rule: 8, message: `Required port ${node.id}.${port.id} has no data binding` });
         } else if (binding.length > 1) {
@@ -393,12 +396,28 @@ export class PlaybookFlowValidatorService {
         errors.push({ rule: 7, message: `Data binding ${binding.id} target port ${binding.targetNode}.${binding.targetPort} does not exist` });
       }
 
+      const allowedIncompleteNodeOutput = binding.sourceKind === 'node-output'
+        && options.allowIncompleteNodeOutputBindings
+        && (!binding.sourceNode || !binding.sourcePort);
+      if (!isCompleteDataBinding(binding) && !allowedIncompleteNodeOutput) {
+        errors.push({ rule: 7, message: this.incompleteBindingMessage(binding) });
+        continue;
+      }
+
+      if (binding.sourceKind === 'trigger'
+        && isNonEmptyString(binding.triggerPath)
+        && binding.triggerPath.startsWith(MANAGED_PLAYBOOK_INPUT_PREFIX)
+        && !isManagedPlaybookInputPath(binding.triggerPath)) {
+        errors.push({ rule: 7, message: `Data binding ${binding.id} has an invalid managed triggerPath` });
+        continue;
+      }
+
       if (binding.sourceKind !== 'node-output') {
         continue;
       }
 
       if (!binding.sourceNode || !binding.sourcePort) {
-        if (options.allowIncompleteNodeOutputBindings) {
+        if (allowedIncompleteNodeOutput) {
           continue;
         }
         errors.push({ rule: 7, message: `Data binding ${binding.id} source node-output bindings require sourceNode and sourcePort` });
@@ -418,6 +437,23 @@ export class PlaybookFlowValidatorService {
     }
 
     return errors;
+  }
+
+  private incompleteBindingMessage(binding: DataBinding): string {
+    switch (binding.sourceKind) {
+      case 'node-output':
+        return `Data binding ${binding.id} source node-output bindings require sourceNode and sourcePort`;
+      case 'trigger':
+        return `Data binding ${binding.id} trigger bindings require a valid triggerPath`;
+      case 'state':
+        return `Data binding ${binding.id} state bindings require statePath`;
+      case 'expression':
+        return `Data binding ${binding.id} expression bindings require expression`;
+      case 'constant':
+        return `Data binding ${binding.id} constant bindings require constantValue`;
+      default:
+        return `Data binding ${binding.id} has an unsupported sourceKind`;
+    }
   }
 
   private checkDuplicateDataBindings(bindings: DataBinding[]): ValidationError[] {

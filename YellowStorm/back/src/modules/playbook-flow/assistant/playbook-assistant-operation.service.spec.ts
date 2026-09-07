@@ -89,15 +89,62 @@ describe('PlaybookAssistantOperationService', () => {
     expect(flowService.update).toHaveBeenCalledWith('flow-1', 'owner-1', expect.objectContaining({
       expectedDefinitionRevision: 5,
       clientMutationId: 'assistant-operation-operation-1',
-    }), {
-      allowUnboundRequiredPorts: true,
-      allowIncompleteNodeOutputBindings: true,
-    });
+    }));
     expect(operationModel.updateOne).toHaveBeenCalledWith(
       expect.objectContaining({ operationId: 'operation-1', status: 'completed' }),
       expect.objectContaining({ $set: expect.objectContaining({ committedRevision: 6 }) }),
     );
     expect(updateExec).toHaveBeenCalled();
+  });
+
+  it('commits a corrected canonical draft from an explicitly marked strict-validation failure', async () => {
+    const updateExec = jest.fn().mockResolvedValue({});
+    const operationModel = {
+      findOne: jest.fn().mockImplementation(() => leanExec({
+        operationId: 'operation-blocked', playbookId: 'flow-1', ownerId: 'owner-1',
+        status: 'failed', target: 'canonical', disposition: 'pending', baseDefinitionRevision: 5,
+        events: [
+          { type: 'node_delta', suggestion: { kind: 'workflow_plan', validationStatus: 'blocked', changes: [{ type: 'create_node' }] } },
+          { type: 'failed', failureKind: 'strict_validation' },
+        ],
+      })),
+      updateOne: jest.fn().mockReturnValue({ exec: updateExec }),
+    };
+    const flowService = {
+      update: jest.fn().mockResolvedValue({ id: 'flow-1', definitionRevision: 6 }),
+    };
+    const service = new PlaybookAssistantOperationService(operationModel as any, flowService as any);
+
+    await expect(service.commit('flow-1', 'owner-1', 'operation-blocked', {
+      name: 'Corrected draft', expectedDefinitionRevision: 5,
+    })).resolves.toMatchObject({ definitionRevision: 6 });
+
+    expect(flowService.update).toHaveBeenCalledWith('flow-1', 'owner-1', expect.objectContaining({
+      name: 'Corrected draft',
+      expectedDefinitionRevision: 5,
+      clientMutationId: 'assistant-operation-operation-blocked',
+    }));
+    expect(operationModel.updateOne).toHaveBeenCalledWith(
+      expect.objectContaining({ operationId: 'operation-blocked', status: 'failed' }),
+      expect.objectContaining({ $set: expect.objectContaining({ disposition: 'applied', committedRevision: 6 }) }),
+    );
+  });
+
+  it('rejects committing a generic failed canonical operation', async () => {
+    const operationModel = {
+      findOne: jest.fn().mockImplementation(() => leanExec({
+        operationId: 'operation-failed', playbookId: 'flow-1', ownerId: 'owner-1',
+        status: 'failed', target: 'canonical', disposition: 'pending', baseDefinitionRevision: 5,
+        events: [{ type: 'failed', recoverable: true }],
+      })),
+    };
+    const flowService = { update: jest.fn() };
+    const service = new PlaybookAssistantOperationService(operationModel as any, flowService as any);
+
+    await expect(service.commit('flow-1', 'owner-1', 'operation-failed', {
+      name: 'Unsafe draft', expectedDefinitionRevision: 5,
+    })).rejects.toThrow('not ready to commit');
+    expect(flowService.update).not.toHaveBeenCalled();
   });
 
   it('applies or discards completed Advisor previews explicitly', async () => {

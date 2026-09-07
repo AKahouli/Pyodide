@@ -1,7 +1,8 @@
-import { useEffect, useMemo, useState } from 'react';
-import { Loader2, Save, Sparkles, Wand2 } from 'lucide-react';
+import { useEffect, useMemo, useState, type ReactNode } from 'react';
+import { ChevronDown, HelpCircle, Loader2, Save, Sparkles } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import {
@@ -12,11 +13,12 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { Switch } from '@/components/ui/switch';
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { parseApiError } from '@/lib/api-error';
 import { showError, showSuccess } from '@/lib/notifications';
 import { useModuleTranslation } from '@/modules/localization';
-import { getAdminPlaybookSettings, getAllModels, getPlaybookPlannerAgents, getPlaybookSuggestorAgents, updateAdminPlaybookSettings } from '../api';
-import type { AdminModelResponse, AdminPlaybookSettings, PlaybookPlannerAgentOption, PlaybookSuggestorAgentOption } from '../types';
+import { getAdminPlaybookSettings, getAllModels, getPlaybookPlannerAgents, updateAdminPlaybookSettings } from '../api';
+import type { AdminModelResponse, AdminPlaybookSettings, PlaybookPlannerAgentOption, UpdateAdminPlaybookSettingsRequest } from '../types';
 
 const GLOBAL_DEFAULT_MODEL = '__global_default__';
 
@@ -38,6 +40,14 @@ const DEFAULT_PLAYBOOK_EXECUTION_SETTINGS = {
   maxParallelismPerExecution: 5,
   recursionLimitDefault: 25,
   recursionLimitMax: 50,
+  maxHitlRounds: 5,
+  pythonWorkerPoolSize: 8,
+  pythonWorkerMaxInflight: 4,
+  maxToolIterations: 40,
+  maxSandboxCallsPerStep: 30,
+  graphCacheEnabled: false,
+  graphCacheMaxEntries: 128,
+  graphCacheTtlSeconds: 900,
   dynamicReasoning: { plannerAgentId: null, maxWorkNodes: 6, maxParallelism: 3, maxDepth: 1, maxRepairAttempts: 1 },
 };
 
@@ -51,7 +61,38 @@ const EXECUTION_FIELD_KEYS = [
   'maxParallelismPerExecution',
   'recursionLimitDefault',
   'recursionLimitMax',
+  'maxHitlRounds',
+  'pythonWorkerPoolSize',
+  'pythonWorkerMaxInflight',
+  'maxToolIterations',
+  'maxSandboxCallsPerStep',
+  'graphCacheMaxEntries',
+  'graphCacheTtlSeconds',
 ] as const;
+
+const RUNTIME_TOOLTIP_KEYS = [
+  'maxConcurrentPerUser', 'executionQueueMaxDepth', 'maxParallelismPerExecution',
+  'recursionLimitDefault', 'recursionLimitMax', 'maxHitlRounds', 'pythonWorkerPoolSize',
+  'pythonWorkerMaxInflight', 'maxToolIterations', 'graphCacheEnabled',
+  'maxSandboxCallsPerStep',
+  'graphCacheMaxEntries', 'graphCacheTtlSeconds',
+] as const;
+
+type RuntimeTooltipKey = (typeof RUNTIME_TOOLTIP_KEYS)[number];
+
+function hasRuntimeTooltip(key: string): key is RuntimeTooltipKey {
+  return (RUNTIME_TOOLTIP_KEYS as readonly string[]).includes(key);
+}
+
+const EXECUTION_FIELD_MAX: Partial<Record<(typeof EXECUTION_FIELD_KEYS)[number], number>> = {
+  maxHitlRounds: 100,
+  pythonWorkerPoolSize: 100,
+  pythonWorkerMaxInflight: 20,
+  maxToolIterations: 500,
+  maxSandboxCallsPerStep: 100,
+  graphCacheMaxEntries: 10000,
+  graphCacheTtlSeconds: 86400,
+};
 
 const DYNAMIC_REASONING_FIELD_KEYS = ['maxWorkNodes', 'maxParallelism', 'maxDepth', 'maxRepairAttempts'] as const;
 
@@ -64,6 +105,61 @@ const LIMIT_FIELD_CONFIG = [
 ] as const;
 
 type LimitFieldKey = (typeof LIMIT_FIELD_CONFIG)[number]['key'];
+
+type SettingsPaneProps = Readonly<{
+  title: ReactNode;
+  description: ReactNode;
+  icon?: ReactNode;
+  contentClassName?: string;
+  children: ReactNode;
+}>;
+
+function SettingsPane({ title, description, icon, contentClassName = 'space-y-6', children }: SettingsPaneProps) {
+  return (
+    <Collapsible defaultOpen={false}>
+      <Card>
+        <CollapsibleTrigger asChild>
+          <button type="button" className="group w-full text-left">
+            <CardHeader>
+              <div className="flex items-start justify-between gap-4">
+                <div className="space-y-1.5">
+                  <CardTitle className="flex items-center gap-2">
+                    {icon}
+                    {title}
+                  </CardTitle>
+                  <CardDescription>{description}</CardDescription>
+                </div>
+                <ChevronDown className="mt-1 h-4 w-4 shrink-0 text-muted-foreground transition-transform group-data-[state=open]:rotate-180" />
+              </div>
+            </CardHeader>
+          </button>
+        </CollapsibleTrigger>
+        <CollapsibleContent>
+          <CardContent className={contentClassName}>{children}</CardContent>
+        </CollapsibleContent>
+      </Card>
+    </Collapsible>
+  );
+}
+
+function FieldLabel({ fieldKey, children }: Readonly<{ fieldKey: string; children: ReactNode }>) {
+  const { t } = useModuleTranslation('admin');
+  return (
+    <span className="flex items-center gap-1.5">
+      {children}
+      {hasRuntimeTooltip(fieldKey) && (
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <button type="button" className="text-muted-foreground hover:text-foreground" aria-label={t(`playbookSettings.execution.fields.${fieldKey}.tooltipLabel`)}>
+              <HelpCircle className="h-3.5 w-3.5" />
+            </button>
+          </TooltipTrigger>
+          <TooltipContent className="max-w-xs">{t(`playbookSettings.execution.fields.${fieldKey}.tooltip`)}</TooltipContent>
+        </Tooltip>
+      )}
+    </span>
+  );
+}
 
 function buildSelectableModels(models: AdminModelResponse[], selectedModelId: string | null): AdminModelResponse[] {
   const activeModels = models.filter((model) => model.isActive);
@@ -86,16 +182,13 @@ export function PlaybookSettingsPage() {
   const [saveError, setSaveError] = useState<string | null>(null);
   const [models, setModels] = useState<AdminModelResponse[]>([]);
   const [plannerAgents, setPlannerAgents] = useState<PlaybookPlannerAgentOption[]>([]);
-  const [suggestorAgents, setSuggestorAgents] = useState<PlaybookSuggestorAgentOption[]>([]);
   const [settings, setSettings] = useState<AdminPlaybookSettings>({
-    playbookSuggestorAgentId: null,
     inferenceModelId: null,
     advisorEvaluationModelId: null,
     replayEvaluationModelId: null,
     nodeSuggestionsMode: 'manual',
     approvalSuggestionMode: 'auto',
     intentNormalizationLimits: DEFAULT_INTENT_NORMALIZATION_LIMITS,
-    replayEligibilityConfidenceThreshold: 70,
     useDeterministicBlueprintBuilder: true,
     playbookExecution: DEFAULT_PLAYBOOK_EXECUTION_SETTINGS,
   });
@@ -105,11 +198,10 @@ export function PlaybookSettingsPage() {
     const load = async () => {
       setLoading(true);
       try {
-        const [settingsResult, modelsResult, plannerAgentsResult, suggestorAgentsResult] = await Promise.all([
+        const [settingsResult, modelsResult, plannerAgentsResult] = await Promise.all([
           getAdminPlaybookSettings(),
           getAllModels(),
           getPlaybookPlannerAgents(),
-          getPlaybookSuggestorAgents(),
         ]);
 
         if (cancelled) return;
@@ -127,7 +219,6 @@ export function PlaybookSettingsPage() {
         });
         setModels(modelsResult.models);
         setPlannerAgents(plannerAgentsResult);
-        setSuggestorAgents(suggestorAgentsResult);
       } catch (error) {
         if (!cancelled) {
           showError(t('playbookSettings.toasts.loadError.title'), {
@@ -176,16 +267,11 @@ export function PlaybookSettingsPage() {
     () => plannerAgents.find((agent) => agent.id === settings.playbookExecution.dynamicReasoning.plannerAgentId) || null,
     [plannerAgents, settings.playbookExecution.dynamicReasoning.plannerAgentId],
   );
-  const selectedSuggestorAgent = useMemo(
-    () => suggestorAgents.find((agent) => agent.id === settings.playbookSuggestorAgentId) || null,
-    [settings.playbookSuggestorAgentId, suggestorAgents],
-  );
-
-  const handleSave = async () => {
+  const handleSave = async (patch: UpdateAdminPlaybookSettingsRequest) => {
     setSaving(true);
     setSaveError(null);
     try {
-      const result = await updateAdminPlaybookSettings(settings);
+      const result = await updateAdminPlaybookSettings(patch);
       setSettings(result);
       showSuccess(t('playbookSettings.toasts.saved.title'), {
         description: t('playbookSettings.toasts.saved.description'),
@@ -227,11 +313,11 @@ export function PlaybookSettingsPage() {
     && settings.playbookExecution.maxConcurrentPerProvider <= settings.playbookExecution.availableCapacity
     && settings.playbookExecution.maxConcurrentPerModel <= settings.playbookExecution.availableCapacity
     && settings.playbookExecution.recursionLimitDefault <= settings.playbookExecution.recursionLimitMax
+    && settings.playbookExecution.maxSandboxCallsPerStep <= 100
     && settings.playbookExecution.dynamicReasoning.maxParallelism <= settings.playbookExecution.dynamicReasoning.maxWorkNodes
     && settings.playbookExecution.dynamicReasoning.maxParallelism <= settings.playbookExecution.maxParallelismPerExecution
     && settings.playbookExecution.dynamicReasoning.maxDepth === 1
     && selectedPlannerAgent !== null;
-  const settingsValid = executionSettingsValid && selectedSuggestorAgent !== null;
 
   const updateExecutionField = (key: (typeof EXECUTION_FIELD_KEYS)[number], value: string) => {
     const parsed = Number.parseInt(value, 10);
@@ -272,78 +358,39 @@ export function PlaybookSettingsPage() {
         </div>
       )}
 
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <Wand2 className="h-4 w-4" />
-            {t('playbookSettings.suggestor.title')}
-          </CardTitle>
-          <CardDescription>{t('playbookSettings.suggestor.description')}</CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="space-y-2">
-            <Label htmlFor="playbook-suggestor-agent">{t('playbookSettings.suggestor.agent.label')}</Label>
-            <Select
-              value={settings.playbookSuggestorAgentId ?? ''}
-              onValueChange={(playbookSuggestorAgentId) => setSettings((previous) => ({
-                ...previous,
-                playbookSuggestorAgentId,
-              }))}
-              disabled={loading || suggestorAgents.length === 0}
-            >
-              <SelectTrigger id="playbook-suggestor-agent">
-                <SelectValue placeholder={t('playbookSettings.suggestor.agent.placeholder')} />
-              </SelectTrigger>
-              <SelectContent>
-                {settings.playbookSuggestorAgentId && !selectedSuggestorAgent && (
-                  <SelectItem value={settings.playbookSuggestorAgentId} disabled>
-                    {t('playbookSettings.suggestor.agent.unavailable')}
-                  </SelectItem>
-                )}
-                {suggestorAgents.map((agent) => (
-                  <SelectItem key={agent.id} value={agent.id}>{agent.name} · {agent.model}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            <p className={selectedSuggestorAgent ? 'text-xs text-muted-foreground' : 'text-xs text-destructive'}>
-              {selectedSuggestorAgent
-                ? t('playbookSettings.suggestor.agent.selectedHelp', {
-                  agent: selectedSuggestorAgent.name,
-                  model: selectedSuggestorAgent.model,
-                })
-                : suggestorAgents.length === 0
-                  ? t('playbookSettings.suggestor.agent.noOptions')
-                  : t('playbookSettings.suggestor.agent.required')}
-            </p>
-          </div>
-          <div className="flex justify-end">
-            <Button type="button" onClick={() => void handleSave()} disabled={saving || !settingsValid}>
-              {saving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}
-              {t('playbookSettings.actions.save')}
-            </Button>
-          </div>
-        </CardContent>
-      </Card>
-
-      <Card>
-        <CardHeader>
-          <CardTitle>{t('playbookSettings.execution.title')}</CardTitle>
-          <CardDescription>{t('playbookSettings.execution.description')}</CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-6">
+      <SettingsPane
+        title={t('playbookSettings.execution.title')}
+        description={t('playbookSettings.execution.description')}
+      >
+        <TooltipProvider>
+          <div className="space-y-6">
           <div className="grid gap-4 md:grid-cols-2">
             {EXECUTION_FIELD_KEYS.map((key) => (
               <div key={key} className="space-y-2">
-                <Label htmlFor={`execution-${key}`}>{t(`playbookSettings.execution.fields.${key}.label`)}</Label>
+                <Label htmlFor={`execution-${key}`}><FieldLabel fieldKey={key}>{t(`playbookSettings.execution.fields.${key}.label`)}</FieldLabel></Label>
                 <Input
                   id={`execution-${key}`}
                   type="number"
                   min={key === 'executionQueueMaxDepth' ? 0 : 1}
+                  max={EXECUTION_FIELD_MAX[key]}
                   value={settings.playbookExecution[key]}
                   onChange={(event) => updateExecutionField(key, event.target.value)}
                 />
               </div>
             ))}
+          </div>
+          <div className="flex items-center justify-between gap-4 rounded-md border border-border/60 p-4">
+            <Label htmlFor="execution-graphCacheEnabled">
+              <FieldLabel fieldKey="graphCacheEnabled">{t('playbookSettings.execution.fields.graphCacheEnabled.label')}</FieldLabel>
+            </Label>
+            <Switch
+              id="execution-graphCacheEnabled"
+              checked={settings.playbookExecution.graphCacheEnabled}
+              onCheckedChange={(graphCacheEnabled) => setSettings((previous) => ({
+                ...previous,
+                playbookExecution: { ...previous.playbookExecution, graphCacheEnabled },
+              }))}
+            />
           </div>
           <div className="space-y-3 rounded-md border border-border/60 p-4">
             <div>
@@ -376,7 +423,9 @@ export function PlaybookSettingsPage() {
                     </SelectItem>
                   )}
                   {plannerAgents.map((agent) => (
-                    <SelectItem key={agent.id} value={agent.id}>{agent.name} · {agent.model}</SelectItem>
+                    <SelectItem key={agent.id} value={agent.id}>
+                      {agent.name} · {agent.model || t('playbookSettings.execution.dynamicReasoning.planner.inferenceFallback')}
+                    </SelectItem>
                   ))}
                 </SelectContent>
               </Select>
@@ -384,7 +433,7 @@ export function PlaybookSettingsPage() {
                 {selectedPlannerAgent
                   ? t('playbookSettings.execution.dynamicReasoning.planner.selectedHelp', {
                     agent: selectedPlannerAgent.name,
-                    model: selectedPlannerAgent.model,
+                    model: selectedPlannerAgent.model || t('playbookSettings.execution.dynamicReasoning.planner.inferenceFallback'),
                   })
                   : plannerAgents.length === 0
                     ? t('playbookSettings.execution.dynamicReasoning.planner.noOptions')
@@ -410,23 +459,24 @@ export function PlaybookSettingsPage() {
           {!executionSettingsValid && <p className="text-sm text-destructive">{t('playbookSettings.execution.validationError')}</p>}
           <p className="text-xs text-muted-foreground">{t('playbookSettings.execution.newExecutionsOnly')}</p>
           <div className="flex justify-end">
-            <Button type="button" onClick={() => void handleSave()} disabled={saving || !settingsValid}>
+            <Button
+              type="button"
+              onClick={() => void handleSave({ playbookExecution: settings.playbookExecution })}
+              disabled={saving || !executionSettingsValid}
+            >
               {saving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}
               {t('playbookSettings.actions.save')}
             </Button>
           </div>
-        </CardContent>
-      </Card>
+          </div>
+        </TooltipProvider>
+      </SettingsPane>
 
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <Sparkles className="h-4 w-4" />
-            {t('playbookSettings.inference.title')}
-          </CardTitle>
-          <CardDescription>{t('playbookSettings.inference.description')}</CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-6">
+      <SettingsPane
+        title={t('playbookSettings.inference.title')}
+        description={t('playbookSettings.inference.description')}
+        icon={<Sparkles className="h-4 w-4" />}
+      >
           {loading ? (
             <div className="flex items-center gap-2 text-sm text-muted-foreground">
               <Loader2 className="h-4 w-4 animate-spin" />
@@ -560,22 +610,29 @@ export function PlaybookSettingsPage() {
               </div>
 
               <div className="flex justify-end">
-                <Button type="button" onClick={() => void handleSave()} disabled={saving || !settingsValid}>
+                <Button
+                  type="button"
+                  onClick={() => void handleSave({
+                    inferenceModelId: settings.inferenceModelId,
+                    advisorEvaluationModelId: settings.advisorEvaluationModelId,
+                    replayEvaluationModelId: settings.replayEvaluationModelId,
+                    nodeSuggestionsMode: settings.nodeSuggestionsMode,
+                    approvalSuggestionMode: settings.approvalSuggestionMode,
+                  })}
+                  disabled={saving}
+                >
                   {saving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}
                   {t('playbookSettings.actions.save')}
                 </Button>
               </div>
             </>
           )}
-        </CardContent>
-      </Card>
+      </SettingsPane>
 
-      <Card>
-        <CardHeader>
-          <CardTitle>{t('playbookSettings.intentNormalization.title')}</CardTitle>
-          <CardDescription>{t('playbookSettings.intentNormalization.description')}</CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-6">
+      <SettingsPane
+        title={t('playbookSettings.intentNormalization.title')}
+        description={t('playbookSettings.intentNormalization.description')}
+      >
           {loading ? (
             <div className="flex items-center gap-2 text-sm text-muted-foreground">
               <Loader2 className="h-4 w-4 animate-spin" />
@@ -603,67 +660,23 @@ export function PlaybookSettingsPage() {
               </div>
 
               <div className="flex justify-end">
-                <Button type="button" onClick={() => void handleSave()} disabled={saving || !settingsValid}>
+                <Button
+                  type="button"
+                  onClick={() => void handleSave({ intentNormalizationLimits: settings.intentNormalizationLimits })}
+                  disabled={saving}
+                >
                   {saving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}
                   {t('playbookSettings.actions.save')}
                 </Button>
               </div>
             </>
           )}
-        </CardContent>
-      </Card>
+      </SettingsPane>
 
-      <Card>
-        <CardHeader>
-          <CardTitle>{t('playbookSettings.replay.title')}</CardTitle>
-          <CardDescription>{t('playbookSettings.replay.description')}</CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-6">
-          {loading ? (
-            <div className="flex items-center gap-2 text-sm text-muted-foreground">
-              <Loader2 className="h-4 w-4 animate-spin" />
-              <span>{t('playbookSettings.loading')}</span>
-            </div>
-          ) : (
-            <>
-              <div className="space-y-2">
-                <Label htmlFor="replay-eligibility-threshold">{t('playbookSettings.fields.replayEligibilityThreshold.label')}</Label>
-                <Input
-                  id="replay-eligibility-threshold"
-                  type="number"
-                  min={0}
-                  max={100}
-                  value={settings.replayEligibilityConfidenceThreshold}
-                  onChange={(event) => {
-                    const parsed = Number.parseInt(event.target.value, 10);
-                    const clamped = Number.isFinite(parsed)
-                      ? Math.min(100, Math.max(0, parsed))
-                      : 70;
-                    setSettings((prev) => ({ ...prev, replayEligibilityConfidenceThreshold: clamped }));
-                  }}
-                />
-                <p className="text-xs text-muted-foreground">
-                  {t('playbookSettings.fields.replayEligibilityThreshold.help')}
-                </p>
-              </div>
-
-              <div className="flex justify-end">
-                <Button type="button" onClick={() => void handleSave()} disabled={saving || !settingsValid}>
-                  {saving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}
-                  {t('playbookSettings.actions.save')}
-                </Button>
-              </div>
-            </>
-          )}
-        </CardContent>
-      </Card>
-
-      <Card>
-        <CardHeader>
-          <CardTitle>{t('playbookSettings.intent.title')}</CardTitle>
-          <CardDescription>{t('playbookSettings.intent.description')}</CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-6">
+      <SettingsPane
+        title={t('playbookSettings.intent.title')}
+        description={t('playbookSettings.intent.description')}
+      >
           {loading ? (
             <div className="flex items-center gap-2 text-sm text-muted-foreground">
               <Loader2 className="h-4 w-4 animate-spin" />
@@ -690,15 +703,20 @@ export function PlaybookSettingsPage() {
               </div>
 
               <div className="flex justify-end">
-                <Button type="button" onClick={() => void handleSave()} disabled={saving || !settingsValid}>
+                <Button
+                  type="button"
+                  onClick={() => void handleSave({
+                    useDeterministicBlueprintBuilder: settings.useDeterministicBlueprintBuilder,
+                  })}
+                  disabled={saving}
+                >
                   {saving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}
                   {t('playbookSettings.actions.save')}
                 </Button>
               </div>
             </>
           )}
-        </CardContent>
-      </Card>
+      </SettingsPane>
     </div>
   );
 }

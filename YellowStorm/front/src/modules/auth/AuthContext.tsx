@@ -213,6 +213,31 @@ export function AuthProvider({ children }: AuthProviderProps) {
     }
   }, []);
 
+  React.useEffect(() => {
+    if (!state.isAuthenticated || state.user?.status !== 'inactive') {
+      return;
+    }
+
+    const poll = () => {
+      void refreshUser().catch(() => undefined);
+    };
+    poll();
+    const interval = window.setInterval(poll, 15_000);
+    const onVisibility = () => {
+      if (!document.hidden) {
+        poll();
+      }
+    };
+    document.addEventListener('visibilitychange', onVisibility);
+    window.addEventListener('focus', poll);
+
+    return () => {
+      window.clearInterval(interval);
+      document.removeEventListener('visibilitychange', onVisibility);
+      window.removeEventListener('focus', poll);
+    };
+  }, [state.isAuthenticated, state.user?.status, refreshUser]);
+
   const value = React.useMemo<AuthContextType>(
     () => ({
       ...state,

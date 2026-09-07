@@ -60,11 +60,11 @@ export function EvaluationSettingsPage() {
   const selectedModelIsValid = !reliability.enabled
     || eligibleModels.some((model) => model.id === reliability.judgeModelId);
   const numericFieldsValid = Number.isInteger(reliability.maxConcurrentEvaluations)
-    && reliability.maxConcurrentEvaluations >= 1 && reliability.maxConcurrentEvaluations <= 10
-    && Number.isInteger(reliability.timeoutMs) && reliability.timeoutMs >= 5000 && reliability.timeoutMs <= 120000
-    && Number.isInteger(reliability.maxFindings) && reliability.maxFindings >= 1 && reliability.maxFindings <= 10
-    && Number.isInteger(reliability.correction.threshold) && reliability.correction.threshold >= 0 && reliability.correction.threshold <= 100
-    && Number.isInteger(reliability.correction.maxAttempts) && reliability.correction.maxAttempts >= 1 && reliability.correction.maxAttempts <= 3
+    && reliability.maxConcurrentEvaluations >= 1
+    && Number.isInteger(reliability.timeoutMs) && reliability.timeoutMs >= 5000
+    && Number.isInteger(reliability.maxFindings) && reliability.maxFindings >= 1
+    && Number.isInteger(reliability.correction.threshold) && reliability.correction.threshold >= 0
+    && Number.isInteger(reliability.correction.maxAttempts) && reliability.correction.maxAttempts >= 1
     && Number.isInteger(reliability.correction.maxDurationMs) && reliability.correction.maxDurationMs >= 10000;
 
   const patchReliability = (patch: Partial<typeof reliability>) => {
@@ -145,16 +145,16 @@ export function EvaluationSettingsPage() {
 
       <section className="space-y-4 rounded-lg border p-5">
         <h2 className="font-semibold">{t('evaluationSettings.advanced')}</h2>
-        <NumberField id="answer-reliability-concurrency" label={t('evaluationSettings.concurrency')} description={t('evaluationSettings.concurrencyHelp')} value={reliability.maxConcurrentEvaluations} min={1} max={10} onChange={(value) => patchReliability({ maxConcurrentEvaluations: value })} />
-        <NumberField id="answer-reliability-timeout" label={t('evaluationSettings.timeout')} description={t('evaluationSettings.timeoutHelp')} value={reliability.timeoutMs / 1000} min={5} max={120} onChange={(value) => patchReliability({ timeoutMs: value * 1000 })} />
-        <NumberField id="answer-reliability-findings" label={t('evaluationSettings.maxFindings')} description={t('evaluationSettings.maxFindingsHelp')} value={reliability.maxFindings} min={1} max={10} onChange={(value) => patchReliability({ maxFindings: value })} />
+        <NumberField id="answer-reliability-concurrency" label={t('evaluationSettings.concurrency')} description={t('evaluationSettings.concurrencyHelp')} value={reliability.maxConcurrentEvaluations} min={1} onChange={(value) => patchReliability({ maxConcurrentEvaluations: value })} />
+        <NumberField id="answer-reliability-timeout" label={t('evaluationSettings.timeout')} description={t('evaluationSettings.timeoutHelp')} value={reliability.timeoutMs / 1000} min={5} onChange={(value) => patchReliability({ timeoutMs: value * 1000 })} />
+        <NumberField id="answer-reliability-findings" label={t('evaluationSettings.maxFindings')} description={t('evaluationSettings.maxFindingsHelp')} value={reliability.maxFindings} min={1} onChange={(value) => patchReliability({ maxFindings: value })} />
       </section>
 
       {reliability.mode === 'corrective_transparent' ? (
         <section className="space-y-5 rounded-lg border p-5">
           <h2 className="font-semibold">{t('evaluationSettings.correction.title')}</h2>
-          <NumberField id="correction-threshold" label={t('evaluationSettings.correction.threshold')} description={t('evaluationSettings.correction.thresholdHelp')} value={reliability.correction.threshold} min={0} max={100} onChange={(threshold) => patchCorrection({ threshold })} suffix="/100" />
-          <NumberField id="correction-attempts" label={t('evaluationSettings.correction.maxAttempts')} description={reliability.correction.maxAttempts > 1 ? t('evaluationSettings.correction.attemptWarning') : t('evaluationSettings.correction.maxAttemptsHelp')} value={reliability.correction.maxAttempts} min={1} max={3} onChange={(maxAttempts) => patchCorrection({ maxAttempts })} />
+          <NumberField id="correction-threshold" label={t('evaluationSettings.correction.threshold')} description={t('evaluationSettings.correction.thresholdHelp')} value={reliability.correction.threshold} min={0} onChange={(threshold) => patchCorrection({ threshold })} suffix="/100" />
+          <NumberField id="correction-attempts" label={t('evaluationSettings.correction.maxAttempts')} description={reliability.correction.maxAttempts > 1 ? t('evaluationSettings.correction.attemptWarning') : t('evaluationSettings.correction.maxAttemptsHelp')} value={reliability.correction.maxAttempts} min={1} onChange={(maxAttempts) => patchCorrection({ maxAttempts })} />
           <NumberField id="correction-duration" label={t('evaluationSettings.correction.maxDuration')} description={t('evaluationSettings.correction.maxDurationHelp')} value={reliability.correction.maxDurationMs / 1000} min={10} onChange={(seconds) => patchCorrection({ maxDurationMs: seconds * 1000 })} />
 
           <div className="space-y-3">
@@ -186,8 +186,8 @@ export function EvaluationSettingsPage() {
   );
 }
 
-function NumberField({ id, label, description, value, min, max, onChange, suffix }: Readonly<{ id: string; label: string; description: string; value: number; min: number; max?: number; onChange: (value: number) => void; suffix?: string }>) {
-  return <div className="grid gap-2 md:grid-cols-[1fr_10rem]"><div><Label htmlFor={id}>{label}</Label><p id={`${id}-description`} className="text-xs text-muted-foreground">{description}</p></div><div className="flex items-center gap-2"><Input id={id} name={id} aria-describedby={`${id}-description`} type="number" min={min} max={max} value={value} onChange={(event) => onChange(Number(event.target.value))} />{suffix ? <span className="text-sm text-muted-foreground">{suffix}</span> : null}</div></div>;
+function NumberField({ id, label, description, value, min, onChange, suffix }: Readonly<{ id: string; label: string; description: string; value: number; min: number; onChange: (value: number) => void; suffix?: string }>) {
+  return <div className="grid gap-2 md:grid-cols-[1fr_10rem]"><div><Label htmlFor={id}>{label}</Label><p id={`${id}-description`} className="text-xs text-muted-foreground">{description}</p></div><div className="flex items-center gap-2"><Input id={id} name={id} aria-describedby={`${id}-description`} type="number" min={min} value={value} onChange={(event) => onChange(Number(event.target.value))} />{suffix ? <span className="text-sm text-muted-foreground">{suffix}</span> : null}</div></div>;
 }
 
 function ModeOption({ id, value, title, description, badge, disabled }: Readonly<{ id: string; value: string; title: string; description?: string; badge?: string; disabled?: boolean }>) {

@@ -22,12 +22,15 @@ import {
 import { useAutosave } from '../hooks/useAutosave';
 import { useIsDirty } from '../store';
 import { createHitlBlocker, updateNodeHitlPolicy } from '../api';
-import type { HitlFeedbackScope, HitlHistoryEntry, HumanFeedbackData, IntentSuggestionHistoryEntry, InterruptType, PlaybookIntentClarificationResource, PlaybookIntentConstructionStatus, PlaybookIntentDesignResponse, PlaybookIntentDiagnostic, PlaybookIntentImageInput, PlaybookIntentSuggestion, PlaybookIntentTraceResponse } from '../types';
+import type { HitlFeedbackScope, HitlHistoryEntry, HumanFeedbackData, IntentSuggestionHistoryEntry, InterruptType, PlaybookAssistantMessage, PlaybookClarificationAnswer, PlaybookIntentClarificationResource, PlaybookIntentConstructionStatus, PlaybookIntentDesignResponse, PlaybookIntentDiagnostic, PlaybookIntentImageInput, PlaybookIntentSuggestion, PlaybookIntentTraceResponse } from '../types';
 import { PlaybookClarificationResourcePicker } from './PlaybookClarificationResourcePicker';
 import { IntentTraceModal } from './IntentTraceModal';
 
 interface Props {
   playbookId: string | undefined;
+  designChatEnabled?: boolean;
+  assistantMessages?: PlaybookAssistantMessage[];
+  assistantMessagesLoading?: boolean;
   intentDesign?: PlaybookIntentDesignResponse | null;
   intentLoading?: boolean;
   history?: IntentSuggestionHistoryEntry[];
@@ -35,12 +38,13 @@ interface Props {
   constructionDiagnostics?: PlaybookIntentDiagnostic[];
   intentTraces?: PlaybookIntentTraceResponse | null;
   intentTracesLoading?: boolean;
-  onSubmitDesignIntent?: (intentText: string, visibleUserQuery: string, images?: PlaybookIntentImageInput[]) => Promise<void> | void;
-  onAnswerDesignIntent?: (answerText?: string) => Promise<void> | void;
+  onSubmitDesignIntent?: (intentText: string, visibleUserQuery: string, images?: File[]) => Promise<void> | void;
+  onAnswerDesignIntent?: (answers: PlaybookClarificationAnswer[], answerText: string) => Promise<void> | void;
   onApplyHistorySuggestion?: (suggestion: PlaybookIntentSuggestion) => void;
   onCancelConstruction?: () => void;
   onReviewConstructionDiagnostic?: (diagnostic: PlaybookIntentDiagnostic) => void;
   assistantPreviewStatus?: 'idle' | 'streaming' | 'ready' | 'applying' | 'discarding';
+  assistantOperationTarget?: 'canonical' | 'advisor_preview' | null;
   onApplyAssistantPreview?: () => void;
   onDiscardAssistantPreview?: () => void;
   onWidthChange?: (width: number) => void;
@@ -129,33 +133,6 @@ function formatDateTime(date: Date) {
   return `${year}-${month}-${day} ${hour}:${minute}:${second}`;
 }
 
-function buildIntentTextWithHistory(intentText: string, messages: ReturnType<typeof useDesignMessages>) {
-  const normalizedIntent = intentText.trim();
-  const history = messages
-    .filter((message) => message.status !== 'reverted')
-    .flatMap((message) => {
-      const timestamp = formatMessageTime(message.createdAt);
-      const prefix = timestamp ? `- [${timestamp}] ` : '- ';
-      const assistantText = message.status === 'failed'
-        ? `Assistant failed: ${normalizeHistoryLine(message.error || message.aiSummary)}`
-        : `Assistant: ${normalizeHistoryLine(message.aiSummary)}`;
-      return [
-        `${prefix}User: ${normalizeHistoryLine(message.userQuery)}`,
-        `${prefix}${assistantText}`,
-      ];
-    })
-    .join('\n');
-
-  const currentRequest = `Current user request:\n- [${formatDateTime(new Date())}] User: ${normalizedIntent}`;
-  if (!history) return currentRequest;
-
-  return `Previous Designer Assistant chat history:\n${history}\n\n${currentRequest}`;
-}
-
-function normalizeHistoryLine(value: string) {
-  return value.trim().replace(/\s+/g, ' ');
-}
-
 function hasHumanAnswer(entry: InterruptEntry) {
   return entry.status === 'answered' && Boolean(getRawHumanAnswer(entry));
 }
@@ -230,32 +207,38 @@ const MAX_PROMPT_IMAGES = 4;
 const MAX_PROMPT_IMAGE_BYTES = 1_500_000;
 const SUPPORTED_PROMPT_IMAGE_TYPES = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/gif']);
 
-interface PromptImageAttachment extends PlaybookIntentImageInput {
+interface PromptImageAttachment {
   id: string;
+  file: File;
+  mediaType: PlaybookIntentImageInput['mediaType'];
+  name: string;
   previewUrl: string;
 }
 
 function readPromptImage(file: File): Promise<PromptImageAttachment> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
-    reader.onload = () => {
-      const previewUrl = String(reader.result || '');
-      const data = previewUrl.split(',')[1] || '';
-      resolve({
-        id: `${file.name || 'pasted-image'}-${file.size}-${file.lastModified}-${Math.random().toString(36).slice(2)}`,
-        name: file.name || 'pasted image',
-        mediaType: file.type as PlaybookIntentImageInput['mediaType'],
-        data,
-        previewUrl,
-      });
-    };
+    reader.onload = () => resolve({
+      id: `${file.name || 'pasted-image'}-${file.size}-${file.lastModified}-${Math.random().toString(36).slice(2)}`,
+      file,
+      name: file.name || 'pasted image',
+      mediaType: file.type as PlaybookIntentImageInput['mediaType'],
+      previewUrl: String(reader.result || ''),
+    });
     reader.onerror = () => reject(reader.error || new Error('Failed to read image'));
     reader.readAsDataURL(file);
   });
 }
 
+function releasePromptImagePreview(previewUrl: string) {
+  if (previewUrl.startsWith('blob:') && typeof URL.revokeObjectURL === 'function') URL.revokeObjectURL(previewUrl);
+}
+
 export function PlaybookDesignerPanel({
   playbookId,
+  designChatEnabled = true,
+  assistantMessages,
+  assistantMessagesLoading = false,
   intentDesign = null,
   intentLoading = false,
   history = [],
@@ -269,6 +252,7 @@ export function PlaybookDesignerPanel({
   onCancelConstruction,
   onReviewConstructionDiagnostic,
   assistantPreviewStatus = 'idle',
+  assistantOperationTarget = null,
   onApplyAssistantPreview,
   onDiscardAssistantPreview,
   onWidthChange,
@@ -276,6 +260,11 @@ export function PlaybookDesignerPanel({
 }: Props) {
   const { t } = useModuleTranslation('playbook');
   const constructionActive = constructionStatus === 'starting' || constructionStatus === 'streaming';
+  const assistantOperationPending = assistantPreviewStatus !== 'idle';
+  const blockedCanonicalDraft = constructionStatus === 'failed'
+    && assistantPreviewStatus === 'ready'
+    && assistantOperationTarget === 'canonical'
+    && constructionDiagnostics.some((diagnostic) => diagnostic.severity === 'error');
 
   const designerOpen = useDesignerOpen();
   const copilotMode = useCopilotMode();
@@ -311,7 +300,7 @@ export function PlaybookDesignerPanel({
   const stopExecution = usePlaybookStore((s) => s.stopExecution);
   const isStopping = usePlaybookStore((s) => s.isStopping);
 
-  const { saveNow } = useAutosave({ paused: constructionActive });
+  const { saveNow } = useAutosave({ paused: constructionActive || assistantOperationPending });
 
   const [query, setQuery] = useState('');
   const [response, setResponse] = useState('');
@@ -325,6 +314,7 @@ export function PlaybookDesignerPanel({
   const [isClearingDesignMemory, setIsClearingDesignMemory] = useState(false);
   const [designStepIndex, setDesignStepIndex] = useState(0);
   const [designAnswers, setDesignAnswers] = useState<Record<string, string>>({});
+  const [designAnswerResources, setDesignAnswerResources] = useState<Record<string, PlaybookIntentClarificationResource>>({});
   const [selectedDesignChoice, setSelectedDesignChoice] = useState('');
   const [selectedDesignResource, setSelectedDesignResource] = useState<PlaybookIntentClarificationResource | null>(null);
   const [resourcePickerOpen, setResourcePickerOpen] = useState(false);
@@ -380,11 +370,16 @@ export function PlaybookDesignerPanel({
     };
   }, [designerOpen, isMobileOverlay]);
 
+  const closeDesignerPanel = useCallback(() => {
+    document.querySelector<HTMLElement>('[data-playbook-designer-trigger="true"]')?.focus();
+    setDesignerOpen(false);
+  }, [setDesignerOpen]);
+
   const handleMobileDialogKeyDown = useCallback((event: globalThis.KeyboardEvent) => {
     if (!isMobileOverlay) return;
     if (event.key === 'Escape') {
       event.preventDefault();
-      setDesignerOpen(false);
+      closeDesignerPanel();
       return;
     }
     if (event.key !== 'Tab') return;
@@ -407,7 +402,7 @@ export function PlaybookDesignerPanel({
       event.preventDefault();
       first.focus();
     }
-  }, [isMobileOverlay, setDesignerOpen]);
+  }, [closeDesignerPanel, isMobileOverlay]);
 
   useEffect(() => {
     if (!designerOpen || !isMobileOverlay) return;
@@ -543,14 +538,18 @@ export function PlaybookDesignerPanel({
   const currentDesignQuestion = designQuestions[Math.min(designStepIndex, Math.max(0, designQuestions.length - 1))] ?? null;
   const isLastDesignQuestion = currentDesignQuestion ? designStepIndex >= designQuestions.length - 1 : true;
   const designIntentBusy = intentLoading;
-  const isAwaitingDesignAnswer = effectiveCopilotMode === 'design' && intentDesign?.status === 'needs_clarification' && Boolean(currentDesignQuestion);
-  const scrollCount = effectiveCopilotMode === 'design' ? messages.length + (designIntentBusy ? 1 : 0) + designQuestions.length : interruptThread.length;
+  const renderDesignChat = effectiveCopilotMode === 'design' && designChatEnabled;
+  const isAwaitingDesignAnswer = renderDesignChat && intentDesign?.status === 'needs_clarification' && Boolean(currentDesignQuestion);
+  const assistantHistoryEnabled = assistantMessages !== undefined;
+  const designMessageCount = assistantHistoryEnabled ? assistantMessages.length : messages.length;
+  const designMessagesLoading = assistantHistoryEnabled ? assistantMessagesLoading : messagesLoading;
+  const scrollCount = effectiveCopilotMode === 'design' ? designMessageCount + (designIntentBusy ? 1 : 0) + designQuestions.length : interruptThread.length;
 
   useEffect(() => {
-    if (designerOpen && copilotMode === 'design' && playbookId) {
+    if (!assistantHistoryEnabled && designerOpen && copilotMode === 'design' && playbookId) {
       fetchDesignMessages(playbookId);
     }
-  }, [designerOpen, copilotMode, playbookId, fetchDesignMessages]);
+  }, [assistantHistoryEnabled, designerOpen, copilotMode, playbookId, fetchDesignMessages]);
 
   useEffect(() => {
     if (scrollCount > prevScrollCount.current && scrollRef.current) {
@@ -612,6 +611,7 @@ export function PlaybookDesignerPanel({
   useEffect(() => {
     setDesignStepIndex(0);
     setDesignAnswers({});
+    setDesignAnswerResources({});
     setSelectedDesignChoice('');
     setSelectedDesignResource(null);
     setDesignAnswer('');
@@ -627,6 +627,10 @@ export function PlaybookDesignerPanel({
   useEffect(() => {
     onWidthChange?.(designerOpen ? sidebarWidth : 0);
   }, [designerOpen, onWidthChange, sidebarWidth]);
+
+  useEffect(() => () => {
+    onWidthChange?.(0);
+  }, [onWidthChange]);
 
   const getCurrentDesignAnswer = useCallback(() => {
     if (selectedDesignChoice === '__resource__' && selectedDesignResource) return getResourceAnswer(selectedDesignResource);
@@ -650,8 +654,41 @@ export function PlaybookDesignerPanel({
       .join('\n');
   }, [currentDesignQuestion, designAnswers, designQuestions, getCurrentDesignAnswer]);
 
+  const getCapturedAnswers = useCallback((includeCurrent: boolean): PlaybookClarificationAnswer[] => {
+    const answers = { ...designAnswers };
+    const resources = { ...designAnswerResources };
+    if (includeCurrent && currentDesignQuestion) {
+      const currentAnswer = getCurrentDesignAnswer();
+      if (currentAnswer) answers[currentDesignQuestion.id] = currentAnswer;
+      if (selectedDesignChoice === '__resource__' && selectedDesignResource) {
+        resources[currentDesignQuestion.id] = selectedDesignResource;
+      }
+    }
+    const captured: PlaybookClarificationAnswer[] = [];
+    designQuestions.forEach((question) => {
+      const resource = resources[question.id];
+      if (resource) {
+        captured.push({ questionId: question.id, resource: { kind: resource.kind, id: resource.id } });
+        return;
+      }
+      const answer = answers[question.id]?.trim();
+      if (!answer) return;
+      captured.push(question.choices.includes(answer)
+        ? { questionId: question.id, choice: answer }
+        : { questionId: question.id, text: answer });
+    });
+    return captured;
+  }, [currentDesignQuestion, designAnswerResources, designAnswers, designQuestions, getCurrentDesignAnswer, selectedDesignChoice, selectedDesignResource]);
+
   const loadDesignAnswer = useCallback((questionId: string | undefined, answers: Record<string, string>) => {
     const question = designQuestions.find((item) => item.id === questionId);
+    const resource = questionId ? designAnswerResources[questionId] : undefined;
+    if (resource) {
+      setSelectedDesignChoice('__resource__');
+      setSelectedDesignResource(resource);
+      setDesignAnswer('');
+      return;
+    }
     const answer = questionId ? answers[questionId] || '' : '';
     if (!answer) {
       setSelectedDesignChoice('');
@@ -668,14 +705,20 @@ export function PlaybookDesignerPanel({
     setSelectedDesignChoice('__custom__');
     setSelectedDesignResource(null);
     setDesignAnswer(answer);
-  }, [designQuestions]);
+  }, [designAnswerResources, designQuestions]);
 
   const saveCurrentDesignAnswer = useCallback(() => {
     if (!currentDesignQuestion) return '';
     const answer = getCurrentDesignAnswer();
     if (answer) setDesignAnswers((current) => ({ ...current, [currentDesignQuestion.id]: answer }));
+    setDesignAnswerResources((current) => {
+      const next = { ...current };
+      if (selectedDesignChoice === '__resource__' && selectedDesignResource) next[currentDesignQuestion.id] = selectedDesignResource;
+      else delete next[currentDesignQuestion.id];
+      return next;
+    });
     return answer;
-  }, [currentDesignQuestion, getCurrentDesignAnswer]);
+  }, [currentDesignQuestion, getCurrentDesignAnswer, selectedDesignChoice, selectedDesignResource]);
 
   const handleBackDesign = useCallback(() => {
     if (designStepIndex <= 0) return;
@@ -690,6 +733,7 @@ export function PlaybookDesignerPanel({
   }, [currentDesignQuestion, designAnswers, designQuestions, designStepIndex, loadDesignAnswer, saveCurrentDesignAnswer]);
 
   const handleContinueDesign = useCallback(() => {
+    if (assistantOperationPending) return;
     const currentAnswer = saveCurrentDesignAnswer();
     if (!currentAnswer) return;
     if (!isLastDesignQuestion) {
@@ -702,8 +746,8 @@ export function PlaybookDesignerPanel({
       loadDesignAnswer(nextQuestion?.id, nextAnswers);
       return;
     }
-    void onAnswerDesignIntent?.(getCapturedRequirements(true));
-  }, [currentDesignQuestion, designAnswers, designQuestions, designStepIndex, getCapturedRequirements, isLastDesignQuestion, loadDesignAnswer, onAnswerDesignIntent, saveCurrentDesignAnswer]);
+    void onAnswerDesignIntent?.(getCapturedAnswers(true), getCapturedRequirements(true));
+  }, [assistantOperationPending, currentDesignQuestion, designAnswers, designQuestions, designStepIndex, getCapturedAnswers, getCapturedRequirements, isLastDesignQuestion, loadDesignAnswer, onAnswerDesignIntent, saveCurrentDesignAnswer]);
 
   const handleSelectDesignChoice = useCallback((choice: string) => {
     setSelectedDesignChoice(choice);
@@ -718,13 +762,14 @@ export function PlaybookDesignerPanel({
   }, []);
 
   const handleSkipDesign = useCallback(() => {
-    void onAnswerDesignIntent?.(getCapturedRequirements(true));
-  }, [getCapturedRequirements, onAnswerDesignIntent]);
+    if (assistantOperationPending) return;
+    void onAnswerDesignIntent?.(getCapturedAnswers(true), getCapturedRequirements(true));
+  }, [assistantOperationPending, getCapturedAnswers, getCapturedRequirements, onAnswerDesignIntent]);
 
   const handleSubmitDesign = useCallback(async (e: FormEvent) => {
     e.preventDefault();
-    const images = promptImages.map(({ mediaType, data, name }) => ({ mediaType, data, name }));
-    if ((!query.trim() && images.length === 0) || !playbookId || designIntentBusy || !onSubmitDesignIntent) return;
+    const images = promptImages.map(({ file }) => file);
+    if ((!query.trim() && images.length === 0) || !playbookId || designIntentBusy || assistantOperationPending || !onSubmitDesignIntent) return;
 
     const q = query.trim();
     const imageLabel = `[${images.length} image${images.length === 1 ? '' : 's'} attached]`;
@@ -737,17 +782,17 @@ export function PlaybookDesignerPanel({
 
     try {
       if (images.length > 0) {
-        await onSubmitDesignIntent?.(buildIntentTextWithHistory(visibleQuery, messages), visibleQuery, images);
+        await onSubmitDesignIntent?.(visibleQuery, visibleQuery, images);
       } else {
-        await onSubmitDesignIntent?.(buildIntentTextWithHistory(visibleQuery, messages), visibleQuery);
+        await onSubmitDesignIntent?.(visibleQuery, visibleQuery);
       }
     } catch {
       setQuery(q);
       setPromptImages(promptImages);
       return;
     }
-    await fetchDesignMessages(playbookId);
-  }, [query, promptImages, playbookId, designIntentBusy, isDirty, saveNow, onSubmitDesignIntent, fetchDesignMessages, messages]);
+    promptImages.forEach((image) => releasePromptImagePreview(image.previewUrl));
+  }, [assistantOperationPending, query, promptImages, playbookId, designIntentBusy, isDirty, saveNow, onSubmitDesignIntent]);
 
   const handleDesignComposerKeyDown = useCallback((event: KeyboardEvent<HTMLTextAreaElement>) => {
     if (event.key !== 'Enter' || event.altKey || event.shiftKey || event.nativeEvent.isComposing) return;
@@ -756,10 +801,11 @@ export function PlaybookDesignerPanel({
   }, []);
 
   const handleApplyHistory = useCallback((entry: IntentSuggestionHistoryEntry) => {
+    if (assistantOperationPending) return;
     if (entry.intent) setQuery(entry.intent);
     onApplyHistorySuggestion?.(entry.suggestion);
     setHistoryOpen(false);
-  }, [onApplyHistorySuggestion]);
+  }, [assistantOperationPending, onApplyHistorySuggestion]);
 
   const handlePasteDesignImages = useCallback((event: ClipboardEvent<HTMLTextAreaElement>) => {
     const files = Array.from(event.clipboardData.files).filter((file) => file.type.startsWith('image/'));
@@ -795,7 +841,11 @@ export function PlaybookDesignerPanel({
   }, [promptImages.length, t]);
 
   const removePromptImage = useCallback((id: string) => {
-    setPromptImages((current) => current.filter((image) => image.id !== id));
+    setPromptImages((current) => {
+      const removed = current.find((image) => image.id === id);
+      if (removed) releasePromptImagePreview(removed.previewUrl);
+      return current.filter((image) => image.id !== id);
+    });
     setPromptImageError('');
   }, []);
 
@@ -992,10 +1042,10 @@ export function PlaybookDesignerPanel({
         </Button>
       )}
       <div
+        {...(!designerOpen ? { inert: '' } : {})}
         ref={panelRef}
         role={isMobileOverlay ? (designerOpen ? 'dialog' : undefined) : 'complementary'}
         aria-modal={isMobileOverlay && designerOpen ? true : undefined}
-        aria-hidden={!designerOpen}
         aria-labelledby="playbook-designer-panel-title"
         tabIndex={-1}
         className="fixed inset-0 z-50 flex flex-col border-l bg-background transition-transform duration-300 sm:absolute sm:left-auto sm:z-40"
@@ -1070,16 +1120,16 @@ export function PlaybookDesignerPanel({
           >
             {intentTracesLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <ScrollText className="h-4 w-4" />}
           </Button>
-          <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => setDesignerOpen(false)} aria-label={t('interrupt.collapseAssistant')}>
+          <Button variant="ghost" size="icon" className="h-7 w-7" onClick={closeDesignerPanel} aria-label={t('interrupt.collapseAssistant')}>
             <X className="h-4 w-4" />
           </Button>
         </div>
       </div>
 
       <div ref={scrollRef} className="flex-1 overflow-y-auto px-3 py-4 space-y-3">
-        {effectiveCopilotMode === 'design' ? (
+        {effectiveCopilotMode === 'design' ? (designChatEnabled ? (
           <>
-            {messages.length === 0 && !messagesLoading && (
+            {designMessageCount === 0 && !designMessagesLoading && (
               <div className="flex flex-col items-center justify-center h-full text-center text-muted-foreground px-4">
                 <Sparkles className="h-8 w-8 mb-3 opacity-40" />
                 <p className="text-sm font-medium">{t('designer.empty')}</p>
@@ -1087,7 +1137,18 @@ export function PlaybookDesignerPanel({
               </div>
             )}
 
-            {messages.map((msg) => {
+            {assistantHistoryEnabled ? assistantMessages.map((message) => (
+              <div key={message.messageId} className={message.role === 'user' ? 'flex justify-end' : 'flex justify-start'}>
+                <div className={message.role === 'user'
+                  ? 'max-w-[85%] rounded-lg rounded-tr-sm bg-primary px-3 py-2 text-sm text-primary-foreground'
+                  : 'max-w-[85%] rounded-lg rounded-tl-sm bg-muted px-3 py-2 text-sm'}>
+                  <p className="whitespace-pre-wrap">{message.content}</p>
+                  <span className={message.role === 'user' ? 'mt-1 block text-[11px] opacity-70' : 'mt-1 block text-[11px] text-muted-foreground'}>
+                    {formatMessageTime(message.createdAt)}
+                  </span>
+                </div>
+              </div>
+            )) : messages.map((msg) => {
               if (msg.status === 'reverted') {
                 return (
                   <div key={msg.id} className="flex justify-center">
@@ -1213,10 +1274,10 @@ export function PlaybookDesignerPanel({
                     <Button type="button" size="sm" variant="outline" onClick={handleBackDesign} disabled={designIntentBusy || designStepIndex === 0}>
                       {t('intentBar.design.back')}
                     </Button>
-                    <Button type="button" size="sm" onClick={handleContinueDesign} disabled={designIntentBusy || !canContinueDesign}>
+                    <Button type="button" size="sm" onClick={handleContinueDesign} disabled={designIntentBusy || assistantOperationPending || !canContinueDesign}>
                       {isLastDesignQuestion ? t('intentBar.design.generate') : t('intentBar.design.next')}
                     </Button>
-                    <Button type="button" size="sm" variant="outline" onClick={handleSkipDesign} disabled={designIntentBusy || !onAnswerDesignIntent}>
+                    <Button type="button" size="sm" variant="outline" onClick={handleSkipDesign} disabled={designIntentBusy || assistantOperationPending || !onAnswerDesignIntent}>
                       {t('intentBar.design.skip')}
                     </Button>
                   </div>
@@ -1242,7 +1303,7 @@ export function PlaybookDesignerPanel({
               </div>
             )}
           </>
-        ) : (
+        ) : null) : (
           <>
             {interruptThread.length === 0 && (
               <div className="flex flex-col items-center justify-center h-full text-center text-muted-foreground px-4">
@@ -1384,15 +1445,21 @@ export function PlaybookDesignerPanel({
           )}
           {assistantPreviewStatus !== 'idle' && (
             <div className="rounded-lg border border-primary/30 bg-primary/5 p-3">
-              <p className="text-sm font-medium">{t('intentBar.preview.title')}</p>
-              <p className="mt-1 text-xs text-muted-foreground">{t('intentBar.preview.description')}</p>
+              <p className="text-sm font-medium">
+                {t(blockedCanonicalDraft ? 'intentBar.blockedDraft.title' : assistantOperationTarget === 'canonical' ? 'intentBar.commitRetry.title' : 'intentBar.preview.title')}
+              </p>
+              <p className="mt-1 text-xs text-muted-foreground">
+                {t(blockedCanonicalDraft ? 'intentBar.blockedDraft.description' : assistantOperationTarget === 'canonical' ? 'intentBar.commitRetry.description' : 'intentBar.preview.description')}
+              </p>
               {assistantPreviewStatus === 'ready' && (
                 <div className="mt-3 flex justify-end gap-2">
-                  <Button type="button" variant="outline" size="sm" onClick={onDiscardAssistantPreview}>
-                    {t('intentBar.preview.discard')}
-                  </Button>
+                  {assistantOperationTarget !== 'canonical' && (
+                    <Button type="button" variant="outline" size="sm" onClick={onDiscardAssistantPreview}>
+                      {t('intentBar.preview.discard')}
+                    </Button>
+                  )}
                   <Button type="button" size="sm" onClick={onApplyAssistantPreview}>
-                    {t('intentBar.preview.apply')}
+                    {t(blockedCanonicalDraft ? 'intentBar.blockedDraft.save' : assistantOperationTarget === 'canonical' ? 'intentBar.commitRetry.retry' : 'intentBar.preview.apply')}
                   </Button>
                 </div>
               )}
@@ -1401,9 +1468,10 @@ export function PlaybookDesignerPanel({
               )}
             </div>
           )}
-          <div className="flex items-center justify-end gap-2 text-xs text-muted-foreground">
-            <div className="flex items-center gap-2">
-              <Button
+          {designChatEnabled && (<>
+            <div className="flex items-center justify-end gap-2 text-xs text-muted-foreground">
+              <div className="flex items-center gap-2">
+                {!assistantHistoryEnabled && <Button
                 type="button"
                 variant="outline"
                 size="sm"
@@ -1413,13 +1481,13 @@ export function PlaybookDesignerPanel({
               >
                 {isClearingDesignMemory ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}
                 {t('designer.clearMemory')}
-              </Button>
+              </Button>}
               <Button
                 type="button"
                 variant={historyOpen ? 'secondary' : 'outline'}
                 size="sm"
                 className="h-7 gap-1.5 px-2"
-                disabled={constructionActive || history.length === 0 || !onApplyHistorySuggestion}
+                disabled={constructionActive || assistantOperationPending || history.length === 0 || !onApplyHistorySuggestion}
                 aria-expanded={historyOpen}
                 onClick={() => setHistoryOpen((current) => !current)}
               >
@@ -1436,7 +1504,7 @@ export function PlaybookDesignerPanel({
                   type="button"
                   variant="ghost"
                   className="h-auto w-full justify-start whitespace-normal px-2 py-1.5 text-left text-xs"
-                  disabled={constructionActive || !onApplyHistorySuggestion}
+                  disabled={constructionActive || assistantOperationPending || !onApplyHistorySuggestion}
                   onClick={() => handleApplyHistory(entry)}
                 >
                   <span className="line-clamp-2">{entry.intent || entry.suggestion.label}</span>
@@ -1446,12 +1514,14 @@ export function PlaybookDesignerPanel({
           ) : null}
           <div className="flex gap-2">
             <Textarea
+              id="playbook-designer-message"
+              name="playbookDesignerMessage"
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               onKeyDown={handleDesignComposerKeyDown}
               onPaste={handlePasteDesignImages}
               placeholder={t('designer.inputPlaceholder')}
-              disabled={designIntentBusy && !constructionActive}
+              disabled={(designIntentBusy || assistantOperationPending) && !constructionActive}
               rows={1}
               className="max-h-32 min-h-10 resize-y text-sm"
             />
@@ -1459,7 +1529,7 @@ export function PlaybookDesignerPanel({
               type={constructionActive ? 'button' : 'submit'}
               size="icon"
               variant={constructionActive ? 'destructive' : 'default'}
-              disabled={constructionActive ? !onCancelConstruction : (!query.trim() && promptImages.length === 0) || designIntentBusy || !onSubmitDesignIntent}
+              disabled={constructionActive ? !onCancelConstruction : (!query.trim() && promptImages.length === 0) || designIntentBusy || assistantOperationPending || !onSubmitDesignIntent}
               className="shrink-0"
               onClick={constructionActive ? onCancelConstruction : undefined}
               aria-label={constructionActive ? t('intentBar.actions.stop') : t('designer.send')}
@@ -1492,6 +1562,7 @@ export function PlaybookDesignerPanel({
             </div>
           )}
           {promptImageError ? <p className="text-xs text-destructive">{promptImageError}</p> : null}
+          </>)}
         </form>
       ) : composerInterruptEntry ? (
         <div className="border-t px-3 py-3 shrink-0 space-y-3">

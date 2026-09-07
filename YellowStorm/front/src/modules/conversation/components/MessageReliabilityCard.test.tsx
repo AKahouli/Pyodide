@@ -1,5 +1,7 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
+import enTranslations from '../locales/en.json';
+import frTranslations from '../locales/fr.json';
 import { MessageReliabilityCard } from './MessageReliabilityCard';
 
 const rerunReliabilityEvaluationMock = vi.hoisted(() => vi.fn());
@@ -37,6 +39,23 @@ vi.mock('@/modules/localization', () => ({
         'reliability.originalEvaluation': 'Original evaluation',
         'reliability.evaluationDetailsAria': `Review statements for ${options?.label}`,
         'reliability.scoreAria': `Reliability score: ${options?.score} out of 100`,
+        'reliability.info.answerReliabilityAria': 'What answer reliability means',
+        'reliability.info.answerReliabilityDefinition': 'Answer reliability compares checked statements with attached sources.',
+        'reliability.info.scoreAria': 'How the reliability score works',
+        'reliability.info.scoreDefinition': 'Key statements count 3x, major statements 2x, and minor statements 1x.',
+        'reliability.info.historyAria': 'What evaluation history means',
+        'reliability.info.historyDefinition': 'History covers the original answer and correction attempts.',
+        'reliability.info.verdictAria': 'How the reliability verdict works',
+        'reliability.info.verdictDefinition': 'The verdict summarizes the score range.',
+        'reliability.info.groupAria': `What ${options?.group} means`,
+        'reliability.info.groups.contradicted': 'The sources conflict with these statements.',
+        'reliability.info.groups.unsupported': 'The sources do not confirm these statements.',
+        'reliability.info.groups.partially_supported': 'The sources confirm only part of these statements.',
+        'reliability.info.groups.supported': 'The sources confirm these statements.',
+        'reliability.info.keyClaimAria': 'What a key claim means',
+        'reliability.info.keyClaimDefinition': 'A key claim has greater impact on the score.',
+        'reliability.info.legacyFindingsAria': 'What claims needing attention means',
+        'reliability.info.legacyFindingsDefinition': 'Issues recorded by an earlier evaluation format.',
         'reliability.viewAnswerAria': `View answer for ${options?.label}`,
         'reliability.unavailable': 'Reliability check unavailable',
         'reliability.unavailableDescription': 'The answer could not be checked.',
@@ -132,7 +151,7 @@ describe('MessageReliabilityCard', () => {
 
     const rerun = screen.getByRole('button', { name: 'Rerun the original answer reliability evaluation' });
     expect(rerun.parentElement).toHaveClass('col-start-2', 'row-start-2', 'md:col-start-3', 'md:row-start-1');
-    expect(screen.getByText('Answer reliability').parentElement).toHaveClass('col-start-2', 'row-start-1');
+    expect(screen.getByText('Answer reliability').parentElement?.parentElement).toHaveClass('col-start-2', 'row-start-1');
   });
 
   it('queues the original answer evaluation from the dedicated action', async () => {
@@ -188,6 +207,46 @@ describe('MessageReliabilityCard', () => {
     expect(screen.queryByText('judge-name')).not.toBeInTheDocument();
   });
 
+  it('provides keyboard-accessible definitions for reliability concepts and every score', async () => {
+    render(<MessageReliabilityCard evaluation={completedEvaluation} />);
+
+    const answerDefinition = screen.getByRole('button', { name: 'What answer reliability means' });
+    const summaryScoreDefinition = screen.getByRole('button', { name: 'How the reliability score works' });
+    expect(answerDefinition).toHaveAttribute('type', 'button');
+    expect(summaryScoreDefinition).toHaveAttribute('type', 'button');
+
+    fireEvent.focus(summaryScoreDefinition);
+    await waitFor(() => expect(summaryScoreDefinition).toHaveAttribute('aria-describedby'));
+    expect(screen.getAllByText('Key statements count 3x, major statements 2x, and minor statements 1x.')).not.toHaveLength(0);
+
+    expandReliability();
+    expect(screen.getAllByRole('button', { name: 'How the reliability score works' })).toHaveLength(2);
+    expect(screen.getByRole('button', { name: 'What evaluation history means' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'How the reliability verdict works' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'What Conflicts with sources (1) means' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'What Not found in sources (1) means' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'What Partly supported (1) means' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'What Supported by sources (1) means' })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Not found in sources (1)' }));
+    expect(screen.getByRole('button', { name: 'What a key claim means' })).toBeInTheDocument();
+  });
+
+  it('keeps the production score definition aligned across English and French', () => {
+    expect(enTranslations['reliability.info.scoreDefinition']).toContain('count 3x');
+    expect(enTranslations['reliability.info.scoreDefinition']).toContain('major statements 2x');
+    expect(enTranslations['reliability.info.scoreDefinition']).toContain('minor statements 1x');
+    expect(enTranslations['reliability.info.scoreDefinition']).toContain('Partial support receives half credit');
+    expect(enTranslations['reliability.info.scoreDefinition']).toContain('unsupported or contradicted statements receive none');
+    expect(enTranslations['reliability.info.scoreDefinition']).toContain('not independently verified truth');
+    expect(frTranslations['reliability.info.scoreDefinition']).toContain('comptent 3 fois');
+    expect(frTranslations['reliability.info.scoreDefinition']).toContain('majeures 2 fois');
+    expect(frTranslations['reliability.info.scoreDefinition']).toContain('mineures 1 fois');
+    expect(frTranslations['reliability.info.scoreDefinition']).toContain('appui partiel rapporte la moitié');
+    expect(frTranslations['reliability.info.scoreDefinition']).toContain("non étayée ou contredite n'en rapporte aucun");
+    expect(frTranslations['reliability.info.scoreDefinition']).toContain('non une vérité vérifiée de manière indépendante');
+  });
+
   it('uses caution colors through 70 and switches to green above the threshold', () => {
     const { rerender } = render(<MessageReliabilityCard evaluation={{ ...completedEvaluation, score: 0 }} />);
     let meter = screen.getByRole('meter', { name: 'Reliability score: 0 out of 100' });
@@ -219,6 +278,7 @@ describe('MessageReliabilityCard', () => {
     expandReliability();
     expect(screen.getByText('Claims needing attention')).toBeInTheDocument();
     expect(screen.getByText('The source does not mention this.')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'What claims needing attention means' })).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Supported by sources (1)' })).not.toBeInTheDocument();
   });
 

@@ -2,7 +2,7 @@
 
 import sys
 from types import SimpleNamespace
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -14,6 +14,13 @@ def _install_lite_llm_mock(monkeypatch, mock_litellm):
         sys.modules,
         "google.adk.models.lite_llm",
         SimpleNamespace(LiteLlm=mock_litellm),
+    )
+    # The factory instantiates the latency-instrumented wrapper; constructor
+    # kwargs are forwarded unchanged, so route the wrapper to the same mock.
+    monkeypatch.setitem(
+        sys.modules,
+        "src.smart_rag.infrastructure.monitoring.instrumented_lite_llm",
+        SimpleNamespace(InstrumentedLiteLlm=mock_litellm),
     )
 
 
@@ -51,6 +58,23 @@ class TestLLMFactory:
         assert result == mock_llm
         mock_litellm.assert_called_once()
 
+    @pytest.mark.parametrize("model_name", ["test-model", "ollama/test-model"])
+    def test_create_no_tool_calls_llm_forwards_zero_retries(self, monkeypatch, model_name):
+        mock_litellm = MagicMock()
+        _install_lite_llm_mock(monkeypatch, mock_litellm)
+
+        LLMFactory.create_no_tool_calls_llm(model_name, num_retries=0)
+
+        assert mock_litellm.call_args.kwargs["num_retries"] == 0
+
+    def test_create_no_tool_calls_llm_omits_retries_by_default(self, monkeypatch):
+        mock_litellm = MagicMock()
+        _install_lite_llm_mock(monkeypatch, mock_litellm)
+
+        LLMFactory.create_no_tool_calls_llm("test-model")
+
+        assert "num_retries" not in mock_litellm.call_args.kwargs
+
     @pytest.mark.parametrize(
         "factory_method",
         [
@@ -59,9 +83,10 @@ class TestLLMFactory:
             "create_no_tool_calls_llm",
         ],
     )
-    @patch('google.adk.models.lite_llm.LiteLlm')
-    def test_omits_temperature_when_explicitly_none(self, mock_litellm, factory_method):
+    def test_omits_temperature_when_explicitly_none(self, monkeypatch, factory_method):
         """An explicit omission must not become LiteLLM's legacy 0.0 default."""
+        mock_litellm = MagicMock()
+        _install_lite_llm_mock(monkeypatch, mock_litellm)
         getattr(LLMFactory(), factory_method)("test-model", temperature=None)
 
         assert "temperature" not in mock_litellm.call_args.kwargs
@@ -100,6 +125,25 @@ class TestLLMFactory:
             "create_no_tool_calls_llm",
         ],
     )
+    def test_forwards_reasoning_effort_from_model_config(self, monkeypatch, factory_method):
+        mock_litellm = MagicMock()
+        _install_lite_llm_mock(monkeypatch, mock_litellm)
+
+        getattr(LLMFactory(), factory_method)({
+            "provider": "reasoning-model",
+            "reasoning_effort": "high",
+        })
+
+        assert mock_litellm.call_args.kwargs["reasoning_effort"] == "high"
+
+    @pytest.mark.parametrize(
+        "factory_method",
+        [
+            "create_parallel_tool_calls_llm",
+            "create_no_parallel_tool_calls_llm",
+            "create_no_tool_calls_llm",
+        ],
+    )
     def test_normalizes_kimi_temperature_on_every_factory_method(self, monkeypatch, factory_method):
         """Live BadRequestError: "invalid temperature: only 1 is allowed for
         this model ... Model Group=kimi-k3" -- kimi rejects any temperature
@@ -127,3 +171,22 @@ class TestLLMFactory:
         except AttributeError:
             # Method might not exist
             pass
+
+    def test_every_factory_path_instantiates_the_instrumented_llm(self, monkeypatch):
+        """All three creation paths must construct InstrumentedLiteLlm so the
+        conversation latency instrumentation covers every agent boundary."""
+        raw_lite_llm = MagicMock(name="raw LiteLlm")
+        instrumented = MagicMock(name="InstrumentedLiteLlm")
+        _install_lite_llm_mock(monkeypatch, raw_lite_llm)
+        monkeypatch.setitem(
+            sys.modules,
+            "src.smart_rag.infrastructure.monitoring.instrumented_lite_llm",
+            SimpleNamespace(InstrumentedLiteLlm=instrumented),
+        )
+
+        LLMFactory.create_parallel_tool_calls_llm("test-model")
+        LLMFactory.create_no_parallel_tool_calls_llm("test-model")
+        LLMFactory.create_no_tool_calls_llm("test-model")
+
+        assert instrumented.call_count == 3
+        raw_lite_llm.assert_not_called()

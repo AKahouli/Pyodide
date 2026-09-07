@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Loader2, MessageSquare, Save, Sparkles } from 'lucide-react';
+import { Gauge, Loader2, MessageSquare, Save, Sparkles } from 'lucide-react';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -25,6 +25,8 @@ const DEFAULTS: ComposerSuggestionSettings = {
   maxOutputTokens: 256,
 };
 
+const LATENCY_DEFAULT = true;
+
 const LIMITS = {
   debounceMs: [250, 2000],
   minimumDraftLength: [3, 200],
@@ -35,6 +37,7 @@ const LIMITS = {
 export function ConversationSettingsPage() {
   const { t } = useModuleTranslation('admin');
   const [settings, setSettings] = useState<ComposerSuggestionSettings>(DEFAULTS);
+  const [latencyInstrumentationEnabled, setLatencyInstrumentationEnabled] = useState(LATENCY_DEFAULT);
   const [agents, setAgents] = useState<ConversationSettingsAgentOption[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -46,6 +49,7 @@ export function ConversationSettingsPage() {
       .then(([result, agentOptions]) => {
         if (cancelled) return;
         setSettings(result.composerSuggestions);
+        setLatencyInstrumentationEnabled(result.latencyInstrumentationEnabled ?? LATENCY_DEFAULT);
         setAgents(agentOptions);
       })
       .catch((error) => {
@@ -77,8 +81,12 @@ export function ConversationSettingsPage() {
     }
     setSaving(true);
     try {
-      const result = await updateAdminConversationSettings({ composerSuggestions: settings });
+      const result = await updateAdminConversationSettings({
+        composerSuggestions: settings,
+        latencyInstrumentationEnabled,
+      });
       setSettings(result.composerSuggestions);
+      setLatencyInstrumentationEnabled(result.latencyInstrumentationEnabled ?? LATENCY_DEFAULT);
       showSuccess(t('conversationSettings.toasts.saved.title'), { description: t('conversationSettings.toasts.saved.description') });
     } catch (error) {
       showError(t('conversationSettings.toasts.saveError'), { description: error instanceof Error ? error.message : undefined });
@@ -96,6 +104,30 @@ export function ConversationSettingsPage() {
         </h1>
         <p className="text-sm text-muted-foreground">{t('conversationSettings.description')}</p>
       </div>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2"><Gauge className="h-4 w-4" />{t('conversationSettings.latency.title')}</CardTitle>
+          <CardDescription>{t('conversationSettings.latency.description')}</CardDescription>
+        </CardHeader>
+        <CardContent>
+          {loading ? (
+            <div className="flex items-center gap-2 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" />{t('conversationSettings.loading')}</div>
+          ) : (
+            <div className="flex items-center justify-between gap-6 rounded-lg border p-4">
+              <div className="space-y-1">
+                <Label htmlFor="latency-instrumentation-enabled">{t('conversationSettings.latency.enabled.label')}</Label>
+                <p className="text-xs text-muted-foreground">{t('conversationSettings.latency.enabled.description')}</p>
+              </div>
+              <Switch
+                id="latency-instrumentation-enabled"
+                checked={latencyInstrumentationEnabled}
+                onCheckedChange={setLatencyInstrumentationEnabled}
+              />
+            </div>
+          )}
+        </CardContent>
+      </Card>
 
       <Card>
         <CardHeader>

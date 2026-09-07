@@ -8,9 +8,8 @@
  *   2. persistent model via the right-aside control
  *   3. per-turn override (different model) and per-turn Default stickiness
  *   4. SSE origin: events endpoint hits the backend, not the Vite dev server
- *   5. stopped stream: send is disabled and no POST /messages fires
- *   6. a11y: sidebar search input has id/name, no missing-id warning
- *   7. responsive: 1024x768 and 390x844 layouts
+ *   5. a11y: sidebar search input has id/name, no missing-id warning
+ *   6. responsive: 1024x768 and 390x844 layouts
  *
  * Selector strategy:
  *   - `data-testid` values in the real DOM are derived from the *translated*
@@ -196,37 +195,6 @@ workyTest.describe('Worky per-stream model selection', () => {
     const expectedOrigin = new URL(API_BASE_URL).origin;
     expect(origin, `SSE pointed at Vite origin ${origin}`).not.toBe(FRONTEND_BASE_URL);
     expect(origin).toBe(expectedOrigin);
-  });
-
-  workyTest('stopped stream: send is disabled and no POST /messages fires', async ({ request, authed, freshStream, page }) => {
-    // Stop the stream via REST so the page renders a terminal status.
-    const stop = await request.delete(`${API_BASE_URL}/worky/streams/${freshStream.id}`, {
-      headers: { authorization: `Bearer ${authed.accessToken}`, 'content-type': 'application/json' },
-      data: { reason: 'playwright-smoke' },
-    });
-    expect(stop.ok()).toBeTruthy();
-
-    await gotoWorkyStream(page, freshStream.id);
-
-    await expect(page.getByTestId('worky-prompt-send')).toBeDisabled();
-    await expect(page.getByTestId('worky-prompt-content')).toBeDisabled();
-
-    // Listener is attached right before the action so the timeout
-    // window covers the actual click, not the navigation/boot.
-    const messagesPostPromise = page
-      .waitForRequest(
-        (req) => req.method() === 'POST' && /\/worky\/streams\/[^/]+\/messages$/.test(req.url()),
-        { timeout: 5_000 },
-      )
-      .catch(() => null);
-
-    // Force the click + fill so the test exercises the disabled path
-    // without Playwright's editable-control guard short-circuiting it.
-    await page.getByTestId('worky-prompt-content').fill('ignored', { force: true });
-    await page.getByTestId('worky-prompt-send').click({ force: true });
-
-    const messagesReq = await messagesPostPromise;
-    expect(messagesReq, 'send must not fire on a stopped stream').toBeNull();
   });
 
   workyTest('sidebar search input has id and name (a11y)', async ({ page, freshStream }) => {

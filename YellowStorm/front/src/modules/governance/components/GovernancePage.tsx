@@ -1,5 +1,5 @@
 import { useEffect, useState, type FormEvent } from 'react';
-import { ChevronDown, ChevronLeft, Copy, MoreHorizontal, Pencil, Plus, ShieldCheck, Trash2 } from 'lucide-react';
+import { AlertCircle, ChevronDown, ChevronLeft, Copy, Loader2, MoreHorizontal, Pencil, Plus, RefreshCw, ShieldCheck, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from '@/components/ui/alert-dialog';
@@ -16,7 +16,8 @@ import type { TabKey } from './GovernanceScopeWorkspace';
 
 export function GovernancePage(): JSX.Element {
   const { t } = useModuleTranslation('governance');
-  const { data: programs = [] } = useGovernancePrograms();
+  const programsQuery = useGovernancePrograms();
+  const { data: programs = [], isLoading: programsLoading, isError: programsError, isSuccess: programsLoaded, isFetching: programsFetching, refetch: refetchPrograms } = programsQuery;
   const selectedProgramId = useGovernanceUiStore((state) => state.selectedProgramId);
   const setSelectedProgramId = useGovernanceUiStore((state) => state.setSelectedProgramId);
   const selectedScopeId = useGovernanceUiStore((state) => state.selectedScopeId);
@@ -33,8 +34,19 @@ export function GovernancePage(): JSX.Element {
   const createScope = useCreateGovernanceScope(selectedProgramId);
 
   useEffect(() => {
-    if (!selectedProgramId && programs[0]) setSelectedProgramId(programs[0].id);
-  }, [programs, selectedProgramId, setSelectedProgramId]);
+    if (!programsLoaded) return;
+    if (programs.length === 0) {
+      if (selectedProgramId) {
+        setSelectedProgramId(null);
+        setSelectedScopeId(null);
+      }
+      return;
+    }
+    if (!selectedProgramId || !programs.some((program) => program.id === selectedProgramId)) {
+      setSelectedProgramId(programs[0].id);
+      setSelectedScopeId(null);
+    }
+  }, [programs, programsLoaded, selectedProgramId, setSelectedProgramId, setSelectedScopeId]);
 
   const selectedProgram = programs.find((program) => program.id === selectedProgramId);
   const updateProgram = useUpdateGovernanceProgram(selectedProgramId);
@@ -141,11 +153,11 @@ export function GovernancePage(): JSX.Element {
 
           <div className='flex-1' />
 
-          <ProgramActionsMenu createLabel={t('programs.create')} renameLabel={t('programs.rename')} cloneLabel={t('programs.clone')} deleteLabel={t('programs.delete')} deleteConfirmTitle={t('programs.deleteConfirmTitle')} deleteConfirmBody={selectedProgram ? t('programs.deleteConfirmBody', { name: selectedProgram.name }) : ''} deleteCancel={t('scopeShell.settings.deleteCancel')} actionsLabel={t('programs.actions')} hasSelectedProgram={Boolean(selectedProgram)} isCloning={createProgram.isPending} isDeleting={deleteProgram.isPending} onCreate={() => setProgramDialogOpen(true)} onRename={openRenameDialog} onClone={handleCloneProgram} onDelete={handleDeleteProgram} />
+          {!programsLoading && !programsError && <ProgramActionsMenu createLabel={t('programs.create')} renameLabel={t('programs.rename')} cloneLabel={t('programs.clone')} deleteLabel={t('programs.delete')} deleteConfirmTitle={t('programs.deleteConfirmTitle')} deleteConfirmBody={selectedProgram ? t('programs.deleteConfirmBody', { name: selectedProgram.name }) : ''} deleteCancel={t('scopeShell.settings.deleteCancel')} actionsLabel={t('programs.actions')} hasSelectedProgram={Boolean(selectedProgram)} isCloning={createProgram.isPending} isDeleting={deleteProgram.isPending} onCreate={() => setProgramDialogOpen(true)} onRename={openRenameDialog} onClone={handleCloneProgram} onDelete={handleDeleteProgram} />}
 
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
-              <button type='button' className='inline-flex min-h-11 items-center gap-2 rounded-xl border bg-muted/40 px-3 py-2 text-sm font-medium transition hover:bg-muted sm:min-h-0'>
+              <button type='button' disabled={programsLoading || programsError} className='inline-flex min-h-11 items-center gap-2 rounded-xl border bg-muted/40 px-3 py-2 text-sm font-medium transition hover:bg-muted disabled:cursor-not-allowed disabled:opacity-60 sm:min-h-0'>
                 <span className='text-muted-foreground'>{t('programs.switcher')}</span>
                 <span className='max-w-[220px] truncate'>{selectedProgram?.name ?? t('programs.empty')}</span>
                 <ChevronDown className='h-4 w-4 text-muted-foreground' />
@@ -162,16 +174,41 @@ export function GovernancePage(): JSX.Element {
           </DropdownMenu>
         </header>
 
-        {selectedScopeId ? (
+        {programsLoading ? (
+          <div className='flex min-h-72 items-center justify-center gap-3 text-sm text-muted-foreground' role='status'>
+            <Loader2 className='h-5 w-5 animate-spin' />
+            {t('page.loading')}
+          </div>
+        ) : programsError ? (
+          <div className='flex min-h-72 flex-col items-center justify-center rounded-2xl border bg-card p-8 text-center' role='alert'>
+            <AlertCircle className='h-8 w-8 text-destructive' />
+            <h2 className='mt-4 text-lg font-semibold'>{t('page.error.title')}</h2>
+            <p className='mt-1 max-w-md text-sm leading-6 text-muted-foreground'>{t('page.error.description')}</p>
+            <Button className='mt-5' variant='outline' disabled={programsFetching} onClick={() => void refetchPrograms()}>
+              <RefreshCw className='mr-2 h-4 w-4' />
+              {programsFetching ? t('page.error.retrying') : t('page.error.retry')}
+            </Button>
+          </div>
+        ) : programs.length === 0 ? (
+          <div className='flex min-h-72 flex-col items-center justify-center rounded-2xl border border-dashed bg-card p-8 text-center'>
+            <ShieldCheck className='h-8 w-8 text-primary' />
+            <h2 className='mt-4 text-lg font-semibold'>{t('page.emptyPrograms.title')}</h2>
+            <p className='mt-1 max-w-md text-sm leading-6 text-muted-foreground'>{t('page.emptyPrograms.description')}</p>
+            <Button className='mt-5' onClick={() => setProgramDialogOpen(true)}>
+              <Plus className='mr-2 h-4 w-4' />
+              {t('programs.create')}
+            </Button>
+          </div>
+        ) : selectedScopeId ? (
           <>
             <button type='button' onClick={() => setSelectedScopeId(null)} className='inline-flex min-h-11 w-fit items-center gap-1.5 rounded-full border bg-card px-3 py-1.5 text-sm text-muted-foreground transition hover:text-foreground sm:min-h-0'>
               <ChevronLeft className='h-4 w-4' />{t('cockpit.back')}
             </button>
             <GovernanceScopeLifecycleShell programId={selectedProgramId} initialTab={initialScopeTab} onActiveTabChange={setInitialScopeTab} />
           </>
-        ) : (
+        ) : selectedProgram ? (
           <GovernanceCockpit programId={selectedProgramId} onSelectScope={handleSelectScope} onCreateScope={() => setScopeDialogOpen(true)} />
-        )}
+        ) : null}
       </div>
 
       <Dialog open={programDialogOpen} onOpenChange={setProgramDialogOpen}>

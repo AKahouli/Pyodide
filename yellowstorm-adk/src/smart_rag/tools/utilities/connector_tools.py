@@ -1,13 +1,10 @@
 import inspect
 import json
 import re
-import time
 import uuid
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
-import jwt
 import requests
 from google.adk.tools.tool_context import ToolContext
 
@@ -17,10 +14,13 @@ from src.config.settings import get_settings
 from src.logger.logging import get_logger
 from src.smart_rag.tools.search.tools import SearchToolADK
 from src.smart_rag.tools.utilities.code_interpreter import _STATE_KEY_BRAIN_DOCS
+from src.smart_rag.infrastructure.external.purpose_aware_mcp import (
+    DISPLAY_PURPOSE_DESCRIPTION,
+    DISPLAY_PURPOSE_KEY,
+    LEGACY_DISPLAY_PURPOSE_KEY,
+)
 
 logger = get_logger("api.smart_rag.tools.connector_tools")
-_platform_access_token: Optional[str] = None
-_platform_access_token_expires_at = 0.0
 _STATE_KEY_CONNECTOR_TEXT_SOURCES = "_connector_text_sources"
 _STATE_KEY_CONNECTOR_IMAGE_SOURCES = "_connector_image_sources"
 _STATE_KEY_CONNECTOR_SOURCE_SIGNATURES = "_connector_source_signatures"
@@ -37,6 +37,8 @@ class ConnectorToolContext:
     file_names: Optional[List[str]] = None
     session_id: Optional[str] = None
     agent_id: Optional[str] = None
+    user_id: Optional[str] = None
+    platform_api_token: Optional[str] = None
 
 
 def _log_payload(value: Any) -> str:
@@ -439,6 +441,30 @@ def _with_tool_context_signature(signature: inspect.Signature) -> inspect.Signat
     return inspect.Signature(parameters)
 
 
+def _with_display_purpose_signature(signature: inspect.Signature) -> inspect.Signature:
+    parameters = list(signature.parameters.values())
+    parameters.append(
+        inspect.Parameter(
+            name=DISPLAY_PURPOSE_KEY,
+            kind=inspect.Parameter.KEYWORD_ONLY,
+            annotation=str,
+        )
+    )
+    return inspect.Signature(parameters)
+
+
+def _add_display_purpose_to_schema(schema: Dict[str, Any]) -> None:
+    parameters = schema["function"]["parameters"]
+    parameters["properties"][DISPLAY_PURPOSE_KEY] = {
+        "type": "string",
+        "description": DISPLAY_PURPOSE_DESCRIPTION,
+    }
+    parameters["required"] = [
+        *parameters.get("required", []),
+        DISPLAY_PURPOSE_KEY,
+    ]
+
+
 _SINGULAR_WORKSPACE_NAME_PARAMS = ("workspace_name", "workspaceName")
 _PLURAL_WORKSPACE_NAME_PARAMS = ("workspace_names", "workspaceNames")
 _SINGULAR_LEGACY_WORKSPACE_PARAMS = (
@@ -606,26 +632,81 @@ def _unique_strings(values: List[Any]) -> List[str]:
     return normalized
 
 
+def _unique_workspace_paths(values: List[Any]) -> List[str]:
+    paths: List[str] = []
+    seen_aliases = set()
+    for value in values:
+        path = str(value or "").strip().replace("\\", "/").strip("/")
+        alias = path.rsplit("/", 1)[-1]
+        if not path or alias in seen_aliases:
+            continue
+        seen_aliases.add(alias)
+        paths.append(path)
+    return paths
+
+
+def _workspace_root_from_filepath(filepath: Any) -> str:
+    path = str(filepath or "").strip().replace("\\", "/").strip("/")
+    if "://" in path or "/" not in path:
+        return ""
+    return path.rsplit("/", 1)[0]
+
+
+def _qualify_workspace_path(path: Any, user_id: Optional[str]) -> str:
+    normalized = str(path or "").strip().replace("\\", "/").strip("/")
+    owner = str(user_id or "").strip().strip("/")
+    if not normalized or "://" in normalized or "/" in normalized or not owner:
+        return normalized
+    return f"{owner}/{normalized}"
+
+
+def _document_workspace_path(doc: Dict[str, Any], user_id: Optional[str]) -> str:
+    return _workspace_root_from_filepath(doc.get("filepath")) or _qualify_workspace_path(
+        doc.get("workspace_name") or doc.get("workspace_id"),
+        user_id,
+    )
+
+
 def _collect_connector_context(
     brain_documents: Optional[List[Dict[str, Any]]],
     workspace_names: Optional[List[str]],
     workspace_id: Optional[str],
     brain_ids: Optional[List[str]],
     explicit_file_names: Optional[List[str]] = None,
+    user_id: Optional[str] = None,
 ) -> Dict[str, List[str]]:
     file_names: List[Any] = list(explicit_file_names or [])
     workspace_ids: List[Any] = []
     header_workspace_ids: List[Any] = []
     workspace_paths: List[Any] = []
 
-    for doc in brain_documents or []:
-        if not isinstance(doc, dict):
-            continue
+    selected_workspace_id = str(workspace_id or "").strip()
+    documents = [doc for doc in brain_documents or [] if isinstance(doc, dict)]
+    documents.sort(
+        key=lambda doc: 0
+        if selected_workspace_id
+        and str(doc.get("workspace_id") or "").strip() == selected_workspace_id
+        else 1
+    )
+    selected_workspace_path = next(
+        (
+            _document_workspace_path(doc, user_id)
+            for doc in documents
+            if selected_workspace_id
+            and str(doc.get("workspace_id") or "").strip() == selected_workspace_id
+        ),
+        _qualify_workspace_path(selected_workspace_id, user_id),
+    )
+
+    workspace_ids.append(selected_workspace_id)
+    header_workspace_ids.append(selected_workspace_id)
+    workspace_paths.append(selected_workspace_path)
+    for doc in documents:
         file_names.append(doc.get("file_name") or doc.get("filename"))
         doc_workspace_id = doc.get("workspace_id")
         workspace_ids.append(doc_workspace_id)
         header_workspace_ids.append(doc_workspace_id)
-        workspace_paths.append(doc.get("workspace_name") or doc.get("workspace_id"))
+        workspace_paths.append(_document_workspace_path(doc, user_id))
 
     workspace_ids.append(workspace_id)
     header_workspace_ids.append(workspace_id)
@@ -635,7 +716,17 @@ def _collect_connector_context(
     workspace_ids.extend(brain_ids or [])
     header_workspace_ids.extend(brain_ids or [])
     workspace_ids.extend(workspace_names or [])
-    workspace_paths.extend(workspace_names or [])
+    paths_by_name = {
+        str(path).rsplit("/", 1)[-1]: path
+        for path in workspace_paths
+        if str(path or "").strip()
+    }
+    for name in workspace_names or []:
+        normalized_name = str(name or "").strip().replace("\\", "/").strip("/")
+        workspace_paths.append(
+            paths_by_name.get(normalized_name.rsplit("/", 1)[-1])
+            or _qualify_workspace_path(normalized_name, user_id)
+        )
 
     # Older callers may only populate ``workspace_names``.  Keep this as a
     # compatibility fallback: modern gRPC callers provide canonical IDs via
@@ -647,7 +738,7 @@ def _collect_connector_context(
         "file_names": _unique_strings(file_names),
         "workspace_ids": _unique_strings(workspace_ids),
         "header_workspace_ids": _unique_strings(header_workspace_ids),
-        "workspace_paths": _unique_strings(workspace_paths),
+        "workspace_paths": _unique_workspace_paths(workspace_paths),
     }
 
 
@@ -746,6 +837,7 @@ def create_connector_tools(
         context.workspace_id,
         context.brain_ids,
         context.file_names,
+        context.user_id,
     )
     settings = get_settings()
     backend_url = getattr(settings, "API_URL", None)
@@ -795,6 +887,19 @@ def create_connector_tools(
             )
             schema = _build_function_schema(tool_name, description, parameter_schema)
             signature = _build_signature(parameter_schema)
+            parameter_properties = parameter_schema.get("properties") or {}
+            has_reserved_purpose = any(
+                key in parameter_properties
+                for key in (DISPLAY_PURPOSE_KEY, LEGACY_DISPLAY_PURPOSE_KEY)
+            )
+            if has_reserved_purpose:
+                logger.warning(
+                    "Connector action already defines reserved display-purpose field; purpose metadata not injected: %s",
+                    tool_name,
+                )
+            else:
+                _add_display_purpose_to_schema(schema)
+                signature = _with_display_purpose_signature(signature)
 
             async def _connector_tool(
                 _connector_id: str = connector_id,
@@ -811,6 +916,7 @@ def create_connector_tools(
                 _connector_context: Dict[str, List[str]] = connector_context,
                 _session_id: Optional[str] = context.session_id,
                 _agent_id: Optional[str] = context.agent_id,
+                _has_reserved_purpose: bool = has_reserved_purpose,
                 _is_logical_search: bool = is_logical_search,
                 tool_context: ToolContext = None,
                 **kwargs: Any,
@@ -827,6 +933,10 @@ def create_connector_tools(
                     if isinstance(kwargs.get("params"), dict)
                     else kwargs
                 )
+                if not _has_reserved_purpose:
+                    params = dict(params)
+                    params.pop(DISPLAY_PURPOSE_KEY, None)
+                    params.pop(LEGACY_DISPLAY_PURPOSE_KEY, None)
                 merged_params = {**_fixed_params, **params}
                 merged_params.pop("user_id", None)
                 merged_params = _with_default_workspace_params(

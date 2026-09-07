@@ -14,6 +14,7 @@ import {
   MaxLength,
   Min,
   MinLength,
+  ValidateNested,
 } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 
@@ -108,6 +109,16 @@ export class GraphOperationsDto {
   @IsArray()
   @ArrayMinSize(1)
   @ArrayMaxSize(2000)
+  @IsObject({ each: true })
+  operations!: Record<string, unknown>[];
+}
+
+export class AgeGraphOperationsDto {
+  @ApiProperty({ type: [Object], description: 'AGE graph mutations: node.create, node.delete, edge.create or edge.delete' })
+  @Type(() => Object)
+  @IsArray()
+  @ArrayMinSize(1)
+  @ArrayMaxSize(50)
   @IsObject({ each: true })
   operations!: Record<string, unknown>[];
 }
@@ -252,6 +263,21 @@ export class GenerateSemanticModelOntologyDto {
   businessRequirements: string[] = [];
 }
 
+export class SemanticModelManualInstancesDto {
+  @ApiProperty()
+  @IsUUID()
+  nodeTypeId!: string;
+
+  @ApiProperty({ type: [String], maxItems: 100 })
+  @IsArray()
+  @ArrayMinSize(1)
+  @ArrayMaxSize(100)
+  @IsString({ each: true })
+  @MinLength(1, { each: true })
+  @MaxLength(200, { each: true })
+  labels!: string[];
+}
+
 export class StartSemanticModelBuildDto {
   @ApiProperty({ type: [String], maxItems: 50, required: false, default: [] })
   @IsOptional()
@@ -267,6 +293,14 @@ export class StartSemanticModelBuildDto {
   @IsOptional()
   @IsIn(['replace', 'incremental'])
   applyMode: 'replace' | 'incremental' = 'replace';
+
+  @ApiPropertyOptional({ type: [SemanticModelManualInstancesDto], maxItems: 100, default: [] })
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(100)
+  @ValidateNested({ each: true })
+  @Type(() => SemanticModelManualInstancesDto)
+  manualInstances?: SemanticModelManualInstancesDto[];
 }
 
 export class UpdateBusinessRequirementsDto {

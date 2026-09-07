@@ -18,7 +18,7 @@ class MockSettings(BaseModel):
     AZURE_STORAGE_ACCOUNT_KEY: str = "mock_storage_key"
     AZURE_DATALAKE_CONNECTION_STRING: str = "DefaultEndpointsProtocol=https;AccountName=mock_account;AccountKey=mock_key;EndpointSuffix=core.windows.net"
     AZURE_DATALAKE_FILE_SYSTEM_NAME: str = "mock_file_system"
-    DATABASE_URL: str = "sqlite:///./test.db"
+    DATABASE_URL: str = "sqlite+aiosqlite:///./test.db"
     LANGGRAPH_CHECKPOINT_SCHEMA: str = "langgraph_checkpoints"
     LANGGRAPH_CHECKPOINT_POOL_MIN_SIZE: int = 1
     LANGGRAPH_CHECKPOINT_POOL_MAX_SIZE: int = 2
@@ -41,9 +41,6 @@ class MockSettings(BaseModel):
     APPLICATIONINSIGHTS_CONNECTION_STRING: Optional[str] = None
     APPLICATION_INSIGHTS_LOG_CONFIG_PATH: str = "./src/logger/mock_app_insight_logging.json"
 
-    LANGFUSE_HOST: str = "https://mock_langfuse_host"
-    LANGFUSE_SECRET_KEY: str = "mock_langfuse_secret_key"
-    LANGFUSE_PUBLIC_KEY: str = "mock_langfuse_public_key"
     # Authentication to get token
     AUTH_USERNAME: str = "mock_user"
     AUTH_PASSWORD: str = "mock_password"
