@@ -9,6 +9,7 @@ import {
   SemanticModelEvidenceSearchTask,
 } from '../domain/semantic-model-evidence-search.types';
 import { SemanticGraph } from '../domain/semantic-model.types';
+import type { SemanticModelManualInstances } from '../domain/semantic-model-build.types';
 import { SelectedCorpusBinding } from '../domain/selected-corpus-manifest.types';
 import { SemanticGraphCommandService } from './semantic-graph-command.service';
 import { SemanticModelCorpusPreparationService } from './semantic-model-corpus-preparation.service';
@@ -32,7 +33,7 @@ export class SemanticModelEvidenceSearchService {
     private readonly nativeSearch: SemanticModelNativeSearchClient,
   ) {}
 
-  async search(userId: string, modelId: string): Promise<SemanticModelEvidenceSearchResponse> {
+  async search(userId: string, modelId: string, manualInstances: SemanticModelManualInstances[] = []): Promise<SemanticModelEvidenceSearchResponse> {
     await this.models.requireRole(userId, modelId, ['owner', 'editor', 'viewer']);
     const manifest = await this.corpusPreparation.prepare(userId, modelId);
     const graph = await this.graphCommands.getGraph(userId, modelId) as SemanticGraph;
@@ -42,7 +43,7 @@ export class SemanticModelEvidenceSearchService {
     );
     const failedUnits: SemanticModelEvidenceSearchFailedUnit[] = [];
     const jobs = searchUnits.flatMap(({ binding, document }, unitIndex) =>
-      this.buildSearchQueries(binding, graph).map((query, queryIndex) => ({
+      this.buildSearchQueries(binding, graph, manualInstances).map((query, queryIndex) => ({
         unitIndex,
         queryIndex,
         binding,
@@ -168,9 +169,31 @@ export class SemanticModelEvidenceSearchService {
     };
   }
 
-  private buildSearchQueries(binding: SelectedCorpusBinding, graph: SemanticGraph): string[] {
+  private buildSearchQueries(
+    binding: SelectedCorpusBinding,
+    graph: SemanticGraph,
+    manualInstances: SemanticModelManualInstances[] = [],
+  ): string[] {
     const scope = this.describeOntologySearchScope(binding, graph);
     const concepts = this.searchConcepts(scope, binding.target.label);
+    const manual = manualInstances.find((item) => item.nodeTypeId === binding.target.id);
+    if (manual?.labels?.length) {
+      const concept = concepts[0] ?? { label: binding.target.label, attributes: [] };
+      return [...new Set(manual.labels.flatMap((label) => {
+        const value = label.trim();
+        if (!value) return [];
+        return [
+          `Exact instance: "${value}"`,
+          `${concept.label}: "${value}"`,
+          ...concept.attributes.map((attribute) => {
+            const detail = [attribute['label'] || attribute['key'], attribute['description']]
+              .filter((part): part is string => typeof part === 'string' && part.trim().length > 0)
+              .join(': ');
+            return `${concept.label}: "${value}" ${detail}`;
+          }),
+        ];
+      }))];
+    }
     return [...new Set(concepts.flatMap(({ label, attributes }) => [
       ...attributes.map((attribute) => {
         const detail = [attribute['label'] || attribute['key'], attribute['description']]

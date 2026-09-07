@@ -113,6 +113,16 @@ export class GraphOperationsDto {
   operations!: Record<string, unknown>[];
 }
 
+export class AgeGraphOperationsDto {
+  @ApiProperty({ type: [Object], description: 'AGE graph mutations: node.create, node.delete, edge.create or edge.delete' })
+  @Type(() => Object)
+  @IsArray()
+  @ArrayMinSize(1)
+  @ArrayMaxSize(50)
+  @IsObject({ each: true })
+  operations!: Record<string, unknown>[];
+}
+
 export class ConnectWorkspaceDto {
   @ApiProperty()
   @Type(() => Number)
@@ -254,7 +264,7 @@ export class GenerateSemanticModelOntologyDto {
 }
 
 export class SemanticModelManualInstancesDto {
-  @ApiProperty({ format: 'uuid' })
+  @ApiProperty()
   @IsUUID()
   nodeTypeId!: string;
 
@@ -284,13 +294,13 @@ export class StartSemanticModelBuildDto {
   @IsIn(['replace', 'incremental'])
   applyMode: 'replace' | 'incremental' = 'replace';
 
-  @ApiPropertyOptional({ type: [SemanticModelManualInstancesDto], default: [] })
+  @ApiPropertyOptional({ type: [SemanticModelManualInstancesDto], maxItems: 100, default: [] })
   @IsOptional()
   @IsArray()
   @ArrayMaxSize(100)
   @ValidateNested({ each: true })
   @Type(() => SemanticModelManualInstancesDto)
-  manualInstances: SemanticModelManualInstancesDto[] = [];
+  manualInstances?: SemanticModelManualInstancesDto[];
 }
 
 export class UpdateBusinessRequirementsDto {
