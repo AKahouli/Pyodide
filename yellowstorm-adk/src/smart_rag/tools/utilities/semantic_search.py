@@ -9,6 +9,7 @@ def create_semantic_search(runtime_context: dict[str, Any]):
     """Create a graph search tool bound to a server-authorized schema."""
     schema_name = str(runtime_context.get("semantic_model_schema_name") or "").strip()
     url = str(runtime_context.get("semantic_search_url") or "").strip()
+    token = str(runtime_context.get("semantic_search_token") or "").strip()
     try:
         timeout_seconds = float(runtime_context.get("semantic_search_timeout_seconds", 300))
     except (TypeError, ValueError):
@@ -16,7 +17,7 @@ def create_semantic_search(runtime_context: dict[str, Any]):
     if not math.isfinite(timeout_seconds):
         timeout_seconds = 300.0
     timeout_seconds = min(max(timeout_seconds, 1.0), 1800.0)
-    if not schema_name or not url:
+    if not schema_name or not url or not token:
         return None
 
     async def semantic_search(query: str) -> dict[str, Any]:
@@ -29,6 +30,7 @@ def create_semantic_search(runtime_context: dict[str, Any]):
             async with httpx.AsyncClient(timeout=timeout_seconds) as client:
                 response = await client.post(
                     url,
+                    headers={"Authorization": f"Bearer {token}"},
                     json={
                         "schema_name": schema_name,
                         "query": normalized_query,

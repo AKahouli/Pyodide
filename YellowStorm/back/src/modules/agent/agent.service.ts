@@ -840,7 +840,8 @@ export class AgentService {
             platform_api_token: this.configService.get<string>('INTERNAL_SERVICE_SECRET', ''),
             ...(semanticSchemaName ? {
               semantic_model_schema_name: semanticSchemaName,
-              semantic_search_url: this.configService.get<string>('SEMANTIC_SEARCH_FUSED_URL', 'http://127.0.0.1:8100/v1/graphs/search/fused'),
+              semantic_search_url: `${this.configService.get<string>('SEMANTIC_SEARCH_URL', 'http://127.0.0.1:8100').replace(/\/$/, '')}/v1/graphs/search/fused`,
+              semantic_search_token: this.configService.get<string>('SEMANTIC_SEARCH_TOKEN', ''),
               semantic_search_timeout_seconds: String(this.configService.get<number>('SEMANTIC_SEARCH_TIMEOUT_SECONDS', 300)),
             } : {}),
             ...(resolvedModel?.omitTemperature

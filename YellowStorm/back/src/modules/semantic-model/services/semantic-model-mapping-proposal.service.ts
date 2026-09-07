@@ -15,6 +15,7 @@ import { SemanticAgeGraphRepository, type AgeGraphData, type AgeGraphNode } from
 import { SemanticGraphCommandService } from './semantic-graph-command.service';
 import { SemanticModelEvidenceSearchService } from './semantic-model-evidence-search.service';
 import { SemanticModelService } from './semantic-model.service';
+import { SemanticGraphIndexJobService } from './semantic-graph-index-job.service';
 
 @Injectable()
 export class SemanticModelMappingProposalService {
@@ -27,6 +28,7 @@ export class SemanticModelMappingProposalService {
     private readonly evidenceSearch: SemanticModelEvidenceSearchService,
     private readonly db: SemanticModelDatabaseService,
     private readonly ageGraph: SemanticAgeGraphRepository,
+    private readonly indexJobs: SemanticGraphIndexJobService,
   ) {}
 
   async startAsync(userId: string, modelId: string, manualInstances: SemanticModelManualInstances[] = []): Promise<{ jobId: string; status: 'running' }> {
@@ -459,9 +461,7 @@ export class SemanticModelMappingProposalService {
 
     await this.graphCommands.apply(userId, modelId, { expectedRevision: graph.revision, operations } as never);
 
-    const updatedGraph = await this.graphCommands.getGraph(userId, modelId);
-    await this.ageGraph.dropGraph(modelId);
-    const { vertexCount, edgeCount, failedVertexCount, failedEdgeCount } = await this.ageGraph.buildGraph(updatedGraph, modelId);
+    const vertexCount = 0, edgeCount = 0, failedVertexCount = 0, failedEdgeCount = 0;
 
     const ageHadFailures = failedVertexCount > 0 || failedEdgeCount > 0;
     if (ageHadFailures) {
@@ -481,6 +481,8 @@ export class SemanticModelMappingProposalService {
     const graphViewerWarning = ageHadFailures
       ? `Le graphe a été sauvegardé mais la vue graphe est incomplète (${failedVertexCount} nœuds et ${failedEdgeCount} relations n'ont pas pu être écrits). Les données sont intactes — réessayez pour reconstruire le viewer.`
       : null;
+
+    await this.indexJobs.enqueue(modelId);
 
     return { appliedNodeCount: createdCount, updatedNodeCount: updatedCount, deletedNodeCount: deletedCount, appliedEdgeCount: operations.filter((o) => o['type'] === 'record_relation.create').length, graphViewerWarning };
   }
@@ -522,13 +524,18 @@ export class SemanticModelMappingProposalService {
 
   async rebuildAgeGraph(userId: string, modelId: string): Promise<{ vertexCount: number; edgeCount: number; failedVertexCount: number; failedEdgeCount: number; graphViewerWarning: string | null }> {
     await this.models.requireActiveRole(userId, modelId, ['owner', 'editor']);
-    const graph = await this.graphCommands.getGraph(userId, modelId);
-    await this.ageGraph.dropGraph(modelId);
-    const result = await this.ageGraph.buildGraph(graph, modelId);
+    const result = { vertexCount: 0,edgeCount: 0,failedVertexCount: 0,failedEdgeCount: 0 };
     const graphViewerWarning = result.failedVertexCount || result.failedEdgeCount
       ? `Le graphe AGE est incomplet (${result.failedVertexCount} nœud(s) et ${result.failedEdgeCount} relation(s) non écrits).`
       : null;
+    await this.indexJobs.enqueue(modelId);
     return { ...result, graphViewerWarning };
+  }
+
+  async indexAgeGraph(userId: string, modelId: string): Promise<{ queued: true }> {
+    await this.models.requireRole(userId, modelId, ['owner', 'editor', 'viewer']);
+    await this.indexJobs.enqueue(modelId);
+    return { queued: true };
   }
 
   async applyAgeGraphOperations(userId: string, modelId: string, dto: AgeGraphOperationsDto) {
@@ -573,12 +580,11 @@ export class SemanticModelMappingProposalService {
       return { appliedNodeCount: 0, appliedEdgeCount: 0, deletedNodeCount: 0, deletedEdgeCount: 0, graphViewerWarning: null };
     }
     await this.graphCommands.apply(userId, modelId, { expectedRevision: graph.revision, operations: expandedOperations } as never);
-    const updatedGraph = await this.graphCommands.getGraph(userId, modelId);
-    await this.ageGraph.dropGraph(modelId);
-    const ageResult = await this.ageGraph.buildGraph(updatedGraph, modelId);
+    const ageResult = { failedVertexCount: 0,failedEdgeCount: 0 };
     const graphViewerWarning = ageResult.failedVertexCount || ageResult.failedEdgeCount
       ? `Le graphe AGE est incomplet (${ageResult.failedVertexCount} nœud(s) et ${ageResult.failedEdgeCount} relation(s) non écrits).`
       : null;
+    await this.indexJobs.enqueue(modelId);
     return {
       appliedNodeCount: createdNodeCount,
       appliedEdgeCount: operations.filter((operation) => operation.type === 'edge.create').length,

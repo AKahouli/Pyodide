@@ -376,6 +376,7 @@ export const API_ENDPOINTS = {
     mappingPlanApply: (id: string, jobId: string) => `/semantic-models/${id}/mapping/jobs/${jobId}/apply`,
     ageGraph: (id: string) => `/semantic-models/${id}/age-graph`,
     ageGraphRebuild: (id: string) => `/semantic-models/${id}/age-graph/rebuild`,
+    ageGraphIndex: (id: string) => `/semantic-models/${id}/age-graph/index`,
     ageGraphOperations: (id: string) => `/semantic-models/${id}/age-graph/operations`,
     corpus: (id: string) => `/semantic-models/${id}/corpus`,
     builds: (id: string) => `/semantic-models/${id}/builds`,

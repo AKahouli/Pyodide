@@ -48,9 +48,10 @@ export function SemanticModelSelect({ value, onChange, disabled }: SemanticModel
                 </CommandItem>
               )}
               {models.map((model) => (
-                <CommandItem key={model.id} value={model.name} onSelect={() => onChange(model.id)}>
+                <CommandItem key={model.id} value={model.name} disabled={model.indexStatus !== 'indexed'} onSelect={() => onChange(model.id)}>
                   <Network className='mr-2 size-4 shrink-0' />
                   <span className='min-w-0 flex-1 truncate'>{model.name}</span>
+                  <span role='status' aria-label={model.indexStatus} className={`mr-1 h-2 w-2 rounded-full ${model.indexStatus === 'indexed' ? 'bg-emerald-500' : model.indexStatus === 'failed' ? 'bg-red-500' : `bg-amber-500 ${model.indexStatus === 'pending' || model.indexStatus === 'in_progress' ? 'animate-pulse' : ''}`}`} />
                   <Check className={cn('ml-2 size-4', value === model.id ? 'opacity-100' : 'opacity-0')} />
                 </CommandItem>
               ))}

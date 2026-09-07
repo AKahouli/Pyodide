@@ -34,6 +34,9 @@ export class SemanticModelService {
   async resolveSearchSchema(userId: string, modelId: string): Promise<string> {
     const model = await this.get(userId, modelId);
     if (model.status === 'archived') throw new NotFoundException(ErrorCode.SEMANTIC_MODEL_NOT_FOUND);
+    if (model.indexStatus !== 'indexed') {
+      throw new ConflictException(ErrorCode.SEMANTIC_MODEL_UNAVAILABLE, 'This semantic model is still being indexed');
+    }
     return this.ageGraph.graphNameForModel(model.id);
   }
 
@@ -119,11 +122,14 @@ export class SemanticModelService {
 
   async archive(userId: string, modelId: string, expectedRevision: number): Promise<void> {
     const model = await this.requireActiveRole(userId, modelId, ['owner']);
-    const result = await this.database.query(
-      `UPDATE semantic_model.models SET status='archived', archived_at=now(), revision=revision+1, updated_at=now()
-       WHERE id=$1 AND revision=$2`, [model.id, expectedRevision]);
-    if (!result.rowCount) throw new ConflictException(ErrorCode.SEMANTIC_MODEL_REVISION_CONFLICT);
-    void this.ageGraph.dropGraph(modelId);
+    await this.database.transaction(async (client) => {
+      await client.query('SELECT pg_advisory_xact_lock(hashtext($1))',[modelId]);
+      const result = await client.query(
+        `UPDATE semantic_model.models SET status='archived', archived_at=now(), revision=revision+1, updated_at=now()
+         WHERE id=$1 AND revision=$2`, [model.id, expectedRevision]);
+      if (!result.rowCount) throw new ConflictException(ErrorCode.SEMANTIC_MODEL_REVISION_CONFLICT);
+      await client.query('DELETE FROM semantic_model.graph_index_jobs WHERE model_id=$1',[modelId]);
+    });
   }
 
   async clone(userId: string, modelId: string, name: string): Promise<SemanticModelRow> {

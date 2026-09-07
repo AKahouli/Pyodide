@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Link, useBlocker, useNavigate, useParams } from "react-router-dom";
+import { useQueryClient } from '@tanstack/react-query';
 import {
   AlertTriangle,
   ArrowLeft,
@@ -50,6 +51,7 @@ import { isBuildActive, useSemanticBuildJob } from "../hooks/use-semantic-build-
 import { VersionsPanel } from "../components/versions/VersionsPanel";
 import { useKnowledgeLinking } from "../hooks/use-knowledge-linking";
 import { useSemanticGraph, useSemanticModel } from "../query/hooks";
+import { semanticModelQueryKeys } from '../query/queryKeys';
 import { isPendingSaveCurrent, isSemanticGraphSaved, selectPendingOperations, useSemanticModelEditorStore } from "../store";
 import type { EditorMode } from "../types";
 import { layoutStructure } from "../utils/model-utils";
@@ -62,6 +64,7 @@ export function SemanticModelEditorPage() {
   const { modelId } = useParams();
   const { t } = useModuleTranslation("semantic-model");
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const model = useSemanticModel(modelId);
   const graphQuery = useSemanticGraph(modelId);
   const knowledge = useKnowledgeLinking(modelId);
@@ -108,7 +111,7 @@ export function SemanticModelEditorPage() {
     model.data?.status !== "archived" &&
     model.data?.role !== "viewer" &&
     Boolean(model.data?.currentDraftVersionId);
-  const canValidate = isSemanticGraphSaved({ graph, pending, saveStatus });
+  const canValidate = canEdit && isSemanticGraphSaved({ graph, pending, saveStatus });
   const buildJob = useSemanticBuildJob(modelId);
   const buildActive = isBuildActive(buildJob.data);
 
@@ -151,20 +154,11 @@ export function SemanticModelEditorPage() {
           revision,
           batch.operations,
         );
-        let ageSyncError: unknown = null;
-        if (batch.operations.some((operation) => operation.type.startsWith("record"))) {
-          try {
-            const ageResult = await semanticModelApi.rebuildAgeGraph(modelId);
-            if (ageResult.graphViewerWarning) ageSyncError = new Error(ageResult.graphViewerWarning);
-          } catch (error) {
-            ageSyncError = error;
-          }
+        if (batch.operations.some((operation) => operation.type !== 'layout.update')) {
+          queryClient.setQueryData(semanticModelQueryKeys.model(modelId), (current: typeof model.data) => current ? { ...current,indexStatus: 'pending' as const,indexError: null } : current);
+          void queryClient.invalidateQueries({ queryKey: semanticModelQueryKeys.all });
         }
         if (saveIsCurrent()) markSaved(result.revision, batch.groupCount);
-        if (ageSyncError && saveIsCurrent()) {
-          const apiError = parseApiError(ageSyncError);
-          showError(t("save.error"), { description: apiError.message });
-        }
       } catch (error) {
         if (saveIsCurrent()) {
           const apiError = parseApiError(error);
@@ -270,6 +264,18 @@ export function SemanticModelEditorPage() {
     );
 
   const statusLabel = t(`save.${saveStatus}`);
+  const openGraphViewer = () => {
+    setGraphViewerOpen(true);
+    if (!modelId) return;
+    void semanticModelApi.indexAgeGraph(modelId)
+      .then(() => {
+        queryClient.setQueryData(semanticModelQueryKeys.model(modelId), (current: typeof model.data) => current ? { ...current,indexStatus: 'pending' as const,indexError: null } : current);
+        return queryClient.invalidateQueries({ queryKey: semanticModelQueryKeys.all });
+      })
+      .catch((error: unknown) => {
+        showError(t('save.error'), { description: parseApiError(error).message });
+      });
+  };
   return (
     <div className="flex h-[100dvh] w-full min-w-0 max-w-full flex-col overflow-hidden bg-muted/15">
       <header className="flex shrink-0 flex-wrap items-center gap-2 border-b bg-background/95 px-3 py-2 backdrop-blur">
@@ -305,6 +311,10 @@ export function SemanticModelEditorPage() {
               {t("action.retry")}
             </button>
           )}
+        </div>
+        <div className="flex items-center gap-1.5 rounded-full bg-muted px-2.5 py-1 text-[11px]" title={model.data?.indexError ?? undefined}>
+          <span className={`h-2 w-2 rounded-full ${model.data?.indexStatus === 'indexed' ? 'bg-emerald-500' : model.data?.indexStatus === 'failed' ? 'bg-red-500' : `bg-amber-500 ${model.data?.indexStatus === 'pending' || model.data?.indexStatus === 'in_progress' ? 'animate-pulse' : ''}`}`} />
+          {t(model.data?.indexStatus === 'indexed' ? 'indexStatus.indexed' : model.data?.indexStatus === 'failed' ? 'indexStatus.failed' : 'indexStatus.working')}
         </div>
         <Tabs
           value={mode}
@@ -438,7 +448,7 @@ export function SemanticModelEditorPage() {
                 size="lg"
                 variant="outline"
                 className="shadow-lg bg-background"
-                onClick={() => setGraphViewerOpen(true)}
+                onClick={openGraphViewer}
               >
                 <Network className="mr-2 h-4 w-4" />
                 {t("graphViewer.button")}

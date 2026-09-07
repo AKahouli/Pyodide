@@ -76,6 +76,12 @@ export const semanticModelApi = {
       {},
     ));
   },
+  async indexAgeGraph(id: string): Promise<{ queued: true }> {
+    return unwrap(await apiClient.post<ApiResponse<{ queued: true }>>(
+      API_ENDPOINTS.semanticModels.ageGraphIndex(id),
+      {},
+    ));
+  },
   async applyAgeGraphOperations(id: string, operations: AgeGraphOperation[]): Promise<{ appliedNodeCount: number; appliedEdgeCount: number; deletedNodeCount: number; deletedEdgeCount: number; graphViewerWarning: string | null }> {
     return unwrap(await apiClient.post<ApiResponse<{ appliedNodeCount: number; appliedEdgeCount: number; deletedNodeCount: number; deletedEdgeCount: number; graphViewerWarning: string | null }>>(
       API_ENDPOINTS.semanticModels.ageGraphOperations(id),

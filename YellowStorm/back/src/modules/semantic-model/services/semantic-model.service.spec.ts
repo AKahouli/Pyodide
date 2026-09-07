@@ -4,7 +4,7 @@ import { SemanticModelService } from './semantic-model.service';
 describe('SemanticModelService archived access', () => {
   const accessible = {
     id: 'model-id',
-    role: 'owner',
+    role: 'owner', indexStatus: 'indexed', indexError: null,
     status: 'archived',
   };
   const repository = { findAccessible: jest.fn() };

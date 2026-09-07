@@ -21,6 +21,7 @@ export type SemanticModelStatus = 'draft' | 'published' | 'archived';
 export type SemanticModelMaturity = 'automatic' | 'structured' | 'structured_with_records' | 'operational';
 export type EditorMode = 'structure' | 'records';
 export type SaveStatus = 'saved' | 'saving' | 'offline' | 'error' | 'conflict';
+export type SemanticModelIndexStatus = 'not_indexed' | 'pending' | 'in_progress' | 'indexed' | 'failed';
 
 export interface SemanticModel {
   id: string;
@@ -43,6 +44,8 @@ export interface SemanticModel {
   brokenBindingCount?: number;
   createdAt: string;
   updatedAt: string;
+  indexStatus: SemanticModelIndexStatus;
+  indexError: string | null;
 }
 
 export interface SemanticModelManualInstances {
