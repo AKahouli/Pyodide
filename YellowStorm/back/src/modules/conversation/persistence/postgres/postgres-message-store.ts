@@ -118,6 +118,7 @@ export class PostgresMessageStore implements MessageStore {
   ): Promise<{ user: MessageRecord; placeholder: MessageRecord }> {
     return this.db.transaction(async (tx) => {
       const now = new Date();
+      const placeholderCreatedAt = new Date(now.getTime() + 1);
       const userId = newOwnedId();
       const [userRow] = await tx
         .insert(schema.messages)
@@ -167,7 +168,9 @@ export class PostgresMessageStore implements MessageStore {
           isComplete: false,
           components: [],
           requestId: input.placeholder.requestId,
-          createdAt: now,
+          // Message reads use createdAt + id, so the answer must sort strictly
+          // after its question instead of relying on the random id tie-breaker.
+          createdAt: placeholderCreatedAt,
           updatedAt: now,
         })
         .returning();
