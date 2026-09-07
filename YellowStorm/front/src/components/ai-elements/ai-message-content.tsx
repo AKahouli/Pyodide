@@ -34,6 +34,7 @@ import { Separator } from '../ui/separator';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '../ui/dialog';
 import { rehypeCitationMarkers } from '@/lib/rehype-citation-markers';
 import { remarkAssistantCitationLinks } from '@/lib/remark-assistant-citation-links';
+import { isUrlCitation } from '@/modules/conversation/utils/message-citations';
 import { applyOutlineHeadingOverrides, type MarkdownHeadingInfo } from './ai-message-outline';
 import { formatLabel } from './format-label';
 
@@ -476,6 +477,13 @@ export async function openCitationSource(
 ): Promise<void> {
   const objectKey = (citation.sourceType === 'image' ? citation.path : citation.source) || '';
   if (!objectKey) return;
+
+  // Web citations point at a page, not a workspace document — the citations
+  // API can only 404 for them, so open the source directly.
+  if (isUrlCitation(citation)) {
+    window.open(objectKey, '_blank', 'noopener,noreferrer');
+    return;
+  }
 
   const displayName = citation.fileName ||
     (citation.sourceType === 'image' ? citation.source : '') ||

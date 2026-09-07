@@ -21,7 +21,7 @@
 | Email | `nodemailer` (SMTP) or Microsoft Graph (`@azure/msal-node`) |
 | AI runtimes | gRPC ADK services, MCP via `@modelcontextprotocol/sdk` |
 | WhatsApp | `@whiskeysockets/baileys`, `socket.io`, `qrcode` |
-| Relational storage | `pg` for memory-cards/Postgres-backed features |
+| Relational storage | `pg` + `drizzle-orm` (conversation domain — see §24.5; memory-cards and other Postgres-backed features) |
 | Security | `helmet`, `compression`, `cookie-parser` |
 | Testing | Jest 29 + `@nestjs/testing` (`*.spec.ts`) |
 
@@ -227,6 +227,8 @@ Query: `?page=1&limit=10` (shared `PaginationDto`). Response wraps items + `pagi
 ---
 
 ## 9. Mongoose & Schemas
+
+**Not everything is Mongo:** the conversation domain (conversations, messages, citations, branches, reports, shares) is persisted in PostgreSQL via Drizzle — see §24.5. Do not look for conversation data in Mongo collections; `messages`/`conversations` there are legacy and stale.
 
 - Always `@Schema({ timestamps: true })`. Export `HydratedDocument<T>` as `<Name>Document`.
 - Declare indexes next to the schema, not in services.
@@ -511,6 +513,19 @@ When adding a new producer: add the versioned contract, gate emission on a `data
 
 `knowledge-intelligence` provides reusable Mongo repositories plus a durable, Mongo-embedded extraction-job queue (see §9's lease pattern). Identity is `(sourceVersionId, jobType, inputHash, engineVersion)` — changing any of these fields creates a new job; do not mutate identity on an existing job. Engine version bumps intentionally re-run extraction; gate behind a feature flag if cost is a concern.
 
+### 24.5 Conversation Domain Persistence (PostgreSQL + Drizzle)
+
+The conversation domain — conversations, messages (including the `components` payload with text parts, citations, and artifacts), branches, reports, shares, analytics, playbook handoffs, and group members/invites — is persisted in **PostgreSQL**, not Mongo. Connection details come from the Joi-validated `postgres` config namespace (`POSTGRES_HOST/PORT/USER/PASSWORD/DB/...`); the poc environment's database is named `agentstore`.
+
+- **Access layer:** the global `PostgresModule` (`src/modules/postgres/`) owns the `pg` `Pool` (`PG_POOL`) and the Drizzle handle (`DRIZZLE_DB`, `drizzle-orm/node-postgres`), wrapped by `PostgresConnectionService`. Services must never create their own pool or read `POSTGRES_*` env directly (§11/§26 rules apply to Postgres too).
+- **Store tokens, not DB handles:** consuming services inject symbol tokens (`CONVERSATION_STORE`, `MESSAGE_STORE`, `CONVERSATION_BRANCH_STORE`, `REPORT_STORE`, `SHARE_STORE`, `CONVERSATION_ANALYTICS_STORE`, `CONVERSATION_PLAYBOOK_HANDOFF_STORE`) defined in `src/modules/conversation/persistence/` and bound to `persistence/postgres/*` implementations in `ConversationPersistenceModule`. Add new persistence behind a token the same way; keep services storage-agnostic so the store can be faked in unit tests.
+- **Schema & migrations:** tables are declared with Drizzle `pg-core` in `src/modules/postgres/schema/` (the conversation tables live under `pgSchema('conversation')` in `conversation.schema.ts`). Migrations are generated with `drizzle-kit` into `./drizzle/` (numbered SQL files, e.g. `0005_conversation.sql`); `drizzle.config.ts` reads the same `POSTGRES_*` env. A schema change is not done until the migration exists and both sides of any reader/writer are updated.
+- **ID and column conventions:** Mongo-style 24-hex ids are preserved — primary/foreign keys are `char(24)` with a `^[0-9a-f]{24}$` check constraint, so existing id handling and API contracts stay unchanged. Timestamps are `timestamp with time zone`.
+- **Ordered references:** use the `orderedIdTable()` helper (e.g. `conversation_workspaces`, `conversation_tagged_agents`, `conversation_selected_skills`) for ordered many-to-many references — `(id, position)` primary key plus FK to the owner — instead of JSON arrays when ordering and referential integrity matter.
+- **Message payloads are one jsonb column:** text parts, citations, artifacts, and tool components live in `conversation.messages.components` (jsonb). There is no per-component collection or table; when the payload shape changes, update the mapper (`persistence/postgres/postgres-message-record.mapper.ts`) and every consumer in the same change.
+- **Cross-store boundary:** workspace documents (the files citations and artifacts point at) remain in Mongo (`workspace_documents`) and blob storage. Resolution paths (e.g. `ConversationArtifactService`) read Postgres for the citation identity, then Mongo for the document — verify both sides when changing either, and remember the two stores can disagree on naming (citation `fileName` may be the storage `filename` while Mongo keeps a different `originalName`). Mongo `messages`/`conversations` collections are legacy: do not read them as current data and do not write new code to them.
+- **Testing:** unit specs mock the store tokens. For real-SQL integration tests, opt in via `src/modules/postgres/testing/pg-integration.ts` — `describeIntegration` skips unless `POSTGRES_HOST` is set, and `makeTestDb()` targets `POSTGRES_TEST_DB` so the real `agentstore` is never polluted. Use that helper instead of ad-hoc pools.
+
 ---
 
 ## 25. Pre-PR Checklist
@@ -520,6 +535,7 @@ When adding a new producer: add the versioned contract, gate emission on a `data
 - [ ] No direct `process.env` in services.
 - [ ] Exceptions thrown from `@modules/exceptions` with proper `ErrorCode`.
 - [ ] Mongoose schema: `timestamps`, indexes, `toJSON` transform (`_id` → `id`).
+- [ ] Postgres schema change: Drizzle schema updated in `src/modules/postgres/schema/`, migration generated into `./drizzle/`, and store mapper/consumers updated in the same change set (see §24.5).
 - [ ] Tests colocated as `*.spec.ts`; `npm test` passes.
 - [ ] Proto changes mirrored in ADK when applicable; standalone `dist/`, Docker packaging, and both runtime sides validated.
 - [ ] Proto packaging: all backend proto files (`a2a_admin.proto`, `chatbot.proto`, `conversation.proto`, `playbook-flow.proto`, `companion_ai.proto`, plus new ones) exist in standalone `dist/` and the production image; update `postbuild` and Docker copies as required.
