@@ -330,7 +330,7 @@ export const AppSidebar = memo(function AppSidebar() {
   );
 
   useEffect(() => {
-    if (activeGroup) {
+    if (activeGroup && activeGroup !== 'ask') {
       setOpenGroups(getOpenOutcomeGroups(activeGroup));
     }
   }, [activeGroup]);
