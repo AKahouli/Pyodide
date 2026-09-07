@@ -267,6 +267,33 @@ describe('MessageActions', () => {
     expect(screen.getByRole('button', { name: 'spec' })).toBeInTheDocument();
   });
 
+  it('lists each source document once, without page numbers', () => {
+    render(
+      <MessageActions
+        message={{
+          id: 'ai-1',
+          conversationType: 'ai',
+          components: [
+            { type: 'text', data: { content: 'answer', citations: [
+              { source: 'docs/impl-guide.pdf', page: '3', parentId: '', sourceType: 'text', externalId: '', pageContent: '', workspaceId: '' },
+              { source: 'docs/impl-guide.pdf', page: '7', reference: '[2]', parentId: '', sourceType: 'text', externalId: '', pageContent: '', workspaceId: '' },
+              { source: 'https://example.com/spec', parentId: '', sourceType: 'text', externalId: '', page: '', pageContent: '', workspaceId: '' },
+            ] } },
+          ],
+          isComplete: true,
+          isStreaming: false,
+        } as never}
+        isLastAiMessage={false}
+        conversationId='conv-1'
+      />,
+    );
+
+    expect(screen.getAllByRole('button', { name: /impl-guide\.pdf/ })).toHaveLength(1);
+    expect(screen.getByRole('button', { name: 'spec' })).toBeInTheDocument();
+    expect(screen.queryByText('3')).not.toBeInTheDocument();
+    expect(screen.queryByText('7')).not.toBeInTheDocument();
+  });
+
   it('hides the sources button when the answer has no citations', () => {
     render(
       <MessageActions

@@ -257,7 +257,6 @@ export const MessageActions = memo(function MessageActions({ message, isLastAiMe
                               ? <Globe className='h-3.5 w-3.5 shrink-0 text-muted-foreground' />
                               : <FileText className='h-3.5 w-3.5 shrink-0 text-muted-foreground' />}
                             <span className='min-w-0 flex-1 truncate'>{label}</span>
-                            {citation.page && <span className='shrink-0 text-[11px] text-muted-foreground'>{citation.page}</span>}
                           </button>
                         );
                       })}

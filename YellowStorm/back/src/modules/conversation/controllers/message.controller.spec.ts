@@ -528,6 +528,7 @@ describe('MessageController.sendMessage sticky routing', () => {
       undefined,
       'Ada Lovelace',
       undefined,
+      expect.objectContaining({ requestId: 'req-1' }),
     );
   });
 
