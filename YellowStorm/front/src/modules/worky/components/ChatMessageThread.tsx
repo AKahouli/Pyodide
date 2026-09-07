@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import { useCallback, useMemo } from 'react';
 import { useModuleTranslation } from '@/modules/localization';
 import {
   ChatConversation,
@@ -7,8 +7,10 @@ import {
   ChatScrollButton,
   type ChatMessage,
 } from '@/components/ai-elements/chat-conversation';
+import type { ChoiceComponentAction } from '@/components/ai-elements/choice/ChoicePartRenderer';
 import { MessageProvider } from '@/components/ai-elements/message-context';
 import { mapComponentsToContentParts } from '@/modules/conversation/utils';
+import { useSendMessage } from '../query/hooks';
 import { useWorkyMessages, useWorkyStore } from '../store';
 import { cn } from '@/lib/utils';
 import { ChatClarificationCard } from './ChatClarificationCard';
@@ -70,17 +72,25 @@ function toChronologicalThread(
 /** Maps a worky message onto the shared ChatMessage shape the conversation chat
  *  bubble consumes: owner→user (right, primary), manager/system→assistant (left).
  *  Rich components render when present; otherwise the plain-text content. */
-function toChatMessage(message: WorkyMessage): ChatMessage {
+function toChatMessage(
+  message: WorkyMessage,
+  onComponentAction?: (action: ChoiceComponentAction) => Promise<void>,
+): ChatMessage {
   const content =
     message.components && message.components.length > 0
       ? mapComponentsToContentParts(message.components)
       : message.content;
   const timestamp = message.createdAt ? new Date(message.createdAt) : undefined;
+  const role = message.role === 'owner' ? 'user' : 'assistant';
   return {
     id: message.id,
-    role: message.role === 'owner' ? 'user' : 'assistant',
+    role,
     content,
     timestamp: timestamp && !Number.isNaN(timestamp.getTime()) ? timestamp : undefined,
+    // A choice card (e.g. the approve/decline gate on a send tool) submits the
+    // selected option's submitText as a normal message; the session is waiting
+    // on that interrupt, so the backend routes it to resume the parked turn.
+    ...(role === 'assistant' && onComponentAction ? { onComponentAction } : {}),
   };
 }
 
@@ -91,6 +101,20 @@ export function ChatMessageThread({
   const { t } = useModuleTranslation('worky');
   const messages = useWorkyMessages();
   const streaming = useWorkyStore((s) => s.streaming);
+  const setStreaming = useWorkyStore((s) => s.setStreaming);
+  const send = useSendMessage(streamId ?? '');
+  const onComponentAction = useCallback(
+    async (action: ChoiceComponentAction) => {
+      if (!streamId) return;
+      setStreaming(true);
+      try {
+        await send.mutateAsync({ content: action.submitText });
+      } catch {
+        setStreaming(false);
+      }
+    },
+    [streamId, send, setStreaming],
+  );
   const pendingClarifications = useWorkyStore((s) => s.pendingClarifications) ?? [];
   const showClarifications = Boolean(streamId) && pendingClarifications.length > 0;
   const threadItems = useMemo(
@@ -132,7 +156,7 @@ export function ChatMessageThread({
               item.kind === 'message' ? (
                 <ChatMessageBubble
                   key={item.message.id}
-                  message={toChatMessage(item.message)}
+                  message={toChatMessage(item.message, onComponentAction)}
                   density='compact'
                   data-testid={`worky-message-${item.message.role}`}
                 />

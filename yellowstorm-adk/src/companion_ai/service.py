@@ -1123,6 +1123,43 @@ class OrchestratorService:
             session_id, msg_id, uuid.uuid4().hex, "error",
             {"title": title, "content": content}))
 
+    async def _project_approval_choice(self, session_id: str, interrupt_id: str,
+                                       preview: dict) -> None:
+        """Surface a gated send (require_confirmation) as an approve/decline card.
+
+        Reuses the `choice` component the chat module already renders (a
+        present_choices payload) rather than a bespoke widget: two options whose
+        submitText is the verdict. Selecting one sends that verdict as a normal
+        chat message; the session is `waiting` on this interrupt, so RunTask
+        routes it to resume_turn, which maps `approve` → confirmed (see there).
+        `preview` is the drafted call: for a mail, to/subject/body; else a
+        message/args blob."""
+        args = preview.get("args") or {}
+        if "subject" in args or "body" in args:
+            title = "Approuver l'envoi de cet e-mail ?"
+            draft = (f"À : {args.get('to', '?')}\n"
+                     f"Objet : {args.get('subject', '')}\n\n{args.get('body', '')}")
+        else:
+            title = "Approuver l'envoi de ce message ?"
+            draft = args.get("message") or json.dumps(args, ensure_ascii=False)
+        data = {
+            "schemaVersion": 1, "status": "ready",
+            "questionId": interrupt_id[:100],
+            "prompt": title,
+            "description": (draft or "")[:1500],
+            "presentation": "quick_replies", "selectionMode": "single",
+            "submitBehavior": "immediate",
+            "options": [
+                {"id": "approve", "label": "Approuver", "submitText": "approve"},
+                {"id": "decline", "label": "Refuser", "submitText": "decline"},
+            ],
+            "fallbackText": title,
+        }
+        msg_id = uuid.uuid4().hex
+        await self._project(self._rm and self._rm.add_message(msg_id, session_id, "assistant", title))
+        await self._project(self._rm and self._rm.add_message_component(
+            session_id, msg_id, uuid.uuid4().hex, "choice", data))
+
     @staticmethod
     def _assistant_answer(plan: Plan) -> str:
         """The chat reply for a completed plan: the results of its terminal steps
@@ -1544,9 +1581,22 @@ class OrchestratorService:
         # matter that this exact id can't match anything current.
         logger.info("[worky] 9. Runner.run_async → resuming session=%s interrupt=%s%s",
                     session_id, interrupt_id, " (out-of-band dynamic step)" if resumed_out_of_band else "")
+        # A confirm interrupt resumes with a tool-confirmation VERDICT, which ADK's
+        # native processor turns back into a real re-invocation of the gated send
+        # (approve) or a rejection to the model (decline) — the send's reasoning
+        # continues in place. This works through the rebuild because every step is
+        # fed None node_input (silent join) and sees its own scoped history
+        # (include_contents='default'), so the verdict stays the last user turn.
+        # ask/mail resume with the answer as before.
+        if hitl.is_confirm(interrupt_id):
+            resume = hitl.confirmation_resume_part(
+                hitl.confirm_fc_id(interrupt_id),
+                confirmed=answer.strip().lower() in ("approve", "approuver", "yes", "oui"))
+        else:
+            resume = hitl.resume_part(interrupt_id, {"value": answer})
         interrupt = await self._drive_until_quiescent(
             runner, session_id, user_id, plan, name_to_step,
-            types.Content(role="user", parts=[hitl.resume_part(interrupt_id, {"value": answer})]),
+            types.Content(role="user", parts=[resume]),
             model=model, connectors=connectors, executor_prompt=executor_prompt)
 
         # STEP 10 — may block again if the plan has another ask step.
@@ -1752,6 +1802,16 @@ class OrchestratorService:
                 if iid not in seen:
                     seen.add(iid)
                     interrupts.append((iid, step_id))
+            # A send tool marked require_confirmation parks under a *different*
+            # dialect (adk_request_confirmation) that interrupt_ids can't see. The
+            # preview (the drafted mail/message) is only on this event, so project
+            # the approval card now, while we still have it — a resume re-emits
+            # nothing for it (like every other interrupt).
+            for iid, preview in hitl.confirmation_interrupts(ev):
+                if iid not in seen:
+                    seen.add(iid)
+                    interrupts.append((iid, step_id))
+                    await self._project_approval_choice(session_id, iid, preview)
         return interrupts
 
     async def _outstanding(self, session_id: str,
@@ -1783,7 +1843,8 @@ class OrchestratorService:
                 continue
             step = plan.step(step_id)
             step.status = Status.BLOCKED
-            step.blocked_reason = ("awaiting user input" if hitl.is_ask(interrupt_id)
+            step.blocked_reason = ("awaiting your approval" if hitl.is_confirm(interrupt_id)
+                                   else "awaiting user input" if hitl.is_ask(interrupt_id)
                                    else "awaiting email reply")
             await self._project(self._rm and self._rm.set_step_status(
                 session_id, step_id, "blocked", blocked_reason=step.blocked_reason,
@@ -1793,9 +1854,10 @@ class OrchestratorService:
                 # token was minted at projection but had no interrupt to resume.
                 await self._project(self._rm and self._rm.bind_mail_wait_interrupt(
                     session_id, step_id, interrupt_id))
-            if hitl.is_ask(interrupt_id):
+            if hitl.is_ask(interrupt_id) and not hitl.is_confirm(interrupt_id):
                 # Surface the ask-the-user question in the chat. A mail wait has
                 # nothing to ask the owner — it is waiting on the outside world.
+                # A confirm already projected its approve/decline card in _drive.
                 await self._add_message(session_id, "assistant",
                                         step.question or step.description or "")
 
