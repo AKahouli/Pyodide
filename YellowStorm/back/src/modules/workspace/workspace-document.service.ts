@@ -1541,6 +1541,7 @@ export class WorkspaceDocumentService {
       limit = 20,
       status,
       search,
+      searchFilename,
       sortBy = 'createdAt',
       sortOrder = 'desc',
     } = params;
@@ -1553,7 +1554,12 @@ export class WorkspaceDocumentService {
     };
 
     if (search) {
-      query.originalName = { $regex: escapeRegex(search), $options: 'i' };
+      const namePattern = { $regex: escapeRegex(search), $options: 'i' };
+      if (searchFilename) {
+        query.$or = [{ originalName: namePattern }, { filename: namePattern }];
+      } else {
+        query.originalName = namePattern;
+      }
     }
 
     const sort: Record<string, 1 | -1> = {
