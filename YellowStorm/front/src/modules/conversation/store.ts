@@ -2883,8 +2883,7 @@ export const useAllMessages = () =>
         return s.messages.length === 0 ? EMPTY_MESSAGES : s.messages;
       }
 
-      // Append optimistic messages (they're already newest)
-      return [...s.messages, ...newOptimistic];
+      return newOptimistic.reduce(insertMessageChronologically, s.messages);
     }),
   );
 
@@ -2967,7 +2966,9 @@ export const useDisplayMessages = () =>
           }
           return true;
         });
-        combined = newOptimistic.length === 0 ? s.messages : [...s.messages, ...newOptimistic];
+        combined = newOptimistic.length === 0
+          ? s.messages
+          : newOptimistic.reduce(insertMessageChronologically, s.messages);
       }
 
       if (combined.length === 0) return EMPTY_MESSAGES;

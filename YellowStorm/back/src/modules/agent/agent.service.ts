@@ -716,10 +716,16 @@ export class AgentService {
     const toolsMap = new Map<string, IToolResponse>();
     for (const t of fetchedTools) toolsMap.set(t.id, t);
 
-    const modelMap = new Map<string, { model: string; omitTemperature: boolean; inputModalities: string[]; maxInputTokens: number | null }>();
+    const modelMap = new Map<string, { model: string; omitTemperature: boolean; inputModalities: string[]; maxInputTokens: number | null; reasoningEfforts: string[] }>();
     for (const m of modelResults) {
       if (m) {
-        modelMap.set(m.id, { model: m.id, omitTemperature: m.omitTemperature, inputModalities: m.inputModalities, maxInputTokens: m.maxInputTokens });
+        modelMap.set(m.id, {
+          model: m.id,
+          omitTemperature: m.omitTemperature,
+          inputModalities: m.inputModalities,
+          maxInputTokens: m.maxInputTokens,
+          reasoningEfforts: m.supportsReasoning ? m.reasoning.efforts.map((effort) => effort.id) : [],
+        });
       }
     }
 
@@ -761,6 +767,13 @@ export class AgentService {
       const effectiveModelId = effectiveModelIdForAgent(agent);
       const resolvedModel = modelMap.get(effectiveModelId);
       const proxyModel = resolvedModel?.model || effectiveModelId;
+      const requestedReasoningEffort = reasoningEffort && pingedAgents.length === 0
+        ? reasoningEffort
+        : agent.reasoningEffort;
+      const effectiveReasoningEffort = requestedReasoningEffort
+        && resolvedModel?.reasoningEfforts.includes(requestedReasoningEffort)
+        ? requestedReasoningEffort
+        : undefined;
       const effectiveSkills = this.resolveEffectiveSkills(agent, skillsMap);
       const effectiveConnectorIds = [
         ...new Set([...(agent.connectorIds || []), ...(selectedConnectorId ? [selectedConnectorId] : [])]),
@@ -828,7 +841,7 @@ export class AgentService {
         chatbot: {
           model: proxyModel,
           input_modalities: resolvedModel?.inputModalities || ['text'],
-          ...(reasoningEffort && pingedAgents.length === 0 ? { reasoning_effort: reasoningEffort } : {}),
+          ...(effectiveReasoningEffort ? { reasoning_effort: effectiveReasoningEffort } : {}),
           ...(resolvedModel?.maxInputTokens ? { context_window_tokens: resolvedModel.maxInputTokens } : {}),
         },
         agent_params: {
@@ -944,13 +957,18 @@ export class AgentService {
         .map((a) => a.model || inheritedDefaultModelId)
         .filter(Boolean) as string[],
     )];
-    const modelMap = new Map<string, { model: string; omitTemperature: boolean; inputModalities: string[] }>();
+    const modelMap = new Map<string, { model: string; omitTemperature: boolean; inputModalities: string[]; reasoningEfforts: string[] }>();
     if (allModelIds.length > 0) {
       const modelResults = await Promise.all(
         allModelIds.map((id) => this.modelsService.findById(id)),
       );
       for (const m of modelResults) {
-        if (m) modelMap.set(m.id, { model: m.id, omitTemperature: m.omitTemperature, inputModalities: m.inputModalities });
+        if (m) modelMap.set(m.id, {
+          model: m.id,
+          omitTemperature: m.omitTemperature,
+          inputModalities: m.inputModalities,
+          reasoningEfforts: m.supportsReasoning ? m.reasoning.efforts.map((effort) => effort.id) : [],
+        });
       }
     }
 
@@ -1029,6 +1047,10 @@ export class AgentService {
         const effectiveModelId = agent.model || inheritedDefaultModelId;
         const resolvedModel = modelMap.get(effectiveModelId);
         const proxyModel = resolvedModel?.model || effectiveModelId;
+        const effectiveReasoningEffort = agent.reasoningEffort
+          && resolvedModel?.reasoningEfforts.includes(agent.reasoningEffort)
+          ? agent.reasoningEffort
+          : undefined;
         const effectiveSkills = this.resolveEffectiveSkills(agent, skillsMap);
 
         let prompt = '';
@@ -1059,6 +1081,7 @@ export class AgentService {
           chatbot: {
             model: proxyModel,
             input_modalities: resolvedModel?.inputModalities || ['text'],
+            ...(effectiveReasoningEffort ? { reasoning_effort: effectiveReasoningEffort } : {}),
           },
           agent_params: {
             params: {
@@ -1418,6 +1441,7 @@ export class AgentService {
       description: dto.description ?? '',
       temperature: dto.temperature ?? 0,
       llmModel: dto.model,
+      reasoningEffort: dto.reasoning_effort || undefined,
       instruction: dto.instruction ?? '',
       ignorePrePrompt: dto.ignorePrePrompt ?? false,
       knowledgeBases: dto.knowledgeBases ?? [],
@@ -1463,6 +1487,7 @@ export class AgentService {
     if (dto.description !== undefined) patch.description = dto.description;
     if (dto.temperature !== undefined) patch.temperature = dto.temperature;
     if ('model' in dto) patch.llmModel = dto.model || '';
+    if ('reasoning_effort' in dto) patch.reasoningEffort = dto.reasoning_effort || null;
     if (dto.instruction !== undefined) patch.instruction = dto.instruction;
     if (dto.ignorePrePrompt !== undefined) patch.ignorePrePrompt = dto.ignorePrePrompt;
     if (dto.enable_temporary_child_agents !== undefined) patch.enable_temporary_child_agents = dto.enable_temporary_child_agents;
@@ -1623,6 +1648,7 @@ export class AgentService {
       description: (d.description as string) || '',
       temperature: (d.temperature as number) ?? 0,
       model: d.llmModel as string | undefined,
+      reasoning_effort: d.reasoningEffort as string | undefined,
       instruction: (d.instruction as string) || '',
       ignorePrePrompt: (d.ignorePrePrompt as boolean) || false,
       knowledgeBases: ((d.knowledgeBases as Array<{ toString(): string }>) || []).map((id) =>
@@ -1691,6 +1717,7 @@ export class AgentService {
       description: (d.description as string) || '',
       temperature: (d.temperature as number) ?? 0,
       model: d.llmModel as string | undefined,
+      reasoningEffort: d.reasoningEffort as string | undefined,
       instruction: (d.instruction as string) || '',
       ignorePrePrompt: (d.ignorePrePrompt as boolean) || false,
       knowledgeBases: ((d.knowledgeBases as Array<{ toString(): string }>) || []).map((id) =>

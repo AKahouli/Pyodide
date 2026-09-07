@@ -1,13 +1,4 @@
-import { BrainCircuit, ChevronDown } from 'lucide-react';
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuLabel,
-  DropdownMenuRadioGroup,
-  DropdownMenuRadioItem,
-  DropdownMenuTrigger,
-} from '@/components/ui/dropdown-menu';
-import { PromptInputButton } from '@/components/ai-elements/prompt-input';
+import { ReasoningEffortSelector } from '@/components/ai-elements/reasoning-effort-selector';
 import { useDefaultModel, useModels } from '@/modules/models';
 import { useModuleTranslation } from '@/modules/localization';
 import { useSelectedModelId, useSelectedReasoningEffort, useSetSelectedReasoningEffort } from '../store';
@@ -51,27 +42,10 @@ export function ReasoningEffortSelect() {
 
   if (efforts.length === 0) return null;
 
-  return (
-    <DropdownMenu>
-      <DropdownMenuTrigger asChild>
-        <PromptInputButton type='button' aria-label={t('input.reasoning.label')}>
-          <BrainCircuit className='h-4 w-4' />
-          <span className='hidden sm:inline'>
-            {efforts.find((effort) => effort.id === effectiveEffort)?.name ?? t('input.reasoning.label')}
-          </span>
-          <ChevronDown className='h-3 w-3 opacity-60' />
-        </PromptInputButton>
-      </DropdownMenuTrigger>
-      <DropdownMenuContent align='start'>
-        <DropdownMenuLabel>{t('input.reasoning.label')}</DropdownMenuLabel>
-        <DropdownMenuRadioGroup value={effectiveEffort ?? undefined} onValueChange={setSelectedReasoningEffort}>
-          {efforts.map((effort) => (
-            <DropdownMenuRadioItem key={effort.id} value={effort.id} title={effort.description}>
-              {effort.name}
-            </DropdownMenuRadioItem>
-          ))}
-        </DropdownMenuRadioGroup>
-      </DropdownMenuContent>
-    </DropdownMenu>
-  );
+  return <ReasoningEffortSelector
+    efforts={efforts}
+    value={effectiveEffort}
+    onValueChange={setSelectedReasoningEffort}
+    label={t('input.reasoning.label')}
+  />;
 }

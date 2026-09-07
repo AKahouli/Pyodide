@@ -64,6 +64,12 @@ export class UpdateAgentDto {
   @MaxLength(100)
   model?: string;
 
+  @ApiPropertyOptional({ description: 'Reasoning effort supported by the selected model', maxLength: 50 })
+  @IsOptional()
+  @IsString()
+  @MaxLength(50)
+  reasoning_effort?: string;
+
   @ApiPropertyOptional({ description: 'Additional instructions', maxLength: 50000 })
   @IsOptional()
   @IsString()

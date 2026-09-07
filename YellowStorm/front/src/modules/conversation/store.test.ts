@@ -1,5 +1,6 @@
+import { renderHook } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { applyChunksToComponents, useConversationStore } from './store';
+import { applyChunksToComponents, useAllMessages, useConversationStore, useDisplayMessages } from './store';
 import { useModelsStore } from '@/modules/models';
 
 const fetchConversationMock = vi.hoisted(() => vi.fn());
@@ -65,6 +66,25 @@ beforeEach(() => {
 });
 
 describe('conversation optimistic messages', () => {
+  it('keeps a pending user prompt before an assistant answer that arrived first', () => {
+    useConversationStore.setState({
+      messages: [{
+        id: 'ai-1', conversationId: 'conv-1', conversationType: 'ai',
+        createdAt: '2026-09-07T13:13:31.000Z', components: [{ type: 'text', data: { content: 'Answer' } }],
+      }],
+      optimisticMessages: [{
+        id: 'temp-1', conversationId: 'conv-1', conversationType: 'user',
+        content: 'Question', createdAt: '2026-09-07T13:13:00.000Z',
+      }],
+    });
+
+    const allMessages = renderHook(() => useAllMessages());
+    const displayMessages = renderHook(() => useDisplayMessages());
+
+    expect(allMessages.result.current.map((message) => message.id)).toEqual(['temp-1', 'ai-1']);
+    expect(displayMessages.result.current.map((message) => message.id)).toEqual(['temp-1', 'ai-1']);
+  });
+
   it('sends the POST immediately while nudging the shared SSE pipe without awaiting it', async () => {
     sendMessageMock.mockResolvedValue({
       userMessage: {

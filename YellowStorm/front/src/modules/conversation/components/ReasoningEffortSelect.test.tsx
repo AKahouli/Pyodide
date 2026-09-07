@@ -1,6 +1,7 @@
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { ReasoningEffortSelector } from '@/components/ai-elements/reasoning-effort-selector';
 import { ReasoningEffortSelect, useReasoningEffortState } from './ReasoningEffortSelect';
 
 const setSelectedReasoningEffortMock = vi.hoisted(() => vi.fn());
@@ -108,5 +109,36 @@ describe('ReasoningEffortSelect', () => {
     await userEvent.click(screen.getByRole('button', { name: 'input.reasoning.label' }));
     await userEvent.click(screen.getByRole('menuitemradio', { name: 'High' }));
     expect(setSelectedReasoningEffortMock).toHaveBeenCalledWith('high');
+  });
+
+  it('supports a full-width controlled selector for forms', async () => {
+    const onValueChange = vi.fn();
+    render(
+      <ReasoningEffortSelector
+        efforts={reasoningModel.reasoning.efforts}
+        value='low'
+        onValueChange={onValueChange}
+        label='Reasoning effort'
+        fullWidth
+      />,
+    );
+
+    await userEvent.click(screen.getByRole('button', { name: 'Reasoning effort' }));
+    await userEvent.click(screen.getByRole('menuitemradio', { name: 'High' }));
+    expect(onValueChange).toHaveBeenCalledWith('high');
+  });
+
+  it('renders a disabled controlled selector when a model has no efforts', () => {
+    render(
+      <ReasoningEffortSelector
+        efforts={[]}
+        value={undefined}
+        onValueChange={vi.fn()}
+        label='Reasoning effort unavailable'
+        disabled
+      />,
+    );
+
+    expect(screen.getByRole('button', { name: 'Reasoning effort unavailable' })).toBeDisabled();
   });
 });

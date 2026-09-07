@@ -48,6 +48,7 @@ CREATE TABLE IF NOT EXISTS agents (
   temperature                   real         NOT NULL DEFAULT 0
                                   CHECK (temperature >= 0 AND temperature <= 1),
   llm_model                     varchar(100),                            -- optional
+  reasoning_effort              varchar(50),                             -- optional, model-specific
   email                         varchar(320),                            -- optional
   instruction                   text         NOT NULL DEFAULT '',         -- maxlength 50000
   ignore_pre_prompt             boolean      NOT NULL DEFAULT false,
