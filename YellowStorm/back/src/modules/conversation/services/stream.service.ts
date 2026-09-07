@@ -2172,11 +2172,22 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
     username?: string,
   ): Promise<void> {
     try {
-      // Governed conversations send no modelId, so always resolve the
-      // platform default model — an empty model makes the gRPC name
-      // generation fail and the conversation keeps its default title.
-      const model = await this.modelsService.getDefaultModel();
-      const litellmModel = model?.litellmModel || '';
+      // Naming model is admin-configurable (Paramètres de conversation). Use the
+      // chosen model when set; otherwise fall back to the platform default.
+      // An empty model makes the gRPC name generation fail and the conversation
+      // keeps its default title.
+      const { conversationName } = await this.conversationSettings.getSettings();
+      const chosen = conversationName.modelId
+        ? await this.modelsService.findById(conversationName.modelId).catch(() => null)
+        : null;
+
+      // Chosen models are served by the LiteLLM proxy, so route via the proxy
+      // alias ("litellm_proxy/<model_name>"). Their stored litellmModel is a
+      // provider-prefixed target (e.g. "ollama/gemma3:4b") that would bypass the
+      // proxy and fail. The platform default keeps its litellmModel (unchanged).
+      const litellmModel = chosen
+        ? `litellm_proxy/${chosen.id}`
+        : ((await this.modelsService.getDefaultModel())?.litellmModel || '');
 
       const response = await this.callGenerateNameGrpc(query, litellmModel, username);
       const generatedName = response.conversation_name || 'New Conversation';

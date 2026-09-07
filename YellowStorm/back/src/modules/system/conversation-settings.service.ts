@@ -4,6 +4,7 @@ import { Model } from 'mongoose';
 import { AgentService } from '../agent/agent.service';
 import type {
   ComposerSuggestionSettings,
+  ConversationNameSettings,
   ConversationSettings,
   ConversationSettingsAgentOption,
   ConversationSettingsValue,
@@ -51,6 +52,10 @@ export class ConversationSettingsService implements OnModuleInit {
       composerSuggestions: {
         ...DEFAULT_CONVERSATION_SETTINGS.composerSuggestions,
         ...(stored?.composerSuggestions ?? {}),
+      },
+      conversationName: {
+        ...DEFAULT_CONVERSATION_SETTINGS.conversationName,
+        ...(stored?.conversationName ?? {}),
       },
       updatedAt: setting?.updatedAt as Date | undefined,
     };
@@ -110,6 +115,7 @@ export class ConversationSettingsService implements OnModuleInit {
 
   async updateSettings(
     value: { composerSuggestions: ComposerSuggestionSettings } & {
+      conversationName?: ConversationNameSettings;
       redactSensitiveText?: boolean;
       latencyInstrumentationEnabled?: boolean;
     },
@@ -124,6 +130,7 @@ export class ConversationSettingsService implements OnModuleInit {
       latencyInstrumentationEnabled:
         value.latencyInstrumentationEnabled ?? current.latencyInstrumentationEnabled,
       composerSuggestions: { ...value.composerSuggestions },
+      conversationName: { ...(value.conversationName ?? current.conversationName) },
     };
     const updated = await this.settings.findOneAndUpdate(
       { key: KEY },

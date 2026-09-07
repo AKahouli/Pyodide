@@ -2286,8 +2286,11 @@ class ChatbotServicer(
             GenerateConversationNameResponse with generated conversation name
         """
         try:
+            # Model is chosen in the admin panel (Paramètres de conversation) and
+            # sent as request.model.
+            model = request.model
             logger.info(
-                f"[gRPC] Generate conversation name request - model: {request.model}"
+                f"[gRPC] Generate conversation name request - model: {model}"
             )
 
             # Create a prompt to generate conversation name
@@ -2301,7 +2304,7 @@ class ChatbotServicer(
 
             # Use litellm to generate the name
             response = await litellm.acompletion(
-                model=request.model,
+                model=model,
                 messages=[{"role": "user", "content": prompt}],
                 api_base=app_settings.LITELLM_API_BASE_URL,
                 api_key=app_settings.LITELLM_API_SECRET_KEY,
@@ -2310,9 +2313,8 @@ class ChatbotServicer(
             )
 
             # Extract the generated name
-            conversation_name = (
-                response.choices[0].message.content.strip().strip('"').strip("'")
-            )
+            raw_content = response.choices[0].message.content if response.choices else None
+            conversation_name = (raw_content or "").strip().strip('"').strip("'")
 
             logger.info(
                 f"[gRPC] Generated conversation name: '{conversation_name}' for query: '{request.query[:100]}...'"

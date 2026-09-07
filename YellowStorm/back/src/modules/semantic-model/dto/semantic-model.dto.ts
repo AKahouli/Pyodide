@@ -12,6 +12,7 @@ import {
   IsUUID,
   Max,
   MaxLength,
+  Matches,
   Min,
   MinLength,
   ValidateNested,
@@ -211,6 +212,7 @@ export class CloneSemanticModelDto {
   @IsString()
   @MinLength(1)
   @MaxLength(160)
+  @Matches(/\S/)
   name!: string;
 }
 
