@@ -1777,8 +1777,9 @@ export interface ComposerSuggestionSettings {
   requestsPerMinute: number;
   maxOutputTokens: number;
 }
-export interface ConversationSettingsResponse { composerSuggestions: ComposerSuggestionSettings; redactSensitiveText?: boolean; latencyInstrumentationEnabled?: boolean; updatedAt?: string; }
-export type UpdateConversationSettingsRequest = Pick<ConversationSettingsResponse, 'composerSuggestions'> & { redactSensitiveText?: boolean; latencyInstrumentationEnabled?: boolean };
+export interface ConversationNameSettings { modelId: string | null; }
+export interface ConversationSettingsResponse { composerSuggestions: ComposerSuggestionSettings; conversationName?: ConversationNameSettings; redactSensitiveText?: boolean; latencyInstrumentationEnabled?: boolean; updatedAt?: string; }
+export type UpdateConversationSettingsRequest = Pick<ConversationSettingsResponse, 'composerSuggestions'> & { conversationName?: ConversationNameSettings; redactSensitiveText?: boolean; latencyInstrumentationEnabled?: boolean };
 export interface UpdateSensitiveTextRedactionRequest { redactSensitiveText: boolean; }
 export interface ConversationSettingsAgentOption { id: string; name: string; description?: string; agentTypeName?: string; model?: string; }
 
