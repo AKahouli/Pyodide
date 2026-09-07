@@ -61,7 +61,7 @@ describe('VersionSwitcher', () => {
     expect(within(dialog).getByText('rev_12')).toBeInTheDocument();
     expect(within(dialog).getByText('rev_7')).toBeInTheDocument();
 
-    await user.click(within(dialog).getByRole('button', { name: 'versionHistory.preview' }));
+    await user.click(within(dialog).getByText('rev_12'));
     expect(previewFinalizedVersion).toHaveBeenCalledWith('rev_12');
   });
 });

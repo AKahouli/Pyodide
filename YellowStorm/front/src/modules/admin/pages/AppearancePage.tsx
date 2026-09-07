@@ -279,8 +279,6 @@ export function AppearancePage() {
           </CardContent>
         </Card>
 
-        </Card>
-
         <Card>
           <CardHeader>
             <div className='flex items-start gap-3'>
