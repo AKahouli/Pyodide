@@ -7,6 +7,9 @@ export default defineConfig({
   test: {
     globals: true,
     environment: 'jsdom',
+    // pretendToBeVisual gives jsdom a working requestAnimationFrame, which the
+    // streaming coalescer (store.ts) schedules its per-frame flushes on.
+    environmentOptions: { jsdom: { pretendToBeVisual: true } },
     setupFiles: './src/test/setup.ts', // if you have setup file
     // Playwright e2e specs live under tests/e2e and must not run in Vitest.
     exclude: ['**/node_modules/**', '**/dist/**', '**/cypress/**', '**/tests/e2e/**'],

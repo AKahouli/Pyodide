@@ -1,4 +1,11 @@
+import type { ConversationLatencyMetricsV1 } from './latency.interface';
+
 export type ConversationType = 'user' | 'ai';
+
+export type {
+  ConversationLatencyMetricsV1,
+  ConversationLatencyQuality,
+} from './latency.interface';
 
 export type ComponentType =
   | 'text'
@@ -276,6 +283,7 @@ export interface CompleteAIMessageData {
   guardrailDecision?: GuardrailDecisionMetadata;
   interaction?: Record<string, unknown>;
   modelRequestTelemetry?: ModelRequestTelemetry;
+  latencyMetrics?: ConversationLatencyMetricsV1;
 }
 
 export interface ModelRequestTelemetry {
@@ -333,6 +341,7 @@ export interface MessageResponse {
   durationMs?: number;
   timeToFirstChunk?: number;
   timeToFirstToken?: number;
+  latencyMetrics?: ConversationLatencyMetricsV1;
   requestId?: string;
   agentIds?: string[];
   memberIds?: string[];

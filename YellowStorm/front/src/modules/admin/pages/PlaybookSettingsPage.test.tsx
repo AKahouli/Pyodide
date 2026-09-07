@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { screen, waitFor } from '@testing-library/react';
+import { fireEvent, screen, waitFor } from '@testing-library/react';
 
 import { renderWithProviders } from '@/test/renderWithProviders';
 import { showError } from '@/lib/notifications';
@@ -16,6 +16,7 @@ const translateMock = vi.hoisted(() => (
   (key: string) => ({
     'playbookSettings.actions.save': 'Save',
     'playbookSettings.execution.title': 'Execution',
+    'playbookSettings.execution.fields.maxSandboxCallsPerStep.label': 'Code Interpreter calls per step',
     'playbookSettings.execution.dynamicReasoning.planner.label': 'Planner agent',
     'playbookSettings.execution.dynamicReasoning.planner.inferenceFallback': 'Playbook inference model',
     'playbookSettings.inference.title': 'Inference',
@@ -53,6 +54,7 @@ const settings: AdminPlaybookSettings = {
     pythonWorkerPoolSize: 8,
     pythonWorkerMaxInflight: 4,
     maxToolIterations: 40,
+    maxSandboxCallsPerStep: 30,
     graphCacheEnabled: false,
     graphCacheMaxEntries: 128,
     graphCacheTtlSeconds: 900,
@@ -143,6 +145,7 @@ describe('PlaybookSettingsPage', () => {
       'maxConcurrentPerUser', 'executionQueueMaxDepth', 'maxParallelismPerExecution',
       'recursionLimitDefault', 'recursionLimitMax', 'maxHitlRounds', 'pythonWorkerPoolSize',
       'pythonWorkerMaxInflight', 'maxToolIterations', 'graphCacheEnabled',
+      'maxSandboxCallsPerStep',
       'graphCacheMaxEntries', 'graphCacheTtlSeconds',
     ];
     keys.forEach((key) => {
@@ -173,12 +176,20 @@ describe('PlaybookSettingsPage', () => {
     const { user } = renderWithProviders(<PlaybookSettingsPage />);
     await user.click(screen.getByRole('button', { name: /Execution/ }));
 
+    const sandboxLimit = await screen.findByRole('spinbutton', {
+      name: 'Code Interpreter calls per step',
+    });
+    fireEvent.change(sandboxLimit, { target: { value: '16' } });
+
     const saveButton = await screen.findByRole('button', { name: 'Save' });
     expect(saveButton).toBeEnabled();
     await user.click(saveButton);
 
     await waitFor(() => expect(updateAdminPlaybookSettings).toHaveBeenCalledWith({
-      playbookExecution: settings.playbookExecution,
+      playbookExecution: {
+        ...settings.playbookExecution,
+        maxSandboxCallsPerStep: 16,
+      },
     }));
   });
 });

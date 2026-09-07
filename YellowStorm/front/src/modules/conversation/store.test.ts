@@ -9,10 +9,10 @@ const fetchMessageMock = vi.hoisted(() => vi.fn());
 const fetchMessagesMock = vi.hoisted(() => vi.fn());
 const fetchActiveStreamMock = vi.hoisted(() => vi.fn());
 const fetchBranchesMock = vi.hoisted(() => vi.fn());
-const waitForConnectionMock = vi.hoisted(() => vi.fn());
+const ensureConnectedMock = vi.hoisted(() => vi.fn());
 
 vi.mock('./stream', () => ({
-  conversationStreamService: { waitForConnection: waitForConnectionMock },
+  conversationStreamService: { ensureConnected: ensureConnectedMock },
 }));
 
 vi.mock('./api', async (importOriginal) => ({
@@ -35,11 +35,10 @@ beforeEach(() => {
   fetchMessagesMock.mockReset();
   fetchActiveStreamMock.mockReset();
   fetchBranchesMock.mockReset();
-  waitForConnectionMock.mockReset();
+  ensureConnectedMock.mockReset();
   fetchBranchesMock.mockResolvedValue([]);
   fetchActiveStreamMock.mockResolvedValue(null);
   fetchConversationsMock.mockResolvedValue({ items: [], total: 0, page: 1, limit: 12, totalPages: 0 });
-  waitForConnectionMock.mockResolvedValue(true);
   useConversationStore.setState({
     currentConversation: null,
     currentConversationId: null,
@@ -56,14 +55,17 @@ beforeEach(() => {
     isAwaitingFirstChunk: false,
     awaitingConversationId: null,
     pendingAssistantMessageId: null,
+    pendingTerminalErrorKey: null,
+    earlyStreamErrors: new Map(),
+    inFlightSendConversations: new Set(),
     streamingStateCache: new Map(),
+    criticalError: null,
+    inputDisabled: false,
   });
 });
 
 describe('conversation optimistic messages', () => {
-  it('waits for the app-level SSE handshake before sending a stream-producing message', async () => {
-    let resolveConnection: (connected: boolean) => void = () => undefined;
-    waitForConnectionMock.mockImplementation(() => new Promise((resolve) => { resolveConnection = resolve; }));
+  it('sends the POST immediately while nudging the shared SSE pipe without awaiting it', async () => {
     sendMessageMock.mockResolvedValue({
       userMessage: {
         id: 'message-1',
@@ -74,24 +76,24 @@ describe('conversation optimistic messages', () => {
       },
     });
 
-    const pending = useConversationStore.getState().sendMessage('conv-1', { content: 'hello' });
+    await useConversationStore.getState().sendMessage('conv-1', { content: 'hello' });
 
-    expect(useConversationStore.getState().optimisticMessages).toHaveLength(1);
-    expect(sendMessageMock).not.toHaveBeenCalled();
-
-    resolveConnection(true);
-    await pending;
-
+    expect(ensureConnectedMock).toHaveBeenCalledTimes(1);
     expect(sendMessageMock).toHaveBeenCalledWith('conv-1', { content: 'hello' });
+    // Optimistic message replaced by the persisted user message.
+    expect(useConversationStore.getState().optimisticMessages).toHaveLength(0);
+    expect(useConversationStore.getState().messages).toEqual([
+      expect.objectContaining({ id: 'message-1', content: 'hello' }),
+    ]);
   });
 
-  it('does not send when the app-level SSE handshake cannot be established', async () => {
-    waitForConnectionMock.mockResolvedValue(false);
+  it('refetches canonical messages when the server reports a stream resync', async () => {
+    fetchMessagesMock.mockResolvedValue({ items: [], total: 0, page: 1, limit: 5, totalPages: 0 });
+    useConversationStore.setState({ currentConversationId: 'conv-1' });
 
-    await expect(useConversationStore.getState().sendMessage('conv-1', { content: 'hello' })).rejects.toBeInstanceOf(Error);
+    useConversationStore.getState().onStreamResyncRequired({ reason: 'cursor_gap', lastSeenCursor: 'boot-1:9' });
 
-    expect(sendMessageMock).not.toHaveBeenCalled();
-    expect(useConversationStore.getState().optimisticMessages).toHaveLength(0);
+    await vi.waitFor(() => expect(fetchMessagesMock).toHaveBeenCalledWith('conv-1', expect.anything()));
   });
 
   it('preserves choice interaction display text while the request is pending', async () => {
@@ -125,6 +127,50 @@ describe('conversation optimistic messages', () => {
       },
     });
     await pending;
+  });
+
+  it('applies a scoped stream error that arrives before the send response', async () => {
+    let resolveSend: (value: { userMessage: Record<string, unknown>; aiMessageId: string }) => void = () => undefined;
+    sendMessageMock.mockImplementation(() => new Promise((resolve) => { resolveSend = resolve; }));
+    useConversationStore.setState({ currentConversationId: 'conv-1' });
+
+    const pending = useConversationStore.getState().sendMessage('conv-1', { content: 'hello' });
+    await vi.waitFor(() => expect(sendMessageMock).toHaveBeenCalledTimes(1));
+    useConversationStore.getState().onMessageCreated({
+      conversationId: 'conv-1',
+      message: {
+        id: 'message-1', conversationId: 'conv-1', conversationType: 'user',
+        content: 'hello', createdAt: '2026-08-31T18:14:58.000Z',
+      },
+    });
+    expect(useConversationStore.getState().optimisticMessages).toHaveLength(0);
+    expect(useConversationStore.getState().inFlightSendConversations.has('conv-1')).toBe(true);
+    useConversationStore.getState().onStreamError({
+      conversationId: 'conv-1',
+      messageId: 'ai-1',
+      errorCode: 'ERR_1417',
+      message: 'Limit reached',
+    });
+
+    expect(useConversationStore.getState().criticalError).toBeNull();
+    resolveSend({
+      userMessage: {
+        id: 'message-1', conversationId: 'conv-1', conversationType: 'user',
+        content: 'hello', createdAt: '2026-08-31T18:14:58.000Z',
+      },
+      aiMessageId: 'ai-1',
+    });
+    await pending;
+
+    expect(useConversationStore.getState()).toMatchObject({
+      isStreaming: false,
+      isAwaitingFirstChunk: false,
+      pendingAssistantMessageId: null,
+      inputDisabled: true,
+      criticalError: { code: 'ERR_1417' },
+    });
+    expect(useConversationStore.getState().earlyStreamErrors.size).toBe(0);
+    expect(useConversationStore.getState().inFlightSendConversations.size).toBe(0);
   });
 });
 
@@ -211,16 +257,19 @@ describe('conversation workspace selection', () => {
 });
 
 describe('conversation live activity', () => {
-  it('applies reasoning and tool descriptions immediately while answer text remains buffered', () => {
+  const nextFrame = () =>
+    new Promise<void>((resolve) =>
+      typeof requestAnimationFrame === 'function' ? requestAnimationFrame(() => resolve()) : setTimeout(resolve, 0),
+    );
+
+  it('applies activity and answer text in one frame commit', async () => {
     useConversationStore.setState({
       currentConversationId: 'conv-1',
-      isStreaming: true,
-      streamingConversationId: 'conv-1',
-      streamingMessageId: 'message-1',
       isAwaitingFirstChunk: true,
       awaitingConversationId: 'conv-1',
       streamingComponents: [],
     });
+    useConversationStore.getState().onStreamStart({ conversationId: 'conv-1', messageId: 'message-1' });
 
     const store = useConversationStore.getState();
     store.onStreamChunk({
@@ -243,6 +292,7 @@ describe('conversation live activity', () => {
       action: 'add',
       component: { id: 'text-1', type: 'text', data: { content: 'Final answer' } },
     });
+    await nextFrame();
 
     expect(useConversationStore.getState().streamingComponents).toEqual([
       { id: 'activity-1', type: 'agentActivity', data: { summary: '', status: 'completed' } },
@@ -257,12 +307,12 @@ describe('conversation live activity', () => {
           resultJson: '{"ok":true}',
         }),
       },
+      { id: 'text-1', type: 'text', data: { content: 'Final answer' } },
     ]);
     expect(useConversationStore.getState().isAwaitingFirstChunk).toBe(false);
-    useConversationStore.getState().onStreamStart({ conversationId: 'conv-1', messageId: 'message-2' });
   });
 
-  it('flushes earlier text before applying immediate activity and merges reasoning updates', () => {
+  it('coalesces text and activity chunks into one ordered commit per frame', async () => {
     useConversationStore.setState({
       currentConversationId: 'conv-1',
       streamingComponents: [],
@@ -273,6 +323,7 @@ describe('conversation live activity', () => {
     store.onStreamChunk({ conversationId: 'conv-1', action: 'add', component: { id: 'text-1', type: 'text', data: { content: 'First. ' } } });
     store.onStreamChunk({ conversationId: 'conv-1', action: 'add', component: { id: 'tool-1', type: 'toolActivity', data: { toolName: 'search', status: 'running', summary: 'Find sources' } } });
     store.onStreamChunk({ conversationId: 'conv-1', action: 'update', component: { id: 'activity-1', type: 'agentActivity', data: { summary: 'Sources selected', status: 'completed' } } });
+    await nextFrame();
 
     expect(useConversationStore.getState().streamingComponents).toEqual([
       { id: 'activity-1', type: 'agentActivity', data: { summary: 'Sources selected', status: 'completed' } },
@@ -382,6 +433,263 @@ describe('new conversation selections', () => {
 });
 
 describe('conversation streaming component updates', () => {
+  it('repairs dropped chunks from the active-stream snapshot on queue overflow', async () => {
+    fetchActiveStreamMock.mockResolvedValue({
+      conversationId: 'conv-1',
+      messageId: 'message-1',
+      revision: 501,
+      components: [{ id: 'text-snap', type: 'text', data: { content: 'Snapshot body' } }],
+    });
+    useConversationStore.setState({
+      currentConversationId: 'conv-1',
+      streamingComponents: [],
+    });
+    useConversationStore.getState().onStreamStart({ conversationId: 'conv-1', messageId: 'message-1' });
+
+    const store = useConversationStore.getState();
+    for (let i = 0; i < 501; i += 1) {
+      store.onStreamChunk({
+        conversationId: 'conv-1',
+        action: 'update',
+        component: { id: 'text-stream', type: 'text', data: { content: `chunk ${i}` } },
+        revision: i + 1,
+      });
+    }
+    // A brand-new component created after the overflow dropped the backlog.
+    store.onStreamChunk({
+      conversationId: 'conv-1',
+      action: 'add',
+      component: { id: 'text-tail', type: 'text', data: { content: 'Tail' } },
+      revision: 503,
+    });
+    await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+    await Promise.resolve();
+    await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+
+    expect(fetchActiveStreamMock).toHaveBeenCalledWith('conv-1');
+    // The snapshot is the canonical base; the live tail applied during the
+    // fetch is preserved as a local-only component after it.
+    const components = useConversationStore.getState().streamingComponents;
+    expect(components).toHaveLength(2);
+    expect(components[0]).toEqual({ id: 'text-snap', type: 'text', data: { content: 'Snapshot body' } });
+    expect(components[1]).toMatchObject({ id: 'text-tail', data: { content: 'Tail' } });
+
+    // The live tail keeps merging onto the repaired base.
+    useConversationStore.getState().onStreamChunk({
+      conversationId: 'conv-1',
+      action: 'update',
+      component: { id: 'text-tail', type: 'text', data: { content: 'Tail grows' } },
+      revision: 504,
+    });
+    await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+
+    expect(useConversationStore.getState().streamingComponents).toEqual([
+      expect.objectContaining({ id: 'text-snap', type: 'text', data: { content: 'Snapshot body' } }),
+      expect.objectContaining({ id: 'text-tail', type: 'text', data: { content: 'TailTail grows' } }),
+    ]);
+  });
+
+  it('recovers progressive content when revisioned chunks arrive before any stream_start', async () => {
+    let resolveSnapshot: (value: Record<string, unknown>) => void = () => undefined;
+    fetchActiveStreamMock.mockImplementation(() => new Promise((resolve) => { resolveSnapshot = resolve; }));
+    useConversationStore.setState({ currentConversationId: 'conv-1' });
+
+    // Cold send: the SSE pipe was not open when the backend emitted
+    // stream_start, so revisioned chunks arrive with no observed start.
+    useConversationStore.getState().onStreamChunk({
+      conversationId: 'conv-1',
+      action: 'add',
+      component: { id: 'text-1', type: 'text', data: { content: 'early ' } },
+      revision: 1,
+    });
+    useConversationStore.getState().onStreamChunk({
+      conversationId: 'conv-1',
+      action: 'update',
+      component: { id: 'text-1', type: 'text', data: { content: 'early tail' } },
+      revision: 2,
+    });
+    // Recovery is keyed by conversation — it works even before the POST ack
+    // has supplied the message id.
+    await vi.waitFor(() => expect(fetchActiveStreamMock).toHaveBeenCalledWith('conv-1'));
+
+    resolveSnapshot({
+      conversationId: 'conv-1',
+      messageId: 'ai-1',
+      revision: 2,
+      components: [{ id: 'text-1', type: 'text', data: { content: 'early tail' } }],
+    });
+
+    await vi.waitFor(() => {
+      expect(useConversationStore.getState()).toMatchObject({
+        isStreaming: true,
+        streamingConversationId: 'conv-1',
+        streamingMessageId: 'ai-1',
+        pendingAssistantMessageId: 'ai-1',
+        isAwaitingFirstChunk: false,
+      });
+    });
+
+    // Post-install deltas apply live instead of re-buffering into recovery.
+    useConversationStore.getState().onStreamChunk({
+      conversationId: 'conv-1',
+      action: 'update',
+      component: { id: 'text-1', type: 'text', data: { content: ' more' } },
+      revision: 3,
+    });
+    await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+
+    expect(useConversationStore.getState().streamingComponents).toEqual([
+      expect.objectContaining({ id: 'text-1', data: { content: 'early tail more' } }),
+    ]);
+  });
+
+  it('forced resync installs the snapshot for a live run instead of skipping it', async () => {
+    let resolveSnapshot: (value: Record<string, unknown>) => void = () => undefined;
+    fetchActiveStreamMock.mockImplementation(() => new Promise((resolve) => { resolveSnapshot = resolve; }));
+    useConversationStore.setState({ currentConversationId: 'conv-1' });
+    useConversationStore.getState().onStreamStart({ conversationId: 'conv-1', messageId: 'ai-1' });
+
+    // Render through revision 2, then miss the 3..250 span.
+    useConversationStore.getState().onStreamChunk({
+      conversationId: 'conv-1',
+      action: 'update',
+      component: { id: 'text-1', type: 'text', data: { content: 'partial' } },
+      revision: 2,
+    });
+    await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+
+    useConversationStore.getState().onStreamResyncRequired({ reason: 'cursor_gap' });
+    await vi.waitFor(() => expect(fetchActiveStreamMock).toHaveBeenCalledWith('conv-1'));
+
+    // Deltas arriving while the snapshot is in flight are held, not applied.
+    useConversationStore.getState().onStreamChunk({
+      conversationId: 'conv-1',
+      action: 'update',
+      component: { id: 'text-1', type: 'text', data: { content: 'HOLD' } },
+      revision: 251,
+    });
+
+    resolveSnapshot({
+      conversationId: 'conv-1',
+      messageId: 'ai-1',
+      revision: 250,
+      components: [{ id: 'text-1', type: 'text', data: { content: 'repaired span' } }],
+    });
+
+    await vi.waitFor(() => {
+      expect(useConversationStore.getState().streamingComponents).toEqual([
+        expect.objectContaining({ id: 'text-1', data: { content: 'repaired spanHOLD' } }),
+      ]);
+    });
+    // The gap was repaired without a disruptive canonical list reload.
+    expect(fetchMessagesMock).not.toHaveBeenCalled();
+
+    // Only deltas newer than the snapshot apply afterwards.
+    useConversationStore.getState().onStreamChunk({
+      conversationId: 'conv-1',
+      action: 'update',
+      component: { id: 'text-1', type: 'text', data: { content: ' tail' } },
+      revision: 252,
+    });
+    await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+
+    expect(useConversationStore.getState().streamingComponents).toEqual([
+      expect.objectContaining({ id: 'text-1', data: { content: 'repaired spanHOLD tail' } }),
+    ]);
+  });
+
+  it('forced resync ignores the snapshot after the user navigated away', async () => {
+    let resolveSnapshot: (value: Record<string, unknown>) => void = () => undefined;
+    fetchActiveStreamMock.mockImplementation(() => new Promise((resolve) => { resolveSnapshot = resolve; }));
+    useConversationStore.setState({ currentConversationId: 'conv-1' });
+    useConversationStore.getState().onStreamStart({ conversationId: 'conv-1', messageId: 'ai-1' });
+
+    useConversationStore.getState().onStreamResyncRequired({ reason: 'cursor_gap' });
+    await vi.waitFor(() => expect(fetchActiveStreamMock).toHaveBeenCalledWith('conv-1'));
+
+    useConversationStore.setState({ currentConversationId: 'conv-2' });
+    resolveSnapshot({
+      conversationId: 'conv-1',
+      messageId: 'ai-1',
+      revision: 9,
+      components: [{ id: 'text-9', type: 'text', data: { content: 'stale' } }],
+    });
+    await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+
+    expect(useConversationStore.getState().streamingComponents).toEqual([]);
+    expect(fetchMessagesMock).not.toHaveBeenCalled();
+  });
+
+  it('forced resync defers to canonical completion that lands during the snapshot fetch', async () => {
+    let resolveSnapshot: (value: Record<string, unknown>) => void = () => undefined;
+    fetchActiveStreamMock.mockImplementation(() => new Promise((resolve) => { resolveSnapshot = resolve; }));
+    useConversationStore.setState({ currentConversationId: 'conv-1' });
+    useConversationStore.getState().onStreamStart({ conversationId: 'conv-1', messageId: 'ai-1' });
+
+    useConversationStore.getState().onStreamResyncRequired({ reason: 'cursor_gap' });
+    await vi.waitFor(() => expect(fetchActiveStreamMock).toHaveBeenCalledWith('conv-1'));
+
+    fetchMessageMock.mockResolvedValue({
+      id: 'ai-1', conversationId: 'conv-1', conversationType: 'ai',
+      isComplete: true, components: [], createdAt: '2026-09-06T00:00:00.000Z',
+    });
+    await useConversationStore.getState().onStreamComplete({ conversationId: 'conv-1', messageId: 'ai-1' });
+    expect(useConversationStore.getState().isStreaming).toBe(false);
+
+    resolveSnapshot({
+      conversationId: 'conv-1',
+      messageId: 'ai-1',
+      revision: 9,
+      components: [{ id: 'text-9', type: 'text', data: { content: 'late snapshot' } }],
+    });
+    await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+
+    // The completion owns the terminal state; the snapshot must not
+    // resurrect the stream or trigger a canonical reload.
+    expect(useConversationStore.getState().isStreaming).toBe(false);
+    expect(useConversationStore.getState().streamingComponents).toEqual([]);
+    expect(fetchMessagesMock).not.toHaveBeenCalled();
+  });
+
+  it('missing-start recovery defers to a terminal event that lands during the snapshot fetch', async () => {
+    let resolveSnapshot: (value: Record<string, unknown>) => void = () => undefined;
+    fetchActiveStreamMock.mockImplementation(() => new Promise((resolve) => { resolveSnapshot = resolve; }));
+    useConversationStore.setState({ currentConversationId: 'conv-1' });
+
+    // Cold send: chunks arrive with no observed start; recovery kicks off.
+    useConversationStore.getState().onStreamChunk({
+      conversationId: 'conv-1',
+      action: 'add',
+      component: { id: 'text-1', type: 'text', data: { content: 'early' } },
+      revision: 1,
+    });
+    await vi.waitFor(() => expect(fetchActiveStreamMock).toHaveBeenCalledWith('conv-1'));
+
+    // The run settles terminally while the snapshot is in flight.
+    fetchMessageMock.mockResolvedValue({
+      id: 'ai-1', conversationId: 'conv-1', conversationType: 'ai',
+      isComplete: true, components: [], createdAt: '2026-09-06T00:00:00.000Z',
+    });
+    useConversationStore.setState({ streamingMessageId: 'ai-1', pendingAssistantMessageId: 'ai-1' });
+    await useConversationStore.getState().onStreamComplete({ conversationId: 'conv-1', messageId: 'ai-1' });
+    expect(useConversationStore.getState().isStreaming).toBe(false);
+
+    resolveSnapshot({
+      conversationId: 'conv-1',
+      messageId: 'ai-1',
+      revision: 5,
+      components: [{ id: 'text-1', type: 'text', data: { content: 'late snapshot' } }],
+    });
+    await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+
+    // The terminal state wins; the snapshot must not resurrect the stream.
+    expect(useConversationStore.getState().isStreaming).toBe(false);
+    expect(useConversationStore.getState().streamingComponents).toEqual([]);
+    expect(useConversationStore.getState().messages).toEqual([
+      expect.objectContaining({ id: 'ai-1', isComplete: true }),
+    ]);
+  });
+
   it('restores an active stream snapshot after refresh and keeps applying live chunks', async () => {
     fetchMessagesMock.mockResolvedValue({
       items: [{
@@ -405,6 +713,7 @@ describe('conversation streaming component updates', () => {
       action: 'add',
       component: { id: 'tool-1', type: 'toolActivity', data: { toolName: 'search', status: 'running' } },
     });
+    await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
 
     expect(useConversationStore.getState()).toMatchObject({
       isStreaming: true,
@@ -644,7 +953,7 @@ describe('conversation streaming component updates', () => {
   });
 
   it('deduplicates snapshot text from overlapping sequenced SSE chunks', async () => {
-    vi.useFakeTimers();
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval', 'requestAnimationFrame', 'cancelAnimationFrame'] });
     try {
       fetchMessagesMock.mockResolvedValue({
         items: [{ id: 'ai-1', conversationId: 'conv-1', conversationType: 'ai', components: [], isStreaming: true, isComplete: false }],
@@ -666,7 +975,8 @@ describe('conversation streaming component updates', () => {
         conversationId: 'conv-1', messageId: 'ai-1', revision: 2, action: 'update',
         component: { id: 'text-1', type: 'text', data: { content: 'B' } },
       });
-      await vi.advanceTimersByTimeAsync(31);
+      // The coalescer flushes on the next animation frame (16ms fake tick).
+      await vi.advanceTimersByTimeAsync(16);
 
       expect(useConversationStore.getState().streamingComponents[0]?.data.content).toBe('AB');
     } finally {
@@ -695,6 +1005,7 @@ describe('conversation streaming component updates', () => {
       components: [{ id: 'text-1', type: 'text', data: { content: 'Partial' } }],
     });
     await hydration;
+    await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
 
     expect(useConversationStore.getState().streamingComponents).toEqual([
       expect.objectContaining({ id: 'text-1' }),
@@ -860,6 +1171,234 @@ describe('conversation streaming component updates', () => {
     });
   });
 
+  it('uses canonical completion components instead of live-only extras', () => {
+    useConversationStore.setState({
+      currentConversationId: 'conv-1',
+      isStreaming: true,
+      streamingConversationId: 'conv-1',
+      streamingMessageId: 'ai-edited',
+      pendingAssistantMessageId: 'ai-edited',
+      streamingComponents: [
+        { id: 'tool-1', type: 'toolActivity', data: { toolName: 'search', summary: 'Find contract clauses', renderKind: 'search', status: 'completed' } },
+        { id: 'text-1', type: 'text', data: { content: 'The contract term is 42 months [1].' } },
+        { id: 'citation-1', type: 'citation', data: { parentId: 'text-1', reference: '[1]', fileName: 'contract.pdf', page: '3' } },
+      ],
+      messages: [{
+        id: 'ai-edited', conversationId: 'conv-1', conversationType: 'ai',
+        components: [], isComplete: false, createdAt: '2026-08-31T18:14:58.000Z',
+      }],
+    });
+
+    useConversationStore.getState().onMessageUpdated({
+      conversationId: 'conv-1',
+      messageId: 'ai-edited',
+      message: {
+        conversationType: 'ai',
+        components: [{ id: 'text-1', type: 'text', data: { content: 'The contract term is 42 months [1].' } }],
+        isComplete: true,
+        createdAt: '2026-08-31T18:14:58.000Z',
+      },
+    });
+
+    expect(useConversationStore.getState().messages[0].components?.map((component) => component.type)).toEqual(['text']);
+    expect(useConversationStore.getState()).toMatchObject({
+      isStreaming: false,
+      streamingComponents: [],
+    });
+  });
+
+  it('does not consume or clear a newer stream after delayed completion recovery', async () => {
+    let resolveCompletedMessage: (message: Record<string, unknown>) => void = () => undefined;
+    fetchMessageMock.mockImplementationOnce(
+      () => new Promise((resolve) => { resolveCompletedMessage = resolve; }),
+    );
+    useConversationStore.setState({
+      currentConversationId: 'conv-1',
+      isStreaming: true,
+      streamingConversationId: 'conv-1',
+      streamingMessageId: 'ai-1',
+      pendingAssistantMessageId: 'ai-1',
+      streamingComponents: [{ id: 'text-1', type: 'text', data: { content: 'Old partial' } }],
+      messages: [],
+    });
+
+    const oldCompletion = useConversationStore.getState().onStreamComplete({
+      conversationId: 'conv-1',
+      messageId: 'ai-1',
+    });
+    await vi.waitFor(() => expect(fetchMessageMock).toHaveBeenCalledWith('conv-1', 'ai-1'));
+
+    useConversationStore.getState().onStreamStart({ conversationId: 'conv-1', messageId: 'ai-2' });
+    useConversationStore.getState().onStreamChunk({
+      conversationId: 'conv-1',
+      messageId: 'ai-2',
+      action: 'add',
+      component: { id: 'tool-2', type: 'toolActivity', data: { toolName: 'search', status: 'running' } },
+    });
+    resolveCompletedMessage({
+      id: 'ai-1', conversationId: 'conv-1', conversationType: 'ai',
+      components: [{ id: 'text-1', type: 'text', data: { content: 'Old complete' } }],
+      isComplete: true, createdAt: '2026-08-31T18:14:58.000Z',
+    });
+    await oldCompletion;
+    await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+
+    expect(useConversationStore.getState()).toMatchObject({
+      isStreaming: true,
+      streamingConversationId: 'conv-1',
+      streamingMessageId: 'ai-2',
+      pendingAssistantMessageId: 'ai-2',
+    });
+    expect(useConversationStore.getState().streamingComponents).toEqual([
+      expect.objectContaining({ id: 'tool-2' }),
+    ]);
+    expect(useConversationStore.getState().messages).toEqual([
+      expect.objectContaining({ id: 'ai-1', isComplete: true }),
+    ]);
+  });
+
+  it('ignores a delayed error from an older message while a newer stream is active', () => {
+    useConversationStore.setState({
+      currentConversationId: 'conv-1',
+      isStreaming: true,
+      streamingConversationId: 'conv-1',
+      streamingMessageId: 'ai-2',
+      pendingAssistantMessageId: 'ai-2',
+      streamingComponents: [{ id: 'text-2', type: 'text', data: { content: 'New partial' } }],
+    });
+
+    useConversationStore.getState().onStreamError({
+      conversationId: 'conv-1',
+      messageId: 'ai-1',
+      errorCode: 'ERR_1404',
+      message: 'Old stream failed',
+    });
+
+    expect(useConversationStore.getState()).toMatchObject({
+      isStreaming: true,
+      streamingConversationId: 'conv-1',
+      streamingMessageId: 'ai-2',
+      pendingAssistantMessageId: 'ai-2',
+      streamingComponents: [{ id: 'text-2', type: 'text', data: { content: 'New partial' } }],
+    });
+  });
+
+  it('handles a scoped error after its canonical completion cleared stream ownership', () => {
+    useConversationStore.setState({
+      currentConversationId: 'conv-1',
+      isStreaming: true,
+      streamingConversationId: 'conv-1',
+      streamingMessageId: 'ai-1',
+      pendingAssistantMessageId: 'ai-1',
+      messages: [{
+        id: 'ai-1', conversationId: 'conv-1', conversationType: 'ai',
+        components: [], isComplete: false, createdAt: '2026-08-31T18:14:58.000Z',
+      }],
+    });
+
+    useConversationStore.getState().onMessageUpdated({
+      conversationId: 'conv-1',
+      messageId: 'ai-1',
+      message: {
+        components: [{ id: 'error-1', type: 'error', data: { code: 'ERR_1417', message: 'Limit reached' } }],
+        isComplete: true,
+      },
+    });
+    useConversationStore.getState().onStreamError({
+      conversationId: 'conv-1',
+      messageId: 'ai-1',
+      errorCode: 'ERR_1417',
+      message: 'Limit reached',
+    });
+
+    expect(useConversationStore.getState()).toMatchObject({
+      isStreaming: false,
+      streamingMessageId: null,
+      pendingAssistantMessageId: null,
+      pendingTerminalErrorKey: null,
+      inputDisabled: true,
+      criticalError: { code: 'ERR_1417' },
+    });
+  });
+
+  it('preserves foreground terminal error ownership across a background stream start', () => {
+    useConversationStore.setState({
+      currentConversationId: 'conv-1',
+      isStreaming: true,
+      streamingConversationId: 'conv-1',
+      streamingMessageId: 'ai-1',
+      pendingAssistantMessageId: 'ai-1',
+      messages: [{
+        id: 'ai-1', conversationId: 'conv-1', conversationType: 'ai',
+        components: [], isComplete: false, createdAt: '2026-08-31T18:14:58.000Z',
+      }],
+    });
+    useConversationStore.getState().onMessageUpdated({
+      conversationId: 'conv-1',
+      messageId: 'ai-1',
+      message: {
+        components: [{ id: 'error-1', type: 'error', data: { code: 'ERR_1417', message: 'Limit reached' } }],
+        isComplete: true,
+      },
+    });
+
+    useConversationStore.getState().onStreamStart({ conversationId: 'conv-2', messageId: 'ai-2' });
+    useConversationStore.getState().onStreamError({
+      conversationId: 'conv-1',
+      messageId: 'ai-1',
+      errorCode: 'ERR_1417',
+      message: 'Limit reached',
+    });
+
+    expect(useConversationStore.getState()).toMatchObject({
+      pendingTerminalErrorKey: null,
+      inputDisabled: true,
+      criticalError: { code: 'ERR_1417' },
+    });
+    expect(useConversationStore.getState().streamingStateCache.get('conv-2')).toMatchObject({
+      streamingMessageId: 'ai-2',
+    });
+  });
+
+  it('does not apply a completed old error after a newer stream starts', () => {
+    useConversationStore.setState({
+      currentConversationId: 'conv-1',
+      isStreaming: true,
+      streamingConversationId: 'conv-1',
+      streamingMessageId: 'ai-1',
+      pendingAssistantMessageId: 'ai-1',
+      messages: [{
+        id: 'ai-1', conversationId: 'conv-1', conversationType: 'ai',
+        components: [], isComplete: false, createdAt: '2026-08-31T18:14:58.000Z',
+      }],
+    });
+    useConversationStore.getState().onMessageUpdated({
+      conversationId: 'conv-1',
+      messageId: 'ai-1',
+      message: {
+        components: [{ id: 'error-1', type: 'error', data: { code: 'ERR_1417', message: 'Limit reached' } }],
+        isComplete: true,
+      },
+    });
+
+    useConversationStore.getState().onStreamStart({ conversationId: 'conv-1', messageId: 'ai-2' });
+    useConversationStore.getState().onStreamError({
+      conversationId: 'conv-1',
+      messageId: 'ai-1',
+      errorCode: 'ERR_1417',
+      message: 'Limit reached',
+    });
+
+    expect(useConversationStore.getState()).toMatchObject({
+      isStreaming: true,
+      streamingMessageId: 'ai-2',
+      pendingAssistantMessageId: 'ai-2',
+      pendingTerminalErrorKey: null,
+      inputDisabled: false,
+      criticalError: null,
+    });
+  });
+
   it('reconciles a persisted completion after the live event was missed', async () => {
     fetchMessageMock.mockResolvedValue({
       id: 'ai-1',
@@ -885,6 +1424,39 @@ describe('conversation streaming component updates', () => {
       streamingMessageId: null,
       pendingAssistantMessageId: null,
       messagesTotal: 1,
+    });
+  });
+
+  it('retains scoped error ownership after reconciliation finds an error completion', async () => {
+    fetchMessageMock.mockResolvedValue({
+      id: 'ai-1',
+      conversationId: 'conv-1',
+      conversationType: 'ai',
+      components: [{ id: 'error-1', type: 'error', data: { code: 'ERR_1417', message: 'Limit reached' } }],
+      isComplete: true,
+      createdAt: '2026-08-31T18:14:58.000Z',
+    });
+    useConversationStore.setState({
+      currentConversationId: 'conv-1',
+      isStreaming: true,
+      streamingConversationId: 'conv-1',
+      streamingMessageId: 'ai-1',
+      pendingAssistantMessageId: 'ai-1',
+    });
+
+    await useConversationStore.getState().reconcilePendingStream();
+    expect(useConversationStore.getState().pendingTerminalErrorKey).toBe('conv-1:ai-1');
+    useConversationStore.getState().onStreamError({
+      conversationId: 'conv-1',
+      messageId: 'ai-1',
+      errorCode: 'ERR_1417',
+      message: 'Limit reached',
+    });
+
+    expect(useConversationStore.getState()).toMatchObject({
+      pendingTerminalErrorKey: null,
+      inputDisabled: true,
+      criticalError: { code: 'ERR_1417' },
     });
   });
 

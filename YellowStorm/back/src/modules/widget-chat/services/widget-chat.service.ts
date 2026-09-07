@@ -790,6 +790,7 @@ export class WidgetChatService {
 
       call.on('data', (chunk: any) => {
         resetIdle();
+        if (chunk.action === 'heartbeat') return;
         chunkCount++;
         const action = chunk.action;
         const comp = chunk.component;

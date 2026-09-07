@@ -3,7 +3,7 @@
  * Renderer instances (one per file, all mounted, only active visible)
  */
 
-import { useRef } from 'react';
+import { Suspense, useRef } from 'react';
 import { Loader2 } from 'lucide-react';
 import type { PluginRegistry } from '@embedpdf/react-pdf-viewer';
 import { useModuleTranslation } from '@/modules/localization';
@@ -39,7 +39,19 @@ export function FileViewerContent() {
               </div>
             );
           } else if (Renderer) {
-            content = <Renderer tab={tab} isActive={isActive} registryRef={registryMap} />;
+            // Renderers may be lazy (PDF); show the tab's loading state until the chunk arrives.
+            content = (
+              <Suspense
+                fallback={
+                  <div className='flex flex-col items-center justify-center h-full gap-3 text-muted-foreground'>
+                    <Loader2 className='h-8 w-8 animate-spin' />
+                    <p className='text-sm'>{t('loading')} {tab.fileName}...</p>
+                  </div>
+                }
+              >
+                <Renderer tab={tab} isActive={isActive} registryRef={registryMap} />
+              </Suspense>
+            );
           } else {
             content = <UnsupportedRenderer tab={tab} isActive={isActive} />;
           }

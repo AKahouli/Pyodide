@@ -30,7 +30,6 @@ class TestDelegationTools:
         user_request = self.create_mock_user_request()
         agent_factory = MagicMock()
         mcp_helper = MagicMock()
-        manager_span = MagicMock()
         agent_runner = MagicMock()
         session_helper = MagicMock()
         documents_tree = [{"id": "doc1", "name": "Document 1"}]
@@ -43,7 +42,6 @@ class TestDelegationTools:
             user_request=user_request,
             agent_factory=agent_factory,
             mcp_helper=mcp_helper,
-            manager_span=manager_span,
             agent_runner=agent_runner,
             session_helper=session_helper,
             documents_tree=documents_tree,
@@ -61,7 +59,6 @@ class TestDelegationTools:
         assert delegation_tools.streaming_formatter is not None
         assert delegation_tools.agent_runner is not None
         assert delegation_tools.user_request is not None
-        assert delegation_tools.manager_span is not None
         assert delegation_tools.session_helper is not None
         assert delegation_tools.documents_tree is not None
         assert delegation_tools.brain_tree is not None
@@ -101,7 +98,6 @@ class TestDelegationTools:
         delegation_tools.agent_factory.create_report_writer_agent.assert_called_once_with(
             report_prompt, delegation_tools.user_request.chatbot_name
         )
-        # Note: create_excel_mcp_headers is called as a static method inside the factory, not on the instance
 
     def test_get_agents_exception_handling(self):
         """Test exception handling in get_agents."""
@@ -163,7 +159,6 @@ class TestDelegationTools:
         delegation_tools.agent_factory.create_html_agent.return_value = MagicMock()
         delegation_tools.agent_factory.create_operator_agent.return_value = MagicMock()
         delegation_tools.agent_factory.create_report_writer_agent.return_value = MagicMock()
-        delegation_tools.mcp_helper.create_excel_mcp_headers.return_value = {}
 
         result = delegation_tools.get_agents("vis", "op", "report", "search")
 
@@ -176,7 +171,6 @@ class TestDelegationTools:
         user_request = self.create_mock_user_request()
         agent_factory = MagicMock()
         mcp_helper = MagicMock()
-        manager_span = MagicMock()
         agent_runner = MagicMock()
         session_helper = MagicMock()
         documents_tree = [{"doc": "tree"}]
@@ -188,7 +182,6 @@ class TestDelegationTools:
             user_request=user_request,
             agent_factory=agent_factory,
             mcp_helper=mcp_helper,
-            manager_span=manager_span,
             agent_runner=agent_runner,
             session_helper=session_helper,
             documents_tree=documents_tree,
@@ -201,7 +194,6 @@ class TestDelegationTools:
         assert delegation_tools.user_request is user_request
         assert delegation_tools.agent_factory is agent_factory
         assert delegation_tools.mcp_helper is mcp_helper
-        assert delegation_tools.manager_span is manager_span
         assert delegation_tools.agent_runner is agent_runner
         assert delegation_tools.session_helper is session_helper
         assert delegation_tools.documents_tree is documents_tree
@@ -229,7 +221,6 @@ class TestDelegationTools:
         delegation_tools.agent_factory.create_html_agent.return_value = MagicMock()
         delegation_tools.agent_factory.create_operator_agent.return_value = MagicMock()
         delegation_tools.agent_factory.create_report_writer_agent.return_value = MagicMock()
-        delegation_tools.mcp_helper.create_excel_mcp_headers.return_value = {}
 
         # Test with empty prompts
         result1 = delegation_tools.get_agents("", "", "", "")
@@ -262,7 +253,6 @@ class TestDelegationTools:
             user_request=self.create_mock_user_request(),
             agent_factory=MagicMock(),
             mcp_helper=MagicMock(),
-            manager_span=MagicMock(),
             agent_runner=MagicMock(),
             session_helper=MagicMock(),
             documents_tree=complex_documents_tree,
@@ -287,7 +277,6 @@ class TestDelegationTools:
             user_request=user_request_with_web,
             agent_factory=MagicMock(),
             mcp_helper=MagicMock(),
-            manager_span=MagicMock(),
             agent_runner=MagicMock(),
             session_helper=MagicMock(),
             documents_tree=[],
@@ -307,7 +296,6 @@ class TestDelegationTools:
             user_request=user_request_no_web,
             agent_factory=MagicMock(),
             mcp_helper=MagicMock(),
-            manager_span=MagicMock(),
             agent_runner=MagicMock(),
             session_helper=MagicMock(),
             documents_tree=[],
@@ -326,7 +314,6 @@ class TestDelegationTools:
             user_request=self.create_mock_user_request(),
             agent_factory=MagicMock(),
             mcp_helper=MagicMock(),
-            manager_span=MagicMock(),
             agent_runner=MagicMock(),
             session_helper=MagicMock(),
             documents_tree=[],
@@ -336,22 +323,3 @@ class TestDelegationTools:
         )
 
         assert delegation_tools.q is mock_queue
-
-    def test_manager_span_integration(self):
-        """Test manager span integration for tracing."""
-        mock_span = MagicMock()
-        delegation_tools = DelegationTools(
-            streaming_formatter=MagicMock(),
-            user_request=self.create_mock_user_request(),
-            agent_factory=MagicMock(),
-            mcp_helper=MagicMock(),
-            manager_span=mock_span,
-            agent_runner=MagicMock(),
-            session_helper=MagicMock(),
-            documents_tree=[],
-            brain_tree=[],
-            q=MagicMock(),
-            citation_manager=MagicMock()
-        )
-
-        assert delegation_tools.manager_span is mock_span

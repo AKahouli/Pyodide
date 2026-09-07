@@ -340,7 +340,7 @@ function createReplayWorkflowHarness() {
     { reserve: jest.fn().mockResolvedValue({ type: 'reserved' }), confirmLink: jest.fn(), release: jest.fn() } as any,
     { findOne: jest.fn().mockResolvedValue({ nodes: clone(baselineSnapshot.nodes), controlEdges: [], dataBindings: [], settings: baselineSnapshot.settings }) } as any,
     { buildSnapshot: jest.fn().mockReturnValue(clone(baselineSnapshot)) } as any,
-    { validate: jest.fn() } as any,
+    { validate: jest.fn(), collectValidationErrors: jest.fn().mockReturnValue([]) } as any,
     { buildGrpcAgentsForPlaybook: jest.fn().mockResolvedValue([]) } as any,
     {
       emitExecutionComplete: jest.fn(),

@@ -4,7 +4,7 @@ import { cn } from '@/lib/utils';
 import { getMimeTypeFromFilename, openFileViewerFromUrlLoader } from '@/modules/file-viewer';
 import { downloadCode } from '@/lib/download';
 import { toast } from 'sonner';
-import { useState, useMemo, useCallback, useEffect, useRef, type HTMLAttributes } from 'react';
+import { useState, useMemo, useCallback, useEffect, useRef, memo, lazy, Suspense, type HTMLAttributes } from 'react';
 import { useFileViewerDisplayMode, useShouldAutoOpenPreview } from './message-context';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -21,9 +21,6 @@ import { Button } from '@/components/ui/button';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { PlayIcon, CheckCircle2, Circle, ListTodo, AlertTriangle, Loader2, Bot, Eye, Download, FileText, XCircle, Maximize, Minimize } from 'lucide-react';
 import type { BundledLanguage } from 'shiki';
-import { Area, AreaChart, Bar, BarChart, CartesianGrid, Cell, ComposedChart, Label, Line, LineChart, Pie, PieChart, ResponsiveContainer, Scatter, ScatterChart, XAxis, YAxis, ZAxis } from 'recharts';
-import { ChartContainer, ChartLegend, ChartLegendContent, ChartTooltip, ChartTooltipContent } from '@/components/ui/chart';
-import type { ChartConfig } from '@/components/ui/chart';
 import type { ChartComponentData } from '@/modules/conversation/types';
 import type { ChoiceComponentData, ChoiceInteractionMetadata } from '@/modules/conversation/types';
 import { ChoicePartRenderer, type ChoiceComponentAction } from './choice/ChoicePartRenderer';
@@ -33,6 +30,12 @@ import { Separator } from '../ui/separator';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '../ui/dialog';
 import { rehypeCitationMarkers } from '@/lib/rehype-citation-markers';
 import { remarkAssistantCitationLinks } from '@/lib/remark-assistant-citation-links';
+import { applyOutlineHeadingOverrides, type MarkdownHeadingInfo } from './ai-message-outline';
+import { formatLabel } from './format-label';
+
+// Charts are a lazy boundary: recharts (~heavy) must not load with the
+// conversation route, only when a chart part actually renders (Phase 7).
+const ChartPartRenderer = lazy(() => import('./chart-part-renderer').then((m) => ({ default: m.ChartPartRenderer })));
 
 // ============================================================================
 // Message Content Part Types
@@ -203,6 +206,9 @@ export interface ToolActivityPart {
 
 export type MessageContentPart = TextPart | CodePart | AgentActivityPart | QueuePart | PlanPart | CheckpointPart | ChartPart | ChoicePart | TaskPart | ErrorPart | SourcesPart | SandboxPart | WebPreviewPart | ArtifactPart | CitationPart | ToolActivityPart;
 
+/** A markdown heading rendered inside a message, registered for the document outline. */
+export type { MarkdownHeadingInfo } from './ai-message-outline';
+
 // ============================================================================
 // AIMessageContent Component
 // ============================================================================
@@ -218,6 +224,12 @@ export type AIMessageContentProps = HTMLAttributes<HTMLDivElement> & {
   showTaskDiagnostics?: boolean;
   redactTaskDiagnostics?: boolean;
   citationScope?: { conversationId: string; messageId: string };
+  /**
+   * Called after render with every markdown heading (h1–h6) rendered by this
+   * content, in document order. Consumers use it to build a document outline;
+   * when omitted, heading registration is skipped entirely.
+   */
+  onOutlineHeadings?: (headings: MarkdownHeadingInfo[]) => void;
 };
 
 type TaskActivityStep = {
@@ -237,7 +249,7 @@ function redactDiagnosticText(value: string): string {
 /**
  * AIMessageContent - Renders structured AI message content using ai-sdk components
  */
-export const AIMessageContent = ({ parts, className, isStreaming = false, onComponentAction, onSubmitQuestions, choiceInteractions, taskDisplay = 'raw', showTaskDiagnostics = true, redactTaskDiagnostics = true, citationScope, ...props }: AIMessageContentProps) => {
+export const AIMessageContent = ({ parts, className, isStreaming = false, onComponentAction, onSubmitQuestions, choiceInteractions, taskDisplay = 'raw', showTaskDiagnostics = true, redactTaskDiagnostics = true, citationScope, onOutlineHeadings, ...props }: AIMessageContentProps) => {
   const choicePrompts = new Set(parts.filter((part): part is ChoicePart => part.type === 'choice' && part.status === 'ready').map((part) => part.prompt.trim()).filter(Boolean));
   const hasTask = parts.some((part) => part.type === 'task');
   const taskActivity: TaskActivityStep[] = [];
@@ -245,6 +257,25 @@ export const AIMessageContent = ({ parts, className, isStreaming = false, onComp
     if (part.type === 'text' && choicePrompts.has(part.content.trim())) return false;
     return !(taskDisplay === 'activity' && hasTask && part.type === 'toolActivity');
   });
+
+  // Outline aggregation: every rendered text part reports its own headings;
+  // merge them here into one ordered snapshot so the consumer receives the
+  // complete set for this content. Part keys that no longer exist (a text part
+  // was removed or hidden) are pruned so their headings never linger.
+  const outlinePartsRef = useRef(new Map<number, MarkdownHeadingInfo[]>());
+  const textPartIndexes = useMemo(() => visibleParts.map((part, index) => part.type === 'text' ? index : -1).filter((index) => index >= 0), [visibleParts]);
+  const publishMergedOutline = useCallback((updatedKey: number | null, headings?: MarkdownHeadingInfo[]) => {
+    const map = outlinePartsRef.current;
+    for (const key of [...map.keys()]) {
+      if (!textPartIndexes.includes(key)) map.delete(key);
+    }
+    if (updatedKey !== null && headings) map.set(updatedKey, headings);
+    onOutlineHeadings?.([...map.entries()].sort(([a], [b]) => a - b).flatMap(([, partHeadings]) => partHeadings));
+  }, [onOutlineHeadings, textPartIndexes]);
+  useEffect(() => {
+    if (!onOutlineHeadings) return;
+    publishMergedOutline(null);
+  }, [textPartIndexes, onOutlineHeadings, publishMergedOutline]);
 
   const pendingChoiceParts = visibleParts.filter(
     (part): part is ChoicePart => part.type === 'choice' && part.status === 'ready' && !choiceInteractions?.has(part.componentId),
@@ -265,7 +296,7 @@ export const AIMessageContent = ({ parts, className, isStreaming = false, onComp
       {visibleParts.map((part, index) => {
         if (part.type === 'choice' && groupedChoiceIds.has(part.componentId)) return null;
         return (
-          <AIMessagePart key={part.type === 'choice' ? `choice:${part.componentId}` : index} part={part} isStreaming={isStreaming} onComponentAction={onComponentAction} choiceInteractions={choiceInteractions} taskDisplay={taskDisplay} taskActivity={taskActivity} showTaskDiagnostics={showTaskDiagnostics} redactTaskDiagnostics={redactTaskDiagnostics} citationScope={citationScope} />
+          <AIMessagePart key={part.type === 'choice' ? `choice:${part.componentId}` : index} part={part} partIndex={index} isStreaming={isStreaming} onComponentAction={onComponentAction} choiceInteractions={choiceInteractions} taskDisplay={taskDisplay} taskActivity={taskActivity} showTaskDiagnostics={showTaskDiagnostics} redactTaskDiagnostics={redactTaskDiagnostics} citationScope={citationScope} onOutlineHeadings={onOutlineHeadings ? (partHeadings) => publishMergedOutline(index, partHeadings) : undefined} />
         );
       })}
     </div>
@@ -278,6 +309,7 @@ export const AIMessageContent = ({ parts, className, isStreaming = false, onComp
 
 type AIMessagePartProps = {
   part: MessageContentPart;
+  partIndex: number;
   isStreaming?: boolean;
   onComponentAction?: (action: ChoiceComponentAction) => Promise<void>;
   choiceInteractions?: Map<string, ChoiceInteractionMetadata>;
@@ -286,46 +318,72 @@ type AIMessagePartProps = {
   showTaskDiagnostics?: boolean;
   redactTaskDiagnostics?: boolean;
   citationScope?: { conversationId: string; messageId: string };
+  onOutlineHeadings?: (headings: MarkdownHeadingInfo[]) => void;
 };
 
-const AIMessagePart = ({ part, isStreaming = false, onComponentAction, choiceInteractions, taskDisplay = 'raw', taskActivity = [], showTaskDiagnostics = true, redactTaskDiagnostics = true, citationScope }: AIMessagePartProps) => {
-  switch (part.type) {
-    case 'text':
-      return <TextPartRenderer content={part.content} showCursor={part.showCursor} citations={part.citations} citationScope={citationScope} />;
-    case 'code':
-      return <CodePartRenderer content={part.content} language={part.language} filename={part.filename} />;
-    case 'agentActivity':
-      return <AgentActivityPartRenderer part={part} isStreaming={isStreaming} />;
-    case 'queue':
-      return <QueuePartRenderer title={part.title} items={part.items} isStreaming={isStreaming} />;
-    case 'plan':
-      return <PlanPartRenderer title={part.title} description={part.description} steps={part.steps} status={part.status} isStreaming={isStreaming} />;
-    case 'checkpoint':
-      return <CheckpointPartRenderer label={part.label} />;
-    case 'chart':
-      return <ChartPartRenderer type='chart' kind={part.kind} title={part.title} data={part.data} config={part.config} xAxisKey={part.xAxisKey} yAxisKey={part.yAxisKey} nameKey={part.nameKey} zAxisKey={part.zAxisKey} stacked={part.stacked} layout={part.layout} innerRadius={part.innerRadius} showLegend={part.showLegend} showGrid={part.showGrid} series={part.series} />;
-    case 'choice':
-      return <ChoicePartRenderer {...part} onAction={onComponentAction} submittedInteraction={choiceInteractions?.get(part.componentId)} externallyDisabled={isStreaming} />;
-    case 'task':
-      return <TaskPartRenderer title={part.title} items={part.items} status={part.status} isStreaming={isStreaming} activity={taskDisplay === 'activity' ? taskActivity : undefined} showDiagnostics={showTaskDiagnostics} redactDiagnostics={redactTaskDiagnostics} />;
-    case 'error':
-      return <ErrorPartRenderer title={part.title} content={part.content} />;
-    case 'sources':
-      return <SourcesPartRenderer sources={part.sources} />;
-    case 'sandbox':
-      return <SandboxPartRenderer code={part.code} output={part.output} error={part.error} outputAvailable={part.outputAvailable} />;
-    case 'webPreview':
-      return <WebPreviewPartRenderer content={part.content} />;
-    case 'artifact':
-      return <ArtifactPartRenderer filePath={part.filePath} filename={part.filename} />;
-    case 'citation':
-      return <CitationPartRenderer citation={part} citationScope={citationScope} />;
-    case 'toolActivity':
-      return <ToolActivityPartRenderer part={part} isStreaming={isStreaming} />;
-    default:
-      return null;
-  }
-};
+const AIMessagePart = memo(
+  function AIMessagePart({ part, partIndex, isStreaming = false, onComponentAction, choiceInteractions, taskDisplay = 'raw', taskActivity = [], showTaskDiagnostics = true, redactTaskDiagnostics = true, citationScope, onOutlineHeadings }: AIMessagePartProps) {
+    switch (part.type) {
+      case 'text': {
+        // Anchor ids must be globally unique across messages: scope them by the
+        // owning message id plus the part index.
+        const outlineKey = onOutlineHeadings ? `${citationScope?.messageId ?? 'msg'}-${partIndex}`.replace(/[^a-zA-Z0-9_-]/g, '-') : undefined;
+        return <TextPartRenderer content={part.content} showCursor={part.showCursor} citations={part.citations} citationScope={citationScope} outlineKey={outlineKey} onOutlineHeadings={onOutlineHeadings} />;
+      }
+      case 'code':
+        return <CodePartRenderer content={part.content} language={part.language} filename={part.filename} isStreaming={isStreaming} />;
+      case 'agentActivity':
+        return <AgentActivityPartRenderer part={part} isStreaming={isStreaming} />;
+      case 'queue':
+        return <QueuePartRenderer title={part.title} items={part.items} isStreaming={isStreaming} />;
+      case 'plan':
+        return <PlanPartRenderer title={part.title} description={part.description} steps={part.steps} status={part.status} isStreaming={isStreaming} />;
+      case 'checkpoint':
+        return <CheckpointPartRenderer label={part.label} />;
+      case 'chart':
+        return (
+          <Suspense fallback={<div className='my-4 h-[250px] animate-pulse rounded-xl border bg-card' />}>
+            <ChartPartRenderer type='chart' kind={part.kind} title={part.title} data={part.data} config={part.config} xAxisKey={part.xAxisKey} yAxisKey={part.yAxisKey} nameKey={part.nameKey} zAxisKey={part.zAxisKey} stacked={part.stacked} layout={part.layout} innerRadius={part.innerRadius} showLegend={part.showLegend} showGrid={part.showGrid} series={part.series} />
+          </Suspense>
+        );
+      case 'choice':
+        return <ChoicePartRenderer {...part} onAction={onComponentAction} submittedInteraction={choiceInteractions?.get(part.componentId)} externallyDisabled={isStreaming} />;
+      case 'task':
+        return <TaskPartRenderer title={part.title} items={part.items} status={part.status} isStreaming={isStreaming} activity={taskDisplay === 'activity' ? taskActivity : undefined} showDiagnostics={showTaskDiagnostics} redactDiagnostics={redactTaskDiagnostics} />;
+      case 'error':
+        return <ErrorPartRenderer title={part.title} content={part.content} />;
+      case 'sources':
+        return <SourcesPartRenderer sources={part.sources} />;
+      case 'sandbox':
+        return <SandboxPartRenderer code={part.code} output={part.output} error={part.error} outputAvailable={part.outputAvailable} />;
+      case 'webPreview':
+        return <WebPreviewPartRenderer content={part.content} />;
+      case 'artifact':
+        return <ArtifactPartRenderer filePath={part.filePath} filename={part.filename} />;
+      case 'citation':
+        return <CitationPartRenderer citation={part} citationScope={citationScope} />;
+      case 'toolActivity':
+        return <ToolActivityPartRenderer part={part} isStreaming={isStreaming} />;
+      default:
+        return null;
+    }
+  },
+  // While streaming, unchanged parts keep object identity (stable projections
+  // upstream), so completed parts skip re-render entirely. Callback props are
+  // deliberately not compared: they close over values that only matter when
+  // the part itself changed — except choice parts, whose submitted-interaction
+  // state lives in the interactions map.
+  (prev, next) =>
+    prev.part === next.part &&
+    prev.partIndex === next.partIndex &&
+    prev.isStreaming === next.isStreaming &&
+    prev.taskDisplay === next.taskDisplay &&
+    prev.showTaskDiagnostics === next.showTaskDiagnostics &&
+    prev.redactTaskDiagnostics === next.redactTaskDiagnostics &&
+    prev.citationScope?.conversationId === next.citationScope?.conversationId &&
+    prev.citationScope?.messageId === next.citationScope?.messageId &&
+    (prev.part.type !== 'choice' || prev.choiceInteractions === next.choiceInteractions),
+);
 
 // Shared markdown component overrides (extracted to avoid duplication)
 const markdownComponents: React.ComponentProps<typeof ReactMarkdown>['components'] = {
@@ -358,14 +416,14 @@ const markdownComponents: React.ComponentProps<typeof ReactMarkdown>['components
   li({ children }) {
     return <li className='my-0 leading-relaxed'>{children}</li>;
   },
-  h1({ children }) {
-    return <h1 className='text-xl font-bold mb-3 mt-6 first:mt-0'>{children}</h1>;
+  h1({ node: _node, children, ...props }) {
+    return <h1 className='text-xl font-bold mb-3 mt-6 first:mt-0' {...props}>{children}</h1>;
   },
-  h2({ children }) {
-    return <h2 className='text-lg font-bold mb-3 mt-5 first:mt-0'>{children}</h2>;
+  h2({ node: _node, children, ...props }) {
+    return <h2 className='text-lg font-bold mb-3 mt-5 first:mt-0' {...props}>{children}</h2>;
   },
-  h3({ children }) {
-    return <h3 className='text-base font-bold mb-2 mt-4 first:mt-0'>{children}</h3>;
+  h3({ node: _node, children, ...props }) {
+    return <h3 className='text-base font-bold mb-2 mt-4 first:mt-0' {...props}>{children}</h3>;
   },
   hr() {
     return <hr className='my-8 border-t-2 border-muted-foreground/80' />;
@@ -395,11 +453,17 @@ function normalizeCitationReference(reference?: string): string | undefined {
   return reference?.trim().replace(/^\[|\]$/g, '').trim() || undefined;
 }
 
-function getCitationTriggerLabel(citation: CitationData, fallback: string): string {
-  return normalizeCitationReference(citation.reference) || citation.source || fallback;
+function getCitationDisplayName(citation: CitationData, fallback: string): string {
+  const source = citation.fileName ||
+    (citation.sourceType === 'image' ? citation.path || citation.source : citation.source || citation.path);
+  return source?.split(/[\\/]/).filter(Boolean).at(-1) || fallback;
 }
 
-async function openCitationSource(
+function getCitationTriggerLabel(citation: CitationData, fallback: string): string {
+  return normalizeCitationReference(citation.reference) || getCitationDisplayName(citation, fallback);
+}
+
+export async function openCitationSource(
   citation: CitationData,
   displayMode: ReturnType<typeof useFileViewerDisplayMode>,
   defaultLabel: string,
@@ -442,7 +506,158 @@ async function openCitationSource(
 }
 
 // Text Part with Markdown support
-const TextPartRenderer = ({ content, showCursor, citations, citationScope }: { content: string; showCursor?: boolean; citations?: CitationData[]; citationScope?: { conversationId: string; messageId: string } }) => {
+
+/**
+ * Split accumulated streaming markdown at the last blank line that sits
+ * OUTSIDE a fenced code block. Everything before it is stable (it can never
+ * change as more text streams in) and everything after it is the active tail.
+ * Content below the minimum length is left unsplit — the memoization only
+ * pays off once the stable prefix is large.
+ *
+ * Content containing a link/footnote reference definition is never split:
+ * reference definitions are document-scoped (a `[use]` binds to its
+ * `[ref]: url` wherever that line sits), and the two segments are parsed by
+ * independent ReactMarkdown instances, so a boundary between a use and its
+ * definition silently breaks the link regardless of how block-safe the blank
+ * line is.
+ */
+const HOT_TAIL_MIN_LENGTH = 2_000;
+/** Tail-segment outline-id offset; stable ids stay below it (see ai-message-outline). */
+const HOT_TAIL_SEQ_BASE = 100_000;
+/** CommonMark link reference definition: up to 3 spaces indent, [label], colon.
+ * A definition indented ≥4 spaces inside a deeply nested list escapes this
+ * check; that residual case re-enables the original cross-segment bug only
+ * for that layout. */
+const LINK_REFERENCE_DEFINITION = /^ {0,3}\[[^\]\n]+\]:/;
+
+export function splitMarkdownAtSafeBoundary(content: string): { stable: string; tail: string } {
+  if (content.length <= HOT_TAIL_MIN_LENGTH) return { stable: '', tail: content };
+  const LIST_MARKER = /^(\s+|[-*+]\s|\d{1,9}[.)]\s)/;
+  let inFence = false;
+  let fenceChar = '';
+  let fenceLength = 0;
+  let hasReferenceDefinition = false;
+  let lastBoundary = -1;
+  let lineStart = 0;
+  const boundaries: number[] = [];
+  const lineTexts: string[] = [];
+  const lineOffsets: number[] = [];
+  for (let i = 0; i <= content.length; i += 1) {
+    if (i === content.length || content[i] === '\n') {
+      const line = content.slice(lineStart, i);
+      lineTexts.push(line);
+      lineOffsets.push(lineStart);
+      const trimmed = line.trimStart();
+      const fenceMatch = /^(`{3,}|~{3,})/.exec(trimmed);
+      if (fenceMatch) {
+        const marker = fenceMatch[1];
+        if (!inFence) {
+          inFence = true;
+          fenceChar = marker[0];
+          fenceLength = marker.length;
+        } else if (marker[0] === fenceChar && marker.length >= fenceLength && !trimmed.slice(marker.length).trim()) {
+          // CommonMark closing fence: same char, at least as long, no info string.
+          inFence = false;
+        }
+      } else {
+        if (!inFence) {
+          if (LINK_REFERENCE_DEFINITION.test(line)) hasReferenceDefinition = true;
+          else if (line.trim() === '') boundaries.push(i + 1);
+        }
+      }
+      lineStart = i + 1;
+    }
+  }
+  if (hasReferenceDefinition) return { stable: '', tail: content };
+  // A blank line separates blocks only when the next line starts a new block.
+  // Indented or list-marker next lines continue the previous construct — but
+  // only when a list item actually preceded the blank line (a paragraph
+  // followed by "1. Item" STARTS a list, which is a safe split point).
+  // Blockquote markers hide list context from the raw tests (`> 2. Item`),
+  // so both sides are also tested with the markers stripped; and a quote line
+  // following a list item or another quote line may be lazy continuation
+  // inside that construct, so those boundaries are vetoed too.
+  const startsListMarker = (line: string) => LIST_MARKER.test(line);
+  const isQuoteLine = (line: string) => /^\s*>/.test(line);
+  const listMarkerThroughQuote = (line: string) => LIST_MARKER.test(line.replace(/^\s*(?:>\s?)+/, ''));
+  for (let b = boundaries.length - 1; b >= 0; b -= 1) {
+    const boundary = boundaries[b];
+    const blankLineIndex = lineOffsets.findIndex((offset, index) => offset >= 0 && offset + (lineTexts[index]?.length ?? 0) + 1 === boundary);
+    if (blankLineIndex < 0) continue;
+    const nextNonBlank = lineTexts.slice(blankLineIndex + 1).find((candidate) => candidate.trim() !== '');
+    if (nextNonBlank === undefined) {
+      lastBoundary = boundary;
+      break;
+    }
+    const prevNonBlank = [...lineTexts.slice(0, blankLineIndex)].reverse().find((candidate) => candidate.trim() !== '');
+    const nextContinuesList = startsListMarker(nextNonBlank) || listMarkerThroughQuote(nextNonBlank);
+    if (!nextContinuesList && !(isQuoteLine(nextNonBlank) && prevNonBlank !== undefined && (startsListMarker(prevNonBlank.trimEnd()) || isQuoteLine(prevNonBlank)))) {
+      lastBoundary = boundary;
+      break;
+    }
+    const prevContinuesList = prevNonBlank !== undefined && (startsListMarker(prevNonBlank.trimEnd()) || listMarkerThroughQuote(prevNonBlank));
+    if (!prevContinuesList) {
+      lastBoundary = boundary;
+      break;
+    }
+  }
+  if (lastBoundary <= 0) return { stable: '', tail: content };
+  return { stable: content.slice(0, lastBoundary), tail: content.slice(lastBoundary) };
+}
+
+type SegmentOutlineSlot = 'stable' | 'tail';
+
+/**
+ * One markdown segment of a streaming text part. Memoized on its content:
+ * the stable prefix re-renders (reparses) only when a new block boundary
+ * completes, never per token. Outline overrides are applied per segment with
+ * a distinct id sequence base so anchors cannot collide across segments.
+ */
+const MarkdownSegment = memo(
+  function MarkdownSegment({
+    content,
+    components,
+    hasInline,
+    outlineKey,
+    seqBase,
+    slot,
+    onSegmentHeadings,
+  }: {
+    content: string;
+    components: React.ComponentProps<typeof ReactMarkdown>['components'];
+    hasInline: boolean;
+    outlineKey?: string;
+    seqBase: number;
+    slot: SegmentOutlineSlot;
+    onSegmentHeadings?: (slot: SegmentOutlineSlot, headings: MarkdownHeadingInfo[]) => void;
+  }) {
+    const collectedRef = useRef<MarkdownHeadingInfo[]>([]);
+    collectedRef.current = [];
+    let componentsForRender = components;
+    if (outlineKey) {
+      componentsForRender = applyOutlineHeadingOverrides(components as Record<string, unknown>, outlineKey, collectedRef.current, { seqBase });
+    }
+    useEffect(() => {
+      if (!outlineKey) return;
+      onSegmentHeadings?.(slot, collectedRef.current);
+    }, [content, outlineKey, onSegmentHeadings, slot]);
+    return (
+      <ReactMarkdown remarkPlugins={remarkPlugins} rehypePlugins={hasInline ? rehypeCitationPlugins : undefined} components={componentsForRender}>
+        {content}
+      </ReactMarkdown>
+    );
+  },
+  (prev, next) =>
+    prev.content === next.content &&
+    prev.components === next.components &&
+    prev.hasInline === next.hasInline &&
+    prev.seqBase === next.seqBase &&
+    prev.slot === next.slot &&
+    prev.outlineKey === next.outlineKey &&
+    prev.onSegmentHeadings === next.onSegmentHeadings,
+);
+
+const TextPartRenderer = ({ content, showCursor, citations, citationScope, outlineKey, onOutlineHeadings }: { content: string; showCursor?: boolean; citations?: CitationData[]; citationScope?: { conversationId: string; messageId: string }; outlineKey?: string; onOutlineHeadings?: (headings: MarkdownHeadingInfo[]) => void }) => {
   // Split citations: those with a reference AND a matching [n] marker in the text are inline
   // (rendered at [n] positions by rehype), all others are trailing (rendered as badges after text).
   // This ensures citations with a reference but no matching marker are not silently lost.
@@ -471,6 +686,11 @@ const TextPartRenderer = ({ content, showCursor, citations, citationScope }: { c
   const citationMapRef = useRef(citationMap);
   citationMapRef.current = citationMap;
 
+  // citationScope arrives as a fresh object literal per upstream render; keep
+  // it behind a ref so the memoized segments' `components` identity is stable.
+  const citationScopeRef = useRef(citationScope);
+  citationScopeRef.current = citationScope;
+
   // Build components with cite handler for inline citations
   const componentsWithCite = useMemo(() => {
     if (!hasInline) return markdownComponents;
@@ -481,16 +701,42 @@ const TextPartRenderer = ({ content, showCursor, citations, citationScope }: { c
         if (ref == null) return null;
         const c = citationMapRef.current.get(ref);
         if (!c) return <>[{ref}]</>;
-        return <SingleInlineCitation citation={c} citationScope={citationScope} />;
+        return <SingleInlineCitation citation={c} citationScope={citationScopeRef.current} />;
       },
     };
-  }, [citationScope, hasInline]);
+  }, [hasInline]);
 
+  // Hot-tail split: the stable prefix re-parses only when a block boundary
+  // completes; the tail re-parses per drain tick but stays bounded by the
+  // last (incomplete) block.
+  const { stable, tail } = useMemo(() => splitMarkdownAtSafeBoundary(content), [content]);
+
+  // Outline registration across the two segments: each segment reports its
+  // own headings; the parent merges stable-then-tail and publishes the DOM-
+  // verified set. Both callbacks read props through refs and are created
+  // once, so the memoized stable segment is never invalidated by upstream
+  // render churn (reviewer finding: per-frame callback identity defeated the
+  // segment memo on the main chat surface).
+  const onOutlineHeadingsRef = useRef(onOutlineHeadings);
+  onOutlineHeadingsRef.current = onOutlineHeadings;
+  const segmentHeadingsRef = useRef<{ stable: MarkdownHeadingInfo[]; tail: MarkdownHeadingInfo[] }>({ stable: [], tail: [] });
+  const publishSegmentHeadings = useCallback(() => {
+    const merged = [...segmentHeadingsRef.current.stable, ...segmentHeadingsRef.current.tail]
+      .filter((heading) => document.getElementById(heading.id) !== null);
+    onOutlineHeadingsRef.current?.(merged);
+  }, []);
+  const handleSegmentHeadings = useCallback((slot: SegmentOutlineSlot, headings: MarkdownHeadingInfo[]) => {
+    segmentHeadingsRef.current[slot] = headings;
+    publishSegmentHeadings();
+  }, [publishSegmentHeadings]);
+
+  const hasStable = stable.length > 0;
   return (
     <div className={cn(showCursor && "[&>*:last-child]:after:content-[''] [&>*:last-child]:after:inline-block [&>*:last-child]:after:w-[3px] [&>*:last-child]:after:h-4 [&>*:last-child]:after:bg-foreground [&>*:last-child]:after:ml-0.5 [&>*:last-child]:after:animate-pulse [&>*:last-child]:after:align-text-bottom", hasTrailing && '[&>*:nth-last-child(2)]:not(:where(ul, ol, pre)):inline [&>*:nth-last-child(2)]:not(:where(ul, ol, pre)):mb-0')}>
-      <ReactMarkdown remarkPlugins={remarkPlugins} rehypePlugins={hasInline ? rehypeCitationPlugins : undefined} components={componentsWithCite}>
-        {content}
-      </ReactMarkdown>
+      {hasStable && (
+        <MarkdownSegment content={stable} components={componentsWithCite} hasInline={hasInline} outlineKey={outlineKey} seqBase={0} slot='stable' onSegmentHeadings={outlineKey ? handleSegmentHeadings : undefined} />
+      )}
+      <MarkdownSegment content={tail} components={componentsWithCite} hasInline={hasInline} outlineKey={outlineKey} seqBase={HOT_TAIL_SEQ_BASE} slot='tail' onSegmentHeadings={outlineKey ? handleSegmentHeadings : undefined} />
       {hasTrailing && <CitationsInline citations={trailingCitations} citationScope={citationScope} />}
     </div>
   );
@@ -518,7 +764,7 @@ const SingleInlineCitation = ({ citation: c, citationScope }: { citation: Citati
           <InlineCitationCarousel>
             <InlineCitationCarouselContent>
               <InlineCitationCarouselItem>
-                <InlineCitationSource title={c.source || tCommon('ai.citations.defaultSource')} description={c.page ? tCommon('ai.citations.page', { page: c.page }) : undefined} />
+                <InlineCitationSource title={getCitationDisplayName(c, tCommon('ai.citations.defaultSource'))} description={c.page ? tCommon('ai.citations.page', { page: c.page }) : undefined} />
                 {c.pageContent && <InlineCitationQuote>{c.pageContent}</InlineCitationQuote>}
               </InlineCitationCarouselItem>
             </InlineCitationCarouselContent>
@@ -545,7 +791,7 @@ const CitationsInline = ({ citations, citationScope }: { citations: CitationData
   };
 
   return (
-    <span className='inline-flex flex-wrap gap-1 ml-1'>
+    <span className='inline-flex flex-wrap gap-0 ml-1'>
       {citations.map((c, i) => (
         <InlineCitation key={i}>
           <InlineCitationCard>
@@ -554,7 +800,7 @@ const CitationsInline = ({ citations, citationScope }: { citations: CitationData
               <InlineCitationCarousel>
                 <InlineCitationCarouselContent>
                   <InlineCitationCarouselItem>
-                    <InlineCitationSource title={c.source || tCommon('ai.citations.defaultSource')} description={c.page ? tCommon('ai.citations.page', { page: c.page }) : undefined} />
+                    <InlineCitationSource title={getCitationDisplayName(c, tCommon('ai.citations.defaultSource'))} description={c.page ? tCommon('ai.citations.page', { page: c.page }) : undefined} />
                     {c.pageContent && <InlineCitationQuote>{c.pageContent}</InlineCitationQuote>}
                   </InlineCitationCarouselItem>
                 </InlineCitationCarouselContent>
@@ -594,7 +840,7 @@ const CitationPartRenderer = ({ citation, citationScope }: { citation: CitationP
 );
 
 // Code Part
-const CodePartRenderer = ({ content, language, filename }: { content: string; language: string; filename?: string }) => <CodeArtifact code={content} language={language as BundledLanguage} filename={filename} className='my-2' />;
+const CodePartRenderer = ({ content, language, filename, isStreaming }: { content: string; language: string; filename?: string; isStreaming?: boolean }) => <CodeArtifact code={content} language={language as BundledLanguage} filename={filename} isStreaming={isStreaming} className='my-2' />;
 
 const AgentActivityPartRenderer = ({ part, isStreaming }: { part: AgentActivityPart; isStreaming: boolean }) => (
   <div className='flex min-h-8 items-center gap-2 text-sm text-muted-foreground'>
@@ -715,14 +961,7 @@ const PlanPartRenderer = ({ title, description, steps, status = 'pending', isStr
 };
 
 /** Turns "hello_world-foo" into "Hello World Foo" */
-const formatLabel = (raw: string): string => {
-  if (!raw) return '';
-  return raw
-    .replace(/[_-]+/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim()
-    .replace(/\b\w/g, (c) => c.toUpperCase());
-};
+export { formatLabel };
 
 // Checkpoint Part
 const CheckpointPartRenderer = ({ label }: { label: string }) => (
@@ -739,7 +978,7 @@ const ToolActivityPartRenderer = ({ part, isStreaming }: { part: ToolActivityPar
     <div className='flex min-h-8 items-center gap-2 text-sm text-muted-foreground'>
       {isStreaming && part.status === 'running' && <Loader2 className='size-4 animate-spin text-primary' aria-hidden='true' />}
       {failed && <XCircle className='size-4 text-destructive' aria-hidden='true' />}
-      {(part.status === 'completed' || part.status === 'stopped') && <CheckCircle2 className='size-4 text-primary' aria-hidden='true' />}
+      {(part.status === 'completed' || part.status === 'stopped') && <CheckCircle2 className='size-4 text-green-500' aria-hidden='true' />}
       <span className='font-medium text-foreground'>{label}</span>
       {part.summary && <span className='truncate'>- {part.summary}</span>}
       {part.durationMs !== undefined && <span className='ml-auto tabular-nums'>{part.durationMs} ms</span>}
@@ -758,7 +997,7 @@ const TaskPartRenderer = ({ title, items, status, isStreaming = false, activity,
     const resolvedStatus = stepStatus ?? (status === 'completed' ? 'completed' : isStreaming && index === (activity?.length ?? 0) - 1 ? 'running' : 'completed');
     if (resolvedStatus === 'failed') return <XCircle className='size-4 shrink-0 text-destructive' />;
     if (resolvedStatus === 'running') return <Loader2 className='size-4 shrink-0 animate-spin text-running motion-reduce:animate-none' />;
-    return <CheckCircle2 className='size-4 shrink-0 text-primary' />;
+    return <CheckCircle2 className='size-4 shrink-0 text-green-500' />;
   };
 
   return (
@@ -847,127 +1086,6 @@ const SourcesPartRenderer = ({ sources }: { sources: SourceItemData[] }) => (
 );
 
 // Chart Part
-const ChartPartRenderer = ({ title, kind, data, config, xAxisKey, yAxisKey, nameKey, zAxisKey, stacked = false, layout = 'horizontal', innerRadius = 0, showLegend = true, showGrid = true, series }: ChartPart) => {
-  const { t: tCommon } = useModuleTranslation('common');
-  const hasData = Array.isArray(data) && data.length > 0;
-
-  if (!hasData) {
-    return <div className='my-4 rounded-xl border bg-card p-4 text-sm text-muted-foreground'>{tCommon('ai.chart.noData')}</div>;
-  }
-
-  const showPieLegend = showLegend && kind === 'pie';
-
-  const chartContent = (() => {
-    switch (kind) {
-      case 'line':
-        return (
-          <LineChart accessibilityLayer data={data}>
-            {showGrid && <CartesianGrid vertical={false} />}
-            <XAxis dataKey={xAxisKey} tickLine={false} tickMargin={10} />
-            <YAxis dataKey={yAxisKey} />
-            <ChartTooltip content={<ChartTooltipContent hideLabel />} />
-            {showLegend && <ChartLegend content={<ChartLegendContent />} />}
-            {series.map((s) => (
-              <Line key={s.dataKey} type='monotone' dataKey={s.dataKey} stroke={`var(--color-${s.dataKey})`} dot={false} />
-            ))}
-          </LineChart>
-        );
-      case 'bar':
-        return (
-          <BarChart accessibilityLayer data={data} layout={layout}>
-            {showGrid && <CartesianGrid vertical={layout !== 'vertical'} horizontal={layout === 'vertical'} />}
-            {layout === 'vertical' ? <XAxis type='number' tickLine={false} axisLine={false} /> : <XAxis dataKey={xAxisKey} tickLine={false} tickMargin={10} />}
-            {layout === 'vertical' ? <YAxis type='category' dataKey={xAxisKey} tickLine={false} axisLine={false} width={90} /> : <YAxis dataKey={yAxisKey} />}
-            <ChartTooltip content={<ChartTooltipContent hideLabel />} />
-            {showLegend && <ChartLegend content={<ChartLegendContent />} />}
-            {series.map((s) => (
-              <Bar key={s.dataKey} dataKey={s.dataKey} fill={`var(--color-${s.dataKey})`} radius={4} minPointSize={2} stackId={stacked ? 'stack' : undefined} />
-            ))}
-          </BarChart>
-        );
-      case 'area':
-        return (
-          <AreaChart accessibilityLayer data={data}>
-            {showGrid && <CartesianGrid vertical={false} />}
-            <XAxis dataKey={xAxisKey} tickLine={false} tickMargin={10} />
-            <YAxis dataKey={yAxisKey} />
-            <ChartTooltip content={<ChartTooltipContent hideLabel />} />
-            {showLegend && <ChartLegend content={<ChartLegendContent />} />}
-            {series.map((s) => (
-              <Area key={s.dataKey} type='monotone' dataKey={s.dataKey} fill={`var(--color-${s.dataKey})`} stroke={`var(--color-${s.dataKey})`} stackId={stacked ? 'stack' : undefined} />
-            ))}
-          </AreaChart>
-        );
-      case 'pie':
-        return (
-          <PieChart accessibilityLayer>
-            <ChartTooltip content={<ChartTooltipContent hideLabel />} />
-            {showPieLegend && <ChartLegend content={<ChartLegendContent />} />}
-            <Pie data={data} dataKey={series[0]?.dataKey || yAxisKey || 'value'} nameKey={nameKey || xAxisKey} innerRadius={innerRadius} outerRadius={90}>
-              {data.map((entry, index) => {
-                const colorIndex = (index % 5) + 1;
-                const fill = (entry as any).fill || `var(--chart-${colorIndex})`;
-                return <Cell key={`slice-${index}`} fill={fill} />;
-              })}
-              {innerRadius > 0 && <Label position='center'>{title || tCommon('ai.chart.donutLabel')}</Label>}
-            </Pie>
-          </PieChart>
-        );
-      case 'scatter':
-        return (
-          <ScatterChart accessibilityLayer>
-            {showGrid && <CartesianGrid />}
-            <XAxis type='number' dataKey={xAxisKey} name={xAxisKey} />
-            <YAxis type='number' dataKey={yAxisKey || series[0]?.dataKey} name={yAxisKey || series[0]?.dataKey} />
-            {zAxisKey && <ZAxis type='number' dataKey={zAxisKey} range={[60, 200]} />}
-            <ChartTooltip content={<ChartTooltipContent hideLabel />} />
-            {showLegend && <ChartLegend content={<ChartLegendContent />} />}
-            <Scatter name={title || tCommon('ai.chart.scatterSeries')} data={data} fill={`var(--color-${series[0]?.dataKey || 'chart'})`} />
-          </ScatterChart>
-        );
-      case 'composed':
-        return (
-          <ComposedChart accessibilityLayer data={data}>
-            {showGrid && <CartesianGrid vertical={false} />}
-            <XAxis dataKey={xAxisKey} tickLine={false} tickMargin={10} />
-            <YAxis dataKey={yAxisKey} />
-            <ChartTooltip content={<ChartTooltipContent hideLabel />} />
-            {showLegend && <ChartLegend content={<ChartLegendContent />} />}
-            {series.map((s) => {
-              const resolvedKind = s.kind || 'bar';
-              if (resolvedKind === 'line') {
-                return <Line key={s.dataKey} type='monotone' dataKey={s.dataKey} stroke={`var(--color-${s.dataKey})`} dot={false} />;
-              }
-              if (resolvedKind === 'area') {
-                return <Area key={s.dataKey} type='monotone' dataKey={s.dataKey} fill={`var(--color-${s.dataKey})`} stroke={`var(--color-${s.dataKey})`} />;
-              }
-              return <Bar key={s.dataKey} dataKey={s.dataKey} fill={`var(--color-${s.dataKey})`} radius={4} minPointSize={2} />;
-            })}
-          </ComposedChart>
-        );
-      default:
-        return <div className='flex items-center justify-center h-full text-destructive text-sm'>Unknown chart kind: {kind}</div>;
-    }
-  })();
-
-  return (
-    <div className='my-4 rounded-xl border bg-card text-card-foreground shadow w-full' role='figure' aria-label={title || tCommon('ai.chart.a11yLabel')}>
-      {title && (
-        <div className='p-4 border-b'>
-          <h3 className='font-semibold leading-none tracking-tight'>{title}</h3>
-        </div>
-      )}
-      <div className='p-4'>
-        <ChartContainer config={config} className='aspect-auto h-[250px] w-full min-w-0'>
-          <ResponsiveContainer width='100%' height='100%'>
-            {chartContent}
-          </ResponsiveContainer>
-        </ChartContainer>
-      </div>
-    </div>
-  );
-};
-
 // Sandbox Part - Python code execution
 const SandboxPartRenderer = ({ code, output, error, outputAvailable }: { code: string; output: string; error: string; outputAvailable: boolean }) => {
   const { t: tCommon } = useModuleTranslation('common');

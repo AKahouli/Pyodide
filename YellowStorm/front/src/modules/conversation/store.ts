@@ -7,9 +7,18 @@ import { ErrorCode } from '@/lib/error-codes';
 import { useModelsStore } from '@/modules/models/store';
 import * as api from './api';
 import { getStreamErrorMessage } from './utils';
+import { insertMessageChronologically } from './utils/message-order';
 import { conversationStreamService } from './stream';
 import { translateConversation } from './translation';
-import type { Conversation, ConversationSummary, Message, StreamingComponent, SendMessagePayload, CreateReportPayload, StreamStartEvent, StreamChunkEvent, StreamCompleteEvent, StreamErrorEvent, ConversationNameGeneratedEvent, SSEConnectionStatus, MessageCreatedEvent, MessageUpdatedEvent } from './types';
+import { computeFrontendLatency, mergeLatencyMetrics, type FrontendPaintComputation } from './utils/latency-paint';
+import { streamMetrics } from './utils/stream-metrics';
+import { createLatencyPaintController, type PendingLatencyPaint } from './store-latency';
+import type { Conversation, ConversationSummary, Message, MessageComponent, StreamingComponent, SendMessagePayload, CreateReportPayload, StreamStartEvent, StreamChunkEvent, StreamCompleteEvent, StreamErrorEvent, ConversationNameGeneratedEvent, SSEConnectionStatus, MessageCreatedEvent, MessageUpdatedEvent, StreamResyncRequiredEvent, StreamChunkLatencyData, ActiveStreamSnapshot } from './types';
+
+export type { PendingLatencyPaint };
+
+/** Shared first-paint lifecycle for the latency instrumentation. */
+const latencyPaint = createLatencyPaintController();
 
 export const DEFAULT_CONVERSATIONS_LIMIT = 12;
 const DEFAULT_MESSAGES_LIMIT = 5;
@@ -20,6 +29,23 @@ let currentStreamRevision = 0;
 let currentRevisionStreamKey: string | null = null;
 let receivedCurrentStreamStart = false;
 let pendingRecoveryChunks: BufferedStreamChunk[] = [];
+/**
+ * Forced-resync hold: while a `stream_resync_required` repair fetches the
+ * authoritative snapshot, arriving deltas of the affected conversation are
+ * held here instead of being applied to the (known-stale) live state, then
+ * applied only when newer than the installed snapshot.
+ */
+let resyncHoldActive = false;
+let resyncHoldConversationId: string | null = null;
+let resyncHeldChunks: BufferedStreamChunk[] = [];
+let forcedResyncInFlight = false;
+let missingStartRecoveryInFlight = false;
+/**
+ * Backlog caps: the snapshot repair supersedes anything beyond these bounds,
+ * so the recovery queues can never grow with a long-running stream.
+ */
+const MAX_PENDING_RECOVERY_CHUNKS = 500;
+const MAX_RESYNC_HELD_CHUNKS = 500;
 let pendingStreamReconcileTimer: ReturnType<typeof setTimeout> | null = null;
 let pendingStreamReconcileAttempts = 0;
 let pendingStreamReconcileInFlight = false;
@@ -33,6 +59,15 @@ type BufferedStreamChunk = {
   revision?: number;
 };
 
+/**
+ * Attach the browser-computed sixth latency metric to a persisted message.
+ * Never overwrites an already-present frontend value. Delegates to the shared
+ * controller; kept as a wrapper for the message merge call sites.
+ */
+function withPendingLatency(message: Message): Message {
+  return latencyPaint.mergeIntoMessage(message);
+}
+
 // ===== Streaming Helper Functions =====
 
 /** Cached streaming state for conversations that are streaming in the background. */
@@ -42,6 +77,12 @@ interface CachedStreamingState {
   streamingComponents: StreamingComponent[];
   isAwaitingFirstChunk: boolean;
 }
+
+/**
+ * Runtime-only first-paint tracking for the latency instrumentation.
+ * Set when the one-time latency envelope chunk arrives; never persisted.
+ * The lifecycle lives in ./store-latency and is shared with the store actions.
+ */
 
 /**
  * Apply an array of chunk actions to a components array, returning a new array.
@@ -79,45 +120,67 @@ export function applyChunksToComponents(
 }
 
 /**
- * Streaming chunk queue with throttled drain.
- * Chunks arrive fast from SSE but are applied ONE at a time at a controlled
- * pace, producing a smooth word-by-word typewriter effect.
- * If the queue grows too large the drain speed increases to prevent lag.
+ * Streaming chunk queue with frame-oriented coalescing.
+ * Chunks arrive fast from SSE; they are applied in ONE store transaction per
+ * animation frame (per-frame batching coalesces consecutive deltas to the
+ * same component). Hidden tabs have no RAF, so a coarse timer takes over and
+ * the queue stays bounded: on overflow the backlog is dropped and canonical
+ * state is refetched instead of freezing the tab with a synchronous flush.
  */
+const MAX_QUEUED_CHUNKS = 500;
+const HIDDEN_TAB_FLUSH_INTERVAL_MS = 250;
+
 class StreamingBuffer {
   private queue: BufferedStreamChunk[] = [];
-  private drainTimer: ReturnType<typeof setTimeout> | null = null;
+  private scheduled = false;
+  private rafId: number | null = null;
+  private hiddenTimer: ReturnType<typeof setTimeout> | null = null;
   private flushCallback: ((chunks: BufferedStreamChunk[]) => void) | null = null;
-  private readonly BASE_INTERVAL_MS = 30; // Base ms between each chunk render
+  private overflowCallback: (() => void) | null = null;
 
   setFlushCallback(callback: (chunks: BufferedStreamChunk[]) => void) {
     this.flushCallback = callback;
   }
 
+  /** Invoked when the bounded queue overflows; the store reconciles from canonical state. */
+  setOverflowCallback(callback: () => void) {
+    this.overflowCallback = callback;
+  }
+
   addChunk(action: 'add' | 'update' | 'delete', component: StreamingComponent, revision?: number) {
+    streamMetrics.recordQueueEnqueue();
     this.queue.push({ action, component, revision });
 
-    // Safety cap: if queue grew too large (e.g. tab was backgrounded), flush everything
-    if (this.queue.length > 500) {
-      this.flush();
+    // Hidden-tab safety cap: rather than an unbounded synchronous flush (the
+    // old >500 behavior), drop the backlog instead of freezing the tab. The
+    // stream continues merging onto the retained tail; there is no mid-stream
+    // replay of the dropped span — completion reconciliation restores the
+    // canonical persisted message.
+    if (this.queue.length > MAX_QUEUED_CHUNKS) {
+      this.queue = [];
+      this.cancelScheduledFlush();
+      const overflow = this.overflowCallback;
+      if (overflow) overflow();
       return;
     }
 
-    this.scheduleDrain();
+    this.scheduleFlush();
   }
 
-  /** Synchronously drain all remaining chunks (used on stream end). */
+  /** Synchronously drain all remaining chunks (used on stream end / terminal events). */
   flush() {
-    this.cancelDrain();
+    this.cancelScheduledFlush();
     if (this.queue.length > 0 && this.flushCallback) {
       const chunks = this.queue.splice(0);
+      const startedAt = performance.now();
       this.flushCallback(chunks);
+      streamMetrics.recordQueueFlush(chunks.length, performance.now() - startedAt, 1);
     }
   }
 
   clear() {
     this.queue = [];
-    this.cancelDrain();
+    this.cancelScheduledFlush();
   }
 
   discardThrough(revision: number) {
@@ -126,41 +189,288 @@ class StreamingBuffer {
 
   // --- internals ---
 
-  private scheduleDrain() {
-    if (this.drainTimer || this.queue.length === 0) return;
-    this.drainTimer = setTimeout(() => this.drainOne(), this.getDrainInterval());
-  }
-
-  /** Adaptive interval: speed up when queue is building to avoid falling behind. */
-  private getDrainInterval(): number {
-    const len = this.queue.length;
-    if (len > 20) return 5;
-    if (len > 10) return 15;
-    return this.BASE_INTERVAL_MS;
-  }
-
-  private drainOne() {
-    this.drainTimer = null;
-    if (this.queue.length === 0 || !this.flushCallback) return;
-
-    // Batch-drain when queue is large to reduce React re-render count
-    const batchSize = this.queue.length > 20 ? 5 : this.queue.length > 10 ? 3 : 1;
-    const chunks = this.queue.splice(0, batchSize);
-    this.flushCallback(chunks);
-
-    // Continue draining if more queued
-    this.scheduleDrain();
-  }
-
-  private cancelDrain() {
-    if (this.drainTimer) {
-      clearTimeout(this.drainTimer);
-      this.drainTimer = null;
+  private scheduleFlush() {
+    if (this.scheduled || this.queue.length === 0) return;
+    this.scheduled = true;
+    const hidden = typeof document !== 'undefined' && document.hidden;
+    if (hidden) {
+      // RAF is suspended while hidden; drain on a coarse timer instead.
+      this.hiddenTimer = setTimeout(() => {
+        this.hiddenTimer = null;
+        this.scheduled = false;
+        this.flushQueued();
+      }, HIDDEN_TAB_FLUSH_INTERVAL_MS);
+    } else if (typeof requestAnimationFrame === 'function') {
+      this.rafId = requestAnimationFrame(() => {
+        this.rafId = null;
+        this.scheduled = false;
+        this.flushQueued();
+      });
+    } else {
+      this.hiddenTimer = setTimeout(() => {
+        this.hiddenTimer = null;
+        this.scheduled = false;
+        this.flushQueued();
+      }, 0);
     }
+  }
+
+  private flushQueued() {
+    if (this.queue.length === 0 || !this.flushCallback) return;
+    const chunks = this.queue.splice(0);
+    const startedAt = performance.now();
+    this.flushCallback(chunks);
+    streamMetrics.recordQueueFlush(chunks.length, performance.now() - startedAt, 1);
+  }
+
+  private cancelScheduledFlush() {
+    if (this.rafId !== null) {
+      cancelAnimationFrame(this.rafId);
+      this.rafId = null;
+    }
+    if (this.hiddenTimer) {
+      clearTimeout(this.hiddenTimer);
+      this.hiddenTimer = null;
+    }
+    this.scheduled = false;
   }
 }
 
 const streamingBuffer = new StreamingBuffer();
+
+/** Guards against overlapping snapshot repairs when overflow fires repeatedly. */
+let streamSnapshotRepairInFlight = false;
+/**
+ * Bumped by every authoritative snapshot install (forced resync, missing-start
+ * recovery). Older in-flight snapshot fetches compare epochs so a stale fetch
+ * resolving late cannot overwrite a fresher installed state.
+ */
+let snapshotInstallEpoch = 0;
+
+/**
+ * Client-metrics window generation: bumped on every send. A deferred
+ * completion snapshot from the previous turn is dropped when the generation
+ * moved on, so it cannot erase the new turn's freshly recorded counters.
+ */
+let clientMetricsGeneration = 0;
+/**
+ * Generation of the turn whose latency envelope was captured mid-stream —
+ * stable across the completion boundary, unlike the streaming ids which are
+ * nulled as soon as the completion event lands.
+ */
+let clientMetricsTurnGeneration = 0;
+/** Grace window that lets the post-completion code highlight reach the report. */
+const CLIENT_METRICS_HIGHLIGHT_GRACE_MS = 250;
+
+/**
+ * Repair the dropped span mid-stream: adopt the server's active-stream snapshot
+ * (the same canonical component buffer the cold-attach path uses) instead of
+ * leaving a gap that only completion reconciliation would heal.
+ */
+async function repairStreamingComponentsFromSnapshot(conversationId: string): Promise<void> {
+  const fetchEpoch = snapshotInstallEpoch;
+  let snapshot: ActiveStreamSnapshot | null = null;
+  try {
+    snapshot = await api.fetchActiveStream(conversationId);
+  } catch (err) {
+    console.warn('[ConversationStore] active-stream snapshot repair failed; falling back to canonical refetch', err);
+  }
+  const state = useConversationStore.getState();
+  if (!snapshot || state.currentConversationId !== conversationId || !state.isStreaming || state.streamingMessageId !== snapshot.messageId) {
+    // Stream finished or moved on while fetching — a canonical refetch covers it.
+    void state.fetchMessages(conversationId);
+    return;
+  }
+  if (snapshotInstallEpoch !== fetchEpoch) {
+    // A newer authoritative snapshot installed while this fetch was in
+    // flight; it already supersedes this (older) repair snapshot.
+    return;
+  }
+  const snapshotRevision = snapshot.revision ?? 0;
+  streamingBuffer.discardThrough(snapshotRevision);
+  if (currentRevisionStreamKey === `${conversationId}:${snapshot.messageId}`) {
+    currentStreamRevision = Math.max(currentStreamRevision, snapshotRevision);
+  }
+  // Merge instead of replace: the snapshot is the canonical base for every
+  // component it contains, while components created by chunks that arrived
+  // during the fetch only exist locally and keep their applied state.
+  const snapshotIds = new Set(snapshot.components.map((component) => component.id));
+  const localOnly = state.streamingComponents.filter((component) => !snapshotIds.has(component.id));
+  useConversationStore.setState({
+    streamingComponents: [...snapshot.components, ...localOnly],
+  });
+}
+
+streamingBuffer.setOverflowCallback(() => {
+  // Canonical mid-stream resync: the queue dropped older chunks, so reconcile
+  // from the server's snapshot (same adoption path as a cold attach).
+  const conversationId = useConversationStore.getState().currentConversationId;
+  if (!conversationId || streamSnapshotRepairInFlight) return;
+  streamSnapshotRepairInFlight = true;
+  void repairStreamingComponentsFromSnapshot(conversationId).finally(() => {
+    streamSnapshotRepairInFlight = false;
+  });
+});
+
+/** Standard live flush: batch-apply queued chunks in one store commit per frame. */
+function attachStreamingFlushCallback(): void {
+  streamingBuffer.setFlushCallback((chunks) => {
+    useConversationStore.setState((s) => {
+      const components = applyChunksToComponents(s.streamingComponents, chunks);
+      const nextState: Partial<ConversationState> = { streamingComponents: components };
+      if (components.length > 0 && s.isAwaitingFirstChunk) {
+        nextState.isAwaitingFirstChunk = false; // hide loader once chunks are renderable
+        nextState.awaitingConversationId = null;
+      }
+      return nextState;
+    });
+  });
+}
+
+/**
+ * Install a fetched active-stream snapshot as the canonical live state at its
+ * own revision: deltas at or below the snapshot revision are discarded and
+ * only newer ones apply on top. `receivedCurrentStreamStart` becomes true so
+ * revisioned chunks stop diverting into the recovery backlog. Used by both
+ * the missing-start recovery (cold send that missed `stream_start`) and the
+ * forced resync (proven replay gap).
+ */
+function installActiveStreamSnapshot(
+  conversationId: string,
+  snapshot: ActiveStreamSnapshot,
+  heldChunks: BufferedStreamChunk[],
+  options: { replaceComponents: boolean },
+): void {
+  const snapshotRevision = snapshot.revision ?? 0;
+  const snapshotKey = `${conversationId}:${snapshot.messageId}`;
+  if (currentRevisionStreamKey !== snapshotKey) currentStreamRevision = 0;
+  currentRevisionStreamKey = snapshotKey;
+  currentStreamRevision = Math.max(currentStreamRevision, snapshotRevision);
+  receivedCurrentStreamStart = true;
+  streamingBuffer.discardThrough(snapshotRevision);
+
+  const state = useConversationStore.getState();
+  const newerChunks = heldChunks.filter((chunk) => chunk.revision === undefined || chunk.revision > snapshotRevision);
+  let base = snapshot.components;
+  if (!options.replaceComponents) {
+    // Components created by chunks that arrived during the fetch exist only
+    // locally; the snapshot is the canonical base for everything it contains.
+    const snapshotIds = new Set(snapshot.components.map((component) => component.id));
+    base = [...snapshot.components, ...state.streamingComponents.filter((component) => !snapshotIds.has(component.id))];
+  }
+  const components = applyChunksToComponents(base, newerChunks);
+  attachStreamingFlushCallback();
+  snapshotInstallEpoch += 1;
+  useConversationStore.setState({
+    isStreaming: true,
+    streamingConversationId: conversationId,
+    streamingMessageId: snapshot.messageId,
+    pendingAssistantMessageId: snapshot.messageId,
+    streamingComponents: components,
+    ...(components.length > 0 ? { isAwaitingFirstChunk: false, awaitingConversationId: null } : {}),
+  });
+  streamingBuffer.flush();
+}
+
+/**
+ * A revisioned chunk arrived without an observed `stream_start` — the
+ * immediate-send path can lose the start frame to a not-yet-open SSE pipe on
+ * a cold tab. Recover from the server's active-stream snapshot keyed by the
+ * conversation (no message id needed): the snapshot installs at its own
+ * revision and only newer deltas apply, so progressive rendering no longer
+ * depends on the POST ack or the SSE handshake ordering.
+ */
+async function recoverMissingStreamStart(conversationId: string): Promise<void> {
+  if (missingStartRecoveryInFlight) return;
+  // An in-flight fetchMessages hydration owns snapshot recovery for this
+  // conversation: its active-stream install applies the buffered backlog
+  // itself, and a second concurrent fetch here would race it.
+  if (useConversationStore.getState().messagesLoading) return;
+  missingStartRecoveryInFlight = true;
+  try {
+    const snapshot = await api.fetchActiveStream(conversationId).catch((err: unknown) => {
+      console.warn('[ConversationStore] missing-start snapshot recovery failed', err);
+      return null;
+    });
+    const state = useConversationStore.getState();
+    // The start frame arrived (or the view moved on) while fetching: the
+    // normal event paths own the stream now. A failed fetch keeps the bounded
+    // backlog so the next chunk can retry.
+    if (receivedCurrentStreamStart || state.currentConversationId !== conversationId) {
+      pendingRecoveryChunks = [];
+      return;
+    }
+    if (!snapshot || resyncHoldActive) return;
+    // A terminal event (completion/error) settles the stream while the
+    // snapshot is in flight — the terminal state must win, never be
+    // resurrected as a live-looking stream no event will ever finish.
+    if (!state.isStreaming) {
+      pendingRecoveryChunks = [];
+      return;
+    }
+    const trackedMessageId = state.streamingMessageId ?? state.pendingAssistantMessageId;
+    if (trackedMessageId && trackedMessageId !== snapshot.messageId) {
+      // A different (newer) run owns the pipe; its own events are intact.
+      pendingRecoveryChunks = [];
+      return;
+    }
+    const heldChunks = pendingRecoveryChunks;
+    pendingRecoveryChunks = [];
+    installActiveStreamSnapshot(conversationId, snapshot, heldChunks, { replaceComponents: false });
+  } finally {
+    missingStartRecoveryInFlight = false;
+  }
+}
+
+/**
+ * The server proved a replay discontinuity (`stream_resync_required`). For
+ * the currently live run, the ordinary already-live hydration optimization
+ * must not skip the repair: hold arriving deltas, force-install the
+ * authoritative snapshot, then apply only deltas newer than it. Falls back to
+ * the canonical message reload when no local run is being tracked — never a
+ * partial replay over a proven gap.
+ */
+async function forcedResyncActiveStream(conversationId: string): Promise<void> {
+  if (forcedResyncInFlight) return;
+  forcedResyncInFlight = true;
+  resyncHoldActive = true;
+  resyncHoldConversationId = conversationId;
+  try {
+    const initial = useConversationStore.getState();
+    const wasTrackingRun = (initial.streamingMessageId ?? initial.pendingAssistantMessageId) !== null;
+    const snapshot = await api.fetchActiveStream(conversationId).catch((err: unknown) => {
+      console.warn('[ConversationStore] forced resync snapshot fetch failed', err);
+      return null;
+    });
+    resyncHoldActive = false;
+    resyncHoldConversationId = null;
+    const heldChunks = resyncHeldChunks;
+    resyncHeldChunks = [];
+
+    const state = useConversationStore.getState();
+    if (state.currentConversationId !== conversationId) return;
+    if (!snapshot) {
+      void state.fetchMessages(conversationId);
+      return;
+    }
+    const trackedMessageId = state.streamingMessageId ?? state.pendingAssistantMessageId;
+    if (trackedMessageId === snapshot.messageId) {
+      installActiveStreamSnapshot(conversationId, snapshot, heldChunks, { replaceComponents: true });
+      return;
+    }
+    if (!state.isStreaming && !wasTrackingRun) {
+      // Not tracking any run: the canonical reload is the recovery surface
+      // (it hydrates the active run from the same snapshot).
+      void state.fetchMessages(conversationId);
+    }
+    // A different run is already tracked, or the tracked run completed or
+    // moved on while fetching — those own their canonical state; leave them.
+  } finally {
+    resyncHoldActive = false;
+    resyncHoldConversationId = null;
+    forcedResyncInFlight = false;
+  }
+}
 
 function cancelPendingStreamReconciliation(): void {
   if (pendingStreamReconcileTimer) clearTimeout(pendingStreamReconcileTimer);
@@ -178,8 +488,8 @@ function schedulePendingStreamReconciliation(reconcile: () => Promise<void>): vo
   }, PENDING_STREAM_RECONCILE_INTERVAL_MS);
 }
 
-function isImmediateStreamingComponent(component: StreamingComponent): boolean {
-  return component.type === 'agentActivity' || component.type === 'toolActivity' || component.type === 'artifact';
+function hasErrorComponent(message: { components?: Array<{ type: string }> }): boolean {
+  return message.components?.some((component) => component.type === 'error') === true;
 }
 
 function isTransientReconciliationError(error: unknown): boolean {
@@ -408,10 +718,16 @@ interface ConversationState {
   streamingComponents: StreamingComponent[];
   isStreaming: boolean;
 
+  // Latency instrumentation first-paint tracking (runtime-only, not persisted)
+  pendingLatencyPaint: PendingLatencyPaint | null;
+
   // Send state
   isAwaitingFirstChunk: boolean;
   awaitingConversationId: string | null;
   pendingAssistantMessageId: string | null;
+  pendingTerminalErrorKey: string | null;
+  earlyStreamErrors: Map<string, StreamErrorEvent>;
+  inFlightSendConversations: Set<string>;
   optimisticMessages: Message[];
 
   // SSE connection state
@@ -501,9 +817,12 @@ interface ConversationState {
   onStreamChunk: (event: StreamChunkEvent) => void;
   onStreamComplete: (event: StreamCompleteEvent) => void;
   onStreamError: (event: StreamErrorEvent) => void;
+  recordLatencyFirstPaint: () => void;
+  reportPendingLatency: (conversationId: string, messageId: string) => void;
   onConversationNameGenerated: (event: ConversationNameGeneratedEvent) => void;
   onMessageCreated: (event: MessageCreatedEvent) => void;
   onMessageUpdated: (event: MessageUpdatedEvent) => void;
+  onStreamResyncRequired: (event: StreamResyncRequiredEvent) => void;
   reconcilePendingStream: () => Promise<void>;
   onMentionCreated: (event: { conversationId: string; messageId: string; userId: string }) => void;
   clearTypewriter: () => void;
@@ -577,10 +896,14 @@ export const useConversationStore = create<ConversationState>()(
       streamingQuestionMessageId: null,
       streamingComponents: [],
       isStreaming: false,
+      pendingLatencyPaint: null,
 
       isAwaitingFirstChunk: false,
       awaitingConversationId: null,
       pendingAssistantMessageId: null,
+      pendingTerminalErrorKey: null,
+      earlyStreamErrors: new Map(),
+      inFlightSendConversations: new Set(),
       optimisticMessages: [],
 
       sseStatus: 'disconnected' as SSEConnectionStatus,
@@ -1005,9 +1328,12 @@ export const useConversationStore = create<ConversationState>()(
                 streamingQuestionMessageId: null,
                 streamingComponents: [],
                 isAwaitingFirstChunk: false,
-                awaitingConversationId: null,
-                pendingAssistantMessageId: null,
-                streamingStateCache: newCache,
+                 awaitingConversationId: null,
+                 pendingAssistantMessageId: null,
+                 pendingTerminalErrorKey: hasErrorComponent(persistedMessage)
+                   ? `${conversationId}:${persistedMessage.id}`
+                   : null,
+                 streamingStateCache: newCache,
               });
               return;
             }
@@ -1158,6 +1484,11 @@ export const useConversationStore = create<ConversationState>()(
       },
 
       sendMessage: async (conversationId, payload) => {
+        // Each turn owns a fresh client-metrics window (Phase 0 telemetry). The
+        // generation bump also invalidates a deferred completion snapshot from
+        // the previous turn so it cannot wipe this turn's early counters.
+        clientMetricsGeneration += 1;
+        streamMetrics.reset();
         const tempId = `temp-${Date.now()}`;
         const optimisticMsg: Message = {
           id: tempId,
@@ -1174,11 +1505,16 @@ export const useConversationStore = create<ConversationState>()(
         };
 
         // Optimistic add
-        set((s) => ({
-          isAwaitingFirstChunk: !payload.memberIds?.length,
-          awaitingConversationId: !payload.memberIds?.length ? conversationId : null,
-          optimisticMessages: [...s.optimisticMessages, optimisticMsg],
-        }));
+        set((s) => {
+          const inFlightSendConversations = new Set(s.inFlightSendConversations);
+          inFlightSendConversations.add(conversationId);
+          return {
+            isAwaitingFirstChunk: !payload.memberIds?.length,
+            awaitingConversationId: !payload.memberIds?.length ? conversationId : null,
+            optimisticMessages: [...s.optimisticMessages, optimisticMsg],
+            inFlightSendConversations,
+          };
+        });
 
         // Persist the conversation's skill selection (covers new conversations,
         // where toggles happened before the conversation existed).
@@ -1191,17 +1527,22 @@ export const useConversationStore = create<ConversationState>()(
         try {
           // Strip attachedFiles (frontend-only for optimistic display) before sending to API
           const { attachedFiles: _, ...apiPayload } = payload;
-          // New conversations can submit before the app-level EventSource handshake finishes.
-          // Keep the optimistic message visible while waiting briefly for stream delivery.
-          if (!await conversationStreamService.waitForConnection()) {
-            throw new Error(translateConversation('sse.connectionErrors.rejected'));
-          }
+          // Phase 0 telemetry: store entry → POST dispatch (no connection wait on this span).
+          const sendStartedAt = performance.now();
+          // POST starts immediately; the shared SSE pipe connects/reconnects in
+          // parallel and the server replays any events it misses — the old
+          // awaited readiness gate is gone by design (replay-safe streaming).
+          conversationStreamService.ensureConnected();
+          streamMetrics.recordClickToPost(performance.now() - sendStartedAt);
           const result = await api.sendMessage(conversationId, apiPayload);
 
           // Replace optimistic message with real user message (with deduplication).
           // Patch sticky taggedAgentIds when the set actually changes.
           set((s) => {
             const alreadyExists = s.messages.some((m) => m.id === result.userMessage.id);
+            // Insert (not append): SSE may already have delivered AI answers
+            // created after this user message while the POST was in flight.
+            const nextMessages = alreadyExists ? s.messages : insertMessageChronologically(s.messages, result.userMessage);
             const nextTaggedAgentIds = result.userMessage.agentIds?.length
               ? result.userMessage.agentIds
               : undefined;
@@ -1210,10 +1551,12 @@ export const useConversationStore = create<ConversationState>()(
               !!nextTaggedAgentIds &&
               s.currentConversation?.id === conversationId &&
               (prevTagged?.length !== nextTaggedAgentIds.length ||
-                nextTaggedAgentIds.some((agentId, i) => agentId !== prevTagged?.[i]));
+                nextTaggedAgentIds.some((agentId, i) => agentId !== prevTagged[i]));
+            const inFlightSendConversations = new Set(s.inFlightSendConversations);
+            inFlightSendConversations.delete(conversationId);
 
             return {
-              messages: alreadyExists ? s.messages : [...s.messages, result.userMessage],
+              messages: nextMessages,
               optimisticMessages: s.optimisticMessages.filter((m) => m.id !== tempId),
               messagesTotal: alreadyExists ? s.messagesTotal : s.messagesTotal + 1,
               selectedModelId: payload.modelId || s.selectedModelId,
@@ -1221,8 +1564,17 @@ export const useConversationStore = create<ConversationState>()(
                 ? { ...s.currentConversation!, taggedAgentIds: nextTaggedAgentIds }
                 : s.currentConversation,
               pendingAssistantMessageId: result.aiMessageId ?? s.pendingAssistantMessageId,
+              inFlightSendConversations,
             };
           });
+
+          const earlyError = get().earlyStreamErrors.get(conversationId);
+          if (earlyError) {
+            const earlyStreamErrors = new Map(get().earlyStreamErrors);
+            earlyStreamErrors.delete(conversationId);
+            set({ earlyStreamErrors });
+            if (earlyError.messageId === result.aiMessageId) get().onStreamError(earlyError);
+          }
         } catch (err) {
           // Rollback optimistic message
           const apiError = parseApiError(err);
@@ -1230,6 +1582,12 @@ export const useConversationStore = create<ConversationState>()(
             isAwaitingFirstChunk: false,
             awaitingConversationId: null,
             optimisticMessages: s.optimisticMessages.filter((m) => m.id !== tempId),
+            earlyStreamErrors: new Map(
+              [...s.earlyStreamErrors].filter(([errorConversationId]) => errorConversationId !== conversationId),
+            ),
+            inFlightSendConversations: new Set(
+              [...s.inFlightSendConversations].filter((sendConversationId) => sendConversationId !== conversationId),
+            ),
           }));
 
           // Handle MODEL_INACTIVE error - refresh models and clear selection
@@ -1388,6 +1746,7 @@ export const useConversationStore = create<ConversationState>()(
       onStreamStart: (event) => {
         cancelPendingStreamReconciliation();
         const state = get();
+        const eventStreamKey = `${event.conversationId}:${event.messageId}`;
 
         if (event.conversationId !== state.currentConversationId) {
           // Background conversation — track in cache
@@ -1435,9 +1794,12 @@ export const useConversationStore = create<ConversationState>()(
           streamingConversationId: event.conversationId,
           streamingMessageId: event.messageId,
           pendingAssistantMessageId: event.messageId,
+          ...(state.pendingTerminalErrorKey !== eventStreamKey ? { pendingTerminalErrorKey: null } : {}),
           streamingComponents: [],
           inputDisabled: false,
+          pendingLatencyPaint: null,
         });
+        latencyPaint.clear();
       },
 
       onStreamChunk: (event) => {
@@ -1455,6 +1817,33 @@ export const useConversationStore = create<ConversationState>()(
               isAwaitingFirstChunk: updated.length > 0 ? false : cached.isAwaitingFirstChunk,
             });
             set({ streamingStateCache: newCache });
+          }
+          return;
+        }
+
+        // Latency instrumentation: the first model-derived chunk carries the
+        // one-time envelope; record its browser arrival for the paint metric.
+        // The client-metrics generation is stashed alongside: mid-stream it is
+        // stable, and the completion report later uses it to tell "this turn's
+        // window" apart from a newer send's window.
+        if (event.latency) {
+          clientMetricsTurnGeneration = clientMetricsGeneration;
+          const captured = latencyPaint.capture({
+            conversationId: event.conversationId,
+            firstChunkReceivedPerfMs: performance.now(),
+            latency: event.latency,
+          });
+          if (captured) set({ pendingLatencyPaint: captured });
+        }
+
+        // A forced resync is fetching the authoritative snapshot: hold deltas
+        // of the affected conversation so they can be ordered against it
+        // instead of rendering onto the state with the proven gap.
+        if (resyncHoldActive && state.currentConversationId === resyncHoldConversationId) {
+          if (resyncHeldChunks.length >= MAX_RESYNC_HELD_CHUNKS) {
+            resyncHeldChunks = []; // the snapshot supersedes the held span
+          } else {
+            resyncHeldChunks.push({ action: event.action, component: event.component, revision: event.revision });
           }
           return;
         }
@@ -1484,49 +1873,97 @@ export const useConversationStore = create<ConversationState>()(
         }
 
         if (event.revision !== undefined && !receivedCurrentStreamStart) {
-          pendingRecoveryChunks.push({
-            action: event.action,
-            component: event.component,
-            revision: event.revision,
-          });
+          // Revisioned content without an observed `stream_start` (cold send
+          // raced the SSE pipe): keep a bounded backlog and recover from the
+          // active-stream snapshot instead of waiting for completion.
+          if (pendingRecoveryChunks.length >= MAX_PENDING_RECOVERY_CHUNKS) {
+            pendingRecoveryChunks = []; // the snapshot supersedes the backlog
+          } else {
+            pendingRecoveryChunks.push({
+              action: event.action,
+              component: event.component,
+              revision: event.revision,
+            });
+          }
+          void recoverMissingStreamStart(event.conversationId);
           return;
         }
 
-        if (isImmediateStreamingComponent(event.component)) {
-          streamingBuffer.flush();
-          set((current) => {
-            const components = applyChunksToComponents(current.streamingComponents, [{ action: event.action, component: event.component }]);
-            return {
-              streamingComponents: components,
-              ...(components.length > 0 && current.isAwaitingFirstChunk
-                ? { isAwaitingFirstChunk: false, awaitingConversationId: null }
-                : {}),
-            };
-          });
-          return;
-        }
-
-        // Current conversation — buffer the chunk instead of immediately updating state
+        // Immediate components (agent/tool/artifact activity) ride the same
+        // frame queue as text: relative order with content is preserved and
+        // the whole batch lands in one store commit per frame.
         streamingBuffer.addChunk(event.action, event.component, event.revision);
       },
 
+      /**
+       * Compute the sixth latency metric after React commit + double rAF.
+       * Called from the paint observer in ConversationContent; one-shot per
+       * stream and a no-op in hidden tabs (browsers throttle rAF there).
+       */
+      recordLatencyFirstPaint: () => {
+        const before = get().pendingLatencyPaint;
+        if (!before || before.measured) return;
+        const visible = typeof document === 'undefined' || document.visibilityState === 'visible';
+        const updated = latencyPaint.measure(performance.now(), performance.timeOrigin, visible);
+        if (!updated || updated === before) return;
+        set({ pendingLatencyPaint: updated });
+        // Completion may already have raced: attach to the persisted message now.
+        set((s) => ({
+          messages: s.messages.map((message) => (message.id === before.messageId ? withPendingLatency(message) : message)),
+        }));
+        // Completion arrived before the paint callback fired — report now.
+        if (updated.completeArrived) {
+          get().reportPendingLatency(before.conversationId, before.messageId);
+        }
+      },
+
+      /** Fire-and-forget persistence of the sixth metric; clears the pending state. */
+      reportPendingLatency: (conversationId: string, messageId: string) => {
+        const payload = latencyPaint.report(conversationId, messageId);
+        if (get().pendingLatencyPaint !== latencyPaint.pending) {
+          set({ pendingLatencyPaint: latencyPaint.pending });
+        }
+        if (!payload) return;
+        // The completed message's code highlight runs in a post-completion
+        // effect, after this point — give it a short window to land in the
+        // counters before snapshotting. Paint values come from captured
+        // samples, so the delay does not shift any timing. The deferred
+        // snapshot is keyed to the turn's generation (captured mid-stream with
+        // the envelope, stable across the completion boundary): if a newer
+        // send has opened its own window by fire time, this report drops its
+        // counters instead of erasing the new turn's.
+        const turnGeneration = clientMetricsTurnGeneration;
+        setTimeout(() => {
+          if (turnGeneration !== clientMetricsGeneration) return;
+          const clientMetrics = streamMetrics.snapshotAndReset();
+          api
+            .reportFrontendLatency(conversationId, messageId, clientMetrics ? { ...payload, clientMetrics } : payload)
+            .catch((err) => console.error('[ConversationStore] frontend latency report failed:', err));
+        }, CLIENT_METRICS_HIGHLIGHT_GRACE_MS);
+      },
+
       onStreamComplete: async (event) => {
-        cancelPendingStreamReconciliation();
+        const eventStreamKey = `${event.conversationId}:${event.messageId}`;
+        if (pendingStreamReconcileTarget === eventStreamKey) cancelPendingStreamReconciliation();
         if (currentRevisionStreamKey === `${event.conversationId}:${event.messageId}`) {
           currentRevisionStreamKey = null;
           currentStreamRevision = 0;
           receivedCurrentStreamStart = false;
           pendingRecoveryChunks = [];
         }
+        // Persist the browser-measured sixth metric after completion so the
+        // request never competes with the first-token window.
+        get().reportPendingLatency(event.conversationId, event.messageId);
         const state = get();
 
         if (event.conversationId !== state.currentConversationId) {
           // Background conversation — clean cache, message is now persisted in DB
           const newCache = new Map(get().streamingStateCache);
-          newCache.delete(event.conversationId);
+          if (newCache.get(event.conversationId)?.streamingMessageId === event.messageId) {
+            newCache.delete(event.conversationId);
+          }
           const clearCompletedStream =
-            state.streamingConversationId === event.conversationId ||
-            state.awaitingConversationId === event.conversationId ||
+            state.streamingMessageId === event.messageId ||
             state.pendingAssistantMessageId === event.messageId;
           set({
             streamingStateCache: newCache,
@@ -1561,27 +1998,34 @@ export const useConversationStore = create<ConversationState>()(
           return;
         }
 
-        // Flush any remaining buffered chunks and clear
-        streamingBuffer.flush();
-        streamingBuffer.clear();
+        const completesActiveStream =
+          state.streamingMessageId === event.messageId || state.pendingAssistantMessageId === event.messageId;
+        if (completesActiveStream) {
+          streamingBuffer.flush();
+          streamingBuffer.clear();
+        }
 
         // completeAIMessage broadcasts the canonical message before stream_complete.
         // Prefer that ordered SSE update; REST is only recovery for a missed update.
         const completedMessage = get().messages.find((message) => message.id === event.messageId && message.isComplete);
         if (completedMessage) {
-          const cleanedCache = new Map(get().streamingStateCache);
-          cleanedCache.delete(event.conversationId);
-          set({
-            isStreaming: false,
-            streamingConversationId: null,
-            streamingMessageId: null,
-            streamingQuestionMessageId: null,
-            streamingComponents: [],
-            isAwaitingFirstChunk: false,
-            awaitingConversationId: null,
-            pendingAssistantMessageId: null,
-            streamingStateCache: cleanedCache,
-          });
+          if (completesActiveStream) {
+            const cleanedCache = new Map(get().streamingStateCache);
+            if (cleanedCache.get(event.conversationId)?.streamingMessageId === event.messageId) {
+              cleanedCache.delete(event.conversationId);
+            }
+            set({
+              isStreaming: false,
+              streamingConversationId: null,
+              streamingMessageId: null,
+              streamingQuestionMessageId: null,
+              streamingComponents: [],
+              isAwaitingFirstChunk: false,
+              awaitingConversationId: null,
+              pendingAssistantMessageId: null,
+              streamingStateCache: cleanedCache,
+            });
+          }
 
           if (completedMessage.questionMessageId) {
             get().fetchBranches(event.conversationId, completedMessage.questionMessageId, true);
@@ -1593,28 +2037,34 @@ export const useConversationStore = create<ConversationState>()(
         // Recover the persisted message if its ordered SSE update was missed.
         try {
           const message = await api.fetchMessage(event.conversationId, event.messageId);
-          let resolvedMessage = message;
+           let resolvedMessage = message;
 
-          set((s) => {
-            resolvedMessage = s.messages.find((candidate) => candidate.id === event.messageId && candidate.isComplete) ?? message;
-            const result = upsertMessage(s.messages, resolvedMessage);
+           set((s) => {
+             resolvedMessage = s.messages.find((candidate) => candidate.id === event.messageId && candidate.isComplete) ?? message;
+             const result = upsertMessage(s.messages, resolvedMessage);
+             const ownsCompletedStream =
+               s.streamingMessageId === event.messageId || s.pendingAssistantMessageId === event.messageId;
 
             // Clean stale cache entry to prevent fetchMessages from restoring it
             const cleanedCache = new Map(s.streamingStateCache);
-            cleanedCache.delete(event.conversationId);
+            if (cleanedCache.get(event.conversationId)?.streamingMessageId === event.messageId) {
+              cleanedCache.delete(event.conversationId);
+            }
 
             return {
               messages: result.messages,
               messagesTotal: result.inserted ? s.messagesTotal + 1 : s.messagesTotal,
-              isStreaming: false,
-              streamingConversationId: null,
-              streamingMessageId: null,
-              streamingQuestionMessageId: null,
-              streamingComponents: [],
-              isAwaitingFirstChunk: false,
-              awaitingConversationId: null,
-              pendingAssistantMessageId: null,
               streamingStateCache: cleanedCache,
+              ...(ownsCompletedStream ? {
+                isStreaming: false,
+                streamingConversationId: null,
+                streamingMessageId: null,
+                streamingQuestionMessageId: null,
+                streamingComponents: [],
+                isAwaitingFirstChunk: false,
+                awaitingConversationId: null,
+                pendingAssistantMessageId: null,
+              } : {}),
             };
           });
 
@@ -1628,38 +2078,78 @@ export const useConversationStore = create<ConversationState>()(
         } catch (err) {
           console.error('[ConversationStore] onStreamComplete fetch error:', err);
           // Still clear streaming state and stale cache entry
-          const cleanedCache = new Map(get().streamingStateCache);
-          cleanedCache.delete(event.conversationId);
-          set({
-            isStreaming: false,
-            streamingConversationId: null,
-            streamingMessageId: null,
-            streamingQuestionMessageId: null,
-            streamingComponents: [],
-            isAwaitingFirstChunk: false,
-            awaitingConversationId: null,
-            pendingAssistantMessageId: null,
-            streamingStateCache: cleanedCache,
-          });
+          const current = get();
+          const ownsCompletedStream =
+            current.streamingMessageId === event.messageId || current.pendingAssistantMessageId === event.messageId;
+          if (ownsCompletedStream) {
+            const cleanedCache = new Map(current.streamingStateCache);
+            if (cleanedCache.get(event.conversationId)?.streamingMessageId === event.messageId) {
+              cleanedCache.delete(event.conversationId);
+            }
+            set({
+              isStreaming: false,
+              streamingConversationId: null,
+              streamingMessageId: null,
+              streamingQuestionMessageId: null,
+              streamingComponents: [],
+              isAwaitingFirstChunk: false,
+              awaitingConversationId: null,
+              pendingAssistantMessageId: null,
+              streamingStateCache: cleanedCache,
+            });
+          }
         }
       },
 
       onStreamError: (event) => {
-        cancelPendingStreamReconciliation();
-        currentRevisionStreamKey = null;
-        currentStreamRevision = 0;
-        receivedCurrentStreamStart = false;
-        pendingRecoveryChunks = [];
         const state = get();
+        const eventStreamKey = `${event.conversationId}:${event.messageId}`;
+        // A failed stream keeps at most partial latency data — drop the
+        // browser paint state rather than reporting a misleading value.
+        if (state.pendingLatencyPaint?.messageId === event.messageId) {
+          latencyPaint.clear();
+          set({ pendingLatencyPaint: null });
+        }
+        const cachedStream = state.streamingStateCache.get(event.conversationId);
+        const ownsForegroundStream =
+          state.streamingMessageId === event.messageId || state.pendingAssistantMessageId === event.messageId;
+        const ownsCachedStream = cachedStream?.streamingMessageId === event.messageId;
+        const foregroundMessageId = state.streamingMessageId ?? state.pendingAssistantMessageId;
+        const ownsCompletedError =
+          state.pendingTerminalErrorKey === eventStreamKey &&
+          (!foregroundMessageId || foregroundMessageId === event.messageId);
+        if (!ownsForegroundStream && !ownsCachedStream && !ownsCompletedError) {
+          if (
+            state.inFlightSendConversations.has(event.conversationId) &&
+            !foregroundMessageId
+          ) {
+            const earlyStreamErrors = new Map(state.earlyStreamErrors);
+            earlyStreamErrors.set(event.conversationId, event);
+            set({ earlyStreamErrors });
+          }
+          return;
+        }
+
+        if (pendingStreamReconcileTarget === `${event.conversationId}:${event.messageId}`) {
+          cancelPendingStreamReconciliation();
+        }
+        if (currentRevisionStreamKey === `${event.conversationId}:${event.messageId}`) {
+          currentRevisionStreamKey = null;
+          currentStreamRevision = 0;
+          receivedCurrentStreamStart = false;
+          pendingRecoveryChunks = [];
+        }
 
         if (event.conversationId !== state.currentConversationId) {
           // Background conversation — clean cache
           const newCache = new Map(get().streamingStateCache);
-          newCache.delete(event.conversationId);
-          const clearFailedStream = state.streamingConversationId === event.conversationId || state.awaitingConversationId === event.conversationId;
+          if (newCache.get(event.conversationId)?.streamingMessageId === event.messageId) {
+            newCache.delete(event.conversationId);
+          }
           set({
             streamingStateCache: newCache,
-            ...(clearFailedStream ? {
+            ...(state.pendingTerminalErrorKey === eventStreamKey ? { pendingTerminalErrorKey: null } : {}),
+            ...(ownsForegroundStream ? {
               isStreaming: false,
               streamingConversationId: null,
               streamingMessageId: null,
@@ -1680,7 +2170,9 @@ export const useConversationStore = create<ConversationState>()(
 
         // Clean stale cache entry to prevent fetchMessages from restoring it
         const cleanedCache = new Map(get().streamingStateCache);
-        cleanedCache.delete(event.conversationId);
+        if (cleanedCache.get(event.conversationId)?.streamingMessageId === event.messageId) {
+          cleanedCache.delete(event.conversationId);
+        }
 
         if (errorInfo.isCritical) {
           set({
@@ -1694,6 +2186,7 @@ export const useConversationStore = create<ConversationState>()(
             isAwaitingFirstChunk: false,
             awaitingConversationId: null,
             pendingAssistantMessageId: null,
+            pendingTerminalErrorKey: null,
             streamingStateCache: cleanedCache,
           });
         } else {
@@ -1707,6 +2200,7 @@ export const useConversationStore = create<ConversationState>()(
             isAwaitingFirstChunk: false,
             awaitingConversationId: null,
             pendingAssistantMessageId: null,
+            pendingTerminalErrorKey: null,
             streamingStateCache: cleanedCache,
           });
         }
@@ -1762,7 +2256,11 @@ export const useConversationStore = create<ConversationState>()(
           });
 
           return {
-            messages: [...s.messages, event.message],
+            // Chronological insert: this SSE event may arrive before the POST
+            // response that created the triggering user message (see
+            // insertMessageChronologically — appending would render the prompt
+            // after its answer).
+            messages: insertMessageChronologically(s.messages, event.message),
             messagesTotal: s.messagesTotal + 1,
             optimisticMessages,
           };
@@ -1779,6 +2277,7 @@ export const useConversationStore = create<ConversationState>()(
         const completesPendingStream = event.message.isComplete === true && (
           state.streamingMessageId === event.messageId || state.pendingAssistantMessageId === event.messageId
         );
+        const completesWithError = completesPendingStream && hasErrorComponent(event.message);
         if (completesPendingStream) {
           cancelPendingStreamReconciliation();
           streamingBuffer.flush();
@@ -1786,17 +2285,18 @@ export const useConversationStore = create<ConversationState>()(
         }
 
         const existing = state.messages.find((message) => message.id === event.messageId);
-        if (existing) {
-          set((s) => {
-            const cache = new Map(s.streamingStateCache);
-            if (completesPendingStream) cache.delete(event.conversationId);
-            return {
-              messages: s.messages.map((message) => (message.id === event.messageId ? {
-                ...message,
-                ...event.message,
-                reliabilityEvaluation: event.message.reliabilityEvaluation ?? message.reliabilityEvaluation,
-                correctionWorkflow: event.message.correctionWorkflow ?? message.correctionWorkflow,
-              } : message)),
+         if (existing) {
+           set((s) => {
+             const cache = new Map(s.streamingStateCache);
+             if (completesPendingStream) cache.delete(event.conversationId);
+              return {
+               messages: s.messages.map((message) => (message.id === event.messageId ? withPendingLatency({
+                 ...message,
+                 ...event.message,
+                  ...(event.message.components ? { components: event.message.components } : {}),
+                 reliabilityEvaluation: event.message.reliabilityEvaluation ?? message.reliabilityEvaluation,
+                 correctionWorkflow: event.message.correctionWorkflow ?? message.correctionWorkflow,
+              }) : message)),
               ...(completesPendingStream ? {
                 isStreaming: false,
                 streamingConversationId: null,
@@ -1804,23 +2304,27 @@ export const useConversationStore = create<ConversationState>()(
                 streamingQuestionMessageId: null,
                 streamingComponents: [],
                 isAwaitingFirstChunk: false,
-                awaitingConversationId: null,
-                pendingAssistantMessageId: null,
-                streamingStateCache: cache,
+                 awaitingConversationId: null,
+                 pendingAssistantMessageId: null,
+                 pendingTerminalErrorKey: completesWithError
+                   ? `${event.conversationId}:${event.messageId}`
+                   : null,
+                 streamingStateCache: cache,
               } : {}),
             };
           });
           return;
         }
 
-        if (event.message.conversationType && event.message.createdAt) {
-          const message = {
-            ...event.message,
-            id: event.messageId,
-            conversationId: event.conversationId,
-          } as Message;
-          set((s) => {
-            const result = upsertMessage(s.messages, message);
+         if (event.message.conversationType && event.message.createdAt) {
+           set((s) => {
+              const message = withPendingLatency({
+                ...event.message,
+                ...(event.message.components ? { components: event.message.components } : {}),
+               id: event.messageId,
+               conversationId: event.conversationId,
+             } as Message);
+             const result = upsertMessage(s.messages, message);
             const cache = new Map(s.streamingStateCache);
             if (completesPendingStream) cache.delete(event.conversationId);
             return {
@@ -1833,9 +2337,12 @@ export const useConversationStore = create<ConversationState>()(
                 streamingQuestionMessageId: null,
                 streamingComponents: [],
                 isAwaitingFirstChunk: false,
-                awaitingConversationId: null,
-                pendingAssistantMessageId: null,
-                streamingStateCache: cache,
+                 awaitingConversationId: null,
+                 pendingAssistantMessageId: null,
+                 pendingTerminalErrorKey: completesWithError
+                   ? `${event.conversationId}:${event.messageId}`
+                   : null,
+                 streamingStateCache: cache,
               } : {}),
             };
           });
@@ -1899,6 +2406,7 @@ export const useConversationStore = create<ConversationState>()(
               isAwaitingFirstChunk: false,
               awaitingConversationId: null,
               pendingAssistantMessageId: null,
+              pendingTerminalErrorKey: hasErrorComponent(message) ? target : null,
               streamingStateCache: cache,
             };
           });
@@ -1916,6 +2424,20 @@ export const useConversationStore = create<ConversationState>()(
         } finally {
           if (pendingStreamReconcileTarget === target) pendingStreamReconcileInFlight = false;
         }
+      },
+
+      /**
+       * The server could not replay a missed event window (cursor gap or
+       * process switch), so SSE history is no longer contiguous. For the
+       * live run this forces installation of the authoritative active-stream
+       * snapshot (held deltas apply only when newer than it); without a
+       * tracked run it falls back to the canonical message reload.
+       */
+      onStreamResyncRequired: (event) => {
+        console.warn('[ConversationStore] stream resync required', { reason: event.reason });
+        const conversationId = get().currentConversationId;
+        if (!conversationId) return;
+        void forcedResyncActiveStream(conversationId);
       },
 
       onMentionCreated: (event) => {
@@ -2154,6 +2676,9 @@ export const useConversationStore = create<ConversationState>()(
           isAwaitingFirstChunk: false,
           awaitingConversationId: null,
           pendingAssistantMessageId: null,
+          pendingTerminalErrorKey: null,
+          earlyStreamErrors: new Map(),
+          inFlightSendConversations: new Set(),
           optimisticMessages: [],
           branchCache: new Map(),
           activeBranches: new Map(),
@@ -2166,6 +2691,7 @@ export const useConversationStore = create<ConversationState>()(
 
       clearAll: () => {
         streamingBuffer.clear();
+        latencyPaint.clear();
         set({
           conversations: [],
           conversationSummaries: [],
@@ -2188,9 +2714,13 @@ export const useConversationStore = create<ConversationState>()(
           streamingMessageId: null,
           streamingQuestionMessageId: null,
           streamingComponents: [],
+          pendingLatencyPaint: null,
           isAwaitingFirstChunk: false,
           awaitingConversationId: null,
           pendingAssistantMessageId: null,
+          pendingTerminalErrorKey: null,
+          earlyStreamErrors: new Map(),
+          inFlightSendConversations: new Set(),
           optimisticMessages: [],
           branchCache: new Map(),
           activeBranches: new Map(),

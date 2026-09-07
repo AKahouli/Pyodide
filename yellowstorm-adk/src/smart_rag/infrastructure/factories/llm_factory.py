@@ -69,13 +69,14 @@ class LLMFactory:
             import litellm
             litellm.drop_params = True
             from google.adk.models.lite_llm import LiteLlm
+            from src.smart_rag.infrastructure.monitoring.instrumented_lite_llm import InstrumentedLiteLlm
             model_name = _resolve_model_config(model_name)
             model_temperature = _temperature_for_model(model_name, temperature)
             reasoning_effort = get_reasoning_effort_for_model(model_name)
 
             # Create new LLM instance
             if "ollama" in model_name.lower():
-                llm = LiteLlm(
+                llm = InstrumentedLiteLlm(
                     model=model_name,
                     api_base=app_settings.OLLAMA_API_BASE_URL,
                     api_key=app_settings.OLLAMA_API_KEY,
@@ -87,7 +88,7 @@ class LLMFactory:
                 )
                 logger.info(f"Successfully created Ollama LLM for model: {model_name}")
             else:
-                llm = LiteLlm(
+                llm = InstrumentedLiteLlm(
                     model=model_name,
                     api_base=app_settings.LITELLM_API_BASE_URL,
                     api_key=app_settings.LITELLM_API_SECRET_KEY,
@@ -113,13 +114,14 @@ class LLMFactory:
             import litellm
             litellm.drop_params = True
             from google.adk.models.lite_llm import LiteLlm
+            from src.smart_rag.infrastructure.monitoring.instrumented_lite_llm import InstrumentedLiteLlm
             model_name = _resolve_model_config(model_name)
             model_temperature = _temperature_for_model(model_name, temperature)
             reasoning_effort = get_reasoning_effort_for_model(model_name)
 
             # Create new LLM instance
             if "ollama" in model_name.lower():
-                llm = LiteLlm(
+                llm = InstrumentedLiteLlm(
                     model=model_name,
                     api_base=app_settings.OLLAMA_API_BASE_URL,
                     api_key=app_settings.OLLAMA_API_KEY,
@@ -132,7 +134,7 @@ class LLMFactory:
                 )
                 logger.info(f"Successfully created Ollama no-tool-calls LLM for model: {model_name}")
             else:
-                llm = LiteLlm(
+                llm = InstrumentedLiteLlm(
                     model=model_name,
                     api_base=app_settings.LITELLM_API_BASE_URL,
                     api_key=app_settings.LITELLM_API_SECRET_KEY,
@@ -152,18 +154,24 @@ class LLMFactory:
             raise
 
     @staticmethod
-    def create_no_tool_calls_llm(model_name: str, temperature=0.0,max_completion_tokens=20000) -> 'LiteLlm':
+    def create_no_tool_calls_llm(
+        model_name: str,
+        temperature=0.0,
+        max_completion_tokens=20000,
+        num_retries: int | None = None,
+    ) -> 'LiteLlm':
         """Create an LLM instance without tool calls."""
         try:
             import litellm
             litellm.drop_params = True
             from google.adk.models.lite_llm import LiteLlm
+            from src.smart_rag.infrastructure.monitoring.instrumented_lite_llm import InstrumentedLiteLlm
             model_name = _resolve_model_config(model_name)
             model_temperature = _temperature_for_model(model_name, temperature)
             reasoning_effort = get_reasoning_effort_for_model(model_name)
             # Create new LLM instance
             if "ollama" in model_name.lower():
-                llm = LiteLlm(
+                llm = InstrumentedLiteLlm(
                     model=model_name,
                     api_base=app_settings.OLLAMA_API_BASE_URL,
                     api_key=app_settings.OLLAMA_API_KEY,
@@ -172,10 +180,11 @@ class LLMFactory:
                     **({"temperature": model_temperature} if temperature is not None else {}),
                     max_completion_tokens=max_completion_tokens,
                     **({"reasoning_effort": reasoning_effort} if reasoning_effort else {}),
+                    **({"num_retries": num_retries} if num_retries is not None else {}),
                 )
                 logger.info(f"Successfully created Ollama no-tool-calls LLM for model: {model_name}")
             else:
-                llm = LiteLlm(
+                llm = InstrumentedLiteLlm(
                     model=model_name,
                     api_base=app_settings.LITELLM_API_BASE_URL,
                     api_key=app_settings.LITELLM_API_SECRET_KEY,
@@ -184,6 +193,7 @@ class LLMFactory:
                     **({"temperature": model_temperature} if temperature is not None else {}),
                     max_completion_tokens=max_completion_tokens,
                     **({"reasoning_effort": reasoning_effort} if reasoning_effort else {}),
+                    **({"num_retries": num_retries} if num_retries is not None else {}),
                 )
                 logger.info(f"Successfully created LiteLLM proxy no-tool-calls LLM for model: {model_name}")
             return llm

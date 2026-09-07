@@ -69,6 +69,27 @@ export class CorsSettingsValue {
   origins!: Array<{ origin: string; enabled: boolean }>;
 }
 
+@Schema({ _id: false })
+export class EmailLogoValue {
+  @Prop({ required: true })
+  data!: string;
+
+  @Prop({ required: true, enum: ['image/png', 'image/jpeg'] })
+  contentType!: string;
+
+  @Prop({ required: true })
+  filename!: string;
+
+  @Prop({ required: true })
+  size!: number;
+
+  @Prop({ required: true })
+  updatedAt!: Date;
+
+  @Prop()
+  updatedBy?: string;
+}
+
 @Schema({
   timestamps: true,
   collection: 'system_settings',
@@ -78,7 +99,7 @@ export class SystemSetting extends Document {
   key!: string;
 
   @Prop({ type: Object, required: true })
-  value!: MaintenanceValue | RegistrationValue | AppearanceValue | CorsSettingsValue | Record<string, unknown>;
+  value!: MaintenanceValue | RegistrationValue | AppearanceValue | CorsSettingsValue | EmailLogoValue | Record<string, unknown>;
 
   createdAt!: Date;
   updatedAt!: Date;

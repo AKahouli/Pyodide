@@ -6,11 +6,11 @@ import { LoggerService } from '@modules/logger';
 import { WorkyStream, WorkyStreamDocument } from '../schemas/worky-stream.schema';
 import { WorkyPlanningService } from './worky-planning.service';
 import { WorkySttService } from './worky-stt.service';
+import { WorkyTurnKickoffService } from './worky-turn-kickoff.service';
 
 /**
  * Bridges inbound WhatsApp group messages into the Worky planning loop:
- * persists the owner message then starts a planning turn so the Manager
- * replies both in the UI (SSE) and back to the WhatsApp group.
+ * persists the owner message in the shared Worky history.
  */
 @Injectable()
 export class WorkyWhatsAppIngressService {
@@ -19,6 +19,7 @@ export class WorkyWhatsAppIngressService {
     private readonly streams: Model<WorkyStreamDocument>,
     @Inject(forwardRef(() => WorkyPlanningService))
     private readonly planning: WorkyPlanningService,
+    private readonly kickoff: WorkyTurnKickoffService,
     private readonly stt: WorkySttService,
     private readonly configService: ConfigService,
     private readonly logger: LoggerService,
@@ -67,14 +68,13 @@ export class WorkyWhatsAppIngressService {
       messageId: saved.id,
     });
 
-    // Planning service forwards IA replies (text + clarifications) to WhatsApp
-    // via ensureWhatsAppDelivery at the end of each turn.
-    this.planning.startTurn({
+    await this.kickoff.kickoff({
       streamId: input.streamId,
       userId: input.userId,
       content: input.content,
-      triggerKind: 'owner_message',
+      turnId: saved.turnId ?? undefined,
     });
+
   }
 
   /**

@@ -1,5 +1,6 @@
 import { Types } from 'mongoose';
 import { RegistrationApprovalService } from './registration-approval.service';
+import { EmailTemplateRenderer } from '../email';
 import { RegistrationApproval, UserStatus } from './schemas/user.schema';
 import { ErrorCode } from '../exceptions/constants/error-codes';
 
@@ -48,10 +49,16 @@ describe('RegistrationApprovalService', () => {
       warn: jest.fn(),
       error: jest.fn(),
     };
+    const emailTemplateRenderer = new EmailTemplateRenderer(
+      configService as never,
+      logger as never,
+      { getEmailLogo: jest.fn().mockResolvedValue(null) } as never,
+    );
     const service = new RegistrationApprovalService(
       userModel as never,
       authorizationService as never,
       emailService as never,
+      emailTemplateRenderer as never,
       configService as never,
       logger as never,
     );
@@ -151,17 +158,24 @@ describe('RegistrationApprovalService decisions', () => {
       warn: jest.fn(),
       error: jest.fn(),
     };
+    const configService = {
+      get: jest.fn((key: string, def: unknown) => {
+        if (key === 'app.name') return 'YelloStorm';
+        if (key === 'app.frontendUrl') return 'http://localhost:5173';
+        return def;
+      }),
+    };
+    const emailTemplateRenderer = new EmailTemplateRenderer(
+      configService as never,
+      logger as never,
+      { getEmailLogo: jest.fn().mockResolvedValue(null) } as never,
+    );
     const service = new RegistrationApprovalService(
       userModel as never,
       { findRoleByName: jest.fn() } as never,
       emailService as never,
-      {
-        get: jest.fn((key: string, def: unknown) => {
-          if (key === 'app.name') return 'YelloStorm';
-          if (key === 'app.frontendUrl') return 'http://localhost:5173';
-          return def;
-        }),
-      } as never,
+      emailTemplateRenderer as never,
+      configService as never,
       logger as never,
     );
     return { service, userModel, emailService, logger };
@@ -227,7 +241,7 @@ describe('RegistrationApprovalService decisions', () => {
     expect(logger.error).toHaveBeenCalled();
   });
 
-  it('rejects an inactive pending user and sends a decision email', async () => {
+  it('rejects an inactive pending user without sending email', async () => {
     const user = makeUserDoc();
     const { service, emailService } = makeDecisionService(user);
 
@@ -239,37 +253,18 @@ describe('RegistrationApprovalService decisions', () => {
       registrationApproval: RegistrationApproval.REJECTED,
     });
     expect(user.save).toHaveBeenCalled();
-    expect(emailService.send).toHaveBeenCalledTimes(1);
-    expect(emailService.send.mock.calls[0][0].to).toBe('jane@acme.io');
-    expect(emailService.send.mock.calls[0][0].subject).toContain('declined');
-    expect(emailService.send.mock.calls[0][0].html).toContain('http://localhost:5173/#/');
-  });
-
-  it('still rejects when the decision email fails', async () => {
-    const user = makeUserDoc();
-    const { service, logger } = makeDecisionService(user, {
-      success: false,
-      error: 'smtp down',
-      attempts: 1,
-    });
-
-    await expect(service.rejectRegistration(userId.toString())).resolves.toMatchObject({
-      changed: true,
-      registrationApproval: RegistrationApproval.REJECTED,
-    });
-    expect(logger.error).toHaveBeenCalled();
+    expect(emailService.send).not.toHaveBeenCalled();
   });
 
   it('is a no-op when the registration is already rejected', async () => {
     const user = makeUserDoc({ registrationApproval: RegistrationApproval.REJECTED });
-    const { service, emailService } = makeDecisionService(user);
+    const { service } = makeDecisionService(user);
 
     const result = await service.rejectRegistration(userId.toString());
 
     expect(result.changed).toBe(false);
     expect(user.status).toBe(UserStatus.INACTIVE);
     expect(user.save).not.toHaveBeenCalled();
-    expect(emailService.send).not.toHaveBeenCalled();
   });
 
   it('does not approve a suspended account', async () => {

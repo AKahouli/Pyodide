@@ -63,6 +63,22 @@ class Settings(BaseSettings):
     LITELLM_API_BASE_URL: str
     LITELLM_API_SECRET_KEY: str
     ATTRIBUT_EXTRACT_MODEL: str = "gpt-5.4-mini"
+    SEMANTIC_MODEL_ONTOLOGY_MODEL: str = "gpt-5.4-nano"
+    SEMANTIC_MODEL_LLM_TIMEOUT_SECONDS: Optional[int] = None
+    # Concurrency for ALL 3 mapping pipeline stages (extraction, resolution, edge detection).
+    # A single knob controls the max parallel workers used by:
+    #   - NodeExtractor (parallel LLM calls per document batch)
+    #   - NodeResolver (parallel dedup per concept type)
+    #   - EdgeDetector (parallel NER + RelationExtractor per document blob)
+    # Increase to accelerate on providers that accept many concurrent requests.
+    SEMANTIC_MODEL_EXTRACTION_CONCURRENCY: int = 8
+    # Max number of concepts extracted per single LLM call (batching per document).
+    # Small models (DeepSeek Flash, gemma, llama) may drop concepts if too many are batched.
+    # Set to 1 to disable batching (legacy per-concept mode).
+    SEMANTIC_MODEL_EXTRACTION_BATCH_SIZE: int = 6
+    # Cap the LLM response length. Prevents runaway 10k+ token generations that
+    # eat wall-clock time without adding value. Set to 0 to disable the cap.
+    SEMANTIC_MODEL_LLM_MAX_TOKENS: int = 32000
     EXCEL_MCP_URL: str
     MICROSANDBOX_MCP_URL: Optional[str] = None
     MICROSANDBOX_DOCUMENT_SERVER_URL: Optional[str] = None
@@ -75,9 +91,6 @@ class Settings(BaseSettings):
     APPLICATION_INSIGHTS_LOG_CONFIG_PATH: str = "./src/logger/app_insight_logging.json"
     GOOGLE_API_USE_CLIENT_CERTIFICATE: bool = False
 
-    LANGFUSE_HOST: str
-    LANGFUSE_SECRET_KEY: str
-    LANGFUSE_PUBLIC_KEY: str
     # Authentication to get token
     AUTH_USERNAME: str
     AUTH_PASSWORD: str
@@ -138,11 +151,6 @@ class Settings(BaseSettings):
     NEO4J_PASSWORD: Optional[str] = None
     CSRD_BRAIN_ID: Optional[str] = "No_CSRD"
 
-    # SNOWFLAKE
-    SNOWFLAKE_MCP_URL: Optional[str] = None
-
-    # DataViz
-    DATAVIZ_MCP_URL: Optional[str] = None
     DEFAULT_HTML_AGENT_ENABLED: bool = False
 
     # Code Interpreter Backend
@@ -332,25 +340,6 @@ class Settings(BaseSettings):
             raise ValueError("LITELLM_API_SECRET_KEY is required and cannot be empty")
         return v
 
-    @field_validator("EXCEL_MCP_URL", mode="before")
-    @classmethod
-    def validate_excel_mcp_url(cls, v):
-        if not v or v.strip() == "":
-            raise ValueError("EXCEL_MCP_URL is required and cannot be empty")
-
-        try:
-            parsed = urlparse(v)
-            if not parsed.scheme or not parsed.netloc:
-                raise ValueError(
-                    "EXCEL_MCP_URL must be a valid URL with scheme and domain"
-                )
-            if parsed.scheme not in ("http", "https"):
-                raise ValueError("EXCEL_MCP_URL must use http or https scheme")
-        except Exception:
-            raise ValueError("EXCEL_MCP_URL must be a valid URL")
-
-        return v
-
     @field_validator("MICROSANDBOX_MCP_URL", mode="before")
     @classmethod
     def validate_microsandbox_mcp_url(cls, v):
@@ -399,44 +388,6 @@ class Settings(BaseSettings):
 
         return v
 
-    @field_validator("SNOWFLAKE_MCP_URL", mode="before")
-    @classmethod
-    def validate_snowflake_mcp_url(cls, v):
-        if not v or v.strip() == "":
-            return None
-
-        try:
-            parsed = urlparse(v)
-            if not parsed.scheme or not parsed.netloc:
-                raise ValueError(
-                    "SNOWFLAKE_MCP_URL must be a valid URL with scheme and domain"
-                )
-            if parsed.scheme not in ("http", "https"):
-                raise ValueError("SNOWFLAKE_MCP_URL must use http or https scheme")
-        except Exception:
-            raise ValueError("SNOWFLAKE_MCP_URL must be a valid URL")
-
-        return v
-
-    @field_validator("DATAVIZ_MCP_URL", mode="before")
-    @classmethod
-    def validate_dataviz_mcp_url(cls, v):
-        if not v or v.strip() == "":
-            return None
-
-        try:
-            parsed = urlparse(v)
-            if not parsed.scheme or not parsed.netloc:
-                raise ValueError(
-                    "DATAVIZ_MCP_URL must be a valid URL with scheme and domain"
-                )
-            if parsed.scheme not in ("http", "https"):
-                raise ValueError("DATAVIZ_MCP_URL must use http or https scheme")
-        except Exception:
-            raise ValueError("DATAVIZ_MCP_URL must be a valid URL")
-
-        return v
-
     @field_validator("CODE_INTERPRETER_BACKEND_URL", mode="before")
     @classmethod
     def validate_code_interpreter_backend_url(cls, v):
@@ -475,39 +426,6 @@ class Settings(BaseSettings):
                 "RUN_CODE_RUNTIME_API_KEY is required when RUN_CODE_ENABLED is true"
             )
         return self
-
-    @field_validator("LANGFUSE_HOST", mode="before")
-    @classmethod
-    def validate_langfuse_host(cls, v):
-        if not v or v.strip() == "":
-            raise ValueError("LANGFUSE_HOST is required and cannot be empty")
-
-        try:
-            parsed = urlparse(v)
-            if not parsed.scheme or not parsed.netloc:
-                raise ValueError(
-                    "LANGFUSE_HOST must be a valid URL with scheme and domain"
-                )
-            if parsed.scheme not in ("http", "https"):
-                raise ValueError("LANGFUSE_HOST must use http or https scheme")
-        except Exception:
-            raise ValueError("LANGFUSE_HOST must be a valid URL")
-
-        return v
-
-    @field_validator("LANGFUSE_SECRET_KEY", mode="before")
-    @classmethod
-    def validate_langfuse_secret_key(cls, v):
-        if not v or v.strip() == "":
-            raise ValueError("LANGFUSE_SECRET_KEY is required and cannot be empty")
-        return v
-
-    @field_validator("LANGFUSE_PUBLIC_KEY", mode="before")
-    @classmethod
-    def validate_langfuse_public_key(cls, v):
-        if not v or v.strip() == "":
-            raise ValueError("LANGFUSE_PUBLIC_KEY is required and cannot be empty")
-        return v
 
     @field_validator("AUTH_USERNAME", mode="before")
     @classmethod

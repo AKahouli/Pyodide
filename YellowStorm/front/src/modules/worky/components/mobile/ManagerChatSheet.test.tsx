@@ -14,5 +14,6 @@ describe('ManagerChatSheet', () => {
     render(<ManagerChatSheet streamId="s1" open onOpenChange={() => {}} />);
     expect(screen.getByText('chat-thread')).toBeTruthy();
     expect(screen.getByText('prompt-bar')).toBeTruthy();
+    expect(screen.getByText('messages.description')).toBeTruthy();
   });
 });

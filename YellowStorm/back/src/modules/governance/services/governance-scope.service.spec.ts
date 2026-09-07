@@ -12,7 +12,7 @@ function queryResult<T>(value: T) {
 
 describe('GovernanceScopeService delete authorization', () => {
   function buildService(options: { isOwner?: boolean; accessibleScopeIds?: string[]; deleteMembership?: unknown; groupIds?: string[]; children?: unknown[]; deployments?: unknown[] } = {}) {
-    const scope = { _id: { toString: () => scopeId }, programId: { toString: () => programId }, name: 'Scope', metadata: { classification: { stage: 'pilot' } }, save: jest.fn().mockResolvedValue(undefined) };
+    const scope = { _id: { toString: () => scopeId }, programId: { toString: () => programId }, name: 'Scope', metadata: { classification: { stage: 'pilot' } }, knowledge: undefined as unknown as Record<string, unknown>, save: jest.fn().mockResolvedValue(undefined) };
     const scopeModel = {
       create: jest.fn().mockResolvedValue(scope),
       findOne: jest.fn().mockReturnValue(queryResult(scope)),
@@ -137,6 +137,64 @@ describe('GovernanceScopeService delete authorization', () => {
     expect(scopeModel.create).toHaveBeenCalledWith(expect.objectContaining({ metadata: { description: 'Credit risk guidance' } }));
 
     await expect(service.create(actorId, programId, { name: 'Other scope', metadata: { description: 42 } })).rejects.toBeInstanceOf(ValidationException);
+  });
+
+  it('normalizes knowledge settings on creation', async () => {
+    const { service, scopeModel } = buildService({ isOwner: true });
+    scopeModel.findOne.mockReturnValueOnce(queryResult(null)).mockReturnValueOnce(queryResult(null));
+
+    await service.create(actorId, programId, {
+      name: 'Scope',
+      knowledge: { sourceMode: 'workspaces_only', webSourcesEnabled: true, webAllowedDomains: [' https://Docs.Example.com/guide ', 'repo.example.org'], webBlockedDomains: ['tracker.example.net'] },
+    });
+
+    expect(scopeModel.create).toHaveBeenCalledWith(expect.objectContaining({
+      knowledge: {
+        sourceMode: 'workspaces_only',
+        webSourcesEnabled: true,
+        webAllowedDomains: ['docs.example.com', 'repo.example.org'],
+        webBlockedDomains: ['tracker.example.net'],
+      },
+    }));
+  });
+
+  it('clears web domain lists when web sources are disabled', async () => {
+    const { service, scopeModel } = buildService({ isOwner: true });
+    scopeModel.findOne.mockReturnValueOnce(queryResult(null)).mockReturnValueOnce(queryResult(null));
+
+    await service.create(actorId, programId, {
+      name: 'Scope',
+      knowledge: { sourceMode: 'llm_only', webSourcesEnabled: false, webAllowedDomains: ['docs.example.com'] },
+    });
+
+    expect(scopeModel.create).toHaveBeenCalledWith(expect.objectContaining({
+      knowledge: { sourceMode: 'llm_only', webSourcesEnabled: false, webAllowedDomains: [], webBlockedDomains: [] },
+    }));
+  });
+
+  it('rejects invalid web source domains', async () => {
+    const { service } = buildService({ isOwner: true });
+
+    await expect(service.update(actorId, actorEmail, programId, scopeId, {
+      knowledge: { sourceMode: 'llm_only', webSourcesEnabled: true, webBlockedDomains: ['not a domain'] },
+    })).rejects.toBeInstanceOf(ValidationException);
+  });
+
+  it('persists knowledge updates on the scope', async () => {
+    const { service, scope } = buildService({ isOwner: true });
+
+    await service.update(actorId, actorEmail, programId, scopeId, {
+      knowledge: { sourceMode: 'workspaces_only', webSourcesEnabled: true },
+    });
+
+    expect(scope.knowledge).toEqual({ sourceMode: 'workspaces_only', webSourcesEnabled: true, webAllowedDomains: [], webBlockedDomains: [] });
+  });
+
+  it('requires scope management permission for knowledge updates', async () => {
+    const { service, scope } = buildService();
+
+    await expect(service.update(actorId, actorEmail, programId, scopeId, { knowledge: { sourceMode: 'workspaces_only' } })).rejects.toBeInstanceOf(ForbiddenException);
+    expect(scope.knowledge).toBeUndefined();
   });
 
   it('does not prepare a draft when only the guardrail review timestamp changes', async () => {

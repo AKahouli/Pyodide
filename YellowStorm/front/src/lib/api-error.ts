@@ -41,6 +41,13 @@ type BackendError = {
   timestamp: string;
   details?: unknown;
 };
+
+type ClientApiError = {
+  code: string;
+  message?: string;
+  statusCode: number;
+  details?: unknown;
+};
 /**
  * Parse an error into a standardized ApiError
  */
@@ -88,6 +95,18 @@ export function parseApiError(error: unknown): ApiError {
       message: getErrorMessage(ErrorCode.INTERNAL_ERROR),
       statusCode: error.response?.status || 500,
       requiresReAuth: error.response?.status === 401,
+      raw: error,
+    };
+  }
+
+  // The shared Axios client already unwraps non-401 responses into this
+  // compact shape. Preserve its domain code instead of showing ERR_1000.
+  if (isClientApiError(error)) {
+    return {
+      code: error.code,
+      message: error.message || getErrorMessage(error.code),
+      statusCode: error.statusCode,
+      requiresReAuth: requiresReAuth(error.code),
       raw: error,
     };
   }
@@ -140,6 +159,17 @@ function isBackendError(error: unknown): error is BackendError {
     "statusCode" in error &&
     "method" in error &&
     "path" in error
+  );
+}
+
+function isClientApiError(error: unknown): error is ClientApiError {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    typeof (error as ClientApiError).code === "string" &&
+    "statusCode" in error &&
+    typeof (error as ClientApiError).statusCode === "number"
   );
 }
 

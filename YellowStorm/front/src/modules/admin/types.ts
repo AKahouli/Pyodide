@@ -194,6 +194,7 @@ export interface FeatureVisibility {
   appBuilder: boolean;
   worky: boolean;
   agents: boolean;
+  semanticModel: boolean;
   platformCopilot: boolean;
 }
 
@@ -236,6 +237,16 @@ export interface AppearanceSettings {
   themes: Record<AdminColorTheme, AppearanceThemeConfig>;
   logos: AppearanceLogo[];
 }
+
+export interface EmailLogo {
+  filename: string;
+  contentType: string;
+  size: number;
+  updatedAt: string;
+  dataUri: string;
+}
+
+export type EmailLogoResponse = { logo: EmailLogo | null };
 
 // Plan Types
 
@@ -1060,6 +1071,7 @@ export interface PlaybookExecutionAdminSettings {
   pythonWorkerPoolSize: number;
   pythonWorkerMaxInflight: number;
   maxToolIterations: number;
+  maxSandboxCallsPerStep: number;
   graphCacheEnabled: boolean;
   graphCacheMaxEntries: number;
   graphCacheTtlSeconds: number;
@@ -1765,8 +1777,8 @@ export interface ComposerSuggestionSettings {
   requestsPerMinute: number;
   maxOutputTokens: number;
 }
-export interface ConversationSettingsResponse { composerSuggestions: ComposerSuggestionSettings; redactSensitiveText?: boolean; updatedAt?: string; }
-export type UpdateConversationSettingsRequest = Pick<ConversationSettingsResponse, 'composerSuggestions'> & { redactSensitiveText?: boolean };
+export interface ConversationSettingsResponse { composerSuggestions: ComposerSuggestionSettings; redactSensitiveText?: boolean; latencyInstrumentationEnabled?: boolean; updatedAt?: string; }
+export type UpdateConversationSettingsRequest = Pick<ConversationSettingsResponse, 'composerSuggestions'> & { redactSensitiveText?: boolean; latencyInstrumentationEnabled?: boolean };
 export interface UpdateSensitiveTextRedactionRequest { redactSensitiveText: boolean; }
 export interface ConversationSettingsAgentOption { id: string; name: string; description?: string; agentTypeName?: string; model?: string; }
 

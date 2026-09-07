@@ -71,29 +71,13 @@ export async function patchWorkyStream(
   return readJson<WorkyStreamFixture>(response);
 }
 
-export async function stopWorkyStream(
-  request: APIRequestContext,
-  accessToken: string,
-  streamId: string,
-): Promise<void> {
-  const response = await request.delete(`${API_BASE_URL}/worky/streams/${streamId}`, {
-    headers: { authorization: `Bearer ${accessToken}`, 'content-type': 'application/json' },
-    data: { reason: 'playwright-smoke' },
-  });
-  expect(response.ok(), `stopStream failed: ${response.status()} ${await response.text()}`).toBeTruthy();
-}
-
 export async function deleteWorkyStream(
   request: APIRequestContext,
   accessToken: string,
   streamId: string,
 ): Promise<void> {
-  // Stop is a soft-delete; for clean-up we use the same endpoint again
-  // (idempotent on stopped streams). If a hard delete is added later,
-  // switch to that.
-  const response = await request.delete(`${API_BASE_URL}/worky/streams/${streamId}`, {
+  const response = await request.delete(`${API_BASE_URL}/worky/streams/${streamId}/delete`, {
     headers: { authorization: `Bearer ${accessToken}`, 'content-type': 'application/json' },
-    data: { reason: 'playwright-smoke-cleanup' },
   });
   expect(response.ok(), `deleteStream failed: ${response.status()} ${await response.text()}`).toBeTruthy();
 }
@@ -118,7 +102,7 @@ export const workyTest = base.extend<{
     try {
       await use(stream);
     } finally {
-      await deleteWorkyStream(request, authed.accessToken, stream.id).catch(() => undefined);
+      await deleteWorkyStream(request, authed.accessToken, stream.id);
     }
   },
 });

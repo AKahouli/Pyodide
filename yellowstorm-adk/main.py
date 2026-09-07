@@ -6,6 +6,9 @@ from contextlib import asynccontextmanager
 from importlib.metadata import version
 from os import getenv
 
+# Keep full LLM message content out of ADK telemetry spans.
+os.environ["ADK_CAPTURE_MESSAGE_CONTENT_IN_SPANS"] = "false"
+
 from fastapi.exceptions import RequestValidationError
 from src.middleware import add_middleware
 #from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
@@ -31,12 +34,14 @@ from src.routers.authentification import router as auth_router
 from src.routers.playbook import playbook_router
 from src.routers.evaluation import router as evaluation_router
 from src.smart_rag.infrastructure.session.manager import (
-    get_shared_engine,
+    dispose_shared_database_session_service,
     dispose_shared_engine,
+    get_shared_database_session_service,
 )
 from src.routers.evaluation_batch import router as evaluation_batch_router
 from src.routers.response_evaluation import router as response_evaluation_router
 from src.routers.response_correction import router as response_correction_router
+from src.routers.semantic_model import router as semantic_model_router
 
 from src.evaluation.repository import EvaluationRepository, dispose_evaluation_engine
 from src.a2a_gateway.repository import A2AAgentRepository, dispose_a2a_engine
@@ -88,6 +93,7 @@ async def lifespan(app: FastAPI):
     runtime_versions = {
         package: version(package)
         for package in (
+            "google-adk",
             "langgraph",
             "langgraph-checkpoint",
             "langgraph-checkpoint-postgres",
@@ -122,17 +128,19 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.error(f"Failed to initialize A2A agent store: {e}")
 
-    # Pre-initialize shared database engine for parallel access
-    logger.info("Pre-initializing shared database engine...")
-    shared_engine = None
-
-    # Create database tables (run in executor to avoid blocking event loop)
-    logger.info("Creating database tables...")
-    # loop = asyncio.get_event_loop()
-    # await loop.run_in_executor(None, lambda: Base.metadata.create_all(shared_engine))
-    logger.info("Database tables created successfully")
-
-    logger.info("Shared database engine ready for parallel requests")
+    # Eagerly warm the shared ADK session service (pooled engine +
+    # prepare_tables) before gRPC traffic so request-path session lookups
+    # skip engine creation and schema checks.
+    try:
+        logger.info("Initializing shared ADK database session service...")
+        session_service = await get_shared_database_session_service()
+        logger.info(
+            "Shared ADK database session service ready (engine_id=%s)",
+            id(session_service.db_engine),
+        )
+    except Exception as e:
+        # Keep starting: the provider retries lazily on the first request.
+        logger.error(f"Failed to warm shared ADK database session service: {e}")
 
     # Start gRPC server as background task
     grpc_server_task = None
@@ -199,6 +207,11 @@ async def lifespan(app: FastAPI):
         except Exception as e:
             logger.error(f"Error stopping gRPC server: {str(e)}")
 
+    # Dispose the shared ADK session service, then its engine exactly once.
+    # gRPC is stopped above, so no in-flight request still holds the service.
+    await dispose_shared_database_session_service()
+    await dispose_shared_engine()
+
     await dispose_evaluation_engine()
     await dispose_a2a_engine()
     logger.info("Finished router chatbot (DOWN)")
@@ -243,6 +256,7 @@ app.include_router(evaluation_router)
 app.include_router(evaluation_batch_router)
 app.include_router(response_evaluation_router)
 app.include_router(response_correction_router)
+app.include_router(semantic_model_router)
 app.include_router(a2a_serving_router)
 if __name__ == "__main__":
     uvicorn.run(

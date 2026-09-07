@@ -112,6 +112,7 @@
   "docx.loading": "Loading document…",
   "docx.error.title": "Unable to open document",
   "docx.error.description": "We couldn't render this Word document. Try again or download the original file.",
+  "docx.toolbar.download": "Download Word document",
   "excel.loading": "Loading spreadsheet…",
   "excel.error.title": "Unable to open spreadsheet",
   "excel.error.description": "We couldn't render this Excel file. Try again or download the original file.",

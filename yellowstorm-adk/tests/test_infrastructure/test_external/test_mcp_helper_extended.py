@@ -10,15 +10,15 @@ from src.smart_rag.infrastructure.external.mcp_helper import MCPHelper
 
 class TestMCPHelperTypeExtraction:
     def test_extract_requested_mcp_types_from_tools_and_params(self):
-        tools = [{"mcp_type": "excel,microsandbox"}, {"mcp_type": "vectorstore"}]
-        params = {"mcp_types": "excel"}
+        tools = [{"mcp_type": "github,microsandbox"}, {"mcp_type": "vectorstore"}]
+        params = {"mcp_types": "github"}
         result = MCPHelper.extract_requested_mcp_types(tools, params)
-        assert result == ["excel", "microsandbox", "vectorstore"]
+        assert result == ["github", "microsandbox", "vectorstore"]
 
     def test_has_requested_mcp_type(self):
         assert MCPHelper.has_requested_mcp_type(
-            "excel",
-            tools=[{"mcp_type": "excel"}],
+            "github",
+            tools=[{"mcp_type": "github"}],
         )
         assert not MCPHelper.has_requested_mcp_type("unknown", tools=[])
 

@@ -7,11 +7,17 @@ import { MessageActions } from './MessageActions';
 const updateFeedbackMock = vi.hoisted(() => vi.fn());
 const regenerateMessageMock = vi.hoisted(() => vi.fn());
 const toastSuccessMock = vi.hoisted(() => vi.fn());
+const toastErrorMock = vi.hoisted(() => vi.fn());
 const branchConversationMock = vi.hoisted(() => vi.fn());
 const prepareConversationPlaybookHandoffMock = vi.hoisted(() => vi.fn());
 const openHandoffMock = vi.hoisted(() => vi.fn());
 const navigateMock = vi.hoisted(() => vi.fn());
 const fetchConversationsMock = vi.hoisted(() => vi.fn());
+const openCitationSourceMock = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
+const exportBlocksToDocxMock = vi.hoisted(() => vi.fn().mockResolvedValue(new Blob(['docx'])));
+const downloadBlobMock = vi.hoisted(() => vi.fn());
+const notificationSuccessMock = vi.hoisted(() => vi.fn());
+const notificationErrorMock = vi.hoisted(() => vi.fn());
 const modelMock = vi.hoisted(() => ({ value: { id: 'model-1', name: 'Model One' } as { id: string; name: string } | undefined }));
 
 vi.mock('@/components/ui/tooltip', () => ({
@@ -26,6 +32,27 @@ vi.mock('@/components/ui/dropdown-menu', () => ({
   DropdownMenuTrigger: ({ children }: { children: ReactNode }) => <>{children}</>,
   DropdownMenuContent: ({ children }: { children: ReactNode }) => <>{children}</>,
   DropdownMenuItem: ({ children, onClick, disabled }: { children: ReactNode; onClick?: () => void; disabled?: boolean }) => <button onClick={onClick} disabled={disabled}>{children}</button>,
+}));
+
+vi.mock('@/components/ui/popover', () => ({
+  Popover: ({ children }: { children: ReactNode }) => <>{children}</>,
+  PopoverTrigger: ({ children }: { children: ReactNode }) => <>{children}</>,
+  PopoverContent: ({ children }: { children: ReactNode }) => <>{children}</>,
+}));
+
+vi.mock('@/components/ai-elements/ai-message-content', () => ({
+  openCitationSource: openCitationSourceMock,
+}));
+
+vi.mock('../utils/docx-export', () => ({
+  exportBlocksToDocx: exportBlocksToDocxMock,
+  downloadBlob: downloadBlobMock,
+}));
+
+vi.mock('@/lib/notifications', () => ({
+  showSuccess: notificationSuccessMock,
+  showError: notificationErrorMock,
+  showInfo: vi.fn(),
 }));
 
 vi.mock('react-router-dom', () => ({ useNavigate: () => navigateMock }));
@@ -84,7 +111,7 @@ vi.mock('./MessagePdfExport', () => ({
 vi.mock('sonner', () => ({
   toast: {
     success: toastSuccessMock,
-    error: vi.fn(),
+    error: toastErrorMock,
   },
 }));
 
@@ -210,5 +237,84 @@ describe('MessageActions', () => {
       />,
     );
     expect(screen.getByText('messageActions.modelUnavailable')).toBeInTheDocument();
+  });
+
+  it('lists cited sources and opens them in the document viewer', async () => {
+    render(
+      <MessageActions
+        message={{
+          id: 'ai-1',
+          conversationType: 'ai',
+          components: [
+            { type: 'text', data: { content: 'answer', citations: [{ source: 'docs/impl-guide.pdf', page: '4', parentId: '', sourceType: 'text', externalId: '', pageContent: '', workspaceId: '' }, { source: 'https://example.com/spec', parentId: '', sourceType: 'text', externalId: '', page: '', pageContent: '', workspaceId: '' }] } },
+          ],
+          isComplete: true,
+          isStreaming: false,
+        } as never}
+        isLastAiMessage={false}
+        conversationId='conv-1'
+      />,
+    );
+
+    expect(screen.getByText('messageActions.sources')).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: /impl-guide\.pdf/ }));
+    await waitFor(() => expect(openCitationSourceMock).toHaveBeenCalledWith(
+      expect.objectContaining({ source: 'docs/impl-guide.pdf' }),
+      'sidebar',
+      'ai.citations.defaultSource',
+      { conversationId: 'conv-1', messageId: 'ai-1' },
+    ));
+    expect(screen.getByRole('button', { name: 'spec' })).toBeInTheDocument();
+  });
+
+  it('hides the sources button when the answer has no citations', () => {
+    render(
+      <MessageActions
+        message={{ id: 'ai-1', conversationType: 'ai', components: [], isComplete: true, isStreaming: false } as never}
+        isLastAiMessage={false}
+        conversationId='conv-1'
+      />,
+    );
+    expect(screen.queryByRole('button', { name: 'messageActions.sources' })).not.toBeInTheDocument();
+  });
+
+  it('exports the answer to DOCX', async () => {
+    render(
+      <MessageActions
+        message={{ id: 'ai-1', conversationType: 'ai', components: [], isComplete: true, isStreaming: false, createdAt: '2026-07-29T13:00:00.000Z' } as never}
+        isLastAiMessage={false}
+        conversationId='conv-1'
+      />,
+    );
+
+    await userEvent.click(screen.getByRole('button', { name: 'messageActions.exportDocx' }));
+    await waitFor(() => {
+      expect(exportBlocksToDocxMock).toHaveBeenCalledWith(
+        [{
+          label: 'export.assistantLabel',
+          timestamp: new Intl.DateTimeFormat('en', { dateStyle: 'medium', timeStyle: 'medium' }).format(new Date('2026-07-29T13:00:00.000Z')),
+          markdown: 'markdown',
+        }],
+        'exportPdf.untitledConversation',
+      );
+      expect(downloadBlobMock).toHaveBeenCalledWith(expect.any(Blob), expect.stringMatching(/\.docx$/));
+      expect(notificationSuccessMock).toHaveBeenCalledWith('toasts.export.docxSuccess');
+    });
+  });
+
+  it('exports the answer to PDF via the print pipeline', async () => {
+    render(
+      <MessageActions
+        message={{ id: 'ai-1', conversationType: 'ai', components: [], isComplete: true, isStreaming: false, createdAt: '2026-07-29T13:00:00.000Z' } as never}
+        isLastAiMessage={false}
+        conversationId='conv-1'
+      />,
+    );
+
+    await userEvent.click(screen.getByRole('button', { name: 'messageActions.exportPdf' }));
+    expect(screen.getByTestId('message-pdf-export')).toBeInTheDocument();
+
+    await act(async () => pdfExportMock.onFinish?.(false));
+    expect(toastErrorMock).toHaveBeenCalledWith('toasts.message.exportError');
   });
 });

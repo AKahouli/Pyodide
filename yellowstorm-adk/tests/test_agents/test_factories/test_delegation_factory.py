@@ -73,11 +73,10 @@ class TestAgentDelegationFactory:
             "description": "Test agent description"
         }
 
-        with patch('src.smart_rag.agents.factories.delegation_factory.langfuse_client'):
-            delegate_func = factory.make_delegate_function("TestAgent")
+        delegate_func = factory.make_delegate_function("TestAgent")
 
-            assert callable(delegate_func)
-            assert delegate_func.__doc__ is not None
+        assert callable(delegate_func)
+        assert delegate_func.__doc__ is not None
 
     def test_task_search_order_counter(self):
         """Test task search order counter initialization."""
@@ -121,24 +120,20 @@ class TestAgentDelegationFactory:
         }
         mock_agent_repository.get_agent_id_by_name.return_value = "agent123"
 
-        with patch('src.smart_rag.agents.factories.delegation_factory.langfuse_client') as mock_langfuse:
-            mock_span = MagicMock()
-            mock_langfuse.span.return_value = mock_span
+        with patch.object(factory, '_create_agent_with_error_handling', new_callable=AsyncMock) as mock_create:
+            mock_agent = MagicMock()
+            mock_toolkit = MagicMock()
+            mock_create.return_value = (mock_agent, mock_toolkit)
 
-            with patch.object(factory, '_create_agent_with_error_handling', new_callable=AsyncMock) as mock_create:
-                mock_agent = MagicMock()
-                mock_toolkit = MagicMock()
-                mock_create.return_value = (mock_agent, mock_toolkit)
+            with patch.object(factory, '_execute_agent_with_error_handling', new_callable=AsyncMock) as mock_execute:
+                mock_execute.return_value = "Test result"
 
-                with patch.object(factory, '_execute_agent_with_error_handling', new_callable=AsyncMock) as mock_execute:
-                    mock_execute.return_value = "Test result"
+                delegate_func = factory.make_delegate_function("TestAgent")
+                result = await delegate_func("Test task", "Expected output")
 
-                    delegate_func = factory.make_delegate_function("TestAgent")
-                    result = await delegate_func("Test task", "Expected output")
-
-                    assert result == "Test result"
-                    mock_create.assert_called_once()
-                    mock_execute.assert_called_once()
+                assert result == "Test result"
+                mock_create.assert_called_once()
+                mock_execute.assert_called_once()
 
     def test_agent_not_found_scenario(self):
         """Test scenario when agent is not found."""
@@ -158,11 +153,10 @@ class TestAgentDelegationFactory:
         mock_agent_helper.normalize_agent_name.return_value = "nonexistent_agent"
         mock_agent_repository.get_agent_by_name.return_value = None
 
-        with patch('src.smart_rag.agents.factories.delegation_factory.langfuse_client'):
-            delegate_func = factory.make_delegate_function("NonexistentAgent")
+        delegate_func = factory.make_delegate_function("NonexistentAgent")
 
-            assert callable(delegate_func)
-            assert "Agent not found" in delegate_func.__doc__
+        assert callable(delegate_func)
+        assert "Agent not found" in delegate_func.__doc__
 
     def test_inject_connector_repo_adds_github_aliases(self):
         bindings = [{"connector_id": "connector-1", "fixed_params": {"existing": "value"}}]

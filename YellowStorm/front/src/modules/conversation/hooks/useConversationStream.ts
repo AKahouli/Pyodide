@@ -76,6 +76,9 @@ export function useConversationStream() {
         case 'mention_created':
           store.onMentionCreated(event.data);
           break;
+        case 'stream_resync_required':
+          store.onStreamResyncRequired(event.data);
+          break;
         }
 
     });

@@ -9,7 +9,7 @@ const mocks = vi.hoisted(() => ({
   fetchConversations: vi.fn(),
   fetchMessages: vi.fn(),
   sendMessage: vi.fn(),
-  waitForConnection: vi.fn(),
+  ensureConnected: vi.fn(),
   subscribe: vi.fn(),
   listener: undefined as ((event: StreamSSEEvent) => void) | undefined,
 }));
@@ -24,7 +24,7 @@ vi.mock('@/modules/conversation/api', () => ({
 
 vi.mock('@/modules/conversation/stream', () => ({
   conversationStreamService: {
-    waitForConnection: mocks.waitForConnection,
+    ensureConnected: mocks.ensureConnected,
     subscribe: mocks.subscribe,
   },
 }));
@@ -51,7 +51,6 @@ describe('usePlatformCopilotConversation', () => {
     mocks.createConversation.mockResolvedValue({ id: 'conversation-1', runtimePurpose: 'platform_copilot' });
     mocks.fetchConversations.mockResolvedValue({ items: [{ id: 'conversation-1', title: 'Yellowmind', runtimePurpose: 'platform_copilot' }], total: 1, page: 1, limit: 100, totalPages: 1 });
     mocks.fetchMessages.mockResolvedValue({ items: [], total: 0, page: 1, limit: 100, totalPages: 0 });
-    mocks.waitForConnection.mockResolvedValue(true);
     mocks.sendMessage.mockResolvedValue({
       userMessage: {
         id: 'user-1', conversationId: 'conversation-1', conversationType: 'user', content: 'Find it',
@@ -196,13 +195,22 @@ describe('usePlatformCopilotConversation', () => {
     expect(result.current.conversationId).toBe('conversation-2');
   });
 
-  it('does not start a turn when the shared Conversation stream is unavailable', async () => {
-    mocks.waitForConnection.mockResolvedValue(false);
+  it('starts the turn without waiting for the shared Conversation stream', async () => {
+    const { result } = renderHook(() => usePlatformCopilotConversation(true, context));
+    await waitFor(() => expect(result.current.conversationId).toBe('conversation-1'));
+
+    await act(async () => { expect(await result.current.send('Find it')).toBe(true); });
+
+    expect(mocks.ensureConnected).toHaveBeenCalled();
+    expect(mocks.sendMessage).toHaveBeenCalledWith('conversation-1', expect.objectContaining({ content: 'Find it' }));
+  });
+
+  it('surfaces POST failures without conflating them with stream connection state', async () => {
+    mocks.sendMessage.mockRejectedValue(new Error('POST failed'));
     const { result } = renderHook(() => usePlatformCopilotConversation(true, context));
     await waitFor(() => expect(result.current.conversationId).toBe('conversation-1'));
 
     await act(async () => { expect(await result.current.send('Find it')).toBe(false); });
-    expect(mocks.sendMessage).not.toHaveBeenCalled();
-    expect(result.current.error).toEqual(expect.objectContaining({ message: 'Conversation stream is unavailable' }));
+    expect(result.current.error).toEqual(expect.objectContaining({ message: 'POST failed' }));
   });
 });

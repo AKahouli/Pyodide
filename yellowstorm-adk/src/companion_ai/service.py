@@ -21,12 +21,15 @@ whose nodes are per-step LlmAgents. Event→step mapping uses node_info.path
 from __future__ import annotations
 
 import asyncio
+from contextvars import ContextVar
 import json
 import logging
 import re
 import uuid
 from datetime import datetime, timedelta, timezone
 from typing import List, Optional, Tuple
+
+active_turn_id: ContextVar[Optional[str]] = ContextVar("worky_active_turn_id", default=None)
 
 from google.adk.agents import LlmAgent
 from google.adk.runners import Runner
@@ -1102,10 +1105,12 @@ class OrchestratorService:
 
     async def _add_message(self, session_id: str, role: str, content: str) -> None:
         """Project one chat turn into `messages` (the client's conversation view)."""
-        if not content:
+        if not content or self._rm is None:
             return
-        await self._project(self._rm and self._rm.add_message(
-            uuid.uuid4().hex, session_id, role, content))
+        # Terminal chat projection is the UI completion signal. Let failures
+        # reach the servicer so it can attempt a correlated failure outcome.
+        await self._rm.add_message(
+            uuid.uuid4().hex, session_id, role, content, active_turn_id.get())
 
     async def _add_error_message(self, session_id: str, content: str,
                                  title: str = "This task couldn't be completed") -> None:
@@ -1384,6 +1389,8 @@ class OrchestratorService:
         """
         if not new_steps:
             return 0
+        if len({s.id for s in new_steps}) != len(new_steps):
+            raise ValueError("plan has duplicate step ids")
         # The plan's frontier: steps nothing currently depends on. Injected steps
         # hang off it so they schedule in a NEW wave AFTER all existing work.
         # Without this, an independent step (no deps) lands in wave 0 alongside
@@ -1403,8 +1410,8 @@ class OrchestratorService:
             if not s.is_persona:
                 s.assignee = live.executor_id
                 s.assignee_name = live.executor_name or DEFAULT_EXECUTOR_LABEL
+        scheduler.validate(Plan(steps=[*live.steps, *new_steps]))
         live.steps.extend(new_steps)
-        scheduler.validate(live)
         scheduler.assign_waves(live)
         for s in new_steps:
             await self._project_step(session_id, live, s)

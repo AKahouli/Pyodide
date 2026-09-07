@@ -335,7 +335,7 @@ export const AppSidebar = memo(function AppSidebar() {
   );
 
   useEffect(() => {
-    if (activeGroup) {
+    if (activeGroup && activeGroup !== 'ask') {
       setOpenGroups(getOpenOutcomeGroups(activeGroup));
     }
   }, [activeGroup]);
@@ -610,7 +610,7 @@ export const AppSidebar = memo(function AppSidebar() {
         >
           <SidebarMenu>
             {featureVisibility.workspace && <WorkspaceButton />}
-            {canOpenSemanticModels && <SemanticModelButton />}
+            {featureVisibility.semanticModel && canOpenSemanticModels && <SemanticModelButton />}
           </SidebarMenu>
         </OutcomeGroup>
 

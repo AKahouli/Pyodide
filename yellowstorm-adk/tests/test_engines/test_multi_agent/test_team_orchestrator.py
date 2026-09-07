@@ -136,7 +136,7 @@ class TestAutoAgentGenerationTeam:
              patch.object(orchestrator, 'manager_factory') as mock_manager_factory, \
              patch.object(orchestrator, 'streaming_processor') as mock_streaming_processor, \
              patch.object(orchestrator, 'memory_service') as mock_memory_service, \
-             patch('src.smart_rag.engines.multi_agent.team_orchestrator.get_database_session_service') as mock_db_factory, \
+             patch('src.smart_rag.engines.multi_agent.team_orchestrator.get_shared_database_session_service', new_callable=AsyncMock) as mock_db_factory, \
              patch('src.smart_rag.engines.multi_agent.team_orchestrator.get_in_memory_session_service') as mock_memory_factory, \
              patch('src.smart_rag.engines.multi_agent.team_orchestrator.get_adk_runner', return_value=MockRunner), \
              patch('src.smart_rag.infrastructure.session.citation_manager.get_citation_manager', new=AsyncMock(return_value=MagicMock())):
@@ -148,7 +148,7 @@ class TestAutoAgentGenerationTeam:
             mock_manager_factory.create_manager_agent.return_value = mock_manager_agent
             mock_streaming_processor.process_streaming_events = AsyncMock(return_value="Manager response")
             mock_memory_service.save_manager_conversation = AsyncMock()
-            mock_db_factory.return_value.return_value = mock_database_session
+            mock_db_factory.return_value = mock_database_session
             mock_memory_factory.return_value.return_value = mock_memory_session
 
             result = await orchestrator.run_agent_team(
@@ -219,9 +219,10 @@ class TestAutoAgentGenerationTeam:
             "src.smart_rag.infrastructure.session.citation_manager.get_citation_manager",
             new=AsyncMock(return_value=mock_citation_manager),
         ), patch(
-            "src.smart_rag.engines.multi_agent.team_orchestrator.get_database_session_service"
+            "src.smart_rag.engines.multi_agent.team_orchestrator.get_shared_database_session_service",
+            new_callable=AsyncMock,
         ) as mock_session_factory:
-            mock_session_factory.return_value.return_value = MagicMock()
+            mock_session_factory.return_value = MagicMock()
             result = await orchestrator.run_single_agent("parent task", "sess-1", queue)
 
         assert result == "parent answer"

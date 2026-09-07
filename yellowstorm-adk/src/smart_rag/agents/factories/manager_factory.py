@@ -74,7 +74,7 @@ class ManagerAgentFactory:
             manager_temperature (float): Temperature setting for the manager's LLM.
             tool_choice (str, optional): Tool choice mode ('auto', 'none', etc.).
                 If 'none', the manager will not be able to delegate to agents.
-            manager_specific_tools (Optional[List[str]]): List of tool names (e.g., ['dataviz'])
+            manager_specific_tools (Optional[List[str]]): List of tool names (e.g., ['formviz'])
                 that should be added directly to the manager agent.
 
         Returns:
@@ -224,19 +224,7 @@ class ManagerAgentFactory:
                 enable_deep_search = True
                 enable_vectorstore_mcp = True
 
-            if tool_name_lower == 'dataviz':
-                # Add dataviz MCP toolset
-                try:
-                    mcp_configs = [{'type': 'dataviz'}]
-                    dataviz_toolset = MCPHelper.create_toolsets(mcp_configs)
-                    if dataviz_toolset:
-                        updated_tools.extend(dataviz_toolset)
-                    else:
-                        logger.warning("Failed to create dataviz toolset - toolset is None")
-                except Exception as e:
-                    logger.exception(f"Error adding dataviz toolset to manager agent: {e}")
-
-            elif tool_name_lower == 'formviz':
+            if tool_name_lower == 'formviz':
                 try:
                     from src.smart_rag.tools.utilities.formviz_tools import generate_form_viz
                     updated_tools.append(generate_form_viz)

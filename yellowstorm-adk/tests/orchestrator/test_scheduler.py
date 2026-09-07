@@ -108,6 +108,12 @@ def test_unknown_dependency_is_rejected():
         sch.validate(p)
 
 
+def test_duplicate_step_ids_are_rejected():
+    p = _plan(Step(id="a"), Step(id="a"))
+    with pytest.raises(ValueError, match="duplicate step ids"):
+        sch.validate(p)
+
+
 if __name__ == "__main__":
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     for fn in fns:

@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { WorkspaceDocumentService } from '@modules/workspace/workspace-document.service';
 import { WorkspaceService } from '@modules/workspace/workspace.service';
+import { WorkspaceShareService } from '@modules/workspace/workspace-share.service';
 import { ConflictException, ForbiddenException, NotFoundException } from '@modules/exceptions';
 import { ErrorCode } from '@modules/exceptions/constants/error-codes';
 import { ConnectWorkspaceDto } from '../dto';
@@ -13,6 +14,7 @@ export class SemanticModelWorkspaceService {
     private readonly database: SemanticModelDatabaseService,
     private readonly models: SemanticModelService,
     private readonly workspaces: WorkspaceService,
+    private readonly workspaceShares: WorkspaceShareService,
     private readonly documents: WorkspaceDocumentService,
   ) {}
 
@@ -26,8 +28,8 @@ export class SemanticModelWorkspaceService {
 
   async connect(userId: string, modelId: string, dto: ConnectWorkspaceDto) {
     const model = await this.models.requireActiveRole(userId, modelId, ['owner', 'editor']);
+    if (!await this.workspaceShares.hasAccess(userId, dto.workspaceId)) throw new ForbiddenException(ErrorCode.SEMANTIC_MODEL_WORKSPACE_INVALID);
     const workspace = await this.workspaces.findById(dto.workspaceId);
-    if (workspace.createdBy !== userId) throw new ForbiddenException(ErrorCode.SEMANTIC_MODEL_WORKSPACE_INVALID);
     const revision = await this.database.transaction(async (client) => {
       const revision = await this.models.advanceRevision(client,modelId,dto.expectedRevision);
       await client.query(

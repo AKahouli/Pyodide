@@ -50,6 +50,16 @@ export default registerAs('email', () => ({
     maxPerMinute: Number.parseInt(process.env.EMAIL_RATE_LIMIT_PER_MINUTE || '100', 10),
   },
 
+  // Email Template Rendering
+  templates: {
+    // Override where the email HTML templates live (absolute or cwd-relative).
+    dir: process.env.EMAIL_TEMPLATES_DIR || 'src/modules/email/templates',
+    // Absolute URL to a public copy of the header logo (CDN/static host).
+    // Empty by default: no logo is rendered unless an admin uploads one or
+    // this env var is set to a public URL.
+    logoUrl: process.env.EMAIL_LOGO_URL || '',
+  },
+
   // Timeouts
   connectionTimeoutMs: Number.parseInt(process.env.EMAIL_CONNECTION_TIMEOUT || '10000', 10),
   socketTimeoutMs: Number.parseInt(process.env.EMAIL_SOCKET_TIMEOUT || '30000', 10),

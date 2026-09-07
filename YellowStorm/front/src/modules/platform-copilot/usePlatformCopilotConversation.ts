@@ -1,12 +1,48 @@
 import * as React from 'react';
-import { createConversation, fetchConversation, fetchConversations, fetchMessages, sendMessage } from '@/modules/conversation/api';
+import { createConversation, fetchConversation, fetchConversations, fetchMessages, fetchToolResult, sendMessage } from '@/modules/conversation/api';
 import { conversationStreamService } from '@/modules/conversation/stream';
-import type { ChoiceInteractionMetadata, Conversation, Message, StreamingComponent, StreamSSEEvent } from '@/modules/conversation/types';
+import type { ChoiceInteractionMetadata, Conversation, Message, MessageComponent, StreamingComponent, StreamSSEEvent } from '@/modules/conversation/types';
 import type { PlatformCopilotPageContext } from './types';
 import type { PendingPlaybookHandoffDraft } from './platformCopilotPanelStore';
 
 export const PLATFORM_COPILOT_CONVERSATION_STORAGE_KEY = 'ys_platform_copilot_conversation_id';
 const LEGACY_CONVERSATION_STORAGE_KEY = 'ys_second_brain_conversation_id';
+
+/**
+ * Persisted message responses omit tool result payloads; the copilot derives
+ * its UI handoff targets from them, so pull each missing payload on demand.
+ * A failed lookup only costs that tool's handoff targets, not the hydrate.
+ */
+async function hydrateToolResults(conversationId: string, messages: Message[]): Promise<Message[]> {
+  return Promise.all(messages.map(async (message) => {
+    if (message.conversationType !== 'ai') return message;
+    const tools = (message.components ?? []).filter(
+      (component): component is MessageComponent & { id: string } =>
+        component.type === 'toolActivity'
+        && Boolean(component.id)
+        && (component.data as Record<string, unknown>).resultJson === undefined,
+    );
+    if (tools.length === 0) return message;
+    const payloads = await Promise.all(tools.map(async (component) => {
+      try {
+        return (await fetchToolResult(conversationId, message.id, component.id)).resultJson;
+      } catch (err) {
+        console.warn('[PlatformCopilot] tool result hydration failed; handoff targets may be missing', err);
+        return undefined;
+      }
+    }));
+    const resultById = new Map(tools.map((component, index) => [component.id, payloads[index]]));
+    return {
+      ...message,
+      components: (message.components ?? []).map((component) => {
+        const resultJson = component.type === 'toolActivity' && component.id ? resultById.get(component.id) : undefined;
+        return resultJson
+          ? { ...component, data: { ...component.data, resultJson } }
+          : component;
+      }),
+    };
+  }));
+}
 
 function upsertMessage(messages: Message[], message: Message): Message[] {
   const index = messages.findIndex((candidate) => candidate.id === message.id);
@@ -59,7 +95,7 @@ export function usePlatformCopilotConversation(open: boolean, clientContext: Pla
 
   const hydrate = React.useCallback(async (id: string) => {
     const page = await fetchMessages(id, { limit: 100 });
-    setMessages(page.items);
+    setMessages(await hydrateToolResults(id, page.items));
   }, []);
 
   const loadHistory = React.useCallback(async () => {
@@ -174,8 +210,9 @@ export function usePlatformCopilotConversation(open: boolean, clientContext: Pla
       : crypto.randomUUID());
     retryRef.current = { fingerprint, requestId };
     try {
-      const connected = await conversationStreamService.waitForConnection();
-      if (!connected) throw new Error('Conversation stream is unavailable');
+      // POST starts immediately; the shared SSE pipe connects in parallel and
+      // the server replays any events missed by the (re)connecting pipe.
+      conversationStreamService.ensureConnected();
       const response = await sendMessage(conversationId, {
         content,
         requestId,

@@ -41,8 +41,8 @@ class MockEventSource {
     this.listeners.set(type, [...(this.listeners.get(type) ?? []), callback]);
   }
 
-  emitNamed(type: string, payload: unknown) {
-    const event = { data: JSON.stringify(payload) } as MessageEvent<string>;
+  emitNamed(type: string, payload: unknown, id?: string) {
+    const event = { data: JSON.stringify(payload), lastEventId: id ?? '' } as MessageEvent<string>;
     for (const listener of this.listeners.get(type) ?? []) listener(event);
   }
 
@@ -134,13 +134,144 @@ describe('conversationStreamService', () => {
     unsubscribe();
   });
 
-  it('resolves a pending connection wait when the server confirms the pipe', async () => {
+  it('opens the pipe synchronously from ensureConnected without blocking the caller', () => {
     localStorage.setItem('accessToken', 'token-123');
 
-    const ready = conversationStreamService.waitForConnection();
-    MockEventSource.instances[0]?.emitNamed('connected', { connectionId: 'conn-1' });
+    conversationStreamService.ensureConnected();
 
-    await expect(ready).resolves.toBe(true);
+    expect(MockEventSource.instances).toHaveLength(1);
+    expect(conversationStreamService.getIsConnected()).toBe(false);
+
+    // Connected pipe: ensureConnected is a no-op, no second EventSource.
+    MockEventSource.instances[0].emitNamed('connected', { connectionId: 'conn-1' });
+    conversationStreamService.ensureConnected();
+
+    expect(MockEventSource.instances).toHaveLength(1);
+  });
+
+  it('carries the last seen event id as the reconnect cursor', () => {
+    vi.useFakeTimers();
+    localStorage.setItem('accessToken', 'token-123');
+    conversationStreamService.connect();
+    const source = MockEventSource.instances[0];
+    source.emitNamed('connected', { connectionId: 'conn-1' });
+    source.emitNamed('stream_start', { conversationId: 'c1', messageId: 'm1' }, 'boot-1:4');
+    source.emitNamed('stream_chunk', { conversationId: 'c1', action: 'update' }, 'boot-1:5');
+
+    source.readyState = MockEventSource.CLOSED;
+    source.emitError();
+    vi.advanceTimersByTime(1000);
+
+    expect(MockEventSource.instances).toHaveLength(2);
+    expect(decodeURIComponent(MockEventSource.instances[1].url)).toContain('cursor=boot-1:5');
+    vi.useRealTimers();
+  });
+
+  it('captures the replay cursor from the wrapped wire payload on the default event', () => {
+    vi.useFakeTimers();
+    localStorage.setItem('accessToken', 'token-123');
+    conversationStreamService.connect();
+    const source = MockEventSource.instances[0];
+    source.emitNamed('connected', { connectionId: 'conn-1' });
+    source.emitMessage({ id: 'boot-1:4', type: 'stream_start', data: { conversationId: 'c1', messageId: 'm1' } });
+    source.emitMessage({ id: 'boot-1:5', type: 'stream_chunk', data: { conversationId: 'c1', action: 'update' } });
+
+    source.readyState = MockEventSource.CLOSED;
+    source.emitError();
+    vi.advanceTimersByTime(1000);
+
+    expect(MockEventSource.instances).toHaveLength(2);
+    expect(decodeURIComponent(MockEventSource.instances[1].url)).toContain('cursor=boot-1:5');
+    vi.useRealTimers();
+  });
+
+  it('ignores server auto-assigned numeric event ids when tracking the cursor', () => {
+    vi.useFakeTimers();
+    localStorage.setItem('accessToken', 'token-123');
+    conversationStreamService.connect();
+    const source = MockEventSource.instances[0];
+    source.emitNamed('connected', { connectionId: 'conn-1' }, '1');
+    source.emitNamed('heartbeat', { timestamp: 1 }, '2');
+    source.emitMessage({ id: '3', type: 'heartbeat', data: { timestamp: 2 } });
+
+    source.readyState = MockEventSource.CLOSED;
+    source.emitError();
+    vi.advanceTimersByTime(1000);
+
+    expect(MockEventSource.instances).toHaveLength(2);
+    expect(decodeURIComponent(MockEventSource.instances[1].url)).not.toContain('cursor=');
+    vi.useRealTimers();
+  });
+
+  it('drops the replay cursor when the pipe is disconnected explicitly', () => {
+    localStorage.setItem('accessToken', 'token-123');
+    conversationStreamService.connect();
+    MockEventSource.instances[0].emitNamed('stream_chunk', { conversationId: 'c1', action: 'update' }, 'boot-1:9');
+
+    conversationStreamService.disconnect();
+    conversationStreamService.connect();
+
+    expect(MockEventSource.instances).toHaveLength(2);
+    expect(MockEventSource.instances[1].url).not.toContain('cursor=');
+  });
+
+  it('drops the replay cursor when the auth token changes', () => {
+    localStorage.setItem('accessToken', 'old-token');
+    conversationStreamService.connect();
+    const original = MockEventSource.instances[0];
+    original.emitNamed('stream_chunk', { conversationId: 'c1', action: 'update' }, 'boot-1:9');
+
+    localStorage.setItem('accessToken', 'new-token');
+    conversationStreamService.connect();
+
+    expect(original.closed).toBe(true);
+    expect(MockEventSource.instances).toHaveLength(2);
+    expect(MockEventSource.instances[1].url).toContain('token=new-token');
+    expect(MockEventSource.instances[1].url).not.toContain('cursor=');
+  });
+
+  it('emits stream_resync_required events to listeners', () => {
+    localStorage.setItem('accessToken', 'token-123');
+    const listener = vi.fn();
+    const unsubscribe = conversationStreamService.subscribe(listener);
+
+    conversationStreamService.connect();
+    MockEventSource.instances[0].emitNamed('stream_resync_required', { reason: 'cursor_gap', lastSeenCursor: 'boot-1:2' });
+
+    expect(listener).toHaveBeenCalledWith({
+      type: 'stream_resync_required',
+      data: { reason: 'cursor_gap', lastSeenCursor: 'boot-1:2' },
+    });
+    unsubscribe();
+  });
+
+  it('keeps the replay cursor across a token-refresh reconnect', () => {
+    localStorage.setItem('accessToken', 'old-token');
+    conversationStreamService.connect();
+    MockEventSource.instances[0].emitNamed('stream_chunk', { conversationId: 'c1', action: 'update' }, 'boot-1:7');
+
+    localStorage.setItem('accessToken', 'new-token');
+    conversationStreamService.reconnectWithNewToken();
+
+    expect(MockEventSource.instances).toHaveLength(2);
+    expect(decodeURIComponent(MockEventSource.instances[1].url)).toContain('token=new-token');
+    expect(decodeURIComponent(MockEventSource.instances[1].url)).toContain('cursor=boot-1:7');
+  });
+
+  it('keeps the replay cursor when the heartbeat watchdog forces a reconnect', () => {
+    vi.useFakeTimers();
+    localStorage.setItem('accessToken', 'token-123');
+    conversationStreamService.connect();
+    const source = MockEventSource.instances[0];
+    source.emitNamed('connected', { connectionId: 'conn-1' });
+    source.emitNamed('stream_chunk', { conversationId: 'c1', action: 'update' }, 'boot-1:3');
+
+    vi.advanceTimersByTime(30_000); // heartbeat watchdog fires → teardownForReconnect
+    vi.advanceTimersByTime(1_000); // reconnect backoff
+
+    expect(MockEventSource.instances).toHaveLength(2);
+    expect(decodeURIComponent(MockEventSource.instances[1].url)).toContain('cursor=boot-1:3');
+    vi.useRealTimers();
   });
 
   it('replaces the existing EventSource when the token is refreshed', () => {
@@ -156,21 +287,18 @@ describe('conversationStreamService', () => {
     expect(MockEventSource.instances[1].url).toContain('token=new-token');
   });
 
-  it('replaces a connected pipe when another singleton changes the shared token', async () => {
+  it('replaces a connected pipe when another singleton changes the shared token', () => {
     localStorage.setItem('accessToken', 'old-token');
     conversationStreamService.connect();
     const original = MockEventSource.instances[0];
     original.emitNamed('connected', { connectionId: 'old-connection' });
 
     localStorage.setItem('accessToken', 'new-token');
-    const ready = conversationStreamService.waitForConnection();
+    conversationStreamService.connect();
 
     expect(original.closed).toBe(true);
     expect(MockEventSource.instances).toHaveLength(2);
     expect(MockEventSource.instances[1].url).toContain('token=new-token');
-
-    MockEventSource.instances[1].emitNamed('connected', { connectionId: 'new-connection' });
-    await expect(ready).resolves.toBe(true);
   });
 
   it('closes native CONNECTING retries so reconnects can read the latest token', () => {

@@ -153,6 +153,34 @@ describe('PlaybookFlowValidatorService', () => {
     }).toThrow('Target port target-node.prompt has multiple data bindings');
   });
 
+  it.each([
+    [{ sourceKind: 'trigger', triggerPath: '' }, 'trigger bindings require a valid triggerPath'],
+    [{ sourceKind: 'trigger', triggerPath: 'playbookInputs.__proto__' }, 'trigger bindings require a valid triggerPath'],
+    [{ sourceKind: 'state', statePath: '   ' }, 'state bindings require statePath'],
+    [{ sourceKind: 'expression', expression: '' }, 'expression bindings require expression'],
+    [{ sourceKind: 'constant' }, 'constant bindings require constantValue'],
+    [{ sourceKind: 'node-output', sourceNode: '', sourcePort: 'summary' }, 'require sourceNode and sourcePort'],
+  ])('rejects incomplete source-specific bindings', (source, message) => {
+    expect(() => service.validate(buildNodes(), [], [{
+      id: 'binding-1',
+      targetNode: 'target-node',
+      targetPort: 'prompt',
+      ...source,
+    }] as any)).toThrow(message);
+  });
+
+  it('accepts complete constants and legacy trigger namespaces', () => {
+    expect(() => service.validate(buildNodes(), [], [{
+      id: 'binding-1', targetNode: 'target-node', targetPort: 'prompt',
+      sourceKind: 'trigger', triggerPath: 'mail.payload.subject',
+    }] as any)).not.toThrow();
+
+    expect(() => service.validate(buildNodes(), [], [{
+      id: 'binding-1', targetNode: 'target-node', targetPort: 'prompt',
+      sourceKind: 'constant', constantValue: null,
+    }] as any)).not.toThrow();
+  });
+
   it('keeps colon-containing binding target tuples distinct', () => {
     expect(() => {
       service.validate([

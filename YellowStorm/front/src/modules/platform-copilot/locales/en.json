@@ -6,6 +6,8 @@
   "newConversation": "Start a new Yellowmind conversation",
   "scrollLatest": "Scroll to the latest message",
   "resize": "Resize Yellowmind panel",
+  "launcher.moveInstructions": "Drag to move Yellowmind, or use the arrow keys while the button is focused.",
+  "launcher.position": "Yellowmind position: {{x}} pixels from the left and {{y}} pixels from the top.",
   "empty.title": "Work with your Playbooks",
   "empty.description": "Find a workflow, inspect its design, validate readiness, or prepare a controlled run.",
   "placeholder": "Ask about your Playbooks...",

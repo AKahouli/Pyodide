@@ -36,8 +36,8 @@ export function openFileViewer(
 }
 
 /**
- * Open a file from a direct URL in the file viewer.
- * Used for artifacts and citation sources signed by path.
+ * Open a file from a non-renewable direct URL in the file viewer.
+ * Signed URLs should use openFileViewerFromUrlLoader so they can be refreshed.
  */
 export function openFileViewerFromUrl(
   url: string,

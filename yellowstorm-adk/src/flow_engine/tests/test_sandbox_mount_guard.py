@@ -5,7 +5,6 @@ import pytest
 from src.flow_engine.tools import langchain_factory
 from src.flow_engine import mcp
 from src.flow_engine.tools.sandbox_mount_guard import (
-    SANDBOX_CALL_LIMIT_MESSAGE,
     SandboxCallBudget,
     SandboxMountGuard,
     SandboxMountValidationError,
@@ -17,13 +16,14 @@ REQUIRED_ACTIONS = {"sandbox_create", "sandbox_destroy", "file_list"}
 
 
 @pytest.mark.anyio
-async def test_sandbox_call_budget_admits_exactly_eight_concurrent_calls() -> None:
+async def test_sandbox_call_budget_uses_default_limit() -> None:
     budget = SandboxCallBudget()
 
-    admitted = await asyncio.gather(*(budget.try_acquire() for _ in range(20)))
+    admitted = await asyncio.gather(*(budget.try_acquire() for _ in range(40)))
 
-    assert admitted.count(True) == 8
-    assert admitted.count(False) == 12
+    assert admitted.count(True) == 30
+    assert admitted.count(False) == 10
+    assert "30 per step" in budget.limit_message
 
 
 @pytest.mark.anyio
@@ -44,6 +44,24 @@ async def test_mount_guard_accepts_validated_input() -> None:
         ("sandbox_create", {"workspace_paths": ["owner/cv"]}),
         ("file_list", {"path": "/mnt/workspace/cv/cv_template.docx"}),
     ]
+
+
+@pytest.mark.anyio
+async def test_mount_guard_accepts_validated_input_despite_create_warning() -> None:
+    async def call(action, _params):
+        if action == "sandbox_create":
+            return "Error: unexpected end of data"
+        return {"name": "cv_template.docx"}
+
+    result = await SandboxMountGuard(EXPECTED_INPUTS, REQUIRED_ACTIONS).create_validated(
+        call,
+        {},
+    )
+
+    assert result == (
+        "Error: unexpected end of data\n"
+        "Validated sandbox inputs: /mnt/workspace/cv/cv_template.docx"
+    )
 
 
 @pytest.mark.anyio
@@ -85,6 +103,36 @@ async def test_mount_guard_fails_after_one_recreation() -> None:
     assert [action for action, _params in calls].count("sandbox_create") == 2
     with pytest.raises(SandboxMountValidationError, match="already attempted"):
         await guard.create_validated(call, {})
+
+
+@pytest.mark.anyio
+async def test_mount_guard_preserves_failed_recreation_response() -> None:
+    calls = []
+    creation_results = iter([
+        "created",
+        "Sandbox acquire failed (retryable=false, code=CREATE_FAILED, attempts=1)",
+    ])
+
+    async def call(action, params):
+        calls.append((action, params))
+        if action == "sandbox_create":
+            return next(creation_results)
+        if action == "file_list":
+            return "Error: file not found"
+        return "destroyed"
+
+    with pytest.raises(SandboxMountValidationError) as exc_info:
+        await SandboxMountGuard(EXPECTED_INPUTS, REQUIRED_ACTIONS).create_validated(call, {})
+
+    assert "code=CREATE_FAILED" in str(exc_info.value)
+    assert "after one recreation: cv_template.docx" in str(exc_info.value)
+    assert [action for action, _params in calls] == [
+        "sandbox_create",
+        "file_list",
+        "sandbox_destroy",
+        "sandbox_create",
+        "file_list",
+    ]
 
 
 @pytest.mark.anyio
@@ -188,6 +236,63 @@ async def test_code_interpreter_uses_workspace_mounts_without_legacy_file_paths(
 
 
 @pytest.mark.anyio
+async def test_code_interpreter_returns_mount_failure_without_dispatching_later_calls(
+    monkeypatch,
+) -> None:
+    calls = []
+    secret = "secret-auth-canary"
+
+    async def call_mcp_tool(
+        _transport,
+        _url,
+        _config,
+        action,
+        params,
+        *,
+        auth_headers,
+        **_kwargs,
+    ):
+        calls.append((action, params, auth_headers))
+        if action == "sandbox_create":
+            return "Sandbox acquire failed (retryable=false, code=CREATE_FAILED, attempts=1)"
+        return "Error: file not found"
+
+    monkeypatch.setattr(mcp, "call_mcp_tool", call_mcp_tool)
+    tools, _collector = langchain_factory.create_langchain_tools(
+        agent_config={"tools": []},
+        step_connector_bindings=[{
+            "connector_id": "code-interpreter",
+            "connector_name": "Code Interpreter",
+            "connector_slug": "code-interpreter",
+            "mcp_server_url": "https://example.test/mcp",
+            "auth_headers": {"Authorization": f"Bearer {secret}"},
+            "actions": [
+                {"action_key": "sandbox_create", "parameter_schema": {}},
+                {"action_key": "sandbox_destroy", "parameter_schema": {}},
+                {"action_key": "file_list", "parameter_schema": {}},
+                {"action_key": "shell_exec", "parameter_schema": {}},
+            ],
+        }],
+        workspace_ceph_paths=["owner/cv"],
+        binding_workspace_ids=["workspace-id"],
+        sandbox_inputs=EXPECTED_INPUTS,
+    )
+    create_tool = next(tool for tool in tools if tool.name == "code-interpreter_sandbox_create")
+    shell_tool = next(tool for tool in tools if tool.name == "code-interpreter_shell_exec")
+
+    create_response = await create_tool.ainvoke({})
+    dispatched_calls = len(calls)
+    shell_response = await shell_tool.ainvoke({})
+
+    assert create_response.startswith("Error: Sandbox recreation failed")
+    assert "code=CREATE_FAILED" in create_response
+    assert "after one recreation: cv_template.docx" in create_response
+    assert secret not in create_response
+    assert shell_response == "Error: Sandbox input validation did not complete successfully"
+    assert len(calls) == dispatched_calls
+
+
+@pytest.mark.anyio
 async def test_code_interpreter_blocks_calls_after_per_step_budget(monkeypatch) -> None:
     calls = []
 
@@ -217,17 +322,18 @@ async def test_code_interpreter_blocks_calls_after_per_step_budget(monkeypatch) 
                 {"action_key": "file_write", "parameter_schema": {}},
             ],
         }],
+        max_sandbox_calls_per_step=16,
     )
     shell_tool = next(tool for tool in tools if tool.name == "code-interpreter_shell_exec")
     write_tool = next(tool for tool in tools if tool.name == "code-interpreter_file_write")
 
-    responses = [await shell_tool.ainvoke({}) for _ in range(7)]
+    responses = [await shell_tool.ainvoke({}) for _ in range(15)]
     responses.append(await write_tool.ainvoke({}))
     responses.append(await shell_tool.ainvoke({}))
 
-    assert responses[:8] == ["ok"] * 8
-    assert responses[8] == SANDBOX_CALL_LIMIT_MESSAGE
-    assert len(calls) == 8
+    assert responses[:16] == ["ok"] * 16
+    assert "16 per step" in responses[16]
+    assert len(calls) == 16
 
 
 @pytest.mark.anyio
@@ -251,15 +357,17 @@ async def test_sandbox_call_budget_is_isolated_per_tool_factory(monkeypatch) -> 
     first_tools, _collector = langchain_factory.create_langchain_tools(
         agent_config={"tools": []},
         step_connector_bindings=binding,
+        max_sandbox_calls_per_step=2,
     )
     second_tools, _collector = langchain_factory.create_langchain_tools(
         agent_config={"tools": []},
         step_connector_bindings=binding,
+        max_sandbox_calls_per_step=2,
     )
     first = first_tools[0]
     second = second_tools[0]
 
-    assert all(response == "ok" for response in await asyncio.gather(*(first.ainvoke({}) for _ in range(8))))
-    assert await first.ainvoke({}) == SANDBOX_CALL_LIMIT_MESSAGE
+    assert all(response == "ok" for response in await asyncio.gather(*(first.ainvoke({}) for _ in range(2))))
+    assert "2 per step" in await first.ainvoke({})
     assert await second.ainvoke({}) == "ok"
-    assert call_count == 9
+    assert call_count == 3

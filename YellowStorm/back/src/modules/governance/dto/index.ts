@@ -1,6 +1,6 @@
 export { CreateGovernanceProgramDto } from './create-governance-program.dto';
 export { UpdateGovernanceProgramDto } from './update-governance-program.dto';
-export { CreateGovernanceScopeDto } from './create-governance-scope.dto';
+export { CreateGovernanceScopeDto, GovernanceScopeKnowledgeDto } from './create-governance-scope.dto';
 export { UpdateGovernanceScopeDto } from './update-governance-scope.dto';
 export { UpdateGovernanceDocumentDto } from './update-governance-document.dto';
 export { CreateGovernanceMembershipDto } from './create-governance-membership.dto';

@@ -1,7 +1,6 @@
 import * as React from 'react';
 import { Activity, ArrowUpRight, Bot, History, Library, ListChecks, MessageSquarePlus, Send, ShieldCheck, Sparkles, Workflow, X } from 'lucide-react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { Streamdown } from 'streamdown';
 import { useStickToBottomContext } from 'use-stick-to-bottom';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -9,6 +8,7 @@ import { ResizablePanel } from '@/components/ui/resizable-panel';
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import { Textarea } from '@/components/ui/textarea';
 import { ChatConversation, ChatConversationContent, ChatScrollButton } from '@/components/ai-elements/chat-conversation';
+import { AssistantMarkdown } from '@/components/ai-elements/assistant-response';
 import { handleApiError } from '@/lib/api-error';
 import { useModuleTranslation } from '@/modules/localization';
 import { usePlaybookStore, usePlaybookUiStore } from '@/modules/playbook';
@@ -31,6 +31,24 @@ export const PLATFORM_COPILOT_PANEL_WIDTH_STORAGE_KEY = 'ys_platform_copilot_pan
 const PLATFORM_COPILOT_PANEL_DEFAULT_WIDTH = 400;
 const PLATFORM_COPILOT_PANEL_MIN_WIDTH = 336;
 const PLATFORM_COPILOT_PANEL_MAX_WIDTH_RATIO = 0.5;
+const PLATFORM_COPILOT_LAUNCHER_MARGIN = 8;
+
+type LauncherPosition = { left: number; top: number };
+
+function clampLauncherPosition(position: LauncherPosition, launcher: HTMLButtonElement): LauncherPosition {
+  const rect = launcher.getBoundingClientRect();
+  const maxLeft = Math.max(PLATFORM_COPILOT_LAUNCHER_MARGIN, window.innerWidth - rect.width - PLATFORM_COPILOT_LAUNCHER_MARGIN);
+  const maxTop = Math.max(PLATFORM_COPILOT_LAUNCHER_MARGIN, window.innerHeight - rect.height - PLATFORM_COPILOT_LAUNCHER_MARGIN);
+  return {
+    left: Math.max(PLATFORM_COPILOT_LAUNCHER_MARGIN, Math.min(maxLeft, position.left)),
+    top: Math.max(PLATFORM_COPILOT_LAUNCHER_MARGIN, Math.min(maxTop, position.top)),
+  };
+}
+
+function releaseLauncherPointer(launcher: HTMLButtonElement, pointerId: number) {
+  if (typeof launcher.hasPointerCapture === 'function' && !launcher.hasPointerCapture(pointerId)) return;
+  launcher.releasePointerCapture?.(pointerId);
+}
 
 export function PlatformCopilotMascot() {
   const { t, language } = useModuleTranslation('platform-copilot');
@@ -52,7 +70,12 @@ export function PlatformCopilotMascot() {
   const [input, setInput] = React.useState('');
   const [historyOpen, setHistoryOpen] = React.useState(false);
   const [scrollRequest, setScrollRequest] = React.useState(0);
+  const [launcherPosition, setLauncherPosition] = React.useState<LauncherPosition | null>(null);
+  const [launcherMovementAnnouncement, setLauncherMovementAnnouncement] = React.useState('');
   const launcherRef = React.useRef<HTMLButtonElement>(null);
+  const launcherPositionRef = React.useRef<LauncherPosition | null>(null);
+  const launcherDragRef = React.useRef<{ pointerId: number; startX: number; startY: number; originLeft: number; originTop: number; moved: boolean } | null>(null);
+  const suppressLauncherClickRef = React.useRef(false);
   const composerRef = React.useRef<HTMLTextAreaElement>(null);
   const initializedHandoffIdRef = React.useRef<string>();
   const hasOpenedRef = React.useRef(false);
@@ -100,6 +123,29 @@ export function PlatformCopilotMascot() {
     const timeout = window.setTimeout(refreshExpiry, delay);
     return () => window.clearTimeout(timeout);
   }, [pendingHandoff]);
+
+  React.useEffect(() => {
+    const keepLauncherInViewport = () => {
+      setLauncherPosition((position) => {
+        if (!position || !launcherRef.current) return position;
+        const clamped = clampLauncherPosition(position, launcherRef.current);
+        launcherPositionRef.current = clamped;
+        return clamped;
+      });
+    };
+    window.addEventListener('resize', keepLauncherInViewport);
+    return () => window.removeEventListener('resize', keepLauncherInViewport);
+  }, []);
+
+  React.useLayoutEffect(() => {
+    if (open || !launcherRef.current) return;
+    setLauncherPosition((position) => {
+      if (!position || !launcherRef.current) return position;
+      const clamped = clampLauncherPosition(position, launcherRef.current);
+      launcherPositionRef.current = clamped;
+      return clamped;
+    });
+  }, [open]);
 
   const pageContext = React.useMemo<PlatformCopilotPageContext>(() => {
     const match = location.pathname.match(/^\/playbooks\/([^/]+)(?:\/executions\/([^/]+))?/);
@@ -149,6 +195,73 @@ export function PlatformCopilotMascot() {
   }, [platformCopilot.conversationId, platformCopilot.messages, platformCopilot.streamingComponents, platformCopilot.streamingMessageId]);
   const loading = platformCopilot.loading || Boolean(platformCopilot.streamingMessageId);
   const handoffExpired = Boolean(pendingHandoff && new Date(pendingHandoff.expiresAt).getTime() <= Date.now());
+
+  const handleLauncherPointerDown = (event: React.PointerEvent<HTMLButtonElement>) => {
+    if (event.button !== 0) return;
+    const rect = event.currentTarget.getBoundingClientRect();
+    launcherDragRef.current = {
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startY: event.clientY,
+      originLeft: rect.left,
+      originTop: rect.top,
+      moved: false,
+    };
+    event.currentTarget.setPointerCapture?.(event.pointerId);
+  };
+
+  const handleLauncherPointerMove = (event: React.PointerEvent<HTMLButtonElement>) => {
+    const drag = launcherDragRef.current;
+    if (!drag || drag.pointerId !== event.pointerId) return;
+    const deltaX = event.clientX - drag.startX;
+    const deltaY = event.clientY - drag.startY;
+    if (!drag.moved && Math.abs(deltaX) <= 4 && Math.abs(deltaY) <= 4) return;
+    drag.moved = true;
+    event.preventDefault();
+    const position = clampLauncherPosition({ left: drag.originLeft + deltaX, top: drag.originTop + deltaY }, event.currentTarget);
+    launcherPositionRef.current = position;
+    setLauncherPosition(position);
+  };
+
+  const handleLauncherPointerUp = (event: React.PointerEvent<HTMLButtonElement>) => {
+    const drag = launcherDragRef.current;
+    if (!drag || drag.pointerId !== event.pointerId) return;
+    suppressLauncherClickRef.current = drag.moved;
+    if (drag.moved && launcherPositionRef.current) {
+      setLauncherMovementAnnouncement(t('launcher.position', {
+        x: Math.round(launcherPositionRef.current.left),
+        y: Math.round(launcherPositionRef.current.top),
+      }));
+    }
+    launcherDragRef.current = null;
+    releaseLauncherPointer(event.currentTarget, event.pointerId);
+  };
+
+  const handleLauncherPointerCancel = (event: React.PointerEvent<HTMLButtonElement>) => {
+    if (launcherDragRef.current?.pointerId !== event.pointerId) return;
+    launcherDragRef.current = null;
+    releaseLauncherPointer(event.currentTarget, event.pointerId);
+  };
+
+  const handleLauncherLostPointerCapture = (event: React.PointerEvent<HTMLButtonElement>) => {
+    if (launcherDragRef.current?.pointerId === event.pointerId) launcherDragRef.current = null;
+  };
+
+  const handleLauncherKeyDown = (event: React.KeyboardEvent<HTMLButtonElement>) => {
+    let deltaX = 0;
+    let deltaY = 0;
+    if (event.key === 'ArrowLeft') deltaX = -10;
+    else if (event.key === 'ArrowRight') deltaX = 10;
+    else if (event.key === 'ArrowUp') deltaY = -10;
+    else if (event.key === 'ArrowDown') deltaY = 10;
+    else return;
+    event.preventDefault();
+    const rect = event.currentTarget.getBoundingClientRect();
+    const position = clampLauncherPosition({ left: rect.left + deltaX, top: rect.top + deltaY }, event.currentTarget);
+    launcherPositionRef.current = position;
+    setLauncherPosition(position);
+    setLauncherMovementAnnouncement(t('launcher.position', { x: Math.round(position.left), y: Math.round(position.top) }));
+  };
 
   const sendMessage = async () => {
     const message = (composerRef.current?.value ?? input).trim();
@@ -303,7 +416,7 @@ export function PlatformCopilotMascot() {
                 {message.role === 'assistant' ? (
                   <>
                     <PlatformCopilotActivity components={message.components} isStreaming={message.isStreaming} />
-                    {message.text && <Streamdown className='min-w-0 w-full max-w-full overflow-hidden break-words [&_code]:[overflow-wrap:anywhere] [&_ol]:my-2 [&_ol]:pl-5 [&_p]:my-2 [&_p]:[overflow-wrap:anywhere] [&_pre]:w-full [&_pre]:max-w-full [&_pre]:overflow-x-auto [&_pre_code]:break-normal [&_pre_code]:[overflow-wrap:normal] [&_table]:my-3 [&_table]:block [&_table]:w-full [&_table]:max-w-full [&_table]:overflow-x-auto [&_table]:whitespace-nowrap [&_ul]:my-2 [&_ul]:pl-5'>{message.text}</Streamdown>}
+                    {message.text && <AssistantMarkdown>{message.text}</AssistantMarkdown>}
                     {(() => {
                       const pendingChoices = message.components
                         .filter((component) => component.type === 'choice')
@@ -396,9 +509,13 @@ export function PlatformCopilotMascot() {
   return (
     <>
       {!open && (
-        <Button ref={launcherRef} type='button' className='pointer-events-auto fixed bottom-5 right-5 z-[120] h-14 touch-manipulation rounded-full border border-primary-foreground/20 px-5 shadow-xl shadow-primary/20' aria-label={t('open')} onClick={(event) => {
+        <Button ref={launcherRef} type='button' style={launcherPosition ? { ...launcherPosition, right: 'auto', bottom: 'auto' } : undefined} className='pointer-events-auto fixed bottom-5 right-5 z-[120] h-14 cursor-grab touch-none select-none rounded-full border border-primary-foreground/20 px-5 shadow-xl shadow-primary/20 active:cursor-grabbing' aria-label={t('open')} aria-describedby='platform-copilot-launcher-instructions' onPointerDown={handleLauncherPointerDown} onPointerMove={handleLauncherPointerMove} onPointerUp={handleLauncherPointerUp} onPointerCancel={handleLauncherPointerCancel} onLostPointerCapture={handleLauncherLostPointerCapture} onKeyDown={handleLauncherKeyDown} onClick={(event) => {
           event.preventDefault();
           event.stopPropagation();
+          if (suppressLauncherClickRef.current) {
+            suppressLauncherClickRef.current = false;
+            return;
+          }
           hasOpenedRef.current = true;
           openPanel();
         }}>
@@ -406,6 +523,8 @@ export function PlatformCopilotMascot() {
           {t('title')}
         </Button>
       )}
+      <span id='platform-copilot-launcher-instructions' className='sr-only'>{t('launcher.moveInstructions')}</span>
+      <span className='sr-only' aria-live='polite'>{launcherMovementAnnouncement}</span>
       {open && useDrawer && (
         <Sheet open onOpenChange={(nextOpen) => { if (nextOpen) openPanel(); else closePanel(); }}>
           <SheetContent className='pointer-events-auto z-[110] flex w-full flex-col gap-0 p-0 [&>button]:right-3 [&>button]:top-3 [&>button]:grid [&>button]:size-11 [&>button]:place-items-center [&>button_svg]:size-5 sm:max-w-md' aria-label={t('title')} closeLabel={t('close')}>

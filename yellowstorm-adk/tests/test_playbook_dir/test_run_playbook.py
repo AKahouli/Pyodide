@@ -1,11 +1,14 @@
 """Unit tests for execute_playbook_with_agent_team."""
 
+import asyncio
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from src.schema.chatbot_schema import AgentSuggestion
 from src.schema.playbook import RunPlaybookRequest, RunPlaybookStepRequest
+from src.smart_rag.core.agent_team_service import AgentTeamService
 from src.smart_rag.playbook_dir.run_playbook import execute_playbook_with_agent_team
 
 
@@ -86,3 +89,46 @@ class TestRunPlaybook:
         ):
             with pytest.raises(RuntimeError, match="boom"):
                 await execute_playbook_with_agent_team(request, queue)
+
+    @pytest.mark.asyncio
+    async def test_playbook_and_team_requests_for_same_session_do_not_overlap(self):
+        first_entered = asyncio.Event()
+        release_first = asyncio.Event()
+        active_calls = 0
+        max_active_calls = 0
+
+        async def run_logic(_request, _queue):
+            nonlocal active_calls, max_active_calls
+            active_calls += 1
+            max_active_calls = max(max_active_calls, active_calls)
+            if not first_entered.is_set():
+                first_entered.set()
+                await release_first.wait()
+            active_calls -= 1
+
+        playbook_request = _playbook_request()
+        team_request = SimpleNamespace(
+            user_id=playbook_request.user_id,
+            session_id=playbook_request.session_id,
+            agent_mode="mono",
+            message="team turn",
+        )
+        team_request.model_copy = lambda **kwargs: SimpleNamespace(
+            **{**vars(team_request), **kwargs.get("update", {})}
+        )
+        with patch(
+            "src.smart_rag.engines.multi_agent.workflow_processor._run_agent_team_logic",
+            side_effect=run_logic,
+        ):
+            playbook = asyncio.create_task(
+                execute_playbook_with_agent_team(playbook_request, MagicMock())
+            )
+            await first_entered.wait()
+            team = asyncio.create_task(
+                AgentTeamService().process_team_request(team_request, MagicMock())
+            )
+            await asyncio.sleep(0)
+            release_first.set()
+            await asyncio.gather(playbook, team)
+
+        assert max_active_calls == 1

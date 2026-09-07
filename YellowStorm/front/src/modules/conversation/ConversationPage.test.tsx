@@ -33,6 +33,7 @@ vi.mock('./store', () => ({
   ),
   useCurrentConversation: () => conversationStateMock.value.currentConversation,
   useConversationLoading: () => conversationLoadingMock.value,
+  useDisplayMessages: () => [],
 }));
 
 vi.mock('@/modules/file-viewer', () => ({

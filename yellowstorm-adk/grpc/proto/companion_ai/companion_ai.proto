@@ -79,6 +79,8 @@ message RunRequest {
   string user_name  = 12;
   string user_email = 13;
   string user_role  = 14;
+  // Client-generated id for correlating the accepted turn with Electric rows.
+  string turn_id    = 15;
 }
 
 message RunResponse {

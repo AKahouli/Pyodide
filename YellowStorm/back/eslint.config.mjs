@@ -26,6 +26,17 @@ export default tseslint.config(
     },
   },
   {
+    // Tests routinely reach into private state with non-null assertions;
+    // assertion-style strictness stays enforced on source, not specs.
+    files: ['**/*.spec.ts', 'test/**/*.ts'],
+    rules: {
+      '@typescript-eslint/no-non-null-assertion': 'off',
+      '@typescript-eslint/non-nullable-type-assertion-style': 'off',
+      '@typescript-eslint/no-unnecessary-type-assertion': 'off',
+      '@typescript-eslint/unbound-method': 'off',
+    },
+  },
+  {
     ignores: ['dist/**', 'node_modules/**', 'coverage/**'],
   },
 );

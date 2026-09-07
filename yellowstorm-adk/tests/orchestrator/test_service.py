@@ -1,5 +1,6 @@
 """Unit tests for OrchestratorService pure helpers (no ADK/DB/LLM)."""
 import asyncio
+import json
 import os
 import sys
 from unittest.mock import AsyncMock, MagicMock
@@ -10,6 +11,29 @@ import pytest
 
 from src.companion_ai import scheduler, service as svc
 from src.companion_ai.plan import Plan, Status, Step
+
+
+@pytest.mark.asyncio
+async def test_add_message_projects_active_turn_id():
+    rm = MagicMock(add_message=AsyncMock())
+    service = svc.OrchestratorService(MagicMock(), rm, planner_model="m")
+    token = svc.active_turn_id.set("turn-1")
+    try:
+        await service._add_message("session-1", "assistant", "done")
+    finally:
+        svc.active_turn_id.reset(token)
+
+    args = rm.add_message.await_args.args
+    assert args[1:] == ("session-1", "assistant", "done", "turn-1")
+
+
+@pytest.mark.asyncio
+async def test_add_message_propagates_projection_failure():
+    rm = MagicMock(add_message=AsyncMock(side_effect=RuntimeError("database unavailable")))
+    service = svc.OrchestratorService(MagicMock(), rm, planner_model="m")
+
+    with pytest.raises(RuntimeError, match="database unavailable"):
+        await service._add_message("session-1", "assistant", "done")
 
 
 def test_make_plan_extracts_a_plan_when_output_schema_is_combined_with_tools(monkeypatch):
@@ -230,6 +254,52 @@ def test_plan_turn_keeps_a_genuine_direct_reply_completed():
 
     assert calls["n"] == 1, "a real direct reply must NOT trigger a retry"
     rm.set_session_status.assert_awaited_with("s", "completed")
+def _planner_service(monkeypatch, responses):
+    class FakeRunner:
+        def __init__(self):
+            self.session_service = MagicMock(
+                get_session=AsyncMock(return_value=object()),
+                create_session=AsyncMock(),
+            )
+            self.messages = []
+
+        async def run_async(self, **kwargs):
+            self.messages.append(kwargs["new_message"].parts[0].text)
+            event = MagicMock()
+            event.content.parts = [MagicMock(text=json.dumps(responses[len(self.messages) - 1]))]
+            yield event
+
+    runner = FakeRunner()
+    monkeypatch.setattr(svc.nodes, "build_llm", lambda *a, **k: "fake")
+    return svc.OrchestratorService(lambda node, app_name: runner, None, planner_model="fake"), runner
+
+
+def test_make_plan_retries_duplicate_ids_with_a_complete_replacement(monkeypatch):
+    invalid = {"title": "t", "steps": [
+        {"id": "s1", "description": "first"},
+        {"id": "s1", "description": "second", "depends_on": ["s1"]},
+    ]}
+    corrected = {"title": "t", "steps": [
+        {"id": "s1", "description": "first"},
+        {"id": "s2", "description": "second", "depends_on": ["s1"]},
+    ]}
+    service, runner = _planner_service(monkeypatch, [invalid, corrected])
+
+    plan = asyncio.run(service._make_plan("sess", "user", "do work"))
+
+    assert [step.id for step in plan.steps] == ["s1", "s2"]
+    assert len(runner.messages) == 2
+    assert "Every step id must be unique" in runner.messages[1]
+
+
+def test_make_plan_stops_after_one_invalid_correction(monkeypatch):
+    duplicate = {"title": "t", "steps": [{"id": "s1"}, {"id": "s1"}]}
+    service, runner = _planner_service(monkeypatch, [duplicate, duplicate])
+
+    with pytest.raises(ValueError, match="duplicate step ids"):
+        asyncio.run(service._make_plan("sess", "user", "do work"))
+
+    assert len(runner.messages) == 2
 
 
 def test_step_row_shows_the_personas_display_name_before_it_runs():
@@ -1245,6 +1315,22 @@ async def test_inject_steps_registers_a_mail_wait_for_injected_await_reply():
     rm.cancel_mail_waits.assert_not_awaited()            # existing waits NOT dropped
     _, kw = rm.register_mail_wait.await_args
     assert kw["session_id"] == "sess" and kw["step_id"] == live.steps[-1].id
+
+
+async def test_inject_steps_rejects_duplicate_ids_before_mutating_live_plan():
+    rm = MagicMock(upsert_steps=AsyncMock(), register_mail_wait=AsyncMock())
+    service = svc.OrchestratorService(MagicMock(), rm, planner_model="m")
+    original = Step(id="s1", kind="execute", status=Status.RUNNING, wave=3)
+    live = Plan(id="p", executor_id="e", executor_name="W", steps=[original])
+    new = [Step(id="n", description="first"), Step(id="n", description="second")]
+
+    with pytest.raises(ValueError, match="duplicate step ids"):
+        await service._inject_steps("sess", "u", live, new)
+
+    assert live.steps == [original]
+    assert original.wave == 3
+    rm.upsert_steps.assert_not_awaited()
+    rm.register_mail_wait.assert_not_awaited()
 
 
 async def test_apply_ops_cancel_persists_status_via_set_step_status():

@@ -1,7 +1,7 @@
-import { render, screen } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type { ReactNode } from 'react';
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { mockNavigate } from '@/test/setup';
 import { ConversationHeader } from './ConversationHeader';
 
@@ -15,8 +15,24 @@ vi.mock('@/components/ui/tooltip', () => ({
 vi.mock('./RenameDialog', () => ({ RenameDialog: ({ open }: { open: boolean }) => <div>{open ? 'rename-open' : 'rename-closed'}</div> }));
 vi.mock('./DeleteConversationDialog', () => ({ DeleteConversationDialog: ({ open }: { open: boolean }) => <div>{open ? 'delete-open' : 'delete-closed'}</div> }));
 vi.mock('./ShareDialog', () => ({ ShareDialog: ({ open }: { open: boolean }) => <div>{open ? 'share-open' : 'share-closed'}</div> }));
-vi.mock('./WorkspaceManagerSheet', () => ({ WorkspaceManagerSheet: ({ open }: { open: boolean }) => <div>{open ? 'workspace-open' : 'workspace-closed'}</div> }));
 vi.mock('./CreateGroupConversationDialog', () => ({ CreateGroupConversationDialog: () => null }));
+vi.mock('./ConversationPdfExport', () => ({ ConversationPdfExport: () => <div>conversation-pdf-export</div> }));
+
+const fetchMessagesMock = vi.hoisted(() => vi.fn());
+const exportBlocksToDocxMock = vi.hoisted(() => vi.fn().mockResolvedValue(new Blob(['docx'])));
+const downloadBlobMock = vi.hoisted(() => vi.fn());
+const showSuccessMock = vi.hoisted(() => vi.fn());
+
+vi.mock('../api', () => ({ fetchMessages: fetchMessagesMock }));
+vi.mock('../utils/docx-export', () => ({
+  exportBlocksToDocx: exportBlocksToDocxMock,
+  downloadBlob: downloadBlobMock,
+}));
+vi.mock('@/lib/notifications', () => ({
+  showSuccess: showSuccessMock,
+  showError: vi.fn(),
+  showInfo: vi.fn(),
+}));
 
 vi.mock('../hooks/useTypewriter', () => ({
   useTypewriter: () => '',
@@ -43,7 +59,19 @@ vi.mock('../store', () => ({
 }));
 
 describe('ConversationHeader', () => {
-  it('navigates back and opens share/workspace dialogs', async () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    fetchMessagesMock.mockResolvedValue({
+      items: [
+        { id: 'u1', conversationType: 'user', content: 'Question?', createdAt: '2026-01-01T10:00:00Z' },
+        { id: 'a1', conversationType: 'ai', components: [{ type: 'text', data: { content: 'Answer' } }], createdAt: '2026-01-01T10:00:05Z' },
+      ],
+      hasMore: false,
+      nextCursor: null,
+    });
+  });
+
+  it('navigates back and opens the share dialog without a header workspace selector', async () => {
     render(<ConversationHeader />);
 
     expect(screen.getByText('Conversation title')).toBeInTheDocument();
@@ -51,8 +79,7 @@ describe('ConversationHeader', () => {
     await userEvent.click(screen.getByRole('button', { name: 'header.actions.back' }));
     expect(mockNavigate).toHaveBeenCalledWith('/');
 
-    await userEvent.click(screen.getByRole('button', { name: 'header.tooltips.workspaces' }));
-    expect(screen.getByText('workspace-open')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'header.tooltips.workspaces' })).not.toBeInTheDocument();
 
     await userEvent.click(screen.getByRole('button', { name: 'header.tooltips.share' }));
     expect(screen.getByText('share-open')).toBeInTheDocument();
@@ -70,5 +97,28 @@ describe('ConversationHeader', () => {
 
     await userEvent.click(screen.getByRole('button', { name: 'header.actions.delete' }));
     expect(screen.getByText('delete-open')).toBeInTheDocument();
+  });
+
+  it('exports the whole conversation to DOCX and PDF', async () => {
+    render(<ConversationHeader />);
+
+    await userEvent.click(screen.getByRole('button', { name: 'header.actions.export' }));
+    await userEvent.click(screen.getByRole('menuitem', { name: /messageActions.exportDocx/ }));
+
+    await waitFor(() => {
+      expect(exportBlocksToDocxMock).toHaveBeenCalledWith(
+        [
+          expect.objectContaining({ role: 'user', label: 'export.userLabel', markdown: 'Question?' }),
+          expect.objectContaining({ role: 'ai', label: 'export.assistantLabel' }),
+        ],
+        'Conversation title',
+      );
+      expect(downloadBlobMock).toHaveBeenCalledWith(expect.any(Blob), expect.stringMatching(/\.docx$/));
+      expect(showSuccessMock).toHaveBeenCalledWith('toasts.export.docxSuccess');
+    });
+
+    await userEvent.click(screen.getByRole('button', { name: 'header.actions.export' }));
+    await userEvent.click(screen.getByRole('menuitem', { name: /messageActions.exportPdf/ }));
+    await waitFor(() => expect(screen.getByText('conversation-pdf-export')).toBeInTheDocument());
   });
 });

@@ -74,11 +74,37 @@ def test_grpc_request_log_payload_is_valid_json():
     assert "'Question'" not in request_json
 
 
-def test_grpc_request_json_is_raw_and_copyable_from_log_message():
-    payload = {"query": "Question", "enabled": True}
+def test_grpc_in_log_message_never_serializes_secret_payloads():
+    """Regression: the gRPC IN log must stay allow-listed.
+
+    Before the allow-list fix this emitted the full protobuf dict as
+    ``request_json=``, leaking platform tokens, agent params, guardrail
+    config, and connector credentials into logs.
+    """
+    payload = {
+        "query": "DO_NOT_LOG_SECRET question",
+        "platform_api_token": "DO_NOT_LOG_PLATFORM_TOKEN",
+        "user_context": {"user_id": "u1", "platform_api_token": "DO_NOT_LOG_PLATFORM_TOKEN"},
+        "agent_params": {"api_key": "DO_NOT_LOG_SECRET"},
+        "workspace_context": [{"credentials": "DO_NOT_LOG_SECRET"}],
+        "attached_files": [{"name": "file.txt", "url": "https://example.com/DO_NOT_LOG_SECRET"}],
+        "guardrail": {"api_key": "DO_NOT_LOG_SECRET"},
+    }
 
     message = _grpc_in_log_message("RunAgentTeam request received", payload)
-    copied_json = message.split("request_json=", 1)[1]
 
-    assert copied_json == '{"query":"Question","enabled":true}'
-    assert json.loads(copied_json) == payload
+    assert "DO_NOT_LOG_PLATFORM_TOKEN" not in message
+    assert "DO_NOT_LOG_SECRET" not in message
+    assert "request_json=" not in message
+
+    summary = json.loads(message.split("request_summary=", 1)[1])
+    assert summary["query_length"] == len("DO_NOT_LOG_SECRET question")
+    assert summary["workspace_count"] == 1
+    assert summary["attached_file_count"] == 1
+    assert set(summary) == {
+        "query_length",
+        "workspace_count",
+        "agent_count",
+        "has_agent",
+        "attached_file_count",
+    }

@@ -21,6 +21,7 @@ export interface GovernanceScope {
   type: 'organization' | 'municipality' | 'department' | 'business_unit' | 'country' | 'team' | 'custom';
   status: 'active' | 'inactive';
   metadata?: GovernanceScopeMetadata;
+  knowledge?: GovernanceScopeKnowledgeSettings;
   createdAt: string;
   updatedAt: string;
 }
@@ -45,6 +46,15 @@ export type GovernanceScopeRiskLevel = 'standard' | 'high_risk';
 export type GovernanceScopeCompliance = 'none' | 'regulated';
 export type GovernanceScopeStage = 'pilot' | 'production';
 export type GovernanceScopeReviewStatus = 'not_started' | 'in_review' | 'ready_for_approval' | 'approved' | 'rejected';
+
+export type GovernanceScopeKnowledgeSourceMode = 'llm_only' | 'workspaces_only';
+
+export interface GovernanceScopeKnowledgeSettings {
+  sourceMode: GovernanceScopeKnowledgeSourceMode;
+  webSourcesEnabled: boolean;
+  webAllowedDomains: string[];
+  webBlockedDomains: string[];
+}
 
 export interface GovernanceScopeReviewChecklistItem {
   key: string;
@@ -124,6 +134,7 @@ export interface CreateGovernanceScopePayload {
 export type UpdateGovernanceScopePayload = Partial<CreateGovernanceScopePayload> & {
   status?: GovernanceScope['status'];
   metadata?: GovernanceScopeMetadata;
+  knowledge?: GovernanceScopeKnowledgeSettings;
 };
 
 export interface UpdateGovernanceDocumentPayload { expectedGovernanceRevision: number; tags?: string[]; metadata?: Record<string, unknown>; ownerUserId?: string; ownerScopeId?: string; }
