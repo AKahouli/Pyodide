@@ -263,6 +263,7 @@ Do not render charts for single values or non-numeric content.
                     "brain_documents": agent.brain_documents,
                     "brain_relations": agent.brain_relations,
                     "brain_ids": agent.brain_ids,
+                    "file_names": agent.file_names,
                     "vectorstore_name": agent.vectorstore_name,
                     "agent_params": agent.agent_params if hasattr(agent, 'agent_params') else {},
                     "save_memory": agent.save_memory,

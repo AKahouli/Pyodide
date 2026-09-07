@@ -107,8 +107,9 @@ export class SemanticModelController {
   }
 
   @Post(':modelId/graph/validate')
-  @RequirePermissions([Permissions.SEMANTIC_MODELS_READ,Permissions.SEMANTIC_MODELS_ALL],'any')
-  validate(@CurrentUser() user: UserDocument,@Param('modelId') modelId: string) {
+  @RequirePermissions([Permissions.SEMANTIC_MODELS_UPDATE,Permissions.SEMANTIC_MODELS_ALL],'any')
+  async validate(@CurrentUser() user: UserDocument,@Param('modelId') modelId: string) {
+    await this.mappingProposals.rebuildAgeGraph(user._id.toString(), modelId);
     return this.graph.validate(user._id.toString(),modelId);
   }
 
@@ -179,6 +180,13 @@ export class SemanticModelController {
   @RequirePermissions([Permissions.SEMANTIC_MODELS_UPDATE,Permissions.SEMANTIC_MODELS_ALL],'any')
   rebuildAgeGraph(@CurrentUser() user: UserDocument,@Param('modelId') modelId: string) {
     return this.mappingProposals.rebuildAgeGraph(user._id.toString(), modelId);
+  }
+
+  @Post(':modelId/age-graph/index')
+  @ApiOperation({ summary: 'Synchronize the existing AGE projection with the semantic search index' })
+  @RequirePermissions([Permissions.SEMANTIC_MODELS_READ,Permissions.SEMANTIC_MODELS_ALL],'any')
+  indexAgeGraph(@CurrentUser() user: UserDocument,@Param('modelId') modelId: string) {
+    return this.mappingProposals.indexAgeGraph(user._id.toString(), modelId);
   }
 
   @Post(':modelId/age-graph/operations')

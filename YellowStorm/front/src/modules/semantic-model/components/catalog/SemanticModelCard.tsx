@@ -43,6 +43,7 @@ export function SemanticModelCard({ model }: Readonly<{ model: SemanticModel }>)
               {automatic ? <Sparkles className='h-5 w-5' /> : <Network className='h-5 w-5' />}
             </div>
             <div className='flex flex-wrap items-center justify-end gap-1.5'>
+              <span role='status' aria-label={t(model.indexStatus === 'indexed' ? 'indexStatus.indexed' : model.indexStatus === 'failed' ? 'indexStatus.failed' : 'indexStatus.working')} className={`h-2.5 w-2.5 rounded-full ${model.indexStatus === 'indexed' ? 'bg-emerald-500' : model.indexStatus === 'failed' ? 'bg-red-500' : `bg-amber-500 ${model.indexStatus === 'pending' || model.indexStatus === 'in_progress' ? 'animate-pulse' : ''}`}`} title={t(model.indexStatus === 'indexed' ? 'indexStatus.indexed' : model.indexStatus === 'failed' ? 'indexStatus.failed' : 'indexStatus.working')} />
               {isOwner && (
                 <Button
                   variant='ghost'
