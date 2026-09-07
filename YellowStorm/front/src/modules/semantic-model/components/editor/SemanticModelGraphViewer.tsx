@@ -265,7 +265,9 @@ export function SemanticModelGraphViewer({ open, onClose, modelId }: Props) {
     });
 
     simRef.current = sim;
-    return () => sim.stop();
+    return () => {
+      sim.stop();
+    };
   }, [ageNodes, ageEdges]);
 
   const selectedMeta = selectedNode?.properties._meta as NodeMeta | undefined;
