@@ -42,6 +42,6 @@ import { SemanticModelShareService } from './services/semantic-model-share.servi
     SemanticModelBuildOrchestratorService,
     SemanticModelShareService,
   ],
-  exports: [SemanticModelDatabaseService,SemanticModelProvisioningService],
+  exports: [SemanticModelDatabaseService,SemanticModelProvisioningService,SemanticModelService],
 })
 export class SemanticModelModule {}

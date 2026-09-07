@@ -67,6 +67,7 @@ export interface MessageReplayContext {
   webSearchEnabled: boolean;
   deepSearchEnabled: boolean;
   modelId?: string;
+  semanticModelId?: string;
   agentIds: string[];
   skillIds: string[];
   connectorRepo?: {

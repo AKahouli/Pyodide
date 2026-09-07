@@ -61,6 +61,7 @@ import { ConversationAgentRequestBuilder } from './services/conversation-agent-r
 import { CorrectiveReplayContextService } from './services/corrective-replay-context.service';
 import { CorrectiveReplayPromptBuilder } from './services/corrective-replay-prompt.builder';
 import { CorrectiveReplayRunnerService } from './services/corrective-replay-runner.service';
+import { SemanticModelModule } from '../semantic-model/semantic-model.module';
 
 @Module({
   imports: [
@@ -86,6 +87,7 @@ import { CorrectiveReplayRunnerService } from './services/corrective-replay-runn
     EmailModule,
     GovernanceRuntimeModule,
     forwardRef(() => EvaluationModule),
+    SemanticModelModule,
   ],
   controllers: [
     StreamController,  // Must be before ConversationController to avoid route conflict with :id param

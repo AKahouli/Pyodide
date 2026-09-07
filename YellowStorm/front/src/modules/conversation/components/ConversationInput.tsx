@@ -6,7 +6,7 @@ import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import { PromptInputButton } from '@/components/ai-elements/prompt-input';
 import type { PromptInputMessage } from '@/components/ai-elements/prompt-input';
-import { useConversationStore, useIsAwaitingFirstChunk, useInputDisabled, useReplyingToMessage, useSelectedWorkspaceIds, useDeepSearchEnabled, useSetDeepSearchEnabled } from '../store';
+import { useConversationStore, useIsAwaitingFirstChunk, useInputDisabled, useReplyingToMessage, useSelectedWorkspaceIds, useSelectedSemanticModelId, useDeepSearchEnabled, useSetDeepSearchEnabled } from '../store';
 import { UsageLimitBanner } from '@/modules/usage';
 import { useUsage } from '@/modules/usage/UsageContext';
 import { useConversationFileUpload } from '../hooks/useConversationFileUpload';
@@ -31,6 +31,7 @@ export function ConversationInput({ conversationId }: ConversationInputProps) {
   const isStreaming = useConversationStore((s) => s.isStreaming);
   const inputDisabled = useInputDisabled();
   const selectedWorkspaceIds = useSelectedWorkspaceIds();
+  const selectedSemanticModelId = useSelectedSemanticModelId();
   const currentConversation = useConversationStore((s) => s.currentConversation);
   const governedMode = currentConversation?.runtimeMode === 'governed';
   const { status: usageStatus } = useUsage();
@@ -88,7 +89,7 @@ export function ConversationInput({ conversationId }: ConversationInputProps) {
       if (!message.text?.trim() && !completedFileIds.length) return;
 
       const persistedWorkspaceIds = currentConversation?.workspaces ?? [];
-      if (!governedMode && (selectedWorkspaceIds.length !== persistedWorkspaceIds.length || selectedWorkspaceIds.some((id) => !persistedWorkspaceIds.includes(id)))) {
+      if (!governedMode && !selectedSemanticModelId && (selectedWorkspaceIds.length !== persistedWorkspaceIds.length || selectedWorkspaceIds.some((id) => !persistedWorkspaceIds.includes(id)))) {
         await updateConversation(conversationId, { workspaces: selectedWorkspaceIds });
       }
 
@@ -109,6 +110,7 @@ export function ConversationInput({ conversationId }: ConversationInputProps) {
         attachedFiles: attachedFiles.length ? attachedFiles : undefined,
         deepSearchEnabled: deepSearchEnabled || undefined,
         modelId: governedMode ? undefined : (modelId || undefined),
+        semanticModelId: governedMode ? undefined : (selectedSemanticModelId || undefined),
         agentIds: agentIds?.length ? agentIds : undefined,
         memberIds: memberIds?.length ? memberIds : undefined,
         teamIds: teamIds?.length ? teamIds : undefined,
@@ -122,7 +124,7 @@ export function ConversationInput({ conversationId }: ConversationInputProps) {
       clearAll();
       clearReplyingTo();
     },
-    [completedFileIds, uploadFiles, sendMessage, conversationId, clearAll, clearReplyingTo, replyingToMessage?.id, currentConversation?.workspaces, governedMode, selectedWorkspaceIds, updateConversation, deepSearchEnabled],
+    [completedFileIds, uploadFiles, sendMessage, conversationId, clearAll, clearReplyingTo, replyingToMessage?.id, currentConversation?.workspaces, governedMode, selectedWorkspaceIds, selectedSemanticModelId, updateConversation, deepSearchEnabled],
   );
 
   const senderDisplayName = useMemo(() => {

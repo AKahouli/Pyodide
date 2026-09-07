@@ -180,6 +180,7 @@ export interface Message {
   attachedFileIds?: string[];
   attachedFiles?: AttachedFile[];
   modelId?: string;
+  semanticModelId?: string;
   /** Agents used for this turn (mentions or sticky reuse from backend). */
   agentIds?: string[];
   memberIds?: string[];
@@ -293,6 +294,7 @@ export interface SendMessagePayload {
   webSearchEnabled?: boolean;
   deepSearchEnabled?: boolean;
   modelId?: string;
+  semanticModelId?: string;
   agentIds?: string[];
   memberIds?: string[];
   /** Mentioned team IDs; the backend expands each into its agents at send time. */

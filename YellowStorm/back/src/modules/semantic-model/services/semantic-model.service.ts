@@ -31,6 +31,12 @@ export class SemanticModelService {
     return model;
   }
 
+  async resolveSearchSchema(userId: string, modelId: string): Promise<string> {
+    const model = await this.get(userId, modelId);
+    if (model.status === 'archived') throw new NotFoundException(ErrorCode.SEMANTIC_MODEL_NOT_FOUND);
+    return this.ageGraph.graphNameForModel(model.id);
+  }
+
   async create(userId: string, dto: CreateSemanticModelDto): Promise<SemanticModelRow> {
     const workspaceIds = [...new Set(dto.workspaceIds ?? [])];
     await this.assertOwnedWorkspaces(userId, workspaceIds);

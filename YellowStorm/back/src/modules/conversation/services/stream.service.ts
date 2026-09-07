@@ -41,6 +41,7 @@ import {
 import { randomUUID } from 'node:crypto';
 import { ResponseReliabilityService } from './response-reliability.service';
 import { ConversationAgentRequestBuilder, type BuiltAgentExecutionRequest } from './conversation-agent-request.builder';
+import { SemanticModelService } from '../../semantic-model/services/semantic-model.service';
 
 export interface StreamRequest {
   content: string;
@@ -49,6 +50,7 @@ export interface StreamRequest {
   webSearchEnabled?: boolean;
   deepSearchEnabled?: boolean;
   modelId?: string;
+  semanticModelId?: string;
   agentIds?: string[];
   connectorRepo?: {
     connectorId: string;
@@ -106,6 +108,7 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
     private readonly skillService: SkillService,
     private readonly responseReliabilityService: ResponseReliabilityService,
     private readonly agentRequestBuilder: ConversationAgentRequestBuilder,
+    private readonly semanticModelService: SemanticModelService,
   ) {
     this.logger.setContext('StreamService');
   }
@@ -698,6 +701,7 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
         webSearchEnabled: request.webSearchEnabled ?? false,
         deepSearchEnabled: request.deepSearchEnabled ?? false,
         modelId: request.modelId,
+        semanticModelId: request.semanticModelId,
         agentIds: request.agentIds ?? [],
         skillIds: request.skillIds ?? [],
         connectorRepo: request.connectorRepo,
@@ -766,8 +770,11 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
     const requestedGovernedAgentIds = governanceOverride
       ? (request.agentIds.length ? request.agentIds : [governanceOverride.primaryAgentId])
       : undefined;
+    const semanticSchemaName = request.semanticModelId
+      ? await this.semanticModelService.resolveSearchSchema(userId, request.semanticModelId)
+      : undefined;
     const [workspaceContexts, agents] = await Promise.all([
-      this.buildWorkspaceContexts(conversationId, logOpts, conversation),
+      request.semanticModelId ? Promise.resolve([]) : this.buildWorkspaceContexts(conversationId, logOpts, conversation),
       governanceOverride
         ? this.agentService.buildGovernedAgentsForStream(userId, requestedGovernedAgentIds ?? [], governanceOverride.workspaceIds)
         : this.agentService.buildAgentsForStream(
@@ -777,6 +784,7 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
           sharedAgentIds,
           groupMembers,
           request.connectorRepo?.connectorId,
+          semanticSchemaName,
         ),
     ]);
     const [, attachedFiles, previousAttachedFiles, skills] = await Promise.all([

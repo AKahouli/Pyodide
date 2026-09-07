@@ -33,6 +33,7 @@ import { resolveStickyAgentRouting } from '../utils/sticky-agent-routing';
 import { ChoiceInteractionService } from '../services/choice-interaction.service';
 import { GovernedConversationRuntimeService } from '../../governance/services/governed-conversation-runtime.service';
 import { ResponseReliabilityService } from '../services/response-reliability.service';
+import { SemanticModelService } from '../../semantic-model/services/semantic-model.service';
 @ApiTags('Messages')
 @Controller('conversations/:conversationId/messages')
 @ApiBearerAuth()
@@ -49,6 +50,7 @@ export class MessageController {
     private readonly choiceInteractionService: ChoiceInteractionService,
     private readonly governedRuntimeService: GovernedConversationRuntimeService,
     private readonly responseReliabilityService: ResponseReliabilityService,
+    private readonly semanticModelService: SemanticModelService,
   ) {
     this.logger.setContext('MessageController');
   }
@@ -114,6 +116,10 @@ export class MessageController {
       ? await this.governedRuntimeService.resolveRuntime(user._id.toString(), conversation)
       : undefined;
     if (governedRuntime) this.governedRuntimeService.assertRuntimeRequestAllowed(governedRuntime, dto);
+    if (!governedRuntime && dto.semanticModelId) {
+      await this.semanticModelService.resolveSearchSchema(user._id.toString(), dto.semanticModelId);
+    }
+    const effectiveSemanticModelId = governedRuntime ? undefined : dto.semanticModelId;
 
     // Validate model is active for standard conversations only.
     if (!governedRuntime && dto.modelId) {
@@ -216,6 +222,7 @@ export class MessageController {
         webSearchEnabled: dto.webSearchEnabled ?? false,
         deepSearchEnabled: dto.deepSearchEnabled ?? false,
         modelId: dto.modelId,
+        semanticModelId: effectiveSemanticModelId,
         agentIds: effectiveAgentIds ?? [],
         skillIds: dto.skillIds ?? [],
         connectorRepo: dto.connectorRepo,
@@ -278,6 +285,7 @@ export class MessageController {
           webSearchEnabled: dto.webSearchEnabled,
           deepSearchEnabled: dto.deepSearchEnabled,
           modelId: dto.modelId,
+          semanticModelId: effectiveSemanticModelId,
           agentIds: effectiveAgentIds,
           connectorRepo: dto.connectorRepo,
           skillIds: dto.skillIds,

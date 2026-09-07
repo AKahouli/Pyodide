@@ -40,6 +40,7 @@ beforeEach(() => {
     conversationLoading: false,
     selectedModelId: null,
     selectedWorkspaceIds: [],
+    selectedSemanticModelId: null,
     messages: [],
     optimisticMessages: [],
     messagesTotal: 0,
@@ -53,6 +54,16 @@ beforeEach(() => {
     streamingStateCache: new Map(),
   });
 });
+
+  it('keeps workspace and semantic model selections mutually exclusive', () => {
+    useConversationStore.getState().setSelectedWorkspaceIds(['ws-1']);
+    useConversationStore.getState().setSelectedSemanticModelId('semantic-1');
+    expect(useConversationStore.getState().selectedWorkspaceIds).toEqual(['ws-1']);
+    expect(useConversationStore.getState().selectedSemanticModelId).toBe('semantic-1');
+
+    useConversationStore.getState().setSelectedWorkspaceIds(['ws-2']);
+    expect(useConversationStore.getState().selectedSemanticModelId).toBeNull();
+  });
 
 describe('conversation optimistic messages', () => {
   it('waits for the app-level SSE handshake before sending a stream-producing message', async () => {

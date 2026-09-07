@@ -375,6 +375,7 @@ interface ConversationState {
 
   // Workspace selection
   selectedWorkspaceIds: string[];
+  selectedSemanticModelId: string | null;
 
   // Selected connector repository for the current conversation
   selectedConnectorRepo: { connectorId: string; connectorName: string; repoId: string; repoName: string; repoUrl?: string } | null;
@@ -411,7 +412,7 @@ interface ConversationState {
   claimCurrentConversation: (
     id: string,
     conversation?: Conversation,
-    selections?: { modelId?: string; workspaceIds?: string[] },
+    selections?: { modelId?: string; semanticModelId?: string; workspaceIds?: string[] },
   ) => void;
   setCurrentConversation: (id: string) => Promise<void>;
 
@@ -467,6 +468,7 @@ interface ConversationState {
   // Workspace selection
   setSelectedWorkspaceIds: (workspaceIds: string[]) => void;
   resetSelectedWorkspaceIds: () => void;
+  setSelectedSemanticModelId: (modelId: string | null) => void;
 
   // Connector repository selection
   setSelectedConnectorRepo: (repo: { connectorId: string; connectorName: string; repoId: string; repoName: string; repoUrl?: string } | null) => void;
@@ -531,6 +533,7 @@ export const useConversationStore = create<ConversationState>()(
 
       selectedModelId: null,
       selectedWorkspaceIds: [],
+      selectedSemanticModelId: null,
       selectedConnectorRepo: null,
       deepSearchEnabled: false,
       selectedSkillIds: [],
@@ -769,6 +772,7 @@ export const useConversationStore = create<ConversationState>()(
           conversationLoading: false,
           selectedSkillIds: cached?.selectedSkills ?? [],
           selectedModelId: selections?.modelId ?? null,
+          selectedSemanticModelId: selections?.semanticModelId ?? null,
           selectedWorkspaceIds: selections?.workspaceIds ?? cached?.workspaces ?? [],
         });
       },
@@ -779,7 +783,7 @@ export const useConversationStore = create<ConversationState>()(
         set({
           conversationLoading: true,
           currentConversationId: id,
-          ...(isSwitchingConversation ? { selectedModelId: null } : {}),
+          ...(isSwitchingConversation ? { selectedModelId: null, selectedSemanticModelId: null } : {}),
         });
         try {
           const conversation = await api.fetchConversation(id);
@@ -1755,11 +1759,15 @@ export const useConversationStore = create<ConversationState>()(
       // ===== Workspace Selection =====
 
       setSelectedWorkspaceIds: (workspaceIds) => {
-        set({ selectedWorkspaceIds: workspaceIds });
+        set({ selectedWorkspaceIds: workspaceIds, ...(workspaceIds.length ? { selectedSemanticModelId: null } : {}) });
       },
 
       resetSelectedWorkspaceIds: () => {
         set({ selectedWorkspaceIds: [] });
+      },
+
+      setSelectedSemanticModelId: (modelId) => {
+        set({ selectedSemanticModelId: modelId });
       },
 
       setSelectedConnectorRepo: (repo) => {
@@ -2059,6 +2067,10 @@ export const useSelectedWorkspaceIds = () => useConversationStore((s) => s.selec
 export const useSetSelectedWorkspaceIds = () => useConversationStore((s) => s.setSelectedWorkspaceIds);
 
 export const useResetSelectedWorkspaceIds = () => useConversationStore((s) => s.resetSelectedWorkspaceIds);
+
+export const useSelectedSemanticModelId = () => useConversationStore((s) => s.selectedSemanticModelId);
+
+export const useSetSelectedSemanticModelId = () => useConversationStore((s) => s.setSelectedSemanticModelId);
 
 export const useSelectedConnectorRepo = () => useConversationStore((s) => s.selectedConnectorRepo);
 

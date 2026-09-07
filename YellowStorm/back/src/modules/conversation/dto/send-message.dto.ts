@@ -1,5 +1,5 @@
 import { Type } from 'class-transformer';
-import { IsString, IsOptional, IsBoolean, IsArray, IsMongoId, MaxLength, ValidateNested, IsIn, ArrayMaxSize, ArrayUnique, Matches, IsNotEmpty } from 'class-validator';
+import { IsString, IsOptional, IsBoolean, IsArray, IsMongoId, IsUUID, MaxLength, ValidateNested, IsIn, ArrayMaxSize, ArrayUnique, Matches, IsNotEmpty } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 
 class ConnectorRepoDto {
@@ -69,6 +69,11 @@ export class SendMessageDto {
   @IsOptional()
   @IsString()
   modelId?: string;
+
+  @ApiPropertyOptional({ description: 'Accessible semantic model used by the semantic search tool' })
+  @IsOptional()
+  @IsUUID()
+  semanticModelId?: string;
 
   @ApiPropertyOptional({ description: 'Mentioned agent IDs', type: [String] })
   @IsOptional()

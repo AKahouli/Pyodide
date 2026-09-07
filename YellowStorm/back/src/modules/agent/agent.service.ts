@@ -514,6 +514,7 @@ export class AgentService {
     sharedAgentIds?: string[],
     groupMembers?: any[],
     selectedConnectorId?: string,
+    semanticSchemaName?: string,
   ): Promise<IGrpcAgent[]> {
     this.logger.log('Building agents for stream', {
       userId,
@@ -808,6 +809,11 @@ export class AgentService {
             guardrails_classifier_model: guardrailsClassifierModelId,
             platform_api_url: this.configService.get<string>('PLATFORM_API_URL', 'http://localhost:3000/api'),
             platform_api_token: this.configService.get<string>('INTERNAL_SERVICE_SECRET', ''),
+            ...(semanticSchemaName ? {
+              semantic_model_schema_name: semanticSchemaName,
+              semantic_search_url: this.configService.get<string>('SEMANTIC_SEARCH_FUSED_URL', 'http://127.0.0.1:8100/v1/graphs/search/fused'),
+              semantic_search_timeout_seconds: String(this.configService.get<number>('SEMANTIC_SEARCH_TIMEOUT_SECONDS', 300)),
+            } : {}),
             ...(resolvedModel?.omitTemperature
               ? { omit_temperature: 'true' }
               : { temperature: String(agent.temperature) }),

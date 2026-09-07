@@ -28,6 +28,7 @@ describe('MessageController.sendMessage sticky routing', () => {
   let requestContext: { getRequestId: jest.Mock };
   let choiceInteractionService: { canonicalize: jest.Mock };
   let responseReliabilityService: { rerun: jest.Mock };
+  let semanticModelService: { resolveSearchSchema: jest.Mock };
   let logger: {
     setContext: jest.Mock;
     log: jest.Mock;
@@ -69,6 +70,7 @@ describe('MessageController.sendMessage sticky routing', () => {
     requestContext = { getRequestId: jest.fn().mockReturnValue('req-1') };
     choiceInteractionService = { canonicalize: jest.fn() };
     responseReliabilityService = { rerun: jest.fn().mockResolvedValue({ messageId: 'ai-1', reliabilityEvaluation: { status: 'pending' } }) };
+    semanticModelService = { resolveSearchSchema: jest.fn().mockResolvedValue('sem_test') };
     logger = {
       setContext: jest.fn(),
       log: jest.fn(),
@@ -87,6 +89,7 @@ describe('MessageController.sendMessage sticky routing', () => {
       choiceInteractionService as any,
       { resolveRuntime: jest.fn(), assertRuntimeRequestAllowed: jest.fn(), resolveEffectiveAgents: jest.fn() } as any,
       responseReliabilityService as any,
+      semanticModelService as any,
     );
   });
 
@@ -241,5 +244,27 @@ describe('MessageController.sendMessage sticky routing', () => {
       userId: userId.toString(),
       requestId: 'req-1',
     });
+  });
+
+  it('authorizes and propagates a selected semantic model into replay and stream context', async () => {
+    const semanticModelId = '17b75421-e6c3-47b6-b220-4583d01fbd02';
+    conversationService.getConversationDocument.mockResolvedValue({ isFirstMessage: false, taggedAgentIds: [] });
+
+    await controller.sendMessage(user, conversationId, { content: 'question', semanticModelId } as any);
+
+    expect(semanticModelService.resolveSearchSchema).toHaveBeenCalledWith(userId.toString(), semanticModelId);
+    expect(messageService.createUserMessage).toHaveBeenCalledWith(expect.objectContaining({
+      replayContext: expect.objectContaining({ semanticModelId }),
+    }));
+    expect(streamService.startStream).toHaveBeenCalledWith(
+      userId.toString(),
+      conversationId,
+      expect.any(String),
+      expect.objectContaining({ semanticModelId }),
+      'req-1',
+      undefined,
+      'Ada Lovelace',
+      undefined,
+    );
   });
 });
