@@ -74,7 +74,8 @@ async def test_runtask_projects_correlated_failure_when_background_turn_fails():
         add_message=AsyncMock(),
         set_session_status=AsyncMock(),
     )
-    service = MagicMock(plan_turn=AsyncMock(side_effect=RuntimeError("boom")), resume_turn=AsyncMock())
+    service = MagicMock(plan_turn=AsyncMock(side_effect=RuntimeError("boom")),
+                        resume_turn=AsyncMock(), fail_session=AsyncMock())
     s = _servicer(rm=rm, service=service)
 
     resp = await s.RunTask(pb.RunRequest(
@@ -126,6 +127,7 @@ async def test_failed_conversation_projects_failure_without_failing_executing_pl
         plan_turn=AsyncMock(),
         resume_turn=AsyncMock(),
         converse_turn=AsyncMock(side_effect=RuntimeError("boom")),
+        fail_session=AsyncMock(),
     )
     s = _servicer(rm=rm, service=service)
     running = asyncio.create_task(asyncio.sleep(60))

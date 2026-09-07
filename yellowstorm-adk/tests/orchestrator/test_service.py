@@ -274,32 +274,33 @@ def _planner_service(monkeypatch, responses):
     return svc.OrchestratorService(lambda node, app_name: runner, None, planner_model="fake"), runner
 
 
-def test_make_plan_retries_duplicate_ids_with_a_complete_replacement(monkeypatch):
+def test_make_plan_drops_duplicate_ids_and_keeps_the_plan(monkeypatch):
+    # A flaky planner can emit the same id twice. Rather than retry or abort the
+    # turn, _make_plan drops the duplicate and keeps the plan (ids namespaced by
+    # plan.id downstream). One planner call, no correction round-trip.
     invalid = {"title": "t", "steps": [
         {"id": "s1", "description": "first"},
         {"id": "s1", "description": "second", "depends_on": ["s1"]},
     ]}
-    corrected = {"title": "t", "steps": [
-        {"id": "s1", "description": "first"},
-        {"id": "s2", "description": "second", "depends_on": ["s1"]},
-    ]}
-    service, runner = _planner_service(monkeypatch, [invalid, corrected])
+    service, runner = _planner_service(monkeypatch, [invalid])
 
     plan = asyncio.run(service._make_plan("sess", "user", "do work"))
 
-    assert [step.id for step in plan.steps] == ["s1", "s2"]
-    assert len(runner.messages) == 2
-    assert "Every step id must be unique" in runner.messages[1]
+    assert len(plan.steps) == 1
+    assert plan.steps[0].id.endswith("s1")
+    assert len(runner.messages) == 1
 
 
-def test_make_plan_stops_after_one_invalid_correction(monkeypatch):
-    duplicate = {"title": "t", "steps": [{"id": "s1"}, {"id": "s1"}]}
-    service, runner = _planner_service(monkeypatch, [duplicate, duplicate])
+def test_make_plan_drops_blank_ids_and_keeps_the_plan(monkeypatch):
+    # The sibling case: a blank id is dropped the same way, no retry, no raise.
+    data = {"title": "t", "steps": [{"id": "s1"}, {"id": ""}]}
+    service, runner = _planner_service(monkeypatch, [data])
 
-    with pytest.raises(ValueError, match="duplicate step ids"):
-        asyncio.run(service._make_plan("sess", "user", "do work"))
+    plan = asyncio.run(service._make_plan("sess", "user", "do work"))
 
-    assert len(runner.messages) == 2
+    assert len(plan.steps) == 1
+    assert plan.steps[0].id.endswith("s1")
+    assert len(runner.messages) == 1
 
 
 def test_step_row_shows_the_personas_display_name_before_it_runs():
