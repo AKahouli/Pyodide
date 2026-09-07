@@ -9,6 +9,7 @@ import {
   SemanticModelNativeSearchFatalError,
 } from './semantic-model-native-search-client.service';
 import { ErrorCode } from '@modules/exceptions/constants/error-codes';
+import { ServiceUnavailableException } from '@modules/exceptions';
 import { SemanticModelService } from './semantic-model.service';
 
 const config = {
@@ -160,17 +161,10 @@ describe('SemanticModelEvidenceSearchService', () => {
       .toEqual([10, 10, 10, 3]);
   });
 
-  it('marks the document failed when every query fails', async () => {
+  it('fails loudly when every search unit fails', async () => {
     nativeSearch.searchBatch.mockRejectedValue(new Error('unavailable'));
 
-    const result = await service.search('user-1', 'model-1');
-
-    expect(result.tasks).toEqual([]);
-    expect(result.failedUnits).toEqual([expect.objectContaining({
-      bindingId: 'binding-1',
-      sourceDocumentId: 'document-1',
-      fileName: 'employee.pdf',
-    })]);
+    await expect(service.search('user-1', 'model-1')).rejects.toBeInstanceOf(ServiceUnavailableException);
   });
 
   it('propagates fatal native-search configuration and authentication errors', async () => {

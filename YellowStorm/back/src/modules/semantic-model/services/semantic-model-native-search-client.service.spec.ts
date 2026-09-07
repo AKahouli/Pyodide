@@ -58,7 +58,7 @@ describe('SemanticModelNativeSearchClient', () => {
           Authorization: 'Bearer test-token',
           'Content-Type': 'application/json',
         },
-        timeout: 180000,
+        timeout: 0,
       },
     );
     expect(mockedAxios.post.mock.calls[0][2]?.headers).not.toHaveProperty('X-User-Id');
@@ -104,7 +104,7 @@ describe('SemanticModelNativeSearchClient', () => {
           Authorization: 'Bearer test-token',
           'Content-Type': 'application/json',
         },
-        timeout: 180000,
+        timeout: 0,
       }),
     );
   });
