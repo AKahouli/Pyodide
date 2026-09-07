@@ -7,8 +7,14 @@ export interface ComposerSuggestionSettings {
   maxOutputTokens: number;
 }
 
+export interface ConversationNameSettings {
+  /** Model id (from the models catalog) used to generate conversation titles. Null = platform default model. */
+  modelId: string | null;
+}
+
 export interface ConversationSettingsValue {
   composerSuggestions: ComposerSuggestionSettings;
+  conversationName: ConversationNameSettings;
   redactSensitiveText: boolean;
   /** End-to-end latency instrumentation for the classic Conversation flow. */
   latencyInstrumentationEnabled: boolean;
@@ -29,6 +35,9 @@ export interface ConversationSettingsAgentOption {
 export const DEFAULT_CONVERSATION_SETTINGS: ConversationSettingsValue = {
   redactSensitiveText: true,
   latencyInstrumentationEnabled: true,
+  conversationName: {
+    modelId: null,
+  },
   composerSuggestions: {
     enabled: true,
     agentId: null,
