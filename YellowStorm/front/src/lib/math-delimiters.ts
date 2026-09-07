@@ -43,6 +43,19 @@ export function normalizeMathDelimiters(markdown: string): string {
       i = lineEnd;
       continue;
     }
+    const atLineStart = i === 0 || markdown[i - 1] === '\n';
+    // A run of 3+ backticks/tildes at line start always opens a fence, even
+    // though it also looks like an inline code span opener.
+    const fenceMatch = atLineStart ? OPENING_FENCE.exec(markdown.slice(i, i + 12)) : null;
+    if (fenceMatch) {
+      const lineEnd = lineEndOf(markdown, i);
+      inFence = true;
+      fenceChar = fenceMatch[1][0];
+      fenceLength = fenceMatch[1].length;
+      result += markdown.slice(i, lineEnd);
+      i = lineEnd;
+      continue;
+    }
     if (markdown[i] === '`') {
       let runEnd = i;
       while (markdown[runEnd] === '`') runEnd += 1;
@@ -58,15 +71,10 @@ export function normalizeMathDelimiters(markdown: string): string {
       }
       continue;
     }
-    const atLineStart = i === 0 || markdown[i - 1] === '\n';
-    const fenceMatch = atLineStart ? OPENING_FENCE.exec(markdown.slice(i, i + 12)) : null;
-    if (fenceMatch) {
-      const lineEnd = lineEndOf(markdown, i);
-      inFence = true;
-      fenceChar = fenceMatch[1][0];
-      fenceLength = fenceMatch[1].length;
-      result += markdown.slice(i, lineEnd);
-      i = lineEnd;
+    // `\\` is a markdown-escaped backslash, never a math delimiter opener.
+    if (markdown[i] === '\\' && markdown[i + 1] === '\\') {
+      result += '\\\\';
+      i += 2;
       continue;
     }
     const span = markdown.startsWith('\\(', i)

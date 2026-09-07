@@ -52,4 +52,21 @@ describe('normalizeMathDelimiters', () => {
   it('keeps converting after a stray unclosed backtick', () => {
     expect(normalizeMathDelimiters('un ` retour \\[ x \\]')).toBe('un ` retour $$\nx\n$$');
   });
+
+  it('leaves markdown-escaped backslash-bracket pairs verbatim', () => {
+    // Literal chars: \\[x\\] — escaped backslash then bracket, not LaTeX.
+    expect(normalizeMathDelimiters('littéral \\\\[x\\\\] ici')).toBe('littéral \\\\[x\\\\] ici');
+  });
+
+  it('converts escaped-bracket-looking LaTeX (documented ambiguity)', () => {
+    // Inherent `\[x\]` ambiguity (LaTeX display math vs escaped brackets):
+    // resolved in favor of math, like Pandoc and KaTeX auto-render.
+    expect(normalizeMathDelimiters('texte \\[x\\] suite')).toBe('texte $$\nx\n$$ suite');
+  });
+
+  it('treats a line-start backtick run of 3+ as a fence, not an inline span', () => {
+    // The unpaired mid-line ``` must not swallow the fence; LaTeX inside stays.
+    const markdown = '```md\nlook ``` here\n\\[ x \\]\n```';
+    expect(normalizeMathDelimiters(markdown)).toBe(markdown);
+  });
 });

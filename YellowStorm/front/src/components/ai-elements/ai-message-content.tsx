@@ -570,10 +570,11 @@ export function splitMarkdownAtSafeBoundary(content: string): { stable: string; 
         if (!inFence) {
           // `$$` fences delimit remark-math flow blocks; blank lines inside a
           // display-math block are legal LaTeX and must not become boundaries.
-          if (trimmed.startsWith('$$')) {
-            const singleLineMath = trimmed.length > 4 && trimmed.endsWith('$$');
-            inMath = !inMath ? !singleLineMath : false;
-          }
+          // An ODD number of `$$` on a line toggles open/closed state — this
+          // covers `$$`-only lines, `text $$` openers and `$$ text` closers
+          // (mid-paragraph spans from delimiter normalization), while even
+          // counts (single-line `$$x$$`, prose) change nothing.
+          if (trimmed.includes('$$') && (trimmed.split('$$').length - 1) % 2 === 1) inMath = !inMath;
           if (!inMath) {
             if (LINK_REFERENCE_DEFINITION.test(line)) hasReferenceDefinition = true;
             else if (line.trim() === '') boundaries.push(i + 1);

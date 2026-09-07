@@ -121,6 +121,15 @@ describe('splitMarkdownAtSafeBoundary math blocks', () => {
     expect(stable).toBe(base + 'Inline display $$x^2$$ line\n\n');
     expect(tail).toBe('After the paragraph');
   });
+
+  it('tracks mid-line $$ openers and closers from normalized display spans', () => {
+    // normalizeMathDelimiters can emit `$$` mid-line when `\[ ... \]` was
+    // mid-paragraph; the splitter must still pair opener and closer.
+    const content = base + 'Avant $$\nE = mc^2\n$$ apres\n\nAprès le math';
+    const { stable, tail } = splitMarkdownAtSafeBoundary(content);
+    expect(stable).toBe(base + 'Avant $$\nE = mc^2\n$$ apres\n\n');
+    expect(tail).toBe('Après le math');
+  });
 });
 
 describe('splitMarkdownAtSafeBoundary reference definitions', () => {
