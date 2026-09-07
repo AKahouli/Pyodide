@@ -361,6 +361,7 @@ describe('callGrpcRun router config serialization', () => {
   it('serializes the concrete inference fallback resolved for a model-less planner', async () => {
     const executionSettingsResolver = {
       resolve: jest.fn().mockResolvedValue({
+        maxSandboxCallsPerStep: 16,
         dynamicReasoningEnabled: true,
         dynamicReasoning: {
           plannerAgentId: 'planner-1',
@@ -398,6 +399,9 @@ describe('callGrpcRun router config serialization', () => {
     );
     expect(run).toHaveBeenCalledWith(expect.objectContaining({
       settings: expect.objectContaining({
+        runtime_settings: expect.objectContaining({
+          max_sandbox_calls_per_step: 16,
+        }),
         playbook_planner: expect.objectContaining({
           model: 'azure/fallback-model',
           agent_type_slug: 'general_assistant',

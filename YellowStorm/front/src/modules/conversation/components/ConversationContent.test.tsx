@@ -23,6 +23,7 @@ vi.mock('./BranchNavigation', () => ({ BranchNavigation: () => <div>branch-nav</
 vi.mock('./LoadingIndicator', () => ({ LoadingIndicator: ({ activity }: { activity: string }) => <div>loading-{activity}</div> }));
 vi.mock('./MessageReliabilityCard', () => ({ MessageReliabilityCard: () => <div>reliability-card</div> }));
 vi.mock('./MessageAttachments', () => ({ MessageAttachments: () => <div>attachments</div> }));
+vi.mock('./outline/OutlineAnchorScroller', () => ({ OutlineAnchorScroller: () => null }));
 
 const storeState = {
   isStreaming: false,

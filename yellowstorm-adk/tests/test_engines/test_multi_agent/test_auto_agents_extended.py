@@ -39,15 +39,11 @@ class TestAutoAgentsExtended:
         team = _team()
         user_request = _user_request()
         queue = AsyncMock()
-        main_trace = MagicMock()
         with patch(
-            "src.smart_rag.engines.multi_agent.agentic_workflows.auto_agents.langfuse_client"
-        ) as mock_lf, patch(
             "src.smart_rag.engines.multi_agent.agentic_workflows.auto_agents._run_team_with_suggestions",
             new_callable=AsyncMock,
         ) as mock_run:
-            mock_lf.span.return_value = MagicMock()
-            await handle_no_agents_workflow(team, user_request, queue, main_trace)
+            await handle_no_agents_workflow(team, user_request, queue)
         team.get_agent_suggestions.assert_awaited()
         mock_run.assert_awaited_once()
 
@@ -58,13 +54,10 @@ class TestAutoAgentsExtended:
         user_request = _user_request()
         queue = AsyncMock()
         with patch(
-            "src.smart_rag.engines.multi_agent.agentic_workflows.auto_agents.langfuse_client"
-        ) as mock_lf, patch(
             "src.smart_rag.engines.multi_agent.agentic_workflows.auto_agents._run_team_with_suggestions",
             new_callable=AsyncMock,
         ) as mock_run:
-            mock_lf.span.return_value = MagicMock()
-            await handle_no_agents_workflow(team, user_request, queue, MagicMock())
+            await handle_no_agents_workflow(team, user_request, queue)
         assert team.get_agent_suggestions.await_count == 3
         mock_run.assert_awaited_once()
 
@@ -88,24 +81,15 @@ class TestAutoAgentsExtended:
         user_request.available_agents = []
         agents = [{"name": "SearchAgent", "id": "a1"}]
         with patch(
-            "src.smart_rag.engines.multi_agent.agentic_workflows.auto_agents.langfuse_client"
-        ) as mock_lf, patch(
             "src.smart_rag.engines.multi_agent.agentic_workflows.auto_agents.DocumentHelpers"
         ) as mock_docs:
-            mock_lf.span.return_value = MagicMock()
             mock_docs.merge_user_request_brain_documents_into_agents.return_value = agents
             mock_docs.merge_agents_brain_data.return_value = ([], {})
-            await _run_team_with_suggestions(team, user_request, agents, AsyncMock(), MagicMock())
+            await _run_team_with_suggestions(team, user_request, agents, AsyncMock())
         team.run_agent_team.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_handle_no_agents_workflow_exception(self):
         team = _team()
         team.get_agent_suggestions = AsyncMock(side_effect=RuntimeError("boom"))
-        with patch(
-            "src.smart_rag.engines.multi_agent.agentic_workflows.auto_agents.langfuse_client"
-        ) as mock_lf:
-            span = MagicMock()
-            mock_lf.span.return_value = span
-            await handle_no_agents_workflow(team, _user_request(), AsyncMock(), MagicMock())
-        span.event.assert_called()
+        await handle_no_agents_workflow(team, _user_request(), AsyncMock())

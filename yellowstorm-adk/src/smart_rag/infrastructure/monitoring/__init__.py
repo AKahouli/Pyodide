@@ -6,9 +6,8 @@ This module contains monitoring and observability functionality:
 These provide observability and monitoring capabilities for the system.
 """
 
-from .trace_recorder import TraceRecorder, langfuse_client
+from .trace_recorder import TraceRecorder
 
 __all__ = [
-    'TraceRecorder',
-    'langfuse_client'
+    'TraceRecorder'
 ]

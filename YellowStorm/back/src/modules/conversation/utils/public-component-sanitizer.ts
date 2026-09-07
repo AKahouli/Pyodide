@@ -96,19 +96,23 @@ export function sanitizePublicToolData(data: Record<string, unknown>, options: S
   return sanitizeValue(data, 0, options) as Record<string, unknown>;
 }
 
+// Rendered product content: served verbatim (sentinel cleanup only), never redacted or length-bounded.
+const PRODUCT_CONTENT_TYPES: ReadonlySet<string> = new Set(['text', 'webPreview']);
+
 export function sanitizePublicComponent(component: MessageComponent, options: SanitizerOptions = {}): MessageComponent {
   if (component.type === 'artifact') {
     const { storagePath: _storagePath, filePath: _filePath, file_path: _filePathSnake, ...publicData } = component.data;
     return { id: component.id, type: component.type, data: sanitizePublicToolData(publicData, options) };
   }
-  if (component.type === 'text' && typeof component.data.content === 'string') {
+  if (PRODUCT_CONTENT_TYPES.has(component.type) && typeof component.data.content === 'string') {
     const content = component.data.content
       .replace(/\{[^{}\r\n]*"content"\s*:\s*"YELLOWSTORM_ATTACHMENT_SENTINEL_\d+(?:\\n)?"[^{}\r\n]*\}/g, '')
       .replace(/YELLOWSTORM_ATTACHMENT_SENTINEL_\d+(?:\\n)?/g, '');
+    const { content: _rawContent, ...rest } = component.data;
     return {
       id: component.id,
       type: component.type,
-      data: sanitizePublicToolData({ ...component.data, content }, options),
+      data: { ...sanitizePublicToolData(rest, options), content },
     };
   }
   if (component.type === 'agentActivity') {

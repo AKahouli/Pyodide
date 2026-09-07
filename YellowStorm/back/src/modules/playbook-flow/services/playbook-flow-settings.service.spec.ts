@@ -172,6 +172,18 @@ describe('PlaybookFlowSettingsService inference model resolution', () => {
     }));
   });
 
+  it('persists the Code Interpreter call limit with execution settings', async () => {
+    const { service, systemService } = createService();
+
+    await service.updateAdminSettings({
+      playbookExecution: { maxSandboxCallsPerStep: 16 },
+    });
+
+    expect(systemService.setPlaybookSettings).toHaveBeenCalledWith(expect.objectContaining({
+      playbookExecution: expect.objectContaining({ maxSandboxCallsPerStep: 16 }),
+    }));
+  });
+
   it('rejects an explicitly empty planner selection', async () => {
     const { service, agentService, systemService } = createService();
 

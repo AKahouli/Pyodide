@@ -6,6 +6,8 @@
   "newConversation": "Démarrer une nouvelle conversation Yellowmind",
   "scrollLatest": "Faire défiler jusqu’au dernier message",
   "resize": "Redimensionner le panneau Yellowmind",
+  "launcher.moveInstructions": "Faites glisser Yellowmind pour le déplacer, ou utilisez les touches fléchées lorsque le bouton est sélectionné.",
+  "launcher.position": "Position de Yellowmind : {{x}} pixels depuis la gauche et {{y}} pixels depuis le haut.",
   "empty.title": "Travaillez avec vos Playbooks",
   "empty.description": "Trouvez un workflow, inspectez sa conception, validez sa préparation ou préparez une exécution contrôlée.",
   "placeholder": "Posez une question sur vos Playbooks...",

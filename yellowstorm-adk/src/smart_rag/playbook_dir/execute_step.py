@@ -23,7 +23,7 @@ from src.smart_rag.infrastructure.processing import PromptProcessor
 from src.smart_rag.infrastructure.factories import LLMFactory
 from src.smart_rag.messaging import StreamingFormatter, MessageTransformer
 from src.smart_rag.engines.traditional import EventExtractor
-from src.smart_rag.engines.multi_agent.config import langfuse_client, AgentTeamConfig
+from src.smart_rag.engines.multi_agent.config import AgentTeamConfig
 from src.smart_rag.playbook_dir.execute_manager import PlaybookManagerExecutor
 from src.smart_rag.agents.tools.temporary_child_agent import (
     TEMPORARY_CHILD_AGENT_PARENT_INSTRUCTION,
@@ -486,28 +486,12 @@ class PlaybookStepExecutor:
             # Check if search_web tool is present
             search_web = self._check_search_web_tool(request)
 
-            # Create span for agent delegation (Langfuse tracking)
-            delegation_span = langfuse_client.span(
-                trace_id=temp_session_id,
-                name=f"playbook_step_replay_{request.agent.name}",
-                input={
-                    "agent_name": request.agent.name,
-                    "task_description": request.taskDescription,
-                    "task_id": request.taskId,
-                    "task_order": str(request.order),
-                    "call_id": request.call_id,
-                    "tools": agent_config.get('tools', []) if agent_config else [],
-                    "search_web": search_web
-                },
-            )
-
             # Use delegation_factory to create agent with error handling
             agent, toolkit = await delegation_factory._create_agent_with_error_handling(
                 agent_config=agent_config,
                 agent_name=request.agent.name,
                 normalized_agent_name=normalized_agent_name,
                 expected_output=expected_output,
-                delegation_span=delegation_span,
                 search_web=search_web
             )
 
@@ -534,7 +518,6 @@ class PlaybookStepExecutor:
                 temporary_child_tool = make_temporary_child_agent_tool(
                     temporary_child_team,
                     agent_config,
-                    delegation_span,
                 )
                 agent.tools = [temporary_child_tool]
                 logger.info(
@@ -558,7 +541,6 @@ class PlaybookStepExecutor:
                 task_description=task_description,
                 expected_output=expected_output,
                 task_order=str(request.order),
-                delegation_span=delegation_span,
                 q=queue,
                 agent_name=request.agent.name,
                 agent_id=request.agent.name,

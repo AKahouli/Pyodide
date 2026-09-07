@@ -30,4 +30,19 @@ describe('UpdateConversationSettingsDto', () => {
     await expect(validate(plainToInstance(UpdateSensitiveTextRedactionDto, { redactSensitiveText: false }))).resolves.toEqual([]);
     await expect(validate(plainToInstance(UpdateSensitiveTextRedactionDto, { redactSensitiveText: 'false' }))).resolves.not.toEqual([]);
   });
+
+  it('validates the latency instrumentation toggle as a boolean', async () => {
+    const base = {
+      composerSuggestions: {
+        enabled: true,
+        agentId: null,
+        debounceMs: 400,
+        minimumDraftLength: 3,
+        requestsPerMinute: 60,
+        maxOutputTokens: 256,
+      },
+    };
+    await expect(validate(plainToInstance(UpdateConversationSettingsDto, { ...base, latencyInstrumentationEnabled: false }))).resolves.toEqual([]);
+    await expect(validate(plainToInstance(UpdateConversationSettingsDto, { ...base, latencyInstrumentationEnabled: 'false' }))).resolves.not.toEqual([]);
+  });
 });

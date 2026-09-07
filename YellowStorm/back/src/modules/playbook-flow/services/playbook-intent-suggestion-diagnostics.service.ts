@@ -241,6 +241,9 @@ export class PlaybookIntentSuggestionDiagnosticsService {
     if (change.sourceKind === 'state') {
       return { id: this.bindingId(targetNode, change.targetPort), targetNode, targetPort: change.targetPort, sourceKind: 'state', statePath: change.statePath } as DataBinding;
     }
+    if (change.sourceKind === 'trigger') {
+      return { id: this.bindingId(targetNode, change.targetPort), targetNode, targetPort: change.targetPort, sourceKind: 'trigger', triggerPath: change.triggerPath } as DataBinding;
+    }
     const sourceNode = this.resolveNodeId(change.sourceTaskId, change.sourceNodeRef, nodeRefToId);
     if (!sourceNode || !change.sourcePort) return null;
     return {

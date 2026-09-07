@@ -89,6 +89,7 @@ export const API_ENDPOINTS = {
     appearanceLogoFile: (id: string) => `/experimental/system/appearance/logos/${id}/file`,
     cors: '/experimental/system/cors',
     features: '/experimental/system/features',
+    emailLogo: '/experimental/system/email-logo',
   },
   workspaceUploadSettings: {
     current: '/workspace-settings/uploads',
@@ -222,10 +223,12 @@ export const API_ENDPOINTS = {
     messages: (id: string) => `/conversations/${id}/messages`,
     activeStream: (id: string) => `/conversations/${id}/active-stream`,
     messageById: (convId: string, msgId: string) => `/conversations/${convId}/messages/${msgId}`,
+    toolResult: (convId: string, msgId: string, componentId: string) => `/conversations/${convId}/messages/${msgId}/tools/${componentId}/result`,
     feedback: (convId: string, msgId: string) => `/conversations/${convId}/messages/${msgId}/feedback`,
     rerunReliabilityEvaluation: (convId: string, msgId: string) => `/conversations/${convId}/messages/${msgId}/reliability-evaluation/rerun`,
     regenerate: (convId: string, msgId: string) => `/conversations/${convId}/messages/${msgId}/regenerate`,
     stop: (convId: string, msgId: string) => `/conversations/${convId}/messages/${msgId}/stop`,
+    frontendLatency: (convId: string, msgId: string) => `/conversations/${convId}/messages/${msgId}/latency/frontend-paint`,
     branches: (convId: string, msgId: string) => `/conversations/${convId}/messages/${msgId}/branches`,
     report: (convId: string, msgId: string) => `/conversations/${convId}/messages/${msgId}/report`,
     markMentionSeen: (conversationId: string, messageId: string) => `/conversations/${conversationId}/messages/${messageId}/mention-seen`,
@@ -370,6 +373,16 @@ export const API_ENDPOINTS = {
     graph: (id: string) => `/semantic-models/${id}/graph`,
     operations: (id: string) => `/semantic-models/${id}/graph/operations`,
     validate: (id: string) => `/semantic-models/${id}/graph/validate`,
+    generateOntology: (id: string) => `/semantic-models/${id}/ontology/generate`,
+    evidenceSearch: (id: string) => `/semantic-models/${id}/evidence/search`,
+    mappingProposals: (id: string) => `/semantic-models/${id}/mapping/proposals`,
+    mappingProposalJobs: (id: string) => `/semantic-models/${id}/mapping/proposals/jobs`,
+    mappingProposalJob: (id: string, jobId: string) => `/semantic-models/${id}/mapping/proposals/jobs/${jobId}`,
+    mappingPlanApply: (id: string, jobId: string) => `/semantic-models/${id}/mapping/jobs/${jobId}/apply`,
+    ageGraph: (id: string) => `/semantic-models/${id}/age-graph`,
+    builds: (id: string) => `/semantic-models/${id}/builds`,
+    latestBuild: (id: string) => `/semantic-models/${id}/builds/latest`,
+    build: (id: string, buildId: string) => `/semantic-models/${id}/builds/${buildId}`,
     bindings: (id: string) => `/semantic-models/${id}/bindings`,
     binding: (id: string, bindingId: string) => `/semantic-models/${id}/bindings/${bindingId}`,
     workspaces: (id: string) => `/semantic-models/${id}/workspaces`,
@@ -380,6 +393,8 @@ export const API_ENDPOINTS = {
     workspaceDefault: (workspaceId: string) => `/workspaces/${workspaceId}/semantic-model`,
     workspaceModels: (workspaceId: string) => `/workspaces/${workspaceId}/semantic-models`,
     ensureWorkspaceDefault: (workspaceId: string) => `/workspaces/${workspaceId}/semantic-model/ensure`,
+    shares: (id: string) => `/semantic-models/${id}/shares`,
+    share: (id: string, targetUserId: string) => `/semantic-models/${id}/shares/${targetUserId}`,
   },
   adminCatalogTransfer: {
     exportConnectors: '/admin/catalog-transfer/connectors/export',
@@ -487,6 +502,7 @@ export const API_ENDPOINTS = {
     generate: '/playbooks/generate',
     rewritePrompt: '/playbooks/rewrite-prompt',
     byId: (id: string) => `/playbooks/${id}`,
+    inputContract: (id: string) => `/playbooks/${id}/input-contract`,
     integrationLink: (id: string) => `/playbooks/${id}/integration-link`,
     publicExecute: (token: string) => `/playbooks/public/${token}/execute`,
     execute: (id: string) => `/playbooks/${id}/execute`,
@@ -625,6 +641,7 @@ export const API_ENDPOINTS = {
   playbookFlows: {
     list: '/playbooks',
     byId: (id: string) => `/playbooks/${id}`,
+    inputContract: (id: string) => `/playbooks/${id}/input-contract`,
     delta: (id: string) => `/playbooks/${id}/delta`,
     generate: '/playbooks/generate',
     rewritePrompt: '/playbooks/rewrite-prompt',
@@ -693,19 +710,6 @@ export const API_ENDPOINTS = {
     streamEvents: (id: string) => `/worky/streams/${id}/events`,
     streamMessages: (id: string) => `/worky/streams/${id}/messages`,
     streamBoard: (id: string) => `/worky/streams/${id}/board`,
-    streamStart: (id: string) => `/worky/streams/${id}/start`,
-    streamPause: (id: string) => `/worky/streams/${id}/pause`,
-    streamResume: (id: string) => `/worky/streams/${id}/resume`,
-    streamStop: (id: string) => `/worky/streams/${id}`,
-    // Cancels the running orchestrator turn (StopSession RPC), vs streamStop
-    // which tears down the whole stream lifecycle.
-    streamStopTurn: (id: string) => `/worky/streams/${id}/stop`,
-    // Pauses the running orchestrator turn (PauseSession RPC); continue via a
-    // new message. ':id/pause' is the legacy stream pause, hence '-turn'.
-    streamPauseTurn: (id: string) => `/worky/streams/${id}/pause-turn`,
-    // Resumes a paused orchestrator session (continue via RunTask). ':id/resume'
-    // is the legacy stream resume, hence '-turn'.
-    streamResumeTurn: (id: string) => `/worky/streams/${id}/resume-turn`,
     streamDelete: (id: string) => `/worky/streams/${id}/delete`,
     respondInteraction: (id: string) => `/worky/interactions/${id}/respond`,
     taskById: (id: string) => `/worky/tasks/${id}`,

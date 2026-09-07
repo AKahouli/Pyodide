@@ -3,19 +3,15 @@ import { ConfigModule } from '@nestjs/config';
 import { MongooseModule } from '@nestjs/mongoose';
 import { WorkyStreamService } from './services/worky-stream.service';
 import { WorkyElectricConsumerService } from './services/worky-electric-consumer.service';
-import { WorkyIdempotencyService } from './services/worky-idempotency.service';
 import { WorkyEventService } from './services/worky-event.service';
 import { WorkyAuditService } from './services/worky-audit.service';
-import { WorkyRuntimeClient } from './services/worky-runtime.client';
 import { WorkyOrchestratorGrpcClientService } from './services/worky-orchestrator.grpc-client.service';
-import { WorkyRuntimeDispatchService } from './services/worky-runtime-dispatch.service';
 import { WorkyPlanDeltaService } from './services/worky-plan-delta.service';
 import { WorkyPlanningService } from './services/worky-planning.service';
 import { WorkyTaskService } from './services/worky-task.service';
 import { WorkyInteractionService } from './services/worky-interaction.service';
 import { WorkyExecutionService } from './services/worky-execution.service';
 import { WorkyGovernanceService } from './services/worky-governance.service';
-import { WorkyEphemeralWorkerService } from './services/worky-ephemeral-worker.service';
 import { WorkySchedulerService } from './services/worky-scheduler.service';
 import { WorkyHumanAssignmentService } from './services/worky-human-assignment.service';
 import { WorkyBudgetService } from './services/worky-budget.service';
@@ -27,7 +23,6 @@ import { WorkyTraceController } from './controllers/worky-trace.controller';
 import { WorkyTaskResultService } from './services/worky-task-result.service';
 import { WorkyStreamController } from './controllers/worky-stream.controller';
 import { WorkyEventsController } from './controllers/worky-events.controller';
-import { WorkyInternalController } from './controllers/worky-internal.controller';
 import { WorkyMessageController } from './controllers/worky-message.controller';
 import { WorkySttController } from './controllers/worky-stt.controller';
 import { WorkySttService } from './services/worky-stt.service';
@@ -42,7 +37,6 @@ import { WorkyTaskController } from './controllers/worky-task.controller';
 import { WorkyGovernanceAdminController } from './controllers/admin/worky-governance-admin.controller';
 import { WorkyStreamAccessGuard } from './guards/worky-stream-access.guard';
 import { WorkyTaskStreamAccessGuard } from './guards/worky-task-stream-access.guard';
-import { WorkyServiceAuthGuard } from './guards/worky-service-auth.guard';
 import {
   WorkyStream,
   WorkyStreamSchema,
@@ -67,10 +61,6 @@ import {
   WorkyInteraction,
   WorkyInteractionSchema,
 } from './schemas/worky-interaction.schema';
-import {
-  WorkyExecutionSnapshot,
-  WorkyExecutionSnapshotSchema,
-} from './schemas/worky-execution-snapshot.schema';
 import {
   WorkyEphemeralWorker,
   WorkyEphemeralWorkerSchema,
@@ -101,6 +91,7 @@ import {
 } from './schemas/worky-mail-subscription.schema';
 import { WorkyMailSubscriptionService } from './services/worky-mail-subscription.service';
 import { WorkyTurnContextService } from './services/worky-turn-context.service';
+import { WorkyTurnKickoffService } from './services/worky-turn-kickoff.service';
 import { WorkyMailWebhookService } from './services/worky-mail-webhook.service';
 import { WorkyMailRenewalService } from './services/worky-mail-renewal.service';
 import { WorkyMailCatchupService } from './services/worky-mail-catchup.service';
@@ -110,10 +101,6 @@ import { ConnectedAppModule } from '@modules/connected-app/connected-app.module'
 // Stateless Graph client, reused rather than reimplemented; worky provides the
 // class directly instead of importing the whole PlaybookFlowModule for one service.
 import { PlaybookFlowMailGraphClientService } from '@modules/playbook-flow/services/playbook-flow-mail-graph-client.service';
-import {
-  WorkyIdempotencyRecord,
-  WorkyIdempotencyRecordSchema,
-} from './schemas/worky-idempotency-record.schema';
 import {
   WorkyGovernancePolicy,
   WorkyGovernancePolicySchema,
@@ -182,6 +169,7 @@ import {
 import { WorkyWhatsAppIngressService } from './services/worky-whatsapp-ingress.service';
 import { WorkyWhatsAppIntegrationService } from './services/worky-whatsapp-integration.service';
 import { WorkyWhatsAppSystemBotService } from './services/worky-whatsapp-system-bot.service';
+import { WorkyWhatsAppDeliveryService } from './services/worky-whatsapp-delivery.service';
 import { WorkyWhatsAppSystemBotAdminController } from './controllers/admin/worky-whatsapp-system-bot.controller';
 import { WorkyWhatsAppSystemBotStatusController } from './controllers/worky-whatsapp-system-bot-status.controller';
 
@@ -209,14 +197,12 @@ import { WorkyWhatsAppSystemBotStatusController } from './controllers/worky-what
       { name: WorkyPlanVersion.name, schema: WorkyPlanVersionSchema },
       { name: WorkyPlanDelta.name, schema: WorkyPlanDeltaSchema },
       { name: WorkyInteraction.name, schema: WorkyInteractionSchema },
-      { name: WorkyExecutionSnapshot.name, schema: WorkyExecutionSnapshotSchema },
       { name: WorkyEphemeralWorker.name, schema: WorkyEphemeralWorkerSchema },
       { name: WorkyTaskResult.name, schema: WorkyTaskResultSchema },
       { name: WorkyCostEvent.name, schema: WorkyCostEventSchema },
       { name: WorkyTrace.name, schema: WorkyTraceSchema },
       { name: WorkyBudgetReservation.name, schema: WorkyBudgetReservationSchema },
       { name: WorkyMailEventLedger.name, schema: WorkyMailEventLedgerSchema },
-      { name: WorkyIdempotencyRecord.name, schema: WorkyIdempotencyRecordSchema },
       { name: WorkyGovernancePolicy.name, schema: WorkyGovernancePolicySchema },
       { name: WorkyScheduledEvent.name, schema: WorkyScheduledEventSchema },
       { name: WorkyExecutionReport.name, schema: WorkyExecutionReportSchema },
@@ -240,7 +226,6 @@ import { WorkyWhatsAppSystemBotStatusController } from './controllers/worky-what
     WorkyStreamController,
     WorkyMailWebhookController,
     WorkyEventsController,
-    WorkyInternalController,
     WorkyMessageController,
     WorkySttController,
     WorkyTtsController,
@@ -258,26 +243,23 @@ import { WorkyWhatsAppSystemBotStatusController } from './controllers/worky-what
   providers: [
     WorkyStreamService,
     WorkyElectricConsumerService,
-    WorkyIdempotencyService,
     WorkyEventService,
     WorkyAuditService,
-    WorkyRuntimeClient,
     WorkyOrchestratorGrpcClientService,
     PlaybookFlowMailGraphClientService,
     WorkyMailSubscriptionService,
     WorkyTurnContextService,
+    WorkyTurnKickoffService,
     WorkyMailWebhookService,
     WorkyMailRenewalService,
     WorkyMailCatchupService,
     WorkyTeamsCatchupService,
-    WorkyRuntimeDispatchService,
     WorkyPlanDeltaService,
     WorkyPlanningService,
     WorkyTaskService,
     WorkyInteractionService,
     WorkyExecutionService,
     WorkyGovernanceService,
-    WorkyEphemeralWorkerService,
     WorkySchedulerService,
     WorkyHumanAssignmentService,
     WorkyBudgetService,
@@ -292,25 +274,21 @@ import { WorkyWhatsAppSystemBotStatusController } from './controllers/worky-what
     WorkyWhatsAppIngressService,
     WorkyWhatsAppIntegrationService,
     WorkyWhatsAppSystemBotService,
+    WorkyWhatsAppDeliveryService,
     WorkyStreamAccessGuard,
     WorkyTaskStreamAccessGuard,
-    WorkyServiceAuthGuard,
   ],
   exports: [
     WorkyStreamService,
-    WorkyIdempotencyService,
     WorkyEventService,
     WorkyAuditService,
-    WorkyRuntimeClient,
     WorkyOrchestratorGrpcClientService,
-    WorkyRuntimeDispatchService,
     WorkyPlanDeltaService,
     WorkyPlanningService,
     WorkyTaskService,
     WorkyInteractionService,
     WorkyExecutionService,
     WorkyGovernanceService,
-    WorkyEphemeralWorkerService,
     WorkySchedulerService,
     WorkyHumanAssignmentService,
     WorkyBudgetService,
@@ -323,7 +301,6 @@ import { WorkyWhatsAppSystemBotStatusController } from './controllers/worky-what
     WorkyWhatsAppSystemBotService,
     WorkyStreamAccessGuard,
     WorkyTaskStreamAccessGuard,
-    WorkyServiceAuthGuard,
   ],
 })
 export class WorkyModule {}

@@ -9,6 +9,7 @@ import { useWorkyUiStore } from '../uiStore';
 const STREAM_ID = 'stream-1';
 interface SendInput {
   content: string;
+  turnId: string;
   managerModelId?: string;
   workerModelId?: string;
 }
@@ -19,11 +20,6 @@ interface SendCallbacks {
 const sendCalls: SendInput[] = [];
 let nextError: Error | null = null;
 let lastMutate: ((input: SendInput, callbacks?: SendCallbacks) => void) | null = null;
-// The composer swaps the send button for a stop button while a run streams.
-// Tests flip this to render/exercise that path.
-let streamingValue = false;
-const stopMutateMock = vi.fn();
-
 vi.mock('../query/hooks', () => ({
   useSendMessage: () => ({
     mutate: (input: SendInput, callbacks?: SendCallbacks) => {
@@ -41,22 +37,25 @@ vi.mock('../query/hooks', () => ({
     },
     isPending: false,
   }),
-  // Consumed by useStopSession (via PromptBar). Capture the stop request.
-  useStopTurn: () => ({ mutate: stopMutateMock, isPending: false }),
   useStream: () => ({ data: undefined }),
 }));
 
 vi.mock('../store', () => ({
-  useWorkyStreaming: () => streamingValue,
   useWorkyStore: (selector: (s: {
     setStreamError: (v: string | null) => void;
-    setStreaming: (v: boolean) => void;
+    beginTurn: (turnId: string) => void;
+    finishTurn: (turnId: string) => void;
   }) => unknown) =>
-    selector({ setStreamError: setStreamErrorMock, setStreaming: setStreamingMock }),
+    selector({
+      setStreamError: setStreamErrorMock,
+      beginTurn: beginTurnMock,
+      finishTurn: finishTurnMock,
+    }),
 }));
 
 const setStreamErrorMock = vi.fn();
-const setStreamingMock = vi.fn();
+const beginTurnMock = vi.fn();
+const finishTurnMock = vi.fn();
 
 function TestProviders({ children }: { children: ReactNode }): JSX.Element {
   const qc = new QueryClient({
@@ -74,10 +73,9 @@ describe('PromptBar composer', () => {
     sendCalls.length = 0;
     lastMutate = null;
     nextError = null;
-    streamingValue = false;
-    stopMutateMock.mockClear();
     setStreamErrorMock.mockClear();
-    setStreamingMock.mockClear();
+    beginTurnMock.mockClear();
+    finishTurnMock.mockClear();
     useWorkyUiStore.getState().reset();
   });
 
@@ -93,7 +91,7 @@ describe('PromptBar composer', () => {
     fireEvent.click(screen.getByTestId('worky-prompt-send'));
 
     expect(sendCalls).toHaveLength(1);
-    expect(sendCalls[0]).toEqual({ content: 'hello' });
+    expect(sendCalls[0]).toEqual({ content: 'hello', turnId: expect.any(String) });
     expect(sendCalls[0].managerModelId).toBeUndefined();
     expect(sendCalls[0].workerModelId).toBeUndefined();
   });
@@ -134,7 +132,7 @@ describe('PromptBar composer', () => {
     fireEvent.change(textarea, { target: { value: 'show progress' } });
     fireEvent.click(screen.getByTestId('worky-prompt-send'));
 
-    expect(setStreamingMock).toHaveBeenCalledWith(true);
+    expect(beginTurnMock).toHaveBeenCalledWith(sendCalls[0].turnId);
   });
 
   it('clears any prior stream error when a new message is sent', () => {
@@ -166,6 +164,7 @@ describe('PromptBar composer', () => {
 
     const alert = await screen.findByTestId('worky-send-error');
     expect(alert).toHaveTextContent('Network exploded');
+    expect(finishTurnMock).toHaveBeenCalledWith(sendCalls[0].turnId);
 
     // Stream switch must clear the failure so it never bleeds across.
     const { rerender } = render(
@@ -183,20 +182,28 @@ describe('PromptBar composer', () => {
     });
   });
 
-  it('swaps the send button for a stop button while streaming and stops the run', () => {
-    streamingValue = true;
+  it('keeps send available while the active plan is running', () => {
     render(
       <TestProviders>
-        <PromptBar streamId={STREAM_ID} status='active' />
+        <PromptBar streamId={STREAM_ID} status='active' sessionStatus='running' />
       </TestProviders>,
     );
 
-    // Send is replaced by stop while a run is in flight.
-    expect(screen.queryByTestId('worky-prompt-send')).not.toBeInTheDocument();
-    fireEvent.click(screen.getByTestId('worky-prompt-stop'));
+    const textarea = screen.getByTestId('worky-prompt-content');
+    fireEvent.change(textarea, { target: { value: 'add a follow-up' } });
+    fireEvent.click(screen.getByTestId('worky-prompt-send'));
+    expect(sendCalls[0]).toMatchObject({ content: 'add a follow-up' });
+    expect(screen.queryByTestId('worky-prompt-stop')).not.toBeInTheDocument();
+  });
 
-    expect(stopMutateMock).toHaveBeenCalledTimes(1);
-    expect(stopMutateMock.mock.calls[0][0]).toEqual({ streamId: STREAM_ID });
+  it('disables message submission while the Companion session is paused', () => {
+    render(
+      <TestProviders>
+        <PromptBar streamId={STREAM_ID} status='active' sessionStatus='paused' />
+      </TestProviders>,
+    );
+    expect(screen.getByTestId('worky-prompt-content')).toBeDisabled();
+    expect(screen.getByTestId('worky-prompt-send')).toBeDisabled();
   });
 
   it('does not render the removed in-composer dictation mic', () => {

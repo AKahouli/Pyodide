@@ -1,3 +1,4 @@
+import re
 import uuid
 from dataclasses import dataclass
 
@@ -26,12 +27,23 @@ class ThoughtActivityTracker:
             return None
         if not any(char.isalnum() for char in text) and not (partial is True and self._active_id):
             return None
+        if (
+            partial is not True
+            and not self._active_id
+            and not self._replay_id
+            and self.is_standalone_fragment(text)
+        ):
+            return None
 
         if partial is not True:
             candidate_detail = self._active_detail or self._replay_detail
             if candidate_detail and text == candidate_detail:
                 return None
             if candidate_detail:
+                if self.is_standalone_fragment(text):
+                    if candidate_detail.endswith(text):
+                        return None
+                    text = f"{candidate_detail}{text}"
                 self._active_id = self._active_id or self._replay_id
                 self._active_started_at = self._active_started_at or self._replay_started_at
                 self._active_detail = text
@@ -82,3 +94,14 @@ class ThoughtActivityTracker:
         self._replay_id = self._active_id
         self._replay_detail = self._active_detail
         self._replay_started_at = self._active_started_at
+
+    @staticmethod
+    def _lexical_word_count(text: str) -> int:
+        return len(re.findall(r"[^\W_]+", text, flags=re.UNICODE))
+
+    @classmethod
+    def is_standalone_fragment(cls, text: str) -> bool:
+        first = next((char for char in text.strip() if char.isalnum()), "")
+        return cls._lexical_word_count(text) <= 3 and bool(first) and (
+            first.isdigit() or first.islower()
+        )

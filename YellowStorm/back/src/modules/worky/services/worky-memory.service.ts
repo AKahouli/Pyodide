@@ -67,8 +67,7 @@ const VALID_CATEGORIES: ReadonlySet<string> = new Set([
  *   - `confirm(id)`     transitions the proposal to `confirmed` and
  *     creates a `WorkyMemoryEntry` (the durable record). Emits
  *     `memory.confirmed`. The runtime can pull the new entry via
- *     `findForOwner` (or, in a later Part, the
- *     `WorkyRuntimeClient` callback).
+ *     `findForOwner`.
  *   - `reject(id)`      transitions the proposal to `rejected`. NO
  *     `WorkyMemoryEntry` is created. Emits `memory.rejected`.
  *   - `findProposals(ownerUserId, status?)` and `findForOwner(…)`

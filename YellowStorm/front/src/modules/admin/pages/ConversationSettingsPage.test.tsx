@@ -45,12 +45,24 @@ describe('ConversationSettingsPage', () => {
 
     await waitFor(() => expect(updateAdminConversationSettings).toHaveBeenCalledWith({
       composerSuggestions: { ...settings, debounceMs: 750 },
+      latencyInstrumentationEnabled: true,
     }));
+  });
+
+  it('saves an explicit latency instrumentation toggle', async () => {
+    const { user } = renderWithProviders(<ConversationSettingsPage />);
+    const latencyToggle = await screen.findByRole('switch', { name: 'conversationSettings.latency.enabled.label' });
+    await user.click(latencyToggle);
+    await user.click(screen.getByRole('button', { name: 'conversationSettings.actions.save' }));
+
+    await waitFor(() => expect(updateAdminConversationSettings).toHaveBeenCalledWith(
+      expect.objectContaining({ latencyInstrumentationEnabled: false }),
+    ));
   });
 
   it('disables dependent controls when suggestions are switched off', async () => {
     const { user } = renderWithProviders(<ConversationSettingsPage />);
-    const toggle = await screen.findByRole('switch');
+    const toggle = await screen.findByRole('switch', { name: 'conversationSettings.enabled.label' });
     await user.click(toggle);
 
     expect(screen.getByLabelText('conversationSettings.debounce.label')).toBeDisabled();

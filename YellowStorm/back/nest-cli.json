@@ -10,7 +10,11 @@
       "**/*.crt",
       "**/*.cert",
       { "include": "modules/app-data/templates/assets/**/*", "outDir": "dist/src" },
-      { "include": "modules/conversation-v2/templates/assets/**/*", "outDir": "dist/src" }
+      { "include": "modules/conversation-v2/templates/assets/**/*", "outDir": "dist/src" },
+      "**/*.html",
+      "**/*.png",
+      "**/*.svg",
+      { "include": "../scripts/**/*.sql", "outDir": "dist" }
     ],
     "watchAssets": true,
     "plugins": [

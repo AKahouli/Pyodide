@@ -1638,6 +1638,15 @@ export async function executePlaybook(
   id: string,
   data?: ExecutePlaybookData,
 ): Promise<{ executionId: string }> {
+  const payload = buildExecutionRequestPayload(data);
+  const response = await apiClient.post<ApiResponse<{ executionId: string }>>(
+    API_ENDPOINTS.playbookFlows.execute(id),
+    payload,
+  );
+  return response.data.data;
+}
+
+function buildExecutionRequestPayload(data?: ExecutePlaybookData): Record<string, unknown> {
   const payload: Record<string, unknown> = {};
   if (data?.singleStepTaskId) payload.singleStepTaskId = data.singleStepTaskId;
   if (data?.executionMode) payload.executionMode = data.executionMode;
@@ -1648,11 +1657,7 @@ export async function executePlaybook(
   if (data?.runNodeReflection !== undefined) payload.reflectionEnabled = data.runNodeReflection;
   if (data?.advisorScoringMode !== undefined) payload.advisorScoringMode = data.advisorScoringMode;
   if (data?.modelIdOverride) payload.modelIdOverride = data.modelIdOverride;
-  const response = await apiClient.post<ApiResponse<{ executionId: string }>>(
-    API_ENDPOINTS.playbookFlows.execute(id),
-    payload,
-  );
-  return response.data.data;
+  return payload;
 }
 
 export async function getPlaybookIntegrationToken(id: string): Promise<{ token: string }> {
@@ -2354,6 +2359,13 @@ export async function getFlow(id: string, options?: { view?: 'base' | 'enriched'
   return normalizePlaybook(response.data.data);
 }
 
+export async function getPlaybookInputContract(id: string): Promise<import('./types').PlaybookInputContract> {
+  const response = await apiClient.get<ApiResponse<import('./types').PlaybookInputContract>>(
+    API_ENDPOINTS.playbookFlows.inputContract(id),
+  );
+  return response.data.data;
+}
+
 export async function createFlow(data: CreateFlowData): Promise<Flow> {
   const response = await apiClient.post<ApiResponse<Flow>>(
     API_ENDPOINTS.playbookFlows.list,
@@ -2396,23 +2408,13 @@ export async function startFlowExecution(
   flowId: string,
   inputContext?: Record<string, unknown>,
   idempotencyKey?: string,
-  options?: {
-    reflectionEnabled?: boolean;
-    advisorScoringMode?: import('./types').AdvisorScoringMode;
-    advisorAutopilotEnabled?: boolean;
-    advisorAutopilotTargetScore?: number;
-    advisorAutopilotMaxTurns?: number;
-  },
+  options?: ExecutePlaybookData,
 ): Promise<{ executionId: string }> {
   const response = await apiClient.post<ApiResponse<{ executionId: string }>>(
     API_ENDPOINTS.playbookFlows.execute(flowId),
     {
       inputContext,
-      ...(options?.reflectionEnabled !== undefined ? { reflectionEnabled: options.reflectionEnabled } : {}),
-      ...(options?.advisorScoringMode !== undefined ? { advisorScoringMode: options.advisorScoringMode } : {}),
-      ...(options?.advisorAutopilotEnabled !== undefined ? { advisorAutopilotEnabled: options.advisorAutopilotEnabled } : {}),
-      ...(options?.advisorAutopilotTargetScore !== undefined ? { advisorAutopilotTargetScore: options.advisorAutopilotTargetScore } : {}),
-      ...(options?.advisorAutopilotMaxTurns !== undefined ? { advisorAutopilotMaxTurns: options.advisorAutopilotMaxTurns } : {}),
+      ...buildExecutionRequestPayload(options),
     },
     idempotencyKey
       ? { headers: { 'Idempotency-Key': idempotencyKey } }

@@ -1,21 +1,55 @@
-import { Controller, Get, Post, Put, Body, UseGuards, Req } from '@nestjs/common';
-import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth } from '@nestjs/swagger';
+import { Controller, Get, Post, Put, Delete, Body, Req, HttpCode, HttpStatus, UploadedFile, UseGuards, UseInterceptors } from '@nestjs/common';
+import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth, ApiConsumes, ApiBody } from '@nestjs/swagger';
 import { Request } from 'express';
-import { SystemService } from './system.service';
+import { FileInterceptor } from '@nestjs/platform-express';
+import { SystemService, EMAIL_LOGO_MAX_BYTES } from './system.service';
 import { Public } from '../auth/decorators/public.decorator';
 import { SkipMaintenance } from './decorators/skip-maintenance.decorator';
 import { RateLimitSkip } from '../rate-limiter';
+import { BadRequestException } from '../exceptions';
 import { MaintenanceStatus } from './interfaces/maintenance.interface';
 import { RegistrationStatus } from './interfaces/registration.interface';
 import { AppearanceSettings } from './interfaces/appearance.interface';
 import { SetAppearanceSettingsDto } from './dto/set-appearance-settings.dto';
 import { CorsSettingsValue } from './schemas/system-setting.schema';
+import { decodeMultipartFilename, multipartFileInterceptorOptions } from '../../common/utils';
 import { RequirePermissions, PermissionsGuard, Permissions, AuditLogService } from '../authorization';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { UserDocument } from '../user/schemas/user.schema';
 import { FeatureVisibilityService } from './feature-visibility.service';
 import type { FeatureVisibility } from './interfaces/feature-visibility.interface';
 import { UpdateFeatureVisibilityDto } from './dto/update-feature-visibility.dto';
+
+interface MulterFile {
+  originalname: string;
+  mimetype: string;
+  size: number;
+  buffer: Buffer;
+}
+
+export interface EmailLogoResponse {
+  filename: string;
+  contentType: string;
+  size: number;
+  updatedAt: string;
+  dataUri: string;
+}
+
+function toEmailLogoResponse(value: {
+  filename: string;
+  contentType: string;
+  size: number;
+  updatedAt: Date;
+  data: string;
+}): EmailLogoResponse {
+  return {
+    filename: value.filename,
+    contentType: value.contentType,
+    size: value.size,
+    updatedAt: value.updatedAt.toISOString(),
+    dataUri: `data:${value.contentType};base64,${value.data}`,
+  };
+}
 
 @ApiTags('System (Experimental)')
 @Controller('experimental/system')
@@ -237,6 +271,106 @@ export class SystemController {
     });
 
     return result;
+  }
+
+  @Get('email-logo')
+  @UseGuards(PermissionsGuard)
+  @RequirePermissions(Permissions.SYSTEM_MAINTENANCE)
+  @SkipMaintenance()
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Get the admin-configured email logo (null when default is used)' })
+  async getEmailLogo(): Promise<{ logo: EmailLogoResponse | null }> {
+    const logo = await this.systemService.getEmailLogo();
+    if (!logo) {
+      return { logo: null };
+    }
+    return { logo: toEmailLogoResponse(logo) };
+  }
+
+  @Post('email-logo')
+  @HttpCode(HttpStatus.OK)
+  @UseGuards(PermissionsGuard)
+  @RequirePermissions(Permissions.SYSTEM_MAINTENANCE)
+  @SkipMaintenance()
+  @UseInterceptors(FileInterceptor('file', multipartFileInterceptorOptions(EMAIL_LOGO_MAX_BYTES)))
+  @ApiConsumes('multipart/form-data')
+  @ApiBody({
+    schema: {
+      type: 'object',
+      properties: {
+        file: { type: 'string', format: 'binary' },
+      },
+      required: ['file'],
+    },
+  })
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Upload the email logo used in all transactional email templates (PNG/JPEG, max 512 KB)' })
+  async setEmailLogo(
+    @UploadedFile() file: MulterFile,
+    @CurrentUser() user: UserDocument,
+    @Req() req: Request,
+  ): Promise<{ logo: EmailLogoResponse }> {
+    if (!file) {
+      throw new BadRequestException('Email logo file is required');
+    }
+
+    file.originalname = decodeMultipartFilename(file.originalname);
+
+    let logo;
+    try {
+      logo = await this.systemService.setEmailLogo(
+        {
+          buffer: file.buffer,
+          contentType: file.mimetype,
+          filename: file.originalname,
+          size: file.size,
+        },
+        user._id.toString(),
+      );
+    } catch (error) {
+      throw new BadRequestException(
+        (error as Error).message || 'Invalid email logo file',
+      );
+    }
+
+    this.auditLogService.logSuccess({
+      actorId: user._id.toString(),
+      actorEmail: user.email,
+      action: 'system.emailLogo',
+      metadata: {
+        contentType: logo.contentType,
+        size: logo.size,
+        filename: logo.filename,
+      },
+      ipAddress: req.ip,
+      userAgent: req.headers['user-agent'],
+    });
+
+    return { logo: toEmailLogoResponse(logo) };
+  }
+
+  @Delete('email-logo')
+  @HttpCode(HttpStatus.OK)
+  @UseGuards(PermissionsGuard)
+  @RequirePermissions(Permissions.SYSTEM_MAINTENANCE)
+  @SkipMaintenance()
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Remove the custom email logo and fall back to the bundled default' })
+  async clearEmailLogo(
+    @CurrentUser() user: UserDocument,
+    @Req() req: Request,
+  ): Promise<{ logo: null }> {
+    await this.systemService.clearEmailLogo(user._id.toString());
+
+    this.auditLogService.logSuccess({
+      actorId: user._id.toString(),
+      actorEmail: user.email,
+      action: 'system.emailLogo.remove',
+      ipAddress: req.ip,
+      userAgent: req.headers['user-agent'],
+    });
+
+    return { logo: null };
   }
 
   @Get('cors')

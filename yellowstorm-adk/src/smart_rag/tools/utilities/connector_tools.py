@@ -664,6 +664,7 @@ def _collect_connector_context(
     brain_documents: Optional[List[Dict[str, Any]]],
     workspace_names: Optional[List[str]],
     workspace_id: Optional[str],
+    brain_ids: Optional[List[str]],
     user_id: Optional[str] = None,
 ) -> Dict[str, List[str]]:
     file_names: List[Any] = []
@@ -699,6 +700,13 @@ def _collect_connector_context(
         header_workspace_ids.append(doc_workspace_id)
         workspace_paths.append(_document_workspace_path(doc, user_id))
 
+    workspace_ids.append(workspace_id)
+    header_workspace_ids.append(workspace_id)
+    # ``brain_ids`` are the canonical workspace IDs provided by gRPC.  Workspace
+    # names are display labels and must never be the only source for the HTTP
+    # authorization header expected by Logical Search.
+    workspace_ids.extend(brain_ids or [])
+    header_workspace_ids.extend(brain_ids or [])
     workspace_ids.extend(workspace_names or [])
     paths_by_name = {
         str(path).rsplit("/", 1)[-1]: path
@@ -711,6 +719,12 @@ def _collect_connector_context(
             paths_by_name.get(normalized_name.rsplit("/", 1)[-1])
             or _qualify_workspace_path(normalized_name, user_id)
         )
+
+    # Older callers may only populate ``workspace_names``.  Keep this as a
+    # compatibility fallback: modern gRPC callers provide canonical IDs via
+    # ``workspace_id`` or ``brain_ids`` above.
+    if not _unique_strings(header_workspace_ids):
+        header_workspace_ids.extend(workspace_names or [])
 
     return {
         "file_names": _unique_strings(file_names),
@@ -788,6 +802,7 @@ def create_connector_tools(
         context.brain_documents,
         effective_workspace_names,
         context.workspace_id,
+        context.brain_ids,
         context.user_id,
     )
     settings = get_settings()

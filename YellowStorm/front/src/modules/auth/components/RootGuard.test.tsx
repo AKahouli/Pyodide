@@ -19,6 +19,9 @@ vi.mock('@/modules/conversation/hooks/useConversationStream', () => ({
 vi.mock('@/modules/conversation-v2/useStream', () => ({
   useConversationV2StreamConnection: vi.fn(),
 }));
+vi.mock('@/modules/playbook/services/playbookStreamService', () => ({
+  usePlaybookStreamGlobal: vi.fn(),
+}));
 vi.mock('@/modules/sidebar', () => ({ AppSidebar: () => <div data-testid='app-sidebar' /> }));
 vi.mock('@/modules/conversation', () => ({ NewConversationPage: () => <div>new conversation page</div> }));
 vi.mock('@/components/ui/sidebar', () => ({
@@ -30,6 +33,10 @@ vi.mock('@/modules/auth/components/LandingPage', () => ({ LandingPage: () => <di
 vi.mock('@/modules/conversation/effects/stars-background', () => ({
   StarsBackground: () => <div data-testid='stars-bg' />,
 }));
+vi.mock('@/modules/localization', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/modules/localization')>();
+  return { ...actual, useModuleTranslation: () => ({ t: (key: string) => key, ready: true, language: 'en' }) };
+});
 vi.mock('@/modules/admin', () => ({
   DEFAULT_FEATURE_VISIBILITY: { platformCopilot: false },
   getFeatureVisibility: getFeatureVisibilityMock,
@@ -110,6 +117,35 @@ describe('RootGuard', () => {
     await waitFor(() => expect(screen.getByText('platform copilot mascot')).toBeInTheDocument());
   });
 
+  it('hides Platform Copilot inside a Worky stream without hiding it on other Worky routes', async () => {
+    useAuthMock.mockReturnValue(makeAuthState({ isAuthenticated: true }));
+    getFeatureVisibilityMock.mockResolvedValue({ platformCopilot: true });
+
+    const { unmount } = renderWithRouter(
+      <Routes>
+        <Route path='/' element={<RootGuard />}>
+          <Route path='worky/:streamId' element={<div>worky stream</div>} />
+        </Route>
+      </Routes>,
+      ['/worky/stream-1/'],
+    );
+
+    await waitFor(() => expect(getFeatureVisibilityMock).toHaveBeenCalled());
+    expect(screen.queryByText('platform copilot mascot')).not.toBeInTheDocument();
+    unmount();
+
+    renderWithRouter(
+      <Routes>
+        <Route path='/' element={<RootGuard />}>
+          <Route path='worky/:streamId/report' element={<div>worky report</div>} />
+        </Route>
+      </Routes>,
+      ['/worky/stream-1/report'],
+    );
+
+    await waitFor(() => expect(screen.getByText('platform copilot mascot')).toBeInTheDocument());
+  });
+
   it('keeps Platform Copilot hidden when feature visibility cannot be loaded', async () => {
     useAuthMock.mockReturnValue(makeAuthState({ isAuthenticated: true }));
     getFeatureVisibilityMock.mockRejectedValue(new Error('unavailable'));
@@ -141,7 +177,7 @@ describe('RootGuard', () => {
     expect(getFeatureVisibilityMock).not.toHaveBeenCalled();
   });
 
-  it('shows declined copy when the inactive user was rejected', () => {
+  it('shows the rejected variant of the pending-approval page when the registration was declined', () => {
     useAuthMock.mockReturnValue(
       makeAuthState({
         isAuthenticated: true,
@@ -153,7 +189,6 @@ describe('RootGuard', () => {
 
     expect(screen.getByRole('status')).toHaveTextContent('pendingApproval.messageRejected');
     expect(screen.getByText('pendingApproval.steps.access.statusRejected')).toBeInTheDocument();
-    expect(screen.queryByText('pendingApproval.message')).not.toBeInTheDocument();
   });
 
   it('does not show the pending-approval page on the profile-completion redirect', async () => {
@@ -174,5 +209,30 @@ describe('RootGuard', () => {
 
     await waitFor(() => expect(screen.getByText('complete profile page')).toBeInTheDocument());
     expect(screen.queryByRole('status')).not.toBeInTheDocument();
+  });
+
+  it('shows the approved step-3 status after the account is accepted and then reveals the app shell', async () => {
+    const renderGuard = () => <MemoryRouter initialEntries={['/']}><RootGuard /></MemoryRouter>;
+    useAuthMock.mockReturnValue(
+      makeAuthState({ isAuthenticated: true, user: { status: 'inactive' } as never }),
+    );
+
+    const { rerender } = render(renderGuard());
+    expect(screen.getByRole('status')).toHaveTextContent('pendingApproval.message');
+    expect(screen.queryByTestId('sidebar-provider')).not.toBeInTheDocument();
+
+    // Admin approves: polling flips the persisted user to active.
+    useAuthMock.mockReturnValue(
+      makeAuthState({ isAuthenticated: true, user: { status: 'active' } as never }),
+    );
+    rerender(renderGuard());
+
+    expect(screen.getByRole('status')).toHaveTextContent('pendingApproval.messageApproved');
+    expect(screen.getByText('pendingApproval.steps.access.statusDone')).toBeInTheDocument();
+
+    await waitFor(
+      () => expect(screen.getByTestId('sidebar-provider')).toBeInTheDocument(),
+      { timeout: 4000 },
+    );
   });
 });

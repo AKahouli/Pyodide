@@ -10,8 +10,7 @@ import { ConfigService } from '@nestjs/config';
  *
  * Proxying through NestJS (rather than browser → OpenRouter directly) hides the
  * API key, lets the existing auth guard + `WORKY_STREAM_WRITE` permission gate
- * it, and mirrors `WorkyRuntimeClient`'s native-`fetch` approach (no
- * `@nestjs/axios` dependency).
+ * it using native `fetch` (no `@nestjs/axios` dependency).
  */
 export interface WorkyTranscriptionResult {
   text: string;

@@ -91,7 +91,7 @@ describe('single-step execution allowed paths', () => {
           }],
         }),
       } as any,
-      { validate: jest.fn() } as any,
+      { validate: jest.fn(), collectValidationErrors: jest.fn().mockReturnValue([]) } as any,
       { buildGrpcAgentsForPlaybook: jest.fn() } as any,
       { cacheOwner: jest.fn(), emitExecutionQueued: jest.fn() } as any,
       new PlaybookFlowObservabilityService(
@@ -205,7 +205,7 @@ describe('single-step execution allowed paths', () => {
           dataBindings: [],
         }),
       } as any,
-      { validate: jest.fn() } as any,
+      { validate: jest.fn(), collectValidationErrors: jest.fn().mockReturnValue([]) } as any,
       { buildGrpcAgentsForPlaybook: jest.fn() } as any,
       { cacheOwner: jest.fn(), emitExecutionQueued: jest.fn() } as any,
       new PlaybookFlowObservabilityService(

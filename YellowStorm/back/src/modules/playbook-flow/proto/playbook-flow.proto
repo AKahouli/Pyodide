@@ -51,6 +51,7 @@ message RuntimeSettings {
   bool graph_cache_enabled = 10;
   int32 graph_cache_max_entries = 11;
   int32 graph_cache_ttl_seconds = 12;
+  int32 max_sandbox_calls_per_step = 13;
 }
 
 message DynamicReasoningPolicy {

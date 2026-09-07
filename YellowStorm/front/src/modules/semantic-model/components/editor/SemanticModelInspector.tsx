@@ -7,7 +7,6 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Separator } from '@/components/ui/separator';
 import { Switch } from '@/components/ui/switch';
 import { Textarea } from '@/components/ui/textarea';
-import { showWarning } from '@/lib/notifications';
 import { useModuleTranslation } from '@/modules/localization';
 import { useSemanticModelEditorStore } from '../../store';
 import type { KnowledgeLinkingController } from '../../hooks/use-knowledge-linking';
@@ -20,65 +19,77 @@ export function SemanticModelInspector({ canEdit,knowledge,knowledgeOpen,knowled
   const graph = useSemanticModelEditorStore((state) => state.graph);
   const selectedId = useSemanticModelEditorStore((state) => state.selectedId);
   const select = useSemanticModelEditorStore((state) => state.select);
-  const commit = useSemanticModelEditorStore((state) => state.commit);
-  const commitBatch = useSemanticModelEditorStore((state) => state.commitBatch);
   const node = graph?.nodes.find((item) => item.id === selectedId);
   const relation = graph?.relations.find((item) => item.id === selectedId);
   const record = graph?.records.find((item) => item.id === selectedId);
   if (knowledgeOpen||!selectedId||(!node&&!relation&&!record)) return <aside className={knowledgeOpen?'absolute inset-y-0 right-0 z-30 w-[min(22rem,calc(100%-1rem))] border-l bg-background/95 shadow-2xl backdrop-blur xl:static xl:w-80 xl:shadow-none':'hidden w-80 shrink-0 border-l bg-background/92 xl:block'}><KnowledgePanel canEdit={canEdit} knowledge={knowledge} targetNodeId={knowledgeTargetId} onClose={knowledgeOpen?onKnowledgeClose:undefined}/></aside>;
   return <aside className='absolute inset-y-0 right-0 z-20 w-[min(22rem,calc(100%-1rem))] overflow-y-auto border-l bg-background/95 p-5 shadow-2xl backdrop-blur xl:static xl:w-80 xl:shadow-none'>
     <div className='mb-5 flex items-center justify-between'><div><p className='text-xs font-medium uppercase tracking-wider text-muted-foreground'>{t('inspector.title')}</p><h2 className='font-semibold'>{node?.label ?? relation?.label ?? record?.label}</h2></div><Button size='icon' variant='ghost' onClick={() => select(null)} aria-label={t('action.close')}><X className='h-4 w-4' /></Button></div>
-    {node && <NodeForm node={node} locked={Boolean(node.systemKey)} />}
-    {relation && <RelationForm relation={relation} />}
-    {record && <RecordForm record={record} />}
+    {node && <NodeForm node={node} locked={Boolean(node.systemKey)} canEdit={canEdit} />}
+    {relation && <RelationForm relation={relation} canEdit={canEdit} />}
+    {record && <RecordForm record={record} canEdit={canEdit} />}
   </aside>;
+}
 
-  function NodeForm({ node: item,locked }: Readonly<{ node: SemanticNodeType; locked: boolean }>) {
-    const update = (changes: Partial<Omit<SemanticNodeType,'id'|'systemKey'>>) => commit({ type:'node_type.update',id:item.id,changes }, (current) => ({ ...current,nodes:current.nodes.map((candidate) => candidate.id === item.id ? {...candidate,...changes} : candidate) }));
-    const deleteNode = () => {
-      if (!graph) return;
-      const relationIds = new Set(graph.relations.filter((candidate)=>candidate.sourceNodeTypeId===item.id||candidate.targetNodeTypeId===item.id).map((candidate)=>candidate.id));
-      const recordIds = new Set(graph.records.filter((candidate)=>candidate.nodeTypeId===item.id).map((candidate)=>candidate.id));
-      const recordRelationIds = new Set(graph.recordRelations.filter((candidate)=>relationIds.has(candidate.relationTypeId)||recordIds.has(candidate.sourceRecordId)||recordIds.has(candidate.targetRecordId)).map((candidate)=>candidate.id));
-      const operations = [
-        ...[...recordRelationIds].map((id)=>({type:'record_relation.delete' as const,id})),
-        ...[...recordIds].map((id)=>({type:'record.delete' as const,id})),
-        ...[...relationIds].map((id)=>({type:'relation_type.delete' as const,id})),
-        {type:'node_type.delete' as const,id:item.id},
-      ];
-      if (operations.length>100){showWarning(t('inspector.deleteTooLarge'));return;}
-      commitBatch(operations,(current)=>({...current,nodes:current.nodes.filter((candidate)=>candidate.id!==item.id),relations:current.relations.filter((candidate)=>!relationIds.has(candidate.id)),records:current.records.filter((candidate)=>!recordIds.has(candidate.id)),recordRelations:current.recordRelations.filter((candidate)=>!recordRelationIds.has(candidate.id))}));
-    };
-    if (!canEdit) return <div className='space-y-4'><ReadOnlyField label={t('field.label')} value={item.label} /><ReadOnlyField label={t('field.description')} value={item.description||t('editor.noDescription')} /><ReadOnlyField label={t('field.category')} value={t(`category.${item.category}`)} /><ReadOnlyField label={t('field.recordPolicy')} value={t(`recordPolicy.${item.recordPolicy}`)} />{item.attributes.length>0&&<ReadOnlyField label={t('attributes.title')} value={item.attributes.map((attribute)=>attribute.label).join(', ')} />}</div>;
-    return <div className='space-y-5'>{locked && <div className='flex gap-2 rounded-xl bg-sky-500/10 p-3 text-xs text-sky-700 dark:text-sky-300'><LockKeyhole className='h-4 w-4 shrink-0' />{t('inspector.protected')}</div>}
-      <Field label={t('field.label')}><Input value={item.label} disabled={locked||!canEdit} onChange={(event) => update({ label:event.target.value,key:businessKey(event.target.value) })} /></Field>
-      <Field label={t('field.description')}><Textarea value={item.description} disabled={locked||!canEdit} onChange={(event) => update({ description:event.target.value })} /></Field>
-      <Field label={t('field.category')}><Select value={item.category} disabled={locked||!canEdit} onValueChange={(category: SemanticNodeType['category']) => update({ category })}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value='business_object'>{t('category.business_object')}</SelectItem><SelectItem value='classification'>{t('category.classification')}</SelectItem></SelectContent></Select></Field>
-      <Field label={t('field.recordPolicy')}><Select value={item.recordPolicy} disabled={locked||!canEdit} onValueChange={(recordPolicy: SemanticNodeType['recordPolicy']) => update({ recordPolicy })}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{(['none','optional','expected'] as const).map((policy) => <SelectItem key={policy} value={policy}>{t(`recordPolicy.${policy}`)}</SelectItem>)}</SelectContent></Select></Field>
-      {!locked&&canEdit && <AttributeEditor attributes={item.attributes} onChange={(attributes) => update({ attributes })} />}
-      {!locked&&canEdit && <><Separator /><Button variant='destructive' className='w-full' onClick={deleteNode}><Trash2 className='mr-2 h-4 w-4' />{t('inspector.deleteConcept')}</Button></>}
-    </div>;
-  }
+function NodeForm({ node: item,locked,canEdit }: Readonly<{ node: SemanticNodeType; locked: boolean; canEdit: boolean }>) {
+  const { t } = useModuleTranslation('semantic-model');
+  const graph = useSemanticModelEditorStore((state) => state.graph);
+  const commit = useSemanticModelEditorStore((state) => state.commit);
+  const commitBatch = useSemanticModelEditorStore((state) => state.commitBatch);
+  const select = useSemanticModelEditorStore((state) => state.select);
+  const update = (changes: Partial<Omit<SemanticNodeType,'id'|'systemKey'>>) => commit({ type:'node_type.update',id:item.id,changes }, (current) => ({ ...current,nodes:current.nodes.map((candidate) => candidate.id === item.id ? {...candidate,...changes} : candidate) }));
+  const deleteNode = () => {
+    if (!graph) return;
+    const relationIds = new Set(graph.relations.filter((candidate)=>candidate.sourceNodeTypeId===item.id||candidate.targetNodeTypeId===item.id).map((candidate)=>candidate.id));
+    const recordIds = new Set(graph.records.filter((candidate)=>candidate.nodeTypeId===item.id).map((candidate)=>candidate.id));
+    const recordRelationIds = new Set(graph.recordRelations.filter((candidate)=>relationIds.has(candidate.relationTypeId)||recordIds.has(candidate.sourceRecordId)||recordIds.has(candidate.targetRecordId)).map((candidate)=>candidate.id));
+    const operations = [
+      ...[...recordRelationIds].map((id)=>({type:'record_relation.delete' as const,id})),
+      ...[...recordIds].map((id)=>({type:'record.delete' as const,id})),
+      ...[...relationIds].map((id)=>({type:'relation_type.delete' as const,id})),
+      {type:'node_type.delete' as const,id:item.id},
+    ];
+    commitBatch(operations,(current)=>({...current,nodes:current.nodes.filter((candidate)=>candidate.id!==item.id),relations:current.relations.filter((candidate)=>!relationIds.has(candidate.id)),records:current.records.filter((candidate)=>!recordIds.has(candidate.id)),recordRelations:current.recordRelations.filter((candidate)=>!recordRelationIds.has(candidate.id))}));
+    select(null);
+  };
+  if (!canEdit) return <div className='space-y-4'><ReadOnlyField label={t('field.label')} value={item.label} /><ReadOnlyField label={t('field.description')} value={item.description||t('editor.noDescription')} /><ReadOnlyField label={t('field.category')} value={t(`category.${item.category}`)} /><ReadOnlyField label={t('field.recordPolicy')} value={t(`recordPolicy.${item.recordPolicy}`)} />{item.attributes.length>0&&<ReadOnlyField label={t('attributes.title')} value={item.attributes.map((attribute)=>attribute.label).join(', ')} />}</div>;
+  return <div className='space-y-5'>{locked && <div className='flex gap-2 rounded-xl bg-sky-500/10 p-3 text-xs text-sky-700 dark:text-sky-300'><LockKeyhole className='h-4 w-4 shrink-0' />{t('inspector.protected')}</div>}
+    <Field label={t('field.label')}><Input value={item.label} disabled={locked||!canEdit} onChange={(event) => update({ label:event.target.value,key:businessKey(event.target.value) })} /></Field>
+    <Field label={t('field.description')}><Textarea value={item.description} disabled={locked||!canEdit} onChange={(event) => update({ description:event.target.value })} /></Field>
+    <Field label={t('field.category')}><Select value={item.category} disabled={locked||!canEdit} onValueChange={(category: SemanticNodeType['category']) => update({ category })}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value='business_object'>{t('category.business_object')}</SelectItem><SelectItem value='classification'>{t('category.classification')}</SelectItem></SelectContent></Select></Field>
+    <Field label={t('field.recordPolicy')}><Select value={item.recordPolicy} disabled={locked||!canEdit} onValueChange={(recordPolicy: SemanticNodeType['recordPolicy']) => update({ recordPolicy })}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{(['none','optional','expected'] as const).map((policy) => <SelectItem key={policy} value={policy}>{t(`recordPolicy.${policy}`)}</SelectItem>)}</SelectContent></Select></Field>
+    {!locked&&canEdit && <AttributeEditor attributes={item.attributes} onChange={(attributes) => update({ attributes })} />}
+    {!locked&&canEdit && <><Separator /><Button variant='destructive' className='w-full' onClick={deleteNode}><Trash2 className='mr-2 h-4 w-4' />{t('inspector.deleteConcept')}</Button></>}
+  </div>;
+}
 
-  function RelationForm({ relation: item }: Readonly<{ relation: SemanticRelationType }>) {
-    const update = (changes: Partial<Omit<SemanticRelationType,'id'>>) => commit({ type:'relation_type.update',id:item.id,changes }, (current) => ({ ...current,relations:current.relations.map((candidate) => candidate.id === item.id ? {...candidate,...changes} : candidate) }));
-    if (!canEdit) return <div className='space-y-4'><ReadOnlyField label={t('field.label')} value={item.label} />{item.inverseLabel&&<ReadOnlyField label={t('field.inverseLabel')} value={item.inverseLabel} />}{item.description&&<ReadOnlyField label={t('field.description')} value={item.description} />}<ReadOnlyField label={t('field.cardinality')} value={t(`cardinality.${item.cardinality}`)} /></div>;
-    const deleteRelation = () => {
-      if (!graph) return;
-      const recordRelationIds = graph.recordRelations.filter((candidate)=>candidate.relationTypeId===item.id).map((candidate)=>candidate.id);
-      const operations = [...recordRelationIds.map((id)=>({type:'record_relation.delete' as const,id})),{type:'relation_type.delete' as const,id:item.id}];
-      if (operations.length>100){showWarning(t('inspector.deleteTooLarge'));return;}
-      commitBatch(operations,(current)=>({...current,relations:current.relations.filter((candidate)=>candidate.id!==item.id),recordRelations:current.recordRelations.filter((candidate)=>!recordRelationIds.includes(candidate.id))}));
-    };
-    return <div className='space-y-5'><Field label={t('field.label')}><Input value={item.label} disabled={!canEdit} onChange={(event) => update({label:event.target.value,key:businessKey(event.target.value)})} /></Field><Field label={t('field.inverseLabel')}><Input value={item.inverseLabel} disabled={!canEdit} onChange={(event) => update({inverseLabel:event.target.value})} /></Field><Field label={t('field.description')}><Textarea value={item.description} disabled={!canEdit} onChange={(event) => update({description:event.target.value})} /></Field><Field label={t('field.cardinality')}><Select value={item.cardinality} disabled={!canEdit} onValueChange={(cardinality: SemanticRelationType['cardinality']) => update({cardinality})}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{(['one_to_one','one_to_many','many_to_one','many_to_many'] as const).map((value) => <SelectItem key={value} value={value}>{t(`cardinality.${value}`)}</SelectItem>)}</SelectContent></Select></Field><div className='flex items-center justify-between'><Label>{t('field.traversable')}</Label><Switch checked={item.traversable} disabled={!canEdit} onCheckedChange={(traversable) => update({traversable})} /></div>{canEdit&&<><Separator /><Button variant='destructive' className='w-full' onClick={deleteRelation}><Trash2 className='mr-2 h-4 w-4' />{t('inspector.deleteRelationship')}</Button></>}</div>;
-  }
+function RelationForm({ relation: item,canEdit }: Readonly<{ relation: SemanticRelationType; canEdit: boolean }>) {
+  const { t } = useModuleTranslation('semantic-model');
+  const graph = useSemanticModelEditorStore((state) => state.graph);
+  const commit = useSemanticModelEditorStore((state) => state.commit);
+  const commitBatch = useSemanticModelEditorStore((state) => state.commitBatch);
+  const select = useSemanticModelEditorStore((state) => state.select);
+  const update = (changes: Partial<Omit<SemanticRelationType,'id'>>) => commit({ type:'relation_type.update',id:item.id,changes }, (current) => ({ ...current,relations:current.relations.map((candidate) => candidate.id === item.id ? {...candidate,...changes} : candidate) }));
+  const deleteRelation = () => {
+    if (!graph) return;
+    const recordRelationIds = graph.recordRelations.filter((candidate)=>candidate.relationTypeId===item.id).map((candidate)=>candidate.id);
+    const operations = [...recordRelationIds.map((id)=>({type:'record_relation.delete' as const,id})),{type:'relation_type.delete' as const,id:item.id}];
+    commitBatch(operations,(current)=>({...current,relations:current.relations.filter((candidate)=>candidate.id!==item.id),recordRelations:current.recordRelations.filter((candidate)=>!recordRelationIds.includes(candidate.id))}));
+    select(null);
+  };
+  if (!canEdit) return <div className='space-y-4'><ReadOnlyField label={t('field.label')} value={item.label} />{item.inverseLabel&&<ReadOnlyField label={t('field.inverseLabel')} value={item.inverseLabel} />}{item.description&&<ReadOnlyField label={t('field.description')} value={item.description} />}<ReadOnlyField label={t('field.cardinality')} value={t(`cardinality.${item.cardinality}`)} /></div>;
+  return <div className='space-y-5'><Field label={t('field.label')}><Input value={item.label} disabled={!canEdit} onChange={(event) => update({label:event.target.value,key:businessKey(event.target.value)})} /></Field><Field label={t('field.inverseLabel')}><Input value={item.inverseLabel} disabled={!canEdit} onChange={(event) => update({inverseLabel:event.target.value})} /></Field><Field label={t('field.description')}><Textarea value={item.description} disabled={!canEdit} onChange={(event) => update({description:event.target.value})} /></Field><Field label={t('field.cardinality')}><Select value={item.cardinality} disabled={!canEdit} onValueChange={(cardinality: SemanticRelationType['cardinality']) => update({cardinality})}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{(['one_to_one','one_to_many','many_to_one','many_to_many'] as const).map((value) => <SelectItem key={value} value={value}>{t(`cardinality.${value}`)}</SelectItem>)}</SelectContent></Select></Field><div className='flex items-center justify-between'><Label>{t('field.traversable')}</Label><Switch checked={item.traversable} disabled={!canEdit} onCheckedChange={(traversable) => update({traversable})} /></div>{canEdit&&<><Separator /><Button variant='destructive' className='w-full' onClick={deleteRelation}><Trash2 className='mr-2 h-4 w-4' />{t('inspector.deleteRelationship')}</Button></>}</div>;
+}
 
-  function RecordForm({ record: item }: Readonly<{ record: SemanticRecord }>) {
-    const type = graph?.nodes.find((candidate) => candidate.id === item.nodeTypeId);
-    const update = (changes: Partial<Omit<SemanticRecord,'id'|'nodeTypeId'>>) => commit({type:'record.update',id:item.id,changes},(current) => ({...current,records:current.records.map((candidate) => candidate.id === item.id ? {...candidate,...changes} : candidate)}));
-    if (!canEdit) return <div className='space-y-4'><ReadOnlyField label={t('records.type')} value={type?.label??''} /><ReadOnlyField label={t('field.label')} value={item.label} />{type?.attributes.map((attribute)=><ReadOnlyField key={attribute.key} label={attribute.label} value={String(item.values[attribute.key]??'')} />)}</div>;
-    return <div className='space-y-5'><p className='rounded-xl bg-muted p-3 text-xs text-muted-foreground'>{t('records.instanceOf',{ name:type?.label ?? '' })}</p><Field label={t('field.label')}><Input value={item.label} disabled={!canEdit} onChange={(event) => update({label:event.target.value})} /></Field>{type?.attributes.map((attribute) => <Field key={attribute.key} label={attribute.label}><Input value={String(item.values[attribute.key] ?? '')} disabled={!canEdit} onChange={(event) => update({values:{...item.values,[attribute.key]:event.target.value}})} /></Field>)}{canEdit&&<><Separator /><Button variant='destructive' className='w-full' onClick={() => commit({type:'record.delete',id:item.id},(current) => ({...current,records:current.records.filter((candidate) => candidate.id !== item.id),recordRelations:current.recordRelations.filter((candidate) => candidate.sourceRecordId !== item.id && candidate.targetRecordId !== item.id)}))}><Trash2 className='mr-2 h-4 w-4' />{t('records.delete')}</Button></>}</div>;
-  }
+function RecordForm({ record: item,canEdit }: Readonly<{ record: SemanticRecord; canEdit: boolean }>) {
+  const { t } = useModuleTranslation('semantic-model');
+  const graph = useSemanticModelEditorStore((state) => state.graph);
+  const commit = useSemanticModelEditorStore((state) => state.commit);
+  const select = useSemanticModelEditorStore((state) => state.select);
+  const type = graph?.nodes.find((candidate) => candidate.id === item.nodeTypeId);
+  const update = (changes: Partial<Omit<SemanticRecord,'id'|'nodeTypeId'>>) => commit({type:'record.update',id:item.id,changes},(current) => ({...current,records:current.records.map((candidate) => candidate.id === item.id ? {...candidate,...changes} : candidate)}));
+  if (!canEdit) return <div className='space-y-4'><ReadOnlyField label={t('records.type')} value={type?.label??''} /><ReadOnlyField label={t('field.label')} value={item.label} />{type?.attributes.map((attribute)=><ReadOnlyField key={attribute.key} label={attribute.label} value={String(item.values[attribute.key]??'')} />)}</div>;
+  return <div className='space-y-5'><p className='rounded-xl bg-muted p-3 text-xs text-muted-foreground'>{t('records.instanceOf',{ name:type?.label ?? '' })}</p><Field label={t('field.label')}><Input value={item.label} disabled={!canEdit} onChange={(event) => update({label:event.target.value})} /></Field>{type?.attributes.map((attribute) => <Field key={attribute.key} label={attribute.label}><Input value={String(item.values[attribute.key] ?? '')} disabled={!canEdit} onChange={(event) => update({values:{...item.values,[attribute.key]:event.target.value}})} /></Field>)}{canEdit&&<><Separator /><Button variant='destructive' className='w-full' onClick={() => { commit({type:'record.delete',id:item.id},(current) => ({...current,records:current.records.filter((candidate) => candidate.id !== item.id),recordRelations:current.recordRelations.filter((candidate) => candidate.sourceRecordId !== item.id && candidate.targetRecordId !== item.id)})); select(null); }}><Trash2 className='mr-2 h-4 w-4' />{t('records.delete')}</Button></>}</div>;
 }
 
 function Field({ label,children }: Readonly<{ label: string; children: React.ReactNode }>) { return <div className='space-y-2'><Label>{label}</Label>{children}</div>; }

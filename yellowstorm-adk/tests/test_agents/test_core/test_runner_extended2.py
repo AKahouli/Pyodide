@@ -114,18 +114,6 @@ class TestRunnerCitationHelpers:
 
 class TestRunnerResponseHandlers:
     @pytest.mark.asyncio
-    async def test_handle_dataviz_response(self):
-        runner = _runner()
-        function_response = MagicMock()
-        function_response.name = "dataviz"
-        function_response.response = {"ui": {"title": "Chart"}}
-        queue = AsyncMock()
-        await runner._handle_dataviz_response(
-            function_response, "agent-1", "SearchAgent", "sess-1", queue
-        )
-        queue.put.assert_awaited_once()
-
-    @pytest.mark.asyncio
     async def test_handle_formviz_response(self):
         runner = _runner()
         model = MagicMock()

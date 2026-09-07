@@ -96,6 +96,7 @@ async def init_schema(pool: asyncpg.Pool, schema: str = "public") -> None:
                 session_id TEXT NOT NULL,
                 role       TEXT NOT NULL,
                 content    TEXT,
+                turn_id    TEXT,
                 created_at TIMESTAMPTZ NOT NULL DEFAULT now()
             )""")
         # Rich components of a chat message (the client's `message_components`
@@ -114,6 +115,8 @@ async def init_schema(pool: asyncpg.Pool, schema: str = "public") -> None:
                 created_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
                 PRIMARY KEY (session_id, component_id)
             )""")
+        await con.execute(
+            f'ALTER TABLE {_q(schema,"messages")} ADD COLUMN IF NOT EXISTS turn_id TEXT')
         # Internal (not published to Electric): which step is waiting on which
         # email reply. The token travels in the outbound mail and comes back on
         # the reply; this is what turns it into (session, step, interrupt).
@@ -298,12 +301,13 @@ class ReadModel:
                 session_id)
         return [(r["interrupt_id"], r["step_id"]) for r in rows]
 
-    async def add_message(self, message_id: str, session_id: str, role: str, content: str) -> None:
+    async def add_message(self, message_id: str, session_id: str, role: str, content: str,
+                          turn_id: Optional[str] = None) -> None:
         async with self._pool.acquire() as con:
             await con.execute(f"""
-                INSERT INTO {_q(self._schema,'messages')} (id,session_id,role,content)
-                VALUES ($1,$2,$3,$4) ON CONFLICT (id) DO NOTHING
-            """, message_id, session_id, role, content)
+                INSERT INTO {_q(self._schema,'messages')} (id,session_id,role,content,turn_id)
+                VALUES ($1,$2,$3,$4,$5) ON CONFLICT (id) DO NOTHING
+            """, message_id, session_id, role, content, turn_id)
 
     async def add_message_component(self, session_id: str, message_id: str, component_id: str,
                                     type: str, data: dict, ordinal: int = 0) -> None:

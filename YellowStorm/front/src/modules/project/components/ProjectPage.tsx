@@ -34,6 +34,7 @@ import {
   useInputDisabled,
   useResetSelectedWorkspaceIds,
 } from '@/modules/conversation/store';
+import { ReasoningEffortSelect, useReasoningEffortState } from '@/modules/conversation/components/ReasoningEffortSelect';
 import { translateConversation } from '@/modules/conversation/translation';
 import { RenameDialog } from '@/modules/conversation/components/RenameDialog';
 import { DeleteConversationDialog } from '@/modules/conversation/components/DeleteConversationDialog';
@@ -68,6 +69,7 @@ export function ProjectPage() {
   const sendMessage = useConversationStore((s) => s.sendMessage);
   const inputDisabled = useInputDisabled();
   const resetSelectedWorkspaceIds = useResetSelectedWorkspaceIds();
+  const { effectiveEffort: effectiveReasoningEffort } = useReasoningEffortState();
   const { status: usageStatus } = useUsage();
   const isLimitExceeded = usageStatus?.isLimitExceeded ?? false;
 
@@ -110,7 +112,7 @@ export function ProjectPage() {
     message: PromptInputMessage,
     modelId: string,
     agentIds?: string[],
-    _memberIds?: string[],
+    memberIds?: string[],
     workspaceIds?: string[],
     connectorRepo?: {
       connectorId: string;
@@ -152,6 +154,9 @@ export function ProjectPage() {
         modelId: modelId || undefined,
         agentIds: agentIds?.length ? agentIds : undefined,
         teamIds: teamIds?.length ? teamIds : undefined,
+        ...(!agentIds?.length && !memberIds?.length && !teamIds?.length && effectiveReasoningEffort
+          ? { reasoningEffort: effectiveReasoningEffort }
+          : {}),
         connectorRepo,
       });
 
@@ -246,6 +251,8 @@ export function ProjectPage() {
               accept={accept}
               maxFiles={5}
               showWorkspaceSelect={true}
+              showModelSelector
+              extraTools={<ReasoningEffortSelect />}
             />
           </div>
 

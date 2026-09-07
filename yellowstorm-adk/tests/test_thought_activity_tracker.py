@@ -61,6 +61,60 @@ def test_complete_only_thought_starts_activity() -> None:
     assert update.detail == "Complete reasoning"
 
 
+def test_complete_only_short_fragment_does_not_start_or_seed_activity() -> None:
+    tracker = ThoughtActivityTracker()
+
+    assert tracker.observe("start", False, "ignored") is None
+    assert tracker.observe("search first.", False, "ignored") is None
+    assert tracker.observe("4\n files", False, "ignored") is None
+    assert tracker.observe("me read them", False, "ignored") is None
+    update = tracker.observe("Inspect contracts", False, "start")
+
+    assert update is not None
+    assert update.action == "add"
+    assert update.detail == "Inspect contracts"
+
+
+def test_punctuation_separated_four_word_thought_starts_activity() -> None:
+    update = ThoughtActivityTracker().observe("search/read/compare/respond", False, "start")
+
+    assert update is not None
+    assert update.action == "add"
+
+
+def test_complete_one_word_can_correct_an_existing_activity() -> None:
+    tracker = ThoughtActivityTracker()
+    first = tracker.observe("Draft reasoning", True, "start")
+    corrected = tracker.observe("Done", False, "complete")
+
+    assert first is not None
+    assert corrected is not None
+    assert corrected.component_id == first.component_id
+    assert corrected.action == "update"
+    assert corrected.detail == "Done"
+
+
+def test_complete_short_suffix_does_not_replace_accumulated_reasoning() -> None:
+    tracker = ThoughtActivityTracker()
+    first = tracker.observe("Reuse citation-grounded citations", True, "start")
+    duplicate = tracker.observe("-grounded citations", False, "complete")
+
+    assert first is not None
+    assert duplicate is None
+
+
+def test_complete_short_delta_extends_accumulated_reasoning() -> None:
+    tracker = ThoughtActivityTracker()
+    first = tracker.observe("Reuse citation", True, "start")
+    suffix = tracker.observe("-grounded citations", False, "complete")
+
+    assert first is not None
+    assert suffix is not None
+    assert suffix.component_id == first.component_id
+    assert suffix.action == "update"
+    assert suffix.detail == "Reuse citation-grounded citations"
+
+
 def test_tool_boundary_allows_identical_reasoning_in_new_span() -> None:
     tracker = ThoughtActivityTracker()
     first = tracker.observe("Check revenue", False, "first")

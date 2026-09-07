@@ -8,6 +8,11 @@ export default registerAs('conversation', () => ({
   maxConcurrentStreams: Number.parseInt(process.env.CONVERSATION_MAX_CONCURRENT_STREAMS || '5', 10),
   sseHeartbeatMs: Number.parseInt(process.env.CONVERSATION_SSE_HEARTBEAT_MS || '15000', 10),
   maxSseConnections: Number.parseInt(process.env.CONVERSATION_MAX_SSE_CONNECTIONS || '5', 10),
+  // Bounded per-user SSE replay window so a reconnecting client can recover
+  // events missed while it had no connection. Not a durable event store.
+  sseReplayEnabled: (process.env.CONVERSATION_SSE_REPLAY_ENABLED || 'true') === 'true',
+  sseReplayMaxEvents: Number.parseInt(process.env.CONVERSATION_SSE_REPLAY_MAX_EVENTS || '200', 10),
+  sseReplayTtlMs: Number.parseInt(process.env.CONVERSATION_SSE_REPLAY_TTL_MS || '120000', 10),
   maxMessageLength: Number.parseInt(process.env.CONVERSATION_MAX_MESSAGE_LENGTH || '50000', 10),
   maxFilesPerMessage: Number.parseInt(process.env.CONVERSATION_MAX_FILES_PER_MESSAGE || '5', 10),
   shareExpiryDays: Number.parseInt(process.env.CONVERSATION_SHARE_EXPIRY_DAYS || '30', 10),

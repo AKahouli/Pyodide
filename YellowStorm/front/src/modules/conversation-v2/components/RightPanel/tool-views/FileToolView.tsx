@@ -6,7 +6,7 @@ import { CodeArtifact } from '@/components/ai-elements/code-artifact';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import {
-  openFileViewerFromUrl,
+  openFileViewerFromUrlLoader,
   getMimeTypeFromFilename,
   useFileViewerDisplayMode,
 } from '@/modules/file-viewer';
@@ -27,12 +27,20 @@ export function FileToolView({ content }: { content: File }) {
     if (opening || !content.path) return;
     setOpening(true);
     try {
-      const { url } = await conversationV2Api.getFileSignedUrl(content.path);
       const mimeType = getMimeTypeFromFilename(filename) ?? 'application/octet-stream';
       // Mutually exclusive with the tool-detail right panel — both occupy the
       // right side and collide otherwise.
       closeRightPanel();
-      openFileViewerFromUrl(url, filename, mimeType, { displayMode });
+      await openFileViewerFromUrlLoader(
+        content.path,
+        filename,
+        mimeType,
+        async () => {
+          const { url } = await conversationV2Api.getFileSignedUrl(content.path);
+          return { url };
+        },
+        { displayMode },
+      );
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Unknown error';
       toast.error('Failed to open file', { description: message });

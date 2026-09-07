@@ -32,6 +32,7 @@ import type {
   SetCorsSettingsRequest,
   AppearanceSettings,
   AppearanceLogo,
+  EmailLogo,
   PlanResponse,
   CreatePlanRequest,
   UpdatePlanRequest,
@@ -316,6 +317,32 @@ export async function updateAppearanceLogo(
 
 export async function deleteAppearanceLogo(id: string): Promise<void> {
   await apiClient.delete(API_ENDPOINTS.system.appearanceLogo(id));
+}
+
+export async function getEmailLogo(): Promise<EmailLogo | null> {
+  const response = await apiClient.get<ApiResponse<{ logo: EmailLogo | null }>>(
+    API_ENDPOINTS.system.emailLogo
+  );
+  return response.data.data.logo;
+}
+
+export async function uploadEmailLogo(file: File): Promise<EmailLogo> {
+  const formData = new FormData();
+  formData.append('file', file);
+  const response = await apiClient.post<ApiResponse<{ logo: EmailLogo }>>(
+    API_ENDPOINTS.system.emailLogo,
+    formData,
+    {
+      headers: {
+        'Content-Type': 'multipart/form-data',
+      },
+    },
+  );
+  return response.data.data.logo;
+}
+
+export async function deleteEmailLogo(): Promise<void> {
+  await apiClient.delete(API_ENDPOINTS.system.emailLogo);
 }
 
 // Plans API

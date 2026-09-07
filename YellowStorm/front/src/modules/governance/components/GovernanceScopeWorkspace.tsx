@@ -51,6 +51,7 @@ import { WorkspaceBindingList as WorkspaceBindingListPanel } from './bindings/Wo
 import { dataRoomFeatures } from '@/config/dataRoomFeatures';
 import { governanceQueryKeys } from '../query/queryKeys';
 import { ScopeAudienceTab } from './scope/ScopeAudienceTab';
+import { KnowledgeSourcesCard } from './scope/KnowledgeSourcesCard';
 import { getLatestDryRunRevisionNumber, governanceScopeTabs, isCurrentDraftDryRunPassed, type TabKey } from './scope-readiness';
 
 export type { TabKey } from './scope-readiness';
@@ -196,7 +197,7 @@ export function GovernanceScopeWorkspace({ programId, scopeId, overview, members
       </div>
       <div className='p-5'>
         {activeTab === 'overview' && settingsDraft && <OverviewTab programId={programId} overview={overview} settingsDraft={settingsDraft} onSettingsDraftChange={setSettingsDraft} onNavigate={(tab) => void changeTab(tab)} />}
-        {activeTab === 'knowledge' && <KnowledgeTab programId={programId} scopeId={scopeId} />}
+        {activeTab === 'knowledge' && <KnowledgeTab programId={programId} scopeId={scopeId} scope={overview.scope} />}
         {activeTab === 'agents' && <AgentsTab programId={programId} scopeId={scopeId} overview={overview} />}
         {activeTab === 'audience' && programId && <ScopeAudienceTab programId={programId} scopeId={scopeId} />}
         {activeTab === 'ownership' && <OwnershipTab programId={programId} memberships={memberships} scopeId={scopeId} />}
@@ -439,7 +440,7 @@ function ChannelStatusPill({ value }: Readonly<{ value: unknown }>): JSX.Element
   );
 }
 
-function KnowledgeTab({ programId, scopeId }: Readonly<{ programId: string | null; scopeId: string }>): JSX.Element {
+function KnowledgeTab({ programId, scopeId, scope }: Readonly<{ programId: string | null; scopeId: string; scope: GovernanceScope }>): JSX.Element {
   const { t } = useModuleTranslation('governance');
   const [dialogOpen, setDialogOpen] = useState(false);
   const fetchWorkspaces = useWorkspaceStore((state) => state.fetchWorkspaces);
@@ -455,6 +456,7 @@ function KnowledgeTab({ programId, scopeId }: Readonly<{ programId: string | nul
 
   return (
     <div className='grid gap-4'>
+      <KnowledgeSourcesCard programId={programId} scope={scope} />
       <div className='flex items-center justify-between gap-3'>
         <div>
           <h3 className='text-sm font-semibold'>{t('scopeShell.knowledge.mapTitle')}</h3>

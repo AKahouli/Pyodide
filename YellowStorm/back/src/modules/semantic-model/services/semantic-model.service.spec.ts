@@ -8,7 +8,7 @@ describe('SemanticModelService archived access', () => {
     status: 'archived',
   };
   const repository = { findAccessible: jest.fn() };
-  const service = new SemanticModelService({} as never, repository as never, {} as never, {} as never);
+  const service = new SemanticModelService({} as never, repository as never, {} as never, {} as never, {} as never);
 
   beforeEach(() => repository.findAccessible.mockReset());
 

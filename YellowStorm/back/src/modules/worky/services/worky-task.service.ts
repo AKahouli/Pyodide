@@ -105,6 +105,7 @@ export class WorkyTaskService {
         id,
         streamId,
         externalId: (task.externalId as string | null | undefined) ?? null,
+        ordinal: typeof task.ordinal === 'number' ? task.ordinal : null,
         title: task.title ?? '',
         description: task.description ?? '',
         lane: projectionLane,
@@ -114,6 +115,13 @@ export class WorkyTaskService {
         assigneeType: task.assigneeType ?? 'unassigned',
         assigneeId: task.assigneeId ? (task.assigneeId as Types.ObjectId).toString() : null,
         assigneeKey: (task.assigneeKey as string | null | undefined) ?? null,
+        kind: (task.kind as string | undefined) ?? 'execute',
+        question: (task.question as string | null | undefined) ?? null,
+        interruptId: (task.interruptId as string | null | undefined) ?? null,
+        assigneeName: (task.assigneeName as string | null | undefined) ?? null,
+        assigneeRole: (task.assigneeRole as string | null | undefined) ?? null,
+        isPersona: (task.isPersona as boolean | undefined) ?? false,
+        isDynamicDelegate: (task.isDynamicDelegate as boolean | undefined) ?? false,
         actionCategory: task.actionCategory ?? 'internal_analysis',
         dependsOn: (task.dependsOn ?? []).map((d) => (d as Types.ObjectId).toString()),
         wave: typeof task.wave === 'number' ? task.wave : null,
@@ -193,6 +201,7 @@ export interface IBoardTaskView {
   streamId: string;
   /** plan_steps.step_id (Electric source) — what `dependsOnStepIds` entries refer to. */
   externalId: string | null;
+  ordinal: number | null;
   title: string;
   description: string;
   lane: BoardLane;
@@ -203,6 +212,13 @@ export interface IBoardTaskView {
   assigneeId: string | null;
   /** plan_steps.assignee (Electric source) — executor sub-agent that handled this task; null when unattributed. */
   assigneeKey: string | null;
+  kind: string;
+  question: string | null;
+  interruptId: string | null;
+  assigneeName: string | null;
+  assigneeRole: string | null;
+  isPersona: boolean;
+  isDynamicDelegate: boolean;
   actionCategory: string;
   dependsOn: string[];
   /** Parallel wave index (plan_steps.wave via Electric); null outside a plan. */

@@ -2,7 +2,7 @@ import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
-import { Flow, FlowDocument } from '../schemas/playbook-flow.schema';
+import { ControlEdge, DataBinding, Flow, FlowDocument } from '../schemas/playbook-flow.schema';
 import { FlowExecution, FlowExecutionDocument } from '../schemas/playbook-flow-execution.schema';
 import { CreatePlaybookFlowDto } from '../dto/create-playbook-flow.dto';
 import { PatchPlaybookFlowDeltaDto } from '../dto/patch-playbook-flow-delta.dto';
@@ -515,6 +515,33 @@ export class PlaybookFlowService implements OnModuleInit {
   async findOneForExecutionStart(flowId: string, ownerId: string): Promise<IFlowResponse> {
     const flow = await this.accessService.findAccessibleFlow(flowId, ownerId, 'write');
     return this.responseAssembler.toBaseFlowResponse(flow);
+  }
+
+  async persistSanitizedExecutionGraph(
+    flowId: string,
+    ownerId: string,
+    expectedDefinitionRevision: number,
+    controlEdges: ControlEdge[],
+    dataBindings: DataBinding[],
+  ): Promise<number> {
+    const revisionFilter = expectedDefinitionRevision === 0
+      ? { $or: [{ definitionRevision: 0 }, { definitionRevision: { $exists: false } }] }
+      : { definitionRevision: expectedDefinitionRevision };
+    const saved = await this.flowModel.findOneAndUpdate(
+      { _id: flowId, ownerId, ...revisionFilter },
+      {
+        $set: { controlEdges, dataBindings },
+        $inc: { definitionRevision: 1 },
+      },
+      { new: true, runValidators: true },
+    );
+    if (!saved) {
+      throw new ConflictException(
+        ErrorCode.CONFLICT,
+        'Playbook changed while preparing execution. Retry with the latest version.',
+      );
+    }
+    return saved.definitionRevision ?? expectedDefinitionRevision + 1;
   }
 
   async update(

@@ -285,8 +285,8 @@ describe('PlaybookFlowIntentConstructionService', () => {
         .mockResolvedValueOnce({ data: stream('{"blueprint":{"nodes":[]}}') });
       const blocked = {
         id: 'intent-blueprint', kind: 'workflow_plan', label: 'Blocked', summary: '', reason: '', confidence: 0.5,
-        impact: { nodesToCreate: 0, nodesToUpdate: 0, nodesToDelete: 0, edgesToCreate: 0, edgesToDelete: 0, dataBindingsToCreate: 0, dataBindingsToDelete: 0, affectedTaskIds: [], businessOutcome: '' },
-        changes: [], isDirectIntentFallback: false, validationStatus: 'blocked',
+        impact: { nodesToCreate: 1, nodesToUpdate: 0, nodesToDelete: 0, edgesToCreate: 0, edgesToDelete: 0, dataBindingsToCreate: 0, dataBindingsToDelete: 0, affectedTaskIds: [], businessOutcome: '' },
+        changes: [{ type: 'create_node', nodeRef: 'challenge_router', task: { title: 'Challenge router' } }], isDirectIntentFallback: false, validationStatus: 'blocked',
         diagnostics: [{ severity: 'error', stage: 'binding_resolver', code: 'edge_artifact_mismatch', message: 'mismatch' }],
       };
       const valid = { ...blocked, validationStatus: 'valid', diagnostics: [] };
@@ -304,14 +304,14 @@ describe('PlaybookFlowIntentConstructionService', () => {
       expect(job.status).toBe('completed');
     });
 
-    it('fails without deltas when the single repair remains blocked', async () => {
+    it('emits the complete blocked draft before failing strict validation', async () => {
       const context = makeContext(true);
       const stream = [Buffer.from(`data: ${JSON.stringify({ choices: [{ delta: { content: '{"blueprint":{"nodes":[]}}' } }] })}\n\n`)];
       context.httpClient.post.mockResolvedValue({ data: stream });
       const blocked = {
         id: 'intent-blueprint', kind: 'workflow_plan', label: 'Blocked', summary: '', reason: '', confidence: 0.5,
-        impact: { nodesToCreate: 0, nodesToUpdate: 0, nodesToDelete: 0, edgesToCreate: 0, edgesToDelete: 0, dataBindingsToCreate: 0, dataBindingsToDelete: 0, affectedTaskIds: [], businessOutcome: '' },
-        changes: [], isDirectIntentFallback: false, validationStatus: 'blocked',
+        impact: { nodesToCreate: 1, nodesToUpdate: 0, nodesToDelete: 0, edgesToCreate: 0, edgesToDelete: 0, dataBindingsToCreate: 0, dataBindingsToDelete: 0, affectedTaskIds: [], businessOutcome: '' },
+        changes: [{ type: 'create_node', nodeRef: 'challenge_router', task: { title: 'Challenge router' } }], isDirectIntentFallback: false, validationStatus: 'blocked',
         diagnostics: [{ severity: 'error', stage: 'binding_resolver', code: 'edge_artifact_mismatch', message: 'mismatch' }],
       };
       const compiler = { compile: jest.fn().mockReturnValue([blocked]) };
@@ -325,7 +325,37 @@ describe('PlaybookFlowIntentConstructionService', () => {
 
       expect(context.httpClient.post).toHaveBeenCalledTimes(2);
       expect(job.status).toBe('failed');
+      expect(job.events).toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          type: 'node_delta',
+          suggestion: blocked,
+        }),
+        expect.objectContaining({
+          type: 'failed',
+          failureKind: 'strict_validation',
+        }),
+      ]));
+      expect((job.events as any[]).findIndex((event) => event.type === 'node_delta'))
+        .toBeLessThan((job.events as any[]).findIndex((event) => event.type === 'failed'));
+    });
+
+    it('keeps empty compiler output as a generic failure with no retained draft', async () => {
+      const context = makeContext(true);
+      const stream = [Buffer.from(`data: ${JSON.stringify({ choices: [{ delta: { content: '{"blueprint":{"nodes":[]}}' } }] })}\n\n`)];
+      context.httpClient.post.mockResolvedValue({ data: stream });
+      const compiler = { compile: jest.fn().mockReturnValue([]) };
+      const service = new PlaybookFlowIntentConstructionService({} as any, compiler as any);
+      const job = {
+        id: 'construction-empty', flowId: 'flow-1', ownerId: 'owner-1', status: 'queued', baseDefinitionRevision: 1,
+        events: [], abortController: new AbortController(), waiters: new Set<() => void>(),
+      };
+
+      await (service as any).run(job, { intent: 'Build workflow' }, context);
+
+      expect(context.httpClient.post).toHaveBeenCalledTimes(2);
+      expect(job.status).toBe('failed');
       expect((job.events as any[]).some((event) => event.type.endsWith('_delta'))).toBe(false);
+      expect((job.events as any[]).find((event) => event.type === 'failed')).not.toHaveProperty('failureKind');
     });
   });
 });

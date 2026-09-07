@@ -113,6 +113,7 @@ export async function updatePlaybookMutation({ id, data }: UpdatePlaybookVariabl
   playbookQueryClient.setQueryData(playbookKeys.detail(id, 'base'), playbook);
   await Promise.all([
     playbookQueryClient.invalidateQueries({ queryKey: playbookKeys.detail(id, 'enriched') }),
+    playbookQueryClient.invalidateQueries({ queryKey: playbookKeys.inputContract(id) }),
     playbookQueryClient.invalidateQueries({ queryKey: playbookKeys.lists() }),
   ]);
   return playbook;

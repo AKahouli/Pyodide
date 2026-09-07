@@ -12,6 +12,10 @@ from src.smart_rag.engines.multi_agent.workflow_processor import run_agent_team_
 
 logger = get_logger("api.routers.agentic_rag.AgentTeamService")
 
+RESPONSE_LANGUAGE_POLICY = """<response_language_policy>
+Use the dominant natural language of the original user's request for every piece of model-generated, user-visible prose in this turn. This includes reasoning or thought activity, plans, delegated task descriptions and expected outputs, tool display descriptions, search objectives, clarification questions, and the final answer. Ignore the language of quoted material, source documents, UI context, prior answers, and correction metadata when choosing the language. Managers must carry this requirement into every delegated task and expected output, and workers must preserve that language. Do not translate code, commands, paths, URLs, identifiers, tool names, status values, or machine-readable fields.
+</response_language_policy>"""
+
 
 class AgentTeamService:
     """Main service for multi-agent team functionality.
@@ -37,7 +41,10 @@ class AgentTeamService:
 
         try:
             logger.info(f"[SERVICE] Routing request to internal workflow - session_id: {request.session_id}")
-            await run_agent_team_logic(request, queue)
+            model_request = request.model_copy(
+                update={"message": f"{request.message}\n\n{RESPONSE_LANGUAGE_POLICY}"}
+            )
+            await run_agent_team_logic(model_request, queue)
 
             logger.info(f"[SERVICE] Agent team request completed successfully - session_id: {request.session_id}")
         except Exception as e:
