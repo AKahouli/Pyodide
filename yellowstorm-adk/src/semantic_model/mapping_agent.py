@@ -79,9 +79,15 @@ class SemanticModelMappingAgent:
         # Stage 2 — resolve: dedup + merge with Semantica DuplicateDetector (parallel per concept type)
         resolved_nodes, merge_groups = self._resolver.resolve(raw_nodes, graph, concurrency=concurrency)
 
+        # Source-materialized records are authoritative instances, but they
+        # still need to participate in relation detection. Add them only to
+        # the edge-detector context; they are not returned as new node
+        # proposals and therefore cannot be recreated by the mapper.
+        relation_nodes = [*resolved_nodes, *self._materialized_record_nodes(graph)]
+
         # Stage 3 — detect edges with Semantica NER + RelationExtractor
         edges = self._edge_detector.detect(
-            graph, resolved_nodes, search_tasks, normalize_text, settings
+            graph, relation_nodes, search_tasks, normalize_text, settings
         )
 
         # Stage 4 — match resolved nodes against existing graph entities and assign stable entityKey.
@@ -93,6 +99,31 @@ class SemanticModelMappingAgent:
             "edges": edges,
             "mergeGroups": merge_groups,
         }
+
+    @staticmethod
+    def _materialized_record_nodes(graph: dict[str, Any]) -> list[dict[str, Any]]:
+        result: list[dict[str, Any]] = []
+        for record in graph.get("records", []):
+            if not isinstance(record, dict) or not record.get("id") or not record.get("nodeTypeId"):
+                continue
+            values = record.get("values") or {}
+            if not isinstance(values, dict) or str(values.get("_source_materialized", "")).lower() != "true":
+                continue
+            attributes = [
+                {"key": key, "value": value}
+                for key, value in values.items()
+                if not str(key).startswith("_")
+                and isinstance(value, (str, int, float, bool))
+            ]
+            result.append({
+                "id": str(record["id"]),
+                "nodeTypeId": str(record["nodeTypeId"]),
+                "label": str(record.get("label") or ""),
+                "attributes": attributes,
+                "evidenceReferences": [],
+                "confidence": 1.0,
+            })
+        return result
 
     @staticmethod
     def _manual_instance_targets(

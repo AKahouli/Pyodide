@@ -151,7 +151,20 @@ export function SemanticModelEditorPage() {
           revision,
           batch.operations,
         );
+        let ageSyncError: unknown = null;
+        if (batch.operations.some((operation) => operation.type.startsWith("record"))) {
+          try {
+            const ageResult = await semanticModelApi.rebuildAgeGraph(modelId);
+            if (ageResult.graphViewerWarning) ageSyncError = new Error(ageResult.graphViewerWarning);
+          } catch (error) {
+            ageSyncError = error;
+          }
+        }
         if (saveIsCurrent()) markSaved(result.revision, batch.groupCount);
+        if (ageSyncError && saveIsCurrent()) {
+          const apiError = parseApiError(ageSyncError);
+          showError(t("save.error"), { description: apiError.message });
+        }
       } catch (error) {
         if (saveIsCurrent()) {
           const apiError = parseApiError(error);
@@ -434,8 +447,8 @@ export function SemanticModelEditorPage() {
                 size="lg"
                 className="shadow-lg"
                 onClick={() => setValidateOpen(true)}
-                disabled={buildActive}
-                title={buildActive ? t("build.alreadyRunning") : undefined}
+                disabled={buildActive || !canValidate}
+                title={buildActive ? t("build.alreadyRunning") : !canValidate ? t("save.saving") : undefined}
               >
                 <Zap className="mr-2 h-4 w-4" />
                 {t("validate.button")}
@@ -460,7 +473,7 @@ export function SemanticModelEditorPage() {
             </div>
           )}
         </section>
-        <SemanticModelInspector canEdit={canEdit} knowledge={knowledge} knowledgeOpen={knowledgeOpen} knowledgeTargetId={knowledgeTargetId} onKnowledgeClose={closeKnowledge} />
+        <SemanticModelInspector modelId={modelId!} canEdit={canEdit} knowledge={knowledge} knowledgeOpen={knowledgeOpen} knowledgeTargetId={knowledgeTargetId} onKnowledgeClose={closeKnowledge} />
         {validationOpen && (
           <aside className="absolute bottom-4 right-4 z-30 max-h-[60%] w-[min(24rem,calc(100%-2rem))] overflow-y-auto rounded-2xl border bg-background p-4 shadow-2xl">
             <div className="mb-3 flex items-center justify-between">

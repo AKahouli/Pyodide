@@ -168,10 +168,11 @@ export class SemanticModelMappingProposalService {
       throw new BadRequestException(ErrorCode.SEMANTIC_MODEL_VALIDATION_FAILED, 'Mapping job is not completed');
     }
 
-    const { nodes, edges } = job.result.plan;
+    let planNodes = [...job.result.plan.nodes];
+    const edges = job.result.plan.edges;
     // Incremental mode has nothing to apply when the plan is empty. Replace
     // mode intentionally clears the graph even when extraction found nothing.
-    if (!nodes.length && !edges.length && mode !== 'replace') {
+    if (!planNodes.length && !edges.length && mode !== 'replace') {
       return { appliedNodeCount: 0, appliedEdgeCount: 0, updatedNodeCount: 0, deletedNodeCount: 0, graphViewerWarning: null };
     }
 
@@ -191,7 +192,87 @@ export class SemanticModelMappingProposalService {
       refToDoc.set(task.bindingId, entry);
     }
 
-    const buildValues = (node: typeof nodes[0]): Record<string, unknown> => {
+    // A concept with source-materialized records is authoritative: its
+    // instances come from the saved source-document records, never from LLM
+    // entity detection. Extracted nodes are used only for attribute enrichment.
+    const isMaterializedRecord = (record: (typeof graph.records)[number]) =>
+      String(record.values['_source_materialized']).toLowerCase() === 'true';
+    const materializedTypeIds = new Set(
+      graph.records
+        .filter(isMaterializedRecord)
+        .map((record) => record.nodeTypeId),
+    );
+    // Materialized concepts are authoritative. Keep their extracted attributes
+    // as optional enrichment, but never keep Semantica's aggregated node as the
+    // instance itself: one source document must produce one record.
+    const materializedAttributesBySource = new Map<string, SemanticModelMappingPlan['nodes'][number]['attributes']>();
+    for (const node of planNodes) {
+      if (!materializedTypeIds.has(node.nodeTypeId)) continue;
+      for (const reference of node.evidenceReferences ?? []) {
+        const source = refToDoc.get(reference);
+        if (!source) continue;
+        const sourceKey = `${node.nodeTypeId}:${source.workspaceId}:${source.sourceDocumentId}`;
+        if (!materializedAttributesBySource.has(sourceKey)) materializedAttributesBySource.set(sourceKey, node.attributes);
+      }
+    }
+    planNodes = planNodes.filter((node) => !materializedTypeIds.has(node.nodeTypeId));
+
+    // Source-materialized records are created explicitly in the graph editor.
+    // They are authoritative and must survive replace runs even when the
+    // current search/corpus does not emit a matching evidence task.
+    if (mode === 'replace' || materializedTypeIds.size > 0) {
+      const represented = new Set<string>();
+      for (const node of planNodes) {
+        for (const reference of node.evidenceReferences ?? []) {
+          const source = refToDoc.get(reference);
+          if (source) represented.add(`${node.nodeTypeId}:${source.workspaceId}:${source.sourceDocumentId}`);
+        }
+      }
+      for (const record of graph.records) {
+        if (!materializedTypeIds.has(record.nodeTypeId)) continue;
+        const sourceIds = Array.isArray(record.values['_source_document_ids'])
+          ? record.values['_source_document_ids'].map(String)
+          : typeof record.values['_source_document_id'] === 'string' ? [record.values['_source_document_id']] : [];
+        const workspaceIds = Array.isArray(record.values['_source_workspace_ids'])
+          ? record.values['_source_workspace_ids'].map(String)
+          : typeof record.values['_source_workspace_id'] === 'string' ? [record.values['_source_workspace_id']] : [];
+        const sourcePairs = sourceIds
+          .map((sourceId, index) => ({ sourceId, workspaceId: workspaceIds[index] ?? '', index }))
+          .filter((pair) => pair.sourceId.length > 0);
+        if (!sourcePairs.length) continue;
+        if (sourcePairs.every((pair) => represented.has(`${record.nodeTypeId}:${pair.workspaceId}:${pair.sourceId}`))) continue;
+        for (const { sourceId, workspaceId, index } of sourcePairs) {
+          const sourceKey = `${record.nodeTypeId}:${workspaceId}:${sourceId}`;
+          const syntheticReference = `materialized:${record.id}:${index}`;
+          refToDoc.set(syntheticReference, {
+            sourceDocumentId: sourceId,
+            fileName: (Array.isArray(record.values['_source_file_names']) ? record.values['_source_file_names'][index] : record.values['_source_file_name']) as string || record.label,
+            workspaceId,
+          });
+          const evidenceReferences = [
+            ...evidenceTasks
+              .filter((task) => task.sourceDocumentId === sourceId && task.workspaceId === workspaceId)
+              .map((task) => task.bindingId),
+            syntheticReference,
+          ];
+          const attributes = materializedAttributesBySource.get(sourceKey) ?? Object.entries(record.values)
+            .filter(([key, value]) => !key.startsWith('_') && value !== null && value !== undefined && ['string', 'number', 'boolean'].includes(typeof value))
+            .map(([key, value]) => ({ key, value: value as string | number | boolean, evidenceReferences }));
+          planNodes.push({
+            id: `preserved-${record.id}-${index}`,
+            nodeTypeId: record.nodeTypeId,
+            label: (Array.isArray(record.values['_source_file_names']) ? record.values['_source_file_names'][index] : record.values['_source_file_name']) as string || record.label,
+            entityKey: index === 0 ? record.id : `${record.id}:${index}`,
+            attributes,
+            evidenceReferences,
+            confidence: 1,
+          });
+          represented.add(sourceKey);
+        }
+      }
+    }
+
+    const buildValues = (node: SemanticModelMappingPlan['nodes'][number]): Record<string, unknown> => {
       const values: Record<string, unknown> = {};
       for (const attr of node.attributes) values[attr.key] = attr.value;
       const sourceDocs = new Map<string, string>();
@@ -210,10 +291,15 @@ export class SemanticModelMappingProposalService {
       // Store the full list; keep _source_workspace_id as a convenience shortcut to the first one.
       values['_source_workspace_ids'] = [...sourceWorkspaces];
       values['_source_workspace_id'] = sourceWorkspaces.size > 0 ? [...sourceWorkspaces][0] : null;
+      if (materializedTypeIds.has(node.nodeTypeId) && sourceDocs.size > 0) values['_source_materialized'] = true;
       return values;
     };
 
     const tempToRealId = new Map<string, string>();
+    const existingRecordIds = new Set(graph.records.map((record) => record.id));
+    const replacedRecordIds = new Map<string, string>();
+    const resolveEdgeRecordId = (nodeId: string): string | undefined =>
+      tempToRealId.get(nodeId) ?? replacedRecordIds.get(nodeId) ?? (existingRecordIds.has(nodeId) ? nodeId : undefined);
     const operations: Record<string, unknown>[] = [];
     let createdCount = 0;
     let updatedCount = 0;
@@ -266,7 +352,7 @@ export class SemanticModelMappingProposalService {
       // Step 1 — resolve each plan node against existing records
       const seenRecordIds = new Set<string>();
 
-      for (const node of nodes) {
+      for (const node of planNodes) {
         const values = buildValues(node);
         const nodeDocIds = Array.isArray(values['_source_document_ids'])
           ? (values['_source_document_ids'] as string[])
@@ -323,8 +409,8 @@ export class SemanticModelMappingProposalService {
       const newRelOps: Record<string, unknown>[] = [];
 
       for (const edge of edges) {
-        const sourceRecordId = tempToRealId.get(edge.sourceNodeId);
-        const targetRecordId = tempToRealId.get(edge.targetNodeId);
+        const sourceRecordId = resolveEdgeRecordId(edge.sourceNodeId);
+        const targetRecordId = resolveEdgeRecordId(edge.targetNodeId);
         if (!sourceRecordId || !targetRecordId) continue;
 
         const relKey = `${edge.relationTypeId}:${sourceRecordId}:${targetRecordId}`;
@@ -354,17 +440,18 @@ export class SemanticModelMappingProposalService {
       for (const rel of graph.recordRelations) operations.push({ type: 'record_relation.delete', id: rel.id });
       for (const record of graph.records) { operations.push({ type: 'record.delete', id: record.id }); deletedCount++; }
 
-      for (const node of nodes) {
+      for (const node of planNodes) {
         const realId = randomUUID();
         const vals = buildValues(node);
         vals['_entity_key'] = realId;
         tempToRealId.set(node.id, realId);
+        if (node.entityKey) replacedRecordIds.set(node.entityKey, realId);
         operations.push({ type: 'record.create', entity: { id: realId, nodeTypeId: node.nodeTypeId, label: node.label, values: vals, status: 'active', position: { x: 0, y: 0 } } });
         createdCount++;
       }
       for (const edge of edges) {
-        const sourceRecordId = tempToRealId.get(edge.sourceNodeId);
-        const targetRecordId = tempToRealId.get(edge.targetNodeId);
+        const sourceRecordId = resolveEdgeRecordId(edge.sourceNodeId);
+        const targetRecordId = resolveEdgeRecordId(edge.targetNodeId);
         if (!sourceRecordId || !targetRecordId) continue;
         operations.push({ type: 'record_relation.create', entity: { id: randomUUID(), relationTypeId: edge.relationTypeId, sourceRecordId, targetRecordId, values: {} } });
       }
@@ -433,6 +520,17 @@ export class SemanticModelMappingProposalService {
     return { nodes, edges };
   }
 
+  async rebuildAgeGraph(userId: string, modelId: string): Promise<{ vertexCount: number; edgeCount: number; failedVertexCount: number; failedEdgeCount: number; graphViewerWarning: string | null }> {
+    await this.models.requireActiveRole(userId, modelId, ['owner', 'editor']);
+    const graph = await this.graphCommands.getGraph(userId, modelId);
+    await this.ageGraph.dropGraph(modelId);
+    const result = await this.ageGraph.buildGraph(graph, modelId);
+    const graphViewerWarning = result.failedVertexCount || result.failedEdgeCount
+      ? `Le graphe AGE est incomplet (${result.failedVertexCount} nœud(s) et ${result.failedEdgeCount} relation(s) non écrits).`
+      : null;
+    return { ...result, graphViewerWarning };
+  }
+
   async applyAgeGraphOperations(userId: string, modelId: string, dto: AgeGraphOperationsDto) {
     await this.models.requireActiveRole(userId, modelId, ['owner', 'editor']);
     const graph = await this.graphCommands.getGraph(userId, modelId);
@@ -440,6 +538,7 @@ export class SemanticModelMappingProposalService {
     const expandedOperations: SemanticGraphOperation[] = [];
     const deletedRecordIds = new Set<string>();
     const deletedRelationIds = new Set<string>();
+    let createdNodeCount = 0;
     for (const operation of operations) {
       if (operation.type === 'node.delete') {
         for (const relation of graph.recordRelations) {
@@ -462,12 +561,16 @@ export class SemanticModelMappingProposalService {
           type: 'record.create',
           entity: { id: randomUUID(), nodeTypeId: operation.nodeTypeId, label: operation.label, values: operation.values, status: 'active', position: { x: 0, y: 0 } },
         });
+        createdNodeCount++;
       } else {
         expandedOperations.push({
           type: 'record_relation.create',
           entity: { id: randomUUID(), relationTypeId: operation.relationTypeId, sourceRecordId: operation.sourceId, targetRecordId: operation.targetId, values: {} },
         });
       }
+    }
+    if (!expandedOperations.length) {
+      return { appliedNodeCount: 0, appliedEdgeCount: 0, deletedNodeCount: 0, deletedEdgeCount: 0, graphViewerWarning: null };
     }
     await this.graphCommands.apply(userId, modelId, { expectedRevision: graph.revision, operations: expandedOperations } as never);
     const updatedGraph = await this.graphCommands.getGraph(userId, modelId);
@@ -477,7 +580,7 @@ export class SemanticModelMappingProposalService {
       ? `Le graphe AGE est incomplet (${ageResult.failedVertexCount} nœud(s) et ${ageResult.failedEdgeCount} relation(s) non écrits).`
       : null;
     return {
-      appliedNodeCount: operations.filter((operation) => operation.type === 'node.create').length,
+      appliedNodeCount: createdNodeCount,
       appliedEdgeCount: operations.filter((operation) => operation.type === 'edge.create').length,
       deletedNodeCount: operations.filter((operation) => operation.type === 'node.delete').length,
       deletedEdgeCount: operations.filter((operation) => operation.type === 'edge.delete').length,

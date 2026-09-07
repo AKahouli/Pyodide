@@ -70,6 +70,12 @@ export const semanticModelApi = {
       API_ENDPOINTS.semanticModels.ageGraph(id),
     ));
   },
+  async rebuildAgeGraph(id: string): Promise<{ vertexCount: number; edgeCount: number; failedVertexCount: number; failedEdgeCount: number; graphViewerWarning: string | null }> {
+    return unwrap(await apiClient.post<ApiResponse<{ vertexCount: number; edgeCount: number; failedVertexCount: number; failedEdgeCount: number; graphViewerWarning: string | null }>>(
+      API_ENDPOINTS.semanticModels.ageGraphRebuild(id),
+      {},
+    ));
+  },
   async applyAgeGraphOperations(id: string, operations: AgeGraphOperation[]): Promise<{ appliedNodeCount: number; appliedEdgeCount: number; deletedNodeCount: number; deletedEdgeCount: number; graphViewerWarning: string | null }> {
     return unwrap(await apiClient.post<ApiResponse<{ appliedNodeCount: number; appliedEdgeCount: number; deletedNodeCount: number; deletedEdgeCount: number; graphViewerWarning: string | null }>>(
       API_ENDPOINTS.semanticModels.ageGraphOperations(id),

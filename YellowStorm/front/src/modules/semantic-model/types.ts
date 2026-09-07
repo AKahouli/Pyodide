@@ -127,6 +127,7 @@ export type AgeGraphOperation =
 
 export interface SemanticCorpusDocument {
   sourceDocumentId: string;
+  workspaceId: string;
   originalName: string;
   indexingStatus?: 'none' | 'pending' | 'processing' | 'ready' | 'failed';
 }

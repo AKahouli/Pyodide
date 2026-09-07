@@ -104,6 +104,7 @@ export class SemanticModelCorpusPreparationService {
       const result = await this.documents.findAllSorted(workspaceId, {
         page,
         limit: 100,
+        includeAllStatuses: true,
         sortBy: 'originalName',
         sortOrder: 'asc',
       });
