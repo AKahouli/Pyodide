@@ -50,9 +50,30 @@ async def test_preflight_runs_first_injects_result_and_removes_duplicate_tool(mo
     assert calls == ["Quelles garanties ?"]
     first = await queue.get()
     second = await queue.get()
-    assert first["component"]["data"]["title"] == "semantic_search"
+    assert first["component"]["type"] == "tool_activity"
+    assert first["component"]["data"]["tool_name"] == "semantic_search"
+    assert first["component"]["data"]["params_json"] == '{"query": "Quelles garanties ?"}'
+    assert first["component"]["data"]["render_kind"] == "search"
+    assert first["component"]["data"]["actor_id"] == "agent-1"
+    assert first["component"]["data"]["actor_name"] == "Agent"
     assert first["component"]["data"]["status"] == "running"
+    assert second["component"]["type"] == "tool_activity"
+    assert second["component"]["data"]["tool_name"] == "semantic_search"
     assert second["component"]["data"]["status"] == "completed"
+    assert '"Guarantees"' in second["component"]["data"]["result_json"]
+    assert second["component"]["data"]["completed_at"].endswith("Z")
+
+    # Guard the transport boundary: this activity must survive as the same
+    # protobuf oneof consumed by the backend and conversation UI.
+    from src.grpc_server.chatbot_servicer import ChatbotServicer
+
+    started_chunk = ChatbotServicer(agent_team_service=None)._dict_to_stream_chunk(first)
+    completed_chunk = ChatbotServicer(agent_team_service=None)._dict_to_stream_chunk(second)
+    assert started_chunk.component.WhichOneof("data") == "tool_activity"
+    assert started_chunk.component.tool_activity.tool_name == "semantic_search"
+    assert started_chunk.component.tool_activity.params_json == '{"query": "Quelles garanties ?"}'
+    assert completed_chunk.component.WhichOneof("data") == "tool_activity"
+    assert '"Guarantees"' in completed_chunk.component.tool_activity.result_json
     assert "Guarantees" in request.message
     assert 'workspace_id: ["workspace-alice", "workspace-bob"]' in request.message
     assert request.brain_ids == ["workspace-alice", "workspace-bob"]

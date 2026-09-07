@@ -83,12 +83,15 @@ async def run_semantic_search_preflight(request: RunAgentTeamRequest, queue) -> 
     started_at = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
     await queue.put(formatter.format_component_event(
         agent_id=agent_id,
-        component_type="tool_info",
+        component_type="tool_activity",
         component_data={
-            "title": "semantic_search",
+            "tool_name": "semantic_search",
             "status": "running",
-            "params": json.dumps({"query": request.message}, ensure_ascii=False),
+            "params_json": json.dumps({"query": request.message}, ensure_ascii=False),
             "started_at": started_at,
+            "render_kind": "search",
+            "actor_id": agent_id,
+            "actor_name": agent_name,
         },
         message_id=request.session_id,
         component_id=component_id,
@@ -107,9 +110,9 @@ async def run_semantic_search_preflight(request: RunAgentTeamRequest, queue) -> 
                 break
             await queue.put(formatter.format_component_event(
                 agent_id=agent_id,
-                component_type="tool_info",
+                component_type="tool_activity",
                 component_data={
-                    "title": "semantic_search",
+                    "tool_name": "semantic_search",
                     "status": "running",
                 },
                 message_id=request.session_id,
@@ -127,11 +130,12 @@ async def run_semantic_search_preflight(request: RunAgentTeamRequest, queue) -> 
         result_json = json.dumps(result)
     await queue.put(formatter.format_component_event(
         agent_id=agent_id,
-        component_type="tool_info",
+        component_type="tool_activity",
         component_data={
-            "title": "semantic_search",
+            "tool_name": "semantic_search",
             "status": "failed" if failed else "completed",
             "result_json": result_json if len(result_json.encode("utf-8")) <= 65536 else "",
+            "completed_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
         },
         message_id=request.session_id,
         component_id=component_id,

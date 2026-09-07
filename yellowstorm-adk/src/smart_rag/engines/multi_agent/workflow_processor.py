@@ -70,27 +70,6 @@ async def _run_agent_team_logic(user_request: RunAgentTeamRequest, q: asyncio.Qu
 
     await run_semantic_search_preflight(user_request, q)
 
-    # Create main trace for agentic_rag_conversation
-    main_trace = langfuse_client.trace(
-        session_id=user_request.session_id,
-        id=user_request.session_id,
-        name="agentic_rag_conversation",
-        user_id=user_request.user_id,
-        input={
-            "user_message": user_request.message,
-            "manager_prompt": user_request.manager_prompt,
-            "brain_ids": user_request.brain_ids,
-            "agents_provided": len(user_request.agents) if user_request.agents else 0,
-            "has_brain_documents": bool(user_request.brain_documents),
-            "has_brain_relations": bool(user_request.brain_relations)
-        },
-        metadata={
-            "session_id": user_request.session_id,
-            "user_id": user_request.user_id,
-            "workflow_type": "agent_team_orchestration"
-        }
-    )
-
     try:
         logger.info(f"[ORCHESTRATOR] Initializing dependencies - session_id: {user_request.session_id}")
         dependencies = initialize_dependencies()
