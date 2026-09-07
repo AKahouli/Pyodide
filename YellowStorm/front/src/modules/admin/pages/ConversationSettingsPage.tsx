@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Gauge, Loader2, MessageSquare, Save, Sparkles } from 'lucide-react';
+import { Gauge, Loader2, MessageSquare, Save, Sparkles, Tag } from 'lucide-react';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -12,9 +12,12 @@ import { useModuleTranslation } from '@/modules/localization';
 import {
   getAdminConversationSettings,
   getAdminConversationSettingsAgents,
+  getAllModels,
   updateAdminConversationSettings,
 } from '../api';
-import type { ComposerSuggestionSettings, ConversationSettingsAgentOption } from '../types';
+import type { AdminModelResponse, ComposerSuggestionSettings, ConversationSettingsAgentOption } from '../types';
+
+const PLATFORM_DEFAULT = 'platform-default';
 
 const DEFAULTS: ComposerSuggestionSettings = {
   enabled: true,
@@ -38,6 +41,8 @@ export function ConversationSettingsPage() {
   const { t } = useModuleTranslation('admin');
   const [settings, setSettings] = useState<ComposerSuggestionSettings>(DEFAULTS);
   const [latencyInstrumentationEnabled, setLatencyInstrumentationEnabled] = useState(LATENCY_DEFAULT);
+  const [nameModelId, setNameModelId] = useState<string | null>(null);
+  const [models, setModels] = useState<AdminModelResponse[]>([]);
   const [agents, setAgents] = useState<ConversationSettingsAgentOption[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -45,12 +50,14 @@ export function ConversationSettingsPage() {
 
   useEffect(() => {
     let cancelled = false;
-    Promise.all([getAdminConversationSettings(), getAdminConversationSettingsAgents()])
-      .then(([result, agentOptions]) => {
+    Promise.all([getAdminConversationSettings(), getAdminConversationSettingsAgents(), getAllModels()])
+      .then(([result, agentOptions, modelList]) => {
         if (cancelled) return;
         setSettings(result.composerSuggestions);
         setLatencyInstrumentationEnabled(result.latencyInstrumentationEnabled ?? LATENCY_DEFAULT);
+        setNameModelId(result.conversationName?.modelId ?? null);
         setAgents(agentOptions);
+        setModels(modelList.models.filter((model) => model.isActive));
       })
       .catch((error) => {
         if (!cancelled) showError(t('conversationSettings.toasts.loadError'), { description: error instanceof Error ? error.message : undefined });
@@ -83,10 +90,12 @@ export function ConversationSettingsPage() {
     try {
       const result = await updateAdminConversationSettings({
         composerSuggestions: settings,
+        conversationName: { modelId: nameModelId },
         latencyInstrumentationEnabled,
       });
       setSettings(result.composerSuggestions);
       setLatencyInstrumentationEnabled(result.latencyInstrumentationEnabled ?? LATENCY_DEFAULT);
+      setNameModelId(result.conversationName?.modelId ?? null);
       showSuccess(t('conversationSettings.toasts.saved.title'), { description: t('conversationSettings.toasts.saved.description') });
     } catch (error) {
       showError(t('conversationSettings.toasts.saveError'), { description: error instanceof Error ? error.message : undefined });
@@ -124,6 +133,30 @@ export function ConversationSettingsPage() {
                 checked={latencyInstrumentationEnabled}
                 onCheckedChange={setLatencyInstrumentationEnabled}
               />
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2"><Tag className="h-4 w-4" />{t('conversationSettings.naming.title')}</CardTitle>
+          <CardDescription>{t('conversationSettings.naming.description')}</CardDescription>
+        </CardHeader>
+        <CardContent>
+          {loading ? (
+            <div className="flex items-center gap-2 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" />{t('conversationSettings.loading')}</div>
+          ) : (
+            <div className="space-y-2">
+              <Label htmlFor="naming-model">{t('conversationSettings.naming.model.label')}</Label>
+              <Select value={nameModelId ?? PLATFORM_DEFAULT} onValueChange={(value) => setNameModelId(value === PLATFORM_DEFAULT ? null : value)}>
+                <SelectTrigger id="naming-model" aria-describedby="naming-model-help"><SelectValue /></SelectTrigger>
+                <SelectContent className="max-h-[40vh]">
+                  <SelectItem value={PLATFORM_DEFAULT}>{t('conversationSettings.naming.model.platformDefault')}</SelectItem>
+                  {models.map((model) => <SelectItem key={model.id} value={model.id}>{model.name}{model.chef ? ` - ${model.chef}` : ''}</SelectItem>)}
+                </SelectContent>
+              </Select>
+              <p id="naming-model-help" className="text-xs text-muted-foreground">{t('conversationSettings.naming.model.description')}</p>
             </div>
           )}
         </CardContent>
