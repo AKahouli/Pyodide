@@ -150,7 +150,7 @@ jobs:
       - name: Install Python dependencies
         run: |
           pip install --upgrade pip setuptools wheel
-          pip install -r requirements.txt
+          pip install -r requirements.txt --no-cache-dir
       - name: Generate gRPC stubs
         run: python grpc/generate_proto.py
       - name: Generate CompanionAi gRPC stubs
