@@ -46,6 +46,7 @@ beforeEach(() => {
     conversationLoading: false,
     selectedModelId: null,
     selectedWorkspaceIds: [],
+    selectedSemanticModelId: null,
     messages: [],
     optimisticMessages: [],
     messagesTotal: 0,
@@ -64,6 +65,16 @@ beforeEach(() => {
     inputDisabled: false,
   });
 });
+
+  it('keeps workspace and semantic model selections mutually exclusive', () => {
+    useConversationStore.getState().setSelectedWorkspaceIds(['ws-1']);
+    useConversationStore.getState().setSelectedSemanticModelId('semantic-1');
+    expect(useConversationStore.getState().selectedWorkspaceIds).toEqual(['ws-1']);
+    expect(useConversationStore.getState().selectedSemanticModelId).toBe('semantic-1');
+
+    useConversationStore.getState().setSelectedWorkspaceIds(['ws-2']);
+    expect(useConversationStore.getState().selectedSemanticModelId).toBeNull();
+  });
 
 describe('conversation optimistic messages', () => {
   it('keeps a pending user prompt before an assistant answer that arrived first', () => {

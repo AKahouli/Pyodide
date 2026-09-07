@@ -36,6 +36,7 @@ import {
   useConversationStore,
   useInputDisabled,
   useSelectedWorkspaceIds,
+  useSelectedSemanticModelId,
 } from './store';
 import { ReasoningEffortSelect, useReasoningEffortState } from './components/ReasoningEffortSelect';
 import { useConversationFileUpload } from './hooks/useConversationFileUpload';
@@ -65,6 +66,7 @@ export function NewConversationPage() {
   const sendMessage = useConversationStore((s) => s.sendMessage);
   const selectedWorkspaceIds = useSelectedWorkspaceIds();
   const { effectiveEffort: effectiveReasoningEffort } = useReasoningEffortState();
+  const selectedSemanticModelId = useSelectedSemanticModelId();
   const navigate = useNavigate();
   const [isSending, setIsSending] = useState(false);
   const [silentConvId, setSilentConvId] = useState<string | null>(null);
@@ -77,7 +79,7 @@ export function NewConversationPage() {
   // any workspace/skill selection (and stale conversation id) carried over from the
   // previously open conversation. Direct setState avoids PATCHing the old one.
   useEffect(() => {
-    useConversationStore.setState({ currentConversationId: null, selectedSkillIds: [], selectedWorkspaceIds: [] });
+    useConversationStore.setState({ currentConversationId: null, selectedSkillIds: [], selectedWorkspaceIds: [], selectedSemanticModelId: null });
     // The agent (v2) path keeps its own skill + connector selection in the
     // conv-v2 store; reset both so selections from a previous v2 session don't
     // leak into this new one.
@@ -232,6 +234,7 @@ export function NewConversationPage() {
 
       claimCurrentConversation(convId, conversation, {
         modelId: modelId || undefined,
+        semanticModelId: selectedSemanticModelId || undefined,
         workspaceIds: workspaceIds ?? [],
       });
       navigate(`/conversation/${convId}`);
@@ -252,6 +255,7 @@ export function NewConversationPage() {
         attachedFileIds: completedFileIds.length ? completedFileIds : undefined,
         attachedFiles: attachedFiles.length ? attachedFiles : undefined,
         modelId: modelId || undefined,
+        semanticModelId: selectedSemanticModelId || undefined,
         agentIds: agentIds?.length ? agentIds : undefined,
         teamIds: teamIds?.length ? teamIds : undefined,
         ...(!agentIds?.length && !memberIds?.length && !teamIds?.length && effectiveReasoningEffort

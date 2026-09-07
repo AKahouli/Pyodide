@@ -61,7 +61,7 @@ describe('AuthService account access', () => {
     const usageService = {
       getDefaultPlan: jest.fn().mockResolvedValue({
         _id: new Types.ObjectId(),
-        slug: 'free',
+        slug: 'unlimited',
         workspaceStorageBytes: 100,
       }),
     };

@@ -47,6 +47,7 @@ COPY --from=build /app/src/modules/conversation-v2/proto ./dist/modules/conversa
 COPY --from=build /app/src/modules/playbook-flow/proto ./dist/modules/playbook-flow/proto
 COPY --from=build /app/src/modules/agent/proto ./dist/modules/agent/proto
 COPY --from=build /app/src/modules/worky/proto ./dist/modules/worky/proto
+COPY --from=build /app/src/modules/email/templates ./dist/modules/email/templates
 COPY --from=build /app/node_modules ./node_modules
 COPY package.json ./
 

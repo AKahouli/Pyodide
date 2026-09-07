@@ -124,7 +124,7 @@ describe('OAuthFlowService', () => {
     };
 
     usageService = {
-      getDefaultPlan: jest.fn().mockResolvedValue({ _id: new Types.ObjectId(), slug: 'free' }),
+      getDefaultPlan: jest.fn().mockResolvedValue({ _id: new Types.ObjectId(), slug: 'unlimited' }),
     };
 
     authorizationService = {

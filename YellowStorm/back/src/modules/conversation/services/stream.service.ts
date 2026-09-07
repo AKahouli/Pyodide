@@ -44,6 +44,7 @@ import {
 import { randomUUID } from 'node:crypto';
 import { ResponseReliabilityService } from './response-reliability.service';
 import { ConversationAgentRequestBuilder, type BuiltAgentExecutionRequest } from './conversation-agent-request.builder';
+import { SemanticModelService } from '../../semantic-model/services/semantic-model.service';
 import { PLATFORM_COPILOT } from '../../agent/constants/platform-copilot.constants';
 import { sanitizePublicComponent } from '../utils/public-component-sanitizer';
 import { ConversationSettingsService } from '../../system/conversation-settings.service';
@@ -67,6 +68,7 @@ export interface StreamRequest {
   webSearchEnabled?: boolean;
   deepSearchEnabled?: boolean;
   modelId?: string;
+  semanticModelId?: string;
   reasoningEffort?: string;
   agentIds?: string[];
   connectorRepo?: {
@@ -145,6 +147,7 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
     private readonly responseReliabilityService: ResponseReliabilityService,
     private readonly agentRequestBuilder: ConversationAgentRequestBuilder,
     private readonly conversationSettings: ConversationSettingsService,
+    private readonly semanticModelService: SemanticModelService,
   ) {
     this.logger.setContext('StreamService');
   }
@@ -786,6 +789,7 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
         webSearchEnabled: request.webSearchEnabled ?? false,
         deepSearchEnabled: request.deepSearchEnabled ?? false,
         modelId: request.modelId,
+        semanticModelId: request.semanticModelId,
         agentIds: request.agentIds ?? [],
         skillIds: request.skillIds ?? [],
         connectorRepo: request.connectorRepo,
@@ -917,8 +921,11 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
       ? (request.agentIds.length ? request.agentIds : [governanceOverride.primaryAgentId])
       : undefined;
     beginBackendPreAdkStage('workspaceAgentResolutionMs');
+    const semanticSchemaName = request.semanticModelId
+      ? await this.semanticModelService.resolveSearchSchema(userId, request.semanticModelId)
+      : undefined;
     const [workspaceContexts, agents] = await Promise.all([
-      this.buildWorkspaceContexts(conversationId, logOpts, conversation),
+      request.semanticModelId ? Promise.resolve([]) : this.buildWorkspaceContexts(conversationId, logOpts, conversation),
       governanceOverride
         ? this.agentService.buildGovernedAgentsForStream(userId, requestedGovernedAgentIds ?? [], governanceOverride.workspaceIds)
         : this.agentService.buildAgentsForStream(
@@ -928,6 +935,7 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
           sharedAgentIds,
           groupMembers,
           request.connectorRepo?.connectorId,
+          semanticSchemaName,
           conversation.runtimePurpose === PLATFORM_COPILOT ? {
             conversationId,
             correlationId: runtimeCorrelationId,
@@ -2172,11 +2180,22 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
     username?: string,
   ): Promise<void> {
     try {
-      // Governed conversations send no modelId, so always resolve the
-      // platform default model — an empty model makes the gRPC name
-      // generation fail and the conversation keeps its default title.
-      const model = await this.modelsService.getDefaultModel();
-      const litellmModel = model?.litellmModel || '';
+      // Naming model is admin-configurable (Paramètres de conversation). Use the
+      // chosen model when set; otherwise fall back to the platform default.
+      // An empty model makes the gRPC name generation fail and the conversation
+      // keeps its default title.
+      const { conversationName } = await this.conversationSettings.getSettings();
+      const chosen = conversationName.modelId
+        ? await this.modelsService.findById(conversationName.modelId).catch(() => null)
+        : null;
+
+      // Chosen models are served by the LiteLLM proxy, so route via the proxy
+      // alias ("litellm_proxy/<model_name>"). Their stored litellmModel is a
+      // provider-prefixed target (e.g. "ollama/gemma3:4b") that would bypass the
+      // proxy and fail. The platform default keeps its litellmModel (unchanged).
+      const litellmModel = chosen
+        ? `litellm_proxy/${chosen.id}`
+        : ((await this.modelsService.getDefaultModel())?.litellmModel || '');
 
       const response = await this.callGenerateNameGrpc(query, litellmModel, username);
       const generatedName = response.conversation_name || 'New Conversation';

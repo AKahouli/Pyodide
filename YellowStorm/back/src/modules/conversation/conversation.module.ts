@@ -55,6 +55,7 @@ import { ConversationAgentRequestBuilder } from './services/conversation-agent-r
 import { CorrectiveReplayContextService } from './services/corrective-replay-context.service';
 import { CorrectiveReplayPromptBuilder } from './services/corrective-replay-prompt.builder';
 import { CorrectiveReplayRunnerService } from './services/corrective-replay-runner.service';
+import { SemanticModelModule } from '../semantic-model/semantic-model.module';
 import { ConversationArtifactService } from './services/conversation-artifact.service';
 import { UserModule } from '../user/user.module';
 import { ConversationPersistenceModule } from './persistence/conversation-persistence.module';
@@ -78,6 +79,7 @@ import { ConversationPersistenceModule } from './persistence/conversation-persis
     GovernanceRuntimeModule,
     forwardRef(() => EvaluationModule),
     UserModule,
+    SemanticModelModule,
   ],
   controllers: [
     StreamController, // Must be before ConversationController to avoid route conflict with :id param

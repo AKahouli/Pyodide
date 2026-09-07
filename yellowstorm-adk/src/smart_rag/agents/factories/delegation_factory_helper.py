@@ -656,6 +656,7 @@ def create_search_agent_with_tools(
                         workspace_id=connector_workspace_id,
                         brain_ids=final_workspace_names,
                         brain_documents=agent_config.get("brain_documents", []),
+                        file_names=agent_config.get("file_names", []),
                         session_id=config.session_id,
                         agent_id=agent_config.get("id"),
                         user_id=config.user_id,
@@ -848,6 +849,7 @@ def create_standard_agent_with_tools(
         max_tokens=max_tokens,
         session_id=config.session_id,
         brain_documents=agent_config.get("brain_documents", []),
+        file_names=agent_config.get("file_names", []),
         conversation_brain_id=config.brain_ids[0] if config.brain_ids else None,
         user_id=config.user_id,
         connector_bindings=_inject_connector_repo_into_bindings(

@@ -1,10 +1,14 @@
 import { useState } from 'react';
-import { AlertTriangle, ArrowRight, Boxes, Database, FileText, Network, Share2, Sparkles } from 'lucide-react';
+import { AlertTriangle, ArrowRight, Boxes, Copy, Database, FileText, Network, Share2, Sparkles } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { Input } from '@/components/ui/input';
+import { useApiAction } from '@/lib/use-api-action';
 import { useModuleTranslation } from '@/modules/localization';
+import { semanticModelApi } from '../../api';
 import type { SemanticModel } from '../../types';
 import { ShareSemanticModelDialog } from './ShareSemanticModelDialog';
 
@@ -15,6 +19,19 @@ export function SemanticModelCard({ model }: Readonly<{ model: SemanticModel }>)
   const attention = Boolean(model.brokenBindingCount);
   const isOwner = model.role === 'owner' || !model.role;
   const [shareOpen, setShareOpen] = useState(false);
+  const [cloneOpen, setCloneOpen] = useState(false);
+  const [cloneName, setCloneName] = useState(`${model.name} ${t('clone.copySuffix')}`.trim());
+  const cloneAction = useApiAction(
+    (name: string) => semanticModelApi.clone(model.id, name),
+    {
+      showSuccessToast: true,
+      successMessage: t('clone.created'),
+      onSuccess: (copy) => {
+        setCloneOpen(false);
+        navigate(`/semantic-models/${copy.id}`);
+      },
+    },
+  );
 
   return (
     <>
@@ -26,6 +43,7 @@ export function SemanticModelCard({ model }: Readonly<{ model: SemanticModel }>)
               {automatic ? <Sparkles className='h-5 w-5' /> : <Network className='h-5 w-5' />}
             </div>
             <div className='flex flex-wrap items-center justify-end gap-1.5'>
+              <span role='status' aria-label={t(model.indexStatus === 'indexed' ? 'indexStatus.indexed' : model.indexStatus === 'failed' ? 'indexStatus.failed' : 'indexStatus.working')} className={`h-2.5 w-2.5 rounded-full ${model.indexStatus === 'indexed' ? 'bg-emerald-500' : model.indexStatus === 'failed' ? 'bg-red-500' : `bg-amber-500 ${model.indexStatus === 'pending' || model.indexStatus === 'in_progress' ? 'animate-pulse' : ''}`}`} title={t(model.indexStatus === 'indexed' ? 'indexStatus.indexed' : model.indexStatus === 'failed' ? 'indexStatus.failed' : 'indexStatus.working')} />
               {isOwner && (
                 <Button
                   variant='ghost'
@@ -55,8 +73,15 @@ export function SemanticModelCard({ model }: Readonly<{ model: SemanticModel }>)
           </div>
           {attention && <div className='flex items-center gap-2 rounded-lg bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-300'><AlertTriangle className='h-4 w-4 shrink-0' />{t('catalog.needsAttention', { count: model.brokenBindingCount ?? 0 })}</div>}
         </CardContent>
-        <CardFooter>
-          <Button className='w-full justify-between' variant='ghost' onClick={() => navigate(`/semantic-models/${model.id}`)}>
+        <CardFooter className='gap-2'>
+          <Button
+            variant='outline'
+            onClick={() => { setCloneName(`${model.name} ${t('clone.copySuffix')}`.trim()); setCloneOpen(true); }}
+          >
+            <Copy className='mr-1.5 h-4 w-4' />
+            {t('clone.button')}
+          </Button>
+          <Button className='flex-1 justify-between' variant='ghost' onClick={() => navigate(`/semantic-models/${model.id}`)}>
             {t('catalog.open')}<ArrowRight className='h-4 w-4 transition group-hover:translate-x-1' />
           </Button>
         </CardFooter>
@@ -70,6 +95,31 @@ export function SemanticModelCard({ model }: Readonly<{ model: SemanticModel }>)
           onOpenChange={setShareOpen}
         />
       )}
+      <Dialog open={cloneOpen} onOpenChange={setCloneOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>{t('clone.title')}</DialogTitle>
+            <DialogDescription>{t('clone.description')}</DialogDescription>
+          </DialogHeader>
+          <Input
+            value={cloneName}
+            onChange={(event) => setCloneName(event.target.value)}
+            placeholder={t('clone.placeholder')}
+            aria-label={t('clone.name')}
+            autoFocus
+            maxLength={160}
+          />
+          <DialogFooter>
+            <Button variant='outline' onClick={() => setCloneOpen(false)}>{t('action.cancel')}</Button>
+            <Button
+              onClick={() => void cloneAction.execute(cloneName.trim())}
+              disabled={!cloneName.trim() || cloneAction.isLoading}
+            >
+              {cloneAction.isLoading ? t('clone.creating') : t('clone.submit')}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </>
   );
 }

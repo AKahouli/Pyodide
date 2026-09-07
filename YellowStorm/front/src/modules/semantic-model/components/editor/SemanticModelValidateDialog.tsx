@@ -22,8 +22,8 @@ interface Props {
 /**
  * Fire-and-forget launcher for the async build orchestrator.
  *
- * The dialog collects optional requirements and explicit record allow-lists,
- * then posts `POST /builds`. As soon as the backend returns a buildId, it closes
+ * The dialog only collects the (optional) business requirements and posts
+ * `POST /builds`. As soon as the backend returns a buildId, the dialog closes
  * and control is handed back to the user. Progress is tracked by the
  * `SemanticModelBuildProgressBanner` mounted at the top of the editor.
  */
@@ -71,7 +71,7 @@ export function SemanticModelValidateDialog({ open, onOpenChange, modelId, onSta
     if (!manualConceptId || !labels.length) return;
     setManualInstances((current) => {
       const existing = current.find((item) => item.nodeTypeId === manualConceptId);
-      if (!existing) return [...current, { nodeTypeId: manualConceptId, labels }];
+      if (!existing) return [...current, { nodeTypeId: manualConceptId, labels: [...new Set(labels)] }];
       return current.map((item) => item.nodeTypeId === manualConceptId
         ? { ...item, labels: [...new Set([...item.labels, ...labels])] }
         : item);
