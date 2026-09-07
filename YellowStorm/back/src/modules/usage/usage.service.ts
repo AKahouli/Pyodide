@@ -112,8 +112,8 @@ export class UsageService implements OnApplicationBootstrap {
   async getDefaultPlan(): Promise<PlanDocument> {
     let plan = await this.planModel.findOne({ isDefault: true, isActive: true });
     if (!plan) {
-      // Fallback to free plan
-      plan = await this.planModel.findOne({ slug: PlanTier.FREE });
+      // Fallback to unlimited plan
+      plan = await this.planModel.findOne({ slug: PlanTier.UNLIMITED });
     }
     if (!plan) {
       throw new NotFoundException(ErrorCode.PLAN_NOT_FOUND, 'No default plan configured');
