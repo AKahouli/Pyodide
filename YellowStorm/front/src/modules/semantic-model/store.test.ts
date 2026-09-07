@@ -48,7 +48,7 @@ describe('semantic model editor store', () => {
   it('never splits an operation group at the autosave limit', () => {
     const operation = { type:'layout.update' as const,positions:[] };
     const pending = [...Array.from({length:99},() => [operation]),[operation,operation]];
-    expect(selectPendingOperations(pending)).toEqual({ operations:Array(99).fill(operation),groupCount:99 });
+    expect(selectPendingOperations(pending, 100)).toEqual({ operations:Array(99).fill(operation),groupCount:99 });
   });
 
   it('retries recoverable failures without changing pending work', () => {

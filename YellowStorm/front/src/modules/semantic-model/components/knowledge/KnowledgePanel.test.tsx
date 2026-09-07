@@ -5,7 +5,7 @@ import type { KnowledgeLinkingController } from '../../hooks/use-knowledge-linki
 import { useSemanticModelEditorStore } from '../../store';
 import { KnowledgePanel } from './KnowledgePanel';
 
-const workspaceApi = vi.hoisted(() => ({getWorkspaces:vi.fn(),getDocuments:vi.fn(),getDocument:vi.fn(),getFolderContents:vi.fn()}));
+const workspaceApi = vi.hoisted(() => ({getWorkspaces:vi.fn(),getDocuments:vi.fn(),getDocument:vi.fn(),getFolderContents:vi.fn(),getSharedWorkspaces:vi.fn()}));
 
 vi.mock('@/modules/workspace/api', () => workspaceApi);
 
@@ -29,6 +29,7 @@ describe('KnowledgePanel', () => {
     workspaceApi.getDocuments.mockImplementation(async (workspaceId:string) => ({documents:workspaceId==='workspace'?[{id:'document',originalName:'Customer Policy.pdf',isFolder:false}]:[],pagination:{page:1,totalPages:1}}));
     workspaceApi.getDocument.mockResolvedValue({id:'document',originalName:'Customer Policy.pdf',isFolder:false});
     workspaceApi.getFolderContents.mockResolvedValue({documents:[],pagination:{page:1,totalPages:1}});
+    workspaceApi.getSharedWorkspaces.mockResolvedValue({workspaces:[],pagination:{page:1,totalPages:1}});
     vi.clearAllMocks();
   });
 
