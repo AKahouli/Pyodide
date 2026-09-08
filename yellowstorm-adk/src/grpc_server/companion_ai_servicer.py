@@ -12,7 +12,6 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import os
 import uuid
 from typing import Dict, Optional, Set
 
@@ -197,21 +196,6 @@ class CompanionAiServicer(pb_grpc.CompanionAiServicer):
         run_id = request.turn_id or uuid.uuid4().hex
         logger.info("[worky] 1. RunTask ◄ incoming request: %s", _describe_request(request))
         logger.info("[worky] 1. RunTask ◄ models: %s", _agent_models(request))
-        # ponytail: CAPTURE — dump the full UNREDACTED connector bindings per
-        # agent to files, so a standalone E2E client (scripts/worky_e2e_runtask.py)
-        # can replay the EXACT tools the backend sent. Carries live Bearer tokens
-        # → writes only under WORKY_CAPTURE_DIR (unset = inert). Remove after
-        # capturing. Grep: [worky][CAPTURE]
-        _cap_dir = os.environ.get("WORKY_CAPTURE_DIR")
-        if _cap_dir:
-            os.makedirs(_cap_dir, exist_ok=True)
-            for a in request.agents:
-                raw = dict(a.agent_params.params).get("connector_bindings_json", "")
-                if raw:
-                    path = os.path.join(_cap_dir, f"bindings_{a.agent_type or a.name}.json")
-                    with open(path, "w") as f:
-                        f.write(raw)
-                    logger.info("[worky][CAPTURE] wrote %s (%d bytes)", path, len(raw))
 
         # A message that arrives WHILE a plan is executing is NOT a supersede.
         # The old behaviour cancelled the running turn and replanned — which
