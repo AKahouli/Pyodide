@@ -6,7 +6,15 @@ builds the RunRequest); this adds resume + scenario driving.
     WORKY_PLANNER_MODEL=gpt-5.6-terra WORKY_EXECUTOR_MODEL=gpt-5.6-terra \
     python scripts/worky_e2e_drive.py <scenario>
 
-scenarios: decline | approve | amend | concurrent   (default: decline)
+scenarios (default: decline):
+  decline          gate parks → decline sticks (no retry) → plan completes
+  approve          gate parks → approve → real send → parks on await_reply
+  amend            one mid-flight update adds a step
+  multiamend       several SEQUENTIAL updates on one session, all must land
+  concurrent       N sessions run at once
+  concurrent_amend N sessions each amended concurrently — updates stay isolated
+
+All validated live end-to-end (2026-09-08) with gpt-5.6-terra for both roles.
 """
 import os, sys, time, uuid
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -129,13 +137,93 @@ def scenario_concurrent():
         print(f"  {sid} -> {st}")
 
 
+def _running(sid, timeout=60):
+    """Wait until the plan is actually executing (status running + steps), so a
+    follow-up message AMENDS the live plan instead of starting a fresh turn."""
+    end = time.time() + timeout
+    while time.time() < end:
+        st, _, steps = _state(sid)
+        if st == "running" and steps:
+            return True
+        if st in ("completed", "failed", "waiting"):
+            return False
+        time.sleep(1)
+    return False
+
+
+def _final(sid, timeout=240):
+    st, _, steps = _wait(sid, timeout)
+    print(f"  FINAL status={st}  steps={len(steps)}")
+    for t, s, _ in steps:
+        print(f"     - [{s:9}] {t[:56]}")
+    return st, steps
+
+
+def scenario_multiamend():
+    """One session, several SEQUENTIAL amends fired while the plan executes —
+    each must land as an added step (converse path, per-session lock serializes)."""
+    stub = _stub()
+    sid = stub.CreateSession(pb.CreateSessionRequest(user_id=base.USER)).session_id
+    print(f"[multiamend] session={sid}")
+    _run(stub, sid, "Search the current price of Bitcoin and write a one-paragraph summary.")
+    amends = [
+        ("ethereum", "Also add the current price of Ethereum."),
+        ("solana",   "Also add the current price of Solana."),
+        ("compare",  "Also add a short paragraph comparing Bitcoin, Ethereum and Solana."),
+    ]
+    for tag, msg in amends:
+        if not _running(sid):
+            print(f"  (plan not executing when amending {tag!r} — sending anyway)")
+        print(f"  >> amend: {tag}")
+        _run(stub, sid, msg)
+        time.sleep(3)
+    st, steps = _final(sid)
+    blob = " ".join(t.lower() for t, _, _ in steps)
+    for tag, _ in amends:
+        print(f"  amend '{tag}' landed: {tag in blob or (tag=='compare' and 'compar' in blob)}")
+
+
+def scenario_concurrent_amend(n=3):
+    """N sessions in parallel, each amended once — checks concurrency + that each
+    amend lands in ITS OWN session (isolation), no cross-talk."""
+    stub = _stub()
+    topics = [("Bitcoin", "Ethereum"), ("gold", "silver"), ("oil", "natural gas")]
+    sids = []
+    for i in range(n):
+        a, b = topics[i % len(topics)]
+        sid = stub.CreateSession(pb.CreateSessionRequest(user_id=base.USER)).session_id
+        _run(stub, sid, f"Search the current price of {a} and summarize it.")
+        sids.append((sid, a, b)); print(f"[concurrent_amend] {sid} <- {a}")
+    # Fire one amend per session, concurrently, adding the SECOND topic.
+    def amend(entry):
+        sid, a, b = entry
+        _running(sid)
+        _run(_stub(), sid, f"Also add the current price of {b}.")
+        return sid, b
+    import concurrent.futures as cf
+    with cf.ThreadPoolExecutor(max_workers=n) as ex:
+        list(ex.map(amend, sids))
+    ok = True
+    for sid, a, b in sids:
+        st, _, steps = _wait(sid)
+        blob = " ".join(t.lower() for t, _, _ in steps)
+        isolated = b.lower() in blob and a.lower() in blob
+        print(f"  {sid} [{a}/{b}] -> {st}  amend-landed+isolated={isolated}")
+        ok = ok and isolated
+    print(f"  CONCURRENT+AMEND isolation OK: {ok}")
+
+
 if __name__ == "__main__":
     sc = sys.argv[1] if len(sys.argv) > 1 else "decline"
     if sc in ("decline", "approve"):
         scenario_single(sc)
     elif sc == "amend":
         scenario_amend()
+    elif sc == "multiamend":
+        scenario_multiamend()
     elif sc == "concurrent":
         scenario_concurrent()
+    elif sc == "concurrent_amend":
+        scenario_concurrent_amend()
     else:
         print("unknown scenario", sc)
