@@ -21,6 +21,7 @@ import {
   type WhatsAppIntegrationRef,
 } from '../interfaces/whatsapp-integration-ref.interface';
 import { extractWhatsAppReplyText } from '../utils/whatsapp-reply-text.util';
+import { normalizeWhatsappUserJid } from '../utils/whatsapp-user-jid.util';
 
 @Injectable()
 export class WhatsAppMessageService {
@@ -75,7 +76,11 @@ export class WhatsAppMessageService {
       return;
     }
 
-    const selfSet = new Set(selfJids.filter(Boolean).map((jid) => jid.toLowerCase()));
+    // Device suffixes must be stripped on both sides: socket.user carries
+    // `81673265873042:74@lid` while self-chat messages arrive on the bare LID.
+    const selfSet = new Set(
+      selfJids.filter(Boolean).map((jid) => normalizeWhatsappUserJid(jid).toLowerCase()),
+    );
     for (const message of messages) {
       const remoteJid = message.key.remoteJid;
       if (!remoteJid || remoteJid.endsWith('@g.us') || remoteJid === 'status@broadcast') {
@@ -84,7 +89,9 @@ export class WhatsAppMessageService {
       // Owner messages typed in the paired number's own self-chat are routed
       // like normal inbound traffic; other fromMe traffic (owner writing to
       // other contacts, bot send echoes) stays ignored.
-      const isSelfChat = Boolean(message.key.fromMe) && selfSet.has(remoteJid.toLowerCase());
+      const isSelfChat =
+        Boolean(message.key.fromMe) &&
+        selfSet.has(normalizeWhatsappUserJid(remoteJid).toLowerCase());
       if (message.key.fromMe && !isSelfChat) continue;
 
       const text = this.extractText(message);
@@ -147,13 +154,15 @@ export class WhatsAppMessageService {
       return;
     }
     const phoneDigits = integrationRef.phoneNumber?.replace(/\D/g, '');
-    const selfSet = new Set(selfJids.filter(Boolean).map((jid) => jid.toLowerCase()));
+    const selfSet = new Set(
+      selfJids.filter(Boolean).map((jid) => normalizeWhatsappUserJid(jid).toLowerCase()),
+    );
     if (!selfSet.size || !phoneDigits) return;
 
     for (const message of messages) {
       if (!message.key.fromMe) continue;
-      const remoteJid = message.key.remoteJid?.toLowerCase();
-      if (!remoteJid || !selfSet.has(remoteJid)) continue;
+      const remoteJid = message.key.remoteJid;
+      if (!remoteJid || !selfSet.has(normalizeWhatsappUserJid(remoteJid).toLowerCase())) continue;
       const text = this.extractText(message);
       if (!text) continue;
 

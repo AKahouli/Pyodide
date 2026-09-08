@@ -211,6 +211,41 @@ describe('WhatsAppMessageService', () => {
     expect(sendReply).toHaveBeenCalledWith(SELF, 'Agent self-chat reply');
   });
 
+  it('routes self-chat messages when selfJids carry the device suffix but the message arrives on the bare LID', async () => {
+    const integrationRef = buildAgentIntegration();
+    const binding = buildBinding();
+    const conversationId = binding.conversationId!.toString();
+    const integrationDoc = {
+      _id: integrationRef.integrationId,
+      userId: integrationRef.userId,
+      agentId: integrationRef.agentId,
+    };
+    const BARE_LID = '81673265873042@lid';
+
+    mockActiveUser();
+    mockAgentIntegrationService.getDocumentById.mockResolvedValue(integrationDoc);
+    mockBindingModel.findOneAndUpdate.mockReturnValue({ exec: async () => binding });
+    mockConversationService.findById.mockResolvedValue({ id: conversationId });
+    mockMessageService.createUserMessage.mockResolvedValue({ id: 'user-msg-1' });
+    mockMessageService.createAIPlaceholder.mockResolvedValue({ id: 'ai-msg-1' });
+    mockStreamService.runStream.mockResolvedValue(undefined);
+    mockMessageService.findById.mockResolvedValue({
+      components: [{ type: 'text', data: { content: 'Agent self-chat reply' } }],
+    });
+    mockBindingModel.updateOne.mockReturnValue({ exec: async () => ({ modifiedCount: 1 }) });
+
+    await service.handleIncomingMessages(
+      integrationRef,
+      [{ key: { remoteJid: BARE_LID, fromMe: true }, message: { conversation: 'salut' } }] as never[],
+      sendReply,
+      ['81673265873042:74@lid', '21654747178:74@s.whatsapp.net'],
+    );
+    await flushAsyncRouting();
+
+    expect(mockStreamService.runStream).toHaveBeenCalled();
+    expect(sendReply).toHaveBeenCalledWith(BARE_LID, 'Agent self-chat reply');
+  });
+
   it('still ignores fromMe messages the owner sends to other contacts', async () => {
     const integrationRef = buildAgentIntegration();
 

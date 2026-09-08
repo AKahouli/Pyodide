@@ -340,6 +340,12 @@ export class WhatsAppSessionManager implements OnModuleInit, OnModuleDestroy {
     if (integrationRef.kind === 'agent') {
       socket.ev.on('messages.upsert', ({ messages, type }) => {
         if (type !== 'notify') return;
+        const selfJids = [
+          socket.user?.jid,
+          socket.user?.lid,
+          socket.user?.id,
+          active.credsMeJid,
+        ].filter((jid): jid is string => Boolean(jid));
         const sendReply = async (remoteJid: string, text: string): Promise<void> => {
           try {
             const sent = await socket.sendMessage(remoteJid, { text });
@@ -360,12 +366,6 @@ export class WhatsAppSessionManager implements OnModuleInit, OnModuleDestroy {
             throw sendError;
           }
         };
-        const selfJids = [
-          active.socket.user?.jid,
-          active.socket.user?.lid,
-          active.socket.user?.id,
-          active.credsMeJid,
-        ].filter((jid): jid is string => Boolean(jid));
         const ownerTypedMessages = messages.filter(
           (message) => !message.key.id || !this.botSentMessageIds.has(message.key.id),
         );
