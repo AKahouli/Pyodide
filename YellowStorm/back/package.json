@@ -23,7 +23,7 @@
     "semantic-model:migrate": "node scripts/semantic-model/migrate.mjs",
     "semantic-model:verify": "node scripts/semantic-model/verify.mjs",
     "db:generate": "drizzle-kit generate",
-    "db:migrate": "drizzle-kit migrate",
+    "db:migrate": "drizzle-kit migrate --config=drizzle.config.ts",
     "db:studio": "drizzle-kit studio",
     "backfill:agents": "ts-node scripts/backfill-agents-to-postgres.ts",
     "test:migration:conversations": "ts-node scripts/test-conversation-postgres-migration.ts",

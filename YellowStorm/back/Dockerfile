@@ -43,6 +43,8 @@ RUN useradd -ms /bin/bash azureuser \
 
 COPY --from=build /app/dist ./dist
 COPY scripts ./scripts
+COPY drizzle.config.ts ./drizzle.config.ts
+COPY drizzle ./drizzle
 COPY --from=build /app/src/modules/conversation/proto ./dist/modules/conversation/proto
 COPY --from=build /app/src/modules/conversation-v2/proto ./dist/modules/conversation-v2/proto
 COPY --from=build /app/src/modules/playbook-flow/proto ./dist/modules/playbook-flow/proto
