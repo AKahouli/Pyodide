@@ -49,6 +49,7 @@ COPY --from=build /app/src/modules/playbook-flow/proto ./dist/modules/playbook-f
 COPY --from=build /app/src/modules/agent/proto ./dist/modules/agent/proto
 COPY --from=build /app/src/modules/worky/proto ./dist/modules/worky/proto
 COPY --from=build /app/src/modules/email/templates ./dist/modules/email/templates
+COPY scripts/semantic-model ./scripts/semantic-model
 COPY --from=build /app/node_modules ./node_modules
 COPY package.json ./
 
