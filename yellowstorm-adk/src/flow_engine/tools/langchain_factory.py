@@ -1717,6 +1717,60 @@ def _format_search_result(result: Dict[str, Any]) -> str:
 # ---------------------------------------------------------------------------
 
 
+def _coerce_action_parameter_schema(action: Any) -> Dict[str, Any]:
+    """Decode a connector action's parameter schema.
+
+    Schemas arrive as a JSON string ("parameter_schema_json"): deeply nested MCP
+    tool schemas (e.g. Notion, 30+ levels) overflow protobuf's ~100-message
+    recursion limit when embedded as a Struct, which made the whole RunRequest
+    fail to decode. Plain dicts are still accepted for backward compatibility.
+    """
+    if not isinstance(action, dict):
+        return {}
+    raw_json = action.get("parameter_schema_json")
+    if isinstance(raw_json, str) and raw_json.strip():
+        try:
+            parsed = json.loads(raw_json)
+        except json.JSONDecodeError:
+            return {}
+        return parsed if isinstance(parsed, dict) else {}
+    schema = action.get("parameter_schema")
+    return schema if isinstance(schema, dict) else {}
+
+
+def _format_schema_for_tool_description(schema: Any, max_chars: int = 12000) -> str:
+    """Render a connector action's JSON schema for the LLM-facing description.
+
+    The pydantic args schema built for connector tools is intentionally shallow
+    (nested objects become opaque dicts), so the model cannot see nested key
+    names, nesting, or required sub-fields and ends up guessing shapes that the
+    MCP server's own validation rejects. Embedding the structural schema in the
+    description closes that gap. Bulky human-oriented keys are stripped to keep
+    prompts small; very large schemas are truncated.
+    """
+    if not isinstance(schema, dict) or not schema:
+        return ""
+
+    def _prune(node: Any) -> Any:
+        if isinstance(node, dict):
+            return {
+                key: _prune(value)
+                for key, value in node.items()
+                if key not in ("description", "title", "examples", "format", "$schema", "$id")
+            }
+        if isinstance(node, list):
+            return [_prune(item) for item in node]
+        return node
+
+    try:
+        rendered = json.dumps(_prune(schema), separators=(",", ":"), ensure_ascii=False)
+    except (TypeError, ValueError):
+        return ""
+    if len(rendered) > max_chars:
+        rendered = rendered[:max_chars] + "...(schema truncated)"
+    return rendered
+
+
 def _create_connector_mcp_tools(
     bindings: List[Dict[str, Any]],
     collector: ToolResultCollector,
@@ -1768,13 +1822,7 @@ def _create_connector_mcp_tools(
                     else a.get("action_key", a.get("name", "")),
                     "label": None if isinstance(a, str) else a.get("label"),
                     "description": None if isinstance(a, str) else a.get("description"),
-                    "parameter_schema": {}
-                    if isinstance(a, str)
-                    else (
-                        a.get("parameter_schema") or {}
-                        if a.get("parameter_schema")
-                        else {}
-                    ),
+                    "parameter_schema": _coerce_action_parameter_schema(a),
                     "safety": "unknown" if isinstance(a, str) else str(a.get("safety") or "unknown").lower(),
                 }
                 for a in raw_actions
@@ -1817,6 +1865,18 @@ def _create_connector_mcp_tools(
                 tool_name,
                 action_parameter_schema,
             )
+            schema_block = _format_schema_for_tool_description(action_parameter_schema)
+            schema_properties = (
+                action_parameter_schema.get("properties")
+                if isinstance(action_parameter_schema, dict)
+                else None
+            )
+            # Only inject the runtime workspace_id argument for servers whose
+            # tool schema actually declares it (our own MCP gateway). Third-
+            # party servers (e.g. mcp.notion.com) reject the unknown key.
+            schema_allows_workspace_id = isinstance(schema_properties, dict) and (
+                "workspace_id" in schema_properties
+            )
 
             def _make_mcp_tool(
                 cid: str = connector_id,
@@ -1826,6 +1886,7 @@ def _create_connector_mcp_tools(
                 ad: str = action_description,
                 safety: str = action_safety,
                 arg_schema: Any = args_schema,
+                sb: str = schema_block,
                 tt: str = transport_type,
                 su: str = server_url,
                 sc: Dict[str, Any] = server_config,
@@ -1843,6 +1904,7 @@ def _create_connector_mcp_tools(
                 call_budget: Optional[SandboxCallBudget] = sandbox_call_budget if is_code_interpreter else None,
                 suppress_file_paths: bool = is_code_interpreter and bool(sandbox_inputs),
                 action_keys: set[str] = set(available_action_keys),
+                sw: bool = schema_allows_workspace_id,
                 internal_token: str = platform_api_token,
             ) -> StructuredTool:
                 async def _execute_mcp(*args: Any, **kwargs: Any) -> Any:
@@ -1860,6 +1922,15 @@ def _create_connector_mcp_tools(
                     for filename_param in ("file_name", "file_names"):
                         if params.get(filename_param) in (None, "", []):
                             merged_params.pop(filename_param, None)
+                    # The shallow args model fills omitted optional fields with
+                    # None and those Nones reach this coroutine. Strict MCP
+                    # servers (FastMCP, e.g. Notion) reject explicit nulls for
+                    # optional fields — omit them instead of sending null.
+                    merged_params = {
+                        key: value
+                        for key, value in merged_params.items()
+                        if value is not None
+                    }
                     _last_mcp_actual_args.set(dict(merged_params))
                     if call_budget is not None and not await call_budget.try_acquire():
                         return call_budget.limit_message
@@ -1897,7 +1968,8 @@ def _create_connector_mcp_tools(
                             if _wi:
                                 effective_auth_headers["workspace_id"] = json.dumps(_wi) if len(_wi) > 1 else _wi[0]
                                 effective_auth_headers["Workspace-Id"] = ",".join(_wi)
-                                merged_params["workspace_id"] = _wi[0] if len(_wi) == 1 else _wi
+                                if sw:
+                                    merged_params["workspace_id"] = _wi[0] if len(_wi) == 1 else _wi
                                 merged_params.pop("workspace_name", None)
                                 effective_auth_headers.pop("workspace_name", None)
                             if wsp:
@@ -2015,6 +2087,12 @@ def _create_connector_mcp_tools(
                     description=(
                         f"{ad} (connector: {cn}, action: {al}). "
                         "Use this connector action to search, browse, or inspect remote items first."
+                        + (
+                            "\n\nExact parameter JSON schema — use these key names, nesting, and required fields exactly:\n"
+                            + sb
+                            if sb
+                            else ""
+                        )
                     ),
                     func=None,
                     coroutine=_execute_mcp,
