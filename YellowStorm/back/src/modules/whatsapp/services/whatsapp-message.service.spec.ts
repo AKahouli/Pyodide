@@ -176,6 +176,63 @@ describe('WhatsAppMessageService', () => {
     expect(sendReply).toHaveBeenCalledWith('123@s.whatsapp.net', 'Agent reply');
   });
 
+  it('routes owner self-chat messages to the agent and replies into the self-chat', async () => {
+    const integrationRef = buildAgentIntegration();
+    const binding = buildBinding();
+    const conversationId = binding.conversationId!.toString();
+    const integrationDoc = {
+      _id: integrationRef.integrationId,
+      userId: integrationRef.userId,
+      agentId: integrationRef.agentId,
+    };
+    const SELF = '21654747178@s.whatsapp.net';
+
+    mockActiveUser();
+    mockAgentIntegrationService.getDocumentById.mockResolvedValue(integrationDoc);
+    mockBindingModel.findOneAndUpdate.mockReturnValue({ exec: async () => binding });
+    mockConversationService.findById.mockResolvedValue({ id: conversationId });
+    mockMessageService.createUserMessage.mockResolvedValue({ id: 'user-msg-1' });
+    mockMessageService.createAIPlaceholder.mockResolvedValue({ id: 'ai-msg-1' });
+    mockStreamService.runStream.mockResolvedValue(undefined);
+    mockMessageService.findById.mockResolvedValue({
+      components: [{ type: 'text', data: { content: 'Agent self-chat reply' } }],
+    });
+    mockBindingModel.updateOne.mockReturnValue({ exec: async () => ({ modifiedCount: 1 }) });
+
+    await service.handleIncomingMessages(
+      integrationRef,
+      [{ key: { remoteJid: SELF, fromMe: true }, message: { conversation: 'salut toi-même' } }] as never[],
+      sendReply,
+      [SELF],
+    );
+    await flushAsyncRouting();
+
+    expect(mockStreamService.runStream).toHaveBeenCalled();
+    expect(sendReply).toHaveBeenCalledWith(SELF, 'Agent self-chat reply');
+  });
+
+  it('still ignores fromMe messages the owner sends to other contacts', async () => {
+    const integrationRef = buildAgentIntegration();
+
+    mockActiveUser();
+
+    await service.handleIncomingMessages(
+      integrationRef,
+      [
+        {
+          key: { remoteJid: '21694968472@s.whatsapp.net', fromMe: true },
+          message: { conversation: 'salut X' },
+        },
+      ] as never[],
+      sendReply,
+      ['21654747178@s.whatsapp.net'],
+    );
+    await flushAsyncRouting();
+
+    expect(mockStreamService.runStream).not.toHaveBeenCalled();
+    expect(sendReply).not.toHaveBeenCalled();
+  });
+
   describe('captureSelfChatText', () => {
     const SELF_PN_JID = '21654747178@s.whatsapp.net';
 

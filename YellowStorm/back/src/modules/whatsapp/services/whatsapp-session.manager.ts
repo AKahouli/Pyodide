@@ -342,7 +342,14 @@ export class WhatsAppSessionManager implements OnModuleInit, OnModuleDestroy {
         if (type !== 'notify') return;
         const sendReply = async (remoteJid: string, text: string): Promise<void> => {
           try {
-            await socket.sendMessage(remoteJid, { text });
+            const sent = await socket.sendMessage(remoteJid, { text });
+            const sentId = sent?.key?.id;
+            if (sentId) {
+              // Echo guard: the reply comes back as a fromMe upsert and must
+              // not be routed again as a self-chat user message.
+              this.botSentMessageIds.add(sentId);
+              setTimeout(() => this.botSentMessageIds.delete(sentId), 60_000);
+            }
           } catch (sendError: unknown) {
             const msg = sendError instanceof Error ? sendError.message : String(sendError);
             this.logger.error('WhatsApp sendMessage failed', {
@@ -371,7 +378,7 @@ export class WhatsAppSessionManager implements OnModuleInit, OnModuleDestroy {
             });
           });
         void this.messageService
-          .handleIncomingMessages(active.integrationRef, messages, sendReply)
+          .handleIncomingMessages(active.integrationRef, ownerTypedMessages, sendReply, selfJids)
           .catch((error: unknown) => {
             this.logger.error('WhatsApp messages.upsert failed', {
               integrationId: active.integrationRef.integrationId.toString(),

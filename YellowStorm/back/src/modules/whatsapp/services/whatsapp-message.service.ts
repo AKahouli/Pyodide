@@ -45,6 +45,7 @@ export class WhatsAppMessageService {
     integrationRef: WhatsAppIntegrationRef,
     messages: import('@whiskeysockets/baileys').WAMessage[],
     sendReply?: (remoteJid: string, text: string) => Promise<void>,
+    selfJids: string[] = [],
   ): Promise<void> {
     if (integrationRef.kind === 'worky_stream') {
       return;
@@ -74,12 +75,17 @@ export class WhatsAppMessageService {
       return;
     }
 
+    const selfSet = new Set(selfJids.filter(Boolean).map((jid) => jid.toLowerCase()));
     for (const message of messages) {
-      if (message.key.fromMe) continue;
       const remoteJid = message.key.remoteJid;
       if (!remoteJid || remoteJid.endsWith('@g.us') || remoteJid === 'status@broadcast') {
         continue;
       }
+      // Owner messages typed in the paired number's own self-chat are routed
+      // like normal inbound traffic; other fromMe traffic (owner writing to
+      // other contacts, bot send echoes) stays ignored.
+      const isSelfChat = Boolean(message.key.fromMe) && selfSet.has(remoteJid.toLowerCase());
+      if (message.key.fromMe && !isSelfChat) continue;
 
       const text = this.extractText(message);
       if (!text) continue;
