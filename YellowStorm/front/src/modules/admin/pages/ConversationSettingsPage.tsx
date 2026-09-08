@@ -15,9 +15,19 @@ import {
   getAllModels,
   updateAdminConversationSettings,
 } from '../api';
-import type { AdminModelResponse, ComposerSuggestionSettings, ConversationSettingsAgentOption } from '../types';
+import { CompactionSettingsCard } from '../components/CompactionSettingsCard';
+import type { AdminModelResponse, CompactionSettings, ComposerSuggestionSettings, ConversationSettingsAgentOption } from '../types';
 
 const PLATFORM_DEFAULT = 'platform-default';
+
+const COMPACTION_DEFAULTS: CompactionSettings = {
+  enabled: true,
+  compactionInterval: 10,
+  overlapSize: 2,
+  tokenFraction: 0.75,
+  eventRetentionSize: 6,
+  summarizerModel: '',
+};
 
 const DEFAULTS: ComposerSuggestionSettings = {
   enabled: true,
@@ -41,6 +51,7 @@ export function ConversationSettingsPage() {
   const { t } = useModuleTranslation('admin');
   const [settings, setSettings] = useState<ComposerSuggestionSettings>(DEFAULTS);
   const [latencyInstrumentationEnabled, setLatencyInstrumentationEnabled] = useState(LATENCY_DEFAULT);
+  const [compaction, setCompaction] = useState<CompactionSettings>(COMPACTION_DEFAULTS);
   const [nameModelId, setNameModelId] = useState<string | null>(null);
   const [models, setModels] = useState<AdminModelResponse[]>([]);
   const [agents, setAgents] = useState<ConversationSettingsAgentOption[]>([]);
@@ -55,6 +66,7 @@ export function ConversationSettingsPage() {
         if (cancelled) return;
         setSettings(result.composerSuggestions);
         setLatencyInstrumentationEnabled(result.latencyInstrumentationEnabled ?? LATENCY_DEFAULT);
+        setCompaction(result.compaction ?? COMPACTION_DEFAULTS);
         setNameModelId(result.conversationName?.modelId ?? null);
         setAgents(agentOptions);
         setModels(modelList.models.filter((model) => model.isActive));
@@ -92,9 +104,11 @@ export function ConversationSettingsPage() {
         composerSuggestions: settings,
         conversationName: { modelId: nameModelId },
         latencyInstrumentationEnabled,
+        compaction,
       });
       setSettings(result.composerSuggestions);
       setLatencyInstrumentationEnabled(result.latencyInstrumentationEnabled ?? LATENCY_DEFAULT);
+      setCompaction(result.compaction ?? COMPACTION_DEFAULTS);
       setNameModelId(result.conversationName?.modelId ?? null);
       showSuccess(t('conversationSettings.toasts.saved.title'), { description: t('conversationSettings.toasts.saved.description') });
     } catch (error) {
@@ -161,6 +175,8 @@ export function ConversationSettingsPage() {
           )}
         </CardContent>
       </Card>
+
+      <CompactionSettingsCard value={compaction} onChange={setCompaction} models={models} disabled={loading} />
 
       <Card>
         <CardHeader>

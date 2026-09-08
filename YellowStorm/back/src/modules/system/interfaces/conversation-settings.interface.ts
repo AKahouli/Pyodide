@@ -12,12 +12,29 @@ export interface ConversationNameSettings {
   modelId: string | null;
 }
 
+/** ADK context-compaction defaults. Sent on each chat request; token_threshold is
+ *  derived engine-side as tokenFraction * model context window. */
+export interface CompactionSettings {
+  enabled: boolean;
+  /** Sliding window: new invocations between compactions (0 = sliding window off). */
+  compactionInterval: number;
+  /** Sliding window: prior invocations re-summarized for continuity. */
+  overlapSize: number;
+  /** Token trigger: threshold = tokenFraction * context window, 0..1 (0 = token trigger off). */
+  tokenFraction: number;
+  /** Token trigger: recent raw events kept un-compacted. */
+  eventRetentionSize: number;
+  /** LiteLLM model used to summarize; empty = fall back to the chat model. */
+  summarizerModel: string;
+}
+
 export interface ConversationSettingsValue {
   composerSuggestions: ComposerSuggestionSettings;
   conversationName: ConversationNameSettings;
   redactSensitiveText: boolean;
   /** End-to-end latency instrumentation for the classic Conversation flow. */
   latencyInstrumentationEnabled: boolean;
+  compaction: CompactionSettings;
 }
 
 export interface ConversationSettings extends ConversationSettingsValue {
@@ -35,6 +52,14 @@ export interface ConversationSettingsAgentOption {
 export const DEFAULT_CONVERSATION_SETTINGS: ConversationSettingsValue = {
   redactSensitiveText: true,
   latencyInstrumentationEnabled: true,
+  compaction: {
+    enabled: true,
+    compactionInterval: 10,
+    overlapSize: 2,
+    tokenFraction: 0.75,
+    eventRetentionSize: 6,
+    summarizerModel: '',
+  },
   conversationName: {
     modelId: null,
   },

@@ -1047,6 +1047,20 @@ class ChatbotServicer(
                 "input_modalities": list(pb_agent.chatbot.input_modalities) or ["text"],
                 **({"reasoning_effort": pb_agent.chatbot.reasoning_effort} if pb_agent.chatbot.reasoning_effort else {}),
                 **({"context_window_tokens": pb_agent.chatbot.context_window_tokens} if pb_agent.chatbot.context_window_tokens > 0 else {}),
+                **(
+                    {
+                        "compaction": {
+                            "enabled": pb_agent.chatbot.compaction.enabled,
+                            "compaction_interval": pb_agent.chatbot.compaction.compaction_interval,
+                            "overlap_size": pb_agent.chatbot.compaction.overlap_size,
+                            "token_fraction": pb_agent.chatbot.compaction.token_fraction,
+                            "event_retention_size": pb_agent.chatbot.compaction.event_retention_size,
+                            "summarizer_model": pb_agent.chatbot.compaction.summarizer_model,
+                        }
+                    }
+                    if pb_agent.chatbot.HasField("compaction") and pb_agent.chatbot.compaction.enabled
+                    else {}
+                ),
             }
             if pb_agent.HasField("chatbot")
             else None,

@@ -264,6 +264,16 @@ export interface IGrpcWorkspaceContext {
   }>;
 }
 
+/** Proto-shaped (snake_case) compaction config carried on the gRPC Chatbot message. */
+export interface IGrpcCompaction {
+  enabled: boolean;
+  compaction_interval: number;
+  overlap_size: number;
+  token_fraction: number;
+  event_retention_size: number;
+  summarizer_model: string;
+}
+
 export interface IGrpcAgent {
   id: string;
   name: string;
@@ -279,6 +289,7 @@ export interface IGrpcAgent {
     input_modalities: string[];
     reasoning_effort?: string;
     context_window_tokens?: number;
+    compaction?: IGrpcCompaction;
   };
   agent_params?: {
     params: Record<string, string>;

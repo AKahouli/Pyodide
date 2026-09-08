@@ -36,6 +36,7 @@ from src.smart_rag.engines.helpers import build_content_with_images, coerce_to_d
 from src.smart_rag.messaging.ui_tool_component_registry import UI_TOOL_COMPONENT_REGISTRY
 from src.logger.logging import get_logger
 from src.smart_rag.infrastructure.model_parameters import get_context_window_for_model
+from src.smart_rag.infrastructure.compaction import make_chat_runner
 from src.smart_rag.run_code_artifacts import build_run_code_artifacts, build_tool_result_artifacts
 from src.run_workspace import run_workspace_path
 from src.smart_rag.tool_activity_presenter import (
@@ -426,12 +427,7 @@ class AgentRunner:
         thought_activity_tracker = ThoughtActivityTracker()
 
         _mark_session_stage("mark_runner_construction_start")
-        runner = Runner(
-            agent=agent,
-            app_name=APP_NAME,
-            session_service=session_helper,
-            plugins=[CleanSessionPlugin()],
-        )
+        runner = make_chat_runner(agent, session_helper)
         _mark_session_stage("mark_runner_construction_end")
         guarded_output = agent_tree_has_output_guardrail(agent)
 
@@ -1098,12 +1094,7 @@ class AgentRunner:
         accumulated_text = ""
         guarded_output = agent_tree_has_output_guardrail(agent)
         _mark_session_stage("mark_runner_construction_start")
-        runner = Runner(
-            agent=agent,
-            app_name=APP_NAME,
-            session_service=session_helper,
-            plugins=[CleanSessionPlugin()],
-        )
+        runner = make_chat_runner(agent, session_helper)
         _mark_session_stage("mark_runner_construction_end")
 
         _mark_runner_invoked()
