@@ -1139,14 +1139,29 @@ class OrchestratorService:
         routes it to resume_turn, which maps `approve` → confirmed (see there).
         `preview` is the drafted call: for a mail, to/subject/body; else a
         message/args blob."""
-        args = preview.get("args") or {}
+        raw = preview.get("args") or {}
+        # Connector tools wrap the real arguments under `params` and add a
+        # `display_purpose` sibling (see smart_rag/tools/utilities/connector_tools.py).
+        # Unwrap it, or the card can't find subject/body/message and falls back to
+        # dumping the raw JSON blob at the owner.
+        args = raw["params"] if isinstance(raw.get("params"), dict) else raw
+
+        def _recipients(a: dict) -> str:
+            v = (a.get("to") or a.get("to_recipients") or a.get("recipient")
+                 or a.get("user_email") or "")
+            return ", ".join(str(x) for x in v) if isinstance(v, list) else str(v)
+
         if "subject" in args or "body" in args:
             title = "Approuver l'envoi de cet e-mail ?"
-            draft = (f"À : {args.get('to', '?')}\n"
+            draft = (f"À : {_recipients(args) or '?'}\n"
                      f"Objet : {args.get('subject', '')}\n\n{args.get('body', '')}")
+        elif "message" in args:
+            title = "Approuver l'envoi de ce message ?"
+            to = _recipients(args)
+            draft = (f"À : {to}\n\n" if to else "") + str(args.get("message", ""))
         else:
             title = "Approuver l'envoi de ce message ?"
-            draft = args.get("message") or json.dumps(args, ensure_ascii=False)
+            draft = json.dumps(args, ensure_ascii=False)
         data = {
             "schemaVersion": 1, "status": "ready",
             "questionId": interrupt_id[:100],
