@@ -79,7 +79,8 @@ export function ChatMessageThread({
   const { t } = useModuleTranslation('worky');
   const messages = useWorkyMessages();
   const streaming = useWorkyStore((s) => s.streaming);
-  const setStreaming = useWorkyStore((s) => s.setStreaming);
+  const beginTurn = useWorkyStore((s) => s.beginTurn);
+  const finishTurn = useWorkyStore((s) => s.finishTurn);
   const send = useSendMessage(streamId ?? '');
   // A choice card (e.g. the approve/decline gate on a send tool) submits the
   // selected option's submitText as a normal message; the session is parked on
@@ -87,14 +88,15 @@ export function ChatMessageThread({
   const onComponentAction = useCallback(
     async (action: ChoiceComponentAction) => {
       if (!streamId) return;
-      setStreaming(true);
+      const turnId = crypto.randomUUID();
+      beginTurn(turnId);
       try {
-        await send.mutateAsync({ content: action.submitText });
+        await send.mutateAsync({ content: action.submitText, turnId });
       } catch {
-        setStreaming(false);
+        finishTurn(turnId);
       }
     },
-    [streamId, send, setStreaming],
+    [streamId, send, beginTurn, finishTurn],
   );
   const pendingClarifications = useWorkyStore((s) => s.pendingClarifications) ?? [];
   const showClarifications = Boolean(streamId) && pendingClarifications.length > 0;
