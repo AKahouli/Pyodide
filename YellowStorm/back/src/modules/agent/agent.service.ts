@@ -2,7 +2,7 @@ import { Inject, Injectable, Optional, forwardRef } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Types } from 'mongoose';
 import { LoggerService } from '../logger';
-import { IAgentResponse, IAgentForStream, IGrpcAgent, ISharedAgentInfo } from './interfaces/agent.interface';
+import { IAgentResponse, IAgentForStream, IGrpcAgent, IGrpcCompaction, ISharedAgentInfo } from './interfaces/agent.interface';
 import { AgentShareService } from './services/agent-share.service';
 import { AgentConnectorRuntimeService } from './services/agent-connector-runtime.service';
 import { CreateAgentDto } from './dto/create-agent.dto';
@@ -525,6 +525,7 @@ export class AgentService {
     selectedConnectorId?: string,
     runtimeContext?: { conversationId: string; correlationId: string; playbookHandoffAttached?: boolean },
     reasoningEffort?: string,
+    compaction?: IGrpcCompaction,
   ): Promise<IGrpcAgent[]> {
     this.logger.log('Building agents for stream', {
       userId,
@@ -830,6 +831,7 @@ export class AgentService {
           input_modalities: resolvedModel?.inputModalities || ['text'],
           ...(reasoningEffort && pingedAgents.length === 0 ? { reasoning_effort: reasoningEffort } : {}),
           ...(resolvedModel?.maxInputTokens ? { context_window_tokens: resolvedModel.maxInputTokens } : {}),
+          ...(compaction ? { compaction } : {}),
         },
         agent_params: {
           params: {

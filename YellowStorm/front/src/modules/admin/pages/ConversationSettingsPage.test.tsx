@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { fireEvent, screen, waitFor } from '@testing-library/react';
 import { renderWithProviders } from '@/test/renderWithProviders';
 import { ConversationSettingsPage } from './ConversationSettingsPage';
-import { getAdminConversationSettings, getAdminConversationSettingsAgents, updateAdminConversationSettings } from '../api';
+import { getAdminConversationSettings, getAdminConversationSettingsAgents, getAllModels, updateAdminConversationSettings } from '../api';
 
 const useAuthMock = vi.hoisted(() => vi.fn(() => ({ isAuthenticated: true, user: { id: 'admin' } })));
 const translateMock = vi.hoisted(() => (key: string) => key);
@@ -15,6 +15,7 @@ vi.mock('@/lib/notifications', () => ({ showError: vi.fn(), showSuccess: vi.fn()
 vi.mock('../api', () => ({
   getAdminConversationSettings: vi.fn(),
   getAdminConversationSettingsAgents: vi.fn(),
+  getAllModels: vi.fn(),
   updateAdminConversationSettings: vi.fn(),
 }));
 
@@ -34,6 +35,7 @@ describe('ConversationSettingsPage', () => {
     vi.mocked(updateAdminConversationSettings).mockReset();
     vi.mocked(getAdminConversationSettings).mockResolvedValue({ composerSuggestions: settings });
     vi.mocked(getAdminConversationSettingsAgents).mockResolvedValue([]);
+    vi.mocked(getAllModels).mockResolvedValue({ models: [] } as unknown as Awaited<ReturnType<typeof getAllModels>>);
     vi.mocked(updateAdminConversationSettings).mockResolvedValue({ composerSuggestions: settings });
   });
 
@@ -45,7 +47,9 @@ describe('ConversationSettingsPage', () => {
 
     await waitFor(() => expect(updateAdminConversationSettings).toHaveBeenCalledWith({
       composerSuggestions: { ...settings, debounceMs: 750 },
+      conversationName: { modelId: null },
       latencyInstrumentationEnabled: true,
+      compaction: { enabled: true, compactionInterval: 10, overlapSize: 2, tokenFraction: 0.75, eventRetentionSize: 6, summarizerModel: '' },
     }));
   });
 

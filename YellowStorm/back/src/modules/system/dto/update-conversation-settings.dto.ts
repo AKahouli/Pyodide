@@ -1,6 +1,6 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
-import { IsBoolean, IsDefined, IsInt, IsMongoId, IsObject, IsOptional, IsString, Max, Min, ValidateNested } from 'class-validator';
+import { IsBoolean, IsDefined, IsInt, IsMongoId, IsNumber, IsObject, IsOptional, IsString, Max, Min, ValidateNested } from 'class-validator';
 
 export class UpdateComposerSuggestionSettingsDto {
   @ApiProperty()
@@ -50,6 +50,44 @@ export class UpdateConversationNameSettingsDto {
   modelId!: string | null;
 }
 
+export class UpdateCompactionSettingsDto {
+  @ApiProperty()
+  @IsBoolean()
+  enabled!: boolean;
+
+  @ApiProperty({ minimum: 0, maximum: 1000, description: 'Sliding window: new invocations between compactions (0 = off)' })
+  @Type(() => Number)
+  @IsInt()
+  @Min(0)
+  @Max(1000)
+  compactionInterval!: number;
+
+  @ApiProperty({ minimum: 0, maximum: 100 })
+  @Type(() => Number)
+  @IsInt()
+  @Min(0)
+  @Max(100)
+  overlapSize!: number;
+
+  @ApiProperty({ minimum: 0, maximum: 1, description: 'Token trigger: threshold = tokenFraction * context window (0 = off)' })
+  @Type(() => Number)
+  @IsNumber()
+  @Min(0)
+  @Max(1)
+  tokenFraction!: number;
+
+  @ApiProperty({ minimum: 0, maximum: 1000 })
+  @Type(() => Number)
+  @IsInt()
+  @Min(0)
+  @Max(1000)
+  eventRetentionSize!: number;
+
+  @ApiProperty({ description: 'LiteLLM model used to summarize; empty = fall back to the chat model' })
+  @IsString()
+  summarizerModel!: string;
+}
+
 export class UpdateConversationSettingsDto {
   @ApiPropertyOptional({ default: true })
   @IsOptional()
@@ -74,6 +112,13 @@ export class UpdateConversationSettingsDto {
   @ValidateNested()
   @Type(() => UpdateComposerSuggestionSettingsDto)
   composerSuggestions!: UpdateComposerSuggestionSettingsDto;
+
+  @ApiPropertyOptional({ type: UpdateCompactionSettingsDto })
+  @IsOptional()
+  @IsObject()
+  @ValidateNested()
+  @Type(() => UpdateCompactionSettingsDto)
+  compaction?: UpdateCompactionSettingsDto;
 }
 
 export class UpdateSensitiveTextRedactionDto {

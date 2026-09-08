@@ -69,11 +69,21 @@ export interface ComposerSuggestionSettings {
   maxOutputTokens: number;
 }
 
+export interface CompactionSettings {
+  enabled: boolean;
+  compactionInterval: number;
+  overlapSize: number;
+  tokenFraction: number;
+  eventRetentionSize: number;
+  summarizerModel: string;
+}
+
 export interface ConversationSettings {
   composerSuggestions: ComposerSuggestionSettings;
   redactSensitiveText?: boolean;
   /** Runtime source of truth for the classic Conversation latency UI. */
   latencyInstrumentationEnabled?: boolean;
+  compaction?: CompactionSettings;
   updatedAt?: string;
 }
 
