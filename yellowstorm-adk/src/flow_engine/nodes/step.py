@@ -1007,6 +1007,7 @@ async def _execute_step(
         binding_workspace_ids=tool_scope.binding_workspace_ids,
         run_code_sources=tool_scope.run_code_sources,
         execution_id=str(state.get("execution_id") or ""),
+        max_sandbox_calls_per_step=int(state.get("max_sandbox_calls_per_step") or 30),
     )
     if _temporary_child_enabled(agent_config["agent_params"]):
         temporary_child_tool = _TemporaryChildAgentTool(

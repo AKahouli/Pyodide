@@ -94,6 +94,18 @@ class TestRenderChart:
         assert result["zAxisKey"] == "size"
 
     @pytest.mark.asyncio
+    async def test_scatter_without_z_axis_remains_valid(self):
+        result = await render_chart(
+            kind="scatter",
+            xAxisKey="x",
+            yAxisKey="y",
+            data=[{"x": 1, "y": 2}, {"x": 3, "y": 4}],
+        )
+
+        assert result["chartData"] == [{"x": 1, "y": 2}, {"x": 3, "y": 4}]
+        assert result["zAxisKey"] == ""
+
+    @pytest.mark.asyncio
     async def test_empty_data_returns_error(self):
         result = await render_chart(
             kind="bar",
@@ -133,3 +145,59 @@ class TestRenderChart:
         )
 
         assert result["config"]["revenue"]["color"] == "#ff0099"
+
+    @pytest.mark.asyncio
+    async def test_normalizes_unambiguous_formatted_series_values(self):
+        result = await render_chart(
+            kind="bar",
+            xAxisKey="period",
+            data=[
+                {"period": "T1", "revenue": "2 450,5 €", "margin": "12.5%"},
+                {"period": "T2", "revenue": "$3,100.25", "margin": "0.12345"},
+            ],
+            series=[{"dataKey": "revenue"}, {"dataKey": "margin"}],
+        )
+
+        assert result["chartData"] == [
+            {"period": "T1", "revenue": 2450.5, "margin": 12.5},
+            {"period": "T2", "revenue": 3100.25, "margin": 0.12345},
+        ]
+
+    @pytest.mark.asyncio
+    async def test_rejects_non_finite_series_values(self):
+        result = await render_chart(
+            kind="bar",
+            xAxisKey="period",
+            data=[{"period": "T1", "revenue": float("nan")}],
+            series=[{"dataKey": "revenue"}],
+        )
+
+        assert result["error"] == "invalid_chart_payload"
+        assert any("must be finite" in detail for detail in result["details"])
+
+    @pytest.mark.asyncio
+    async def test_rejects_ambiguous_formatted_series_values(self):
+        result = await render_chart(
+            kind="bar",
+            xAxisKey="period",
+            data=[{"period": "T1", "revenue": "1,234"}],
+            series=[{"dataKey": "revenue"}],
+        )
+
+        assert result["error"] == "invalid_chart_payload"
+        assert any("data[0].revenue" in detail for detail in result["details"])
+
+    @pytest.mark.asyncio
+    async def test_partial_config_receives_missing_series_defaults(self):
+        result = await render_chart(
+            kind="bar",
+            xAxisKey="period",
+            data=[{"period": "T1", "revenue": 10, "cost": 4}],
+            series=[{"dataKey": "revenue"}, {"dataKey": "cost", "color": "#00ff00"}],
+            config={"revenue": {"label": "Custom revenue"}},
+        )
+
+        assert result["config"] == {
+            "revenue": {"label": "Custom revenue", "color": "var(--chart-1)"},
+            "cost": {"label": "Cost", "color": "#00ff00"},
+        }

@@ -4,7 +4,7 @@
  */
 
 import { useCallback, useContext, useEffect, useRef, useState } from 'react';
-import { type BundledLanguage, codeToHtml, type ShikiTransformer } from 'shiki';
+import type { BundledLanguage, ShikiTransformer } from 'shiki';
 import { FileWarning, X, RotateCw, Loader2, Copy, Check } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { ThemeProviderContext } from '@/contexts/ThemeContext';
@@ -86,6 +86,13 @@ const EXT_TO_LANGUAGE: Record<string, BundledLanguage> = {
   csv: 'csv',
   log: 'log',
 };
+
+// Shiki loads only when a highlighted file is actually opened (Phase 7 lazy boundary).
+let shikiModulePromise: Promise<typeof import('shiki')> | null = null;
+function loadShiki(): Promise<typeof import('shiki')> {
+  shikiModulePromise ??= import('shiki');
+  return shikiModulePromise;
+}
 
 const lineNumberTransformer: ShikiTransformer = {
   name: 'line-numbers',
@@ -173,6 +180,7 @@ export function TextRenderer({ tab }: TextRendererInternalProps) {
 
         if (lang) {
           // Syntax-highlighted rendering
+          const { codeToHtml } = await loadShiki();
           const [light, dark] = await Promise.all([
             codeToHtml(text, {
               lang,

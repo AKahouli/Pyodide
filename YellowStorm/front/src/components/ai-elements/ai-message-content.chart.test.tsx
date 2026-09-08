@@ -12,7 +12,10 @@ const getFileSignedUrlMock = vi.hoisted(() => vi.fn());
 const getCitationViewUrlMock = vi.hoisted(() => vi.fn());
 
 vi.mock('@/modules/localization', () => ({
-  useModuleTranslation: () => ({ t: (key: string) => key, language: 'en' }),
+  useModuleTranslation: () => ({
+    t: (key: string, options?: { page?: string }) => key === 'ai.citations.page' ? `Page ${options?.page}` : key,
+    language: 'en',
+  }),
 }));
 
 vi.mock('@/modules/file-viewer', () => ({
@@ -31,6 +34,15 @@ vi.mock('@/modules/conversation/api', () => ({ getCitationViewUrl: getCitationVi
 beforeAll(() => {
   vi.stubGlobal('IntersectionObserver', class {
     observe = vi.fn();
+    unobserve = vi.fn();
+    disconnect = vi.fn();
+  });
+  vi.stubGlobal('ResizeObserver', class {
+    constructor(private readonly callback: ResizeObserverCallback) {}
+    observe = (target: Element) => this.callback([{
+      target,
+      contentRect: { width: 800, height: 250 },
+    } as ResizeObserverEntry], this as unknown as ResizeObserver);
     unobserve = vi.fn();
     disconnect = vi.fn();
   });
@@ -157,6 +169,49 @@ describe('AIMessageContent charts', () => {
 
     expect(screen.queryByText('[2]')).not.toBeInTheDocument();
     expect(screen.getByText('2')).toBeInTheDocument();
+  });
+
+  it('shows only the file name, page, and source context in citation previews', async () => {
+    const storageKey = '6984baadd6b2ec4585e8c707/bpce/reports/quarterly-results.pdf';
+    const parts: MessageContentPart[] = [{
+      type: 'text',
+      content: 'Novobanco contribution [21].',
+      citations: [{
+        parentId: '',
+        sourceType: 'text',
+        source: storageKey,
+        externalId: '',
+        page: '8',
+        pageContent: 'Novobanco: 246 M€ de PNB pour 2 mois de contribution au S1-26',
+        workspaceId: 'bpce',
+        reference: '[21]',
+      }],
+    }];
+
+    render(<AIMessageContent parts={parts} />);
+    await userEvent.hover(screen.getByRole('button', { name: '21' }));
+
+    expect(await screen.findByText('quarterly-results.pdf')).toBeInTheDocument();
+    expect(screen.getByText('Page 8')).toBeInTheDocument();
+    expect(screen.getByText('Novobanco: 246 M€ de PNB pour 2 mois de contribution au S1-26')).toBeInTheDocument();
+    expect(screen.queryByText(storageKey)).not.toBeInTheDocument();
+  });
+
+  it('does not expose storage keys in citation triggers without references', () => {
+    const storageKey = '6984baadd6b2ec4585e8c707/bpce/reports/quarterly-results.pdf';
+    render(<AIMessageContent parts={[{
+      type: 'text',
+      content: 'Trailing source.',
+      citations: [{
+        parentId: '', sourceType: 'text', source: storageKey, externalId: '', page: '8',
+        pageContent: 'Source context', workspaceId: 'bpce',
+      }],
+    }]} />);
+
+    const trigger = screen.getByRole('button', { name: 'quarterly-results.pdf' });
+    expect(trigger).toHaveAttribute('title', 'quarterly-results.pdf');
+    expect(screen.queryByRole('button', { name: storageKey })).not.toBeInTheDocument();
+    expect(screen.queryByText(storageKey)).not.toBeInTheDocument();
   });
 
   it('opens citations with exact located highlight text', async () => {
@@ -312,7 +367,7 @@ describe('AIMessageContent charts', () => {
     });
   });
 
-  it('renders a line chart between text parts', () => {
+  it('renders a line chart between text parts', async () => {
     const parts: MessageContentPart[] = [
       { type: 'text', content: 'Before chart' },
       {
@@ -331,11 +386,34 @@ describe('AIMessageContent charts', () => {
     render(<AIMessageContent parts={parts} />);
 
     expect(screen.getByText('Before chart')).toBeInTheDocument();
-    expect(screen.getByRole('figure', { name: 'Revenue trend' })).toBeInTheDocument();
+    // The chart renderer is a lazy boundary; wait for the chunk + render.
+    // The first lazy import in a worker pays the cold transform cost.
+    expect(await screen.findByRole('figure', { name: 'Revenue trend' }, { timeout: 10_000 })).toBeInTheDocument();
     expect(screen.getByText('After chart')).toBeInTheDocument();
   });
 
-  it('renders a no-data state for empty chart payloads', () => {
+  it('renders fallback-colored bars when yAxisKey is not a data field', async () => {
+    const parts: MessageContentPart[] = [{
+      type: 'chart',
+      title: 'Revenue by period',
+      kind: 'bar',
+      data: [{ period: 'T1', 'net revenue': 42 }],
+      config: {},
+      xAxisKey: 'period',
+      yAxisKey: 'amount_M€',
+      series: [{ dataKey: 'net revenue', label: 'Net revenue' }],
+    }];
+
+    const { container } = render(<AIMessageContent parts={parts} />);
+
+    await screen.findByRole('figure', { name: 'Revenue by period' });
+    expect(container.querySelectorAll('.recharts-responsive-container')).toHaveLength(1);
+    await waitFor(() => {
+      expect(container.querySelector('.recharts-bar-rectangle path')).toHaveAttribute('fill', 'var(--chart-1)');
+    }, { timeout: 3000 });
+  });
+
+  it('renders a no-data state for empty chart payloads', async () => {
     const parts: MessageContentPart[] = [
       {
         type: 'chart',
@@ -350,7 +428,7 @@ describe('AIMessageContent charts', () => {
 
     render(<AIMessageContent parts={parts} />);
 
-    expect(screen.getByText('ai.chart.noData')).toBeInTheDocument();
+    expect(await screen.findByText('ai.chart.noData')).toBeInTheDocument();
   });
 
   it('renders a localized error block when chart payload is invalid', () => {

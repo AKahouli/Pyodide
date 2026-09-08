@@ -120,6 +120,10 @@ class UpdatePlaybookExecutionAdminSettingsDto {
   @IsOptional() @Type(() => Number) @IsInt() @Min(1) @Max(500)
   maxToolIterations?: number;
 
+  @ApiPropertyOptional({ minimum: 1, maximum: 100 })
+  @IsOptional() @Type(() => Number) @IsInt() @Min(1) @Max(100)
+  maxSandboxCallsPerStep?: number;
+
   @ApiPropertyOptional()
   @IsOptional() @IsBoolean()
   graphCacheEnabled?: boolean;

@@ -57,6 +57,18 @@ class TestBaseFactoryExtended:
         assert agent.name == "DiagramAgent"
         assert agent.model == "no_tool_llm"
 
+    def test_web_preview_disables_model_retries(self, agent_factory):
+        agent_factory.set_web_preview_tool_config({
+            "instructions": "Return complete HTML.",
+            "description": "Generate a web preview.",
+        })
+
+        agent_factory.create_web_preview_tool("gpt-4o")
+
+        agent_factory.llm_factory.create_no_tool_calls_llm.assert_called_once_with(
+            "gpt-4o", temperature=0.0, num_retries=0
+        )
+
     def test_html_diagram_agent_preserves_omitted_temperature(self, agent_factory):
         agent_factory.create_agent(
             name="DiagramAgent",
@@ -86,21 +98,15 @@ class TestBaseFactoryExtended:
         assert isinstance(agent, Agent)
         assert mock_tools[0] in agent.tools
 
-    def test_create_agent_with_dataviz_and_formviz(self, agent_factory):
-        with patch(
-            "src.smart_rag.agents.factories.base_factory.MCPHelper.create_toolsets",
-            return_value=[MagicMock()],
-        ) as dataviz:
-            agent = agent_factory.create_agent(
-                name="VizAgent",
-                prompt="Visualize",
-                chatbot_name="gpt-4o",
-                dataviz_tool=True,
-                formviz_tool=True,
-            )
-        dataviz.assert_called_once()
+    def test_create_agent_with_formviz(self, agent_factory):
+        agent = agent_factory.create_agent(
+            name="VizAgent",
+            prompt="Visualize",
+            chatbot_name="gpt-4o",
+            formviz_tool=True,
+        )
         assert isinstance(agent, Agent)
-        assert len(agent.tools) == 2
+        assert len(agent.tools) == 1
 
     def test_create_agent_with_code_interpreter(self, agent_factory):
         with patch(

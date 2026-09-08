@@ -80,6 +80,9 @@
   "card": {
     "untitled": "Untitled app",
     "deployedAt": "Deployed {{date}}",
+    "deployedRevision": "Deployed version · {{revision}}",
+    "latestRevision": "Latest version · {{revision}} ({{date}})",
+    "latestRevisionWithCount": "Latest version · {{revision}} ({{date}}) · {{count}} versions",
     "updatedAt": "Updated {{date}}",
     "draftHint": "Not published yet — continue in the conversation to deploy.",
     "draftStatus": {

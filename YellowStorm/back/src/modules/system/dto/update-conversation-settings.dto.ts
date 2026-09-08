@@ -47,6 +47,11 @@ export class UpdateConversationSettingsDto {
   @IsBoolean()
   redactSensitiveText?: boolean;
 
+  @ApiPropertyOptional({ default: true, description: 'End-to-end latency instrumentation for classic Conversation turns' })
+  @IsOptional()
+  @IsBoolean()
+  latencyInstrumentationEnabled?: boolean;
+
   @ApiProperty({ type: UpdateComposerSuggestionSettingsDto })
   @IsDefined()
   @IsObject()

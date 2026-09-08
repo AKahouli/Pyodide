@@ -30,7 +30,7 @@ The core of the system is a **Manager Agent** that receives user queries and dyn
 - **Playbook Execution** -- Multi-step playbook workflows with per-step streaming.
 - **Attribute Extraction** -- Extract structured data from documents asynchronously with webhook delivery. Supports batch processing via Celery.
 - **Session Persistence** -- PostgreSQL-backed sessions using Google ADK's `DatabaseSessionService`.
-- **Observability** -- Langfuse LLM tracing, Azure Application Insights, Elasticsearch, DataDog, and PostgreSQL centralized logging.
+- **Observability** -- Azure Application Insights, Elasticsearch, DataDog, and PostgreSQL centralized logging.
 - **Security** -- JWT authentication, hardened Docker images with Trivy/Bandit/pip-audit/Safety scanning, CIS Docker Benchmark compliance.
 - **CI/CD** -- GitHub Actions pipeline with tests, SonarCloud analysis, semantic versioning, Docker build/push to Azure Container Registry, and automated deployment.
 
@@ -44,7 +44,6 @@ The core of the system is a **Manager Agent** that receives user queries and dyn
 | Storage | Azure Data Lake, PostgreSQL, Redis |
 | Background Tasks | Celery (Redis broker) |
 | Graph DB | Neo4j |
-| LLM Observability | Langfuse |
 | Monitoring | Azure Application Insights, Elasticsearch, DataDog |
 | Containerization | Docker (multi-stage hardened build) |
 | CI/CD | GitHub Actions, SonarCloud, Azure Container Registry |
@@ -186,7 +185,6 @@ Key configuration groups:
 | Redis | `REDIS_HOST`, `REDIS_PORT`, `REDIS_PASSWORD` |
 | Search | `VECTORSTORE_NAME`, `EMBEDDING_MODEL`, `AZURE_AI_SEARCH_*` |
 | Auth | `AUTH_USERNAME`, `AUTH_PASSWORD`, `SECRET_KEY`, `ALGORITHM` |
-| Observability | `LANGFUSE_HOST`, `LANGFUSE_SECRET_KEY`, `LANGFUSE_PUBLIC_KEY` |
 | gRPC | `GRPC_ENABLED` (default: `true`), `GRPC_PORT` (default: `50051`) |
 | gRPC security (secure by default) | `GRPC_API_KEY` (caller auth via `x-api-key` metadata — **required**), `GRPC_TLS_CERT_PATH`, `GRPC_TLS_KEY_PATH` (**required**), `GRPC_ALLOW_INSECURE` (default `false`; explicit local-dev opt-out — runs plaintext + no auth) |
 

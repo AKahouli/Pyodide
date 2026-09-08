@@ -14,10 +14,8 @@ from typing import Any, Optional, List
 from src.logger.logging import get_logger
 from src.smart_rag.tools.utilities.tool_utils import extract_tool_names, normalize_tools
 from src.smart_rag.agents.factories.delegation_factory_helper import create_agent_for_delegation, _extract_original_expected_output, _build_mcp_context_note
-from src.smart_rag.agents.factories.utils import update_span_with_execution_result, process_execution_summary, \
-    create_enhanced_prompt
+from src.smart_rag.agents.factories.utils import create_enhanced_prompt
 from src.smart_rag.agents.core.helpers import AgentHelper
-from src.smart_rag.engines.multi_agent.config import langfuse_client
 from src.smart_rag.infrastructure.session import SessionHelper
 from src.smart_rag.infrastructure.external.mcp_helper import MCPHelper
 from src.smart_rag.messaging import StreamingFormatter
@@ -49,7 +47,7 @@ class AgentDelegationFactory:
     This factory class manages the complex process of creating callable delegate functions
     that the manager agent can use to assign tasks to specialized agents. It handles
     agent configuration, instantiation, execution coordination, error management,
-    and result processing with full observability through Langfuse tracking.
+    and result processing.
     
     Attributes:
         config: Configuration object containing system settings and parameters.
@@ -109,7 +107,7 @@ class AgentDelegationFactory:
 
 
     def make_delegate_function(self, agent_name: str, q: Optional[asyncio.Queue[dict]] = None,
-                               search_web: Optional[bool] = False, parent_span=None) -> Any:
+                               search_web: Optional[bool] = False) -> Any:
         """Create a delegate function for the agent.
         
         Creates a callable async function that the manager agent can use to delegate
@@ -120,7 +118,6 @@ class AgentDelegationFactory:
             agent_name (str): Name of the agent to create delegation function for.
             q (Optional[asyncio.Queue[dict]]): Queue for streaming responses to client.
             search_web (Optional[bool]): Whether the agent should have web search capabilities.
-            parent_span: Langfuse span for tracking delegation operations hierarchy.
             
         Returns:
             Any: Callable async function that accepts task_description and expected_output
@@ -143,25 +140,9 @@ class AgentDelegationFactory:
             # Resolve image_input based on delegate_images flag
             resolved_image_input = self._image_input if delegate_images and self._image_input else None
 
-            # Create span for agent delegation
-            delegation_span = langfuse_client.span(
-                trace_id=self.config.session_id,
-                parent_span_id=parent_span.span_id if parent_span else None,
-                name=f"delegate_to_{normalized_agent_name}",
-                input={
-                    "agent_name": agent_name,
-                    "task_description": task_description,
-                    "task_order": expected_output,
-                    "tools": agent_config.get('tools', []) if agent_config else [],
-                    "search_depth": "standard" if "search_web" in (agent_config.get('tools', []) or []) else "UNDEFINED",
-                    "delegate_images": delegate_images,
-                    "has_images": bool(resolved_image_input)
-                },
-            )
-
             # Create agent with error handling
             agent, toolkit = await self._create_agent_with_error_handling(
-                agent_config, agent_name, normalized_agent_name, expected_output, delegation_span, search_web,self.citation_manager
+                agent_config, agent_name, normalized_agent_name, expected_output, search_web,self.citation_manager
             )
             if agent is None:
                 logger.error(f"[DELEGATION] Failed to create agent: {agent_name} - session_id: {self.config.session_id}")
@@ -174,7 +155,6 @@ class AgentDelegationFactory:
                 temporary_child_tool = make_temporary_child_agent_tool(
                     _DelegatedTemporaryChildTeam(self),
                     agent_config,
-                    delegation_span,
                     image_input=resolved_image_input,
                 )
                 agent.tools = [temporary_child_tool]
@@ -196,7 +176,7 @@ class AgentDelegationFactory:
             # Execute agent with error handling
             agent_id = self.agent_repository.get_agent_id_by_name(agent_name)
             result = await self._execute_agent_with_error_handling(
-                agent,agent_config, task_description, original_expected_output, expected_output, delegation_span, q, agent_name, agent_id, toolkit,
+                agent,agent_config, task_description, original_expected_output, expected_output, q, agent_name, agent_id, toolkit,
                 image_input=resolved_image_input
             )
 
@@ -213,19 +193,18 @@ class AgentDelegationFactory:
         return delegate
 
     async def _create_agent_with_error_handling(self, agent_config, agent_name, normalized_agent_name, expected_output,
-                                                delegation_span, search_web: Optional[bool] = False,citation_manager=None) -> Optional[Any]:
-        """Create agent with proper error handling and span updates.
+                                                search_web: Optional[bool] = False,citation_manager=None) -> Optional[Any]:
+        """Create an agent with proper error handling.
         
         Handles the complete agent creation process including configuration validation,
         tool assignment, prompt enhancement, and agent instantiation with comprehensive
-        error handling and observability tracking.
+        error handling.
         
         Args:
             agent_config: Dictionary containing agent configuration and metadata.
             agent_name (str): Original name of the agent to create.
             normalized_agent_name (str): Normalized version of the agent name.
             expected_output (str): Expected output format for the agent.
-            delegation_span: Langfuse span for tracking the delegation operation.
             search_web (Optional[bool]): Whether to enable web search capabilities.
             
         Returns:
@@ -235,11 +214,6 @@ class AgentDelegationFactory:
             if not agent_config:
                 error_msg = f"Agent {agent_name} not found"
                 logger.exception(error_msg)
-                delegation_span.update(output={
-                    "result": None,
-                    "execution_status": "failed",
-                    "error": error_msg
-                })
                 return None, None
 
             tools = agent_config.get('tools')
@@ -287,37 +261,17 @@ class AgentDelegationFactory:
                 citation_manager=self.citation_manager
             )
 
-            delegation_span.update(
-                output={
-                    "agent_type": "html" if agent_config.get('html', False) else "regular",
-                    "tools_available": tool_names,  # Use extracted tool names for logging
-                    "prompt_length": len(base_enhanced_prompt)
-                },
-            )
-
             return agent, toolkit
 
         except Exception as e:
             error_msg = f"Error creating {agent_name}: {str(e)}"
             logger.exception(error_msg)
-            delegation_span.event(
-                name="error",
-                output={
-                    "error_message": str(e),
-                    "error_type": "agent_creation_error"
-                },
-            )
-            delegation_span.update(output={
-                "result": None,
-                "execution_status": "failed",
-                "error": str(e)
-            })
             return None, None
 
-    async def _execute_agent_with_error_handling(self, agent,agent_config, task_description, expected_output, task_order, delegation_span, q,
+    async def _execute_agent_with_error_handling(self, agent,agent_config, task_description, expected_output, task_order, q,
                                                  agent_name, agent_id="no_id", toolkit=None,
                                                  image_input: Optional[List] = None) -> Optional[Any]:
-        """Execute agent with proper error handling and span updates.
+        """Execute an agent with proper error handling.
 
         Manages the complete agent execution process including session management,
         task execution, result processing, and comprehensive error handling with
@@ -327,7 +281,6 @@ class AgentDelegationFactory:
             agent: The agent instance to execute.
             task_description (str): Description of the task for the agent to perform.
             expected_output (str): Expected format or type of output.
-            delegation_span: Langfuse span for tracking execution metrics.
             q: Queue for streaming responses to client.
             agent_name (str): Name of the agent being executed.
             agent_id (str): Unique identifier for the agent, defaults to "no_id".
@@ -409,17 +362,6 @@ class AgentDelegationFactory:
             if mcp_used and 'python_interpreter' in mcp_used:
                 await self._handle_python_interpreter_files(agent_name, mcp_used, q, generated_files)
 
-            # Process execution summary if available
-            if execution_summary:
-                logger.debug(f"[DELEGATION] Processing execution summary for agent: {agent_name}")
-                process_execution_summary(execution_summary, delegation_span)
-            else:
-                logger.warning(f"[DELEGATION] No execution summary for agent: {agent_name}")
-
-            # Update span based on execution success
-            logger.debug(f"[DELEGATION] Updating span for agent: {agent_name}")
-            update_span_with_execution_result(delegation_span, result, execution_summary, agent_name)
-
             # Save agent conversation to memory if result is available and save_memory is enabled
             if agent_config.get('save_memory', False):
                 logger.debug(f"[DELEGATION] Saving conversation to memory for agent: {agent_name}")
@@ -433,18 +375,6 @@ class AgentDelegationFactory:
             logger.exception(f"[DELEGATION] {error_msg} - session_id: {self.config.session_id}")
             logger.error(f"[DELEGATION] Exception type: {type(e).__name__}")
             logger.error(f"[DELEGATION] Exception args: {e.args}")
-            delegation_span.event(
-                name="error",
-                output={
-                    "error_message": str(e),
-                    "error_type": "agent_execution_error"
-                },
-            )
-            delegation_span.update(output={
-                "result": None,
-                "execution_status": "failed",
-                "error": str(e)
-            })
             return None
 
     async def _add_memory_context_to_prompt(self, base_prompt: str, agent_name: str,

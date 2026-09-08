@@ -28,7 +28,7 @@ The authentication module provides secure user authentication with JWT tokens, s
 The authentication module provides:
 
 - **User Registration**: Email/password registration with email verification; classic signups start `inactive` and `pending` Super Admin review
-- **Login/Logout**: Secure authentication with JWT access tokens; `suspended` accounts cannot obtain a session; `inactive` pending users can sign in and complete their profile, then wait for Super Admin approval in-app
+- **Login/Logout**: Secure authentication with JWT access tokens; `inactive` and `suspended` accounts cannot obtain a session
 - **Refresh Token Rotation**: Secure token refresh with reuse detection
 - **Session Management**: View and revoke active sessions
 - **Email Verification**: Magic link verification flow
@@ -55,6 +55,13 @@ The authentication module provides:
 │           │              │    JwtService    │                                │
 │           │              │ (Token Signing)  │                                │
 │           │              └──────────────────┘                                │
+│           │                       │                                          │
+│           │                       ▼                                          │
+│           │              ┌──────────────────────────────┐                    │
+│           │              │ RegistrationApprovalService  │                    │
+│           │              │ (UserModule — Super Admin    │                    │
+│           │              │  registration notice)        │                    │
+│           │              └──────────────────────────────┘                    │
 │           │                                                                  │
 │           ▼                                                                  │
 │  ┌──────────────────┐    ┌──────────────────┐    ┌──────────────────┐       │
@@ -175,13 +182,12 @@ auth/
    ├── UsageService.getDefaultPlan() - get free plan
    ├── UserService.assignPlan() - assign to new user
    ├── Send verification email (best-effort)
+   └── RegistrationApprovalService.notifySuperAdminsOfRegistration() (best-effort)
 3. Return { message, userId }
 4. User clicks email link
 5. GET /auth/verify-email?token=xxx
 6. UserService.verifyEmail() - mark emailVerified: true
    (status and registrationApproval are unchanged)
-7. User signs in and POST /users/me/complete-profile
-   └── RegistrationApprovalService.notifySuperAdminsOfRegistration() (best-effort)
 ```
 
 New OAuth users are not in this flow (`createOAuthUser` still defaults to `active`). Completing email verification does **not** activate the account.
@@ -193,7 +199,8 @@ New OAuth users are not in this flow (`createOAuthUser` still defaults to `activ
 2. AuthService.login()
    ├── UserService.findByEmail()
    ├── assertAccountAccessible(user)
-   │   └── status === 'suspended' → ERR_1110
+   │   ├── status === 'suspended' → ERR_1110
+   │   └── status === 'inactive'  → ERR_1202
    ├── UserService.validatePassword() - bcrypt compare
    ├── Check emailVerified === true
    ├── Check for new login location
@@ -218,7 +225,9 @@ New OAuth users are not in this flow (`createOAuthUser` still defaults to `activ
    ├── Verify session.isValid (detect reuse)
    ├── Verify session not expired
    ├── bcrypt.compare(token, session.refreshTokenHash)
-   ├── Get user; if suspended, invalidate all sessions and deny (ERR_1110)
+   ├── Get user; if inactive or suspended, invalidate all sessions and deny
+   │   ├── status === 'suspended' → ERR_1110
+   │   └── status === 'inactive'  → ERR_1202
    ├── Invalidate old session (isValid = false)
    ├── Create new session in same tokenFamily
    ├── Fetch fresh permissions (propagate role changes)
@@ -294,7 +303,7 @@ Classic email/password signups wait for Super Admin review. Completing email ver
 | `status` | `inactive` (explicit) | schema default `active` |
 | `registrationApproval` | `pending` | omitted |
 | Email verification | required before login | already verified by provider |
-| Super Admin notice | yes, after complete-profile | no |
+| Super Admin notice | yes, after verification email | no |
 
 Approve and reject live on the **user admin API** (not this auth module):
 
@@ -308,31 +317,29 @@ Approve and reject live on the **user admin API** (not this auth module):
 | Action | `status` | `registrationApproval` | User email |
 |--------|----------|------------------------|------------|
 | Approve | `inactive` → `active` | `approved` | confirmation (best-effort) |
-| Reject | stays `inactive` | `rejected` | decline notice (best-effort) |
+| Reject | stays `inactive` | `rejected` | none |
 
 Re-approve already `approved` / re-reject already `rejected` → 200 no-op. Approving a rejected account is allowed (recovery). UsersPage Valider/Refuser is Super Admin only. The Super Admin notice email links to `/#/admin/users` (the full users list).
 
 ### Account access gates
 
-`assertAccountAccessible` / `getAccountAccessDenial` live in the user module and block **suspended** accounts from obtaining or keeping a session:
+`assertAccountAccessible` / `getAccountAccessDenial` live in the user module and are used by:
 
-| Surface | Inactive | Suspended (`ERR_1110`) |
-|---------|----------|------------------------|
-| `AuthService.login()` | Allowed | Forbidden, before password check |
-| `AuthService.refreshTokens()` | Allowed | Forbidden + all sessions invalidated |
-| `JwtStrategy.validate()` | Allowed | Unauthorized |
-| OAuth login of an **existing** linked user | Allowed | Forbidden |
-
-Inactive classic users can sign in and call `/auth/*` plus `/users/me*`. `AccountApprovalGuard` (global, after JWT) returns `ERR_1202` on every other API until Super Admin approval. Login and `GET /users/me` include `registrationApproval` so the pending-approval page can show a declined state when Super Admin rejected the request (step 3 **Refusé**).
+| Surface | Inactive (`ERR_1202`) | Suspended (`ERR_1110`) |
+|---------|----------------------|------------------------|
+| `AuthService.login()` | Forbidden, before password check | same |
+| `AuthService.refreshTokens()` | Forbidden + all sessions invalidated | same |
+| `JwtStrategy.validate()` | Unauthorized | same |
+| OAuth login of an **existing** linked user | Forbidden | same |
 
 Helper messages:
 
 - Suspended: `Account is suspended`
-- Inactive (feature guard / in-app banner): `This account is inactive pending approval.`
+- Inactive: `This account is inactive pending approval.`
 
 ### Super Admin notification (best-effort)
 
-After `POST /users/me/complete-profile`, `UserService.completeProfile()` calls `RegistrationApprovalService.notifySuperAdminsOfRegistration()` for classic users still `pending`. Failures never fail profile completion (SMTP down, send error, missing role, or no recipients → log/warn). Registration and email verification do **not** send this notice. OAuth profile completion does not send it.
+After the verification email, `AuthService.register()` calls `RegistrationApprovalService.notifySuperAdminsOfRegistration()`. Failures never fail registration (SMTP down, send error, missing role, or no recipients → log/warn).
 
 Recipients: users with role `super_admin` and `status: active`. One email per recipient (other Super Admin addresses are not exposed in To/CC).
 
@@ -344,7 +351,7 @@ Email link (hash router; Super Admin must already be signed in):
 
 This opens the admin users list. It is **not** a one-click approve/reject token.
 
-`RegistrationApprovalService.approveRegistration()` / `rejectRegistration()` run from `AdminUserController` (permission `*`). Approve and reject each send a best-effort information email to the applicant (`{APP_FRONTEND_URL}/#/`). Mail failure does not roll back the decision.
+`RegistrationApprovalService.approveRegistration()` / `rejectRegistration()` run from `AdminUserController` (permission `*`). Approve sends a best-effort confirmation email to the applicant (`{APP_FRONTEND_URL}/#/`). Mail failure does not roll back the approval.
 
 ---
 
@@ -483,7 +490,7 @@ Content-Type: application/json
 }
 ```
 
-The created user is `inactive` with `registrationApproval: pending`. Login succeeds after email verification; app features stay blocked (`ERR_1202`) until a Super Admin calls `POST /admin/users/:id/approve-registration`.
+The created user is `inactive` with `registrationApproval: pending`. Login is denied with `ERR_1202` until a Super Admin calls `POST /admin/users/:id/approve-registration`.
 
 **Login:**
 ```http
@@ -602,7 +609,7 @@ async validate(payload: JwtPayload) {
   // 1. Verify token type is 'access'
   // 2. Check session is still valid (enables immediate revocation)
   // 3. Load user from database
-  // 4. Deny suspended (ERR_1110); inactive pending users may keep a session
+  // 4. Deny inactive (ERR_1202) or suspended (ERR_1110)
   // 5. Attach permissions to user object
   return user;
 }
@@ -834,7 +841,7 @@ APP_FRONTEND_URL=https://app.yellostorm.com
 | ERR_1116 | AUTH_RESET_TOKEN_INVALID | Password reset token invalid or already used |
 | ERR_1117 | AUTH_RESET_TOKEN_EXPIRED | Password reset token has expired |
 | ERR_1120 | AUTH_TOKEN_MISSING | Auth token missing (SSE) |
-| ERR_1202 | USER_INACTIVE | Account is inactive pending Super Admin approval (app features; login still succeeds) |
+| ERR_1202 | USER_INACTIVE | Account is inactive pending Super Admin approval (login / refresh / JWT / existing OAuth login) |
 
 ---
 
@@ -858,7 +865,7 @@ Verifying the address does not change `status` or `registrationApproval`.
 
 ### Super Admin Registration Notice
 
-Sent after the applicant completes their profile (`POST /users/me/complete-profile`) to every **active** user with the `super_admin` role (best-effort; never fails profile completion). Not sent at registration or on OAuth profile completion:
+Sent after the verification email to every **active** user with the `super_admin` role (best-effort; never fails registration):
 
 ```
 Subject: New registration request - YelloStorm
@@ -887,21 +894,7 @@ Contains:
 - Plain text fallback
 ```
 
-### Registration Declined (user information)
-
-Sent after Super Admin rejection (best-effort; mail failure does not roll back `registrationApproval: rejected`):
-
-```
-Subject: Your registration request was declined - YelloStorm
-
-Contains:
-- Notice that the access request was declined
-- Sign-in button/link to /#/ (status page while inactive)
-- Hint to contact a Super Admin if it looks like a mistake
-- Plain text fallback
-```
-
-Re-rejecting an already rejected user does not send another email.
+Rejection does not send mail to the applicant.
 
 ### Password Reset Email
 
@@ -923,7 +916,7 @@ Contains:
 Sent when login detected from new IP:
 
 ```
-Subject: 🔔 New login to your YellowMind account
+Subject: 🔔 New login to your YelloStorm account
 
 Contains:
 - Login timestamp
@@ -983,6 +976,6 @@ export class SomeService {
 ### Invalidating All User Sessions
 
 ```typescript
-// When user changes password or is suspended
+// When user changes password, is suspended, or is inactive at refresh
 await this.authService.invalidateAllUserSessions(userId);
 ```

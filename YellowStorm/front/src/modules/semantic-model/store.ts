@@ -55,7 +55,7 @@ export const semanticModelEditorInitialState = {
   saveAttempt: 0,
 };
 
-export function selectPendingOperations(pending: SemanticOperationGroup[], limit = 100): { operations: SemanticGraphOperation[]; groupCount: number } {
+export function selectPendingOperations(pending: SemanticOperationGroup[], limit = 2000): { operations: SemanticGraphOperation[]; groupCount: number } {
   const groups: SemanticOperationGroup[] = [];
   let operationCount = 0;
   for (const group of pending) {
@@ -85,7 +85,7 @@ export const useSemanticModelEditorStore = create<SemanticModelEditorState>()(de
     return { graph: update(state.graph), pending: [...state.pending, [operation]], undoStack: [...state.undoStack.slice(-49), history], redoStack: [], saveStatus: 'saving' };
   }),
   commitBatch: (operations, update) => set((state) => {
-    if (!state.graph || !operations.length || operations.length > 100) return state;
+    if (!state.graph || !operations.length) return state;
     const history = { graph:state.graph,pending:state.pending };
     return { graph:update(state.graph),pending:[...state.pending,operations],undoStack:[...state.undoStack.slice(-49),history],redoStack:[],saveStatus:'saving' };
   }),

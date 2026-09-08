@@ -44,6 +44,7 @@ const DEFAULT_PLAYBOOK_EXECUTION_SETTINGS = {
   pythonWorkerPoolSize: 8,
   pythonWorkerMaxInflight: 4,
   maxToolIterations: 40,
+  maxSandboxCallsPerStep: 30,
   graphCacheEnabled: false,
   graphCacheMaxEntries: 128,
   graphCacheTtlSeconds: 900,
@@ -64,6 +65,7 @@ const EXECUTION_FIELD_KEYS = [
   'pythonWorkerPoolSize',
   'pythonWorkerMaxInflight',
   'maxToolIterations',
+  'maxSandboxCallsPerStep',
   'graphCacheMaxEntries',
   'graphCacheTtlSeconds',
 ] as const;
@@ -72,6 +74,7 @@ const RUNTIME_TOOLTIP_KEYS = [
   'maxConcurrentPerUser', 'executionQueueMaxDepth', 'maxParallelismPerExecution',
   'recursionLimitDefault', 'recursionLimitMax', 'maxHitlRounds', 'pythonWorkerPoolSize',
   'pythonWorkerMaxInflight', 'maxToolIterations', 'graphCacheEnabled',
+  'maxSandboxCallsPerStep',
   'graphCacheMaxEntries', 'graphCacheTtlSeconds',
 ] as const;
 
@@ -86,6 +89,7 @@ const EXECUTION_FIELD_MAX: Partial<Record<(typeof EXECUTION_FIELD_KEYS)[number],
   pythonWorkerPoolSize: 100,
   pythonWorkerMaxInflight: 20,
   maxToolIterations: 500,
+  maxSandboxCallsPerStep: 100,
   graphCacheMaxEntries: 10000,
   graphCacheTtlSeconds: 86400,
 };
@@ -309,6 +313,7 @@ export function PlaybookSettingsPage() {
     && settings.playbookExecution.maxConcurrentPerProvider <= settings.playbookExecution.availableCapacity
     && settings.playbookExecution.maxConcurrentPerModel <= settings.playbookExecution.availableCapacity
     && settings.playbookExecution.recursionLimitDefault <= settings.playbookExecution.recursionLimitMax
+    && settings.playbookExecution.maxSandboxCallsPerStep <= 100
     && settings.playbookExecution.dynamicReasoning.maxParallelism <= settings.playbookExecution.dynamicReasoning.maxWorkNodes
     && settings.playbookExecution.dynamicReasoning.maxParallelism <= settings.playbookExecution.maxParallelismPerExecution
     && settings.playbookExecution.dynamicReasoning.maxDepth === 1

@@ -7,6 +7,7 @@ import { ErrorCode } from '@modules/exceptions/constants/error-codes';
 import { CreateSemanticModelDto, SemanticModelQueryDto, UpdateSemanticModelDto } from '../dto';
 import { SemanticGraphOperation } from '../domain/semantic-model.types';
 import { SemanticModelDatabaseService } from '../infrastructure/semantic-model-database.service';
+import { SemanticAgeGraphRepository } from '../repositories/semantic-age-graph.repository';
 import { SemanticGraphRepository } from '../repositories/semantic-graph.repository';
 import { SemanticModelRepository, SemanticModelRow } from '../repositories/semantic-model.repository';
 
@@ -17,6 +18,7 @@ export class SemanticModelService {
     private readonly models: SemanticModelRepository,
     private readonly graph: SemanticGraphRepository,
     private readonly workspaces: WorkspaceService,
+    private readonly ageGraph: SemanticAgeGraphRepository,
   ) {}
 
   list(userId: string, query: SemanticModelQueryDto) {
@@ -115,6 +117,7 @@ export class SemanticModelService {
       `UPDATE semantic_model.models SET status='archived', archived_at=now(), revision=revision+1, updated_at=now()
        WHERE id=$1 AND revision=$2`, [model.id, expectedRevision]);
     if (!result.rowCount) throw new ConflictException(ErrorCode.SEMANTIC_MODEL_REVISION_CONFLICT);
+    void this.ageGraph.dropGraph(modelId);
   }
 
   async clone(userId: string, modelId: string, name: string): Promise<SemanticModelRow> {

@@ -21,7 +21,6 @@ from google.adk.agents.run_config import StreamingMode
 from google.genai import types
 
 from src.logger.logging import get_logger
-from src.smart_rag.engines.multi_agent.config import langfuse_client
 from src.smart_rag.engines.helpers import (
     build_content_with_images,
     coerce_to_dict,
@@ -43,6 +42,19 @@ from src.smart_rag.tool_activity_presenter import (
 from src.smart_rag.thought_activity_tracker import ThoughtActivityTracker
 
 logger = get_logger("api.routers.agentic_rag.StreamingEventProcessor")
+
+
+def _mark_runner_invoked() -> None:
+    """Stamp the pre-provider milestone immediately before the manager run."""
+    from src.smart_rag.infrastructure.monitoring.conversation_latency import get_current_conversation_latency_trace
+    trace = get_current_conversation_latency_trace()
+    if trace is not None:
+        trace.mark_runner_invoked()
+
+
+def _current_latency_trace():
+    from src.smart_rag.infrastructure.monitoring.conversation_latency import get_current_conversation_latency_trace
+    return get_current_conversation_latency_trace()
 
 
 class StreamingEventProcessor:
@@ -112,7 +124,6 @@ class StreamingEventProcessor:
         manager_agent: Any,
         agent_runner,
         q: Optional[asyncio.Queue[dict]] = None,
-        team_execution_span=None,
         image_input: Optional[List] = None,
     ) -> str:
         """Process streaming events from the manager agent.
@@ -127,7 +138,6 @@ class StreamingEventProcessor:
             manager_agent (Any): The manager agent handling the session.
             agent_runner: Runner for executing agent operations.
             q (Optional[asyncio.Queue[dict]]): Queue for streaming responses to client.
-            team_execution_span: Langfuse span for tracking team execution metrics.
 
         Returns:
             str: The accumulated manager text from the entire conversation
@@ -160,6 +170,7 @@ class StreamingEventProcessor:
         event_count = 0
         guarded_output = agent_tree_has_output_guardrail(manager_agent)
         validated_final_received = False
+        _mark_runner_invoked()
         stream = agent_runner.run_async(
             user_id=self.config.user_id,
             session_id=session_id,
@@ -167,6 +178,17 @@ class StreamingEventProcessor:
             run_config=RunConfig(streaming_mode=StreamingMode.SSE, max_llm_calls=200),
         )
         should_close_stream = True
+        from src.smart_rag.infrastructure.monitoring.latency_diagnostics import (
+            PHASE_GOOGLE_ADK_RUNNER,
+            reset_latency_diag_phase,
+            set_latency_diag_phase,
+        )
+
+        trace = _current_latency_trace()
+        if trace is not None:
+            trace.note_session_id(session_id)
+            trace.mark_runner_iteration_start()
+        runner_phase_token = set_latency_diag_phase(PHASE_GOOGLE_ADK_RUNNER)
         try:
             async for event in stream:
                 if not event.content or not event.content.parts:
@@ -230,7 +252,6 @@ class StreamingEventProcessor:
                     manager_agent,
                     message_id,
                     q,
-                    team_execution_span,
                     delegation_count,
                     accumulated_manager_text,
                     current_agent,
@@ -243,16 +264,14 @@ class StreamingEventProcessor:
             should_close_stream = False
             raise
         finally:
+            reset_latency_diag_phase(runner_phase_token)
             aclose = getattr(stream, "aclose", None)
             if should_close_stream and aclose is not None:
                 with contextlib.suppress(Exception):
                     await aclose()
 
-        # Complete final generation span
         if guarded_output and not validated_final_received:
             accumulated_manager_text = ""
-        if team_execution_span:
-            team_execution_span.update(output=accumulated_manager_text)
 
         # Log completion of streaming with token usage
         logger.info(
@@ -271,7 +290,6 @@ class StreamingEventProcessor:
         manager_agent: Any,
         message_id: str,
         q: Optional[asyncio.Queue[dict]] = None,
-        manager_generation_span=None,
         delegation_count: int = 0,
         accumulated_manager_text: str = "",
         current_agent: str = None,
@@ -284,14 +302,13 @@ class StreamingEventProcessor:
 
         Processes individual parts of streaming events, including text content,
         function calls, and function responses. Updates tracking variables and
-        creates Langfuse events for monitoring.
+        creates client-facing stream events.
 
         Args:
             event: The streaming event containing content parts.
             manager_agent (Any): The manager agent processing the event.
             message_id (str): Current message identifier.
             q (Optional[asyncio.Queue[dict]]): Queue for streaming responses.
-            manager_generation_span: Langfuse span for tracking generation.
             delegation_count (int): Current count of agent delegations.
             accumulated_manager_text (str): Text accumulated from manager responses.
             current_agent (str): Currently active agent name for delegation tracking.
@@ -316,6 +333,8 @@ class StreamingEventProcessor:
             is_thought = (
                 part.text
                 and getattr(part, "thought", False) is True
+                and not part.function_call
+                and not part.function_response
                 and not guarded_output
             )
             if not is_thought and part.text:
@@ -351,9 +370,13 @@ class StreamingEventProcessor:
             elif (
                 part.text
                 and getattr(part, "thought", False) is not True
+                and not part.function_call
+                and not part.function_response
                 and has_function_call
+                and getattr(event, "partial", None) is not True
                 and not event.is_final_response()
                 and not guarded_output
+                and not thought_activity_tracker.is_standalone_fragment(part.text)
             ):
                 summary = sanitize_activity_summary(part.text)
                 if summary and q:
@@ -374,7 +397,7 @@ class StreamingEventProcessor:
                         component_id=f"activity-{uuid.uuid4()}",
                         action="add",
                     ))
-            elif part.text and not event.is_final_response() and not has_function_call:
+            elif part.text and not part.function_response and not event.is_final_response() and not has_function_call:
                 event_text = part.text
                 accumulated_manager_text += event_text
                 if not guarded_output:
@@ -384,11 +407,7 @@ class StreamingEventProcessor:
 
             # Track function calls to agents
             elif part.function_call:
-                # Complete current generation span
-                if manager_generation_span:
-                    manager_generation_span.update(output=accumulated_manager_text)
-                    accumulated_manager_text = ""
-
+                accumulated_manager_text = ""
                 delegation_count += 1
                 func_name = part.function_call.name
                 tool_args = dict(part.function_call.args or {})
@@ -431,21 +450,6 @@ class StreamingEventProcessor:
                         component_id=tool_component_id,
                         action="add",
                     ))
-
-                # Handle dataviz generate_ui function call
-                if func_name == "generate_ui" and q:
-                    ui_chunk = self.streaming_formatter.format_streaming_event(
-                        agent_id="manager",
-                        agent_name="manager",
-                        agent_type="manager",
-                        chunk="generating ui",
-                        message_id=current_message_id,
-                        content_type="ui",
-                    )
-                    await q.put(ui_chunk)
-                    logger.info(
-                        f"[MANAGER DATAVIZ] Sent 'generating ui' chunk for tool: {func_name}"
-                    )
 
                 # Handle generate_form_viz function call
                 if func_name == "generate_form_viz" and q:
@@ -540,16 +544,6 @@ class StreamingEventProcessor:
                     ):
                         current_agent = real_agent_name
 
-                # Create manager function delegation event (following smart_rag_helper pattern)
-                function_delegation_event = langfuse_client.event(
-                    name=func_name,
-                    input={
-                        "function_name": func_name,
-                        "arguments": sanitize_tool_result_value(tool_args),
-                        "delegation_order": delegation_count,
-                    },
-                )
-
             elif part.function_response:
                 func_name = part.function_response.name
                 if q:
@@ -612,10 +606,6 @@ class StreamingEventProcessor:
                                 component_id=f"artifact-{artifact['artifact_id']}",
                                 action="add",
                             ))
-                if func_name == "generate_ui" and q:
-                    await self._handle_dataviz_response(
-                        part.function_response, current_message_id, q
-                    )
                 if func_name == "generate_form_viz" and q:
                     await self._handle_formviz_response(
                         part.function_response, current_message_id, q
@@ -640,13 +630,30 @@ class StreamingEventProcessor:
                     await self._handle_ui_tool_response(part.function_response, current_message_id, q)
 
             elif event.is_final_response() and event.content and event.content.parts:
+                final_text = "".join(
+                    str(getattr(item, "text", "") or "")
+                    for item in event.content.parts
+                    if getattr(item, "thought", False) is not True
+                )
                 if guarded_output:
-                    final_text = "".join(str(getattr(item, "text", "") or "") for item in event.content.parts)
                     accumulated_manager_text = final_text
-                    if final_text:
-                        current_agent = await self._handle_text_event(
-                            final_text, current_message_id, q, manager_agent, current_agent
-                        )
+                    final_text_to_emit = final_text
+                elif final_text.startswith(accumulated_manager_text):
+                    final_text_to_emit = final_text[len(accumulated_manager_text):]
+                    accumulated_manager_text = final_text
+                elif final_text and final_text not in accumulated_manager_text:
+                    final_text_to_emit = final_text
+                    accumulated_manager_text += final_text
+                else:
+                    final_text_to_emit = ""
+                if final_text_to_emit:
+                    current_agent = await self._handle_text_event(
+                        final_text_to_emit,
+                        current_message_id,
+                        q,
+                        manager_agent,
+                        current_agent,
+                    )
                 await self._handle_final_response(current_message_id, q)
 
         return (
@@ -727,39 +734,6 @@ class StreamingEventProcessor:
         logger.debug(
             f"[AUTO MODE] Final response event received - message_id: {message_id}. Stream will end naturally."
         )
-
-    async def _handle_dataviz_response(
-        self, function_response, message_id: str, q: asyncio.Queue[dict]
-    ) -> None:
-        """Handle DataViz MCP tool response and send entire response to backend.
-
-        Args:
-            function_response: The function response object from the tool
-            message_id: The message ID for the current response
-            q: Queue for streaming events
-
-        Returns:
-            None
-        """
-        import json
-
-        try:
-            # Get the entire response data
-            response_data = function_response.response
-            # Send entire function response as UI chunk
-            ui_chunk = self.streaming_formatter.format_streaming_event(
-                agent_id="manager",
-                agent_name="manager",
-                agent_type="manager",
-                chunk=json.dumps(response_data),
-                message_id=message_id,
-                content_type="ui",
-            )
-            await q.put(ui_chunk)
-            logger.info(f"[MANAGER DATAVIZ] Sent tool response as UI chunk to backend")
-
-        except Exception as e:
-            logger.error(f"[MANAGER DATAVIZ] Error handling dataviz response: {str(e)}")
 
     async def _handle_formviz_response(
         self, function_response, message_id: str, q: asyncio.Queue[dict]

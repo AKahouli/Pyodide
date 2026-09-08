@@ -2,6 +2,7 @@ import { WorkyEvent } from '../interfaces/worky-event.interface';
 import {
   PgMessageRow,
   PgPlanRow,
+  PgSessionRow,
   PgPlanStepRow,
   PgMessageComponentRow,
   PgPlanStepComponentRow,
@@ -82,8 +83,19 @@ function laneToExecState(lane: string): string {
 export function mapMessage(row: PgMessageRow, streamId: string): { set: Record<string, unknown>; event: Frame } {
   const role = mapRole(row.role);
   return {
-    set: { streamId, externalId: row.id, role, content: row.content, emittedAt: new Date(row.created_at) },
-    event: { type: 'message.appended', emittedAt: now(), payload: { id: row.id, role, content: row.content } },
+    set: {
+      streamId,
+      externalId: row.id,
+      turnId: row.turn_id ?? null,
+      role,
+      content: row.content,
+      emittedAt: new Date(row.created_at),
+    },
+    event: {
+      type: 'message.appended',
+      emittedAt: now(),
+      payload: { id: row.id, turnId: row.turn_id ?? null, role, content: row.content },
+    },
   };
 }
 
@@ -116,6 +128,13 @@ export function mapPlanStep(row: PgPlanStepRow, streamId: string): { set: Record
         .map((id) => id.trim())
         .filter(Boolean),
       assigneeKey: (row.assignee ?? '').trim() || null,
+      kind: (row.kind ?? '').trim() || 'execute',
+      question: row.question?.trim() || null,
+      interruptId: row.interrupt_id?.trim() || null,
+      assigneeName: row.assignee_name?.trim() || null,
+      assigneeRole: row.assignee_role?.trim() || null,
+      isPersona: row.is_persona ?? false,
+      isDynamicDelegate: row.is_dynamic_delegate ?? false,
     },
     event: {
       type: terminal ? 'task.completed' : 'task.updated',
@@ -127,7 +146,7 @@ export function mapPlanStep(row: PgPlanStepRow, streamId: string): { set: Record
 
 export function mapPlan(row: PgPlanRow, streamId: string): { set: Record<string, unknown>; event: Frame } {
   return {
-    set: { streamId, title: row.title, status: row.status },
+    set: { streamId, title: row.title, goal: row.goal?.trim() ?? '', status: row.status },
     // Reuse existing 'stream.updated' event so the frontend refetches; no new event type needed here.
     event: { type: 'stream.updated', emittedAt: now(), payload: { plan: { title: row.title, status: row.status } } },
   };
@@ -147,6 +166,26 @@ const TERMINAL_SESSION_STATUSES = new Set([
 ]);
 export function isTerminalSessionStatus(status: string): boolean {
   return TERMINAL_SESSION_STATUSES.has((status || '').toLowerCase());
+}
+
+export function mapSession(row: PgSessionRow, streamId: string): { set: Record<string, unknown>; event: Frame } {
+  return {
+    set: {
+      streamId,
+      sessionStatus: row.status,
+      activeInterruptId: row.interrupt_id?.trim() || null,
+    },
+    event: {
+      type: 'stream.updated',
+      emittedAt: now(),
+      payload: {
+        session: {
+          status: row.status,
+          activeInterruptId: row.interrupt_id?.trim() || null,
+        },
+      },
+    },
+  };
 }
 
 /** Electric jsonb may arrive parsed or as a JSON string — normalize to an object. */

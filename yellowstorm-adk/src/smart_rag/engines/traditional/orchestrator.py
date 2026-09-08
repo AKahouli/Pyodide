@@ -30,7 +30,6 @@ from src.smart_rag.infrastructure.external.mcp_helper import MCPHelper
 # Import modular components
 from src.smart_rag.infrastructure.factories.llm_factory import LLMFactory
 from src.smart_rag.infrastructure.memory.memory_service import MemoryService
-from src.smart_rag.infrastructure.monitoring.trace_recorder import langfuse_client
 from src.smart_rag.infrastructure.processing.prompt_processor import PromptProcessor
 from src.smart_rag.infrastructure.session.citation_manager import SessionCitationManager
 from src.smart_rag.messaging.formatters import StreamingFormatter
@@ -71,7 +70,7 @@ class SmartRAGOrchestrator:
         self.memory_service = MemoryService()
 
     async def chat_smart_rag(self, user_request: ChatWithADKRequest, q: asyncio.Queue[dict]) -> None:
-        """Main function to handle Smart RAG chat with hierarchical Langfuse tracing.
+        """Main function to handle Smart RAG chat.
 
         Args:
             user_request (ChatWithADKRequest): The user request containing chat parameters.
@@ -98,27 +97,6 @@ class SmartRAGOrchestrator:
         except Exception as e:
             logger.error(f"Failed to extract request parameters: {str(e)}")
             return
-
-        # Create main trace for smart_rag_conversation
-        main_trace = langfuse_client.trace(
-            session_id=session_id,
-            id=session_id,
-            name="smart_rag_conversation",
-            user_id=user_id,
-            input={
-                "user_message": message,
-                "brain_ids": brain_ids,
-                "top_k": top_k,
-                "vectorstore_name": vectorstore_name,
-                "search_web": user_request.search_web if hasattr(user_request, 'search_web') else False
-            },
-            metadata={
-                "session_id": session_id,
-                "user_id": user_id,
-                "brain_count": len(brain_ids) if brain_ids else 0,
-                "document_count": len(brain_documents) if brain_documents else 0
-            }
-        )
 
         # Extract prompts
         (agent_prompt, operator_agent_prompt, report_writer_prompt, visualisation_agent_prompt,
@@ -154,17 +132,6 @@ class SmartRAGOrchestrator:
         if memory_context:
             manager_prompt += memory_context
 
-        manager_span = langfuse_client.span(
-            trace_id=session_id,
-            name="manager_orchestration",
-            input={
-                "instructions": manager_prompt,
-                "user_message": message
-            },
-            metadata={
-                "orchestration_type": "smart_rag_manager"
-            }
-        )
         self.agent_factory.set_guardrail_config({
             "user_id": user_id,
             "agent_params": user_request.agent_params or {},
@@ -174,7 +141,7 @@ class SmartRAGOrchestrator:
         # Use the global citation manager registry to get or create a cached citation manager
         from src.smart_rag.infrastructure.session.citation_manager import get_citation_manager
         citation_manager = await get_citation_manager(session_id=session_id)
-        delegation_tools=DelegationTools(self.streaming_formatter, user_request, self.agent_factory, mcp_helper=self.mcp_helper, manager_span=manager_span, agent_runner=self.agent_runner, session_helper=session_helper_agents,documents_tree=documents_tree,brain_tree=brain_tree, q=q,citation_manager=citation_manager)
+        delegation_tools=DelegationTools(self.streaming_formatter, user_request, self.agent_factory, mcp_helper=self.mcp_helper, agent_runner=self.agent_runner, session_helper=session_helper_agents,documents_tree=documents_tree,brain_tree=brain_tree, q=q,citation_manager=citation_manager)
         delegate_to_report_writer_agent, delegate_to_operator_agent, delegate_to_html_agent, delegate_to_search_agent = delegation_tools.get_agents(visualisation_agent_prompt=visualisation_agent_prompt,operator_agent_prompt=operator_agent_prompt,report_writer_prompt=report_writer_prompt,search_agent_prompt=agent_prompt)
 
         manager_agent = self.agent_factory.create_manager_agent(
@@ -204,20 +171,7 @@ class SmartRAGOrchestrator:
             app_name=f"Smart_rag_{user_id}",
             session_service=data_base_session,
         )
-        # Run manager agent with tracing
-
-        manager_generation_span = langfuse_client.span(
-            trace_id=session_id,
-            parent_observation_id=manager_span.id,
-            name="manager_generation",
-            input={
-                "request": message,
-            }
-        )
-
         accumulated_manager_text = ""
-        delegation_count = 0
-        manager_conversation = [{"role": "user", "content": message}]
         chunk_order = 0
         guarded_output = agent_tree_has_output_guardrail(manager_agent)
 
@@ -252,23 +206,7 @@ class SmartRAGOrchestrator:
 
                     # Track function calls to agents
                     if part.function_call:
-                        # Complete current generation span
-                        if manager_generation_span:
-                            manager_generation_span.update(output=accumulated_manager_text)
-                            accumulated_manager_text = ""
-
-                        delegation_count += 1
-                        func_name = part.function_call.name
-
-                        # Create manager function delegation span
-                        function_delegation_span = langfuse_client.event(
-                            name=func_name,
-                            input={
-                                "function_name": func_name,
-                                "arguments": dict(part.function_call.args) if part.function_call.args else {},
-                                "delegation_order": delegation_count
-                            },
-                        )
+                        accumulated_manager_text = ""
 
                     if part.function_response and event.author != manager_agent.name:
                         message_id = str(uuid.uuid4())
@@ -286,10 +224,6 @@ class SmartRAGOrchestrator:
                                     chunk_order=chunk_order,
                                 ))
                                 chunk_order += 1
-                        # Complete final generation span
-                        if manager_generation_span:
-                            manager_generation_span.update(output=accumulated_manager_text)
-
                         # Save manager conversation to mem0 memory
                         """if accumulated_manager_text:
                             manager_conversation.append({"role": "assistant", "content": accumulated_manager_text})
@@ -297,21 +231,6 @@ class SmartRAGOrchestrator:
                                 manager_conversation,
                                 user_id
                             )"""
-
-                        # Complete manager orchestration span
-
-                        manager_span.update(output={
-                            "final_response": "Smart RAG conversation completed",
-                            "total_delegations": delegation_count,
-                            "manager_text_length": len(accumulated_manager_text),
-                        })
-
-                        # Complete main trace
-                        main_trace.update(output={
-                            "conversation_completed": True,
-                            "total_agent_delegations": delegation_count,
-                            "session_id": session_id
-                        })
 
                         output = self.streaming_formatter.format_streaming_event(
                             agent_name="manager",
@@ -333,10 +252,5 @@ class SmartRAGOrchestrator:
 
 
         except Exception as e:
-            # Handle errors in spans
-            if manager_generation_span:
-                manager_generation_span.update(output={"error": str(e)})
-            manager_span.update(output={"error": str(e)})
-            main_trace.update(output={"error": str(e)})
             logger.error(f"Error in manager execution: {str(e)}")
             raise

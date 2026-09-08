@@ -3,13 +3,16 @@
  * Maps MIME types to renderer components
  */
 
-import type React from 'react';
-import { PdfRenderer } from './PdfRenderer';
+import React, { lazy } from 'react';
 import { TextRenderer } from './TextRenderer';
 import { ImageRenderer } from './ImageRenderer';
 import { PptxRenderer } from './PptxRenderer';
 import { SpreadsheetRenderer } from './SpreadsheetRenderer';
 import { DocxRenderer } from './DocxRenderer';
+
+// The PDF stack (@embedpdf + pdfjs) is the heaviest renderer; load it only
+// when a PDF is actually opened (Phase 7 lazy boundary).
+const PdfRenderer = lazy(() => import('./PdfRenderer').then((m) => ({ default: m.PdfRenderer })));
 
 const RENDERER_MAP: Record<string, React.ComponentType<any>> = {
   // Word

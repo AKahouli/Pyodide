@@ -11,7 +11,7 @@ import { AuthService } from '@modules/auth/auth.service';
 import { UserService } from '@modules/user/user.service';
 import { UsageService } from '@modules/usage';
 import { AuthorizationService } from '@modules/authorization/authorization.service';
-import { EmailService } from '@modules/email';
+import { EmailService, EmailTemplateRenderer } from '@modules/email';
 import { LoggerService } from '@modules/logger';
 import { WorkspaceInitializerService } from '@modules/workspace/workspace-initializer.service';
 import { UserStatus } from '@modules/user/schemas/user.schema';
@@ -139,6 +139,10 @@ describe('OAuthFlowService', () => {
       send: jest.fn().mockResolvedValue({ success: true }),
     };
 
+    const emailTemplateRenderer = {
+      render: jest.fn().mockResolvedValue({ subject: 's', html: '<p>s</p>', text: 's' }),
+    };
+
     const mockWorkspaceInitializerService = {
       initializeWorkspace: jest.fn(),
     };
@@ -155,6 +159,7 @@ describe('OAuthFlowService', () => {
         { provide: UsageService, useValue: usageService },
         { provide: AuthorizationService, useValue: authorizationService },
         { provide: EmailService, useValue: emailService },
+        { provide: EmailTemplateRenderer, useValue: emailTemplateRenderer },
         { provide: ConfigService, useValue: mockConfigService },
         { provide: LoggerService, useValue: mockLoggerService },
         { provide: WorkspaceInitializerService, useValue: mockWorkspaceInitializerService },

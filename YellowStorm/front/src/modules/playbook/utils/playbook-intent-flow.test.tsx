@@ -47,6 +47,9 @@ function buildDeps(preview: AdvisorRemediationPreviewResponse) {
     constructionAbortRef: { current: null },
     captureConstructionSnapshot: vi.fn(),
     setPreviewConstructionReady: vi.fn(),
+    setCanonicalConstructionReady: vi.fn(),
+    setCanonicalConstructionPending: vi.fn(),
+    clearCanonicalConstructionPending: vi.fn(),
     showError: vi.fn(),
     showWarning: vi.fn(),
     getCurrentDefinitionRevision: vi.fn(() => 7),
@@ -182,6 +185,7 @@ describe('usePlaybookIntentFlow advisor remediation', () => {
       captureHistory: false,
       applicationKey: 'intent-construction-construction-ready',
     }));
+    expect(deps.setCanonicalConstructionPending).toHaveBeenCalledWith('construction-ready', 7);
     expect(deps.finalizeConstruction).toHaveBeenCalledWith(7, 'construction-ready');
     expect(deps.requestPlaybookIntent).not.toHaveBeenCalled();
   });
@@ -349,6 +353,58 @@ describe('usePlaybookIntentFlow advisor remediation', () => {
     expect(deps.rollbackConstruction).not.toHaveBeenCalled();
   });
 
+  it('retains a complete blocked workflow locally after strict validation fails', async () => {
+    const diagnostic = {
+      severity: 'error' as const,
+      stage: 'invariant_validator' as const,
+      code: 'validator_rule_5',
+      message: 'Router cycle has no terminal exit route',
+      reviewTarget: { kind: 'node' as const, nodeRef: 'challenge_router', nodeLabel: 'Challenge router' },
+      resolutionCode: 'review_router' as const,
+    };
+    const blockedSuggestion = { ...blockedWorkflowSuggestion, diagnostics: [diagnostic] };
+    const deps = {
+      ...buildDeps({
+        suggestion: blockedSuggestion,
+        suggestions: [blockedSuggestion],
+        intent: 'Build workflow.',
+        expectedDefinitionRevision: 7,
+        validation: { valid: false, warnings: [], errors: [diagnostic.message] },
+      }),
+      assessPlaybookIntentDesign: vi.fn().mockResolvedValue({ status: 'ready_to_generate', detectedIntent: 'Build workflow' }),
+      startPlaybookIntentConstruction: vi.fn().mockResolvedValue({ constructionId: 'construction-blocked', playbookId: 'p1', baseDefinitionRevision: 7 }),
+      streamPlaybookIntentConstruction: vi.fn(async (_playbookId, _constructionId, options) => {
+        options.onEvent({ type: 'node_delta', constructionId: 'construction-blocked', playbookId: 'p1', sequence: 1, suggestion: blockedSuggestion } as any);
+        options.onEvent({
+          type: 'failed', constructionId: 'construction-blocked', playbookId: 'p1', sequence: 2,
+          message: diagnostic.message, recoverable: true, failureKind: 'strict_validation',
+        } as any);
+      }),
+      captureConstructionSnapshot: vi.fn(),
+      rollbackConstruction: vi.fn(),
+      finalizeConstruction: vi.fn(),
+      setConstructionStatus: vi.fn(),
+      setConstructionProgress: vi.fn(),
+      setConstructionDiagnostics: vi.fn(),
+      constructionAbortRef: { current: null },
+    };
+    const { result } = renderHook(() => usePlaybookIntentFlow(deps));
+
+    let response: Awaited<ReturnType<typeof result.current.handleSubmitIntentText>> | undefined;
+    await act(async () => {
+      response = await result.current.handleSubmitIntentText('Build workflow');
+    });
+
+    expect(response).toEqual({ status: 'failed', error: diagnostic.message });
+    expect(deps.captureConstructionSnapshot).toHaveBeenCalledTimes(1);
+    expect(deps.handleApplyIntentSuggestion).toHaveBeenCalledWith(blockedSuggestion, expect.objectContaining({ save: false }));
+    expect(deps.setCanonicalConstructionReady).toHaveBeenCalledWith('construction-blocked', 7);
+    expect(deps.clearCanonicalConstructionPending).not.toHaveBeenCalled();
+    expect(deps.finalizeConstruction).not.toHaveBeenCalled();
+    expect(deps.rollbackConstruction).not.toHaveBeenCalled();
+    expect(deps.setConstructionDiagnostics).toHaveBeenCalledWith([diagnostic]);
+  });
+
   it('does not fall back after direct construction applies but final persistence fails', async () => {
     const deps = {
       ...buildDeps({
@@ -382,7 +438,9 @@ describe('usePlaybookIntentFlow advisor remediation', () => {
     expect(response).toEqual({ status: 'failed', error: 'Save failed' });
     expect(deps.handleApplyIntentSuggestion).toHaveBeenCalledTimes(1);
     expect(deps.requestPlaybookIntent).not.toHaveBeenCalled();
-    expect(deps.rollbackConstruction).toHaveBeenCalledTimes(1);
+    expect(deps.setCanonicalConstructionReady).toHaveBeenCalledWith('construction-save-failure', 7);
+    expect(deps.clearCanonicalConstructionPending).not.toHaveBeenCalled();
+    expect(deps.rollbackConstruction).not.toHaveBeenCalled();
   });
 
   it('returns skipped without legacy fallback when construction is cancelled', async () => {

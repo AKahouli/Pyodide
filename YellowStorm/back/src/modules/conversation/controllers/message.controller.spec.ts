@@ -11,10 +11,13 @@ describe('MessageController.sendMessage sticky routing', () => {
   let messageService: {
     createUserMessage: jest.Mock;
     createAIPlaceholder: jest.Mock;
+    createUserMessageWithAiPlaceholder: jest.Mock;
     markStreamFailed: jest.Mock;
     findTurnByRequestId: jest.Mock;
     getMessageDocument: jest.Mock;
     findById: jest.Mock;
+    findToolActivityResult: jest.Mock;
+    reportFrontendLatency: jest.Mock;
   };
   let streamService: {
     isAvailable: jest.Mock;
@@ -53,18 +56,34 @@ describe('MessageController.sendMessage sticky routing', () => {
   } as any;
 
   beforeEach(() => {
+    const createUserMessageMock = jest.fn().mockResolvedValue({
+      id: new Types.ObjectId().toString(),
+      agentIds: [],
+    });
+    const createAIPlaceholderMock = jest.fn().mockResolvedValue({
+      id: new Types.ObjectId().toString(),
+    });
     messageService = {
-      createUserMessage: jest.fn().mockResolvedValue({
-        id: new Types.ObjectId().toString(),
-        agentIds: [],
-      }),
-      createAIPlaceholder: jest.fn().mockResolvedValue({
-        id: new Types.ObjectId().toString(),
-      }),
+      createUserMessage: createUserMessageMock,
+      createAIPlaceholder: createAIPlaceholderMock,
+      // Compose the merged-turn mock from the two existing mocks so call
+      // assertions on either remain meaningful.
+      createUserMessageWithAiPlaceholder: jest.fn(
+        async (data: { placeholder: Record<string, unknown> }) => {
+          const userMessage = await createUserMessageMock(data);
+          const aiMessage = await createAIPlaceholderMock({
+            ...data.placeholder,
+            questionMessageId: userMessage.id,
+          });
+          return { userMessage, aiMessage };
+        },
+      ),
       markStreamFailed: jest.fn(),
       findTurnByRequestId: jest.fn().mockResolvedValue(null),
       getMessageDocument: jest.fn(),
       findById: jest.fn(),
+      findToolActivityResult: jest.fn(),
+      reportFrontendLatency: jest.fn().mockResolvedValue({ id: 'ai-1' }),
     };
     streamService = {
       isAvailable: jest.fn().mockReturnValue(true),
@@ -110,6 +129,7 @@ describe('MessageController.sendMessage sticky routing', () => {
       responseReliabilityService as any,
       conversationArtifactService as any,
       playbookHandoffService as any,
+      { isLatencyInstrumentationEnabledCached: jest.fn().mockReturnValue(true) } as any,
     );
   });
 
@@ -124,6 +144,14 @@ describe('MessageController.sendMessage sticky routing', () => {
     expect(conversationArtifactService.resolveCitationUrl).toHaveBeenCalledWith(
       conversationId, 'message-1', { source: 'deepsearch', fileName: 'report.pdf' },
     );
+  });
+
+  it('forwards on-demand tool result lookups with route identifiers', async () => {
+    messageService.findToolActivityResult.mockResolvedValue({ resultJson: '{"ok":true}' });
+
+    await expect(controller.getToolActivityResult(conversationId, 'message-1', 'tool-1'))
+      .resolves.toEqual({ resultJson: '{"ok":true}' });
+    expect(messageService.findToolActivityResult).toHaveBeenCalledWith(conversationId, 'message-1', 'tool-1');
   });
 
   it('forces a platform copilot conversation through its pinned agent', async () => {
@@ -170,6 +198,7 @@ describe('MessageController.sendMessage sticky routing', () => {
         playbookHandoffId,
       }),
       'turn-1', undefined, 'Ada Lovelace', undefined,
+      expect.objectContaining({ schemaVersion: 1 }),
     );
   });
 
@@ -222,6 +251,8 @@ describe('MessageController.sendMessage sticky routing', () => {
       userId.toString(), conversationId, aiMessageId,
       expect.objectContaining({ content: 'Create a lead Playbook', agentIds: [stickyAgentId] }),
       'turn-recovery', undefined, 'Ada Lovelace',
+      undefined,
+      expect.objectContaining({ schemaVersion: 1 }),
     );
   });
 
@@ -251,6 +282,8 @@ describe('MessageController.sendMessage sticky routing', () => {
       userId.toString(), conversationId, aiMessageId,
       expect.objectContaining({ agentIds: [stickyAgentId] }),
       'turn-recovery', undefined, 'Ada Lovelace',
+      undefined,
+      expect.objectContaining({ schemaVersion: 1 }),
     );
   });
 
@@ -296,6 +329,7 @@ describe('MessageController.sendMessage sticky routing', () => {
       undefined,
       'Ada Lovelace',
       undefined,
+      expect.objectContaining({ schemaVersion: 1 }),
     );
   });
 
@@ -322,6 +356,7 @@ describe('MessageController.sendMessage sticky routing', () => {
       undefined,
       'Ada Lovelace',
       undefined,
+      expect.objectContaining({ schemaVersion: 1 }),
     );
   });
 
@@ -406,6 +441,7 @@ describe('MessageController.sendMessage sticky routing', () => {
       undefined,
       'Ada Lovelace',
       undefined,
+      expect.objectContaining({ schemaVersion: 1 }),
     );
   });
 
@@ -453,6 +489,7 @@ describe('MessageController.sendMessage sticky routing', () => {
       undefined,
       'Ada Lovelace',
       undefined,
+      expect.objectContaining({ schemaVersion: 1 }),
     );
   });
 
@@ -467,6 +504,29 @@ describe('MessageController.sendMessage sticky routing', () => {
       userId: userId.toString(),
       requestId: 'req-1',
     });
+  });
+
+  it('forwards the frontend paint report to the message service with route identifiers', async () => {
+    await controller.reportFrontendLatency(conversationId, 'ai-1', {
+      schemaVersion: 1,
+      requestId: 'req-1',
+      frontendFirstChunkPaintedEpochMs: 1_000_500,
+      frontendRenderMs: 80,
+      browserRenderOnlyMs: 20,
+      quality: 'ok',
+    });
+
+    expect(messageService.reportFrontendLatency).toHaveBeenCalledWith(
+      conversationId,
+      'ai-1',
+      'req-1',
+      {
+        frontendFirstChunkPaintedEpochMs: 1_000_500,
+        frontendRenderMs: 80,
+        browserRenderOnlyMs: 20,
+        quality: 'ok',
+      },
+    );
   });
 
   it('regenerates a platform copilot turn without a conversation-level playbook permission gate', async () => {
@@ -531,5 +591,80 @@ describe('MessageController.sendMessage sticky routing', () => {
       modelId: 'model-1',
       reasoningEffort: 'high',
     }));
+  });
+
+  it('regenerates with the edited prompt instead of stale replay content', async () => {
+    const questionId = new Types.ObjectId();
+    const currentAgentId = new Types.ObjectId();
+    messageService.getMessageDocument
+      .mockResolvedValueOnce({ questionMessageId: questionId })
+      .mockResolvedValueOnce({
+        content: 'edited question',
+        modelId: 'model-current',
+        reasoningEffort: 'high',
+        agentIds: [currentAgentId],
+        replayContext: {
+          content: 'original question',
+          taskSummary: 'Choose the original option',
+          modelId: 'model-old',
+          reasoningEffort: 'low',
+          agentIds: ['agent-old'],
+          attachedFileIds: ['file-1'],
+        },
+      });
+    conversationService.getConversationDocument.mockResolvedValue({ runtimePurpose: 'standard' });
+
+    await controller.regenerate(user, conversationId, 'ai-1');
+
+    expect(streamService.startStream).toHaveBeenCalledWith(
+      userId.toString(),
+      conversationId,
+      expect.any(String),
+      expect.objectContaining({
+        content: 'edited question',
+        modelId: 'model-current',
+        reasoningEffort: 'high',
+        agentIds: [currentAgentId.toString()],
+        attachedFileIds: ['file-1'],
+        taskSummary: undefined,
+      }),
+      'req-1',
+      undefined,
+      'Ada Lovelace',
+      undefined,
+      expect.objectContaining({ schemaVersion: 1 }),
+    );
+  });
+
+  it('preserves a replay task summary when the prompt was not edited', async () => {
+    const questionId = new Types.ObjectId();
+    messageService.getMessageDocument
+      .mockResolvedValueOnce({ questionMessageId: questionId })
+      .mockResolvedValueOnce({
+        content: 'choose option b',
+        replayContext: {
+          content: 'choose option b',
+          taskSummary: 'The user selected option B',
+          agentIds: [],
+        },
+      });
+    conversationService.getConversationDocument.mockResolvedValue({ runtimePurpose: 'standard' });
+
+    await controller.regenerate(user, conversationId, 'ai-1');
+
+    expect(streamService.startStream).toHaveBeenCalledWith(
+      userId.toString(),
+      conversationId,
+      expect.any(String),
+      expect.objectContaining({
+        content: 'choose option b',
+        taskSummary: 'The user selected option B',
+      }),
+      'req-1',
+      undefined,
+      'Ada Lovelace',
+      undefined,
+      expect.objectContaining({ schemaVersion: 1 }),
+    );
   });
 });

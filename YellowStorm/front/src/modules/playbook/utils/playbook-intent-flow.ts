@@ -35,6 +35,9 @@ interface PlaybookIntentFlowDeps {
   setIntentDesign: (design: PlaybookIntentDesignResponse | null) => void;
   startAdvisorRemediationConstruction?: (playbookId: string, data: { mode: AdvisorIntentApplyRequest['mode']; executionId: string; items: AdvisorIntentApplyRequest['items']; selectedTaskId?: string; expectedDefinitionRevision: number }) => Promise<PlaybookIntentConstructionStartResponse>;
   setPreviewConstructionReady?: (operationId: string, baseDefinitionRevision: number) => void;
+  setCanonicalConstructionReady?: (operationId: string, baseDefinitionRevision: number) => void;
+  setCanonicalConstructionPending?: (operationId: string, baseDefinitionRevision: number) => void;
+  clearCanonicalConstructionPending?: (operationId: string) => void;
   showError: (message: string) => void;
   showWarning: (message: string) => void;
   getCurrentDefinitionRevision: () => number;
@@ -109,6 +112,9 @@ export function usePlaybookIntentFlow(deps: PlaybookIntentFlowDeps): PlaybookInt
     constructionAbortRef,
     realtimeConstructionEnabled = true,
     setPreviewConstructionReady,
+    setCanonicalConstructionReady,
+    setCanonicalConstructionPending,
+    clearCanonicalConstructionPending,
   } = deps;
   const { t } = useModuleTranslation('playbook');
 
@@ -157,7 +163,14 @@ export function usePlaybookIntentFlow(deps: PlaybookIntentFlowDeps): PlaybookInt
       ...(images?.length ? { images } : {}),
     }, { signal: abortController.signal });
     let baseDefinitionRevision = construction.baseDefinitionRevision ?? expectedDefinitionRevision;
+    const canonicalOperationPending = construction.target !== 'advisor_preview';
+    const clearPendingCanonicalOperation = () => {
+      if (canonicalOperationPending) clearCanonicalConstructionPending?.(construction.constructionId);
+    };
     setConstructionId?.(construction.constructionId);
+    if (canonicalOperationPending) {
+      setCanonicalConstructionPending?.(construction.constructionId, baseDefinitionRevision);
+    }
     setConstructionStatus?.('streaming');
 
     let appliedDelta = false;
@@ -167,6 +180,7 @@ export function usePlaybookIntentFlow(deps: PlaybookIntentFlowDeps): PlaybookInt
     const bufferedSuggestionOrder: string[] = [];
     const bufferedSuggestions = new Map<string, { suggestion: PlaybookIntentSuggestion; sequence: number }>();
     let constructionDiagnostics: PlaybookIntentDiagnostic[] = [];
+    let strictValidationFailureMessage = '';
     try {
       await streamPlaybookIntentConstruction(id, construction.constructionId, {
         signal: abortController.signal,
@@ -200,27 +214,32 @@ export function usePlaybookIntentFlow(deps: PlaybookIntentFlowDeps): PlaybookInt
           if (event.type === 'cancelled') {
             throw Object.assign(new Error(event.reason || t('intentBar.error')), { constructionCancelled: true });
           }
-          if (event.type === 'failed') throw new Error(event.message);
+          if (event.type === 'failed') {
+            if (event.failureKind === 'strict_validation') {
+              strictValidationFailureMessage = event.message;
+            } else {
+              throw new Error(event.message);
+            }
+          }
         },
       });
     } catch (error) {
       if ((error as { constructionCancelled?: boolean }).constructionCancelled) {
         if (appliedDelta) rollbackConstruction?.();
+        clearPendingCanonicalOperation();
         setConstructionStatus?.('cancelled');
         setConstructionProgress?.('');
         return 'cancelled' as const;
       }
+      clearPendingCanonicalOperation();
       throw error;
     }
 
     if (abortController.signal.aborted) {
       if (appliedDelta) rollbackConstruction?.();
+      clearPendingCanonicalOperation();
       setConstructionStatus?.('cancelled');
       return 'cancelled' as const;
-    }
-    if (!completed) {
-      if (appliedDelta) rollbackConstruction?.();
-      throw Object.assign(new Error(t('intentBar.error')), appliedDelta ? { appliedDelta: true } : {});
     }
     const finalSuggestions = bufferedSuggestionOrder
       .map((key) => bufferedSuggestions.get(key))
@@ -228,12 +247,10 @@ export function usePlaybookIntentFlow(deps: PlaybookIntentFlowDeps): PlaybookInt
       .sort((left, right) => left.sequence - right.sequence)
       .map((entry) => entry.suggestion);
 
-    if (lastSequence > 0 && finalSuggestions.length > 0) {
+    const applySuggestions = (suggestions: PlaybookIntentSuggestion[]) => {
       captureConstructionSnapshot?.();
-      let applicationStarted = false;
       try {
-        applicationStarted = true;
-        finalSuggestions.forEach((suggestion) => {
+        suggestions.forEach((suggestion) => {
           handleApplyIntentSuggestion(suggestion, {
             replaceAll: false,
             expectedDefinitionRevision: baseDefinitionRevision,
@@ -248,20 +265,46 @@ export function usePlaybookIntentFlow(deps: PlaybookIntentFlowDeps): PlaybookInt
           });
         });
         appliedDelta = true;
-        if (construction.target === 'advisor_preview') {
-          setPreviewConstructionReady?.(construction.constructionId, baseDefinitionRevision);
-        } else {
-          await finalizeConstruction?.(baseDefinitionRevision, construction.constructionId);
-        }
       } catch (error) {
-        if (applicationStarted) rollbackConstruction?.();
+        rollbackConstruction?.();
+        clearPendingCanonicalOperation();
         throw Object.assign(error instanceof Error ? error : new Error(t('intentBar.error')), { appliedDelta: true });
       }
+    };
+
+    if (strictValidationFailureMessage) {
+      const blockedSuggestions = finalSuggestions.filter((suggestion) => suggestion.kind === 'workflow_plan' && suggestion.validationStatus === 'blocked');
+      if (construction.target === 'advisor_preview' || blockedSuggestions.length === 0) {
+        clearPendingCanonicalOperation();
+        throw new Error(strictValidationFailureMessage);
+      }
+      applySuggestions(blockedSuggestions);
+      setCanonicalConstructionReady?.(construction.constructionId, baseDefinitionRevision);
+      setConstructionStatus?.('failed');
+      setConstructionProgress?.('');
+      throw Object.assign(new Error(strictValidationFailureMessage), { retainedBlockedDraft: true });
     }
+
+    if (!completed) {
+      clearPendingCanonicalOperation();
+      throw new Error(t('intentBar.error'));
+    }
+
+    if (lastSequence > 0 && finalSuggestions.length > 0) {
+      applySuggestions(finalSuggestions);
+
+      if (construction.target === 'advisor_preview') {
+        setPreviewConstructionReady?.(construction.constructionId, baseDefinitionRevision);
+      } else {
+        setCanonicalConstructionReady?.(construction.constructionId, baseDefinitionRevision);
+        await finalizeConstruction?.(baseDefinitionRevision, construction.constructionId);
+      }
+    }
+    if (!appliedDelta) clearPendingCanonicalOperation();
     setConstructionStatus?.('completed');
     setConstructionProgress?.(t('intentBar.construction.completed'));
     return appliedDelta ? 'applied' as const : 'empty' as const;
-  }, [captureConstructionSnapshot, constructionAbortRef, finalizeConstruction, getCurrentDefinitionRevision, handleApplyIntentSuggestion, id, isDirty, playbook, rollbackConstruction, saveNow, setConstructionDiagnostics, setConstructionId, setConstructionProgress, setConstructionStatus, setPreviewConstructionReady, startPlaybookIntentConstruction, streamPlaybookIntentConstruction, t]);
+  }, [captureConstructionSnapshot, clearCanonicalConstructionPending, constructionAbortRef, finalizeConstruction, getCurrentDefinitionRevision, handleApplyIntentSuggestion, id, isDirty, playbook, rollbackConstruction, saveNow, setCanonicalConstructionPending, setCanonicalConstructionReady, setConstructionDiagnostics, setConstructionId, setConstructionProgress, setConstructionStatus, setPreviewConstructionReady, startPlaybookIntentConstruction, streamPlaybookIntentConstruction, t]);
 
   const consumePlaybookConstruction = useCallback(async (construction: PlaybookIntentConstructionStartResponse): Promise<IntentSubmitResult> => {
     setIntentLoading(true);

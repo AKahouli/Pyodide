@@ -3,6 +3,7 @@ import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
 import { AgentService } from '../agent/agent.service';
 import type {
+  ComposerSuggestionSettings,
   ConversationSettings,
   ConversationSettingsAgentOption,
   ConversationSettingsValue,
@@ -46,6 +47,7 @@ export class ConversationSettingsService implements OnModuleInit {
     const stored = setting?.value as Partial<ConversationSettingsValue> | undefined;
     const settings: ConversationSettings = {
       redactSensitiveText: stored?.redactSensitiveText !== false,
+      latencyInstrumentationEnabled: stored?.latencyInstrumentationEnabled !== false,
       composerSuggestions: {
         ...DEFAULT_CONVERSATION_SETTINGS.composerSuggestions,
         ...(stored?.composerSuggestions ?? {}),
@@ -79,12 +81,48 @@ export class ConversationSettingsService implements OnModuleInit {
     return true;
   }
 
-  async updateSettings(value: Omit<ConversationSettingsValue, 'redactSensitiveText'> & { redactSensitiveText?: boolean }): Promise<ConversationSettings> {
+  /** Whether classic Conversation turns carry the end-to-end latency trace context. */
+  async isLatencyInstrumentationEnabled(): Promise<boolean> {
+    return (await this.getSettings()).latencyInstrumentationEnabled !== false;
+  }
+
+  /**
+   * Synchronous cached read for request-entry paths that must not block on
+   * settings DB I/O (latency instrumentation sampling). Serves the in-memory
+   * value, triggers an async refresh when stale, and falls back to the default
+   * (enabled) once the cache is too stale to trust.
+   */
+  isLatencyInstrumentationEnabledCached(): boolean {
+    if (this.cache) {
+      const now = Date.now();
+      if (this.cache.expiresAt <= now) {
+        const version = this.cacheVersion;
+        void this.getSettings().catch(() => {
+          if (version === this.cacheVersion) this.cache = null;
+        });
+      }
+      return this.cache.settings.latencyInstrumentationEnabled !== false
+        || now > this.cache.expiresAt + MAX_STALE_MS;
+    }
+    void this.getSettings().catch(() => undefined);
+    return true;
+  }
+
+  async updateSettings(
+    value: { composerSuggestions: ComposerSuggestionSettings } & {
+      redactSensitiveText?: boolean;
+      latencyInstrumentationEnabled?: boolean;
+    },
+  ): Promise<ConversationSettings> {
     if (value.composerSuggestions.agentId) {
       await this.agents.assertActiveDefaultAgent(value.composerSuggestions.agentId);
     }
+    // Cache-first so an admin update never blocks on a stalled settings refresh.
+    const current = this.cache?.settings ?? await this.getSettings();
     const persisted: ConversationSettingsValue = {
-      redactSensitiveText: value.redactSensitiveText ?? (await this.getSettings()).redactSensitiveText,
+      redactSensitiveText: value.redactSensitiveText ?? current.redactSensitiveText,
+      latencyInstrumentationEnabled:
+        value.latencyInstrumentationEnabled ?? current.latencyInstrumentationEnabled,
       composerSuggestions: { ...value.composerSuggestions },
     };
     const updated = await this.settings.findOneAndUpdate(

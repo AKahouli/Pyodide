@@ -24,6 +24,10 @@ import {
   AppSourceRevision,
   AppSourceRevisionSchema,
 } from './schemas/app-source-revision.schema';
+import {
+  AppFinalizedRevision,
+  AppFinalizedRevisionSchema,
+} from './schemas/app-finalized-revision.schema';
 import { RuntimeBindingService } from './services/runtime-binding.service';
 import { RuntimeBrokerService } from './services/runtime-broker.service';
 import { RuntimeConnectionRegistry } from './services/runtime-connection.registry';
@@ -34,6 +38,7 @@ import { RuntimeTicketService } from './services/runtime-ticket.service';
 import { RuntimeTokenService } from './services/runtime-token.service';
 import { RuntimeToolDispatcherService } from './services/runtime-tool-dispatcher.service';
 import { AppRuntimeConversationNotifierService } from './services/app-runtime-conversation-notifier.service';
+import { RuntimeFinalizedRevisionService } from './services/runtime-finalized-revision.service';
 
 @Module({
   imports: [
@@ -46,6 +51,7 @@ import { AppRuntimeConversationNotifierService } from './services/app-runtime-co
       { name: AppRuntimeTicket.name, schema: AppRuntimeTicketSchema },
       { name: AppRuntimeToolCall.name, schema: AppRuntimeToolCallSchema },
       { name: AppSourceRevision.name, schema: AppSourceRevisionSchema },
+      { name: AppFinalizedRevision.name, schema: AppFinalizedRevisionSchema },
     ]),
   ],
   controllers: [AppRuntimeInternalController, AppRuntimeMcpController],
@@ -61,12 +67,14 @@ import { AppRuntimeConversationNotifierService } from './services/app-runtime-co
     RuntimeMcpDispatcherService,
     AppRuntimeGateway,
     AppRuntimeConversationNotifierService,
+    RuntimeFinalizedRevisionService,
   ],
   exports: [
     RuntimeTokenService,
     RuntimeBindingService,
     RuntimeTicketService,
     RuntimeRevisionService,
+    RuntimeFinalizedRevisionService,
     RuntimeMcpAuthService,
     RuntimeMcpDispatcherService,
   ],

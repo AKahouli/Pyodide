@@ -131,10 +131,14 @@ export class WorkyWhatsAppConnectionService {
 
   /**
    * Forwards an AI manager message to the Worky bridge WhatsApp group, if one
-   * is connected for the given stream. Non-throwing — callers must handle errors.
+   * is configured for the given stream. Transient connection failures throw so
+   * the Worky delivery outbox can retry them.
    */
-  async forwardManagerMessage(streamId: string, text: string): Promise<void> {
-    await this.sessionManager.sendToWorkyGroup(streamId, text);
+  async forwardManagerMessage(
+    streamId: string,
+    text: string,
+  ): Promise<'sent' | 'not_configured'> {
+    return this.sessionManager.sendToWorkyGroup(streamId, text);
   }
 
   async deleteIntegration(userId: string, streamId: string): Promise<void> {

@@ -175,6 +175,7 @@ describe('AppSidebar', () => {
       </MemoryRouter>,
     );
 
+    await userEvent.click(screen.getByRole('button', { name: 'groups.ask.label' }));
     await waitFor(() => expect(screen.queryByRole('button', { name: 'actions.newChat.label' })).not.toBeInTheDocument());
     expect(screen.queryByText('workspace-btn')).not.toBeInTheDocument();
     expect(screen.queryByText('agent-btn')).not.toBeInTheDocument();
@@ -201,6 +202,7 @@ describe('AppSidebar', () => {
     expect(screen.getByText('groups.automate.label')).toBeInTheDocument();
     expect(screen.getByText('groups.govern.label')).toBeInTheDocument();
 
+    await userEvent.click(screen.getByRole('button', { name: 'groups.ask.label' }));
     await userEvent.click(screen.getByRole('button', { name: 'actions.newChat.label' }));
     expect(navigateMock).toHaveBeenCalledWith('/');
 
@@ -250,7 +252,7 @@ describe('AppSidebar', () => {
       </MemoryRouter>,
     );
 
-    await waitFor(() => expect(screen.getByRole('button', { name: 'groups.ask.label' }).closest('[data-open]')).toHaveAttribute('data-open', 'true'));
+    await waitFor(() => expect(screen.getByRole('button', { name: 'groups.ask.label' }).closest('[data-open]')).toHaveAttribute('data-open', 'false'));
     await userEvent.click(screen.getByRole('button', { name: 'groups.knowledge.label' }));
 
     expect(screen.getByRole('button', { name: 'groups.ask.label' }).closest('[data-open]')).toHaveAttribute('data-open', 'false');

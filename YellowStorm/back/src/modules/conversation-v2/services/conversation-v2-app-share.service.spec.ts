@@ -223,6 +223,10 @@ describe('ConversationV2AppShareService', () => {
         source: 'shared',
         shareId: shareId.toString(),
         canOpenConversation: true,
+        lastDeployedRevisionId: null,
+        latestFinalizedRevisionId: null,
+        latestFinalizedAt: null,
+        finalizedVersionCount: 0,
       },
     ]);
   });

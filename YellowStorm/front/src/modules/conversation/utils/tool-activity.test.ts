@@ -82,6 +82,17 @@ describe('formatSanitizedToolText', () => {
     expect(output).not.toContain('yield record');
     expect(output).not.toContain('exit 1');
   });
+
+  it('bounds formatted and oversized serialized payloads before rendering', () => {
+    const formatted = formatSanitizedToolText(JSON.stringify({
+      rows: Array.from({ length: 100 }, (_, index) => ({ index, values: Array.from({ length: 30 }, (_, value) => value) })),
+    }));
+    const oversized = formatSanitizedToolText(JSON.stringify({ result: 'x'.repeat(70_000) }));
+
+    expect(formatted).toContain('[truncated]');
+    expect(formatted!.length).toBeLessThanOrEqual(12_000);
+    expect(oversized).toBe('[truncated]');
+  });
 });
 
 describe('code interpreter activity details', () => {
@@ -106,6 +117,21 @@ describe('code interpreter activity details', () => {
       primaryInput: 'print("hello")',
       paramsJson: JSON.stringify({ code: 'print("other")' }),
     })).toBe('print("hello")');
+  });
+
+  it('bounds oversized serialized and object requests before full rendering', () => {
+    const serialized = resolveCodeInterpreterRequest({
+      toolName: 'python_interpreter',
+      paramsJson: JSON.stringify({ code: 'x'.repeat(70_000) }),
+    });
+    const object = resolveCodeInterpreterRequest({
+      toolName: 'python_interpreter',
+      params: { rows: Array.from({ length: 10_000 }, (_, index) => ({ index })) },
+    });
+
+    expect(serialized).toBe('[truncated]');
+    expect(object!.length).toBeLessThanOrEqual(12_000);
+    expect(object).toContain('[truncated]');
   });
 
   it('redacts arbitrary paths and environment credentials in requests and output', () => {

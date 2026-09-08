@@ -175,6 +175,7 @@ async function createE2EService(
   };
   const validatorService = {
     validate: jest.fn(),
+    collectValidationErrors: jest.fn().mockReturnValue([]),
   };
   const streamEvents = {
     emitExecutionComplete: jest.fn(),

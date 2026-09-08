@@ -49,6 +49,10 @@ from src.flow_engine.runtime.checkpoint_fork import (
 )
 from src.flow_engine.nodes.human_approval import normalize_approval_resume
 from src.flow_engine.state import ExecutionState
+from src.flow_engine.tools.sandbox_mount_guard import (
+    DEFAULT_SANDBOX_CALLS_PER_STEP,
+    MAX_SANDBOX_CALLS_PER_STEP,
+)
 from src.flow_engine.workers.pool import ExecutionLimiter
 from src.temporary_child_summary import pop_temporary_child_summary
 
@@ -61,6 +65,14 @@ compiled_graph_cache = CompiledGraphCache(
 execution_limiter = ExecutionLimiter(
     app_settings.PLAYBOOK_PYTHON_WORKER_POOL_SIZE * app_settings.PLAYBOOK_PYTHON_WORKER_MAX_INFLIGHT,
 )
+
+def _sandbox_call_limit(settings: Any) -> int:
+    if settings is None or not settings.HasField("runtime_settings"):
+        return DEFAULT_SANDBOX_CALLS_PER_STEP
+    value = int(getattr(settings.runtime_settings, "max_sandbox_calls_per_step", 0) or 0)
+    if value <= 0:
+        return DEFAULT_SANDBOX_CALLS_PER_STEP
+    return min(value, MAX_SANDBOX_CALLS_PER_STEP)
 
 
 async def _apply_runtime_settings(settings: Any) -> None:
@@ -297,6 +309,7 @@ class PlaybookFlowRuntimeServicer:
                     request.settings.playbook_planner,
                     preserving_proto_field_name=True,
                 ) if request.settings.HasField("playbook_planner") else {},
+                "max_sandbox_calls_per_step": _sandbox_call_limit(request.settings),
             }
 
             config = {"configurable": {"thread_id": execution_id}}
@@ -551,7 +564,11 @@ class PlaybookFlowRuntimeServicer:
                     target_node_id=target_node_id,
                     target_iteration=target_iteration,
                 ),
-                {"execution_id": execution_id, "hitl_memory": hitl_memory or []},
+                {
+                    "execution_id": execution_id,
+                    "hitl_memory": hitl_memory or [],
+                    "max_sandbox_calls_per_step": _sandbox_call_limit(request.settings),
+                },
             )
             replay_config = fork_result.config
 

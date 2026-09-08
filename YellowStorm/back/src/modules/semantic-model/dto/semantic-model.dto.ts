@@ -14,6 +14,7 @@ import {
   MaxLength,
   Min,
   MinLength,
+  ValidateNested,
 } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 
@@ -107,7 +108,7 @@ export class GraphOperationsDto {
   @Type(() => Object)
   @IsArray()
   @ArrayMinSize(1)
-  @ArrayMaxSize(100)
+  @ArrayMaxSize(2000)
   @IsObject({ each: true })
   operations!: Record<string, unknown>[];
 }
@@ -239,4 +240,69 @@ export class PublishSemanticModelDto extends ExpectedModelRevisionDto {
   @IsInt()
   @Min(0)
   expectedGraphRevision!: number;
+}
+
+export class GenerateSemanticModelOntologyDto {
+  @ApiProperty({ type: [String], maxItems: 50, required: false, default: [] })
+  @IsArray()
+  @ArrayMinSize(0)
+  @ArrayMaxSize(50)
+  @IsString({ each: true })
+  @MinLength(1, { each: true })
+  @MaxLength(4000, { each: true })
+  businessRequirements: string[] = [];
+}
+
+export class SemanticModelManualInstancesDto {
+  @ApiProperty({ format: 'uuid' })
+  @IsUUID()
+  nodeTypeId!: string;
+
+  @ApiProperty({ type: [String], maxItems: 100 })
+  @IsArray()
+  @ArrayMinSize(1)
+  @ArrayMaxSize(100)
+  @IsString({ each: true })
+  @MinLength(1, { each: true })
+  @MaxLength(200, { each: true })
+  labels!: string[];
+}
+
+export class StartSemanticModelBuildDto {
+  @ApiProperty({ type: [String], maxItems: 50, required: false, default: [] })
+  @IsOptional()
+  @IsArray()
+  @ArrayMinSize(0)
+  @ArrayMaxSize(50)
+  @IsString({ each: true })
+  @MinLength(1, { each: true })
+  @MaxLength(4000, { each: true })
+  businessRequirements: string[] = [];
+
+  @ApiPropertyOptional({ enum: ['replace', 'incremental'], default: 'replace' })
+  @IsOptional()
+  @IsIn(['replace', 'incremental'])
+  applyMode: 'replace' | 'incremental' = 'replace';
+
+  @ApiPropertyOptional({ type: [SemanticModelManualInstancesDto], default: [] })
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(100)
+  @ValidateNested({ each: true })
+  @Type(() => SemanticModelManualInstancesDto)
+  manualInstances: SemanticModelManualInstancesDto[] = [];
+}
+
+export class UpdateBusinessRequirementsDto {
+  @ApiProperty()
+  @Type(() => Number)
+  @IsInt()
+  @Min(0)
+  expectedGraphRevision!: number;
+
+  @ApiProperty({ type: [Object] })
+  @IsArray()
+  @ArrayMaxSize(100)
+  @IsObject({ each: true })
+  businessRequirements!: Record<string, unknown>[];
 }

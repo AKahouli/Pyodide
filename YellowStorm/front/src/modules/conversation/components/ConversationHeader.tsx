@@ -2,13 +2,18 @@ import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
-import { ArrowLeft, Library, Pencil, Share, ShieldCheck, Trash2, Users } from 'lucide-react';
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
+import { ArrowLeft, FileDown, FileText, Loader2, Pencil, Share, ShieldCheck, Trash2, Users } from 'lucide-react';
 import { useConversationStore, useCurrentConversation } from '../store';
 import { useTypewriter } from '../hooks/useTypewriter';
+import { fetchMessages } from '../api';
+import { buildExportBlocks, buildExportFilename, fetchAllMessagesForExport, type ExportBlock } from '../utils/document-export';
+import { downloadBlob, exportBlocksToDocx } from '../utils/docx-export';
+import { showError, showInfo, showSuccess } from '@/lib/notifications';
 import { RenameDialog } from './RenameDialog';
 import { DeleteConversationDialog } from './DeleteConversationDialog';
 import { ShareDialog } from './ShareDialog';
-import { WorkspaceManagerSheet } from './WorkspaceManagerSheet';
+import { ConversationPdfExport } from './ConversationPdfExport';
 import { CreateGroupConversationDialog } from './CreateGroupConversationDialog';
 import { useModuleTranslation } from '@/modules/localization';
 
@@ -23,9 +28,11 @@ export function ConversationHeader() {
   const [renameOpen, setRenameOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [shareOpen, setShareOpen] = useState(false);
-  const [workspaceSheetOpen, setWorkspaceSheetOpen] = useState(false);
   const [groupDialogOpen, setGroupDialogOpen] = useState(false);
-  const { t } = useModuleTranslation('conversation');
+  const [isExportingDocx, setIsExportingDocx] = useState(false);
+  const [isExportingPdf, setIsExportingPdf] = useState(false);
+  const [pdfBlocks, setPdfBlocks] = useState<ExportBlock[] | null>(null);
+  const { t, language } = useModuleTranslation('conversation');
 
   // Typewriter effect for newly generated names
   const isTypewriting = typewriterConversationId === conversation?.id;
@@ -38,6 +45,53 @@ export function ConversationHeader() {
 
   const handleShare = () => {
     setShareOpen(true);
+  };
+
+  const exportTitle = conversation?.title?.trim() || t('exportPdf.untitledConversation');
+
+  const buildExportBlocksForConversation = async (): Promise<ExportBlock[]> => {
+    const messages = await fetchAllMessagesForExport(conversation.id, (id, params) => fetchMessages(id, params));
+    const formatTimestamp = (iso: string) => {
+      const date = new Date(iso);
+      return Number.isNaN(date.getTime()) ? iso : new Intl.DateTimeFormat(language, { dateStyle: 'medium', timeStyle: 'medium' }).format(date);
+    };
+    return buildExportBlocks(messages, { user: t('export.userLabel'), assistant: t('export.assistantLabel') }, formatTimestamp);
+  };
+
+  const handleExportDocx = async () => {
+    if (isExportingDocx) return;
+    setIsExportingDocx(true);
+    try {
+      const blocks = await buildExportBlocksForConversation();
+      if (!blocks.length) {
+        showInfo(t('export.empty'));
+        return;
+      }
+      const blob = await exportBlocksToDocx(blocks, exportTitle);
+      downloadBlob(blob, buildExportFilename(exportTitle, 'docx'));
+      showSuccess(t('toasts.export.docxSuccess'));
+    } catch {
+      showError(t('toasts.export.failed'));
+    } finally {
+      setIsExportingDocx(false);
+    }
+  };
+
+  const handleExportPdf = async () => {
+    if (isExportingPdf || pdfBlocks) return;
+    setIsExportingPdf(true);
+    try {
+      const blocks = await buildExportBlocksForConversation();
+      if (!blocks.length) {
+        showInfo(t('export.empty'));
+        return;
+      }
+      setPdfBlocks(blocks);
+    } catch {
+      showError(t('toasts.message.exportError'));
+    } finally {
+      setIsExportingPdf(false);
+    }
   };
 
   const handleRename = async (newTitle: string) => {
@@ -56,10 +110,28 @@ export function ConversationHeader() {
           <ArrowLeft className='h-4 w-4' />
         </Button>
         <div className='flex min-w-0 flex-1 items-center gap-1'>
-          <h1 className='flex min-w-0 items-center gap-2 font-medium text-lg'>
-            {isGoverned && <ShieldCheck className='size-4 shrink-0 text-primary' aria-label={t('governedConversation.title')} />}
+          <h1 className='flex min-w-0 items-center font-medium text-lg'>
             <span className='truncate'>{displayTitle}</span>
           </h1>
+          {isGoverned && conversation.governanceContext && (
+            <TooltipProvider>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <span tabIndex={0} data-governed-badge aria-label={t('governedConversation.description')} className='inline-flex shrink-0 items-center gap-1 rounded-full border border-primary/30 bg-primary/10 px-2 py-0.5 text-xs font-medium text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring'>
+                    <ShieldCheck className='size-3.5' aria-hidden='true' />
+                    {t('governedConversation.badge')}
+                  </span>
+                </TooltipTrigger>
+                <TooltipContent className='max-w-72'>
+                  <div className='grid gap-0.5'>
+                    <p className='font-semibold'>{t('governedConversation.title')}</p>
+                    <p>{t('governedConversation.version', { number: conversation.governanceContext.revisionNumber })}</p>
+                    <p className='text-muted-foreground'>{t('governedConversation.description')}</p>
+                  </div>
+                </TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
+          )}
           <TooltipProvider>
             <Tooltip>
               <TooltipTrigger asChild>
@@ -90,18 +162,6 @@ export function ConversationHeader() {
           {!isGoverned && <TooltipProvider>
             <Tooltip>
               <TooltipTrigger asChild>
-                <Button variant='ghost' size='icon' onClick={() => setWorkspaceSheetOpen(true)} className='size-11 shrink-0 md:size-9' aria-label={t('header.tooltips.workspaces')}>
-                  <Library className='h-4 w-4' />
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent>
-                <p>{t('header.tooltips.workspaces')}</p>
-              </TooltipContent>
-            </Tooltip>
-          </TooltipProvider>}
-          {!isGoverned && <TooltipProvider>
-            <Tooltip>
-              <TooltipTrigger asChild>
                 <Button variant='ghost' size='icon' onClick={handleShare} className='size-11 shrink-0 md:size-9' aria-label={t('header.tooltips.share')}>
                   <Share className='h-4 w-4' />
                 </Button>
@@ -111,6 +171,34 @@ export function ConversationHeader() {
               </TooltipContent>
             </Tooltip>
           </TooltipProvider>}
+          {!isGoverned && (
+            <TooltipProvider>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <DropdownMenu>
+                    <DropdownMenuTrigger asChild>
+                      <Button variant='ghost' size='icon' className='size-11 shrink-0 md:size-9' aria-label={t('header.actions.export')} disabled={isExportingDocx}>
+                        {isExportingDocx ? <Loader2 className='h-4 w-4 animate-spin' /> : <FileDown className='h-4 w-4' />}
+                      </Button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align='end'>
+                      <DropdownMenuItem onClick={() => void handleExportDocx()}>
+                        <FileText className='h-3.5 w-3.5 mr-2' />
+                        {t('messageActions.exportDocx')}
+                      </DropdownMenuItem>
+                      <DropdownMenuItem onClick={() => void handleExportPdf()}>
+                        <FileDown className='h-3.5 w-3.5 mr-2' />
+                        {t('messageActions.exportPdf')}
+                      </DropdownMenuItem>
+                    </DropdownMenuContent>
+                  </DropdownMenu>
+                </TooltipTrigger>
+                <TooltipContent>
+                  <p>{t('header.actions.export')}</p>
+                </TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
+          )}
           <TooltipProvider>
             <Tooltip>
               <TooltipTrigger asChild>
@@ -130,7 +218,16 @@ export function ConversationHeader() {
 
       {!isGoverned && <ShareDialog open={shareOpen} onOpenChange={setShareOpen} conversationId={conversation.id} conversationTitle={conversation.title} />}
 
-      {!isGoverned && <WorkspaceManagerSheet open={workspaceSheetOpen} onOpenChange={setWorkspaceSheetOpen} conversationId={conversation.id} workspaceIds={conversation.workspaces || []} />}
+      {pdfBlocks && (
+        <ConversationPdfExport
+          blocks={pdfBlocks}
+          title={exportTitle}
+          onFinish={(ok) => {
+            setPdfBlocks(null);
+            if (!ok) showError(t('toasts.message.exportError'));
+          }}
+        />
+      )}
 
       <CreateGroupConversationDialog open={groupDialogOpen} onOpenChange={setGroupDialogOpen} mode='manage' />
     </>

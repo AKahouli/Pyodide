@@ -83,6 +83,7 @@ export function createExecutionServiceForTests(overrides?: {
   const flowService = {
     findOneForExecutionStart: jest.fn().mockResolvedValue({ nodes: [], controlEdges: [], dataBindings: [], settings: {} }),
     findOne: jest.fn().mockResolvedValue({ nodes: [], controlEdges: [], dataBindings: [], settings: {} }),
+    persistSanitizedExecutionGraph: jest.fn().mockResolvedValue(1),
     ...overrides?.flowService,
   };
   const builderService = {
@@ -96,6 +97,7 @@ export function createExecutionServiceForTests(overrides?: {
   };
   const validatorService = {
     validate: jest.fn(),
+    collectValidationErrors: jest.fn().mockReturnValue([]),
   };
   const streamEvents = {
     emitExecutionComplete: jest.fn(),

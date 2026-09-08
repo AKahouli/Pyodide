@@ -46,14 +46,60 @@ describe('public component sanitizer', () => {
     expect(component.data.resultJson).not.toContain('owner/system_run');
   });
 
-  it('removes attachment sentinels and redacts workspace paths from answer text', () => {
+  it('removes attachment sentinels from answer text without redacting or bounding it', () => {
+    const longAnalysis = 'Analyse complète. '.repeat(1400);
     const component = sanitizePublicComponent({
       id: 'text-1',
       type: 'text',
-      data: { content: 'Before {"content":"YELLOWSTORM_ATTACHMENT_SENTINEL_123\\n"} /workspace/sources/id/report.pdf after' },
+      data: {
+        content: `Before {"content":"YELLOWSTORM_ATTACHMENT_SENTINEL_123\\n"} /workspace/sources/id/report.pdf after ${longAnalysis}`,
+      },
     });
 
-    expect(component.data.content).toBe('Before  [REDACTED] after');
+    expect(component.data.content).not.toContain('YELLOWSTORM_ATTACHMENT_SENTINEL');
+    expect(component.data.content).toContain('/workspace/sources/id/report.pdf');
+    expect(component.data.content).toBe(
+      `Before  /workspace/sources/id/report.pdf after ${longAnalysis}`,
+    );
+    expect((component.data.content as string).length).toBeGreaterThan(20_000);
+  });
+
+  it('serves web preview html verbatim without redaction or bounding', () => {
+    const longHtml = `<html><body><p>${'/workspace/sources/id/report.pdf '.repeat(700)}</p></body></html>`;
+    const component = sanitizePublicComponent({
+      id: 'web-1',
+      type: 'webPreview',
+      data: { content: longHtml },
+    });
+
+    expect(component.data.content).toBe(longHtml);
+    expect((component.data.content as string).length).toBeGreaterThan(20_000);
+    expect(component.data.content).not.toContain('[truncated]');
+    expect(component.data.content).not.toContain('[REDACTED]');
+  });
+
+  it('routes web preview components with non-string content through full sanitization', () => {
+    const component = sanitizePublicComponent({
+      id: 'web-nonstring',
+      type: 'webPreview',
+      data: { content: { password: 'private' } },
+    });
+
+    expect(component.data).toEqual({ content: { password: '[REDACTED]' } });
+  });
+
+  it('strips sentinels from web preview content but redacts its non-content fields', () => {
+    const component = sanitizePublicComponent({
+      id: 'web-mixed',
+      type: 'webPreview',
+      data: {
+        content: 'A YELLOWSTORM_ATTACHMENT_SENTINEL_7 B',
+        paramsJson: '{"password":"private"}',
+      },
+    });
+
+    expect(component.data.content).toBe('A  B');
+    expect(component.data.paramsJson).toBe('{"password":"[REDACTED]"}');
   });
 
   it('does not classify numeric slash dates as storage paths', () => {
@@ -66,14 +112,49 @@ describe('public component sanitizer', () => {
     expect(component.data.content).toBe('Cover pool au 30/06/2025 — 19 931,3 M€');
   });
 
-  it('keeps malformed dates and numeric relative paths protected', () => {
+  it('passes answer text through unchanged regardless of path-like fragments', () => {
     const component = sanitizePublicComponent({
       id: 'text-numeric-path',
       type: 'text',
       data: { content: 'Invalid 31/02/2025 paths 123/456/789, 1/2/2025, 0001/02/2025, 2025/2/1, 2025/02/0001' },
     });
 
-    expect(component.data.content).toBe('Invalid [REDACTED] paths [REDACTED] [REDACTED] [REDACTED] [REDACTED] [REDACTED]');
+    expect(component.data.content).toBe(
+      'Invalid 31/02/2025 paths 123/456/789, 1/2/2025, 0001/02/2025, 2025/2/1, 2025/02/0001',
+    );
+  });
+
+  it('still bounds oversized diagnostic payload strings', () => {
+    const component = sanitizePublicComponent({
+      id: 'tool-big',
+      type: 'toolActivity',
+      data: { paramsJson: `{"stdout":"${'x'.repeat(25_000)}"}` },
+    });
+
+    const paramsJson = component.data.paramsJson as string;
+    expect(paramsJson).toContain('... [truncated]');
+    expect(paramsJson.length).toBeLessThan(21_000);
+  });
+
+  it('still redacts non-content fields of text components', () => {
+    const component = sanitizePublicComponent({
+      id: 'text-extra',
+      type: 'text',
+      data: { content: 'Answer body', paramsJson: '{"password":"private"}' },
+    });
+
+    expect(component.data.content).toBe('Answer body');
+    expect(component.data.paramsJson).toBe('{"password":"[REDACTED]"}');
+  });
+
+  it('routes text components with non-string content through full sanitization', () => {
+    const component = sanitizePublicComponent({
+      id: 'text-nonstring',
+      type: 'text',
+      data: { content: { password: 'private' } },
+    });
+
+    expect(component.data).toEqual({ content: { password: '[REDACTED]' } });
   });
 
   it('never exposes artifact storage paths', () => {

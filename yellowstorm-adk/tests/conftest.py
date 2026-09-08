@@ -30,38 +30,6 @@ for field_name, field_info in mock_fields.items():
         env_value = str(field_value)
     os.environ[field_name] = env_value
 
-# Ensure test environment is set (no ENVIRONMENT or LANGFUSE_ENABLED in Settings)
-
-# Create a mock Langfuse client with the necessary methods
-class MockLangfuseClient:
-    def span(self, *args, **kwargs):
-        mock_span = MagicMock()
-        mock_span.id = "mock_span_id"
-        return mock_span
-
-    def trace(self, *args, **kwargs):
-        mock_trace = MagicMock()
-        mock_trace.id = "mock_trace_id"
-        return mock_trace
-
-    def generation(self, *args, **kwargs):
-        mock_generation = MagicMock()
-        mock_generation.id = "mock_generation_id"
-        return mock_generation
-
-# Mock langfuse to prevent any network calls
-try:
-    import langfuse
-    # Replace the Langfuse class with our mock
-    langfuse.Langfuse = lambda *args, **kwargs: MockLangfuseClient()
-
-    # Also patch the langfuse_client in the config module
-    if 'src.smart_rag.engines.multi_agent.config' in sys.modules:
-        sys.modules['src.smart_rag.engines.multi_agent.config'].langfuse_client = MockLangfuseClient()
-
-except ImportError:
-    pass
-
 # Add src to path for imports
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
 
@@ -76,30 +44,6 @@ def mock_settings_global(monkeypatch):
     from tests.common_schema import MockSettings
     mock_settings_instance = MockSettings()
     monkeypatch.setattr(settings_module, "get_settings", lambda: mock_settings_instance)
-
-    # Mock langfuse_client in config modules
-    try:
-        mock_client = MockLangfuseClient()
-
-        # Patch langfuse_client in multi_agent config
-        try:
-            import src.smart_rag.engines.multi_agent.config as multi_agent_config
-            monkeypatch.setattr(multi_agent_config, "langfuse_client", mock_client)
-        except ImportError:
-            pass
-
-        # Patch any other modules that might import langfuse_client
-        try:
-            import src.smart_rag.engines.traditional.orchestrator as traditional_orchestrator
-            if hasattr(traditional_orchestrator, 'langfuse_client'):
-                monkeypatch.setattr(traditional_orchestrator, "langfuse_client", mock_client)
-        except ImportError:
-            pass
-
-    except ImportError:
-        pass
-
-
 
 @pytest.fixture
 def event_loop():
@@ -307,15 +251,6 @@ def mock_trace_recorder():
 def mock_mcp_toolset():
     """Mock MCP toolset for testing."""
     return MagicMock()
-
-
-@pytest.fixture
-def sample_excel_headers():
-    """Sample Excel MCP headers for testing."""
-    return {
-        "Authorization": "Bearer test-token",
-        "Content-Type": "application/json"
-    }
 
 
 @pytest.fixture(scope="function", autouse=True)

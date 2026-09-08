@@ -72,9 +72,15 @@ export const configValidationSchema = Joi.object({
   }),
   SEMANTIC_PG_SSL: Joi.boolean().default(false),
   SEMANTIC_PG_POOL_MAX: Joi.number().min(1).max(50).default(10),
-  SEMANTIC_AGE_GRAPH: Joi.string()
-    .pattern(/^[a-z][a-z0-9_]{0,62}$/)
-    .default('semantic_model_graph'),
+  SEMANTIC_AGE_GRAPH: Joi.string().pattern(/^[a-z][a-z0-9_]{0,62}$/).default('semantic_model_graph'),
+  SEMANTIC_MODEL_NATIVE_SEARCH_URL: Joi.string().uri().default('http://localhost:8045/search_native'),
+  SEMANTIC_MODEL_NATIVE_SEARCH_BATCH_URL: Joi.string().uri().default('http://localhost:8045/search_native/batch'),
+  SEMANTIC_MODEL_NATIVE_SEARCH_AUTH_TOKEN: Joi.string().allow('').optional(),
+  SEMANTIC_MODEL_NATIVE_SEARCH_LOG_QUERY: Joi.boolean().default(false),
+  SEMANTIC_MODEL_EVIDENCE_SEARCH_TIMEOUT_MS: Joi.number().min(5000).max(1800000).default(180000),
+  SEMANTIC_MODEL_EVIDENCE_SEARCH_CONCURRENCY: Joi.number().integer().min(1).max(16).default(4),
+  SEMANTIC_MODEL_ONTOLOGY_TIMEOUT_MS: Joi.number().min(0).max(7200000).default(0),
+  SEMANTIC_MODEL_MAPPING_TIMEOUT_MS: Joi.number().min(0).max(7200000).default(0),
 
   // Encryption
   ENCRYPTION_KEY: Joi.string()
@@ -218,6 +224,9 @@ export const configValidationSchema = Joi.object({
   CONVERSATION_MAX_CONCURRENT_STREAMS: Joi.number().min(1).max(50).default(5),
   CONVERSATION_SSE_HEARTBEAT_MS: Joi.number().min(5000).max(60000).default(15000),
   CONVERSATION_MAX_SSE_CONNECTIONS: Joi.number().min(1).max(20).default(5),
+  CONVERSATION_SSE_REPLAY_ENABLED: Joi.boolean().default(true),
+  CONVERSATION_SSE_REPLAY_MAX_EVENTS: Joi.number().min(10).max(2000).default(200),
+  CONVERSATION_SSE_REPLAY_TTL_MS: Joi.number().min(5000).max(600000).default(120000),
   CONVERSATION_MAX_MESSAGE_LENGTH: Joi.number().min(1000).max(100000).default(50000),
   CONVERSATION_MAX_FILES_PER_MESSAGE: Joi.number().min(1).max(20).default(5),
   CONVERSATION_SHARE_EXPIRY_DAYS: Joi.number().min(1).max(365).default(30),
@@ -383,14 +392,10 @@ export const configValidationSchema = Joi.object({
   LOGGING_MAX_POOL_SIZE: Joi.number().min(1).max(10).default(3),
   LOGGING_DISPLAY_ONLY_CONTEXTS: Joi.string().optional(),
 
-  // Worky (Chief of Staff) — Part 1
-  WORKY_RUNTIME_BASE_URL: Joi.string().uri().default('http://worky-adk-runtime:8011'),
-  WORKY_RUNTIME_TIMEOUT_MS: Joi.number().min(1000).max(300000).default(120000),
-  WORKY_SERVICE_TOKEN: Joi.string().min(8).optional(),
+  // Worky (Chief of Staff)
   WORKY_SSE_HEARTBEAT_MS: Joi.number().min(5000).max(60000).default(15000),
   WORKY_MAX_SSE_CONNECTIONS: Joi.number().min(1).max(20).default(5),
   WORKY_DEFAULT_STORAGE_BYTES: Joi.number().min(1048576).default(52428800),
-  WORKY_IDEMPOTENCY_TTL_HOURS: Joi.number().min(1).max(168).default(24),
 
   // Worky — speech-to-text via OpenRouter (OpenAI-compatible transcriptions)
   WORKY_STT_BASE_URL: Joi.string().uri().default('https://openrouter.ai/api'),
@@ -425,4 +430,16 @@ export const configValidationSchema = Joi.object({
     ),
   WORKY_VOICE_TOKEN_TTL_SEC: Joi.number().min(60).max(3600).default(1800),
   WORKY_VOICE_SESSION_START_TTL_SEC: Joi.number().min(30).max(600).default(60),
+
+  // Worky - Electric SQL projection sync
+  WORKY_ELECTRIC_URL: Joi.string().uri().default('http://electric:3000/v1/shape'),
+  ELECTRIC_SECRET: Joi.string().allow('').default(''),
+  WORKY_ELECTRIC_MESSAGES_TABLE: Joi.string().default('messages'),
+  WORKY_ELECTRIC_SESSIONS_TABLE: Joi.string().default('sessions'),
+  WORKY_ELECTRIC_PLANS_TABLE: Joi.string().default('plans'),
+  WORKY_ELECTRIC_PLAN_STEPS_TABLE: Joi.string().default('plan_steps'),
+  WORKY_ELECTRIC_MESSAGE_COMPONENTS_TABLE: Joi.string().default('message_components'),
+  WORKY_ELECTRIC_PLAN_STEP_COMPONENTS_TABLE: Joi.string().default('plan_step_components'),
+  WORKY_ELECTRIC_PLAN_STEP_ARTIFACTS_TABLE: Joi.string().default('plan_step_artifacts'),
+  WORKY_ELECTRIC_DEBUG: Joi.boolean().default(false),
 });

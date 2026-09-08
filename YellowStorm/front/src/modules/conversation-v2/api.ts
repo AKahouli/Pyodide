@@ -117,6 +117,28 @@ export const conversationV2Api = {
     );
     return res.data.data;
   },
+  async getFinalizedVersions(sessionId: string): Promise<{
+    items: Array<{
+      revisionId: string;
+      title: string;
+      finalizedAt: string;
+      fileCount?: number;
+    }>;
+    latestRevisionId: string | null;
+  }> {
+    const res = await apiClient.get<
+      ApiResponse<{
+        items: Array<{
+          revisionId: string;
+          title: string;
+          finalizedAt: string;
+          fileCount?: number;
+        }>;
+        latestRevisionId: string | null;
+      }>
+    >(`/conversation-v2/sessions/${sessionId}/finalized-versions`);
+    return res.data.data;
+  },
   async deleteSession(sessionId: string): Promise<void> {
     await apiClient.delete(`/conversation-v2/sessions/${sessionId}`);
   },

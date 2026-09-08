@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type DragEvent, type FormEvent, type KeyboardEvent, type MouseEvent, type PointerEvent } from 'react';
+import { memo, useEffect, useMemo, useRef, useState, type DragEvent, type FormEvent, type KeyboardEvent, type MouseEvent, type PointerEvent } from 'react';
 import { Background, Controls, Handle, Position, ReactFlow, type Connection, type Edge, type Node, type NodeProps, type ReactFlowInstance } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import { BookOpen, Briefcase, Check, FileStack, Library, Plus, Tag, Warehouse, X } from 'lucide-react';
@@ -64,7 +64,7 @@ function QuickRecordForm({ nodeId,onClose }: Readonly<{ nodeId:string;onClose:()
   </form>;
 }
 
-function BusinessNode({ data,selected,isConnectable }: NodeProps<Node<BusinessNodeData>>) {
+const BusinessNode = memo(function BusinessNode({ data,selected,isConnectable }: NodeProps<Node<BusinessNodeData>>) {
   const { t } = useModuleTranslation('semantic-model');
   const [recordInputOpen,setRecordInputOpen] = useState(false);
   const [draftLabel,setDraftLabel] = useState('');
@@ -97,7 +97,7 @@ function BusinessNode({ data,selected,isConnectable }: NodeProps<Node<BusinessNo
     <p className='mt-2 text-[11px] text-muted-foreground'>{t('concept.quickHelp')}</p>
   </div>;
   const dropLabel=data.dropState?t(`knowledge.dropState.${data.dropState}`):null;
-  return <div className={cn('relative w-60 rounded-2xl border bg-card shadow-sm transition',selected?'border-primary ring-4 ring-primary/10':'border-border/80 hover:border-primary/40',data.protected&&'border-sky-400/60 bg-sky-50/70 dark:bg-sky-950/20',data.dropState==='valid'&&'border-primary ring-4 ring-primary/20',data.dropState==='already-linked'&&'border-emerald-500 ring-4 ring-emerald-500/15',data.dropState==='busy'&&'border-amber-500 ring-4 ring-amber-500/15')}
+  return <div className={cn('relative w-60 rounded-2xl border bg-card shadow-sm transition-colors',selected?'border-primary ring-4 ring-primary/10':'border-border/80 hover:border-primary/40',data.protected&&'border-sky-400/60 bg-sky-50/70 dark:bg-sky-950/20',data.dropState==='valid'&&'border-primary ring-4 ring-primary/20',data.dropState==='already-linked'&&'border-emerald-500 ring-4 ring-emerald-500/15',data.dropState==='busy'&&'border-amber-500 ring-4 ring-amber-500/15')}
     onDragEnter={(event)=>{if(!data.onKnowledgeDragEnter)return;event.preventDefault();event.stopPropagation();data.onKnowledgeDragEnter(data.nodeId);}}
     onDragOver={(event)=>{if(!data.onKnowledgeDrop)return;event.preventDefault();event.stopPropagation();event.dataTransfer.dropEffect=data.dropState==='valid'?'copy':'none';}}
     onDragLeave={(event)=>{if(event.currentTarget.contains(event.relatedTarget as globalThis.Node|null))return;data.onKnowledgeDragLeave?.(data.nodeId);}}
@@ -117,7 +117,7 @@ function BusinessNode({ data,selected,isConnectable }: NodeProps<Node<BusinessNo
     </div>}
     {isConnectable&&<Handle type='source' position={Position.Right} className='!h-4 !w-4 !border-2 !border-background !bg-primary' aria-label={t('relation.connectFrom')} title={t('relation.connectFrom')} />}
   </div>;
-}
+});
 
 const nodeTypes = { business:BusinessNode };
 
@@ -140,6 +140,12 @@ export function SemanticModelCanvas({ canEdit,onConnectRequest,knowledge,onOpenK
     const timer = window.setTimeout(() => void flowRef.current?.fitView({nodes:[{id:quickConcept.sourceId},{id:quickConcept.id}],padding:0.3,maxZoom:1,duration:200}),0);
     return () => window.clearTimeout(timer);
   },[quickConcept?.id]);
+  const graphId = graph?.versionId;
+  useEffect(() => {
+    if (!graphId) return;
+    const timer = window.setTimeout(() => void flowRef.current?.fitView({padding:0.25,maxZoom:1,duration:300}),100);
+    return () => window.clearTimeout(timer);
+  },[graphId]);
   useEffect(() => {
     if (!isMobile) return;
     const timer = window.setTimeout(() => void flowRef.current?.fitView({padding:0.15,minZoom:1,maxZoom:1}),0);
@@ -181,13 +187,19 @@ export function SemanticModelCanvas({ canEdit,onConnectRequest,knowledge,onOpenK
     void knowledge.link(nodeId,resource);
   };
 
-  const nodes = useMemo<Node<BusinessNodeData>[]>(()=>{
+  // Stage 1 — stable node data, no selection state.
+  // selectedId is intentionally excluded so clicking a node doesn't rebuild every node object.
+  const baseNodes = useMemo<Node<BusinessNodeData>[]>(()=>{
     if (!graph) return [];
-    if (mode==='records') return graph.records.map((record)=>({id:record.id,type:'business',position:record.position,data:{nodeId:record.id,label:record.label,description:String(record.values.description??''),category:'record',protected:false},selected:selectedId===record.id}));
-    const modelNodes = graph.nodes.map((node)=>({id:node.id,type:'business',position:node.position,draggable:canEdit&&!node.systemKey,data:{nodeId:node.id,label:node.label,description:node.description,category:node.category,protected:Boolean(node.systemKey),recordPolicy:node.recordPolicy,quickActions:canEdit,onQuickConcept:beginQuickConcept,onOpenKnowledge,knowledgeCounts:knowledge.countsByNode[node.id]??{workspaces:0,documents:0},dropState:dropStateFor(node.id),onKnowledgeDragEnter:canEdit&&knowledge.draggedResource?setDropNodeId:undefined,onKnowledgeDragLeave:canEdit?((nodeId:string)=>setDropNodeId((current)=>current===nodeId?null:current)):undefined,onKnowledgeDrop:canEdit?dropKnowledge:undefined},selected:selectedId===node.id}));
+    if (mode==='records') return graph.records.map((record)=>({id:record.id,type:'business',position:record.position,data:{nodeId:record.id,label:record.label,description:String(record.values.description??''),category:'record',protected:false}}));
+    const modelNodes = graph.nodes.map((node)=>({id:node.id,type:'business',position:node.position,draggable:canEdit&&!node.systemKey,data:{nodeId:node.id,label:node.label,description:node.description,category:node.category,protected:Boolean(node.systemKey),recordPolicy:node.recordPolicy,quickActions:canEdit,onQuickConcept:beginQuickConcept,onOpenKnowledge,knowledgeCounts:knowledge.countsByNode[node.id]??{workspaces:0,documents:0},dropState:dropStateFor(node.id),onKnowledgeDragEnter:canEdit&&knowledge.draggedResource?setDropNodeId:undefined,onKnowledgeDragLeave:canEdit?((nodeId:string)=>setDropNodeId((current)=>current===nodeId?null:current)):undefined,onKnowledgeDrop:canEdit?dropKnowledge:undefined}}));
     if (!quickConcept) return modelNodes;
     return [...modelNodes,{id:quickConcept.id,type:'business',position:quickConcept.position,draggable:false,selectable:false,focusable:false,data:{nodeId:quickConcept.id,label:'',description:'',category:'business_object',protected:false,draft:true,onDraftSubmit:submitQuickConcept,onDraftCancel:()=>setQuickConcept(null)}}];
-  },[canEdit,dropNodeId,graph,knowledge.bindings,knowledge.countsByNode,knowledge.draggedResource,knowledge.isBusy,mode,onOpenKnowledge,quickConcept,selectedId]);
+  },[canEdit,dropNodeId,graph,knowledge.bindings,knowledge.countsByNode,knowledge.draggedResource,knowledge.isBusy,mode,onOpenKnowledge,quickConcept]);
+  // Stage 2 — apply selection cheaply; reuses same object refs for unaffected nodes so memo on BusinessNode holds.
+  const nodes = useMemo<Node<BusinessNodeData>[]>(()=>
+    baseNodes.map((node)=>node.selected===(node.id===selectedId)?node:{...node,selected:node.id===selectedId})
+  ,[baseNodes,selectedId]);
   const edges = useMemo<Edge[]>(()=>{
     if (!graph) return [];
     if (mode==='records') return graph.recordRelations.map((relation)=>({id:relation.id,source:relation.sourceRecordId,target:relation.targetRecordId,label:graph.relations.find((type)=>type.id===relation.relationTypeId)?.label}));
@@ -196,7 +208,7 @@ export function SemanticModelCanvas({ canEdit,onConnectRequest,knowledge,onOpenK
   },[graph,mode,quickConcept,t]);
 
   return <>
-    <ReactFlow nodes={nodes} edges={edges} nodeTypes={nodeTypes} fitView fitViewOptions={{padding:0.25,minZoom:isMobile?1:0.25,maxZoom:1}} minZoom={isMobile?1:0.25} maxZoom={1.6} proOptions={{hideAttribution:true}} nodesConnectable={canEdit} nodesDraggable={canEdit} onInit={(instance)=>{flowRef.current=instance;}}
+    <ReactFlow nodes={nodes} edges={edges} nodeTypes={nodeTypes} fitView fitViewOptions={{padding:0.25,minZoom:isMobile?1:0.25,maxZoom:1}} minZoom={isMobile?1:0.25} maxZoom={1.6} proOptions={{hideAttribution:true}} nodesConnectable={canEdit} nodesDraggable={canEdit} elevateNodesOnSelect={false} onInit={(instance)=>{flowRef.current=instance;}}
       onConnect={(connection:Connection)=>{
         if (!connection.source||!connection.target||!graph) return;
         if (mode!=='records'){onConnectRequest({sourceId:connection.source,targetId:connection.target});return;}

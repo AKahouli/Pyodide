@@ -38,8 +38,9 @@ export class GovernedConversationService {
     const revision = await this.revisionModel.findOne({ _id: deployment.currentPublishedRevisionId, deploymentId: deployment._id, status: 'published' }).lean().exec();
     if (!revision) throw new NotFoundException(ErrorCode.GOVERNANCE_REVISION_NOT_FOUND);
     const allowedAgentIds = (revision.allowedAgentIds?.length ? revision.allowedAgentIds : [revision.agentId]).map(String);
+    // No title: governed conversations follow the standard flow and get their
+    // name generated from the first message like normal conversations.
     return this.conversationService.createGoverned(userId, {
-      title: scope.name,
       requestId: dto.requestId,
       programId: scope.programId.toString(),
       scopeId: scope._id.toString(),

@@ -52,13 +52,41 @@ async def test_create_session_returns_id_and_projects():
 
 async def test_runtask_accepts_and_runs_plan():
     rm = MagicMock(snapshot=AsyncMock(return_value={"session": {"status": "running", "interrupt_id": None}}))
-    service = MagicMock(plan_turn=AsyncMock(), resume_turn=AsyncMock())
+    seen_turn_ids = []
+
+    async def capture_turn(**_kwargs):
+        seen_turn_ids.append(companion_ai_servicer.active_turn_id.get())
+
+    service = MagicMock(plan_turn=AsyncMock(side_effect=capture_turn), resume_turn=AsyncMock())
     s = _servicer(rm=rm, service=service)
-    resp = await s.RunTask(pb.RunRequest(user_id="u", session_id="s1", message="hi", agents=_AGENTS), _ctx())
-    assert resp.accepted is True and resp.run_id
+    resp = await s.RunTask(pb.RunRequest(
+        user_id="u", session_id="s1", message="hi", turn_id="turn-1", agents=_AGENTS), _ctx())
+    assert resp.accepted is True and resp.run_id == "turn-1"
     await _drain(s)
     service.plan_turn.assert_awaited_once()
     service.resume_turn.assert_not_awaited()
+    assert seen_turn_ids == ["turn-1"]
+
+
+async def test_runtask_projects_correlated_failure_when_background_turn_fails():
+    rm = MagicMock(
+        snapshot=AsyncMock(return_value={"session": {"status": "running", "interrupt_id": None}}),
+        add_message=AsyncMock(),
+        set_session_status=AsyncMock(),
+    )
+    service = MagicMock(plan_turn=AsyncMock(side_effect=RuntimeError("boom")),
+                        resume_turn=AsyncMock(), fail_session=AsyncMock())
+    s = _servicer(rm=rm, service=service)
+
+    resp = await s.RunTask(pb.RunRequest(
+        user_id="u", session_id="s1", message="hi", turn_id="turn-failed", agents=_AGENTS), _ctx())
+    await _drain(s)
+
+    assert resp.accepted is True
+    args = rm.add_message.await_args.args
+    assert args[1:] == (
+        "s1", "assistant", "I couldn't complete that request. Please try again.", "turn-failed")
+    rm.set_session_status.assert_awaited_once_with("s1", "failed")
 
 
 async def test_runtask_converses_alongside_an_executing_plan():
@@ -82,6 +110,36 @@ async def test_runtask_converses_alongside_an_executing_plan():
     service.plan_turn.assert_not_awaited()          # no replan
     assert s._running["s1"] is running               # not superseded
     assert not running.cancelled()                   # the plan keeps running
+    running.cancel()
+
+
+async def test_failed_conversation_projects_failure_without_failing_executing_plan():
+    rm = MagicMock(
+        snapshot=AsyncMock(return_value={
+            "session": {"status": "running", "interrupt_id": None},
+            "plan": {"id": "p1"},
+            "steps": [{"step_id": "s1", "status": "running"}],
+        }),
+        add_message=AsyncMock(),
+        set_session_status=AsyncMock(),
+    )
+    service = MagicMock(
+        plan_turn=AsyncMock(),
+        resume_turn=AsyncMock(),
+        converse_turn=AsyncMock(side_effect=RuntimeError("boom")),
+        fail_session=AsyncMock(),
+    )
+    s = _servicer(rm=rm, service=service)
+    running = asyncio.create_task(asyncio.sleep(60))
+    s._running["s1"] = running
+
+    await s.RunTask(pb.RunRequest(
+        user_id="u", session_id="s1", message="status?", turn_id="conversation-1", agents=_AGENTS), _ctx())
+    await _drain(s)
+
+    assert rm.add_message.await_args.args[-1] == "conversation-1"
+    rm.set_session_status.assert_not_awaited()
+    assert s._running["s1"] is running
     running.cancel()
 
 

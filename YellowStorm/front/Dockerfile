@@ -8,6 +8,7 @@ COPY src ./src
 COPY index.html ./
 COPY vite.config.ts ./
 COPY tsconfig.json tsconfig.node.json ./
+ENV NODE_OPTIONS=--max-old-space-size=8192
 RUN npm run build
 
 FROM nginx:stable-alpine-slim

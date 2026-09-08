@@ -211,8 +211,7 @@ export class ClarificationRequestDeltaDto {
 }
 
 /**
- * Validated body shape for `POST /worky/internal/streams/{id}/plan-delta`.
- * Replaces Part 1's opaque `Record<string, unknown>`. Optional arrays are
+ * Validated plan-delta body shared by Worky planning services. Optional arrays are
  * defaulted to `[]` in the plan-delta service so empty deltas are a no-op.
  */
 export class PlanDeltaBodyDto {

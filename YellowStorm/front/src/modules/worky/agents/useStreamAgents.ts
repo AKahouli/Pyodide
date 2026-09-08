@@ -45,7 +45,13 @@ export function useStreamAgents(): StreamAgentsResult {
   const delegatedIds = useMemo(() => {
     const keys = new Set<string>();
     for (const t of tasks) {
-      if (t.assigneeKey && !ownResolve(t.assigneeKey)) keys.add(t.assigneeKey);
+      const historicalPersona = t.isPersona === undefined;
+      if (
+        t.assigneeKey &&
+        !t.assigneeName &&
+        (t.isPersona === true || historicalPersona) &&
+        !ownResolve(t.assigneeKey)
+      ) keys.add(t.assigneeKey);
     }
     return [...keys].sort();
   }, [tasks, ownResolve]);

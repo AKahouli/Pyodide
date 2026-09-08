@@ -231,6 +231,7 @@ export const messages = conversationSchema.table(
     durationMs: integer('duration_ms'),
     timeToFirstChunk: integer('time_to_first_chunk'),
     timeToFirstToken: integer('time_to_first_token'),
+    latencyMetrics: jsonb('latency_metrics'),
     requestId: text('request_id'),
     guardrailDecision: jsonb('guardrail_decision'),
     interaction: jsonb('interaction'),

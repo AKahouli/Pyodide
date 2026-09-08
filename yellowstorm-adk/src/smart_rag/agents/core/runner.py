@@ -22,7 +22,15 @@ from src.guardrails.adapters.google_adk import agent_tree_has_output_guardrail
 from google.genai import types
 
 from src.smart_rag.infrastructure.monitoring import TraceRecorder
+from src.smart_rag.infrastructure.monitoring.conversation_latency import get_current_conversation_latency_trace
+from src.smart_rag.infrastructure.monitoring.latency_diagnostics import (
+    PHASE_GOOGLE_ADK_RUNNER,
+    PHASE_YELLOWMIND_PRE_RUNNER,
+    reset_latency_diag_phase,
+    set_latency_diag_phase,
+)
 from src.smart_rag.infrastructure.processing import PromptProcessor
+from src.smart_rag.infrastructure.processing.plugin import CleanSessionPlugin
 from src.smart_rag.messaging import MessageTransformer, StreamingFormatter
 from src.smart_rag.engines.helpers import build_content_with_images, coerce_to_dict
 from src.smart_rag.messaging.ui_tool_component_registry import UI_TOOL_COMPONENT_REGISTRY
@@ -41,6 +49,49 @@ from src.smart_rag.tool_activity_presenter import (
 from src.smart_rag.thought_activity_tracker import ThoughtActivityTracker
 
 logger = get_logger("api.smart_rag.agentic_rag.AgentRunner")
+
+
+def _mark_runner_invoked() -> None:
+    """Stamp the pre-provider milestone immediately before ``Runner.run_async``."""
+    trace = get_current_conversation_latency_trace()
+    if trace is not None:
+        trace.mark_runner_invoked()
+
+
+def _mark_session_stage(marker: str) -> None:
+    """Stamp a session/runner breakdown milestone by method name (no I/O)."""
+    trace = get_current_conversation_latency_trace()
+    if trace is not None:
+        getattr(trace, marker)()
+
+
+def _mark_runner_iteration_start() -> None:
+    """Log-only milestone: first ``run_async`` iteration is about to be requested."""
+    trace = get_current_conversation_latency_trace()
+    if trace is not None:
+        trace.mark_runner_iteration_start()
+
+
+def _note_diag_session_id(session_id) -> None:
+    trace = get_current_conversation_latency_trace()
+    if trace is not None:
+        trace.note_session_id(session_id)
+
+
+class _latency_diag_phase:
+    """Scope a session diagnostic phase so instrumented session lookups can be
+    attributed to the explicit Yellowmind pre-runner read vs. ADK Runner reads."""
+
+    def __init__(self, phase: str) -> None:
+        self._phase = phase
+        self._token = None
+
+    def __enter__(self) -> None:
+        self._token = set_latency_diag_phase(self._phase)
+
+    def __exit__(self, exc_type, exc, tb) -> None:
+        reset_latency_diag_phase(self._token)
+
 APP_NAME = "manager_app"
 _STATE_KEY_CONNECTOR_TEXT_SOURCES = "_connector_text_sources"
 _STATE_KEY_CONNECTOR_IMAGE_SOURCES = "_connector_image_sources"
@@ -225,28 +276,37 @@ class AgentRunner:
             # (sub-agents / one-shot runs).
             if session_id is None:
                 session_id = f"session-{uuid.uuid4()}"
-                session = await session_helper.create_session(
-                    app_name="manager_app",
-                    user_id=user_id,
-                    session_id=session_id,
-                    state=initial_state or None,
-                )
-            else:
-                session = await session_helper.get_session(
-                    app_name="manager_app",
-                    user_id=user_id,
-                    session_id=session_id,
-                )
-                if session is None:
+                _mark_session_stage("mark_session_create_seed_start")
+                with _latency_diag_phase(PHASE_YELLOWMIND_PRE_RUNNER):
                     session = await session_helper.create_session(
                         app_name="manager_app",
                         user_id=user_id,
                         session_id=session_id,
                         state=initial_state or None,
                     )
-                    # Seed a read-only snapshot of the shared conversation so this
-                    for seed_event in (seed_events or []):
-                        await session_helper.append_event(session, seed_event)
+                _mark_session_stage("mark_session_create_seed_end")
+            else:
+                _mark_session_stage("mark_session_lookup_start")
+                with _latency_diag_phase(PHASE_YELLOWMIND_PRE_RUNNER):
+                    session = await session_helper.get_session(
+                        app_name="manager_app",
+                        user_id=user_id,
+                        session_id=session_id,
+                    )
+                _mark_session_stage("mark_session_lookup_end")
+                if session is None:
+                    _mark_session_stage("mark_session_create_seed_start")
+                    with _latency_diag_phase(PHASE_YELLOWMIND_PRE_RUNNER):
+                        session = await session_helper.create_session(
+                            app_name="manager_app",
+                            user_id=user_id,
+                            session_id=session_id,
+                            state=initial_state or None,
+                        )
+                        # Seed a read-only snapshot of the shared conversation so this
+                        for seed_event in (seed_events or []):
+                            await session_helper.append_event(session, seed_event)
+                    _mark_session_stage("mark_session_create_seed_end")
             logger.info(f"[SESSION] run_agent_tool using ADK session_id: '{session_id}' (user_id: {user_id})")
 
         except Exception as e:
@@ -343,7 +403,7 @@ class AgentRunner:
             agent_id: The ID of the agent.
 
         Returns:
-            Tuple containing final result, list of MCP tools used, and execution summary (for langfuse tracing).
+            Tuple containing the final result, MCP tools used, execution summary, and generated files.
         """
         recorder = TraceRecorder(agent_name=agent_name, agent_type=agent_type)
         agent_role = (
@@ -364,9 +424,17 @@ class AgentRunner:
         seen_tool_component_ids: set[str] = set()
         thought_activity_tracker = ThoughtActivityTracker()
 
-        runner = Runner(agent=agent, app_name=APP_NAME, session_service=session_helper)
+        _mark_session_stage("mark_runner_construction_start")
+        runner = Runner(
+            agent=agent,
+            app_name=APP_NAME,
+            session_service=session_helper,
+            plugins=[CleanSessionPlugin()],
+        )
+        _mark_session_stage("mark_runner_construction_end")
         guarded_output = agent_tree_has_output_guardrail(agent)
 
+        _mark_runner_invoked()
         stream = runner.run_async(
             user_id=user_id,
             session_id=session_id,
@@ -374,6 +442,12 @@ class AgentRunner:
             run_config=self.config,
         )
         should_close_stream = True
+        _note_diag_session_id(session_id)
+        _mark_runner_iteration_start()
+        # run_async returns an async generator: much of its body (including the
+        # Runner-internal session retrieval) executes on iteration, so the
+        # diagnostic phase must cover the loop, not just the call.
+        runner_phase_token = set_latency_diag_phase(PHASE_GOOGLE_ADK_RUNNER)
 
         try:
             async for event in stream:
@@ -404,6 +478,8 @@ class AgentRunner:
                         agent_type != "html"
                         and part.text
                         and getattr(part, "thought", False) is True
+                        and not part.function_call
+                        and not part.function_response
                         and not guarded_output
                     )
                     if not is_thought and part.text:
@@ -442,9 +518,13 @@ class AgentRunner:
                         agent_type != "html"
                         and part.text
                         and getattr(part, "thought", False) is not True
+                        and not part.function_call
+                        and not part.function_response
                         and has_function_call
+                        and getattr(event, "partial", None) is not True
                         and not event.is_final_response()
                         and not guarded_output
+                        and not thought_activity_tracker.is_standalone_fragment(part.text)
                     ):
                         summary = sanitize_activity_summary(part.text)
                         if summary and q:
@@ -471,6 +551,7 @@ class AgentRunner:
                         agent_type != "html"
                         and part.text
                         and getattr(part, "thought", False) is not True
+                        and not part.function_response
                         and not event.is_final_response()
                         and not has_function_call
                         and not guarded_output
@@ -695,21 +776,6 @@ class AgentRunner:
                                 f"[RUNNER] Sending SANDBOX component to client - agent: {agent_name}, component_id: {call_id}"
                             )
 
-                        if func_name == "generate_ui" and q:
-                            # Send UI generation status chunk
-                            ui_chunk = self.streaming_formatter.format_streaming_event(
-                                agent_id=agent_id,
-                                agent_name=agent_name,
-                                agent_type=agent_type,
-                                chunk="generating ui",
-                                message_id=session_id,
-                                content_type="ui",
-                            )
-                            await q.put(ui_chunk)
-                            logger.info(
-                                f"[DATAVIZ] Sent 'generating ui' chunk for tool: {func_name}"
-                            )
-
                         if func_name == "generate_form_viz" and q:
                             # Send form viz generation status chunk
                             ui_chunk = self.streaming_formatter.format_streaming_event(
@@ -743,7 +809,7 @@ class AgentRunner:
                             part.function_response.response, success
                         )
 
-                        # Check if this is a DataViz generate_ui tool response
+                        # Name of the tool this response belongs to
                         func_name = part.function_response.name
 
                         if q:
@@ -818,15 +884,6 @@ class AgentRunner:
                             q,
                         ):
                             continue
-
-                        if func_name == "generate_ui" and q:
-                            await self._handle_dataviz_response(
-                                part.function_response,
-                                agent_name,
-                                agent_type,
-                                session_id,
-                                q,
-                            )
 
                         # Check if this is a generate_form_viz tool response
                         if func_name == "generate_form_viz" and q:
@@ -1010,6 +1067,7 @@ class AgentRunner:
             recorder.record_error(e)
             raise
         finally:
+            reset_latency_diag_phase(runner_phase_token)
             aclose = getattr(stream, "aclose", None)
             if should_close_stream and aclose is not None:
                 with contextlib.suppress(Exception):
@@ -1029,19 +1087,30 @@ class AgentRunner:
             q: Queue for streaming events.
             agent_id: The ID of the agent.
         Returns:
-            Tuple containing final result, False (no MCP tools), and execution summary (for langfuse tracing).
+            Tuple containing the final result, False (no MCP tools), execution summary, and generated files.
         """
         recorder = TraceRecorder(agent_name=agent.name, agent_type="html")
         accumulated_text = ""
         guarded_output = agent_tree_has_output_guardrail(agent)
-        runner = Runner(agent=agent, app_name=APP_NAME, session_service=session_helper)
+        _mark_session_stage("mark_runner_construction_start")
+        runner = Runner(
+            agent=agent,
+            app_name=APP_NAME,
+            session_service=session_helper,
+            plugins=[CleanSessionPlugin()],
+        )
+        _mark_session_stage("mark_runner_construction_end")
 
+        _mark_runner_invoked()
         stream = runner.run_async(
             user_id=user_id,
             session_id=session_id,
             new_message=content,
         )
         should_close_stream = True
+        _note_diag_session_id(session_id)
+        _mark_runner_iteration_start()
+        runner_phase_token = set_latency_diag_phase(PHASE_GOOGLE_ADK_RUNNER)
 
         try:
             async for event in stream:
@@ -1097,6 +1166,7 @@ class AgentRunner:
             execution_summary = recorder.get_execution_summary()
             return (None, [], execution_summary, [])
         finally:
+            reset_latency_diag_phase(runner_phase_token)
             aclose = getattr(stream, "aclose", None)
             if should_close_stream and aclose is not None:
                 with contextlib.suppress(Exception):
@@ -1385,44 +1455,6 @@ class AgentRunner:
             f"[DIAGRAM REPLACEMENT] Made {replacements_made} replacements, final text length: {len(modified_text)}"
         )
         return modified_text
-
-    async def _handle_dataviz_response(
-        self, function_response, agent_name, agent_type, session_id, q
-    ):
-        """Handle DataViz MCP tool response and send entire response to backend.
-
-        Args:
-            function_response: The function response object from the tool
-            agent_name: The name of the agent
-            agent_type: The type of the agent
-            session_id: The session ID
-            q: Queue for streaming events
-
-        Returns:
-            None
-        """
-        try:
-            logger.info(
-                f"[DATAVIZ] Processing tool response for function: {function_response.name}"
-            )
-
-            # Get the entire response data
-            response_data = function_response.response
-            logger.debug(f"[DATAVIZ] Response type: {type(response_data)}")
-
-            # Send entire function response as UI chunk
-            ui_chunk = self.streaming_formatter.format_streaming_event(
-                agent_name=agent_name,
-                agent_type=agent_type,
-                chunk=json.dumps(response_data),
-                message_id=session_id,
-                content_type="ui",
-            )
-            await q.put(ui_chunk)
-            logger.info(f"[DATAVIZ] Sent tool response as UI chunk to backend")
-
-        except Exception as e:
-            logger.exception(f"[DATAVIZ] Error handling DataViz response: {e}")
 
     async def _handle_formviz_response(
         self, function_response, agent_name, agent_type, session_id, q

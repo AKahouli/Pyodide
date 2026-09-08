@@ -8,7 +8,6 @@ import {
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiParam, ApiTags } from '@nestjs/swagger';
 import { WorkyInteractionService } from '../services/worky-interaction.service';
-import { WorkyPlanningService } from '../services/worky-planning.service';
 import { WorkyPlanDeltaService } from '../services/worky-plan-delta.service';
 import { RespondWorkyInteractionDto } from '../dto/respond-worky-interaction.dto';
 import { CurrentUser } from '../../auth/decorators/current-user.decorator';
@@ -23,6 +22,10 @@ import { Model } from 'mongoose';
 import { WorkyStream, WorkyStreamDocument } from '../schemas/worky-stream.schema';
 import { WorkyInteraction, WorkyInteractionDocument } from '../schemas/worky-interaction.schema';
 import { WorkyPlanDelta, WorkyPlanDeltaDocument } from '../schemas/worky-plan-delta.schema';
+import {
+  PreparedWorkyTurn,
+  WorkyTurnKickoffService,
+} from '../services/worky-turn-kickoff.service';
 
 export interface RespondInteractionResponse {
   interactionId: string;
@@ -40,8 +43,8 @@ export interface RespondInteractionResponse {
 export class WorkyInteractionController {
   constructor(
     private readonly interactions: WorkyInteractionService,
-    private readonly planning: WorkyPlanningService,
     private readonly planDeltaService: WorkyPlanDeltaService,
+    private readonly kickoff: WorkyTurnKickoffService,
     @InjectModel(WorkyStream.name)
     private readonly streams: Model<WorkyStreamDocument>,
     @InjectModel(WorkyInteraction.name)
@@ -54,7 +57,7 @@ export class WorkyInteractionController {
   @HttpCode(HttpStatus.ACCEPTED)
   @RequirePermissions(Permissions.WORKY_INTERACTION_RESPOND)
   @ApiOperation({
-    summary: 'Respond to a pending interaction; triggers a follow-up planning turn',
+    summary: 'Respond to a pending interaction',
   })
   @ApiParam({ name: 'id', description: 'Interaction id' })
   async respond(
@@ -88,6 +91,14 @@ export class WorkyInteractionController {
         'You do not have access to this Worky interaction.',
       );
     }
+    const preparedTurn: PreparedWorkyTurn | null = dto.cancel
+      ? null
+      : await this.kickoff.prepare({
+          streamId: interaction.streamId.toString(),
+          userId: user._id.toString(),
+          content: dto.content,
+          requester: user,
+        });
     const result = await this.interactions.respond({
       userId: user._id.toString(),
       interactionId,
@@ -122,28 +133,9 @@ export class WorkyInteractionController {
       }
     }
 
-    // Trigger a follow-up planning turn so the Manager can resolve and
-    // re-delta. Skipped on `canceled` (the user dismissed the question).
-    // For replan approvals the apply path already emitted the events;
-    // we still let the Manager record the verdict on the plan.
     let followUpTurnStarted = false;
-    if (result.status === 'responded' && dto.content) {
-      this.planning.startTurn({
-        streamId: result.streamId,
-        userId: user._id.toString(),
-        content: dto.content,
-        // Carry the original clarification through to the follow-up
-        // turn so the runtime can inject the question/options into
-        // the context snapshot. Without this the Manager only sees
-        // the owner's answer text and tends to re-ask.
-        resolvingInteractionId: interactionId,
-        triggerKind:
-          result.verdict === 'approved'
-            ? 'approval_granted'
-            : result.verdict === 'rejected'
-              ? 'approval_rejected'
-              : 'clarification_response',
-      });
+    if (result.status === 'responded' && preparedTurn) {
+      this.kickoff.dispatch(preparedTurn);
       followUpTurnStarted = true;
     }
     return { ...result, followUpTurnStarted, replanApplied };

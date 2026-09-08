@@ -6,6 +6,7 @@ import { useAuth } from '@/modules/auth';
 import { useConversationStore, useDisplayMessages, useIsAwaitingFirstChunk, useAwaitingConversationId, useMessagesHasMore, useMessagesLoadingOlder, useBranchCache, useActiveBranches, useEditingMessageId } from '../store';
 import { messageToChat } from '../utils';
 import { MessageActions } from './MessageActions';
+import { useConversationSettings } from '../hooks/useConversationSettings';
 import { UserMessageActions } from './UserMessageActions';
 import { EditableUserMessage } from './EditableUserMessage';
 import { BranchNavigation } from './BranchNavigation';
@@ -75,6 +76,7 @@ const MemoizedMessageBubble = memo(function MemoizedMessageBubble({
   currentUserId,
   allMessages,
   choiceInteractions,
+  latencyInstrumentationEnabled,
 }: { 
   message: Message; 
   isLastAiMessage: boolean; 
@@ -83,6 +85,7 @@ const MemoizedMessageBubble = memo(function MemoizedMessageBubble({
   currentUserId?: string;
   allMessages: Message[];
   choiceInteractions: Map<string, ChoiceInteractionMetadata>;
+  latencyInstrumentationEnabled?: boolean;
 }) {
   const sendMessage = useConversationStore((s) => s.sendMessage);
   const regenerateMessage = useConversationStore((s) => s.regenerateMessage);
@@ -218,6 +221,7 @@ const MemoizedMessageBubble = memo(function MemoizedMessageBubble({
                       message={message} 
                       isLastAiMessage={isLastAiMessage} 
                       conversationId={conversationId} 
+                      latencyInstrumentationEnabled={latencyInstrumentationEnabled}
                     />
                   ) : null}
                 </div>
@@ -234,6 +238,8 @@ const MemoizedMessageBubble = memo(function MemoizedMessageBubble({
 
 export function GroupConversationContent() {
   const messages = useDisplayMessages();
+  const settings = useConversationSettings();
+  const latencyInstrumentationEnabled = settings?.latencyInstrumentationEnabled;
   const { user } = useAuth();
   const isStreaming = useConversationStore((s) => s.isStreaming);
   const streamingComponents = useConversationStore((s) => s.streamingComponents);
@@ -360,6 +366,7 @@ export function GroupConversationContent() {
                 currentUserId={user?.id}
                 allMessages={messages}
                 choiceInteractions={choiceInteractions}
+                latencyInstrumentationEnabled={latencyInstrumentationEnabled}
               />
             ))
           )}

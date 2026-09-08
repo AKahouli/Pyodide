@@ -1,5 +1,6 @@
 import { StrictMode } from "react";
 import { render, screen } from "@testing-library/react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { SemanticGraph } from "../types";
 import { useSemanticModelEditorStore } from "../store";
@@ -77,10 +78,13 @@ describe("SemanticModelEditorPage", () => {
   });
 
   it("rehydrates cached graph data during Strict Mode effect replay", async () => {
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
     render(
-      <StrictMode>
-        <SemanticModelEditorPage />
-      </StrictMode>,
+      <QueryClientProvider client={queryClient}>
+        <StrictMode>
+          <SemanticModelEditorPage />
+        </StrictMode>
+      </QueryClientProvider>,
     );
 
     expect(await screen.findByText("semantic-model-canvas")).toBeInTheDocument();

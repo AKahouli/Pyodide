@@ -1,3 +1,5 @@
+import type { ClientStreamMetrics } from './utils/stream-metrics';
+
 export interface GroupMember {
   userId: string;
   joinedAt: string;
@@ -70,6 +72,8 @@ export interface ComposerSuggestionSettings {
 export interface ConversationSettings {
   composerSuggestions: ComposerSuggestionSettings;
   redactSensitiveText?: boolean;
+  /** Runtime source of truth for the classic Conversation latency UI. */
+  latencyInstrumentationEnabled?: boolean;
   updatedAt?: string;
 }
 
@@ -112,6 +116,99 @@ export interface ReliabilityEvaluation {
 export interface ReliabilityRerunResponse {
   messageId: string;
   reliabilityEvaluation: ReliabilityEvaluation;
+}
+
+// ===== End-to-end latency instrumentation =====
+
+export type ConversationLatencyQuality = 'ok' | 'partial' | 'clock-skew';
+
+/** ADK-local monotonic breakdown of the `sessionRunnerSetupMs` child. Diagnostic only. */
+export interface SessionRunnerSetupBreakdownV1 {
+  sessionServiceInitMs?: number;
+  sessionLookupMs?: number;
+  sessionCreateSeedMs?: number;
+  runnerConstructionMs?: number;
+  /** Runner constructed → immediately before runner.run_async. */
+  runnerHandoffMs?: number;
+}
+
+/** ADK-local monotonic breakdown of `adkPreProviderMs`. Diagnostic only. */
+export interface AdkPreProviderBreakdownV1 {
+  protobufToDictMs?: number;
+  requestLoggingMs?: number;
+  requestConversionMs?: number;
+  workflowDispatchMs?: number;
+  sessionLockWaitMs?: number;
+  orchestrationSetupMs?: number;
+  agentToolPreparationMs?: number;
+  sessionRunnerSetupMs?: number;
+  adkRuntimePreModelMs?: number;
+  sessionRunnerSetupBreakdown?: SessionRunnerSetupBreakdownV1;
+}
+
+/**
+ * Node-local breakdown of `backendPreAdkMs` (backend.received → adk
+ * .request_received). All children except `grpcTransitToAdkMs` are monotonic;
+ * `grpcTransitToAdkMs` is cross-clock and policy-validated. Diagnostic only.
+ */
+export interface BackendPreAdkBreakdownV1 {
+  controllerValidationRoutingMs?: number;
+  userMessagePersistenceMs?: number;
+  aiPlaceholderPersistenceMs?: number;
+  streamBootstrapMs?: number;
+  conversationContextLoadMs?: number;
+  workspaceAgentResolutionMs?: number;
+  supplementalContextAssemblyMs?: number;
+  grpcPayloadPreparationMs?: number;
+  grpcTransitToAdkMs?: number;
+}
+
+export interface ConversationLatencyMetricsV1 {
+  schemaVersion: 1;
+  /** adk.request_received - backend.received (cross-clock). */
+  backendPreAdkMs?: number;
+  /** Diagnostic children of backendPreAdkMs; absent on historical messages. */
+  backendPreAdkBreakdown?: BackendPreAdkBreakdownV1;
+  /** llm.request_start - adk.request_received (monotonic, ADK-local). */
+  adkPreProviderMs?: number;
+  /** Diagnostic children of adkPreProviderMs; absent on historical messages. */
+  adkPreProviderBreakdown?: AdkPreProviderBreakdownV1;
+  /** llm.first_delta - llm.request_start (monotonic, ADK-local). */
+  providerTtftMs?: number;
+  /** adk.first_delta_forwarded - llm.first_delta (monotonic, ADK-local). */
+  adkForwardingMs?: number;
+  /** backend.first_delta_written - adk.first_delta_forwarded (cross-clock). */
+  backendForwardingMs?: number;
+  /** frontend.first_chunk_painted - backend.first_delta_written (cross-clock). */
+  frontendRenderMs?: number;
+  /** Diagnostic only: paint minus SSE arrival, browser-monotonic. Not a primary UI row. */
+  browserRenderOnlyMs?: number;
+  quality?: ConversationLatencyQuality;
+}
+
+/** One-time latency envelope carried by the first model-derived stream_chunk. */
+export interface StreamChunkLatencyData {
+  schemaVersion: 1;
+  requestId: string;
+  assistantMessageId: string;
+  backendFirstDeltaWrittenEpochMs: number;
+  metrics: Omit<
+    ConversationLatencyMetricsV1,
+    'schemaVersion' | 'frontendRenderMs' | 'browserRenderOnlyMs'
+  >;
+  quality: ConversationLatencyQuality;
+}
+
+/** Payload for the idempotent frontend-paint reporting endpoint. */
+export interface ReportFrontendLatencyPayload {
+  schemaVersion: 1;
+  requestId: string;
+  frontendFirstChunkPaintedEpochMs: number;
+  frontendRenderMs: number;
+  browserRenderOnlyMs?: number;
+  quality: ConversationLatencyQuality;
+  /** Optional client streaming counters (Phase 0 telemetry); absent when nothing was recorded. */
+  clientMetrics?: ClientStreamMetrics;
 }
 
 export type ResponseCorrectionStatus = 'queued' | 'correcting' | 're_evaluating' | 'corrected' | 'failed' | 'abstained' | 'human_review_required';
@@ -206,6 +303,7 @@ export interface Message {
   durationMs?: number;
   timeToFirstChunk?: number;
   timeToFirstToken?: number;
+  latencyMetrics?: ConversationLatencyMetricsV1;
   parentMessageId?: string; // Reference to the message being replied to
   reliabilityEvaluation?: ReliabilityEvaluation;
   correctionWorkflow?: ResponseCorrectionWorkflow;
@@ -444,6 +542,8 @@ export interface StreamChunkEvent {
   action: 'add' | 'update' | 'delete';
   component: StreamingComponent;
   metadata?: Record<string, unknown>;
+  /** One-time latency envelope on the first model-derived chunk only. */
+  latency?: StreamChunkLatencyData;
 }
 
 export interface StreamCompleteEvent {
@@ -454,10 +554,13 @@ export interface StreamCompleteEvent {
     outputTokens: number;
     durationMs: number;
   };
+  /** First five server-side metrics; the browser contributes the sixth. */
+  latencyMetrics?: ConversationLatencyMetricsV1;
 }
 
 export interface StreamErrorEvent {
   conversationId: string;
+  messageId: string;
   errorCode: string;
   message: string;
 }
@@ -478,6 +581,12 @@ export interface ConversationNameGeneratedEvent {
   name: string;
 }
 
+export interface StreamResyncRequiredEvent {
+  reason: 'cursor_gap' | 'unknown_instance';
+  lastSeenCursor?: string;
+  oldestRetainedCursor?: string;
+}
+
 export type SSEConnectionStatus = 'connecting' | 'connected' | 'disconnected' | 'failed';
 
 export type StreamSSEEvent =
@@ -491,6 +600,7 @@ export type StreamSSEEvent =
   | { type: 'message_created'; data: MessageCreatedEvent }
   | { type: 'message_updated'; data: MessageUpdatedEvent }
   | { type: 'mention_created'; data: { conversationId: string; messageId: string; userId: string } }
+  | { type: 'stream_resync_required'; data: StreamResyncRequiredEvent }
   | { type: 'connection_failed'; data: { reason: string } }
   | { type: 'error'; data: { code?: string; message?: string } };
 

@@ -50,7 +50,7 @@
     "empty": "Sélectionnez un outil pour l'inspecter.",
     "jumpToLive": "Revenir au direct",
     "tabCode": "Code",
-    "tabPreview": "Aperçu",
+    "tabPreview": "Aperçus",
     "tabData": "Données",
     "resizeHandle": "Glisser pour redimensionner l'aperçu"
   },
@@ -161,6 +161,18 @@
       "delete": "Supprimer",
       "more": "Autres actions"
     }
+  },
+  "versionHistory": {
+    "title": "Versions",
+    "subtitle": "Choisir une version finalisée à prévisualiser ou déployer",
+    "open": "Versions finalisées",
+    "finalized": "Finalisée",
+    "latest": "Dernière",
+    "preview": "Prévisualiser cette version",
+    "deploy": "Déployer cette version",
+    "active": "Active",
+    "empty": "Aucune version finalisée",
+    "loading": "Chargement des versions…"
   },
   "deploy": {
     "publish": "Déployer",

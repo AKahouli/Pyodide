@@ -135,6 +135,10 @@ export class ConversationV2AppShareService {
       source: 'shared' as const,
       shareId: doc._id.toString(),
       canOpenConversation: doc.includeConversation !== false,
+      lastDeployedRevisionId: null,
+      latestFinalizedRevisionId: null,
+      latestFinalizedAt: null,
+      finalizedVersionCount: 0,
     }));
   }
 

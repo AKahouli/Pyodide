@@ -9,6 +9,8 @@ export const playbookKeys = {
     [...playbookKeys.all, 'legacy-detail', id] as const,
   detail: (id: string, view: PlaybookDetailView) =>
     [...playbookKeys.all, 'detail', id, view] as const,
+  inputContract: (id: string) =>
+    [...playbookKeys.detail(id, 'base'), 'input-contract'] as const,
   designMessages: (playbookId: string) =>
     [...playbookKeys.legacyDetail(playbookId), 'design-messages'] as const,
   designOperation: (playbookId: string, operationId: string) =>

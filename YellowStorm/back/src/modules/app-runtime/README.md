@@ -116,6 +116,13 @@ Legacy `POST /internal/app-runtime/tool-invoke` always answers HTTP 200 with a f
 - **Revision guard**: a mutation is refused when the browser revision differs
   from the binding revision, and `runtime.rehydrate` is emitted first.
 
+## Finalized versions
+
+Successful `finalize` tool calls are recorded in Mongo (`app_finalized_revisions`)
+via `RuntimeFinalizedRevisionService.record()`. These stable revision ids are
+the only ones allowed for deployment (`GET /conversation-v2/sessions/:id/finalized-versions`,
+deploy whitelist in `ConversationV2Controller`).
+
 ## Known limitation
 
 The socket registry is process-local and there is no Redis Socket.IO adapter, so

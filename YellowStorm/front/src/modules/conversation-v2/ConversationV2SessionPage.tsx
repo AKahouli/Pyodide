@@ -69,6 +69,7 @@ export default function ConversationV2SessionPage() {
     setSelectedSkillIds,
     setSelectedConnectorIds,
     replayEvents,
+    loadFinalizedVersions,
     setStreaming,
     streamError,
     events,
@@ -86,6 +87,7 @@ export default function ConversationV2SessionPage() {
       setSelectedSkillIds: s.setSelectedSkillIds,
       setSelectedConnectorIds: s.setSelectedConnectorIds,
       replayEvents: s.replayEvents,
+      loadFinalizedVersions: s.loadFinalizedVersions,
       setStreaming: s.setStreaming,
       streamError: s.streamError,
       events: s.events,
@@ -206,6 +208,7 @@ export default function ConversationV2SessionPage() {
           since = nextSince;
         }
         replayEvents(collected);
+        void loadFinalizedVersions(sessionId);
 
         // If the session is mid-turn server-side, show the thinking state; the
         // per-user pipe delivers the rest (and a done/error to clear it).
@@ -229,7 +232,7 @@ export default function ConversationV2SessionPage() {
     return () => {
       cancelled = true;
     };
-  }, [sessionId, switchToSession, setSystemWorkspaceId, setWorkspaceIds, setDeployState, setSelectedSkillIds, setSelectedConnectorIds, replayEvents, setStreaming, hydrateSelectedModelForSession]);
+  }, [sessionId, switchToSession, setSystemWorkspaceId, setWorkspaceIds, setDeployState, setSelectedSkillIds, setSelectedConnectorIds, replayEvents, loadFinalizedVersions, setStreaming, hydrateSelectedModelForSession]);
 
   // Fire off the initial message handed in from the landing page once the
   // session is loaded. Guarded by sentInitialForSession so we don't re-send

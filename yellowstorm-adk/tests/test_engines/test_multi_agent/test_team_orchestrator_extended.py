@@ -68,14 +68,15 @@ class TestTeamOrchestratorExtended:
         team.document_helper._get_consolidated_document_tree_info_for_manager = MagicMock(return_value="")
         queue = AsyncMock()
         with patch(
-            "src.smart_rag.engines.multi_agent.team_orchestrator.get_database_session_service"
+            "src.smart_rag.engines.multi_agent.team_orchestrator.get_shared_database_session_service",
+            new_callable=AsyncMock,
         ) as mock_db, patch(
             "src.smart_rag.engines.multi_agent.team_orchestrator.get_adk_runner"
         ) as mock_runner, patch(
             "src.smart_rag.infrastructure.session.citation_manager.get_citation_manager",
             new=AsyncMock(return_value=MagicMock()),
         ):
-            mock_db.return_value.return_value.get_session = AsyncMock(return_value=MagicMock())
+            mock_db.return_value.get_session = AsyncMock(return_value=MagicMock())
             mock_runner.return_value = MagicMock()
             result = await team.run_agent_team("user", "manager", "sess-1", False, queue)
         assert result is None

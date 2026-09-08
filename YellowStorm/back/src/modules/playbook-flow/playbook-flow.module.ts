@@ -118,6 +118,8 @@ import { PlaybookIntentSuggestionDiagnosticsService } from './services/playbook-
 import { PlaybookFlowPrimitiveRegistryService } from './services/playbook-flow-primitive-registry.service';
 import { PlaybookIntentBlueprintRepairService } from './services/playbook-intent-blueprint-repair.service';
 import { PlaybookIntentBlueprintCompilerService } from './services/playbook-intent-blueprint-compiler.service';
+import { PlaybookInputContractService } from './services/playbook-input-contract.service';
+import { PlaybookIntentExternalInputNormalizerService } from './services/playbook-intent-external-input-normalizer.service';
 import { PlaybookFlowStreamAuthGuard } from './guards/playbook-flow-stream-auth.guard';
 import { PlaybookFlowObservabilityService } from './services/observability/playbook-flow-observability.service';
 import { PlaybookFlowPublicReasoningParserService } from './services/observability/playbook-flow-public-reasoning-parser.service';
@@ -209,6 +211,9 @@ import { PlaybookAssistantAttachmentService } from './assistant/playbook-assista
     ConversationModule,
   ],
   controllers: [
+    // The stream controller must register before PlaybookFlowController so the
+    // static GET /playbooks/stream route is not shadowed by GET /playbooks/:id.
+    PlaybookFlowStreamController,
     PlaybookFlowMailWebhookController,
     PlaybookFlowTemplateController,
     PlaybookFlowExecutionController,
@@ -220,7 +225,6 @@ import { PlaybookAssistantAttachmentService } from './assistant/playbook-assista
     PlaybookFlowOutputFormatController,
     PlaybookFlowAdvisorController,
     PlaybookFlowExecutionAdvisorController,
-    PlaybookFlowStreamController,
     PlaybookFlowPromptTemplateController,
     PlaybookFlowSettingsController,
     PlaybookFlowHitlController,
@@ -297,6 +301,8 @@ import { PlaybookAssistantAttachmentService } from './assistant/playbook-assista
     PlaybookIntentSuggestionDiagnosticsService,
     PlaybookIntentBlueprintRepairService,
     PlaybookIntentBlueprintCompilerService,
+    PlaybookInputContractService,
+    PlaybookIntentExternalInputNormalizerService,
     PlaybookFlowPrimitiveRegistryService,
     PlaybookFlowStreamAuthGuard,
     PlaybookFlowObservabilityService,

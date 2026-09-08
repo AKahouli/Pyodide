@@ -12,6 +12,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import uuid
 from typing import Dict, Optional, Set
 
@@ -21,7 +22,7 @@ from src.grpc_generated import companion_ai_pb2 as pb
 from src.grpc_generated import companion_ai_pb2_grpc as pb_grpc
 from src.companion_ai import mail_token
 from src.companion_ai.readmodel import ReadModel
-from src.companion_ai.service import OrchestratorService, _with_requester
+from src.companion_ai.service import OrchestratorService, _with_requester, active_turn_id
 
 logger = logging.getLogger(__name__)
 
@@ -193,9 +194,24 @@ class CompanionAiServicer(pb_grpc.CompanionAiServicer):
     async def RunTask(self, request: pb.RunRequest, context) -> pb.RunResponse:
         # STEP 1 — the user's message arrives. Everything downstream is driven by
         # this one request; the RPC itself only ever returns an ack.
-        run_id = uuid.uuid4().hex
+        run_id = request.turn_id or uuid.uuid4().hex
         logger.info("[worky] 1. RunTask ◄ incoming request: %s", _describe_request(request))
         logger.info("[worky] 1. RunTask ◄ models: %s", _agent_models(request))
+        # ponytail: CAPTURE — dump the full UNREDACTED connector bindings per
+        # agent to files, so a standalone E2E client (scripts/worky_e2e_runtask.py)
+        # can replay the EXACT tools the backend sent. Carries live Bearer tokens
+        # → writes only under WORKY_CAPTURE_DIR (unset = inert). Remove after
+        # capturing. Grep: [worky][CAPTURE]
+        _cap_dir = os.environ.get("WORKY_CAPTURE_DIR")
+        if _cap_dir:
+            os.makedirs(_cap_dir, exist_ok=True)
+            for a in request.agents:
+                raw = dict(a.agent_params.params).get("connector_bindings_json", "")
+                if raw:
+                    path = os.path.join(_cap_dir, f"bindings_{a.agent_type or a.name}.json")
+                    with open(path, "w") as f:
+                        f.write(raw)
+                    logger.info("[worky][CAPTURE] wrote %s (%d bytes)", path, len(raw))
 
         # A message that arrives WHILE a plan is executing is NOT a supersede.
         # The old behaviour cancelled the running turn and replanned — which
@@ -246,6 +262,7 @@ class CompanionAiServicer(pb_grpc.CompanionAiServicer):
                 and bool(snap.get("steps")))
 
     async def _run_converse(self, request: pb.RunRequest, run_id: str) -> None:
+        token = active_turn_id.set(run_id)
         try:
             planner = _agent_by_type(request.agents, PLANNER_AGENT_TYPE)
             await self._svc.converse_turn(
@@ -263,6 +280,9 @@ class CompanionAiServicer(pb_grpc.CompanionAiServicer):
             logger.exception("[worky] converse turn failed (session=%s run=%s)",
                              request.session_id, run_id)
             await self._svc.fail_session(request.session_id, exc)
+            await self._record_turn_failure(request.session_id, run_id, fail_session=False)
+        finally:
+            active_turn_id.reset(token)
 
     def _forget_running(self, session_id: str):
         """Done-callback that drops the session's task ref only if it's still the
@@ -274,6 +294,7 @@ class CompanionAiServicer(pb_grpc.CompanionAiServicer):
 
     async def _run_turn(self, request: pb.RunRequest, model: str, run_id: str,
                         prev: Optional[asyncio.Task] = None) -> None:
+        token = active_turn_id.set(run_id)
         try:
             # Last-answer-wins: cancel any in-flight turn for this session so two
             # turns never run concurrently — that race is what let a "changed my
@@ -347,6 +368,32 @@ class CompanionAiServicer(pb_grpc.CompanionAiServicer):
         except Exception as exc:
             logger.exception("RunTask turn failed (session=%s run=%s)", request.session_id, run_id)
             await self._svc.fail_session(request.session_id, exc)
+            await self._record_turn_failure(request.session_id, run_id)
+        finally:
+            active_turn_id.reset(token)
+
+    async def _record_turn_failure(
+        self, session_id: str, run_id: str, *, fail_session: bool = True
+    ) -> None:
+        """Best-effort durable failure outcome consumed through Electric."""
+        if self._rm is None:
+            return
+        try:
+            await self._rm.add_message(
+                uuid.uuid4().hex,
+                session_id,
+                "assistant",
+                "I couldn't complete that request. Please try again.",
+                run_id,
+            )
+            if fail_session:
+                await self._rm.set_session_status(session_id, "failed")
+        except Exception:
+            logger.exception(
+                "RunTask failure projection failed (session=%s run=%s)",
+                session_id,
+                run_id,
+            )
 
     async def GetSession(self, request: pb.GetSessionRequest, context) -> pb.GetSessionResponse:
         if self._rm is None:

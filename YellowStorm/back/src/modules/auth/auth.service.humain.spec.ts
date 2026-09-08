@@ -39,6 +39,9 @@ describe('AuthService human-agent creation', () => {
     const configService = { get: jest.fn((_key: string, def: unknown) => def) };
     const logger = { setContext: jest.fn(), log: jest.fn(), warn: jest.fn(), error: jest.fn() };
     const emailService = { isAvailable: jest.fn().mockReturnValue(false) };
+    const emailTemplateRenderer = {
+      render: jest.fn().mockResolvedValue({ subject: 's', html: '<p>s</p>', text: 's' }),
+    };
     const usageService = { getDefaultPlan: jest.fn().mockResolvedValue({ _id: new Types.ObjectId(), slug: 'free', workspaceStorageBytes: 100 }) };
     const authorizationService = { getUserPermissions: jest.fn().mockResolvedValue([]), getUserRoleNames: jest.fn().mockResolvedValue([]) };
     const systemService = { isRegistrationEnabled: jest.fn().mockReturnValue(true) };
@@ -50,6 +53,7 @@ describe('AuthService human-agent creation', () => {
       configService as never,
       logger as never,
       emailService as never,
+      emailTemplateRenderer as never,
       usageService as never,
       authorizationService as never,
       systemService as never,

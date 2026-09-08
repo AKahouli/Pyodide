@@ -1,15 +1,7 @@
 import asyncio
-import sys
 from types import SimpleNamespace
 
 import pytest
-
-sys.modules.setdefault(
-    "src.smart_rag.tools.utilities.connector_tools",
-    SimpleNamespace(
-        import_connector_items_to_workspace_request=lambda *args, **kwargs: None,
-    ),
-)
 
 from src.flow_engine.tools.langchain_factory import (
     ToolResultCollector,

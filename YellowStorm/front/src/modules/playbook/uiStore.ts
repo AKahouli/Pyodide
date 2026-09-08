@@ -35,6 +35,7 @@ export interface PlaybookUiState {
   nodeEditorOpen: boolean;
   graphPanelOpen: boolean;
   pageMode: PlaybookPageMode;
+  assistantOperationPlaybookId: string | null;
   assistantOperationId: string | null;
   assistantOperationTarget: 'canonical' | 'advisor_preview' | null;
   assistantPreviewStatus: 'idle' | 'streaming' | 'ready' | 'applying' | 'discarding';
@@ -57,7 +58,7 @@ export interface PlaybookUiActions {
   setSkillSidebarOpen: (open: boolean) => void;
   setNodeEditorOpen: (open: boolean) => void;
   setGraphPanelOpen: (open: boolean) => void;
-  setAssistantOperation: (operation: { id: string; target: 'canonical' | 'advisor_preview'; baseDefinitionRevision: number; status: 'streaming' | 'ready' }) => void;
+  setAssistantOperation: (operation: { playbookId: string; id: string; target: 'canonical' | 'advisor_preview'; baseDefinitionRevision: number; status: 'streaming' | 'ready' }) => void;
   setAssistantPreviewStatus: (status: PlaybookUiState['assistantPreviewStatus']) => void;
   clearAssistantOperation: () => void;
   setAssistantConstructionId: (id: string | null) => void;
@@ -81,6 +82,7 @@ export const initialPlaybookUiState: PlaybookUiState = {
   nodeEditorOpen: false,
   graphPanelOpen: false,
   pageMode: 'design',
+  assistantOperationPlaybookId: null,
   assistantOperationId: null,
   assistantOperationTarget: null,
   assistantPreviewStatus: 'idle',
@@ -135,6 +137,7 @@ export const usePlaybookUiStore = create<PlaybookUiStore>()(
         : { nodeEditorOpen: false }),
       setGraphPanelOpen: (open) => set({ graphPanelOpen: open }),
       setAssistantOperation: (operation) => set({
+        assistantOperationPlaybookId: operation.playbookId,
         assistantOperationId: operation.id,
         assistantOperationTarget: operation.target,
         assistantBaseDefinitionRevision: operation.baseDefinitionRevision,
@@ -142,6 +145,7 @@ export const usePlaybookUiStore = create<PlaybookUiStore>()(
       }),
       setAssistantPreviewStatus: (status) => set({ assistantPreviewStatus: status }),
       clearAssistantOperation: () => set({
+        assistantOperationPlaybookId: null,
         assistantOperationId: null,
         assistantOperationTarget: null,
         assistantPreviewStatus: 'idle',

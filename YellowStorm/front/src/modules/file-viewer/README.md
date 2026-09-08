@@ -63,7 +63,7 @@ The file viewer module provides:
 │  │         │              │  Renderer Layer  │                            │ │
 │  │         │              │                  │                            │ │
 │  │         │              │  PdfRenderer     │  @embedpdf/react-pdf-viewer  │ │
-│  │         │              │  DocxRenderer    │  @cyntler/react-doc-viewer  │ │
+│  │         │              │  DocxRenderer    │  docx-preview               │ │
 │  │         │              │  SpreadsheetRenderer │ exceljs + sheet navigation│ │
 │  │         │              │  PptxRenderer    │  pptx-to-html w/ controls  │ │
 │  │         │              │  TextRenderer    │  shiki syntax highlighting │ │
@@ -113,7 +113,7 @@ The file viewer module provides:
 | **Zustand**                    | State management with devtools middleware |
 | **TypeScript**                 | Type-safe development                     |
 | **@embedpdf/react-pdf-viewer** | PDF rendering with plugin architecture    |
-| **@cyntler/react-doc-viewer**   | DOCX rendering                              |
+| **docx-preview**                | Local DOCX-to-HTML rendering                |
 | **exceljs**                    | Spreadsheet parsing + sheet navigation    |
 | **shiki**                      | Syntax highlighting for 40+ languages     |
 | **Lucide React**               | Icons                                     |
@@ -142,7 +142,7 @@ file-viewer/
 │   └── FileViewerContent.tsx   # Tab bar + renderer instances (all mounted, active visible)
 ├── renderers/
 │   ├── index.ts                # Renderer registry: getRenderer(), isViewableFile(), etc.
-│   ├── DocxRenderer/            # DOCX rendering via @cyntler/react-doc-viewer
+│   ├── DocxRenderer/            # Local DOCX rendering via docx-preview
 │   ├── SpreadsheetRenderer/    # Spreadsheet rendering via exceljs with sheet/row controls
 │   ├── ImageRenderer.tsx       # Image with zoom, pan, checkerboard background
 │   ├── PdfRenderer/            # PDF rendering with theme mapping and navigation
@@ -380,15 +380,14 @@ Maps MIME types to renderer components and provides utility functions.
 
 ### DocxRenderer
 
-Renders DOCX files using `@cyntler/react-doc-viewer`.
+Renders DOCX files locally using `docx-preview`.
 
 **Features:**
 
-- **Native DOCX rendering**: Uses Microsoft Office Online viewer via iframe for rendering
+- **Local DOCX rendering**: Fetches the signed file URL and converts the document to HTML in the browser
 - **Download button**: Floating button in top-right corner allows downloading the file
-- **Header disabled**: The package's default header is hidden, replaced by our tab system
-- **Loading override**: Custom empty loader component hides the package's internal loading state
-- **Clean loading**: Loading state is managed at parent level (FileViewerContent), showing "Chargement de {fileName}..."
+- **No third-party iframe**: Preview does not depend on Microsoft Office Online embedding
+- **Loading and errors**: Shows localized loading, retry, and download controls
 
 ### PdfRenderer
 
@@ -839,7 +838,7 @@ File content is loaded from Azure Blob Storage presigned URLs. CORS behavior var
 | Renderer          | Loading Method                               | CORS Subject? | Notes                             |
 | ----------------- | -------------------------------------------- | ------------- | --------------------------------- |
 | **PdfRenderer**   | `@embedpdf/react-pdf-viewer` internal loader | Yes           | Requires Azure CORS configuration |
-| **DocxRenderer**  | Microsoft Office Online viewer (iframe)      | Yes           | Requires Azure CORS configuration |
+| **DocxRenderer**  | `fetch(url)` + local `docx-preview` rendering | Yes           | Requires object-storage CORS configuration |
 | **PptxRenderer**   | `fetch(url).then(r => r.arrayBuffer())`      | Yes           | Requires Azure CORS configuration |
 | **SpreadsheetRenderer** | `fetch(url).then(r => r.arrayBuffer())`      | Yes           | Requires Azure CORS configuration |
 | **TextRenderer**  | `fetch(url).then(r => r.text())`             | Yes           | Requires Azure CORS configuration |

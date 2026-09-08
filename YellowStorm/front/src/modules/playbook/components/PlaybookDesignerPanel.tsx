@@ -44,6 +44,7 @@ interface Props {
   onCancelConstruction?: () => void;
   onReviewConstructionDiagnostic?: (diagnostic: PlaybookIntentDiagnostic) => void;
   assistantPreviewStatus?: 'idle' | 'streaming' | 'ready' | 'applying' | 'discarding';
+  assistantOperationTarget?: 'canonical' | 'advisor_preview' | null;
   onApplyAssistantPreview?: () => void;
   onDiscardAssistantPreview?: () => void;
   onWidthChange?: (width: number) => void;
@@ -251,6 +252,7 @@ export function PlaybookDesignerPanel({
   onCancelConstruction,
   onReviewConstructionDiagnostic,
   assistantPreviewStatus = 'idle',
+  assistantOperationTarget = null,
   onApplyAssistantPreview,
   onDiscardAssistantPreview,
   onWidthChange,
@@ -258,6 +260,11 @@ export function PlaybookDesignerPanel({
 }: Props) {
   const { t } = useModuleTranslation('playbook');
   const constructionActive = constructionStatus === 'starting' || constructionStatus === 'streaming';
+  const assistantOperationPending = assistantPreviewStatus !== 'idle';
+  const blockedCanonicalDraft = constructionStatus === 'failed'
+    && assistantPreviewStatus === 'ready'
+    && assistantOperationTarget === 'canonical'
+    && constructionDiagnostics.some((diagnostic) => diagnostic.severity === 'error');
 
   const designerOpen = useDesignerOpen();
   const copilotMode = useCopilotMode();
@@ -293,7 +300,7 @@ export function PlaybookDesignerPanel({
   const stopExecution = usePlaybookStore((s) => s.stopExecution);
   const isStopping = usePlaybookStore((s) => s.isStopping);
 
-  const { saveNow } = useAutosave({ paused: constructionActive });
+  const { saveNow } = useAutosave({ paused: constructionActive || assistantOperationPending });
 
   const [query, setQuery] = useState('');
   const [response, setResponse] = useState('');
@@ -726,6 +733,7 @@ export function PlaybookDesignerPanel({
   }, [currentDesignQuestion, designAnswers, designQuestions, designStepIndex, loadDesignAnswer, saveCurrentDesignAnswer]);
 
   const handleContinueDesign = useCallback(() => {
+    if (assistantOperationPending) return;
     const currentAnswer = saveCurrentDesignAnswer();
     if (!currentAnswer) return;
     if (!isLastDesignQuestion) {
@@ -739,7 +747,7 @@ export function PlaybookDesignerPanel({
       return;
     }
     void onAnswerDesignIntent?.(getCapturedAnswers(true), getCapturedRequirements(true));
-  }, [currentDesignQuestion, designAnswers, designQuestions, designStepIndex, getCapturedAnswers, getCapturedRequirements, isLastDesignQuestion, loadDesignAnswer, onAnswerDesignIntent, saveCurrentDesignAnswer]);
+  }, [assistantOperationPending, currentDesignQuestion, designAnswers, designQuestions, designStepIndex, getCapturedAnswers, getCapturedRequirements, isLastDesignQuestion, loadDesignAnswer, onAnswerDesignIntent, saveCurrentDesignAnswer]);
 
   const handleSelectDesignChoice = useCallback((choice: string) => {
     setSelectedDesignChoice(choice);
@@ -754,13 +762,14 @@ export function PlaybookDesignerPanel({
   }, []);
 
   const handleSkipDesign = useCallback(() => {
+    if (assistantOperationPending) return;
     void onAnswerDesignIntent?.(getCapturedAnswers(true), getCapturedRequirements(true));
-  }, [getCapturedAnswers, getCapturedRequirements, onAnswerDesignIntent]);
+  }, [assistantOperationPending, getCapturedAnswers, getCapturedRequirements, onAnswerDesignIntent]);
 
   const handleSubmitDesign = useCallback(async (e: FormEvent) => {
     e.preventDefault();
     const images = promptImages.map(({ file }) => file);
-    if ((!query.trim() && images.length === 0) || !playbookId || designIntentBusy || !onSubmitDesignIntent) return;
+    if ((!query.trim() && images.length === 0) || !playbookId || designIntentBusy || assistantOperationPending || !onSubmitDesignIntent) return;
 
     const q = query.trim();
     const imageLabel = `[${images.length} image${images.length === 1 ? '' : 's'} attached]`;
@@ -783,7 +792,7 @@ export function PlaybookDesignerPanel({
       return;
     }
     promptImages.forEach((image) => releasePromptImagePreview(image.previewUrl));
-  }, [query, promptImages, playbookId, designIntentBusy, isDirty, saveNow, onSubmitDesignIntent]);
+  }, [assistantOperationPending, query, promptImages, playbookId, designIntentBusy, isDirty, saveNow, onSubmitDesignIntent]);
 
   const handleDesignComposerKeyDown = useCallback((event: KeyboardEvent<HTMLTextAreaElement>) => {
     if (event.key !== 'Enter' || event.altKey || event.shiftKey || event.nativeEvent.isComposing) return;
@@ -792,10 +801,11 @@ export function PlaybookDesignerPanel({
   }, []);
 
   const handleApplyHistory = useCallback((entry: IntentSuggestionHistoryEntry) => {
+    if (assistantOperationPending) return;
     if (entry.intent) setQuery(entry.intent);
     onApplyHistorySuggestion?.(entry.suggestion);
     setHistoryOpen(false);
-  }, [onApplyHistorySuggestion]);
+  }, [assistantOperationPending, onApplyHistorySuggestion]);
 
   const handlePasteDesignImages = useCallback((event: ClipboardEvent<HTMLTextAreaElement>) => {
     const files = Array.from(event.clipboardData.files).filter((file) => file.type.startsWith('image/'));
@@ -1264,10 +1274,10 @@ export function PlaybookDesignerPanel({
                     <Button type="button" size="sm" variant="outline" onClick={handleBackDesign} disabled={designIntentBusy || designStepIndex === 0}>
                       {t('intentBar.design.back')}
                     </Button>
-                    <Button type="button" size="sm" onClick={handleContinueDesign} disabled={designIntentBusy || !canContinueDesign}>
+                    <Button type="button" size="sm" onClick={handleContinueDesign} disabled={designIntentBusy || assistantOperationPending || !canContinueDesign}>
                       {isLastDesignQuestion ? t('intentBar.design.generate') : t('intentBar.design.next')}
                     </Button>
-                    <Button type="button" size="sm" variant="outline" onClick={handleSkipDesign} disabled={designIntentBusy || !onAnswerDesignIntent}>
+                    <Button type="button" size="sm" variant="outline" onClick={handleSkipDesign} disabled={designIntentBusy || assistantOperationPending || !onAnswerDesignIntent}>
                       {t('intentBar.design.skip')}
                     </Button>
                   </div>
@@ -1435,15 +1445,21 @@ export function PlaybookDesignerPanel({
           )}
           {assistantPreviewStatus !== 'idle' && (
             <div className="rounded-lg border border-primary/30 bg-primary/5 p-3">
-              <p className="text-sm font-medium">{t('intentBar.preview.title')}</p>
-              <p className="mt-1 text-xs text-muted-foreground">{t('intentBar.preview.description')}</p>
+              <p className="text-sm font-medium">
+                {t(blockedCanonicalDraft ? 'intentBar.blockedDraft.title' : assistantOperationTarget === 'canonical' ? 'intentBar.commitRetry.title' : 'intentBar.preview.title')}
+              </p>
+              <p className="mt-1 text-xs text-muted-foreground">
+                {t(blockedCanonicalDraft ? 'intentBar.blockedDraft.description' : assistantOperationTarget === 'canonical' ? 'intentBar.commitRetry.description' : 'intentBar.preview.description')}
+              </p>
               {assistantPreviewStatus === 'ready' && (
                 <div className="mt-3 flex justify-end gap-2">
-                  <Button type="button" variant="outline" size="sm" onClick={onDiscardAssistantPreview}>
-                    {t('intentBar.preview.discard')}
-                  </Button>
+                  {assistantOperationTarget !== 'canonical' && (
+                    <Button type="button" variant="outline" size="sm" onClick={onDiscardAssistantPreview}>
+                      {t('intentBar.preview.discard')}
+                    </Button>
+                  )}
                   <Button type="button" size="sm" onClick={onApplyAssistantPreview}>
-                    {t('intentBar.preview.apply')}
+                    {t(blockedCanonicalDraft ? 'intentBar.blockedDraft.save' : assistantOperationTarget === 'canonical' ? 'intentBar.commitRetry.retry' : 'intentBar.preview.apply')}
                   </Button>
                 </div>
               )}
@@ -1471,7 +1487,7 @@ export function PlaybookDesignerPanel({
                 variant={historyOpen ? 'secondary' : 'outline'}
                 size="sm"
                 className="h-7 gap-1.5 px-2"
-                disabled={constructionActive || history.length === 0 || !onApplyHistorySuggestion}
+                disabled={constructionActive || assistantOperationPending || history.length === 0 || !onApplyHistorySuggestion}
                 aria-expanded={historyOpen}
                 onClick={() => setHistoryOpen((current) => !current)}
               >
@@ -1488,7 +1504,7 @@ export function PlaybookDesignerPanel({
                   type="button"
                   variant="ghost"
                   className="h-auto w-full justify-start whitespace-normal px-2 py-1.5 text-left text-xs"
-                  disabled={constructionActive || !onApplyHistorySuggestion}
+                  disabled={constructionActive || assistantOperationPending || !onApplyHistorySuggestion}
                   onClick={() => handleApplyHistory(entry)}
                 >
                   <span className="line-clamp-2">{entry.intent || entry.suggestion.label}</span>
@@ -1505,7 +1521,7 @@ export function PlaybookDesignerPanel({
               onKeyDown={handleDesignComposerKeyDown}
               onPaste={handlePasteDesignImages}
               placeholder={t('designer.inputPlaceholder')}
-              disabled={designIntentBusy && !constructionActive}
+              disabled={(designIntentBusy || assistantOperationPending) && !constructionActive}
               rows={1}
               className="max-h-32 min-h-10 resize-y text-sm"
             />
@@ -1513,7 +1529,7 @@ export function PlaybookDesignerPanel({
               type={constructionActive ? 'button' : 'submit'}
               size="icon"
               variant={constructionActive ? 'destructive' : 'default'}
-              disabled={constructionActive ? !onCancelConstruction : (!query.trim() && promptImages.length === 0) || designIntentBusy || !onSubmitDesignIntent}
+              disabled={constructionActive ? !onCancelConstruction : (!query.trim() && promptImages.length === 0) || designIntentBusy || assistantOperationPending || !onSubmitDesignIntent}
               className="shrink-0"
               onClick={constructionActive ? onCancelConstruction : undefined}
               aria-label={constructionActive ? t('intentBar.actions.stop') : t('designer.send')}

@@ -5,9 +5,9 @@ import { ConflictException, ForbiddenException, NotFoundException, ValidationExc
 import { ErrorCode } from '@modules/exceptions/constants/error-codes';
 import { AuditLogService } from '@modules/authorization/services/audit-log.service';
 import { UserGroupService } from '@modules/user-group';
-import { CreateGovernanceScopeDto, UpdateGovernanceScopeDto } from '../dto';
+import { CreateGovernanceScopeDto, GovernanceScopeKnowledgeDto, UpdateGovernanceScopeDto } from '../dto';
 import { GovernanceProgramService } from './governance-program.service';
-import { GovernanceScope, GovernanceScopeDocument } from '../schemas/governance-scope.schema';
+import { GovernanceScope, GovernanceScopeDocument, GovernanceScopeKnowledgeSchemaClass } from '../schemas/governance-scope.schema';
 import { GovernanceDocument, GovernanceDocumentDocument } from '../schemas/governance-document.schema';
 import { GovernanceWorkspaceBinding, GovernanceWorkspaceBindingDocument } from '../schemas/governance-workspace-binding.schema';
 import { GovernanceMembership, GovernanceMembershipDocument } from '../schemas/governance-membership.schema';
@@ -18,6 +18,13 @@ import { GovernanceMetric, GovernanceMetricDocument } from '../schemas/governanc
 import { GovernancePublicationAttempt, GovernancePublicationAttemptDocument } from '../schemas/governance-publication-attempt.schema';
 import { GovernanceDraftPreparationService } from './governance-draft-preparation.service';
 
+export interface GovernanceScopeKnowledgeResponse {
+  sourceMode: 'llm_only' | 'workspaces_only';
+  webSourcesEnabled: boolean;
+  webAllowedDomains: string[];
+  webBlockedDomains: string[];
+}
+
 export interface GovernanceScopeResponse {
   id: string;
   programId: string;
@@ -27,6 +34,7 @@ export interface GovernanceScopeResponse {
   status: 'active' | 'inactive';
   agentIds: string[];
   metadata: Record<string, unknown>;
+  knowledge: GovernanceScopeKnowledgeResponse;
   createdAt: string;
   updatedAt: string;
 }
@@ -63,7 +71,8 @@ export class GovernanceScopeService {
     await this.assertNoDuplicate(programId, dto.name.trim());
     await this.assertValidParent(programId, dto.parentScopeId);
     const metadata = dto.metadata ? this.normalizeDescription(dto.metadata) : undefined;
-    const scope = await this.scopeModel.create({ ...dto, metadata, name: dto.name.trim(), programId: new Types.ObjectId(programId) });
+    const knowledge = dto.knowledge ? this.normalizeKnowledge(dto.knowledge) : undefined;
+    const scope = await this.scopeModel.create({ ...dto, metadata, ...(knowledge ? { knowledge } : {}), name: dto.name.trim(), programId: new Types.ObjectId(programId) });
     return this.toResponse(scope);
   }
 
@@ -103,6 +112,7 @@ export class GovernanceScopeService {
       if (dto.status === 'inactive') await this.suspendPublishedDeployment(ownerUserId, ownerEmail, programId, scopeId);
     }
     if (dto.agentIds !== undefined) scope.agentIds = dto.agentIds.map((id) => new Types.ObjectId(id));
+    if (dto.knowledge !== undefined) scope.knowledge = this.normalizeKnowledge(dto.knowledge);
     if (dto.metadata !== undefined) {
       const metadata = this.normalizeDescription(dto.metadata);
       this.assertMetadataUpdateAllowed(metadata);
@@ -164,7 +174,7 @@ export class GovernanceScopeService {
   }
 
   private hasScopeManagementFields(dto: UpdateGovernanceScopeDto): boolean {
-    if (dto.name !== undefined || dto.parentScopeId !== undefined || dto.type !== undefined || dto.status !== undefined || dto.agentIds !== undefined) return true;
+    if (dto.name !== undefined || dto.parentScopeId !== undefined || dto.type !== undefined || dto.status !== undefined || dto.agentIds !== undefined || dto.knowledge !== undefined) return true;
     if (!dto.metadata) return false;
     return Object.keys(dto.metadata).some((key) => key !== 'review');
   }
@@ -205,6 +215,35 @@ export class GovernanceScopeService {
     if (review && typeof review === 'object' && 'status' in review && (review as { status?: unknown }).status === 'approved') {
       throw new ForbiddenException(ErrorCode.GOVERNANCE_ACCESS_DENIED);
     }
+  }
+
+  /**
+   * Web-source domain lists are stored normalized (lowercase hostnames, no
+   * scheme/path). With web sources enabled but both lists empty, every web
+   * source is authorized.
+   */
+  private normalizeKnowledge(knowledge: GovernanceScopeKnowledgeDto): GovernanceScopeKnowledgeSchemaClass {
+    const webSourcesEnabled = knowledge.webSourcesEnabled ?? false;
+    return {
+      sourceMode: knowledge.sourceMode ?? 'llm_only',
+      webSourcesEnabled,
+      webAllowedDomains: webSourcesEnabled ? this.normalizeDomainList(knowledge.webAllowedDomains, 'webAllowedDomains') : [],
+      webBlockedDomains: webSourcesEnabled ? this.normalizeDomainList(knowledge.webBlockedDomains, 'webBlockedDomains') : [],
+    };
+  }
+
+  private normalizeDomainList(values: string[] | undefined, field: string): string[] {
+    if (!values?.length) return [];
+    return values.map((value) => this.normalizeDomain(value, field));
+  }
+
+  private normalizeDomain(raw: string, field: string): string {
+    const host = raw.trim().toLowerCase().replace(/^https?:\/\//, '').split('/')[0].split(':')[0];
+    const isValidHost = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$/.test(host);
+    if (!isValidHost) {
+      throw new ValidationException([{ field: `knowledge.${field}`, message: `"${raw.trim()}" is not a valid domain name`, value: raw }]);
+    }
+    return host;
   }
 
   private normalizeDescription(metadata: Record<string, unknown>): Record<string, unknown> {
@@ -297,6 +336,7 @@ export class GovernanceScopeService {
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   private toResponse(doc: any): GovernanceScopeResponse {
+    const knowledge = doc.knowledge ?? {};
     return {
       id: doc._id.toString(),
       programId: doc.programId.toString(),
@@ -306,6 +346,12 @@ export class GovernanceScopeService {
       status: doc.status,
       agentIds: (doc.agentIds ?? []).map((id: Types.ObjectId) => id.toString()),
       metadata: doc.metadata ?? {},
+      knowledge: {
+        sourceMode: knowledge.sourceMode ?? 'llm_only',
+        webSourcesEnabled: knowledge.webSourcesEnabled ?? false,
+        webAllowedDomains: knowledge.webAllowedDomains ?? [],
+        webBlockedDomains: knowledge.webBlockedDomains ?? [],
+      },
       createdAt: doc.createdAt instanceof Date ? doc.createdAt.toISOString() : doc.createdAt,
       updatedAt: doc.updatedAt instanceof Date ? doc.updatedAt.toISOString() : doc.updatedAt,
     };

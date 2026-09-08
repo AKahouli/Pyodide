@@ -1110,6 +1110,7 @@ describe('PlaybookDesignerPanel HITL feedback scope', () => {
       playbookId="playbook-1"
       constructionStatus="completed"
       assistantPreviewStatus="ready"
+      assistantOperationTarget="advisor_preview"
       onApplyAssistantPreview={onApply}
       onDiscardAssistantPreview={onDiscard}
     />);
@@ -1119,6 +1120,65 @@ describe('PlaybookDesignerPanel HITL feedback scope', () => {
 
     expect(onApply).toHaveBeenCalledTimes(1);
     expect(onDiscard).toHaveBeenCalledTimes(1);
+  });
+
+  it('offers retry without discard when a generated canvas commit fails', async () => {
+    const onRetry = vi.fn();
+    const onSubmit = vi.fn();
+    const onApplyHistory = vi.fn();
+    storeState.copilotMode = 'design';
+
+    render(<PlaybookDesignerPanel
+      playbookId="playbook-1"
+      constructionStatus="failed"
+      assistantPreviewStatus="ready"
+      assistantOperationTarget="canonical"
+      onApplyAssistantPreview={onRetry}
+      onDiscardAssistantPreview={vi.fn()}
+      onSubmitDesignIntent={onSubmit}
+      onApplyHistorySuggestion={onApplyHistory}
+      history={[{
+        id: 'retained-history',
+        playbookId: 'playbook-1',
+        playbookName: 'Test',
+        intent: 'Replace workflow',
+        appliedAt: Date.now(),
+        suggestion: { id: 'retained-suggestion', kind: 'workflow_plan', changes: [], impact: {} },
+      } as unknown as IntentSuggestionHistoryEntry]}
+    />);
+
+    expect(screen.getByText('intentBar.commitRetry.title')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'intentBar.preview.discard' })).not.toBeInTheDocument();
+    expect(screen.getByRole('textbox')).toBeDisabled();
+    expect(screen.getByRole('button', { name: /intentBar.history.title/ })).toBeDisabled();
+    await userEvent.click(screen.getByRole('button', { name: 'intentBar.commitRetry.retry' }));
+    expect(onRetry).toHaveBeenCalledTimes(1);
+    expect(onSubmit).not.toHaveBeenCalled();
+    expect(onApplyHistory).not.toHaveBeenCalled();
+  });
+
+  it('labels a retained blocked canvas as a local draft that must be corrected', async () => {
+    const onSave = vi.fn();
+    storeState.copilotMode = 'design';
+
+    render(<PlaybookDesignerPanel
+      playbookId="playbook-1"
+      constructionStatus="failed"
+      constructionDiagnostics={[{
+        severity: 'error',
+        stage: 'invariant_validator',
+        code: 'validator_rule_5',
+        message: 'Router cycle has no terminal exit route',
+      }]}
+      assistantPreviewStatus="ready"
+      assistantOperationTarget="canonical"
+      onApplyAssistantPreview={onSave}
+    />);
+
+    expect(screen.getByText('intentBar.blockedDraft.title')).toBeInTheDocument();
+    expect(screen.getByText('intentBar.blockedDraft.description')).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: 'intentBar.blockedDraft.save' }));
+    expect(onSave).toHaveBeenCalledTimes(1);
   });
 
   it('keeps only the stop action while direct construction is streaming', () => {

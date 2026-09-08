@@ -33,6 +33,26 @@ interface UsePlaybookCanvasExecutionHandlersResult {
   handleStop: () => Promise<void>;
 }
 
+export function buildPlaybookRunOptions(
+  playbook: Playbook,
+  nodeReflectionEnabled: boolean,
+): ExecutePlaybookData {
+  const stepExecutionModes: NonNullable<ExecutePlaybookData['stepExecutionModes']> = {};
+  for (const task of playbook.tasks) {
+    if (task.enabled !== false) stepExecutionModes[task.id] = task.stepReplayMode || 'live';
+  }
+  return {
+    executionMode: 'inherit',
+    stepExecutionModes,
+    streaming: true,
+    runNodeReflection: nodeReflectionEnabled,
+    advisorScoringMode: playbook.advisorScoringMode,
+    advisorAutopilotEnabled: playbook.advisorAutopilotEnabled === true,
+    advisorAutopilotTargetScore: playbook.advisorAutopilotTargetScore ?? undefined,
+    advisorAutopilotMaxTurns: playbook.advisorAutopilotMaxTurns ?? undefined,
+  };
+}
+
 /**
  * Extract execution-oriented canvas actions to keep the page component focused.
  */
@@ -75,22 +95,7 @@ export const usePlaybookCanvasExecutionHandlers = ({
     setSkillSidebarOpen(false);
     setGlobalSidebarOpen(false);
 
-    const stepExecutionModes: Record<string, 'live' | 'replay_strict' | 'replay_flex' | 'replay_adaptive'> = {};
-    for (const task of playbook.tasks) {
-      if (task.enabled !== false) {
-        stepExecutionModes[task.id] = task.stepReplayMode || 'live';
-      }
-    }
-
-    await executePlaybook(id, {
-      executionMode: 'inherit',
-      stepExecutionModes,
-      streaming: true,
-      runNodeReflection: nodeReflectionEnabled,
-      advisorAutopilotEnabled: playbook.advisorAutopilotEnabled === true,
-      advisorAutopilotTargetScore: playbook.advisorAutopilotTargetScore ?? undefined,
-      advisorAutopilotMaxTurns: playbook.advisorAutopilotMaxTurns ?? undefined,
-    });
+    await executePlaybook(id, buildPlaybookRunOptions(playbook, nodeReflectionEnabled));
   }, [
     id,
     isDirty,

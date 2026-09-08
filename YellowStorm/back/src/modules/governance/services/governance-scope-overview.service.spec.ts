@@ -203,4 +203,69 @@ describe('GovernanceScopeOverviewService', () => {
     expect(result.knowledge.documents).toEqual([]);
     expect(result.readiness.checks).toContainEqual(expect.objectContaining({ key: 'knowledge_mapped', status: 'passed', targetType: 'workspace' }));
   });
+
+  it.each([
+    { knowledge: { sourceMode: 'workspaces_only', webSourcesEnabled: true, webAllowedDomains: ['docs.example.com'], webBlockedDomains: ['tracker.example.net'] }, expected: { sourceMode: 'workspaces_only', webSourcesEnabled: true, webAllowedDomains: ['docs.example.com'], webBlockedDomains: ['tracker.example.net'] } },
+    { knowledge: undefined, expected: { sourceMode: 'llm_only', webSourcesEnabled: false, webAllowedDomains: [], webBlockedDomains: [] } },
+  ])('surfaces scope knowledge settings on the overview ($_)', async ({ knowledge, expected }) => {
+    const programId = new Types.ObjectId();
+    const scopeId = new Types.ObjectId();
+    const deploymentId = new Types.ObjectId();
+    const revisionId = new Types.ObjectId();
+    const agentId = new Types.ObjectId();
+    const scopeModel = { findOne: jest.fn().mockReturnValue(query({ _id: scopeId, programId, name: 'Courbevoie', type: 'municipality', status: 'active', agentIds: [agentId], metadata: {}, ...(knowledge ? { knowledge } : {}), createdAt: new Date(), updatedAt: new Date() })) };
+    const sourceModel = { find: jest.fn().mockReturnValue(query([])) };
+    const deploymentModel = { findOne: jest.fn().mockReturnValue(query({ _id: deploymentId, programId, scopeId, name: 'Courbevoie public', status: 'draft', currentDraftRevisionId: revisionId, channels: {}, createdAt: new Date(), updatedAt: new Date() })) };
+    const revisionModel = { findById: jest.fn().mockReturnValue(query({ _id: revisionId, deploymentId, revisionNumber: 1, status: 'draft', agentId, workspaceIds: [], sourceIds: [], includedSourceIds: [], excludedSourceIds: [], createdBy: agentId, createdAt: new Date(), updatedAt: new Date() })) };
+    const dryRunModel = { findOne: jest.fn().mockReturnValue(query(null)) };
+    const membershipModel = { find: jest.fn().mockReturnValue(query([])) };
+    const agentRepository = { findByIds: jest.fn().mockResolvedValue([]) };
+    const metricModel = { find: jest.fn().mockReturnValue(query([])) };
+    const moduleRef = await Test.createTestingModule({
+      providers: [
+        GovernanceScopeOverviewService,
+        { provide: getModelToken(GovernanceScope.name), useValue: scopeModel },
+        { provide: getModelToken(GovernanceDocument.name), useValue: sourceModel },
+        { provide: getModelToken(WorkspaceDoc.name), useValue: { find: jest.fn().mockReturnValue(query([])) } },
+        { provide: getModelToken(GovernanceWorkspaceBinding.name), useValue: { find: jest.fn().mockReturnValue(query([])) } },
+        { provide: getModelToken(GovernanceDeployment.name), useValue: deploymentModel },
+        { provide: getModelToken(GovernanceDeploymentRevision.name), useValue: revisionModel },
+        { provide: getModelToken(GovernanceDryRun.name), useValue: dryRunModel },
+        { provide: getModelToken(GovernanceMembership.name), useValue: membershipModel },
+        { provide: getModelToken(GovernanceMetric.name), useValue: metricModel },
+        { provide: AgentRepository, useValue: agentRepository },
+        { provide: getModelToken(User.name), useValue: { find: jest.fn().mockReturnValue(query([])) } },
+        { provide: GovernanceProgramService, useValue: { assertOwnedProgram: jest.fn().mockResolvedValue(undefined) } },
+        { provide: GovernanceAccessService, useValue: { assertScopeAccess: jest.fn().mockResolvedValue(undefined), canActInScopeRole: jest.fn().mockResolvedValue(true) } },
+      ],
+    }).compile();
+
+    const result = await moduleRef.get(GovernanceScopeOverviewService).getOverview(agentId.toString(), programId.toString(), scopeId.toString());
+
+    expect(result.scope.knowledge).toEqual(expected);
+  });
+
+  it.each([
+    { knowledge: { sourceMode: 'llm_only' }, expectedStatus: 'passed' },
+    { knowledge: { sourceMode: 'workspaces_only' }, expectedStatus: 'failed' },
+    { knowledge: undefined, expectedStatus: 'failed' },
+  ])('gates the knowledge readiness check on the scope source mode ($_)', async ({ knowledge, expectedStatus }) => {
+    const programId = new Types.ObjectId();
+    const scopeId = new Types.ObjectId();
+    const service = await compileOverview({
+      scopeModel: { findOne: jest.fn().mockReturnValue(query({ _id: scopeId, programId, name: 'Courbevoie', type: 'municipality', status: 'active', agentIds: [], metadata: {}, ...(knowledge ? { knowledge } : {}), createdAt: new Date(), updatedAt: new Date() })) },
+      workspaceBindingModel: { find: jest.fn().mockReturnValue(query([])) },
+      deploymentModel: { findOne: jest.fn().mockReturnValue(query(null)) },
+      revisionModel: { findById: jest.fn().mockReturnValue(query(null)) },
+      dryRunModel: { findOne: jest.fn().mockReturnValue(query(null)) },
+      membershipModel: { find: jest.fn().mockReturnValue(query([])) },
+      metricModel: { find: jest.fn().mockReturnValue(query([])) },
+      agentRepository: { findByIds: jest.fn().mockResolvedValue([]) },
+    });
+
+    const result = await service.getOverview(new Types.ObjectId().toString(), programId.toString(), scopeId.toString());
+
+    const knowledgeCheck = result.readiness.checks.find((check) => checkKey(check) === 'knowledge_mapped');
+    expect(knowledgeCheck?.status).toBe(expectedStatus);
+  });
 });

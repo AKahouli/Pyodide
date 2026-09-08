@@ -33,6 +33,44 @@ describe('PlaybookFlowService', () => {
     idempotencyService.reserveSave.mockResolvedValue({ type: 'reserved' });
   });
 
+  describe('persistSanitizedExecutionGraph', () => {
+    it('atomically scopes graph cleanup to the owner and loaded revision', async () => {
+      const flowModel = {
+        findOneAndUpdate: jest.fn().mockResolvedValue({ definitionRevision: 8 }),
+      };
+      const service = Object.create(PlaybookFlowService.prototype) as PlaybookFlowService;
+      (service as any).flowModel = flowModel;
+
+      await expect(service.persistSanitizedExecutionGraph(
+        'flow-1',
+        'owner-1',
+        7,
+        [{ id: 'edge-1', source: 'a', target: 'b' } as any],
+        [],
+      )).resolves.toBe(8);
+
+      expect(flowModel.findOneAndUpdate).toHaveBeenCalledWith(
+        { _id: 'flow-1', ownerId: 'owner-1', definitionRevision: 7 },
+        {
+          $set: {
+            controlEdges: [{ id: 'edge-1', source: 'a', target: 'b' }],
+            dataBindings: [],
+          },
+          $inc: { definitionRevision: 1 },
+        },
+        { new: true, runValidators: true },
+      );
+    });
+
+    it('rejects cleanup when the loaded revision lost the compare-and-swap race', async () => {
+      const service = Object.create(PlaybookFlowService.prototype) as PlaybookFlowService;
+      (service as any).flowModel = { findOneAndUpdate: jest.fn().mockResolvedValue(null) };
+
+      await expect(service.persistSanitizedExecutionGraph('flow-1', 'owner-1', 7, [], []))
+        .rejects.toThrow('Playbook changed while preparing execution.');
+    });
+  });
+
   it('findOneBase returns the flow without replay enrichment', async () => {
     const flowDocument = {
       ownerId: 'user-1',

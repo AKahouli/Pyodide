@@ -1,3 +1,5 @@
+import math
+import re
 from typing import Any, Literal, Optional
 
 from google.adk.tools.tool_context import ToolContext
@@ -45,7 +47,6 @@ class RenderChartInput(BaseModel):
                 raise ValueError("pie charts require nameKey or xAxisKey")
             if not self.series:
                 raise ValueError("pie charts require a numeric value series")
-            return self
 
         if self.kind != "scatter" and not self.series:
             inferred_key = self.yAxisKey or _infer_default_series_key(self.data, self.xAxisKey)
@@ -79,6 +80,22 @@ class RenderChartInput(BaseModel):
                 )
             self.series = normalized_series
 
+        numeric_keys = (
+            [key for key in (self.xAxisKey, self.yAxisKey, self.zAxisKey) if key]
+            if self.kind == "scatter"
+            else [series.dataKey for series in self.series]
+        )
+        for row_index, row in enumerate(self.data):
+            for key in numeric_keys:
+                if not key or key not in row:
+                    raise ValueError(
+                        f"data[{row_index}].{key or 'value'} is required and must be numeric"
+                    )
+                try:
+                    row[key] = _coerce_chart_number(row[key])
+                except ValueError as exc:
+                    raise ValueError(f"data[{row_index}].{key}: {exc}") from exc
+
         return self
 
 
@@ -90,17 +107,64 @@ _CHART_PALETTE_TOKENS = (
     "var(--chart-5)",
 )
 
+_NUMBER_WRAPPER_RE = re.compile(
+    r"^\s*[€$£]?\s*(?P<number>[+-]?[\d\s\u00a0\u202f.,']+)\s*(?:%|[€$£])?\s*$"
+)
+_GROUPED_SPACE_RE = re.compile(
+    r"^[+-]?\d{1,3}(?:[\s\u00a0\u202f']\d{3})+(?:[.,]\d+)?$"
+)
+_GROUPED_US_RE = re.compile(r"^[+-]?\d{1,3}(?:,\d{3})+(?:\.\d+)?$")
+_GROUPED_EU_RE = re.compile(r"^[+-]?\d{1,3}(?:\.\d{3})+(?:,\d+)?$")
+_PLAIN_NUMBER_RE = re.compile(r"^[+-]?\d+(?:[.,]\d+)?$")
+
+
+def _coerce_chart_number(value: Any) -> int | float:
+    if isinstance(value, bool):
+        raise ValueError("boolean values are not numeric chart values")
+
+    if isinstance(value, (int, float)):
+        if not math.isfinite(value):
+            raise ValueError("value must be finite")
+        return value
+
+    if not isinstance(value, str):
+        raise ValueError("value must be a number or an unambiguous numeric string")
+
+    match = _NUMBER_WRAPPER_RE.fullmatch(value)
+    if not match:
+        raise ValueError("value must be a number or an unambiguous numeric string")
+
+    number = match.group("number").strip()
+    separator_count = number.count(",") + number.count(".")
+    if separator_count == 1 and re.search(r"[.,]\d{3}$", number):
+        raise ValueError("numeric string has an ambiguous decimal or thousands separator")
+
+    if _GROUPED_SPACE_RE.fullmatch(number):
+        normalized = re.sub(r"[\s\u00a0\u202f']", "", number).replace(",", ".")
+    elif _GROUPED_US_RE.fullmatch(number) and (number.count(",") > 1 or "." in number):
+        normalized = number.replace(",", "")
+    elif _GROUPED_EU_RE.fullmatch(number) and (number.count(".") > 1 or "," in number):
+        normalized = number.replace(".", "").replace(",", ".")
+    elif _PLAIN_NUMBER_RE.fullmatch(number):
+        normalized = number.replace(",", ".")
+    else:
+        raise ValueError("numeric string uses an unsupported or ambiguous format")
+
+    parsed = float(normalized)
+    if not math.isfinite(parsed):
+        raise ValueError("value must be finite")
+    return int(parsed) if parsed.is_integer() else parsed
+
 
 def _build_chart_config(payload: RenderChartInput) -> dict[str, dict[str, str]]:
-    if payload.config:
-        return payload.config
-
-    config: dict[str, dict[str, str]] = {}
+    config = {key: dict(value) for key, value in payload.config.items()}
     for idx, series in enumerate(payload.series):
-        config[series.dataKey] = {
-            "label": series.label or _format_label(series.dataKey),
-            "color": series.color or _CHART_PALETTE_TOKENS[idx % len(_CHART_PALETTE_TOKENS)],
-        }
+        item_config = config.setdefault(series.dataKey, {})
+        item_config.setdefault("label", series.label or _format_label(series.dataKey))
+        item_config.setdefault(
+            "color",
+            series.color or _CHART_PALETTE_TOKENS[idx % len(_CHART_PALETTE_TOKENS)],
+        )
     return config
 
 
@@ -166,6 +230,9 @@ async def render_chart(
 
     If one of the series is near-constant (e.g. a 0% rate held all year), prefer
     "composed" with that series rendered as a line so it stays visually present.
+    Series values must be finite numbers. Plain numeric strings and unambiguous
+    currency, percentage, or grouped-number strings are normalized to numbers;
+    ambiguous formatted values are rejected instead of producing an empty chart.
     """
 
     try:

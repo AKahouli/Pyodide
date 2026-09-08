@@ -133,10 +133,6 @@ vi.mock('@/modules/usage/components/UsageLimitBanner', () => ({
   UsageLimitBanner: () => <div role='alert'>usage-limit-banner</div>,
 }));
 
-vi.mock('./components/GroupChatButton', () => ({
-  GroupChatButton: () => <div>group-chat-button</div>,
-}));
-
 vi.mock('./components/SelectedConnectorRepo', () => ({
   SelectedConnectorRepo: () => <div>selected-connector-repo</div>,
 }));

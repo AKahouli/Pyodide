@@ -13,6 +13,7 @@ import {
   ReliabilityEvaluation,
   ResponseCorrectionAttempt,
 } from '../interfaces/message.interface';
+import type { ConversationLatencyMetricsV1, FrontendLatencyPatch } from '../interfaces/latency.interface';
 import { ConversationService } from './conversation.service';
 import { StreamGatewayService } from './stream-gateway.service';
 import { WorkspaceDocumentService } from '../../workspace/workspace-document.service';
@@ -150,6 +151,69 @@ export class MessageService {
     return response;
   }
 
+  /**
+   * Phase 5 pre-agent reduction: user message + AI placeholder persist in one
+   * store transaction. Applies the same validation and side effects as
+   * createUserMessage, then broadcasts the placeholder creation exactly as
+   * createAIPlaceholder would — preserving event order (user first).
+   */
+  async createUserMessageWithAiPlaceholder(data: CreateUserMessageData & { placeholder: Omit<CreateAIPlaceholderData, 'questionMessageId'> }): Promise<{ userMessage: MessageResponse; aiMessage: MessageResponse }> {
+    const maxLength = this.configService.get<number>('conversation.maxMessageLength', 50000);
+    if (data.content.length > maxLength) {
+      throw new AppException({
+        code: ErrorCode.CHAT_MESSAGE_TOO_LONG,
+        message: `Message exceeds maximum length of ${String(maxLength)} characters`,
+        statusCode: HttpStatus.BAD_REQUEST,
+      });
+    }
+    const maxFiles = this.configService.get<number>('conversation.maxFilesPerMessage', 5);
+    if (data.attachedFileIds && data.attachedFileIds.length > maxFiles) {
+      throw new AppException({
+        code: ErrorCode.CHAT_FILE_UPLOAD_LIMIT,
+        message: `Maximum ${String(maxFiles)} files per message`,
+        statusCode: HttpStatus.BAD_REQUEST,
+      });
+    }
+
+    const { user, placeholder } = await this.messageStore.createUserWithAiPlaceholder({
+      user: data,
+      placeholder: data.placeholder,
+    });
+
+    if (data.agentIds?.length) {
+      await this.conversationService.updateTaggedAgents(data.conversationId, data.agentIds);
+    }
+
+    // mention notification (fire and forget, same as createUserMessage)
+    this.extractAndNotifyMentions(user, data.conversationId).catch((err: unknown) => {
+      this.logger.error('Failed to process mentions', {
+        error: err instanceof Error ? err.message : String(err),
+      });
+    });
+
+    const userResponse = this.mapToResponse(user);
+    if (user.attachedFileIds?.length) {
+      const fileIds = user.attachedFileIds;
+      const fileMap = await this.resolveAttachedFiles(fileIds);
+      userResponse.attachedFiles = fileIds
+        .map((fid) => fileMap.get(fid))
+        .filter((f): f is AttachedFileResponse => !!f);
+    }
+
+    void this.broadcastMessage(data.conversationId, {
+      type: 'message_created',
+      data: { conversationId: data.conversationId, message: userResponse },
+    });
+
+    const placeholderResponse = this.mapToResponse(placeholder);
+    void this.broadcastMessage(data.conversationId, {
+      type: 'message_created',
+      data: { conversationId: data.conversationId, message: placeholderResponse },
+    });
+
+    return { userMessage: userResponse, aiMessage: placeholderResponse };
+  }
+
   async completeAIMessage(data: CompleteAIMessageData): Promise<MessageResponse> {
     this.logger.log('Completing AI message', {
       messageId: data.messageId,
@@ -201,6 +265,33 @@ export class MessageService {
     });
 
     return response;
+  }
+
+  /**
+   * Merge the browser-reported sixth latency metric (frontend paint) into an
+   * AI message. Validates ownership boundaries; the store applies the merge
+   * idempotently so duplicate reports never overwrite the accepted value.
+   */
+  async reportFrontendLatency(
+    conversationId: string,
+    messageId: string,
+    requestId: string,
+    patch: FrontendLatencyPatch,
+  ): Promise<MessageResponse> {
+    const message = await this.messageStore.findById(messageId);
+    if (!message || message.conversationId !== conversationId) {
+      throw new NotFoundException(ErrorCode.CHAT_MESSAGE_NOT_FOUND, 'AI message not found');
+    }
+    if (message.conversationType !== 'ai') {
+      throw new BadRequestException(ErrorCode.VALIDATION_ERROR, 'Latency metrics can only be reported for AI messages');
+    }
+    const updated = await this.messageStore.updateFrontendLatency(messageId, requestId, patch);
+    if (!updated) {
+      // Either the turn requestId mismatches or the metric was already accepted.
+      this.logger.debug('Frontend latency report not applied', { conversationId, messageId });
+      return this.mapToResponse(message);
+    }
+    return this.mapToResponse(updated);
   }
 
   private async extractAndNotifyMentions(
@@ -431,6 +522,34 @@ export class MessageService {
     }
 
     return response;
+  }
+
+  /**
+   * On-demand tool activity result: message responses omit `resultJson` so
+   * bulk reads stay small; clients fetch a single tool payload through here.
+   * The payload passes through the same sanitizer as the include-results path.
+   */
+  async findToolActivityResult(conversationId: string, messageId: string, componentId: string): Promise<{ resultJson: string | null }> {
+    const [message, redactSensitiveText] = await Promise.all([
+      this.messageStore.findById(messageId),
+      this.resolveRedactSensitiveText(),
+    ]);
+
+    if (!message || String(message.conversationId) !== String(conversationId)) {
+      throw new NotFoundException(ErrorCode.CHAT_MESSAGE_NOT_FOUND, 'Message not found');
+    }
+
+    const components = Array.isArray(message.components) ? message.components as Array<{ id?: unknown; type?: unknown; data?: Record<string, unknown> }> : [];
+    const component = components.find((candidate) => candidate?.id === componentId && candidate?.type === 'toolActivity');
+    if (!component) {
+      throw new NotFoundException(ErrorCode.CHAT_MESSAGE_NOT_FOUND, 'Tool activity not found');
+    }
+
+    const [publicComponent] = this.publicComponents([component], true, redactSensitiveText) ?? [];
+    const resultJson = typeof publicComponent?.data?.resultJson === 'string' && publicComponent.data.resultJson.trim()
+      ? publicComponent.data.resultJson
+      : null;
+    return { resultJson };
   }
 
   async updateFeedback(messageId: string, feedback: FeedbackType): Promise<MessageResponse> {
@@ -871,7 +990,7 @@ export class MessageService {
       conversationId: toStr(message.conversationId),
       conversationType: message.conversationType as 'user' | 'ai',
       content: message.content,
-      components: this.publicComponents(message.components, true, redactSensitiveText) as any,
+      components: this.publicComponents(message.components, false, redactSensitiveText) as any,
       attachedFileIds: message.attachedFileIds?.map((id: any) => toStr(id)),
       modelId: message.modelId,
       reasoningEffort: message.reasoningEffort,
@@ -890,6 +1009,7 @@ export class MessageService {
       durationMs: message.durationMs,
       timeToFirstChunk: message.timeToFirstChunk,
       timeToFirstToken: message.timeToFirstToken,
+      latencyMetrics: message.latencyMetrics as ConversationLatencyMetricsV1 | undefined,
       requestId: message.requestId,
       guardrailDecision: message.guardrailDecision as any,
       interaction: message.interaction as Record<string, unknown> | undefined,

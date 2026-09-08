@@ -1,16 +1,17 @@
-import { Loader2, MessageCircle, Send, Square } from 'lucide-react';
+import { MessageCircle, Send } from 'lucide-react';
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type JSX } from 'react';
-import { InputGroup, InputGroupAddon, InputGroupButton, InputGroupTextarea } from '@/components/ui/input-group';
+import { Button } from '@/components/ui/button';
+import { Textarea } from '@/components/ui/textarea';
 import { useModuleTranslation } from '@/modules/localization';
 import { useSendMessage } from '../query/hooks';
-import { useStopSession } from '../hooks/useStopSession';
-import { useWorkyStore, useWorkyStreaming } from '../store';
+import { useWorkyStore } from '../store';
 import { useWorkyUiStore } from '../uiStore';
 import type { WorkyStreamStatus } from '../types';
 
 interface PromptBarProps {
   streamId: string;
   status?: WorkyStreamStatus;
+  sessionStatus?: string | null;
   onWhatsAppClick?: () => void;
   whatsappConnected?: boolean;
 }
@@ -22,12 +23,12 @@ interface PromptBarProps {
  * model override to configure.
  *
  * Voice input lives in the centre voice dock (the realtime concierge), so the
- * old in-composer dictation mic was removed — the send button doubles as a
- * stop control while a run is streaming.
+ * old in-composer dictation mic was removed.
  */
 export function PromptBar({
   streamId,
   status,
+  sessionStatus,
   onWhatsAppClick,
   whatsappConnected,
 }: PromptBarProps): JSX.Element {
@@ -35,15 +36,13 @@ export function PromptBar({
   const [value, setValue] = useState('');
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const send = useSendMessage(streamId);
-  const streaming = useWorkyStreaming();
   const setStreamError = useWorkyStore((s) => s.setStreamError);
-  const setStreaming = useWorkyStore((s) => s.setStreaming);
+  const beginTurn = useWorkyStore((s) => s.beginTurn);
+  const finishTurn = useWorkyStore((s) => s.finishTurn);
   const notifySendError = useWorkyUiStore((s) => s.notifySendError);
   const clearSendError = useWorkyUiStore((s) => s.clearSendError);
   const sendError = useWorkyUiStore((s) => s.sendError);
-  const { stop, isStopping } = useStopSession(streamId);
-
-  const isDisabled = send.isPending || status === 'archived';
+  const isDisabled = send.isPending || status === 'archived' || sessionStatus === 'paused';
 
   // Grow the composer to fit its content, but cap it at 40% of the chat
   // sidebar's height (falling back to 40vh when the composer is not inside the
@@ -87,13 +86,14 @@ export function PromptBar({
     if (!content || isDisabled) return;
     setStreamError(null);
     clearSendError();
-    setStreaming(true);
+    const turnId = crypto.randomUUID();
+    beginTurn(turnId);
     send.mutate(
-      { content },
+      { content, turnId },
       {
         onSuccess: () => setValue(''),
         onError: (err: unknown) => {
-          setStreaming(false);
+          finishTurn(turnId);
           const message =
             (err as { message?: string })?.message ?? t('promptBar.sendFailed');
           notifySendError(message);
@@ -103,7 +103,7 @@ export function PromptBar({
   };
 
   return (
-    <div className='flex flex-col gap-1'>
+    <footer className='shrink-0 border-t bg-background p-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]'>
       {sendError ? (
         <div
           role='alert'
@@ -121,8 +121,8 @@ export function PromptBar({
         </div>
       ) : null}
       <form onSubmit={submit}>
-        <InputGroup className='bg-background/60'>
-          <InputGroupTextarea
+        <div className='flex items-end gap-2 rounded-xl border bg-card p-2 shadow-sm focus-within:ring-1 focus-within:ring-ring'>
+          <Textarea
             ref={textareaRef}
             id='worky-prompt-content'
             name='content'
@@ -132,10 +132,7 @@ export function PromptBar({
             placeholder={t('promptBar.placeholder')}
             rows={1}
             disabled={isDisabled}
-            // flex-none: the block-end addon makes InputGroup a column flex
-            // container, and the inherited `flex-1` (flex-basis:0%) would
-            // otherwise override our inline height and keep the box collapsed.
-            className='flex-none min-h-[44px] py-2 text-xs'
+            className='max-h-none min-h-10 flex-1 resize-none border-0 bg-transparent px-2 py-2 text-sm shadow-none focus-visible:ring-0'
             onKeyDown={(e) => {
               if (e.key === 'Enter' && !e.shiftKey) {
                 e.preventDefault();
@@ -143,61 +140,39 @@ export function PromptBar({
               }
             }}
           />
-          <InputGroupAddon align='block-end' className='justify-end gap-1'>
-            {onWhatsAppClick ? (
-              <InputGroupButton
-                type='button'
-                size='icon-sm'
-                variant='ghost'
-                onClick={onWhatsAppClick}
-                disabled={isDisabled}
-                aria-label={t('whatsapp.openModal')}
-                data-testid='worky-prompt-whatsapp'
-                className='relative'
-              >
-                <MessageCircle className='h-4 w-4' />
-                {whatsappConnected ? (
-                  <span
-                    className='absolute right-1 top-1 h-2 w-2 rounded-full bg-green-500'
-                    data-testid='worky-prompt-whatsapp-connected'
-                  />
-                ) : null}
-              </InputGroupButton>
-            ) : null}
-            {streaming ? (
-              // While a run streams, the primary button stops the whole run
-              // (terminal StopSession) instead of submitting an empty draft.
-              <InputGroupButton
-                type='button'
-                size='icon-sm'
-                variant='default'
-                onClick={stop}
-                disabled={isStopping}
-                aria-label={t('promptBar.stop')}
-                title={t('promptBar.stop')}
-                data-testid='worky-prompt-stop'
-              >
-                {isStopping ? (
-                  <Loader2 className='h-4 w-4 animate-spin' />
-                ) : (
-                  <Square className='h-4 w-4' />
-                )}
-              </InputGroupButton>
-            ) : (
-              <InputGroupButton
-                type='submit'
-                size='icon-sm'
-                variant='default'
-                disabled={isDisabled || !value.trim()}
-                aria-label={t('promptBar.send')}
-                data-testid='worky-prompt-send'
-              >
-                <Send className='h-4 w-4' />
-              </InputGroupButton>
-            )}
-          </InputGroupAddon>
-        </InputGroup>
+          {onWhatsAppClick ? (
+            <Button
+              type='button'
+              size='icon'
+              variant='ghost'
+              onClick={onWhatsAppClick}
+              disabled={isDisabled}
+              aria-label={t('whatsapp.openModal')}
+              data-testid='worky-prompt-whatsapp'
+              className='relative size-10 shrink-0 rounded-lg'
+            >
+              <MessageCircle className='h-4 w-4' />
+              {whatsappConnected ? (
+                <span
+                  className='absolute right-1 top-1 h-2 w-2 rounded-full bg-green-500'
+                  data-testid='worky-prompt-whatsapp-connected'
+                />
+              ) : null}
+            </Button>
+          ) : null}
+          <Button
+            type='submit'
+            size='icon'
+            variant='default'
+            disabled={isDisabled || !value.trim()}
+            aria-label={t('promptBar.send')}
+            data-testid='worky-prompt-send'
+            className='size-11 shrink-0 rounded-lg'
+          >
+            <Send className='h-4 w-4' />
+          </Button>
+        </div>
       </form>
-    </div>
+    </footer>
   );
 }
