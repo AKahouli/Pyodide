@@ -183,6 +183,39 @@ def scenario_multiamend():
         print(f"  amend '{tag}' landed: {tag in blob or (tag=='compare' and 'compar' in blob)}")
 
 
+def scenario_amend_sends():
+    """Most complex: multi-amend that ADDS gated send steps (email + Teams), then
+    approve every gate for REAL delivery. Amends land during the non-gated search
+    window (status running, no interrupt); the send steps gate afterwards and are
+    approved one by one. Needs fresh Graph tokens or the sends 401."""
+    stub = _stub()
+    sid = stub.CreateSession(pb.CreateSessionRequest(user_id=base.USER)).session_id
+    print(f"[amend_sends] session={sid}")
+    _run(stub, sid, "Search the current price of Bitcoin and write a one-line summary, "
+                    "then email that summary to Firas.")
+    amends = [
+        ("teams-imed", "Also send that same summary to Imed on Teams."),
+        ("email-imed", "Also email that summary to Hamdi Imed as well."),
+    ]
+    for tag, msg in amends:
+        if not _running(sid):
+            print(f"  (not executing when amending {tag!r})")
+        print(f"  >> amend: {tag}")
+        _run(stub, sid, msg)
+        time.sleep(3)
+    # Approve every gate the amended plan raises (email Firas, teams Imed, email Imed).
+    drive(sid, "approve", max_rounds=12)
+    st, _, steps = _state(sid)
+    print(f"  plan status={st}")
+    for t, s, _ in steps:
+        print(f"     - [{s:9}] {t[:56]}")
+    # Proof of real delivery: a mail_wait row is written only after a successful send.
+    c = psycopg2.connect(RM_DSN); cur = c.cursor()
+    cur.execute("select expected_from, status from mail_waits where session_id=%s", (sid,))
+    waits = cur.fetchall(); c.close()
+    print(f"  MAIL/TEAMS WAITS (proof of send): {waits}")
+
+
 def scenario_concurrent_amend(n=3):
     """N sessions in parallel, each amended once — checks concurrency + that each
     amend lands in ITS OWN session (isolation), no cross-talk."""
@@ -225,5 +258,7 @@ if __name__ == "__main__":
         scenario_concurrent()
     elif sc == "concurrent_amend":
         scenario_concurrent_amend()
+    elif sc == "amend_sends":
+        scenario_amend_sends()
     else:
         print("unknown scenario", sc)
