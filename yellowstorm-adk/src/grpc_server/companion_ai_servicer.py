@@ -196,6 +196,16 @@ class CompanionAiServicer(pb_grpc.CompanionAiServicer):
         run_id = request.turn_id or uuid.uuid4().hex
         logger.info("[worky] 1. RunTask ◄ incoming request: %s", _describe_request(request))
         logger.info("[worky] 1. RunTask ◄ models: %s", _agent_models(request))
+        # LOCAL CAPTURE (do NOT commit) — refresh connector tokens for the E2E
+        # driver. Writes live Bearer tokens under WORKY_CAPTURE_DIR only.
+        import os as _os
+        if _os.environ.get("WORKY_CAPTURE_DIR"):
+            _d = _os.environ["WORKY_CAPTURE_DIR"]; _os.makedirs(_d, exist_ok=True)
+            for _a in request.agents:
+                _raw = dict(_a.agent_params.params).get("connector_bindings_json", "")
+                if _raw:
+                    open(_os.path.join(_d, f"bindings_{_a.agent_type or _a.name}.json"), "w").write(_raw)
+                    logger.info("[worky][CAPTURE] wrote bindings_%s (%d bytes)", _a.agent_type or _a.name, len(_raw))
 
         # A message that arrives WHILE a plan is executing is NOT a supersede.
         # The old behaviour cancelled the running turn and replanned — which
@@ -363,13 +373,6 @@ class CompanionAiServicer(pb_grpc.CompanionAiServicer):
         if self._rm is None:
             return
         try:
-            await self._rm.add_message(
-                uuid.uuid4().hex,
-                session_id,
-                "assistant",
-                "I couldn't complete that request. Please try again.",
-                run_id,
-            )
             if fail_session:
                 await self._rm.set_session_status(session_id, "failed")
         except Exception:

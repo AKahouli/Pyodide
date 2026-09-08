@@ -110,6 +110,8 @@ async def lifespan(app: FastAPI):
     try:
         from src.evaluation.agent_evaluator import apply_litellm_debug_patch
         apply_litellm_debug_patch()
+        from src.companion_ai.adk_patches import apply_replay_barrier_timeout_patch
+        apply_replay_barrier_timeout_patch()
         logger.info("✅ Global LLM patches applied successfully at startup")
     except Exception as e:
         logger.error(f"Failed to apply global LLM patches: {e}")

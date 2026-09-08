@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import { useCallback, useMemo } from 'react';
 import { Bot } from 'lucide-react';
 import { useModuleTranslation } from '@/modules/localization';
 import {
@@ -8,8 +8,10 @@ import {
 } from '@/components/ai-elements/chat-conversation';
 import { AssistantActivity, AssistantMarkdown } from '@/components/ai-elements/assistant-response';
 import { AIMessageContent } from '@/components/ai-elements/ai-message-content';
+import type { ChoiceComponentAction } from '@/components/ai-elements/choice/ChoicePartRenderer';
 import { MessageProvider } from '@/components/ai-elements/message-context';
 import { mapComponentsToContentParts } from '@/modules/conversation/utils';
+import { useSendMessage } from '../query/hooks';
 import { useWorkyMessages, useWorkyStore } from '../store';
 import { cn } from '@/lib/utils';
 import { ChatClarificationCard } from './ChatClarificationCard';
@@ -77,6 +79,23 @@ export function ChatMessageThread({
   const { t } = useModuleTranslation('worky');
   const messages = useWorkyMessages();
   const streaming = useWorkyStore((s) => s.streaming);
+  const setStreaming = useWorkyStore((s) => s.setStreaming);
+  const send = useSendMessage(streamId ?? '');
+  // A choice card (e.g. the approve/decline gate on a send tool) submits the
+  // selected option's submitText as a normal message; the session is parked on
+  // that interrupt, so the backend routes it to resume the waiting turn.
+  const onComponentAction = useCallback(
+    async (action: ChoiceComponentAction) => {
+      if (!streamId) return;
+      setStreaming(true);
+      try {
+        await send.mutateAsync({ content: action.submitText });
+      } catch {
+        setStreaming(false);
+      }
+    },
+    [streamId, send, setStreaming],
+  );
   const pendingClarifications = useWorkyStore((s) => s.pendingClarifications) ?? [];
   const showClarifications = Boolean(streamId) && pendingClarifications.length > 0;
   const threadItems = useMemo(
@@ -142,6 +161,7 @@ export function ChatMessageThread({
                           <AssistantActivity components={item.message.components} isStreaming={false} labels={activityLabels} />
                           <AIMessageContent
                             parts={mapComponentsToContentParts(item.message.components.filter((component) => !ACTIVITY_COMPONENT_TYPES.has(component.type)))}
+                            onComponentAction={onComponentAction}
                           />
                         </>
                       ) : (

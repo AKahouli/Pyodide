@@ -414,7 +414,13 @@ def capture_artifacts_tool(tool, *, on_artifact: Callable[[dict], Awaitable[None
     capturing.__name__ = original.__name__
     capturing.__signature__ = original.__signature__
     capturing.__annotations__ = original.__annotations__
-    return SearchToolADK(capturing, {"function": tool.custom_schema})
+    # Preserve an approval gate the wrapped tool already carries (e.g. a send
+    # tool stamped by stamp_send_email_tool): re-wrapping into a fresh
+    # SearchToolADK would otherwise reset require_confirmation to False and let
+    # the send run ungated — the tool still stamps/sends inside `capturing`, so
+    # the gate would silently vanish. This wrapper runs AFTER _mail_stamping.
+    return SearchToolADK(capturing, {"function": tool.custom_schema},
+                         require_confirmation=getattr(tool, "_require_confirmation", False))
 
 
 def _recipients(kwargs) -> List[str]:
@@ -486,7 +492,11 @@ def stamp_send_email_tool(tool, *, token_provider: Callable[[], Awaitable[Option
     stamped.__name__ = original.__name__
     stamped.__signature__ = original.__signature__
     stamped.__annotations__ = original.__annotations__
-    return SearchToolADK(stamped, {"function": tool.custom_schema})
+    # Contacts someone outside the chat → gate on the owner's approval. ADK
+    # raises an adk_request_confirmation interrupt on the first call; the token
+    # stamping above only runs once approved (this func is invoked after the
+    # gate). Declined → the model gets "rejected" and re-plans.
+    return SearchToolADK(stamped, {"function": tool.custom_schema}, require_confirmation=True)
 
 
 def _teams_chat_id(result) -> Optional[str]:
@@ -532,7 +542,8 @@ def record_send_teams_tool(tool, *, token_provider: Callable[[], Awaitable[Optio
     recorded.__name__ = original.__name__
     recorded.__signature__ = original.__signature__
     recorded.__annotations__ = original.__annotations__
-    return SearchToolADK(recorded, {"function": tool.custom_schema})
+    # Same gate as send_email: contacting a Teams user needs the owner's OK.
+    return SearchToolADK(recorded, {"function": tool.custom_schema}, require_confirmation=True)
 
 
 def _stored_result_node(name: str, text: str):
@@ -807,6 +818,14 @@ def make_llm_node_factory(
             model=build_llm(model_name, with_tools=bool(step_tools), temperature=temperature),
             instruction=instruction,
             tools=step_tools,
+            # See its OWN scoped history (isolation_scope still filters other
+            # steps out). Without this, single_turn defaults to include_contents
+            # ='none', so on a tool-confirmation resume the step is blind to the
+            # send it already emitted and re-decides from scratch — the send
+            # never re-fires and the model drifts. With its own history visible,
+            # ADK's native confirmation resume re-runs the send and the model
+            # continues from the result, in place.
+            include_contents="default",
             output_key=name,  # step result lands in session state under this key
             # Cancel check first (a cancelled step must do nothing at all — and
             # short-circuiting before the trace keeps "⚡ REAL MODEL CALL" honest,

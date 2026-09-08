@@ -83,9 +83,7 @@ async def test_runtask_projects_correlated_failure_when_background_turn_fails():
     await _drain(s)
 
     assert resp.accepted is True
-    args = rm.add_message.await_args.args
-    assert args[1:] == (
-        "s1", "assistant", "I couldn't complete that request. Please try again.", "turn-failed")
+    rm.add_message.assert_not_awaited()
     rm.set_session_status.assert_awaited_once_with("s1", "failed")
 
 
@@ -137,7 +135,7 @@ async def test_failed_conversation_projects_failure_without_failing_executing_pl
         user_id="u", session_id="s1", message="status?", turn_id="conversation-1", agents=_AGENTS), _ctx())
     await _drain(s)
 
-    assert rm.add_message.await_args.args[-1] == "conversation-1"
+    rm.add_message.assert_not_awaited()
     rm.set_session_status.assert_not_awaited()
     assert s._running["s1"] is running
     running.cancel()

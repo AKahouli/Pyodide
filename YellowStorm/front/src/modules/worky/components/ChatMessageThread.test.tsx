@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import type { ReactNode } from 'react';
 import { vi } from 'vitest';
@@ -19,9 +19,15 @@ vi.mock('../store', () => ({
   useWorkyStore: vi.fn(),
 }));
 
+const sendMutateAsync = vi.fn(() => Promise.resolve());
 vi.mock('../query/hooks', () => ({
   useRespondInteraction: vi.fn(() => ({
     mutate: vi.fn(),
+    isPending: false,
+  })),
+  useSendMessage: vi.fn(() => ({
+    mutate: vi.fn(),
+    mutateAsync: sendMutateAsync,
     isPending: false,
   })),
 }));
@@ -44,8 +50,12 @@ describe('ChatMessageThread', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockedUseStore.mockImplementation(
-      (selector: (s: { streaming: boolean; pendingClarifications: [] }) => unknown) =>
-        selector({ streaming: false, pendingClarifications: [] }),
+      (selector: (s: {
+        streaming: boolean;
+        setStreaming: () => void;
+        pendingClarifications: [];
+      }) => unknown) =>
+        selector({ streaming: false, setStreaming: vi.fn(), pendingClarifications: [] }),
     );
   });
 
@@ -317,5 +327,47 @@ describe('ChatMessageThread', () => {
     expect(items[1]).toContain('First clarification');
     expect(items[2]).toContain('second question');
     expect(items[3]).toContain('Second clarification');
+  });
+
+  it('submits an approve/decline choice as a normal message (resumes the parked send)', async () => {
+    mockedUseMessages.mockReturnValue([
+      {
+        id: 'm1',
+        role: 'manager',
+        content: "Approuver l'envoi de cet e-mail ?",
+        planDeltaRef: null,
+        createdAt: '2026-09-03T10:00:00.000Z',
+        components: [
+          {
+            id: 'c1',
+            type: 'choice',
+            data: {
+              schemaVersion: 1,
+              status: 'ready',
+              questionId: 'confirm::call_1',
+              prompt: "Approuver l'envoi de cet e-mail ?",
+              presentation: 'quick_replies',
+              selectionMode: 'single',
+              submitBehavior: 'immediate',
+              options: [
+                { id: 'approve', label: 'Approuver', submitText: 'approve' },
+                { id: 'decline', label: 'Refuser', submitText: 'decline' },
+              ],
+            },
+          },
+        ],
+      },
+    ]);
+
+    render(
+      <TestProviders>
+        <ChatMessageThread streamId='stream-1' />
+      </TestProviders>,
+    );
+
+    fireEvent.click(screen.getByRole('radio', { name: 'Approuver' }));
+    await waitFor(() =>
+      expect(sendMutateAsync).toHaveBeenCalledWith({ content: 'approve' }),
+    );
   });
 });
