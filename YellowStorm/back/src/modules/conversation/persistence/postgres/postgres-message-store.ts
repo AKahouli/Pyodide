@@ -502,7 +502,7 @@ export class PostgresMessageStore implements MessageStore {
         LIMIT 1000 FOR UPDATE SKIP LOCKED
       )
       UPDATE conversation.messages m
-      SET reliability_evaluation = jsonb_set(jsonb_set(m.reliability_evaluation, '{status}', '"failed"'), '{failureCode}', '"stale_pending_after_restart"') || jsonb_build_object('evaluatedAt', ${new Date().toISOString()}),
+      SET reliability_evaluation = jsonb_set(jsonb_set(m.reliability_evaluation, '{status}', '"failed"'), '{failureCode}', '"stale_pending_after_restart"') || jsonb_build_object('evaluatedAt', ${new Date().toISOString()}::text),
           updated_at = now()
       FROM candidates c
       WHERE m.id = c.id
@@ -523,7 +523,7 @@ export class PostgresMessageStore implements MessageStore {
         LIMIT ${remaining} FOR UPDATE SKIP LOCKED
       )
       UPDATE conversation.messages m
-      SET reliability_evaluation = jsonb_set(jsonb_set(m.reliability_evaluation, '{status}', '"failed"'), '{failureCode}', '"stale_pending_after_restart"') || jsonb_build_object('evaluatedAt', ${new Date().toISOString()}),
+      SET reliability_evaluation = jsonb_set(jsonb_set(m.reliability_evaluation, '{status}', '"failed"'), '{failureCode}', '"stale_pending_after_restart"') || jsonb_build_object('evaluatedAt', ${new Date().toISOString()}::text),
           reliability_evaluation_heartbeat_at = NULL,
           updated_at = now()
       FROM candidates c

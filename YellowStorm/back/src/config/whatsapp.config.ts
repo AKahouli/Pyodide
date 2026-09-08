@@ -12,6 +12,10 @@ export default registerAs('whatsapp', () => ({
     10,
   ),
   processingTimeoutMs: Number.parseInt(process.env.WHATSAPP_PROCESSING_TIMEOUT_MS || '180000', 10),
+  internalSendRateLimitPerMinute: Number.parseInt(
+    process.env.WHATSAPP_INTERNAL_SEND_RATE_LIMIT_PER_MINUTE || '30',
+    10,
+  ),
   fallbackReply:
     process.env.WHATSAPP_FALLBACK_REPLY || 'I could not generate a response for this message.',
 }));
