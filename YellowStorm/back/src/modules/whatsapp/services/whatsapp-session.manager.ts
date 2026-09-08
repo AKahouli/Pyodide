@@ -153,12 +153,19 @@ export class WhatsAppSessionManager implements OnModuleInit, OnModuleDestroy {
 
     try {
       const sent = await active.socket.sendMessage(remoteJid, { text });
+      const sentId = sent?.key?.id;
+      if (sentId) {
+        // Echo guard: the send comes back as a fromMe messages.upsert; the
+        // self-chat capture must not mistake it for an owner-typed validation.
+        this.botSentMessageIds.add(sentId);
+        setTimeout(() => this.botSentMessageIds.delete(sentId), 60_000);
+      }
       this.logger.log('WhatsApp proactive message sent', {
         integrationId: integrationId.toString(),
         remoteJid,
-        sentId: sent?.key?.id,
+        sentId,
       });
-      return sent?.key?.id ?? undefined;
+      return sentId ?? undefined;
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       this.logger.error('WhatsApp proactive sendMessage failed', {
@@ -346,6 +353,23 @@ export class WhatsAppSessionManager implements OnModuleInit, OnModuleDestroy {
             throw sendError;
           }
         };
+        const selfJids = [
+          active.socket.user?.jid,
+          active.socket.user?.lid,
+          active.socket.user?.id,
+          active.credsMeJid,
+        ].filter((jid): jid is string => Boolean(jid));
+        const ownerTypedMessages = messages.filter(
+          (message) => !message.key.id || !this.botSentMessageIds.has(message.key.id),
+        );
+        void this.messageService
+          .captureSelfChatText(active.integrationRef, ownerTypedMessages, selfJids)
+          .catch((error: unknown) => {
+            this.logger.error('WhatsApp self-chat capture failed', {
+              integrationId: active.integrationRef.integrationId.toString(),
+              error: error instanceof Error ? error.message : String(error),
+            });
+          });
         void this.messageService
           .handleIncomingMessages(active.integrationRef, messages, sendReply)
           .catch((error: unknown) => {

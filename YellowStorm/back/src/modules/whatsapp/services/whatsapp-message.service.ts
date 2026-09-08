@@ -120,6 +120,58 @@ export class WhatsAppMessageService {
     return null;
   }
 
+  /**
+   * Captures texts the owner types in the paired number's own self-chat
+   * (fromMe + remoteJid == own JID) into the self binding so the MCP
+   * validation tool can long-poll them. Messages the owner sends to other
+   * contacts (fromMe + remoteJid == contact) stay ignored, and no agent run
+   * is triggered for these captures.
+   */
+  async captureSelfChatText(
+    integrationRef: WhatsAppIntegrationRef,
+    messages: import('@whiskeysockets/baileys').WAMessage[],
+    selfJids: string[],
+  ): Promise<void> {
+    if (
+      integrationRef.kind !== 'agent' ||
+      !integrationRef.enabled ||
+      integrationRef.status !== WhatsAppIntegrationStatus.CONNECTED ||
+      !integrationRef.agentId
+    ) {
+      return;
+    }
+    const phoneDigits = integrationRef.phoneNumber?.replace(/\D/g, '');
+    const selfSet = new Set(selfJids.filter(Boolean).map((jid) => jid.toLowerCase()));
+    if (!selfSet.size || !phoneDigits) return;
+
+    for (const message of messages) {
+      if (!message.key.fromMe) continue;
+      const remoteJid = message.key.remoteJid?.toLowerCase();
+      if (!remoteJid || !selfSet.has(remoteJid)) continue;
+      const text = this.extractText(message);
+      if (!text) continue;
+
+      await this.bindingModel
+        .updateOne(
+          { integrationId: integrationRef.integrationId, remoteJid: `${phoneDigits}@s.whatsapp.net` },
+          {
+            $set: {
+              userId: integrationRef.userId,
+              agentId: integrationRef.agentId,
+              lastMessageAt: new Date(),
+              lastInboundText: text,
+            },
+          },
+          { upsert: true },
+        )
+        .exec();
+      this.logger.log('WhatsApp self-chat text captured', {
+        integrationId: integrationRef.integrationId.toString(),
+        textLength: text.length,
+      });
+    }
+  }
+
   private extractText(message: import('@whiskeysockets/baileys').WAMessage): string {
     const content = message.message;
     if (!content) return '';

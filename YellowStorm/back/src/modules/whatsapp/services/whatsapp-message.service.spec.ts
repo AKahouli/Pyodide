@@ -175,4 +175,99 @@ describe('WhatsAppMessageService', () => {
     expect(mockStreamService.runStream).toHaveBeenCalled();
     expect(sendReply).toHaveBeenCalledWith('123@s.whatsapp.net', 'Agent reply');
   });
+
+  describe('captureSelfChatText', () => {
+    const SELF_PN_JID = '21654747178@s.whatsapp.net';
+
+    const mockUpdateOne = () => {
+      mockBindingModel.updateOne.mockReturnValue({ exec: async () => ({ modifiedCount: 1 }) });
+    };
+
+    const selfMessage = (remoteJid: string, text: string, fromMe = true) =>
+      ({ key: { remoteJid, fromMe }, message: { conversation: text } }) as never;
+
+    it('captures owner-typed self-chat text into the PN-normalized binding', async () => {
+      mockUpdateOne();
+      const integrationRef = buildAgentIntegration({ phoneNumber: '+21654747178' });
+
+      await service.captureSelfChatText(integrationRef, [selfMessage(SELF_PN_JID, 'Valide cela')], [
+        SELF_PN_JID,
+        '65730196316337@lid',
+      ]);
+
+      expect(mockBindingModel.updateOne).toHaveBeenCalledWith(
+        { integrationId: integrationRef.integrationId, remoteJid: SELF_PN_JID },
+        expect.objectContaining({
+          $set: expect.objectContaining({ lastInboundText: 'Valide cela' }),
+        }),
+        { upsert: true },
+      );
+    });
+
+    it('captures self-chat text arriving under the LID form of the own JID', async () => {
+      mockUpdateOne();
+      const integrationRef = buildAgentIntegration({ phoneNumber: '+21654747178' });
+      const ownLid = '65730196316337@lid';
+
+      await service.captureSelfChatText(integrationRef, [selfMessage(ownLid, 'OK demain')], [
+        SELF_PN_JID,
+        ownLid,
+      ]);
+
+      expect(mockBindingModel.updateOne).toHaveBeenCalledWith(
+        expect.objectContaining({ remoteJid: SELF_PN_JID }),
+        expect.objectContaining({
+          $set: expect.objectContaining({ lastInboundText: 'OK demain' }),
+        }),
+        { upsert: true },
+      );
+    });
+
+    it('ignores messages the owner sends to other contacts', async () => {
+      const integrationRef = buildAgentIntegration({ phoneNumber: '+21654747178' });
+
+      await service.captureSelfChatText(
+        integrationRef,
+        [selfMessage('21694968472@s.whatsapp.net', 'Salut X')],
+        [SELF_PN_JID],
+      );
+
+      expect(mockBindingModel.updateOne).not.toHaveBeenCalled();
+    });
+
+    it('ignores self-chat messages without extractable text', async () => {
+      const integrationRef = buildAgentIntegration({ phoneNumber: '+21654747178' });
+
+      await service.captureSelfChatText(
+        integrationRef,
+        [{ key: { remoteJid: SELF_PN_JID, fromMe: true } } as never],
+        [SELF_PN_JID],
+      );
+
+      expect(mockBindingModel.updateOne).not.toHaveBeenCalled();
+    });
+
+    it('ignores inbound (not fromMe) self messages', async () => {
+      const integrationRef = buildAgentIntegration({ phoneNumber: '+21654747178' });
+
+      await service.captureSelfChatText(integrationRef, [selfMessage(SELF_PN_JID, 'hi', false)], [
+        SELF_PN_JID,
+      ]);
+
+      expect(mockBindingModel.updateOne).not.toHaveBeenCalled();
+    });
+
+    it('does nothing when the integration is not connected', async () => {
+      const integrationRef = buildAgentIntegration({
+        phoneNumber: '+21654747178',
+        status: WhatsAppIntegrationStatus.PAIRING,
+      });
+
+      await service.captureSelfChatText(integrationRef, [selfMessage(SELF_PN_JID, 'hi')], [
+        SELF_PN_JID,
+      ]);
+
+      expect(mockBindingModel.updateOne).not.toHaveBeenCalled();
+    });
+  });
 });
