@@ -62,7 +62,7 @@ describe('ConversationSettingsService', () => {
     expect(agents.assertActiveDefaultAgent).toHaveBeenCalledWith(value.composerSuggestions.agentId);
     expect(findOneAndUpdate).toHaveBeenCalledWith(
       { key: 'conversation_settings' },
-      { key: 'conversation_settings', value: { ...value, redactSensitiveText: true, latencyInstrumentationEnabled: true } },
+      { key: 'conversation_settings', value: { ...value, redactSensitiveText: true, latencyInstrumentationEnabled: true, conversationName: DEFAULT_CONVERSATION_SETTINGS.conversationName } },
       { upsert: true, new: true, setDefaultsOnInsert: true },
     );
   });
