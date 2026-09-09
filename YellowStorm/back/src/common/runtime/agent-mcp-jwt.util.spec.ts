@@ -5,7 +5,6 @@ function decodeSegment(segment: string): Record<string, unknown> {
   return JSON.parse(Buffer.from(segment, 'base64url').toString('utf8'));
 }
 
-
 describe('signAgentMcpToken', () => {
   const { publicKey, privateKey } = generateKeyPairSync('rsa', {
     modulusLength: 2048,
