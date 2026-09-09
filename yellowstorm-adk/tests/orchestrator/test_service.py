@@ -1728,3 +1728,70 @@ async def test_concurrent_amends_on_one_session_are_serialized():
     # The second amend planned AFTER the first applied its step, so it saw a
     # bigger plan — proof it wasn't working from the same stale snapshot.
     assert seen_steps_at_plan == [1, 2]
+
+
+def _schema_aware_planner_service(monkeypatch, *, schema_pass_fails):
+    """A planner runner that knows whether the agent was built WITH output_schema.
+
+    When schema_pass_fails, the structured pass raises (as a provider that can't
+    do structured output would 400), so _make_plan must fall back to the
+    schema-less prompt-mode pass. Both passes otherwise return the same valid plan
+    JSON — the plan was always parsed from text, so prompt mode needs no schema.
+    """
+    _PLAN = {"title": "t", "goal": "g", "answer": "ok",
+             "steps": [{"id": "s1", "kind": "execute", "title": "x",
+                        "description": "do x", "depends_on": []}]}
+
+    class SchemaAwareRunner:
+        def __init__(self):
+            self.session_service = MagicMock(
+                get_session=AsyncMock(return_value=object()),
+                create_session=AsyncMock(),
+            )
+            self.calls = []  # (had_output_schema, message_text)
+
+        def bind(self, agent):
+            self._agent = agent
+            return self
+
+        async def run_async(self, **kwargs):
+            had_schema = getattr(self._agent, "output_schema", None) is not None
+            self.calls.append((had_schema, kwargs["new_message"].parts[0].text))
+            if had_schema and schema_pass_fails:
+                raise RuntimeError("response_format not supported by this model")
+            event = MagicMock()
+            event.content.parts = [MagicMock(text=json.dumps(_PLAN))]
+            yield event
+
+    runner = SchemaAwareRunner()
+    monkeypatch.setattr(svc.nodes, "build_llm", lambda *a, **k: "fake")
+    return (svc.OrchestratorService(lambda node, app_name: runner.bind(node),
+                                    None, planner_model="fake"),
+            runner)
+
+
+def test_make_plan_falls_back_to_prompt_mode_when_structured_output_unsupported(monkeypatch):
+    # A model whose provider can't do structured output makes the schema pass
+    # raise; _make_plan must retry schema-less (prompt mode) so the planner still
+    # works on ANY model that can emit JSON — not only structured-output ones.
+    service, runner = _schema_aware_planner_service(monkeypatch, schema_pass_fails=True)
+
+    plan = asyncio.run(service._make_plan("sess", "user", "find bitcoin price"))
+
+    assert [s.id.split("_")[-1] for s in plan.steps] == ["s1"]   # plan still built
+    assert len(runner.calls) == 2                                # schema, then fallback
+    assert runner.calls[0][0] is True                            # pass 0 had output_schema
+    assert runner.calls[1][0] is False                           # fallback had none
+    assert "strict JSON" in runner.calls[1][1]                   # contract restated in msg
+
+
+def test_make_plan_uses_structured_output_and_does_not_fall_back_when_supported(monkeypatch):
+    # A capable model succeeds on the structured pass: no fallback, one call —
+    # unchanged from before the fallback was added (zero regression).
+    service, runner = _schema_aware_planner_service(monkeypatch, schema_pass_fails=False)
+
+    plan = asyncio.run(service._make_plan("sess", "user", "find bitcoin price"))
+
+    assert len(plan.steps) == 1
+    assert len(runner.calls) == 1
+    assert runner.calls[0][0] is True                            # structured pass, no retry
