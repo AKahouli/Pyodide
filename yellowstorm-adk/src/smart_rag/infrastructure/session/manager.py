@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import create_async_engine
 from src.config.settings import get_settings
 from src.logger.logging import get_logger
 from src.smart_rag.infrastructure.processing.plugin import CleanSessionPlugin
+from src.smart_rag.infrastructure.compaction import make_chat_runner
 
 logger = get_logger("api.smart_rag.session_helper")
 settings = get_settings()
@@ -242,13 +243,8 @@ class SessionHelper:
                 extra_state=extra_state
             )
 
-            # Initialize runner with clean session plugin
-            self.runner = Runner(
-                agent=agent,
-                app_name=APP_NAME,
-                session_service=self.session_service,
-                plugins=[CleanSessionPlugin()],
-            )
+            # Initialize runner (with compaction when the request enabled it)
+            self.runner = make_chat_runner(agent, self.session_service)
 
             return self.session_id
         except Exception as e:

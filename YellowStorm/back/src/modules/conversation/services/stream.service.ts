@@ -38,7 +38,7 @@ import { RunCodeSourceScopeService } from '../../workspace/services/run-code-sou
 import type { RunCodeAttachmentSource } from '../../workspace/interfaces/run-code-source.interface';
 import { DocumentStatus } from '../../workspace/schemas/workspace-document.schema';
 import { AgentService } from '../../agent/agent.service';
-import { IGrpcAgent, IGrpcWorkspaceContext } from '../../agent/interfaces/agent.interface';
+import { IGrpcAgent, IGrpcCompaction, IGrpcWorkspaceContext } from '../../agent/interfaces/agent.interface';
 import { ModelsService } from '../../models/models.service';
 import { SkillService } from '../../skill/skill.service';
 import {
@@ -1061,6 +1061,20 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
     const requestedGovernedAgentIds = governanceOverride
       ? (request.agentIds.length ? request.agentIds : [governanceOverride.primaryAgentId])
       : undefined;
+    // Admin-configured compaction default, sent to the engine on every chat
+    // request; the engine derives token_threshold from token_fraction * context
+    // window. Omitted when disabled, so the engine keeps its no-compaction path.
+    const compactionSettings = (await this.conversationSettings.getSettings()).compaction;
+    const compaction: IGrpcCompaction | undefined = compactionSettings?.enabled
+      ? {
+        enabled: true,
+        compaction_interval: compactionSettings.compactionInterval,
+        overlap_size: compactionSettings.overlapSize,
+        token_fraction: compactionSettings.tokenFraction,
+        event_retention_size: compactionSettings.eventRetentionSize,
+        summarizer_model: compactionSettings.summarizerModel ?? '',
+      }
+      : undefined;
     beginBackendPreAdkStage('workspaceAgentResolutionMs');
     const semanticSchemaName = request.semanticModelId
       ? await this.semanticModelService.resolveSearchSchema(userId, request.semanticModelId)
@@ -1083,6 +1097,7 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
             playbookHandoffAttached: Boolean(request.playbookHandoffId),
           } : undefined,
           request.reasoningEffort,
+          compaction,
         ),
     ]);
     endBackendPreAdkStage('workspaceAgentResolutionMs');
