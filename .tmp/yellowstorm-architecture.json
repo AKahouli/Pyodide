@@ -27,7 +27,7 @@
       "sublabel": "JWT + MS OAuth",
       "pos": [
         40,
-        150
+        183
       ],
       "size": [
         130,
@@ -42,7 +42,7 @@
       "sublabel": "SSE + Socket.IO",
       "pos": [
         40,
-        450
+        417
       ],
       "size": [
         130,
@@ -70,7 +70,7 @@
       "sublabel": "Mongoose 8",
       "pos": [
         270,
-        150
+        183
       ],
       "size": [
         140,
@@ -84,7 +84,7 @@
       "sublabel": "Ceph S3 presigned",
       "pos": [
         270,
-        450
+        417
       ],
       "size": [
         140,
@@ -112,7 +112,7 @@
       "sublabel": "webhooks + Qdrant",
       "pos": [
         500,
-        150
+        183
       ],
       "size": [
         140,
@@ -126,7 +126,7 @@
       "sublabel": "flow_engine runtime",
       "pos": [
         730,
-        450
+        417
       ],
       "size": [
         140,
@@ -154,7 +154,7 @@
       "sublabel": "chat + checkpoints",
       "pos": [
         500,
-        450
+        417
       ],
       "size": [
         140,

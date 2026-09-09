@@ -99,7 +99,7 @@ describe('ConversationHeader', () => {
     expect(screen.getByText('delete-open')).toBeInTheDocument();
   });
 
-  it('exports the whole conversation to DOCX and PDF', async () => {
+  it('exports the whole conversation to DOCX, PDF, and HTML', async () => {
     render(<ConversationHeader />);
 
     await userEvent.click(screen.getByRole('button', { name: 'header.actions.export' }));
@@ -120,5 +120,12 @@ describe('ConversationHeader', () => {
     await userEvent.click(screen.getByRole('button', { name: 'header.actions.export' }));
     await userEvent.click(screen.getByRole('menuitem', { name: /messageActions.exportPdf/ }));
     await waitFor(() => expect(screen.getByText('conversation-pdf-export')).toBeInTheDocument());
+
+    await userEvent.click(screen.getByRole('button', { name: 'header.actions.export' }));
+    await userEvent.click(screen.getByRole('menuitem', { name: /messageActions.exportHtml/ }));
+    await waitFor(() => {
+      expect(downloadBlobMock).toHaveBeenCalledWith(expect.any(Blob), expect.stringMatching(/\.html$/));
+      expect(showSuccessMock).toHaveBeenCalledWith('toasts.export.htmlSuccess');
+    });
   });
 });

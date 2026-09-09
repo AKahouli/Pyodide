@@ -46,7 +46,7 @@ export interface ShareStore {
     sharedBy: string;
     maxMessages: number;
   }): Promise<string>;
-  deleteForkConversations(ids: string[], ownerId: string): Promise<void>;
+  deleteForkConversations(ids: string[]): Promise<void>;
   createPrivate(input: {
     originalConversationId: string;
     sharedBy: string;

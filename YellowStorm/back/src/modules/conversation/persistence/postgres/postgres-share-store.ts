@@ -148,16 +148,11 @@ export class PostgresShareStore implements ShareStore {
     });
   }
 
-  async deleteForkConversations(ids: string[], ownerId: string): Promise<void> {
+  async deleteForkConversations(ids: string[]): Promise<void> {
     if (!ids.length) return;
     await this.db
       .delete(schema.conversations)
-      .where(
-        and(
-          inArray(schema.conversations.id, ids),
-          eq(schema.conversations.createdBy, ownerId),
-        ),
-      );
+      .where(inArray(schema.conversations.id, ids));
   }
 
   async createPrivate(input: {

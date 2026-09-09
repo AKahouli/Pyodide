@@ -329,6 +329,20 @@ describe('MessageActions', () => {
     });
   });
 
+  it('exports the answer to HTML', async () => {
+    render(
+      <MessageActions
+        message={{ id: 'ai-1', conversationType: 'ai', components: [], isComplete: true, isStreaming: false, createdAt: '2026-07-29T13:00:00.000Z' } as never}
+        isLastAiMessage={false}
+        conversationId='conv-1'
+      />,
+    );
+
+    await userEvent.click(screen.getByRole('button', { name: 'messageActions.exportHtml' }));
+    expect(downloadBlobMock).toHaveBeenCalledWith(expect.any(Blob), expect.stringMatching(/\.html$/));
+    expect(notificationSuccessMock).toHaveBeenCalledWith('toasts.export.htmlSuccess');
+  });
+
   it('exports the answer to PDF via the print pipeline', async () => {
     render(
       <MessageActions

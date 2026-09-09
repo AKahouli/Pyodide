@@ -199,7 +199,7 @@ export class ShareService {
       });
       return this.mapToResponse(shared);
     } catch (error) {
-      await this.shareStore.deleteForkConversations(forkedConversationIds, userId);
+      await this.shareStore.deleteForkConversations(forkedConversationIds);
       if (error instanceof ConversationCloneLimitError) {
         throw new BadRequestException(ErrorCode.CHAT_BRANCH_INVALID, error.message);
       }

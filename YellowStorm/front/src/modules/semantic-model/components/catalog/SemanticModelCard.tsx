@@ -1,6 +1,7 @@
 import { useState } from 'react';
-import { AlertTriangle, ArrowRight, Boxes, Copy, Database, FileText, Network, Share2, Sparkles } from 'lucide-react';
+import { AlertTriangle, ArrowRight, Boxes, Copy, Database, FileText, Network, Pencil, Share2, Sparkles } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
+import { useQueryClient } from '@tanstack/react-query';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
@@ -9,6 +10,7 @@ import { Input } from '@/components/ui/input';
 import { useApiAction } from '@/lib/use-api-action';
 import { useModuleTranslation } from '@/modules/localization';
 import { semanticModelApi } from '../../api';
+import { semanticModelQueryKeys } from '../../query/queryKeys';
 import type { SemanticModel } from '../../types';
 import { ShareSemanticModelDialog } from './ShareSemanticModelDialog';
 
@@ -18,9 +20,24 @@ export function SemanticModelCard({ model }: Readonly<{ model: SemanticModel }>)
   const automatic = model.kind === 'workspace_default';
   const attention = Boolean(model.brokenBindingCount);
   const isOwner = model.role === 'owner' || !model.role;
+  const canEdit = model.role !== 'viewer';
   const [shareOpen, setShareOpen] = useState(false);
   const [cloneOpen, setCloneOpen] = useState(false);
   const [cloneName, setCloneName] = useState(`${model.name} ${t('clone.copySuffix')}`.trim());
+  const [renameOpen, setRenameOpen] = useState(false);
+  const [renameName, setRenameName] = useState(model.name);
+  const queryClient = useQueryClient();
+  const renameAction = useApiAction(
+    (name: string) => semanticModelApi.update(model.id, { expectedRevision: model.revision, name }),
+    {
+      showSuccessToast: true,
+      successMessage: t('catalog.rename.renamed'),
+      onSuccess: () => {
+        setRenameOpen(false);
+        void queryClient.invalidateQueries({ queryKey: semanticModelQueryKeys.all });
+      },
+    },
+  );
   const cloneAction = useApiAction(
     (name: string) => semanticModelApi.clone(model.id, name),
     {
@@ -60,7 +77,21 @@ export function SemanticModelCard({ model }: Readonly<{ model: SemanticModel }>)
             </div>
           </div>
           <div className='space-y-1'>
-            <CardTitle className='line-clamp-1 text-lg'>{model.name}</CardTitle>
+            <div className='flex items-center justify-between gap-1.5'>
+              <CardTitle className='line-clamp-1 text-lg'>{model.name}</CardTitle>
+              {canEdit && (
+                <Button
+                  variant='ghost'
+                  size='icon'
+                  className='h-7 w-7 shrink-0 text-muted-foreground opacity-100 transition md:opacity-0 md:group-hover:opacity-100 md:focus-visible:opacity-100 hover:text-primary'
+                  aria-label={t('catalog.rename.button')}
+                  title={t('catalog.rename.button')}
+                  onClick={(e) => { e.stopPropagation(); setRenameName(model.name); setRenameOpen(true); }}
+                >
+                  <Pencil className='h-4 w-4' />
+                </Button>
+              )}
+            </div>
             <p className='line-clamp-2 min-h-10 text-sm text-muted-foreground'>{model.description || t('catalog.noDescription')}</p>
           </div>
         </CardHeader>
@@ -95,6 +126,31 @@ export function SemanticModelCard({ model }: Readonly<{ model: SemanticModel }>)
           onOpenChange={setShareOpen}
         />
       )}
+      <Dialog open={renameOpen} onOpenChange={setRenameOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>{t('catalog.rename.title')}</DialogTitle>
+            <DialogDescription>{t('catalog.rename.description')}</DialogDescription>
+          </DialogHeader>
+          <Input
+            value={renameName}
+            onChange={(event) => setRenameName(event.target.value)}
+            aria-label={t('catalog.rename.name')}
+            autoFocus
+            maxLength={160}
+            onKeyDown={(event) => { if (event.key === 'Enter' && renameName.trim() && !renameAction.isLoading) void renameAction.execute(renameName.trim()); }}
+          />
+          <DialogFooter>
+            <Button variant='outline' onClick={() => setRenameOpen(false)}>{t('action.cancel')}</Button>
+            <Button
+              onClick={() => void renameAction.execute(renameName.trim())}
+              disabled={!renameName.trim() || renameName.trim() === model.name || renameAction.isLoading}
+            >
+              {renameAction.isLoading ? t('catalog.rename.saving') : t('catalog.rename.submit')}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
       <Dialog open={cloneOpen} onOpenChange={setCloneOpen}>
         <DialogContent>
           <DialogHeader>
