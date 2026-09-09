@@ -282,7 +282,7 @@ class ConversationStreamService {
 
 - Automatic reconnection with exponential backoff
 - Heartbeat monitoring (30s timeout)
-- Max 10 reconnection attempts
+- Unlimited reconnection attempts (backoff capped at 60s) — backend restarts recover without user action
 - Token-based authentication via query parameter
 
 ### SSE Event Types

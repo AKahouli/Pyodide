@@ -82,6 +82,7 @@ export class PostgresShareStore implements ShareStore {
 
   async forkConversation(input: {
     original: ShareSourceConversationRecord;
+    ownerId: string;
     sharedBy: string;
     maxMessages: number;
   }): Promise<string> {
@@ -106,7 +107,7 @@ export class PostgresShareStore implements ShareStore {
         .values({
           id: conversationId,
           title: input.original.title,
-          createdBy: input.sharedBy,
+          createdBy: input.ownerId,
           messageCount: sourceMessages.length,
           isShared: true,
           sharedFrom: input.sharedBy,

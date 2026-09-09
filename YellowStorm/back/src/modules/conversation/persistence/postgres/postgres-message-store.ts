@@ -206,6 +206,9 @@ export class PostgresMessageStore implements MessageStore {
         components: input.components,
         isStreaming: false,
         isComplete: true,
+        executionStatus: 'completed',
+        executionTerminalAt: now,
+        interruptionReason: null,
         inputTokens: input.inputTokens,
         outputTokens: input.outputTokens,
         durationMs: input.durationMs,
@@ -383,6 +386,13 @@ export class PostgresMessageStore implements MessageStore {
       .set({
         streamExecutionLeaseId: leaseId,
         streamExecutionLeaseExpiresAt: expiresAt,
+        // Durable run lifecycle: the lease token doubles as the execution
+        // attempt identity (single ownership authority).
+        executionStatus: 'running',
+        executionAttemptId: leaseId,
+        executionStartedAt: now,
+        lastProgressAt: now,
+        interruptionReason: null,
         updatedAt: now,
       })
       .where(
@@ -401,9 +411,14 @@ export class PostgresMessageStore implements MessageStore {
   }
 
   async renewStream(id: string, leaseId: string, expiresAt: Date): Promise<boolean> {
+    const now = new Date();
     const rows = await this.db
       .update(schema.messages)
-      .set({ streamExecutionLeaseExpiresAt: expiresAt, updatedAt: new Date() })
+      .set({
+        streamExecutionLeaseExpiresAt: expiresAt,
+        lastProgressAt: now,
+        updatedAt: now,
+      })
       .where(
         and(
           eq(schema.messages.id, id),
@@ -421,6 +436,11 @@ export class PostgresMessageStore implements MessageStore {
       .set({
         streamExecutionLeaseId: null,
         streamExecutionLeaseExpiresAt: null,
+        // Released without any terminal record: the run was cancelled, not
+        // completed. Terminal states written by completeAi/markStreamFailed
+        // are left untouched.
+        executionStatus: sql`CASE WHEN ${schema.messages.executionStatus} IS NULL OR ${schema.messages.executionStatus} IN ('running', 'starting') THEN 'cancelled' ELSE ${schema.messages.executionStatus} END`,
+        executionTerminalAt: sql`CASE WHEN ${schema.messages.executionStatus} IS NULL OR ${schema.messages.executionStatus} IN ('running', 'starting') THEN now() ELSE ${schema.messages.executionTerminalAt} END`,
         updatedAt: new Date(),
       })
       .where(and(eq(schema.messages.id, id), eq(schema.messages.streamExecutionLeaseId, leaseId)));
@@ -644,10 +664,102 @@ export class PostgresMessageStore implements MessageStore {
   async markStreamFailed(id: string, leaseId?: string): Promise<void> {
     const conditions = [eq(schema.messages.id, id), eq(schema.messages.isComplete, false)];
     if (leaseId) conditions.push(eq(schema.messages.streamExecutionLeaseId, leaseId));
+    const now = new Date();
     await this.db
       .update(schema.messages)
-      .set({ isStreaming: false, isComplete: false, updatedAt: new Date() })
+      .set({
+        isStreaming: false,
+        isComplete: false,
+        executionStatus: 'failed',
+        executionTerminalAt: now,
+        updatedAt: now,
+      })
       .where(and(...conditions));
+  }
+
+  /**
+   * Truthful settlement for a crashed/interrupted run: only an attempt that
+   * is still streaming with an EXPIRED lease can be marked interrupted, so a
+   * healthy long-running run (which keeps renewing its lease) is never
+   * overwritten and two replicas racing converge on one write. Returns the
+   * interrupted execution, or null when the attempt was not claimable.
+   */
+  async markExecutionInterrupted(
+    id: string,
+    reason: string,
+    now: Date,
+  ): Promise<{ id: string; conversationId: string; executionAttemptId: string | null } | null> {
+    const rows = await this.db
+      .update(schema.messages)
+      .set({
+        isStreaming: false,
+        isComplete: false,
+        executionStatus: 'interrupted',
+        interruptionReason: reason,
+        executionTerminalAt: now,
+        streamExecutionLeaseId: null,
+        streamExecutionLeaseExpiresAt: null,
+        updatedAt: now,
+      })
+      .where(
+        and(
+          eq(schema.messages.id, id),
+          eq(schema.messages.isStreaming, true),
+          eq(schema.messages.isComplete, false),
+          // Lease expiry is the ownership boundary: no live lease may be
+          // interrupted by the recovery worker.
+          or(
+            isNull(schema.messages.streamExecutionLeaseExpiresAt),
+            lte(schema.messages.streamExecutionLeaseExpiresAt, now),
+          ),
+        ),
+      )
+      .returning({
+        id: schema.messages.id,
+        conversationId: schema.messages.conversationId,
+        executionAttemptId: schema.messages.executionAttemptId,
+      });
+    return rows[0] ?? null;
+  }
+
+  /**
+   * Bounded scan for the recovery worker: streaming AI attempts whose lease
+   * expired before the cutoff (i.e. the owner stopped renewing). Ordered by
+   * expiry so the oldest backlog is settled first.
+   */
+  async findExpiredStreamExecutions(
+    cutoff: Date,
+    limit: number,
+  ): Promise<
+    Array<{
+      id: string;
+      conversationId: string;
+      executionAttemptId: string | null;
+      leaseExpiresAt: Date | null;
+    }>
+  > {
+    const rows = await this.db
+      .select({
+        id: schema.messages.id,
+        conversationId: schema.messages.conversationId,
+        executionAttemptId: schema.messages.executionAttemptId,
+        leaseExpiresAt: schema.messages.streamExecutionLeaseExpiresAt,
+      })
+      .from(schema.messages)
+      .where(
+        and(
+          eq(schema.messages.isStreaming, true),
+          eq(schema.messages.isComplete, false),
+          eq(schema.messages.conversationType, 'ai'),
+          or(
+            isNull(schema.messages.streamExecutionLeaseExpiresAt),
+            lte(schema.messages.streamExecutionLeaseExpiresAt, cutoff),
+          ),
+        ),
+      )
+      .orderBy(schema.messages.streamExecutionLeaseExpiresAt, schema.messages.id)
+      .limit(limit);
+    return rows;
   }
 
   async updateFrontendLatency(
@@ -691,15 +803,24 @@ export class PostgresMessageStore implements MessageStore {
   }
 
   async cleanupStaleStreams(cutoff: Date): Promise<number> {
+    // Ownership-based, not age-based: a healthy long-running stream keeps
+    // renewing its lease and is never swept. Legacy rows without a lease
+    // fall back to updated_at age.
     const result = await this.db.execute(sql`
       WITH candidates AS (
         SELECT id FROM conversation.messages
-        WHERE is_streaming = true AND updated_at < ${cutoff}
+        WHERE is_streaming = true
+          AND COALESCE(stream_execution_lease_expires_at, updated_at) < ${cutoff}
         ORDER BY updated_at, id
         LIMIT 1000 FOR UPDATE SKIP LOCKED
       )
       UPDATE conversation.messages m
-      SET is_streaming = false, is_complete = false, updated_at = now()
+      SET is_streaming = false,
+          is_complete = false,
+          execution_status = CASE WHEN m.execution_status IS NULL OR m.execution_status IN ('running', 'starting') THEN 'interrupted' ELSE m.execution_status END,
+          interruption_reason = CASE WHEN m.execution_status IS NULL OR m.execution_status IN ('running', 'starting') THEN 'stale_stream_swept' ELSE m.interruption_reason END,
+          execution_terminal_at = CASE WHEN m.execution_status IS NULL OR m.execution_status IN ('running', 'starting') THEN now() ELSE m.execution_terminal_at END,
+          updated_at = now()
       FROM candidates c
       WHERE m.id = c.id
       RETURNING m.id

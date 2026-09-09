@@ -7,6 +7,7 @@ import { useAuth } from './useAuth';
 
 const authApiMock = vi.hoisted(() => ({
   getRegistrationStatus: vi.fn(),
+  getAuthProviders: vi.fn(),
   getCurrentUser: vi.fn(),
   refreshToken: vi.fn(),
   login: vi.fn(),
@@ -55,6 +56,9 @@ describe('AuthProvider', () => {
     vi.clearAllMocks();
 
     authApiMock.getRegistrationStatus.mockResolvedValue({ enabled: true });
+    authApiMock.getAuthProviders.mockResolvedValue([
+      { type: 'classic', providerKey: 'classic', displayName: 'Classic', iconKey: 'classic', registrationEnabled: true },
+    ]);
     authApiMock.getCurrentUser.mockResolvedValue(baseUser);
     authApiMock.login.mockResolvedValue({
       accessToken: 'access-token',
@@ -152,5 +156,38 @@ describe('AuthProvider', () => {
 
     await waitFor(() => expect(result.current.isLoading).toBe(false));
     expect(result.current.user?.registrationApproval).toBe('rejected');
+  });
+
+  it('preserves credentials and exposes a retryable state on transient bootstrap failure', async () => {
+    localStorage.setItem(AUTH_STORAGE_KEYS.accessToken, 'access-token');
+    localStorage.setItem(AUTH_STORAGE_KEYS.user, JSON.stringify(baseUser));
+    authApiMock.getCurrentUser.mockRejectedValue({ code: 'ERR_NETWORK', statusCode: 0 });
+
+    const { result } = renderHook(() => useAuth(), { wrapper: AuthProvider });
+
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
+    expect(result.current.isAuthTemporarilyUnavailable).toBe(true);
+    expect(result.current.isAuthenticated).toBe(false);
+    // Credentials must survive a transient failure (F02).
+    expect(localStorage.getItem(AUTH_STORAGE_KEYS.accessToken)).toBe('access-token');
+    expect(localStorage.getItem(AUTH_STORAGE_KEYS.user)).toBe(JSON.stringify(baseUser));
+  });
+
+  it('recovers authentication when retryRecovery succeeds after a transient failure', async () => {
+    localStorage.setItem(AUTH_STORAGE_KEYS.accessToken, 'access-token');
+    localStorage.setItem(AUTH_STORAGE_KEYS.user, JSON.stringify(baseUser));
+    authApiMock.getCurrentUser.mockRejectedValueOnce({ statusCode: 503, code: 'ERR_1008' });
+
+    const { result } = renderHook(() => useAuth(), { wrapper: AuthProvider });
+
+    await waitFor(() => expect(result.current.isAuthTemporarilyUnavailable).toBe(true));
+
+    await act(async () => {
+      await result.current.retryRecovery();
+    });
+
+    expect(result.current.isAuthenticated).toBe(true);
+    expect(result.current.isAuthTemporarilyUnavailable).toBe(false);
+    expect(result.current.user?.email).toBe(baseUser.email);
   });
 });

@@ -71,6 +71,20 @@
       "when": 1788818236176,
       "tag": "0009_conversation_turn_order_fix",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1788950400000,
+      "tag": "0010_conversation_execution_state",
+      "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1788950500000,
+      "tag": "0011_conversation_executions",
+      "breakpoints": true
     }
   ]
 }

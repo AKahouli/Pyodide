@@ -42,6 +42,7 @@ export interface ShareStore {
   }): Promise<SharedConversationRecord>;
   forkConversation(input: {
     original: ShareSourceConversationRecord;
+    ownerId: string;
     sharedBy: string;
     maxMessages: number;
   }): Promise<string>;

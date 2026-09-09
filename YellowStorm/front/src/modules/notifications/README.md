@@ -24,7 +24,7 @@ The notifications module provides real-time notification delivery via Server-Sen
 The notifications module provides:
 
 - **Real-time Delivery**: SSE-based push notifications from server to client
-- **Automatic Reconnection**: Exponential backoff with max 10 attempts
+- **Automatic Reconnection**: Exponential backoff with unlimited retries (delay capped at 60s)
 - **Heartbeat Monitoring**: Detects stale connections (30s timeout)
 - **Toast Integration**: Automatic toast display for incoming notifications
 - **State Management**: React Context with notifications list and unread count

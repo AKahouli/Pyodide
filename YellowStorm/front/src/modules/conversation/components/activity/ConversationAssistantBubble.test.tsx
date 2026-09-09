@@ -541,6 +541,9 @@ describe('ConversationAssistantBubble', () => {
     expect(container.querySelector('[data-tool-full-name]')).toHaveTextContent('Smart Navigation Search Paddle Read Document Map');
     expect(container.querySelector('[data-tool-full-description]')).toHaveTextContent('Getting the page count and structure');
     expect(container.querySelector('[data-tool-payload-group]')).toContainElement(screen.getByRole('button', { name: 'Request' }));
+    const actions = container.querySelector('[data-tool-detail-actions]') as HTMLElement;
+    const payloadGroup = container.querySelector('[data-tool-payload-group]') as HTMLElement;
+    expect(actions.compareDocumentPosition(payloadGroup) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Request' })).toHaveAttribute('aria-expanded', 'false');
     expect(screen.getByRole('button', { name: 'View response' })).toHaveAttribute('aria-expanded', 'false');
   });
@@ -585,7 +588,8 @@ describe('ConversationAssistantBubble', () => {
     expect(screen.getByRole('button', { name: 'Read the research explanation, Tool response: Run code (Running)' })).toBeInTheDocument();
   });
 
-  it('opens a sanitized tool response without exposing private payload fields', () => {
+  it('opens a sanitized tool response modal without exposing private payload fields', async () => {
+    mocks.fetchToolResult.mockResolvedValue({ resultJson: JSON.stringify({ message: 'Execution stopped', password: 'private', path: '/tmp/private.py', recordId: '507f1f77bcf86cd799439011', code: 'print("private")' }) });
     render(<ConversationAssistantBubble
       conversationId='conversation-1'
       messageId='message-1'
@@ -617,13 +621,14 @@ describe('ConversationAssistantBubble', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Request' }));
     fireEvent.click(screen.getByRole('button', { name: 'View response' }));
     expect(screen.getByText('Request')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'View response' })).toHaveAttribute('aria-expanded', 'true');
-    expect(screen.getByText(/Execution stopped/)).toBeInTheDocument();
+    expect(await screen.findByRole('dialog')).toBeInTheDocument();
+    expect(await screen.findByText(/Execution stopped/)).toBeInTheDocument();
     expect(screen.queryByText(/private\.py|507f1f77bcf86cd799439011|print\(|"private"/)).not.toBeInTheDocument();
     expect(screen.getByText(/\[REDACTED\]/)).toBeInTheDocument();
   });
 
-  it('drills into code-interpreter commands and output while redacting private values', () => {
+  it('drills into code-interpreter commands and output while redacting private values', async () => {
+    mocks.fetchToolResult.mockResolvedValue({ resultJson: JSON.stringify({ stdout: 'Created output.pdf', exit_code: 0, workspace_path: '/workspace/private/output.pdf' }) });
     render(<ConversationAssistantBubble
       conversationId='conversation-1'
       messageId='message-1'
@@ -649,12 +654,13 @@ describe('ConversationAssistantBubble', () => {
     fireEvent.click(screen.getByRole('button', { name: 'View response' }));
 
     expect(screen.getByText(/pandoc source\.md -o output\.pdf/)).toBeInTheDocument();
-    expect(screen.getByText(/Created output\.pdf/)).toBeInTheDocument();
+    expect(await screen.findByText(/Created output\.pdf/)).toBeInTheDocument();
     expect(screen.getByText(/"exit_code": 0/)).toBeInTheDocument();
     expect(screen.queryByText(/Bearer private|\/workspace\/private/)).not.toBeInTheDocument();
   });
 
-  it('expands request and response details for a generic tool', () => {
+  it('expands request and opens response details for a generic tool', async () => {
+    mocks.fetchToolResult.mockResolvedValue({ resultJson: JSON.stringify({ matches: 4 }) });
     render(<ConversationAssistantBubble
       conversationId='conversation-1'
       messageId='message-1'
@@ -676,11 +682,12 @@ describe('ConversationAssistantBubble', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Request' }));
     fireEvent.click(screen.getByRole('button', { name: 'View response' }));
     expect(screen.getByText(/annual revenue/)).toBeInTheDocument();
-    expect(screen.getByText(/"matches": 4/)).toBeInTheDocument();
+    expect(await screen.findByText(/"matches": 4/)).toBeInTheDocument();
   });
 
-  it('bounds a large raw tool response when expanded', () => {
-    const { container } = render(<ConversationAssistantBubble
+  it('bounds a large raw tool response in the modal', async () => {
+    mocks.fetchToolResult.mockResolvedValue({ resultJson: JSON.stringify({ rows: Array.from({ length: 100 }, (_, index) => ({ index, values: Array.from({ length: 30 }, (_, value) => value) })) }) });
+    render(<ConversationAssistantBubble
       conversationId='conversation-1'
       messageId='message-1'
       isStreaming={false}
@@ -697,12 +704,13 @@ describe('ConversationAssistantBubble', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Read matching files, Tool response: Search (Completed)' }));
     fireEvent.click(screen.getByRole('button', { name: 'View response' }));
 
-    const payload = container.querySelector('[data-tool-payload="response"]');
+    const payload = await screen.findByText(/\[truncated\]/);
     expect(payload).toHaveTextContent('[truncated]');
-    expect(payload?.textContent?.length).toBeLessThan(12_100);
+    expect(payload.textContent?.length).toBeLessThan(12_100);
   });
 
-  it('reveals an inline streamed tool response without a network round trip', () => {
+  it('loads a streamed tool response from persistence on demand', async () => {
+    mocks.fetchToolResult.mockResolvedValue({ resultJson: JSON.stringify({ matches: 4 }) });
     render(<ConversationAssistantBubble
       conversationId='conversation-1'
       messageId='message-1'
@@ -720,8 +728,8 @@ describe('ConversationAssistantBubble', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Find revenue, Tool response: Search (Completed)' }));
     fireEvent.click(screen.getByRole('button', { name: 'View response' }));
 
-    expect(screen.getByText(/"matches": 4/)).toBeInTheDocument();
-    expect(mocks.fetchToolResult).not.toHaveBeenCalled();
+    expect(await screen.findByText(/"matches": 4/)).toBeInTheDocument();
+    expect(mocks.fetchToolResult).toHaveBeenCalledWith('conversation-1', 'message-1', 'tool-search');
   });
 
   it('pulls the tool response on demand when the payload was not streamed', async () => {
@@ -739,6 +747,7 @@ describe('ConversationAssistantBubble', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Find revenue, Tool response: Search (Completed)' }));
     expect(screen.queryByText(/"matches": 7/)).not.toBeInTheDocument();
+    expect(mocks.fetchToolResult).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole('button', { name: 'View response' }));
 
     await waitFor(() => expect(screen.getByText(/"matches": 7/)).toBeInTheDocument());

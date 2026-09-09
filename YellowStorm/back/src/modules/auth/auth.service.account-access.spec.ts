@@ -34,6 +34,13 @@ describe('AuthService account access', () => {
     model.findById = jest.fn();
     model.deleteOne = jest.fn();
     model.updateMany = jest.fn().mockResolvedValue({ modifiedCount: 1 });
+    model.findOneAndUpdate = jest.fn().mockResolvedValue({ _id: new Types.ObjectId() });
+    model.db = {
+      startSession: jest.fn().mockResolvedValue({
+        withTransaction: async (fn: () => Promise<unknown>) => fn(),
+        endSession: jest.fn().mockResolvedValue(undefined),
+      }),
+    };
     return model;
   };
 

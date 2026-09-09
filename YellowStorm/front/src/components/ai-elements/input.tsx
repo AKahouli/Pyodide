@@ -604,7 +604,6 @@ const Input = memo(function Input({ onSubmit: externalSubmit, onStop, status: ex
               </PromptInputActionMenu>
               {showWorkspaceSelect && <WorkspaceSelect selectedIds={selectedWorkspaceIds} onChange={handleWorkspaceSelectionChange} disabled={disabled || submitDisabled || Boolean(selectedSemanticModelId)} workspaceOptions={workspaceOptions} className='size-11 md:size-8' />}
               {showWorkspaceSelect && <SemanticModelSelect value={selectedSemanticModelId} onChange={setSelectedSemanticModelId} disabled={disabled || submitDisabled} />}
-              {extraTools}
                {showModelSelector && !governedMode && models.length > 0 && <ModelSelector onOpenChange={setModelSelectorOpen} open={modelSelectorOpen}>
                  <ModelSelectorTrigger asChild>
                    <PromptInputButton type='button' disabled={disabled || submitDisabled}>
@@ -643,6 +642,7 @@ const Input = memo(function Input({ onSubmit: externalSubmit, onStop, status: ex
                   </ModelSelectorList>
                 </ModelSelectorContent>
                </ModelSelector>}
+              {extraTools}
             </PromptInputTools>
             <div className='flex flex-row w-fit gap-3 px-1'>
               <Usage />

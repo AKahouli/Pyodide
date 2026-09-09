@@ -2,7 +2,8 @@ import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { ReasoningEffortSelector } from '@/components/ai-elements/reasoning-effort-selector';
-import { ReasoningEffortSelect, useReasoningEffortState } from './ReasoningEffortSelect';
+import { ReasoningEffortSelect, ReliabilityCheckToggle, useReasoningEffortState } from './ReasoningEffortSelect';
+import { useConversationUiStore } from '../uiStore';
 
 const setSelectedReasoningEffortMock = vi.hoisted(() => vi.fn());
 const storeStateMock = vi.hoisted(() => ({
@@ -57,6 +58,7 @@ describe('ReasoningEffortSelect', () => {
     storeStateMock.selectedReasoningEffort = null;
     modelsStateMock.models = [reasoningModel];
     modelsStateMock.defaultModel = null;
+    useConversationUiStore.setState({ autoReliabilityEnabled: false });
   });
 
   it('renders nothing when the active model exposes no reasoning efforts', () => {
@@ -109,6 +111,16 @@ describe('ReasoningEffortSelect', () => {
     await userEvent.click(screen.getByRole('button', { name: 'input.reasoning.label' }));
     await userEvent.click(screen.getByRole('menuitemradio', { name: 'High' }));
     expect(setSelectedReasoningEffortMock).toHaveBeenCalledWith('high');
+  });
+
+  it('renders the reliability badge off by default and enables it on click', async () => {
+    render(<ReliabilityCheckToggle />);
+    const badge = screen.getByRole('button', { name: 'input.autoReliability' });
+    expect(badge).toHaveAttribute('aria-pressed', 'false');
+
+    await userEvent.click(badge);
+
+    expect(badge).toHaveAttribute('aria-pressed', 'true');
   });
 
   it('supports a full-width controlled selector for forms', async () => {

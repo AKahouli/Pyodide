@@ -182,5 +182,7 @@
   "ERR_3707": "Ce lien de connaissance n’est pas valide.",
   "ERR_3708": "Les versions publiées ne peuvent pas être modifiées.",
   "ERR_3709": "Ce modèle n’a pas de brouillon modifiable.",
-  "ERR_3710": "Les modèles sémantiques sont temporairement indisponibles."
+  "ERR_3710": "Les modèles sémantiques sont temporairement indisponibles.",
+  "ERR_1130": "L'authentification est temporairement indisponible. Votre session n'a pas été affectée ; nouvelle tentative en cours.",
+  "ERR_1131": "La connexion est en cours de synchronisation. Veuillez réessayer."
 }

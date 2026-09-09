@@ -1,9 +1,11 @@
 import { Inject, Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { nanoid } from 'nanoid';
-import { BadRequestException, ForbiddenException, NotFoundException } from '../../exceptions';
+import { BadRequestException, ForbiddenException, NotFoundException, ServiceUnavailableException } from '../../exceptions';
 import { ErrorCode } from '../../exceptions/constants/error-codes';
+import { EmailService } from '../../email/email.service';
 import { LoggerService } from '../../logger';
+import { UserService } from '../../user/user.service';
 import type {
   CreateShareData,
   EmbeddedMessage,
@@ -74,6 +76,8 @@ export class ShareService {
     @Inject(SHARE_STORE) private readonly shareStore: ShareStore,
     private readonly configService: ConfigService,
     private readonly logger: LoggerService,
+    private readonly userService: UserService,
+    private readonly emailService: EmailService,
   ) {
     this.logger.setContext('ShareService');
   }
@@ -139,24 +143,46 @@ export class ShareService {
     maxCloneMessages: number,
   ): Promise<ShareResponse> {
     const recipientEmails = data.recipientEmails || [];
+    if (!recipientEmails.length) {
+      throw new BadRequestException(ErrorCode.CHAT_BRANCH_INVALID, 'At least one recipient email is required');
+    }
+    const recipients = await Promise.all(recipientEmails.map(async (email) => ({
+      email,
+      user: await this.userService.findByEmail(email),
+    })));
+    if (recipients.some(({ user }) => !user)) {
+      throw new NotFoundException(ErrorCode.USER_NOT_FOUND, 'Every recipient must have a YelloStorm account');
+    }
+    if (recipients.some(({ user }) => user!._id.toString() === userId)) {
+      throw new BadRequestException(ErrorCode.CHAT_BRANCH_INVALID, 'You cannot share a conversation with yourself');
+    }
     const forkedConversationIds: string[] = [];
     try {
-      for (const _email of recipientEmails) {
-        try {
-          forkedConversationIds.push(
-            await this.shareStore.forkConversation({
-              original: conversation,
-              sharedBy: userId,
-              maxMessages: maxCloneMessages,
-            }),
-          );
-        } catch (error) {
-          if (error instanceof ConversationCloneLimitError) throw error;
-          this.logger.error('Failed to fork conversation', {
-            originalId: conversation.id,
-            error: (error as Error).message,
-          });
-        }
+      for (const { user } of recipients) {
+        forkedConversationIds.push(
+          await this.shareStore.forkConversation({
+            original: conversation,
+            ownerId: user!._id.toString(),
+            sharedBy: userId,
+            maxMessages: maxCloneMessages,
+          }),
+        );
+      }
+      const frontBase = this.configService.get<string>('app.frontendUrl', 'http://localhost:5173').replace(/\/$/, '');
+      const emailResult = await this.emailService.sendBulk({
+        emails: recipients.map(({ email }, index) => {
+          const conversationUrl = `${frontBase}/#/conversation/${forkedConversationIds[index]}`;
+          return {
+            to: email,
+            subject: `${data.title || conversation.title} has been shared with you`,
+            text: `A YelloStorm conversation has been shared with you.\n\nOpen conversation: ${conversationUrl}`,
+            html: `<p>A YelloStorm conversation has been shared with you.</p><p><a href="${conversationUrl}">Open conversation</a></p>`,
+          };
+        }),
+        stopOnError: false,
+      });
+      if (emailResult.failed > 0) {
+        throw new ServiceUnavailableException(ErrorCode.SERVICE_UNAVAILABLE, 'Failed to send one or more conversation share emails');
       }
       const shared = await this.shareStore.createPrivate({
         originalConversationId: conversation.id,

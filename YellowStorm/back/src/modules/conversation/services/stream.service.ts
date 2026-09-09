@@ -15,6 +15,10 @@ import * as path from 'node:path';
 import { StreamGatewayService } from './stream-gateway.service';
 import { MessageService } from './message.service';
 import { ConversationService } from './conversation.service';
+import {
+  CONVERSATION_EXECUTION_STORE,
+  ConversationExecutionStore,
+} from '../persistence/conversation-execution-store';
 import { MessageComponent, ComponentType, type ConversationClientContextV1, type CorrectionReplayContext, type MessageReplayContext } from '../interfaces/message.interface';
 import {
   getComponentType as sharedGetComponentType,
@@ -119,6 +123,10 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
   private lastError: string | null = null;
   private lastCheckedAt?: Date;
   private activeStreams = new Map<string, Set<string>>(); // userId -> Set<conversationId>
+  private activeConversationExecutions = new Set<string>(); // conversation-level exclusivity across actors
+  private bootstrapCancelRequested = new Set<string>(); // streamKey -> stop during bootstrap
+  private readonly fleetAdmissionEnabled: boolean;
+  private readonly replicaId: string | null;
   private componentBuffers = new Map<string, Map<string, MessageComponent>>(); // streamKey -> (componentId -> accumulated component)
   private streamRevisions = new Map<string, number>(); // streamKey -> latest component-buffer revision
   private activeCalls = new Map<string, grpc.ClientReadableStream<any>>(); // streamKey -> gRPC call
@@ -148,8 +156,15 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
     private readonly agentRequestBuilder: ConversationAgentRequestBuilder,
     private readonly conversationSettings: ConversationSettingsService,
     private readonly semanticModelService: SemanticModelService,
+    @Inject(CONVERSATION_EXECUTION_STORE)
+    private readonly executionStore: ConversationExecutionStore,
   ) {
     this.logger.setContext('StreamService');
+    this.fleetAdmissionEnabled = this.configService.get<boolean>(
+      'conversation.fleetAdmissionEnabled',
+      true,
+    );
+    this.replicaId = this.configService.get<string>('REPLICA_ID') || null;
   }
 
   async seedConversationSession(
@@ -222,8 +237,13 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
     }
 
     this.activeStreams.clear();
+    this.activeConversationExecutions.clear();
+    this.bootstrapCancelRequested.clear();
+    this.streamExecutionLeases.clear();
+    this.streamTerminalCoordinators.clear();
     this.componentBuffers.clear();
     this.streamRevisions.clear();
+    this.streamUsage.clear();
 
     if (this.chatbotClient) {
       grpc.closeClient(this.chatbotClient);
@@ -671,8 +691,19 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
         'This response is already streaming',
       );
     }
+    // Owned execution identity for the whole lifecycle (bootstrap through
+    // terminal persistence). Local cleanup keys off this identity.
+    const streamKey = `${userId}:${conversationId}:${messageId}`;
+    // Terminal coordinator exists from bootstrap so a stop that arrives before
+    // the gRPC dispatch shares exactly one settlement with end/error paths.
+    this.createStreamTerminalCoordinator(streamKey);
     let leaseHeartbeat: ReturnType<typeof setInterval> | undefined;
     let leaseLost = false;
+    // Ownership marker set once the conversation slot is granted: a rejected
+    // duplicate must never release the legitimate owner's registration.
+    let registeredLocally = false;
+    // Set once the shared fleet admission slot is granted (WP07).
+    let fleetAdmitted = false;
     try {
     // Check concurrency
     const maxStreams = this.configService.get<number>('conversation.maxConcurrentStreams', 5);
@@ -715,17 +746,71 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
       );
     }
 
-    // Register active stream
+    // Same-conversation execution is exclusive across ACTORS, not just per
+    // user: group members must not concurrently mutate the same ADK session.
+    if (this.activeConversationExecutions.has(conversationId)) {
+      this.logger.warn('Conversation already streaming for another member', { conversationId }, logOpts);
+      await this.sendErrorEvent(userId, conversationId, messageId, ErrorCode.CHAT_ALREADY_STREAMING);
+      throw new ConflictException(
+        ErrorCode.CHAT_ALREADY_STREAMING,
+        'This conversation is already streaming',
+      );
+    }
+
+    // Register active stream — after every admission guard, so a rejected
+    // duplicate leaves no ghost registration behind.
     if (!this.activeStreams.has(userId)) {
       this.activeStreams.set(userId, new Set());
     }
     this.activeStreams.get(userId)!.add(conversationId);
-
-    const streamKey = `${userId}:${conversationId}:${messageId}`;
+    this.activeConversationExecutions.add(conversationId);
     this.streamExecutionLeases.set(streamKey, leaseId);
+    registeredLocally = true;
+
+    // Fleet admission (WP07): shared per-user/global capacity plus durable
+    // same-conversation exclusivity across actors AND replicas. A missing
+    // admission table (migration pending) degrades to process-local limits.
+    if (this.fleetAdmissionEnabled) {
+      const admitted = await this.executionStore.admit({
+        executionId: randomUUID().replaceAll('-', '').slice(0, 24),
+        conversationId,
+        userId,
+        messageId,
+        ownerReplicaId: this.replicaId,
+        expiresAt: new Date(Date.now() + leaseDurationMs * 2),
+        maxActiveRunsPerUser: maxStreams,
+        maxActiveRunsFleet: this.configService.get<number>('conversation.fleetMaxActiveRuns', 50),
+      });
+      if (!admitted.admitted) {
+        if (admitted.reason === 'capacity') {
+          this.logger.warn('Fleet admission rejected: capacity full', { userId, conversationId }, logOpts);
+          await this.sendErrorEvent(userId, conversationId, messageId, ErrorCode.CHAT_STREAM_LIMIT);
+          throw new AppException({
+            code: ErrorCode.CHAT_STREAM_LIMIT,
+            message: 'Maximum concurrent generations reached, please retry shortly',
+            statusCode: HttpStatus.TOO_MANY_REQUESTS,
+          });
+        }
+        this.logger.warn('Fleet admission rejected: execution conflict', {
+          userId,
+          conversationId,
+          reason: admitted.reason,
+        }, logOpts);
+        await this.sendErrorEvent(userId, conversationId, messageId, ErrorCode.CHAT_ALREADY_STREAMING);
+        throw new ConflictException(
+          ErrorCode.CHAT_ALREADY_STREAMING,
+          'This conversation is already streaming',
+        );
+      }
+      fleetAdmitted = true;
+    }
+
     const assertLeaseOwned = () => {
       if (leaseLost) {
         throw new ConflictException(ErrorCode.CHAT_ALREADY_STREAMING, 'Stream execution lease was lost');
+      }
+      if (this.bootstrapCancelRequested.has(streamKey)) {
+        throw new ConflictException(ErrorCode.CHAT_STREAM_FAILED, 'Stream was cancelled during bootstrap');
       }
     };
     leaseHeartbeat = setInterval(() => {
@@ -745,6 +830,20 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
             error: error instanceof Error ? error.message : String(error),
           }, logOpts);
         });
+      if (fleetAdmitted) {
+        // Keep the shared capacity slot alive and observe cross-replica stop
+        // requests (bounded polling fallback; the serving replica settles).
+        void this.executionStore
+          .extendExpiry(messageId, new Date(Date.now() + leaseDurationMs * 2))
+          .then(() => this.executionStore.isCancelRequested(messageId))
+          .then((cancelRequested) => {
+            if (cancelRequested) {
+              this.logger.log('Remote stop observed for owned execution', { conversationId, messageId }, logOpts);
+              void this.stopStream(userId, conversationId, messageId).catch(() => undefined);
+            }
+          })
+          .catch(() => undefined);
+      }
     }, 30_000);
     leaseHeartbeat.unref?.();
     this.componentBuffers.set(streamKey, new Map());
@@ -854,14 +953,56 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
     }
     } catch (error) {
       if ((error as { code?: ErrorCode }).code !== ErrorCode.CHAT_ALREADY_STREAMING) {
-        await this.messageService.markStreamFailed(messageId, leaseId);
+        // Ownership-checked and best-effort: a failing database must not mask
+        // the original failure nor skip local cleanup below. The recovery
+        // worker reclaims un-finalized attempts.
+        await this.messageService.markStreamFailed(messageId, leaseId).catch((markError: unknown) => {
+          this.logger.error('Failed to mark stream failed during cleanup', {
+            conversationId,
+            messageId,
+            error: markError instanceof Error ? markError.message : String(markError),
+          }, logOpts);
+        });
       }
       throw error;
     } finally {
       if (leaseHeartbeat) clearInterval(leaseHeartbeat);
-      await this.messageService.releaseStreamExecution(messageId, leaseId);
-      for (const [streamKey, activeLeaseId] of this.streamExecutionLeases) {
-        if (activeLeaseId === leaseId) this.streamExecutionLeases.delete(streamKey);
+      if (fleetAdmitted) {
+        // Release the shared capacity slot, mirroring the message's durable
+        // terminal state. Best-effort: expired rows are reclaimed by the
+        // recovery worker, so a failed finalize cannot leak the slot forever.
+        await this.executionStore.finalizeByMessage(messageId).catch((finalizeError: unknown) => {
+          this.logger.error('Failed to finalize fleet admission row', {
+            conversationId,
+            messageId,
+            error: finalizeError instanceof Error ? finalizeError.message : String(finalizeError),
+          }, logOpts);
+        });
+      }
+      // Durable release is ownership-checked and best-effort; its failure
+      // must not leak the lease map entry or the local execution slots.
+      await this.messageService.releaseStreamExecution(messageId, leaseId).catch((releaseError: unknown) => {
+        this.logger.error('Failed to release stream execution lease', {
+          conversationId,
+          messageId,
+          error: releaseError instanceof Error ? releaseError.message : String(releaseError),
+        }, logOpts);
+      });
+      // Local cleanup never depends on database success (idempotent with the
+      // terminal/gRPC paths that may have cleaned up earlier).
+      this.bootstrapCancelRequested.delete(streamKey);
+      for (const [key, activeLeaseId] of this.streamExecutionLeases) {
+        if (activeLeaseId === leaseId) this.streamExecutionLeases.delete(key);
+      }
+      if (registeredLocally) {
+        this.cleanupStream(userId, conversationId, streamKey);
+      } else {
+        // Rejected before registration: release only this execution's own
+        // handle, never the conversation slot owned by another execution.
+        this.componentBuffers.delete(streamKey);
+        this.streamRevisions.delete(streamKey);
+        this.streamUsage.delete(streamKey);
+        this.streamTerminalCoordinators.delete(streamKey);
       }
     }
   }
@@ -1123,12 +1264,59 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
 
     const call = this.activeCalls.get(streamKey);
     if (!call) {
-      this.logger.warn('No active stream found for stop request', { streamKey });
-      throw new AppException({
-        code: ErrorCode.CHAT_STREAM_FAILED,
-        message: 'No active stream found',
-        statusCode: HttpStatus.NOT_FOUND,
+      // Stop during bootstrap: the gRPC call does not exist yet, but the
+      // execution does (lease/terminal were registered at admission). Signal
+      // cancellation so preparation aborts and dispatch is prevented, and
+      // settle through the same terminal coordinator.
+      const leaseId = this.streamExecutionLeases.get(streamKey);
+      if (!leaseId) {
+        // Cross-replica stop (WP07): record the control intent on the shared
+        // execution row so the owning replica observes and settles it.
+        if (this.fleetAdmissionEnabled) {
+          const requested = await this.executionStore.requestCancel(messageId).catch(() => false);
+          if (requested) {
+            this.logger.log('Stop requested for remotely owned execution', {
+              userId,
+              conversationId,
+              messageId,
+            });
+            return;
+          }
+        }
+        this.logger.warn('No active stream found for stop request', { streamKey });
+        throw new AppException({
+          code: ErrorCode.CHAT_STREAM_FAILED,
+          message: 'No active stream found',
+          statusCode: HttpStatus.NOT_FOUND,
+        });
+      }
+
+      this.bootstrapCancelRequested.add(streamKey);
+      // Capture the coordinator before settlement: the operation's cleanup
+      // removes it from the map, but the stop caller still awaits settlement.
+      const bootstrapTerminal = this.streamTerminalCoordinators.get(streamKey);
+      const claimedTerminal = this.beginStreamTerminal(streamKey, async () => {
+        try {
+          // Ownership-checked: only the owning attempt is marked; safe to run
+          // even if bootstrap fails concurrently.
+          await this.messageService.markStreamFailed(messageId, leaseId);
+          this.streamGateway.sendToUser(userId, {
+            type: 'stream_error',
+            data: {
+              conversationId,
+              messageId,
+              errorCode: ErrorCode.CHAT_STREAM_FAILED,
+              message: 'Generation stopped before it started',
+            },
+          });
+        } finally {
+          this.cleanupStream(userId, conversationId, streamKey);
+        }
       });
+      if (claimedTerminal && bootstrapTerminal) {
+        await bootstrapTerminal.settlement;
+      }
+      return;
     }
 
     const streamExecutionLeaseId = this.streamExecutionLeases.get(streamKey);
@@ -1280,10 +1468,20 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
       }
       endBackendPreAdkStage('grpcPayloadPreparationMs');
       markGrpcDispatchedForLatency();
+      if (this.bootstrapCancelRequested.has(streamKey)) {
+        // Stop arrived during bootstrap: refuse dispatch, zero upstream calls.
+        throw new ConflictException(
+          ErrorCode.CHAT_STREAM_FAILED,
+          'Stream was cancelled during bootstrap',
+        );
+      }
       const call = useSingleAgent
         ? this.chatbotClient.RunSingleAgent(grpcRequest, metadata)
         : this.chatbotClient.RunAgentTeam(grpcRequest, metadata);
-      const terminal = this.createStreamTerminalCoordinator(streamKey);
+      // Reuse the coordinator created at admission so stop/end/error share
+      // exactly one terminal settlement.
+      const terminal = this.streamTerminalCoordinators.get(streamKey)
+        ?? this.createStreamTerminalCoordinator(streamKey);
       this.activeCalls.set(streamKey, call);
 
       let totalInputTokens = 0;
@@ -1896,6 +2094,7 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
     this.streamRevisions.delete(streamKey);
     this.streamUsage.delete(streamKey);
     this.streamTerminalCoordinators.delete(streamKey);
+    this.activeConversationExecutions.delete(conversationId);
     const userStreams = this.activeStreams.get(userId);
     if (userStreams) {
       userStreams.delete(conversationId);

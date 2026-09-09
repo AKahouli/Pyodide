@@ -120,5 +120,59 @@ describe('PostgresConnectionService', () => {
       await jest.advanceTimersByTimeAsync(RECOVERY_PROBE_INTERVAL_MS * 3);
       expect((pool.connect as jest.Mock).mock.calls.length).toBe(3);
     });
+
+    it('never overlaps probes: the next probe waits for the previous to finish', async () => {
+      jest.useFakeTimers();
+      let resolveFirstProbe: (value: boolean) => void = () => undefined;
+      const failClient = {
+        query: jest.fn().mockRejectedValue(new Error('Connection refused')),
+        release: jest.fn(),
+      };
+      const pool = {
+        on: jest.fn(),
+        connect: jest.fn().mockResolvedValue(failClient),
+      } as unknown as Pool;
+      const logger = loggerStub();
+      const svc = new PostgresConnectionService(pool, {} as any, logger);
+      svc.onModuleInit();
+      // First probe of the episode hangs (network black hole).
+      jest
+        .spyOn(svc, 'ping')
+        .mockImplementationOnce(() => new Promise<boolean>((r) => { resolveFirstProbe = r; }));
+      const pingSpy = jest.spyOn(svc, 'ping');
+
+      const onPoolError = (pool.on as jest.Mock).mock.calls[0][1] as (err: Error) => void;
+      onPoolError(new Error('Connection terminated unexpectedly'));
+
+      await jest.advanceTimersByTimeAsync(RECOVERY_PROBE_INTERVAL_MS * 5);
+      // A long-running first probe blocks the chain: no second connect.
+      expect(pingSpy).toHaveBeenCalledTimes(1);
+
+      resolveFirstProbe(false);
+      await jest.advanceTimersByTimeAsync(0);
+      expect(pingSpy).toHaveBeenCalledTimes(1); // next probe scheduled after completion
+      await jest.advanceTimersByTimeAsync(RECOVERY_PROBE_INTERVAL_MS);
+      expect(pingSpy).toHaveBeenCalledTimes(2);
+
+      svc.onModuleDestroy();
+    });
+
+    it('discards the pooled client when statement_timeout cannot be reset', async () => {
+      const client = {
+        query: jest
+          .fn()
+          .mockResolvedValueOnce(undefined) // SET statement_timeout
+          .mockResolvedValueOnce({ rows: [{ '?column?': 1 }] }) // SELECT 1
+          .mockRejectedValueOnce(new Error('Connection terminated unexpectedly')), // reset fails
+        release: jest.fn(),
+      };
+      const pool = { connect: jest.fn().mockResolvedValue(client) } as unknown as Pool;
+      const logger = loggerStub();
+      const svc = new PostgresConnectionService(pool, {} as any, logger);
+      await expect(svc.ping()).resolves.toBe(true);
+      // Releasing with an error destroys the client instead of returning a
+      // 1500ms-timeout-poisoned connection to application work.
+      expect(client.release).toHaveBeenCalledWith(expect.any(Error));
+    });
   });
 });

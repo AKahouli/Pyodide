@@ -16,6 +16,7 @@ import { useAuth } from '@/modules/auth/useAuth';
 import { ComposerSuggestionChips } from './ComposerSuggestionChips';
 import { SelectedConnectorRepo } from './SelectedConnectorRepo';
 import { ContextMeter } from './ContextMeter';
+import { ReliabilityCheckToggle } from './ReasoningEffortSelect';
 import { useDefaultModel, useModels } from '@/modules/models';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuLabel, DropdownMenuRadioGroup, DropdownMenuRadioItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 
@@ -312,6 +313,7 @@ export function ConversationInput({ conversationId }: ConversationInputProps) {
                 </DropdownMenuContent>
               </DropdownMenu>
             )}
+            <ReliabilityCheckToggle />
           </>
         }
         belowTextarea={

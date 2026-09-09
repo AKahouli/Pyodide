@@ -16,6 +16,7 @@ import { ConversationService } from './services/conversation.service';
 import { MessageService } from './services/message.service';
 import { StreamService } from './services/stream.service';
 import { StreamGatewayService } from './services/stream-gateway.service';
+import { ConversationRecoveryService } from './services/conversation-recovery.service';
 import { ShareService } from './services/share.service';
 import { ReportService } from './services/report.service';
 import { ComposerSuggestionsService } from './services/composer-suggestions.service';
@@ -95,6 +96,7 @@ import { ConversationPersistenceModule } from './persistence/conversation-persis
     MessageService,
     StreamService,
     StreamGatewayService,
+    ConversationRecoveryService,
     ShareService,
     ReportService,
     ComposerSuggestionsService,

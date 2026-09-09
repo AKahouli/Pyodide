@@ -416,6 +416,7 @@ class AgentRunner:
         citation_buffer = ""
         # Preserve citation numbers generated upstream while deduplicating repeats.
         citation_mapping = {}
+        sent_citation_refs: set[str] = set()
         # Track current text component ID for citation parent_id
         current_text_component_id = None
         pending_tool_components_by_call_id: Dict[str, List[str]] = {}
@@ -591,7 +592,9 @@ class AgentRunner:
                                     toolkit,
                                     getattr(session, "state", {}),
                                 )
-                                if source_info and q:
+                                if not source_info:
+                                    logger.debug(f"No source found for {citation_ref}")
+                                elif q and citation_ref not in sent_citation_refs:
                                     logger.debug(
                                         f"Source found for {citation_ref} -> sending as {ui_reference}"
                                     )
@@ -603,8 +606,7 @@ class AgentRunner:
                                         current_text_component_id,
                                         ui_reference,
                                     )
-                                else:
-                                    logger.debug(f"No source found for {citation_ref}")
+                                    sent_citation_refs.add(citation_ref)
 
                                 text_to_send = _replace_citation_marker(
                                     text_to_send,
@@ -1003,7 +1005,9 @@ class AgentRunner:
                                 toolkit,
                                 getattr(session, "state", {}),
                             )
-                            if source_info and q:
+                            if not source_info:
+                                logger.debug(f"No source found for {citation_ref}")
+                            elif q and citation_ref not in sent_citation_refs:
                                 logger.debug(
                                     f"Sending citation component for {citation_ref} -> {ui_reference}"
                                 )
@@ -1015,6 +1019,7 @@ class AgentRunner:
                                     current_text_component_id,
                                     ui_reference,
                                 )
+                                sent_citation_refs.add(citation_ref)
 
                             text_to_send = _replace_citation_marker(
                                 text_to_send,
@@ -1325,18 +1330,22 @@ class AgentRunner:
                 ui_reference,
             )
 
-        should_emit_final = bool(event_text) and event_text != streamed_text
-        if q and should_emit_final:
-            if self.streaming_formatter.component_tracker:
-                self.streaming_formatter.component_tracker.finish_component(agent_id)
+        extends_streamed_text = bool(streamed_text) and event_text.startswith(streamed_text)
+        text_to_emit = event_text[len(streamed_text):] if extends_streamed_text else event_text
+        component_tracker = self.streaming_formatter.component_tracker
+        if q and text_to_emit:
+            if component_tracker and not extends_streamed_text:
+                component_tracker.finish_component(agent_id)
             await q.put(self.streaming_formatter.format_streaming_event(
                 agent_id=agent_id,
                 agent_name=agent_name,
                 agent_type="agent",
-                chunk=event_text,
+                chunk=text_to_emit,
                 message_id=session_id,
                 content_type="final_response",
             ))
+        if component_tracker:
+            component_tracker.finish_component(agent_id)
 
         return event_text
 

@@ -38,7 +38,7 @@ import {
   useSelectedWorkspaceIds,
   useSelectedSemanticModelId,
 } from './store';
-import { ReasoningEffortSelect, useReasoningEffortState } from './components/ReasoningEffortSelect';
+import { ReasoningEffortSelect, ReliabilityCheckToggle, useReasoningEffortState } from './components/ReasoningEffortSelect';
 import { useConversationFileUpload } from './hooks/useConversationFileUpload';
 import { useAllowedUploadExtensions } from '@/modules/workspace/hooks/useAllowedUploadExtensions';
 import { useModuleTranslation } from '@/modules/localization';
@@ -303,7 +303,7 @@ export function NewConversationPage() {
                   showWorkspaceSelect={true}
                   preserveWorkspaceSelectionOnSubmit
                   showModelSelector
-                  extraTools={<ReasoningEffortSelect />}
+                  extraTools={<><ReasoningEffortSelect /><ReliabilityCheckToggle /></>}
                   belowTextarea={
                     <ComposerSuggestionChips
                       fetchDisabled={inputDisabled || isLimitExceeded || isUploading || isSending}

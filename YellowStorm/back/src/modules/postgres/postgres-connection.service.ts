@@ -11,6 +11,11 @@ export const RECOVERY_PROBE_INTERVAL_MS = 5000;
 export class PostgresConnectionService implements OnModuleInit, OnModuleDestroy {
   private recoveryProbeTimer: NodeJS.Timeout | null = null;
   private failedProbeCount = 0;
+  private poolErrorAttached = false;
+  // Non-secret episode diagnostics for operators.
+  private outageSince: Date | null = null;
+  private lastSuccessAt: Date | null = null;
+  private lastErrorClass: string | null = null;
 
   constructor(
     @Inject(PG_POOL) private readonly pool: Pool,
@@ -21,6 +26,9 @@ export class PostgresConnectionService implements OnModuleInit, OnModuleDestroy 
   }
 
   onModuleInit(): void {
+    // Attach exactly once: double registration would double-log pool errors.
+    if (this.poolErrorAttached) return;
+    this.poolErrorAttached = true;
     this.pool.on('error', (err: Error) => this.handlePoolClientError(err));
   }
 
@@ -39,22 +47,38 @@ export class PostgresConnectionService implements OnModuleInit, OnModuleDestroy 
   async ping(options: { logFailure?: boolean } = {}): Promise<boolean> {
     const { logFailure = true } = options;
     const client = await this.pool.connect().catch(() => null);
-    if (!client) return false;
+    if (!client) {
+      this.lastErrorClass = 'CheckoutFailed';
+      return false;
+    }
     try {
       await client.query('SET statement_timeout TO 1500');
       await client.query('SELECT 1');
+      this.lastSuccessAt = new Date();
+      this.outageSince = null;
+      this.lastErrorClass = null;
       return true;
     } catch (error) {
+      this.lastErrorClass = (error as Error).name || 'QueryError';
       if (logFailure) {
         this.logger.error('Postgres ping failed', { error: (error as Error).message });
       }
       return false;
     } finally {
+      let discarded = false;
       try {
         await client.query('SET statement_timeout TO DEFAULT');
       } catch (resetErr) {
-        this.logger.warn('Failed to reset statement_timeout', { error: (resetErr as Error).message });
-      } finally {
+        // The probe-scoped timeout is still active on this client. Releasing
+        // it healthy would leak the 1500ms timeout into application work —
+        // hand it back with an error so the pool destroys it instead.
+        discarded = true;
+        this.logger.warn('Failed to reset statement_timeout; discarding pooled client', {
+          error: (resetErr as Error).message,
+        });
+        client.release(resetErr as Error);
+      }
+      if (!discarded) {
         client.release();
       }
     }
@@ -74,6 +98,23 @@ export class PostgresConnectionService implements OnModuleInit, OnModuleDestroy 
     };
   }
 
+  /** Non-secret recovery diagnostics: episode timing and probe progress. */
+  getRecoveryInfo(): {
+    outageSince: string | null;
+    lastSuccessAt: string | null;
+    lastErrorClass: string | null;
+    failedProbeCount: number;
+    probeActive: boolean;
+  } {
+    return {
+      outageSince: this.outageSince ? this.outageSince.toISOString() : null,
+      lastSuccessAt: this.lastSuccessAt ? this.lastSuccessAt.toISOString() : null,
+      lastErrorClass: this.lastErrorClass,
+      failedProbeCount: this.failedProbeCount,
+      probeActive: this.recoveryProbeTimer !== null,
+    };
+  }
+
   /**
    * A dropped connection on a checked-out client (server restart, network drop,
    * server-side timeout) triggers a recovery probe loop. The pool reconnects
@@ -87,26 +128,43 @@ export class PostgresConnectionService implements OnModuleInit, OnModuleDestroy 
       return;
     }
     this.failedProbeCount = 0;
+    // Preserve the original episode start when errors arrive mid-outage.
+    if (!this.outageSince) {
+      this.outageSince = new Date();
+    }
     this.logger.error('PostgreSQL connection error — recovery probe started', { error: err.message });
     this.startRecoveryProbe();
   }
 
+  /**
+   * Single-flight probing: the next probe is scheduled only after the previous
+   * one completes, so a long connect timeout during a network black hole never
+   * overlaps probes or accumulates pool waiters.
+   */
   private startRecoveryProbe(): void {
     if (this.recoveryProbeTimer) return;
-    this.recoveryProbeTimer = setInterval(() => {
-      void this.probeRecovery();
-    }, RECOVERY_PROBE_INTERVAL_MS);
-    this.recoveryProbeTimer.unref();
+    const scheduleNext = (): void => {
+      this.recoveryProbeTimer = setTimeout(() => {
+        void this.probeRecovery().finally(() => {
+          // The chain continues only while the outage episode is still active;
+          // a successful probe stops the timer and the chain ends.
+          if (this.recoveryProbeTimer !== null) scheduleNext();
+        });
+      }, RECOVERY_PROBE_INTERVAL_MS);
+      this.recoveryProbeTimer.unref();
+    };
+    scheduleNext();
   }
 
   private stopRecoveryProbe(): void {
     if (!this.recoveryProbeTimer) return;
-    clearInterval(this.recoveryProbeTimer);
+    clearTimeout(this.recoveryProbeTimer);
     this.recoveryProbeTimer = null;
   }
 
   private async probeRecovery(): Promise<void> {
     // Only the first failed probe of an episode logs at error level.
+    const outageStartedAt = this.outageSince;
     const healthy = await this.ping({ logFailure: this.failedProbeCount === 0 }).catch(() => false);
     if (healthy) {
       const attempts = this.failedProbeCount;
@@ -117,6 +175,12 @@ export class PostgresConnectionService implements OnModuleInit, OnModuleDestroy 
           ? `PostgreSQL connection recovered after ${attempts} failed probe(s)`
           : 'PostgreSQL connection recovered',
       );
+      if (outageStartedAt) {
+        this.logger.log('PostgreSQL outage episode summary', {
+          outageSince: outageStartedAt.toISOString(),
+          recoveredAt: new Date().toISOString(),
+        });
+      }
     } else {
       this.failedProbeCount += 1;
     }

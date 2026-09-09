@@ -1,0 +1,316 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "YellowStorm Full Runtime Architecture",
+    "quality_profile": "showcase"
+  },
+  "components": [
+    {
+      "id": "browser",
+      "type": "frontend",
+      "label": "Browser SPA",
+      "sublabel": "React 18 + Vite",
+      "pos": [
+        40,
+        300
+      ],
+      "size": [
+        130,
+        60
+      ]
+    },
+    {
+      "id": "auth",
+      "type": "security",
+      "label": "Identity",
+      "sublabel": "JWT + MS OAuth",
+      "pos": [
+        40,
+        150
+      ],
+      "size": [
+        130,
+        64
+      ],
+      "tag": "global guards"
+    },
+    {
+      "id": "notify",
+      "type": "messagebus",
+      "label": "Realtime Bus",
+      "sublabel": "SSE + Socket.IO",
+      "pos": [
+        40,
+        450
+      ],
+      "size": [
+        130,
+        60
+      ]
+    },
+    {
+      "id": "backend",
+      "type": "backend",
+      "label": "API Backend",
+      "sublabel": "NestJS 10",
+      "pos": [
+        270,
+        300
+      ],
+      "size": [
+        140,
+        60
+      ]
+    },
+    {
+      "id": "mongo",
+      "type": "database",
+      "label": "MongoDB",
+      "sublabel": "Mongoose 8",
+      "pos": [
+        270,
+        150
+      ],
+      "size": [
+        140,
+        60
+      ]
+    },
+    {
+      "id": "s3",
+      "type": "cloud",
+      "label": "S3 Object Store",
+      "sublabel": "Ceph S3 presigned",
+      "pos": [
+        270,
+        450
+      ],
+      "size": [
+        140,
+        60
+      ]
+    },
+    {
+      "id": "agents",
+      "type": "backend",
+      "label": "ADK Agent Team",
+      "sublabel": "smart_rag team V2",
+      "pos": [
+        500,
+        300
+      ],
+      "size": [
+        140,
+        60
+      ]
+    },
+    {
+      "id": "index",
+      "type": "external",
+      "label": "Indexing + Vectors",
+      "sublabel": "webhooks + Qdrant",
+      "pos": [
+        500,
+        150
+      ],
+      "size": [
+        140,
+        60
+      ]
+    },
+    {
+      "id": "flows",
+      "type": "backend",
+      "label": "PlaybookFlow",
+      "sublabel": "flow_engine runtime",
+      "pos": [
+        730,
+        450
+      ],
+      "size": [
+        140,
+        60
+      ]
+    },
+    {
+      "id": "llm",
+      "type": "external",
+      "label": "Model Gateway",
+      "sublabel": "LiteLLM 1.99",
+      "pos": [
+        730,
+        300
+      ],
+      "size": [
+        140,
+        60
+      ]
+    },
+    {
+      "id": "pg",
+      "type": "database",
+      "label": "PostgreSQL",
+      "sublabel": "chat + checkpoints",
+      "pos": [
+        500,
+        450
+      ],
+      "size": [
+        140,
+        60
+      ]
+    }
+  ],
+  "boundaries": [
+    {
+      "kind": "region",
+      "label": "YellowStorm platform",
+      "wraps": [
+        "backend",
+        "agents",
+        "flows",
+        "auth",
+        "notify"
+      ]
+    },
+    {
+      "kind": "security-group",
+      "label": "governed data plane",
+      "wraps": [
+        "backend",
+        "mongo",
+        "s3",
+        "pg"
+      ]
+    }
+  ],
+  "connections": [
+    {
+      "id": "browser-to-backend",
+      "from": "browser",
+      "to": "backend",
+      "label": "HTTPS + SSE",
+      "variant": "emphasis",
+      "labelAt": [
+        256,
+        374
+      ]
+    },
+    {
+      "id": "browser-to-auth",
+      "from": "browser",
+      "to": "auth",
+      "label": "OAuth sign-in",
+      "variant": "security"
+    },
+    {
+      "id": "auth-to-backend",
+      "from": "auth",
+      "to": "backend",
+      "label": "verify JWT",
+      "variant": "security"
+    },
+    {
+      "id": "backend-to-agents",
+      "from": "backend",
+      "to": "agents",
+      "label": "gRPC stream",
+      "variant": "emphasis",
+      "labelDy": 28
+    },
+    {
+      "id": "agents-to-llm",
+      "from": "agents",
+      "to": "llm",
+      "label": "model calls"
+    },
+    {
+      "id": "backend-to-mongo",
+      "from": "backend",
+      "to": "mongo",
+      "label": "persist"
+    },
+    {
+      "id": "backend-to-s3",
+      "from": "backend",
+      "to": "s3",
+      "label": "blob I/O",
+      "variant": "dashed",
+      "labelAt": [
+        377,
+        374
+      ]
+    },
+    {
+      "id": "backend-to-notify",
+      "from": "backend",
+      "to": "notify",
+      "label": "fan-out"
+    },
+    {
+      "id": "notify-to-browser",
+      "from": "notify",
+      "to": "browser",
+      "label": "live updates"
+    },
+    {
+      "id": "backend-to-flows",
+      "from": "backend",
+      "to": "flows",
+      "label": "playbook runs",
+      "fromSide": "bottom",
+      "toSide": "top"
+    },
+    {
+      "id": "backend-to-index",
+      "from": "backend",
+      "to": "index",
+      "label": "index webhook",
+      "variant": "dashed"
+    },
+    {
+      "id": "agents-to-index",
+      "from": "agents",
+      "to": "index",
+      "label": "vector query",
+      "variant": "dashed"
+    },
+    {
+      "id": "flows-to-pg",
+      "from": "flows",
+      "to": "pg",
+      "label": "checkpoints",
+      "variant": "dashed"
+    }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "Request path",
+      "items": [
+        "SPA posts once, streams back over SSE",
+        "NestJS dials ChatbotService gRPC :50051",
+        "ChatbotServicer V2 runs smart_rag via LiteLLM"
+      ]
+    },
+    {
+      "dot": "emerald",
+      "title": "State",
+      "items": [
+        "MongoDB via Mongoose, Postgres via Drizzle",
+        "Ceph S3 documents behind presigned URLs",
+        "Flow checkpointer persists state to Postgres"
+      ]
+    },
+    {
+      "dot": "rose",
+      "title": "Runtime",
+      "items": [
+        "Second gRPC client drives PlaybookFlowRuntime",
+        "CompanionAI and A2A admin share the ADK bus",
+        "WhatsApp pairing and M365 triggers off backend"
+      ]
+    }
+  ]
+}
