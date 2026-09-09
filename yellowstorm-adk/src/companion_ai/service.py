@@ -248,6 +248,22 @@ Example — "email x asking which company she works for, then report on it":
   ]}}"""
 
 
+# Appended to the planner message on the schema-less fallback pass (see
+# _make_plan). output_schema makes the PROVIDER enforce JSON; without it the
+# only thing keeping the model honest is the prompt, so restate the contract
+# plainly. Not a template — appended to the message, so single braces are fine.
+_PLANNER_JSON_REMINDER = (
+    "Respond with ONLY a single strict JSON object — no prose, no markdown "
+    "fences. Shape: "
+    '{"title": "", "goal": "", "answer": "<one short reply to the user>", '
+    '"steps": [{"id": "s1", "kind": "execute", "title": "<short label>", '
+    '"description": "<full instruction>", "depends_on": []}]}. '
+    'For chit-chat, use an empty "steps" list and put your reply in "answer". '
+    "Every step id is unique, every depends_on entry names another step, and "
+    "the graph has no cycles."
+)
+
+
 def _node_to_step_name(path: str) -> str:
     """'wf@1/step_a@1' -> 'step_a' (strip parents and @version)."""
     seg = path.split("/")[-1]
@@ -1952,41 +1968,71 @@ class OrchestratorService:
         # "search Bitcoin" in history and re-plan BOTH, and _inject_steps would
         # append a duplicate of the step already running.
         plan_session = plan_session or (session_id + "_plan")
-        planner = LlmAgent(
-            name="planner",
-            model=self._build_planner_model(planner_model),
-            # The DB prompt (agentstore) is the source of truth: it REPLACES the
-            # instruction rather than stacking on it. PLANNER_INSTRUCTION is only
-            # a fallback when the DB has none. Concatenating the two made the
-            # planner read the whole prompt twice -- once from the DB, once from
-            # this hardcoded copy (whose {{ }} JSON examples reached the model as
-            # invalid doubled braces). Same replace-semantics the executor uses.
-            instruction=(planner_prompt or PLANNER_INSTRUCTION),
-            # The planner runs on ITS OWN connectors (like the executor runs on
-            # its own): whatever the admin linked to the worky-planner agent
-            # becomes a planner tool. find_human_agents stays as the built-in
-            # until a human-agents MCP is linked to replace it.
-            tools=[human_agents.make_find_human_agents_tool(),
-                   *self._tools_for(planner_connectors, session_id, user_id)],
-            output_schema=_PlannerOutput,
-        )
-        runner = self._runner_factory(planner, f"planner_{session_id}")
-        await _ensure_session(runner, f"planner_{session_id}", user_id, plan_session)
+        # output_schema forces provider structured output (response_schema +
+        # application/json): a capable model gets the strongest shape guarantee on
+        # the first pass. But it HARD-REQUIRES provider support — a model without
+        # it 400s or ignores the schema. So try WITH the schema, then fall back to
+        # a schema-less prompt-mode pass whose JSON contract lives in the
+        # instruction (the DB prompt / PLANNER_INSTRUCTION) and is restated in the
+        # message. The plan was always parsed from text via _extract_json anyway,
+        # so prompt mode needs nothing else — it just lets the planner run on ANY
+        # model that can emit JSON, not only structured-output ones.
+        model_obj = self._build_planner_model(planner_model)
+        # The DB prompt (agentstore) is the source of truth: it REPLACES the
+        # instruction rather than stacking on it. PLANNER_INSTRUCTION is only a
+        # fallback when the DB has none. (Concatenating the two made the planner
+        # read the whole prompt twice, and its {{ }} JSON examples reached the
+        # model as invalid doubled braces.)
+        planner_instruction = (planner_prompt or PLANNER_INSTRUCTION)
+        # The planner runs on ITS OWN connectors (like the executor). find_human_agents
+        # stays the built-in until a human-agents MCP is linked to replace it.
+        planner_tools = [human_agents.make_find_human_agents_tool(),
+                         *self._tools_for(planner_connectors, session_id, user_id)]
+
+        def _planner_agent(use_schema: bool) -> LlmAgent:
+            kwargs = dict(name="planner", model=model_obj,
+                          instruction=planner_instruction, tools=planner_tools)
+            if use_schema:
+                kwargs["output_schema"] = _PlannerOutput
+            return LlmAgent(**kwargs)
+
+        async def _run_planner(agent: LlmAgent, msg: str) -> str:
+            runner = self._runner_factory(agent, f"planner_{session_id}")
+            await _ensure_session(runner, f"planner_{session_id}", user_id, plan_session)
+            text = ""
+            async for ev in runner.run_async(
+                user_id=user_id, session_id=plan_session,
+                new_message=types.Content(role="user", parts=[types.Part(text=msg)])):
+                if ev.content and ev.content.parts:
+                    for p in ev.content.parts:
+                        if getattr(p, "text", None):
+                            text = p.text
+            return text
+
         # Tell the planner who it is planning for, so it addresses the requester
         # directly and never assigns work or emails back to them. Kept as a
         # per-turn preamble on the message (not the DB instruction) so it works
         # whatever prompt the agentstore supplies.
         ctx = requester_context(requester)
         planner_message = f"{ctx}\n\n---\nUser's request:\n{message}" if ctx else message
-        text = ""
-        async for ev in runner.run_async(
-            user_id=user_id, session_id=plan_session,
-            new_message=types.Content(role="user", parts=[types.Part(text=planner_message)])):
-            if ev.content and ev.content.parts:
-                for p in ev.content.parts:
-                    if getattr(p, "text", None):
-                        text = p.text
-        data = _extract_json(text)
+
+        # Pass 1: structured. Pass 2: schema-less prompt mode — reached when the
+        # provider can't do structured output (the run raises) OR the structured
+        # reply wasn't parseable JSON. asyncio.CancelledError is a BaseException,
+        # so a supersede/stop still propagates through the `except Exception`.
+        data = None
+        attempts = ((True, planner_message),
+                    (False, planner_message + "\n\n" + _PLANNER_JSON_REMINDER))
+        for idx, (use_schema, msg) in enumerate(attempts):
+            try:
+                data = _extract_json(await _run_planner(_planner_agent(use_schema), msg))
+                break
+            except Exception as exc:  # provider rejected structured output, or no JSON
+                logger.warning(
+                    "[worky] planner pass %d failed (use_schema=%s) session=%s: %s",
+                    idx, use_schema, session_id, exc)
+                if idx == len(attempts) - 1:
+                    raise
         steps = []
         seen_ids: set = set()
         for s in data.get("steps", []):
