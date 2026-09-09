@@ -49,7 +49,14 @@ export class AdminConversationSettingsController {
     };
     try {
       const result = await this.settings.updateSettings(body);
-      this.audit.logSuccess({ ...auditBase, metadata: { composerSuggestions: result.composerSuggestions } });
+      this.audit.logSuccess({
+        ...auditBase,
+        metadata: {
+          composerSuggestions: result.composerSuggestions,
+          latencyInstrumentationEnabled: result.latencyInstrumentationEnabled,
+          compaction: result.compaction,
+        },
+      });
       return result;
     } catch (error) {
       this.audit.logFailure({

@@ -2,7 +2,7 @@ import { Inject, Injectable, Optional, forwardRef } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Types } from 'mongoose';
 import { LoggerService } from '../logger';
-import { IAgentResponse, IAgentForStream, IGrpcAgent, ISharedAgentInfo } from './interfaces/agent.interface';
+import { IAgentResponse, IAgentForStream, IGrpcAgent, IGrpcCompaction, ISharedAgentInfo } from './interfaces/agent.interface';
 import { AgentShareService } from './services/agent-share.service';
 import { AgentConnectorRuntimeService } from './services/agent-connector-runtime.service';
 import { CreateAgentDto } from './dto/create-agent.dto';
@@ -525,6 +525,7 @@ export class AgentService {
     selectedConnectorId?: string,
     runtimeContext?: { conversationId: string; correlationId: string; playbookHandoffAttached?: boolean },
     reasoningEffort?: string,
+    compaction?: IGrpcCompaction,
   ): Promise<IGrpcAgent[]> {
     this.logger.log('Building agents for stream', {
       userId,
@@ -534,7 +535,16 @@ export class AgentService {
       selectedConnectorId,
     });
 
-    // Fetch personal + default agents
+    // Fetch personal + default agents. The untagged chat path also needs the
+    // hidden mono-agent resolved from the DB (it never appears in the roster),
+    // so start that query chain alongside the roster fetch to overlap the two
+    // round-trip chains instead of stacking them.
+    const monoAgentPromise = agentIds && agentIds.length > 0 ? null : this.resolveDefaultMonoAgent();
+    // Detach a handled branch so a rejection before this promise is awaited
+    // (e.g. the roster fetch failing first on the same DB blip) cannot surface
+    // as an unhandledRejection — the backend treats that as fatal. Awaiting
+    // the original below still propagates the error to the request.
+    monoAgentPromise?.catch(() => undefined);
     const userAgents = await this.getAgentsForUser(userId);
 
     // Fetch shared agents if any
@@ -620,7 +630,7 @@ export class AgentService {
       // (never the full roster) — the caller decides RunSingleAgent vs.
       // RunAgentTeam purely from roster size, so dumping every available
       // agent here would silently flip an untagged message to RunAgentTeam.
-      const monoAgent = await this.resolveDefaultMonoAgent();
+      const monoAgent = monoAgentPromise ? await monoAgentPromise : await this.resolveDefaultMonoAgent();
       if (monoAgent) {
         filteredAgents = [monoAgent];
       } else {
@@ -672,16 +682,8 @@ export class AgentService {
         modelId: effectiveModelIdForAgent(a),
       }));
 
-    // Single batch query to AgentTypeService
-    const promptMap = await this.agentTypeService.resolvePromptsInBatch(promptPairs);
-
     // Collect ALL unique tool IDs across filtered agents and batch-fetch
     const allToolIds = [...new Set(filteredAgents.flatMap((a) => a.toolIds))];
-    const toolsMap = new Map<string, IToolResponse>();
-    if (allToolIds.length > 0) {
-      const fetched = await this.toolService.findByIds(allToolIds);
-      for (const t of fetched) toolsMap.set(t.id, t);
-    }
 
     // Batch-fetch all unique model IDs to resolve full LiteLLM model identifiers
     const allModelIds = [...new Set(
@@ -689,17 +691,6 @@ export class AgentService {
         .map(effectiveModelIdForAgent)
         .filter(Boolean) as string[],
     )];
-    const modelMap = new Map<string, { model: string; omitTemperature: boolean; inputModalities: string[]; maxInputTokens: number | null }>();
-    if (allModelIds.length > 0) {
-      const modelResults = await Promise.all(
-        allModelIds.map((id) => this.modelsService.findById(id)),
-      );
-      for (const m of modelResults) {
-        if (m) {
-          modelMap.set(m.id, { model: m.id, omitTemperature: m.omitTemperature, inputModalities: m.inputModalities, maxInputTokens: m.maxInputTokens });
-        }
-      }
-    }
 
     const allConnectorIds = [
       ...new Set(
@@ -709,7 +700,30 @@ export class AgentService {
           .filter(Boolean) as string[],
       ),
     ];
-    const connectorsMap = await this.buildConnectorsMap(allConnectorIds);
+
+    // Every lookup below depends only on the filtered roster, not on each
+    // other — run them in one round so the remote-DB latency stacks once
+    // instead of once per lookup.
+    const [promptMap, fetchedTools, modelResults, connectorsMap, adminGuardrailsSettings, guardrailsClassifierModel] = await Promise.all([
+      this.agentTypeService.resolvePromptsInBatch(promptPairs),
+      allToolIds.length > 0 ? this.toolService.findByIds(allToolIds) : Promise.resolve([] as IToolResponse[]),
+      Promise.all(allModelIds.map((id) => this.modelsService.findById(id))),
+      this.buildConnectorsMap(allConnectorIds),
+      this.guardrailsSettingsService.getSettings(),
+      this.modelsService.getGuardrailsClassifierModel(),
+    ]);
+    const guardrailsClassifierModelId = this.modelsService.getModelIdentifier(guardrailsClassifierModel);
+
+    const toolsMap = new Map<string, IToolResponse>();
+    for (const t of fetchedTools) toolsMap.set(t.id, t);
+
+    const modelMap = new Map<string, { model: string; omitTemperature: boolean; inputModalities: string[]; maxInputTokens: number | null }>();
+    for (const m of modelResults) {
+      if (m) {
+        modelMap.set(m.id, { model: m.id, omitTemperature: m.omitTemperature, inputModalities: m.inputModalities, maxInputTokens: m.maxInputTokens });
+      }
+    }
+
     const agentsWithConnectorSkills = filteredAgents.map((agent) => ({
       ...agent,
       connectorSkillIds: this.getConnectorSkillIds(connectorsMap, [
@@ -731,10 +745,6 @@ export class AgentService {
       const fetchedSkills = await this.skillService.findByIds(allSkillIds);
       for (const skill of fetchedSkills) skillsMap.set(skill.id, skill);
     }
-
-    const adminGuardrailsSettings = await this.guardrailsSettingsService.getSettings();
-    const guardrailsClassifierModel = await this.modelsService.getGuardrailsClassifierModel();
-    const guardrailsClassifierModelId = this.modelsService.getModelIdentifier(guardrailsClassifierModel);
 
     const grpcAgents = await Promise.all(agentsWithConnectorSkills.map(async (agent) => {
       const agentTools = agent.toolIds
@@ -823,6 +833,7 @@ export class AgentService {
           input_modalities: resolvedModel?.inputModalities || ['text'],
           ...(reasoningEffort && pingedAgents.length === 0 ? { reasoning_effort: reasoningEffort } : {}),
           ...(resolvedModel?.maxInputTokens ? { context_window_tokens: resolvedModel.maxInputTokens } : {}),
+          ...(compaction ? { compaction } : {}),
         },
         agent_params: {
           params: {

@@ -208,10 +208,80 @@ async def test_litellm_patch_normalizes_keyword_and_positional_text_only_message
 
     apply_litellm_debug_patch()
 
-    assert await litellm.acompletion("text-boundary-model", messages) == "async-result"
-    assert litellm.completion(model="text-boundary-model", messages=messages) == "sync-result"
+    assert await litellm.acompletion(
+        "text-boundary-model", messages, num_retries=0
+    ) == "async-result"
+    assert litellm.completion(
+        model="text-boundary-model", messages=messages, num_retries=0
+    ) == "sync-result"
     assert calls[0][1] == "azure/text-boundary-model"
     assert "model" not in calls[0][3]
+    assert calls[0][3]["num_retries"] == 0
+    assert calls[0][3]["timeout"] == 700  # async path carries the judge timeout bump
     assert calls[0][2][0]["content"] == [{"type": "text", "text": "question"}]
     assert calls[1][1] == "azure/text-boundary-model"
     assert calls[1][2][0]["content"] == [{"type": "text", "text": "question"}]
+    assert calls[1][3]["num_retries"] == 0
+    assert calls[1][3]["timeout"] == 300
+
+
+# --- compaction resolution (configurable ADK context compaction) ---
+from src.smart_rag.infrastructure.model_parameters import (  # noqa: E402
+    _resolve_request_compaction,
+    get_request_compaction_config,
+    set_request_compaction_config,
+)
+
+
+def _base(**over):
+    cfg = {
+        "enabled": True,
+        "compaction_interval": 10,
+        "overlap_size": 2,
+        "token_fraction": 0.75,
+        "event_retention_size": 6,
+        "summarizer_model": "",
+    }
+    cfg.update(over)
+    return cfg
+
+
+def test_resolve_derives_token_threshold_from_fraction_and_window():
+    r = _resolve_request_compaction(_base(), "azure/gpt-4.1", 200_000)
+    assert (r.compaction_interval, r.overlap_size) == (10, 2)
+    assert r.token_threshold == 150_000 and r.event_retention_size == 6
+    assert r.summarizer_model == "azure/gpt-4.1"  # empty falls back to chat model
+
+
+def test_resolve_disabled_returns_none():
+    assert _resolve_request_compaction(_base(enabled=False), "m", 1000) is None
+
+
+def test_resolve_unknown_window_skips_token_pair_keeps_sliding():
+    r = _resolve_request_compaction(_base(), "m", None)
+    assert r.token_threshold is None and r.event_retention_size is None
+    assert r.compaction_interval == 10
+
+
+def test_resolve_no_usable_trigger_returns_none():
+    assert _resolve_request_compaction(
+        _base(compaction_interval=0, token_fraction=0.0), "m", 1000
+    ) is None
+
+
+def test_resolve_keeps_explicit_summarizer_model():
+    r = _resolve_request_compaction(_base(summarizer_model="azure/gpt-4.1-mini"), "m", 1000)
+    assert r.summarizer_model == "azure/gpt-4.1-mini"
+
+
+def test_resolve_model_config_wires_and_subagent_does_not_clobber():
+    set_request_compaction_config(None)
+    resolve_model_config({
+        "provider": "azure/gpt-4.1", "context_window_tokens": 128_000,
+        "compaction": _base(compaction_interval=8, token_fraction=0.5),
+    })
+    g = get_request_compaction_config()
+    assert g is not None and g.token_threshold == 64_000
+    # a later sub-agent config without compaction must not wipe the request config
+    resolve_model_config({"provider": "other/model", "context_window_tokens": 4096})
+    assert get_request_compaction_config() is g

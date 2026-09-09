@@ -8,19 +8,28 @@ import {
   ConnectWorkspaceDto,
   CreateBindingDto,
   CreateSemanticModelDto,
+  GenerateSemanticModelOntologyDto,
   GraphOperationsDto,
   ExpectedModelRevisionDto,
   PublishSemanticModelDto,
   SemanticModelQueryDto,
   SemanticRecordQueryDto,
+  StartSemanticModelBuildDto,
   UpdateBindingDto,
   UpdateSemanticModelDto,
 } from '../dto';
+import { ShareSemanticModelDto, UpdateSemanticModelShareDto } from '../dto/semantic-model-share.dto';
+import { SemanticModelShareService } from '../services/semantic-model-share.service';
 import { SemanticGraphCommandService } from '../services/semantic-graph-command.service';
 import { SemanticKnowledgeBindingService } from '../services/semantic-knowledge-binding.service';
 import { SemanticModelService } from '../services/semantic-model.service';
 import { SemanticModelVersionService } from '../services/semantic-model-version.service';
 import { SemanticModelWorkspaceService } from '../services/semantic-model-workspace.service';
+import { SemanticModelOntologyGenerationService } from '../services/semantic-model-ontology-generation.service';
+import { SemanticModelCorpusPreparationService } from '../services/semantic-model-corpus-preparation.service';
+import { SemanticModelEvidenceSearchService } from '../services/semantic-model-evidence-search.service';
+import { SemanticModelMappingProposalService } from '../services/semantic-model-mapping-proposal.service';
+import { SemanticModelBuildOrchestratorService } from '../services/semantic-model-build-orchestrator.service';
 
 @ApiTags('Semantic Models')
 @ApiBearerAuth()
@@ -33,6 +42,12 @@ export class SemanticModelController {
     private readonly workspaces: SemanticModelWorkspaceService,
     private readonly bindings: SemanticKnowledgeBindingService,
     private readonly versions: SemanticModelVersionService,
+    private readonly ontologyGeneration: SemanticModelOntologyGenerationService,
+    private readonly corpusPreparation: SemanticModelCorpusPreparationService,
+    private readonly evidenceSearch: SemanticModelEvidenceSearchService,
+    private readonly mappingProposals: SemanticModelMappingProposalService,
+    private readonly builds: SemanticModelBuildOrchestratorService,
+    private readonly shares: SemanticModelShareService,
   ) {}
 
   @Get()
@@ -95,6 +110,95 @@ export class SemanticModelController {
   validate(@CurrentUser() user: UserDocument,@Param('modelId') modelId: string) {
     return this.graph.validate(user._id.toString(),modelId);
   }
+
+  @Post(':modelId/ontology/generate')
+  @ApiOperation({ summary: 'Generate local Semantica ontology artifacts from the current designer canvas' })
+  @RequirePermissions([Permissions.SEMANTIC_MODELS_UPDATE,Permissions.SEMANTIC_MODELS_ALL],'any')
+  generateOntology(@CurrentUser() user: UserDocument,@Param('modelId') modelId: string,@Body() dto: GenerateSemanticModelOntologyDto) {
+    return this.ontologyGeneration.generate(user._id.toString(), modelId, dto);
+  }
+
+  @Get(':modelId/corpus')
+  @ApiOperation({ summary: 'Prepare the indexed document corpus selected by Semantic Model knowledge bindings' })
+  @RequirePermissions([Permissions.SEMANTIC_MODELS_READ,Permissions.SEMANTIC_MODELS_ALL],'any')
+  getPreparedCorpus(@CurrentUser() user: UserDocument,@Param('modelId') modelId: string) {
+    return this.corpusPreparation.prepare(user._id.toString(), modelId);
+  }
+
+  @Post(':modelId/evidence/search')
+  @ApiOperation({ summary: 'Use the configured Logical Search MCP agent for Semantic Model evidence discovery' })
+  @RequirePermissions([Permissions.SEMANTIC_MODELS_UPDATE,Permissions.SEMANTIC_MODELS_ALL],'any')
+  searchEvidence(@CurrentUser() user: UserDocument,@Param('modelId') modelId: string) {
+    return this.evidenceSearch.search(user._id.toString(), modelId);
+  }
+
+  @Post(':modelId/mapping/proposals')
+  @HttpCode(HttpStatus.ACCEPTED)
+  @ApiOperation({ summary: 'Start an async mapping proposal job and return a jobId for polling' })
+  @RequirePermissions([Permissions.SEMANTIC_MODELS_UPDATE,Permissions.SEMANTIC_MODELS_ALL],'any')
+  startMappingProposalJob(@CurrentUser() user: UserDocument,@Param('modelId') modelId: string) {
+    return this.mappingProposals.startAsync(user._id.toString(), modelId);
+  }
+
+  @Get(':modelId/mapping/proposals/jobs')
+  @ApiOperation({ summary: 'List all mapping proposal runs for a model (most recent first)' })
+  @RequirePermissions([Permissions.SEMANTIC_MODELS_READ,Permissions.SEMANTIC_MODELS_ALL],'any')
+  listMappingProposalJobs(@CurrentUser() user: UserDocument,@Param('modelId') modelId: string) {
+    return this.mappingProposals.listJobs(user._id.toString(), modelId);
+  }
+
+  @Get(':modelId/mapping/proposals/jobs/:jobId')
+  @ApiOperation({ summary: 'Poll the status and result of an async mapping proposal job' })
+  @RequirePermissions([Permissions.SEMANTIC_MODELS_READ,Permissions.SEMANTIC_MODELS_ALL],'any')
+  getMappingProposalJob(@CurrentUser() user: UserDocument,@Param('modelId') modelId: string,@Param('jobId') jobId: string) {
+    return this.mappingProposals.getJob(user._id.toString(), modelId, jobId);
+  }
+
+  @Post(':modelId/mapping/jobs/:jobId/apply')
+  @ApiOperation({ summary: 'Apply a completed mapping plan — persists nodes and edges as Business Records' })
+  @RequirePermissions([Permissions.SEMANTIC_MODELS_UPDATE,Permissions.SEMANTIC_MODELS_ALL],'any')
+  applyMappingPlan(
+    @CurrentUser() user: UserDocument,
+    @Param('modelId') modelId: string,
+    @Param('jobId') jobId: string,
+    @Query('mode') mode?: 'replace' | 'incremental',
+  ) {
+    return this.mappingProposals.applyMappingPlan(user._id.toString(), modelId, jobId, mode ?? 'incremental');
+  }
+
+  @Get(':modelId/age-graph')
+  @ApiOperation({ summary: 'Read the AGE graph for a semantic model — returns all vertices and edges stored in Apache AGE' })
+  @RequirePermissions([Permissions.SEMANTIC_MODELS_READ,Permissions.SEMANTIC_MODELS_ALL],'any')
+  getAgeGraph(@CurrentUser() user: UserDocument,@Param('modelId') modelId: string) {
+    return this.mappingProposals.getAgeGraph(user._id.toString(), modelId);
+  }
+
+  @Post(':modelId/builds')
+  @HttpCode(HttpStatus.ACCEPTED)
+  @ApiOperation({ summary: 'Start an async build (ontology + mapping + apply). Returns a buildId immediately for polling.' })
+  @RequirePermissions([Permissions.SEMANTIC_MODELS_UPDATE,Permissions.SEMANTIC_MODELS_ALL],'any')
+  startBuild(@CurrentUser() user: UserDocument,@Param('modelId') modelId: string,@Body() dto: StartSemanticModelBuildDto) {
+    return this.builds.startAsync(user._id.toString(), modelId, {
+      businessRequirements: dto.businessRequirements ?? [],
+      applyMode: dto.applyMode ?? 'replace',
+      manualInstances: dto.manualInstances ?? [],
+    });
+  }
+
+  @Get(':modelId/builds/latest')
+  @ApiOperation({ summary: 'Get the most recent build for this model (any status). Used by the UI banner to reattach polling after reload.' })
+  @RequirePermissions([Permissions.SEMANTIC_MODELS_READ,Permissions.SEMANTIC_MODELS_ALL],'any')
+  getLatestBuild(@CurrentUser() user: UserDocument,@Param('modelId') modelId: string) {
+    return this.builds.getLatestBuild(user._id.toString(), modelId);
+  }
+
+  @Get(':modelId/builds/:buildId')
+  @ApiOperation({ summary: 'Poll the status and per-step progress of a build job.' })
+  @RequirePermissions([Permissions.SEMANTIC_MODELS_READ,Permissions.SEMANTIC_MODELS_ALL],'any')
+  getBuild(@CurrentUser() user: UserDocument,@Param('modelId') modelId: string,@Param('buildId') buildId: string) {
+    return this.builds.getBuild(user._id.toString(), modelId, buildId);
+  }
+
 
   @Post(':modelId/graph/impact')
   @RequirePermissions([Permissions.SEMANTIC_MODELS_UPDATE,Permissions.SEMANTIC_MODELS_ALL],'any')
@@ -181,5 +285,36 @@ export class SemanticModelController {
   @RequirePermissions([Permissions.SEMANTIC_MODELS_UPDATE,Permissions.SEMANTIC_MODELS_ALL],'any')
   restore(@CurrentUser() user: UserDocument,@Param('modelId') modelId: string,@Param('versionId') versionId: string,@Body() dto: PublishSemanticModelDto) {
     return this.versions.restore(user._id.toString(),modelId,versionId,dto.expectedRevision,dto.expectedGraphRevision);
+  }
+
+  // ── Sharing ────────────────────────────────────────────────────────────────
+
+  @Get(':modelId/shares')
+  @ApiOperation({ summary: 'List all members with access to a semantic model (owner-only management, all members can view)' })
+  @RequirePermissions([Permissions.SEMANTIC_MODELS_READ,Permissions.SEMANTIC_MODELS_ALL],'any')
+  listShares(@CurrentUser() user: UserDocument,@Param('modelId') modelId: string) {
+    return this.shares.list(user._id.toString(),modelId);
+  }
+
+  @Post(':modelId/shares')
+  @ApiOperation({ summary: 'Share a semantic model with one or more users by email' })
+  @RequirePermissions([Permissions.SEMANTIC_MODELS_UPDATE,Permissions.SEMANTIC_MODELS_ALL],'any')
+  share(@CurrentUser() user: UserDocument,@Param('modelId') modelId: string,@Body() dto: ShareSemanticModelDto) {
+    return this.shares.share(user._id.toString(),modelId,dto);
+  }
+
+  @Patch(':modelId/shares/:targetUserId')
+  @ApiOperation({ summary: 'Update the role of a shared member' })
+  @RequirePermissions([Permissions.SEMANTIC_MODELS_UPDATE,Permissions.SEMANTIC_MODELS_ALL],'any')
+  updateShare(@CurrentUser() user: UserDocument,@Param('modelId') modelId: string,@Param('targetUserId') targetUserId: string,@Body() dto: UpdateSemanticModelShareDto) {
+    return this.shares.updateRole(user._id.toString(),modelId,targetUserId,dto);
+  }
+
+  @Delete(':modelId/shares/:targetUserId')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  @ApiOperation({ summary: 'Revoke access for a shared member' })
+  @RequirePermissions([Permissions.SEMANTIC_MODELS_UPDATE,Permissions.SEMANTIC_MODELS_ALL],'any')
+  revokeShare(@CurrentUser() user: UserDocument,@Param('modelId') modelId: string,@Param('targetUserId') targetUserId: string) {
+    return this.shares.revoke(user._id.toString(),modelId,targetUserId);
   }
 }

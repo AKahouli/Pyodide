@@ -87,6 +87,12 @@ export const conversationV2Api = {
       connectorRepoUrl?: string;
       skillIds?: string[];
       connectorIds?: string[];
+      /**
+       * Finalized revision the turn must build from (e.g. "rev_2") — sent when
+       * the user is previewing a historical version instead of the latest.
+       * The backend branches a fresh revision from it before running the agent.
+       */
+      baseRevisionId?: string;
     },
   ): Promise<void> {
     await apiClient.post(`/conversation-v2/sessions/${sessionId}/message`, body);

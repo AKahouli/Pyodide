@@ -28,8 +28,6 @@ import { WorkyBudgetReservation } from '../schemas/worky-budget-reservation.sche
 import { WorkyCostEvent } from '../schemas/worky-cost-event.schema';
 import { WorkyEphemeralWorker } from '../schemas/worky-ephemeral-worker.schema';
 import { WorkyExecutionReport } from '../schemas/worky-execution-report.schema';
-import { WorkyExecutionSnapshot } from '../schemas/worky-execution-snapshot.schema';
-import { WorkyIdempotencyRecord } from '../schemas/worky-idempotency-record.schema';
 import { WorkyInteraction } from '../schemas/worky-interaction.schema';
 import { WorkyMailEventLedger } from '../schemas/worky-mail-event-ledger.schema';
 import { WorkyMemoryEntry, WorkyMemoryProposal } from '../schemas/worky-memory.schema';
@@ -426,8 +424,6 @@ export class WorkyStreamService implements OnModuleInit {
       [WorkyCostEvent.name, { streamId: streamObjectId }],
       [WorkyEphemeralWorker.name, { streamId: streamObjectId }],
       [WorkyExecutionReport.name, { streamId: streamObjectId }],
-      [WorkyExecutionSnapshot.name, { streamId: streamObjectId }],
-      [WorkyIdempotencyRecord.name, { streamId: streamObjectId }],
       [WorkyInteraction.name, { streamId: streamObjectId }],
       [WorkyMailEventLedger.name, { streamId: streamObjectId }],
       [WorkyMemoryEntry.name, { sourceStreamId: streamObjectId }],

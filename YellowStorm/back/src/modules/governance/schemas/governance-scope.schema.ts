@@ -18,6 +18,23 @@ export class GovernanceScopeAudienceSchemaClass {
 
 const GovernanceScopeAudienceSchema = SchemaFactory.createForClass(GovernanceScopeAudienceSchemaClass);
 
+export type GovernanceScopeKnowledgeSourceMode = 'llm_only' | 'workspaces_only';
+
+@Schema({ _id: false })
+export class GovernanceScopeKnowledgeSchemaClass {
+  @Prop({ type: String, enum: ['llm_only', 'workspaces_only'], default: 'llm_only' })
+  sourceMode!: GovernanceScopeKnowledgeSourceMode;
+
+  @Prop({ type: Boolean, default: false })
+  webSourcesEnabled!: boolean;
+
+  @Prop({ type: [String], default: [] })
+  webAllowedDomains!: string[];
+
+  @Prop({ type: [String], default: [] })
+  webBlockedDomains!: string[];
+}
+
 export type GovernanceScopeType =
   | 'organization'
   | 'municipality'
@@ -57,6 +74,9 @@ export class GovernanceScope extends Document {
     default: () => ({ mode: 'restricted', userIds: [], groupIds: [] }),
   })
   audience!: GovernanceScopeAudienceSchemaClass;
+
+  @Prop({ type: GovernanceScopeKnowledgeSchemaClass, default: () => ({}) })
+  knowledge!: GovernanceScopeKnowledgeSchemaClass;
 
   @Prop({ type: Object, default: {} })
   metadata!: Record<string, unknown>;

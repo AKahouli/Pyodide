@@ -1,6 +1,6 @@
 """Extended unit tests for DelegationTools delegate functions."""
 
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -27,7 +27,6 @@ def _delegation_tools():
         user_request=user_request,
         agent_factory=agent_factory,
         mcp_helper=MagicMock(),
-        manager_span=MagicMock(),
         agent_runner=agent_runner,
         session_helper=MagicMock(),
         documents_tree=[],
@@ -42,9 +41,7 @@ class TestDelegationToolsExtended:
     async def test_delegate_to_search_agent_success(self):
         tools, agent_factory = _delegation_tools()
         agent_factory.create_search_agent.return_value = (MagicMock(), MagicMock(), "prompt")
-        with patch("src.smart_rag.agents.tools.delegation_tools.langfuse_client") as mock_lf:
-            mock_lf.span.return_value = MagicMock()
-            report_fn, operator_fn, search_fn, html_fn = tools.get_agents("viz", "ops", "report", "search")
+        report_fn, operator_fn, search_fn, html_fn = tools.get_agents("viz", "ops", "report", "search")
         result = await search_fn("find revenue", "1")
         assert result == "result"
 
@@ -52,9 +49,7 @@ class TestDelegationToolsExtended:
     async def test_delegate_to_search_agent_creation_failure(self):
         tools, agent_factory = _delegation_tools()
         agent_factory.create_search_agent.side_effect = RuntimeError("fail")
-        with patch("src.smart_rag.agents.tools.delegation_tools.langfuse_client") as mock_lf:
-            mock_lf.span.return_value = MagicMock()
-            _, _, search_fn, _ = tools.get_agents("viz", "ops", "report", "search")
+        _, _, search_fn, _ = tools.get_agents("viz", "ops", "report", "search")
         result = await search_fn("task", "1")
         assert result is None
 
@@ -64,9 +59,7 @@ class TestDelegationToolsExtended:
         agent_factory.create_html_agent.return_value = MagicMock()
         agent_factory.create_operator_agent.return_value = MagicMock()
         agent_factory.create_report_writer_agent.return_value = MagicMock()
-        with patch("src.smart_rag.agents.tools.delegation_tools.langfuse_client") as mock_lf:
-            mock_lf.span.return_value = MagicMock()
-            _, operator_fn, _, _ = tools.get_agents("viz", "ops", "report", "search")
+        _, operator_fn, _, _ = tools.get_agents("viz", "ops", "report", "search")
         result = await operator_fn("compute", "1")
         assert result == "result"
 
@@ -76,9 +69,7 @@ class TestDelegationToolsExtended:
         agent_factory.create_html_agent.return_value = MagicMock()
         agent_factory.create_operator_agent.return_value = MagicMock()
         agent_factory.create_report_writer_agent.return_value = MagicMock()
-        with patch("src.smart_rag.agents.tools.delegation_tools.langfuse_client") as mock_lf:
-            mock_lf.span.return_value = MagicMock()
-            report_fn, _, _, _ = tools.get_agents("viz", "ops", "report", "search")
+        report_fn, _, _, _ = tools.get_agents("viz", "ops", "report", "search")
         result = await report_fn("write report", "1")
         assert result == "result"
 
@@ -88,9 +79,7 @@ class TestDelegationToolsExtended:
         agent_factory.create_html_agent.return_value = MagicMock()
         agent_factory.create_operator_agent.return_value = MagicMock()
         agent_factory.create_report_writer_agent.return_value = MagicMock()
-        with patch("src.smart_rag.agents.tools.delegation_tools.langfuse_client") as mock_lf:
-            mock_lf.span.return_value = MagicMock()
-            _, _, _, html_fn = tools.get_agents("viz", "ops", "report", "search")
+        _, _, _, html_fn = tools.get_agents("viz", "ops", "report", "search")
         result = await html_fn("build ui", "1")
         assert result == "result"
 

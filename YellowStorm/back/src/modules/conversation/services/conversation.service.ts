@@ -174,7 +174,7 @@ export class ConversationService {
   async createGoverned(
     userId: string,
     data: {
-      title: string;
+      title?: string;
       requestId: string;
       programId: string;
       scopeId: string;
@@ -194,7 +194,7 @@ export class ConversationService {
     try {
       const record = await this.conversationStore.create({
         id: newOwnedId(),
-        title: data.title,
+        title: data.title || 'New Conversation',
         createdBy: userId,
         runtimeMode: 'governed',
         governedCreationRequestId: data.requestId,

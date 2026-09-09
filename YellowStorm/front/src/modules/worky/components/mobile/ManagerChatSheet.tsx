@@ -1,5 +1,5 @@
 import type { JSX } from 'react';
-import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
+import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import { useModuleTranslation } from '@/modules/localization';
 import { ChatMessageThread } from '../ChatMessageThread';
 import { PromptBar } from '../PromptBar';
@@ -15,26 +15,27 @@ export function ManagerChatSheet({
   onOpenChange,
   onWhatsAppClick,
   whatsappConnected,
+  sessionStatus,
 }: {
   streamId: string;
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onWhatsAppClick?: () => void;
   whatsappConnected?: boolean;
+  sessionStatus?: string | null;
 }): JSX.Element {
   const { t } = useModuleTranslation('worky');
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
       <SheetContent side="bottom" className="flex h-[85vh] flex-col gap-0 rounded-t-2xl p-0">
         <SheetHeader className="border-b border-border px-4 py-3">
-          <SheetTitle>{t('voice.manager')}</SheetTitle>
+          <SheetTitle>{t('executive.rail.title')}</SheetTitle>
+          <SheetDescription className='sr-only'>{t('messages.description')}</SheetDescription>
         </SheetHeader>
         <div className="min-h-0 flex-1 overflow-y-auto">
           <ChatMessageThread streamId={streamId} />
         </div>
-        <div className="border-t border-border">
-          <PromptBar streamId={streamId} onWhatsAppClick={onWhatsAppClick} whatsappConnected={whatsappConnected} />
-        </div>
+        <PromptBar streamId={streamId} sessionStatus={sessionStatus} onWhatsAppClick={onWhatsAppClick} whatsappConnected={whatsappConnected} />
       </SheetContent>
     </Sheet>
   );

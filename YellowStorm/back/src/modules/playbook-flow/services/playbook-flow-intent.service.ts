@@ -42,7 +42,7 @@ type IntentUserMessageContent = string | Array<
   | { type: 'image_url'; image_url: { url: string } }
 >;
 
-interface ResolvedDesignResource {
+export interface ResolvedDesignResource {
   question: string;
   label: string;
   kind: 'workspace' | 'document';
@@ -305,6 +305,15 @@ export type PlaybookIntentWorkflowChange =
     statePath: string;
   }
   | {
+    type: 'create_data_binding';
+    targetTaskId: string | null;
+    targetNodeRef: string | null;
+    targetIteratorNodeRef?: string | null;
+    targetPort: string;
+    sourceKind: 'trigger';
+    triggerPath: string;
+  }
+  | {
     type: 'delete_data_binding';
     targetTaskId: string | null;
     targetNodeRef: string | null;
@@ -359,6 +368,7 @@ export interface PlaybookIntentAnalysisContext {
   validationContext: IntentWorkflowValidationContext;
   limits: IntentNormalizationLimits;
   availableDesignCatalog: AvailableDesignCatalog;
+  resolvedDesignResources: ResolvedDesignResource[];
   nodeTemplates: Array<{
     id: string; key: string; nodeType: string; title: string; description?: string; category: string;
     inputPorts: Array<{ id: string; name: string; artifactKind: string; required?: boolean; description?: string }>;
@@ -677,6 +687,7 @@ export class PlaybookFlowIntentService {
       validationContext,
       limits: effectiveSettings.intentNormalizationLimits,
       availableDesignCatalog,
+      resolvedDesignResources,
       nodeTemplates: nodeTemplates.items.map((template) => ({
         id: template.id,
         key: template.key,
@@ -1401,7 +1412,7 @@ or {"status":"ready_to_generate","detectedIntent":"...","assumptions":["..."],"r
         return null;
       }
 
-      if (change.sourceKind === 'constant' || change.sourceKind === 'state') {
+      if (change.sourceKind === 'constant' || change.sourceKind === 'state' || change.sourceKind === 'trigger') {
         if (change.targetTaskId && ctx.existingTaskIds.has(change.targetTaskId)) {
           const inputPorts = ctx.inputPortsByTaskId.get(change.targetTaskId);
           if (inputPorts && change.targetPort && !inputPorts.has(change.targetPort)) {
@@ -1409,6 +1420,7 @@ or {"status":"ready_to_generate","detectedIntent":"...","assumptions":["..."],"r
           }
         }
         if (change.sourceKind === 'state' && !change.statePath.trim()) return null;
+        if (change.sourceKind === 'trigger' && !change.triggerPath.trim()) return null;
         return change;
       }
 
@@ -1565,6 +1577,32 @@ or {"status":"ready_to_generate","detectedIntent":"...","assumptions":["..."],"r
           targetPort,
           sourceKind: 'constant',
           constantValue,
+        } : null;
+      }
+
+      if (item.sourceKind === 'state') {
+        const statePath = this.normalizeText(item.statePath);
+        return statePath ? {
+          type: 'create_data_binding',
+          targetTaskId: targetTaskId || null,
+          targetNodeRef: targetNodeRef || null,
+          ...(targetIteratorNodeRef ? { targetIteratorNodeRef } : {}),
+          targetPort,
+          sourceKind: 'state',
+          statePath,
+        } : null;
+      }
+
+      if (item.sourceKind === 'trigger') {
+        const triggerPath = this.normalizeText(item.triggerPath);
+        return triggerPath ? {
+          type: 'create_data_binding',
+          targetTaskId: targetTaskId || null,
+          targetNodeRef: targetNodeRef || null,
+          ...(targetIteratorNodeRef ? { targetIteratorNodeRef } : {}),
+          targetPort,
+          sourceKind: 'trigger',
+          triggerPath,
         } : null;
       }
 

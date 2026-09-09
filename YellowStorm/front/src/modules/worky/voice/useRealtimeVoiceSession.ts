@@ -195,6 +195,10 @@ export function useRealtimeVoiceSession(streamId: string): VoiceSessionApi {
     // Audio pipeline.
     const ctx = new AudioContext();
     ctxRef.current = ctx;
+    // Fresh context clock starts near 0; a stale play head from a prior call
+    // (hang-up/restart or reconnect) would schedule all output far in the
+    // future, so the concierge is inaudible on the second call.
+    playHeadRef.current = 0;
     // The awaits drop the user-gesture context, so the AudioContext can start
     // suspended — resume it or the capture worklet never runs and no audio
     // plays back (mirrors useAudioRecorder's resume).

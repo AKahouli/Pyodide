@@ -196,7 +196,7 @@ describe('single-step execution dependency safety', () => {
           }],
         }),
       } as any,
-      { validate: jest.fn() } as any,
+      { validate: jest.fn(), collectValidationErrors: jest.fn().mockReturnValue([]) } as any,
       { buildGrpcAgentsForPlaybook: jest.fn() } as any,
       { cacheOwner: jest.fn(), emitExecutionQueued: jest.fn() } as any,
       new PlaybookFlowObservabilityService(

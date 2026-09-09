@@ -25,10 +25,14 @@ from google.adk.workflow.utils._workflow_hitl_utils import (
     create_request_input_response,
     get_request_input_interrupt_ids,
 )
+from google.adk.flows.llm_flows.functions import REQUEST_CONFIRMATION_FUNCTION_CALL_NAME
+from google.adk.tools.tool_confirmation import ToolConfirmation
+from google.genai import types
 
 
 ASK = "ask"     # answerable by the person in the chat
 MAIL = "mail"   # answerable only by an incoming email reply
+CONFIRM = "confirm"  # a tool call the chat user must approve before it runs
 
 
 def ask_user_interrupt_id(node_path: str) -> str:
@@ -42,11 +46,32 @@ def mail_reply_interrupt_id(node_path: str) -> str:
 def is_ask(interrupt_id: str) -> bool:
     """True if a person typing in the chat may answer this interrupt.
 
-    The prefix is what keeps the two kinds of wait apart. A session can hold both
-    at once (a question for the owner, plus a step waiting on an email reply), so
-    a chat message must never be routed to a `mail:` interrupt — it would answer
-    a step whose reply hasn't arrived and let the plan run on fabricated input."""
-    return interrupt_id.startswith(f"{ASK}:")
+    The prefix is what keeps the kinds of wait apart. A session can hold several
+    at once (a question for the owner, a step waiting on an email reply, a send
+    awaiting approval), so a chat message must never be routed to a `mail:`
+    interrupt — it would answer a step whose reply hasn't arrived and let the
+    plan run on fabricated input. A `confirm::` interrupt IS chat-answerable
+    (the owner clicks approve/decline), so it counts as an ask here — but its
+    resume part differs (see confirmation_resume_part)."""
+    return interrupt_id.startswith(f"{ASK}:") or is_confirm(interrupt_id)
+
+
+# A confirmation interrupt id is stored as "confirm::<adk_fc_id>": the suffix is
+# the exact random id ADK minted for the adk_request_confirmation call, which
+# resume MUST feed back verbatim (ADK resolves the pending tool by that id
+# against the durable session events). We tag the kind on the front so resume
+# and projection can tell it apart from ask:/mail:, and strip it before ADK.
+def confirm_interrupt_id(fc_id: str) -> str:
+    return f"{CONFIRM}::{fc_id}"
+
+
+def is_confirm(interrupt_id: str) -> bool:
+    return interrupt_id.startswith(f"{CONFIRM}::")
+
+
+def confirm_fc_id(interrupt_id: str) -> str:
+    """The raw ADK confirmation function-call id inside a `confirm::` id."""
+    return interrupt_id[len(CONFIRM) + 2:]
 
 
 def _make_blocking_node(name: str, message: str, *, prefix: str,
@@ -95,3 +120,42 @@ def interrupt_ids(event: Event) -> List[str]:
 def resume_part(interrupt_id: str, answer: Mapping[str, Any]):
     """Build the message Part that resumes a blocked run with the user's answer."""
     return create_request_input_response(interrupt_id, answer)
+
+
+def confirmation_interrupts(event: Event) -> List[tuple[str, dict]]:
+    """Tool-confirmation interrupts on an event, as [(stored_id, preview), ...].
+
+    A tool marked require_confirmation raises a separate `adk_request_confirmation`
+    long-running function call (see google.adk functions.generate_request_confirmation_event)
+    that `get_request_input_interrupt_ids` (hence `interrupt_ids`) does NOT report —
+    it matches only `adk_request_input`. This surfaces the confirmation kind so the
+    turn parks on it too. `preview` carries the gated call for the UI: the tool name
+    and its args (for send_email: to/subject/body; for send_teams: the message)."""
+    out: List[tuple[str, dict]] = []
+    for fc in (event.get_function_calls() or []):
+        if fc.name != REQUEST_CONFIRMATION_FUNCTION_CALL_NAME or not fc.id:
+            continue
+        original = (fc.args or {}).get("originalFunctionCall") or {}
+        out.append((confirm_interrupt_id(fc.id),
+                    {"tool": original.get("name"), "args": original.get("args") or {}}))
+    return out
+
+
+def confirmation_resume_part(fc_id: str, *, confirmed: bool):
+    """Build the Part that answers an adk_request_confirmation with the owner's
+    verdict. `fc_id` is the raw ADK id (strip a stored id with confirm_fc_id).
+
+    ADK's native confirmation processor then re-invokes the ORIGINAL gated tool
+    by id from the durable events — confirmed → it runs and the step's reasoning
+    continues from the result, in place; not confirmed → the model gets "This
+    tool call is rejected." and re-plans. This survives resume_turn's graph
+    rebuild because the step now sees its own scoped history
+    (include_contents='default') and its node_input is None (fed through a silent
+    join, so ADK does not append a trailing user turn) — so this verdict stays
+    the last user turn, the two conditions ADK's processor needs. See
+    graph.to_workflow and the nodes factory."""
+    return types.Part(function_response=types.FunctionResponse(
+        id=fc_id,
+        name=REQUEST_CONFIRMATION_FUNCTION_CALL_NAME,
+        response=ToolConfirmation(confirmed=confirmed).model_dump(by_alias=True, exclude_none=True),
+    ))

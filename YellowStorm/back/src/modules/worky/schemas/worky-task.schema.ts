@@ -138,6 +138,28 @@ export class WorkyTask extends Document {
   @Prop({ type: String, default: null, index: true })
   assigneeKey?: string | null;
 
+  /** Raw Companion step kind. Kept open-ended for historical compatibility. */
+  @Prop({ type: String, default: 'execute' })
+  kind!: string;
+
+  @Prop({ type: String, default: null })
+  question!: string | null;
+
+  @Prop({ type: String, default: null })
+  interruptId!: string | null;
+
+  @Prop({ type: String, default: null })
+  assigneeName!: string | null;
+
+  @Prop({ type: String, default: null })
+  assigneeRole!: string | null;
+
+  @Prop({ type: Boolean, default: false })
+  isPersona!: boolean;
+
+  @Prop({ type: Boolean, default: false })
+  isDynamicDelegate!: boolean;
+
   @Prop({ type: [Types.ObjectId], ref: 'WorkyTask', default: [] })
   dependsOn!: Types.ObjectId[];
 

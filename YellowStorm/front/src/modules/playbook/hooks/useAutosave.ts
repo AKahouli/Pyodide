@@ -62,17 +62,30 @@ export function useAutosave(options?: { paused?: boolean }) {
 
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastDirtyAtRef = useRef<number | null>(null);
+  const lastReportedDirtyVersionRef = useRef(0);
+  const conflictDirtyVersionRef = useRef<number | null>(null);
+  const currentDirtyVersionRef = useRef(dirtyVersion);
+  currentDirtyVersionRef.current = dirtyVersion;
 
-  const notifySaveFailure = useCallback((error: unknown) => {
-    if (!playbookFeatures.xstateAutosaveEnabled) return;
-
+  const notifySaveFailure = useCallback((error: unknown, failedDirtyVersion: number) => {
     const apiError = parseApiError(error);
     if (apiError.code === ErrorCode.CONFLICT) {
-      autosaveActor.send({ type: 'CONFLICT_DETECTED', errorCode: apiError.code });
+      const latestDirtyVersion = currentDirtyVersionRef.current;
+      conflictDirtyVersionRef.current = latestDirtyVersion === failedDirtyVersion
+        ? failedDirtyVersion
+        : null;
+      if (playbookFeatures.xstateAutosaveEnabled) {
+        autosaveActor.send({ type: 'CONFLICT_DETECTED', errorCode: apiError.code });
+        if (latestDirtyVersion !== failedDirtyVersion) {
+          autosaveActor.send({ type: 'LOCAL_CHANGE', dirtyVersion: latestDirtyVersion });
+        }
+      }
       return;
     }
 
-    autosaveActor.send({ type: 'DELTA_SAVE_FAILED' });
+    if (playbookFeatures.xstateAutosaveEnabled) {
+      autosaveActor.send({ type: 'DELTA_SAVE_FAILED' });
+    }
   }, [autosaveActor]);
 
   const clearTimer = useCallback(() => {
@@ -80,6 +93,7 @@ export function useAutosave(options?: { paused?: boolean }) {
   }, []);
 
   const doSave = useCallback(() => {
+    const saveDirtyVersion = dirtyVersion;
     clearTimer();
     if (playbookFeatures.xstateAutosaveEnabled) {
       autosaveActor.send({ type: 'SAVE_NOW', reason: 'autosave' });
@@ -90,10 +104,11 @@ export function useAutosave(options?: { paused?: boolean }) {
       }
       return result;
     }).catch((error: unknown) => {
-      notifySaveFailure(error);
-      throw error;
+      notifySaveFailure(error, saveDirtyVersion);
+      // Timer-triggered saves report through the autosave actor; do not leave
+      // an unhandled rejected promise behind when a conflict blocks retries.
     });
-  }, [autosaveActor, clearTimer, lastAutosaveDurationMs, notifySaveFailure, saveCurrentPlaybook]);
+  }, [autosaveActor, clearTimer, dirtyVersion, lastAutosaveDurationMs, notifySaveFailure, saveCurrentPlaybook]);
 
   useEffect(() => {
     if (paused) {
@@ -104,9 +119,21 @@ export function useAutosave(options?: { paused?: boolean }) {
 
     const now = Date.now();
     const previousDirtyAt = lastDirtyAtRef.current;
-    lastDirtyAtRef.current = now;
-    if (playbookFeatures.xstateAutosaveEnabled) {
+    const hasNewLocalChange = lastReportedDirtyVersionRef.current !== dirtyVersion;
+    if (hasNewLocalChange) {
+      lastReportedDirtyVersionRef.current = dirtyVersion;
+      lastDirtyAtRef.current = now;
+      if (conflictDirtyVersionRef.current !== dirtyVersion) {
+        conflictDirtyVersionRef.current = null;
+      }
+    }
+    if (playbookFeatures.xstateAutosaveEnabled && hasNewLocalChange) {
       autosaveActor.send({ type: 'LOCAL_CHANGE', dirtyVersion });
+    }
+
+    if (conflictDirtyVersionRef.current === dirtyVersion || autosaveActor.isBlockedByConflict) {
+      clearTimer();
+      return;
     }
 
     if (isSaving) {
@@ -140,6 +167,7 @@ export function useAutosave(options?: { paused?: boolean }) {
 
   const saveNow = useCallback(() => {
     if (hasUnboundRequiredPorts || hasIncompleteBindings) return Promise.resolve();
+    const saveDirtyVersion = dirtyVersion;
     clearTimer();
     if (playbookFeatures.xstateAutosaveEnabled) {
       autosaveActor.send({ type: 'SAVE_NOW', reason: 'manual' });
@@ -150,12 +178,13 @@ export function useAutosave(options?: { paused?: boolean }) {
       }
       return result;
     }).catch((error: unknown) => {
-      notifySaveFailure(error);
+      notifySaveFailure(error, saveDirtyVersion);
       throw error;
     });
   }, [
     autosaveActor,
     clearTimer,
+    dirtyVersion,
     hasIncompleteBindings,
     hasUnboundRequiredPorts,
     lastAutosaveDurationMs,

@@ -108,6 +108,7 @@ async function bootstrap() {
       'X-Requested-With',
       'X-Correlation-ID',
       'X-Request-ID',
+      'Idempotency-Key',
       'Cache-Control',
       'Connection',
       'Last-Event-ID',

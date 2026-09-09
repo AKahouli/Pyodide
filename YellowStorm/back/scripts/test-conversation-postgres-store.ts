@@ -31,6 +31,8 @@ const ids = {
   platformActive: 'cccccccccccccccccccccccc',
   platformEmpty: 'dddddddddddddddddddddddd',
   message: 'eeeeeeeeeeeeeeeeeeeeeeee',
+  staleReliability: 'e1e1e1e1e1e1e1e1e1e1e1e1',
+  staleReliabilityHeartbeat: 'e2e2e2e2e2e2e2e2e2e2e2e2',
   oldConversation: 'abababababababababababab',
   oldMessage: 'cdcdcdcdcdcdcdcdcdcdcdcd',
   expiredShare: 'edededededededededededed',
@@ -205,6 +207,41 @@ async function main(): Promise<void> {
     assert.equal(converted?.members[0]?.status, 'owner');
     assert.equal(converted?.invitedUsers[0]?.email, 'convert@example.com');
     const messageStore = new PostgresMessageStore(db);
+    const staleRequestedAt = '2026-08-30T08:00:00.000Z';
+    await db.insert(schema.messages).values([
+      {
+        id: ids.staleReliability,
+        conversationId: ids.plain,
+        conversationType: 'ai',
+        reliabilityEvaluation: { status: 'pending', requestedAt: staleRequestedAt },
+        updatedAt: new Date(staleRequestedAt),
+      },
+      {
+        id: ids.staleReliabilityHeartbeat,
+        conversationId: ids.plain,
+        conversationType: 'ai',
+        reliabilityEvaluation: { status: 'pending', requestedAt: staleRequestedAt },
+        reliabilityEvaluationHeartbeatAt: new Date('2026-08-30T08:30:00.000Z'),
+        updatedAt: new Date(staleRequestedAt),
+      },
+    ]);
+    const failedReliability = await messageStore.failStaleReliability(
+      new Date('2026-08-30T09:00:00.000Z'),
+    );
+    assert.deepEqual(
+      new Set(failedReliability.map((message) => message.id)),
+      new Set([ids.staleReliability, ids.staleReliabilityHeartbeat]),
+    );
+    for (const message of failedReliability) {
+      assert.equal(message.conversationId, ids.plain);
+      assert.equal(message.reliabilityEvaluation?.status, 'failed');
+      assert.equal(
+        message.reliabilityEvaluation?.failureCode,
+        'stale_pending_after_restart',
+      );
+      assert.equal(typeof message.reliabilityEvaluation?.evaluatedAt, 'string');
+      assert.equal(message.reliabilityEvaluationHeartbeatAt, undefined);
+    }
     const userMessage = await messageStore.createUser({
       conversationId: ids.plain,
       senderId: ids.owner,

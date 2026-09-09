@@ -634,6 +634,15 @@ export type PlaybookIntentWorkflowChange =
       statePath: string;
     }
   | {
+      type: 'create_data_binding';
+      targetTaskId: string | null;
+      targetNodeRef: string | null;
+      targetIteratorNodeRef?: string | null;
+      targetPort: string;
+      sourceKind: 'trigger';
+      triggerPath: string;
+    }
+  | {
       type: 'delete_data_binding';
       targetTaskId: string | null;
       targetNodeRef: string | null;
@@ -687,6 +696,34 @@ export interface PlaybookIntentWorkflowPlanSuggestion {
 }
 
 export type PlaybookIntentSuggestion = PlaybookIntentSingleChangeSuggestion | PlaybookIntentWorkflowPlanSuggestion;
+
+export type PlaybookInputScope = 'runtime' | 'configuration';
+export type PlaybookInputSourceKind = 'upload' | 'workspace' | 'document' | 'folder' | 'url' | 'manual';
+
+export interface PlaybookInputDescriptor {
+  id: string;
+  taskId: string;
+  taskTitle: string;
+  portId: string;
+  label: string;
+  artifactKind: ArtifactKind;
+  required: true;
+  scope: PlaybookInputScope;
+  binding: { kind: DataBindingSourceKind | 'missing'; triggerPath?: string };
+  acceptedSources: PlaybookInputSourceKind[];
+  readiness: 'runtime_required' | 'configuration_required' | 'configured' | 'invalid';
+  configuredSource?: { kind: PlaybookInputSourceKind; label: string; resourceId?: string } | null;
+}
+
+export interface PlaybookInputContract {
+  playbookId: string;
+  definitionRevision: number;
+  graphValid: boolean;
+  configurationReady: boolean;
+  runtimeInputCount: number;
+  invalidInputCount: number;
+  inputs: PlaybookInputDescriptor[];
+}
 
 export interface IntentSuggestionHistoryEntry {
   id: string;
@@ -859,7 +896,7 @@ export type PlaybookIntentConstructionEvent =
   | { type: 'data_binding_delta'; constructionId: string; playbookId: string; sequence: number; createdAt: string; suggestion: PlaybookIntentSuggestion }
   | { type: 'completed'; constructionId: string; playbookId: string; sequence: number; createdAt: string; model: string; finalSuggestionCount: number }
   | { type: 'cancelled'; constructionId: string; playbookId: string; sequence: number; createdAt: string; reason?: string }
-  | { type: 'failed'; constructionId: string; playbookId: string; sequence: number; createdAt: string; message: string; recoverable: boolean }
+  | { type: 'failed'; constructionId: string; playbookId: string; sequence: number; createdAt: string; message: string; recoverable: boolean; failureKind?: 'strict_validation' }
   | { type: 'cancelled'; constructionId: string; playbookId: string; sequence: number; createdAt: string; reason?: string };
 
 export interface ToolBindingAction {
@@ -2501,6 +2538,14 @@ export interface PlaybookState {
   pendingAutosaveAfterCurrent: boolean;
   autosaveBackoffUntil: number | null;
   lastSaveReason: 'autosave' | 'manual' | 'route-leave' | null;
+  lastCompletedAssistantOperationId: string | null;
+  lastCompletedAssistantOperationRevision: number | null;
+  canonicalAssistantSaveSnapshot: {
+    operationId: string;
+    playbookId: string;
+    payload: UpdatePlaybookData;
+    dirtyVersion: number;
+  } | null;
   currentExecution: PlaybookExecution | null;
   currentExecutionLoading: boolean;
   executionCache: Record<string, PlaybookExecution>;
@@ -2783,7 +2828,7 @@ export interface PlaybookActions {
   updateFlow: (id: string, data: any, idempotencyKey?: string) => Promise<any>;
   deleteFlow: (id: string) => Promise<void>;
   cloneFlow: (id: string) => Promise<any>;
-  startFlowExecutionAction: (flowId: string, inputContext?: Record<string, unknown>, idempotencyKey?: string) => Promise<any>;
+  startFlowExecutionAction: (flowId: string, inputContext?: Record<string, unknown>, idempotencyKey?: string, options?: ExecutePlaybookData) => Promise<any>;
   fetchFlowExecutions: (flowId: string) => Promise<any>;
   fetchFlowExecution: (executionId: string) => Promise<any>;
   cancelFlowExecutionAction: (executionId: string) => Promise<void>;

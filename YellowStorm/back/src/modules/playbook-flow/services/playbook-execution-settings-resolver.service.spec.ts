@@ -18,6 +18,7 @@ describe('PlaybookExecutionSettingsResolverService', () => {
           pythonWorkerPoolSize: 8,
           pythonWorkerMaxInflight: 4,
           maxToolIterations: 40,
+          maxSandboxCallsPerStep: 30,
           graphCacheEnabled: false,
           graphCacheMaxEntries: 128,
           graphCacheTtlSeconds: 900,
@@ -56,6 +57,7 @@ describe('PlaybookExecutionSettingsResolverService', () => {
       pythonWorkerPoolSize: 12,
       pythonWorkerMaxInflight: 6,
       maxToolIterations: 90,
+      maxSandboxCallsPerStep: 16,
       graphCacheEnabled: true,
       graphCacheMaxEntries: 512,
       graphCacheTtlSeconds: 1800,
@@ -80,6 +82,7 @@ describe('PlaybookExecutionSettingsResolverService', () => {
       recursionLimitDefault: 80,
       recursionLimitMax: 100,
       maxToolIterations: 90,
+      maxSandboxCallsPerStep: 16,
       graphCacheEnabled: true,
     });
   });

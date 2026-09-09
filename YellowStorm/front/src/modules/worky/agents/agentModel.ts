@@ -29,7 +29,7 @@ export interface WorkyAgent {
 
 const isDone = (t: WorkyTask): boolean => t.lane === 'done';
 const isRunning = (t: WorkyTask): boolean => t.lane === 'running' || t.lane === 'review';
-const isBlocked = (t: WorkyTask): boolean => t.lane === 'blocked';
+const isBlocked = (t: WorkyTask): boolean => t.lane === 'blocked' && (t.kind ?? 'execute') === 'execute';
 
 /** Synthesize a per-agent "global status" from the lanes of that agent's tasks. */
 export function deriveAgentStatus(tasks: WorkyTask[]): WorkyAgentStatus {
@@ -65,11 +65,12 @@ export function groupTasksByAgent(
   }
   return [...byKey.entries()].map(([key, list]) => {
     const agent = resolve(key);
-    const name = agent?.name ?? key;
+    const cached = list.find((task) => task.assigneeName || task.assigneeRole);
+    const name = cached?.assigneeName?.trim() || agent?.name || key;
     return {
       key,
       name,
-      role: agent?.role ?? agent?.agentType?.name ?? '',
+      role: cached?.assigneeRole?.trim() || agent?.role || agent?.agentType?.name || '',
       initials: agentInitials(name),
       colorSeed: agent?.id ?? key,
       status: deriveAgentStatus(list),

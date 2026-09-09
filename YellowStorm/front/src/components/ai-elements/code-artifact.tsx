@@ -63,12 +63,14 @@ export type CodeArtifactProps = HTMLAttributes<HTMLDivElement> & {
   language?: BundledLanguage;
   filename?: string;
   showLineNumbers?: boolean;
+  /** Forwarded to CodeBlock: plain text while streaming, Shiki once finalized. */
+  isStreaming?: boolean;
 };
 
 /**
  * CodeArtifact - A code block displayed as an artifact with header, language tag, and copy button
  */
-export const CodeArtifact = ({ code, language = 'plaintext' as BundledLanguage, filename, showLineNumbers = false, className, ...props }: CodeArtifactProps) => {
+export const CodeArtifact = ({ code, language = 'plaintext' as BundledLanguage, filename, showLineNumbers = false, isStreaming = false, className, ...props }: CodeArtifactProps) => {
   const { t: tCommon } = useModuleTranslation('common');
   const displayLanguage = languageDisplayNames[language] || language.toUpperCase();
 
@@ -99,7 +101,7 @@ export const CodeArtifact = ({ code, language = 'plaintext' as BundledLanguage, 
         </ArtifactActions>
       </ArtifactHeader>
       <ArtifactContent className='p-0 overflow-hidden'>
-        <CodeBlock code={code} language={language} showLineNumbers={showLineNumbers} className='border-0 rounded-none' />
+        <CodeBlock code={code} language={language} showLineNumbers={showLineNumbers} isStreaming={isStreaming} className='border-0 rounded-none' />
       </ArtifactContent>
     </Artifact>
   );

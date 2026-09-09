@@ -1,6 +1,6 @@
-import { render, screen } from '@testing-library/react';
-import { describe, expect, it } from 'vitest';
-import { InlineCitationCard, InlineCitationCardTrigger } from './inline-citation';
+import { fireEvent, render, screen } from '@testing-library/react';
+import { describe, expect, it, vi } from 'vitest';
+import { InlineCitationCard, InlineCitationCardBody, InlineCitationCardTrigger } from './inline-citation';
 
 describe('InlineCitationCardTrigger', () => {
   it('renders a compact source button with the complete accessible label', () => {
@@ -11,8 +11,8 @@ describe('InlineCitationCardTrigger', () => {
     );
 
     const trigger = screen.getByRole('button', { name: '1' });
-    expect(trigger).toHaveClass('min-h-11', 'min-w-11', 'max-w-36', 'text-[11px]');
-    expect(trigger.firstChild).toHaveClass('h-6', 'min-w-6', 'max-w-32');
+    expect(trigger).toHaveClass('min-h-7', 'min-w-7', 'max-w-24', 'text-[9px]');
+    expect(trigger.firstChild).toHaveClass('h-4', 'min-w-4', 'max-w-20');
     expect(trigger).toHaveAttribute('title', '1');
   });
 
@@ -24,6 +24,28 @@ describe('InlineCitationCardTrigger', () => {
       </InlineCitationCard>,
     );
 
-    expect(screen.getByRole('button', { name: source }).firstChild).toHaveClass('max-w-32');
+    expect(screen.getByRole('button', { name: source }).firstChild).toHaveClass('max-w-20');
+  });
+
+  it('opens the preview on the first touch and invokes the citation on the second touch', async () => {
+    const onClick = vi.fn();
+    render(
+      <InlineCitationCard>
+        <InlineCitationCardTrigger sources={['2']} onClick={onClick} />
+        <InlineCitationCardBody>Source preview</InlineCitationCardBody>
+      </InlineCitationCard>,
+    );
+    const trigger = screen.getByRole('button', { name: '2' });
+
+    fireEvent.pointerDown(trigger, { pointerType: 'touch' });
+    fireEvent.click(trigger);
+
+    expect(await screen.findByText('Source preview')).toBeInTheDocument();
+    expect(onClick).not.toHaveBeenCalled();
+
+    fireEvent.pointerDown(trigger, { pointerType: 'touch' });
+    fireEvent.click(trigger);
+
+    expect(onClick).toHaveBeenCalledOnce();
   });
 });

@@ -117,6 +117,24 @@ describe('WorkyTurnContextService', () => {
       expect(mailSubscriptions.ensureForUser).toHaveBeenCalledWith('user-1');
     });
 
+    it('propagates connector lookup errors in strict mode', async () => {
+      connectorService.findBySlug.mockRejectedValue(new Error('connector svc down'));
+
+      await expect(service.resolveConnectorsStrict('user-1')).rejects.toThrow(
+        'connector svc down',
+      );
+    });
+
+    it('keeps the mailbox subscription alive whenever outlook resolves', async () => {
+      connectorService.findBySlug.mockImplementation((slug: string) =>
+        slug === 'outlook' ? Promise.resolve({ id: 'mail-id', slug: 'outlook' }) : Promise.resolve(null),
+      );
+
+      await service.resolveConnectorsStrict('user-1');
+
+      expect(mailSubscriptions.ensureForUser).toHaveBeenCalledWith('user-1');
+    });
+
     it('does not arm the mail webhook when outlook is not among the linked connectors', async () => {
       // Agents link c1/c2; the outlook connector has a different id, so its
       // send_email tool is not in this turn — no mailbox subscription.
@@ -188,6 +206,14 @@ describe('WorkyTurnContextService', () => {
 
       expect(agents).toEqual([]);
       expect(logger.warn).toHaveBeenCalled();
+    });
+
+    it('propagates agent build errors in strict mode', async () => {
+      agentService.buildGrpcAgentsForPlaybook.mockRejectedValue(new Error('agent svc down'));
+
+      await expect(service.resolveWorkyAgentsStrict('user-1')).rejects.toThrow(
+        'agent svc down',
+      );
     });
   });
 });

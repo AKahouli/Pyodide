@@ -1,7 +1,7 @@
 import { SemanticModelDatabaseService } from './semantic-model-database.service';
 
 describe('SemanticModelDatabaseService', () => {
-  it('sets the AGE search path inside the transaction', async () => {
+  it('runs relational transactions without loading AGE', async () => {
     const client = {
       query: jest.fn().mockResolvedValue({ rows: [], rowCount: 0 }),
       release: jest.fn(),
@@ -18,8 +18,6 @@ describe('SemanticModelDatabaseService', () => {
 
     expect(client.query.mock.calls.map(([query]) => query)).toEqual([
       'BEGIN',
-      "LOAD 'age'",
-      'SET LOCAL search_path = ag_catalog, "$user", public',
       'COMMIT',
     ]);
     expect(client.release).toHaveBeenCalled();

@@ -9,9 +9,25 @@ Classes:
 """
 
 import asyncio
-import time
 from typing import Dict, Any, Optional, List, Union, Tuple
 from src.smart_rag.infrastructure.model_parameters import resolve_model_config
+from src.smart_rag.infrastructure.monitoring.conversation_latency import (
+    get_current_conversation_latency_trace,
+)
+
+
+def _mark_first_model_agent_ready() -> None:
+    """Stamp the pre-provider milestone for the first model-facing agent."""
+    trace = get_current_conversation_latency_trace()
+    if trace is not None:
+        trace.mark_first_model_agent_ready()
+
+
+def _mark_session_stage(marker: str) -> None:
+    """Stamp a session/runner breakdown milestone by method name (no I/O)."""
+    trace = get_current_conversation_latency_trace()
+    if trace is not None:
+        getattr(trace, marker)()
 
 
 
@@ -24,10 +40,6 @@ def get_adk_agent():
     from google.adk import Agent
     return Agent
 
-def get_database_session_service():
-    from google.adk.sessions import DatabaseSessionService
-    return DatabaseSessionService
-
 def get_in_memory_session_service():
     from google.adk.sessions import InMemorySessionService
     return InMemorySessionService
@@ -35,7 +47,7 @@ def get_in_memory_session_service():
 from src.smart_rag.infrastructure.processing.plugin import CleanSessionPlugin
 
 from src.smart_rag.tools.utilities.tool_utils import extract_tool_names
-from src.smart_rag.engines.multi_agent.config import langfuse_client, AgentTeamConfig
+from src.smart_rag.engines.multi_agent.config import AgentTeamConfig
 from src.smart_rag.agents.core.helpers import AgentHelper
 from src.smart_rag.agents.core.document_helpers import DocumentHelpers
 from src.smart_rag.engines.multi_agent.streaming_processor import StreamingEventProcessor
@@ -65,11 +77,10 @@ from src.smart_rag.messaging.component_tracker import ComponentTracker
 
 # Import classes that tests expect to be available at module level
 from src.smart_rag.infrastructure.session.citation_manager import SessionCitationManager
-# Import classes that tests expect to be available at module level
-from src.config.settings import get_settings
+from src.smart_rag.infrastructure.session.manager import (
+    get_shared_database_session_service,
+)
 
-
-settings = get_settings()
 logger = get_logger("api.routers.agentic_rag.AutoAgentGenerationTeam")
 
 
@@ -412,7 +423,7 @@ Do not render charts for single values or non-numeric content.
             'prompt': ''
         }
     def make_delegate_function(self, agent_name: str, q: Optional[asyncio.Queue[dict]] = None,
-                               search_web: Optional[bool] = False, parent_span=None) -> Any:
+                               search_web: Optional[bool] = False) -> Any:
         """Create a delegate function for the agent.
         
         Creates a callable function that can be used to delegate tasks to a
@@ -422,15 +433,14 @@ Do not render charts for single values or non-numeric content.
             agent_name (str): Name of the agent to create delegation function for.
             q (Optional[asyncio.Queue[dict]]): Queue for streaming responses.
             search_web (Optional[bool]): Whether the agent should have web search capabilities.
-            parent_span: Langfuse span for tracking delegation operations.
         
         Returns:
             Any: Callable function that can be used to delegate tasks to the specified agent.
         """
-        return self.delegation_factory.make_delegate_function(agent_name, q, search_web, parent_span)
+        return self.delegation_factory.make_delegate_function(agent_name, q, search_web)
 
     async def run_agent_team(self, user_prompt: str, manager_prompt: str,  session_id: str, manager_memory:bool,
-                             q: Optional[asyncio.Queue[dict]] = None, manager_temperature: float=None, parent_trace=None,  image_input: Optional[List[Dict]] = None, original_agents: Optional[List] = None) -> None:
+                             q: Optional[asyncio.Queue[dict]] = None, manager_temperature: float=None, image_input: Optional[List[Dict]] = None, original_agents: Optional[List] = None) -> None:
         """Run the agent team based on user prompt.
 
         Orchestrates the execution of the entire agent team to handle a user query.
@@ -443,7 +453,6 @@ Do not render charts for single values or non-numeric content.
             session_id (str): Unique identifier for the current session.
             manager_memory (bool): Whether to save manager conversation to memory.
             q (Optional[asyncio.Queue[dict]]): Queue for streaming responses to client.
-            parent_trace: Langfuse trace for tracking the entire operation.
             image_input (Optional[List[Dict]]): List of images in format [{"label": "base64..."}, ...].
 
         Returns:
@@ -454,28 +463,6 @@ Do not render charts for single values or non-numeric content.
                 tracking spans with failure information.
         """
         logger.info(f"Starting agent team execution - session_id: {session_id}, agent_count: {len(self.agent_repository.get_all_agents())}")
-
-        # Get consolidated document tree info for manager
-        consolidated_doc_info = ""
-        if self.agent_repository.has_search_agents() or self.agent_repository.has_code_interpreter():
-            consolidated_doc_info = self.document_helper._get_consolidated_document_tree_info_for_manager(
-                self.config,
-                self.agent_repository.get_all_agents()
-            )
-
-        # Create span for agent team execution
-        team_execution_span = langfuse_client.span(
-            trace_id=session_id,
-            parent_observation_id=parent_trace.id if parent_trace else None,
-            name="Manager",
-            input={
-                "user_prompt": user_prompt,
-                "image_input": True if image_input else False,
-                "manager_prompt": manager_prompt,
-                "agent_count": len(self.agent_repository.get_all_agents()),
-                "available_documents_for_all_agents": consolidated_doc_info if consolidated_doc_info else "No documents available",
-            },
-        )
 
         try:
             # Get citation manager for this session FIRST before creating any tools
@@ -527,19 +514,17 @@ Do not render charts for single values or non-numeric content.
             manager_agent = self.manager_factory.create_manager_agent(enriched_manager_prompt, tools,
                                                                       self.delegation_factory, manager_temperature,
                                                                       manager_specific_tools=manager_tools)
+            _mark_first_model_agent_ready()
             self.current_queue = q
 
-            # Session initialization with freeze debugging
-            session_init_start = time.time()
-            logger.info(f"[FREEZE DEBUG] Creating DatabaseSessionService for session {session_id}, user {self.config.user_id}")
-            db_service_start = time.time()
-            data_base_session=get_database_session_service()(db_url=settings.DATABASE_URL)
-            db_service_duration = time.time() - db_service_start
-            logger.info(f"[FREEZE DEBUG] DatabaseSessionService created in {db_service_duration:.3f}s")
+            # Session initialization (timings live in the structured
+            # conversation_latency_diag.* logs, not ad hoc lines).
+            _mark_session_stage("mark_session_service_init_start")
+            data_base_session = await get_shared_database_session_service()
+            _mark_session_stage("mark_session_service_init_end")
 
-            get_session_start = time.time()
-            logger.info(f"[FREEZE DEBUG] Calling get_session() with app_name=manager_app, user_id={self.config.user_id}")
             using_database_session = True
+            _mark_session_stage("mark_session_lookup_start")
             try:
                 exsiting_session=await data_base_session.get_session(app_name="manager_app",user_id=self.config.user_id,session_id=session_id)
             except OSError as e:
@@ -547,68 +532,46 @@ Do not render charts for single values or non-numeric content.
                 exsiting_session = None
                 data_base_session = get_in_memory_session_service()()
                 logger.warning(
-                    "[FREEZE DEBUG] Database session lookup failed, using in-memory session for this run - session_id=%s error=%s",
+                    "Database session lookup failed, using in-memory session for this run - session_id=%s error=%s",
                     session_id,
                     str(e),
                 )
-            get_session_duration = time.time() - get_session_start
-
-            if exsiting_session:
-                logger.info(f"[FREEZE DEBUG] Existing session found in {get_session_duration:.3f}s for session {session_id}")
-            else:
-                logger.info(f"[FREEZE DEBUG] No existing session found in {get_session_duration:.3f}s for session {session_id}")
+            _mark_session_stage("mark_session_lookup_end")
 
             def extract_tools_info( agent: Any) -> List[Dict[str, str]]:
                 """Extract tools information from agent.
 
                 Args:
-                    agent: The agent object containing tools
+                    agent: The agent object containing tools information
 
                 Returns:
                     List[Dict[str, str]]: List of dictionaries containing tool name, description, and prompt
                 """
-                extract_start = time.time()
-                logger.info(f"[FREEZE DEBUG] extract_tools_info STARTED for session {session_id}")
                 tools_info = []
                 try:
                     if not (hasattr(agent, 'tools') and agent.tools):
-                        logger.info(f"[FREEZE DEBUG] extract_tools_info: No tools found on agent")
                         return tools_info
 
                     for tool in agent.tools:
                         tool_data = self._extract_tool_data(tool)
                         tools_info.append(tool_data)
 
-                    if tools_info:
-                        logger.info(f"[FREEZE DEBUG] Extracted {len(tools_info)} tools from agent")
-
                 except Exception as e:
-                    logger.error(f"[FREEZE DEBUG] Failed to extract tools info from agent: {str(e)}")
+                    logger.error(f"Failed to extract tools info from agent: {str(e)}")
 
-                extract_duration = time.time() - extract_start
-                logger.info(f"[FREEZE DEBUG] extract_tools_info COMPLETED in {extract_duration:.3f}s")
                 return tools_info
             if not exsiting_session:
-                logger.info(f"[FREEZE DEBUG] No existing session, creating new session for session {session_id}")
-                metadata_start = time.time()
                 agent_name=getattr(manager_agent, 'name', "unknown") if hasattr(manager_agent, 'name') else "unknown"
                 system_prompt=getattr(manager_agent, 'instruction', None) if hasattr(manager_agent, 'instruction') else None
-                logger.info(f"[FREEZE DEBUG] Extracted agent metadata: name={agent_name}, has_prompt={system_prompt is not None}")
-
-                logger.info(f"[FREEZE DEBUG] Calling extract_tools_info() for agent {agent_name}")
                 tools_info_result = extract_tools_info(manager_agent)
-                metadata_duration = time.time() - metadata_start
-                logger.info(f"[FREEZE DEBUG] Agent metadata and tools extracted in {metadata_duration:.3f}s")
 
                 state= {
                     "system_prompt": system_prompt,
                     "agent_name": agent_name,
                     "tools_info": tools_info_result,
                 }
-                logger.info(f"[FREEZE DEBUG] Session state prepared with {len(tools_info_result)} tools")
 
-                create_session_start = time.time()
-                logger.info(f"[FREEZE DEBUG] Calling create_session() for session {session_id}")
+                _mark_session_stage("mark_session_create_seed_start")
                 try:
                     await data_base_session.create_session(app_name="manager_app", user_id=self.config.user_id,
                                                            session_id=session_id,state=state)
@@ -618,37 +581,25 @@ Do not render charts for single values or non-numeric content.
                         await data_base_session.create_session(app_name="manager_app", user_id=self.config.user_id,
                                                                session_id=session_id,state=state)
                         logger.warning(
-                            "[FREEZE DEBUG] Database session creation failed, using in-memory session for this run - session_id=%s error=%s",
+                            "Database session creation failed, using in-memory session for this run - session_id=%s error=%s",
                             session_id,
                             str(e),
                         )
                     else:
                         raise
-                create_session_duration = time.time() - create_session_start
-                logger.info(f"[FREEZE DEBUG] create_session() COMPLETED in {create_session_duration:.3f}s")
+                _mark_session_stage("mark_session_create_seed_end")
 
-            session_init_duration = time.time() - session_init_start
-            logger.info(f"[FREEZE DEBUG] Total session initialization completed in {session_init_duration:.3f}s")
-
-            runner_start = time.time()
-            logger.info(f"[FREEZE DEBUG] Creating Runner for session {session_id}")
+            _mark_session_stage("mark_runner_construction_start")
             agent_runner=get_adk_runner()(
                 agent=manager_agent,
                 app_name="manager_app",
                 session_service=data_base_session,
                 plugins=[CleanSessionPlugin()],
             )
-            runner_duration = time.time() - runner_start
-            logger.info(f"[FREEZE DEBUG] Runner created in {runner_duration:.3f}s")
+            _mark_session_stage("mark_runner_construction_end")
             # Process streaming events and capture the manager response
-            manager_response = await self.streaming_processor.process_streaming_events( session_id, user_prompt, manager_agent, agent_runner, q, team_execution_span, image_input
+            manager_response = await self.streaming_processor.process_streaming_events( session_id, user_prompt, manager_agent, agent_runner, q, image_input=image_input
             )
-
-            # Explicitly flush to ensure traces are sent to Langfuse
-            try:
-                langfuse_client.flush()
-            except Exception as e:
-                logger.exception(f"Failed to flush Langfuse client: {str(e)}")
 
             logger.info(f"Agent team execution completed successfully - session_id: {session_id}")
 
@@ -678,17 +629,6 @@ Do not render charts for single values or non-numeric content.
 
         except Exception as e:
             logger.exception(f"Error running agent team: {str(e)}")
-            team_execution_span.event(
-                name="error",
-                output={
-                    "error_message": str(e),
-                    "error_type": "agent_team_execution_error"
-                }
-            )
-            team_execution_span.update(output={
-                "execution_completed": False,
-                "error": str(e)
-            })
             if q:
                 # Send error component
                 import uuid
@@ -714,7 +654,7 @@ Do not render charts for single values or non-numeric content.
 
     async def run_single_agent(self, user_prompt: str, session_id: str,
                                q: Optional[asyncio.Queue[dict]] = None,
-                               parent_trace=None, image_input: Optional[List[Dict]] = None,
+                               image_input: Optional[List[Dict]] = None,
                                task_summary: Optional[str] = None) -> Optional[str]:
         """Run a single specialized agent directly, with no manager/delegation.
 
@@ -728,23 +668,11 @@ Do not render charts for single values or non-numeric content.
             user_prompt (str): The user query to answer.
             session_id (str): Unique identifier for the current session.
             q (Optional[asyncio.Queue[dict]]): Queue for streaming responses.
-            parent_trace: Langfuse span/trace for observability.
             image_input (Optional[List[Dict]]): Images to pass to the agent.
 
         Returns:
             Optional[str]: The agent's final response text, if any.
         """
-        single_agent_span = langfuse_client.span(
-            trace_id=session_id,
-            parent_observation_id=parent_trace.id if parent_trace else None,
-            name="SingleAgent",
-            input={
-                "user_prompt": user_prompt,
-                "image_input": bool(image_input),
-                "agent_count": len(self.agent_repository.get_all_agents()),
-            },
-        )
-
         try:
             # Citation manager must exist before tools are created (mirrors run_agent_team)
             from src.smart_rag.infrastructure.session.citation_manager import get_citation_manager
@@ -773,10 +701,11 @@ Do not render charts for single values or non-numeric content.
             # Reuse the delegation factory's full agent-creation path (prompt
             # enrichment, memory, attached images, MCP, connectors, all tools).
             agent, toolkit = await self.delegation_factory._create_agent_with_error_handling(
-                agent_config, agent_name, normalized_name, "", single_agent_span, False, self.citation_manager
+                agent_config, agent_name, normalized_name, "", False, self.citation_manager
             )
             if agent is None:
                 raise RuntimeError(f"Failed to create single agent: {agent_name}")
+            _mark_first_model_agent_ready()
 
             if should_enable_temporary_child_agent_tool(agent_config):
                 agent.instruction = (
@@ -785,7 +714,6 @@ Do not render charts for single values or non-numeric content.
                 temporary_child_tool = make_temporary_child_agent_tool(
                     self,
                     agent_config,
-                    single_agent_span,
                     image_input=image_input,
                 )
                 agent.tools = [temporary_child_tool]
@@ -807,7 +735,9 @@ Do not render charts for single values or non-numeric content.
             # Persist the mono conversation so memory carries across turns, keyed
             # on the conversation's session_id.
             session_id_for_agent = session_id
-            session_helper = get_database_session_service()(db_url=settings.DATABASE_URL)
+            _mark_session_stage("mark_session_service_init_start")
+            session_helper = await get_shared_database_session_service()
+            _mark_session_stage("mark_session_service_init_end")
             agent_id = self.agent_repository.get_agent_id_by_name(agent_name) or agent_config.get('id', 'no_id')
 
             result, mcp_used, execution_summary, generated_files = await self.agent_runner.run_agent_tool(
@@ -832,11 +762,6 @@ Do not render charts for single values or non-numeric content.
                     agent_name, mcp_used, q, generated_files
                 )
 
-            try:
-                langfuse_client.flush()
-            except Exception as e:
-                logger.exception(f"Failed to flush Langfuse client: {str(e)}")
-
             # Persist citation state after the final response
             try:
                 if self.citation_manager:
@@ -845,7 +770,6 @@ Do not render charts for single values or non-numeric content.
             except Exception as e:
                 logger.error(f"[SINGLE_AGENT] Failed to save citation manager state: {str(e)}")
 
-            single_agent_span.update(output={"execution_completed": True})
             logger.info(f"Single-agent execution completed successfully - session_id: {session_id}")
 
             if q:
@@ -856,7 +780,6 @@ Do not render charts for single values or non-numeric content.
 
         except Exception as e:
             logger.exception(f"Error running single agent: {str(e)}")
-            single_agent_span.update(output={"execution_completed": False, "error": str(e)})
             if q:
                 import uuid
                 error_component = {

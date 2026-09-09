@@ -112,6 +112,7 @@
   "docx.loading": "Chargement du document…",
   "docx.error.title": "Impossible d’ouvrir le document",
   "docx.error.description": "Nous n’avons pas pu afficher ce document Word. Réessayez ou téléchargez le fichier original.",
+  "docx.toolbar.download": "Télécharger le document Word",
   "excel.loading": "Chargement du classeur…",
   "excel.error.title": "Impossible d’ouvrir le classeur",
   "excel.error.description": "Nous n’avons pas pu afficher ce fichier Excel. Réessayez ou téléchargez le fichier original.",

@@ -1,5 +1,6 @@
 """Unit tests for OrchestratorService pure helpers (no ADK/DB/LLM)."""
 import asyncio
+import json
 import os
 import sys
 from unittest.mock import AsyncMock, MagicMock
@@ -10,6 +11,29 @@ import pytest
 
 from src.companion_ai import scheduler, service as svc
 from src.companion_ai.plan import Plan, Status, Step
+
+
+@pytest.mark.asyncio
+async def test_add_message_projects_active_turn_id():
+    rm = MagicMock(add_message=AsyncMock())
+    service = svc.OrchestratorService(MagicMock(), rm, planner_model="m")
+    token = svc.active_turn_id.set("turn-1")
+    try:
+        await service._add_message("session-1", "assistant", "done")
+    finally:
+        svc.active_turn_id.reset(token)
+
+    args = rm.add_message.await_args.args
+    assert args[1:] == ("session-1", "assistant", "done", "turn-1")
+
+
+@pytest.mark.asyncio
+async def test_add_message_propagates_projection_failure():
+    rm = MagicMock(add_message=AsyncMock(side_effect=RuntimeError("database unavailable")))
+    service = svc.OrchestratorService(MagicMock(), rm, planner_model="m")
+
+    with pytest.raises(RuntimeError, match="database unavailable"):
+        await service._add_message("session-1", "assistant", "done")
 
 
 def test_make_plan_extracts_a_plan_when_output_schema_is_combined_with_tools(monkeypatch):
@@ -230,6 +254,53 @@ def test_plan_turn_keeps_a_genuine_direct_reply_completed():
 
     assert calls["n"] == 1, "a real direct reply must NOT trigger a retry"
     rm.set_session_status.assert_awaited_with("s", "completed")
+def _planner_service(monkeypatch, responses):
+    class FakeRunner:
+        def __init__(self):
+            self.session_service = MagicMock(
+                get_session=AsyncMock(return_value=object()),
+                create_session=AsyncMock(),
+            )
+            self.messages = []
+
+        async def run_async(self, **kwargs):
+            self.messages.append(kwargs["new_message"].parts[0].text)
+            event = MagicMock()
+            event.content.parts = [MagicMock(text=json.dumps(responses[len(self.messages) - 1]))]
+            yield event
+
+    runner = FakeRunner()
+    monkeypatch.setattr(svc.nodes, "build_llm", lambda *a, **k: "fake")
+    return svc.OrchestratorService(lambda node, app_name: runner, None, planner_model="fake"), runner
+
+
+def test_make_plan_drops_duplicate_ids_and_keeps_the_plan(monkeypatch):
+    # A flaky planner can emit the same id twice. Rather than retry or abort the
+    # turn, _make_plan drops the duplicate and keeps the plan (ids namespaced by
+    # plan.id downstream). One planner call, no correction round-trip.
+    invalid = {"title": "t", "steps": [
+        {"id": "s1", "description": "first"},
+        {"id": "s1", "description": "second", "depends_on": ["s1"]},
+    ]}
+    service, runner = _planner_service(monkeypatch, [invalid])
+
+    plan = asyncio.run(service._make_plan("sess", "user", "do work"))
+
+    assert len(plan.steps) == 1
+    assert plan.steps[0].id.endswith("s1")
+    assert len(runner.messages) == 1
+
+
+def test_make_plan_drops_blank_ids_and_keeps_the_plan(monkeypatch):
+    # The sibling case: a blank id is dropped the same way, no retry, no raise.
+    data = {"title": "t", "steps": [{"id": "s1"}, {"id": ""}]}
+    service, runner = _planner_service(monkeypatch, [data])
+
+    plan = asyncio.run(service._make_plan("sess", "user", "do work"))
+
+    assert len(plan.steps) == 1
+    assert plan.steps[0].id.endswith("s1")
+    assert len(runner.messages) == 1
 
 
 def test_step_row_shows_the_personas_display_name_before_it_runs():
@@ -1247,6 +1318,22 @@ async def test_inject_steps_registers_a_mail_wait_for_injected_await_reply():
     assert kw["session_id"] == "sess" and kw["step_id"] == live.steps[-1].id
 
 
+async def test_inject_steps_rejects_duplicate_ids_before_mutating_live_plan():
+    rm = MagicMock(upsert_steps=AsyncMock(), register_mail_wait=AsyncMock())
+    service = svc.OrchestratorService(MagicMock(), rm, planner_model="m")
+    original = Step(id="s1", kind="execute", status=Status.RUNNING, wave=3)
+    live = Plan(id="p", executor_id="e", executor_name="W", steps=[original])
+    new = [Step(id="n", description="first"), Step(id="n", description="second")]
+
+    with pytest.raises(ValueError, match="duplicate step ids"):
+        await service._inject_steps("sess", "u", live, new)
+
+    assert live.steps == [original]
+    assert original.wave == 3
+    rm.upsert_steps.assert_not_awaited()
+    rm.register_mail_wait.assert_not_awaited()
+
+
 async def test_apply_ops_cancel_persists_status_via_set_step_status():
     """A cancel op must persist through set_step_status — upsert_steps (what
     _project_step uses) does NOT touch `status` on conflict, so projecting a
@@ -1641,3 +1728,70 @@ async def test_concurrent_amends_on_one_session_are_serialized():
     # The second amend planned AFTER the first applied its step, so it saw a
     # bigger plan — proof it wasn't working from the same stale snapshot.
     assert seen_steps_at_plan == [1, 2]
+
+
+def _schema_aware_planner_service(monkeypatch, *, schema_pass_fails):
+    """A planner runner that knows whether the agent was built WITH output_schema.
+
+    When schema_pass_fails, the structured pass raises (as a provider that can't
+    do structured output would 400), so _make_plan must fall back to the
+    schema-less prompt-mode pass. Both passes otherwise return the same valid plan
+    JSON — the plan was always parsed from text, so prompt mode needs no schema.
+    """
+    _PLAN = {"title": "t", "goal": "g", "answer": "ok",
+             "steps": [{"id": "s1", "kind": "execute", "title": "x",
+                        "description": "do x", "depends_on": []}]}
+
+    class SchemaAwareRunner:
+        def __init__(self):
+            self.session_service = MagicMock(
+                get_session=AsyncMock(return_value=object()),
+                create_session=AsyncMock(),
+            )
+            self.calls = []  # (had_output_schema, message_text)
+
+        def bind(self, agent):
+            self._agent = agent
+            return self
+
+        async def run_async(self, **kwargs):
+            had_schema = getattr(self._agent, "output_schema", None) is not None
+            self.calls.append((had_schema, kwargs["new_message"].parts[0].text))
+            if had_schema and schema_pass_fails:
+                raise RuntimeError("response_format not supported by this model")
+            event = MagicMock()
+            event.content.parts = [MagicMock(text=json.dumps(_PLAN))]
+            yield event
+
+    runner = SchemaAwareRunner()
+    monkeypatch.setattr(svc.nodes, "build_llm", lambda *a, **k: "fake")
+    return (svc.OrchestratorService(lambda node, app_name: runner.bind(node),
+                                    None, planner_model="fake"),
+            runner)
+
+
+def test_make_plan_falls_back_to_prompt_mode_when_structured_output_unsupported(monkeypatch):
+    # A model whose provider can't do structured output makes the schema pass
+    # raise; _make_plan must retry schema-less (prompt mode) so the planner still
+    # works on ANY model that can emit JSON — not only structured-output ones.
+    service, runner = _schema_aware_planner_service(monkeypatch, schema_pass_fails=True)
+
+    plan = asyncio.run(service._make_plan("sess", "user", "find bitcoin price"))
+
+    assert [s.id.split("_")[-1] for s in plan.steps] == ["s1"]   # plan still built
+    assert len(runner.calls) == 2                                # schema, then fallback
+    assert runner.calls[0][0] is True                            # pass 0 had output_schema
+    assert runner.calls[1][0] is False                           # fallback had none
+    assert "strict JSON" in runner.calls[1][1]                   # contract restated in msg
+
+
+def test_make_plan_uses_structured_output_and_does_not_fall_back_when_supported(monkeypatch):
+    # A capable model succeeds on the structured pass: no fallback, one call —
+    # unchanged from before the fallback was added (zero regression).
+    service, runner = _schema_aware_planner_service(monkeypatch, schema_pass_fails=False)
+
+    plan = asyncio.run(service._make_plan("sess", "user", "find bitcoin price"))
+
+    assert len(plan.steps) == 1
+    assert len(runner.calls) == 1
+    assert runner.calls[0][0] is True                            # structured pass, no retry

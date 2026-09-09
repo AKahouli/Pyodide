@@ -103,6 +103,8 @@ vi.mock('@/modules/localization', () => ({
         newConversation: 'Start a new Yellowmind conversation',
         scrollLatest: 'Scroll to the latest message',
         resize: 'Resize Yellowmind panel',
+        'launcher.moveInstructions': 'Drag to move Yellowmind, or use the arrow keys while the button is focused.',
+        'launcher.position': `Yellowmind position: ${String(options?.x ?? '')} pixels from the left and ${String(options?.y ?? '')} pixels from the top.`,
         placeholder: 'Ask about your Playbooks...',
         sendLabel: 'Send to Yellowmind',
         sending: 'Working...',
@@ -139,6 +141,7 @@ vi.mock('@/modules/localization', () => ({
 
 function setViewport(width: number) {
   Object.defineProperty(window, 'innerWidth', { configurable: true, value: width });
+  Object.defineProperty(window, 'innerHeight', { configurable: true, value: 900 });
   Object.defineProperty(window, 'matchMedia', {
     configurable: true,
     value: vi.fn().mockImplementation((query: string) => ({
@@ -183,6 +186,98 @@ describe('PlatformCopilotMascot', () => {
       messages: [completedMessage()],
     };
     playbookDirty = false;
+  });
+
+  it('moves the launcher within the viewport without opening the panel after a drag', () => {
+    renderMascot();
+    const launcher = screen.getByRole('button', { name: 'Open Yellowmind' });
+    vi.spyOn(launcher, 'getBoundingClientRect').mockReturnValue({
+      bottom: 756,
+      height: 56,
+      left: 1200,
+      right: 1380,
+      top: 700,
+      width: 180,
+      x: 1200,
+      y: 700,
+      toJSON: () => ({}),
+    });
+    Object.defineProperties(launcher, {
+      setPointerCapture: { configurable: true, value: vi.fn() },
+      hasPointerCapture: { configurable: true, value: vi.fn().mockReturnValue(true) },
+      releasePointerCapture: { configurable: true, value: vi.fn() },
+    });
+
+    fireEvent.pointerDown(launcher, { button: 0, clientX: 1250, clientY: 730, pointerId: 7 });
+    fireEvent.pointerMove(launcher, { clientX: 0, clientY: 0, pointerId: 7 });
+    fireEvent.pointerUp(launcher, { pointerId: 7 });
+
+    expect(launcher).toHaveStyle({ left: '8px', top: '8px', right: 'auto', bottom: 'auto' });
+    expect(launcher).toHaveAccessibleDescription('Drag to move Yellowmind, or use the arrow keys while the button is focused.');
+    expect(screen.getByText('Yellowmind position: 8 pixels from the left and 8 pixels from the top.')).toBeInTheDocument();
+    fireEvent.click(launcher);
+    expect(screen.queryByRole('complementary', { name: 'Yellowmind' })).not.toBeInTheDocument();
+
+    fireEvent.click(launcher);
+    expect(screen.getByRole('complementary', { name: 'Yellowmind' })).toBeInTheDocument();
+  });
+
+  it('allows keyboard users to reposition the launcher with arrow keys', () => {
+    renderMascot();
+    const launcher = screen.getByRole('button', { name: 'Open Yellowmind' });
+    vi.spyOn(launcher, 'getBoundingClientRect').mockReturnValue({
+      bottom: 756,
+      height: 56,
+      left: 1200,
+      right: 1380,
+      top: 700,
+      width: 180,
+      x: 1200,
+      y: 700,
+      toJSON: () => ({}),
+    });
+
+    fireEvent.keyDown(launcher, { key: 'ArrowLeft' });
+
+    expect(launcher).toHaveStyle({ left: '1190px', top: '700px', right: 'auto', bottom: 'auto' });
+    expect(screen.queryByRole('complementary', { name: 'Yellowmind' })).not.toBeInTheDocument();
+  });
+
+  it('clamps the launcher when it returns after the viewport changes', () => {
+    const rectSpy = vi.spyOn(HTMLButtonElement.prototype, 'getBoundingClientRect').mockReturnValue({
+      bottom: 756,
+      height: 56,
+      left: 1200,
+      right: 1380,
+      top: 700,
+      width: 180,
+      x: 1200,
+      y: 700,
+      toJSON: () => ({}),
+    });
+    renderMascot();
+    const launcher = screen.getByRole('button', { name: 'Open Yellowmind' });
+    Object.defineProperties(launcher, {
+      setPointerCapture: { configurable: true, value: vi.fn() },
+      hasPointerCapture: { configurable: true, value: vi.fn().mockReturnValue(true) },
+      releasePointerCapture: { configurable: true, value: vi.fn() },
+    });
+    fireEvent.pointerDown(launcher, { button: 0, clientX: 1200, clientY: 700, pointerId: 8 });
+    fireEvent.pointerMove(launcher, { clientX: 1000, clientY: 600, pointerId: 8 });
+    fireEvent.pointerUp(launcher, { pointerId: 8 });
+    fireEvent.click(launcher);
+    fireEvent.click(launcher);
+    expect(screen.getByRole('complementary', { name: 'Yellowmind' })).toBeInTheDocument();
+
+    Object.defineProperties(window, {
+      innerWidth: { configurable: true, value: 500 },
+      innerHeight: { configurable: true, value: 300 },
+    });
+    fireEvent(window, new Event('resize'));
+    act(() => usePlatformCopilotPanelStore.getState().closePanel());
+
+    expect(screen.getByRole('button', { name: 'Open Yellowmind' })).toHaveStyle({ left: '312px', top: '236px' });
+    rectSpy.mockRestore();
   });
 
   it('opens as a non-modal desktop sidecar and renders deduplicated message actions', async () => {

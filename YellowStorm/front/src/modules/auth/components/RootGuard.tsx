@@ -8,7 +8,7 @@
  */
 
 import * as React from 'react';
-import { Outlet, Navigate, useLocation } from 'react-router-dom';
+import { matchPath, Outlet, Navigate, useLocation } from 'react-router-dom';
 import { Loader2 } from 'lucide-react';
 
 import { SidebarProvider, SidebarInset, SidebarTriggerMobile } from '@/components/ui/sidebar';
@@ -20,6 +20,7 @@ import { NewConversationPage } from '@/modules/conversation';
 import { useModelsStore } from '@/modules/models';
 import { useConversationStream } from '@/modules/conversation/hooks/useConversationStream';
 import { useConversationV2StreamConnection } from '@/modules/conversation-v2/useStream';
+import { usePlaybookStreamGlobal } from '@/modules/playbook/services/playbookStreamService';
 import { DEFAULT_FEATURE_VISIBILITY, getFeatureVisibility } from '@/modules/admin';
 import { PlatformCopilotMascot } from '@/modules/platform-copilot';
 import { isPendingAdminApproval } from '../utils/isPendingAdminApproval';
@@ -40,32 +41,54 @@ export function RootGuard() {
     DEFAULT_FEATURE_VISIBILITY.platformCopilot,
   );
 
+  const wasPendingRef = React.useRef(pendingApproval);
+  const [justApproved, setJustApproved] = React.useState(false);
+  const approvedTimerRef = React.useRef<number | undefined>(undefined);
+
+  React.useLayoutEffect(() => {
+    const wasPending = wasPendingRef.current;
+    wasPendingRef.current = pendingApproval;
+
+    if (wasPending && !pendingApproval && user?.status !== 'inactive') {
+      // Approval picked up by polling. Show the completed step-3 state briefly
+      // before revealing the app shell, so the status updates without a refresh.
+      setJustApproved(true);
+      if (approvedTimerRef.current !== undefined) {
+        window.clearTimeout(approvedTimerRef.current);
+      }
+      approvedTimerRef.current = window.setTimeout(() => {
+        setJustApproved(false);
+        approvedTimerRef.current = undefined;
+      }, 2500);
+    } else if (pendingApproval) {
+      setJustApproved(false);
+    }
+
+    return () => {
+      if (approvedTimerRef.current !== undefined) {
+        window.clearTimeout(approvedTimerRef.current);
+        approvedTimerRef.current = undefined;
+      }
+    };
+  }, [pendingApproval, user?.status]);
+
   // Keep SSE connections alive at app level so streaming persists across
   // navigation. v2 uses its own per-user pipe (one connection for all
   // conversation-v2 sessions) so multiple conversations can stream at once.
   useConversationStream();
   useConversationV2StreamConnection();
+  // Playbook execution events drive live canvas step statuses during runs.
+  usePlaybookStreamGlobal(isAuthenticated);
 
   // Initialize models when authenticated
   React.useEffect(() => {
-    if (
-      isAuthenticated &&
-      !requiresEmailVerification &&
-      !requiresProfileCompletion &&
-      !pendingApproval
-    ) {
+    if (isAuthenticated && !requiresEmailVerification && !requiresProfileCompletion && !pendingApproval && !justApproved) {
       fetchModels();
     }
-  }, [
-    isAuthenticated,
-    requiresEmailVerification,
-    requiresProfileCompletion,
-    pendingApproval,
-    fetchModels,
-  ]);
+  }, [isAuthenticated, requiresEmailVerification, requiresProfileCompletion, pendingApproval, justApproved, fetchModels]);
 
   React.useEffect(() => {
-    if (!isAuthenticated || requiresEmailVerification || requiresProfileCompletion || pendingApproval) {
+    if (!isAuthenticated || requiresEmailVerification || requiresProfileCompletion || pendingApproval || justApproved) {
       setPlatformCopilotEnabled(false);
       return;
     }
@@ -78,7 +101,7 @@ export function RootGuard() {
         if (active) setPlatformCopilotEnabled(false);
       });
     return () => { active = false; };
-  }, [isAuthenticated, requiresEmailVerification, requiresProfileCompletion, pendingApproval]);
+  }, [isAuthenticated, requiresEmailVerification, requiresProfileCompletion, pendingApproval, justApproved]);
 
   // Still loading auth state - show spinner to prevent flash of wrong content
   if (isLoading) {
@@ -104,17 +127,32 @@ export function RootGuard() {
     return <Navigate to='/complete-profile' replace />;
   }
 
-  if (pendingApproval) {
+  if (pendingApproval || justApproved) {
+    const status = justApproved
+      ? 'approved'
+      : user?.registrationApproval === 'rejected'
+        ? 'rejected'
+        : 'pending';
+
     return (
       <PendingApprovalPage
         onLogout={() => void logout()}
-        rejected={user?.registrationApproval === 'rejected'}
+        status={status}
       />
     );
   }
 
   // Fully authenticated - show app layout
   const isIndexRoute = location.pathname === '/';
+
+  // Hide the floating Second Brain mascot inside a Worky stream workspace
+  // (`/worky/:streamId`): it floats over the stream chat. It stays visible on
+  // the Worky dashboard (`/worky`), the stream report (`/worky/:id/report`) and
+  // everywhere else.
+  const isWorkyStreamRoute = Boolean(
+    matchPath({ path: '/worky/:streamId', end: true }, location.pathname),
+  );
+
 
   return (
     <SidebarProvider>
@@ -125,7 +163,7 @@ export function RootGuard() {
         </header>
         <div className='flex flex-1 min-h-0 flex-col items-center  overflow-hidden'>{isIndexRoute ? <NewConversationPage /> : <Outlet />}</div>
       </SidebarInset>
-      {platformCopilotEnabled && <PlatformCopilotMascot />}
+      {platformCopilotEnabled && !isWorkyStreamRoute && <PlatformCopilotMascot />}
     </SidebarProvider>
   );
 }

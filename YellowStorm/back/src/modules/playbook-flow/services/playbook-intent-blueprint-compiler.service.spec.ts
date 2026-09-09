@@ -32,6 +32,7 @@ function makeContext(): PlaybookIntentAnalysisContext {
     },
     limits: LIMITS,
     availableDesignCatalog: { availableSkills: [], availableConnectors: [], availableConnectorActions: [], availableWorkspaces: [] },
+    resolvedDesignResources: [],
     nodeTemplates: [{
       id: 'tpl-generic',
       key: 'generic.agent_step',

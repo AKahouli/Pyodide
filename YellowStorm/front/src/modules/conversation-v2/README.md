@@ -180,9 +180,13 @@ Each successful MCP `finalize` creates a **stable version** row (Mongo
 `revision_id`.
 
 - **UI**: [`VersionHistoryPanel`](components/RightPanel/VersionHistoryPanel.tsx)
-  exposes a compact header `VersionSwitcher` popover (newest first) with Preview
-  and Deploy actions, plus a slim `HistoricalPreviewBanner` when viewing an older
-  revision — so the NodePod preview keeps full height under the Aperçus / Données tabs.
+  exposes a compact `VersionSwitcher` popover (newest first) next to the LLM
+  model button in the Composer, with Preview and Deploy actions, plus a slim
+  `HistoricalPreviewBanner` when viewing an older revision — so the NodePod
+  preview keeps full height under the Aperçus / Données tabs. While the agent
+  streams, an amber **Draft** row (with the current workspace revision
+  reference) represents the upcoming version; it converts to a definitive
+  "Version N" entry only when the finalizer step lands.
 - **Preview-only**: selecting an older version calls `syncHostRevisionSources`
   without changing the agent binding (`latestRevisionId`).
 - **Deploy whitelist**: only finalized revision ids are accepted by

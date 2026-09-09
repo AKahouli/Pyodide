@@ -10,8 +10,8 @@ vi.mock('@/modules/localization', async (importOriginal) => {
   return { ...actual, useModuleTranslation: () => ({ t: translateMock, ready: true, language: 'en' }) };
 });
 
-vi.mock('@/components/AppBrandLogo', () => ({
-  AppBrandLogo: ({ className }: { className?: string }) => (
+vi.mock('@/components/icons', () => ({
+  AppLogo: ({ className }: { className?: string }) => (
     <div data-testid='app-logo' className={className}>
       logo
     </div>
@@ -43,14 +43,21 @@ describe('PendingApprovalPage', () => {
     expect(onLogout).toHaveBeenCalledTimes(1);
   });
 
-  it('shows declined access when Super Admin rejected the request', () => {
-    render(<PendingApprovalPage onLogout={vi.fn()} rejected />);
+  it('renders the rejected variant without the email hint', () => {
+    render(<PendingApprovalPage onLogout={vi.fn()} status='rejected' />);
 
+    expect(screen.getByRole('status')).toHaveTextContent('pendingApproval.messageRejected');
     expect(screen.getByText('pendingApproval.steps.validation.statusDone')).toBeInTheDocument();
     expect(screen.getByText('pendingApproval.steps.access.statusRejected')).toBeInTheDocument();
-    expect(screen.getByText('pendingApproval.messageRejected')).toBeInTheDocument();
-    expect(screen.queryByText('pendingApproval.message')).not.toBeInTheDocument();
     expect(screen.queryByText('pendingApproval.emailHint')).not.toBeInTheDocument();
-    expect(screen.queryByText('pendingApproval.steps.access.status')).not.toBeInTheDocument();
+  });
+
+  it('renders the approved variant with step 3 marked as done', () => {
+    render(<PendingApprovalPage onLogout={vi.fn()} status='approved' />);
+
+    expect(screen.getByRole('status')).toHaveTextContent('pendingApproval.messageApproved');
+    expect(screen.getByText('pendingApproval.steps.validation.statusDone')).toBeInTheDocument();
+    expect(screen.getByText('pendingApproval.steps.access.statusDone')).toBeInTheDocument();
+    expect(screen.queryByText('pendingApproval.emailHint')).not.toBeInTheDocument();
   });
 });

@@ -30,6 +30,7 @@ from src.grpc_generated import playbook_flow_pb2_grpc as pb_grpc  # noqa: E402
 from src.flow_engine.grpc_service import (  # noqa: E402
     PlaybookFlowRuntimeServicer,
     _apply_runtime_settings,
+    _sandbox_call_limit,
     app_settings,
     compiled_graph_cache,
     execution_limiter,
@@ -125,6 +126,7 @@ async def test_runtime_settings_preserve_zero_and_false(monkeypatch):
             graph_cache_enabled=False,
             graph_cache_max_entries=64,
             graph_cache_ttl_seconds=120,
+            max_sandbox_calls_per_step=16,
         )))
 
         assert app_settings.PLAYBOOK_EXECUTION_QUEUE_MAX_DEPTH == 0
@@ -132,6 +134,10 @@ async def test_runtime_settings_preserve_zero_and_false(monkeypatch):
         assert app_settings.PLAYBOOK_GRAPH_CACHE_ENABLED is False
         assert compiled_graph_cache.max_entries == 64
         assert compiled_graph_cache.ttl_seconds == 120
+        assert _sandbox_call_limit(pb.RunSettings(runtime_settings=pb.RuntimeSettings(
+            max_sandbox_calls_per_step=16,
+        ))) == 16
+        assert _sandbox_call_limit(pb.RunSettings()) == 30
     finally:
         compiled_graph_cache.reconfigure(max_entries=old_max_entries, ttl_seconds=old_ttl_seconds)
         await execution_limiter.resize(old_capacity)

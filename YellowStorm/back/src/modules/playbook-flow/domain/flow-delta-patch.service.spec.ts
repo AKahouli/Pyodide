@@ -161,4 +161,56 @@ describe('FlowDeltaPatchService', () => {
 
     expect(result.normalizedWorkspaces).toEqual([]);
   });
+
+  it('converts hydrated data binding subdocuments to plain objects on merged graphs', () => {
+    const service = new FlowDeltaPatchService(
+      new FlowWorkspacePolicyService(),
+      new FlowGraphSanitizerService(),
+    );
+    // Mongoose exposes subdocument fields through prototype getters, so a
+    // constantValue that is readable is not an own property of the instance.
+    const hydratedBinding = Object.create(
+      { constantValue: { text: 'BPC-Playbook1' } },
+    ) as Record<string, unknown> & { toObject: () => Record<string, unknown> };
+    hydratedBinding.id = 'binding-1';
+    hydratedBinding.targetNode = 'task-1';
+    hydratedBinding.targetPort = 'input';
+    hydratedBinding.sourceKind = 'constant';
+    hydratedBinding.toObject = () => ({
+      id: 'binding-1',
+      targetNode: 'task-1',
+      targetPort: 'input',
+      sourceKind: 'constant',
+      constantValue: { text: 'BPC-Playbook1' },
+    });
+
+    const result = service.buildPatchedGraph({
+      workspaces: ['workspace-1'],
+      nodes: [
+        {
+          id: 'task-1',
+          kind: 'step',
+          label: 'Draft',
+          input: { ports: [{ id: 'input' }] },
+          output: { ports: [{ id: 'output' }] },
+          metadata: { positionX: 10, positionY: 20 },
+        },
+      ],
+      controlEdges: [],
+      dataBindings: [hydratedBinding],
+    } as any, {
+      expectedUpdatedAt: '2026-05-30T06:00:00.000Z',
+      patch: {
+        nodes: {
+          positionUpdates: [{ id: 'task-1', positionX: 15, positionY: 25 }],
+        },
+      },
+    } as any);
+
+    expect(result.dataBindings).toHaveLength(1);
+    const mergedBinding = result.dataBindings[0];
+    expect(mergedBinding.sourceKind).toBe('constant');
+    expect(Object.prototype.hasOwnProperty.call(mergedBinding, 'constantValue')).toBe(true);
+    expect((mergedBinding as { constantValue?: unknown }).constantValue).toEqual({ text: 'BPC-Playbook1' });
+  });
 });

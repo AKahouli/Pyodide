@@ -9,7 +9,7 @@ export type PlaybookIntentConstructionEvent =
   | { type: 'edge_delta'; constructionId: string; playbookId: string; sequence: number; createdAt: string; suggestion: PlaybookIntentSuggestion }
   | { type: 'data_binding_delta'; constructionId: string; playbookId: string; sequence: number; createdAt: string; suggestion: PlaybookIntentSuggestion }
   | { type: 'completed'; constructionId: string; playbookId: string; sequence: number; createdAt: string; model: string; finalSuggestionCount: number }
-  | { type: 'failed'; constructionId: string; playbookId: string; sequence: number; createdAt: string; message: string; recoverable: boolean }
+  | { type: 'failed'; constructionId: string; playbookId: string; sequence: number; createdAt: string; message: string; recoverable: boolean; failureKind?: 'strict_validation' }
   | { type: 'cancelled'; constructionId: string; playbookId: string; sequence: number; createdAt: string; reason?: string };
 
 export interface PlaybookIntentConstructionStartResult {

@@ -86,27 +86,33 @@ def to_workflow(
     for step in plan.steps:
         target = nodes[step.id]
         deps = list(dict.fromkeys(step.depends_on))  # dedupe, preserve order
+        # EVERY step is fed through a silent pre-join, even with 0 or 1 dep, so
+        # its node_input is always None. That is load-bearing for the tool-call
+        # approval gate: ADK's single_turn workflow node appends its node_input as
+        # a trailing user event on every (re-)run (_llm_agent_wrapper), which on a
+        # confirmation resume would land AFTER the owner's verdict and stop ADK's
+        # native tool-confirmation processor from firing (it needs the verdict to
+        # be the last user turn). prepare_llm_agent_input skips that append when
+        # node_input is None — so routing through a no-output join gives native
+        # confirmation resume for free, no ADK patch. Worky never used node_input
+        # anyway (task comes from description injection, dep results from
+        # context_for_step), so None costs nothing.
+        #
+        # _SilentJoinNode (not a stock JoinNode) for the reason the sink is too:
+        # a stock JoinNode yields Event(output=...), a terminal event pinned to a
+        # fixed slot in ADK's replay barrier. As the plan GROWS mid-session
+        # (create_task / delegate / converse add), a join's structural position
+        # shifts, but history still expects its sequence key at the old slot — so
+        # a later resume times out ("Replay divergence detected: … sequence key
+        # 'join_<id>@1' …", seen live). Emitting no output takes the join out of
+        # the barrier so its position can float.
+        join = _SilentJoinNode(name=f"join_{node_name(step.id)}")
         if not deps:
-            edges.append((START, target))
-        elif len(deps) == 1:
-            edges.append((nodes[deps[0]], target))
+            edges.append((START, join))
         else:
-            # Fan-in: AND-join so the step runs exactly once, after all deps.
-            # _SilentJoinNode, not a stock JoinNode, for the SAME reason the sink
-            # is (see its docstring): a stock JoinNode yields Event(output=...),
-            # which is a terminal event pinned to a fixed slot in ADK's replay
-            # barrier. As the plan GROWS mid-session (create_task / delegate /
-            # converse add), this fan-in join's structural position shifts, but
-            # history still expects its sequence key at the old slot — so a later
-            # resume times out ("Replay divergence detected: … sequence key
-            # 'join_<id>@1' …", seen live). Emitting no output takes the join out
-            # of the barrier so its position can float. Nothing reads its output:
-            # the downstream step triggers on the join's COMPLETION, and worky
-            # executors get their task from description injection, not node input.
-            join = _SilentJoinNode(name=f"join_{node_name(step.id)}")
             for dep in deps:
                 edges.append((nodes[dep], join))
-            edges.append((join, target))
+        edges.append((join, target))
 
     # ADK requires a single terminal output. A plan can end in several parallel
     # leaves (steps nothing depends on), so join them into one sink.

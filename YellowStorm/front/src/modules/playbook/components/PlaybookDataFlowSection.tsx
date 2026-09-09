@@ -779,35 +779,53 @@ function SourcePicker({
   );
 
   const handleConstantSave = () => {
+    // An empty constant must never reach the store: the backend rejects
+    // constant bindings without constantValue (ERR_2522), which would break
+    // every subsequent autosave of the playbook.
+    const trimmedConstantValue = constantValue.trim();
     if (binding) {
       const existingLabel = formatConstantSourceLabel(binding.constantValue, '');
       const shouldKeepStructuredValue = binding.sourceKind === 'constant'
         && typeof binding.constantValue === 'object'
         && binding.constantValue !== null
         && constantValue === existingLabel;
-      const patch: Partial<DataBinding> = {
+      const nextConstantValue = shouldKeepStructuredValue
+        ? binding.constantValue
+        : trimmedConstantValue ? { text: constantValue } : undefined;
+      if (nextConstantValue === undefined) {
+        onClose();
+        return;
+      }
+      onUpdateBinding(binding.id, {
         sourceKind: 'constant',
-        constantValue: shouldKeepStructuredValue ? binding.constantValue : constantValue ? { text: constantValue } : undefined,
+        constantValue: nextConstantValue,
         sourceNode: undefined,
         sourcePort: undefined,
         triggerPath: undefined,
         statePath: undefined,
         expression: undefined,
-      };
-      onUpdateBinding(binding.id, patch);
+      });
     } else {
+      if (!trimmedConstantValue) {
+        onClose();
+        return;
+      }
       onCreateBinding(inputPort.id, 'constant', {
-        constantValue: constantValue ? { text: constantValue } : undefined,
+        constantValue: { text: constantValue },
       });
     }
     onClose();
   };
 
   const handleExpressionSave = () => {
+    if (!expressionValue.trim()) {
+      onClose();
+      return;
+    }
     if (binding) {
       const patch: Partial<DataBinding> = {
         sourceKind: 'expression',
-        expression: expressionValue || undefined,
+        expression: expressionValue,
         sourceNode: undefined,
         sourcePort: undefined,
         triggerPath: undefined,
@@ -816,12 +834,16 @@ function SourcePicker({
       };
       onUpdateBinding(binding.id, patch);
     } else {
-      onCreateBinding(inputPort.id, 'expression', { expression: expressionValue || undefined });
+      onCreateBinding(inputPort.id, 'expression', { expression: expressionValue });
     }
     onClose();
   };
 
   const handlePathSave = (kind: 'trigger' | 'state') => {
+    if (!pathValue.trim()) {
+      onClose();
+      return;
+    }
     if (binding) {
       const patch: Partial<DataBinding> = {
         sourceKind: kind,
@@ -830,14 +852,14 @@ function SourcePicker({
         constantValue: undefined,
         expression: undefined,
         ...(kind === 'trigger'
-          ? { triggerPath: pathValue || undefined, statePath: undefined }
-          : { statePath: pathValue || undefined, triggerPath: undefined }),
+          ? { triggerPath: pathValue, statePath: undefined }
+          : { statePath: pathValue, triggerPath: undefined }),
       };
       onUpdateBinding(binding.id, patch);
     } else {
       onCreateBinding(inputPort.id, kind, kind === 'trigger'
-        ? { triggerPath: pathValue || undefined }
-        : { statePath: pathValue || undefined });
+        ? { triggerPath: pathValue }
+        : { statePath: pathValue });
     }
     onClose();
   };

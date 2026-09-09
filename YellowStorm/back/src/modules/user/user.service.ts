@@ -230,6 +230,7 @@ export class UserService {
       !user.profileComplete && user.registrationApproval === RegistrationApproval.PENDING;
 
     const now = new Date();
+    const wasProfileComplete = user.profileComplete;
 
     user.profile.firstName = data.firstName;
     user.profile.lastName = data.lastName;
@@ -257,15 +258,17 @@ export class UserService {
       description: user.profile.description,
     });
 
+    // The super admin registration notice must be sent only once the applicant
+    // has completed and validated their profile (not at sign-up).
     if (shouldNotifySuperAdmins) {
       try {
         await this.registrationApprovalService.notifySuperAdminsOfRegistration({
           userId,
           email: user.email,
-          requestedAt: now,
+          requestedAt: user.createdAt,
         });
       } catch (error) {
-        this.logger.warn('Failed to notify super admins of registration', {
+        this.logger.warn('Failed to notify super admins of completed registration', {
           userId,
           error: (error as Error).message,
         });

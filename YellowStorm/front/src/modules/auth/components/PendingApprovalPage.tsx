@@ -1,9 +1,8 @@
 import { Check, LogOut, Mail, X } from 'lucide-react';
-import { AppBrandLogo } from '@/components/AppBrandLogo';
+import { AppLogo } from '@/components/icons';
 import { Button } from '@/components/ui/button';
 import { StarsBackground } from '@/modules/conversation/effects/stars-background';
 import { useModuleTranslation, type ModuleTranslationKey } from '@/modules/localization';
-import { AuthScrollShell } from './AuthScrollShell';
 
 type AuthKey = ModuleTranslationKey<'auth'>;
 
@@ -11,14 +10,22 @@ const PENDING_APPROVAL_HERO_SRC = '/pending-approval-hero.png';
 
 type StepState = 'done' | 'current' | 'upcoming' | 'rejected';
 type StepId = 'signup' | 'validation' | 'access';
+type ApprovalStatus = 'pending' | 'approved' | 'rejected';
 
 interface PendingApprovalPageProps {
   onLogout: () => void;
-  rejected?: boolean;
+  status?: ApprovalStatus;
 }
 
-function getSteps(rejected: boolean): ReadonlyArray<{ id: StepId; state: StepState }> {
-  if (rejected) {
+function getSteps(status: ApprovalStatus): ReadonlyArray<{ id: StepId; state: StepState }> {
+  if (status === 'approved') {
+    return [
+      { id: 'signup', state: 'done' },
+      { id: 'validation', state: 'done' },
+      { id: 'access', state: 'done' },
+    ];
+  }
+  if (status === 'rejected') {
     return [
       { id: 'signup', state: 'done' },
       { id: 'validation', state: 'done' },
@@ -33,8 +40,8 @@ function getSteps(rejected: boolean): ReadonlyArray<{ id: StepId; state: StepSta
 }
 
 function stepStatusKey(id: StepId, state: StepState): AuthKey {
-  if (id === 'validation' && state === 'done') {
-    return 'pendingApproval.steps.validation.statusDone';
+  if (state === 'done' && (id === 'validation' || id === 'access')) {
+    return `pendingApproval.steps.${id}.statusDone`;
   }
   if (id === 'access' && state === 'rejected') {
     return 'pendingApproval.steps.access.statusRejected';
@@ -87,20 +94,23 @@ function StepIcon({ state }: { state: StepState }) {
   return <span className='h-8 w-8 rounded-full border-2 border-neutral-600' />;
 }
 
-export function PendingApprovalPage({ onLogout, rejected = false }: PendingApprovalPageProps) {
+export function PendingApprovalPage({ onLogout, status = 'pending' }: PendingApprovalPageProps) {
   const { t } = useModuleTranslation('auth');
-  const steps = getSteps(rejected);
-  const messageKey: AuthKey = rejected
-    ? 'pendingApproval.messageRejected'
-    : 'pendingApproval.message';
+  const steps = getSteps(status);
+  const messageKey: AuthKey =
+    status === 'approved'
+      ? 'pendingApproval.messageApproved'
+      : status === 'rejected'
+        ? 'pendingApproval.messageRejected'
+        : 'pendingApproval.message';
 
   return (
     <div className='fixed inset-0 z-[100] bg-[#0b0b0b]'>
-      <AuthScrollShell>
+      <div className='relative flex h-full min-h-0 w-full flex-1 flex-col overflow-y-auto'>
         <StarsBackground shootingStars={false} />
 
         <header className='absolute top-6 left-6 z-20'>
-          <AppBrandLogo className='h-12 w-56' />
+          <AppLogo className='h-12 w-56' />
         </header>
 
         <main className='relative z-10 flex min-h-full flex-col items-center justify-center px-4 py-24'>
@@ -120,7 +130,7 @@ export function PendingApprovalPage({ onLogout, rejected = false }: PendingAppro
             </h1>
             <p className='mt-2 text-sm text-neutral-400'>{t('pendingApproval.success')}</p>
 
-            <ol className='mt-8 grid grid-cols-3 gap-2 rounded-2xl bg-black/70 px-3 py-4'>
+            <ol className='mt-8 grid grid-cols-3 gap-2 rounded-2xl bg-black/35 px-3 py-4'>
               {steps.map((step, index) => (
                 <li key={step.id} className='relative flex flex-col items-center text-center'>
                   {index < steps.length - 1 ? (
@@ -138,15 +148,17 @@ export function PendingApprovalPage({ onLogout, rejected = false }: PendingAppro
             <p
               id='pending-approval-message'
               className={
-                rejected
+                status === 'rejected'
                   ? 'mt-6 text-sm leading-relaxed text-red-200'
-                  : 'mt-6 text-sm leading-relaxed text-neutral-300'
+                  : status === 'approved'
+                    ? 'mt-6 text-sm leading-relaxed text-green-200'
+                    : 'mt-6 text-sm leading-relaxed text-neutral-300'
               }
             >
               {t(messageKey)}
             </p>
 
-            {rejected ? null : (
+            {status === 'pending' && (
               <p className='mt-5 flex items-center justify-center gap-2 rounded-xl bg-black/40 px-4 py-3 text-sm text-neutral-300'>
                 <Mail aria-hidden className='h-4 w-4 shrink-0 text-orange-400' />
                 {t('pendingApproval.emailHint')}
@@ -165,7 +177,7 @@ export function PendingApprovalPage({ onLogout, rejected = false }: PendingAppro
             </Button>
           </section>
         </main>
-      </AuthScrollShell>
+      </div>
     </div>
   );
 }

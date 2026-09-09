@@ -173,7 +173,7 @@ export class PlaybookIntentGraphBindingResolverService {
       return null;
     }
 
-    if (binding.sourceKind === 'constant' || binding.sourceKind === 'state') {
+    if (binding.sourceKind === 'constant' || binding.sourceKind === 'state' || binding.sourceKind === 'trigger') {
       return { ...binding, targetPort: targetPort.id };
     }
 

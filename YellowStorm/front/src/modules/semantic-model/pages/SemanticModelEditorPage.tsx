@@ -14,6 +14,7 @@ import {
   Redo2,
   Save,
   Undo2,
+  Zap,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
@@ -32,6 +33,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { showError, showSuccess } from "@/lib/notifications";
+import { parseApiError } from "@/lib/api-error";
 import { useModuleTranslation } from "@/modules/localization";
 import { semanticModelApi } from "../api";
 import {
@@ -41,6 +43,10 @@ import {
 } from "../components/editor/EditorDialogs";
 import { SemanticModelCanvas } from "../components/editor/SemanticModelCanvas";
 import { SemanticModelInspector } from "../components/editor/SemanticModelInspector";
+import { SemanticModelGraphViewer } from "../components/editor/SemanticModelGraphViewer";
+import { SemanticModelValidateDialog } from "../components/editor/SemanticModelValidateDialog";
+import { SemanticModelBuildProgressBanner } from "../components/editor/SemanticModelBuildProgressBanner";
+import { isBuildActive, useSemanticBuildJob } from "../hooks/use-semantic-build-job";
 import { VersionsPanel } from "../components/versions/VersionsPanel";
 import { useKnowledgeLinking } from "../hooks/use-knowledge-linking";
 import { useSemanticGraph, useSemanticModel } from "../query/hooks";
@@ -49,9 +55,7 @@ import type { EditorMode } from "../types";
 import { layoutStructure } from "../utils/model-utils";
 
 function apiCode(error: unknown): string | undefined {
-  return error && typeof error === "object" && "code" in error
-    ? String(error.code)
-    : undefined;
+  return parseApiError(error).code;
 }
 
 export function SemanticModelEditorPage() {
@@ -94,6 +98,8 @@ export function SemanticModelEditorPage() {
   const [knowledgeOpen, setKnowledgeOpen] = useState(false);
   const [knowledgeTargetId, setKnowledgeTargetId] = useState<string | null>(null);
   const [leaveOpen, setLeaveOpen] = useState(false);
+  const [validateOpen, setValidateOpen] = useState(false);
+  const [graphViewerOpen, setGraphViewerOpen] = useState(false);
   const savingRef = useRef(false);
   const hydratedVersionRef = useRef<string | null>(null);
   const knowledgeClosedAtRef = useRef(0);
@@ -103,6 +109,8 @@ export function SemanticModelEditorPage() {
     model.data?.role !== "viewer" &&
     Boolean(model.data?.currentDraftVersionId);
   const canValidate = isSemanticGraphSaved({ graph, pending, saveStatus });
+  const buildJob = useSemanticBuildJob(modelId);
+  const buildActive = isBuildActive(buildJob.data);
 
   useEffect(() => {
     if (
@@ -145,7 +153,11 @@ export function SemanticModelEditorPage() {
         );
         if (saveIsCurrent()) markSaved(result.revision, batch.groupCount);
       } catch (error) {
-        if (saveIsCurrent()) markFailed(apiCode(error) === "ERR_3703" ? "conflict" : "error");
+        if (saveIsCurrent()) {
+          const apiError = parseApiError(error);
+          markFailed(apiError.code === "ERR_3703" ? "conflict" : "error");
+          showError(t("save.error"), { description: `[${apiError.code}] ${apiError.message}` });
+        }
       } finally {
         savingRef.current = false;
       }
@@ -172,6 +184,7 @@ export function SemanticModelEditorPage() {
       });
     }
   }, [modelId, setValidation, t]);
+
 
   useEffect(() => {
     const keyboard = (event: KeyboardEvent) => {
@@ -386,6 +399,12 @@ export function SemanticModelEditorPage() {
           )}
         </div>
       </header>
+      {modelId && (
+        <SemanticModelBuildProgressBanner
+          modelId={modelId}
+          onRetry={() => setValidateOpen(true)}
+        />
+      )}
       <main className="relative flex min-h-0 flex-1">
         {versionsOpen && (
           <VersionsPanel
@@ -409,6 +428,31 @@ export function SemanticModelEditorPage() {
               setRelationOpen(true);
             }}
           />
+          {canEdit && graph.nodes.length > 0 && (
+            <div className="absolute bottom-5 right-5 z-10 flex gap-2">
+              {graph.records.length > 0 && (
+                <Button
+                  size="lg"
+                  variant="outline"
+                  className="shadow-lg bg-background"
+                  onClick={() => setGraphViewerOpen(true)}
+                >
+                  <Network className="mr-2 h-4 w-4" />
+                  {t("graphViewer.button")}
+                </Button>
+              )}
+              <Button
+                size="lg"
+                className="shadow-lg"
+                onClick={() => setValidateOpen(true)}
+                disabled={buildActive}
+                title={buildActive ? t("build.alreadyRunning") : undefined}
+              >
+                <Zap className="mr-2 h-4 w-4" />
+                {t("validate.button")}
+              </Button>
+            </div>
+          )}
           {!graph.nodes.length && mode !== "records" && (
             <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
               <div className="pointer-events-auto max-w-sm rounded-3xl border bg-background/95 p-7 text-center shadow-xl">
@@ -480,6 +524,20 @@ export function SemanticModelEditorPage() {
         initialConnection={relationConnection}
       />
       <AddRecordDialog open={recordOpen} onOpenChange={setRecordOpen} />
+      {modelId && (
+        <SemanticModelValidateDialog
+          open={validateOpen}
+          onOpenChange={setValidateOpen}
+          modelId={modelId}
+        />
+      )}
+      {modelId && (
+        <SemanticModelGraphViewer
+          open={graphViewerOpen}
+          onClose={() => setGraphViewerOpen(false)}
+          modelId={modelId}
+        />
+      )}
       <Dialog open={saveStatus === "conflict"}>
         <DialogContent>
           <DialogHeader>

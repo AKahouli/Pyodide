@@ -32,6 +32,7 @@ export function mapPostgresMessage(row: typeof schema.messages.$inferSelect): Me
     durationMs: row.durationMs ?? undefined,
     timeToFirstChunk: row.timeToFirstChunk ?? undefined,
     timeToFirstToken: row.timeToFirstToken ?? undefined,
+    latencyMetrics: row.latencyMetrics as MessageRecord['latencyMetrics'],
     requestId: row.requestId ?? undefined,
     guardrailDecision: row.guardrailDecision as MessageRecord['guardrailDecision'],
     interaction: row.interaction as MessageRecord['interaction'],

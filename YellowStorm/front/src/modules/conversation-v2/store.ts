@@ -513,6 +513,15 @@ export const useConversationV2Store = create<State & Actions>()(
         const repo = get().selectedConnectorRepo;
         const skillIds = get().selectedSkillIds;
         const connectorIds = get().selectedConnectorIds;
+        // When the user previews a historical version and sends a message, the
+        // turn must build from THAT revision — the backend branches a fresh
+        // revision from it (history is never rewritten).
+        const latestFinalized = resolveLatestFinalizedRevisionId(get().finalizedVersions);
+        const selectedRevision = get().previewRevisionId;
+        const baseRevisionId =
+          selectedRevision && latestFinalized && selectedRevision !== latestFinalized
+            ? selectedRevision
+            : undefined;
         try {
           await conversationV2Api.sendMessage(sessionId, {
             message,
@@ -529,6 +538,7 @@ export const useConversationV2Store = create<State & Actions>()(
               : {}),
             ...(skillIds.length ? { skillIds } : {}),
             ...(connectorIds.length ? { connectorIds } : {}),
+            ...(baseRevisionId ? { baseRevisionId } : {}),
           });
         } catch (err) {
           set(

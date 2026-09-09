@@ -191,17 +191,16 @@ export class WhatsAppSessionManager implements OnModuleInit, OnModuleDestroy {
    * Sends `text` to the Worky bridge WhatsApp group via the system bot socket.
    * Tracks the sent message ID so user-session inbound can ignore echoes if needed.
    */
-  async sendToWorkyGroup(streamId: string, text: string): Promise<void> {
+  async sendToWorkyGroup(streamId: string, text: string): Promise<'sent' | 'not_configured'> {
     const groupJid = await this.workyGroupService.resolveGroupJid(streamId);
     if (!groupJid) {
       this.logger.warn('sendToWorkyGroup: no group JID for stream', { streamId });
-      return;
+      return 'not_configured';
     }
 
     const botSocket = this.getSystemBotSocket();
     if (!botSocket) {
-      this.logger.warn('sendToWorkyGroup: system bot socket not active', { streamId });
-      return;
+      throw new Error('Worky WhatsApp system bot socket is not active');
     }
 
     try {
@@ -216,6 +215,7 @@ export class WhatsAppSessionManager implements OnModuleInit, OnModuleDestroy {
         this.botSentMessageIds.add(msgId);
         setTimeout(() => this.botSentMessageIds.delete(msgId), 60_000);
       }
+      return 'sent';
     } catch (err) {
       this.logger.warn('sendToWorkyGroup failed', {
         streamId,

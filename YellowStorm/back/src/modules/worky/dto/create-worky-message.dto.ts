@@ -1,4 +1,4 @@
-import { IsNotEmpty, IsOptional, IsString, MaxLength } from 'class-validator';
+import { IsNotEmpty, IsOptional, IsString, IsUUID, MaxLength } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 
 /**
@@ -17,6 +17,11 @@ export class CreateWorkyMessageDto {
   @IsNotEmpty()
   @MaxLength(50000)
   content!: string;
+
+  @ApiPropertyOptional({ description: 'Client-generated id used to correlate this turn with Electric updates.' })
+  @IsOptional()
+  @IsUUID()
+  turnId?: string;
 
   @ApiPropertyOptional({
     description:

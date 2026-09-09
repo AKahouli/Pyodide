@@ -1,7 +1,6 @@
 """Helpers for managing ADK sessions."""
 import asyncio
 import uuid
-import time
 from typing import Any, Dict, List, Optional
 from threading import Lock
 
@@ -9,51 +8,43 @@ from google.adk.agents import Agent
 from google.adk.runners import Runner
 from google.adk.sessions import DatabaseSessionService, Session
 
-from sqlalchemy import MetaData
-from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
+from sqlalchemy.ext.asyncio import create_async_engine
 
 from src.config.settings import get_settings
 from src.logger.logging import get_logger
 from src.smart_rag.infrastructure.processing.plugin import CleanSessionPlugin
+from src.smart_rag.infrastructure.compaction import make_chat_runner
 
 logger = get_logger("api.smart_rag.session_helper")
 settings = get_settings()
 APP_NAME = "manager_app"
 DEFAULT_AGENT_NAME = "unknown"
-# Parallel Session Manager - shared engine with async coordination
+# Parallel Session Manager - shared engine with async coordination.
+# NOTE: these module-level locks bind to the first event loop that contends
+# on them; production runs one long-lived loop, so per-test loops in pytest
+# must not contend across resets.
 _shared_engine = None
 _engine_lock = asyncio.Lock()
+_shared_session_service = None
+_session_service_lock = asyncio.Lock()
 
 
 async def get_shared_engine(db_url: str):
     """Get or create shared SQLAlchemy engine"""
     global _shared_engine
 
-    start_time = time.time()
-
     # Fast path: engine already exists
     if _shared_engine is not None:
-        logger.info(f"[FREEZE DEBUG] get_shared_engine returning existing engine (fast path) in {time.time() - start_time:.3f}s")
         return _shared_engine
 
-    # Slow path: create engine
-    logger.info("[FREEZE DEBUG] get_shared_engine: engine doesn't exist, waiting for lock...")
-    lock_start = time.time()
     async with _engine_lock:
-        lock_duration = time.time() - lock_start
-        logger.info(f"[FREEZE DEBUG] get_shared_engine: acquired lock after {lock_duration:.2f}s")
-
         # Double-check pattern
         if _shared_engine is None:
             try:
-                logger.info("[FREEZE DEBUG] Creating shared database engine for parallel access...")
-                create_start = time.time()
-
                 # Ensure DB URL uses async driver
                 async_db_url = db_url
                 if db_url.startswith("postgresql://"):
                     async_db_url = db_url.replace("postgresql://", "postgresql+asyncpg://", 1)
-                    logger.info(f"[FREEZE DEBUG] Converting DB URL to use asyncpg driver")
 
                 _shared_engine = create_async_engine(
                     async_db_url,
@@ -66,16 +57,10 @@ async def get_shared_engine(db_url: str):
                         "server_settings": {"statement_timeout": "10000"},  # 10 seconds in ms
                     },
                 )
-                create_duration = time.time() - create_start
-                logger.info(f"[FREEZE DEBUG] Shared async database engine created in {create_duration:.2f}s")
             except Exception as e:
                 logger.error(f"Failed to create shared database engine: {str(e)}")
                 raise
-        else:
-            logger.info("[FREEZE DEBUG] Engine was created by another request while we waited for lock")
 
-    total_duration = time.time() - start_time
-    logger.info(f"[FREEZE DEBUG] get_shared_engine completed in {total_duration:.2f}s")
     return _shared_engine
 
 
@@ -89,33 +74,63 @@ async def dispose_shared_engine():
         logger.info("Shared database engine disposed")
 
 
-class PatchedDatabaseSessionService(DatabaseSessionService):
-    """Database session service with tuned connection pooling."""
+async def get_shared_database_session_service():
+    """Return the one warmed session service for this process.
 
-    def __init__(self, db_url: str) -> None:
-        # Use the shared global engine - this requires the engine to be already created
-        logger.info("[FREEZE DEBUG] PatchedDatabaseSessionService.__init__ STARTED")
-        global _shared_engine
-        if _shared_engine is None:
-            raise RuntimeError("Shared engine not initialized. Call await get_shared_engine() first.")
+    Built lazily (startup or first request) on the shared pooled engine:
+    engine creation, service construction, and ``prepare_tables()`` are paid
+    once here instead of on every request's critical path. The service holds
+    no request-specific state; request diagnostics stay in ContextVars.
+    """
+    global _shared_session_service
 
-        # Initialize parent class to set up all required attributes
-        # Pass the async URL to parent
-        async_db_url = db_url
-        if db_url.startswith("postgresql://"):
-            async_db_url = db_url.replace("postgresql://", "postgresql+asyncpg://", 1)
-        super().__init__(async_db_url)
+    # Fast path: service already warmed.
+    if _shared_session_service is not None:
+        return _shared_session_service
 
-        # Replace the engine with our shared async engine
-        self.db_engine = _shared_engine
-        self.database_session_factory = async_sessionmaker(bind=self.db_engine, expire_on_commit=False)
+    async with _session_service_lock:
+        # Double-check pattern: another waiter may have warmed it already.
+        if _shared_session_service is not None:
+            return _shared_session_service
+
+        engine = await get_shared_engine(settings.DATABASE_URL)
+
+        from src.smart_rag.infrastructure.monitoring.instrumented_database_session_service import (
+            InstrumentedDatabaseSessionService,
+        )
+
+        service = InstrumentedDatabaseSessionService(db_engine=engine)
+        # ADK 2.8 public startup API: pay schema checks/creation before the
+        # service is published so request-path calls fast-return.
+        await service.prepare_tables()
+
+        _shared_session_service = service
+        return service
+
+
+async def dispose_shared_database_session_service():
+    """Clear the shared session service during shutdown.
+
+    Takes the provider lock so a lazily-warming concurrent acquisition
+    cannot publish a service after disposal. The service does not own the
+    shared engine (it was injected via ``db_engine=``), so ``close()``
+    releases no engine resources; the engine itself is disposed exactly
+    once by :func:`dispose_shared_engine`.
+    """
+    global _shared_session_service
+    async with _session_service_lock:
+        service = _shared_session_service
+        _shared_session_service = None
+        if service is not None:
+            await service.close()
+
 
 class SessionHelper:
     """Utility class to manage sessions and runners for a user."""
 
     def __init__(self, user_id: str) -> None:
         self.user_id = user_id
-        self.session_service: Optional[PatchedDatabaseSessionService] = None
+        self.session_service: Optional[DatabaseSessionService] = None
         self.session: Optional[Session] = None
         self.session_id: Optional[str] = None
         self.runner: Optional[Runner] = None
@@ -206,37 +221,17 @@ class SessionHelper:
             Exception: If session initialization fails
         """
         try:
-            start_time = time.time()
-            logger.info(f"[FREEZE DEBUG] init_session STARTED for user {self.user_id}")
-
-            # Ensure shared engine is ready, then create session service
-            engine_start = time.time()
-            logger.info(f"[FREEZE DEBUG] Calling get_shared_engine()")
-            await get_shared_engine(settings.DATABASE_URL)
-            engine_duration = time.time() - engine_start
-            logger.info(f"[FREEZE DEBUG] get_shared_engine() completed in {engine_duration:.2f}s")
-
-            # POTENTIAL FREEZE POINT #1: PatchedDatabaseSessionService calls create_all()
-            service_start = time.time()
-            logger.info(f"[FREEZE DEBUG] Creating PatchedDatabaseSessionService - will call create_all()")
-            self.session_service = PatchedDatabaseSessionService(settings.DATABASE_URL)
-            service_duration = time.time() - service_start
-            logger.info(f"[FREEZE DEBUG] PatchedDatabaseSessionService created in {service_duration:.2f}s")
+            # Shared warmed service: engine creation and prepare_tables() are
+            # paid once per process, not per request.
+            self.session_service = await get_shared_database_session_service()
 
             self.session_id = session_id or f"session-{uuid.uuid4()}"
-            logger.info(f"[FREEZE DEBUG] Session ID: {self.session_id}")
 
             # Extract agent metadata and tools
-            extract_start = time.time()
             system_prompt, agent_name = self._extract_agent_metadata(agent)
             tools_info = self._extract_tools_info(agent)
-            extract_duration = time.time() - extract_start
-            logger.info(f"[FREEZE DEBUG] Agent metadata extracted in {extract_duration:.2f}s")
 
             # Create or retrieve session - calls _find_existing_session
-            set_session_start = time.time()
-            logger.info(f"[FREEZE DEBUG] Calling set_session() - will call _find_existing_session()")
-
             extra_state = {}
             if hasattr(agent, "_mcp_search_state"):
                 extra_state.update(agent._mcp_search_state)
@@ -247,27 +242,13 @@ class SessionHelper:
                 tools_info=tools_info,
                 extra_state=extra_state
             )
-            set_session_duration = time.time() - set_session_start
-            logger.info(f"[FREEZE DEBUG] set_session() completed in {set_session_duration:.2f}s")
 
-            # Initialize runner with clean session plugin
-            runner_start = time.time()
-            self.runner = Runner(
-                agent=agent,
-                app_name=APP_NAME,
-                session_service=self.session_service,
-                plugins=[CleanSessionPlugin()],
-            )
-            runner_duration = time.time() - runner_start
-            logger.info(f"[FREEZE DEBUG] Runner created in {runner_duration:.2f}s")
-
-            total_duration = time.time() - start_time
-            logger.info(f"[FREEZE DEBUG] init_session COMPLETED in {total_duration:.2f}s")
+            # Initialize runner (with compaction when the request enabled it)
+            self.runner = make_chat_runner(agent, self.session_service)
 
             return self.session_id
         except Exception as e:
-            total_duration = time.time() - start_time
-            logger.error(f"[FREEZE DEBUG] init_session FAILED after {total_duration:.2f}s for user {self.user_id}: {str(e)}")
+            logger.error(f"init_session failed for user {self.user_id}: {str(e)}")
             raise
 
     def _build_session_state(
@@ -311,23 +292,15 @@ class SessionHelper:
         Returns:
             Optional[Session]: Existing session if found, None otherwise
         """
-        start_time = time.time()
         try:
-            logger.info(f"[FREEZE DEBUG] _find_existing_session STARTED for session {self.session_id}, user {self.user_id}")
             result = await self.session_service.get_session(
                 app_name=APP_NAME,
                 user_id=self.user_id,
                 session_id=self.session_id
             )
-            duration = time.time() - start_time
-            if result:
-                logger.info(f"[FREEZE DEBUG] _find_existing_session FOUND existing session in {duration:.3f}s")
-            else:
-                logger.info(f"[FREEZE DEBUG] _find_existing_session NO session found in {duration:.3f}s")
             return result
         except Exception as e:
-            duration = time.time() - start_time
-            logger.error(f"[FREEZE DEBUG] _find_existing_session FAILED after {duration:.3f}s for session {self.session_id}, user {self.user_id}: {str(e)}")
+            logger.error(f"Failed to find existing session {self.session_id} for user {self.user_id}: {str(e)}")
             return None
 
     async def set_session(

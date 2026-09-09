@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import type { ReactNode } from 'react';
 import { vi } from 'vitest';
@@ -19,9 +19,15 @@ vi.mock('../store', () => ({
   useWorkyStore: vi.fn(),
 }));
 
+const sendMutateAsync = vi.fn(() => Promise.resolve());
 vi.mock('../query/hooks', () => ({
   useRespondInteraction: vi.fn(() => ({
     mutate: vi.fn(),
+    isPending: false,
+  })),
+  useSendMessage: vi.fn(() => ({
+    mutate: vi.fn(),
+    mutateAsync: sendMutateAsync,
     isPending: false,
   })),
 }));
@@ -44,8 +50,14 @@ describe('ChatMessageThread', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockedUseStore.mockImplementation(
-      (selector: (s: { streaming: boolean; pendingClarifications: [] }) => unknown) =>
-        selector({ streaming: false, pendingClarifications: [] }),
+      (selector: (s: {
+        streaming: boolean;
+        setStreaming: () => void;
+        pendingClarifications: [];
+        beginTurn: () => void;
+        finishTurn: () => void;
+      }) => unknown) =>
+        selector({ streaming: false, setStreaming: vi.fn(), pendingClarifications: [], beginTurn: vi.fn(), finishTurn: vi.fn() }),
     );
   });
 
@@ -60,6 +72,26 @@ describe('ChatMessageThread', () => {
     // The i18n instance is uninitialized in tests so the message
     // surfaces as the raw translation key — match by key path.
     expect(screen.getByText('messages.empty')).toBeInTheDocument();
+  });
+
+  it('renders an animated manager thinking row while a turn is active', () => {
+    mockedUseMessages.mockReturnValue([]);
+    mockedUseStore.mockImplementation(
+      (selector: (s: { streaming: boolean; pendingClarifications: [] }) => unknown) =>
+        selector({ streaming: true, pendingClarifications: [] }),
+    );
+
+    render(
+      <TestProviders>
+        <ChatMessageThread />
+      </TestProviders>,
+    );
+
+    const thinking = screen.getByTestId('worky-message-thinking');
+    expect(thinking).toHaveAttribute('role', 'status');
+    expect(thinking).toHaveTextContent('stream.working');
+    expect(thinking.querySelectorAll('.animate-bounce')).toHaveLength(3);
+    expect(screen.queryByText('messages.empty')).not.toBeInTheDocument();
   });
 
   it('renders each persisted message as an owner/manager conversation bubble', () => {
@@ -113,14 +145,6 @@ describe('ChatMessageThread', () => {
         createdAt: '2026-06-21T10:30:05.000Z',
       },
     ]);
-    // `streaming` may still be true here (e.g. set optimistically by the
-    // composer) — it must not resurrect a partial-token bubble now that
-    // manager replies arrive as complete `message.appended` rows.
-    mockedUseStore.mockImplementation(
-      (selector: (s: { streaming: boolean; pendingClarifications: [] }) => unknown) =>
-        selector({ streaming: true, pendingClarifications: [] }),
-    );
-
     render(
       <TestProviders>
         <ChatMessageThread />
@@ -131,7 +155,7 @@ describe('ChatMessageThread', () => {
     expect(
       screen.getByText('Here is the complete reply, delivered as one row.'),
     ).toBeInTheDocument();
-    expect(screen.queryByTestId('worky-message-streaming')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('worky-message-thinking')).not.toBeInTheDocument();
   });
 
   it('renders manager components when present, not the plain content fallback', () => {
@@ -174,6 +198,73 @@ describe('ChatMessageThread', () => {
     );
 
     expect(screen.getByText('just text')).toBeInTheDocument();
+  });
+
+  it('renders persisted manager Markdown including tables', () => {
+    mockedUseMessages.mockReturnValue([
+      {
+        id: 'm3',
+        role: 'manager',
+        content: '| Agent | Status |\n| --- | --- |\n| Researcher | Done |',
+        planDeltaRef: null,
+        createdAt: '2026-08-13T10:00:00.000Z',
+      },
+    ]);
+
+    render(
+      <TestProviders>
+        <ChatMessageThread />
+      </TestProviders>,
+    );
+
+    expect(screen.getByRole('table')).toBeInTheDocument();
+    expect(screen.getByRole('columnheader', { name: 'Agent' })).toBeInTheDocument();
+    expect(screen.getByRole('cell', { name: 'Researcher' })).toBeInTheDocument();
+  });
+
+  it('renders fenced manager code as a formatted code block', () => {
+    mockedUseMessages.mockReturnValue([
+      {
+        id: 'm-code',
+        role: 'manager',
+        content: '```ts\nconst status = "done";\n```',
+        planDeltaRef: null,
+        createdAt: '2026-08-13T10:00:00.000Z',
+      },
+    ]);
+
+    render(
+      <TestProviders>
+        <ChatMessageThread />
+      </TestProviders>,
+    );
+
+    expect(screen.getByText('const status = "done";').closest('pre')).not.toBeNull();
+  });
+
+  it('uses the shared assistant activity presentation for manager components', () => {
+    mockedUseMessages.mockReturnValue([
+      {
+        id: 'm4',
+        role: 'manager',
+        content: '',
+        planDeltaRef: null,
+        createdAt: '2026-08-13T10:00:00.000Z',
+        components: [
+          { id: 'tool-1', type: 'toolActivity', data: { summary: 'Researching prospects', status: 'completed' } },
+          { id: 'text-1', type: 'text', data: { content: 'Research complete.' } },
+        ],
+      },
+    ]);
+
+    render(
+      <TestProviders>
+        <ChatMessageThread />
+      </TestProviders>,
+    );
+
+    expect(screen.getByText('Researching prospects')).toBeInTheDocument();
+    expect(screen.getByText('Research complete.')).toBeInTheDocument();
   });
 
   it('renders clarifications inline after the owner message that triggered them', () => {
@@ -238,5 +329,47 @@ describe('ChatMessageThread', () => {
     expect(items[1]).toContain('First clarification');
     expect(items[2]).toContain('second question');
     expect(items[3]).toContain('Second clarification');
+  });
+
+  it('submits an approve/decline choice as a normal message (resumes the parked send)', async () => {
+    mockedUseMessages.mockReturnValue([
+      {
+        id: 'm1',
+        role: 'manager',
+        content: "Approuver l'envoi de cet e-mail ?",
+        planDeltaRef: null,
+        createdAt: '2026-09-03T10:00:00.000Z',
+        components: [
+          {
+            id: 'c1',
+            type: 'choice',
+            data: {
+              schemaVersion: 1,
+              status: 'ready',
+              questionId: 'confirm::call_1',
+              prompt: "Approuver l'envoi de cet e-mail ?",
+              presentation: 'quick_replies',
+              selectionMode: 'single',
+              submitBehavior: 'immediate',
+              options: [
+                { id: 'approve', label: 'Approuver', submitText: 'approve' },
+                { id: 'decline', label: 'Refuser', submitText: 'decline' },
+              ],
+            },
+          },
+        ],
+      },
+    ]);
+
+    render(
+      <TestProviders>
+        <ChatMessageThread streamId='stream-1' />
+      </TestProviders>,
+    );
+
+    fireEvent.click(screen.getByRole('radio', { name: 'Approuver' }));
+    await waitFor(() =>
+      expect(sendMutateAsync).toHaveBeenCalledWith(expect.objectContaining({ content: 'approve' })),
+    );
   });
 });

@@ -24,8 +24,10 @@ const SIDEBAR_MIN_VIEWPORT_WIDTH = 768;
 
 type UrlLoaderResult = { url: string; fileName?: string; mimeType?: string };
 type PendingUrlLoad = { token: symbol; promise: Promise<void> };
+type UrlLoaderRegistration = { token: symbol; load: () => Promise<UrlLoaderResult> };
 
 const pendingUrlLoads = new Map<string, PendingUrlLoad>();
+const urlLoaders = new Map<string, UrlLoaderRegistration>();
 
 type FileViewerTranslationKey = ModuleTranslationKey<'file-viewer'>;
 
@@ -117,7 +119,7 @@ interface FileViewerActions {
   setPosition: (pos: WindowPosition) => void;
   setSize: (size: WindowSize) => void;
   setMinimizedPosition: (pos: WindowPosition) => void;
-  refreshTabUrl: (tabId: string) => Promise<void>;
+  refreshTabUrl: (tabId: string) => Promise<string | null>;
 }
 
 type FileViewerStore = FileViewerState & FileViewerActions;
@@ -307,6 +309,8 @@ export const useFileViewerStore = create<FileViewerStore>()(
 
       openFileFromUrlLoader: async (key, fileName, mimeType, load, options) => {
         const tabId = `loader:${key}`;
+        const loaderToken = Symbol(tabId);
+        urlLoaders.set(tabId, { token: loaderToken, load });
         const existingTab = get().tabs.find((tab) => tab.id === tabId);
         const existingLoad = pendingUrlLoads.get(tabId);
         const resolved = resolveDisplayMode(options?.displayMode);
@@ -349,6 +353,9 @@ export const useFileViewerStore = create<FileViewerStore>()(
             }));
           } catch (error) {
             if (pendingUrlLoads.get(tabId)?.token !== token) return;
+            if (urlLoaders.get(tabId)?.token === loaderToken) {
+              urlLoaders.delete(tabId);
+            }
             set((state) => {
               if (existingTab) {
                 return { tabs: state.tabs.map((tab) => tab.id === tabId ? { ...tab, isLoading: false } : tab) };
@@ -372,6 +379,7 @@ export const useFileViewerStore = create<FileViewerStore>()(
       },
 
       closeTab: (tabId) => {
+        urlLoaders.delete(tabId);
         const { tabs, activeTabId } = get();
         const remaining = tabs.filter((t) => t.id !== tabId);
 
@@ -415,6 +423,7 @@ export const useFileViewerStore = create<FileViewerStore>()(
       },
 
       closeViewer: () => {
+        urlLoaders.clear();
         set({
           mode: 'closed',
           displayMode: 'floating',
@@ -457,9 +466,25 @@ export const useFileViewerStore = create<FileViewerStore>()(
 
       refreshTabUrl: async (tabId) => {
         const tab = get().tabs.find((t) => t.id === tabId);
-        if (!tab || !tab.path) return;
+        if (!tab) return null;
 
         try {
+          const loader = urlLoaders.get(tabId);
+          if (loader) {
+            const loaded = await loader.load();
+            if (urlLoaders.get(tabId)?.token !== loader.token) return null;
+            set((state) => ({
+              tabs: state.tabs.map((t) => (t.id === tabId ? {
+                ...t,
+                url: loaded.url,
+                fileName: loaded.fileName || t.fileName,
+                mimeType: loaded.mimeType || t.mimeType,
+              } : t)),
+            }));
+            return loaded.url;
+          }
+
+          if (!tab.path) return null;
           if (!tab.workspaceId || !tab.documentId) throw new Error('Workspace document identity is required');
           const response = await apiClient.get<ApiResponse<DownloadUrlResponse>>(
             API_ENDPOINTS.workspaceDocuments.downloadUrl(tab.workspaceId, tab.documentId),
@@ -468,10 +493,12 @@ export const useFileViewerStore = create<FileViewerStore>()(
           set((state) => ({
             tabs: state.tabs.map((t) => (t.id === tabId ? { ...t, url, urlExpiresAt: expiresAt } : t)),
           }));
+          return url;
         } catch (error) {
           const apiError = error as ApiError;
           const message = apiError?.code ? getErrorMessage(apiError.code) : translateFileViewer('store.refreshError.description');
           toast.error(translateFileViewer('store.refreshError.title'), { description: message });
+          return null;
         }
       },
     }),

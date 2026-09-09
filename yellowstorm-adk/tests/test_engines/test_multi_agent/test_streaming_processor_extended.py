@@ -48,20 +48,16 @@ class TestStreamingProcessorFunctionCalls:
     async def test_handle_event_parts_delegate_function_call(self, processor):
         queue = AsyncMock()
         event = _event_with_function_call("delegate_to_search_agent", {"task": "find docs"})
-        with patch(
-            "src.smart_rag.engines.multi_agent.streaming_processor.langfuse_client"
-        ) as mock_langfuse:
-            mock_langfuse.event.return_value = MagicMock()
-            _, delegation_count, _, current_agent = await processor._handle_event_parts(
-                event,
-                SimpleNamespace(id="mgr-1", name="manager"),
-                "msg-1",
-                queue,
-                delegation_count=0,
-                accumulated_manager_text="",
-                current_agent="manager",
-                component_tracker=ComponentTracker("sess-1"),
-            )
+        _, delegation_count, _, current_agent = await processor._handle_event_parts(
+            event,
+            SimpleNamespace(id="mgr-1", name="manager"),
+            "msg-1",
+            queue,
+            delegation_count=0,
+            accumulated_manager_text="",
+            current_agent="manager",
+            component_tracker=ComponentTracker("sess-1"),
+        )
         assert delegation_count == 1
         assert processor.config.call_id_registry["search_agent"]["call_id"] == "call-1"
 
@@ -69,30 +65,14 @@ class TestStreamingProcessorFunctionCalls:
     async def test_handle_event_parts_python_interpreter_call(self, processor):
         queue = AsyncMock()
         event = _event_with_function_call("python_interpreter", {"code": "print(1)"})
-        with patch(
-            "src.smart_rag.engines.multi_agent.streaming_processor.langfuse_client"
-        ) as mock_lf:
-            mock_lf.event.return_value = MagicMock()
-            await processor._handle_event_parts(
-                event,
-                None,
-                "msg-1",
-                queue,
-                component_tracker=ComponentTracker("sess-1"),
-            )
+        await processor._handle_event_parts(
+            event,
+            None,
+            "msg-1",
+            queue,
+            component_tracker=ComponentTracker("sess-1"),
+        )
         assert queue.put.await_count >= 1
-
-    @pytest.mark.asyncio
-    async def test_handle_event_parts_generate_ui_call(self, processor):
-        queue = AsyncMock()
-        event = _event_with_function_call("generate_ui")
-        with patch(
-            "src.smart_rag.engines.multi_agent.streaming_processor.langfuse_client"
-        ) as mock_lf:
-            mock_lf.event.return_value = MagicMock()
-            await processor._handle_event_parts(event, None, "msg-1", queue)
-        assert queue.put.await_count == 2
-        assert queue.put.await_args_list[0].args[0]["component"]["type"] == "tool_activity"
 
 
 class TestStreamingProcessorResponses:
@@ -112,13 +92,6 @@ class TestStreamingProcessorResponses:
 
         queue.put.assert_awaited_once()
         assert queue.put.call_args.args[0]["component"]["type"] == "web_preview"
-
-    @pytest.mark.asyncio
-    async def test_handle_dataviz_response(self, processor):
-        queue = AsyncMock()
-        response = SimpleNamespace(response={"ui": {"title": "Chart"}})
-        await processor._handle_dataviz_response(response, "msg-1", queue)
-        queue.put.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_handle_formviz_response(self, processor):

@@ -17,7 +17,6 @@ describe('WorkyInteractionController.respond (replan approval end-to-end)', () =
         followUpTurnStarted: false,
       }),
     };
-    const planningService = { startTurn: jest.fn() };
     const planDeltaService = {
       applyApproved: jest.fn().mockResolvedValue({
         status: 'auto_applied',
@@ -27,6 +26,11 @@ describe('WorkyInteractionController.respond (replan approval end-to-end)', () =
         updatedTaskIds: [],
         cancelledTaskIds: [],
       }),
+    };
+    const preparedTurn = { turnId: 'turn-1' };
+    const kickoff = {
+      prepare: jest.fn().mockResolvedValue(preparedTurn),
+      dispatch: jest.fn().mockReturnValue('turn-1'),
     };
     const streamsModel = {
       findById: jest.fn().mockReturnValue({
@@ -62,17 +66,17 @@ describe('WorkyInteractionController.respond (replan approval end-to-end)', () =
     };
     const controller = new WorkyInteractionController(
       interactionsService as any,
-      planningService as any,
       planDeltaService as any,
+      kickoff as any,
       streamsModel as any,
       interactionModel as any,
       planDeltasModel as any,
     );
-    return { controller, planDeltaService, interactionsService, planningService, interactionModel };
+    return { controller, planDeltaService, interactionsService, interactionModel, kickoff };
   };
 
   it('applies the pending replan delta when the owner approves a replan_review', async () => {
-    const { controller, planDeltaService, planningService } = buildController();
+    const { controller, planDeltaService, kickoff } = buildController();
     const result = await controller.respond(
       { _id: userObjectId } as any,
       new Types.ObjectId().toString(),
@@ -86,6 +90,13 @@ describe('WorkyInteractionController.respond (replan approval end-to-end)', () =
       planDeltaId: planDeltaId.toString(),
       status: 'auto_applied',
     });
+    expect(kickoff.prepare).toHaveBeenCalledWith({
+      streamId: streamObjectId.toString(),
+      userId: userObjectId.toString(),
+      content: 'go',
+      requester: { _id: userObjectId },
+    });
+    expect(kickoff.dispatch).toHaveBeenCalledWith({ turnId: 'turn-1' });
   });
 
   it('does NOT apply the delta when the owner rejects the replan', async () => {
@@ -126,5 +137,42 @@ describe('WorkyInteractionController.respond (replan approval end-to-end)', () =
       { content: 'reply', approve: true },
     );
     expect(planDeltaService.applyApproved).not.toHaveBeenCalled();
+  });
+
+  it('does not consume the interaction when kickoff preflight fails', async () => {
+    const { controller, interactionsService, kickoff } = buildController();
+    kickoff.prepare.mockRejectedValueOnce(new Error('context unavailable'));
+
+    await expect(
+      controller.respond(
+        { _id: userObjectId } as any,
+        new Types.ObjectId().toString(),
+        { content: 'go', approve: true },
+      ),
+    ).rejects.toThrow('context unavailable');
+
+    expect(interactionsService.respond).not.toHaveBeenCalled();
+    expect(kickoff.dispatch).not.toHaveBeenCalled();
+  });
+
+  it('does not preflight or dispatch a canceled interaction', async () => {
+    const { controller, interactionsService, kickoff } = buildController();
+    interactionsService.respond.mockResolvedValueOnce({
+      interactionId: new Types.ObjectId().toString(),
+      streamId: streamObjectId.toString(),
+      status: 'canceled',
+      response: '',
+      verdict: null,
+      followUpTurnStarted: false,
+    });
+
+    await controller.respond(
+      { _id: userObjectId } as any,
+      new Types.ObjectId().toString(),
+      { content: 'cancel', cancel: true },
+    );
+
+    expect(kickoff.prepare).not.toHaveBeenCalled();
+    expect(kickoff.dispatch).not.toHaveBeenCalled();
   });
 });

@@ -4,7 +4,7 @@ import { Button } from '@/components/ui/button';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { cn } from '@/lib/utils';
 import { type LucideIcon, XIcon } from 'lucide-react';
-import type { ComponentProps, HTMLAttributes } from 'react';
+import { type ComponentProps, forwardRef, type HTMLAttributes } from 'react';
 
 export type ArtifactProps = HTMLAttributes<HTMLDivElement>;
 
@@ -41,9 +41,9 @@ export type ArtifactActionProps = ComponentProps<typeof Button> & {
   icon?: LucideIcon;
 };
 
-export const ArtifactAction = ({ tooltip, label, icon: Icon, children, className, size = 'sm', variant = 'ghost', ...props }: ArtifactActionProps) => {
+export const ArtifactAction = forwardRef<HTMLButtonElement, ArtifactActionProps>(({ tooltip, label, icon: Icon, children, className, size = 'sm', variant = 'ghost', ...props }: ArtifactActionProps, ref) => {
   const button = (
-    <Button className={cn('size-8 p-0 text-muted-foreground hover:text-foreground', className)} size={size} type='button' variant={variant} {...props}>
+    <Button ref={ref} className={cn('size-8 p-0 text-muted-foreground hover:text-foreground', className)} size={size} type='button' variant={variant} {...props}>
       {Icon ? <Icon className='size-4' /> : children}
       <span className='sr-only'>{label || tooltip}</span>
     </Button>
@@ -62,8 +62,11 @@ export const ArtifactAction = ({ tooltip, label, icon: Icon, children, className
     );
   }
 
-  return button;
-};
+  return <Button ref={ref} className={cn('size-8 p-0 text-muted-foreground hover:text-foreground', className)} size={size} type='button' variant={variant} {...props}>
+    {Icon ? <Icon className='size-4' /> : children}
+    <span className='sr-only'>{label || tooltip}</span>
+  </Button>;
+});
 
 export type ArtifactContentProps = HTMLAttributes<HTMLDivElement>;
 

@@ -40,6 +40,7 @@ describe('playbook query mutation actions', () => {
     } = await import('@/modules/playbook/query/mutationActions');
     const playbook = { id: 'flow-1', name: 'Draft', tasks: [], nodes: [] };
     const cloned = { ...playbook, id: 'flow-2', name: 'Draft copy' };
+    const invalidateSpy = vi.spyOn(playbookQueryClient, 'invalidateQueries');
 
     apiMocks.createPlaybook.mockResolvedValueOnce(playbook);
     apiMocks.updatePlaybook.mockResolvedValueOnce({ ...playbook, name: 'Saved' });
@@ -53,6 +54,7 @@ describe('playbook query mutation actions', () => {
     expect(playbookQueryClient.getQueryData(playbookKeys.legacyDetail('flow-1'))).toMatchObject({ name: 'Saved' });
     expect(playbookQueryClient.getQueryData(playbookKeys.detail('flow-1', 'base'))).toMatchObject({ name: 'Saved' });
     expect(playbookQueryClient.getQueryData(playbookKeys.legacyDetail('flow-2'))).toMatchObject({ name: 'Draft copy' });
+    expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: playbookKeys.inputContract('flow-1') });
 
     await deletePlaybookMutation('flow-1');
 
@@ -95,13 +97,22 @@ describe('playbook query mutation actions', () => {
     };
 
     await patchFlowDeltaMutation({ id: 'flow-1', data: deltaPatch, idempotencyKey: 'save-1' });
-    await startExecutionMutation({ flowId: 'flow-1', inputContext: { value: true }, idempotencyKey: 'run-1' });
+    const executionOptions = {
+      executionMode: 'inherit' as const,
+      stepExecutionModes: { 'task-1': 'replay_flex' as const },
+      runNodeReflection: true,
+      advisorScoringMode: 'heuristic' as const,
+      advisorAutopilotEnabled: true,
+      advisorAutopilotTargetScore: 91,
+      advisorAutopilotMaxTurns: 5,
+    };
+    await startExecutionMutation({ flowId: 'flow-1', inputContext: { value: true }, idempotencyKey: 'run-1', options: executionOptions });
     await cancelExecutionMutation('exec-1');
     await resumeApprovalMutation({ executionId: 'exec-1', decision: 'approve', payload: { taskId: 'task-1' } });
     await resumeFromStepMutation({ playbookId: 'flow-1', executionId: 'exec-1', data: { taskId: 'task-1' } });
 
     expect(apiMocks.patchFlowDelta).toHaveBeenCalledWith('flow-1', deltaPatch, 'save-1');
-    expect(apiMocks.startFlowExecution).toHaveBeenCalledWith('flow-1', { value: true }, 'run-1', undefined);
+    expect(apiMocks.startFlowExecution).toHaveBeenCalledWith('flow-1', { value: true }, 'run-1', executionOptions);
     expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: playbookKeys.detail('flow-1', 'base') });
     expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: playbookKeys.activeExecutions() });
     expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: playbookKeys.execution('exec-2') });

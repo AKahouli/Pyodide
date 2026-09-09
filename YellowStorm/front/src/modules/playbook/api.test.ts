@@ -1,10 +1,11 @@
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   buildPlaybookDeltaPatch,
   buildPlaybookUpdateRequestBody,
   appendDesignMessage,
   clonePlaybook,
   executePlaybook,
+  startFlowExecution,
   getFlowNodeTemplates,
   getPlaybookTriggers,
   getExecution,
@@ -22,6 +23,7 @@ import {
   clearPlaybookTriggerSchedule,
   clearPlaybookTriggerMail,
   getPlaybook,
+  getPlaybookInputContract,
   getReplayReports,
   getTaskReplays,
   getPlaybookUpdateTelemetry,
@@ -43,6 +45,8 @@ vi.mock('@/lib/api/client', () => ({
   default: apiClientMock,
 }));
 
+beforeEach(() => vi.clearAllMocks());
+
 describe('playbook artifact API', () => {
   it('requests action-scoped access and constructs an application proxy URL', async () => {
     apiClientMock.post.mockResolvedValueOnce({ data: { data: { token: 'opaque+/token', expiresAt: '2026-08-24T13:10:00.000Z' } } });
@@ -56,6 +60,24 @@ describe('playbook artifact API', () => {
       '/executions/execution-1/artifacts/artifact-1/access',
       { action: 'view' },
     );
+  });
+});
+
+describe('playbook input contract API', () => {
+  it('loads the derived input contract from the flow endpoint', async () => {
+    const contract = {
+      playbookId: 'playbook-1',
+      definitionRevision: 7,
+      graphValid: true,
+      configurationReady: true,
+      runtimeInputCount: 1,
+      invalidInputCount: 0,
+      inputs: [],
+    };
+    apiClientMock.get.mockResolvedValueOnce({ data: { data: contract } });
+
+    await expect(getPlaybookInputContract('playbook-1')).resolves.toEqual(contract);
+    expect(apiClientMock.get).toHaveBeenCalledWith('/playbooks/playbook-1/input-contract');
   });
 });
 
@@ -1247,6 +1269,35 @@ describe('executePlaybook', () => {
       executionMode: 'live',
       stepExecutionModes: { 'task-7': 'replay_strict' },
     });
+  });
+});
+
+describe('startFlowExecution', () => {
+  it('serializes runtime inputs and complete execution options together', async () => {
+    apiClientMock.post.mockReset();
+    apiClientMock.post.mockResolvedValueOnce({ data: { data: { executionId: 'exec-inputs' } } });
+
+    await startFlowExecution('playbook-1', { playbookInputs: { prompt: 'Draft' } }, 'run-1', {
+      executionMode: 'inherit',
+      stepExecutionModes: { 'task-1': 'replay_flex' },
+      streaming: true,
+      runNodeReflection: true,
+      advisorScoringMode: 'heuristic',
+      advisorAutopilotEnabled: true,
+      advisorAutopilotTargetScore: 92,
+      advisorAutopilotMaxTurns: 4,
+    });
+
+    expect(apiClientMock.post).toHaveBeenCalledWith('/playbooks/playbook-1/executions', {
+      inputContext: { playbookInputs: { prompt: 'Draft' } },
+      executionMode: 'inherit',
+      stepExecutionModes: { 'task-1': 'replay_flex' },
+      reflectionEnabled: true,
+      advisorScoringMode: 'heuristic',
+      advisorAutopilotEnabled: true,
+      advisorAutopilotTargetScore: 92,
+      advisorAutopilotMaxTurns: 4,
+    }, { headers: { 'Idempotency-Key': 'run-1' } });
   });
 });
 

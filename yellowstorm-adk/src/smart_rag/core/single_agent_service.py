@@ -11,6 +11,10 @@ from google.adk.agents.run_config import StreamingMode, RunConfig
 from src.schema.chatbot_schema import RunSingleAgentRequest
 from src.smart_rag.agents.factories import AgentFactory
 from src.smart_rag.infrastructure.session.manager import SessionHelper
+from src.smart_rag.infrastructure.session.execution_lock import (
+    PERSISTED_SESSION_APP_NAME,
+    session_execution_lock,
+)
 from src.smart_rag.infrastructure.processing import PromptProcessor
 from src.smart_rag.infrastructure.processing import (
     add_diagram_context_before_tool,
@@ -20,7 +24,6 @@ from src.smart_rag.infrastructure.factories import LLMFactory
 from src.smart_rag.infrastructure.model_parameters import resolve_model_config
 from src.smart_rag.infrastructure.external.mcp_helper import MCPHelper
 from src.smart_rag.messaging import StreamingFormatter
-from src.smart_rag.infrastructure.monitoring import langfuse_client
 from src.smart_rag.tools import build_tree, SearchToolkit, SearchToolADK, calculator
 from src.smart_rag.tools.native_tool_registry import resolve_native_tools
 from src.smart_rag.engines.helpers import coerce_to_dict
@@ -54,25 +57,14 @@ class SingleAgentService:
         Returns:
             None: Results are streamed through the queue.
         """
-        # Create main trace for single agent execution
-        main_trace = langfuse_client.trace(
-            session_id=request.session_id,
-            id=request.session_id,
-            name="single_agent_conversation",
-            user_id=request.user_id,
-            input={
-                "user_message": request.message,
-                "agent_name": request.agent.name,
-                "agent_description": request.agent.description,
-                "brain_ids": request.agent.brain_ids
-            },
-            metadata={
-                "session_id": request.session_id,
-                "user_id": request.user_id,
-                "workflow_type": "single_agent_conversation"
-            }
-        )
+        async with session_execution_lock(
+            PERSISTED_SESSION_APP_NAME,
+            request.user_id,
+            request.session_id,
+        ):
+            await self._execute_single_agent(request, queue)
 
+    async def _execute_single_agent(self, request: RunSingleAgentRequest, queue: asyncio.Queue[dict]) -> None:
         session_helper = None
         try:
             # 1. Create SessionHelper
@@ -96,21 +88,8 @@ class SingleAgentService:
                 parts=[types.Part(text=request.message)]
             )
 
-            # Create agent execution span
-            agent_execution_span = langfuse_client.span(
-                trace_id=request.session_id,
-                parent_observation_id=main_trace.id,
-                name=f"Agent_{request.agent.name}",
-                input={
-                    "agent_prompt": request.agent.prompt,
-                    "user_message": request.message,
-                    "agent_tools": request.agent.tools
-                },
-            )
-
             # 5. Execute agent using core ADK runner
             accumulated_response = ""
-            function_calls_made = []
 
             # Send initial message to indicate agent started
             start_message = self.streaming_formatter.format_streaming_event(
@@ -162,13 +141,6 @@ class SingleAgentService:
                     if part.function_call:
                         func_name = part.function_call.name
                         func_args = dict(part.function_call.args)
-                        function_calls_made.append({"name": func_name, "args": func_args})
-
-                        # Log function call event
-                        agent_execution_span.event(
-                            name=f"function_{func_name}",
-                            input={"function_name": func_name, "arguments": func_args}
-                        )
 
                         # Stream function call info to client
                         func_output = self.streaming_formatter.format_streaming_event(
@@ -195,11 +167,6 @@ class SingleAgentService:
 
                         # Log search tool results
                         logger.info(f"Search tool response received: {response_log[:500]}..." if len(response_log) > 500 else f"Search tool response: {response_log}")
-
-                        agent_execution_span.event(
-                            name="function_response",
-                            output={"response": response_text}
-                        )
 
                         # Stream search results to client
                         search_output = self.streaming_formatter.format_streaming_event(
@@ -232,37 +199,15 @@ class SingleAgentService:
                             )
                             await queue.put(final_output)
 
-                    # Update spans with final results
-                    agent_execution_span.update(output={
-                        "final_response": accumulated_response,
-                        "function_calls_made": function_calls_made,
-                        "execution_successful": True,
-                    })
-
-                    main_trace.update(output={
-                        "conversation_completed": True,
-                        "final_response": accumulated_response,
-                        "execution_successful": True
-                    })
-
                     # Send completion signal
                     logger.info(f"Agent execution completed for session {session_id}, sending completion signal")
                     await queue.put(None)
                     break
 
             logger.info(f"Exited agent execution loop for session {session_id}")
-            # Flush langfuse
-            try:
-                langfuse_client.flush()
-            except Exception as e:
-                logger.error(f"Failed to flush Langfuse client: {str(e)}")
 
         except Exception as e:
             logger.error(f"Error in single agent execution: {str(e)}")
-            main_trace.update(output={
-                "error": str(e),
-                "execution_successful": False
-            })
             await self._send_error_message(queue, request.session_id, str(e))
 
         finally:

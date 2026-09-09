@@ -19,22 +19,16 @@ import {
   ApiTags,
 } from '@nestjs/swagger';
 import { WorkyStreamService } from '../services/worky-stream.service';
-import { WorkyExecutionService } from '../services/worky-execution.service';
 import { WorkyBudgetService, WorkyBudgetSnapshot } from '../services/worky-budget.service';
 import { WorkyReportService, IWorkyExecutionReportResponse } from '../services/worky-report.service';
 import { CreateWorkyStreamDto } from '../dto/create-worky-stream.dto';
 import { UpdateWorkyStreamDto } from '../dto/update-worky-stream.dto';
 import { QueryWorkyStreamsDto } from '../dto/query-worky-streams.dto';
-import { WorkyStreamControlDto } from '../dto/worky-stream-control.dto';
 import { WorkyBudgetControlDto } from '../dto/worky-budget-control.dto';
 import {
   IWorkyStreamResponse,
   IWorkyStreamListResult,
 } from '../interfaces/worky-stream.interface';
-import {
-  IWorkyExecutionSnapshotResponse,
-  IWorkyStartValidationResult,
-} from '../interfaces/worky-execution.interface';
 import { WorkyStreamAccessGuard } from '../guards/worky-stream-access.guard';
 import { RequirePermissions } from '../../authorization/decorators/require-permissions.decorator';
 import { CurrentUser } from '../../auth/decorators/current-user.decorator';
@@ -47,7 +41,6 @@ import { Permissions } from '../../authorization/constants/permissions';
 export class WorkyStreamController {
   constructor(
     private readonly streams: WorkyStreamService,
-    private readonly execution: WorkyExecutionService,
     private readonly budget: WorkyBudgetService,
     private readonly report: WorkyReportService,
   ) {}
@@ -112,70 +105,6 @@ export class WorkyStreamController {
     @Param('id') id: string,
   ): Promise<{ ok: true; deletedWorkspaceId: string | null }> {
     return this.streams.delete(user._id.toString(), id);
-  }
-
-  // ----- Lifecycle (Part 3) -----
-
-  /**
-   * Validate-and-start. Always succeeds. The result tells the UI
-   * whether all tasks are runnable, only some, or none. The
-   * `partially_executable` outcome is *not* an error — partial progress
-   * is by design.
-   */
-  @Post(':id/start')
-  @HttpCode(HttpStatus.OK)
-  @UseGuards(WorkyStreamAccessGuard)
-  @RequirePermissions(Permissions.WORKY_STREAM_EXECUTE)
-  @ApiOperation({ summary: 'Validate and start a Worky stream execution' })
-  @ApiParam({ name: 'id', description: 'Stream id' })
-  async start(
-    @CurrentUser() user: UserDocument,
-    @Param('id') id: string,
-  ): Promise<IWorkyStartValidationResult> {
-    return this.execution.createSnapshot(id, user._id.toString());
-  }
-
-  @Post(':id/pause')
-  @HttpCode(HttpStatus.OK)
-  @UseGuards(WorkyStreamAccessGuard)
-  @RequirePermissions(Permissions.WORKY_STREAM_EXECUTE)
-  @ApiOperation({ summary: 'Pause a running Worky stream' })
-  @ApiParam({ name: 'id', description: 'Stream id' })
-  async pause(
-    @CurrentUser() user: UserDocument,
-    @Param('id') id: string,
-    @Body() dto: WorkyStreamControlDto,
-  ): Promise<IWorkyExecutionSnapshotResponse | null> {
-    return this.execution.pause(id, user._id.toString(), dto.reason);
-  }
-
-  @Post(':id/resume')
-  @HttpCode(HttpStatus.OK)
-  @UseGuards(WorkyStreamAccessGuard)
-  @RequirePermissions(Permissions.WORKY_STREAM_EXECUTE)
-  @ApiOperation({ summary: 'Resume a paused Worky stream' })
-  @ApiParam({ name: 'id', description: 'Stream id' })
-  async resume(
-    @CurrentUser() user: UserDocument,
-    @Param('id') id: string,
-    @Body() dto: WorkyStreamControlDto,
-  ): Promise<IWorkyExecutionSnapshotResponse | null> {
-    return this.execution.resume(id, user._id.toString(), dto.reason);
-  }
-
-  @Delete(':id')
-  @HttpCode(HttpStatus.OK)
-  @UseGuards(WorkyStreamAccessGuard)
-  @RequirePermissions(Permissions.WORKY_STREAM_WRITE)
-  @ApiOperation({ summary: 'Stop a Worky stream' })
-  @ApiParam({ name: 'id', description: 'Stream id' })
-  async stop(
-    @CurrentUser() user: UserDocument,
-    @Param('id') id: string,
-    @Body() dto: WorkyStreamControlDto,
-  ): Promise<{ ok: true }> {
-    await this.execution.stop(id, user._id.toString(), dto.reason);
-    return { ok: true };
   }
 
   // ----- Budget (Part 4 §4) -----

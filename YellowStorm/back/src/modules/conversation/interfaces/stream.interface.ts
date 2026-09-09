@@ -1,4 +1,8 @@
 import { MessageComponent } from './message.interface';
+import type {
+  ConversationLatencyMetricsV1,
+  StreamChunkLatencyData,
+} from './latency.interface';
 
 export type StreamEventType =
   | 'connected'
@@ -10,7 +14,8 @@ export type StreamEventType =
   | 'conversation_name_generated'
   | 'message_created'
   | 'message_updated'
-  | 'mention_created';
+  | 'mention_created'
+  | 'stream_resync_required';
 
 export interface StreamConnectedEvent {
   type: 'connected';
@@ -36,6 +41,8 @@ export interface StreamChunkEvent {
     action: string;
     component: MessageComponent;
     metadata?: Record<string, unknown>;
+    /** One-time latency envelope on the first model-derived chunk only. */
+    latency?: StreamChunkLatencyData;
   };
 }
 
@@ -49,6 +56,8 @@ export interface StreamCompleteEvent {
       outputTokens: number;
       durationMs: number;
     };
+    /** First five server-side metrics; the browser contributes the sixth. */
+    latencyMetrics?: ConversationLatencyMetricsV1;
   };
 }
 
@@ -56,6 +65,7 @@ export interface StreamErrorEvent {
   type: 'stream_error';
   data: {
     conversationId: string;
+    messageId: string;
     errorCode: string;
     message: string;
   };
@@ -95,6 +105,22 @@ export interface MentionCreatedEvent {
   };
 }
 
+/**
+ * Emitted instead of a replay when the server cannot restore event
+ * continuity for a reconnecting client (cursor older than the bounded
+ * replay window, or a cursor issued by another process). The client must
+ * reconcile from canonical conversation state; replay is intentionally
+ * withheld so partial history is never mixed with a resync.
+ */
+export interface StreamResyncRequiredEvent {
+  type: 'stream_resync_required';
+  data: {
+    reason: 'cursor_gap' | 'unknown_instance';
+    lastSeenCursor?: string;
+    oldestRetainedCursor?: string;
+  };
+}
+
 export type StreamEvent =
   | StreamConnectedEvent
   | StreamHeartbeatEvent
@@ -105,7 +131,8 @@ export type StreamEvent =
   | ConversationNameGeneratedEvent
   | MessageCreatedEvent
   | MessageUpdatedEvent
-  | MentionCreatedEvent;
+  | MentionCreatedEvent
+  | StreamResyncRequiredEvent;
 
 export interface InternalSSEConnection {
   connectionId: string;

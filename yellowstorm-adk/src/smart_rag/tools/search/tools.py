@@ -18,16 +18,21 @@ class SearchToolADK(FunctionTool):
     for search functionality.
     """
     
-    def __init__(self, func, schema: dict):
+    def __init__(self, func, schema: dict, *, require_confirmation=False):
         """
         Initialize SearchToolADK with function and schema.
-        
+
         Args:
             func: The function to wrap
             schema: Dictionary containing the function schema
+            require_confirmation: bool or predicate — when truthy, FunctionTool
+                gates the call on a human confirmation (see google.adk
+                function_tool.py): the first invocation raises an
+                `adk_request_confirmation` interrupt instead of running, and the
+                tool only runs once resumed with a confirmed ToolConfirmation.
         """
         # Call FunctionTool base __init__ with just func; name/description handled upstream
-        super().__init__(func)
+        super().__init__(func, require_confirmation=require_confirmation)
         self.custom_schema = schema["function"]
 
     @override

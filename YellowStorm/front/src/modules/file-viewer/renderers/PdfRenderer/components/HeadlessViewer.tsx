@@ -161,7 +161,11 @@ export function HeadlessViewer({ tabId, isActive, pendingNavigation, registryRef
                   <Scroller
                     documentId={activeDocumentId}
                     renderPage={({ pageIndex }) => (
-                      <PagePointerProvider documentId={activeDocumentId} pageIndex={pageIndex}>
+                      <PagePointerProvider
+                        documentId={activeDocumentId}
+                        pageIndex={pageIndex}
+                        style={{ width: '100%', height: '100%' }}
+                      >
                         <RenderLayer documentId={activeDocumentId} pageIndex={pageIndex} role='img' aria-label={t('pdf.pageAria', { page: pageIndex + 1 })} />
                         <SelectionLayer documentId={activeDocumentId} pageIndex={pageIndex} />
                         <AnnotationLayer documentId={activeDocumentId} pageIndex={pageIndex} />

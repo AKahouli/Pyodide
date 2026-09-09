@@ -180,6 +180,7 @@ describe('PlaybookFlowIntentService normalization', () => {
       validationContext: makeContext(),
       limits: DEFAULT_LIMITS,
       availableDesignCatalog: EMPTY_AVAILABLE_DESIGN_CATALOG,
+      resolvedDesignResources: [],
       nodeTemplates: [],
     });
 
@@ -266,6 +267,7 @@ describe('PlaybookFlowIntentService normalization', () => {
       validationContext: makeContext(),
       limits: DEFAULT_LIMITS,
       availableDesignCatalog: EMPTY_AVAILABLE_DESIGN_CATALOG,
+      resolvedDesignResources: [],
       nodeTemplates: [],
     });
     const handoff = {
@@ -314,6 +316,7 @@ describe('PlaybookFlowIntentService normalization', () => {
       validationContext: makeContext(),
       limits: DEFAULT_LIMITS,
       availableDesignCatalog: EMPTY_AVAILABLE_DESIGN_CATALOG,
+      resolvedDesignResources: [],
       nodeTemplates: [],
     });
     const handoff = {
@@ -354,6 +357,7 @@ describe('PlaybookFlowIntentService normalization', () => {
       validationContext: makeContext(),
       limits: DEFAULT_LIMITS,
       availableDesignCatalog: EMPTY_AVAILABLE_DESIGN_CATALOG,
+      resolvedDesignResources: [],
       nodeTemplates: [],
     });
 
@@ -386,6 +390,7 @@ describe('PlaybookFlowIntentService normalization', () => {
       validationContext: makeContext(),
       limits: DEFAULT_LIMITS,
       availableDesignCatalog: EMPTY_AVAILABLE_DESIGN_CATALOG,
+      resolvedDesignResources: [],
       nodeTemplates: [],
     });
 
@@ -436,6 +441,7 @@ describe('PlaybookFlowIntentService normalization', () => {
       validationContext: makeContext(),
       limits: DEFAULT_LIMITS,
       availableDesignCatalog: EMPTY_AVAILABLE_DESIGN_CATALOG,
+      resolvedDesignResources: [],
       nodeTemplates: [],
     });
 
@@ -484,6 +490,7 @@ describe('PlaybookFlowIntentService normalization', () => {
       validationContext: makeContext(),
       limits: DEFAULT_LIMITS,
       availableDesignCatalog: EMPTY_AVAILABLE_DESIGN_CATALOG,
+      resolvedDesignResources: [],
       nodeTemplates: [],
     });
 
@@ -526,6 +533,7 @@ describe('PlaybookFlowIntentService normalization', () => {
       validationContext: makeContext(),
       limits: DEFAULT_LIMITS,
       availableDesignCatalog: EMPTY_AVAILABLE_DESIGN_CATALOG,
+      resolvedDesignResources: [],
       nodeTemplates: [],
     });
 
@@ -700,6 +708,7 @@ describe('PlaybookFlowIntentService normalization', () => {
       validationContext: makeContext(),
       limits: DEFAULT_LIMITS,
       availableDesignCatalog: EMPTY_AVAILABLE_DESIGN_CATALOG,
+      resolvedDesignResources: [],
       nodeTemplates: [],
     });
 
@@ -736,6 +745,7 @@ describe('PlaybookFlowIntentService normalization', () => {
       validationContext: makeContext(),
       limits: DEFAULT_LIMITS,
       availableDesignCatalog: EMPTY_AVAILABLE_DESIGN_CATALOG,
+      resolvedDesignResources: [],
       nodeTemplates: [],
     });
 
@@ -783,6 +793,7 @@ it('falls back to clarification questions when design JSON is malformed', () => 
       validationContext: makeContext(),
       limits: DEFAULT_LIMITS,
       availableDesignCatalog: EMPTY_AVAILABLE_DESIGN_CATALOG,
+      resolvedDesignResources: [],
       nodeTemplates: [],
     });
 
@@ -826,6 +837,7 @@ it('falls back to clarification questions when design JSON is malformed', () => 
       validationContext: makeContext(),
       limits: DEFAULT_LIMITS,
       availableDesignCatalog: EMPTY_AVAILABLE_DESIGN_CATALOG,
+      resolvedDesignResources: [],
       nodeTemplates: [],
     });
 
@@ -864,6 +876,7 @@ it('falls back to clarification questions when design JSON is malformed', () => 
       validationContext: makeContext(),
       limits: DEFAULT_LIMITS,
       availableDesignCatalog: EMPTY_AVAILABLE_DESIGN_CATALOG,
+      resolvedDesignResources: [],
       nodeTemplates: [],
     });
 

@@ -225,20 +225,3 @@ class TestConstants:
         # In-memory description should mention files or documents
         memory_desc = TOOL_DESCRIPTIONS["in_memory"]
         assert "document" in memory_desc.lower() or "file" in memory_desc.lower()
-
-    @patch('src.smart_rag.engines.multi_agent.config.get_settings')
-    def test_settings_integration(self, mock_get_settings):
-        """Test integration with application settings."""
-        mock_settings = type('MockSettings', (), {
-            'LANGFUSE_PUBLIC_KEY': 'test-public-key',
-            'LANGFUSE_SECRET_KEY': 'test-secret-key',
-            'LANGFUSE_HOST': 'https://test.langfuse.com'
-        })()
-        mock_get_settings.return_value = mock_settings
-
-        # Import after mocking to ensure mock is used
-        from src.smart_rag.engines.multi_agent.config import app_settings
-
-        assert hasattr(app_settings, 'LANGFUSE_PUBLIC_KEY')
-        assert hasattr(app_settings, 'LANGFUSE_SECRET_KEY')
-        assert hasattr(app_settings, 'LANGFUSE_HOST')

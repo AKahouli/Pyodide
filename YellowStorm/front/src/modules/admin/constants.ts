@@ -14,6 +14,7 @@ export const DEFAULT_FEATURE_VISIBILITY: FeatureVisibility = Object.freeze({
   appBuilder: true,
   worky: true,
   agents: true,
+  semanticModel: true,
   platformCopilot: false,
 });
 

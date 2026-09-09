@@ -21,12 +21,15 @@ whose nodes are per-step LlmAgents. Event→step mapping uses node_info.path
 from __future__ import annotations
 
 import asyncio
+from contextvars import ContextVar
 import json
 import logging
 import re
 import uuid
 from datetime import datetime, timedelta, timezone
 from typing import List, Optional, Tuple
+
+active_turn_id: ContextVar[Optional[str]] = ContextVar("worky_active_turn_id", default=None)
 
 from google.adk.agents import LlmAgent
 from google.adk.runners import Runner
@@ -243,6 +246,22 @@ Example — "email x asking which company she works for, then report on it":
     {{"id": "s2", "kind": "await_reply", "title": "Await her reply", "question": "Awaiting a reply from x@example.com naming her company", "description": "", "depends_on": ["s1"]}},
     {{"id": "s3", "kind": "execute", "title": "Research the company", "description": "Research the company named in the reply and write a short report.", "depends_on": ["s2"]}}
   ]}}"""
+
+
+# Appended to the planner message on the schema-less fallback pass (see
+# _make_plan). output_schema makes the PROVIDER enforce JSON; without it the
+# only thing keeping the model honest is the prompt, so restate the contract
+# plainly. Not a template — appended to the message, so single braces are fine.
+_PLANNER_JSON_REMINDER = (
+    "Respond with ONLY a single strict JSON object — no prose, no markdown "
+    "fences. Shape: "
+    '{"title": "", "goal": "", "answer": "<one short reply to the user>", '
+    '"steps": [{"id": "s1", "kind": "execute", "title": "<short label>", '
+    '"description": "<full instruction>", "depends_on": []}]}. '
+    'For chit-chat, use an empty "steps" list and put your reply in "answer". '
+    "Every step id is unique, every depends_on entry names another step, and "
+    "the graph has no cycles."
+)
 
 
 def _node_to_step_name(path: str) -> str:
@@ -1102,10 +1121,12 @@ class OrchestratorService:
 
     async def _add_message(self, session_id: str, role: str, content: str) -> None:
         """Project one chat turn into `messages` (the client's conversation view)."""
-        if not content:
+        if not content or self._rm is None:
             return
-        await self._project(self._rm and self._rm.add_message(
-            uuid.uuid4().hex, session_id, role, content))
+        # Terminal chat projection is the UI completion signal. Let failures
+        # reach the servicer so it can attempt a correlated failure outcome.
+        await self._rm.add_message(
+            uuid.uuid4().hex, session_id, role, content, active_turn_id.get())
 
     async def _add_error_message(self, session_id: str, content: str,
                                  title: str = "This task couldn't be completed") -> None:
@@ -1122,6 +1143,58 @@ class OrchestratorService:
         await self._project(self._rm and self._rm.add_message_component(
             session_id, msg_id, uuid.uuid4().hex, "error",
             {"title": title, "content": content}))
+
+    async def _project_approval_choice(self, session_id: str, interrupt_id: str,
+                                       preview: dict) -> None:
+        """Surface a gated send (require_confirmation) as an approve/decline card.
+
+        Reuses the `choice` component the chat module already renders (a
+        present_choices payload) rather than a bespoke widget: two options whose
+        submitText is the verdict. Selecting one sends that verdict as a normal
+        chat message; the session is `waiting` on this interrupt, so RunTask
+        routes it to resume_turn, which maps `approve` → confirmed (see there).
+        `preview` is the drafted call: for a mail, to/subject/body; else a
+        message/args blob."""
+        raw = preview.get("args") or {}
+        # Connector tools wrap the real arguments under `params` and add a
+        # `display_purpose` sibling (see smart_rag/tools/utilities/connector_tools.py).
+        # Unwrap it, or the card can't find subject/body/message and falls back to
+        # dumping the raw JSON blob at the owner.
+        args = raw["params"] if isinstance(raw.get("params"), dict) else raw
+
+        def _recipients(a: dict) -> str:
+            v = (a.get("to") or a.get("to_recipients") or a.get("recipient")
+                 or a.get("user_email") or "")
+            return ", ".join(str(x) for x in v) if isinstance(v, list) else str(v)
+
+        if "subject" in args or "body" in args:
+            title = "Approuver l'envoi de cet e-mail ?"
+            draft = (f"À : {_recipients(args) or '?'}\n"
+                     f"Objet : {args.get('subject', '')}\n\n{args.get('body', '')}")
+        elif "message" in args:
+            title = "Approuver l'envoi de ce message ?"
+            to = _recipients(args)
+            draft = (f"À : {to}\n\n" if to else "") + str(args.get("message", ""))
+        else:
+            title = "Approuver l'envoi de ce message ?"
+            draft = json.dumps(args, ensure_ascii=False)
+        data = {
+            "schemaVersion": 1, "status": "ready",
+            "questionId": interrupt_id[:100],
+            "prompt": title,
+            "description": (draft or "")[:1500],
+            "presentation": "quick_replies", "selectionMode": "single",
+            "submitBehavior": "immediate",
+            "options": [
+                {"id": "approve", "label": "Approuver", "submitText": "approve"},
+                {"id": "decline", "label": "Refuser", "submitText": "decline"},
+            ],
+            "fallbackText": title,
+        }
+        msg_id = uuid.uuid4().hex
+        await self._project(self._rm and self._rm.add_message(msg_id, session_id, "assistant", title))
+        await self._project(self._rm and self._rm.add_message_component(
+            session_id, msg_id, uuid.uuid4().hex, "choice", data))
 
     @staticmethod
     def _assistant_answer(plan: Plan) -> str:
@@ -1384,6 +1457,8 @@ class OrchestratorService:
         """
         if not new_steps:
             return 0
+        if len({s.id for s in new_steps}) != len(new_steps):
+            raise ValueError("plan has duplicate step ids")
         # The plan's frontier: steps nothing currently depends on. Injected steps
         # hang off it so they schedule in a NEW wave AFTER all existing work.
         # Without this, an independent step (no deps) lands in wave 0 alongside
@@ -1403,8 +1478,8 @@ class OrchestratorService:
             if not s.is_persona:
                 s.assignee = live.executor_id
                 s.assignee_name = live.executor_name or DEFAULT_EXECUTOR_LABEL
+        scheduler.validate(Plan(steps=[*live.steps, *new_steps]))
         live.steps.extend(new_steps)
-        scheduler.validate(live)
         scheduler.assign_waves(live)
         for s in new_steps:
             await self._project_step(session_id, live, s)
@@ -1489,8 +1564,25 @@ class OrchestratorService:
         outstanding_pairs = await self._rm.outstanding_interrupts(session_id)
         outstanding = {i for i, _ in outstanding_pairs}
         if outstanding and interrupt_id not in outstanding:
-            raise RuntimeError(
-                f"interrupt {interrupt_id} is not outstanding for session {session_id}")
+            # The session-level interrupt id can go STALE relative to the
+            # per-step outstanding rows when several steps park in parallel and
+            # the turn re-drives: a confirm gets a fresh ADK-generated id on
+            # every drive, so the id recorded in `set_waiting` no longer matches
+            # the step row after a re-drive resolves a sibling. A chat answer
+            # (approve/decline/text) carries no specific target, so answering a
+            # currently-outstanding interrupt is correct — pick one of the SAME
+            # dialect as the stale id (a verdict answers a confirm; text answers
+            # an ask) rather than failing the whole turn. Only an explicitly
+            # targeted id that the caller passed AND that is gone is a real
+            # error, but even then falling back is safer than dropping the answer.
+            same_dialect = [i for i, _ in outstanding_pairs
+                            if hitl.is_confirm(i) == hitl.is_confirm(interrupt_id)]
+            fallback = (same_dialect or [i for i, _ in outstanding_pairs])[0]
+            logger.warning(
+                "[worky] resume: stored interrupt %s not outstanding (outstanding=%s) "
+                "— answering %s instead (parallel-gate id drift)",
+                interrupt_id, sorted(outstanding), fallback)
+            interrupt_id = fallback
 
         # STEP 8 (resume) — same step ids + depends_on ⇒ same node names + edges,
         # which is what lets the interrupt id from the earlier run still match.
@@ -1544,9 +1636,22 @@ class OrchestratorService:
         # matter that this exact id can't match anything current.
         logger.info("[worky] 9. Runner.run_async → resuming session=%s interrupt=%s%s",
                     session_id, interrupt_id, " (out-of-band dynamic step)" if resumed_out_of_band else "")
+        # A confirm interrupt resumes with a tool-confirmation VERDICT, which ADK's
+        # native processor turns back into a real re-invocation of the gated send
+        # (approve) or a rejection to the model (decline) — the send's reasoning
+        # continues in place. This works through the rebuild because every step is
+        # fed None node_input (silent join) and sees its own scoped history
+        # (include_contents='default'), so the verdict stays the last user turn.
+        # ask/mail resume with the answer as before.
+        if hitl.is_confirm(interrupt_id):
+            resume = hitl.confirmation_resume_part(
+                hitl.confirm_fc_id(interrupt_id),
+                confirmed=answer.strip().lower() in ("approve", "approuver", "yes", "oui"))
+        else:
+            resume = hitl.resume_part(interrupt_id, {"value": answer})
         interrupt = await self._drive_until_quiescent(
             runner, session_id, user_id, plan, name_to_step,
-            types.Content(role="user", parts=[hitl.resume_part(interrupt_id, {"value": answer})]),
+            types.Content(role="user", parts=[resume]),
             model=model, connectors=connectors, executor_prompt=executor_prompt)
 
         # STEP 10 — may block again if the plan has another ask step.
@@ -1752,6 +1857,16 @@ class OrchestratorService:
                 if iid not in seen:
                     seen.add(iid)
                     interrupts.append((iid, step_id))
+            # A send tool marked require_confirmation parks under a *different*
+            # dialect (adk_request_confirmation) that interrupt_ids can't see. The
+            # preview (the drafted mail/message) is only on this event, so project
+            # the approval card now, while we still have it — a resume re-emits
+            # nothing for it (like every other interrupt).
+            for iid, preview in hitl.confirmation_interrupts(ev):
+                if iid not in seen:
+                    seen.add(iid)
+                    interrupts.append((iid, step_id))
+                    await self._project_approval_choice(session_id, iid, preview)
         return interrupts
 
     async def _outstanding(self, session_id: str,
@@ -1783,7 +1898,8 @@ class OrchestratorService:
                 continue
             step = plan.step(step_id)
             step.status = Status.BLOCKED
-            step.blocked_reason = ("awaiting user input" if hitl.is_ask(interrupt_id)
+            step.blocked_reason = ("awaiting your approval" if hitl.is_confirm(interrupt_id)
+                                   else "awaiting user input" if hitl.is_ask(interrupt_id)
                                    else "awaiting email reply")
             await self._project(self._rm and self._rm.set_step_status(
                 session_id, step_id, "blocked", blocked_reason=step.blocked_reason,
@@ -1793,9 +1909,10 @@ class OrchestratorService:
                 # token was minted at projection but had no interrupt to resume.
                 await self._project(self._rm and self._rm.bind_mail_wait_interrupt(
                     session_id, step_id, interrupt_id))
-            if hitl.is_ask(interrupt_id):
+            if hitl.is_ask(interrupt_id) and not hitl.is_confirm(interrupt_id):
                 # Surface the ask-the-user question in the chat. A mail wait has
                 # nothing to ask the owner — it is waiting on the outside world.
+                # A confirm already projected its approve/decline card in _drive.
                 await self._add_message(session_id, "assistant",
                                         step.question or step.description or "")
 
@@ -1851,41 +1968,71 @@ class OrchestratorService:
         # "search Bitcoin" in history and re-plan BOTH, and _inject_steps would
         # append a duplicate of the step already running.
         plan_session = plan_session or (session_id + "_plan")
-        planner = LlmAgent(
-            name="planner",
-            model=self._build_planner_model(planner_model),
-            # The DB prompt (agentstore) is the source of truth: it REPLACES the
-            # instruction rather than stacking on it. PLANNER_INSTRUCTION is only
-            # a fallback when the DB has none. Concatenating the two made the
-            # planner read the whole prompt twice -- once from the DB, once from
-            # this hardcoded copy (whose {{ }} JSON examples reached the model as
-            # invalid doubled braces). Same replace-semantics the executor uses.
-            instruction=(planner_prompt or PLANNER_INSTRUCTION),
-            # The planner runs on ITS OWN connectors (like the executor runs on
-            # its own): whatever the admin linked to the worky-planner agent
-            # becomes a planner tool. find_human_agents stays as the built-in
-            # until a human-agents MCP is linked to replace it.
-            tools=[human_agents.make_find_human_agents_tool(),
-                   *self._tools_for(planner_connectors, session_id, user_id)],
-            output_schema=_PlannerOutput,
-        )
-        runner = self._runner_factory(planner, f"planner_{session_id}")
-        await _ensure_session(runner, f"planner_{session_id}", user_id, plan_session)
+        # output_schema forces provider structured output (response_schema +
+        # application/json): a capable model gets the strongest shape guarantee on
+        # the first pass. But it HARD-REQUIRES provider support — a model without
+        # it 400s or ignores the schema. So try WITH the schema, then fall back to
+        # a schema-less prompt-mode pass whose JSON contract lives in the
+        # instruction (the DB prompt / PLANNER_INSTRUCTION) and is restated in the
+        # message. The plan was always parsed from text via _extract_json anyway,
+        # so prompt mode needs nothing else — it just lets the planner run on ANY
+        # model that can emit JSON, not only structured-output ones.
+        model_obj = self._build_planner_model(planner_model)
+        # The DB prompt (agentstore) is the source of truth: it REPLACES the
+        # instruction rather than stacking on it. PLANNER_INSTRUCTION is only a
+        # fallback when the DB has none. (Concatenating the two made the planner
+        # read the whole prompt twice, and its {{ }} JSON examples reached the
+        # model as invalid doubled braces.)
+        planner_instruction = (planner_prompt or PLANNER_INSTRUCTION)
+        # The planner runs on ITS OWN connectors (like the executor). find_human_agents
+        # stays the built-in until a human-agents MCP is linked to replace it.
+        planner_tools = [human_agents.make_find_human_agents_tool(),
+                         *self._tools_for(planner_connectors, session_id, user_id)]
+
+        def _planner_agent(use_schema: bool) -> LlmAgent:
+            kwargs = dict(name="planner", model=model_obj,
+                          instruction=planner_instruction, tools=planner_tools)
+            if use_schema:
+                kwargs["output_schema"] = _PlannerOutput
+            return LlmAgent(**kwargs)
+
+        async def _run_planner(agent: LlmAgent, msg: str) -> str:
+            runner = self._runner_factory(agent, f"planner_{session_id}")
+            await _ensure_session(runner, f"planner_{session_id}", user_id, plan_session)
+            text = ""
+            async for ev in runner.run_async(
+                user_id=user_id, session_id=plan_session,
+                new_message=types.Content(role="user", parts=[types.Part(text=msg)])):
+                if ev.content and ev.content.parts:
+                    for p in ev.content.parts:
+                        if getattr(p, "text", None):
+                            text = p.text
+            return text
+
         # Tell the planner who it is planning for, so it addresses the requester
         # directly and never assigns work or emails back to them. Kept as a
         # per-turn preamble on the message (not the DB instruction) so it works
         # whatever prompt the agentstore supplies.
         ctx = requester_context(requester)
         planner_message = f"{ctx}\n\n---\nUser's request:\n{message}" if ctx else message
-        text = ""
-        async for ev in runner.run_async(
-            user_id=user_id, session_id=plan_session,
-            new_message=types.Content(role="user", parts=[types.Part(text=planner_message)])):
-            if ev.content and ev.content.parts:
-                for p in ev.content.parts:
-                    if getattr(p, "text", None):
-                        text = p.text
-        data = _extract_json(text)
+
+        # Pass 1: structured. Pass 2: schema-less prompt mode — reached when the
+        # provider can't do structured output (the run raises) OR the structured
+        # reply wasn't parseable JSON. asyncio.CancelledError is a BaseException,
+        # so a supersede/stop still propagates through the `except Exception`.
+        data = None
+        attempts = ((True, planner_message),
+                    (False, planner_message + "\n\n" + _PLANNER_JSON_REMINDER))
+        for idx, (use_schema, msg) in enumerate(attempts):
+            try:
+                data = _extract_json(await _run_planner(_planner_agent(use_schema), msg))
+                break
+            except Exception as exc:  # provider rejected structured output, or no JSON
+                logger.warning(
+                    "[worky] planner pass %d failed (use_schema=%s) session=%s: %s",
+                    idx, use_schema, session_id, exc)
+                if idx == len(attempts) - 1:
+                    raise
         steps = []
         seen_ids: set = set()
         for s in data.get("steps", []):

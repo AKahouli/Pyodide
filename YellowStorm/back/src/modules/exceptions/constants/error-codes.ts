@@ -240,6 +240,10 @@ export enum ErrorCode {
   PLAYBOOK_FLOW_APPROVAL_NOT_FOUND = 'ERR_2532',
   PLAYBOOK_FLOW_DUPLICATE_NAME = 'ERR_2533',
   PLAYBOOK_PLANNER_UNAVAILABLE = 'ERR_2534',
+  PLAYBOOK_INPUT_BINDING_INVALID = 'ERR_2535',
+  PLAYBOOK_REQUIRED_INPUT_MISSING = 'ERR_2536',
+  PLAYBOOK_INPUT_RESOURCE_INACCESSIBLE = 'ERR_2537',
+  PLAYBOOK_CONFIGURATION_REQUIRED = 'ERR_2538',
 
   // Project errors (2700-2799)
   PROJECT_NOT_FOUND = 'ERR_2700',
@@ -351,7 +355,6 @@ export enum ErrorCode {
   WORKY_STREAM_NOT_FOUND = 'ERR_3500',
   WORKY_STREAM_FORBIDDEN = 'ERR_3501',
   WORKY_STREAM_INVALID_STATE = 'ERR_3502',
-  WORKY_RUNTIME_UNAVAILABLE = 'ERR_3503',
   WORKY_SERVICE_AUTH_FAILED = 'ERR_3504',
   WORKY_IDEMPOTENCY_REPLAY = 'ERR_3505',
   // Part 2
@@ -647,6 +650,10 @@ export const ErrorMessages: Record<ErrorCode, string> = {
   [ErrorCode.PLAYBOOK_FLOW_APPROVAL_NOT_FOUND]: 'No pending approval found for this execution.',
   [ErrorCode.PLAYBOOK_FLOW_DUPLICATE_NAME]: 'A playbook with this name already exists.',
   [ErrorCode.PLAYBOOK_PLANNER_UNAVAILABLE]: 'The Playbook Planner default agent is unavailable or ambiguous.',
+  [ErrorCode.PLAYBOOK_INPUT_BINDING_INVALID]: 'The Playbook input binding is invalid.',
+  [ErrorCode.PLAYBOOK_REQUIRED_INPUT_MISSING]: 'A required Playbook input is missing.',
+  [ErrorCode.PLAYBOOK_INPUT_RESOURCE_INACCESSIBLE]: 'A Playbook input resource is unavailable or inaccessible.',
+  [ErrorCode.PLAYBOOK_CONFIGURATION_REQUIRED]: 'A required Playbook setting is not configured.',
 
   [ErrorCode.PROJECT_NOT_FOUND]: 'Project not found.',
   [ErrorCode.PROJECT_ALREADY_EXISTS]: 'A project with this name already exists.',
@@ -697,7 +704,6 @@ export const ErrorMessages: Record<ErrorCode, string> = {
   [ErrorCode.WORKY_STREAM_NOT_FOUND]: 'Worky stream not found.',
   [ErrorCode.WORKY_STREAM_FORBIDDEN]: 'You do not have access to this Worky stream.',
   [ErrorCode.WORKY_STREAM_INVALID_STATE]: 'Worky stream is not in a state that allows this operation.',
-  [ErrorCode.WORKY_RUNTIME_UNAVAILABLE]: 'Worky runtime is currently unavailable.',
   [ErrorCode.WORKY_SERVICE_AUTH_FAILED]: 'Worky service authentication failed.',
   [ErrorCode.WORKY_IDEMPOTENCY_REPLAY]: 'Worky callback has already been processed.',
   [ErrorCode.WORKY_INVALID_PLAN_DELTA]: 'The plan delta is invalid.',

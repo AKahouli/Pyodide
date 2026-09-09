@@ -48,6 +48,8 @@ import { PlaybookFlowOutputContractService } from './playbook-flow-output-contra
 import { PlaybookFlowOutputFormatService } from './playbook-flow-output-format.service';
 import { ModelsService } from '@modules/models/models.service';
 import { WorkspaceService } from '@modules/workspace/workspace.service';
+import { WorkspaceShareService } from '@modules/workspace/workspace-share.service';
+import { WorkspaceDocumentService } from '@modules/workspace/workspace-document.service';
 import type { ResolvedReplayArtifacts } from '../interfaces/playbook-flow-replay-artifact.interface';
 import type { ReplayPlanningSummary } from '../interfaces/playbook-flow-replay-plan.interface';
 import {
@@ -82,6 +84,8 @@ import { PlaybookExecutionSettingsResolverService } from './playbook-execution-s
 import { publicPlaybookTaskResult, sanitizePlaybookPublicValue } from '../utils/playbook-artifact';
 import { PlaybookFlowArtifactService } from './playbook-flow-artifact.service';
 import { FlowDynamicReasoningAttempt, FlowDynamicReasoningAttemptDocument } from '../schemas/playbook-flow-dynamic-reasoning-attempt.schema';
+import { PlaybookInputContractService, type PlaybookInputDescriptor } from './playbook-input-contract.service';
+import { hasRequiredInputValue, readOwnPath } from '../utils/playbook-managed-input.util';
 
 const TERMINAL_STATUSES = ['completed', 'failed', 'cancelled'] as const;
 const RUNTIME_AGENT_METADATA_KEYS = [
@@ -277,6 +281,9 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
     @InjectModel(FlowDynamicReasoningAttempt.name)
     private readonly dynamicReasoningAttemptModel?: Model<FlowDynamicReasoningAttemptDocument>,
     @Optional() private readonly artifactService?: PlaybookFlowArtifactService,
+    @Optional() private readonly inputContractService?: PlaybookInputContractService,
+    @Optional() private readonly workspaceShareService?: WorkspaceShareService,
+    @Optional() private readonly workspaceDocumentService?: WorkspaceDocumentService,
   ) {
     this.hitlResumeService?.bindExecutionHost({
       isRuntimeAvailable: () => this.isRuntimeAvailable(),
@@ -758,7 +765,7 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
     flowId: string,
     ownerId: string,
     singleStepTaskId?: string,
-  ): Promise<IFlowResponse> {
+  ): Promise<{ flow: IFlowResponse; graphWasSanitized: boolean }> {
     const preflightStartedAt = Date.now();
     const flow = await this.loadFlowForExecutionStart(flowId, ownerId);
     this.logger.log(
@@ -773,18 +780,15 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
       bindingAction: 'Cleaning',
     });
 
-    if (
+    const graphWasSanitized = (
       sanitizedGraph.removedOrphanedEdgeCount > 0
       || sanitizedGraph.removedOrphanedBindingCount > 0
       || sanitizedGraph.removedStaleBindingCount > 0
-    ) {
+    );
+    if (graphWasSanitized) {
       this.logger.warn(
         `Cleaned ${sanitizedGraph.removedOrphanedEdgeCount} orphaned edge(s), ${sanitizedGraph.removedOrphanedBindingCount} orphaned binding(s), and ${sanitizedGraph.removedStaleBindingCount} stale binding(s) for flow ${flowId}`,
       );
-      const doc = await this.flowService.findById(flowId);
-      doc.controlEdges = sanitizedGraph.controlEdges as any;
-      doc.dataBindings = sanitizedGraph.dataBindings as any;
-      await doc.save();
       flow.controlEdges = sanitizedGraph.controlEdges as any;
       flow.dataBindings = sanitizedGraph.dataBindings as any;
     }
@@ -793,7 +797,17 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
       ...(singleStepTaskId ? { requiredBindingNodeIds: [singleStepTaskId] } : {}),
     });
 
-    return flow;
+    return { flow, graphWasSanitized };
+  }
+
+  private async persistSanitizedExecutionGraph(flowId: string, flow: IFlowResponse): Promise<void> {
+    flow.definitionRevision = await this.flowService.persistSanitizedExecutionGraph(
+      flowId,
+      flow.ownerId,
+      flow.definitionRevision ?? 0,
+      flow.controlEdges,
+      flow.dataBindings,
+    );
   }
 
   async start(
@@ -811,11 +825,16 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
     stepExecutionModes?: Record<string, string>,
     modelIdOverride?: string,
   ): Promise<IFlowExecutionResponse> {
-    const flow = await this.prepareExecutionStartFlow(flowId, ownerId, singleStepTaskId);
+    const { flow, graphWasSanitized } = await this.prepareExecutionStartFlow(flowId, ownerId, singleStepTaskId);
 
     if (singleStepTaskId) {
       this.assertSingleStepSupported(flow.nodes, singleStepTaskId);
       this.assertSingleStepControlDependenciesSupported(flow.nodes, flow.controlEdges, singleStepTaskId);
+    }
+
+    await this.preflightRequiredInputs(flow, ownerId, inputContext ?? {}, singleStepTaskId);
+    if (graphWasSanitized) {
+      await this.persistSanitizedExecutionGraph(flowId, flow);
     }
 
     const effectiveExecutionSettings = this.executionSettingsResolver
@@ -988,6 +1007,109 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
     this.scheduleQueueDrain(ownerId);
 
     return sanitizeExecutionForResponse(saved.toJSON() as unknown as IFlowExecutionResponse);
+  }
+
+  private async preflightRequiredInputs(
+    flow: IFlowResponse,
+    ownerId: string,
+    inputContext: Record<string, unknown>,
+    singleStepTaskId?: string,
+  ): Promise<void> {
+    const contract = (this.inputContractService ?? new PlaybookInputContractService(this.validatorService)).derive(flow);
+    const inputs = singleStepTaskId
+      ? contract.inputs.filter((input) => input.taskId === singleStepTaskId)
+      : contract.inputs;
+    const invalid = inputs.find((input) => input.readiness === 'invalid');
+    if (invalid) {
+      throw new BadRequestException(
+        ErrorCode.PLAYBOOK_INPUT_BINDING_INVALID,
+        `Playbook input binding is invalid for ${invalid.taskTitle}.${invalid.label}.`,
+      );
+    }
+    const configuration = inputs.find((input) => input.readiness === 'configuration_required');
+    if (configuration) {
+      throw new BadRequestException(
+        ErrorCode.PLAYBOOK_CONFIGURATION_REQUIRED,
+        `Playbook setting ${configuration.label} must be configured before execution.`,
+      );
+    }
+
+    for (const input of inputs.filter((item) => item.readiness === 'configured')) {
+      const binding = flow.dataBindings.find((candidate) => (
+        candidate.targetNode === input.taskId
+        && candidate.targetPort === input.portId
+        && candidate.sourceKind === 'constant'
+      ));
+      if (binding) await this.validateInputResource(ownerId, input, binding.constantValue);
+    }
+
+    for (const input of inputs.filter((item) => item.readiness === 'runtime_required')) {
+      const triggerPath = input.binding.triggerPath;
+      const resolved = triggerPath ? readOwnPath(inputContext, triggerPath) : { found: false };
+      if (!resolved.found || !hasRequiredInputValue(resolved.value)) {
+        throw new BadRequestException(
+          ErrorCode.PLAYBOOK_REQUIRED_INPUT_MISSING,
+          `Required Playbook input ${input.label} is missing.`,
+        );
+      }
+      await this.validateInputResource(ownerId, input, resolved.value);
+    }
+  }
+
+  private async validateInputResource(
+    ownerId: string,
+    input: PlaybookInputDescriptor,
+    value: unknown,
+  ): Promise<void> {
+    const configurationDestination = input.scope === 'configuration';
+    const requiresResource = configurationDestination || input.artifactKind === 'document' || input.artifactKind === 'image';
+    if (!value || typeof value !== 'object') {
+      if (requiresResource) this.throwInputResourceInaccessible(input);
+      return;
+    }
+    const resource = value as Record<string, unknown>;
+    if (resource.kind !== 'workspace' && resource.kind !== 'document' && resource.kind !== 'folder') {
+      if (requiresResource) this.throwInputResourceInaccessible(input);
+      return;
+    }
+    if (configurationDestination && resource.kind !== 'workspace' && resource.kind !== 'folder') {
+      this.throwInputResourceInaccessible(input);
+    }
+    const id = typeof resource.id === 'string' ? resource.id.trim() : '';
+    const workspaceId = typeof resource.workspaceId === 'string' ? resource.workspaceId.trim() : '';
+    if (!id || !workspaceId) this.throwInputResourceInaccessible(input);
+    if (resource.kind === 'workspace' && id !== workspaceId) this.throwInputResourceInaccessible(input);
+    const workspaceShareService = this.workspaceShareService;
+    if (!workspaceShareService) this.throwInputResourceInaccessible(input);
+    const workspaceDocumentService = this.workspaceDocumentService;
+    if ((resource.kind === 'document' || resource.kind === 'folder') && !workspaceDocumentService) {
+      this.throwInputResourceInaccessible(input);
+    }
+
+    try {
+      if (input.scope === 'configuration') {
+        await workspaceShareService.assertUserHasWriteAccess(ownerId, workspaceId);
+      } else {
+        await workspaceShareService.assertUserHasAccess(ownerId, [workspaceId]);
+      }
+      if (resource.kind === 'document' || resource.kind === 'folder') {
+        const documents = await workspaceDocumentService!.findByIds([id]);
+        const document = documents.find((candidate) => candidate.id === id);
+        const expectedFolder = resource.kind === 'folder';
+        if (!document || document.workspaceId !== workspaceId || document.isFolder !== expectedFolder) {
+          this.throwInputResourceInaccessible(input);
+        }
+      }
+    } catch {
+      this.throwInputResourceInaccessible(input);
+    }
+  }
+
+  private throwInputResourceInaccessible(input: PlaybookInputDescriptor): never {
+    throw new BadRequestException(
+      ErrorCode.PLAYBOOK_INPUT_RESOURCE_INACCESSIBLE,
+      `The selected resource for ${input.label} is unavailable or inaccessible.`,
+    );
   }
 
   private assertSingleStepSupported(
@@ -1488,6 +1610,7 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
             python_worker_pool_size: effectiveExecutionSettings.pythonWorkerPoolSize,
             python_worker_max_inflight: effectiveExecutionSettings.pythonWorkerMaxInflight,
             max_tool_iterations: effectiveExecutionSettings.maxToolIterations,
+            max_sandbox_calls_per_step: effectiveExecutionSettings.maxSandboxCallsPerStep,
             graph_cache_enabled: effectiveExecutionSettings.graphCacheEnabled,
             graph_cache_max_entries: effectiveExecutionSettings.graphCacheMaxEntries,
             graph_cache_ttl_seconds: effectiveExecutionSettings.graphCacheTtlSeconds,
@@ -2313,6 +2436,7 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
           python_worker_pool_size: effectiveExecutionSettings.pythonWorkerPoolSize,
           python_worker_max_inflight: effectiveExecutionSettings.pythonWorkerMaxInflight,
           max_tool_iterations: effectiveExecutionSettings.maxToolIterations,
+          max_sandbox_calls_per_step: effectiveExecutionSettings.maxSandboxCallsPerStep,
           graph_cache_enabled: effectiveExecutionSettings.graphCacheEnabled,
           graph_cache_max_entries: effectiveExecutionSettings.graphCacheMaxEntries,
           graph_cache_ttl_seconds: effectiveExecutionSettings.graphCacheTtlSeconds,

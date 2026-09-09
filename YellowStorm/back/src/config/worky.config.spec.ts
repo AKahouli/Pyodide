@@ -1,6 +1,6 @@
 import workyConfig from './worky.config';
 
-describe('workyConfig voice keys', () => {
+describe('workyConfig', () => {
   it('exposes voice defaults', () => {
     const c = workyConfig();
     expect(c.voiceModel).toBe('gemini-3.1-flash-live-preview');
@@ -15,5 +15,13 @@ describe('workyConfig voice keys', () => {
     process.env.WORKY_VOICE_MODEL = 'gemini-x-live';
     expect(workyConfig().voiceModel).toBe('gemini-x-live');
     delete process.env.WORKY_VOICE_MODEL;
+  });
+
+  it('exposes Electric table defaults including sessions', () => {
+    const c = workyConfig();
+    expect(c.electricMessagesTable).toBe('messages');
+    expect(c.electricSessionsTable).toBe('sessions');
+    expect(c.electricPlansTable).toBe('plans');
+    expect(c.electricPlanStepsTable).toBe('plan_steps');
   });
 });

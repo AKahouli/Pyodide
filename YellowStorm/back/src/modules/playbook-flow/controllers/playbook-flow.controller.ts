@@ -24,6 +24,7 @@ import { ErrorCode } from '@modules/exceptions/constants/error-codes';
 import { PlaybookAssistantService } from '../assistant/playbook-assistant.service';
 import { InitializePlaybookAssistantAttachmentDto, RunPlaybookAssistantTurnDto, StartAdvisorRemediationConstructionDto } from '../dto/playbook-assistant.dto';
 import { RateLimit } from '@modules/rate-limiter';
+import { PlaybookInputContractService } from '../services/playbook-input-contract.service';
 
 @ApiTags('Playbook Flows')
 @ApiBearerAuth()
@@ -40,6 +41,7 @@ export class PlaybookFlowController {
     private readonly playbookFlowIntentService: PlaybookFlowIntentService,
     private readonly playbookFlowIntentConstructionService: PlaybookFlowIntentConstructionService,
     private readonly playbookAssistantService: PlaybookAssistantService,
+    private readonly playbookInputContractService: PlaybookInputContractService,
     @Inject(playbookFlowConfig.KEY)
     private readonly playbookFlowSettings: ConfigType<typeof playbookFlowConfig>,
   ) {}
@@ -424,6 +426,17 @@ export class PlaybookFlowController {
     @Body() body: CancelIntentConstructionDto,
   ) {
     return this.playbookFlowIntentConstructionService.cancel(id, userId, constructionId, body?.reason);
+  }
+
+  @Get(':id/input-contract')
+  @ApiOperation({ summary: 'Get the derived Playbook input contract' })
+  @RequirePermissions(Permissions.PLAYBOOK_READ)
+  async getInputContract(
+    @CurrentUser('_id') userId: string,
+    @Param('id') id: string,
+  ) {
+    const flow = await this.playbookFlowService.findOneBase(id, userId);
+    return this.playbookInputContractService.derive(flow);
   }
 
   @Post(':id/assistant/turns')

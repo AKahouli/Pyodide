@@ -8,6 +8,7 @@ import type {
   MessageComponent,
   ResponseCorrectionAttempt,
 } from '../../interfaces/message.interface';
+import type { FrontendLatencyPatch } from '../../interfaces/latency.interface';
 import { newOwnedId } from '../owned-id';
 import type {
   AiMessageComponentsRecord,
@@ -107,6 +108,82 @@ export class PostgresMessageStore implements MessageStore {
     });
   }
 
+  /**
+   * Single-transaction turn persistence: the user message, the conversation
+   * counters, the AI placeholder, and the question.answerMessageId linkage
+   * commit together (was two awaited round trips).
+   */
+  async createUserWithAiPlaceholder(
+    input: Parameters<MessageStore['createUserWithAiPlaceholder']>[0],
+  ): Promise<{ user: MessageRecord; placeholder: MessageRecord }> {
+    return this.db.transaction(async (tx) => {
+      const now = new Date();
+      const userId = newOwnedId();
+      const [userRow] = await tx
+        .insert(schema.messages)
+        .values({
+          id: userId,
+          conversationId: input.user.conversationId,
+          senderId: input.user.senderId,
+          parentMessageId: input.user.parentMessageId,
+          conversationType: 'user',
+          content: input.user.content,
+          attachedFileIds: input.user.attachedFileIds,
+          webSearchEnabled: input.user.webSearchEnabled ?? false,
+          modelId: input.user.modelId,
+          reasoningEffort: input.user.reasoningEffort,
+          agentIds: input.user.agentIds,
+          memberIds: input.user.memberIds,
+          isStreaming: false,
+          isComplete: true,
+          requestId: input.user.requestId,
+          interaction: input.user.interaction,
+          interactions: input.user.interactions,
+          replayContext: input.user.replayContext,
+          createdAt: now,
+          updatedAt: now,
+        })
+        .returning();
+      await tx
+        .update(schema.conversations)
+        .set({
+          lastMessageAt: now,
+          messageCount: sql`${schema.conversations.messageCount} + 1`,
+          updatedAt: now,
+        })
+        .where(eq(schema.conversations.id, input.user.conversationId));
+      const placeholderId = newOwnedId();
+      const [placeholderRow] = await tx
+        .insert(schema.messages)
+        .values({
+          id: placeholderId,
+          conversationId: input.placeholder.conversationId,
+          conversationType: 'ai',
+          senderId: input.placeholder.senderId,
+          modelId: input.placeholder.modelId,
+          reasoningEffort: input.placeholder.reasoningEffort,
+          questionMessageId: userId,
+          isStreaming: true,
+          isComplete: false,
+          components: [],
+          requestId: input.placeholder.requestId,
+          createdAt: now,
+          updatedAt: now,
+        })
+        .returning();
+      await tx
+        .update(schema.messages)
+        .set({ answerMessageId: placeholderId, updatedAt: now })
+        .where(
+          and(
+            eq(schema.messages.id, userId),
+            isNull(schema.messages.answerMessageId),
+          ),
+        );
+      return { user: mapPostgresMessage(userRow), placeholder: mapPostgresMessage(placeholderRow) };
+    });
+  }
+
   async completeAi(
     input: Parameters<MessageStore['completeAi']>[0],
   ): Promise<MessageRecord | null> {
@@ -120,23 +197,29 @@ export class PostgresMessageStore implements MessageStore {
       if (input.streamExecutionLeaseId) {
         conditions.push(eq(schema.messages.streamExecutionLeaseId, input.streamExecutionLeaseId));
       }
-      const [row] = await tx
-        .update(schema.messages)
-        .set({
-          components: input.components,
-          isStreaming: false,
-          isComplete: true,
-          inputTokens: input.inputTokens,
-          outputTokens: input.outputTokens,
-          durationMs: input.durationMs,
-          timeToFirstChunk: input.timeToFirstChunk,
-          timeToFirstToken: input.timeToFirstToken,
-          modelRequestTelemetry: input.modelRequestTelemetry,
-          guardrailDecision: input.guardrailDecision,
-          updatedAt: now,
-        })
-        .where(and(...conditions))
-        .returning();
+    const [row] = await tx
+      .update(schema.messages)
+      .set({
+        components: input.components,
+        isStreaming: false,
+        isComplete: true,
+        inputTokens: input.inputTokens,
+        outputTokens: input.outputTokens,
+        durationMs: input.durationMs,
+        timeToFirstChunk: input.timeToFirstChunk,
+        timeToFirstToken: input.timeToFirstToken,
+        modelRequestTelemetry: input.modelRequestTelemetry,
+        guardrailDecision: input.guardrailDecision,
+        // Shallow JSONB merge: a browser-reported frontend paint metric that
+        // landed first (racing completion) is preserved because the server-side
+        // metrics object never carries that key.
+        latencyMetrics: input.latencyMetrics
+          ? sql`COALESCE(${schema.messages.latencyMetrics}, '{}'::jsonb) || ${JSON.stringify(input.latencyMetrics)}::jsonb`
+          : undefined,
+        updatedAt: now,
+      })
+      .where(and(...conditions))
+      .returning();
       if (!row) return null;
       await tx
         .update(schema.conversations)
@@ -492,47 +575,54 @@ export class PostgresMessageStore implements MessageStore {
   }
 
   async failStaleReliability(cutoff: Date): Promise<MessageRecord[]> {
-    const withoutHeartbeat = await this.db.execute(sql`
-      WITH candidates AS (
-        SELECT id FROM conversation.messages
-        WHERE reliability_evaluation->>'status' = 'pending'
-          AND reliability_evaluation_heartbeat_at IS NULL
-          AND COALESCE(NULLIF(reliability_evaluation->>'requestedAt', '')::timestamptz, updated_at) < ${cutoff}
-        ORDER BY COALESCE(NULLIF(reliability_evaluation->>'requestedAt', '')::timestamptz, updated_at), id
-        LIMIT 1000 FOR UPDATE SKIP LOCKED
-      )
-      UPDATE conversation.messages m
-      SET reliability_evaluation = jsonb_set(jsonb_set(m.reliability_evaluation, '{status}', '"failed"'), '{failureCode}', '"stale_pending_after_restart"') || jsonb_build_object('evaluatedAt', ${new Date().toISOString()}::text),
-          updated_at = now()
-      FROM candidates c
-      WHERE m.id = c.id
-      RETURNING m.*
-    `);
-    const remaining = 1000 - withoutHeartbeat.rows.length;
-    if (remaining === 0) {
-      return withoutHeartbeat.rows.map((row) =>
-        mapPostgresMessage(row as typeof schema.messages.$inferSelect),
-      );
-    }
-    const withStaleHeartbeat = await this.db.execute(sql`
-      WITH candidates AS (
-        SELECT id FROM conversation.messages
-        WHERE reliability_evaluation->>'status' = 'pending'
-          AND reliability_evaluation_heartbeat_at < ${cutoff}
-        ORDER BY reliability_evaluation_heartbeat_at, id
-        LIMIT ${remaining} FOR UPDATE SKIP LOCKED
-      )
-      UPDATE conversation.messages m
-      SET reliability_evaluation = jsonb_set(jsonb_set(m.reliability_evaluation, '{status}', '"failed"'), '{failureCode}', '"stale_pending_after_restart"') || jsonb_build_object('evaluatedAt', ${new Date().toISOString()}::text),
-          reliability_evaluation_heartbeat_at = NULL,
-          updated_at = now()
-      FROM candidates c
-      WHERE m.id = c.id
-      RETURNING m.*
-    `);
-    return [...withoutHeartbeat.rows, ...withStaleHeartbeat.rows].map((row) =>
-      mapPostgresMessage(row as typeof schema.messages.$inferSelect),
-    );
+    const evaluatedAt = new Date().toISOString();
+    return this.db.transaction(async (tx) => {
+      const withoutHeartbeat = await tx.execute<{ id: string }>(sql`
+        WITH candidates AS (
+          SELECT id FROM conversation.messages
+          WHERE reliability_evaluation->>'status' = 'pending'
+            AND reliability_evaluation_heartbeat_at IS NULL
+            AND COALESCE(NULLIF(reliability_evaluation->>'requestedAt', '')::timestamptz, updated_at) < ${cutoff}
+          ORDER BY COALESCE(NULLIF(reliability_evaluation->>'requestedAt', '')::timestamptz, updated_at), id
+          LIMIT 1000 FOR UPDATE SKIP LOCKED
+        )
+        UPDATE conversation.messages m
+        SET reliability_evaluation = jsonb_set(jsonb_set(m.reliability_evaluation, '{status}', '"failed"'), '{failureCode}', '"stale_pending_after_restart"') || jsonb_build_object('evaluatedAt', ${evaluatedAt}::text),
+            updated_at = now()
+        FROM candidates c
+        WHERE m.id = c.id
+        RETURNING m.id
+      `);
+      const updatedIds = withoutHeartbeat.rows.map((row) => row.id);
+      const remaining = 1000 - updatedIds.length;
+
+      if (remaining > 0) {
+        const withStaleHeartbeat = await tx.execute<{ id: string }>(sql`
+          WITH candidates AS (
+            SELECT id FROM conversation.messages
+            WHERE reliability_evaluation->>'status' = 'pending'
+              AND reliability_evaluation_heartbeat_at < ${cutoff}
+            ORDER BY reliability_evaluation_heartbeat_at, id
+            LIMIT ${remaining} FOR UPDATE SKIP LOCKED
+          )
+          UPDATE conversation.messages m
+          SET reliability_evaluation = jsonb_set(jsonb_set(m.reliability_evaluation, '{status}', '"failed"'), '{failureCode}', '"stale_pending_after_restart"') || jsonb_build_object('evaluatedAt', ${evaluatedAt}::text),
+              reliability_evaluation_heartbeat_at = NULL,
+              updated_at = now()
+          FROM candidates c
+          WHERE m.id = c.id
+          RETURNING m.id
+        `);
+        updatedIds.push(...withStaleHeartbeat.rows.map((row) => row.id));
+      }
+
+      if (!updatedIds.length) return [];
+      const rows = await tx
+        .select()
+        .from(schema.messages)
+        .where(inArray(schema.messages.id, updatedIds));
+      return rows.map(mapPostgresMessage);
+    });
   }
 
   async touchPendingReliability(ids: string[], now: Date): Promise<void> {
@@ -555,6 +645,46 @@ export class PostgresMessageStore implements MessageStore {
       .update(schema.messages)
       .set({ isStreaming: false, isComplete: false, updatedAt: new Date() })
       .where(and(...conditions));
+  }
+
+  async updateFrontendLatency(
+    messageId: string,
+    requestId: string,
+    patch: FrontendLatencyPatch,
+  ): Promise<MessageRecord | null> {
+    return this.db.transaction(async (tx) => {
+      const [current] = await tx
+        .select()
+        .from(schema.messages)
+        .where(eq(schema.messages.id, messageId))
+        .limit(1)
+        .for('update');
+      if (!current || current.conversationType !== 'ai') return null;
+      // Idempotency/correlation: reject when the persisted turn carries a
+      // different requestId; skip entirely once a frontend paint value exists.
+      if (current.requestId && requestId !== current.requestId) return null;
+      const existing = (current.latencyMetrics ?? {}) as Record<string, unknown>;
+      if (
+        existing.frontendRenderMs !== undefined ||
+        existing.frontendFirstChunkPaintedEpochMs !== undefined
+      ) {
+        return mapPostgresMessage(current);
+      }
+      // The worse quality wins so a clock-skew signal cannot be lost to a
+      // later, more optimistic report.
+      const qualityRank: Record<string, number> = { ok: 0, partial: 1, 'clock-skew': 2 };
+      const worstQuality =
+        [existing.quality, patch.quality]
+          .filter((value): value is string => typeof value === 'string' && value in qualityRank)
+          .sort((left, right) => qualityRank[right] - qualityRank[left])[0] ?? patch.quality;
+      const merged = { ...existing, ...patch, quality: worstQuality };
+      const [row] = await tx
+        .update(schema.messages)
+        .set({ latencyMetrics: merged, updatedAt: new Date() })
+        .where(eq(schema.messages.id, messageId))
+        .returning();
+      return row ? mapPostgresMessage(row) : null;
+    });
   }
 
   async cleanupStaleStreams(cutoff: Date): Promise<number> {
