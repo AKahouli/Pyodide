@@ -238,7 +238,11 @@ async function bootstrap() {
       reason: serializeUnhandledReason(reason),
       promise: inspect(promise, { depth: 2, breakLength: 120 }),
     });
-    void shutdown('unhandledRejection');
+    // Do not shut down: Baileys regularly raises transient internal "Timed Out"
+    // rejections (prekey upload / init queries, e.g. after a reconnect or
+    // pairing). Exiting here ends the Postgres pool and aborts in-flight agent
+    // runs. Log loudly and keep serving; an unhandled rejection does not imply a
+    // corrupted process state.
   });
 }
 

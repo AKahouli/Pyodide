@@ -382,6 +382,7 @@ Defined in `config.schema.ts`, loaded via `whatsapp.config.ts`:
 | `WHATSAPP_RECONNECT_MAX_DELAY_MS` | `120000` | Max reconnect backoff |
 | `WHATSAPP_RECONNECT_MAX_ATTEMPTS` | `10` | Max reconnect tries before FAILED |
 | `WHATSAPP_CONNECTIVITY_PROBE_TIMEOUT_MS` | `10000` | Network probe timeout |
+| `WHATSAPP_INTERNAL_SEND_RATE_LIMIT_PER_MINUTE` | `30` | Per-agent cap on the internal send endpoint |
 | `WHATSAPP_FALLBACK_REPLY` | *(see config)* | Reply when AI response text cannot be extracted |
 
 `CONVERSATION_GRPC_URL` is defined in conversation config (not `whatsapp.config.ts`) but is required for inbound AI replies.
@@ -403,6 +404,33 @@ CONVERSATION_GRPC_URL=localhost:50051
 "qrcode": "...",
 "@types/qrcode": "..."
 ```
+
+---
+
+## Internal Send Endpoint (WhatsApp Send MCP façade)
+
+`WhatsAppInternalController` exposes a service-to-service surface for the
+standalone **WhatsApp Send MCP** server (outbound proactive sends only):
+
+| Endpoint | Body | Result |
+|---|---|---|
+| `POST /api/v1/internal/whatsapp/send` | `{ agentId, to?, text }` | `{ messageId, status: "SENT", to }` |
+| `POST /api/v1/internal/whatsapp/status` | `{ agentId }` | `{ enabled, status, phoneNumber? }` |
+
+Auth: `X-Internal-Token` (`INTERNAL_SERVICE_SECRET`) via `InternalServiceGuard`;
+internal network only, never publicly routable. `agentId` is trusted because
+the MCP derived it from its signed per-run Bearer JWT; ownership is
+re-validated against `agent_whatsapp_integrations` before any socket is
+touched (enabled + `CONNECTED` required). Recipients must exist in
+`whatsapp_chat_bindings` (no cold outreach); `to` defaults to the most
+recently active binding. Text is truncated to `WHATSAPP_MAX_REPLY_LENGTH`.
+Inbound routing and the deterministic auto-reply stay entirely in
+`WhatsAppMessageService` — never routed through the MCP.
+
+Related config (`whatsapp-mcp.config.ts`): `WHATSAPP_MCP_JWT_PRIVATE_KEY`
+(RS256 PEM signing the per-run agent JWT injected into the connector's
+`auth_headers`), `WHATSAPP_MCP_CONNECTOR_SLUG` (default `mcp-whatsapp`),
+`WHATSAPP_MCP_TOKEN_TTL_SECONDS` (default `300`).
 
 ---
 
