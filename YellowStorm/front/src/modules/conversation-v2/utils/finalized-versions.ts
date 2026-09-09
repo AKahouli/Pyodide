@@ -61,3 +61,17 @@ export function resolveLatestFinalizedRevisionId(
 ): string | null {
   return versions[0]?.revisionId ?? null;
 }
+
+/**
+ * Human-facing version number for a revision inside a latest-first list.
+ * The oldest finalized version is "Version 1", the latest is "Version N".
+ * The revisionId itself stays the durable identifier; this is display-only.
+ */
+export function resolveFinalizedVersionNumber(
+  versions: FinalizedAppVersion[],
+  revisionId: string | null,
+): number | null {
+  if (!revisionId) return null;
+  const index = versions.findIndex((version) => version.revisionId === revisionId);
+  return index === -1 ? null : versions.length - index;
+}

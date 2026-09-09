@@ -160,6 +160,7 @@ export class ConversationV2StreamController {
         : undefined,
       skillIds: body.skillIds,
       connectorIds: body.connectorIds,
+      baseRevisionId: body.baseRevisionId,
     });
     return { accepted: true };
   }

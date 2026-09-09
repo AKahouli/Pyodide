@@ -480,6 +480,47 @@ describe('useConversationV2Store', () => {
     expect(useConversationV2Store.getState().rightPanelMode).toBe('app');
   });
 
+  it('sendMessage ships baseRevisionId when a historical version is selected', async () => {
+    const sendSpy = vi
+      .spyOn(conversationV2Api, 'sendMessage')
+      .mockResolvedValueOnce(undefined);
+    useConversationV2Store.setState({
+      sessionId: 'session-1',
+      finalizedVersions: [
+        { revisionId: 'rev_3', title: 'App', finalizedAt: '2026-09-03T00:00:00.000Z' },
+        { revisionId: 'rev_2', title: 'App', finalizedAt: '2026-09-02T00:00:00.000Z' },
+      ],
+      previewRevisionId: 'rev_2',
+    });
+
+    await useConversationV2Store.getState().sendMessage('continue from version 2');
+
+    expect(sendSpy).toHaveBeenCalledWith(
+      'session-1',
+      expect.objectContaining({ baseRevisionId: 'rev_2' }),
+    );
+  });
+
+  it('sendMessage omits baseRevisionId when the latest version is selected', async () => {
+    const sendSpy = vi
+      .spyOn(conversationV2Api, 'sendMessage')
+      .mockResolvedValueOnce(undefined);
+    useConversationV2Store.setState({
+      sessionId: 'session-1',
+      finalizedVersions: [
+        { revisionId: 'rev_3', title: 'App', finalizedAt: '2026-09-03T00:00:00.000Z' },
+        { revisionId: 'rev_2', title: 'App', finalizedAt: '2026-09-02T00:00:00.000Z' },
+      ],
+      previewRevisionId: 'rev_3',
+    });
+
+    await useConversationV2Store.getState().sendMessage('keep going');
+
+    const body = sendSpy.mock.calls[0]?.[1] as Record<string, unknown> | undefined;
+    expect(body).toBeDefined();
+    expect(body!['baseRevisionId']).toBeUndefined();
+  });
+
   it('deploy sends the application component title to the backend', async () => {
     const deploySpy = vi.spyOn(conversationV2Api, 'deploySession').mockResolvedValueOnce({
       deployStatus: 'deployed',
