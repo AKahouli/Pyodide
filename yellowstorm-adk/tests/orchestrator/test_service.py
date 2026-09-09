@@ -1811,3 +1811,30 @@ def test_parse_verdict_plain_and_edit_on_card():
     assert svc._parse_verdict('{"verdict":"decline","edits":{"subject":"x"}}') == (False, None)
     # Malformed JSON degrades to a plain (non-approve) verdict, never raises.
     assert svc._parse_verdict('{"verdict":') == (False, None)
+
+
+def test_mark_running_flips_pending_and_projects_at_model_start():
+    # _mark_running (before_model_callback) marks a PENDING step RUNNING the
+    # moment its request is sent to the model, and projects it — so the UI shows
+    # in-progress at once instead of lagging until ADK's first event.
+    step = Step(id="s1", kind="execute", description="do", status=Status.PENDING)
+    seen = []
+    async def on_start(s):
+        seen.append((s.id, s.status))
+    cb = svc.nodes._mark_running(step, on_start)
+    asyncio.run(cb(object(), object()))
+    assert step.status == Status.RUNNING
+    assert seen == [("s1", Status.RUNNING)]
+
+
+def test_mark_running_leaves_a_terminal_step_untouched():
+    # A re-entered COMPLETED step is not flipped (so _trace_execution's re-run
+    # diagnostic still fires) and is not re-projected.
+    step = Step(id="s1", kind="execute", description="do", status=Status.COMPLETED)
+    seen = []
+    async def on_start(s):
+        seen.append(s.id)
+    cb = svc.nodes._mark_running(step, on_start)
+    asyncio.run(cb(object(), object()))
+    assert step.status == Status.COMPLETED
+    assert seen == []

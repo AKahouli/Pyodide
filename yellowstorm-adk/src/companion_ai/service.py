@@ -1056,6 +1056,15 @@ class OrchestratorService:
         }
         return SearchToolADK(create_task, schema)
 
+    def _mark_step_running(self, session_id: str):
+        """Project a step RUNNING when its request is sent to the model (see
+        nodes._mark_running), so the UI shows it in-progress at once instead of
+        lagging on 'pending' until ADK returns the first event."""
+        async def _on_start(step: Step) -> None:
+            await self._project(self._rm and self._rm.set_step_status(
+                session_id, step.id, Status.RUNNING.value))
+        return _on_start
+
     def _build_workflow(self, session_id: str, user_id: str, plan: Plan, model: str,
                         connectors: Optional[List[dict]], executor_prompt: Optional[str],
                         replay_completed: bool = False):
@@ -1140,7 +1149,8 @@ class OrchestratorService:
             instruction_for_step=instruction_for_step,
             context_for_step=self._dep_results_context(plan),
             custom_instruction=executor_prompt,
-            replay_completed=replay_completed)
+            replay_completed=replay_completed,
+            on_model_start=self._mark_step_running(session_id))
         factory_holder.append(factory)
 
         wf = graph.to_workflow(plan, factory, name=f"plan_{session_id}",
