@@ -10,7 +10,6 @@ import { ToolDetailDispatch } from './tool-views/ToolDetailDispatch';
 import { ApplicationComponentView } from './ApplicationComponentView';
 import { AppBuildProgressPanel } from './AppBuildProgressPanel';
 import { AppViewModeToggle, DeployControls } from './DeployControls';
-import { VersionSwitcher } from './VersionHistoryPanel';
 import { AppDataPanel } from './AppDataPanel';
 
 const RIGHT_PANEL_STORAGE_KEY = 'conversation-v2-right-panel-width';
@@ -72,7 +71,7 @@ export function RightPanel() {
   const tabClass = (active: boolean) =>
     cn(
       'inline-flex shrink-0 items-center gap-1.5 rounded-md px-2.5 py-1 text-xs font-medium transition-colors',
-      '@max-[520px]/right-panel:gap-0 @max-[520px]/right-panel:px-2',
+      '@max-[620px]/right-panel:gap-0 @max-[620px]/right-panel:px-2',
       active
         ? 'bg-background text-foreground shadow-sm'
         : 'text-muted-foreground hover:text-foreground',
@@ -92,7 +91,7 @@ export function RightPanel() {
       className='border-l bg-card/40'
     >
       <aside className='@container/right-panel flex h-full min-w-0 flex-col overflow-hidden'>
-        <header className='grid h-11 shrink-0 grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-2 border-b px-3 @max-[520px]/right-panel:gap-1 @max-[520px]/right-panel:px-2'>
+        <header className='grid h-11 shrink-0 grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-2 border-b px-3 @max-[620px]/right-panel:gap-1 @max-[620px]/right-panel:px-2'>
           <div className='flex min-w-0 items-center justify-self-start overflow-hidden'>
             {canToggle || showAppPanel ? (
               <div className='inline-flex max-w-full items-center overflow-x-auto rounded-lg border bg-muted/40 p-0.5 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden'>
@@ -105,7 +104,7 @@ export function RightPanel() {
                     title={t('rightPanel.tabCode')}
                   >
                     <CodeIcon className='size-3.5 shrink-0' />
-                    <span className='whitespace-nowrap @max-[520px]/right-panel:hidden'>
+                    <span className='whitespace-nowrap @max-[620px]/right-panel:hidden'>
                       {t('rightPanel.tabCode')}
                     </span>
                   </button>
@@ -120,7 +119,7 @@ export function RightPanel() {
                       title={t('rightPanel.tabPreview')}
                     >
                       <EyeIcon className='size-3.5 shrink-0' />
-                      <span className='whitespace-nowrap @max-[520px]/right-panel:hidden'>
+                      <span className='whitespace-nowrap @max-[620px]/right-panel:hidden'>
                         {t('rightPanel.tabPreview')}
                       </span>
                     </button>
@@ -132,7 +131,7 @@ export function RightPanel() {
                       title={t('rightPanel.tabData')}
                     >
                       <DatabaseIcon className='size-3.5 shrink-0' />
-                      <span className='whitespace-nowrap @max-[520px]/right-panel:hidden'>
+                      <span className='whitespace-nowrap @max-[620px]/right-panel:hidden'>
                         {t('rightPanel.tabData')}
                       </span>
                     </button>
@@ -148,14 +147,11 @@ export function RightPanel() {
           <div className='min-w-0 max-w-[10rem] justify-self-center overflow-hidden px-0.5 @max-[480px]/right-panel:hidden'>
             {hasPreview && showNodepod && applicationComponent ? <AppViewModeToggle /> : null}
           </div>
-          <div className='flex min-w-0 shrink-0 items-center justify-self-end gap-0.5'>
+          <div className='flex min-w-0 shrink items-center justify-self-end gap-0.5 @max-[620px]/right-panel:gap-0'>
             {hasPreview && showNodepod && applicationComponent && (
-              <>
-                <VersionSwitcher />
-                <DeployControls />
-              </>
+              <DeployControls />
             )}
-            <Button variant='ghost' size='icon-sm' aria-label={t('rightPanel.close')} onClick={close}>
+            <Button variant='ghost' size='icon-sm' className='shrink-0' aria-label={t('rightPanel.close')} onClick={close}>
               <XIcon className='size-4' />
             </Button>
           </div>

@@ -4,6 +4,7 @@ import {
   finalizedVersionsFromEvents,
   formatFinalizedDate,
   mergeFinalizedVersions,
+  resolveFinalizedVersionNumber,
   resolveLatestFinalizedRevisionId,
 } from './finalized-versions';
 
@@ -56,5 +57,24 @@ describe('finalized-versions utils', () => {
         { revisionId: 'rev_7', title: 'B', finalizedAt: '2026-09-01T00:00:00.000Z' },
       ]),
     ).toBe('rev_12');
+  });
+
+  it('numbers finalized versions chronologically, oldest first', () => {
+    const versions = [
+      { revisionId: 'rev_12', title: 'A', finalizedAt: '2026-09-02T00:00:00.000Z' },
+      { revisionId: 'rev_7', title: 'B', finalizedAt: '2026-09-01T00:00:00.000Z' },
+    ];
+
+    expect(resolveFinalizedVersionNumber(versions, 'rev_12')).toBe(2);
+    expect(resolveFinalizedVersionNumber(versions, 'rev_7')).toBe(1);
+  });
+
+  it('returns null for unknown or missing revision ids', () => {
+    const versions = [
+      { revisionId: 'rev_12', title: 'A', finalizedAt: '2026-09-02T00:00:00.000Z' },
+    ];
+
+    expect(resolveFinalizedVersionNumber(versions, 'rev_999')).toBeNull();
+    expect(resolveFinalizedVersionNumber(versions, null)).toBeNull();
   });
 });
