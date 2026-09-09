@@ -195,11 +195,81 @@ def _build_workspace_document_context(brain_documents: Any) -> str:
     )
 
 
-def _append_workspace_document_context(prompt: str, brain_documents: Any) -> str:
+def _append_workspace_document_context(
+    prompt: str,
+    brain_documents: Any,
+    *,
+    enabled: bool = True,
+) -> str:
+    if not enabled:
+        return prompt
     context = _build_workspace_document_context(brain_documents)
     if not context:
         return prompt
     return f"{prompt}\n\n{context}"
+
+
+def _append_selected_workspace_context(
+    prompt: str,
+    workspace_names: Any,
+    *,
+    workspace_ids: Any = None,
+    brain_documents: Any = None,
+) -> str:
+    """Always expose the selected workspace scope in the system prompt.
+
+    This is intentionally independent from document-tree injection: disabling
+    document context must not remove the workspace scope used by search and
+    connector tools.
+    """
+    def _values(raw: Any) -> list[str]:
+        if isinstance(raw, str):
+            raw = [raw]
+        if not isinstance(raw, (list, tuple, set)):
+            return []
+        result = []
+        for item in raw:
+            value = " ".join(str(item or "").split())
+            if value and value not in result:
+                result.append(value)
+        return result
+
+    names = _values(workspace_names)
+    ids = _values(workspace_ids)
+    if not names and not ids:
+        return prompt
+
+    document_names_by_id = {}
+    document_ids_by_name = {}
+    if isinstance(brain_documents, list):
+        for document in brain_documents:
+            if not isinstance(document, dict):
+                continue
+            workspace_id = " ".join(str(document.get("workspace_id") or "").split())
+            workspace_name = " ".join(str(document.get("workspace_name") or "").split())
+            if workspace_id and workspace_name:
+                document_names_by_id[workspace_id] = workspace_name
+                document_ids_by_name[workspace_name] = workspace_id
+
+    workspaces = []
+    for index in range(max(len(ids), len(names))):
+        workspace_id = ids[index] if index < len(ids) else ""
+        workspace_name = names[index] if index < len(names) else ""
+        workspace_name = workspace_name or document_names_by_id.get(workspace_id, "")
+        workspace_id = workspace_id or document_ids_by_name.get(workspace_name, "")
+        workspace_id = workspace_id or workspace_name
+        workspace_name = workspace_name or workspace_id
+        item = {"workspace_id": workspace_id, "workspace_name": workspace_name}
+        if item not in workspaces:
+            workspaces.append(item)
+
+    lines = [
+        "<selected_workspaces>",
+        "These workspaces are selected for this agent:",
+        json.dumps(workspaces, ensure_ascii=False, indent=2),
+        "</selected_workspaces>",
+    ]
+    return f"{prompt}\n\n" + "\n".join(lines)
 
 
 def _append_capability_aware_file_context(
@@ -208,7 +278,10 @@ def _append_capability_aware_file_context(
     tools_config: Any,
     *,
     preserve_for_legacy_connector: bool = False,
+    inject_document_tree: bool = True,
 ) -> str:
+    if not inject_document_tree:
+        return prompt
     if preserve_for_legacy_connector:
         return _append_workspace_document_context(prompt, brain_documents)
     names = {
@@ -226,7 +299,11 @@ def _append_current_attachment_context(
     prompt: str,
     attached_files: Any,
     runtime_context: Dict[str, Any],
+    *,
+    enabled: bool = True,
 ) -> str:
+    if not enabled:
+        return prompt
     if not isinstance(attached_files, list) or not attached_files:
         return prompt
 
@@ -484,13 +561,32 @@ def prepare_agent_data(
 
 
 def get_enhanced_prompt(
-    helper, doc_tree, brain_tree, tools: List[str], base_enhanced_prompt: str
+    helper,
+    doc_tree,
+    brain_tree,
+    tools: List[str],
+    base_enhanced_prompt: str,
+    inject_document_tree: bool = True,
 ) -> str:
     """Get enhanced prompt with document tree info if needed."""
     enhanced_prompt = base_enhanced_prompt
-    if "search" in tools and doc_tree:
+    if inject_document_tree and doc_tree:
         enhanced_prompt += helper.get_document_tree_info(doc_tree, brain_tree)
     return enhanced_prompt
+
+
+def document_tree_injection_enabled(agent_config: Optional[Dict[str, Any]]) -> bool:
+    """Return whether document trees may be added to an agent system prompt.
+
+    The value is transported through ``agent_params`` as a string by the backend,
+    so accept common boolean representations while preserving the historical
+    default of enabled when the setting is absent.
+    """
+    params = (agent_config or {}).get("agent_params") or {}
+    value = params.get("document_tree_injection_enabled", True)
+    if isinstance(value, str):
+        return value.strip().lower() not in {"false", "0", "no", "off"}
+    return value is not False
 
 
 def _build_mcp_context_note(config, agent_config: Dict[str, Any]) -> str:
@@ -545,6 +641,18 @@ def create_search_agent_with_tools(
     ) = prepare_agent_data(
         helper, config, agent_config, tools, base_enhanced_prompt, chatbot_name
     )
+    if not document_tree_injection_enabled(agent_config):
+        enhanced_prompt = _append_selected_workspace_context(
+            enhanced_prompt,
+            agent_config.get("workspace_names")
+            or getattr(config, "workspace_names", None)
+            or final_workspace_names,
+            workspace_ids=agent_config.get("brain_ids")
+            or getattr(config, "brain_ids", None)
+            or final_workspace_names,
+            brain_documents=agent_config.get("brain_documents")
+            or getattr(config, "brain_documents", None),
+        )
     enhanced_prompt = _append_connector_repo_context(
         enhanced_prompt,
         _get_connector_repo(config),
@@ -555,11 +663,13 @@ def create_search_agent_with_tools(
         agent_config.get("brain_documents", []),
         tools_config,
         preserve_for_legacy_connector=_get_connector_repo(config) is not None,
+        inject_document_tree=document_tree_injection_enabled(agent_config),
     )
     enhanced_prompt = _append_current_attachment_context(
         enhanced_prompt,
         getattr(config, "attached_files", None),
         agent_config.get("agent_params") or {},
+        enabled=document_tree_injection_enabled(agent_config),
     )
 
     agent_params = agent_config.get("agent_params") or {}
@@ -624,6 +734,7 @@ def create_search_agent_with_tools(
         render_chart_tool=_is_tool_enabled(tools_config, "render_chart"),
         generate_web_preview=preview_tool_config is not None,
         skills=merge_skills(agent_config.get("skills", []), _get_team_skills(config)),
+        document_tree_injection_enabled=document_tree_injection_enabled(agent_config),
     )
 
     # Store toolkit for source handling
@@ -787,6 +898,18 @@ def create_standard_agent_with_tools(
     ) = prepare_agent_data(
         helper, config, agent_config, tools, base_enhanced_prompt, chatbot_name
     )
+    if not document_tree_injection_enabled(agent_config):
+        enhanced_prompt = _append_selected_workspace_context(
+            enhanced_prompt,
+            agent_config.get("workspace_names")
+            or getattr(config, "workspace_names", None)
+            or final_workspace_names,
+            workspace_ids=agent_config.get("brain_ids")
+            or getattr(config, "brain_ids", None)
+            or final_workspace_names,
+            brain_documents=agent_config.get("brain_documents")
+            or getattr(config, "brain_documents", None),
+        )
     enhanced_prompt = _append_connector_repo_context(
         enhanced_prompt,
         _get_connector_repo(config),
@@ -796,11 +919,13 @@ def create_standard_agent_with_tools(
         agent_config.get("brain_documents", []),
         agent_config.get("tools", []),
         preserve_for_legacy_connector=_get_connector_repo(config) is not None,
+        inject_document_tree=document_tree_injection_enabled(agent_config),
     )
     enhanced_prompt = _append_current_attachment_context(
         enhanced_prompt,
         getattr(config, "attached_files", None),
         agent_params,
+        enabled=document_tree_injection_enabled(agent_config),
     )
     enhanced_prompt = _append_run_code_guidance(
         enhanced_prompt,
@@ -857,6 +982,7 @@ def create_standard_agent_with_tools(
             _get_connector_repo(config),
         ),
         platform_api_token=str(_agent_params_std.get("platform_api_token", "")),
+        document_tree_injection_enabled=document_tree_injection_enabled(agent_config),
     )
 
     # Catalogue assignment controls native UI tools; metadata alone never makes a

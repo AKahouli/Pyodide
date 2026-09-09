@@ -43,6 +43,7 @@ import {
   PLATFORM_COPILOT_HANDOFF_RUNTIME_INSTRUCTION,
   PLATFORM_COPILOT_PLAYBOOK_CONNECTOR_SLUG,
 } from './constants/platform-copilot.constants';
+import { SystemService } from '../system/system.service';
 
 /** Agent-type slug of the orchestrating manager agent. */
 const MANAGER_SLUG = 'manager';
@@ -90,6 +91,7 @@ export class AgentService {
     private readonly agentRepository: AgentRepository,
     private readonly agentRoleEmbedding: AgentRoleEmbeddingService,
     @Optional() private readonly connectorRuntimeService?: AgentConnectorRuntimeService,
+    @Optional() private readonly systemService?: SystemService,
   ) {
     this.logger.setContext(AgentService.name);
   }
@@ -704,13 +706,14 @@ export class AgentService {
     // Every lookup below depends only on the filtered roster, not on each
     // other — run them in one round so the remote-DB latency stacks once
     // instead of once per lookup.
-    const [promptMap, fetchedTools, modelResults, connectorsMap, adminGuardrailsSettings, guardrailsClassifierModel] = await Promise.all([
+    const [promptMap, fetchedTools, modelResults, connectorsMap, adminGuardrailsSettings, guardrailsClassifierModel, documentTreeSettings] = await Promise.all([
       this.agentTypeService.resolvePromptsInBatch(promptPairs),
       allToolIds.length > 0 ? this.toolService.findByIds(allToolIds) : Promise.resolve([] as IToolResponse[]),
       Promise.all(allModelIds.map((id) => this.modelsService.findById(id))),
       this.buildConnectorsMap(allConnectorIds),
       this.guardrailsSettingsService.getSettings(),
       this.modelsService.getGuardrailsClassifierModel(),
+      this.systemService?.getDocumentTreeInjectionSettings() ?? Promise.resolve({ enabled: true }),
     ]);
     const guardrailsClassifierModelId = this.modelsService.getModelIdentifier(guardrailsClassifierModel);
 
@@ -852,6 +855,7 @@ export class AgentService {
             connector_bindings_json: JSON.stringify(connectorBindings),
             enable_temporary_child_agents: String(agent.enable_temporary_child_agents),
             max_temporary_child_agents: String(agent.max_temporary_child_agents),
+            document_tree_injection_enabled: String(documentTreeSettings.enabled),
             guardrails_json: JSON.stringify({
               agent: normalizeAgentGuardrails(agent.guardrails),
               admin: normalizeAdminGuardrailsSettings(adminGuardrailsSettings),
@@ -1002,8 +1006,11 @@ export class AgentService {
       for (const skill of fetchedSkills) skillsMap.set(skill.id, skill);
     }
 
-    const adminGuardrailsSettings = await this.guardrailsSettingsService.getSettings();
-    const guardrailsClassifierModel = await this.modelsService.getGuardrailsClassifierModel();
+    const [adminGuardrailsSettings, guardrailsClassifierModel, documentTreeSettings] = await Promise.all([
+      this.guardrailsSettingsService.getSettings(),
+      this.modelsService.getGuardrailsClassifierModel(),
+      this.systemService?.getDocumentTreeInjectionSettings() ?? Promise.resolve({ enabled: true }),
+    ]);
     const guardrailsClassifierModelId = this.modelsService.getModelIdentifier(guardrailsClassifierModel);
 
     const grpcAgents = await Promise.all(
@@ -1095,6 +1102,7 @@ export class AgentService {
               user_id: userId,
               enable_temporary_child_agents: String(agent.enable_temporary_child_agents),
               max_temporary_child_agents: String(agent.max_temporary_child_agents),
+              document_tree_injection_enabled: String(documentTreeSettings.enabled),
               connector_bindings_json: JSON.stringify(connectorBindings),
               guardrails_json: JSON.stringify({
                 agent: normalizeAgentGuardrails(agent.guardrails),

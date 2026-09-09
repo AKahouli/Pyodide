@@ -19,6 +19,8 @@ import { UserDocument } from '../user/schemas/user.schema';
 import { FeatureVisibilityService } from './feature-visibility.service';
 import type { FeatureVisibility } from './interfaces/feature-visibility.interface';
 import { UpdateFeatureVisibilityDto } from './dto/update-feature-visibility.dto';
+import { UpdateDocumentTreeInjectionDto } from './dto/update-document-tree-injection.dto';
+import type { DocumentTreeInjectionSettings } from './interfaces/document-tree-settings.interface';
 
 interface MulterFile {
   originalname: string;
@@ -88,6 +90,37 @@ export class SystemController {
       userAgent: req.headers['user-agent'],
     });
 
+    return result;
+  }
+
+  @Get('document-tree-injection')
+  @UseGuards(PermissionsGuard)
+  @RequirePermissions(Permissions.SYSTEM_MAINTENANCE)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Get global document-tree prompt injection setting' })
+  getDocumentTreeInjectionSettings(): Promise<DocumentTreeInjectionSettings> {
+    return this.systemService.getDocumentTreeInjectionSettings();
+  }
+
+  @Put('document-tree-injection')
+  @UseGuards(PermissionsGuard)
+  @RequirePermissions(Permissions.SYSTEM_MAINTENANCE)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Enable or disable global document-tree prompt injection' })
+  async updateDocumentTreeInjectionSettings(
+    @Body() body: UpdateDocumentTreeInjectionDto,
+    @CurrentUser() user: UserDocument,
+    @Req() req: Request,
+  ): Promise<DocumentTreeInjectionSettings> {
+    const result = await this.systemService.setDocumentTreeInjectionSettings(body.enabled);
+    this.auditLogService.logSuccess({
+      actorId: user._id.toString(),
+      actorEmail: user.email,
+      action: 'system.documentTreeInjection',
+      metadata: { enabled: result.enabled },
+      ipAddress: req.ip,
+      userAgent: req.headers['user-agent'],
+    });
     return result;
   }
 
