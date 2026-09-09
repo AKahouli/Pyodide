@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from contextvars import ContextVar
+from dataclasses import dataclass
 from typing import Any
 
 
@@ -15,6 +16,63 @@ _model_reasoning_efforts: ContextVar[dict[str, str]] = ContextVar(
 _model_context_windows: ContextVar[dict[str, int]] = ContextVar(
     "model_context_windows", default={}
 )
+# Request-scoped compaction config, resolved once from the primary chat model's
+# config (see resolve_model_config). None means "no compaction for this request".
+_request_compaction: ContextVar["RequestCompactionConfig | None"] = ContextVar(
+    "request_compaction", default=None
+)
+
+
+@dataclass(frozen=True)
+class RequestCompactionConfig:
+    """Resolved compaction inputs for one chat request (token_threshold already
+    derived from token_fraction * context window). Consumed by the runner builder
+    in infrastructure/compaction.py to construct an ADK EventsCompactionConfig."""
+
+    compaction_interval: int | None
+    overlap_size: int | None
+    token_threshold: int | None
+    event_retention_size: int | None
+    summarizer_model: str
+
+
+def set_request_compaction_config(config: "RequestCompactionConfig | None") -> None:
+    _request_compaction.set(config)
+
+
+def get_request_compaction_config() -> "RequestCompactionConfig | None":
+    return _request_compaction.get()
+
+
+def _resolve_request_compaction(
+    compaction: dict, model_name: str, context_window: int | None
+) -> "RequestCompactionConfig | None":
+    """Turn the request's raw compaction dict into resolved runner inputs, or None
+    when disabled / no trigger is usable. Sliding-window needs a positive interval;
+    the token trigger needs a positive fraction AND a known context window."""
+    if not compaction.get("enabled"):
+        return None
+    interval = int(compaction.get("compaction_interval") or 0)
+    overlap = int(compaction.get("overlap_size") or 0)
+    fraction = float(compaction.get("token_fraction") or 0.0)
+    retention = int(compaction.get("event_retention_size") or 0)
+
+    sliding = interval > 0
+    token_threshold = (
+        int(fraction * context_window)
+        if fraction > 0 and context_window and context_window > 0
+        else None
+    )
+    if not sliding and not token_threshold:
+        return None
+    return RequestCompactionConfig(
+        compaction_interval=interval if sliding else None,
+        overlap_size=overlap if sliding else None,
+        token_threshold=token_threshold,
+        event_retention_size=retention if token_threshold else None,
+        summarizer_model=str(compaction.get("summarizer_model") or "").strip()
+        or model_name,
+    )
 
 
 def normalize_temperature_for_model(model_name: object, temperature: float | None) -> float | None:
@@ -109,6 +167,17 @@ def resolve_model_config(model_config: object) -> str:
         registry = dict(_model_context_windows.get())
         registry[model_name] = context_window
         _model_context_windows.set(registry)
+    compaction = model_config.get("compaction")
+    if isinstance(compaction, dict):
+        resolved = _resolve_request_compaction(
+            compaction,
+            model_name,
+            context_window if isinstance(context_window, int) and context_window > 0 else None,
+        )
+        # Only the primary chat model carries compaction; sub-agent configs omit
+        # it, so a None here from a sub-agent must not clobber the request config.
+        if resolved is not None:
+            set_request_compaction_config(resolved)
     return model_name
 
 

@@ -3,6 +3,7 @@ import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
 import { AgentService } from '../agent/agent.service';
 import type {
+  CompactionSettings,
   ComposerSuggestionSettings,
   ConversationNameSettings,
   ConversationSettings,
@@ -56,6 +57,10 @@ export class ConversationSettingsService implements OnModuleInit {
       conversationName: {
         ...DEFAULT_CONVERSATION_SETTINGS.conversationName,
         ...(stored?.conversationName ?? {}),
+      },
+      compaction: {
+        ...DEFAULT_CONVERSATION_SETTINGS.compaction,
+        ...(stored?.compaction ?? {}),
       },
       updatedAt: setting?.updatedAt as Date | undefined,
     };
@@ -118,6 +123,7 @@ export class ConversationSettingsService implements OnModuleInit {
       conversationName?: ConversationNameSettings;
       redactSensitiveText?: boolean;
       latencyInstrumentationEnabled?: boolean;
+      compaction?: CompactionSettings;
     },
   ): Promise<ConversationSettings> {
     if (value.composerSuggestions.agentId) {
@@ -131,6 +137,7 @@ export class ConversationSettingsService implements OnModuleInit {
         value.latencyInstrumentationEnabled ?? current.latencyInstrumentationEnabled,
       composerSuggestions: { ...value.composerSuggestions },
       conversationName: { ...(value.conversationName ?? current.conversationName) },
+      compaction: { ...(value.compaction ?? current.compaction) },
     };
     const updated = await this.settings.findOneAndUpdate(
       { key: KEY },

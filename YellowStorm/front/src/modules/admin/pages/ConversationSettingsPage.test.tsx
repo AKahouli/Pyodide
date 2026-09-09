@@ -36,7 +36,7 @@ describe('ConversationSettingsPage', () => {
     vi.mocked(updateAdminConversationSettings).mockReset();
     vi.mocked(getAdminConversationSettings).mockResolvedValue({ composerSuggestions: settings });
     vi.mocked(getAdminConversationSettingsAgents).mockResolvedValue([]);
-    vi.mocked(getAllModels).mockResolvedValue({ models: [], total: 0 });
+    vi.mocked(getAllModels).mockResolvedValue({ models: [] } as unknown as Awaited<ReturnType<typeof getAllModels>>);
     vi.mocked(updateAdminConversationSettings).mockResolvedValue({ composerSuggestions: settings });
   });
 
@@ -50,6 +50,7 @@ describe('ConversationSettingsPage', () => {
       composerSuggestions: { ...settings, debounceMs: 750 },
       conversationName: { modelId: null },
       latencyInstrumentationEnabled: true,
+      compaction: { enabled: true, compactionInterval: 10, overlapSize: 2, tokenFraction: 0.75, eventRetentionSize: 6, summarizerModel: '' },
     }));
   });
 

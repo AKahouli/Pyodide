@@ -44,6 +44,18 @@ message Chatbot {
     repeated string input_modalities = 2; // Supported request inputs: "text", optionally "image"
     string reasoning_effort = 3; // Optional model-supported effort identifier
     int32 context_window_tokens = 4; // Authoritative selected-model input capacity when known
+    Compaction compaction = 5; // ADK context-compaction config for this request (omitted = disabled)
+}
+
+// ADK context compaction config. Both trigger pairs are optional; token_threshold
+// is derived server-side as token_fraction * context_window_tokens.
+message Compaction {
+    bool enabled = 1;               // Master switch; when false the runner builds no compaction config
+    int32 compaction_interval = 2;  // Sliding window: new invocations between compactions (0 = off)
+    int32 overlap_size = 3;         // Sliding window: prior invocations re-summarized for continuity
+    float token_fraction = 4;       // Token trigger: threshold = token_fraction * context window, 0..1 (0 = off)
+    int32 event_retention_size = 5; // Token trigger: recent raw events kept un-compacted
+    string summarizer_model = 6;    // LiteLLM model used to summarize; empty = fall back to the chat model
 }
 
 message Tool {

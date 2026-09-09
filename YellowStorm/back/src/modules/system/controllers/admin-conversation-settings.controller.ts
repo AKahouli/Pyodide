@@ -54,6 +54,7 @@ export class AdminConversationSettingsController {
         metadata: {
           composerSuggestions: result.composerSuggestions,
           latencyInstrumentationEnabled: result.latencyInstrumentationEnabled,
+          compaction: result.compaction,
         },
       });
       return result;
