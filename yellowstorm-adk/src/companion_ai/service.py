@@ -813,6 +813,23 @@ class OrchestratorService:
                     moved = await self._rm.rebind_mail_wait(
                         session_id, f"__pending__:{caller_step_id}", sub_step.id)
                     if not moved and not await self._rm.mail_token_for(session_id, sub_step.id):
+                        # Idempotent re-run: if this caller already has a bound
+                        # await_reply (a prior create_task, whose rebind consumed
+                        # the eager token), don't refuse — the wait already exists.
+                        for existing in plan.steps:
+                            if (existing is not sub_step and existing.kind == "await_reply"
+                                    and caller_step_id in existing.depends_on
+                                    and await self._rm.mail_token_for(session_id, existing.id)):
+                                plan.steps.remove(sub_step)
+                                logger.info(
+                                    "[worky] create_task await_reply idempotent — caller %s "
+                                    "already has bound wait %s (session=%s)",
+                                    caller_step_id, existing.id, session_id)
+                                return (
+                                    "A reply-wait for this step's email is ALREADY registered — "
+                                    "the email was sent and the plan is already waiting for the "
+                                    "reply. Do not send another email or register another wait; "
+                                    "end your step.")
                         # No token anywhere for this step, so no arriving reply
                         # could ever match it: the step would park on an
                         # interrupt nothing can resume, and the plan would block
