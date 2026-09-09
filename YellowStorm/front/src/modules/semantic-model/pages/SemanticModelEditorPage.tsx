@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Link, useBlocker, useNavigate, useParams } from "react-router-dom";
+import { useQueryClient } from '@tanstack/react-query';
 import {
   AlertTriangle,
   ArrowLeft,
@@ -50,6 +51,7 @@ import { isBuildActive, useSemanticBuildJob } from "../hooks/use-semantic-build-
 import { VersionsPanel } from "../components/versions/VersionsPanel";
 import { useKnowledgeLinking } from "../hooks/use-knowledge-linking";
 import { useSemanticGraph, useSemanticModel } from "../query/hooks";
+import { semanticModelQueryKeys } from '../query/queryKeys';
 import { isPendingSaveCurrent, isSemanticGraphSaved, selectPendingOperations, useSemanticModelEditorStore } from "../store";
 import type { EditorMode } from "../types";
 import { layoutStructure } from "../utils/model-utils";
@@ -62,6 +64,7 @@ export function SemanticModelEditorPage() {
   const { modelId } = useParams();
   const { t } = useModuleTranslation("semantic-model");
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const model = useSemanticModel(modelId);
   const graphQuery = useSemanticGraph(modelId);
   const knowledge = useKnowledgeLinking(modelId);
@@ -108,7 +111,7 @@ export function SemanticModelEditorPage() {
     model.data?.status !== "archived" &&
     model.data?.role !== "viewer" &&
     Boolean(model.data?.currentDraftVersionId);
-  const canValidate = isSemanticGraphSaved({ graph, pending, saveStatus });
+  const canValidate = canEdit && isSemanticGraphSaved({ graph, pending, saveStatus });
   const buildJob = useSemanticBuildJob(modelId);
   const buildActive = isBuildActive(buildJob.data);
 
@@ -151,6 +154,10 @@ export function SemanticModelEditorPage() {
           revision,
           batch.operations,
         );
+        if (batch.operations.some((operation) => operation.type !== 'layout.update')) {
+          queryClient.setQueryData(semanticModelQueryKeys.model(modelId), (current: typeof model.data) => current ? { ...current,indexStatus: 'pending' as const,indexError: null } : current);
+          void queryClient.invalidateQueries({ queryKey: semanticModelQueryKeys.all });
+        }
         if (saveIsCurrent()) markSaved(result.revision, batch.groupCount);
       } catch (error) {
         if (saveIsCurrent()) {
@@ -257,6 +264,18 @@ export function SemanticModelEditorPage() {
     );
 
   const statusLabel = t(`save.${saveStatus}`);
+  const openGraphViewer = () => {
+    setGraphViewerOpen(true);
+    if (!modelId) return;
+    void semanticModelApi.indexAgeGraph(modelId)
+      .then(() => {
+        queryClient.setQueryData(semanticModelQueryKeys.model(modelId), (current: typeof model.data) => current ? { ...current,indexStatus: 'pending' as const,indexError: null } : current);
+        return queryClient.invalidateQueries({ queryKey: semanticModelQueryKeys.all });
+      })
+      .catch((error: unknown) => {
+        showError(t('save.error'), { description: parseApiError(error).message });
+      });
+  };
   return (
     <div className="flex h-[100dvh] w-full min-w-0 max-w-full flex-col overflow-hidden bg-muted/15">
       <header className="flex shrink-0 flex-wrap items-center gap-2 border-b bg-background/95 px-3 py-2 backdrop-blur">
@@ -292,6 +311,10 @@ export function SemanticModelEditorPage() {
               {t("action.retry")}
             </button>
           )}
+        </div>
+        <div className="flex items-center gap-1.5 rounded-full bg-muted px-2.5 py-1 text-[11px]" title={model.data?.indexError ?? undefined}>
+          <span className={`h-2 w-2 rounded-full ${model.data?.indexStatus === 'indexed' ? 'bg-emerald-500' : model.data?.indexStatus === 'failed' ? 'bg-red-500' : `bg-amber-500 ${model.data?.indexStatus === 'pending' || model.data?.indexStatus === 'in_progress' ? 'animate-pulse' : ''}`}`} />
+          {t(model.data?.indexStatus === 'indexed' ? 'indexStatus.indexed' : model.data?.indexStatus === 'failed' ? 'indexStatus.failed' : 'indexStatus.working')}
         </div>
         <Tabs
           value={mode}
@@ -377,15 +400,6 @@ export function SemanticModelEditorPage() {
                 <DropdownMenuItem onClick={() => setConceptOpen(true)}>
                   {t("concept.add")}
                 </DropdownMenuItem>
-                <DropdownMenuItem
-                  onClick={() => {
-                    setRelationConnection(null);
-                    setRelationOpen(true);
-                  }}
-                  disabled={graph.nodes.length < 2}
-                >
-                  {t("relation.add")}
-                </DropdownMenuItem>
                 <DropdownMenuItem onClick={() => setRecordOpen(true)}>
                   {t("records.add")}
                 </DropdownMenuItem>
@@ -430,23 +444,21 @@ export function SemanticModelEditorPage() {
           />
           {canEdit && graph.nodes.length > 0 && (
             <div className="absolute bottom-5 right-5 z-10 flex gap-2">
-              {graph.records.length > 0 && (
-                <Button
-                  size="lg"
-                  variant="outline"
-                  className="shadow-lg bg-background"
-                  onClick={() => setGraphViewerOpen(true)}
-                >
-                  <Network className="mr-2 h-4 w-4" />
-                  {t("graphViewer.button")}
-                </Button>
-              )}
+              <Button
+                size="lg"
+                variant="outline"
+                className="shadow-lg bg-background"
+                onClick={openGraphViewer}
+              >
+                <Network className="mr-2 h-4 w-4" />
+                {t("graphViewer.button")}
+              </Button>
               <Button
                 size="lg"
                 className="shadow-lg"
                 onClick={() => setValidateOpen(true)}
-                disabled={buildActive}
-                title={buildActive ? t("build.alreadyRunning") : undefined}
+                disabled={buildActive || !canValidate}
+                title={buildActive ? t("build.alreadyRunning") : !canValidate ? t("save.saving") : undefined}
               >
                 <Zap className="mr-2 h-4 w-4" />
                 {t("validate.button")}
@@ -471,7 +483,7 @@ export function SemanticModelEditorPage() {
             </div>
           )}
         </section>
-        <SemanticModelInspector canEdit={canEdit} knowledge={knowledge} knowledgeOpen={knowledgeOpen} knowledgeTargetId={knowledgeTargetId} onKnowledgeClose={closeKnowledge} />
+        <SemanticModelInspector modelId={modelId!} canEdit={canEdit} knowledge={knowledge} knowledgeOpen={knowledgeOpen} knowledgeTargetId={knowledgeTargetId} onKnowledgeClose={closeKnowledge} />
         {validationOpen && (
           <aside className="absolute bottom-4 right-4 z-30 max-h-[60%] w-[min(24rem,calc(100%-2rem))] overflow-y-auto rounded-2xl border bg-background p-4 shadow-2xl">
             <div className="mb-3 flex items-center justify-between">
@@ -536,6 +548,7 @@ export function SemanticModelEditorPage() {
           open={graphViewerOpen}
           onClose={() => setGraphViewerOpen(false)}
           modelId={modelId}
+          canEdit={canEdit}
         />
       )}
       <Dialog open={saveStatus === "conflict"}>

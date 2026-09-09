@@ -177,6 +177,9 @@ class Settings(BaseSettings):
     # gRPC Configuration
     GRPC_ENABLED: bool = True
     GRPC_PORT: int = 50051
+    # Bounded wait for FIRST serving readiness at startup. The supervisor
+    # keeps retrying transient failures regardless of this window.
+    GRPC_STARTUP_READY_TIMEOUT_SECONDS: int = 10
 
 
     GRPC_API_KEY: Optional[str] = None

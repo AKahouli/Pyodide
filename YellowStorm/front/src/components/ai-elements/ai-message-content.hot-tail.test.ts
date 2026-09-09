@@ -98,6 +98,40 @@ describe('splitMarkdownAtSafeBoundary fence/list rules', () => {
   });
 });
 
+describe('splitMarkdownAtSafeBoundary math blocks', () => {
+  const base = 'Paragraph one with some prose.\n\n'.repeat(120);
+
+  it('never splits inside a $$ display-math block containing blank lines', () => {
+    const content = base + '$$\nE = mc^2\n\nV = W\n$$\n\nAfter the math';
+    const { stable, tail } = splitMarkdownAtSafeBoundary(content);
+    expect(stable).toBe(base + '$$\nE = mc^2\n\nV = W\n$$\n\n');
+    expect(tail).toBe('After the math');
+  });
+
+  it('keeps an unterminated $$ block in the tail while streaming', () => {
+    const content = base + '$$\nE = mc^2\n\nV =';
+    const { stable, tail } = splitMarkdownAtSafeBoundary(content);
+    expect(stable).toBe(base);
+    expect(tail).toBe('$$\nE = mc^2\n\nV =');
+  });
+
+  it('treats a single-line $$x$$ as regular paragraph content', () => {
+    const content = base + 'Inline display $$x^2$$ line\n\nAfter the paragraph';
+    const { stable, tail } = splitMarkdownAtSafeBoundary(content);
+    expect(stable).toBe(base + 'Inline display $$x^2$$ line\n\n');
+    expect(tail).toBe('After the paragraph');
+  });
+
+  it('tracks mid-line $$ openers and closers from normalized display spans', () => {
+    // normalizeMathDelimiters can emit `$$` mid-line when `\[ ... \]` was
+    // mid-paragraph; the splitter must still pair opener and closer.
+    const content = base + 'Avant $$\nE = mc^2\n$$ apres\n\nAprès le math';
+    const { stable, tail } = splitMarkdownAtSafeBoundary(content);
+    expect(stable).toBe(base + 'Avant $$\nE = mc^2\n$$ apres\n\n');
+    expect(tail).toBe('Après le math');
+  });
+});
+
 describe('splitMarkdownAtSafeBoundary reference definitions', () => {
   const base = 'Paragraph one with some prose.\n\n'.repeat(120);
 

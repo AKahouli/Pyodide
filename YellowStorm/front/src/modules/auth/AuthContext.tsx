@@ -3,7 +3,7 @@
  */
 
 import * as React from 'react';
-import { AUTH_STORAGE_KEYS } from '@/lib/api';
+import { AUTH_STORAGE_KEYS, bumpAuthGeneration, isTransientAuthFailure } from '@/lib/api';
 import * as authApi from './api';
 import { notificationsService } from '@/modules/notifications';
 import type { AuthContextType, AuthState, LoginCredentials, RegisterCredentials, CompleteProfileData, User } from './types';
@@ -15,6 +15,7 @@ const initialState: AuthState = {
   requiresEmailVerification: false,
   requiresProfileCompletion: false,
   registrationEnabled: true,
+  isAuthTemporarilyUnavailable: false,
 };
 
 export const AuthContext = React.createContext<AuthContextType | null>(null);
@@ -26,62 +27,86 @@ interface AuthProviderProps {
 export function AuthProvider({ children }: AuthProviderProps) {
   const [state, setState] = React.useState<AuthState>(initialState);
 
-  // Initialize auth state from localStorage on mount
-  React.useEffect(() => {
-    const fetchRegistration = async (): Promise<boolean> => {
+  const validateStoredSession = React.useCallback(async (): Promise<void> => {
+    const token = localStorage.getItem(AUTH_STORAGE_KEYS.accessToken);
+    const userJson = localStorage.getItem(AUTH_STORAGE_KEYS.user);
+
+    if (token && userJson) {
+      let registrationEnabled = true;
       try {
-        const providers = await authApi.getAuthProviders();
-        const classic = providers.find((p) => p.type === 'classic');
-        return classic?.registrationEnabled ?? false;
-      } catch {
-        return true; // Fail-open
-      }
-    };
+        // Fetch registration status in parallel with auth validation
+        const [enabled, userResult] = await Promise.all([
+          authApi
+            .getAuthProviders()
+            .then((providers) => providers.find((p) => p.type === 'classic')?.registrationEnabled ?? false)
+            .catch(() => true), // Fail-open
+          authApi.getCurrentUser().then(
+            (user) => ({ ok: true as const, user }),
+            (error: unknown) => ({ ok: false as const, transient: isTransientAuthFailure(error) }),
+          ),
+        ]);
+        registrationEnabled = enabled;
 
-    const initializeAuth = async () => {
-      try {
-        const token = localStorage.getItem(AUTH_STORAGE_KEYS.accessToken);
-        const userJson = localStorage.getItem(AUTH_STORAGE_KEYS.user);
+        if (userResult.ok) {
+          const user = userResult.user;
+          localStorage.setItem(AUTH_STORAGE_KEYS.user, JSON.stringify(user));
+          setState({
+            user,
+            isAuthenticated: true,
+            isLoading: false,
+            requiresEmailVerification: !user.emailVerified,
+            requiresProfileCompletion: !user.profileComplete,
+            registrationEnabled,
+            isAuthTemporarilyUnavailable: false,
+          });
+          return;
+        }
 
-        if (token && userJson) {
-          // Fetch registration status in parallel with auth validation
-          const [registrationEnabled, user] = await Promise.all([fetchRegistration(), authApi.getCurrentUser().catch(() => null)]);
-
-          if (user) {
-            localStorage.setItem(AUTH_STORAGE_KEYS.user, JSON.stringify(user));
-            setState({
-              user,
-              isAuthenticated: true,
-              isLoading: false,
-              requiresEmailVerification: !user.emailVerified,
-              requiresProfileCompletion: !user.profileComplete,
-              registrationEnabled,
-            });
-            return;
-          }
-
-          // The shared axios client owns token refresh. If the bootstrap user
-          // lookup fails here, avoid issuing a second concurrent refresh call.
-          clearLocalAuthData();
+        if (userResult.transient) {
+          // Transient bootstrap failure: credentials stay in storage and the
+          // UI exposes a retryable connectivity state instead of the login
+          // screen. Protected data is not rendered until validation succeeds.
           setState({
             ...initialState,
             isLoading: false,
             registrationEnabled,
+            isAuthTemporarilyUnavailable: true,
           });
-        } else {
-          // No token - guest user, fetch registration status before finishing load
-          const registrationEnabled = await fetchRegistration();
-          setState({ ...initialState, isLoading: false, registrationEnabled });
+          return;
         }
-      } catch {
-        // Clear invalid storage data
-        clearLocalAuthData();
-        setState({ ...initialState, isLoading: false });
-      }
-    };
 
-    initializeAuth();
+        // Definitive denial (the shared axios client already cleared
+        // credentials and redirects when refresh is definitively rejected).
+        clearLocalAuthData();
+        setState({
+          ...initialState,
+          isLoading: false,
+          registrationEnabled,
+        });
+      } catch {
+        clearLocalAuthData();
+        setState({ ...initialState, isLoading: false, registrationEnabled });
+      }
+    } else {
+      // No token - guest user, fetch registration status before finishing load.
+      // A missing local access token is not proof the HttpOnly refresh cookie
+      // is absent; the shared client's 401 flow attempts one coordinated
+      // recovery on the first protected dispatch.
+      try {
+        const providers = await authApi.getAuthProviders();
+        const classic = providers.find((p) => p.type === 'classic');
+        const registrationEnabled = classic?.registrationEnabled ?? false;
+        setState({ ...initialState, isLoading: false, registrationEnabled });
+      } catch {
+        setState({ ...initialState, isLoading: false, registrationEnabled: true });
+      }
+    }
   }, []);
+
+  // Initialize auth state from localStorage on mount
+  React.useEffect(() => {
+    void validateStoredSession();
+  }, [validateStoredSession]);
 
   const login = React.useCallback(async (credentials: LoginCredentials): Promise<void> => {
     const response = await authApi.login(credentials);
@@ -97,6 +122,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
       isLoading: false,
       requiresEmailVerification: !response.user.emailVerified,
       requiresProfileCompletion: !response.user.profileComplete,
+      isAuthTemporarilyUnavailable: false,
     }));
   }, []);
 
@@ -118,6 +144,9 @@ export function AuthProvider({ children }: AuthProviderProps) {
     } catch {
       // Even if API call fails, clear local auth data
     } finally {
+      // Invalidate any in-flight refresh/recovery so a late response cannot
+      // log the user back in after an explicit logout.
+      bumpAuthGeneration();
       clearLocalAuthData();
       setState({
         ...initialState,
@@ -223,6 +252,15 @@ export function AuthProvider({ children }: AuthProviderProps) {
     };
   }, [state.isAuthenticated, state.user?.status, refreshUser]);
 
+  const retryRecovery = React.useCallback(async (): Promise<void> => {
+    setState((prev) => ({ ...prev, isLoading: true }));
+    try {
+      await validateStoredSession();
+    } finally {
+      setState((prev) => (prev.isLoading ? { ...prev, isLoading: false } : prev));
+    }
+  }, [validateStoredSession]);
+
   const value = React.useMemo<AuthContextType>(
     () => ({
       ...state,
@@ -233,8 +271,9 @@ export function AuthProvider({ children }: AuthProviderProps) {
       resendVerificationEmail,
       completeProfile,
       refreshUser,
+      retryRecovery,
     }),
-    [state, login, register, logout, verifyEmail, resendVerificationEmail, completeProfile, refreshUser],
+    [state, login, register, logout, verifyEmail, resendVerificationEmail, completeProfile, refreshUser, retryRecovery],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

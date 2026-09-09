@@ -21,6 +21,7 @@ export interface AgentRecord {
   description: string;
   temperature: number;
   llmModel?: string;
+  reasoningEffort?: string;
   email?: string;
   instruction: string;
   ignorePrePrompt: boolean;
@@ -63,6 +64,7 @@ export function rowToRecord(row: AgentRow, j: AgentJunctions): AgentRecord {
     description: row.description,
     temperature: row.temperature,
     llmModel: row.llmModel ?? undefined,
+    reasoningEffort: row.reasoningEffort ?? undefined,
     email: row.email ?? undefined,
     instruction: row.instruction,
     ignorePrePrompt: row.ignorePrePrompt,

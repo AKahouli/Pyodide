@@ -154,7 +154,7 @@ export function ShareDialog({ open, onOpenChange, conversationId, conversationTi
                 <Link className='h-4 w-4' />
                 {t('dialogs.share.tabs.public')}
               </TabsTrigger>
-              <TabsTrigger value='private' className='gap-2' disabled>
+              <TabsTrigger value='private' className='gap-2'>
                 <Mail className='h-4 w-4' />
                 {t('dialogs.share.tabs.private')}
               </TabsTrigger>

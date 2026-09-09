@@ -373,7 +373,8 @@ describe('conversationStreamService', () => {
     unsubscribe();
   });
 
-  it('emits rejected connection_failed when socket closes before connected', () => {
+  it('schedules a reconnect without a failure dialog when the socket closes before connected', () => {
+    vi.useFakeTimers();
     localStorage.setItem('accessToken', 'token-abc');
     const listener = vi.fn();
     const unsubscribe = conversationStreamService.subscribe(listener);
@@ -385,12 +386,68 @@ describe('conversationStreamService', () => {
     source.readyState = MockEventSource.CLOSED;
     source.emitError();
 
-    expect(listener).toHaveBeenCalledWith({
-      type: 'connection_failed',
-      data: { reason: 'sse.connectionErrors.rejected' },
-    });
+    // Transient drops must stay silent in the UI — the service retries alone.
+    expect(listener).not.toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'connection_failed' }),
+    );
+
+    vi.advanceTimersByTime(1000);
+    expect(MockEventSource.instances).toHaveLength(2);
+    expect(MockEventSource.instances[1].url).toContain('token=token-abc');
+    vi.useRealTimers();
 
     unsubscribe();
+  });
+
+  it('keeps retrying reconnection past the backoff cap without user action', () => {
+    vi.useFakeTimers();
+    localStorage.setItem('accessToken', 'token-abc');
+    const listener = vi.fn();
+    const unsubscribe = conversationStreamService.subscribe(listener);
+
+    conversationStreamService.connect();
+
+    // Every attempt fails fast (backend down) — the service must keep trying.
+    for (let i = 0; i < 20; i++) {
+      const source = MockEventSource.instances[MockEventSource.instances.length - 1];
+      source.readyState = MockEventSource.CLOSED;
+      source.emitError();
+      vi.advanceTimersByTime(60_000);
+    }
+
+    expect(MockEventSource.instances.length).toBeGreaterThan(10);
+    expect(listener).not.toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'connection_failed' }),
+    );
+    vi.useRealTimers();
+
+    unsubscribe();
+  });
+
+  it('resets to fast retries once the connection recovers', () => {
+    vi.useFakeTimers();
+    localStorage.setItem('accessToken', 'token-abc');
+    conversationStreamService.connect();
+
+    // Drive the backoff out to the cap.
+    for (let i = 0; i < 8; i++) {
+      const source = MockEventSource.instances[MockEventSource.instances.length - 1];
+      source.readyState = MockEventSource.CLOSED;
+      source.emitError();
+      vi.advanceTimersByTime(60_000);
+    }
+
+    // Recover (open fires + connected frame), then drop again — the next
+    // retry must come after 1s, not 60s.
+    const recovered = MockEventSource.instances[MockEventSource.instances.length - 1];
+    recovered.onopen?.();
+    recovered.emitNamed('connected', { connectionId: 'conn-1' });
+    recovered.readyState = MockEventSource.CLOSED;
+    recovered.emitError();
+    vi.advanceTimersByTime(1000);
+
+    expect(MockEventSource.instances.length).toBe(10);
+    vi.useRealTimers();
   });
 
   afterEach(() => {

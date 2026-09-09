@@ -1415,3 +1415,60 @@ describe('WorkspaceDocumentService.completeBulkUpload', () => {
     expect(indexingService.queueDocument).not.toHaveBeenCalled();
   });
 });
+
+describe('WorkspaceDocumentService.findByMultipleWorkspaces search scope', () => {
+  const buildService = () => {
+    const findChain = {
+      sort: jest.fn().mockReturnThis(),
+      skip: jest.fn().mockReturnThis(),
+      limit: jest.fn().mockReturnThis(),
+      exec: jest.fn().mockResolvedValue([]),
+    };
+    const documentModel = {
+      find: jest.fn().mockReturnValue(findChain),
+      countDocuments: jest.fn().mockResolvedValue(0),
+    };
+    const service = new WorkspaceDocumentService(
+      documentModel as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      { get: jest.fn(() => 10) } as never,
+      {} as never,
+      {} as never,
+      { setContext: jest.fn() } as never,
+      {} as never,
+      {} as never,
+      {} as never,
+    );
+    return { service, documentModel };
+  };
+
+  it('searches only originalName by default', async () => {
+    const { service, documentModel } = buildService();
+
+    await service.findByMultipleWorkspaces([WS_ID], { search: 'report.pdf' });
+
+    const query = documentModel.find.mock.calls[0][0];
+    expect(query.originalName).toEqual({ $regex: 'report\\.pdf', $options: 'i' });
+    expect(query.$or).toBeUndefined();
+  });
+
+  it('matches originalName or storage filename when searchFilename is set', async () => {
+    const { service, documentModel } = buildService();
+
+    await service.findByMultipleWorkspaces([WS_ID], {
+      search: 'FP_PRET_EMPRUNT_TEC10_CHROME_v1.pdf',
+      searchFilename: true,
+    });
+
+    const query = documentModel.find.mock.calls[0][0];
+    expect(query.$or).toEqual([
+      { originalName: { $regex: 'FP_PRET_EMPRUNT_TEC10_CHROME_v1\\.pdf', $options: 'i' } },
+      { filename: { $regex: 'FP_PRET_EMPRUNT_TEC10_CHROME_v1\\.pdf', $options: 'i' } },
+    ]);
+    expect(query.originalName).toBeUndefined();
+  });
+});

@@ -8,6 +8,7 @@ export function makeAuthState(overrides: Partial<AuthContextType> = {}): AuthCon
     requiresEmailVerification: false,
     requiresProfileCompletion: false,
     registrationEnabled: true,
+    isAuthTemporarilyUnavailable: false,
     login: async () => undefined,
     register: async () => undefined,
     logout: async () => undefined,
@@ -15,6 +16,7 @@ export function makeAuthState(overrides: Partial<AuthContextType> = {}): AuthCon
     resendVerificationEmail: async () => undefined,
     completeProfile: async () => undefined,
     refreshUser: async () => undefined,
+    retryRecovery: async () => undefined,
     ...overrides,
   };
 }

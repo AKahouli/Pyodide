@@ -1,11 +1,13 @@
 import { useState } from 'react';
 import { AlertTriangle, CheckCircle2, ChevronRight, Eye, Loader2, RotateCcw, XCircle } from 'lucide-react';
 import { CodeBlockCopyButton } from '@/components/ai-elements/code-block';
+import { Button } from '@/components/ui/button';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { useModuleTranslation } from '@/modules/localization';
 import { fetchToolResult } from '../../api';
 import type { MessageComponent, ToolActivityData } from '../../types';
-import { formatActivityDuration, formatToolResponsePayload, resolveToolDescription, resolveToolDisplayKey, resolveToolFallbackName, resolveToolRequest, resolveToolResponse, resolveToolShortName, resolveToolSummary } from '../../utils/tool-activity';
+import { formatActivityDuration, formatToolResponsePayload, resolveToolDescription, resolveToolDisplayKey, resolveToolFallbackName, resolveToolRequest, resolveToolShortName, resolveToolSummary } from '../../utils/tool-activity';
 
 export function statusIcon(status: ToolActivityData['status'] | 'running' | 'completed' | 'failed' | 'stopped', active = true) {
   if (status === 'running') return active ? <Loader2 data-tool-spinner className='size-3.5 animate-spin text-primary' /> : null;
@@ -58,38 +60,21 @@ function ToolPayload({ label, content, language, kind }: Readonly<{ label: strin
   );
 }
 
-type ToolResponseRevealState = 'hidden' | 'loading' | 'shown' | 'empty' | 'error';
+type ToolResponseRevealState = 'idle' | 'loading' | 'shown' | 'empty' | 'error';
 
 /**
- * Tool responses are no longer shipped with every message: the row reveals the
- * payload on demand, formatting the inline stream copy when present and
- * otherwise pulling it from the server with a targeted query.
+ * Tool responses are loaded from the persisted message only when requested.
  */
-function ToolResponseSection({ conversationId, messageId, componentId, data, redactSensitiveText, onPayloadLoaded }: Readonly<{
-  conversationId: string;
-  messageId: string;
-  componentId?: string;
-  data: ToolActivityData;
-  redactSensitiveText: boolean;
-  /** Reports the formatted payload once fetched so the copy action can include it. */
-  onPayloadLoaded?: (payload: string | undefined) => void;
-}>) {
-  const { t } = useModuleTranslation('conversation');
-  const [revealState, setRevealState] = useState<ToolResponseRevealState>('hidden');
+function useToolResponseReveal(conversationId: string, messageId: string, componentId: string | undefined, data: ToolActivityData, redactSensitiveText: boolean): {
+  revealState: ToolResponseRevealState;
+  load: () => Promise<void>;
+  payload: string | undefined;
+} {
+  const [revealState, setRevealState] = useState<ToolResponseRevealState>('idle');
   const [fetchedPayload, setFetchedPayload] = useState<string>();
-  const inlinePayload = resolveToolResponse(data, redactSensitiveText);
-  const payload = fetchedPayload ?? inlinePayload;
 
-  const toggle = async () => {
-    if (revealState === 'loading') return;
-    if (revealState === 'shown') {
-      setRevealState('hidden');
-      return;
-    }
-    if (payload) {
-      setRevealState('shown');
-      return;
-    }
+  const load = async () => {
+    if (revealState === 'loading' || revealState === 'shown') return;
     if (!componentId) {
       setRevealState('empty');
       return;
@@ -100,64 +85,71 @@ function ToolResponseSection({ conversationId, messageId, componentId, data, red
       const formatted = resultJson ? formatToolResponsePayload(data, resultJson, redactSensitiveText) : undefined;
       setFetchedPayload(formatted);
       setRevealState(formatted ? 'shown' : 'empty');
-      onPayloadLoaded?.(formatted);
     } catch {
       setRevealState('error');
     }
   };
 
-  if (data.status === 'running') {
-    return <p className='px-3 py-2.5 text-xs text-muted-foreground'>{t('stream.activity.responsePending')}</p>;
-  }
-  return (
-    <div>
-      <button
-        type='button'
-        data-tool-payload-trigger='response'
-        aria-expanded={revealState === 'shown'}
-        onClick={() => void toggle()}
-        className='inline-flex min-h-9 items-center gap-1.5 px-3 text-xs font-medium text-primary transition-colors hover:text-primary/80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset'
-      >
-        {revealState === 'loading' ? <Loader2 className='size-3.5 animate-spin' aria-hidden='true' /> : <Eye className='size-3.5' aria-hidden='true' />}
-        {t('stream.activity.viewResponse')}
-      </button>
-      {revealState === 'shown' && payload && (
-        <pre data-tool-payload='response' className='mx-3 mb-3 max-h-64 overflow-auto whitespace-pre-wrap break-words rounded-md border bg-background/70 p-3 text-xs text-foreground'>{payload}</pre>
-      )}
-      {revealState === 'empty' && <p className='px-3 pb-3 text-xs text-muted-foreground'>{t('stream.activity.responseUnavailable')}</p>}
-      {revealState === 'error' && <p className='px-3 pb-3 text-xs text-destructive'>{t('stream.activity.responseError')}</p>}
-    </div>
-  );
+  return { revealState, load, payload: fetchedPayload };
 }
 
 function ToolDetails({ conversationId, messageId, componentId, data, redactSensitiveText, fullToolName, summary, compactTimestamp, fullTimestamp, timestampDateTime, onRetry }: Readonly<ToolDetailsProps>) {
   const { t } = useModuleTranslation('conversation');
-  const [fetchedResponse, setFetchedResponse] = useState<string>();
   const request = resolveToolRequest(data, redactSensitiveText);
-  const response = resolveToolResponse(data, redactSensitiveText) ?? fetchedResponse;
+  const [responseOpen, setResponseOpen] = useState(false);
+  const { revealState, load, payload } = useToolResponseReveal(conversationId, messageId, componentId, data, redactSensitiveText);
+  const isRunning = data.status === 'running';
   const copyText = [
     fullToolName,
     summary ? `${t('stream.activity.description')}: ${summary}` : undefined,
     `${t('stream.activity.timestamp')}: ${fullTimestamp}`,
     request ? `${t('stream.activity.request')}:\n${request}` : undefined,
-    response ? `${t('stream.activity.response')}:\n${response}` : undefined,
+    payload ? `${t('stream.activity.response')}:\n${payload}` : undefined,
   ].filter((value): value is string => Boolean(value)).join('\n\n');
   return (
     <CollapsibleContent className='px-1 pb-2 pt-1 sm:px-3'>
       <div data-tool-detail-card className='rounded-lg border border-border/70 bg-background/55 p-3 shadow-xs'>
-        <div className='flex min-w-0 items-baseline gap-2'>
-          <span className='shrink-0 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground'>{t('stream.activity.toolName')}</span>
-          <span data-tool-full-name className='min-w-0 break-words text-sm font-medium text-foreground'>{fullToolName}</span>
+        <div className='flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1'>
+          <div className='flex min-w-0 flex-1 items-baseline gap-2'>
+            <span className='shrink-0 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground'>{t('stream.activity.toolName')}</span>
+            <span data-tool-full-name className='min-w-0 break-words text-sm font-medium text-foreground'>{fullToolName}</span>
+          </div>
+          <div data-tool-detail-actions className='ml-auto flex shrink-0 items-center gap-2'>
+            {!isRunning && (
+              <Dialog open={responseOpen} onOpenChange={setResponseOpen}>
+                <DialogTrigger asChild>
+                  <Button
+                    type='button'
+                    variant='outline'
+                    size='sm'
+                    data-tool-payload-trigger='response'
+                    onClick={() => void load()}
+                    className='h-8 gap-1.5 rounded-md px-3 text-xs text-primary hover:text-primary'
+                  >
+                    {revealState === 'loading' ? <Loader2 className='size-3.5 animate-spin' aria-hidden='true' /> : <Eye className='size-3.5' aria-hidden='true' />}
+                    {t('stream.activity.viewResponse')}
+                  </Button>
+                </DialogTrigger>
+                <DialogContent data-tool-response-dialog aria-describedby={undefined} className='max-h-[85vh] max-w-3xl overflow-hidden'>
+                  <DialogHeader>
+                    <DialogTitle>{t('stream.activity.responseTitle', { tool: fullToolName })}</DialogTitle>
+                  </DialogHeader>
+                  {revealState === 'loading' && <div className='flex min-h-24 items-center justify-center'><Loader2 className='size-5 animate-spin text-primary' aria-hidden='true' /></div>}
+                  {revealState === 'shown' && payload && <pre data-tool-payload='response' className='max-h-[65vh] overflow-auto whitespace-pre-wrap break-words rounded-md border bg-muted/30 p-3 text-xs text-foreground'>{payload}</pre>}
+                  {revealState === 'empty' && <p className='text-sm text-muted-foreground'>{t('stream.activity.responseUnavailable')}</p>}
+                  {revealState === 'error' && <p className='text-sm text-destructive'>{t('stream.activity.responseError')}</p>}
+                </DialogContent>
+              </Dialog>
+            )}
+            <time data-tool-timestamp dateTime={timestampDateTime} title={fullTimestamp} aria-label={fullTimestamp} className='text-xs tabular-nums text-muted-foreground'>{compactTimestamp}</time>
+            <CodeBlockCopyButton code={copyText} aria-label={t('stream.activity.copyToolDetails')} title={t('stream.activity.copyToolDetails')} className='size-8' />
+          </div>
         </div>
         {summary && <p data-tool-full-description className='mt-1.5 whitespace-pre-wrap break-words text-sm leading-relaxed text-muted-foreground'>{summary}</p>}
         <div data-tool-payload-group className='mt-3 divide-y overflow-hidden rounded-md border border-border/70 bg-muted/20'>
           {request && <ToolPayload label={t('stream.activity.request')} content={request} language={data.primaryInputLanguage} kind='request' />}
           {!request && <p className='px-3 py-2.5 text-xs text-muted-foreground'>{t('stream.activity.requestUnavailable')}</p>}
-          <ToolResponseSection conversationId={conversationId} messageId={messageId} componentId={componentId} data={data} redactSensitiveText={redactSensitiveText} onPayloadLoaded={setFetchedResponse} />
-        </div>
-        <div className='mt-3 flex items-center justify-end gap-2 border-t border-border/60 pt-2.5'>
-          <time data-tool-timestamp dateTime={timestampDateTime} title={fullTimestamp} aria-label={fullTimestamp} className='text-xs tabular-nums text-muted-foreground'>{compactTimestamp}</time>
-          <CodeBlockCopyButton code={copyText} aria-label={t('stream.activity.copyToolDetails')} title={t('stream.activity.copyToolDetails')} className='size-8' />
+          {isRunning && <p className='px-3 py-2.5 text-xs text-muted-foreground'>{t('stream.activity.responsePending')}</p>}
         </div>
         {data.status === 'failed' && onRetry && (
           <button type='button' onClick={onRetry} className='mt-2 inline-flex min-h-9 items-center gap-2 rounded-md border px-3 text-xs font-medium text-foreground hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring'>

@@ -875,6 +875,28 @@ export class MessageService {
     await this.messageStore.markStreamFailed(messageId, streamExecutionLeaseId);
   }
 
+  findExpiredStreamExecutions(
+    cutoff: Date,
+    limit: number,
+  ): Promise<
+    Array<{
+      id: string;
+      conversationId: string;
+      executionAttemptId: string | null;
+      leaseExpiresAt: Date | null;
+    }>
+  > {
+    return this.messageStore.findExpiredStreamExecutions(cutoff, limit);
+  }
+
+  markExecutionInterrupted(
+    messageId: string,
+    reason: string,
+    now: Date,
+  ): Promise<{ id: string; conversationId: string; executionAttemptId: string | null } | null> {
+    return this.messageStore.markExecutionInterrupted(messageId, reason, now);
+  }
+
   async cleanupStaleStreams(olderThanMinutes: number): Promise<number> {
     const cutoff = new Date(Date.now() - olderThanMinutes * 60 * 1000);
     return this.messageStore.cleanupStaleStreams(cutoff);

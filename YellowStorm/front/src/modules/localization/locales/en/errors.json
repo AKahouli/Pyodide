@@ -189,5 +189,7 @@
   "ERR_3707": "This knowledge link is not valid.",
   "ERR_3708": "Published versions cannot be changed.",
   "ERR_3709": "This model has no editable draft.",
-  "ERR_3710": "Semantic Models are temporarily unavailable."
+  "ERR_3710": "Semantic Models are temporarily unavailable.",
+  "ERR_1130": "Authentication is temporarily unavailable. Your session was not affected; we are retrying.",
+  "ERR_1131": "Signing in is being synchronized. Please retry."
 }

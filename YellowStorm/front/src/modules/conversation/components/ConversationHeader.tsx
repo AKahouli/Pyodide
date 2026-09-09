@@ -3,12 +3,13 @@ import { useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
-import { ArrowLeft, FileDown, FileText, Loader2, Pencil, Share, ShieldCheck, Trash2, Users } from 'lucide-react';
+import { ArrowLeft, FileDown, FileText, Globe, Loader2, Pencil, Share, ShieldCheck, Trash2, Users } from 'lucide-react';
 import { useConversationStore, useCurrentConversation } from '../store';
 import { useTypewriter } from '../hooks/useTypewriter';
 import { fetchMessages } from '../api';
 import { buildExportBlocks, buildExportFilename, fetchAllMessagesForExport, type ExportBlock } from '../utils/document-export';
 import { downloadBlob, exportBlocksToDocx } from '../utils/docx-export';
+import { exportBlocksToHtml } from '../utils/html-export';
 import { showError, showInfo, showSuccess } from '@/lib/notifications';
 import { RenameDialog } from './RenameDialog';
 import { DeleteConversationDialog } from './DeleteConversationDialog';
@@ -31,6 +32,7 @@ export function ConversationHeader() {
   const [groupDialogOpen, setGroupDialogOpen] = useState(false);
   const [isExportingDocx, setIsExportingDocx] = useState(false);
   const [isExportingPdf, setIsExportingPdf] = useState(false);
+  const [isExportingHtml, setIsExportingHtml] = useState(false);
   const [pdfBlocks, setPdfBlocks] = useState<ExportBlock[] | null>(null);
   const { t, language } = useModuleTranslation('conversation');
 
@@ -91,6 +93,24 @@ export function ConversationHeader() {
       showError(t('toasts.message.exportError'));
     } finally {
       setIsExportingPdf(false);
+    }
+  };
+
+  const handleExportHtml = async () => {
+    if (isExportingHtml) return;
+    setIsExportingHtml(true);
+    try {
+      const blocks = await buildExportBlocksForConversation();
+      if (!blocks.length) {
+        showInfo(t('export.empty'));
+        return;
+      }
+      downloadBlob(exportBlocksToHtml(blocks, exportTitle), buildExportFilename(exportTitle, 'html'));
+      showSuccess(t('toasts.export.htmlSuccess'));
+    } catch {
+      showError(t('toasts.export.failed'));
+    } finally {
+      setIsExportingHtml(false);
     }
   };
 
@@ -177,8 +197,8 @@ export function ConversationHeader() {
                 <TooltipTrigger asChild>
                   <DropdownMenu>
                     <DropdownMenuTrigger asChild>
-                      <Button variant='ghost' size='icon' className='size-11 shrink-0 md:size-9' aria-label={t('header.actions.export')} disabled={isExportingDocx}>
-                        {isExportingDocx ? <Loader2 className='h-4 w-4 animate-spin' /> : <FileDown className='h-4 w-4' />}
+                      <Button variant='ghost' size='icon' className='size-11 shrink-0 md:size-9' aria-label={t('header.actions.export')} disabled={isExportingDocx || isExportingHtml}>
+                        {isExportingDocx || isExportingHtml ? <Loader2 className='h-4 w-4 animate-spin' /> : <FileDown className='h-4 w-4' />}
                       </Button>
                     </DropdownMenuTrigger>
                     <DropdownMenuContent align='end'>
@@ -189,6 +209,10 @@ export function ConversationHeader() {
                       <DropdownMenuItem onClick={() => void handleExportPdf()}>
                         <FileDown className='h-3.5 w-3.5 mr-2' />
                         {t('messageActions.exportPdf')}
+                      </DropdownMenuItem>
+                      <DropdownMenuItem onClick={() => void handleExportHtml()}>
+                        <Globe className='h-3.5 w-3.5 mr-2' />
+                        {t('messageActions.exportHtml')}
                       </DropdownMenuItem>
                     </DropdownMenuContent>
                   </DropdownMenu>

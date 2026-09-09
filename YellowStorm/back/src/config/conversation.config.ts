@@ -21,6 +21,18 @@ export default registerAs('conversation', () => ({
     10,
   ),
   staleStreamCleanupMinutes: 30,
+  // Standard-run recovery worker (WP06.5): settles crashed attempts whose
+  // execution lease expired, per fleet, as `interrupted` — never `completed`.
+  recoveryEnabled: (process.env.CONVERSATION_RECOVERY_ENABLED || 'true') === 'true',
+  recoveryIntervalMs: Number.parseInt(process.env.CONVERSATION_RECOVERY_INTERVAL_MS || '30000', 10),
+  recoveryGraceMs: Number.parseInt(process.env.CONVERSATION_RECOVERY_GRACE_MS || '60000', 10),
+  // Fleet-wide admission (WP07): shared caps across replicas. The per-user
+  // active-run default stays 5 (CONVERSATION_MAX_CONCURRENT_STREAMS); these
+  // add global fleet bounds enforced via shared PostgreSQL admission state.
+  fleetAdmissionEnabled: (process.env.CONVERSATION_FLEET_ADMISSION_ENABLED || 'true') === 'true',
+  fleetMaxActiveRuns: Number.parseInt(process.env.CONVERSATION_FLEET_MAX_ACTIVE_RUNS || '50', 10),
+  fleetMaxQueuedPerUser: Number.parseInt(process.env.CONVERSATION_FLEET_MAX_QUEUED_PER_USER || '5', 10),
+  fleetQueueWaitMs: Number.parseInt(process.env.CONVERSATION_FLEET_QUEUE_WAIT_MS || '60000', 10),
   orphanedConversationThresholdHours: Number.parseInt(
     process.env.CONVERSATION_ORPHANED_THRESHOLD_HOURS || '24',
     10,

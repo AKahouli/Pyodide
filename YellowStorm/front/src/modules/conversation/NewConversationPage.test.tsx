@@ -103,6 +103,7 @@ vi.mock('./store', () => ({
   useInputDisabled: () => false,
   useSelectedModelId: () => 'model-1',
   useSelectedReasoningEffort: () => selectedReasoningEffortMock.value,
+  useSelectedSemanticModelId: () => null,
   useSelectedWorkspaceIds: () => selectedWorkspaceIdsMock.value,
   useSetSelectedReasoningEffort: () => setSelectedReasoningEffortMock,
 }));
@@ -231,6 +232,7 @@ describe('NewConversationPage', () => {
     expect(screen.getByText('workspace-selection-preserved')).toBeInTheDocument();
     expect(setConversationStateMock).toHaveBeenCalledWith({
       currentConversationId: null,
+      selectedSemanticModelId: null,
       selectedSkillIds: [],
       selectedWorkspaceIds: [],
     });
@@ -285,6 +287,10 @@ describe('NewConversationPage', () => {
     render(<NewConversationPage />);
 
     expect(screen.getByRole('button', { name: 'input.reasoning.label' })).toBeInTheDocument();
+    const reasoning = screen.getByRole('button', { name: 'input.reasoning.label' });
+    const reliability = screen.getByRole('button', { name: 'input.autoReliability' });
+    expect(reliability).toHaveAttribute('aria-pressed', 'false');
+    expect(reasoning.compareDocumentPosition(reliability) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     await userEvent.click(screen.getByRole('button', { name: 'submit-new-conversation' }));
 
     await waitFor(() => expect(sendMessageMock).toHaveBeenCalledWith(

@@ -42,12 +42,16 @@ RUN useradd -ms /bin/bash azureuser \
     && chown -R azureuser /usr/src/app
 
 COPY --from=build /app/dist ./dist
+COPY scripts ./scripts
+COPY drizzle.config.ts ./drizzle.config.ts
+COPY drizzle ./drizzle
 COPY --from=build /app/src/modules/conversation/proto ./dist/modules/conversation/proto
 COPY --from=build /app/src/modules/conversation-v2/proto ./dist/modules/conversation-v2/proto
 COPY --from=build /app/src/modules/playbook-flow/proto ./dist/modules/playbook-flow/proto
 COPY --from=build /app/src/modules/agent/proto ./dist/modules/agent/proto
 COPY --from=build /app/src/modules/worky/proto ./dist/modules/worky/proto
 COPY --from=build /app/src/modules/email/templates ./dist/modules/email/templates
+COPY scripts/semantic-model ./scripts/semantic-model
 COPY --from=build /app/node_modules ./node_modules
 COPY package.json ./
 

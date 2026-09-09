@@ -34,6 +34,7 @@ function getManualChunk(id: string): string | undefined {
     || id.includes('/node_modules/react-markdown/')
     || id.includes('/node_modules/remark-')
     || id.includes('/node_modules/rehype-')
+    || id.includes('/node_modules/katex/')
   ) {
     return 'vendor-markdown';
   }

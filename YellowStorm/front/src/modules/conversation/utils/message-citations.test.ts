@@ -34,10 +34,11 @@ describe('collectMessageCitations', () => {
     expect(collectMessageCitations(components)).toHaveLength(2);
   });
 
-  it('keeps same-source citations with different pages separate', () => {
+  it('collapses same-document citations with different pages or references into one entry', () => {
     const components: MessageComponent[] = [
-      { type: 'text', data: { content: 'one', citations: [citation({ source: 'a.pdf', page: '1' })] } },
-      { type: 'text', data: { content: 'two', citations: [citation({ source: 'a.pdf', page: '2' })] } },
+      { type: 'text', data: { content: 'one', citations: [citation({ source: 'a.pdf', page: '1', reference: '[1]' })] } },
+      { type: 'text', data: { content: 'two', citations: [citation({ source: 'a.pdf', page: '2', reference: '[2]' })] } },
+      { type: 'text', data: { content: 'three', citations: [citation({ source: 'a.pdf', page: '2', fileName: 'other.pdf' })] } },
     ];
     expect(collectMessageCitations(components)).toHaveLength(2);
   });

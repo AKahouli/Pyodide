@@ -42,7 +42,7 @@ describe('AuthService human-agent creation', () => {
     const emailTemplateRenderer = {
       render: jest.fn().mockResolvedValue({ subject: 's', html: '<p>s</p>', text: 's' }),
     };
-    const usageService = { getDefaultPlan: jest.fn().mockResolvedValue({ _id: new Types.ObjectId(), slug: 'free', workspaceStorageBytes: 100 }) };
+    const usageService = { getDefaultPlan: jest.fn().mockResolvedValue({ _id: new Types.ObjectId(), slug: 'unlimited', workspaceStorageBytes: 100 }) };
     const authorizationService = { getUserPermissions: jest.fn().mockResolvedValue([]), getUserRoleNames: jest.fn().mockResolvedValue([]) };
     const systemService = { isRegistrationEnabled: jest.fn().mockReturnValue(true) };
     const workspaceInitializer = { getOrCreatePersonalWorkspace: jest.fn().mockResolvedValue(undefined) };

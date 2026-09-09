@@ -1114,6 +1114,9 @@ export const useWorkspaceStore = create<WorkspaceStore>()(
           currentPage: 1,
           totalPages: 0,
           totalWorkspaces: 0,
+          // A stale filter would silently re-apply itself to the next
+          // fetchWorkspaces call (create/delete flows refetch right after).
+          searchQuery: '',
         });
       },
 

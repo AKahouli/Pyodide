@@ -186,6 +186,7 @@ vi.mock('../store', () => ({
   useInputDisabled: () => false,
   useReplyingToMessage: () => null,
   useSelectedWorkspaceIds: () => workspaceSelectionMock.value,
+  useSelectedSemanticModelId: () => null,
   useSetSelectedWorkspaceIds: () => workspaceSelectionMock.set,
   useDeepSearchEnabled: () => false,
   useSetDeepSearchEnabled: () => vi.fn(),

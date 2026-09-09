@@ -263,6 +263,7 @@ Do not render charts for single values or non-numeric content.
                     "brain_documents": agent.brain_documents,
                     "brain_relations": agent.brain_relations,
                     "brain_ids": agent.brain_ids,
+                    "file_names": agent.file_names,
                     "vectorstore_name": agent.vectorstore_name,
                     "agent_params": agent.agent_params if hasattr(agent, 'agent_params') else {},
                     "save_memory": agent.save_memory,
@@ -829,6 +830,13 @@ Do not render charts for single values or non-numeric content.
                         agent_name= getattr(agent_config, 'name', 'Search Agent')
                         agent_max_tokens= getattr(agent_config, 'agent_params', {}).get('max_tokens', 20000)
                         agent_temp= getattr(agent_config, 'agent_params', {}).get('agent_temp', 0.0)
+                        document_tree_injection_enabled = getattr(agent_config, 'agent_params', {}).get(
+                            'document_tree_injection_enabled', True
+                        )
+                        if isinstance(document_tree_injection_enabled, str):
+                            document_tree_injection_enabled = document_tree_injection_enabled.strip().lower() not in {
+                                'false', '0', 'no', 'off'
+                            }
                         preview_tool_config = next((
                             tool for tool in agent_config.tools
                             if tool.get('name') == 'generate_web_preview' and tool.get('enabled', True)
@@ -851,6 +859,7 @@ Do not render charts for single values or non-numeric content.
                             name=agent_name,
                             citation_manager=self.citation_manager,
                             generate_web_preview=preview_tool_config is not None,
+                            document_tree_injection_enabled=document_tree_injection_enabled,
                         )
                         team.agents.append(agent)
                     elif agent_config.type == 'report':

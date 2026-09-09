@@ -20,7 +20,15 @@ export interface DocumentQueryParams {
   page?: number;
   limit?: number;
   status?: DocumentStatus;
+  /** Semantic corpus preparation needs documents regardless of upload status. */
+  includeAllStatuses?: boolean;
   search?: string;
+  /**
+   * Also match the storage `filename`, not just `originalName`. Citation
+   * resolution needs this because a citation can name the storage file while
+   * the document keeps a different original upload name.
+   */
+  searchFilename?: boolean;
   sortBy?: 'originalName' | 'createdAt' | 'size';
   sortOrder?: 'asc' | 'desc';
   parentId?: string | null;

@@ -30,8 +30,12 @@ export class PlaybookFlowStreamAuthGuard implements CanActivate {
       );
     }
 
+    // JWT verification errors (malformed/expired token) are authentication
+    // failures; session-store validation happens outside this catch so a
+    // transient dependency failure surfaces as 503, never as "invalid token".
+    let payload: JwtPayload;
     try {
-      const payload = this.jwtService.verify<JwtPayload>(token, {
+      payload = this.jwtService.verify<JwtPayload>(token, {
         secret: this.configService.get<string>('jwt.secret'),
         issuer: this.configService.get<string>('jwt.issuer'),
         audience: this.configService.get<string>('jwt.audience'),
@@ -43,19 +47,6 @@ export class PlaybookFlowStreamAuthGuard implements CanActivate {
           'Invalid token type for SSE connection',
         );
       }
-
-      if (payload.sessionId) {
-        const isSessionValid = await this.authService.isSessionValid(payload.sessionId);
-        if (!isSessionValid) {
-          throw new UnauthorizedException(
-            ErrorCode.AUTH_SESSION_REVOKED,
-            'Session has been revoked',
-          );
-        }
-      }
-
-      request.sseUser = payload;
-      return true;
     } catch (error) {
       if (error instanceof UnauthorizedException) throw error;
       throw new UnauthorizedException(
@@ -63,5 +54,18 @@ export class PlaybookFlowStreamAuthGuard implements CanActivate {
         'Invalid or expired token',
       );
     }
+
+    if (payload.sessionId) {
+      const isSessionValid = await this.authService.isSessionValid(payload.sessionId);
+      if (!isSessionValid) {
+        throw new UnauthorizedException(
+          ErrorCode.AUTH_SESSION_REVOKED,
+          'Session has been revoked',
+        );
+      }
+    }
+
+    request.sseUser = payload;
+    return true;
   }
 }

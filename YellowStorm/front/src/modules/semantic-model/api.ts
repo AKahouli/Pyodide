@@ -1,7 +1,7 @@
 import { apiClient } from '@/lib/api/client';
 import { API_ENDPOINTS } from '@/lib/api/config';
 import type { ApiResponse } from '@/lib/api/client';
-import type { AgeGraphEdge, AgeGraphNode, KnowledgeBinding, MappingProposalJob, Paginated, SemanticBuildApplyMode, SemanticBuildJob, SemanticBuildStatus, SemanticEvidenceSearchResponse, SemanticGraph, SemanticGraphOperation, SemanticModel, SemanticModelMappingProposalResponse, SemanticModelManualInstances, SemanticModelMember, SemanticModelShareResult, SemanticModelShareRole, SemanticVersion, ValidationIssue } from './types';
+import type { AgeGraphEdge, AgeGraphNode, AgeGraphOperation, KnowledgeBinding, MappingProposalJob, Paginated, SemanticBuildApplyMode, SemanticBuildJob, SemanticBuildStatus, SemanticCorpusManifest, SemanticEvidenceSearchResponse, SemanticGraph, SemanticGraphOperation, SemanticModel, SemanticModelMappingProposalResponse, SemanticModelManualInstances, SemanticModelMember, SemanticModelShareResult, SemanticModelShareRole, SemanticVersion, ValidationIssue } from './types';
 
 const unwrap = <T>(response: { data: ApiResponse<T> }): T => response.data.data;
 
@@ -69,6 +69,27 @@ export const semanticModelApi = {
     return unwrap(await apiClient.get<ApiResponse<{ nodes: AgeGraphNode[]; edges: AgeGraphEdge[] }>>(
       API_ENDPOINTS.semanticModels.ageGraph(id),
     ));
+  },
+  async rebuildAgeGraph(id: string): Promise<{ vertexCount: number; edgeCount: number; failedVertexCount: number; failedEdgeCount: number; graphViewerWarning: string | null }> {
+    return unwrap(await apiClient.post<ApiResponse<{ vertexCount: number; edgeCount: number; failedVertexCount: number; failedEdgeCount: number; graphViewerWarning: string | null }>>(
+      API_ENDPOINTS.semanticModels.ageGraphRebuild(id),
+      {},
+    ));
+  },
+  async indexAgeGraph(id: string): Promise<{ queued: true }> {
+    return unwrap(await apiClient.post<ApiResponse<{ queued: true }>>(
+      API_ENDPOINTS.semanticModels.ageGraphIndex(id),
+      {},
+    ));
+  },
+  async applyAgeGraphOperations(id: string, operations: AgeGraphOperation[]): Promise<{ appliedNodeCount: number; appliedEdgeCount: number; deletedNodeCount: number; deletedEdgeCount: number; graphViewerWarning: string | null }> {
+    return unwrap(await apiClient.post<ApiResponse<{ appliedNodeCount: number; appliedEdgeCount: number; deletedNodeCount: number; deletedEdgeCount: number; graphViewerWarning: string | null }>>(
+      API_ENDPOINTS.semanticModels.ageGraphOperations(id),
+      { operations },
+    ));
+  },
+  async corpus(id: string): Promise<SemanticCorpusManifest> {
+    return unwrap(await apiClient.get<ApiResponse<SemanticCorpusManifest>>(API_ENDPOINTS.semanticModels.corpus(id)));
   },
   async startBuild(
     id: string,

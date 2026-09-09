@@ -15,6 +15,7 @@ except ImportError:
 from src.grpc_server.chatbot_servicer import ChatbotServicer
 from src.grpc_server.auth_interceptor import ApiKeyAuthInterceptor
 from src.grpc_server.credentials import build_server_credentials, resolve_api_key
+from src.grpc_server.supervisor import FatalGrpcConfigurationError
 from src.config.settings import get_settings
 from src.dependencies import get_agent_team_service
 from src.flow_engine.runtime.checkpointer import close_checkpointer, init_checkpointer
@@ -29,7 +30,11 @@ except ImportError:
 logger = get_logger(__name__)
 
 
-async def start_grpc_server(host: str = "0.0.0.0", port: int = 50051) -> None:
+async def start_grpc_server(
+    host: str = "0.0.0.0",
+    port: int = 50051,
+    on_ready=None,
+) -> None:
     """
     Start the gRPC server for chatbot streaming.
 
@@ -40,17 +45,20 @@ async def start_grpc_server(host: str = "0.0.0.0", port: int = 50051) -> None:
     Args:
         host: Host address to bind the server (default: 0.0.0.0 for all interfaces)
         port: Port number for the gRPC server (default: 50051)
+        on_ready: Optional zero-argument callback invoked after the listener is
+            actually bound and serving. Task creation alone is not readiness.
 
     Note:
         This function runs indefinitely until cancelled. It should be run as a
         background task when starting the FastAPI application.
     """
     if chatbot_pb2_grpc is None:
-        logger.error(
-            "[gRPC] Cannot start gRPC server: protobuf code not generated. "
+        # Fatal configuration error: retrying cannot help until the protobuf
+        # stubs are generated. Surface instead of silently degrading.
+        raise FatalGrpcConfigurationError(
+            "Cannot start gRPC server: protobuf code not generated. "
             "Run 'python scripts/generate_proto.py' first."
         )
-        return
 
     logger.info(f"[gRPC] Initializing gRPC server on {host}:{port}")
 
@@ -135,6 +143,12 @@ async def start_grpc_server(host: str = "0.0.0.0", port: int = 50051) -> None:
                     ", ".join(m.name for m in svc.methods))
     except Exception as e:
         logger.error(f"[gRPC] Failed to start Agent Orchestrator: {e}", exc_info=True)
+        # Do not leak a started runtime whose registration failed.
+        if orchestrator_runtime is not None:
+            try:
+                await orchestrator_runtime.stop()
+            except Exception as stop_error:
+                logger.error(f"[gRPC] Failed to stop partially started orchestrator: {stop_error}")
         orchestrator_runtime = None
 
     # Bind the server to port. Secure by default (TLS); plaintext only under the
@@ -156,6 +170,12 @@ async def start_grpc_server(host: str = "0.0.0.0", port: int = 50051) -> None:
         await close_checkpointer()
         raise
     logger.info(f"✅ [gRPC] V2 Server started successfully on {host}:{port}")
+    # The listener is bound and serving: signal readiness to the supervisor.
+    if on_ready is not None:
+        try:
+            on_ready()
+        except Exception as ready_error:
+            logger.error(f"[gRPC] on_ready callback failed: {ready_error}")
     logger.info("[gRPC] Available services:")
     logger.info("  - chatbot.ChatbotService/RunAgentTeam (V2 streaming)")
     logger.info("  - chatbot.ChatbotService/GenerateConversationName (V2 unary)")

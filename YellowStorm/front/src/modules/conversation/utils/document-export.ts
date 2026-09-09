@@ -17,7 +17,7 @@ function sanitizeFilename(title: string): string {
   return cleaned || 'conversation';
 }
 
-export function buildExportFilename(title: string, extension: 'docx' | 'pdf'): string {
+export function buildExportFilename(title: string, extension: 'docx' | 'pdf' | 'html'): string {
   const date = new Date().toISOString().slice(0, 10);
   return `${sanitizeFilename(title)}-${date}.${extension}`;
 }

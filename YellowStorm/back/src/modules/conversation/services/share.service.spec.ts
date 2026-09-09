@@ -72,12 +72,16 @@ function createService(overrides: Record<string, jest.Mock> = {}) {
     incrementViewCount: jest.fn(),
     ...overrides,
   };
+  const userService = { findByEmail: jest.fn().mockResolvedValue({ _id: { toString: () => 'recipient-1' } }) };
+  const emailService = { sendBulk: jest.fn().mockResolvedValue({ failed: 0 }) };
   const service = new ShareService(
     store as never,
-    { get: jest.fn().mockReturnValue(30) } as never,
+    { get: jest.fn((key: string, fallback: unknown) => key === 'app.frontendUrl' ? 'https://app.example.test' : fallback ?? 30) } as never,
     { setContext: jest.fn(), log: jest.fn(), error: jest.fn() } as never,
+    userService as never,
+    emailService as never,
   );
-  return { service, store };
+  return { service, store, userService, emailService };
 }
 
 describe('ShareService', () => {
@@ -136,11 +140,11 @@ describe('ShareService', () => {
     expect(legacyMessages[0].components).toEqual([...components, unknownComponent]);
   });
 
-  it('keeps successful private forks when another recipient fork fails', async () => {
-    const { service, store } = createService({
+  it('creates recipient-owned copies and emails their conversation links', async () => {
+    const { service, store, emailService } = createService({
       forkConversation: jest
         .fn()
-        .mockRejectedValueOnce(new Error('copy failed'))
+        .mockResolvedValueOnce('fork-1')
         .mockResolvedValueOnce('fork-2'),
       createPrivate: jest
         .fn()
@@ -156,9 +160,16 @@ describe('ShareService', () => {
     expect(store.createPrivate).toHaveBeenCalledWith(
       expect.objectContaining({
         recipientEmails: ['one@example.com', 'two@example.com'],
-        forkedConversationIds: ['fork-2'],
+        forkedConversationIds: ['fork-1', 'fork-2'],
       }),
     );
+    expect(store.forkConversation).toHaveBeenCalledWith(expect.objectContaining({ ownerId: 'recipient-1', sharedBy: 'user-1' }));
+    expect(emailService.sendBulk).toHaveBeenCalledWith(expect.objectContaining({
+      emails: expect.arrayContaining([
+        expect.objectContaining({ to: 'one@example.com', text: expect.stringContaining('/#/conversation/fork-1') }),
+        expect.objectContaining({ to: 'two@example.com', text: expect.stringContaining('/#/conversation/fork-2') }),
+      ]),
+    }));
   });
 
   it('deletes committed forks when a later recipient exceeds the clone limit', async () => {
@@ -177,7 +188,23 @@ describe('ShareService', () => {
       }),
     ).rejects.toMatchObject({ message: 'clone limit' });
 
-    expect(store.deleteForkConversations).toHaveBeenCalledWith(['fork-1'], 'user-1');
+    expect(store.deleteForkConversations).toHaveBeenCalledWith(['fork-1']);
+    expect(store.createPrivate).not.toHaveBeenCalled();
+  });
+
+  it('deletes recipient copies when an invitation email fails', async () => {
+    const { service, store, emailService } = createService({
+      forkConversation: jest.fn().mockResolvedValue('fork-1'),
+    });
+    emailService.sendBulk.mockResolvedValue({ failed: 1 });
+
+    await expect(service.createShare('user-1', {
+      conversationId: 'conversation-1',
+      shareType: 'private',
+      recipientEmails: ['one@example.com'],
+    })).rejects.toMatchObject({ response: 'Failed to send one or more conversation share emails' });
+
+    expect(store.deleteForkConversations).toHaveBeenCalledWith(['fork-1']);
     expect(store.createPrivate).not.toHaveBeenCalled();
   });
 

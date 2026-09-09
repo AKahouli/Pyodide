@@ -14,7 +14,7 @@ describe('agents drizzle schema', () => {
     expect(getTableName(agents)).toBe('agents');
     const cols = getTableColumns(agents) as Record<string, { name: string }>;
     for (const name of [
-      'id', 'name', 'slug', 'role', 'description', 'temperature', 'llmModel',
+      'id', 'name', 'slug', 'role', 'description', 'temperature', 'llmModel', 'reasoningEffort',
       'email', 'instruction', 'ignorePrePrompt', 'agentTypeId', 'agentTypeSlug',
       'guardrails', 'deploymentSettings', 'createdBy', 'createdAt', 'updatedAt',
     ]) {
@@ -23,6 +23,7 @@ describe('agents drizzle schema', () => {
     expect(cols.agentTypeId.name).toBe('agent_type_id');
     expect(cols.agentTypeSlug.name).toBe('agent_type_slug');
     expect(cols.llmModel.name).toBe('llm_model');
+    expect(cols.reasoningEffort.name).toBe('reasoning_effort');
   });
 
   it('defines the six junction tables', () => {

@@ -1,5 +1,5 @@
-import { useState } from 'react';
-import { LockKeyhole, Plus, Trash2, X } from 'lucide-react';
+import { useEffect, useState } from 'react';
+import { Loader2, LockKeyhole, Plus, Trash2, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -10,11 +10,14 @@ import { Textarea } from '@/components/ui/textarea';
 import { useModuleTranslation } from '@/modules/localization';
 import { useSemanticModelEditorStore } from '../../store';
 import type { KnowledgeLinkingController } from '../../hooks/use-knowledge-linking';
-import type { AttributeDefinition, SemanticNodeType, SemanticRecord, SemanticRelationType } from '../../types';
+import type { AttributeDefinition, SemanticCorpusDocument, SemanticNodeType, SemanticRecord, SemanticRelationType } from '../../types';
 import { businessKey } from '../../utils/model-utils';
 import { KnowledgePanel } from '../knowledge/KnowledgePanel';
+import { semanticModelApi } from '../../api';
+import { parseApiError } from '@/lib/api-error';
+import { showError, showSuccess } from '@/lib/notifications';
 
-export function SemanticModelInspector({ canEdit,knowledge,knowledgeOpen,knowledgeTargetId,onKnowledgeClose }: Readonly<{ canEdit:boolean;knowledge:KnowledgeLinkingController;knowledgeOpen:boolean;knowledgeTargetId:string|null;onKnowledgeClose:()=>void }>) {
+export function SemanticModelInspector({ modelId = '', canEdit,knowledge,knowledgeOpen,knowledgeTargetId,onKnowledgeClose }: Readonly<{ modelId?:string;canEdit:boolean;knowledge:KnowledgeLinkingController;knowledgeOpen:boolean;knowledgeTargetId:string|null;onKnowledgeClose:()=>void }>) {
   const { t } = useModuleTranslation('semantic-model');
   const graph = useSemanticModelEditorStore((state) => state.graph);
   const selectedId = useSemanticModelEditorStore((state) => state.selectedId);
@@ -25,19 +28,62 @@ export function SemanticModelInspector({ canEdit,knowledge,knowledgeOpen,knowled
   if (knowledgeOpen||!selectedId||(!node&&!relation&&!record)) return <aside className={knowledgeOpen?'absolute inset-y-0 right-0 z-30 w-[min(22rem,calc(100%-1rem))] border-l bg-background/95 shadow-2xl backdrop-blur xl:static xl:w-80 xl:shadow-none':'hidden w-80 shrink-0 border-l bg-background/92 xl:block'}><KnowledgePanel canEdit={canEdit} knowledge={knowledge} targetNodeId={knowledgeTargetId} onClose={knowledgeOpen?onKnowledgeClose:undefined}/></aside>;
   return <aside className='absolute inset-y-0 right-0 z-20 w-[min(22rem,calc(100%-1rem))] overflow-y-auto border-l bg-background/95 p-5 shadow-2xl backdrop-blur xl:static xl:w-80 xl:shadow-none'>
     <div className='mb-5 flex items-center justify-between'><div><p className='text-xs font-medium uppercase tracking-wider text-muted-foreground'>{t('inspector.title')}</p><h2 className='font-semibold'>{node?.label ?? relation?.label ?? record?.label}</h2></div><Button size='icon' variant='ghost' onClick={() => select(null)} aria-label={t('action.close')}><X className='h-4 w-4' /></Button></div>
-    {node && <NodeForm node={node} locked={Boolean(node.systemKey)} canEdit={canEdit} />}
+    {node && <NodeForm modelId={modelId} node={node} locked={Boolean(node.systemKey)} canEdit={canEdit} />}
     {relation && <RelationForm relation={relation} canEdit={canEdit} />}
     {record && <RecordForm record={record} canEdit={canEdit} />}
   </aside>;
 }
 
-function NodeForm({ node: item,locked,canEdit }: Readonly<{ node: SemanticNodeType; locked: boolean; canEdit: boolean }>) {
+function NodeForm({ modelId, node: item,locked,canEdit }: Readonly<{ modelId:string; node: SemanticNodeType; locked: boolean; canEdit: boolean }>) {
   const { t } = useModuleTranslation('semantic-model');
   const graph = useSemanticModelEditorStore((state) => state.graph);
   const commit = useSemanticModelEditorStore((state) => state.commit);
   const commitBatch = useSemanticModelEditorStore((state) => state.commitBatch);
   const select = useSemanticModelEditorStore((state) => state.select);
   const update = (changes: Partial<Omit<SemanticNodeType,'id'|'systemKey'>>) => commit({ type:'node_type.update',id:item.id,changes }, (current) => ({ ...current,nodes:current.nodes.map((candidate) => candidate.id === item.id ? {...candidate,...changes} : candidate) }));
+  const [sourceLoading, setSourceLoading] = useState(false);
+  const [applyToAllSources, setApplyToAllSources] = useState(false);
+  useEffect(() => { setApplyToAllSources(false); }, [item.id]);
+  const existingSourceKeys = new Set(graph?.records
+    .filter((record) => record.nodeTypeId === item.id)
+    .flatMap((record) => {
+      const ids = Array.isArray(record.values._source_document_ids) ? record.values._source_document_ids : [record.values._source_document_id];
+      const workspaceIds = Array.isArray(record.values._source_workspace_ids) ? record.values._source_workspace_ids : [record.values._source_workspace_id];
+      return ids.flatMap((id, index) => typeof id === 'string' && id.length > 0 && typeof workspaceIds[index] === 'string' ? [`${workspaceIds[index]}:${id}`] : []);
+    }));
+  const legacySourceIds = new Set(graph?.records
+    .filter((record) => record.nodeTypeId === item.id && !record.values._source_workspace_id && !Array.isArray(record.values._source_workspace_ids))
+    .flatMap((record) => Array.isArray(record.values._source_document_ids) ? record.values._source_document_ids : [record.values._source_document_id])
+    .filter((id): id is string => typeof id === 'string' && id.length > 0));
+  const toggleApplyToAllSources = async (checked: boolean) => {
+    setApplyToAllSources(checked);
+    if (!checked || sourceLoading || !modelId || !graph) return;
+    setSourceLoading(true);
+    try {
+      const corpus = await semanticModelApi.corpus(modelId);
+      const documents = Array.from(new Map<string, SemanticCorpusDocument>(corpus.bindings
+        .filter((binding) => binding.target.kind === 'node_type' && binding.target.id === item.id)
+        .flatMap((binding) => binding.documents)
+        .map((document) => [`${document.workspaceId}:${document.sourceDocumentId}`, document] as const)).values());
+      const records = documents.filter((document) => !existingSourceKeys.has(`${document.workspaceId}:${document.sourceDocumentId}`) && !legacySourceIds.has(document.sourceDocumentId)).map((document, index): SemanticRecord => ({
+        id: crypto.randomUUID(), nodeTypeId: item.id, label: document.originalName,
+        values: { _source_document_id: document.sourceDocumentId, _source_document_ids: [document.sourceDocumentId], _source_file_name: document.originalName, _source_workspace_id: document.workspaceId, _source_workspace_ids: [document.workspaceId], _source_materialized: true },
+        status: 'active', position: { x: 120 + ((graph.records.length + index) % 3) * 304, y: 120 + Math.floor((graph.records.length + index) / 3) * 164 },
+      }));
+      if (records.length) {
+        commitBatch(records.map((entity) => ({ type:'record.create' as const, entity })), (current) => ({ ...current, records: [...current.records, ...records] }));
+        showSuccess(t('records.added'));
+      } else {
+        const ageResult = await semanticModelApi.rebuildAgeGraph(modelId);
+        if (ageResult.graphViewerWarning) throw new Error(ageResult.graphViewerWarning);
+      }
+    } catch (error) {
+      setApplyToAllSources(false);
+      showError(t('sourceMaterialization.title'), { description: parseApiError(error).message });
+    } finally {
+      setSourceLoading(false);
+    }
+  };
   const deleteNode = () => {
     if (!graph) return;
     const relationIds = new Set(graph.relations.filter((candidate)=>candidate.sourceNodeTypeId===item.id||candidate.targetNodeTypeId===item.id).map((candidate)=>candidate.id));
@@ -54,6 +100,7 @@ function NodeForm({ node: item,locked,canEdit }: Readonly<{ node: SemanticNodeTy
   };
   if (!canEdit) return <div className='space-y-4'><ReadOnlyField label={t('field.label')} value={item.label} /><ReadOnlyField label={t('field.description')} value={item.description||t('editor.noDescription')} /><ReadOnlyField label={t('field.category')} value={t(`category.${item.category}`)} /><ReadOnlyField label={t('field.recordPolicy')} value={t(`recordPolicy.${item.recordPolicy}`)} />{item.attributes.length>0&&<ReadOnlyField label={t('attributes.title')} value={item.attributes.map((attribute)=>attribute.label).join(', ')} />}</div>;
   return <div className='space-y-5'>{locked && <div className='flex gap-2 rounded-xl bg-sky-500/10 p-3 text-xs text-sky-700 dark:text-sky-300'><LockKeyhole className='h-4 w-4 shrink-0' />{t('inspector.protected')}</div>}
+    {!locked&&canEdit && <div className='rounded-xl border-2 border-primary/40 bg-primary/5 p-3'><label className='flex cursor-pointer items-start gap-3 text-sm'><input type='checkbox' className='mt-0.5 h-4 w-4' checked={applyToAllSources} disabled={sourceLoading||!modelId} onChange={(event) => void toggleApplyToAllSources(event.target.checked)} />{sourceLoading&&<Loader2 className='h-4 w-4 animate-spin' />}<span><span className='font-semibold text-primary'>{t('sourceMaterialization.title')}</span><span className='mt-1 block text-xs text-muted-foreground'>{t('sourceMaterialization.help')}</span></span></label></div>}
     <Field label={t('field.label')}><Input value={item.label} disabled={locked||!canEdit} onChange={(event) => update({ label:event.target.value,key:businessKey(event.target.value) })} /></Field>
     <Field label={t('field.description')}><Textarea value={item.description} disabled={locked||!canEdit} onChange={(event) => update({ description:event.target.value })} /></Field>
     <Field label={t('field.category')}><Select value={item.category} disabled={locked||!canEdit} onValueChange={(category: SemanticNodeType['category']) => update({ category })}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value='business_object'>{t('category.business_object')}</SelectItem><SelectItem value='classification'>{t('category.classification')}</SelectItem></SelectContent></Select></Field>

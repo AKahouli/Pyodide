@@ -28,6 +28,7 @@ const authValue: AuthContextType = {
   requiresEmailVerification: false,
   requiresProfileCompletion: false,
   registrationEnabled: true,
+  isAuthTemporarilyUnavailable: false,
   login: vi.fn(),
   register: vi.fn(),
   logout: vi.fn(),
@@ -35,6 +36,7 @@ const authValue: AuthContextType = {
   resendVerificationEmail: vi.fn(),
   completeProfile: vi.fn(),
   refreshUser: vi.fn(),
+  retryRecovery: vi.fn(),
 };
 
 function TestProviders({ children }: { children: React.ReactNode }): JSX.Element {

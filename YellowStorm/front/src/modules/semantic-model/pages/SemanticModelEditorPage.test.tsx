@@ -1,10 +1,22 @@
 import { StrictMode } from "react";
-import { render, screen } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { SemanticGraph } from "../types";
 import { useSemanticModelEditorStore } from "../store";
 import { SemanticModelEditorPage } from "./SemanticModelEditorPage";
+
+const apiMocks = vi.hoisted(() => ({
+  applyOperations: vi.fn(),
+  rebuildAgeGraph: vi.fn(),
+}));
+
+vi.mock("../api", () => ({
+  semanticModelApi: {
+    applyOperations: apiMocks.applyOperations,
+    rebuildAgeGraph: apiMocks.rebuildAgeGraph,
+  },
+}));
 
 const graph: SemanticGraph = {
   modelId: "model-1",
@@ -57,6 +69,12 @@ vi.mock("../hooks/use-knowledge-linking", () => ({
   }),
 }));
 
+vi.mock("../hooks/use-semantic-build-job", () => ({
+  isBuildActive: () => false,
+  useSemanticBuildJob: () => ({ data: null, start: vi.fn() }),
+  useStartSemanticBuild: () => ({ mutateAsync: vi.fn(), isPending: false }),
+}));
+
 vi.mock("../components/editor/EditorDialogs", () => ({
   AddConceptDialog: () => null,
   AddRecordDialog: () => null,
@@ -74,7 +92,46 @@ vi.mock("../components/versions/VersionsPanel", () => ({
 
 describe("SemanticModelEditorPage", () => {
   beforeEach(() => {
+    vi.clearAllMocks();
+    apiMocks.applyOperations.mockResolvedValue({ revision: 1 });
+    apiMocks.rebuildAgeGraph.mockResolvedValue({
+      vertexCount: 0,
+      edgeCount: 0,
+      failedVertexCount: 0,
+      failedEdgeCount: 0,
+      graphViewerWarning: null,
+    });
     useSemanticModelEditorStore.getState().reset();
+  });
+
+  it("does not block autosave on a synchronous AGE rebuild", async () => {
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
+    render(<QueryClientProvider client={queryClient}><SemanticModelEditorPage /></QueryClientProvider>);
+    await screen.findByText("semantic-model-canvas");
+
+    act(() => {
+      useSemanticModelEditorStore.getState().commit(
+        {
+          type: "node_type.create",
+          entity: {
+            id: "node-1",
+            key: "customer",
+            label: "Customer",
+            description: "",
+            category: "business_object",
+            recordPolicy: "optional",
+            systemKey: null,
+            aliases: [],
+            attributes: [],
+            position: { x: 0, y: 0 },
+          },
+        },
+        (current) => current,
+      );
+    });
+
+    await waitFor(() => expect(apiMocks.applyOperations).toHaveBeenCalled(), { timeout: 2_000 });
+    expect(apiMocks.rebuildAgeGraph).not.toHaveBeenCalled();
   });
 
   it("rehydrates cached graph data during Strict Mode effect replay", async () => {

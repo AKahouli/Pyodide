@@ -82,6 +82,7 @@ export class PostgresShareStore implements ShareStore {
 
   async forkConversation(input: {
     original: ShareSourceConversationRecord;
+    ownerId: string;
     sharedBy: string;
     maxMessages: number;
   }): Promise<string> {
@@ -106,7 +107,7 @@ export class PostgresShareStore implements ShareStore {
         .values({
           id: conversationId,
           title: input.original.title,
-          createdBy: input.sharedBy,
+          createdBy: input.ownerId,
           messageCount: sourceMessages.length,
           isShared: true,
           sharedFrom: input.sharedBy,
@@ -147,16 +148,11 @@ export class PostgresShareStore implements ShareStore {
     });
   }
 
-  async deleteForkConversations(ids: string[], ownerId: string): Promise<void> {
+  async deleteForkConversations(ids: string[]): Promise<void> {
     if (!ids.length) return;
     await this.db
       .delete(schema.conversations)
-      .where(
-        and(
-          inArray(schema.conversations.id, ids),
-          eq(schema.conversations.createdBy, ownerId),
-        ),
-      );
+      .where(inArray(schema.conversations.id, ids));
   }
 
   async createPrivate(input: {

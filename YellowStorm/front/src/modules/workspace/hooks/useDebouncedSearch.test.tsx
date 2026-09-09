@@ -43,4 +43,40 @@ describe('useDebouncedSearch', () => {
     expect(result.current.value).toBe('');
     expect(onSearch).not.toHaveBeenCalled();
   });
+
+  it('reset re-emits an empty search after a search already fired', () => {
+    vi.useFakeTimers();
+    const onSearch = vi.fn();
+    const { result } = renderHook(() => useDebouncedSearch(onSearch, 200));
+
+    act(() => {
+      result.current.onChange('query');
+      vi.advanceTimersByTime(200);
+    });
+    expect(onSearch).toHaveBeenCalledTimes(1);
+
+    act(() => {
+      result.current.reset();
+    });
+
+    expect(onSearch).toHaveBeenCalledTimes(2);
+    expect(onSearch).toHaveBeenLastCalledWith('');
+  });
+
+  it('unmount re-emits an empty search after a search already fired', () => {
+    vi.useFakeTimers();
+    const onSearch = vi.fn();
+    const { result, unmount } = renderHook(() => useDebouncedSearch(onSearch, 200));
+
+    act(() => {
+      result.current.onChange('query');
+      vi.advanceTimersByTime(200);
+    });
+    expect(onSearch).toHaveBeenCalledTimes(1);
+
+    unmount();
+
+    expect(onSearch).toHaveBeenCalledTimes(2);
+    expect(onSearch).toHaveBeenLastCalledWith('');
+  });
 });

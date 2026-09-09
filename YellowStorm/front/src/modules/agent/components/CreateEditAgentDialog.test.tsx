@@ -10,6 +10,15 @@ const getActiveToolsMock = vi.hoisted(() => vi.fn().mockResolvedValue([]));
 const getWorkspacesMock = vi.hoisted(() => vi.fn().mockResolvedValue({ workspaces: [] }));
 const getActiveSkillsMock = vi.hoisted(() => vi.fn().mockResolvedValue([]));
 const getActiveConnectorsMock = vi.hoisted(() => vi.fn().mockResolvedValue([]));
+const modelsStateMock = vi.hoisted(() => ({
+  models: [
+    {
+      id: 'model-1', name: 'Model One', supportsReasoning: true,
+      reasoning: { defaultEffort: 'medium', efforts: [{ id: 'low', name: 'Low' }, { id: 'medium', name: 'Medium' }, { id: 'high', name: 'High' }] },
+    },
+    { id: 'model-2', name: 'Model Two', supportsReasoning: false, reasoning: { efforts: [] } },
+  ],
+}));
 
 vi.mock('../store', () => ({
   useAgentTypes: () => [{ id: 'type-1', name: 'Manager' }],
@@ -22,8 +31,8 @@ vi.mock('../store', () => ({
   },
 }));
 
-vi.mock('@/modules/models/store', () => ({
-  useModels: () => [{ id: 'model-1', name: 'Model One' }],
+vi.mock('@/modules/models', () => ({
+  useModels: () => modelsStateMock.models,
   useModelsStore: {
     getState: () => ({ fetchModels: fetchModelsMock }),
   },
@@ -112,7 +121,22 @@ vi.mock('@/components/ui/multi-select', () => ({
 }));
 
 vi.mock('@/components/ui/searchable-select', () => ({
-  SearchableSelect: ({ value }: { value: string }) => <div>searchable-{value}</div>,
+  SearchableSelect: ({ value, options, onValueChange }: { value: string; options: Array<{ value: string; label: string }>; onValueChange: (value: string) => void }) => (
+    <select aria-label="model-select" value={value} onChange={(event) => onValueChange(event.target.value)}>
+      {options.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+    </select>
+  ),
+}));
+
+vi.mock('./AgentReasoningEffortField', () => ({
+  AgentReasoningEffortField: ({ value, onValueChange }: { value: string; onValueChange: (value: string) => void }) => (
+    <select aria-label="reasoning-effort" value={value} onChange={(event) => onValueChange(event.target.value)}>
+      <option value="">Unavailable</option>
+      <option value="low">Low</option>
+      <option value="medium">Medium</option>
+      <option value="high">High</option>
+    </select>
+  ),
 }));
 
 vi.mock('./EvaluationTab', () => ({
@@ -186,6 +210,8 @@ describe('CreateEditAgentDialog', () => {
           role: 'role',
           description: '',
           temperature: 0.5,
+          model: 'model-1',
+          reasoning_effort: 'high',
           instruction: '',
           ignorePrePrompt: false,
           knowledgeBases: [],
@@ -204,13 +230,37 @@ describe('CreateEditAgentDialog', () => {
 
     await waitFor(() => {
       expect(screen.getByLabelText('createEdit.fields.slug')).toHaveValue('platform-copilot');
+      expect(screen.getByLabelText('reasoning-effort')).toHaveValue('high');
     });
 
     await user.click(screen.getByRole('button', { name: 'createEdit.actions.saveChanges' }));
     await waitFor(() => expect(onSave).toHaveBeenCalledWith(
-      expect.objectContaining({ slug: 'platform-copilot' }),
+      expect.objectContaining({ slug: 'platform-copilot', reasoningEffort: 'high' }),
       expect.anything(),
     ));
     expect(screen.getByTestId('telegram-section')).toHaveTextContent('telegram-section-a1');
+  });
+
+  it('clears reasoning effort when the selected model does not support it', async () => {
+    const user = userEvent.setup();
+    const onSave = vi.fn();
+    render(
+      <CreateEditAgentDialog
+        open
+        onOpenChange={vi.fn()}
+        agent={null}
+        onSave={onSave}
+        saving={false}
+      />,
+    );
+
+    await user.selectOptions(await screen.findByLabelText('model-select'), 'model-1');
+    await waitFor(() => expect(screen.getByLabelText('reasoning-effort')).toHaveValue('medium'));
+    await user.selectOptions(screen.getByLabelText('model-select'), '__none__');
+    await waitFor(() => expect(screen.getByLabelText('reasoning-effort')).toHaveValue(''));
+    await user.selectOptions(screen.getByLabelText('model-select'), 'model-1');
+    await waitFor(() => expect(screen.getByLabelText('reasoning-effort')).toHaveValue('medium'));
+    await user.selectOptions(screen.getByLabelText('model-select'), 'model-2');
+    await waitFor(() => expect(screen.getByLabelText('reasoning-effort')).toHaveValue(''));
   });
 });

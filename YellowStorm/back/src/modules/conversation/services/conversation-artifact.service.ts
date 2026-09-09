@@ -97,7 +97,7 @@ export class ConversationArtifactService {
     }
     const result = await this.workspaceDocumentService.findByMultipleWorkspaces(
       [...allowedWorkspaceIds],
-      { search: fileName, page: 1, limit: 100 },
+      { search: fileName, page: 1, limit: 100, searchFilename: true },
     );
     const matches = result.documents.filter((document) =>
       !document.isFolder && document.path &&

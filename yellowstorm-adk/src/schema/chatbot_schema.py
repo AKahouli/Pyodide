@@ -87,6 +87,7 @@ class AgentSuggestion(BaseModel):
     vectorstore_name: Optional[str] = "vectorstorerec"
     workspace_names: Optional[List[str]] = []
     brain_ids: Optional[List[str]] = []
+    file_names: Optional[List[str]] = []
     brain_documents: Optional[List] = []
     brain_relations: Optional[Dict] = {'nodes': [], 'relationships': []}
     chatbot_name: Optional[dict] = None  # If not provided, will inherit from RunAgentTeamRequest.chatbot_name

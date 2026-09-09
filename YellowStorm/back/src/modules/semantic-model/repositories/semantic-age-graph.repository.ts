@@ -31,7 +31,7 @@ export class SemanticAgeGraphRepository {
     return `sem_${modelId.replace(/-/g, '_')}`;
   }
 
-  async ensureGraph(modelId: string): Promise<void> {
+  async ensureGraph(modelId: string, strict = false): Promise<void> {
     const graphName = this.graphNameForModel(modelId);
     const client = await this.database.acquireClient();
     try {
@@ -43,12 +43,13 @@ export class SemanticAgeGraphRepository {
       );
     } catch (err) {
       this.logger.warn(`AGE ensureGraph failed for model ${modelId}: ${(err as Error).message}`);
+      if (strict) throw err;
     } finally {
       client.release();
     }
   }
 
-  async dropGraph(modelId: string): Promise<void> {
+  async dropGraph(modelId: string, strict = false): Promise<void> {
     const graphName = this.graphNameForModel(modelId);
     const client = await this.database.acquireClient();
     try {
@@ -57,13 +58,14 @@ export class SemanticAgeGraphRepository {
       await client.query(`SELECT ag_catalog.drop_graph($1, true)`, [graphName]);
     } catch (err) {
       this.logger.warn(`AGE dropGraph failed for model ${modelId}: ${(err as Error).message}`);
+      if (strict) throw err;
     } finally {
       client.release();
     }
   }
 
-  async buildGraph(graph: SemanticGraph, modelId: string): Promise<{ vertexCount: number; edgeCount: number; failedVertexCount: number; failedEdgeCount: number }> {
-    await this.ensureGraph(modelId);
+  async buildGraph(graph: SemanticGraph, modelId: string, strict = false): Promise<{ vertexCount: number; edgeCount: number; failedVertexCount: number; failedEdgeCount: number }> {
+    await this.ensureGraph(modelId,strict);
     const graphName = this.graphNameForModel(modelId);
     const nodeTypeMap = new Map(graph.nodes.map((n) => [n.id, n]));
     const relationTypeMap = new Map(graph.relations.map((r) => [r.id, r]));

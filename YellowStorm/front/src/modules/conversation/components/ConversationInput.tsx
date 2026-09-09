@@ -6,7 +6,7 @@ import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import { PromptInputButton } from '@/components/ai-elements/prompt-input';
 import type { PromptInputMessage } from '@/components/ai-elements/prompt-input';
-import { useConversationStore, useIsAwaitingFirstChunk, useInputDisabled, useReplyingToMessage, useSelectedWorkspaceIds, useSetSelectedWorkspaceIds, useDeepSearchEnabled, useSetDeepSearchEnabled, useSelectedModelId, useSelectedReasoningEffort, useSetSelectedReasoningEffort } from '../store';
+import { useConversationStore, useIsAwaitingFirstChunk, useInputDisabled, useReplyingToMessage, useSelectedWorkspaceIds, useSetSelectedWorkspaceIds, useSelectedSemanticModelId, useDeepSearchEnabled, useSetDeepSearchEnabled, useSelectedModelId, useSelectedReasoningEffort, useSetSelectedReasoningEffort } from '../store';
 import { UsageLimitBanner } from '@/modules/usage';
 import { useUsage } from '@/modules/usage/UsageContext';
 import { useConversationFileUpload } from '../hooks/useConversationFileUpload';
@@ -16,6 +16,7 @@ import { useAuth } from '@/modules/auth/useAuth';
 import { ComposerSuggestionChips } from './ComposerSuggestionChips';
 import { SelectedConnectorRepo } from './SelectedConnectorRepo';
 import { ContextMeter } from './ContextMeter';
+import { ReliabilityCheckToggle } from './ReasoningEffortSelect';
 import { useDefaultModel, useModels } from '@/modules/models';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuLabel, DropdownMenuRadioGroup, DropdownMenuRadioItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 
@@ -34,6 +35,7 @@ export function ConversationInput({ conversationId }: ConversationInputProps) {
   const isStreaming = useConversationStore((s) => s.isStreaming);
   const inputDisabled = useInputDisabled();
   const selectedWorkspaceIds = useSelectedWorkspaceIds();
+  const selectedSemanticModelId = useSelectedSemanticModelId();
   const setSelectedWorkspaceIds = useSetSelectedWorkspaceIds();
   const currentConversation = useConversationStore((s) => s.currentConversation);
   const governedMode = currentConversation?.runtimeMode === 'governed';
@@ -41,6 +43,7 @@ export function ConversationInput({ conversationId }: ConversationInputProps) {
   // Sticky tagged agents route untagged AI turns to that agent, so the backend
   // rejects reasoning effort on those turns even without a fresh mention.
   const hasStickyTaggedAgents = (currentConversation?.taggedAgentIds?.length ?? 0) > 0;
+  const runtimeManaged = governedMode || platformCopilot;
   const { status: usageStatus } = useUsage();
   const { t } = useModuleTranslation('conversation');
   const { user } = useAuth();
@@ -77,7 +80,7 @@ export function ConversationInput({ conversationId }: ConversationInputProps) {
   }, [conversationId, currentConversation?.id, currentConversation?.workspaces]);
 
   const persistWorkspaceSelection = useCallback((workspaceIds: string[]) => {
-    if (governedMode) return;
+    if (runtimeManaged) return;
 
     workspacePersistenceQueue.current = workspacePersistenceQueue.current
       .then(async () => {
@@ -100,7 +103,7 @@ export function ConversationInput({ conversationId }: ConversationInputProps) {
         }
       })
       .catch(() => undefined);
-  }, [conversationId, governedMode, setSelectedWorkspaceIds, updateConversation]);
+  }, [conversationId, runtimeManaged, setSelectedWorkspaceIds, updateConversation]);
 
   const membersToTag = useMemo(() => {
     if (!currentConversation?.groupMeta?.isGroup || !user?.id) return undefined;
@@ -151,7 +154,7 @@ export function ConversationInput({ conversationId }: ConversationInputProps) {
       await workspacePersistenceQueue.current;
       const submittedWorkspaceIds = workspaceIds ?? selectedWorkspaceIds;
       const persistedIds = persistedWorkspaceIds.current;
-      if (!governedMode && (submittedWorkspaceIds.length !== persistedIds.length || submittedWorkspaceIds.some((id) => !persistedIds.includes(id)))) {
+      if (!runtimeManaged && !selectedSemanticModelId && (submittedWorkspaceIds.length !== persistedIds.length || submittedWorkspaceIds.some((id) => !persistedIds.includes(id)))) {
         await updateConversation(conversationId, { workspaces: submittedWorkspaceIds });
         persistedWorkspaceIds.current = submittedWorkspaceIds;
         setSelectedWorkspaceIds(submittedWorkspaceIds);
@@ -173,16 +176,17 @@ export function ConversationInput({ conversationId }: ConversationInputProps) {
         attachedFileIds: completedFileIds.length ? completedFileIds : undefined,
         attachedFiles: attachedFiles.length ? attachedFiles : undefined,
         deepSearchEnabled: deepSearchEnabled || undefined,
-        modelId: governedMode ? undefined : (modelId || undefined),
-        agentIds: agentIds?.length ? agentIds : undefined,
-        memberIds: memberIds?.length ? memberIds : undefined,
-        teamIds: teamIds?.length ? teamIds : undefined,
-        ...(!governedMode && !platformCopilot && !hasStickyTaggedAgents && !agentIds?.length && !memberIds?.length && !teamIds?.length && effectiveReasoningEffort
+        modelId: runtimeManaged ? undefined : (modelId || undefined),
+        semanticModelId: runtimeManaged ? undefined : (selectedSemanticModelId || undefined),
+        agentIds: !runtimeManaged && agentIds?.length ? agentIds : undefined,
+        memberIds: !runtimeManaged && memberIds?.length ? memberIds : undefined,
+        teamIds: !runtimeManaged && teamIds?.length ? teamIds : undefined,
+        ...(!runtimeManaged && !hasStickyTaggedAgents && !agentIds?.length && !memberIds?.length && !teamIds?.length && effectiveReasoningEffort
           ? { reasoningEffort: effectiveReasoningEffort }
           : {}),
         parentMessageId: replyingToMessage?.id,
-        connectorRepo: governedMode ? undefined : (connectorRepo ?? useConversationStore.getState().selectedConnectorRepo ?? undefined),
-        skillIds: !governedMode && useConversationStore.getState().selectedSkillIds.length
+        connectorRepo: runtimeManaged ? undefined : (connectorRepo ?? useConversationStore.getState().selectedConnectorRepo ?? undefined),
+        skillIds: !runtimeManaged && useConversationStore.getState().selectedSkillIds.length
           ? useConversationStore.getState().selectedSkillIds
           : undefined,
       });
@@ -190,7 +194,7 @@ export function ConversationInput({ conversationId }: ConversationInputProps) {
       clearAll();
       clearReplyingTo();
     },
-    [completedFileIds, uploadFiles, sendMessage, conversationId, clearAll, clearReplyingTo, replyingToMessage?.id, governedMode, platformCopilot, hasStickyTaggedAgents, selectedWorkspaceIds, setSelectedWorkspaceIds, updateConversation, deepSearchEnabled, effectiveReasoningEffort],
+    [completedFileIds, uploadFiles, sendMessage, conversationId, clearAll, clearReplyingTo, replyingToMessage?.id, runtimeManaged, hasStickyTaggedAgents, selectedWorkspaceIds, selectedSemanticModelId, setSelectedWorkspaceIds, updateConversation, deepSearchEnabled, effectiveReasoningEffort],
   );
 
   const senderDisplayName = useMemo(() => {
@@ -268,12 +272,12 @@ export function ConversationInput({ conversationId }: ConversationInputProps) {
         maxFiles={5}
         members={membersToTag}
         autoMention={autoMention}
-        showWorkspaceSelect={!governedMode}
+        showWorkspaceSelect={!runtimeManaged}
         onWorkspaceSelectionChange={persistWorkspaceSelection}
         preserveWorkspaceSelectionOnSubmit
-        showModelSelector
-        governedMode={governedMode}
-        enableTeamMentions={!governedMode}
+        showModelSelector={!runtimeManaged}
+        governedMode={runtimeManaged}
+        enableTeamMentions={!runtimeManaged}
         extraTools={
           <>
             <PromptInputButton
@@ -309,6 +313,7 @@ export function ConversationInput({ conversationId }: ConversationInputProps) {
                 </DropdownMenuContent>
               </DropdownMenu>
             )}
+            <ReliabilityCheckToggle />
           </>
         }
         belowTextarea={
@@ -320,7 +325,7 @@ export function ConversationInput({ conversationId }: ConversationInputProps) {
         }
       />
       <div className='mt-2 flex min-h-5 items-center justify-between gap-3 px-1'>
-        {!governedMode && <SelectedConnectorRepo />}
+        {!runtimeManaged && <SelectedConnectorRepo />}
         {latestContextTelemetry && <ContextMeter {...latestContextTelemetry} />}
       </div>
     </div>

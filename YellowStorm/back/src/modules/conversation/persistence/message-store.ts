@@ -156,6 +156,28 @@ export interface MessageStore {
   touchPendingReliability(ids: string[], now: Date): Promise<void>;
   markStreamFailed(id: string, leaseId?: string): Promise<void>;
   /**
+   * Truthfully settle a crashed/interrupted standard run. Only succeeds when
+   * the attempt is still streaming and its lease has expired; returns the
+   * interrupted execution or null when another path already settled it.
+   */
+  markExecutionInterrupted(
+    id: string,
+    reason: string,
+    now: Date,
+  ): Promise<{ id: string; conversationId: string; executionAttemptId: string | null } | null>;
+  /** Bounded scan of streaming AI attempts whose lease expired before cutoff. */
+  findExpiredStreamExecutions(
+    cutoff: Date,
+    limit: number,
+  ): Promise<
+    Array<{
+      id: string;
+      conversationId: string;
+      executionAttemptId: string | null;
+      leaseExpiresAt: Date | null;
+    }>
+  >;
+  /**
    * Merge the browser-reported sixth latency metric into an AI message's
    * latency_metrics JSONB. Idempotent: an already-accepted frontend paint value
    * is never overwritten. Returns null when the message does not exist, is not

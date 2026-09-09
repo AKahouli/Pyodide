@@ -108,6 +108,36 @@ describe('workspace store', () => {
     expect(useWorkspaceStore.getState().currentPage).toBe(2);
   });
 
+  it('invalidateWorkspaceCache clears the cache and search filter so refetches are unfiltered', async () => {
+    const ws1 = makeWorkspace('ws-1', 'Workspace One');
+    workspaceApiMock.getWorkspaces.mockResolvedValue({
+      workspaces: [ws1],
+      pagination: { page: 1, limit: DEFAULT_PAGE_LIMIT, total: 1, totalPages: 1 },
+    });
+
+    await act(async () => {
+      await useWorkspaceStore.getState().searchWorkspaces('personal');
+    });
+    expect(useWorkspaceStore.getState().searchQuery).toBe('personal');
+
+    act(() => {
+      useWorkspaceStore.getState().invalidateWorkspaceCache();
+    });
+
+    expect(useWorkspaceStore.getState().searchQuery).toBe('');
+    expect(useWorkspaceStore.getState().workspaces.size).toBe(0);
+
+    workspaceApiMock.getWorkspaces.mockClear();
+    await act(async () => {
+      await useWorkspaceStore.getState().fetchWorkspaces(1);
+    });
+    expect(workspaceApiMock.getWorkspaces).toHaveBeenCalledWith({
+      page: 1,
+      limit: DEFAULT_PAGE_LIMIT,
+      search: undefined,
+    });
+  });
+
   it('selects and switches workspace, resets document state, and closes mobile sidebar', async () => {
     const ws1 = makeWorkspace('ws-1', 'Workspace One');
     const ws2Cached = makeWorkspace('ws-2', 'Workspace Two Cached');

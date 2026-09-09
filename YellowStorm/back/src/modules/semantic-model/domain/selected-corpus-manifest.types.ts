@@ -1,13 +1,14 @@
 export type CorpusBindingTargetKind = 'model' | 'node_type' | 'relation_type' | 'record';
 export type CorpusResourceKind = 'workspace' | 'document';
 export type CorpusRetrievalMode = 'broad' | 'targeted' | 'evidence_only';
+export type CorpusIndexingStatus = 'none' | 'pending' | 'processing' | 'ready' | 'failed';
 
 export interface SelectedCorpusDocument {
   sourceDocumentId: string;
   workspaceId: string;
   originalName: string;
   mimeType: string;
-  indexingStatus: 'ready';
+  indexingStatus: CorpusIndexingStatus;
   lastIndexedAt?: string;
 }
 

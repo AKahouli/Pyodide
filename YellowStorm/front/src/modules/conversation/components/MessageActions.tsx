@@ -12,6 +12,7 @@ import { componentsToMarkdown } from '../utils';
 import { collectMessageCitations, getCitationEntryLabel, isUrlCitation } from '../utils/message-citations';
 import { buildExportFilename } from '../utils/document-export';
 import { downloadBlob, exportBlocksToDocx } from '../utils/docx-export';
+import { exportBlocksToHtml } from '../utils/html-export';
 import { openCitationSource, type CitationData } from '@/components/ai-elements/ai-message-content';
 import { useFileViewerDisplayMode } from '@/components/ai-elements/message-context';
 import type { DisplayedAnswerVersion, Message } from '../types';
@@ -152,6 +153,18 @@ export const MessageActions = memo(function MessageActions({ message, isLastAiMe
     }
   };
 
+  const handleExportHtml = () => {
+    try {
+      const markdown = componentsToMarkdown(message.components || []);
+      const timestamp = Number.isNaN(new Date(message.createdAt).getTime()) ? undefined : formattedCreatedAt;
+      const blob = exportBlocksToHtml([{ label: t('export.assistantLabel'), timestamp, markdown }], exportTitle);
+      downloadBlob(blob, buildExportFilename(exportTitle, 'html'));
+      showSuccess(t('toasts.export.htmlSuccess'));
+    } catch {
+      showError(t('toasts.export.failed'));
+    }
+  };
+
   const handleBranch = () => {
     const targetIndex = messages.findIndex((item) => item.id === message.id);
     const prefixIds = new Set(messages.slice(0, targetIndex + 1).map((item) => item.id));
@@ -257,7 +270,6 @@ export const MessageActions = memo(function MessageActions({ message, isLastAiMe
                               ? <Globe className='h-3.5 w-3.5 shrink-0 text-muted-foreground' />
                               : <FileText className='h-3.5 w-3.5 shrink-0 text-muted-foreground' />}
                             <span className='min-w-0 flex-1 truncate'>{label}</span>
-                            {citation.page && <span className='shrink-0 text-[11px] text-muted-foreground'>{citation.page}</span>}
                           </button>
                         );
                       })}
@@ -285,6 +297,10 @@ export const MessageActions = memo(function MessageActions({ message, isLastAiMe
                   <DropdownMenuItem onClick={handleExportPdf}>
                     <FileDown className='h-3.5 w-3.5 mr-2' />
                     {t('messageActions.exportPdf')}
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={handleExportHtml}>
+                    <Globe className='h-3.5 w-3.5 mr-2' />
+                    {t('messageActions.exportHtml')}
                   </DropdownMenuItem>
                 </DropdownMenuContent>
               </DropdownMenu>

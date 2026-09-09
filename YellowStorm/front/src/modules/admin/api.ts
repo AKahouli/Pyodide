@@ -27,6 +27,7 @@ import type {
   SetMaintenanceRequest,
   RegistrationStatus,
   SetRegistrationRequest,
+  DocumentTreeInjectionSettings,
   FeatureVisibility,
   CorsSettings,
   SetCorsSettingsRequest,
@@ -230,6 +231,23 @@ export async function setRegistrationStatus(
   const response = await apiClient.post<ApiResponse<RegistrationStatus>>(
     API_ENDPOINTS.system.registration,
     data
+  );
+  return response.data.data;
+}
+
+export async function getDocumentTreeInjectionSettings(): Promise<DocumentTreeInjectionSettings> {
+  const response = await apiClient.get<ApiResponse<DocumentTreeInjectionSettings>>(
+    API_ENDPOINTS.system.documentTreeInjection,
+  );
+  return response.data.data;
+}
+
+export async function setDocumentTreeInjectionSettings(
+  data: DocumentTreeInjectionSettings,
+): Promise<DocumentTreeInjectionSettings> {
+  const response = await apiClient.put<ApiResponse<DocumentTreeInjectionSettings>>(
+    API_ENDPOINTS.system.documentTreeInjection,
+    data,
   );
   return response.data.data;
 }

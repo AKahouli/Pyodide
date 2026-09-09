@@ -38,6 +38,7 @@ describe('MessageController.sendMessage sticky routing', () => {
   let requestContext: { getRequestId: jest.Mock };
   let choiceInteractionService: { canonicalize: jest.Mock; canonicalizeMany: jest.Mock };
   let responseReliabilityService: { rerun: jest.Mock };
+  let semanticModelService: { resolveSearchSchema: jest.Mock };
   let conversationArtifactService: { resolveDownloadUrl: jest.Mock; resolveCitationUrl: jest.Mock };
   let playbookHandoffService: { bind: jest.Mock; attachUserMessage: jest.Mock };
   let logger: {
@@ -104,6 +105,7 @@ describe('MessageController.sendMessage sticky routing', () => {
     requestContext = { getRequestId: jest.fn().mockReturnValue('req-1') };
     choiceInteractionService = { canonicalize: jest.fn(), canonicalizeMany: jest.fn() };
     responseReliabilityService = { rerun: jest.fn().mockResolvedValue({ messageId: 'ai-1', reliabilityEvaluation: { status: 'pending' } }) };
+    semanticModelService = { resolveSearchSchema: jest.fn().mockResolvedValue('sem_test') };
     conversationArtifactService = { resolveDownloadUrl: jest.fn(), resolveCitationUrl: jest.fn() };
     playbookHandoffService = {
       bind: jest.fn().mockResolvedValue(undefined),
@@ -127,6 +129,7 @@ describe('MessageController.sendMessage sticky routing', () => {
       choiceInteractionService as any,
       { resolveRuntime: jest.fn(), assertRuntimeRequestAllowed: jest.fn(), resolveEffectiveAgents: jest.fn() } as any,
       responseReliabilityService as any,
+      semanticModelService as any,
       conversationArtifactService as any,
       playbookHandoffService as any,
       { isLatencyInstrumentationEnabledCached: jest.fn().mockReturnValue(true) } as any,
@@ -504,6 +507,29 @@ describe('MessageController.sendMessage sticky routing', () => {
       userId: userId.toString(),
       requestId: 'req-1',
     });
+  });
+
+  it('authorizes and propagates a selected semantic model into replay and stream context', async () => {
+    const semanticModelId = '17b75421-e6c3-47b6-b220-4583d01fbd02';
+    conversationService.getConversationDocument.mockResolvedValue({ isFirstMessage: false, taggedAgentIds: [] });
+
+    await controller.sendMessage(user, conversationId, { content: 'question', semanticModelId } as any);
+
+    expect(semanticModelService.resolveSearchSchema).toHaveBeenCalledWith(userId.toString(), semanticModelId);
+    expect(messageService.createUserMessage).toHaveBeenCalledWith(expect.objectContaining({
+      replayContext: expect.objectContaining({ semanticModelId }),
+    }));
+    expect(streamService.startStream).toHaveBeenCalledWith(
+      userId.toString(),
+      conversationId,
+      expect.any(String),
+      expect.objectContaining({ semanticModelId }),
+      'req-1',
+      undefined,
+      'Ada Lovelace',
+      undefined,
+      expect.objectContaining({ requestId: 'req-1' }),
+    );
   });
 
   it('forwards the frontend paint report to the message service with route identifiers', async () => {

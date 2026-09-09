@@ -293,6 +293,11 @@ class DocumentHelpers:
         for agent in agents:
             agent_name = agent.get('name', 'unnamed')
 
+            # Respect the global system-prompt setting carried on each runtime
+            # agent config. The default remains enabled for older requests.
+            if not DocumentHelpers.document_tree_injection_enabled(agent):
+                continue
+
             # Check if agent has search tools and its own document configuration
             tools = agent.get('tools', []) or []
             has_search_tool = any(
@@ -350,6 +355,16 @@ class DocumentHelpers:
                 )
 
         return "".join(consolidated_info_parts) if consolidated_info_parts else ""
+
+    @staticmethod
+    def document_tree_injection_enabled(agent: Dict[str, Any]) -> bool:
+        """Whether this agent may receive document-tree context in its prompt."""
+        value = (agent.get("agent_params") or {}).get(
+            "document_tree_injection_enabled", True
+        )
+        if isinstance(value, str):
+            return value.strip().lower() not in {"false", "0", "no", "off"}
+        return value is not False
 
 
     @staticmethod

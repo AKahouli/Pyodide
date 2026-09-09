@@ -16,6 +16,8 @@ export interface SemanticModelRow {
   currentPublishedVersionId: string | null;
   createdAt: string;
   updatedAt: string;
+  indexStatus: 'pending' | 'in_progress' | 'indexed' | 'failed' | 'not_indexed';
+  indexError: string | null;
 }
 
 const MODEL_COLUMNS = `
@@ -24,7 +26,9 @@ const MODEL_COLUMNS = `
   m.name_managed_by_system AS "nameManagedBySystem",
   m.current_draft_version_id AS "currentDraftVersionId",
   m.current_published_version_id AS "currentPublishedVersionId",
-  m.created_at AS "createdAt", m.updated_at AS "updatedAt"`;
+  m.created_at AS "createdAt", m.updated_at AS "updatedAt",
+  COALESCE((SELECT j.status FROM semantic_model.graph_index_jobs j WHERE j.model_id=m.id),'not_indexed') AS "indexStatus",
+  (SELECT j.last_error FROM semantic_model.graph_index_jobs j WHERE j.model_id=m.id) AS "indexError"`;
 
 @Injectable()
 export class SemanticModelRepository {

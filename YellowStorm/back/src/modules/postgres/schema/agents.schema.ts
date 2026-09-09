@@ -31,6 +31,7 @@ export const agents = pgTable(
     description: varchar('description', { length: 1000 }).notNull().default(''),
     temperature: real('temperature').notNull().default(0),
     llmModel: varchar('llm_model', { length: 100 }),
+    reasoningEffort: varchar('reasoning_effort', { length: 50 }),
     email: varchar('email', { length: 320 }),
     instruction: text('instruction').notNull().default(''),
     ignorePrePrompt: boolean('ignore_pre_prompt').notNull().default(false),

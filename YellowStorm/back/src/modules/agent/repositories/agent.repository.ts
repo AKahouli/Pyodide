@@ -20,6 +20,7 @@ export interface CreateAgentInput {
   description: string;
   temperature: number;
   llmModel?: string;
+  reasoningEffort?: string;
   email?: string;
   instruction: string;
   ignorePrePrompt: boolean;
@@ -48,7 +49,7 @@ export interface CreateAgentInput {
 
 export interface UpdateAgentInput {
   name?: string; slug?: string; agentType?: string; agentTypeSlug?: string; role?: string;
-  description?: string; temperature?: number; llmModel?: string | null; email?: string | null;
+  description?: string; temperature?: number; llmModel?: string | null; reasoningEffort?: string | null; email?: string | null;
   instruction?: string; ignorePrePrompt?: boolean;
   enable_temporary_child_agents?: boolean; max_temporary_child_agents?: number;
   isDefault?: boolean; isActive?: boolean; isDefaultForType?: boolean;
@@ -76,6 +77,7 @@ export class AgentRepository {
         description: input.description,
         temperature: input.temperature,
         llmModel: input.llmModel ?? null,
+        reasoningEffort: input.reasoningEffort ?? null,
         email: input.email ?? null,
         instruction: input.instruction,
         ignorePrePrompt: input.ignorePrePrompt,
@@ -189,6 +191,7 @@ export class AgentRepository {
         description: input.description,
         temperature: input.temperature,
         llmModel: input.llmModel ?? null,
+        reasoningEffort: input.reasoningEffort ?? null,
         email: input.email ?? null,
         instruction: input.instruction,
         ignorePrePrompt: input.ignorePrePrompt,
@@ -266,7 +269,7 @@ export class AgentRepository {
       const scalarMap: Array<[keyof UpdateAgentInput, string]> = [
         ['name', 'name'], ['slug', 'slug'], ['agentType', 'agentTypeId'], ['agentTypeSlug', 'agentTypeSlug'],
         ['role', 'role'], ['description', 'description'], ['temperature', 'temperature'], ['llmModel', 'llmModel'],
-        ['email', 'email'], ['instruction', 'instruction'], ['ignorePrePrompt', 'ignorePrePrompt'],
+        ['reasoningEffort', 'reasoningEffort'], ['email', 'email'], ['instruction', 'instruction'], ['ignorePrePrompt', 'ignorePrePrompt'],
         ['enable_temporary_child_agents', 'enableTemporaryChildAgents'], ['max_temporary_child_agents', 'maxTemporaryChildAgents'],
         ['isDefault', 'isDefault'], ['isActive', 'isActive'], ['isDefaultForType', 'isDefaultForType'],
         ['guardrails', 'guardrails'], ['deploymentSettings', 'deploymentSettings'],

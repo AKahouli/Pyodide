@@ -111,10 +111,17 @@ export class AuthController {
       throw new UnauthorizedException(ErrorCode.AUTH_REFRESH_TOKEN_INVALID, 'Refresh token not provided');
     }
 
+    // Client-generated idempotency identity for one logical rotation. Retries
+    // of the same rotation MUST reuse it; it is not an auth credential.
+    const rawAttemptId = req.headers['x-refresh-attempt-id'];
+    const attemptId = typeof rawAttemptId === 'string' && /^[A-Za-z0-9_-]{8,64}$/.test(rawAttemptId)
+      ? rawAttemptId
+      : undefined;
+
     const ipAddress = getClientIp(req);
     const userAgent = req.headers['user-agent'] || 'unknown';
 
-    const tokens = await this.authService.refreshTokens(refreshToken, ipAddress, userAgent);
+    const tokens = await this.authService.refreshTokens(refreshToken, ipAddress, userAgent, attemptId);
 
     // Set new refresh token in cookie
     this.setRefreshTokenCookie(res, tokens.refreshToken);

@@ -1,12 +1,18 @@
 import { Inject, Injectable } from '@nestjs/common';
 import { Pool, type PoolClient } from 'pg';
+import { LoggerService } from '@modules/logger';
 import { PG_POOL } from '@modules/postgres/postgres.constants';
 import type { AppDataEnvironment } from '../constants/app-data.constants';
 import { advisoryLockKey } from '../utils/app-data-sql.util';
 
 @Injectable()
 export class AppDataAdvisoryLockService {
-  constructor(@Inject(PG_POOL) private readonly pool: Pool) {}
+  constructor(
+    @Inject(PG_POOL) private readonly pool: Pool,
+    private readonly logger: LoggerService,
+  ) {
+    this.logger.setContext(AppDataAdvisoryLockService.name);
+  }
 
   /**
    * Run `fn` on the same connection that holds `pg_advisory_xact_lock`.
@@ -26,7 +32,17 @@ export class AppDataAdvisoryLockService {
       await client.query('COMMIT');
       return result;
     } catch (err) {
-      await client.query('ROLLBACK');
+      // The connection may already be dead (server restart, timeout); a failed
+      // ROLLBACK must not mask the original error.
+      try {
+        await client.query('ROLLBACK');
+      } catch (rollbackErr) {
+        this.logger.warn('ROLLBACK failed after lock body error', {
+          appDataId,
+          environment,
+          rollbackError: (rollbackErr as Error).message,
+        });
+      }
       throw err;
     } finally {
       client.release();

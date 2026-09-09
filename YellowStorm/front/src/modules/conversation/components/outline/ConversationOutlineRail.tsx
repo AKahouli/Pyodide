@@ -1,7 +1,8 @@
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import { useShallow } from 'zustand/react/shallow';
-import { HelpCircle, PanelLeftClose, PanelLeftOpen } from 'lucide-react';
+import { HelpCircle, PanelLeftClose, PanelLeftOpen, Search } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { cn } from '@/lib/utils';
 import { useModuleTranslation } from '@/modules/localization';
@@ -11,12 +12,21 @@ import { buildOutlineGroups, OUTLINE_LISTED_LEVELS, type OutlineGroup } from './
 
 /** Headings at these levels are listed; deeper levels keep anchor ids only. */
 
-function OutlineGroupSection({ group, activeAnchorId, onSelect, questionAriaLabel }: Readonly<{ group: OutlineGroup; activeAnchorId: string | null; onSelect: (anchorId: string) => void; questionAriaLabel: string }>) {
-  const items = group.items.filter((item) => OUTLINE_LISTED_LEVELS.has(item.level) && item.text);
-  if (items.length === 0 && !group.questionText) return null;
+/** Case-insensitive text match across a group's question and listed headings. */
+function groupMatchesQuery(group: OutlineGroup, query: string): boolean {
+  if (group.questionText && group.questionText.toLowerCase().includes(query)) return true;
+  return group.items.some((item) => OUTLINE_LISTED_LEVELS.has(item.level) && item.text && item.text.toLowerCase().includes(query));
+}
+
+function OutlineGroupSection({ group, activeAnchorId, onSelect, questionAriaLabel, query }: Readonly<{ group: OutlineGroup; activeAnchorId: string | null; onSelect: (anchorId: string) => void; questionAriaLabel: string; query: string }>) {
+  const normalizedQuery = query.trim().toLowerCase();
+  const matchesQuery = (text: string) => !normalizedQuery || text.toLowerCase().includes(normalizedQuery);
+  const items = group.items.filter((item) => OUTLINE_LISTED_LEVELS.has(item.level) && item.text && matchesQuery(item.text));
+  const showQuestion = Boolean(group.questionId && group.questionText && matchesQuery(group.questionText));
+  if (items.length === 0 && !showQuestion) return null;
   return (
     <div className='mb-3' data-outline-group>
-      {group.questionId && group.questionText && (
+      {showQuestion && (
         <Tooltip>
           <TooltipTrigger asChild>
             <button
@@ -75,10 +85,16 @@ export function ConversationOutlineRail() {
   const collapsed = useConversationUiStore((s) => s.outlineCollapsed);
   const setOutlineCollapsed = useConversationUiStore((s) => s.setOutlineCollapsed);
   const requestOutlineScroll = useConversationUiStore((s) => s.requestOutlineScroll);
+  const [searchQuery, setSearchQuery] = useState('');
 
   const groups = useMemo(
     () => buildOutlineGroups(messages, headingsByMessageId, streamingMessageId, isStreaming),
     [messages, headingsByMessageId, streamingMessageId, isStreaming],
+  );
+  const normalizedQuery = searchQuery.trim().toLowerCase();
+  const visibleGroups = useMemo(
+    () => (normalizedQuery ? groups.filter((group) => groupMatchesQuery(group, normalizedQuery)) : groups),
+    [groups, normalizedQuery],
   );
 
   if (collapsed) {
@@ -99,12 +115,26 @@ export function ConversationOutlineRail() {
           <PanelLeftClose className='size-4' />
         </Button>
       </div>
+      {groups.length > 0 && (
+        <div className='relative px-3 pb-2'>
+          <Search className='pointer-events-none absolute left-5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground' aria-hidden='true' />
+          <Input
+            value={searchQuery}
+            onChange={(event) => setSearchQuery(event.target.value)}
+            placeholder={t('outline.searchPlaceholder')}
+            aria-label={t('outline.searchPlaceholder')}
+            className='h-8 pl-8 text-xs'
+          />
+        </div>
+      )}
       <TooltipProvider delayDuration={300}>
         <div className='custom-scrollbar min-h-0 flex-1 overflow-y-auto px-2 pb-3'>
           {groups.length === 0
             ? <p data-outline-empty className='px-2 pt-1 text-xs leading-relaxed text-muted-foreground'>{t('outline.empty')}</p>
-            : groups.map((group) => (
-              <OutlineGroupSection key={group.key} group={group} activeAnchorId={activeAnchorId} onSelect={requestOutlineScroll} questionAriaLabel={t('outline.jumpToQuestion')} />
+            : visibleGroups.length === 0
+              ? <p data-outline-empty className='px-2 pt-1 text-xs leading-relaxed text-muted-foreground'>{t('outline.noResults')}</p>
+              : visibleGroups.map((group) => (
+              <OutlineGroupSection key={group.key} group={group} activeAnchorId={activeAnchorId} onSelect={requestOutlineScroll} questionAriaLabel={t('outline.jumpToQuestion')} query={searchQuery} />
             ))}
         </div>
       </TooltipProvider>

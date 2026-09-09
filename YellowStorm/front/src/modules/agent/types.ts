@@ -11,6 +11,7 @@ export interface Agent {
   description: string;
   temperature: number;
   model?: string;
+  reasoning_effort?: string;
   instruction: string;
   ignorePrePrompt: boolean;
   knowledgeBases: string[];
@@ -509,6 +510,7 @@ export interface CreateAgentData {
   description?: string;
   temperature?: number;
   model?: string;
+  reasoning_effort?: string;
   instruction?: string;
   ignorePrePrompt?: boolean;
   knowledgeBases?: string[];
@@ -532,6 +534,7 @@ export interface UpdateAgentData {
   description?: string;
   temperature?: number;
   model?: string;
+  reasoning_effort?: string;
   instruction?: string;
   ignorePrePrompt?: boolean;
   knowledgeBases?: string[];

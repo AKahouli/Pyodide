@@ -20,6 +20,7 @@ from src.smart_rag.engines.multi_agent.agentic_workflows.manual_agents import ha
 from src.smart_rag.engines.multi_agent.agentic_workflows.single_agent import handle_single_agent_workflow
 from src.smart_rag.engines.multi_agent.agentic_workflows.team_configuration import initialize_dependencies, create_team, \
     create_team_config
+from src.smart_rag.tools.semantic_search_preflight import run_semantic_search_preflight
 from src.smart_rag.infrastructure.session.execution_lock import (
     PERSISTED_SESSION_APP_NAME,
     session_execution_lock,
@@ -66,6 +67,8 @@ async def _run_agent_team_logic(user_request: RunAgentTeamRequest, q: asyncio.Qu
         Exception: Any errors during orchestration are logged and sent as error messages
     """
     logger.info(f"[ORCHESTRATOR] Starting agent team orchestration - user_id: {user_request.user_id}, session_id: {user_request.session_id}, agent_mode: {user_request.agent_mode}")
+
+    await run_semantic_search_preflight(user_request, q)
 
     try:
         logger.info(f"[ORCHESTRATOR] Initializing dependencies - session_id: {user_request.session_id}")

@@ -8,6 +8,8 @@ from google.genai import types
 
 from src.smart_rag.agents.core.runner import AgentRunner
 from src.smart_rag.infrastructure.processing.plugin import CleanSessionPlugin
+from src.smart_rag.messaging.component_tracker import ComponentTracker
+from src.smart_rag.messaging.formatters import StreamingFormatter
 from src.smart_rag.tools.utilities.connector_tools import (
     _register_connector_response_sources,
 )
@@ -305,7 +307,18 @@ class TestAgentRunner:
         assert any("validated replacement" in str(item) for item in emitted)
 
     @pytest.mark.asyncio
-    async def test_run_standard_agent_preserves_numeric_citation_reference(self):
+    @pytest.mark.parametrize(
+        "source_results",
+        [
+            [
+                {"source_object": {}, "type": "text"},
+                {"source_object": {}, "type": "text"},
+            ],
+            [None, {"source_object": {}, "type": "text"}],
+        ],
+        ids=["deduplicates-repeat", "retries-missing-source"],
+    )
+    async def test_run_standard_agent_preserves_numeric_citation_reference(self, source_results):
         """Test that numeric citations keep their original reference values."""
         mock_event_extractor = MagicMock()
         mock_message_transformer = MagicMock()
@@ -354,11 +367,11 @@ class TestAgentRunner:
         mock_streaming_formatter.format_streaming_event.return_value = {"type": "chunk"}
         mock_message_transformer.simple_tag_transformer.side_effect = [
             ("Evidence [6]", "", ["[6]"]),
-            ("", "", []),
+            ("Final [6]", "", ["[6]"]),
         ]
 
         with patch('src.smart_rag.agents.core.runner.Runner', return_value=mock_runner_instance), \
-             patch.object(agent_runner, '_find_source_by_reference', return_value={"source_object": {}, "type": "text"}), \
+             patch.object(agent_runner, '_find_source_by_reference', side_effect=source_results), \
              patch.object(agent_runner, '_send_citation_component', new_callable=AsyncMock) as mock_send_citation_component, \
              patch.object(agent_runner, '_handle_final_response', new_callable=AsyncMock, return_value="Final [6]"):
             result = await agent_runner._run_standard_agent(
@@ -378,6 +391,7 @@ class TestAgentRunner:
 
         assert result[0] == "Final [6]"
         assert mock_send_citation_component.await_args_list[0].args[5] == "6"
+        assert mock_send_citation_component.await_count == 1
         mock_queue.put.assert_any_call({"type": "chunk"})
 
     @pytest.mark.asyncio
@@ -856,6 +870,107 @@ class TestAgentRunner:
 
         assert result == "Visible answer"
         mock_queue.put.assert_not_called()
+        runner.streaming_formatter.component_tracker.finish_component.assert_called_once_with("agent_123")
+
+    @pytest.mark.asyncio
+    async def test_handle_final_response_emits_only_unstreamed_suffix(self):
+        formatter = StreamingFormatter(ComponentTracker("session_123"))
+        runner = AgentRunner(MagicMock(), MagicMock(), formatter, MagicMock())
+        streamed = formatter.format_streaming_event(
+            agent_id="agent_123",
+            agent_name="TestAgent",
+            agent_type="agent",
+            chunk="Visible answer with citation ",
+            message_id="session_123",
+        )
+        mock_event = MagicMock()
+        mock_event.content.parts = [types.Part(text="Visible answer with citation [1].")]
+        mock_queue = AsyncMock()
+
+        with patch.object(
+            runner,
+            '_replace_diagram_references_during_streaming',
+            new_callable=AsyncMock,
+            return_value="Visible answer with citation [1].",
+        ):
+            result = await runner._handle_final_response(
+                event=mock_event,
+                agent_id="agent_123",
+                agent_name="TestAgent",
+                toolkit=None,
+                task_order="1",
+                q=mock_queue,
+                session_id="session_123",
+                streamed_text="Visible answer with citation ",
+            )
+
+        assert result == "Visible answer with citation [1]."
+        emitted = mock_queue.put.await_args.args[0]
+        assert emitted == {
+            "action": "update",
+            "component": {
+                "id": streamed["component"]["id"],
+                "type": "text",
+                "data": {"content": "[1]."},
+            },
+            "metadata": {"message_id": "session_123", "agent_id": "agent_123"},
+        }
+        next_answer = formatter.format_streaming_event(
+            agent_id="agent_123",
+            agent_name="TestAgent",
+            agent_type="agent",
+            chunk="A later answer",
+            message_id="session_123",
+        )
+        assert next_answer["action"] == "add"
+        assert next_answer["component"]["id"] != streamed["component"]["id"]
+
+    @pytest.mark.asyncio
+    async def test_handle_final_response_replaces_nonmatching_streamed_text(self):
+        formatter = StreamingFormatter(ComponentTracker("session_123"))
+        runner = AgentRunner(MagicMock(), MagicMock(), formatter, MagicMock())
+        streamed = formatter.format_streaming_event(
+            agent_id="agent_123",
+            agent_name="TestAgent",
+            agent_type="agent",
+            chunk="Initial draft",
+            message_id="session_123",
+        )
+        mock_event = MagicMock()
+        mock_event.content.parts = [types.Part(text="Corrected answer")]
+        mock_queue = AsyncMock()
+
+        with patch.object(
+            runner,
+            '_replace_diagram_references_during_streaming',
+            new_callable=AsyncMock,
+            return_value="Corrected answer",
+        ):
+            result = await runner._handle_final_response(
+                event=mock_event,
+                agent_id="agent_123",
+                agent_name="TestAgent",
+                toolkit=None,
+                task_order="1",
+                q=mock_queue,
+                session_id="session_123",
+                streamed_text="Initial draft",
+            )
+
+        assert result == "Corrected answer"
+        emitted = mock_queue.put.await_args.args[0]
+        assert emitted["action"] == "add"
+        assert emitted["component"]["id"] != streamed["component"]["id"]
+        assert emitted["component"]["data"]["content"] == "Corrected answer"
+        next_answer = formatter.format_streaming_event(
+            agent_id="agent_123",
+            agent_name="TestAgent",
+            agent_type="agent",
+            chunk="A later answer",
+            message_id="session_123",
+        )
+        assert next_answer["action"] == "add"
+        assert next_answer["component"]["id"] != emitted["component"]["id"]
 
     @pytest.mark.asyncio
     async def test_handle_structured_tool_response_streams_sources_component_for_any_tool(self):

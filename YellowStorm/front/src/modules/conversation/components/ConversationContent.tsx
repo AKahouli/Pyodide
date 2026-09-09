@@ -3,6 +3,7 @@ import { Loader2 } from 'lucide-react';
 import { ChatConversation, ChatConversationContent, ChatMessageBubble, ChatScrollButton, ChatConversationEmptyState } from '@/components/ai-elements/chat-conversation';
 import { MessageProvider } from '@/components/ai-elements/message-context';
 import { useConversationStore, useDisplayMessages, useIsAwaitingFirstChunk, useAwaitingConversationId, useMessagesHasMore, useMessagesLoadingOlder, useBranchCache, useActiveBranches, useEditingMessageId } from '../store';
+import { useConversationUiStore } from '../uiStore';
 import { messageToChat } from '../utils';
 import { buildChoiceInteractionIndex } from '../choice-interactions';
 import { MessageActions } from './MessageActions';
@@ -13,6 +14,9 @@ import { ConversationAssistantBubble } from './activity/ConversationAssistantBub
 import { OutlineAnchorScroller } from './outline/OutlineAnchorScroller';
 import { MessageAttachments } from './MessageAttachments';
 import { MessageReliabilityCard } from './MessageReliabilityCard';
+import { rerunReliabilityEvaluation } from '../api';
+import { showError } from '@/lib/notifications';
+import { CreateEditAgentDialog, useAgentStore, type Agent, type UserAgentFormValues } from '@/modules/agent';
 import { useLatencyPaintObserver } from '../hooks/useLatencyPaintObserver';
 import { useConversationSettings } from '../hooks/useConversationSettings';
 import { getAnswerComponents, getAnswerEvaluation, getDefaultAnswerVersion } from '../utils/answer-version';
@@ -114,6 +118,79 @@ const MemoizedMessageBubble = memo(function MemoizedMessageBubble({ message, isL
     && message.isStreaming !== true
     && (message.components?.some((component) => component.type === 'text'
       && typeof component.data.content === 'string' && component.data.content.trim()) ?? false);
+  const autoReliabilityEnabled = useConversationUiStore((s) => s.autoReliabilityEnabled);
+  const autoEvalTriggeredRef = useRef(false);
+  const [agentEditorAgent, setAgentEditorAgent] = useState<Agent | null>(null);
+  const [isAgentEditorOpen, setIsAgentEditorOpen] = useState(false);
+  const [isSavingAgent, setIsSavingAgent] = useState(false);
+
+  const handleOpenAgentEditor = useCallback(async (agentId: string) => {
+    try {
+      await useAgentStore.getState().fetchAgents();
+    } catch {
+      // Fall back to whatever list is already cached in the store.
+    }
+    const agent = useAgentStore.getState().getAgentById(agentId) ?? null;
+    if (!agent) return;
+    setAgentEditorAgent(agent);
+    setIsAgentEditorOpen(true);
+  }, []);
+
+  const handleSaveAgent = useCallback(async (data: UserAgentFormValues) => {
+    if (!agentEditorAgent) return;
+    setIsSavingAgent(true);
+    try {
+      await useAgentStore.getState().updateAgent(agentEditorAgent.id, {
+        name: data.name,
+        slug: data.slug,
+        agentType: data.agentType,
+        role: data.role,
+        description: data.description,
+        temperature: data.temperature,
+        model: data.model || undefined,
+        instruction: data.instruction,
+        ignorePrePrompt: data.ignorePrePrompt,
+        knowledgeBases: data.knowledgeBases,
+        tools: data.tools,
+        skills: data.skills,
+        disabledSkills: data.disabledSkills,
+        connectors: data.connectors,
+        deploymentSettings: data.deploymentSettings,
+        isActive: data.isActive,
+        enable_temporary_child_agents: data.enable_temporary_child_agents,
+        max_temporary_child_agents: data.max_temporary_child_agents,
+      });
+      setIsAgentEditorOpen(false);
+    } catch {
+      showError(t('agentEditor.saveFailed'));
+    } finally {
+      setIsSavingAgent(false);
+    }
+  }, [agentEditorAgent, t]);
+
+  // With the prompt-bar reliability toggle on, a freshly completed answer gets
+  // its evaluation queued automatically — no manual rerun. The trigger needs a
+  // completed text answer (what the evaluator scores); the short delay lets an
+  // already-scheduled backend evaluation (SSE) land first so we don't
+  // double-queue it, and the ref keeps it to one attempt per mounted message.
+  useEffect(() => {
+    if (!justCompleted || isUser || !autoReliabilityEnabled) return;
+    if (!hasRerunnableAnswer || autoEvalTriggeredRef.current) return;
+    autoEvalTriggeredRef.current = true;
+    const timer = setTimeout(async () => {
+      const current = useConversationStore.getState().messages.find((candidate) => candidate.id === message.id);
+      if (!current || current.reliabilityEvaluation || current.correctionWorkflow) return;
+      try {
+        await rerunReliabilityEvaluation(conversationId, message.id);
+      } catch (error) {
+        // Already queued/running elsewhere is success from the user's point of view.
+        if ((error as { statusCode?: number } | null)?.statusCode !== 409) {
+          showError(t('reliability.autoRunFailed'));
+        }
+      }
+    }, 1500);
+    return () => clearTimeout(timer);
+  }, [justCompleted, isUser, autoReliabilityEnabled, hasRerunnableAnswer, conversationId, message.id, t]);
 
   if (!isUser && !hasPersistedContent) return null;
 
@@ -125,9 +202,10 @@ const MemoizedMessageBubble = memo(function MemoizedMessageBubble({ message, isL
             ? <EditableUserMessage message={message} conversationId={conversationId} />
           : isUser
             ? <ChatMessageBubble message={chatMessage} isStreaming={isStreaming} footerActions={<UserMessageActions message={message} isLastUserMessage={isLastUserMessage} className='mt-0' />} />
-            : <ConversationAssistantBubble conversationId={conversationId} messageId={message.id} components={message.components || []} answerComponents={activeComponents} isStreaming={false} justCompleted={justCompleted} choiceInteractions={choiceInteractions} onComponentAction={handleComponentAction} onSubmitQuestions={handleSubmitQuestions} onRetry={handleRetry} />}
+            : <ConversationAssistantBubble conversationId={conversationId} messageId={message.id} components={message.components || []} answerComponents={activeComponents} isStreaming={false} justCompleted={justCompleted} choiceInteractions={choiceInteractions} onComponentAction={handleComponentAction} onSubmitQuestions={handleSubmitQuestions} onRetry={handleRetry} agentId={message.agentIds?.[0] ?? null} onOpenAgentEditor={(agentId) => void handleOpenAgentEditor(agentId)} />}
       </MessageProvider>
-      {!isUser && (hasToolCall || hasRerunnableAnswer) && <MessageReliabilityCard conversationId={conversationId} messageId={message.id} evaluation={getAnswerEvaluation(message, displayedVersion)} originalEvaluation={message.reliabilityEvaluation} correctionWorkflow={message.correctionWorkflow} displayedVersion={displayedVersion} onVersionChange={setDisplayedVersion} />}
+      {!isUser && autoReliabilityEnabled && (hasToolCall || hasRerunnableAnswer) && <MessageReliabilityCard conversationId={conversationId} messageId={message.id} evaluation={getAnswerEvaluation(message, displayedVersion)} originalEvaluation={message.reliabilityEvaluation} correctionWorkflow={message.correctionWorkflow} displayedVersion={displayedVersion} onVersionChange={setDisplayedVersion} />}
+      {!isUser && <CreateEditAgentDialog open={isAgentEditorOpen} onOpenChange={setIsAgentEditorOpen} agent={agentEditorAgent} onSave={handleSaveAgent} saving={isSavingAgent} />}
       {showBranchNav && <BranchNavigation userMessageId={message.questionMessageId!} branches={branches!} activeBranchId={activeBranchId!} />}
       {message.conversationType === 'ai' && <MessageActions message={displayedMessage} isLastAiMessage={isLastAiMessage} conversationId={conversationId} displayedVersion={displayedVersion} latencyInstrumentationEnabled={latencyInstrumentationEnabled} />}
     </div>

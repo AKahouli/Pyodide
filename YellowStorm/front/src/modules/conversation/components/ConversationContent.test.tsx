@@ -1,8 +1,17 @@
-import { render, screen } from '@testing-library/react';
+import { act, render, screen } from '@testing-library/react';
 import type { ReactNode } from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Message, MessageComponent } from '../types';
+import { useConversationUiStore } from '../uiStore';
 import { ConversationContent } from './ConversationContent';
+
+const rerunReliabilityEvaluationMock = vi.hoisted(() => vi.fn());
+vi.mock('../api', () => ({
+  rerunReliabilityEvaluation: rerunReliabilityEvaluationMock,
+  fetchToolResult: vi.fn().mockResolvedValue({ resultJson: null }),
+  getArtifactDownloadUrl: vi.fn().mockResolvedValue({ url: '' }),
+  fetchConversationSettings: vi.fn().mockResolvedValue(null),
+}));
 
 vi.mock('@/components/ai-elements/chat-conversation', () => ({
   ChatConversation: ({ children }: { children: ReactNode }) => <div>{children}</div>,
@@ -37,13 +46,17 @@ const storeState = {
   currentConversationId: 'conv-1',
   fetchBranches: vi.fn(),
   branchCache: new Map(),
+  messages: [] as Message[],
 };
 
 let isAwaitingFirstChunk = false;
 let displayMessages: Message[] = [];
 
 vi.mock('../store', () => ({
-  useConversationStore: (selector: (state: typeof storeState) => unknown) => selector(storeState),
+  useConversationStore: Object.assign(
+    (selector: (state: typeof storeState) => unknown) => selector(storeState),
+    { getState: () => storeState },
+  ),
   useDisplayMessages: () => displayMessages,
   useIsAwaitingFirstChunk: () => isAwaitingFirstChunk,
   useAwaitingConversationId: () => storeState.awaitingConversationId,
@@ -56,6 +69,7 @@ vi.mock('../store', () => ({
 
 describe('ConversationContent', () => {
   beforeEach(() => {
+    vi.useRealTimers();
     displayMessages = [];
     isAwaitingFirstChunk = false;
     storeState.isStreaming = false;
@@ -63,6 +77,8 @@ describe('ConversationContent', () => {
     storeState.streamingConversationId = null;
     storeState.streamingMessageId = null;
     storeState.awaitingConversationId = null;
+    storeState.messages = [];
+    useConversationUiStore.setState({ autoReliabilityEnabled: false });
   });
 
   it('renders empty state when there are no messages', () => {
@@ -102,7 +118,23 @@ describe('ConversationContent', () => {
     expect(screen.queryByText('reliability-card')).not.toBeInTheDocument();
   });
 
+  it('hides the reliability pane while auto reliability evaluation is disabled', () => {
+    displayMessages = [{
+      id: 'ai-with-tool-off', conversationId: 'conv-1', conversationType: 'ai', createdAt: '2026-07-28T00:00:00.000Z',
+      components: [
+        { type: 'text', data: { content: 'Hello' } },
+        { type: 'toolActivity', data: { title: 'Search' } },
+      ],
+      reliabilityEvaluation: { status: 'insufficient_evidence' },
+    }];
+
+    render(<ConversationContent />);
+
+    expect(screen.queryByText('reliability-card')).not.toBeInTheDocument();
+  });
+
   it('shows reliability when a completed AI message has a tool call', () => {
+    useConversationUiStore.setState({ autoReliabilityEnabled: true });
     displayMessages = [{
       id: 'ai-with-tool', conversationId: 'conv-1', conversationType: 'ai', createdAt: '2026-07-28T00:00:00.000Z',
       components: [
@@ -128,6 +160,7 @@ describe('ConversationContent', () => {
   });
 
   it('shows the rerun surface for a completed text answer without a tool call', () => {
+    useConversationUiStore.setState({ autoReliabilityEnabled: true });
     displayMessages = [{
       id: 'ai-text-only', conversationId: 'conv-1', conversationType: 'ai', isComplete: true, createdAt: '2026-07-28T00:00:00.000Z',
       components: [{ type: 'text', data: { content: 'Hello' } }],
@@ -137,6 +170,71 @@ describe('ConversationContent', () => {
     render(<ConversationContent />);
 
     expect(screen.getByText('reliability-card')).toBeInTheDocument();
+  });
+
+  it('auto-queues reliability evaluation when a streamed answer completes with the toggle on', async () => {
+    vi.useRealTimers();
+    rerunReliabilityEvaluationMock.mockClear();
+    vi.useFakeTimers();
+    useConversationUiStore.setState({ autoReliabilityEnabled: true });
+    displayMessages = [{
+      id: 'ai-auto', conversationId: 'conv-1', conversationType: 'ai', isComplete: true, createdAt: '2026-07-28T00:00:00.000Z',
+      components: [{ type: 'text', data: { content: 'Hello' } }],
+    }];
+    storeState.messages = displayMessages;
+
+    const { rerender } = render(<ConversationContent />);
+
+    // Stream starts, then completes — mirroring the real streaming lifecycle.
+    storeState.isStreaming = true;
+    storeState.streamingConversationId = 'conv-1';
+    storeState.streamingMessageId = 'ai-auto';
+    await act(async () => {
+      rerender(<ConversationContent />);
+    });
+    storeState.isStreaming = false;
+    storeState.streamingMessageId = null;
+    await act(async () => {
+      rerender(<ConversationContent />);
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1600);
+    });
+
+    expect(rerunReliabilityEvaluationMock).toHaveBeenCalledWith('conv-1', 'ai-auto');
+  });
+
+  it('does not auto-queue reliability evaluation when an evaluation already exists', async () => {
+    vi.useRealTimers();
+    rerunReliabilityEvaluationMock.mockClear();
+    vi.useFakeTimers();
+    useConversationUiStore.setState({ autoReliabilityEnabled: true });
+    displayMessages = [{
+      id: 'ai-auto', conversationId: 'conv-1', conversationType: 'ai', isComplete: true, createdAt: '2026-07-28T00:00:00.000Z',
+      components: [{ type: 'text', data: { content: 'Hello' } }],
+      reliabilityEvaluation: { status: 'completed', score: 88 },
+    }];
+    storeState.messages = displayMessages;
+
+    const { rerender } = render(<ConversationContent />);
+
+    // Stream starts, then completes — mirroring the real streaming lifecycle.
+    storeState.isStreaming = true;
+    storeState.streamingConversationId = 'conv-1';
+    storeState.streamingMessageId = 'ai-auto';
+    await act(async () => {
+      rerender(<ConversationContent />);
+    });
+    storeState.isStreaming = false;
+    storeState.streamingMessageId = null;
+    await act(async () => {
+      rerender(<ConversationContent />);
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1600);
+    });
+
+    expect(rerunReliabilityEvaluationMock).not.toHaveBeenCalled();
   });
 
   it('animates only the dedicated live assistant bubble', () => {

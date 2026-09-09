@@ -225,6 +225,16 @@ export const messages = conversationSchema.table(
     streamExecutionLeaseExpiresAt: timestamp('stream_execution_lease_expires_at', {
       withTimezone: true,
     }),
+    // Durable standard-run lifecycle (WP06.3). The stream execution lease
+    // above remains the sole ownership authority; these columns describe the
+    // run so a recovery worker can settle crashed attempts truthfully.
+    executionStatus: varchar('execution_status', { length: 20 }),
+    executionAttemptId: text('execution_attempt_id'),
+    executionOwnerReplicaId: text('execution_owner_replica_id'),
+    executionStartedAt: timestamp('execution_started_at', { withTimezone: true }),
+    lastProgressAt: timestamp('last_progress_at', { withTimezone: true }),
+    executionTerminalAt: timestamp('execution_terminal_at', { withTimezone: true }),
+    interruptionReason: text('interruption_reason'),
     inputTokens: integer('input_tokens'),
     outputTokens: integer('output_tokens'),
     modelRequestTelemetry: jsonb('model_request_telemetry'),
@@ -274,12 +284,54 @@ export const messages = conversationSchema.table(
     index('idx_messages_streaming_updated_v2')
       .on(t.updatedAt, t.id)
       .where(sql`${t.isStreaming} = true`),
+    index('idx_messages_streaming_lease_expiry_v2')
+      .on(t.streamExecutionLeaseExpiresAt, t.id)
+      .where(sql`${t.isStreaming} = true`),
     index('idx_messages_pending_reliability_v2')
       .on(t.reliabilityEvaluationHeartbeatAt, t.id)
       .where(sql`${t.reliabilityEvaluation}->>'status' = 'pending'`),
     uniqueIndex('uq_messages_request_identity')
       .on(t.conversationId, t.senderId, t.conversationType, t.requestId)
       .where(sql`${t.requestId} IS NOT NULL AND ${t.senderId} IS NOT NULL`),
+  ],
+);
+
+// Shared standard-run admission state (WP07): one row per admitted execution.
+// The partial unique index on (conversation_id) WHERE status='running' makes
+// same-conversation exclusivity enforceable by the database itself, across
+// actors AND replicas; capacity counters are best-effort gates around it.
+export const conversationExecutions = conversationSchema.table(
+  'conversation_executions',
+  {
+    id: char('id', { length: 24 }).primaryKey(),
+    conversationId: char('conversation_id', { length: 24 })
+      .notNull()
+      .references(() => conversations.id, { onDelete: 'cascade' }),
+    userId: char('user_id', { length: 24 }).notNull(),
+    messageId: char('message_id', { length: 24 }).notNull(),
+    status: varchar('status', { length: 20 }).notNull().default('running'),
+    ownerReplicaId: text('owner_replica_id'),
+    cancelRequestedAt: timestamp('cancel_requested_at', { withTimezone: true }),
+    terminalAt: timestamp('terminal_at', { withTimezone: true }),
+    // Running rows count against capacity only until this instant; the
+    // recovery worker settles rows whose owner vanished without finalizing.
+    expiresAt: timestamp('expires_at', { withTimezone: true }).notNull().defaultNow(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    check('conversation_executions_id_object_id', objectIdCheck(t.id)),
+    check(
+      'conversation_executions_status',
+      sql`${t.status} IN ('running', 'cancelled', 'completed', 'failed', 'interrupted')`,
+    ),
+    uniqueIndex('uq_conversation_executions_running_conversation')
+      .on(t.conversationId)
+      .where(sql`${t.status} = 'running'`),
+    uniqueIndex('uq_conversation_executions_message').on(t.messageId),
+    index('idx_conversation_executions_user_running')
+      .on(t.userId, t.id)
+      .where(sql`${t.status} = 'running'`),
   ],
 );
 

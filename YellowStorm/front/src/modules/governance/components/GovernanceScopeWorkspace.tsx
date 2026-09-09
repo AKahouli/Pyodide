@@ -509,8 +509,23 @@ function WorkspaceMapDialog({ open, onOpenChange, programId, scopeId, mappedWork
   }, [search, searchWorkspaces, open]);
 
   useEffect(() => {
-    if (!open) { setSearch(''); setAddedIds([]); }
-  }, [open]);
+    if (open) return;
+    // Closing cancels the pending debounced search above, so a filter typed
+    // here would otherwise stay in the workspace store and filter unrelated
+    // screens until reload.
+    if (useWorkspaceStore.getState().searchQuery) {
+      void searchWorkspaces('');
+    }
+    setSearch('');
+    setAddedIds([]);
+  }, [open, searchWorkspaces]);
+
+  // Same leak via unmount while the dialog is open (e.g. SPA navigation).
+  useEffect(() => () => {
+    if (useWorkspaceStore.getState().searchQuery) {
+      void searchWorkspaces('');
+    }
+  }, [searchWorkspaces]);
 
   const handleAdd = (workspace: Workspace) => {
     createBinding.mutate(

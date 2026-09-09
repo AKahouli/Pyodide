@@ -42,10 +42,11 @@ export interface ShareStore {
   }): Promise<SharedConversationRecord>;
   forkConversation(input: {
     original: ShareSourceConversationRecord;
+    ownerId: string;
     sharedBy: string;
     maxMessages: number;
   }): Promise<string>;
-  deleteForkConversations(ids: string[], ownerId: string): Promise<void>;
+  deleteForkConversations(ids: string[]): Promise<void>;
   createPrivate(input: {
     originalConversationId: string;
     sharedBy: string;

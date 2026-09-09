@@ -26,6 +26,9 @@ import { SemanticModelValidationService } from './services/semantic-model-valida
 import { SemanticModelVersionService } from './services/semantic-model-version.service';
 import { SemanticModelWorkspaceService } from './services/semantic-model-workspace.service';
 import { SemanticModelShareService } from './services/semantic-model-share.service';
+import { SemanticSearchGraphClient } from './services/semantic-search-graph-client.service';
+import { SemanticGraphIndexJobService } from './services/semantic-graph-index-job.service';
+import { SemanticGraphIndexWorkerService } from './services/semantic-graph-index-worker.service';
 
 @Module({
   imports: [ConfigModule.forFeature(semanticModelConfig),AuthorizationModule,LoggerModule,UserModule,forwardRef(() => WorkspaceModule)],
@@ -38,10 +41,13 @@ import { SemanticModelShareService } from './services/semantic-model-share.servi
     SemanticModelCorpusPreparationService,
     SemanticModelNativeSearchClient,
     SemanticModelEvidenceSearchService,
+    SemanticSearchGraphClient,
+    SemanticGraphIndexJobService,
+    SemanticGraphIndexWorkerService,
     SemanticModelMappingProposalService,
     SemanticModelBuildOrchestratorService,
     SemanticModelShareService,
   ],
-  exports: [SemanticModelDatabaseService,SemanticModelProvisioningService],
+  exports: [SemanticModelDatabaseService,SemanticModelProvisioningService,SemanticModelService],
 })
 export class SemanticModelModule {}

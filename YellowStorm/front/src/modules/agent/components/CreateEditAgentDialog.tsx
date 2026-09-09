@@ -42,8 +42,9 @@ import { AgentDeploymentSection } from "./AgentDeploymentSection";
 import { AgentWhatsAppIntegrationSection } from "./AgentWhatsAppIntegrationSection";
 import { AgentConnectorFields } from './AgentConnectorFields';
 import { AgentGuardrailsTab } from './AgentGuardrailsTab';
+import { AgentReasoningEffortField } from './AgentReasoningEffortField';
 import { useAgentTypes, useAgentStore } from "../store";
-import { useModels, useModelsStore } from "@/modules/models/store";
+import { useModels, useModelsStore } from "@/modules/models";
 import { getActiveSkills, getActiveTools, getActiveConnectors, type ToolOption, type ConnectorOption } from "../api";
 import { getWorkspaces } from "@/modules/workspace";
 import type { Workspace } from "@/modules/workspace/types";
@@ -186,6 +187,7 @@ export function CreateEditAgentDialog({
             description: agent.description || "",
             temperature: agent.temperature,
             model: agent.model || "",
+            reasoningEffort: agent.reasoning_effort || "",
             instruction: agent.instruction || "",
             ignorePrePrompt: agent.ignorePrePrompt,
             knowledgeBases: agent.knowledgeBases || [],
@@ -230,6 +232,8 @@ export function CreateEditAgentDialog({
   }, [selectedAgentTypeId, availableTools, agentTypes, setValue]);
 
   const temperature = watch("temperature");
+  const selectedModelId = watch('model');
+  const reasoningEffort = watch('reasoningEffort');
   const watchedName = watch("name");
   const watchedTools = watch("tools");
   const watchedKBs = watch("knowledgeBases");
@@ -241,6 +245,24 @@ export function CreateEditAgentDialog({
   const watchedDeploymentSettings = watch('deploymentSettings');
   const forceGuardrails = adminGuardrails?.forceActivation === true;
   const inheritedSkillIds = agentTypes.find((at) => at.id === selectedAgentTypeId)?.skills || [];
+  const selectedModel = models.find((model) => model.id === selectedModelId);
+
+  useEffect(() => {
+    if (!selectedModelId) {
+      if (reasoningEffort) setValue('reasoningEffort', '', { shouldDirty: true });
+      return;
+    }
+    if (!selectedModel) return;
+    const efforts = selectedModel.supportsReasoning ? (selectedModel.reasoning?.efforts ?? []) : [];
+    const defaultEffort = selectedModel.reasoning?.defaultEffort;
+    const fallbackEffort = efforts.find((effort) => effort.id === defaultEffort)?.id ?? '';
+    const nextEffort = efforts.some((effort) => effort.id === reasoningEffort)
+      ? reasoningEffort
+      : fallbackEffort;
+    if (nextEffort !== reasoningEffort) {
+      setValue('reasoningEffort', nextEffort, { shouldDirty: true });
+    }
+  }, [reasoningEffort, selectedModel, selectedModelId, setValue]);
 
   useEffect(() => {
     if (agent || slugEditedRef.current) return;
@@ -510,6 +532,12 @@ export function CreateEditAgentDialog({
                           emptyText={t('createEdit.fields.noModelsFound')}
                         />
                       </div>
+
+                      <AgentReasoningEffortField
+                        model={selectedModel}
+                        value={reasoningEffort}
+                        onValueChange={(value) => setValue('reasoningEffort', value, { shouldDirty: true })}
+                      />
                     </div>
                   </TabsContent>
 

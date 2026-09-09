@@ -154,7 +154,6 @@ class ConversationStreamService {
     };
 
     this.eventSource.onerror = () => {
-      const wasConnected = this.isConnected;
       this.isConnected = false;
       if (!this.eventSource) return;
 
@@ -165,11 +164,10 @@ class ConversationStreamService {
       if (this.eventSource.readyState === EventSource.CLOSED) {
         this.eventSource = null;
         this.connectionToken = null;
-        if (wasConnected) this.scheduleReconnect();
-        else {
-          this.scheduleReconnect();
-          this.emit({ type: 'connection_failed', data: { reason: translateConversation('sse.connectionErrors.rejected') } });
-        }
+        // Transient drop (e.g. backend restart): keep retrying with capped
+        // backoff — recovery must never require user action, so no failure
+        // dialog is emitted here.
+        this.scheduleReconnect();
       }
     };
 
@@ -292,15 +290,14 @@ class ConversationStreamService {
   private scheduleReconnect(): void {
     if (this.isEvicted) return;
 
-    if (this.reconnectAttempts >= this.maxReconnectAttempts) {
-      console.error('[ConversationStream] Max reconnection attempts reached');
-      this.emit({ type: 'connection_failed', data: { reason: translateConversation('sse.connectionErrors.lost') } });
-      return;
-    }
-
     const delay = Math.min(this.baseReconnectDelay * Math.pow(2, this.reconnectAttempts), this.maxReconnectDelay);
 
-    this.reconnectAttempts++;
+    // Retry indefinitely: a backend restart can outlast any finite attempt
+    // budget. The counter only shapes the backoff curve and stops growing at
+    // the cap, so a late recovery resets to fast retries via onopen.
+    if (this.reconnectAttempts < this.maxReconnectAttempts) {
+      this.reconnectAttempts++;
+    }
 
     this.reconnectTimeout = setTimeout(() => {
       this.connect();

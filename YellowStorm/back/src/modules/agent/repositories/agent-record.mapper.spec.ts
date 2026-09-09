@@ -12,6 +12,7 @@ function baseRow(overrides: Partial<Row> = {}): Row {
     description: 'desc',
     temperature: 0.5,
     llmModel: 'gpt-x',
+    reasoningEffort: 'high',
     email: 'a@b.co',
     instruction: 'do it',
     ignorePrePrompt: false,
@@ -56,6 +57,7 @@ describe('rowToRecord', () => {
     expect(rec.agentType).toBe('b'.repeat(24)); // id string, NOT populated
     expect(rec.agentTypeSlug).toBe('mono-agent');
     expect(rec.llmModel).toBe('gpt-x');
+    expect(rec.reasoningEffort).toBe('high');
     expect(rec.tools).toEqual(['t'.repeat(24)]);
     expect(rec.skills).toEqual(['s'.repeat(24)]);
     expect(rec.disabledSkills).toEqual(['d'.repeat(24)]);
@@ -74,8 +76,9 @@ describe('rowToRecord', () => {
   });
 
   it('defaults optional/nullable fields safely', () => {
-    const rec = rowToRecord(baseRow({ llmModel: null, email: null, guardrails: {}, deploymentSettings: {} }), emptyJunctions);
+    const rec = rowToRecord(baseRow({ llmModel: null, reasoningEffort: null, email: null, guardrails: {}, deploymentSettings: {} }), emptyJunctions);
     expect(rec.llmModel).toBeUndefined();
+    expect(rec.reasoningEffort).toBeUndefined();
     expect(rec.email).toBeUndefined();
     expect(rec.tools).toEqual([]);
     expect(rec.a2aPublished).toBe(false);
