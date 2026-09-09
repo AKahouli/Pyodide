@@ -166,3 +166,65 @@ it('does not repeat selected values after the user response is displayed', async
   await waitFor(() => expect(screen.getByText('choice.submitted')).toBeInTheDocument());
   expect(screen.queryByText('Profitability')).not.toBeInTheDocument();
 });
+
+it('edit-on-card: approve submits the edited fields as JSON edits', async () => {
+  const user = userEvent.setup();
+  const onAction = vi.fn().mockResolvedValue(undefined);
+  render(
+    <ChoicePartRenderer
+      componentId='c1'
+      schemaVersion={1}
+      questionId='confirm::adk-x'
+      prompt='Approuver ?'
+      presentation='quick_replies'
+      selectionMode='single'
+      submitBehavior='immediate'
+      status='ready'
+      dismissible={false}
+      editable
+      fields={[
+        { key: 'subject', label: 'Objet', value: 'Status' },
+        { key: 'body', label: 'Message', value: 'Hi', multiline: true },
+      ]}
+      options={[
+        { id: 'approve', label: 'Approuver', submitText: 'approve' },
+        { id: 'decline', label: 'Refuser', submitText: 'decline' },
+      ]}
+      onAction={onAction}
+    />,
+  );
+  const subject = screen.getByDisplayValue('Status');
+  await user.clear(subject);
+  await user.type(subject, 'URGENT');
+  await user.click(screen.getByRole('radio', { name: 'Approuver' }));
+  expect(onAction).toHaveBeenCalledWith(expect.objectContaining({
+    submitText: JSON.stringify({ verdict: 'approve', edits: { subject: 'URGENT', body: 'Hi' } }),
+  }));
+});
+
+it('edit-on-card: decline stays a plain verdict', async () => {
+  const user = userEvent.setup();
+  const onAction = vi.fn().mockResolvedValue(undefined);
+  render(
+    <ChoicePartRenderer
+      componentId='c2'
+      schemaVersion={1}
+      questionId='confirm::adk-y'
+      prompt='Approuver ?'
+      presentation='quick_replies'
+      selectionMode='single'
+      submitBehavior='immediate'
+      status='ready'
+      dismissible={false}
+      editable
+      fields={[{ key: 'subject', label: 'Objet', value: 'Status' }]}
+      options={[
+        { id: 'approve', label: 'Approuver', submitText: 'approve' },
+        { id: 'decline', label: 'Refuser', submitText: 'decline' },
+      ]}
+      onAction={onAction}
+    />,
+  );
+  await user.click(screen.getByRole('radio', { name: 'Refuser' }));
+  expect(onAction).toHaveBeenCalledWith(expect.objectContaining({ submitText: 'decline' }));
+});

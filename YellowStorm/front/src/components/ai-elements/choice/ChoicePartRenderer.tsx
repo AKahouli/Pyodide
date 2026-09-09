@@ -1,9 +1,12 @@
 import { useEffect, useState } from 'react';
 import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { cn } from '@/lib/utils';
 import type { ChoiceComponentData, ChoiceInteractionMetadata } from '@/modules/conversation/types';
 import { useModuleTranslation } from '@/modules/localization';
+
+const APPROVE_WORDS = new Set(['approve', 'approuver', 'yes', 'oui']);
 
 export interface ChoiceComponentAction {
   componentId: string;
@@ -25,6 +28,14 @@ export function ChoicePartRenderer({ componentId, onAction, submittedInteraction
   const [otherSelected, setOtherSelected] = useState(false);
   const [customAnswer, setCustomAnswer] = useState('');
   const [state, setState] = useState<'idle' | 'submitting' | 'submitted' | 'error'>(choice.status === 'ready' ? 'idle' : 'submitted');
+  // Edit-on-card: editable draft fields; approving submits the edited values.
+  const isEditable = Boolean(choice.editable) && Boolean(choice.fields?.length);
+  const [fieldValues, setFieldValues] = useState<Record<string, string>>(() =>
+    Object.fromEntries((choice.fields ?? []).map((f) => [f.key, f.value ?? ''])));
+  const editSubmitText = (option: ChoiceComponentData['options'][number]) =>
+    isEditable && APPROVE_WORDS.has(option.submitText.trim().toLowerCase())
+      ? JSON.stringify({ verdict: 'approve', edits: fieldValues })
+      : option.submitText;
   useEffect(() => {
     if (!submittedInteraction) return;
     setSelected(submittedInteraction.selectedOptions.map((option) => option.optionId));
@@ -76,13 +87,14 @@ export function ChoicePartRenderer({ componentId, onAction, submittedInteraction
     setSelected([option.id]);
     setState('submitting');
     try {
-      await onAction({ componentId, submitText: option.submitText, displayText: option.label, interaction: { type: 'choice', componentId, questionId: choice.questionId, selectionMode: 'single', selectedOptions: [{ optionId: option.id, label: option.label, ...(option.value ? { value: option.value } : {}) }], displayText: option.label } });
+      await onAction({ componentId, submitText: editSubmitText(option), displayText: option.label, interaction: { type: 'choice', componentId, questionId: choice.questionId, selectionMode: 'single', selectedOptions: [{ optionId: option.id, label: option.label, ...(option.value ? { value: option.value } : {}) }], displayText: option.label } });
       setState('submitted');
     } catch { setState('error'); }
   };
   if (state === 'submitted') return <div className='rounded-lg border bg-muted/40 p-3 text-sm'>{submittedInteraction?.dismissed ? t('choice.dismissed') : t('choice.submitted')}</div>;
   return <section className='space-y-3 rounded-xl border bg-card p-4' aria-label={choice.prompt}>
-    <div><h3 className='font-medium'>{choice.prompt}</h3>{choice.description && <p className='mt-1 text-sm text-muted-foreground'>{choice.description}</p>}{choice.progress && <p className='mt-1 text-xs text-muted-foreground'>{choice.progress.label || `${choice.progress.current} / ${choice.progress.total}`}</p>}</div>
+    <div><h3 className='font-medium'>{choice.prompt}</h3>{choice.description && !isEditable && <p className='mt-1 text-sm text-muted-foreground'>{choice.description}</p>}{choice.progress && <p className='mt-1 text-xs text-muted-foreground'>{choice.progress.label || `${choice.progress.current} / ${choice.progress.total}`}</p>}</div>
+    {isEditable && <div className='flex flex-col gap-2'>{(choice.fields ?? []).map((field) => <label key={field.key} className='flex flex-col gap-1 text-sm'><span className='text-muted-foreground'>{field.label}</span>{field.multiline ? <Textarea value={fieldValues[field.key] ?? ''} disabled={disabled} onChange={(event) => setFieldValues((prev) => ({ ...prev, [field.key]: event.target.value }))} /> : <Input value={fieldValues[field.key] ?? ''} disabled={disabled} onChange={(event) => setFieldValues((prev) => ({ ...prev, [field.key]: event.target.value }))} />}</label>)}</div>}
     <div className={choice.presentation === 'quick_replies' ? 'flex flex-wrap gap-2' : 'flex flex-col gap-2'} role={choice.selectionMode === 'single' ? 'radiogroup' : 'group'}>
       {choice.options.map((option) => {
         const isSelected = selected.includes(option.id);

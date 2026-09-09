@@ -1795,3 +1795,19 @@ def test_make_plan_uses_structured_output_and_does_not_fall_back_when_supported(
     assert len(plan.steps) == 1
     assert len(runner.calls) == 1
     assert runner.calls[0][0] is True                            # structured pass, no retry
+
+
+def test_parse_verdict_plain_and_edit_on_card():
+    # Plain-text verdicts still work.
+    assert svc._parse_verdict("approve") == (True, None)
+    assert svc._parse_verdict("Approuver") == (True, None)
+    assert svc._parse_verdict("decline") == (False, None)
+    assert svc._parse_verdict("no, change the subject") == (False, None)
+    # Edit-on-card: JSON approval carries edits as the confirmation payload.
+    ok, edits = svc._parse_verdict(
+        '{"verdict":"approve","edits":{"subject":"URGENT","body":"new body"}}')
+    assert ok is True and edits == {"subject": "URGENT", "body": "new body"}
+    # Edits are dropped on a decline (nothing to send).
+    assert svc._parse_verdict('{"verdict":"decline","edits":{"subject":"x"}}') == (False, None)
+    # Malformed JSON degrades to a plain (non-approve) verdict, never raises.
+    assert svc._parse_verdict('{"verdict":') == (False, None)

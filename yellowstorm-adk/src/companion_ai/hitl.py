@@ -141,21 +141,21 @@ def confirmation_interrupts(event: Event) -> List[tuple[str, dict]]:
     return out
 
 
-def confirmation_resume_part(fc_id: str, *, confirmed: bool):
+def confirmation_resume_part(fc_id: str, *, confirmed: bool, payload=None):
     """Build the Part that answers an adk_request_confirmation with the owner's
     verdict. `fc_id` is the raw ADK id (strip a stored id with confirm_fc_id).
+    `payload` carries the owner's edits (edit-on-card): ADK exposes it on the
+    tool as tool_context.tool_confirmation.payload, which the connector tool
+    merges into the send args before dispatch.
 
-    ADK's native confirmation processor then re-invokes the ORIGINAL gated tool
-    by id from the durable events — confirmed → it runs and the step's reasoning
-    continues from the result, in place; not confirmed → the model gets "This
-    tool call is rejected." and re-plans. This survives resume_turn's graph
-    rebuild because the step now sees its own scoped history
-    (include_contents='default') and its node_input is None (fed through a silent
-    join, so ADK does not append a trailing user turn) — so this verdict stays
-    the last user turn, the two conditions ADK's processor needs. See
-    graph.to_workflow and the nodes factory."""
+    ADK's native confirmation processor re-invokes the ORIGINAL gated tool by id
+    from the durable events — confirmed → it runs in place; not confirmed → the
+    model gets "This tool call is rejected." This survives resume_turn's rebuild
+    because the step sees its scoped history (include_contents='default') and its
+    node_input is None, so the verdict stays the last user turn."""
     return types.Part(function_response=types.FunctionResponse(
         id=fc_id,
         name=REQUEST_CONFIRMATION_FUNCTION_CALL_NAME,
-        response=ToolConfirmation(confirmed=confirmed).model_dump(by_alias=True, exclude_none=True),
+        response=ToolConfirmation(
+            confirmed=confirmed, payload=payload).model_dump(by_alias=True, exclude_none=True),
     ))

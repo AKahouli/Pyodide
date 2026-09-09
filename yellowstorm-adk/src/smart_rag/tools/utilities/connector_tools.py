@@ -901,6 +901,29 @@ def create_connector_tools(
                     params.pop(LEGACY_DISPLAY_PURPOSE_KEY, None)
                 merged_params = {**_fixed_params, **params}
                 merged_params.pop("user_id", None)
+                # Edit-on-card: the owner's approval may carry edited fields as
+                # the ToolConfirmation payload; apply them over the drafted args
+                # so the SENT message is the edited one. Only keys the action's
+                # schema declares are accepted, so the card can't inject unknowns.
+                _confirmation = getattr(tool_context, "tool_confirmation", None)
+                _edits = getattr(_confirmation, "payload", None) if _confirmation else None
+                if isinstance(_edits, dict) and _edits:
+                    allowed = (_parameter_schema.get("properties") or {}) if isinstance(
+                        _parameter_schema, dict) else {}
+                    applied = {}
+                    for k, v in _edits.items():
+                        if k not in allowed:
+                            continue
+                        t = (allowed[k] or {}).get("type")
+                        if isinstance(t, list):
+                            t = next((x for x in t if x != "null"), None)
+                        if t == "array" and isinstance(v, str):
+                            v = [s.strip() for s in re.split(r"[,;]", v) if s.strip()]
+                        applied[k] = v
+                    if applied:
+                        merged_params.update(applied)
+                        logger.info("connector_tool edit-on-card applied fields=%s tool=%s",
+                                    sorted(applied.keys()), _tool_name)
                 merged_params = _with_default_workspace_params(
                     merged_params,
                     _parameter_schema,
