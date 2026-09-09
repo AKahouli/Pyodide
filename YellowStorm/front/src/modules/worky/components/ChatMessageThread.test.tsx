@@ -54,8 +54,10 @@ describe('ChatMessageThread', () => {
         streaming: boolean;
         setStreaming: () => void;
         pendingClarifications: [];
+        beginTurn: () => void;
+        finishTurn: () => void;
       }) => unknown) =>
-        selector({ streaming: false, setStreaming: vi.fn(), pendingClarifications: [] }),
+        selector({ streaming: false, setStreaming: vi.fn(), pendingClarifications: [], beginTurn: vi.fn(), finishTurn: vi.fn() }),
     );
   });
 
@@ -367,7 +369,7 @@ describe('ChatMessageThread', () => {
 
     fireEvent.click(screen.getByRole('radio', { name: 'Approuver' }));
     await waitFor(() =>
-      expect(sendMutateAsync).toHaveBeenCalledWith({ content: 'approve' }),
+      expect(sendMutateAsync).toHaveBeenCalledWith(expect.objectContaining({ content: 'approve' })),
     );
   });
 });

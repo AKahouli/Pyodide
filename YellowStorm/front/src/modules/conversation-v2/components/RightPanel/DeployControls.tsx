@@ -22,7 +22,7 @@ import { ShareDeployDialog } from './ShareDeployDialog';
 const modeTabClass = (active: boolean) =>
   cn(
     'inline-flex items-center rounded-md px-2 py-1 text-xs font-medium transition-colors',
-    '@max-[520px]/right-panel:px-1.5 @max-[520px]/right-panel:py-0.5',
+    '@max-[620px]/right-panel:px-1.5 @max-[620px]/right-panel:py-0.5',
     active
       ? 'bg-background text-foreground shadow-sm'
       : 'text-muted-foreground hover:text-foreground',
@@ -117,7 +117,7 @@ export function DeployControls() {
 
   return (
     <TooltipProvider delayDuration={300}>
-      <div className='flex min-w-0 shrink items-center gap-0.5 @max-[520px]/right-panel:gap-0'>
+      <div className='flex min-w-0 shrink items-center gap-0.5 @max-[620px]/right-panel:gap-0'>
         {hasUrl && showingDeployed && (
           <Tooltip>
             <TooltipTrigger asChild>
@@ -174,7 +174,7 @@ export function DeployControls() {
               disabled={isDeploying}
               className={cn(
                 'shrink-0 gap-1.5',
-                '@max-[520px]/right-panel:size-8 @max-[520px]/right-panel:gap-0 @max-[520px]/right-panel:px-0',
+                '@max-[620px]/right-panel:size-8 @max-[620px]/right-panel:gap-0 @max-[620px]/right-panel:px-0',
               )}
               aria-label={deployLabel}
             >
@@ -186,7 +186,7 @@ export function DeployControls() {
                 <Rocket className='h-4 w-4' />
               )}
               {!isDeploying && (
-                <span className='@max-[520px]/right-panel:hidden'>
+                <span className='@max-[620px]/right-panel:hidden'>
                   {isDeployed ? t('deploy.update') : t('deploy.publish')}
                 </span>
               )}

@@ -29,6 +29,7 @@ import {
   PromptInputActionMenuTrigger,
 } from '@/components/ai-elements/prompt-input';
 import { RecentConnectorsMenu, ManageConnectorsDialog, SelectedConnectorsPills } from '@/modules/connector';
+import { VersionSwitcher } from './RightPanel/VersionHistoryPanel';
 import { useChefs, useDefaultModel, useConversationV2DefaultModel, useModels } from '@/modules/models';
 import { useConversationV2PointersStore, useConversationV2Store } from '../store';
 import { useConversationV2Translation } from '../translation';
@@ -191,6 +192,7 @@ export function Composer({ onSend }: ComposerProps) {
                     </ModelSelectorContent>
                   </ModelSelector>
                 )}
+                <VersionSwitcher />
                 <PromptInputActionMenu>
                   <PromptInputActionMenuTrigger />
                   <PromptInputActionMenuContent>

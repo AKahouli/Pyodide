@@ -15,7 +15,10 @@ describe('RuntimeRevisionService', () => {
 
   const findOne = jest.fn();
   const create = jest.fn();
+  const find = jest.fn();
   const download = jest.fn();
+  const exists = jest.fn();
+  const upload = jest.fn();
 
   const config = {
     get: jest.fn((key: string) => {
@@ -32,17 +35,22 @@ describe('RuntimeRevisionService', () => {
     findOne.mockReturnValue({
       lean: () => ({ exec: () => Promise.resolve(null) }),
     });
+    find.mockReturnValue({
+      lean: () => ({ exec: () => Promise.resolve([]) }),
+    });
     create.mockResolvedValue({});
     download.mockRejectedValue(new Error('ceph offline'));
+    exists.mockResolvedValue(true);
+    upload.mockResolvedValue({});
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         RuntimeRevisionService,
         {
           provide: getModelToken(AppSourceRevision.name),
-          useValue: { findOne, create },
+          useValue: { findOne, create, find },
         },
-        { provide: DocumentService, useValue: { download } },
+        { provide: DocumentService, useValue: { download, exists, upload } },
         { provide: ConfigService, useValue: config },
       ],
     }).compile();
@@ -143,5 +151,53 @@ describe('RuntimeRevisionService', () => {
     const second = await svc.ensureStarterRevision('sess_1');
     expect(create).not.toHaveBeenCalled();
     expect(second.workspaceId).toBe('sess_1');
+  });
+
+  it('branchRevision mints an id above every persisted revision and copies the manifest', async () => {
+    const rev2Doc = {
+      workspaceId: 'sess_1',
+      revisionId: 'rev_2',
+      parentRevisionId: null,
+      manifestHash: 'hash_2',
+      manifestObjectKey: 'appbuilder/manifests/sess_1/rev_2.json',
+      files: [
+        { path: 'src/main.jsx', sha256: 'a'.repeat(64), objectKey: 'blobs/aaa', size: 10 },
+        { path: 'index.html', sha256: 'b'.repeat(64), objectKey: 'blobs/bbb', size: 5 },
+      ],
+    };
+    findOne.mockReturnValue({
+      lean: () => ({ exec: () => Promise.resolve(rev2Doc) }),
+    });
+    find.mockReturnValue({
+      lean: () =>
+        ({ exec: () => Promise.resolve([{ revisionId: 'rev_2' }, { revisionId: 'rev_7' }, { revisionId: 'rev_legacy' }]) } as never),
+    });
+
+    const branch = await svc.branchRevision('sess_1', 'rev_2');
+
+    // rev_7 is the highest numeric revision → the branch lands on rev_8, so the
+    // existing rev_3..rev_7 manifests and finalized rows are never rewritten.
+    expect(branch.revisionId).toBe('rev_8');
+    expect(branch.parentRevisionId).toBe('rev_2');
+    expect(branch.files.map((f) => f.path)).toEqual(['index.html', 'src/main.jsx']);
+    expect(upload).toHaveBeenCalledWith(
+      expect.any(Buffer),
+      'rev_8.json',
+      'application/json',
+      { generateUniqueName: false, customFileName: 'appbuilder/manifests/sess_1/rev_8.json' },
+    );
+    expect(create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        workspaceId: 'sess_1',
+        revisionId: 'rev_8',
+        parentRevisionId: 'rev_2',
+      }),
+    );
+  });
+
+  it('branchRevision rejects an unknown source revision', async () => {
+    await expect(svc.branchRevision('sess_1', 'rev_missing')).rejects.toBeInstanceOf(
+      NotFoundException,
+    );
   });
 });
