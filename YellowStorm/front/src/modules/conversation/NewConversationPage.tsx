@@ -22,6 +22,7 @@ import { ComposerSuggestionChips } from './components/ComposerSuggestionChips';
 import { PlaybooksCarousel } from '@/modules/playbook/components/playbook-swiper';
 import { GovernedScopesCarousel } from '@/modules/governance/components/consumer/GovernedScopesCarousel';
 import { WebSearchConnectorToggle } from './components/WebSearchConnectorToggle';
+import { useAuth } from '@/modules/auth/useAuth';
 
 export function NewConversationPage() {
   const { accept } = useAllowedUploadExtensions();
@@ -39,6 +40,7 @@ export function NewConversationPage() {
   const { t } = useModuleTranslation('conversation');
   const inputDisabled = useInputDisabled();
   const { status: usageStatus } = useUsage();
+  const { user } = useAuth();
   const isLimitExceeded = usageStatus?.isLimitExceeded ?? false;
 
   // Starting a brand-new conversation: no conversation is active yet, so clear
@@ -170,8 +172,9 @@ export function NewConversationPage() {
       });
 
       clearAll();
-    } catch {
+    } catch (error) {
       toast.error(t('toasts.conversation.createError'));
+      throw error;
     } finally {
       setIsSending(false);
     }
@@ -188,6 +191,7 @@ export function NewConversationPage() {
         </div>
         <div className='w-full max-w-3xl px-4'>
           <Input
+            draftKey={`${user?.id ?? 'anonymous'}:conversation:new`}
             onSubmit={handleSubmit}
             status={isSending ? 'submitted' : 'ready'}
             disabled={isSending || inputDisabled || isLimitExceeded}

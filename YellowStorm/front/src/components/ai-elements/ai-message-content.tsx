@@ -456,7 +456,11 @@ const markdownComponents: React.ComponentProps<typeof ReactMarkdown>['components
   },
 };
 
-const remarkPlugins = [remarkGfm, remarkMath, remarkAssistantCitationLinks];
+const remarkPlugins: React.ComponentProps<typeof ReactMarkdown>['remarkPlugins'] = [
+  remarkGfm,
+  [remarkMath, { singleDollarTextMath: false }],
+  remarkAssistantCitationLinks,
+];
 const rehypeMathPlugins = [rehypeKatex];
 const rehypeMathCitationPlugins = [rehypeKatex, rehypeCitationMarkers];
 

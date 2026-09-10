@@ -260,6 +260,7 @@ export function ConversationInput({ conversationId }: ConversationInputProps) {
       )}
 
       <Input
+        draftKey={`${user?.id ?? 'anonymous'}:conversation:${conversationId}`}
         onSubmit={handleSubmit}
         onStop={stopStream}
         status={status}

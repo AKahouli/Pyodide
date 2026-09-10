@@ -70,6 +70,15 @@ export class CorsSettingsValue {
 }
 
 @Schema({ _id: false })
+export class LoginSettingsValue {
+  @Prop({ required: true, default: '3600m' })
+  accessExpiry!: string;
+
+  @Prop({ required: true, default: '7d' })
+  refreshExpiry!: string;
+}
+
+@Schema({ _id: false })
 export class EmailLogoValue {
   @Prop({ required: true })
   data!: string;
@@ -99,7 +108,7 @@ export class SystemSetting extends Document {
   key!: string;
 
   @Prop({ type: Object, required: true })
-  value!: MaintenanceValue | RegistrationValue | AppearanceValue | CorsSettingsValue | EmailLogoValue | Record<string, unknown>;
+  value!: MaintenanceValue | RegistrationValue | AppearanceValue | CorsSettingsValue | LoginSettingsValue | EmailLogoValue | Record<string, unknown>;
 
   createdAt!: Date;
   updatedAt!: Date;

@@ -21,6 +21,8 @@ import type { FeatureVisibility } from './interfaces/feature-visibility.interfac
 import { UpdateFeatureVisibilityDto } from './dto/update-feature-visibility.dto';
 import { UpdateDocumentTreeInjectionDto } from './dto/update-document-tree-injection.dto';
 import type { DocumentTreeInjectionSettings } from './interfaces/document-tree-settings.interface';
+import type { LoginSettings } from './interfaces/login-settings.interface';
+import { SetLoginSettingsDto } from './dto/set-login-settings.dto';
 
 interface MulterFile {
   originalname: string;
@@ -146,6 +148,35 @@ export class SystemController {
   })
   async getMaintenanceStatus(): Promise<MaintenanceStatus> {
     return this.systemService.getMaintenanceStatus();
+  }
+
+  @Get('login-settings')
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Get login token expiry settings' })
+  getLoginSettings(): Promise<LoginSettings> {
+    return this.systemService.getLoginSettings();
+  }
+
+  @Post('login-settings')
+  @UseGuards(PermissionsGuard)
+  @RequirePermissions(Permissions.SYSTEM_MAINTENANCE)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Set login token expiry settings' })
+  async setLoginSettings(
+    @Body() body: SetLoginSettingsDto,
+    @CurrentUser() user: UserDocument,
+    @Req() req: Request,
+  ): Promise<LoginSettings> {
+    const result = await this.systemService.setLoginSettings(body);
+    this.auditLogService.logSuccess({
+      actorId: user._id.toString(),
+      actorEmail: user.email,
+      action: 'system.loginSettings',
+      metadata: { ...result },
+      ipAddress: req.ip,
+      userAgent: req.headers['user-agent'],
+    });
+    return result;
   }
 
   @Post('maintenance')

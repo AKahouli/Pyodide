@@ -44,7 +44,10 @@ describe('AuthService human-agent creation', () => {
     };
     const usageService = { getDefaultPlan: jest.fn().mockResolvedValue({ _id: new Types.ObjectId(), slug: 'unlimited', workspaceStorageBytes: 100 }) };
     const authorizationService = { getUserPermissions: jest.fn().mockResolvedValue([]), getUserRoleNames: jest.fn().mockResolvedValue([]) };
-    const systemService = { isRegistrationEnabled: jest.fn().mockReturnValue(true) };
+    const systemService = {
+      isRegistrationEnabled: jest.fn().mockReturnValue(true),
+      getLoginSettingsSync: () => ({ accessExpiry: '3600m', refreshExpiry: '7d' }),
+    };
     const workspaceInitializer = { getOrCreatePersonalWorkspace: jest.fn().mockResolvedValue(undefined) };
     const service = new AuthService(
       makeSessionModel() as never,

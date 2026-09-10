@@ -176,6 +176,11 @@ export interface SetMaintenanceRequest {
   estimatedEndAt?: string;
 }
 
+export interface LoginSettings {
+  accessExpiry: string;
+  refreshExpiry: string;
+}
+
 export interface RegistrationStatus {
   enabled: boolean;
   disabledAt?: string;

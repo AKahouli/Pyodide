@@ -158,8 +158,6 @@ export const configValidationSchema = Joi.object({
     then: Joi.required(),
     otherwise: Joi.optional(),
   }),
-  JWT_ACCESS_EXPIRY: Joi.string().default('15m'),
-  JWT_REFRESH_EXPIRY: Joi.string().default('7d'),
   JWT_ISSUER: Joi.string().default('yellostorm'),
   JWT_AUDIENCE: Joi.string().default('yellostorm-api'),
 

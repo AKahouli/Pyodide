@@ -25,6 +25,7 @@ import type {
   SummaryAnalyticsResponse,
   MaintenanceStatus,
   SetMaintenanceRequest,
+  LoginSettings,
   RegistrationStatus,
   SetRegistrationRequest,
   DocumentTreeInjectionSettings,
@@ -214,6 +215,21 @@ export async function setMaintenanceMode(
   const response = await apiClient.post<ApiResponse<MaintenanceStatus>>(
     API_ENDPOINTS.system.maintenance,
     data
+  );
+  return response.data.data;
+}
+
+export async function getLoginSettings(): Promise<LoginSettings> {
+  const response = await apiClient.get<ApiResponse<LoginSettings>>(
+    API_ENDPOINTS.system.loginSettings,
+  );
+  return response.data.data;
+}
+
+export async function setLoginSettings(data: LoginSettings): Promise<LoginSettings> {
+  const response = await apiClient.post<ApiResponse<LoginSettings>>(
+    API_ENDPOINTS.system.loginSettings,
+    data,
   );
   return response.data.data;
 }

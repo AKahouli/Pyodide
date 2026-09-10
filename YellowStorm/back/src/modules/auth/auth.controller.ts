@@ -235,13 +235,11 @@ export class AuthController {
    * Set refresh token in HTTP-only cookie
    */
   private setRefreshTokenCookie(res: Response, refreshToken: string): void {
-    const maxAge = 7 * 24 * 60 * 60 * 1000; // 7 days in milliseconds
-
     res.cookie(this.cookieName, refreshToken, {
       httpOnly: true,
       secure: this.cookieSecure,
       sameSite: this.cookieSameSite,
-      maxAge,
+      maxAge: this.authService.getRefreshTokenExpiryMs(),
       path: '/api/v1/auth',
     });
   }

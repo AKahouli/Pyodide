@@ -19,6 +19,11 @@ import { EmailService, EmailTemplateRenderer, EmailTemplate } from '../email';
 import { UsageService } from '../usage';
 import { AuthorizationService } from '../authorization/authorization.service';
 import { SystemService } from '../system/system.service';
+import {
+  DEFAULT_ACCESS_EXPIRY_MS,
+  DEFAULT_REFRESH_EXPIRY_MS,
+  parseLoginExpiry,
+} from '../system/interfaces/login-settings.interface';
 import { WorkspaceInitializerService } from '../workspace/workspace-initializer.service';
 import { TokenPair, LoginResponse, DeviceInfoData, SessionInfo } from './interfaces/auth.interface';
 import { BadRequestException, UnauthorizedException, ForbiddenException, NotFoundException, ServiceUnavailableException, ConflictException, InternalServerException } from '../exceptions';
@@ -48,8 +53,6 @@ export class AuthService {
   private static readonly STANDALONE_CLAIM_GRACE_MS = 30_000;
 
   private readonly bcryptRounds: number;
-  private readonly accessExpiry: string;
-  private readonly refreshExpiry: string;
   private readonly maxSessionsPerUser: number;
   private readonly appName: string;
   private readonly frontendUrl: string;
@@ -78,8 +81,6 @@ export class AuthService {
   ) {
     this.logger.setContext(AuthService.name);
     this.bcryptRounds = this.configService.get<number>('auth.bcryptRounds', 12);
-    this.accessExpiry = this.configService.get<string>('jwt.accessExpiry', '15m');
-    this.refreshExpiry = this.configService.get<string>('jwt.refreshExpiry', '7d');
     this.maxSessionsPerUser = this.configService.get<number>('auth.maxSessionsPerUser', 10);
     this.appName = this.configService.get<string>('app.name', 'YelloStorm');
     this.frontendUrl = this.configService.get<string>('app.frontendUrl', 'http://localhost:5173');
@@ -292,7 +293,7 @@ export class AuthService {
     const deviceInfo = this.parseUserAgent(userAgent);
 
     // Calculate refresh token expiry
-    const refreshExpiryMs = this.parseExpiryToMs(this.refreshExpiry);
+    const refreshExpiryMs = this.getRefreshTokenExpiryMs();
     const expiresAt = new Date(Date.now() + refreshExpiryMs);
 
     // Hash refresh token before storing
@@ -333,7 +334,7 @@ export class AuthService {
       permissionsVersion: user.permissionsVersion || 1,
     };
 
-    const accessExpiryMs = this.parseExpiryToMs(this.accessExpiry);
+    const accessExpiryMs = this.getAccessTokenExpiryMs();
     const accessToken = this.jwtService.sign(accessPayload, {
       expiresIn: Math.floor(accessExpiryMs / 1000),
     });
@@ -497,7 +498,7 @@ export class AuthService {
     return {
       accessToken,
       refreshToken: `${successor._id.toString()}.${secret}`,
-      expiresIn: this.parseExpiryToMs(this.accessExpiry) / 1000,
+      expiresIn: this.getAccessTokenExpiryMs() / 1000,
     };
   }
 
@@ -526,7 +527,7 @@ export class AuthService {
   ): Promise<{ successor: SessionDocument; secret: string }> {
     const secret = crypto.randomBytes(32).toString('hex');
     const deviceInfo = this.parseUserAgent(userAgent);
-    const refreshExpiryMs = this.parseExpiryToMs(this.refreshExpiry);
+    const refreshExpiryMs = this.getRefreshTokenExpiryMs();
     const now = new Date();
     const expiresAt = new Date(now.getTime() + refreshExpiryMs);
     const refreshTokenHash = await bcrypt.hash(secret, this.bcryptRounds);
@@ -790,7 +791,7 @@ export class AuthService {
     return {
       accessToken,
       refreshToken: `${successor._id.toString()}.${secret}`,
-      expiresIn: this.parseExpiryToMs(this.accessExpiry) / 1000,
+      expiresIn: this.getAccessTokenExpiryMs() / 1000,
     };
   }
 
@@ -815,7 +816,7 @@ export class AuthService {
       permissionsVersion: user.permissionsVersion || 1,
     };
 
-    const accessExpiryMs = this.parseExpiryToMs(this.accessExpiry);
+    const accessExpiryMs = this.getAccessTokenExpiryMs();
     return this.jwtService.sign(accessPayload, {
       expiresIn: Math.floor(accessExpiryMs / 1000),
     });
@@ -949,30 +950,14 @@ export class AuthService {
     }
   }
 
-  /**
-   * Parse expiry string to milliseconds
-   */
-  private parseExpiryToMs(expiry: string): number {
-    const match = expiry.match(/^(\d+)([smhd])$/);
-    if (!match) {
-      return 15 * 60 * 1000; // Default 15 minutes
-    }
+  getAccessTokenExpiryMs(): number {
+    return parseLoginExpiry(this.systemService.getLoginSettingsSync().accessExpiry)
+      ?? DEFAULT_ACCESS_EXPIRY_MS;
+  }
 
-    const value = Number.parseInt(match[1], 10);
-    const unit = match[2];
-
-    switch (unit) {
-      case 's':
-        return value * 1000;
-      case 'm':
-        return value * 60 * 1000;
-      case 'h':
-        return value * 60 * 60 * 1000;
-      case 'd':
-        return value * 24 * 60 * 60 * 1000;
-      default:
-        return 15 * 60 * 1000;
-    }
+  getRefreshTokenExpiryMs(): number {
+    return parseLoginExpiry(this.systemService.getLoginSettingsSync().refreshExpiry)
+      ?? DEFAULT_REFRESH_EXPIRY_MS;
   }
 
   /**

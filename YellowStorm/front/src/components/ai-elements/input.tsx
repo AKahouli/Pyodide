@@ -65,7 +65,8 @@ export interface FileUploadInfo {
 }
 
 interface InputProps {
-  onSubmit?: (message: PromptInputMessage, modelId: string, agentIds?: string[], memberIds?: string[], workspaceIds?: string[], connectorRepo?: { connectorId: string; connectorName: string; repoId: string; repoName: string; repoUrl?: string }, teamIds?: string[]) => void;
+  onSubmit?: (message: PromptInputMessage, modelId: string, agentIds?: string[], memberIds?: string[], workspaceIds?: string[], connectorRepo?: { connectorId: string; connectorName: string; repoId: string; repoName: string; repoUrl?: string }, teamIds?: string[]) => void | Promise<void>;
+  draftKey?: string;
   onStop?: () => void;
   status?: 'submitted' | 'streaming' | 'ready' | 'error';
   disabled?: boolean;
@@ -94,7 +95,7 @@ interface InputProps {
   onTextChange?: (text: string) => void;
 }
 
-const Input = memo(function Input({ onSubmit: externalSubmit, onStop, status: externalStatus, disabled, submitDisabled, placeholder, onFilesAdded, onFileRemoved, uploadingFiles, accept, maxFiles, members, autoMention, showWorkspaceSelect = true, preserveWorkspaceSelectionOnSubmit = false, showModelSelector = false, governedMode = false, mentionAgents, enableTeamMentions = true, workspaceOptions, onWorkspaceSelectionChange, belowTextarea, extraTools, onTextChange }: InputProps = {}) {
+const Input = memo(function Input({ onSubmit: externalSubmit, draftKey, onStop, status: externalStatus, disabled, submitDisabled, placeholder, onFilesAdded, onFileRemoved, uploadingFiles, accept, maxFiles, members, autoMention, showWorkspaceSelect = true, preserveWorkspaceSelectionOnSubmit = false, showModelSelector = false, governedMode = false, mentionAgents, enableTeamMentions = true, workspaceOptions, onWorkspaceSelectionChange, belowTextarea, extraTools, onTextChange }: InputProps = {}) {
   const models = useModels();
   const chefs = useChefs();
   const defaultModel = useDefaultModel();
@@ -531,7 +532,7 @@ const Input = memo(function Input({ onSubmit: externalSubmit, onStop, status: ex
       const submittedWorkspaceIds = allowedWorkspaceIds ? selectedWorkspaceIds.filter((id) => allowedWorkspaceIds.includes(id)) : selectedWorkspaceIds;
 
       if (externalSubmit) {
-        externalSubmit(
+        const result = externalSubmit(
           message,
           model,
           agentIds.length > 0 ? agentIds : undefined,
@@ -544,7 +545,7 @@ const Input = memo(function Input({ onSubmit: externalSubmit, onStop, status: ex
         if (!preserveWorkspaceSelectionOnSubmit) {
           resetSelectedWorkspaceIds();
         }
-        return;
+        return result;
       }
 
       setStatus('submitted');
@@ -564,7 +565,7 @@ const Input = memo(function Input({ onSubmit: externalSubmit, onStop, status: ex
 
   return (
     <div>
-      <PromptInputProvider onFilesAdded={onFilesAdded} onFileRemoved={onFileRemoved} maxFiles={maxFiles} onError={(err) => toast.error(err.message)}>
+      <PromptInputProvider key={draftKey} draftKey={draftKey} onFilesAdded={onFilesAdded} onFileRemoved={onFileRemoved} maxFiles={maxFiles} onError={(err) => toast.error(err.message)}>
         <PromptInput globalDrop multiple onSubmit={handleSubmit} accept={accept} maxFiles={maxFiles}>
           <PromptInputAttachments>
             {(attachment) => {

@@ -6,7 +6,12 @@ interface MdastText {
 interface MdastLink {
   type: 'link';
   url: string;
-  children: MdastText[];
+  children: MdastNode[];
+}
+
+interface MdastHtml {
+  type: 'html';
+  value: string;
 }
 
 interface MdastParent {
@@ -14,7 +19,7 @@ interface MdastParent {
   children?: MdastNode[];
 }
 
-type MdastNode = MdastText | MdastLink | MdastParent;
+type MdastNode = MdastText | MdastLink | MdastHtml | MdastParent;
 
 const ASSISTANT_CITATION = /\[([^,\]\n]+),\s*(https?:\/\/[^\]\s]+)\]/gi;
 
@@ -35,11 +40,20 @@ function visitNode(node: MdastNode): void {
     const next = children[index + 1];
     const afterNext = children[index + 2];
 
+    const htmlLink = parseHtmlLink(children, index);
+    if (htmlLink) {
+      nextChildren.push(htmlLink.link);
+      index = htmlLink.endIndex;
+      changed = true;
+      continue;
+    }
+
     // remark-gfm parses the URL in the shorthand as a standalone link node.
     const splitCitation = parseSplitCitation(child, next, afterNext);
     if (splitCitation) {
       nextChildren.push(...splitCitation.nodes);
-      // Revisit the trailing text node: it may open another GFM-split citation.
+      // Revisit the remainder: it may open another GFM-split citation.
+      afterNext.value = splitCitation.remainder;
       index += 1;
       changed = true;
       continue;
@@ -62,7 +76,26 @@ function visitNode(node: MdastNode): void {
   if (changed) node.children = nextChildren;
 }
 
-function parseSplitCitation(first: MdastNode, link: MdastNode | undefined, last: MdastNode | undefined): { nodes: MdastNode[] } | null {
+function parseHtmlLink(children: MdastNode[], startIndex: number): { link: MdastLink; endIndex: number } | null {
+  const opening = children[startIndex];
+  if (!isHtml(opening)) return null;
+
+  const href = opening.value.match(/^\s*<a\b[^>]*\s+href\s*=\s*(["'])(.*?)\1[^>]*>\s*$/i)?.[2];
+  if (!href || !isHttpUrl(href)) return null;
+
+  for (let index = startIndex + 1; index < children.length; index += 1) {
+    const node = children[index];
+    if (isHtml(node) && /^\s*<\/a\s*>\s*$/i.test(node.value)) {
+      const linkChildren = children.slice(startIndex + 1, index);
+      if (!linkChildren.length || linkChildren.some((child) => isHtml(child) || isLink(child))) return null;
+      return { link: { type: 'link', url: href, children: linkChildren }, endIndex: index };
+    }
+  }
+
+  return null;
+}
+
+function parseSplitCitation(first: MdastNode, link: MdastNode | undefined, last: MdastNode | undefined): { nodes: MdastNode[]; remainder: string } | null {
   if (!isText(first) || !isLink(link) || !isText(last) || !isHttpUrl(link.url) || !last.value.startsWith(']')) return null;
 
   const match = first.value.match(/^(.*)\[([^,\]\n]+),\s*$/s);
@@ -72,8 +105,7 @@ function parseSplitCitation(first: MdastNode, link: MdastNode | undefined, last:
   const nodes: MdastNode[] = [];
   if (match[1]) nodes.push({ type: 'text', value: match[1] });
   nodes.push(createLink(title, link.url));
-  if (last.value.slice(1)) nodes.push({ type: 'text', value: last.value.slice(1) });
-  return { nodes };
+  return { nodes, remainder: last.value.slice(1) };
 }
 
 function splitTextCitation(value: string): MdastNode[] {
@@ -108,6 +140,10 @@ function hasChildren(node: MdastNode): node is MdastParent & { children: MdastNo
 
 function isText(node: MdastNode | undefined): node is MdastText {
   return node?.type === 'text' && 'value' in node;
+}
+
+function isHtml(node: MdastNode | undefined): node is MdastHtml {
+  return node?.type === 'html' && 'value' in node;
 }
 
 function isLink(node: MdastNode | undefined): node is MdastLink {

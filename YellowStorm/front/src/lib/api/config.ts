@@ -82,6 +82,7 @@ export const API_ENDPOINTS = {
   },
   system: {
     maintenance: '/experimental/system/maintenance',
+    loginSettings: '/experimental/system/login-settings',
     registration: '/experimental/system/registration',
     appearance: '/experimental/system/appearance',
     appearanceLogos: '/experimental/system/appearance/logos',

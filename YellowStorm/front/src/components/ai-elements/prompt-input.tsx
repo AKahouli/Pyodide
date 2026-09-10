@@ -65,6 +65,7 @@ const useOptionalProviderAttachments = () => useContext(ProviderAttachmentsConte
 
 export type PromptInputProviderProps = PropsWithChildren<{
   initialInput?: string;
+  draftKey?: string;
   maxFiles?: number;
   onFilesAdded?: (files: File[], ids: string[]) => void;
   onFileRemoved?: (id: string) => void;
@@ -75,10 +76,35 @@ export type PromptInputProviderProps = PropsWithChildren<{
  * Optional global provider that lifts PromptInput state outside of PromptInput.
  * If you don't use it, PromptInput stays fully self-managed.
  */
-export function PromptInputProvider({ initialInput: initialTextInput = '', maxFiles, onFilesAdded, onFileRemoved, onError, children }: PromptInputProviderProps) {
+export function PromptInputProvider({ initialInput: initialTextInput = '', draftKey, maxFiles, onFilesAdded, onFileRemoved, onError, children }: PromptInputProviderProps) {
   // ----- textInput state
-  const [textInput, setTextInput] = useState(initialTextInput);
-  const clearInput = useCallback(() => setTextInput(''), []);
+  const storageKey = draftKey ? `yellostorm_draft:${draftKey}` : null;
+  const [textInput, setTextInput] = useState(() => {
+    if (!storageKey) return initialTextInput;
+    try {
+      return sessionStorage.getItem(storageKey) ?? initialTextInput;
+    } catch {
+      return initialTextInput;
+    }
+  });
+  const clearInput = useCallback(() => {
+    setTextInput('');
+    try {
+      if (storageKey) sessionStorage.removeItem(storageKey);
+    } catch {
+      // Browser storage may be unavailable; the in-memory draft still clears.
+    }
+  }, [storageKey]);
+
+  useEffect(() => {
+    if (!storageKey) return;
+    try {
+      if (textInput) sessionStorage.setItem(storageKey, textInput);
+      else sessionStorage.removeItem(storageKey);
+    } catch {
+      // Browser storage may be unavailable; the in-memory draft still works.
+    }
+  }, [storageKey, textInput]);
 
   // ----- attachments state (global when wrapped)
   const [attachmentFiles, setAttachmentFiles] = useState<(FileUIPart & { id: string })[]>([]);
