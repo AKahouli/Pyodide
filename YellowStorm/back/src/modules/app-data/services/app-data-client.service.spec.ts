@@ -82,6 +82,79 @@ describe('AppDataClientService', () => {
     const res = await client.forward('GET', '/v1/apps/app-1/dev/tables/notes/rows', {});
     expect(res.status).toBe(401);
   });
+
+  it('ready returns true when microservice reports ok', async () => {
+    const client = clientWith(fetchMock(200, { status: 'ok', database: 'connected' }));
+    await expect(client.ready()).resolves.toBe(true);
+  });
+
+  it('ready returns false when microservice is unreachable', async () => {
+    const client = clientWith(jest.fn().mockRejectedValue(new Error('ECONNREFUSED')));
+    await expect(client.ready()).resolves.toBe(false);
+  });
+
+  it('ready returns false on non-ok status', async () => {
+    const client = clientWith(fetchMock(200, { status: 'degraded' }));
+    await expect(client.ready()).resolves.toBe(false);
+  });
+
+  it('live returns true when microservice responds 200', async () => {
+    const client = clientWith(fetchMock(200, { status: 'ok' }));
+    await expect(client.live()).resolves.toBe(true);
+  });
+
+  it('live returns false when microservice is unreachable', async () => {
+    const client = clientWith(jest.fn().mockRejectedValue(new Error('ECONNREFUSED')));
+    await expect(client.live()).resolves.toBe(false);
+  });
+
+  it('healthDetail returns full status when reachable', async () => {
+    const fetchImpl = jest.fn()
+      .mockResolvedValueOnce({ ok: true, status: 200, text: () => Promise.resolve(JSON.stringify({ status: 'ok' })) })
+      .mockResolvedValueOnce({ ok: true, status: 200, text: () => Promise.resolve(JSON.stringify({ status: 'ok', database: 'connected' })) });
+    const client = clientWith(fetchImpl);
+    const detail = await client.healthDetail();
+    expect(detail).toEqual({
+      reachable: true,
+      live: true,
+      ready: true,
+      database: 'connected',
+    });
+  });
+
+  it('healthDetail returns error info when unreachable', async () => {
+    const client = clientWith(jest.fn().mockRejectedValue(new Error('ECONNREFUSED')));
+    const detail = await client.healthDetail();
+    expect(detail.reachable).toBe(false);
+    expect(detail.live).toBe(false);
+    expect(detail.ready).toBe(false);
+    expect(detail.error).toBe('ECONNREFUSED');
+  });
+
+  it('healthDetail returns not-configured error when service URL is empty', async () => {
+    const client = clientWith(fetchMock(200, { status: 'ok' }), {
+      'appData.serviceUrl': '',
+    });
+    const detail = await client.healthDetail();
+    expect(detail.reachable).toBe(false);
+    expect(detail.live).toBe(false);
+    expect(detail.ready).toBe(false);
+    expect(detail.error).toContain('APP_DATA_SERVICE_URL');
+  });
+
+  it('ready returns false when service URL is empty', async () => {
+    const client = clientWith(fetchMock(200, { status: 'ok' }), {
+      'appData.serviceUrl': '',
+    });
+    await expect(client.ready()).resolves.toBe(false);
+  });
+
+  it('live returns false when service URL is empty', async () => {
+    const client = clientWith(fetchMock(200, { status: 'ok' }), {
+      'appData.serviceUrl': '',
+    });
+    await expect(client.live()).resolves.toBe(false);
+  });
 });
 
 describe('RemoteAppDataDeploymentService', () => {

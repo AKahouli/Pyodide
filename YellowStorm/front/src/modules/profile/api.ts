@@ -3,7 +3,7 @@
  */
 
 import { apiClient, API_ENDPOINTS, ApiResponse } from '@/lib/api';
-import type { Session, UpdateProfileData, HealthCheckResult, HealthHistoryResponse, HealthHistoryStats } from './types';
+import type { Session, UpdateProfileData, HealthCheckResult, HealthHistoryResponse, HealthHistoryStats, AppDataHealthResult } from './types';
 import type { User } from '@/modules/auth';
 
 /**
@@ -115,6 +115,19 @@ export async function getHealthStats(minutes?: number): Promise<HealthHistorySta
   const response = await apiClient.get<ApiResponse<HealthHistoryStats>>(
     API_ENDPOINTS.health.stats,
     { params: minutes ? { minutes } : undefined }
+  );
+  return response.data.data;
+}
+
+/**
+ * Get app-data microservice health
+ */
+export async function getAppDataHealth(): Promise<AppDataHealthResult> {
+  const response = await apiClient.get<ApiResponse<AppDataHealthResult>>(
+    API_ENDPOINTS.health.appData,
+    {
+      validateStatus: (status) => status === 200 || status === 503,
+    }
   );
   return response.data.data;
 }

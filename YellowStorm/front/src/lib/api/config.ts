@@ -79,6 +79,7 @@ export const API_ENDPOINTS = {
     history: '/admin/health/history',
     stats: '/admin/health/stats',
     postgres: '/admin/health/postgres',
+    appData: '/app-data/health',
   },
   system: {
     maintenance: '/experimental/system/maintenance',

@@ -24,7 +24,7 @@ export class RemoteAppDataDeploymentService {
 
   resolvePublicUrl(appDataId: string, environment: AppDataEnvironment): string {
     const devBase = (
-      this.config.get<string>('appData.remotePublicBaseUrl') || 'http://localhost:8443'
+      this.config.get<string>('appData.remotePublicBaseUrl') || ''
     ).replace(/\/$/, '');
     if (environment === 'dev') {
       return `${devBase}/v1/apps/${appDataId}/dev`;

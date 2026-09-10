@@ -22,17 +22,26 @@ export class AppDataRemoteHealthController {
     dataTab: boolean;
     remote: boolean;
     remoteReady: boolean;
+    microservice: {
+      reachable: boolean;
+      live: boolean;
+      ready: boolean;
+      database?: string;
+      error?: string;
+    };
   }> {
     if (!this.config.get<boolean>('appData.enabled', false)) {
       throw new ServiceUnavailableException('App Data disabled');
     }
+    const microservice = await this.client.healthDetail();
     return {
       enabled: true,
       mcp: this.config.get<boolean>('appData.mcpEnabled', false),
       publicApi: this.config.get<boolean>('appData.publicApiEnabled', false),
       dataTab: this.config.get<boolean>('appData.dataTabEnabled', false),
       remote: true,
-      remoteReady: await this.client.ready(),
+      remoteReady: microservice.ready,
+      microservice,
     };
   }
 }

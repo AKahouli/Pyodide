@@ -46,10 +46,15 @@ export class AppDataClientService {
   }
 
   private baseUrl(): string {
-    return (this.config.get<string>('appData.serviceUrl') || 'http://localhost:8443').replace(
-      /\/$/,
-      '',
-    );
+    const url = this.config.get<string>('appData.serviceUrl') ?? '';
+    if (!url) {
+      throw new AppDataException(
+        AppDataErrorCode.REMOTE_UNAVAILABLE,
+        'APP_DATA_SERVICE_URL is not configured',
+        HttpStatus.SERVICE_UNAVAILABLE,
+      );
+    }
+    return url.replace(/\/$/, '');
   }
 
   private serviceToken(): string {
@@ -345,6 +350,58 @@ export class AppDataClientService {
     } catch {
       return false;
     }
+  }
+
+  async live(): Promise<boolean> {
+    try {
+      const res = await this.request<{ status: string }>('GET', '/v1/health/live', {
+        timeoutMs: 3_000,
+        tolerant404: true,
+        passthrough: true,
+      });
+      return res.status === 200;
+    } catch {
+      return false;
+    }
+  }
+
+  async healthDetail(): Promise<{
+    reachable: boolean;
+    live: boolean;
+    ready: boolean;
+    database?: string;
+    error?: string;
+  }> {
+    const [liveRes, readyRes] = await Promise.allSettled([
+      this.request<{ status: string }>('GET', '/v1/health/live', {
+        timeoutMs: 3_000,
+        tolerant404: true,
+        passthrough: true,
+      }),
+      this.request<{ status: string; database?: string }>('GET', '/v1/health/ready', {
+        timeoutMs: 3_000,
+        tolerant404: true,
+        passthrough: true,
+      }),
+    ]);
+
+    const live = liveRes.status === 'fulfilled' && liveRes.value.status === 200;
+    const ready =
+      readyRes.status === 'fulfilled' &&
+      readyRes.value.status === 200 &&
+      (readyRes.value.body as { status?: string })?.status === 'ok';
+    const database =
+      readyRes.status === 'fulfilled'
+        ? (readyRes.value.body as { database?: string })?.database
+        : undefined;
+
+    const reachable = liveRes.status === 'fulfilled' || readyRes.status === 'fulfilled';
+    const error =
+      !reachable
+        ? (liveRes.status === 'rejected' ? liveRes.reason?.message : readyRes.reason?.message) ?? 'unreachable'
+        : undefined;
+
+    return { reachable, live, ready, database, ...(error ? { error } : {}) };
   }
 
   private buildUrl(path: string, query?: Record<string, string | undefined>): string {
