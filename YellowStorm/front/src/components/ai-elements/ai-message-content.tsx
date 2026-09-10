@@ -23,7 +23,7 @@ import { WebPreview, WebPreviewNavigation, WebPreviewBody, isolateGeneratedPrevi
 import { InlineCitation, InlineCitationCard, InlineCitationCardTrigger, InlineCitationCardBody, InlineCitationCarousel, InlineCitationCarouselContent, InlineCitationCarouselItem, InlineCitationSource, InlineCitationQuote } from './inline-citation';
 import { Button } from '@/components/ui/button';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
-import { PlayIcon, CheckCircle2, Circle, ListTodo, AlertTriangle, Loader2, Bot, Eye, Download, FileText, XCircle, Maximize, Minimize } from 'lucide-react';
+import { PlayIcon, CheckCircle2, Circle, ListTodo, AlertTriangle, Loader2, Bot, BotIcon, Eye, Download, FileText, XCircle, Maximize, Minimize } from 'lucide-react';
 import type { BundledLanguage } from 'shiki';
 import type { ChartComponentData } from '@/modules/conversation/types';
 import type { ChoiceComponentData, ChoiceInteractionMetadata } from '@/modules/conversation/types';
@@ -134,6 +134,8 @@ export interface TaskPart {
   title: string;
   items: string[];
   status?: 'pending' | 'in_progress' | 'completed';
+  /** Emitting agent, when the runtime provided it — used to open the agent edit UI. */
+  agentId?: string;
 }
 
 export interface ErrorPart {
@@ -228,6 +230,8 @@ export type AIMessageContentProps = HTMLAttributes<HTMLDivElement> & {
   taskDisplay?: 'raw' | 'activity';
   showTaskDiagnostics?: boolean;
   redactTaskDiagnostics?: boolean;
+  /** When provided, task headers get a clickable agent icon (e.g. open the agent edit UI). */
+  onTaskAgentClick?: (task: { title: string; agentId?: string }) => void;
   citationScope?: { conversationId: string; messageId: string };
   /**
    * Called after render with every markdown heading (h1–h6) rendered by this
@@ -254,7 +258,7 @@ function redactDiagnosticText(value: string): string {
 /**
  * AIMessageContent - Renders structured AI message content using ai-sdk components
  */
-export const AIMessageContent = ({ parts, className, isStreaming = false, onComponentAction, onSubmitQuestions, choiceInteractions, taskDisplay = 'raw', showTaskDiagnostics = true, redactTaskDiagnostics = true, citationScope, onOutlineHeadings, ...props }: AIMessageContentProps) => {
+export const AIMessageContent = ({ parts, className, isStreaming = false, onComponentAction, onSubmitQuestions, choiceInteractions, taskDisplay = 'raw', showTaskDiagnostics = true, redactTaskDiagnostics = false, onTaskAgentClick, citationScope, onOutlineHeadings, ...props }: AIMessageContentProps) => {
   const choicePrompts = new Set(parts.filter((part): part is ChoicePart => part.type === 'choice' && part.status === 'ready').map((part) => part.prompt.trim()).filter(Boolean));
   const hasTask = parts.some((part) => part.type === 'task');
   const taskActivity: TaskActivityStep[] = [];
@@ -301,7 +305,7 @@ export const AIMessageContent = ({ parts, className, isStreaming = false, onComp
       {visibleParts.map((part, index) => {
         if (part.type === 'choice' && groupedChoiceIds.has(part.componentId)) return null;
         return (
-          <AIMessagePart key={part.type === 'choice' ? `choice:${part.componentId}` : index} part={part} partIndex={index} isStreaming={isStreaming} onComponentAction={onComponentAction} choiceInteractions={choiceInteractions} taskDisplay={taskDisplay} taskActivity={taskActivity} showTaskDiagnostics={showTaskDiagnostics} redactTaskDiagnostics={redactTaskDiagnostics} citationScope={citationScope} onOutlineHeadings={onOutlineHeadings ? (partHeadings) => publishMergedOutline(index, partHeadings) : undefined} />
+          <AIMessagePart key={part.type === 'choice' ? `choice:${part.componentId}` : index} part={part} partIndex={index} isStreaming={isStreaming} onComponentAction={onComponentAction} choiceInteractions={choiceInteractions} taskDisplay={taskDisplay} taskActivity={taskActivity} showTaskDiagnostics={showTaskDiagnostics} redactTaskDiagnostics={redactTaskDiagnostics} onTaskAgentClick={onTaskAgentClick} citationScope={citationScope} onOutlineHeadings={onOutlineHeadings ? (partHeadings) => publishMergedOutline(index, partHeadings) : undefined} />
         );
       })}
     </div>
@@ -322,12 +326,13 @@ type AIMessagePartProps = {
   taskActivity?: TaskActivityStep[];
   showTaskDiagnostics?: boolean;
   redactTaskDiagnostics?: boolean;
+  onTaskAgentClick?: (task: { title: string; agentId?: string }) => void;
   citationScope?: { conversationId: string; messageId: string };
   onOutlineHeadings?: (headings: MarkdownHeadingInfo[]) => void;
 };
 
 const AIMessagePart = memo(
-  function AIMessagePart({ part, partIndex, isStreaming = false, onComponentAction, choiceInteractions, taskDisplay = 'raw', taskActivity = [], showTaskDiagnostics = true, redactTaskDiagnostics = true, citationScope, onOutlineHeadings }: AIMessagePartProps) {
+  function AIMessagePart({ part, partIndex, isStreaming = false, onComponentAction, choiceInteractions, taskDisplay = 'raw', taskActivity = [], showTaskDiagnostics = true, redactTaskDiagnostics = false, onTaskAgentClick, citationScope, onOutlineHeadings }: AIMessagePartProps) {
     switch (part.type) {
       case 'text': {
         // Anchor ids must be globally unique across messages: scope them by the
@@ -354,7 +359,7 @@ const AIMessagePart = memo(
       case 'choice':
         return <ChoicePartRenderer {...part} onAction={onComponentAction} submittedInteraction={choiceInteractions?.get(part.componentId)} externallyDisabled={isStreaming} />;
       case 'task':
-        return <TaskPartRenderer title={part.title} items={part.items} status={part.status} isStreaming={isStreaming} activity={taskDisplay === 'activity' ? taskActivity : undefined} showDiagnostics={showTaskDiagnostics} redactDiagnostics={redactTaskDiagnostics} />;
+        return <TaskPartRenderer title={part.title} items={part.items} status={part.status} isStreaming={isStreaming} activity={taskDisplay === 'activity' ? taskActivity : undefined} showDiagnostics={showTaskDiagnostics} redactDiagnostics={redactTaskDiagnostics} onAgentClick={onTaskAgentClick ? () => onTaskAgentClick({ title: part.title, agentId: part.agentId }) : undefined} />;
       case 'error':
         return <ErrorPartRenderer title={part.title} content={part.content} />;
       case 'sources':
@@ -1012,7 +1017,7 @@ const ToolActivityPartRenderer = ({ part, isStreaming }: { part: ToolActivityPar
 };
 
 // Task Part
-const TaskPartRenderer = ({ title, items, status, isStreaming = false, activity, showDiagnostics = true, redactDiagnostics = true }: { title: string; items: string[]; status?: 'pending' | 'in_progress' | 'completed'; isStreaming?: boolean; activity?: TaskActivityStep[]; showDiagnostics?: boolean; redactDiagnostics?: boolean }) => {
+const TaskPartRenderer = ({ title, items, status, isStreaming = false, activity, showDiagnostics = true, redactDiagnostics = false, onAgentClick }: { title: string; items: string[]; status?: 'pending' | 'in_progress' | 'completed'; isStreaming?: boolean; activity?: TaskActivityStep[]; showDiagnostics?: boolean; redactDiagnostics?: boolean; onAgentClick?: () => void }) => {
   const { t: tCommon } = useModuleTranslation('common');
   const [diagnosticsOpen, setDiagnosticsOpen] = useState(false);
   const activityMode = activity !== undefined;
@@ -1029,7 +1034,19 @@ const TaskPartRenderer = ({ title, items, status, isStreaming = false, activity,
     <>
       <Task className='my-2' defaultOpen={isStreaming}>
         <div className='flex items-center gap-1'>
-          <TaskTrigger className='min-w-0 flex-1' title={formatLabel(title)} active={isStreaming && status !== 'completed'} />
+          {onAgentClick && (
+            <button
+              type='button'
+              onClick={onAgentClick}
+              aria-label={tCommon('ai.task.editAgent')}
+              title={tCommon('ai.task.editAgent')}
+              className='relative flex size-8 shrink-0 cursor-pointer items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-accent hover:text-foreground'
+            >
+              {isStreaming && status !== 'completed' && <Loader2 data-agent-spinner className='absolute size-7 animate-spin text-running [animation-duration:1.2s]' />}
+              <BotIcon className='size-4' />
+            </button>
+          )}
+          <TaskTrigger className='min-w-0 flex-1' title={formatLabel(title)} active={isStreaming && status !== 'completed'} hideIcon={!!onAgentClick} />
           {activityMode && showDiagnostics && <TaskDiagnosticsTrigger aria-label={tCommon('ai.task.diagnostics.open')} title={tCommon('ai.task.diagnostics.open')} onClick={() => setDiagnosticsOpen(true)} />}
         </div>
         <TaskContent>

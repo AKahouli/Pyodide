@@ -241,7 +241,7 @@ export const AppSidebar = memo(function AppSidebar() {
   const navigate = useNavigate();
   const location = useLocation();
   const { t } = useModuleTranslation('sidebar');
-  const { hasAnyPermission } = usePermissions();
+  const { hasAnyPermission, canUseFeature, canSeeMenu } = usePermissions();
   const canOpenGovernance = hasAnyPermission(['governance.read', 'governance.*', '*']);
   const canOpenSemanticModels = hasAnyPermission(['semantic_models.read', 'semantic_models.*', '*']);
   const [featureVisibility, setFeatureVisibility] = useState<FeatureVisibility>(DEFAULT_FEATURE_VISIBILITY);
@@ -462,7 +462,7 @@ export const AppSidebar = memo(function AppSidebar() {
       </SidebarHeader>
 
       <SidebarContent className='my-3 flex min-h-0 w-full flex-col overflow-hidden'>
-        <SidebarGroup className='pb-1'>
+        {canSeeMenu('platform') && <SidebarGroup className='pb-1'>
           <SidebarMenu>
             <SidebarMenuItem>
               <SidebarMenuButton
@@ -477,7 +477,7 @@ export const AppSidebar = memo(function AppSidebar() {
               </SidebarMenuButton>
             </SidebarMenuItem>
           </SidebarMenu>
-        </SidebarGroup>
+        </SidebarGroup>}
 
         <OutcomeGroup
           label={t('groups.ask.label')}
@@ -489,7 +489,7 @@ export const AppSidebar = memo(function AppSidebar() {
           onOpenChange={(open) => handleGroupOpenChange('ask', open)}
         >
           <SidebarMenu>
-            {featureVisibility.conversation && (
+            {featureVisibility.conversation && canUseFeature('conversation') && canSeeMenu('newChat') && (
               <SidebarMenuItem>
                 <SidebarMenuButton tooltip={t('actions.newChat.tooltip')} onClick={() => navigate('/')}>
                   <Sparkles />
@@ -602,8 +602,8 @@ export const AppSidebar = memo(function AppSidebar() {
           onOpenChange={(open) => handleGroupOpenChange('knowledge', open)}
         >
           <SidebarMenu>
-            {featureVisibility.workspace && <WorkspaceButton />}
-            {featureVisibility.semanticModel && canOpenSemanticModels && <SemanticModelButton />}
+            {featureVisibility.workspace && canUseFeature('workspace') && canSeeMenu('workspace') && <WorkspaceButton />}
+            {featureVisibility.semanticModel && canUseFeature('semanticModel') && canSeeMenu('semanticModels') && canOpenSemanticModels && <SemanticModelButton />}
           </SidebarMenu>
         </OutcomeGroup>
 
@@ -617,7 +617,7 @@ export const AppSidebar = memo(function AppSidebar() {
           onOpenChange={(open) => handleGroupOpenChange('automate', open)}
         >
           <SidebarMenu>
-            {featureVisibility.playbook && <PlaybookButton />}
+            {featureVisibility.playbook && canUseFeature('playbook') && canSeeMenu('playbook') && <PlaybookButton />}
           </SidebarMenu>
 
           <OutcomeSubgroup
@@ -630,13 +630,13 @@ export const AppSidebar = memo(function AppSidebar() {
               location.pathname.startsWith('/groups')
             }
           >
-            {featureVisibility.agents && <AgentButton />}
-            <TeamButton />
-            <GroupsButton />
+            {featureVisibility.agents && canUseFeature('agents') && canSeeMenu('agents') && <AgentButton />}
+            {canSeeMenu('teams') && <TeamButton />}
+            {canSeeMenu('groups') && <GroupsButton />}
           </OutcomeSubgroup>
 
           <SidebarMenu>
-            {featureVisibility.worky && <WorkyButton />}
+            {featureVisibility.worky && canUseFeature('worky') && canSeeMenu('worky') && <WorkyButton />}
           </SidebarMenu>
 
           <OutcomeSubgroup
@@ -645,8 +645,8 @@ export const AppSidebar = memo(function AppSidebar() {
             icon={<Plug />}
             active={location.pathname.startsWith('/apps') || location.pathname.startsWith('/app-market')}
           >
-            <ConnectedAppButton />
-            {featureVisibility.appMarketplace && <AppMarketplaceButton />}
+            {canSeeMenu('connectedApps') && <ConnectedAppButton />}
+            {featureVisibility.appMarketplace && canUseFeature('appMarketplace') && canSeeMenu('appMarketplace') && <AppMarketplaceButton />}
           </OutcomeSubgroup>
         </OutcomeGroup>
 
@@ -660,8 +660,8 @@ export const AppSidebar = memo(function AppSidebar() {
           onOpenChange={(open) => handleGroupOpenChange('govern', open)}
         >
           <SidebarMenu>
-            {featureVisibility.governance && canOpenGovernance && <GovernanceButton />}
-            <AdminButton />
+            {featureVisibility.governance && canUseFeature('governance') && canSeeMenu('governance') && canOpenGovernance && <GovernanceButton />}
+            {canSeeMenu('admin') && <AdminButton />}
           </SidebarMenu>
         </OutcomeGroup>
       </SidebarContent>

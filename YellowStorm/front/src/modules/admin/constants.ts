@@ -5,6 +5,7 @@
 import { Users, Shield, FileText, CreditCard, BarChart3, Settings, ScrollText, Flag, Cpu, Wrench, Puzzle, Bot, KeyRound, Plug, Cable, Palette, Sparkles, FolderCog, Wand2, MessageCircle, MessageSquare, Gauge } from 'lucide-react';
 import type { AdminMenuItem } from './types';
 import type { FeatureVisibility } from './types';
+import type { ModuleTranslationKey } from '@/modules/localization';
 
 export const DEFAULT_FEATURE_VISIBILITY: FeatureVisibility = Object.freeze({
   conversation: true,
@@ -17,6 +18,45 @@ export const DEFAULT_FEATURE_VISIBILITY: FeatureVisibility = Object.freeze({
   semanticModel: true,
   platformCopilot: false,
 });
+
+export const FEATURE_PERMISSION_ITEMS: {
+  key: keyof FeatureVisibility;
+  permission: string;
+  labelKey: ModuleTranslationKey<'admin'>;
+  descriptionKey: ModuleTranslationKey<'admin'>;
+}[] = [
+  { key: 'conversation', permission: 'feature.conversation', labelKey: 'system.features.items.conversation.label', descriptionKey: 'system.features.items.conversation.description' },
+  { key: 'workspace', permission: 'feature.workspace', labelKey: 'system.features.items.workspace.label', descriptionKey: 'system.features.items.workspace.description' },
+  { key: 'playbook', permission: 'feature.playbook', labelKey: 'system.features.items.playbook.label', descriptionKey: 'system.features.items.playbook.description' },
+  { key: 'governance', permission: 'feature.governance', labelKey: 'system.features.items.governance.label', descriptionKey: 'system.features.items.governance.description' },
+  { key: 'appMarketplace', permission: 'feature.app_marketplace', labelKey: 'system.features.items.appMarketplace.label', descriptionKey: 'system.features.items.appMarketplace.description' },
+  { key: 'worky', permission: 'feature.worky', labelKey: 'system.features.items.worky.label', descriptionKey: 'system.features.items.worky.description' },
+  { key: 'agents', permission: 'feature.agents', labelKey: 'system.features.items.agents.label', descriptionKey: 'system.features.items.agents.description' },
+  { key: 'semanticModel', permission: 'feature.semantic_model', labelKey: 'system.features.items.semanticModel.label', descriptionKey: 'system.features.items.semanticModel.description' },
+  { key: 'platformCopilot', permission: 'feature.platform_copilot', labelKey: 'system.features.items.platformCopilot.label', descriptionKey: 'system.features.items.platformCopilot.description' },
+];
+
+export const MENU_PERMISSION_ITEMS = [
+  { key: 'platform', permission: 'menu.platform', labelKey: 'roles.permissions.menus.platform' },
+  { key: 'newChat', permission: 'menu.new_chat', labelKey: 'roles.permissions.menus.newChat' },
+  { key: 'workspace', permission: 'menu.workspace', labelKey: 'roles.permissions.menus.workspace' },
+  { key: 'semanticModels', permission: 'menu.semantic_models', labelKey: 'roles.permissions.menus.semanticModels' },
+  { key: 'playbook', permission: 'menu.playbook', labelKey: 'roles.permissions.menus.playbook' },
+  { key: 'agents', permission: 'menu.agents', labelKey: 'roles.permissions.menus.agents' },
+  { key: 'teams', permission: 'menu.teams', labelKey: 'roles.permissions.menus.teams' },
+  { key: 'groups', permission: 'menu.groups', labelKey: 'roles.permissions.menus.groups' },
+  { key: 'worky', permission: 'menu.worky', labelKey: 'roles.permissions.menus.worky' },
+  { key: 'connectedApps', permission: 'menu.connected_apps', labelKey: 'roles.permissions.menus.connectedApps' },
+  { key: 'appMarketplace', permission: 'menu.app_marketplace', labelKey: 'roles.permissions.menus.appMarketplace' },
+  { key: 'governance', permission: 'menu.governance', labelKey: 'roles.permissions.menus.governance' },
+  { key: 'admin', permission: 'menu.admin', labelKey: 'roles.permissions.menus.admin' },
+] as const satisfies readonly {
+  key: string;
+  permission: string;
+  labelKey: ModuleTranslationKey<'admin'>;
+}[];
+
+export type MenuPermissionKey = (typeof MENU_PERMISSION_ITEMS)[number]['key'];
 
 // Admin menu items with their required permissions
 export const ADMIN_MENU_ITEMS: AdminMenuItem[] = [

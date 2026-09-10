@@ -143,7 +143,7 @@ export const MessageActions = memo(function MessageActions({ message, isLastAiMe
         ? undefined
         : new Intl.DateTimeFormat(language, { dateStyle: 'medium', timeStyle: 'medium' }).format(new Date(message.createdAt));
       const markdown = componentsToMarkdown(message.components || []);
-      const blob = await exportBlocksToDocx([{ label: t('export.assistantLabel'), timestamp: formattedCreatedAt, markdown }], exportTitle);
+      const blob = await exportBlocksToDocx([{ label: t('export.assistantLabel'), timestamp: formattedCreatedAt, markdown, components: message.components || [] }], exportTitle);
       downloadBlob(blob, buildExportFilename(exportTitle, 'docx'));
       showSuccess(t('toasts.export.docxSuccess'));
     } catch {

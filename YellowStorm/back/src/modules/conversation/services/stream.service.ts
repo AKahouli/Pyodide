@@ -50,7 +50,6 @@ import { ResponseReliabilityService } from './response-reliability.service';
 import { ConversationAgentRequestBuilder, type BuiltAgentExecutionRequest } from './conversation-agent-request.builder';
 import { SemanticModelService } from '../../semantic-model/services/semantic-model.service';
 import { PLATFORM_COPILOT } from '../../agent/constants/platform-copilot.constants';
-import { sanitizePublicComponent } from '../utils/public-component-sanitizer';
 import { ConversationSettingsService } from '../../system/conversation-settings.service';
 import type {
   ConversationLatencyMetricsV1,
@@ -1620,11 +1619,11 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
             } else {
               const buffer = this.componentBuffers.get(streamKey);
               if (buffer) {
-                this.applyChunkToBuffer(buffer, action, comp, guardrailDecision);
+                this.applyChunkToBuffer(buffer, action, comp, guardrailDecision, chunk.metadata?.agent_id);
               }
 
               // Extract component type and data from oneof structure
-              const { type, data } = this.extractComponentData(comp);
+              const { type, data } = this.extractComponentData(comp, chunk.metadata?.agent_id);
               if (guardrailDecision) {
                 data.guardrailDecision = guardrailDecision;
               }
@@ -2158,8 +2157,8 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
     return sharedGetComponentType(comp);
   }
 
-  private extractComponentData(comp: any): { type: ComponentType; data: Record<string, unknown> } {
-    return sharedExtractComponentData(comp);
+  private extractComponentData(comp: any, agentId?: string): { type: ComponentType; data: Record<string, unknown> } {
+    return sharedExtractComponentData(comp, agentId);
   }
 
   /**
@@ -2176,9 +2175,10 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
     action: string,
     comp: any,
     guardrailDecision?: Record<string, unknown>,
+    agentId?: string,
   ): void {
     const componentId = comp.id;
-    const { type, data } = this.extractComponentData(comp);
+    const { type, data } = this.extractComponentData(comp, agentId);
     if (guardrailDecision) {
       data.guardrailDecision = guardrailDecision;
     }
@@ -2701,9 +2701,9 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
   }
 
   private sanitizeComponent(component: MessageComponent): MessageComponent {
-    return sanitizePublicComponent(component, {
-      redactSensitiveText: this.conversationSettings?.shouldRedactSensitiveText() !== false,
-      includeAgentDetail: true,
-    });
+    // Conversation streams render exactly as stored — display-time
+    // sanitization was removed by product decision. Public share snapshots
+    // are still sanitized separately in ShareService.
+    return component;
   }
 }

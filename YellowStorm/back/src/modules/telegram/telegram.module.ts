@@ -5,6 +5,7 @@ import telegramConfig from '@config/telegram.config';
 import { CryptoService } from '@common/services/crypto.service';
 import { AgentModule } from '@modules/agent/agent.module';
 import { ConversationModule } from '@modules/conversation/conversation.module';
+import { SystemModule } from '@modules/system/system.module';
 import { LoggerModule } from '@modules/logger';
 import { SharedAgent, SharedAgentSchema } from '@modules/agent/schemas/shared-agent.schema';
 import { User, UserSchema } from '@modules/user/schemas/user.schema';
@@ -32,6 +33,7 @@ import { TelegramWebhookService } from './services/telegram-webhook.service';
       { name: SharedAgent.name, schema: SharedAgentSchema },
     ]),
     LoggerModule,
+    SystemModule,
     AgentModule,
     ConversationModule,
   ],

@@ -21,21 +21,21 @@ import { showError, showSuccess } from '@/lib/notifications';
 import { cn } from '@/lib/utils';
 import { useModuleTranslation } from '@/modules/localization';
 import { getFeatureVisibility, updateFeatureVisibility } from '../api';
-import { DEFAULT_FEATURE_VISIBILITY } from '../constants';
+import { DEFAULT_FEATURE_VISIBILITY, FEATURE_PERMISSION_ITEMS } from '../constants';
 import { usePermissions } from '../hooks/usePermissions';
 import type { FeatureVisibility } from '../types';
 
-const FEATURES = [
-  { key: 'conversation', icon: MessageSquare, labelKey: 'system.features.items.conversation.label', descriptionKey: 'system.features.items.conversation.description' },
-  { key: 'workspace', icon: Layers3, labelKey: 'system.features.items.workspace.label', descriptionKey: 'system.features.items.workspace.description' },
-  { key: 'playbook', icon: Workflow, labelKey: 'system.features.items.playbook.label', descriptionKey: 'system.features.items.playbook.description' },
-  { key: 'governance', icon: ShieldCheck, labelKey: 'system.features.items.governance.label', descriptionKey: 'system.features.items.governance.description' },
-  { key: 'appMarketplace', icon: Store, labelKey: 'system.features.items.appMarketplace.label', descriptionKey: 'system.features.items.appMarketplace.description' },
-  { key: 'worky', icon: Sparkles, labelKey: 'system.features.items.worky.label', descriptionKey: 'system.features.items.worky.description' },
-  { key: 'agents', icon: Bot, labelKey: 'system.features.items.agents.label', descriptionKey: 'system.features.items.agents.description' },
-  { key: 'semanticModel', icon: Network, labelKey: 'system.features.items.semanticModel.label', descriptionKey: 'system.features.items.semanticModel.description' },
-  { key: 'platformCopilot', icon: Sparkles, labelKey: 'system.features.items.platformCopilot.label', descriptionKey: 'system.features.items.platformCopilot.description' },
-] as const;
+const FEATURE_ICONS = {
+  conversation: MessageSquare,
+  workspace: Layers3,
+  playbook: Workflow,
+  governance: ShieldCheck,
+  appMarketplace: Store,
+  worky: Sparkles,
+  agents: Bot,
+  semanticModel: Network,
+  platformCopilot: Sparkles,
+} as const;
 
 export function FeatureVisibilityCard() {
   const { t } = useModuleTranslation('admin');
@@ -99,7 +99,7 @@ export function FeatureVisibilityCard() {
               <span className="hidden text-sm text-muted-foreground sm:inline">
                 {loading
                   ? t('system.features.status.loading')
-                  : t('system.features.status.summary', { enabled: enabledCount, total: FEATURES.length })}
+                  : t('system.features.status.summary', { enabled: enabledCount, total: FEATURE_PERMISSION_ITEMS.length })}
               </span>
               <ChevronDown className={cn('h-4 w-4 transition-transform', open && 'rotate-180')} />
             </div>
@@ -116,8 +116,8 @@ export function FeatureVisibilityCard() {
               </div>
             ) : (
               <div className="divide-y rounded-lg border">
-                {FEATURES.map((feature) => {
-                  const Icon = feature.icon;
+                {FEATURE_PERMISSION_ITEMS.map((feature) => {
+                  const Icon = FEATURE_ICONS[feature.key];
                   const id = `feature-visibility-${feature.key}`;
                   return (
                     <div key={feature.key} className="flex items-center justify-between gap-4 p-4">

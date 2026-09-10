@@ -1,12 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef } from 'react';
 import { toast } from 'sonner';
-import { BrainCircuit, ChevronDown, X, Reply, Search } from 'lucide-react';
+import { BrainCircuit, ChevronDown, X, Reply } from 'lucide-react';
 import Input from '@/components/ai-elements/input';
 import { Button } from '@/components/ui/button';
-import { cn } from '@/lib/utils';
 import { PromptInputButton } from '@/components/ai-elements/prompt-input';
 import type { PromptInputMessage } from '@/components/ai-elements/prompt-input';
-import { useConversationStore, useIsAwaitingFirstChunk, useInputDisabled, useReplyingToMessage, useSelectedWorkspaceIds, useSetSelectedWorkspaceIds, useSelectedSemanticModelId, useDeepSearchEnabled, useSetDeepSearchEnabled, useSelectedModelId, useSelectedReasoningEffort, useSetSelectedReasoningEffort } from '../store';
+import { useConversationStore, useIsAwaitingFirstChunk, useInputDisabled, useReplyingToMessage, useSelectedWorkspaceIds, useSetSelectedWorkspaceIds, useSelectedSemanticModelId, useDeepSearchEnabled, useSelectedModelId, useSelectedReasoningEffort, useSetSelectedReasoningEffort } from '../store';
 import { UsageLimitBanner } from '@/modules/usage';
 import { useUsage } from '@/modules/usage/UsageContext';
 import { useConversationFileUpload } from '../hooks/useConversationFileUpload';
@@ -48,7 +47,6 @@ export function ConversationInput({ conversationId }: ConversationInputProps) {
   const { t } = useModuleTranslation('conversation');
   const { user } = useAuth();
   const deepSearchEnabled = useDeepSearchEnabled();
-  const setDeepSearchEnabled = useSetDeepSearchEnabled();
   const selectedModelId = useSelectedModelId();
   const selectedReasoningEffort = useSelectedReasoningEffort();
   const setSelectedReasoningEffort = useSetSelectedReasoningEffort();
@@ -280,16 +278,6 @@ export function ConversationInput({ conversationId }: ConversationInputProps) {
         enableTeamMentions={!runtimeManaged}
         extraTools={
           <>
-            <PromptInputButton
-              type='button'
-              onClick={() => setDeepSearchEnabled(!deepSearchEnabled)}
-              className={cn(deepSearchEnabled && 'bg-primary/10 text-primary')}
-              title={t('input.deepSearch')}
-              aria-label={t('input.deepSearch')}
-              aria-pressed={deepSearchEnabled}
-            >
-              <Search className='h-4 w-4' />
-            </PromptInputButton>
             {!governedMode && !platformCopilot && !hasStickyTaggedAgents && reasoningEfforts.length > 0 && (
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>

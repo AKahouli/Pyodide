@@ -26,7 +26,7 @@ const conversationVisibleComponentTypes = new Set([
   'choice',
 ]);
 
-function getComponentType(component: MessageComponent): string {
+export function getComponentType(component: MessageComponent): string {
   return typeof component.type === 'object' && component.type !== null
     ? (component.type as { type?: string }).type || ''
     : component.type;
@@ -268,6 +268,7 @@ function mapSingleComponent(comp: MessageComponent): MessageContentPart {
         title: (data.title as string) || '',
         items: (data.items as string[]) || [],
         status: (data.status as 'pending' | 'in_progress' | 'completed') || undefined,
+        agentId: (data.agentId as string) || undefined,
       };
     case 'error':
       return {
@@ -572,66 +573,75 @@ export function normalizeChoiceComponentData(data: unknown): ChoiceComponentData
 /**
  * Converts message components to markdown for copy-to-clipboard
  */
+export function isVisibleConversationComponent(comp: MessageComponent): boolean {
+  return Boolean(comp) && conversationVisibleComponentTypes.has(getComponentType(comp));
+}
+
+/** True for components exported as rendered visuals (images) rather than markdown. */
+export function isVisualConversationComponent(comp: MessageComponent): boolean {
+  const type = getComponentType(comp);
+  return type === 'chart' || type === 'webPreview';
+}
+
+/** Converts a single visible component to markdown (chart/webPreview have none). */
+export function componentToMarkdown(comp: MessageComponent): string {
+  const data = comp.data || {};
+  switch (comp.type) {
+    case 'text':
+      return (data.content as string) || '';
+    case 'code': {
+      const lang = (data.language as string) || '';
+      const content = (data.content as string) || '';
+      return `\`\`\`${lang}\n${content}\n\`\`\``;
+    }
+    case 'plan': {
+      const title = (data.title as string) || '';
+      const steps = (data.steps as string[]) || [];
+      return `**${title}**\n${steps.map((s) => `- ${s}`).join('\n')}`;
+    }
+    case 'checkpoint':
+      return `---\n**${(data.content as string) || ''}**`;
+    case 'error': {
+      const errTitle = (data.title as string) || translateConversation('messageActions.markdown.errorFallback');
+      const errContent = (data.content as string) || '';
+      return `> **${errTitle}**: ${errContent}`;
+    }
+    case 'sandbox': {
+      const code = (data.code as string) || '';
+      const output = (data.output as string) || '';
+      const error = (data.error as string) || '';
+      let result = `\`\`\`python\n${code}\n\`\`\``;
+      if (output) result += `\n\n${translateConversation('messageActions.markdown.outputLabel')}\n\`\`\`\n${output}\n\`\`\``;
+      if (error) result += `\n\n${translateConversation('messageActions.markdown.errorLabel')}\n\`\`\`\n${error}\n\`\`\``;
+      return result;
+    }
+    case 'webPreview': {
+      const content = (data.content as string) || '';
+      return `\`\`\`html\n${content}\n\`\`\``;
+    }
+    case 'artifact': {
+      const filename = (data.filename as string) || 'file';
+      return `📎 [${filename}]`;
+    }
+    case 'citation': {
+      const reference = (data.reference as string) || '';
+      const source = (data.source as string) || (data.fileName as string) || translateConversation('messageActions.markdown.defaultCitation');
+      const displayLabel = reference || source;
+      const page = (data.page as string) || '';
+      return page ? `[${displayLabel}, p.${page}]` : `[${displayLabel}]`;
+    }
+    default:
+      return (data.content as string) || '';
+  }
+}
+
 export function componentsToMarkdown(components: MessageComponent[]): string {
   if (!components || !Array.isArray(components)) {
     return '';
   }
-  const fallbackErrorTitle = translateConversation('messageActions.markdown.errorFallback');
-  const outputLabel = translateConversation('messageActions.markdown.outputLabel');
-  const errorLabel = translateConversation('messageActions.markdown.errorLabel');
-  const defaultCitationSource = translateConversation('messageActions.markdown.defaultCitation');
   return components
-    .filter((comp) => comp && conversationVisibleComponentTypes.has(getComponentType(comp)))
-    .map((comp) => {
-      const data = comp.data || {};
-      switch (comp.type) {
-        case 'text':
-          return (data.content as string) || '';
-        case 'code': {
-          const lang = (data.language as string) || '';
-          const content = (data.content as string) || '';
-          return `\`\`\`${lang}\n${content}\n\`\`\``;
-        }
-        case 'plan': {
-          const title = (data.title as string) || '';
-          const steps = (data.steps as string[]) || [];
-          return `**${title}**\n${steps.map((s) => `- ${s}`).join('\n')}`;
-        }
-        case 'checkpoint':
-          return `---\n**${(data.content as string) || ''}**`;
-        case 'error': {
-          const errTitle = (data.title as string) || fallbackErrorTitle;
-          const errContent = (data.content as string) || '';
-          return `> **${errTitle}**: ${errContent}`;
-        }
-        case 'sandbox': {
-          const code = (data.code as string) || '';
-          const output = (data.output as string) || '';
-          const error = (data.error as string) || '';
-          let result = `\`\`\`python\n${code}\n\`\`\``;
-          if (output) result += `\n\n${outputLabel}\n\`\`\`\n${output}\n\`\`\``;
-          if (error) result += `\n\n${errorLabel}\n\`\`\`\n${error}\n\`\`\``;
-          return result;
-        }
-        case 'webPreview': {
-          const content = (data.content as string) || '';
-          return `\`\`\`html\n${content}\n\`\`\``;
-        }
-        case 'artifact': {
-          const filename = (data.filename as string) || 'file';
-          return `📎 [${filename}]`;
-        }
-        case 'citation': {
-          const reference = (data.reference as string) || '';
-          const source = (data.source as string) || (data.fileName as string) || defaultCitationSource;
-          const displayLabel = reference || source;
-          const page = (data.page as string) || '';
-          return page ? `[${displayLabel}, p.${page}]` : `[${displayLabel}]`;
-        }
-        default:
-          return (data.content as string) || '';
-      }
-    })
+    .filter((comp) => isVisibleConversationComponent(comp))
+    .map((comp) => componentToMarkdown(comp))
     .filter(Boolean)
     .join('\n\n');
 }

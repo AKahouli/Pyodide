@@ -2,8 +2,8 @@ import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
-import { ArrowLeft, FileDown, FileText, Globe, Loader2, Pencil, Share, ShieldCheck, Trash2, Users } from 'lucide-react';
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
+import { ArrowLeft, FileDown, FileText, Globe, Loader2, Pencil, Share2, ShieldCheck, Trash2, Users } from 'lucide-react';
 import { useConversationStore, useCurrentConversation } from '../store';
 import { useTypewriter } from '../hooks/useTypewriter';
 import { fetchMessages } from '../api';
@@ -179,29 +179,22 @@ export function ConversationHeader() {
               </Tooltip>
             </TooltipProvider>
           )}
-          {!isGoverned && <TooltipProvider>
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button variant='ghost' size='icon' onClick={handleShare} className='size-11 shrink-0 md:size-9' aria-label={t('header.tooltips.share')}>
-                  <Share className='h-4 w-4' />
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent>
-                <p>{t('header.tooltips.share')}</p>
-              </TooltipContent>
-            </Tooltip>
-          </TooltipProvider>}
           {!isGoverned && (
             <TooltipProvider>
               <Tooltip>
                 <TooltipTrigger asChild>
                   <DropdownMenu>
                     <DropdownMenuTrigger asChild>
-                      <Button variant='ghost' size='icon' className='size-11 shrink-0 md:size-9' aria-label={t('header.actions.export')} disabled={isExportingDocx || isExportingHtml}>
-                        {isExportingDocx || isExportingHtml ? <Loader2 className='h-4 w-4 animate-spin' /> : <FileDown className='h-4 w-4' />}
+                      <Button variant='ghost' size='icon' className='size-11 shrink-0 md:size-9' aria-label={t('header.tooltips.share')} disabled={isExportingDocx || isExportingHtml}>
+                        {isExportingDocx || isExportingHtml ? <Loader2 className='h-4 w-4 animate-spin' /> : <Share2 className='h-4 w-4' />}
                       </Button>
                     </DropdownMenuTrigger>
                     <DropdownMenuContent align='end'>
+                      <DropdownMenuItem onClick={handleShare}>
+                        <Share2 className='h-3.5 w-3.5 mr-2' />
+                        {t('header.tooltips.share')}
+                      </DropdownMenuItem>
+                      <DropdownMenuSeparator />
                       <DropdownMenuItem onClick={() => void handleExportDocx()}>
                         <FileText className='h-3.5 w-3.5 mr-2' />
                         {t('messageActions.exportDocx')}
@@ -218,7 +211,7 @@ export function ConversationHeader() {
                   </DropdownMenu>
                 </TooltipTrigger>
                 <TooltipContent>
-                  <p>{t('header.actions.export')}</p>
+                  <p>{t('header.tooltips.share')}</p>
                 </TooltipContent>
               </Tooltip>
             </TooltipProvider>

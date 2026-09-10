@@ -156,6 +156,32 @@ export const Permissions = {
   SEMANTIC_MODELS_MEMBERSHIPS_MANAGE: 'semantic_models.memberships.manage',
   SEMANTIC_MODELS_ALL: 'semantic_models.*',
 
+  // Role-scoped feature and menu visibility
+  FEATURE_RESTRICTED: 'feature.restricted',
+  FEATURE_CONVERSATION: 'feature.conversation',
+  FEATURE_WORKSPACE: 'feature.workspace',
+  FEATURE_PLAYBOOK: 'feature.playbook',
+  FEATURE_GOVERNANCE: 'feature.governance',
+  FEATURE_APP_MARKETPLACE: 'feature.app_marketplace',
+  FEATURE_WORKY: 'feature.worky',
+  FEATURE_AGENTS: 'feature.agents',
+  FEATURE_SEMANTIC_MODEL: 'feature.semantic_model',
+  FEATURE_PLATFORM_COPILOT: 'feature.platform_copilot',
+  MENU_RESTRICTED: 'menu.restricted',
+  MENU_PLATFORM: 'menu.platform',
+  MENU_NEW_CHAT: 'menu.new_chat',
+  MENU_WORKSPACE: 'menu.workspace',
+  MENU_SEMANTIC_MODELS: 'menu.semantic_models',
+  MENU_PLAYBOOK: 'menu.playbook',
+  MENU_AGENTS: 'menu.agents',
+  MENU_TEAMS: 'menu.teams',
+  MENU_GROUPS: 'menu.groups',
+  MENU_WORKY: 'menu.worky',
+  MENU_CONNECTED_APPS: 'menu.connected_apps',
+  MENU_APP_MARKETPLACE: 'menu.app_marketplace',
+  MENU_GOVERNANCE: 'menu.governance',
+  MENU_ADMIN: 'menu.admin',
+
   // Super Admin
   SUPER_ADMIN: '*',
 } as const;
@@ -317,6 +343,34 @@ const ALL_PERMISSIONS = new Set<string>([
   'semantic_models.publish',
   'semantic_models.memberships.manage',
   'semantic_models.*',
+
+  // Role-scoped feature visibility
+  'feature.restricted',
+  'feature.conversation',
+  'feature.workspace',
+  'feature.playbook',
+  'feature.governance',
+  'feature.app_marketplace',
+  'feature.worky',
+  'feature.agents',
+  'feature.semantic_model',
+  'feature.platform_copilot',
+
+  // Role-scoped menu visibility
+  'menu.restricted',
+  'menu.platform',
+  'menu.new_chat',
+  'menu.workspace',
+  'menu.semantic_models',
+  'menu.playbook',
+  'menu.agents',
+  'menu.teams',
+  'menu.groups',
+  'menu.worky',
+  'menu.connected_apps',
+  'menu.app_marketplace',
+  'menu.governance',
+  'menu.admin',
 
   // Super Admin
   '*',

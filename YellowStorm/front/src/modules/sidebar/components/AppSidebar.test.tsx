@@ -37,6 +37,10 @@ const autoCollapseState = vi.hoisted(() => ({
 
 const toggleHistoryPanelMock = vi.hoisted(() => vi.fn());
 const permissionState = vi.hoisted(() => ({ governance: true, semanticModels: true }));
+const visibilityPermissionState = vi.hoisted(() => ({
+  deniedFeatures: new Set<string>(),
+  deniedMenus: new Set<string>(),
+}));
 
 vi.mock('react-router-dom', async () => {
   const actual = await vi.importActual<typeof import('react-router-dom')>('react-router-dom');
@@ -107,6 +111,8 @@ vi.mock('@/modules/admin/hooks/usePermissions', () => ({
     hasAnyPermission: (permissions: string[]) => permissions.some((permission) => permission.startsWith('governance'))
       ? permissionState.governance
       : permissionState.semanticModels,
+    canUseFeature: (feature: string) => !visibilityPermissionState.deniedFeatures.has(feature),
+    canSeeMenu: (menu: string) => !visibilityPermissionState.deniedMenus.has(menu),
   }),
 }));
 vi.mock('@/modules/auth', () => ({ useAuth: () => ({ user: { id: 'u1' } }) }));
@@ -156,6 +162,8 @@ describe('AppSidebar', () => {
     storeFns.currentConversationId = 'c1';
     permissionState.governance = true;
     permissionState.semanticModels = true;
+    visibilityPermissionState.deniedFeatures.clear();
+    visibilityPermissionState.deniedMenus.clear();
     Object.assign(featureVisibility, { conversation: true, workspace: true, playbook: true, governance: true, appMarketplace: true, worky: true, agents: true });
   });
 
@@ -273,5 +281,20 @@ describe('AppSidebar', () => {
     expect(screen.queryByText('governance-btn')).not.toBeInTheDocument();
     expect(screen.queryByText('semantic-model-btn')).not.toBeInTheDocument();
     expect(await screen.findByText('workspace-btn')).toBeInTheDocument();
+  });
+
+  it('hides menus and features excluded by the role allowlists', async () => {
+    visibilityPermissionState.deniedFeatures.add('workspace');
+    visibilityPermissionState.deniedMenus.add('admin');
+
+    render(
+      <MemoryRouter initialEntries={['/admin']}>
+        <AppSidebar />
+      </MemoryRouter>,
+    );
+
+    expect(screen.queryByText('workspace-btn')).not.toBeInTheDocument();
+    expect(screen.queryByText('admin-btn')).not.toBeInTheDocument();
+    expect(await screen.findByText('governance-btn')).toBeInTheDocument();
   });
 });

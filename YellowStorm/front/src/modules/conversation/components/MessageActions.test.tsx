@@ -321,6 +321,7 @@ describe('MessageActions', () => {
           label: 'export.assistantLabel',
           timestamp: new Intl.DateTimeFormat('en', { dateStyle: 'medium', timeStyle: 'medium' }).format(new Date('2026-07-29T13:00:00.000Z')),
           markdown: 'markdown',
+          components: [],
         }],
         'exportPdf.untitledConversation',
       );

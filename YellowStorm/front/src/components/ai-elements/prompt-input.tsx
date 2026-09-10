@@ -722,6 +722,12 @@ export const PromptInputTextarea = forwardRef<HTMLTextAreaElement, PromptInputTe
       return;
     }
 
+    // Excel/Word put an image of the selection on the clipboard alongside the text;
+    // only attach clipboard files when there is no text to paste (e.g. screenshots).
+    if (event.clipboardData.getData('text/plain')) {
+      return;
+    }
+
     const files: File[] = [];
 
     for (const item of items) {

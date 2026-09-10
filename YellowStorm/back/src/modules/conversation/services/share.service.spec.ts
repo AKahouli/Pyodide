@@ -172,6 +172,127 @@ describe('ShareService', () => {
     }));
   });
 
+  it('allows sharing with yourself', async () => {
+    const { service, store } = createService({
+      forkConversation: jest.fn().mockResolvedValue('fork-self'),
+      createPrivate: jest.fn().mockResolvedValue(share({ shareType: 'private', accessToken: undefined })),
+    });
+
+    await expect(
+      service.createShare('recipient-1', {
+        conversationId: 'conversation-1',
+        shareType: 'private',
+        recipientEmails: ['me@example.com'],
+      }),
+    ).resolves.toMatchObject({ shareType: 'private' });
+
+    expect(store.forkConversation).toHaveBeenCalledWith(expect.objectContaining({ ownerId: 'recipient-1', sharedBy: 'recipient-1' }));
+  });
+
+  it('emails a sanitized public link to recipients without an account', async () => {
+    const { service, store, userService, emailService } = createService({
+      forkConversation: jest.fn(),
+      listSnapshotMessages: jest.fn().mockResolvedValue([
+        {
+          conversationType: 'ai',
+          components: [
+            { id: 'tool', type: 'toolActivity', data: { toolName: 'activate_skill', paramsJson: '{"secret":"value"}', resultJson: '{"private":true}' } },
+            { id: 'answer', type: 'text', data: { content: 'Public answer' } },
+          ],
+          createdAt: now,
+        },
+      ]),
+    });
+    (userService.findByEmail as jest.Mock).mockResolvedValue(null);
+    store.createPublic.mockResolvedValue(share({ accessToken: 'guest-token' }));
+    store.createPrivate.mockResolvedValue(share({ shareType: 'private', accessToken: undefined }));
+
+    await service.createShare('user-1', {
+      conversationId: 'conversation-1',
+      shareType: 'private',
+      recipientEmails: ['guest@example.com'],
+    });
+
+    expect(store.forkConversation).not.toHaveBeenCalled();
+    const snapshot = store.createPublic.mock.calls[0][0];
+    expect(snapshot.accessToken).toEqual(expect.any(String));
+    // The guest snapshot must not carry tool payload fields.
+    expect(JSON.stringify(snapshot.messages)).not.toContain('paramsJson');
+    expect(store.createPrivate).toHaveBeenCalledWith(expect.objectContaining({ forkedConversationIds: [] }));
+    const email = emailService.sendBulk.mock.calls[0][0].emails[0];
+    expect(email.to).toBe('guest@example.com');
+    expect(email.html).toContain('/#/share/');
+  });
+
+  it('maps each recipient to their own link when accounts and guests are mixed', async () => {
+    const { service, store, userService, emailService } = createService({
+      forkConversation: jest.fn().mockResolvedValueOnce('fork-1').mockResolvedValueOnce('fork-2'),
+      createPrivate: jest.fn().mockResolvedValue(share({ shareType: 'private', accessToken: undefined })),
+    });
+    (userService.findByEmail as jest.Mock)
+      .mockResolvedValueOnce({ _id: { toString: () => 'r1' } })
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce({ _id: { toString: () => 'r3' } });
+    store.createPublic.mockResolvedValue(share({ accessToken: 'guest-token' }));
+
+    await service.createShare('user-1', {
+      conversationId: 'conversation-1',
+      shareType: 'private',
+      recipientEmails: ['one@example.com', 'guest@example.com', 'two@example.com'],
+    });
+
+    const emails = emailService.sendBulk.mock.calls[0][0].emails;
+    expect(emails[0].html).toContain('/#/conversation/fork-1');
+    expect(emails[1].html).toContain('/#/share/guest-token');
+    expect(emails[2].html).toContain('/#/conversation/fork-2');
+    expect(store.createPrivate).toHaveBeenCalledWith(expect.objectContaining({ forkedConversationIds: ['fork-1', 'fork-2'] }));
+  });
+
+  it('embeds the conversation content in the share email', async () => {
+    const { service, emailService } = createService({
+      createPrivate: jest.fn().mockResolvedValue(share({ shareType: 'private', accessToken: undefined })),
+      listSnapshotMessages: jest.fn().mockResolvedValue([
+        {
+          conversationType: 'ai',
+          components: [
+            { id: 't', type: 'text', data: { content: '**Quarterly revenue** grew' } },
+            { id: 'c', type: 'chart', data: { title: 'Rates', kind: 'bar', data: [{ month: 'Q1', value: 1.2 }], series: [{ dataKey: 'value' }], config: {}, xAxisKey: 'month' } },
+          ],
+          createdAt: now,
+        },
+        { conversationType: 'user', content: 'Explain the cap', createdAt: now },
+      ]),
+    });
+
+    await service.createShare('user-1', {
+      conversationId: 'conversation-1',
+      shareType: 'private',
+      recipientEmails: ['one@example.com'],
+    });
+
+    const email = emailService.sendBulk.mock.calls[0][0].emails[0];
+    expect(email.html).toContain('<strong>Quarterly revenue</strong>');
+    expect(email.html).toContain('<table');
+    expect(email.html).toContain('Rates');
+    expect(email.html).toContain('Explain the cap');
+  });
+
+  it('revokes the guest public link when an invitation email fails', async () => {
+    const { service, store, userService, emailService } = createService({ forkConversation: jest.fn() });
+    (userService.findByEmail as jest.Mock).mockResolvedValue(null);
+    store.createPublic.mockResolvedValue(share({ accessToken: 'guest-token' }));
+    emailService.sendBulk.mockResolvedValue({ failed: 1 });
+
+    await expect(service.createShare('user-1', {
+      conversationId: 'conversation-1',
+      shareType: 'private',
+      recipientEmails: ['guest@example.com'],
+    })).rejects.toMatchObject({ response: 'Failed to send one or more conversation share emails' });
+
+    expect(store.markRevoked).toHaveBeenCalledWith('share-1');
+    expect(store.createPrivate).not.toHaveBeenCalled();
+  });
+
   it('deletes committed forks when a later recipient exceeds the clone limit', async () => {
     const { service, store } = createService({
       forkConversation: jest

@@ -3,6 +3,19 @@ import type { MessageComponent } from '../interfaces/message.interface';
 import { ErrorCode } from '@modules/exceptions/constants/error-codes';
 import { EventEmitter } from 'events';
 
+describe('StreamService task agentId buffering', () => {
+  it('stamps and preserves chunk agentId on task components across updates', () => {
+    const service = Object.create(StreamService.prototype) as StreamService;
+    const buffer = new Map<string, MessageComponent>();
+    const taskChunk = { id: 'task-1', task: { title: 'Smart Agent', items: [{ text: 'step' }], status: 'in_progress' } };
+
+    (service as unknown as { applyChunkToBuffer: (...args: unknown[]) => void }).applyChunkToBuffer(buffer, 'add', taskChunk, undefined, 'agent-123');
+    (service as unknown as { applyChunkToBuffer: (...args: unknown[]) => void }).applyChunkToBuffer(buffer, 'update', { id: 'task-1', task: { title: 'Smart Agent', items: [{ text: 'step 2' }], status: 'completed' } }, undefined, 'agent-123');
+
+    expect(buffer.get('task-1')).toMatchObject({ type: 'task', data: { agentId: 'agent-123', status: 'completed', title: 'Smart Agent' } });
+  });
+});
+
 describe('StreamService guardrail metadata buffering', () => {
   const createLifecycleHarness = (completeAIMessage: jest.Mock) => {
     const call = Object.assign(new EventEmitter(), { cancel: jest.fn() });
@@ -47,7 +60,7 @@ describe('StreamService guardrail metadata buffering', () => {
     };
   };
 
-  it('returns a sanitized process-local snapshot for an active conversation stream', () => {
+  it('returns a process-local snapshot for an active conversation stream as stored', () => {
     const service = Object.create(StreamService.prototype) as StreamService;
     Object.assign(service as object, {
       componentBuffers: new Map([['user-1:conversation-1:message-1', new Map([
@@ -63,7 +76,7 @@ describe('StreamService guardrail metadata buffering', () => {
       revision: 7,
       components: [
         { id: 'activity-1', type: 'agentActivity', data: { summary: 'Planning', detail: 'private trace' } },
-        { id: 'artifact-1', type: 'artifact', data: { filename: 'report.pdf' } },
+        { id: 'artifact-1', type: 'artifact', data: { filename: 'report.pdf', storagePath: '/workspace/private/report.pdf' } },
       ],
     });
     expect(service.getActiveStreamSnapshot('conversation-2')).toBeNull();

@@ -130,8 +130,10 @@ export function getComponentType(comp: any): ComponentType {
 /**
  * Extracts component data from a gRPC chunk component into our internal format.
  * Handles the proto oneof structure where the type is determined by which field is set.
+ * `agentId` (chunk metadata) is stamped onto task components so the UI can link
+ * the task header to its agent.
  */
-export function extractComponentData(comp: any): { type: ComponentType; data: Record<string, unknown> } {
+export function extractComponentData(comp: any, agentId?: string): { type: ComponentType; data: Record<string, unknown> } {
   if (!comp || typeof comp !== 'object') {
     return { type: 'text', data: { content: '' } };
   }
@@ -268,6 +270,7 @@ export function extractComponentData(comp: any): { type: ComponentType; data: Re
           title: comp.task?.title || '',
           items: (comp.task?.items || []).map((item: any) => item.text || ''),
           status: comp.task?.status || 'pending',
+          ...(agentId ? { agentId } : {}),
         },
       };
     case 'error':

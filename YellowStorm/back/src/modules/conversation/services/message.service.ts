@@ -21,8 +21,6 @@ import { LoggerService } from '../../logger';
 import { BadRequestException, ConflictException, NotFoundException } from '../../exceptions';
 import { AppException } from '../../exceptions/exceptions/base.exception';
 import { ErrorCode } from '../../exceptions/constants/error-codes';
-import { sanitizeTaskDiagnosticItems } from '../utils/task-diagnostics';
-import { sanitizePublicComponent } from '../utils/public-component-sanitizer';
 import { StreamEvent } from '../interfaces/stream.interface';
 import { EmailService } from '../../email/email.service';
 import { ConversationSettingsService } from '../../system/conversation-settings.service';
@@ -1077,44 +1075,25 @@ export class MessageService {
   private publicComponents(
     components: unknown,
     includeToolResults = false,
-    resolvedRedactSensitiveText?: boolean,
+    _resolvedRedactSensitiveText?: boolean,
   ): MessageComponent[] | undefined {
     if (!Array.isArray(components)) return undefined;
-    const redactSensitiveText = resolvedRedactSensitiveText
-      ?? this.conversationSettings?.shouldRedactSensitiveText() !== false;
-    const options = { redactSensitiveText, includeAgentDetail: true };
+    // Conversation content is rendered exactly as stored: display-time
+    // sanitization was removed by product decision (public share snapshots
+    // are still sanitized separately in ShareService). toolActivity resultJson
+    // stays out of bulk reads purely for payload size — clients fetch it on
+    // demand via findToolActivityResult.
     return components.map((component) => {
-      if (component?.type === 'task' && component.data) {
-        return sanitizePublicComponent(
-          {
-            id: component.id,
-            type: component.type,
-            data: {
-              ...component.data,
-              items: redactSensitiveText
-                ? sanitizeTaskDiagnosticItems(component.data.items)
-                : component.data.items,
-            },
-          },
-          options,
-        );
-      }
       if (!component?.data) return component;
-      if (component.type !== 'toolActivity' || includeToolResults) {
-        return sanitizePublicComponent(
-          { id: component.id, type: component.type, data: { ...component.data } },
-          options,
-        );
+      if (component.type === 'toolActivity' && !includeToolResults) {
+        const {
+          resultJson: _resultJson,
+          result_json: _resultJsonSnake,
+          ...publicData
+        } = component.data;
+        return { id: component.id, type: component.type, data: publicData };
       }
-      const {
-        resultJson: _resultJson,
-        result_json: _resultJsonSnake,
-        ...publicData
-      } = component.data;
-      return sanitizePublicComponent(
-        { id: component.id, type: component.type, data: publicData },
-        options,
-      );
+      return { id: component.id, type: component.type, data: { ...component.data } };
     });
   }
 

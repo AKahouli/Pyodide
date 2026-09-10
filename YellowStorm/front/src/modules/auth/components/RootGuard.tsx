@@ -22,6 +22,7 @@ import { useConversationStream } from '@/modules/conversation/hooks/useConversat
 import { useConversationV2StreamConnection } from '@/modules/conversation-v2/useStream';
 import { usePlaybookStreamGlobal } from '@/modules/playbook/services/playbookStreamService';
 import { DEFAULT_FEATURE_VISIBILITY, getFeatureVisibility } from '@/modules/admin';
+import { usePermissions } from '@/modules/admin/hooks/usePermissions';
 import { PlatformCopilotMascot } from '@/modules/platform-copilot';
 import { isPendingAdminApproval } from '../utils/isPendingAdminApproval';
 
@@ -37,6 +38,7 @@ export function RootGuard() {
   const location = useLocation();
   const fetchModels = useModelsStore((state) => state.fetchModels);
   const pendingApproval = isPendingAdminApproval(user);
+  const { canUseFeature } = usePermissions();
   const [platformCopilotEnabled, setPlatformCopilotEnabled] = React.useState(
     DEFAULT_FEATURE_VISIBILITY.platformCopilot,
   );
@@ -162,7 +164,7 @@ export function RootGuard() {
         </header>
         <div className='flex flex-1 min-h-0 flex-col items-center  overflow-hidden'>{isIndexRoute ? <NewConversationPage /> : <Outlet />}</div>
       </SidebarInset>
-      {platformCopilotEnabled && !isWorkyStreamRoute && <PlatformCopilotMascot />}
+      {platformCopilotEnabled && canUseFeature('platformCopilot') && !isWorkyStreamRoute && <PlatformCopilotMascot />}
     </SidebarProvider>
   );
 }

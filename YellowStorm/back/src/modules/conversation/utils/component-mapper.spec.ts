@@ -378,3 +378,19 @@ describe('component-mapper choice extraction', () => {
     expect(result.data.resultJson).toContain('short-value');
   });
 });
+
+describe('component-mapper task agentId stamping', () => {
+  it('stamps the chunk metadata agentId onto task component data', () => {
+    const result = extractComponentData(
+      { id: 'task-1', task: { title: 'Smart Agent', items: [{ text: 'step' }], status: 'in_progress' } },
+      'agent-123',
+    );
+    expect(result.type).toBe('task');
+    expect(result.data).toMatchObject({ title: 'Smart Agent', agentId: 'agent-123' });
+  });
+
+  it('omits agentId when no chunk agent metadata exists', () => {
+    const result = extractComponentData({ id: 'task-1', task: { title: 'Smart Agent', items: [{ text: 'step' }], status: 'completed' } });
+    expect(result.data).not.toHaveProperty('agentId');
+  });
+});

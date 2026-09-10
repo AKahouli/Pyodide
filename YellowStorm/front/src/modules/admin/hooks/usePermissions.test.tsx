@@ -41,4 +41,31 @@ describe('usePermissions', () => {
     rerender();
     expect(result.current.permissions).toEqual([]);
   });
+
+  it('keeps legacy roles unrestricted and applies configured visibility allowlists', () => {
+    useAuthMock.mockReturnValue({ user: { permissions: ['users.read'] } });
+    const { result, rerender } = renderHook(() => usePermissions());
+
+    expect(result.current.canUseFeature('workspace')).toBe(true);
+    expect(result.current.canSeeMenu('admin')).toBe(true);
+
+    useAuthMock.mockReturnValue({
+      user: { permissions: ['feature.workspace', 'menu.restricted'] },
+    });
+    rerender();
+
+    expect(result.current.canUseFeature('workspace')).toBe(true);
+    expect(result.current.canUseFeature('conversation')).toBe(false);
+    expect(result.current.canSeeMenu('admin')).toBe(false);
+  });
+
+  it('lets the super-admin wildcard bypass configured visibility restrictions', () => {
+    useAuthMock.mockReturnValue({
+      user: { permissions: ['*', 'feature.restricted', 'menu.restricted'] },
+    });
+    const { result } = renderHook(() => usePermissions());
+
+    expect(result.current.canUseFeature('conversation')).toBe(true);
+    expect(result.current.canSeeMenu('admin')).toBe(true);
+  });
 });

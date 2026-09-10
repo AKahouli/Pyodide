@@ -187,7 +187,7 @@ describe('MessageService store lifecycle', () => {
       .rejects.toThrow('Message not found');
   });
 
-  it('strips persisted artifact paths while preserving activity detail', () => {
+  it('returns persisted components as stored without display-time sanitization', () => {
     const response = (service as any).mapToResponse(record({
       conversationType: 'ai',
       components: [
@@ -196,7 +196,7 @@ describe('MessageService store lifecycle', () => {
       ],
     }));
     expect(response.components).toEqual([
-      { id: 'artifact-1', type: 'artifact', data: { artifactId: 'opaque-1', filename: 'report.pdf' } },
+      { id: 'artifact-1', type: 'artifact', data: { artifactId: 'opaque-1', filename: 'report.pdf', storagePath: 'owner/run/report.pdf' } },
       { id: 'activity-1', type: 'agentActivity', data: { summary: 'Reviewing', detail: 'detail', status: 'completed' } },
     ]);
   });
@@ -223,7 +223,7 @@ describe('MessageService store lifecycle', () => {
       .toBe('Cover pool au 30/06/2025 — 19 931,3 M€');
   });
 
-  it('fails closed when the current redaction setting cannot be loaded', async () => {
+  it('returns tool payloads verbatim even when the redaction setting cannot be loaded', async () => {
     conversationSettings.getSettings.mockRejectedValue(new Error('settings unavailable'));
     messageStore.listPage.mockResolvedValue({
       records: [record({
@@ -240,11 +240,11 @@ describe('MessageService store lifecycle', () => {
     const result = await service.findByConversation(conversationId, {});
 
     const paramsJson = result.messages[0].components?.[0].data.paramsJson as string;
-    expect(paramsJson).toContain('[REDACTED]');
-    expect(paramsJson).not.toContain('owner/runs/private');
+    expect(paramsJson).toContain('owner/runs/private');
+    expect(paramsJson).not.toContain('[REDACTED]');
   });
 
-  it('fails closed without hanging when the redaction setting lookup stalls', async () => {
+  it('returns raw messages without hanging when the redaction setting lookup stalls', async () => {
     jest.useFakeTimers();
     try {
       conversationSettings.getSettings.mockReturnValue(new Promise(() => undefined));
@@ -265,8 +265,8 @@ describe('MessageService store lifecycle', () => {
       const result = await resultPromise;
 
       const paramsJson = result.messages[0].components?.[0].data.paramsJson as string;
-      expect(paramsJson).toContain('[REDACTED]');
-      expect(paramsJson).not.toContain('owner/runs/private');
+      expect(paramsJson).toContain('owner/runs/private');
+      expect(paramsJson).not.toContain('[REDACTED]');
     } finally {
       jest.useRealTimers();
     }

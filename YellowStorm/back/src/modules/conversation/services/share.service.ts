@@ -20,6 +20,7 @@ import {
   type ShareStore,
 } from '../persistence/share-store';
 import { sanitizePublicComponent } from '../utils/public-component-sanitizer';
+import { buildShareEmailBody } from '../utils/share-email.template';
 
 const publicShareComponentTypes = new Set([
   'text',
@@ -106,7 +107,7 @@ export class ShareService {
     }
     return data.shareType === 'public'
       ? this.createPublicShare(userId, conversation, data, sourceMessages)
-      : this.createPrivateShare(userId, conversation, data, maxCloneMessages);
+      : this.createPrivateShare(userId, conversation, data, maxCloneMessages, sourceMessages);
   }
 
   private async createPublicShare(
@@ -141,6 +142,7 @@ export class ShareService {
     conversation: ShareSourceConversationRecord,
     data: CreateShareData,
     maxCloneMessages: number,
+    sourceMessages: EmbeddedMessage[],
   ): Promise<ShareResponse> {
     const recipientEmails = data.recipientEmails || [];
     if (!recipientEmails.length) {
@@ -150,33 +152,50 @@ export class ShareService {
       email,
       user: await this.userService.findByEmail(email),
     })));
-    if (recipients.some(({ user }) => !user)) {
-      throw new NotFoundException(ErrorCode.USER_NOT_FOUND, 'Every recipient must have a YelloStorm account');
-    }
-    if (recipients.some(({ user }) => user!._id.toString() === userId)) {
-      throw new BadRequestException(ErrorCode.CHAT_BRANCH_INVALID, 'You cannot share a conversation with yourself');
-    }
     const forkedConversationIds: string[] = [];
+    let publicShare: SharedConversationRecord | undefined;
     try {
+      // Account holders receive a forked copy (including the owner sharing to
+      // themselves); recipients without an account get a sanitized public
+      // snapshot link instead.
       for (const { user } of recipients) {
+        if (!user) continue;
         forkedConversationIds.push(
           await this.shareStore.forkConversation({
             original: conversation,
-            ownerId: user!._id.toString(),
+            ownerId: user._id.toString(),
             sharedBy: userId,
             maxMessages: maxCloneMessages,
           }),
         );
       }
       const frontBase = this.configService.get<string>('app.frontendUrl', 'http://localhost:5173').replace(/\/$/, '');
+      let publicUrl: string | undefined;
+      if (recipients.some(({ user }) => !user)) {
+        const expiryDays = data.expiresInDays || this.configService.get<number>('conversation.shareExpiryDays', 30);
+        publicShare = await this.shareStore.createPublic({
+          originalConversationId: conversation.id,
+          sharedBy: userId,
+          title: data.title || conversation.title,
+          messages: sanitizePublicShareMessages(sourceMessages),
+          accessToken: nanoid(32),
+          expiresAt: new Date(Date.now() + expiryDays * 24 * 60 * 60 * 1000),
+        });
+        publicUrl = `${frontBase}/#/share/${publicShare.accessToken}`;
+      }
+      let forkIndex = 0;
+      const recipientLinks = recipients.map(({ email, user }) => ({
+        email,
+        url: user ? `${frontBase}/#/conversation/${forkedConversationIds[forkIndex++]}` : publicUrl!,
+      }));
       const emailResult = await this.emailService.sendBulk({
-        emails: recipients.map(({ email }, index) => {
-          const conversationUrl = `${frontBase}/#/conversation/${forkedConversationIds[index]}`;
+        emails: recipientLinks.map(({ email, url }) => {
+          const body = buildShareEmailBody(data.title || conversation.title, url, sourceMessages);
           return {
             to: email,
             subject: `${data.title || conversation.title} has been shared with you`,
-            text: `A YelloStorm conversation has been shared with you.\n\nOpen conversation: ${conversationUrl}`,
-            html: `<p>A YelloStorm conversation has been shared with you.</p><p><a href="${conversationUrl}">Open conversation</a></p>`,
+            text: body.text,
+            html: body.html,
           };
         }),
         stopOnError: false,
@@ -199,7 +218,24 @@ export class ShareService {
       });
       return this.mapToResponse(shared);
     } catch (error) {
-      await this.shareStore.deleteForkConversations(forkedConversationIds);
+      try {
+        await this.shareStore.deleteForkConversations(forkedConversationIds);
+      } catch (cleanupError) {
+        this.logger.error('Failed to delete fork conversations during share rollback', {
+          conversationId: conversation.id,
+          error: String(cleanupError),
+        });
+      }
+      try {
+        if (publicShare) {
+          await this.shareStore.markRevoked(publicShare.id);
+        }
+      } catch (cleanupError) {
+        this.logger.error('Failed to revoke guest share link during share rollback', {
+          shareId: publicShare?.id,
+          error: String(cleanupError),
+        });
+      }
       if (error instanceof ConversationCloneLimitError) {
         throw new BadRequestException(ErrorCode.CHAT_BRANCH_INVALID, error.message);
       }

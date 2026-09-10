@@ -6,6 +6,7 @@ import { CryptoService } from '@common/services/crypto.service';
 import { AuthModule } from '@modules/auth/auth.module';
 import { AgentModule } from '@modules/agent/agent.module';
 import { ConversationModule } from '@modules/conversation/conversation.module';
+import { SystemModule } from '@modules/system/system.module';
 import { WorkyModule } from '@modules/worky/worky.module';
 import { LoggerModule } from '@modules/logger';
 import { SharedAgent, SharedAgentSchema } from '@modules/agent/schemas/shared-agent.schema';
@@ -45,6 +46,7 @@ import { WhatsAppSessionManager } from './services/whatsapp-session.manager';
       { name: SharedAgent.name, schema: SharedAgentSchema },
     ]),
     LoggerModule,
+    SystemModule,
     AgentModule,
     ConversationModule,
     forwardRef(() => WorkyModule),

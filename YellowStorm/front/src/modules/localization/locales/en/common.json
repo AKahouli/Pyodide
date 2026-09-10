@@ -52,6 +52,7 @@
   "ai.chainOfThought.label": "Chain of Thought",
   "ai.task.activity.running": "Working through the request",
   "ai.task.activity.completed": "Request reviewed and answer prepared",
+  "ai.task.editAgent": "Open agent editor",
   "ai.task.diagnostics.open": "Open agent diagnostics",
   "ai.task.diagnostics.title": "Agent diagnostics",
   "ai.task.diagnostics.description": "Review the execution summary and input context used for this response.",
