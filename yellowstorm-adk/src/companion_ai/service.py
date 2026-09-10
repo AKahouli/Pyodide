@@ -1224,7 +1224,8 @@ class OrchestratorService:
             fields = [
                 {"key": "to_recipients", "label": "À", "value": _recipients(args), "type": "list"},
                 {"key": "subject", "label": "Objet", "value": args.get("subject", "")},
-                {"key": "body", "label": "Message", "value": args.get("body", ""), "multiline": True},
+                {"key": "body", "label": "Message", "value": args.get("body", ""),
+                 "multiline": True, "markdown": True},
             ]
         elif "message" in args:
             title = "Approuver l'envoi de ce message ?"

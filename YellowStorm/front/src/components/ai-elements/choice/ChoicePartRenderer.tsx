@@ -1,4 +1,5 @@
 import { useEffect, useState, type KeyboardEvent } from 'react';
+import ReactMarkdown from 'react-markdown';
 import { Pencil, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -116,9 +117,16 @@ export function ChoicePartRenderer({ componentId, onAction, submittedInteraction
         {(choice.fields ?? []).map((field) => {
           const value = fieldValues[field.key] ?? '';
           if (!editing) {
-            return field.multiline
-              ? <p key={field.key} className='whitespace-pre-wrap break-words text-sm leading-relaxed'>{value || <span className='text-muted-foreground'>—</span>}</p>
-              : <p key={field.key} className='flex flex-wrap gap-x-2 text-sm'><span className='shrink-0 text-muted-foreground'>{field.label} :</span><span className='min-w-0 break-words font-medium'>{value || '—'}</span></p>;
+            if (field.multiline) {
+              return <div key={field.key} className='break-words text-sm leading-relaxed'>
+                {value
+                  ? (field.markdown
+                      ? <div className='space-y-2 [&_a]:text-primary [&_a]:underline [&_code]:rounded [&_code]:bg-muted [&_code]:px-1 [&_h1]:font-semibold [&_h2]:font-semibold [&_h3]:font-semibold [&_ol]:list-decimal [&_ol]:pl-5 [&_ul]:list-disc [&_ul]:pl-5'><ReactMarkdown>{value}</ReactMarkdown></div>
+                      : <p className='whitespace-pre-wrap'>{value}</p>)
+                  : <span className='text-muted-foreground'>—</span>}
+              </div>;
+            }
+            return <p key={field.key} className='flex flex-wrap gap-x-2 text-sm'><span className='shrink-0 text-muted-foreground'>{field.label} :</span><span className='min-w-0 break-words font-medium'>{value || '—'}</span></p>;
           }
           return <label key={field.key} className='flex flex-col gap-1'>
             <span className='text-[11px] font-medium uppercase tracking-wide text-muted-foreground'>{field.label}</span>

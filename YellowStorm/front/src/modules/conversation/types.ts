@@ -360,7 +360,7 @@ export type ChoiceSelectionMode = 'single' | 'multiple';
 export type ChoiceSubmitBehavior = 'immediate' | 'explicit';
 export type ChoiceStatus = 'ready' | 'submitted' | 'disabled';
 export interface ChoiceOption { id: string; label: string; submitText: string; value?: string; description?: string; disabled?: boolean; url?: string; }
-export interface ChoiceEditableField { key: string; label: string; value: string; multiline?: boolean; type?: 'list' | 'text' }
+export interface ChoiceEditableField { key: string; label: string; value: string; multiline?: boolean; type?: 'list' | 'text'; markdown?: boolean }
 export interface ChoiceComponentData extends Record<string, unknown> {
   schemaVersion: 1; questionId: string; prompt: string; description?: string; presentation: ChoicePresentation;
   selectionMode: ChoiceSelectionMode; submitBehavior: ChoiceSubmitBehavior; options: ChoiceOption[];

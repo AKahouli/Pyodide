@@ -570,7 +570,7 @@ export function normalizeChoiceComponentData(data: unknown): ChoiceComponentData
   const fields = (Array.isArray(raw.fields) ? raw.fields : [])
     .filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === 'object' && !Array.isArray(item))
     .filter((f) => typeof f.key === 'string' && typeof f.label === 'string')
-    .map((f) => ({ key: f.key as string, label: f.label as string, value: typeof f.value === 'string' ? f.value : '', ...(f.multiline === true ? { multiline: true } : {}), ...(f.type === 'list' || f.type === 'text' ? { type: f.type as 'list' | 'text' } : {}) }));
+    .map((f) => ({ key: f.key as string, label: f.label as string, value: typeof f.value === 'string' ? f.value : '', ...(f.multiline === true ? { multiline: true } : {}), ...(f.type === 'list' || f.type === 'text' ? { type: f.type as 'list' | 'text' } : {}), ...(f.markdown === true ? { markdown: true } : {}) }));
   const editable = raw.editable === true && fields.length > 0;
   return { schemaVersion: 1, questionId: raw.questionId, prompt: raw.prompt, ...(typeof raw.description === 'string' ? { description: raw.description } : {}), presentation, selectionMode, submitBehavior: selectionMode === 'multiple' || presentation === 'list' || otherOption || raw.submitBehavior === 'explicit' ? 'explicit' : 'immediate', options: normalizedOptions as ChoiceComponentData['options'], ...(otherOption ? { otherOption } : {}), ...(labels ? { labels } : {}), ...(progress ? { progress } : {}), ...(typeof raw.fallbackText === 'string' ? { fallbackText: raw.fallbackText } : {}), dismissible: raw.dismissible === true, status: raw.status === 'submitted' || raw.status === 'disabled' ? raw.status : 'ready', ...(editable ? { editable: true, fields } : {}) };
 }

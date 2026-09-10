@@ -267,3 +267,29 @@ it('edit-on-card: decline stays a plain verdict', async () => {
   await user.click(screen.getByRole('radio', { name: 'Refuser' }));
   expect(onAction).toHaveBeenCalledWith(expect.objectContaining({ submitText: 'decline' }));
 });
+
+it('edit-on-card: renders a markdown body formatted in the preview', () => {
+  render(
+    <ChoicePartRenderer
+      componentId='c4'
+      schemaVersion={1}
+      questionId='confirm::adk-md'
+      prompt='Approuver ?'
+      presentation='quick_replies'
+      selectionMode='single'
+      submitBehavior='immediate'
+      status='ready'
+      dismissible={false}
+      editable
+      fields={[{ key: 'body', label: 'Message', value: 'Bonjour **Adem**', multiline: true, markdown: true }]}
+      options={[
+        { id: 'approve', label: 'Approuver', submitText: 'approve' },
+        { id: 'decline', label: 'Refuser', submitText: 'decline' },
+      ]}
+      onAction={vi.fn()}
+    />,
+  );
+  // **Adem** renders as <strong>, not literal asterisks.
+  expect(screen.getByText('Adem').tagName).toBe('STRONG');
+  expect(screen.queryByText(/\*\*Adem\*\*/)).not.toBeInTheDocument();
+});
