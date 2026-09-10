@@ -787,6 +787,22 @@ def _header_user_id(headers: Dict[str, str]) -> str:
     return ""
 
 
+_HTML_BODY_MARKERS = ("<p>", "<p ", "<div", "<br", "<ul", "<ol", "<h1", "<h2", "<h3", "<table")
+
+
+def _markdown_to_email_html(text: str) -> str:
+    """Executors draft e-mail bodies in Markdown (readable in the approval card);
+    the recipient needs HTML. Convert at send. No-op if it already looks like
+    HTML, or if the markdown lib is unavailable (send the body as-is)."""
+    if any(m in text.lower() for m in _HTML_BODY_MARKERS):
+        return text
+    try:
+        import markdown as _md
+        return _md.markdown(text, extensions=["extra", "nl2br", "sane_lists"])
+    except Exception:
+        return text
+
+
 def create_connector_tools(
     bindings: List[Dict[str, Any]],
     context: Optional[ConnectorToolContext] = None,
@@ -901,6 +917,29 @@ def create_connector_tools(
                     params.pop(LEGACY_DISPLAY_PURPOSE_KEY, None)
                 merged_params = {**_fixed_params, **params}
                 merged_params.pop("user_id", None)
+                # Edit-on-card: the owner's approval may carry edited fields as
+                # the ToolConfirmation payload; apply them over the drafted args
+                # so the SENT message is the edited one. Only keys the action's
+                # schema declares are accepted, so the card can't inject unknowns.
+                _confirmation = getattr(tool_context, "tool_confirmation", None)
+                _edits = getattr(_confirmation, "payload", None) if _confirmation else None
+                if isinstance(_edits, dict) and _edits:
+                    allowed = (_parameter_schema.get("properties") or {}) if isinstance(
+                        _parameter_schema, dict) else {}
+                    applied = {}
+                    for k, v in _edits.items():
+                        if k not in allowed:
+                            continue
+                        t = (allowed[k] or {}).get("type")
+                        if isinstance(t, list):
+                            t = next((x for x in t if x != "null"), None)
+                        if t == "array" and isinstance(v, str):
+                            v = [s.strip() for s in re.split(r"[,;]", v) if s.strip()]
+                        applied[k] = v
+                    if applied:
+                        merged_params.update(applied)
+                        logger.info("connector_tool edit-on-card applied fields=%s tool=%s",
+                                    sorted(applied.keys()), _tool_name)
                 merged_params = _with_default_workspace_params(
                     merged_params,
                     _parameter_schema,
@@ -908,6 +947,10 @@ def create_connector_tools(
                     context.workspace_id,
                     connector_name=_connector_name,
                 )
+                # Executors draft e-mail bodies in Markdown; convert to HTML at
+                # send so the recipient gets a formatted message.
+                if _action_key == "send_email" and isinstance(merged_params.get("body"), str) and merged_params["body"].strip():
+                    merged_params["body"] = _markdown_to_email_html(merged_params["body"])
                 # Run/turn correlation applies to every HTTP MCP transport, not
                 # just streamable_http. There is no flow execution here, so the
                 # ADK invocation id (one per agent turn) is the execution id.

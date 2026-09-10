@@ -360,12 +360,14 @@ export type ChoiceSelectionMode = 'single' | 'multiple';
 export type ChoiceSubmitBehavior = 'immediate' | 'explicit';
 export type ChoiceStatus = 'ready' | 'submitted' | 'disabled';
 export interface ChoiceOption { id: string; label: string; submitText: string; value?: string; description?: string; disabled?: boolean; url?: string; }
+export interface ChoiceEditableField { key: string; label: string; value: string; multiline?: boolean; type?: 'list' | 'text'; markdown?: boolean }
 export interface ChoiceComponentData extends Record<string, unknown> {
   schemaVersion: 1; questionId: string; prompt: string; description?: string; presentation: ChoicePresentation;
   selectionMode: ChoiceSelectionMode; submitBehavior: ChoiceSubmitBehavior; options: ChoiceOption[];
   otherOption?: { enabled: boolean; label: string; placeholder?: string; maxLength: number };
   labels?: { submit?: string; dismiss?: string; other?: string };
   progress?: { current: number; total: number; label?: string }; dismissible?: boolean; fallbackText?: string; status: ChoiceStatus;
+  editable?: boolean; fields?: ChoiceEditableField[];
 }
 export interface ChoiceInteractionMetadata {
   type: 'choice'; componentId: string; questionId: string; sourceMessageId?: string; selectionMode: ChoiceSelectionMode;

@@ -310,6 +310,25 @@ def _extract_json(text: str) -> dict:
     return json.loads(m.group(0))
 
 
+_APPROVE_WORDS = ("approve", "approuver", "yes", "oui")
+
+
+def _parse_verdict(answer: str):
+    """A confirm answer → (confirmed, edits). Plain text is the verdict; an
+    edit-on-card approval is JSON {"verdict": "approve", "edits": {...}} whose
+    edits become the ToolConfirmation payload (only kept when confirmed)."""
+    a = (answer or "").strip()
+    if a.startswith("{"):
+        try:
+            d = json.loads(a)
+            confirmed = str(d.get("verdict", "")).strip().lower() in _APPROVE_WORDS
+            edits = d.get("edits") if isinstance(d.get("edits"), dict) and d.get("edits") else None
+            return confirmed, (edits if confirmed else None)
+        except (ValueError, TypeError):
+            pass
+    return a.lower() in _APPROVE_WORDS, None
+
+
 def requester_context(requester: Optional[dict]) -> str:
     """A short preamble naming who the turn is for, so the planner and executor
     address the requester directly and never email or delegate a task back to the
@@ -813,6 +832,23 @@ class OrchestratorService:
                     moved = await self._rm.rebind_mail_wait(
                         session_id, f"__pending__:{caller_step_id}", sub_step.id)
                     if not moved and not await self._rm.mail_token_for(session_id, sub_step.id):
+                        # Idempotent re-run: if this caller already has a bound
+                        # await_reply (a prior create_task, whose rebind consumed
+                        # the eager token), don't refuse — the wait already exists.
+                        for existing in plan.steps:
+                            if (existing is not sub_step and existing.kind == "await_reply"
+                                    and caller_step_id in existing.depends_on
+                                    and await self._rm.mail_token_for(session_id, existing.id)):
+                                plan.steps.remove(sub_step)
+                                logger.info(
+                                    "[worky] create_task await_reply idempotent — caller %s "
+                                    "already has bound wait %s (session=%s)",
+                                    caller_step_id, existing.id, session_id)
+                                return (
+                                    "A reply-wait for this step's email is ALREADY registered — "
+                                    "the email was sent and the plan is already waiting for the "
+                                    "reply. Do not send another email or register another wait; "
+                                    "end your step.")
                         # No token anywhere for this step, so no arriving reply
                         # could ever match it: the step would park on an
                         # interrupt nothing can resume, and the plan would block
@@ -1020,6 +1056,15 @@ class OrchestratorService:
         }
         return SearchToolADK(create_task, schema)
 
+    def _mark_step_running(self, session_id: str):
+        """Project a step RUNNING when its request is sent to the model (see
+        nodes._mark_running), so the UI shows it in-progress at once instead of
+        lagging on 'pending' until ADK returns the first event."""
+        async def _on_start(step: Step) -> None:
+            await self._project(self._rm and self._rm.set_step_status(
+                session_id, step.id, Status.RUNNING.value))
+        return _on_start
+
     def _build_workflow(self, session_id: str, user_id: str, plan: Plan, model: str,
                         connectors: Optional[List[dict]], executor_prompt: Optional[str],
                         replay_completed: bool = False):
@@ -1104,7 +1149,8 @@ class OrchestratorService:
             instruction_for_step=instruction_for_step,
             context_for_step=self._dep_results_context(plan),
             custom_instruction=executor_prompt,
-            replay_completed=replay_completed)
+            replay_completed=replay_completed,
+            on_model_start=self._mark_step_running(session_id))
         factory_holder.append(factory)
 
         wf = graph.to_workflow(plan, factory, name=f"plan_{session_id}",
@@ -1167,14 +1213,28 @@ class OrchestratorService:
                  or a.get("user_email") or "")
             return ", ".join(str(x) for x in v) if isinstance(v, list) else str(v)
 
+        # Editable fields (edit-on-card): keyed by the connector schema names so a
+        # submitted edit merges straight into the send. The frontend renders these
+        # as inputs; approve returns {"verdict":"approve","edits":{key:value}}.
+        fields = []
         if "subject" in args or "body" in args:
             title = "Approuver l'envoi de cet e-mail ?"
             draft = (f"À : {_recipients(args) or '?'}\n"
                      f"Objet : {args.get('subject', '')}\n\n{args.get('body', '')}")
+            fields = [
+                {"key": "to_recipients", "label": "À", "value": _recipients(args), "type": "list"},
+                {"key": "subject", "label": "Objet", "value": args.get("subject", "")},
+                {"key": "body", "label": "Message", "value": args.get("body", ""),
+                 "multiline": True, "markdown": True},
+            ]
         elif "message" in args:
             title = "Approuver l'envoi de ce message ?"
             to = _recipients(args)
             draft = (f"À : {to}\n\n" if to else "") + str(args.get("message", ""))
+            fields = [
+                {"key": "user_email", "label": "À", "value": to},
+                {"key": "message", "label": "Message", "value": args.get("message", ""), "multiline": True},
+            ]
         else:
             title = "Approuver l'envoi de ce message ?"
             draft = json.dumps(args, ensure_ascii=False)
@@ -1191,6 +1251,11 @@ class OrchestratorService:
             ],
             "fallbackText": title,
         }
+        if fields:
+            # Signals the chat UI to render the draft as editable inputs and,
+            # on approve, submit {"verdict":"approve","edits":{...}}.
+            data["editable"] = True
+            data["fields"] = fields
         msg_id = uuid.uuid4().hex
         await self._project(self._rm and self._rm.add_message(msg_id, session_id, "assistant", title))
         await self._project(self._rm and self._rm.add_message_component(
@@ -1644,9 +1709,12 @@ class OrchestratorService:
         # (include_contents='default'), so the verdict stays the last user turn.
         # ask/mail resume with the answer as before.
         if hitl.is_confirm(interrupt_id):
+            # Edit-on-card: an approval may arrive as JSON {"verdict","edits"};
+            # the edits ride along as the ToolConfirmation payload and the
+            # connector tool merges them into the send. Plain text still works.
+            confirmed, edits = _parse_verdict(answer)
             resume = hitl.confirmation_resume_part(
-                hitl.confirm_fc_id(interrupt_id),
-                confirmed=answer.strip().lower() in ("approve", "approuver", "yes", "oui"))
+                hitl.confirm_fc_id(interrupt_id), confirmed=confirmed, payload=edits)
         else:
             resume = hitl.resume_part(interrupt_id, {"value": answer})
         interrupt = await self._drive_until_quiescent(
