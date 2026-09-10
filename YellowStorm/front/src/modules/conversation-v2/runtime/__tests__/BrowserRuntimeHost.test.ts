@@ -1,5 +1,10 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { BrowserRuntimeHost, getOrCreateHost, removeHost } from '../BrowserRuntimeHost';
+import {
+  BrowserRuntimeHost,
+  getOrCreateHost,
+  removeHost,
+  isAppDataPublicUrl,
+} from '../BrowserRuntimeHost';
 import { ToolError } from '../ToolError';
 import { RuntimeErrorCodes } from '../runtime.types';
 
@@ -401,5 +406,43 @@ describe('BrowserRuntimeHost', () => {
     expect(states).toContain('idle');
     expect(states).toContain('connecting');
     host.destroy();
+  });
+});
+
+describe('isAppDataPublicUrl', () => {
+  it('accepts the monolith gateway shape', () => {
+    expect(
+      isAppDataPublicUrl(
+        'http://localhost:3000/api/v1/app-data/public/b7e3524/dev/tables/tasks/rows/row-1',
+      ),
+    ).toBe(true);
+  });
+
+  it('accepts the direct app-data microservice data plane', () => {
+    expect(
+      isAppDataPublicUrl('http://localhost:8443/v1/apps/b7e3524/dev/tables/tasks/rows/row-1'),
+    ).toBe(true);
+    expect(isAppDataPublicUrl('http://localhost:8443/v1/apps/b7e3524/dev/tables/tasks/rows')).toBe(
+      true,
+    );
+  });
+
+  it('accepts the direct app-data microservice auth subtree', () => {
+    expect(isAppDataPublicUrl('http://localhost:8443/v1/apps/b7e3524/auth/login')).toBe(true);
+    expect(isAppDataPublicUrl('http://localhost:8443/v1/apps/b7e3524/auth/me')).toBe(true);
+  });
+
+  it('resolves relative URLs against the current origin', () => {
+    expect(isAppDataPublicUrl('/v1/apps/b7e3524/dev/tables/tasks/rows')).toBe(true);
+    expect(isAppDataPublicUrl('/api/v1/app-data/public/b7e3524/dev/tables/tasks/rows')).toBe(true);
+  });
+
+  it('rejects unrelated paths, non-http protocols and invalid URLs', () => {
+    expect(isAppDataPublicUrl('http://localhost:8443/v1/other/thing')).toBe(false);
+    expect(isAppDataPublicUrl('http://localhost:8443/')).toBe(false);
+    expect(isAppDataPublicUrl('nodepod://preview/v1/apps/b7e3524/dev/tables/tasks/rows')).toBe(
+      false,
+    );
+    expect(isAppDataPublicUrl('not a url')).toBe(false);
   });
 });

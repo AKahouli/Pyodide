@@ -7,6 +7,30 @@ import { registerAs } from '@nestjs/config';
 export default registerAs('appData', () => ({
   /** Master switch — when false, no app-data routes or provisioning run. */
   enabled: process.env.APP_DATA_ENABLED === 'true',
+  /**
+   * Delegate app-data to the standalone app-data microservice over HTTP.
+   * When true, provisioning / release binding / public CRUD / owner Data tab
+   * are proxied to APP_DATA_SERVICE_URL and local tenant-schema services are
+   * not registered. Set to false to restore monolith-local behaviour.
+   */
+  remote: process.env.APP_DATA_REMOTE === 'true',
+  /** Base URL of the app-data microservice (internal, server-to-server). */
+  serviceUrl: process.env.APP_DATA_SERVICE_URL || 'http://localhost:8443',
+  /** Static service token expected by the microservice (Authorization: Bearer). */
+  serviceToken: process.env.APP_DATA_SERVICE_TOKEN || '',
+  /** Externally reachable base URL of the microservice for generated apps. */
+  remotePublicBaseUrl: process.env.APP_DATA_REMOTE_PUBLIC_BASE_URL || 'http://localhost:8443',
+  /**
+   * Public HTTPS base URL of the microservice for PROD deployed apps
+   * (e.g. https://app-data.yellowsys.org behind a reverse proxy). Required
+   * when deploying in NODE_ENV=production — an https page cannot call an
+   * http:// base (mixed content) and localhost never reaches visitors.
+   */
+  remotePublicBaseUrlProd: process.env.APP_DATA_REMOTE_PUBLIC_BASE_URL_PROD || '',
+  /** Default HTTP timeout for microservice calls (ms). */
+  remoteTimeoutMs: parseInt(process.env.APP_DATA_REMOTE_TIMEOUT_MS || '15000', 10),
+  /** HTTP timeout for release binding (copies all rows DEV→PROD) (ms). */
+  remoteBindTimeoutMs: parseInt(process.env.APP_DATA_REMOTE_BIND_TIMEOUT_MS || '120000', 10),
   /** POST /mcp/app-data JSON-RPC endpoint. */
   mcpEnabled: process.env.APP_DATA_MCP_ENABLED === 'true',
   /** Policy-driven HTTP CRUD for generated React apps. */

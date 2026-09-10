@@ -29,11 +29,16 @@ const HIDDEN_IFRAME_SANDBOX =
 
 let appDataFetchProxyInstalled = false;
 
-function isAppDataPublicUrl(url: string): boolean {
+export function isAppDataPublicUrl(url: string): boolean {
   try {
     const parsed = new URL(url, window.location.href);
     if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return false;
-    return parsed.pathname.includes('/app-data/public/');
+    // Gateway shape (monolith + remote proxy controllers) and the direct
+    // app-data microservice data plane (`/v1/apps/:appDataId/:env/...`,
+    // including its `/auth` subtree).
+    return (
+      parsed.pathname.includes('/app-data/public/') || parsed.pathname.startsWith('/v1/apps/')
+    );
   } catch {
     return false;
   }
@@ -48,7 +53,17 @@ function installAppDataFetchProxyOnce(): void {
     reply: (response: Record<string, unknown>) => void,
   ) => {
     const { id, url, method, headers, body } = data;
-    if (typeof url !== 'string' || !isAppDataPublicUrl(url)) return;
+    if (typeof id !== 'string') return;
+    // Never drop silently: the caller waits 30 s for a reply before timing
+    // out, so an unmatched URL gets an immediate explicit error.
+    if (typeof url !== 'string' || !isAppDataPublicUrl(url)) {
+      reply({
+        type: 'ym-app-data-response',
+        id,
+        error: `App Data proxy: URL not relayed (${url ?? 'missing'})`,
+      });
+      return;
+    }
 
     fetch(url, {
       method: (method as string) || 'GET',
@@ -82,9 +97,14 @@ function installAppDataFetchProxyOnce(): void {
     if (event.data?.type !== 'ym-app-data-fetch') return;
     const source = event.source as WindowProxy | null;
     if (!source) return;
-    const targetOrigin =
-      event.origin && event.origin !== 'null' ? event.origin : '*';
-    handleProxyRequest(event.data, (response) => source.postMessage(response, targetOrigin));
+    handleProxyRequest(event.data, (response) => {
+      // '*' on purpose: the preview iframe may navigate (dev-server restart
+      // reassigns src) between the request and the reply — a precise
+      // targetOrigin would silently swallow the response and the caller
+      // would hit its 30 s timeout. The payload carries only what the
+      // caller itself posted, so wildcard delivery is safe here.
+      source.postMessage(response, '*');
+    });
   });
 
   try {

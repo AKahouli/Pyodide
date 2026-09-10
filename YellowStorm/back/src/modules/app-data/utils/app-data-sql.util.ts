@@ -144,6 +144,52 @@ export function validateManifest(
   }
 }
 
+/**
+ * Repair common LLM mistakes in an MCP-submitted manifest instead of failing
+ * the whole tool call: a numeric `version` key nested inside `tables` is
+ * promoted to the manifest level (when missing there) and dropped either way,
+ * and non-object table entries are discarded so `validateManifest` judges
+ * only the real tables. Returns the original reference untouched when the
+ * manifest already has the expected shape.
+ */
+export function normalizeSchemaManifest(
+  manifest: AppDataSchemaManifest,
+): { manifest: AppDataSchemaManifest; changed: boolean } {
+  if (!manifest || typeof manifest !== 'object') {
+    return { manifest, changed: false };
+  }
+  const rawTables: unknown = manifest.tables;
+  if (!rawTables || typeof rawTables !== 'object' || Array.isArray(rawTables)) {
+    return { manifest, changed: false };
+  }
+
+  let version = manifest.version;
+  let changed = false;
+  const tables: Record<string, AppDataTableDef> = {};
+
+  for (const [tableName, tableDef] of Object.entries(rawTables as Record<string, unknown>)) {
+    if (tableName === 'version') {
+      // Frequent LLM slip: the manifest-level version copied inside `tables`.
+      if (typeof version !== 'number' && typeof tableDef === 'number') {
+        version = tableDef;
+      }
+      changed = true;
+      continue;
+    }
+    if (!tableDef || typeof tableDef !== 'object' || Array.isArray(tableDef)) {
+      // Drop malformed entries; validateManifest reports whatever remains.
+      changed = true;
+      continue;
+    }
+    tables[tableName] = tableDef as AppDataTableDef;
+  }
+
+  if (!changed) {
+    return { manifest, changed: false };
+  }
+  return { manifest: { version: version as number, tables }, changed: true };
+}
+
 export function advisoryLockKey(appDataId: string, environment: AppDataEnvironment): string {
   return `${appDataId}:${environment}`;
 }

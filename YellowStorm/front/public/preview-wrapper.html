@@ -35,7 +35,12 @@
         var url = typeof d.url === 'string' ? d.url : '';
         try {
           var parsedUrl = new URL(url, window.location.href);
-          if (parsedUrl.pathname.indexOf('/app-data/public/') === -1) return;
+          // Accept both the legacy gateway shape and the direct app-data
+          // microservice data plane.
+          var isAppDataUrl =
+            parsedUrl.pathname.indexOf('/app-data/public/') !== -1 ||
+            parsedUrl.pathname.indexOf('/v1/apps/') === 0;
+          if (!isAppDataUrl) return;
         } catch (err) {
           return;
         }
@@ -68,8 +73,10 @@
           if (!iw) return;
           var origFetch = iw.fetch.bind(iw);
           iw.fetch = function (input, init) {
-            var url = typeof input === 'string' ? input : (input && input.url) || '';
-            if (url.indexOf('/app-data/public/') !== -1 && init && init.body) {
+          var url = typeof input === 'string' ? input : (input && input.url) || '';
+          var isAppDataUrl =
+            url.indexOf('/app-data/public/') !== -1 || url.indexOf('/v1/apps/') === 0;
+          if (isAppDataUrl && init && init.body) {
               return new Promise(function (resolve, reject) {
                 var id = 'pxy-' + (++window._ymPxyId) + '-' + Date.now();
                 var tm = setTimeout(function () {

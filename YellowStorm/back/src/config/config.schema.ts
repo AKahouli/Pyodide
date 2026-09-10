@@ -280,6 +280,13 @@ export const configValidationSchema = Joi.object({
 
   // Persistent App Data (PostgreSQL tenant schemas — see app-data/README.md).
   APP_DATA_ENABLED: Joi.boolean().default(false),
+  APP_DATA_REMOTE: Joi.boolean().default(false),
+  APP_DATA_SERVICE_URL: Joi.string().uri().default('http://localhost:8443'),
+  APP_DATA_SERVICE_TOKEN: Joi.string().allow('').default(''),
+  APP_DATA_REMOTE_PUBLIC_BASE_URL: Joi.string().uri().default('http://localhost:8443'),
+  APP_DATA_REMOTE_PUBLIC_BASE_URL_PROD: Joi.string().allow('').default(''),
+  APP_DATA_REMOTE_TIMEOUT_MS: Joi.number().min(1000).max(300_000).default(15_000),
+  APP_DATA_REMOTE_BIND_TIMEOUT_MS: Joi.number().min(1000).max(600_000).default(120_000),
   APP_DATA_MCP_ENABLED: Joi.boolean().default(false),
   APP_DATA_PUBLIC_API_ENABLED: Joi.boolean().default(false),
   APP_DATA_DATA_TAB_ENABLED: Joi.boolean().default(false),

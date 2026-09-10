@@ -10,9 +10,6 @@ import {
   ConversationV2SessionSchema,
 } from '@modules/conversation-v2/schemas/conversation-v2-session.schema';
 import { AppDataMcpController } from './controllers/app-data-mcp.controller';
-import { AppDataPublicController } from './controllers/app-data-public.controller';
-import { AppDataPublicAuthController } from './controllers/app-data-public-auth.controller';
-import { AppDataPublicInviteController } from './controllers/app-data-public-invite.controller';
 import { AppDataOwnerController } from './controllers/app-data-owner.controller';
 import { AppDataHealthController } from './controllers/app-data-health.controller';
 import { AppDataAdvisoryLockService } from './services/app-data-advisory-lock.service';
@@ -34,6 +31,69 @@ import { AppDataReleaseBindingService } from './services/app-data-release-bindin
 import { AppDataRowService } from './services/app-data-row.service';
 import { AppDataSchemaDiffService } from './services/app-data-schema-diff.service';
 import { AppDataSchemaService } from './services/app-data-schema.service';
+import { AppDataClientService } from './services/app-data-client.service';
+import { RemoteAppDataDeploymentService } from './services/remote-app-data-deployment.service';
+import { RemoteAppDataReleaseBindingService } from './services/remote-app-data-release-binding.service';
+import { RemoteAppDataMcpDispatcherService } from './services/remote-app-data-mcp-dispatcher.service';
+import { AppDataRemoteOwnerController } from './controllers/remote/app-data-remote-owner.controller';
+import { AppDataRemoteHealthController } from './controllers/remote/app-data-remote-health.controller';
+
+/**
+ * When APP_DATA_REMOTE=true the module delegates to the standalone app-data
+ * microservice: provisioning, release binding and the MCP row tools are
+ * HTTP-proxied, and the local tenant-schema services are not registered.
+ * Consumers keep injecting the same class tokens (AppDataDeploymentService,
+ * AppDataReleaseBindingService, AppDataMcpDispatcherService) — remote
+ * implementations are bound to them.
+ *
+ * Generated apps NEVER talk to this backend for App Data: the public CRUD /
+ * auth / invite controllers were removed. Their `VITE_YM_APP_DATA_URL` points
+ * straight at the microservice (APP_DATA_REMOTE_PUBLIC_BASE_URL). Only the
+ * agent-facing MCP, the owner Data tab and health remain exposed here.
+ */
+const APP_DATA_USE_REMOTE = process.env.APP_DATA_REMOTE === 'true';
+
+const LOCAL_CONTROLLERS = [
+  AppDataMcpController,
+  AppDataOwnerController,
+  AppDataHealthController,
+];
+
+const REMOTE_CONTROLLERS = [
+  AppDataMcpController,
+  AppDataRemoteOwnerController,
+  AppDataRemoteHealthController,
+];
+
+const LOCAL_PROVIDERS = [
+  AppDataIdentifierService,
+  AppDataCatalogService,
+  AppDataAuditService,
+  AppDataAdvisoryLockService,
+  AppDataProvisioningService,
+  AppDataSchemaDiffService,
+  AppDataMigrationService,
+  AppDataSchemaService,
+  AppDataPolicyService,
+  AppDataQueryService,
+  AppDataRowService,
+  AppDataEndUserGrantsService,
+  AppDataEndUserService,
+  AppDataEndUserAuthService,
+  AppDataPublicAccessService,
+  AppDataMcpAuthService,
+  AppDataMcpDispatcherService,
+  AppDataReleaseBindingService,
+  AppDataDeploymentService,
+];
+
+const REMOTE_PROVIDERS = [
+  AppDataClientService,
+  AppDataMcpAuthService,
+  { provide: AppDataMcpDispatcherService, useClass: RemoteAppDataMcpDispatcherService },
+  { provide: AppDataReleaseBindingService, useClass: RemoteAppDataReleaseBindingService },
+  { provide: AppDataDeploymentService, useClass: RemoteAppDataDeploymentService },
+];
 
 @Module({
   imports: [
@@ -45,41 +105,16 @@ import { AppDataSchemaService } from './services/app-data-schema.service';
       { name: ConversationV2Session.name, schema: ConversationV2SessionSchema },
     ]),
   ],
-  controllers: [
-    AppDataMcpController,
-    AppDataPublicController,
-    AppDataPublicAuthController,
-    AppDataPublicInviteController,
-    AppDataOwnerController,
-    AppDataHealthController,
-  ],
-  providers: [
-    AppDataIdentifierService,
-    AppDataCatalogService,
-    AppDataAuditService,
-    AppDataAdvisoryLockService,
-    AppDataProvisioningService,
-    AppDataSchemaDiffService,
-    AppDataMigrationService,
-    AppDataSchemaService,
-    AppDataPolicyService,
-    AppDataQueryService,
-    AppDataRowService,
-    AppDataEndUserGrantsService,
-    AppDataEndUserService,
-    AppDataEndUserAuthService,
-    AppDataPublicAccessService,
-    AppDataMcpAuthService,
-    AppDataMcpDispatcherService,
-    AppDataReleaseBindingService,
-    AppDataDeploymentService,
-  ],
-  exports: [
-    AppDataCatalogService,
-    AppDataDeploymentService,
-    AppDataReleaseBindingService,
-    AppDataProvisioningService,
-    AppDataMcpDispatcherService,
-  ],
+  controllers: APP_DATA_USE_REMOTE ? REMOTE_CONTROLLERS : LOCAL_CONTROLLERS,
+  providers: APP_DATA_USE_REMOTE ? REMOTE_PROVIDERS : LOCAL_PROVIDERS,
+  exports: APP_DATA_USE_REMOTE
+    ? [AppDataDeploymentService, AppDataReleaseBindingService, AppDataMcpDispatcherService]
+    : [
+        AppDataCatalogService,
+        AppDataDeploymentService,
+        AppDataReleaseBindingService,
+        AppDataProvisioningService,
+        AppDataMcpDispatcherService,
+      ],
 })
 export class AppDataModule {}

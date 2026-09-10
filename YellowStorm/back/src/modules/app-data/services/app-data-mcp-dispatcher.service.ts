@@ -25,6 +25,7 @@ import {
 } from '../mcp/app-data-mcp.tools';
 import type { AppDataSchemaManifest } from '../constants/app-data.types';
 import { AppDataException } from '../constants/app-data.errors';
+import { normalizeSchemaManifest } from '../utils/app-data-sql.util';
 import { AppDataCatalogService } from './app-data-catalog.service';
 import { AppDataMcpAuthService } from './app-data-mcp-auth.service';
 import { AppDataPolicyService } from './app-data-policy.service';
@@ -188,23 +189,27 @@ export class AppDataMcpDispatcherService {
       }
       case 'schema_get':
         return this.schema.getSchema(workspaceId, 'dev');
-      case 'schema_plan':
+      case 'schema_plan': {
+        const planned = normalizeSchemaManifest(args.manifest as AppDataSchemaManifest);
         return this.schema.planSchema({
           workspaceId,
           environment: 'dev',
-          manifest: args.manifest as AppDataSchemaManifest,
+          manifest: planned.manifest,
           expectedVersion: Number(args.expectedVersion),
         });
-      case 'schema_apply':
+      }
+      case 'schema_apply': {
+        const applied = normalizeSchemaManifest(args.manifest as AppDataSchemaManifest);
         return this.schema.applySchema({
           workspaceId,
           environment: 'dev',
-          manifest: args.manifest as AppDataSchemaManifest,
+          manifest: applied.manifest,
           expectedVersion: Number(args.expectedVersion),
           confirmDestructive: args.confirmDestructive === true,
           toolCallId,
           actorPrincipal: 'mcp',
         });
+      }
       case 'policy_get':
         return { policies: await this.policies.getPolicies(workspaceId, 'dev') };
       case 'policy_apply':

@@ -38,6 +38,61 @@ export const APP_DATA_MCP_TOOL_DESCRIPTIONS: Record<AppDataMcpToolName, string> 
   row_delete: 'Delete a row in DEV',
 };
 
+/**
+ * Shared JSON Schema for the `manifest` argument of schema_plan / schema_apply.
+ * Fully described so the model cannot misplace `version` inside `tables` —
+ * the shape must be { version, tables: { <name>: { columns: { <col>: {...} } } } }.
+ */
+const APP_DATA_MANIFEST_ARG = {
+  type: 'object',
+  description:
+    'Declarative schema manifest. Exact shape: {"version": <integer>, "tables": {"<table_name>": {"columns": {"<column_name>": {"type": "text"|"integer"|"boolean"|"timestamptz"|"uuid", "primaryKey"?: true, "nullable"?: true, "unique"?: true, "default"?: <literal>}}}}}. ' +
+    'IMPORTANT: "version" belongs at the manifest level only — NEVER place a "version" key inside "tables". ' +
+    'Table and column names must match ^[a-z][a-z0-9_]{0,62}$.',
+  required: ['version', 'tables'],
+  properties: {
+    version: {
+      type: 'integer',
+      description:
+        'Manifest version. Must be strictly greater than the current schema version reported by schema_get.',
+    },
+    tables: {
+      type: 'object',
+      description:
+        'Map of table name to its definition. Every key inside this object is a table name — do NOT put "version" or any metadata here.',
+      additionalProperties: {
+        type: 'object',
+        description: 'One table definition.',
+        required: ['columns'],
+        properties: {
+          columns: {
+            type: 'object',
+            description:
+              'Map of column name to column definition. At least one column; exactly one primaryKey column per table.',
+            additionalProperties: {
+              type: 'object',
+              description: 'One column definition.',
+              required: ['type'],
+              properties: {
+                type: { type: 'string', enum: ['text', 'integer', 'boolean', 'timestamptz', 'uuid'] },
+                primaryKey: { type: 'boolean' },
+                nullable: { type: 'boolean' },
+                unique: { type: 'boolean' },
+                default: {
+                  description: 'Literal default value (string, number, boolean or null).',
+                },
+              },
+              additionalProperties: false,
+            },
+          },
+        },
+        additionalProperties: false,
+      },
+    },
+  },
+  additionalProperties: false,
+} as const;
+
 export const APP_DATA_MCP_TOOL_SCHEMAS: Record<AppDataMcpToolName, Record<string, unknown>> = {
   appdata_status: { type: 'object', properties: {}, additionalProperties: false },
   provision: { type: 'object', properties: {}, additionalProperties: false },
@@ -50,7 +105,7 @@ export const APP_DATA_MCP_TOOL_SCHEMAS: Record<AppDataMcpToolName, Record<string
     type: 'object',
     required: ['manifest', 'expectedVersion'],
     properties: {
-      manifest: { type: 'object' },
+      manifest: APP_DATA_MANIFEST_ARG,
       expectedVersion: { type: 'integer' },
     },
     additionalProperties: false,
@@ -59,7 +114,7 @@ export const APP_DATA_MCP_TOOL_SCHEMAS: Record<AppDataMcpToolName, Record<string
     type: 'object',
     required: ['manifest', 'expectedVersion'],
     properties: {
-      manifest: { type: 'object' },
+      manifest: APP_DATA_MANIFEST_ARG,
       expectedVersion: { type: 'integer' },
       confirmDestructive: { type: 'boolean' },
       toolCallId: { type: 'string' },
