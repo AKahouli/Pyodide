@@ -24,7 +24,7 @@ import {
   type AppDataMcpToolName,
 } from '../mcp/app-data-mcp.tools';
 import type { AppDataSchemaManifest } from '../constants/app-data.types';
-import { AppDataException } from '../constants/app-data.errors';
+import { AppDataException, APP_DATA_ERROR_CODES } from '../constants/app-data.errors';
 import { normalizeSchemaManifest, validateSeedTables } from '../utils/app-data-sql.util';
 import { AppDataCatalogService } from './app-data-catalog.service';
 import { AppDataMcpAuthService } from './app-data-mcp-auth.service';
@@ -141,6 +141,7 @@ export class AppDataMcpDispatcherService {
           reqId,
           new McpError(JsonRpcErrorCode.INVALID_PARAMS, err.message, {
             code: err.appDataCode,
+            errorCode: APP_DATA_ERROR_CODES[err.appDataCode],
             ...err.data,
           }),
         );

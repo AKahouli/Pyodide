@@ -28,7 +28,7 @@ import type {
   AppDataSchemaManifest,
   AppDataStatus,
 } from '../constants/app-data.types';
-import { AppDataErrorCode, AppDataException } from '../constants/app-data.errors';
+import { AppDataErrorCode, AppDataException, APP_DATA_ERROR_CODES } from '../constants/app-data.errors';
 import { AppDataClientService } from './app-data-client.service';
 import { AppDataMcpAuthService } from './app-data-mcp-auth.service';
 import {
@@ -173,6 +173,7 @@ export class RemoteAppDataMcpDispatcherService {
           reqId,
           new McpError(JsonRpcErrorCode.INVALID_PARAMS, err.message, {
             code: err.appDataCode,
+            errorCode: APP_DATA_ERROR_CODES[err.appDataCode],
             ...err.data,
           }),
         );

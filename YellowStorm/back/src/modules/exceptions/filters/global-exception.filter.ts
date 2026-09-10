@@ -112,26 +112,34 @@ export class GlobalExceptionFilter implements ExceptionFilter {
     const exceptionResponse = exception.getResponse();
 
     let message: string;
+    let code: ErrorCode;
     let details: ErrorDetail[] | undefined;
 
     if (typeof exceptionResponse === 'string') {
       message = exceptionResponse;
+      code = this.mapStatusToErrorCode(status);
     } else if (typeof exceptionResponse === 'object' && exceptionResponse !== null) {
       const responseObj = exceptionResponse as Record<string, unknown>;
       message = this.extractMessage(responseObj);
       details = this.extractValidationDetails(responseObj);
+
+      // Preserve domain-specific errorCode when present (e.g. AppDataException).
+      // Fall back to the generic status-based code.
+      const explicitCode = typeof responseObj.errorCode === 'string' ? responseObj.errorCode : undefined;
+      code = explicitCode && explicitCode in ErrorMessages
+        ? (explicitCode as ErrorCode)
+        : this.mapStatusToErrorCode(status);
     } else {
       message = 'An error occurred';
+      code = this.mapStatusToErrorCode(status);
     }
-
-    const code = this.mapStatusToErrorCode(status);
 
     return {
       ...baseResponse,
       error: {
         ...baseResponse.error,
         code,
-        message: this.isProduction ? ErrorMessages[code] : message,
+        message: this.isProduction ? (ErrorMessages[code] ?? message) : message,
         statusCode: status,
         details,
       },
