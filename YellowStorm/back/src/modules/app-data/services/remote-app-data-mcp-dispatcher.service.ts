@@ -31,7 +31,11 @@ import type {
 import { AppDataErrorCode, AppDataException } from '../constants/app-data.errors';
 import { AppDataClientService } from './app-data-client.service';
 import { AppDataMcpAuthService } from './app-data-mcp-auth.service';
-import { normalizeSchemaManifest } from '../utils/app-data-sql.util';
+import {
+  normalizeSchemaManifest,
+  safeSqlDefault,
+  validateSeedTables,
+} from '../utils/app-data-sql.util';
 
 /**
  * Remote implementation of the AppDataMcpDispatcherService contract.
@@ -64,29 +68,6 @@ const REMOTE_SUPPORTED_TOOLS: ReadonlySet<string> = new Set([
   'row_delete',
   'seed',
 ]);
-
-/**
- * SQL DEFAULT expressions safe to forward verbatim: numeric/boolean literals,
- * quoted string literals, and a fixed function allowlist. A bare identifier
- * (e.g. "now") would be parsed by Postgres as a column reference (0A000).
- */
-const SAFE_SQL_DEFAULTS =
-  /^(now\(\)|current_timestamp|gen_random_uuid\(\)|uuid_generate_v4\(\))$/i;
-
-function safeSqlDefault(raw: unknown): string | null {
-  if (typeof raw === 'number' && Number.isFinite(raw)) return String(raw);
-  if (typeof raw === 'boolean') return raw ? 'true' : 'false';
-  if (typeof raw !== 'string') return null;
-  const s = raw.trim();
-  if (/^-?\d+(\.\d+)?$/.test(s)) return s;
-  if (SAFE_SQL_DEFAULTS.test(s)) {
-    return s.toLowerCase() === 'now()' ? 'now()' : s.toLowerCase();
-  }
-  if (s.length >= 2 && s.startsWith("'") && s.endsWith("'")) {
-    return `'${s.slice(1, -1).replace(/'/g, "''")}'`;
-  }
-  return null;
-}
 
 @Injectable()
 export class RemoteAppDataMcpDispatcherService {
@@ -274,9 +255,10 @@ export class RemoteAppDataMcpDispatcherService {
         if (!rawManifest || typeof rawManifest !== 'object' || !rawManifest.tables) {
           throw new McpError(JsonRpcErrorCode.INVALID_PARAMS, 'schema_apply requires a manifest with tables');
         }
-        const manifest = normalizeSchemaManifest(rawManifest).manifest;
-        const { tables, warnings } = this.mapManifestTables(manifest);
+        const { manifest: normalized, warnings: normalizeWarnings } = normalizeSchemaManifest(rawManifest);
+        const { tables, warnings: mapWarnings } = this.mapManifestTables(normalized);
         const applied = await this.client.applySchema(app.id, 'dev', tables);
+        const warnings = [...normalizeWarnings, ...mapWarnings];
         return warnings.length > 0
           ? { applied: true, message: applied.message, tables: applied.tables, warnings }
           : { applied: true, message: applied.message, tables: applied.tables };
@@ -346,25 +328,7 @@ export class RemoteAppDataMcpDispatcherService {
       }
       case 'seed': {
         const app = await this.requireRemoteApp(binding);
-        const rawTables = args.tables as Record<string, unknown> | undefined;
-        if (!rawTables || typeof rawTables !== 'object' || Array.isArray(rawTables)) {
-          throw new McpError(
-            JsonRpcErrorCode.INVALID_PARAMS,
-            'seed requires a "tables" object map ({ "<table>": [ {row}, ... ] })',
-          );
-        }
-        const tables = Object.entries(rawTables)
-          .filter(([, rows]) => Array.isArray(rows))
-          .map(([name, rows]) => ({
-            name,
-            rows: rows as Record<string, unknown>[],
-          }));
-        if (tables.length === 0) {
-          throw new McpError(
-            JsonRpcErrorCode.INVALID_PARAMS,
-            'seed requires at least one table with a rows array',
-          );
-        }
+        const tables = validateSeedTables(args.tables);
         const seeded = await this.client.seedRows(app.id, 'dev', tables, ownerUserId);
         return {
           environment: 'dev',

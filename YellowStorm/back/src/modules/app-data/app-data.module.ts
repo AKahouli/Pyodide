@@ -51,7 +51,7 @@ import { AppDataRemoteHealthController } from './controllers/remote/app-data-rem
  * straight at the microservice (APP_DATA_REMOTE_PUBLIC_BASE_URL). Only the
  * agent-facing MCP, the owner Data tab and health remain exposed here.
  */
-const APP_DATA_USE_REMOTE = process.env.APP_DATA_REMOTE === 'true';
+const APP_DATA_USE_REMOTE = appDataConfig().remote;
 
 const LOCAL_CONTROLLERS = [
   AppDataMcpController,

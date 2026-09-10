@@ -23,7 +23,7 @@ export const APP_DATA_MCP_TOOL_DESCRIPTIONS: Record<AppDataMcpToolName, string> 
   appdata_status: 'Get App Data provisioning and schema status for the bound workspace',
   provision:
     'Provision DEV PostgreSQL schema for persistent app data (idempotent). After success, restart the Vite dev server (yellowruntime_dev_server action=restart) so VITE_YM_* env reaches the Nodepod preview.',
-  schema_get: 'Get current DEV schema manifest and version',
+  schema_get: 'Get current DEV schema manifest and version. In remote mode, returns table names only (no column-level detail) — call schema_apply directly with the full manifest.',
   schema_plan: 'Plan typed schema migration without applying',
   schema_apply:
     'Apply typed schema migration to DEV. New tables automatically receive default DEV policies (anonymous + yellowmind_owner CRUD).',
@@ -128,7 +128,13 @@ export const APP_DATA_MCP_TOOL_SCHEMAS: Record<AppDataMcpToolName, Record<string
   policy_apply: {
     type: 'object',
     required: ['policies'],
-    properties: { policies: { type: 'object' } },
+    properties: {
+      policies: { type: 'object' },
+      expectedVersion: {
+        type: 'integer',
+        description: 'Optional schema version to validate against before applying policies. Prevents stale policy writes over a newer schema.',
+      },
+    },
     additionalProperties: false,
   },
   table_sample: {

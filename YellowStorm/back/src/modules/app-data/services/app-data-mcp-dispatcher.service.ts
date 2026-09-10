@@ -25,7 +25,7 @@ import {
 } from '../mcp/app-data-mcp.tools';
 import type { AppDataSchemaManifest } from '../constants/app-data.types';
 import { AppDataException } from '../constants/app-data.errors';
-import { normalizeSchemaManifest } from '../utils/app-data-sql.util';
+import { normalizeSchemaManifest, validateSeedTables } from '../utils/app-data-sql.util';
 import { AppDataCatalogService } from './app-data-catalog.service';
 import { AppDataMcpAuthService } from './app-data-mcp-auth.service';
 import { AppDataPolicyService } from './app-data-policy.service';
@@ -219,6 +219,7 @@ export class AppDataMcpDispatcherService {
             environment: 'dev',
             policies: args.policies as import('../constants/app-data.types').AppDataPolicyDocument,
             actorPrincipal: 'mcp',
+            expectedVersion: args.expectedVersion != null ? Number(args.expectedVersion) : undefined,
           }),
         };
       case 'table_sample':
@@ -290,47 +291,23 @@ export class AppDataMcpDispatcherService {
       }
       case 'seed': {
         const app = await this.catalog.requireAppByWorkspace(workspaceId);
-        const rawTables = args.tables as Record<string, unknown> | undefined;
-        if (!rawTables || typeof rawTables !== 'object' || Array.isArray(rawTables)) {
-          throw new McpError(
-            JsonRpcErrorCode.INVALID_PARAMS,
-            'seed requires a "tables" object map ({ "<table>": [ {row}, ... ] })',
-          );
-        }
+        const tables = validateSeedTables(args.tables);
         const results: { table: string; inserted: number; skipped: number }[] = [];
         let insertedTotal = 0;
         let skippedTotal = 0;
-        for (const tableName of Object.keys(rawTables)) {
-          const rows = rawTables[tableName];
-          if (!Array.isArray(rows)) continue;
-          let inserted = 0;
-          let skipped = 0;
-          for (const row of rows as Record<string, unknown>[]) {
-            const { id: explicitId, ...rest } = row ?? {};
-            try {
-              await this.rows.insertRow({
-                appDataId: app.appDataId,
-                environment: 'dev',
-                table: tableName,
-                row: { ...(rest ?? {}) },
-                principal,
-                ownerUserId,
-              });
-              inserted++;
-            } catch (err) {
-              // Idempotent re-runs: an explicit id that already exists is a
-              // duplicate-key violation (Postgres code 23505) — count as skipped.
-              const code = (err as { code?: string } | undefined)?.code;
-              if (code === '23505' && explicitId) {
-                skipped++;
-              } else {
-                throw err;
-              }
-            }
-          }
-          results.push({ table: tableName, inserted, skipped });
-          insertedTotal += inserted;
-          skippedTotal += skipped;
+        for (const { name: tableName, rows: tableRows } of tables) {
+          if (tableRows.length === 0) continue;
+          const batchResult = await this.rows.batchInsert({
+            appDataId: app.appDataId,
+            environment: 'dev',
+            table: tableName,
+            rows: tableRows,
+            principal,
+            ownerUserId,
+          });
+          results.push({ table: tableName, inserted: batchResult.inserted, skipped: batchResult.skipped });
+          insertedTotal += batchResult.inserted;
+          skippedTotal += batchResult.skipped;
         }
         return {
           environment: 'dev',

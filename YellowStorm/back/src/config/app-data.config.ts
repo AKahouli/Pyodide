@@ -13,13 +13,23 @@ export default registerAs('appData', () => ({
    * are proxied to APP_DATA_SERVICE_URL and local tenant-schema services are
    * not registered. Set to false to restore monolith-local behaviour.
    */
-  remote: process.env.APP_DATA_REMOTE === 'true',
+  remote: (() => {
+    const raw = process.env.APP_DATA_REMOTE;
+    if (raw === undefined || raw === '') return false;
+    if (raw === 'true') return true;
+    if (raw === 'false') return false;
+    console.warn(
+      `[AppDataModule] APP_DATA_REMOTE="${raw}" is not a recognised value — ` +
+        `expected "true" or "false". Falling back to local mode.`,
+    );
+    return false;
+  })(),
   /** Base URL of the app-data microservice (internal, server-to-server). */
-  serviceUrl: process.env.APP_DATA_SERVICE_URL || 'http://localhost:8443',
+  serviceUrl: process.env.APP_DATA_SERVICE_URL || '',
   /** Static service token expected by the microservice (Authorization: Bearer). */
   serviceToken: process.env.APP_DATA_SERVICE_TOKEN || '',
   /** Externally reachable base URL of the microservice for generated apps. */
-  remotePublicBaseUrl: process.env.APP_DATA_REMOTE_PUBLIC_BASE_URL || 'http://localhost:8443',
+  remotePublicBaseUrl: process.env.APP_DATA_REMOTE_PUBLIC_BASE_URL || '',
   /**
    * Public HTTPS base URL of the microservice for PROD deployed apps
    * (e.g. https://app-data.yellowsys.org behind a reverse proxy). Required

@@ -53,18 +53,22 @@ describe('normalizeSchemaManifest', () => {
     const result = normalizeSchemaManifest(manifest);
     expect(result.changed).toBe(true);
     expect(Object.keys(result.manifest.tables)).toEqual(['tasks']);
+    expect(result.warnings).toHaveLength(2);
+    expect(result.warnings[0]).toContain('broken');
+    expect(result.warnings[1]).toContain('alsoBroken');
   });
 
   it('passes through a manifest without tables or with a non-object tables value', () => {
     const noTables = { version: 1 } as unknown as AppDataSchemaManifest;
-    expect(normalizeSchemaManifest(noTables)).toEqual({ manifest: noTables, changed: false });
+    expect(normalizeSchemaManifest(noTables)).toEqual({ manifest: noTables, changed: false, warnings: [] });
 
     const badTables = { version: 1, tables: 'tasks' } as unknown as AppDataSchemaManifest;
-    expect(normalizeSchemaManifest(badTables)).toEqual({ manifest: badTables, changed: false });
+    expect(normalizeSchemaManifest(badTables)).toEqual({ manifest: badTables, changed: false, warnings: [] });
 
     expect(normalizeSchemaManifest(null as unknown as AppDataSchemaManifest)).toEqual({
       manifest: null,
       changed: false,
+      warnings: [],
     });
   });
 });

@@ -242,7 +242,6 @@ async function bootstrap() {
       reason: serializeUnhandledReason(reason),
       promise: inspect(promise, { depth: 2, breakLength: 120 }),
     });
-    void shutdown('unhandledRejection');
   });
 }
 

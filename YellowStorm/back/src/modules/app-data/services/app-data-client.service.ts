@@ -1,6 +1,5 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, HttpStatus } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { HttpException, HttpStatus } from '@nestjs/common';
 import {
   AppDataErrorCode,
   AppDataException,
@@ -299,19 +298,40 @@ export class AppDataClientService {
 
   /**
    * Raw passthrough for proxy controllers. Returns the upstream status and
-   * parsed body verbatim; never throws for upstream HTTP errors.
+   * parsed body verbatim for successful responses. For non-2xx responses,
+   * sanitizes the body to prevent information disclosure from the microservice.
    */
   async forward(
     method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE',
     path: string,
     options: { body?: unknown; query?: Record<string, string | undefined>; authorization?: string },
   ): Promise<{ status: number; body: unknown }> {
-    return this.request<unknown>(method, path, {
+    const result = await this.request<unknown>(method, path, {
       body: options.body,
       query: options.query,
       authorization: options.authorization,
       passthrough: true,
     });
+    // Sanitize error responses to avoid leaking microservice internals.
+    if (result.status >= 400) {
+      const safeBody = this.sanitizeUpstreamError(result.body);
+      return { status: result.status, body: safeBody };
+    }
+    return result;
+  }
+
+  private sanitizeUpstreamError(body: unknown): unknown {
+    if (!body || typeof body !== 'object') return { message: 'Upstream error' };
+    const obj = body as Record<string, unknown>;
+    // Preserve only safe fields: message, code, error code.
+    const safe: Record<string, unknown> = {};
+    if (typeof obj.message === 'string') safe.message = obj.message;
+    if (typeof obj.code === 'string') safe.code = obj.code;
+    if (typeof obj.error === 'object' && obj.error !== null) {
+      const err = obj.error as Record<string, unknown>;
+      if (typeof err.code === 'string') safe.error = { code: err.code };
+    }
+    return Object.keys(safe).length > 0 ? safe : { message: 'Upstream error' };
   }
 
   async ready(): Promise<boolean> {
@@ -427,12 +447,4 @@ export class AppDataClientService {
         );
     }
   }
-}
-
-/**
- * Re-throw an upstream passthrough response as an HttpException preserving
- * status and body — used by proxy controllers.
- */
-export function throwUpstreamError(status: number, body: unknown): never {
-  throw new HttpException(body ?? { message: 'Upstream error' }, status);
 }

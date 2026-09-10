@@ -1,8 +1,5 @@
 import { ConfigService } from '@nestjs/config';
-import {
-  AppDataClientService,
-  throwUpstreamError,
-} from './app-data-client.service';
+import { AppDataClientService } from './app-data-client.service';
 import { RemoteAppDataDeploymentService } from './remote-app-data-deployment.service';
 import { RemoteAppDataReleaseBindingService } from './remote-app-data-release-binding.service';
 import {
@@ -84,12 +81,6 @@ describe('AppDataClientService', () => {
     const client = clientWith(fetchMock(401, { message: 'Invalid token' }));
     const res = await client.forward('GET', '/v1/apps/app-1/dev/tables/notes/rows', {});
     expect(res.status).toBe(401);
-  });
-
-  it('throwUpstreamError preserves status and body', () => {
-    expect(() => throwUpstreamError(403, { message: 'denied' })).toThrow(
-      expect.objectContaining({ status: 403 }),
-    );
   });
 });
 

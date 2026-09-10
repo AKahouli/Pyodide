@@ -29,6 +29,7 @@ import type { AppDataEnvironment } from '../../constants/app-data.constants';
 import type { AppDataEndUserGrants, AppDataEndUserStatus } from '../../constants/app-data.types';
 import { assertIdentifier } from '../../utils/app-data-sql.util';
 import { parseAppDataEnvironment, parsePositiveInt } from '../../utils/app-data-request.util';
+import { assertAppDataEnabled, assertEndUserManagementEnabled } from '../../utils/app-data-feature.util';
 
 /**
  * Remote-mode owner Data tab. Reads the session → workspace mapping locally,
@@ -48,21 +49,11 @@ export class AppDataRemoteOwnerController {
   ) {}
 
   private assertEnabled(): void {
-    if (
-      !this.config.get<boolean>('appData.enabled', false) ||
-      !this.config.get<boolean>('appData.dataTabEnabled', false)
-    ) {
-      throw new ServiceUnavailableException('App Data owner API is disabled');
-    }
+    assertAppDataEnabled(this.config);
   }
 
   private assertEndUserManagementEnabled(): void {
-    if (
-      !this.config.get<boolean>('appData.enabled', false) ||
-      !this.config.get<boolean>('appData.endUserAuthEnabled', true)
-    ) {
-      throw new ServiceUnavailableException('App Data end-user management is disabled');
-    }
+    assertEndUserManagementEnabled(this.config);
   }
 
   private async workspaceId(sessionId: string): Promise<string> {
@@ -92,6 +83,8 @@ export class AppDataRemoteOwnerController {
     const ws = await this.workspaceId(sessionId);
     const app = await this.client.getAppByWorkspace(ws);
     if (!app) {
+      // Return the same shape as the local catalog.getStatus() so callers
+      // can rely on the AppDataStatus type without mode-specific branching.
       return {
         enabled: true,
         appDataId: null,
@@ -109,6 +102,9 @@ export class AppDataRemoteOwnerController {
           (e as { env?: string }).env === env ||
           (e as { environment?: string }).environment === env,
       ) as { provisioned_at?: string | null } | undefined;
+    // schemaName and currentVersion are null in remote mode because the
+    // microservice does not expose them via the status endpoint. The frontend
+    // must handle nulls gracefully (the AppDataStatus type marks them optional).
     return {
       enabled: true,
       appDataId: app.id,
