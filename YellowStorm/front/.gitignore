@@ -36,3 +36,9 @@ dist-ssr
 playwright-report/
 test-results/
 tests/e2e/.auth/
+# Build debris
+*.tsbuildinfo
+vitest-report.xml
+vitest.config.ts.timestamp-*.mjs
+vite.err.log
+vite.out.log

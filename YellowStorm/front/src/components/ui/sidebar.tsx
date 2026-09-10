@@ -3,7 +3,7 @@
 import * as React from 'react';
 import { cva, type VariantProps } from 'class-variance-authority';
 import { MenuIcon, PanelLeftIcon } from 'lucide-react';
-import { Slot } from 'radix-ui';
+import { Slot } from '@radix-ui/react-slot';
 
 import { useIsMobile } from '@/hooks/use-mobile';
 import { cn } from '@/lib/utils';
@@ -294,13 +294,13 @@ function SidebarGroup({ className, ...props }: React.ComponentProps<'div'>) {
 }
 
 function SidebarGroupLabel({ className, asChild = false, ...props }: React.ComponentProps<'div'> & { asChild?: boolean }) {
-  const Comp = (asChild ? Slot.Root : 'div') as React.ElementType;
+  const Comp = (asChild ? Slot : 'div') as React.ElementType;
 
   return <Comp data-slot='sidebar-group-label' data-sidebar='group-label' className={cn('text-sidebar-foreground/70 ring-sidebar-ring flex h-8 shrink-0 items-center rounded-md px-2 text-xs font-medium outline-hidden transition-[margin,opacity] duration-200 ease-linear focus-visible:ring-2 [&>svg]:size-4 [&>svg]:shrink-0', 'group-data-[collapsible=icon]:-mt-8 group-data-[collapsible=icon]:opacity-0', className)} {...props} />;
 }
 
 function SidebarGroupAction({ className, asChild = false, ...props }: React.ComponentProps<'button'> & { asChild?: boolean }) {
-  const Comp = (asChild ? Slot.Root : 'button') as React.ElementType;
+  const Comp = (asChild ? Slot : 'button') as React.ElementType;
 
   return (
     <Comp
@@ -359,7 +359,7 @@ const SidebarMenuButton = React.forwardRef<
     tooltip?: string | React.ComponentProps<typeof TooltipContent>;
   } & VariantProps<typeof sidebarMenuButtonVariants>
 >(({ asChild = false, isActive = false, variant = 'default', size = 'default', tooltip, className, ...props }, ref) => {
-  const Comp = asChild ? Slot.Root : 'button';
+  const Comp = asChild ? Slot : 'button';
   const { isMobile, state } = useSidebar();
 
   const button = <Comp ref={ref as any} data-slot='sidebar-menu-button' data-sidebar='menu-button' data-size={size} data-active={isActive} className={cn(sidebarMenuButtonVariants({ variant, size }), className)} {...props} />;
@@ -390,7 +390,7 @@ const SidebarMenuAction = React.forwardRef<
     showOnHover?: boolean;
   }
 >(({ className, asChild = false, showOnHover = false, ...props }, ref) => {
-  const Comp = asChild ? Slot.Root : 'button';
+  const Comp = asChild ? Slot : 'button';
 
   return (
     <Comp
@@ -467,7 +467,7 @@ function SidebarMenuSubButton({
   size?: 'sm' | 'md';
   isActive?: boolean;
 }) {
-  const Comp = (asChild ? Slot.Root : 'a') as React.ElementType;
+  const Comp = (asChild ? Slot : 'a') as React.ElementType;
 
   return (
     <Comp

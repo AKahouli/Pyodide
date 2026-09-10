@@ -9,7 +9,6 @@ export const playbookFeatures = {
   querySseMirrorZustandEnabled: import.meta.env.VITE_PLAYBOOK_QUERY_SSE_MIRROR_ZUSTAND === 'true',
   xstateExecutionEnabled: import.meta.env.VITE_PLAYBOOK_XSTATE_EXECUTION_ENABLED === 'true',
   xstateAutosaveEnabled: import.meta.env.VITE_PLAYBOOK_XSTATE_AUTOSAVE_ENABLED === 'true',
-  asyncDesignEnabled: import.meta.env.VITE_PLAYBOOK_ASYNC_DESIGN_ENABLED === 'true',
   mcpAssistantEnabled: resolvePlaybookFeatureFlag(
     import.meta.env.VITE_PLAYBOOK_MCP_ASSISTANT_ENABLED,
     'MY_APP_VITE_PLAYBOOK_MCP_ASSISTANT_ENABLED',

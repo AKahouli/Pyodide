@@ -4,7 +4,6 @@ export const configValidationSchema = Joi.object({
   GOVERNED_CONVERSATIONS_ENABLED: Joi.boolean().default(false),
   GOVERNANCE_SCOPE_AUDIENCE_ENABLED: Joi.boolean().default(false),
   GOVERNED_SCOPE_CAROUSEL_ENABLED: Joi.boolean().default(false),
-  DATA_ROOM_GOVERNANCE_ENABLED: Joi.boolean().default(false),
   DATA_ROOM_WORKSPACE_EVENTS_ENABLED: Joi.boolean().default(false),
   DATA_ROOM_GOVERNANCE_EVENT_CONSUMER_ENABLED: Joi.boolean().default(false),
   DATA_ROOM_OUTBOX_DISPATCH_ENABLED: Joi.boolean().default(false),
