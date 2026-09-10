@@ -926,7 +926,12 @@ class OrchestratorService:
             # `o.id not in after_ids` is the cycle guard: this step already waits
             # on those, so making them wait on it too is a deadlock the scheduler
             # would (rightly) refuse to order.
-            affected = [o for o in plan.steps
+            # A spawned WAIT (ask / await_reply) feeds only its own follow-up step
+            # (created above with depends_on=[sub_step.id]); a pre-planned sibling
+            # that depends on the caller for the caller's OWN output — e.g. "notify
+            # that the mail was sent" after an email step — must NOT be made to wait
+            # for the reply. Only re-parent siblings onto real work steps.
+            affected = [] if kind in ("ask", "await_reply") else [o for o in plan.steps
                        if o.id != sub_step.id and o.id not in siblings
                        and o.id not in after_ids
                        and caller_step_id in o.depends_on

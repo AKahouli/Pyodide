@@ -1838,3 +1838,27 @@ def test_mark_running_leaves_a_terminal_step_untouched():
     asyncio.run(cb(object(), object()))
     assert step.status == Status.COMPLETED
     assert seen == []
+
+
+def test_create_task_await_reply_does_not_reparent_a_planned_sibling():
+    # Regression: an email step that spawns an await_reply must NOT drag a
+    # pre-planned sibling (e.g. "notify on Teams that the mail was sent") into
+    # waiting for the reply. The sibling depends on the caller for the caller's
+    # OWN output, not the reply — its deps must stay unchanged.
+    rm = MagicMock(upsert_steps=AsyncMock(), set_step_status=AsyncMock(),
+                   rebind_mail_wait=AsyncMock(return_value=True), mail_token_for=AsyncMock(return_value="YW-x"))
+    service = svc.OrchestratorService(MagicMock(), rm, planner_model="m")
+    plan = Plan(id="p", title="t", goal="g", steps=[
+        Step(id="s1", kind="execute", description="email Adem", status=Status.RUNNING),
+        Step(id="s2", kind="execute", description="notify Adem on Teams", depends_on=["s1"],
+             status=Status.PENDING),
+    ])
+    scheduler.assign_waves(plan)
+    name_to_step = {"s1": "s1", "s2": "s2"}
+    task_tool = service._create_task_tool_for("sess1", "u1", plan, _fn_factory_holder(),
+                                              name_to_step, "s1", set())
+    tc = MagicMock(); tc.run_node = AsyncMock(return_value="ok")
+    asyncio.run(task_tool.func("Wait for Adem's reply and report it.", kind="await_reply", tool_context=tc))
+
+    assert plan.step("s2").depends_on == ["s1"], (
+        "Notify-Teams sibling must not be re-parented onto the spawned await_reply")
