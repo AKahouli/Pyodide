@@ -69,6 +69,7 @@ export interface StreamRequest {
   taskSummary?: string;
   attachedFileIds?: string[];
   webSearchEnabled?: boolean;
+  webConnectorAccessEnabled?: boolean;
   deepSearchEnabled?: boolean;
   modelId?: string;
   semanticModelId?: string;
@@ -885,6 +886,7 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
         taskSummary: request.taskSummary,
         attachedFileIds: request.attachedFileIds ?? [],
         webSearchEnabled: request.webSearchEnabled ?? false,
+        webConnectorAccessEnabled: request.webConnectorAccessEnabled ?? true,
         deepSearchEnabled: request.deepSearchEnabled ?? false,
         modelId: request.modelId,
         semanticModelId: request.semanticModelId,
@@ -1097,6 +1099,7 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
           } : undefined,
           request.reasoningEffort,
           compaction,
+          request.webConnectorAccessEnabled,
         ),
     ]);
     endBackendPreAdkStage('workspaceAgentResolutionMs');

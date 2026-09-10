@@ -5,7 +5,7 @@
 
 import { useMemo, useCallback } from 'react';
 import { useAuth } from '@/modules/auth';
-import { FEATURE_PERMISSION_ITEMS, MENU_PERMISSION_ITEMS } from '../constants';
+import { FEATURE_PERMISSION_ITEMS, getMenuBranchPermissions, MENU_PERMISSION_ITEMS } from '../constants';
 import type { FeatureVisibility } from '../types';
 import type { MenuPermissionKey } from '../constants';
 
@@ -90,7 +90,9 @@ export function usePermissions() {
   const canSeeMenu = useCallback(
     (menu: MenuPermissionKey): boolean => {
       const item = MENU_PERMISSION_ITEMS.find((candidate) => candidate.key === menu);
-      return item ? checkScopedPermission(permissions, 'menu', item.permission) : false;
+      if (!item) return false;
+      if (checkScopedPermission(permissions, 'menu', item.permission)) return true;
+      return getMenuBranchPermissions(menu).some((permission) => checkPermission(permissions, permission));
     },
     [permissions]
   );

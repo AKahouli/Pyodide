@@ -6,7 +6,6 @@ import MaintenancePage from './pages/MaintenancePage';
 import { EmailVerificationPage, ResetPasswordPage, ProfileCompletionPage } from './modules/auth';
 import { OAuthCallbackPage } from './modules/auth/components/OAuthCallbackPage';
 import { RootGuard } from './modules/auth/components/RootGuard';
-import { dataRoomFeatures } from './config/dataRoomFeatures';
 import { AdminGuard } from './modules/admin/components/AdminGuard';
 import { AdminLayout } from './modules/admin/components/AdminLayout';
 import { PermissionGuard } from './modules/admin/components/PermissionGuard';

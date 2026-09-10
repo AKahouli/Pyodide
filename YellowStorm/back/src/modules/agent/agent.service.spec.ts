@@ -135,6 +135,7 @@ describe('AgentService connector skill inheritance', () => {
     };
     const connectorService = {
       findByIds: jest.fn(),
+      findIdsByCategoryName: jest.fn().mockResolvedValue([]),
     };
     const connectorAuthService = {
       resolveRuntimeAuth: jest.fn(),
@@ -322,6 +323,25 @@ describe('AgentService connector skill inheritance', () => {
     expect(JSON.parse(result[0].agent_params?.params.guardrails_json as string).classifier)
       .toEqual({ omitTemperature: true });
     expect(result[0].agent_params?.params.temperature).toBe('0');
+
+    connectorService.findIdsByCategoryName.mockResolvedValue(['connector-1']);
+    const restricted = await service.buildAgentsForStream(
+      userId,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      false,
+    );
+
+    expect(restricted[0].tools).toEqual([]);
+    expect(JSON.parse(restricted[0].agent_params?.params.connector_bindings_json as string)).toEqual([]);
+    expect(restricted[0].skills?.map((skill) => skill.id as string)).toEqual(['type-skill', 'agent-skill']);
   });
 
   it('exposes every enabled Playbook MCP action to Platform Copilot', async () => {
@@ -377,6 +397,7 @@ describe('AgentService connector skill inheritance', () => {
         undefined,
         undefined,
         undefined,
+        undefined,
         { conversationId: 'conversation-1', correlationId: 'message-1', playbookHandoffAttached: true },
       );
 
@@ -417,6 +438,7 @@ describe('AgentService connector skill inheritance', () => {
       userId,
       undefined,
       ['platform-agent'],
+      undefined,
       undefined,
       undefined,
       undefined,
@@ -528,6 +550,7 @@ describe('AgentService connector skill inheritance', () => {
     const result = await service.buildAgentsForStream(
       userId,
       'selected-model',
+      undefined,
       undefined,
       undefined,
       undefined,

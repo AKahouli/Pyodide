@@ -124,6 +124,7 @@ export interface MessageReplayContext {
   taskSummary?: string;
   attachedFileIds: string[];
   webSearchEnabled: boolean;
+  webConnectorAccessEnabled?: boolean;
   deepSearchEnabled: boolean;
   modelId?: string;
   semanticModelId?: string;

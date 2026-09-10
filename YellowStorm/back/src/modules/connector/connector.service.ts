@@ -144,6 +144,28 @@ export class ConnectorService {
     return connectors.map((c) => this.toResponse(c));
   }
 
+  async findIdsByCategoryName(ids: string[], categoryName: string): Promise<string[]> {
+    if (!ids.length) return [];
+
+    const categories = await this.connectorCategoryModel
+      .find({ name: { $regex: `^${escapeRegex(categoryName)}$`, $options: 'i' } })
+      .select('_id')
+      .lean()
+      .exec();
+    if (!categories.length) return [];
+
+    const connectors = await this.connectorModel
+      .find({
+        _id: { $in: ids.map((id) => new Types.ObjectId(id)) },
+        categoryId: { $in: categories.map((category) => category._id) },
+        isActive: true,
+      })
+      .select('_id')
+      .lean()
+      .exec();
+    return connectors.map((connector) => connector._id.toString());
+  }
+
   /**
    * Resolve connectors by id and map them to the gRPC `ConnectorBinding` wire
    * shape, with per-user auth resolved (OAuth token / credential + dynamic

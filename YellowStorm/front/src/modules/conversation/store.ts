@@ -758,6 +758,9 @@ interface ConversationState {
   // Deep search toggle
   deepSearchEnabled: boolean;
 
+  // Access to connectors in the Web Search category
+  webConnectorAccessEnabled: boolean;
+
   // Selected skill IDs for the current conversation (applied to every message)
   selectedSkillIds: string[];
 
@@ -855,6 +858,9 @@ interface ConversationState {
   // Deep search toggle
   setDeepSearchEnabled: (enabled: boolean) => void;
 
+  // Web Search connector access toggle
+  setWebConnectorAccessEnabled: (enabled: boolean) => void;
+
   // Skill selection (applied to every message in the conversation)
   setSelectedSkillIds: (skillIds: string[]) => void;
   toggleSelectedSkill: (skillId: string) => void;
@@ -925,6 +931,7 @@ export const useConversationStore = create<ConversationState>()(
       selectedSemanticModelId: null,
       selectedConnectorRepo: null,
       deepSearchEnabled: false,
+      webConnectorAccessEnabled: true,
       selectedSkillIds: [],
 
       streamingStateCache: new Map(),
@@ -2619,6 +2626,10 @@ export const useConversationStore = create<ConversationState>()(
         set({ deepSearchEnabled: enabled });
       },
 
+      setWebConnectorAccessEnabled: (enabled) => {
+        set({ webConnectorAccessEnabled: enabled });
+      },
+
       setSelectedSkillIds: (skillIds) => {
         set({ selectedSkillIds: skillIds });
         get().persistSelectedSkills();
@@ -2939,6 +2950,10 @@ export const useSetSelectedConnectorRepo = () => useConversationStore((s) => s.s
 export const useDeepSearchEnabled = () => useConversationStore((s) => s.deepSearchEnabled);
 
 export const useSetDeepSearchEnabled = () => useConversationStore((s) => s.setDeepSearchEnabled);
+
+export const useWebConnectorAccessEnabled = () => useConversationStore((s) => s.webConnectorAccessEnabled);
+
+export const useSetWebConnectorAccessEnabled = () => useConversationStore((s) => s.setWebConnectorAccessEnabled);
 
 export const useSelectedSkillIds = () => useConversationStore((s) => s.selectedSkillIds);
 

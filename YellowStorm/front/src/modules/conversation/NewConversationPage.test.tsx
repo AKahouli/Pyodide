@@ -103,6 +103,8 @@ vi.mock('./store', () => ({
   useSelectedSemanticModelId: () => null,
   useSelectedWorkspaceIds: () => selectedWorkspaceIdsMock.value,
   useSetSelectedReasoningEffort: () => setSelectedReasoningEffortMock,
+  useWebConnectorAccessEnabled: () => true,
+  useSetWebConnectorAccessEnabled: () => vi.fn(),
 }));
 
 vi.mock('./hooks/useConversationFileUpload', () => ({
@@ -202,6 +204,16 @@ describe('NewConversationPage', () => {
     submitRoutingMock.teamIds = undefined;
   });
 
+  it('renders only the chat experience', async () => {
+    render(<NewConversationPage />);
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'submit-new-conversation' })).toBeInTheDocument();
+      expect(screen.queryByText('newConversation.mode.chat')).not.toBeInTheDocument();
+      expect(screen.queryByText('newConversation.mode.agent')).not.toBeInTheDocument();
+    });
+  });
+
   it('forwards selected connector repo on first legacy message', async () => {
     render(<NewConversationPage />);
 
@@ -219,6 +231,7 @@ describe('NewConversationPage', () => {
       expect(createConversationMock).toHaveBeenCalledWith({ workspaces: ['ws-1'] });
       expect(sendMessageMock).toHaveBeenCalledWith('conv-1', {
         content: 'hello',
+        webConnectorAccessEnabled: true,
         modelId: 'model-1',
         agentIds: ['agent-1'],
         connectorRepo: {

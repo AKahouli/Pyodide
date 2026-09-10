@@ -7,7 +7,7 @@ import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/component
 import { Label } from '@/components/ui/label';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import type { ModuleTranslationKey, TranslationParams } from '@/modules/localization';
-import { FEATURE_PERMISSION_ITEMS, MENU_PERMISSION_ITEMS } from '../constants';
+import { FEATURE_PERMISSION_ITEMS, getMenuBranchPermissions, MENU_PERMISSION_ITEMS } from '../constants';
 import { PERMISSION_GROUPS } from '../types';
 
 type AdminTranslate = (key: ModuleTranslationKey<'admin'>, params?: TranslationParams) => string;
@@ -19,21 +19,35 @@ export function toggleScopedPermission(
   available: readonly string[],
   target: string,
 ): string[] {
+  return toggleScopedPermissions(permissions, namespace, available, [target]);
+}
+
+export function toggleScopedPermissions(
+  permissions: string[],
+  namespace: VisibilityNamespace,
+  available: readonly string[],
+  targets: readonly string[],
+): string[] {
   const prefix = `${namespace}.`;
   const scoped = permissions.filter((permission) => permission.startsWith(prefix));
   const unscoped = permissions.filter((permission) => !permission.startsWith(prefix));
 
   if (scoped.length === 0) {
-    return [...unscoped, `${namespace}.restricted`, ...available.filter((permission) => permission !== target)];
+    return [...unscoped, `${namespace}.restricted`, ...available.filter((permission) => !targets.includes(permission))];
   }
 
   const selected = new Set(scoped.filter((permission) => permission !== `${namespace}.restricted`));
-  if (selected.has(target)) selected.delete(target);
-  else selected.add(target);
+  const allTargetsSelected = targets.every((target) => selected.has(target));
+  for (const target of targets) {
+    if (allTargetsSelected) selected.delete(target);
+    else selected.add(target);
+  }
 
   if (available.every((permission) => selected.has(permission))) return unscoped;
   return [...unscoped, `${namespace}.restricted`, ...selected];
 }
+
+export { getMenuBranchPermissions } from '../constants';
 
 export function isScopedPermissionSelected(permissions: string[], namespace: VisibilityNamespace, permission: string) {
   if (permissions.includes('*')) return true;
@@ -137,17 +151,29 @@ export function RolePermissionsEditor({
 
       <TabsContent value="menus" className="mt-2 max-h-64 overflow-y-auto rounded-lg border">
         <p className="border-b p-3 text-xs text-muted-foreground">{t('roles.permissions.menuHelp')}</p>
-        {MENU_PERMISSION_ITEMS.map((item) => (
-          <div key={item.key} className="flex items-center gap-3 border-b p-3 last:border-b-0">
-            <Checkbox
-              id={`role-${item.permission}`}
-              checked={isScopedPermissionSelected(permissions, 'menu', item.permission)}
-              disabled={permissions.includes('*')}
-              onCheckedChange={() => onChange(toggleScopedPermission(permissions, 'menu', menuPermissions, item.permission))}
-            />
-            <Label htmlFor={`role-${item.permission}`} className="cursor-pointer text-sm">{t(item.labelKey)}</Label>
-          </div>
-        ))}
+        {MENU_PERMISSION_ITEMS.map((item) => {
+          const branchPermissions = getMenuBranchPermissions(item.key);
+          const selectedCount = branchPermissions.filter((permission) => isScopedPermissionSelected(permissions, 'menu', permission)).length;
+          const allSelected = selectedCount === branchPermissions.length;
+          const someSelected = selectedCount > 0 && !allSelected;
+          const hasChildren = branchPermissions.length > 1;
+
+          return (
+            <div key={item.key} className="border-b py-3 pr-3 last:border-b-0">
+              <div className="flex items-center gap-3" style={{ marginLeft: `${item.depth * 24 + 12}px` }}>
+                <Checkbox
+                  id={`role-${item.permission}`}
+                  checked={someSelected ? 'indeterminate' : allSelected}
+                  disabled={permissions.includes('*')}
+                  onCheckedChange={() => onChange(toggleScopedPermissions(permissions, 'menu', menuPermissions, branchPermissions))}
+                />
+                <Label htmlFor={`role-${item.permission}`} className={`cursor-pointer text-sm ${hasChildren ? 'font-semibold' : ''}`}>
+                  {t(item.labelKey)}
+                </Label>
+              </div>
+            </div>
+          );
+        })}
       </TabsContent>
     </Tabs>
   );

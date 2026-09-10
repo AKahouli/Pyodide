@@ -37,26 +37,51 @@ export const FEATURE_PERMISSION_ITEMS: {
 ];
 
 export const MENU_PERMISSION_ITEMS = [
-  { key: 'platform', permission: 'menu.platform', labelKey: 'roles.permissions.menus.platform' },
-  { key: 'newChat', permission: 'menu.new_chat', labelKey: 'roles.permissions.menus.newChat' },
-  { key: 'workspace', permission: 'menu.workspace', labelKey: 'roles.permissions.menus.workspace' },
-  { key: 'semanticModels', permission: 'menu.semantic_models', labelKey: 'roles.permissions.menus.semanticModels' },
-  { key: 'playbook', permission: 'menu.playbook', labelKey: 'roles.permissions.menus.playbook' },
-  { key: 'agents', permission: 'menu.agents', labelKey: 'roles.permissions.menus.agents' },
-  { key: 'teams', permission: 'menu.teams', labelKey: 'roles.permissions.menus.teams' },
-  { key: 'groups', permission: 'menu.groups', labelKey: 'roles.permissions.menus.groups' },
-  { key: 'worky', permission: 'menu.worky', labelKey: 'roles.permissions.menus.worky' },
-  { key: 'connectedApps', permission: 'menu.connected_apps', labelKey: 'roles.permissions.menus.connectedApps' },
-  { key: 'appMarketplace', permission: 'menu.app_marketplace', labelKey: 'roles.permissions.menus.appMarketplace' },
-  { key: 'governance', permission: 'menu.governance', labelKey: 'roles.permissions.menus.governance' },
-  { key: 'admin', permission: 'menu.admin', labelKey: 'roles.permissions.menus.admin' },
+  { key: 'platform', permission: 'menu.platform', labelKey: 'roles.permissions.menus.platform', depth: 0 },
+  { key: 'ask', permission: 'menu.ask', labelKey: 'roles.permissions.menus.ask', depth: 0 },
+  { key: 'newChat', permission: 'menu.new_chat', labelKey: 'roles.permissions.menus.newChat', depth: 1, parent: 'ask' },
+  { key: 'projects', permission: 'menu.projects', labelKey: 'roles.permissions.menus.projects', depth: 1, parent: 'ask' },
+  { key: 'history', permission: 'menu.history', labelKey: 'roles.permissions.menus.history', depth: 1, parent: 'ask' },
+  { key: 'knowledge', permission: 'menu.knowledge', labelKey: 'roles.permissions.menus.knowledge', depth: 0 },
+  { key: 'workspace', permission: 'menu.workspace', labelKey: 'roles.permissions.menus.workspace', depth: 1, parent: 'knowledge' },
+  { key: 'semanticModels', permission: 'menu.semantic_models', labelKey: 'roles.permissions.menus.semanticModels', depth: 1, parent: 'knowledge' },
+  { key: 'automate', permission: 'menu.automate', labelKey: 'roles.permissions.menus.automate', depth: 0 },
+  { key: 'playbook', permission: 'menu.playbook', labelKey: 'roles.permissions.menus.playbook', depth: 1, parent: 'automate' },
+  { key: 'agentNetwork', permission: 'menu.agent_network', labelKey: 'roles.permissions.menus.agentNetwork', depth: 1, parent: 'automate' },
+  { key: 'agents', permission: 'menu.agents', labelKey: 'roles.permissions.menus.agents', depth: 2, parent: 'agentNetwork' },
+  { key: 'teams', permission: 'menu.teams', labelKey: 'roles.permissions.menus.teams', depth: 2, parent: 'agentNetwork' },
+  { key: 'groups', permission: 'menu.groups', labelKey: 'roles.permissions.menus.groups', depth: 2, parent: 'agentNetwork' },
+  { key: 'worky', permission: 'menu.worky', labelKey: 'roles.permissions.menus.worky', depth: 1, parent: 'automate' },
+  { key: 'integrations', permission: 'menu.integrations', labelKey: 'roles.permissions.menus.integrations', depth: 1, parent: 'automate' },
+  { key: 'connectedApps', permission: 'menu.connected_apps', labelKey: 'roles.permissions.menus.connectedApps', depth: 2, parent: 'integrations' },
+  { key: 'appMarketplace', permission: 'menu.app_marketplace', labelKey: 'roles.permissions.menus.appMarketplace', depth: 2, parent: 'integrations' },
+  { key: 'govern', permission: 'menu.govern', labelKey: 'roles.permissions.menus.govern', depth: 0 },
+  { key: 'governance', permission: 'menu.governance', labelKey: 'roles.permissions.menus.governance', depth: 1, parent: 'govern' },
+  { key: 'admin', permission: 'menu.admin', labelKey: 'roles.permissions.menus.admin', depth: 1, parent: 'govern' },
 ] as const satisfies readonly {
   key: string;
   permission: string;
   labelKey: ModuleTranslationKey<'admin'>;
+  depth: number;
+  parent?: string;
 }[];
 
 export type MenuPermissionKey = (typeof MENU_PERMISSION_ITEMS)[number]['key'];
+
+export function getMenuBranchPermissions(key: string): string[] {
+  const branchKeys = new Set([key]);
+  let added = true;
+  while (added) {
+    added = false;
+    for (const item of MENU_PERMISSION_ITEMS) {
+      if ('parent' in item && branchKeys.has(item.parent) && !branchKeys.has(item.key)) {
+        branchKeys.add(item.key);
+        added = true;
+      }
+    }
+  }
+  return MENU_PERMISSION_ITEMS.filter((item) => branchKeys.has(item.key)).map((item) => item.permission);
+}
 
 // Admin menu items with their required permissions
 export const ADMIN_MENU_ITEMS: AdminMenuItem[] = [

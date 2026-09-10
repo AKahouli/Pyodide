@@ -20,6 +20,7 @@
   "input.limitCountdownHours": "Limit reached · Resets in {{hours}}h {{minutes}}m",
   "input.limitCountdownMinutes": "Limit reached · Resets in {{minutes}}m",
   "input.deepSearch": "Deep Search",
+  "input.webSearch": "Web search",
   "input.autoReliability": "Reliability Check",
   "input.semanticModel.select": "Select semantic model",
   "input.semanticModel.selected": "Semantic model: {{name}}",

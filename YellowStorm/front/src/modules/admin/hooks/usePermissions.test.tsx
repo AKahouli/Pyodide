@@ -68,4 +68,13 @@ describe('usePermissions', () => {
     expect(result.current.canUseFeature('conversation')).toBe(true);
     expect(result.current.canSeeMenu('admin')).toBe(true);
   });
+
+  it('keeps hierarchy parents visible for existing flat descendant grants', () => {
+    useAuthMock.mockReturnValue({ user: { permissions: ['menu.new_chat'] } });
+    const { result } = renderHook(() => usePermissions());
+
+    expect(result.current.canSeeMenu('ask')).toBe(true);
+    expect(result.current.canSeeMenu('newChat')).toBe(true);
+    expect(result.current.canSeeMenu('knowledge')).toBe(false);
+  });
 });

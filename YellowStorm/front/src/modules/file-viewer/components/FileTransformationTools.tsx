@@ -10,7 +10,6 @@ import { showError, showSuccess } from '@/lib/notifications';
 import { createDecisionFlowArtifact, getWorkspaceArtifactConfiguration } from '@/modules/workspace/artifact-api';
 import { useWorkspaceStore } from '@/modules/workspace/store';
 import type { DecisionFlowDetailLevel, DecisionFlowGenerationOptions, DecisionFlowTargetAudience, DecisionFlowType } from '@/modules/workspace/types';
-import { dataRoomFeatures } from '@/config/dataRoomFeatures';
 import { useModuleTranslation } from '@/modules/localization';
 import type { FileTab } from '../types';
 import { useFileViewerStore } from '../store';

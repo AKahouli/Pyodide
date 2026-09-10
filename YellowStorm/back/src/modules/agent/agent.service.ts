@@ -5,6 +5,7 @@ import { LoggerService } from '../logger';
 import { IAgentResponse, IAgentForStream, IGrpcAgent, IGrpcCompaction, ISharedAgentInfo } from './interfaces/agent.interface';
 import { AgentShareService } from './services/agent-share.service';
 import { AgentConnectorRuntimeService } from './services/agent-connector-runtime.service';
+import { WEB_SEARCH_CATEGORY_NAME } from '../connector/connector-category.service';
 import { CreateAgentDto } from './dto/create-agent.dto';
 import { UpdateAgentDto } from './dto/update-agent.dto';
 import { QueryAgentDto } from './dto/query-agent.dto';
@@ -529,6 +530,7 @@ export class AgentService {
     runtimeContext?: { conversationId: string; correlationId: string; playbookHandoffAttached?: boolean },
     reasoningEffort?: string,
     compaction?: IGrpcCompaction,
+    webConnectorAccessEnabled = true,
   ): Promise<IGrpcAgent[]> {
     this.logger.log('Building agents for stream', {
       userId,
@@ -707,15 +709,19 @@ export class AgentService {
     // Every lookup below depends only on the filtered roster, not on each
     // other — run them in one round so the remote-DB latency stacks once
     // instead of once per lookup.
-    const [promptMap, fetchedTools, modelResults, connectorsMap, adminGuardrailsSettings, guardrailsClassifierModel, documentTreeSettings] = await Promise.all([
+    const [promptMap, fetchedTools, modelResults, connectorsMap, blockedConnectorIds, adminGuardrailsSettings, guardrailsClassifierModel, documentTreeSettings] = await Promise.all([
       this.agentTypeService.resolvePromptsInBatch(promptPairs),
       allToolIds.length > 0 ? this.toolService.findByIds(allToolIds) : Promise.resolve([] as IToolResponse[]),
       Promise.all(allModelIds.map((id) => this.modelsService.findById(id))),
       this.buildConnectorsMap(allConnectorIds),
+      webConnectorAccessEnabled
+        ? Promise.resolve([])
+        : this.connectorService.findIdsByCategoryName(allConnectorIds, WEB_SEARCH_CATEGORY_NAME),
       this.guardrailsSettingsService.getSettings(),
       this.modelsService.getGuardrailsClassifierModel(),
       this.systemService?.getDocumentTreeInjectionSettings() ?? Promise.resolve({ enabled: true }),
     ]);
+    for (const connectorId of blockedConnectorIds) connectorsMap.delete(connectorId);
     const guardrailsClassifierModelId = this.modelsService.getModelIdentifier(guardrailsClassifierModel);
 
     const toolsMap = new Map<string, IToolResponse>();

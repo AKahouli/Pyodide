@@ -297,4 +297,19 @@ describe('AppSidebar', () => {
     expect(screen.queryByText('admin-btn')).not.toBeInTheDocument();
     expect(await screen.findByText('governance-btn')).toBeInTheDocument();
   });
+
+  it('hides a complete nested hierarchy when its parent menu is excluded', async () => {
+    visibilityPermissionState.deniedMenus.add('agentNetwork');
+
+    render(
+      <MemoryRouter initialEntries={['/agents']}>
+        <AppSidebar />
+      </MemoryRouter>,
+    );
+
+    expect(await screen.findByText('playbook-btn')).toBeInTheDocument();
+    expect(screen.queryByText('agent-btn')).not.toBeInTheDocument();
+    expect(screen.queryByText('team-btn')).not.toBeInTheDocument();
+    expect(screen.queryByText('groups-btn')).not.toBeInTheDocument();
+  });
 });

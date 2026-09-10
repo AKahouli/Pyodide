@@ -5,7 +5,7 @@ import Input from '@/components/ai-elements/input';
 import { Button } from '@/components/ui/button';
 import { PromptInputButton } from '@/components/ai-elements/prompt-input';
 import type { PromptInputMessage } from '@/components/ai-elements/prompt-input';
-import { useConversationStore, useIsAwaitingFirstChunk, useInputDisabled, useReplyingToMessage, useSelectedWorkspaceIds, useSetSelectedWorkspaceIds, useSelectedSemanticModelId, useDeepSearchEnabled, useSelectedModelId, useSelectedReasoningEffort, useSetSelectedReasoningEffort } from '../store';
+import { useConversationStore, useIsAwaitingFirstChunk, useInputDisabled, useReplyingToMessage, useSelectedWorkspaceIds, useSetSelectedWorkspaceIds, useSelectedSemanticModelId, useDeepSearchEnabled, useSelectedModelId, useSelectedReasoningEffort, useSetSelectedReasoningEffort, useWebConnectorAccessEnabled } from '../store';
 import { UsageLimitBanner } from '@/modules/usage';
 import { useUsage } from '@/modules/usage/UsageContext';
 import { useConversationFileUpload } from '../hooks/useConversationFileUpload';
@@ -16,6 +16,7 @@ import { ComposerSuggestionChips } from './ComposerSuggestionChips';
 import { SelectedConnectorRepo } from './SelectedConnectorRepo';
 import { ContextMeter } from './ContextMeter';
 import { ReliabilityCheckToggle } from './ReasoningEffortSelect';
+import { WebSearchConnectorToggle } from './WebSearchConnectorToggle';
 import { useDefaultModel, useModels } from '@/modules/models';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuLabel, DropdownMenuRadioGroup, DropdownMenuRadioItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 
@@ -47,6 +48,7 @@ export function ConversationInput({ conversationId }: ConversationInputProps) {
   const { t } = useModuleTranslation('conversation');
   const { user } = useAuth();
   const deepSearchEnabled = useDeepSearchEnabled();
+  const webConnectorAccessEnabled = useWebConnectorAccessEnabled();
   const selectedModelId = useSelectedModelId();
   const selectedReasoningEffort = useSelectedReasoningEffort();
   const setSelectedReasoningEffort = useSetSelectedReasoningEffort();
@@ -174,6 +176,7 @@ export function ConversationInput({ conversationId }: ConversationInputProps) {
         attachedFileIds: completedFileIds.length ? completedFileIds : undefined,
         attachedFiles: attachedFiles.length ? attachedFiles : undefined,
         deepSearchEnabled: deepSearchEnabled || undefined,
+        webConnectorAccessEnabled: runtimeManaged ? undefined : webConnectorAccessEnabled,
         modelId: runtimeManaged ? undefined : (modelId || undefined),
         semanticModelId: runtimeManaged ? undefined : (selectedSemanticModelId || undefined),
         agentIds: !runtimeManaged && agentIds?.length ? agentIds : undefined,
@@ -192,7 +195,7 @@ export function ConversationInput({ conversationId }: ConversationInputProps) {
       clearAll();
       clearReplyingTo();
     },
-    [completedFileIds, uploadFiles, sendMessage, conversationId, clearAll, clearReplyingTo, replyingToMessage?.id, runtimeManaged, hasStickyTaggedAgents, selectedWorkspaceIds, selectedSemanticModelId, setSelectedWorkspaceIds, updateConversation, deepSearchEnabled, effectiveReasoningEffort],
+    [completedFileIds, uploadFiles, sendMessage, conversationId, clearAll, clearReplyingTo, replyingToMessage?.id, runtimeManaged, hasStickyTaggedAgents, selectedWorkspaceIds, selectedSemanticModelId, setSelectedWorkspaceIds, updateConversation, deepSearchEnabled, webConnectorAccessEnabled, effectiveReasoningEffort],
   );
 
   const senderDisplayName = useMemo(() => {
@@ -301,6 +304,7 @@ export function ConversationInput({ conversationId }: ConversationInputProps) {
                 </DropdownMenuContent>
               </DropdownMenu>
             )}
+            {!runtimeManaged && <WebSearchConnectorToggle />}
             <ReliabilityCheckToggle />
           </>
         }

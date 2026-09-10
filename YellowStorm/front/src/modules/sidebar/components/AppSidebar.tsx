@@ -479,7 +479,7 @@ export const AppSidebar = memo(function AppSidebar() {
           </SidebarMenu>
         </SidebarGroup>}
 
-        <OutcomeGroup
+        {canSeeMenu('ask') && <OutcomeGroup
           label={t('groups.ask.label')}
           tooltip={t('groups.ask.tooltip')}
           icon={<ChatBubbleIcon />}
@@ -499,9 +499,9 @@ export const AppSidebar = memo(function AppSidebar() {
             )}
           </SidebarMenu>
 
-          <ProjectsSection />
+          {canSeeMenu('projects') && <ProjectsSection />}
 
-          <Collapsible open={historyPanelOpen} onOpenChange={toggleHistoryPanel}>
+          {canSeeMenu('history') && <Collapsible open={historyPanelOpen} onOpenChange={toggleHistoryPanel}>
             <SidebarMenu>
               <SidebarMenuItem>
                 <CollapsibleTrigger asChild>
@@ -589,10 +589,10 @@ export const AppSidebar = memo(function AppSidebar() {
                 </SidebarMenu>
               </HistoryDropZone>
             </CollapsibleContent>
-          </Collapsible>
-        </OutcomeGroup>
+          </Collapsible>}
+        </OutcomeGroup>}
 
-        <OutcomeGroup
+        {canSeeMenu('knowledge') && <OutcomeGroup
           label={t('groups.knowledge.label')}
           tooltip={t('groups.knowledge.tooltip')}
           icon={<BookOpen />}
@@ -605,9 +605,9 @@ export const AppSidebar = memo(function AppSidebar() {
             {featureVisibility.workspace && canUseFeature('workspace') && canSeeMenu('workspace') && <WorkspaceButton />}
             {featureVisibility.semanticModel && canUseFeature('semanticModel') && canSeeMenu('semanticModels') && canOpenSemanticModels && <SemanticModelButton />}
           </SidebarMenu>
-        </OutcomeGroup>
+        </OutcomeGroup>}
 
-        <OutcomeGroup
+        {canSeeMenu('automate') && <OutcomeGroup
           label={t('groups.automate.label')}
           tooltip={t('groups.automate.tooltip')}
           icon={<Sparkles />}
@@ -620,7 +620,7 @@ export const AppSidebar = memo(function AppSidebar() {
             {featureVisibility.playbook && canUseFeature('playbook') && canSeeMenu('playbook') && <PlaybookButton />}
           </SidebarMenu>
 
-          <OutcomeSubgroup
+          {canSeeMenu('agentNetwork') && <OutcomeSubgroup
             label={t('groups.agentNetwork.label')}
             tooltip={t('groups.agentNetwork.tooltip')}
             icon={<Network />}
@@ -633,13 +633,13 @@ export const AppSidebar = memo(function AppSidebar() {
             {featureVisibility.agents && canUseFeature('agents') && canSeeMenu('agents') && <AgentButton />}
             {canSeeMenu('teams') && <TeamButton />}
             {canSeeMenu('groups') && <GroupsButton />}
-          </OutcomeSubgroup>
+          </OutcomeSubgroup>}
 
           <SidebarMenu>
             {featureVisibility.worky && canUseFeature('worky') && canSeeMenu('worky') && <WorkyButton />}
           </SidebarMenu>
 
-          <OutcomeSubgroup
+          {canSeeMenu('integrations') && <OutcomeSubgroup
             label={t('groups.integrations.label')}
             tooltip={t('groups.integrations.tooltip')}
             icon={<Plug />}
@@ -647,10 +647,10 @@ export const AppSidebar = memo(function AppSidebar() {
           >
             {canSeeMenu('connectedApps') && <ConnectedAppButton />}
             {featureVisibility.appMarketplace && canUseFeature('appMarketplace') && canSeeMenu('appMarketplace') && <AppMarketplaceButton />}
-          </OutcomeSubgroup>
-        </OutcomeGroup>
+          </OutcomeSubgroup>}
+        </OutcomeGroup>}
 
-        <OutcomeGroup
+        {canSeeMenu('govern') && <OutcomeGroup
           label={t('groups.govern.label')}
           tooltip={t('groups.govern.tooltip')}
           icon={<ShieldCheck />}
@@ -663,7 +663,7 @@ export const AppSidebar = memo(function AppSidebar() {
             {featureVisibility.governance && canUseFeature('governance') && canSeeMenu('governance') && canOpenGovernance && <GovernanceButton />}
             {canSeeMenu('admin') && <AdminButton />}
           </SidebarMenu>
-        </OutcomeGroup>
+        </OutcomeGroup>}
       </SidebarContent>
 
       <SidebarFooter className='grid grid-cols-[1fr_auto_auto] items-center gap-1 group-data-[collapsible=icon]:grid-cols-1 group-data-[collapsible=icon]:justify-items-center'>

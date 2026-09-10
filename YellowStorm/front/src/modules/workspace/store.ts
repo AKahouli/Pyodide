@@ -12,7 +12,6 @@ import * as pageApi from './page-api';
 import * as artifactApi from './artifact-api';
 import { DEFAULT_PAGE_LIMIT, validateFiles } from './utils';
 import { getErrorMessage } from '@/lib/error-codes';
-import { dataRoomFeatures } from '@/config/dataRoomFeatures';
 import type { ApiError } from '@/lib/api/client';
 import type { ModuleTranslationKey, TranslationParams } from '@/modules/localization';
 import type {

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { countSelectedRolePermissions, isScopedPermissionSelected, toggleScopedPermission } from './RolePermissionsEditor';
+import { countSelectedRolePermissions, getMenuBranchPermissions, isScopedPermissionSelected, toggleScopedPermission, toggleScopedPermissions } from './RolePermissionsEditor';
 
 describe('toggleScopedPermission', () => {
   const available = ['menu.platform', 'menu.admin'];
@@ -18,8 +18,14 @@ describe('toggleScopedPermission', () => {
   });
 
   it('counts visible selections instead of internal restriction markers', () => {
-    expect(countSelectedRolePermissions(['users.read'])).toBe(23);
+    expect(countSelectedRolePermissions(['users.read'])).toBe(31);
     expect(countSelectedRolePermissions(['users.read', 'feature.workspace', 'menu.restricted'])).toBe(2);
     expect(isScopedPermissionSelected(['*', 'feature.restricted'], 'feature', 'feature.workspace')).toBe(true);
+  });
+
+  it('toggles complete nested menu branches', () => {
+    const branch = getMenuBranchPermissions('agentNetwork');
+    expect(branch).toEqual(['menu.agent_network', 'menu.agents', 'menu.teams', 'menu.groups']);
+    expect(toggleScopedPermissions([], 'menu', branch, branch)).toEqual(['menu.restricted']);
   });
 });

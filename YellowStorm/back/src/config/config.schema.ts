@@ -7,7 +7,6 @@ export const configValidationSchema = Joi.object({
   DATA_ROOM_GOVERNANCE_ENABLED: Joi.boolean().default(false),
   DATA_ROOM_WORKSPACE_EVENTS_ENABLED: Joi.boolean().default(false),
   DATA_ROOM_GOVERNANCE_EVENT_CONSUMER_ENABLED: Joi.boolean().default(false),
-  DATA_ROOM_RECONCILIATION_ENABLED: Joi.boolean().default(false),
   DATA_ROOM_OUTBOX_DISPATCH_ENABLED: Joi.boolean().default(false),
   DATA_ROOM_VALIDITY_INTELLIGENCE_ENABLED: Joi.boolean().default(false),
   DATA_ROOM_KNOWLEDGE_ASSESSMENT_ENABLED: Joi.boolean().default(false),

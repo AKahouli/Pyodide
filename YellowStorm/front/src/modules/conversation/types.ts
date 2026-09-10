@@ -501,6 +501,7 @@ export interface SendMessagePayload {
   attachedFileIds?: string[];
   attachedFiles?: AttachedFile[];
   webSearchEnabled?: boolean;
+  webConnectorAccessEnabled?: boolean;
   deepSearchEnabled?: boolean;
   modelId?: string;
   reasoningEffort?: string;
