@@ -41,7 +41,7 @@ export class AppRuntimeBinding {
   status!: AppRuntimeBindingStatus;
 
   /** Ceph-backed revision id; new bindings start on the seeded starter. */
-  @Prop({ type: String, required: true, default: 'starter_react_vite_v4' })
+  @Prop({ type: String, required: true, default: 'starter_react_vite_v5' })
   latestRevisionId!: string;
 
   /** SHA-256 of the MCP bearer token. The plaintext is never persisted. */

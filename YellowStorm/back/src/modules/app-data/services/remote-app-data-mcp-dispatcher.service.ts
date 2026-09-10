@@ -45,10 +45,52 @@ import { normalizeSchemaManifest } from '../utils/app-data-sql.util';
  * schema_get / schema_plan / policy_get / policy_apply return a
  * NOT_SUPPORTED_REMOTE JSON-RPC error.
  */
+/**
+ * Tools advertised to the agent in remote mode. The remaining names
+ * (schema_get/plan handled below, policy_*) either need manifest-version
+ * tracking or policy documents the microservice does not keep — advertising
+ * them only produced confusing call-time errors.
+ */
+const REMOTE_SUPPORTED_TOOLS: ReadonlySet<string> = new Set([
+  'appdata_status',
+  'provision',
+  'schema_apply',
+  'schema_get',
+  'table_sample',
+  'row_insert',
+  'row_get',
+  'row_query',
+  'row_update',
+  'row_delete',
+  'seed',
+]);
+
+/**
+ * SQL DEFAULT expressions safe to forward verbatim: numeric/boolean literals,
+ * quoted string literals, and a fixed function allowlist. A bare identifier
+ * (e.g. "now") would be parsed by Postgres as a column reference (0A000).
+ */
+const SAFE_SQL_DEFAULTS =
+  /^(now\(\)|current_timestamp|gen_random_uuid\(\)|uuid_generate_v4\(\))$/i;
+
+function safeSqlDefault(raw: unknown): string | null {
+  if (typeof raw === 'number' && Number.isFinite(raw)) return String(raw);
+  if (typeof raw === 'boolean') return raw ? 'true' : 'false';
+  if (typeof raw !== 'string') return null;
+  const s = raw.trim();
+  if (/^-?\d+(\.\d+)?$/.test(s)) return s;
+  if (SAFE_SQL_DEFAULTS.test(s)) {
+    return s.toLowerCase() === 'now()' ? 'now()' : s.toLowerCase();
+  }
+  if (s.length >= 2 && s.startsWith("'") && s.endsWith("'")) {
+    return `'${s.slice(1, -1).replace(/'/g, "''")}'`;
+  }
+  return null;
+}
+
 @Injectable()
 export class RemoteAppDataMcpDispatcherService {
   private readonly logger = new Logger(RemoteAppDataMcpDispatcherService.name);
-
   constructor(
     private readonly auth: AppDataMcpAuthService,
     private readonly config: ConfigService,
@@ -85,11 +127,14 @@ export class RemoteAppDataMcpDispatcherService {
       return appDataMcpInitializeResponse(reqId);
     }
     if (request.method === 'tools/list') {
-      const tools = [...APP_DATA_MCP_TOOL_NAMES].sort().map((name) => ({
-        name,
-        description: APP_DATA_MCP_TOOL_DESCRIPTIONS[name],
-        inputSchema: APP_DATA_MCP_TOOL_SCHEMAS[name],
-      }));
+      const tools = [...APP_DATA_MCP_TOOL_NAMES]
+        .filter((name) => REMOTE_SUPPORTED_TOOLS.has(name))
+        .sort()
+        .map((name) => ({
+          name,
+          description: APP_DATA_MCP_TOOL_DESCRIPTIONS[name],
+          inputSchema: APP_DATA_MCP_TOOL_SCHEMAS[name],
+        }));
       return jsonrpcSuccessResponse(reqId, { tools });
     }
     if (request.method === 'tools/call') {
@@ -193,7 +238,9 @@ export class RemoteAppDataMcpDispatcherService {
       case 'appdata_status':
         return this.remoteStatus(binding);
       case 'provision': {
-        const ensured = await this.client.ensureApp(binding.workspaceId);
+        // Attribute the app to the YellowStorm owner (preview data tickets
+        // resolve against apps.owner_user_id).
+        const ensured = await this.client.ensureApp(binding.workspaceId, undefined, binding.userId);
         const provisioned = await this.client.provision(ensured.id, 'dev');
         return {
           provisioned: true,
@@ -203,13 +250,23 @@ export class RemoteAppDataMcpDispatcherService {
             'Call yellowruntime_dev_server with action "restart" so VITE_YM_APP_DATA_* env is injected into the Nodepod preview (skips login gate in dev).',
         };
       }
-      case 'schema_get':
+      case 'schema_get': {
+        // Remote mode tracks no manifest versions — return the live table
+        // list instead, and steer the model straight to schema_apply.
+        const app = await this.requireRemoteApp(binding);
+        const tables = await this.client.listTables(app.id, 'dev');
+        return {
+          environment: 'dev',
+          tables,
+          note: 'Column-level introspection is not tracked remotely. Call schema_apply directly — reserved columns (id, owner_id, created_at, updated_at) are filtered automatically and never need to be declared.',
+        };
+      }
       case 'schema_plan':
       case 'policy_get':
       case 'policy_apply':
         throw new McpError(
           McpErrorCode.UNSUPPORTED_CAPABILITY,
-          `Tool "${tool}" is not supported in remote mode: the app-data service tracks no manifest versions or policy documents`,
+          `Tool "${tool}" is not available in remote mode — call schema_apply directly (no planning or policy documents are tracked)`,
         );
       case 'schema_apply': {
         const app = await this.requireRemoteApp(binding);
@@ -218,9 +275,11 @@ export class RemoteAppDataMcpDispatcherService {
           throw new McpError(JsonRpcErrorCode.INVALID_PARAMS, 'schema_apply requires a manifest with tables');
         }
         const manifest = normalizeSchemaManifest(rawManifest).manifest;
-        const tables = this.mapManifestTables(manifest);
+        const { tables, warnings } = this.mapManifestTables(manifest);
         const applied = await this.client.applySchema(app.id, 'dev', tables);
-        return { applied: true, message: applied.message, tables: applied.tables };
+        return warnings.length > 0
+          ? { applied: true, message: applied.message, tables: applied.tables, warnings }
+          : { applied: true, message: applied.message, tables: applied.tables };
       }
       case 'table_sample': {
         const app = await this.requireRemoteApp(binding);
@@ -285,6 +344,34 @@ export class RemoteAppDataMcpDispatcherService {
           ).then((deleted) => ({ deleted })),
         };
       }
+      case 'seed': {
+        const app = await this.requireRemoteApp(binding);
+        const rawTables = args.tables as Record<string, unknown> | undefined;
+        if (!rawTables || typeof rawTables !== 'object' || Array.isArray(rawTables)) {
+          throw new McpError(
+            JsonRpcErrorCode.INVALID_PARAMS,
+            'seed requires a "tables" object map ({ "<table>": [ {row}, ... ] })',
+          );
+        }
+        const tables = Object.entries(rawTables)
+          .filter(([, rows]) => Array.isArray(rows))
+          .map(([name, rows]) => ({
+            name,
+            rows: rows as Record<string, unknown>[],
+          }));
+        if (tables.length === 0) {
+          throw new McpError(
+            JsonRpcErrorCode.INVALID_PARAMS,
+            'seed requires at least one table with a rows array',
+          );
+        }
+        const seeded = await this.client.seedRows(app.id, 'dev', tables, ownerUserId);
+        return {
+          environment: 'dev',
+          message: `Seeded ${seeded.inserted} row${seeded.inserted === 1 ? '' : 's'}`,
+          ...seeded,
+        };
+      }
       default:
         throw new McpError(JsonRpcErrorCode.METHOD_NOT_FOUND, `Unhandled tool: ${tool}`);
     }
@@ -327,8 +414,9 @@ export class RemoteAppDataMcpDispatcherService {
 
   private mapManifestTables(
     manifest: AppDataSchemaManifest,
-  ): Array<Record<string, unknown>> {
-    return Object.entries(manifest.tables).map(([tableName, def]) => ({
+  ): { tables: Array<Record<string, unknown>>; warnings: string[] } {
+    const warnings: string[] = [];
+    const tables = Object.entries(manifest.tables).map(([tableName, def]) => ({
       name: tableName,
       columns: Object.entries(def.columns ?? {}).map(([columnName, columnDef]) => {
         const mapped: Record<string, unknown> = {
@@ -337,20 +425,23 @@ export class RemoteAppDataMcpDispatcherService {
           nullable: columnDef.nullable === true,
         };
         if (columnDef.default !== undefined && columnDef.default !== null) {
-          // Microservice inlines DEFAULT into SQL: only pass literal-safe values.
-          if (typeof columnDef.default === 'number' || typeof columnDef.default === 'boolean') {
-            mapped.default = String(columnDef.default);
-          } else if (
-            typeof columnDef.default === 'string' &&
-            /^[-0-9a-zA-Z_]+(?:\(\))?/.test(columnDef.default) &&
-            !/[\s;,()'"\\/*]/.test(columnDef.default) &&
-            !columnDef.default.includes('--')
-          ) {
-            mapped.default = columnDef.default;
+          // Only literal-safe values and a fixed function allowlist survive:
+          // the microservice inlines DEFAULT into SQL, and a bare identifier
+          // (e.g. "now") becomes a column reference there (PG error 0A000).
+          const safe = safeSqlDefault(columnDef.default);
+          if (safe !== null) {
+            mapped.default = safe;
+          } else {
+            warnings.push(
+              `Column ${tableName}.${columnName}: DEFAULT ${JSON.stringify(
+                columnDef.default,
+              )} ignored — supported: literals, now(), current_timestamp, gen_random_uuid(), uuid_generate_v4()`,
+            );
           }
         }
         return mapped;
       }),
     }));
+    return { tables, warnings };
   }
 }

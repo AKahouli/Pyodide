@@ -29,6 +29,32 @@ const HIDDEN_IFRAME_SANDBOX =
 
 let appDataFetchProxyInstalled = false;
 
+/**
+ * Resolves the owner's App Data data ticket for relayed preview requests,
+ * **keyed by appDataId** so two concurrently open previews can never swap
+ * tickets (the microservice binds each ticket to its appDataId — a swapped
+ * one fails with 403 "Token binding mismatch"). Registered by the active
+ * host (start()); the module-level relay stays install-once.
+ */
+type AppDataTicketFetcher = (appDataId: string, force?: boolean) => Promise<string | null>;
+let appDataTicketFetcher: AppDataTicketFetcher | null = null;
+
+export function setAppDataTicketFetcher(fetcher: AppDataTicketFetcher | null): void {
+  appDataTicketFetcher = fetcher;
+}
+
+/** appDataId from a data-plane URL (`/v1/apps/{id}/…` or legacy gateway). */
+export function appDataIdFromUrl(url: string): string | null {
+  try {
+    const pathname = new URL(url, window.location.href).pathname;
+    const m =
+      pathname.match(/\/v1\/apps\/([^/]+)/) || pathname.match(/\/app-data\/public\/([^/]+)/);
+    return m ? decodeURIComponent(m[1]) : null;
+  } catch {
+    return null;
+  }
+}
+
 export function isAppDataPublicUrl(url: string): boolean {
   try {
     const parsed = new URL(url, window.location.href);
@@ -48,56 +74,77 @@ function installAppDataFetchProxyOnce(): void {
   if (appDataFetchProxyInstalled || typeof window === 'undefined') return;
   appDataFetchProxyInstalled = true;
 
-  const handleProxyRequest = (
+  const handleProxyRequest = async (
     data: Record<string, unknown>,
     reply: (response: Record<string, unknown>) => void,
   ) => {
-    const { id, url, method, headers, body } = data;
+    const { id, method, headers, body } = data;
+    const url = typeof data.url === 'string' ? data.url : '';
     if (typeof id !== 'string') return;
     // Never drop silently: the caller waits 30 s for a reply before timing
     // out, so an unmatched URL gets an immediate explicit error.
-    if (typeof url !== 'string' || !isAppDataPublicUrl(url)) {
+    if (!url || !isAppDataPublicUrl(url)) {
       reply({
         type: 'ym-app-data-response',
         id,
-        error: `App Data proxy: URL not relayed (${url ?? 'missing'})`,
+        error: `App Data proxy: URL not relayed (${url || 'missing'})`,
       });
       return;
     }
 
-    fetch(url, {
-      method: (method as string) || 'GET',
-      headers: (headers as HeadersInit) || undefined,
-      body: (body as BodyInit) || undefined,
-    })
-      .then(async (res) => {
-        const responseBody = await res.text();
-        const responseHeaders: Record<string, string> = {};
-        res.headers.forEach((v, k) => {
-          responseHeaders[k] = v;
-        });
-        reply({
-          type: 'ym-app-data-response',
-          id,
-          status: res.status,
-          headers: responseHeaders,
-          body: responseBody,
-        });
-      })
-      .catch((err) => {
-        reply({
-          type: 'ym-app-data-response',
-          id,
-          error: err instanceof Error ? err.message : String(err),
-        });
+    const attempt = async (ticket: string | null): Promise<Response> => {
+      const forwardHeaders: Record<string, string> = {
+        ...((headers as Record<string, string>) || {}),
+      };
+      // Attribute preview App Data calls to the YellowStorm owner — the dev
+      // preview has no login inside the generated app.
+      if (ticket) forwardHeaders['Authorization'] = `Bearer ${ticket}`;
+      return fetch(url, {
+        method: (method as string) || 'GET',
+        headers: forwardHeaders,
+        body: (body as BodyInit) || undefined,
       });
+    };
+
+    try {
+      const appDataId = appDataIdFromUrl(url);
+      let ticket =
+        appDataId && appDataTicketFetcher ? await appDataTicketFetcher(appDataId) : null;
+      let res = await attempt(ticket);
+      if (res.status === 401 && appDataId && appDataTicketFetcher) {
+        // Ticket expired/rotated — force-refresh once and retry.
+        const fresh = await appDataTicketFetcher(appDataId, true);
+        if (fresh) {
+          ticket = fresh;
+          res = await attempt(fresh);
+        }
+      }
+      const responseBody = await res.text();
+      const responseHeaders: Record<string, string> = {};
+      res.headers.forEach((v, k) => {
+        responseHeaders[k] = v;
+      });
+      reply({
+        type: 'ym-app-data-response',
+        id,
+        status: res.status,
+        headers: responseHeaders,
+        body: responseBody,
+      });
+    } catch (err) {
+      reply({
+        type: 'ym-app-data-response',
+        id,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
   };
 
   window.addEventListener('message', (event: MessageEvent) => {
     if (event.data?.type !== 'ym-app-data-fetch') return;
     const source = event.source as WindowProxy | null;
     if (!source) return;
-    handleProxyRequest(event.data, (response) => {
+    void handleProxyRequest(event.data, (response) => {
       // '*' on purpose: the preview iframe may navigate (dev-server restart
       // reassigns src) between the request and the reply — a precise
       // targetOrigin would silently swallow the response and the caller
@@ -111,7 +158,7 @@ function installAppDataFetchProxyOnce(): void {
     const channel = new BroadcastChannel('ym-app-data-proxy');
     channel.onmessage = (event: MessageEvent) => {
       if (event.data?.type !== 'ym-app-data-fetch') return;
-      handleProxyRequest(event.data, (response) => channel.postMessage(response));
+      void handleProxyRequest(event.data, (response) => channel.postMessage(response));
     };
   } catch {
     // BroadcastChannel not supported — new-tab proxy unavailable
@@ -142,6 +189,7 @@ export class BrowserRuntimeHost {
   private sessionId: string | null = null;
   private workspaceId: string | null = null;
   private ticket: RuntimeTicketResponse | null = null;
+  private appDataTickets = new Map<string, { ticket: string; at: number }>();
   private revisionId = 'rev_0';
   private _status: RuntimeHostStatus = 'idle';
   private _error: string | null = null;
@@ -164,6 +212,31 @@ export class BrowserRuntimeHost {
 
   private setupAppDataFetchProxy(): void {
     installAppDataFetchProxyOnce();
+  }
+
+  /**
+   * Owner data ticket for the relay (`Authorization: Bearer <ticket>` on
+   * preview App Data calls), keyed by appDataId. Acquired from the backend
+   * (owner-guarded) and cached; force-refreshed once when the microservice
+   * returns 401.
+   */
+  private async acquireAppDataTicket(appDataId: string, force = false): Promise<string | null> {
+    const TICKET_TTL_MS = 10 * 60_000;
+    const cached = this.appDataTickets.get(appDataId);
+    if (!force && cached && Date.now() - cached.at < TICKET_TTL_MS) {
+      return cached.ticket;
+    }
+    if (!this.sessionId) return cached?.ticket ?? null;
+    try {
+      const res = await conversationV2Api.getAppDataTicket(this.sessionId);
+      this.appDataTickets.set(res.appDataId, { ticket: res.ticket, at: Date.now() });
+      console.log(LOG, 'app-data ticket acquired', { appDataId: res.appDataId });
+    } catch (err) {
+      // Not provisioned yet, backend hiccup, or local mode — the relay then
+      // sends the call without Authorization, which the microservice rejects.
+      console.warn(LOG, 'app-data ticket unavailable', err instanceof Error ? err.message : err);
+    }
+    return this.appDataTickets.get(appDataId)?.ticket ?? null;
   }
 
   /** Off-screen iframe so preview_inspect works when the user panel is closed. */
@@ -221,6 +294,8 @@ export class BrowserRuntimeHost {
     this.reconnectAttempts = 0;
     this.legacyMode = false;
     this.setupAppDataFetchProxy();
+    // Owner data tickets for relayed preview App Data calls (refreshed on 401).
+    setAppDataTicketFetcher((appDataId, force) => this.acquireAppDataTicket(appDataId, force));
 
     const cephPath = existingCephPath ?? null;
     const filesTree = (existingFilesTree as FilesTreeNode | null) ?? null;

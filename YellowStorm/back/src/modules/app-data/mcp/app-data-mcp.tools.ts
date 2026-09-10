@@ -12,6 +12,7 @@ export const APP_DATA_MCP_TOOL_NAMES = [
   'row_query',
   'row_update',
   'row_delete',
+  'seed',
 ] as const;
 
 export type AppDataMcpToolName = (typeof APP_DATA_MCP_TOOL_NAMES)[number];
@@ -36,6 +37,7 @@ export const APP_DATA_MCP_TOOL_DESCRIPTIONS: Record<AppDataMcpToolName, string> 
   row_query: 'Query rows with pagination in DEV',
   row_update: 'Update a row in DEV',
   row_delete: 'Delete a row in DEV',
+  seed: 'Bulk-insert seed rows into DEV tables (idempotent — rows carrying an explicit "id" uuid are skipped on conflict). DEV only; PROD data stays user-generated.',
 };
 
 /**
@@ -178,6 +180,25 @@ export const APP_DATA_MCP_TOOL_SCHEMAS: Record<AppDataMcpToolName, Record<string
     type: 'object',
     required: ['table', 'id'],
     properties: { table: { type: 'string' }, id: { type: 'string' }, idColumn: { type: 'string' } },
+    additionalProperties: false,
+  },
+  seed: {
+    type: 'object',
+    required: ['tables'],
+    description:
+      'Bulk idempotent seed. Exact shape: {"tables": {"<table_name>": [{"<column>": <value>, ...}, ...]}}. ' +
+      'Rows may carry an explicit "id" (uuid) so re-running the same seed is safe (ON CONFLICT DO NOTHING). ' +
+      'Reserved columns (id, owner_id, created_at, updated_at) are always server-managed. DEV only.',
+    properties: {
+      tables: {
+        type: 'object',
+        description: 'Map of table name to an array of row objects to insert.',
+        additionalProperties: {
+          type: 'array',
+          items: { type: 'object' },
+        },
+      },
+    },
     additionalProperties: false,
   },
 };

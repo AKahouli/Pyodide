@@ -1,11 +1,15 @@
 import {
+  BadRequestException,
   Body,
   Controller,
   Get,
+  Inject,
   Param,
   Patch,
+  Post,
   Put,
   Query,
+  Req,
   ServiceUnavailableException,
   UseGuards,
 } from '@nestjs/common';
@@ -13,12 +17,14 @@ import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import { ConfigService } from '@nestjs/config';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
+import type { Request } from 'express';
 import { ConversationV2OwnerGuard } from '@modules/conversation-v2/guards/conversation-v2-owner.guard';
 import {
   ConversationV2Session,
   ConversationV2SessionDocument,
 } from '@modules/conversation-v2/schemas/conversation-v2-session.schema';
 import { AppDataClientService } from '../../services/app-data-client.service';
+import { AppDataDeploymentService } from '../../services/app-data-deployment.service';
 import type { AppDataEnvironment } from '../../constants/app-data.constants';
 import type { AppDataEndUserGrants, AppDataEndUserStatus } from '../../constants/app-data.types';
 import { assertIdentifier } from '../../utils/app-data-sql.util';
@@ -37,6 +43,8 @@ export class AppDataRemoteOwnerController {
     private readonly client: AppDataClientService,
     @InjectModel(ConversationV2Session.name)
     private readonly sessions: Model<ConversationV2SessionDocument>,
+    @Inject(AppDataDeploymentService)
+    private readonly deployment: AppDataDeploymentService,
   ) {}
 
   private assertEnabled(): void {
@@ -112,6 +120,39 @@ export class AppDataRemoteOwnerController {
     };
   }
 
+  /**
+   * Owner-scoped data ticket for the dev preview. The Nodepod relay attaches
+   * it as `Authorization: Bearer <ticket>` so App Data rows are attributed to
+   * the YellowStorm owner instead of an anonymous principal — without any
+   * login inside the generated app.
+   */
+  @Get('ticket')
+  @ApiOperation({ summary: 'Issue an owner-scoped App Data data ticket (dev preview)' })
+  async ticket(@Param('id') sessionId: string, @Req() req: Request) {
+    if (!this.config.get<boolean>('appData.enabled', false)) {
+      throw new ServiceUnavailableException('App Data is disabled');
+    }
+    const ownerUserId = (req as Request & { user?: { id: string } }).user?.id;
+    if (!ownerUserId) {
+      throw new ServiceUnavailableException('Owner identity missing on request');
+    }
+    const ws = await this.workspaceId(sessionId);
+    // Idempotent upsert — also lazily attaches the owner to pre-existing apps.
+    const ensured = await this.client.ensureApp(ws, undefined, ownerUserId);
+    const { ticket } = await this.client.issueTicket({
+      workspaceId: ws,
+      userId: ownerUserId,
+      appDataId: ensured.id,
+      env: 'dev',
+    });
+    const runtimeEnv = await this.deployment.getRuntimeEnvForWorkspace(ws, 'dev');
+    return {
+      ticket,
+      appDataId: ensured.id,
+      publicUrl: runtimeEnv?.publicUrl ?? null,
+    };
+  }
+
   @Get('end-users')
   @ApiOperation({ summary: 'List registered app end-users and their CRUD grants (remote)' })
   async listEndUsers(@Param('id') sessionId: string) {
@@ -183,5 +224,39 @@ export class AppDataRemoteOwnerController {
       page: String(parsePositiveInt(page, 1)),
       pageSize: pageSize ? String(parsePositiveInt(pageSize, 50)) : undefined,
     });
+  }
+
+  /**
+   * Seed rows into DEV from the owner Data tab. DEV-only: PROD data stays
+   * user-generated (binding copies schema only). Rows are attributed to the
+   * session owner so the dev preview (owner data ticket) sees them.
+   */
+  @Post(':environment/seed')
+  @ApiOperation({
+    summary: 'Seed DEV rows (owner Data tab)',
+    description:
+      'Idempotently bulk-insert seed rows into DEV tables ({ "tables": { "<table>": [ {row}, ... ] } }). Re-runs with the same explicit row ids are skipped.',
+  })
+  async seed(
+    @Param('id') sessionId: string,
+    @Param('environment') environment: AppDataEnvironment,
+    @Body() body: { tables?: Record<string, Record<string, unknown>[]> },
+    @Req() req: Request,
+  ) {
+    this.assertEnabled();
+    const env = parseAppDataEnvironment(environment);
+    if (env !== 'dev') {
+      throw new BadRequestException('Seeding is DEV-only');
+    }
+    const { appId } = await this.requireRemoteAppId(sessionId);
+    const tables = Object.entries(body?.tables ?? {}).map(([name, rows]) => ({
+      name,
+      rows: Array.isArray(rows) ? rows : [],
+    }));
+    if (tables.length === 0) {
+      throw new BadRequestException('Seed payload must include at least one table');
+    }
+    const ownerUserId = (req as Request & { user?: { id: string } }).user?.id;
+    return this.client.seedRows(appId, env, tables, ownerUserId);
   }
 }

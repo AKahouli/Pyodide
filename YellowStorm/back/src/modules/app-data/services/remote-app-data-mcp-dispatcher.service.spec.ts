@@ -21,6 +21,12 @@ function dispatcherWith() {
   const client = {
     getAppByWorkspace: jest.fn().mockResolvedValue({ id: 'app-1', workspaceId: 'ws-1' }),
     applySchema: jest.fn().mockResolvedValue({ message: 'applied', tables: 1 }),
+    seedRows: jest.fn().mockResolvedValue({
+      total: 2,
+      inserted: 2,
+      skipped: 0,
+      tables: [{ table: 'todos', inserted: 2, skipped: 0 }],
+    }),
   };
   const dispatcher = new RemoteAppDataMcpDispatcherService(
     auth as unknown as AppDataMcpAuthService,
@@ -41,6 +47,66 @@ function schemaApplyRequest(manifest: unknown) {
     },
   };
 }
+
+describe('RemoteAppDataMcpDispatcherService seed', () => {
+  it('advertises the seed tool in tools/list', async () => {
+    const { dispatcher } = dispatcherWith();
+    const response = await dispatcher.handleRequest(
+      { jsonrpc: '2.0', id: 1, method: 'tools/list' },
+      'Bearer mcp-token',
+    );
+    const tools = (response as { result?: { tools?: { name: string }[] } }).result?.tools ?? [];
+    expect(tools.map((t) => t.name)).toContain('seed');
+  });
+
+  it('forwards a tables object map to seedRows in DEV with the owner userId', async () => {
+    const { dispatcher, client } = dispatcherWith();
+    const response = await dispatcher.handleRequest(
+      {
+        jsonrpc: '2.0',
+        id: 1,
+        method: 'tools/call',
+        params: {
+          name: 'seed',
+          arguments: {
+            tables: {
+              todos: [{ title: 'A' }, { title: 'B' }],
+              nonRows: 'skip-me',
+            },
+          },
+        },
+      },
+      'Bearer mcp-token',
+    );
+
+    expect(client.seedRows).toHaveBeenCalledTimes(1);
+    const [appDataId, env, tables, ownerUserId] = client.seedRows.mock.calls[0];
+    expect(appDataId).toBe('app-1');
+    expect(env).toBe('dev');
+    expect(ownerUserId).toBe('user-1');
+    expect(tables).toEqual([{ name: 'todos', rows: [{ title: 'A' }, { title: 'B' }] }]);
+    expect(response).toMatchObject({
+      result: { structuredContent: { inserted: 2, environment: 'dev' } },
+    });
+  });
+
+  it('rejects seed calls whose tables argument is not an object map', async () => {
+    const { dispatcher, client } = dispatcherWith();
+    const response = await dispatcher.handleRequest(
+      {
+        jsonrpc: '2.0',
+        id: 1,
+        method: 'tools/call',
+        params: { name: 'seed', arguments: { tables: ['not-a-map'] } },
+      },
+      'Bearer mcp-token',
+    );
+    expect(client.seedRows).not.toHaveBeenCalled();
+    expect(response).toMatchObject({
+      error: { code: -32602 },
+    });
+  });
+});
 
 describe('RemoteAppDataMcpDispatcherService schema_apply', () => {
   it('strips a version key nested inside tables before calling the microservice', async () => {

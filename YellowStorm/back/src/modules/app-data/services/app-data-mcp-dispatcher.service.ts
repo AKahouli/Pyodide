@@ -288,6 +288,59 @@ export class AppDataMcpDispatcherService {
           }),
         };
       }
+      case 'seed': {
+        const app = await this.catalog.requireAppByWorkspace(workspaceId);
+        const rawTables = args.tables as Record<string, unknown> | undefined;
+        if (!rawTables || typeof rawTables !== 'object' || Array.isArray(rawTables)) {
+          throw new McpError(
+            JsonRpcErrorCode.INVALID_PARAMS,
+            'seed requires a "tables" object map ({ "<table>": [ {row}, ... ] })',
+          );
+        }
+        const results: { table: string; inserted: number; skipped: number }[] = [];
+        let insertedTotal = 0;
+        let skippedTotal = 0;
+        for (const tableName of Object.keys(rawTables)) {
+          const rows = rawTables[tableName];
+          if (!Array.isArray(rows)) continue;
+          let inserted = 0;
+          let skipped = 0;
+          for (const row of rows as Record<string, unknown>[]) {
+            const { id: explicitId, ...rest } = row ?? {};
+            try {
+              await this.rows.insertRow({
+                appDataId: app.appDataId,
+                environment: 'dev',
+                table: tableName,
+                row: { ...(rest ?? {}) },
+                principal,
+                ownerUserId,
+              });
+              inserted++;
+            } catch (err) {
+              // Idempotent re-runs: an explicit id that already exists is a
+              // duplicate-key violation (Postgres code 23505) — count as skipped.
+              const code = (err as { code?: string } | undefined)?.code;
+              if (code === '23505' && explicitId) {
+                skipped++;
+              } else {
+                throw err;
+              }
+            }
+          }
+          results.push({ table: tableName, inserted, skipped });
+          insertedTotal += inserted;
+          skippedTotal += skipped;
+        }
+        return {
+          environment: 'dev',
+          message: `Seeded ${insertedTotal} row${insertedTotal === 1 ? '' : 's'}`,
+          total: insertedTotal + skippedTotal,
+          inserted: insertedTotal,
+          skipped: skippedTotal,
+          tables: results,
+        };
+      }
       default:
         throw new McpError(JsonRpcErrorCode.METHOD_NOT_FOUND, `Unhandled tool: ${tool}`);
     }

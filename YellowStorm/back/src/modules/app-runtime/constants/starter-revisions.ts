@@ -14,6 +14,11 @@ import {
   STARTER_REACT_VITE_V4_MANIFEST_KEY,
   STARTER_REACT_VITE_V4_REVISION_ID,
 } from './starter-react-vite-v4';
+import {
+  STARTER_REACT_VITE_V5_FILES,
+  STARTER_REACT_VITE_V5_MANIFEST_KEY,
+  STARTER_REACT_VITE_V5_REVISION_ID,
+} from './starter_react_vite_v5';
 
 export type { StarterManifestFile } from './starter-react-vite-v1';
 
@@ -21,6 +26,7 @@ export const SYSTEM_STARTER_REVISION_IDS = [
   STARTER_REACT_VITE_V1_REVISION_ID,
   STARTER_REACT_VITE_V3_REVISION_ID,
   STARTER_REACT_VITE_V4_REVISION_ID,
+  STARTER_REACT_VITE_V5_REVISION_ID,
 ] as const;
 
 export type SystemStarterRevisionId = (typeof SYSTEM_STARTER_REVISION_IDS)[number];
@@ -51,6 +57,11 @@ const STARTERS: Record<string, EmbeddedStarterDefinition> = {
     manifestKey: STARTER_REACT_VITE_V4_MANIFEST_KEY,
     files: STARTER_REACT_VITE_V4_FILES,
   },
+  [STARTER_REACT_VITE_V5_REVISION_ID]: {
+    revisionId: STARTER_REACT_VITE_V5_REVISION_ID,
+    manifestKey: STARTER_REACT_VITE_V5_MANIFEST_KEY,
+    files: STARTER_REACT_VITE_V5_FILES,
+  },
 };
 
 export function resolveEmbeddedStarter(revisionId: string): EmbeddedStarterDefinition | null {
@@ -58,5 +69,5 @@ export function resolveEmbeddedStarter(revisionId: string): EmbeddedStarterDefin
 }
 
 /** Default system starter for new App Builder sessions. */
-export const DEFAULT_STARTER_REVISION_ID = STARTER_REACT_VITE_V4_REVISION_ID;
-export const DEFAULT_STARTER_MANIFEST_KEY = STARTER_REACT_VITE_V4_MANIFEST_KEY;
+export const DEFAULT_STARTER_REVISION_ID = STARTER_REACT_VITE_V5_REVISION_ID;
+export const DEFAULT_STARTER_MANIFEST_KEY = STARTER_REACT_VITE_V5_MANIFEST_KEY;

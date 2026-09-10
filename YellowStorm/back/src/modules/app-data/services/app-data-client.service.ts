@@ -85,12 +85,27 @@ export class AppDataClientService {
   async ensureApp(
     workspaceId: string,
     name?: string,
-  ): Promise<{ id: string; workspaceId: string; name: string }> {
-    const res = await this.request<{ id: string; workspaceId: string; name: string }>(
-      'POST',
-      '/v1/internal/apps',
-      { body: { workspaceId, name } },
-    );
+    ownerUserId?: string,
+  ): Promise<{ id: string; workspaceId: string; name: string; ownerUserId: string | null }> {
+    const res = await this.request<{
+      id: string;
+      workspaceId: string;
+      name: string;
+      ownerUserId: string | null;
+    }>('POST', '/v1/internal/apps', { body: { workspaceId, name, ownerUserId } });
+    return res.body;
+  }
+
+  /** Issue an owner/app/env-scoped data ticket (microservice JWT). */
+  async issueTicket(params: {
+    workspaceId: string;
+    userId: string;
+    appDataId: string;
+    env: 'dev' | 'prod';
+  }): Promise<{ ticket: string }> {
+    const res = await this.request<{ ticket: string }>('POST', '/v1/internal/tickets', {
+      body: params,
+    });
     return res.body;
   }
 
@@ -247,6 +262,29 @@ export class AppDataClientService {
       `/v1/internal/apps/${encodeURIComponent(appDataId)}/${env}/tables/${encodeURIComponent(table)}/rows/${encodeURIComponent(id)}`,
     );
     return res.body?.deleted === true;
+  }
+
+  async seedRows(
+    appDataId: string,
+    env: 'dev' | 'prod',
+    tables: { name: string; rows: Record<string, unknown>[] }[],
+    ownerId?: string,
+  ): Promise<{
+    total: number;
+    inserted: number;
+    skipped: number;
+    tables: { table: string; inserted: number; skipped: number }[];
+  }> {
+    const res = await this.request<{
+      total: number;
+      inserted: number;
+      skipped: number;
+      tables: { table: string; inserted: number; skipped: number }[];
+    }>('POST', `/v1/internal/apps/${encodeURIComponent(appDataId)}/${env}/seed`, {
+      body: { owner_id: ownerId, tables },
+      timeoutMs: this.bindTimeoutMs(),
+    });
+    return res.body;
   }
 
   async mcpRpc(
