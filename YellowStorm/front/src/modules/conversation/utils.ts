@@ -106,6 +106,32 @@ export function formatTimingMs(ms: number | undefined): string {
  * the canonical per-interaction displayText (readable) over the raw canonical
  * JSON that is persisted as message.content.
  */
+const VERDICT_LABELS: Record<string, string> = {
+  approve: 'Approuvé', approuver: 'Approuvé', yes: 'Approuvé', oui: 'Approuvé',
+  decline: 'Refusé', refuser: 'Refusé', no: 'Refusé', non: 'Refusé',
+};
+
+/**
+ * A gate approval/decline is sent as the machine payload ("approve", or the
+ * edit-on-card JSON {"verdict","edits"}). Render a friendly label for the user
+ * bubble instead of the raw payload; any other content passes through unchanged.
+ */
+export function formatChoiceSubmissionContent(content: string): string {
+  const raw = (content ?? '').trim();
+  if (!raw) return content;
+  if (raw.startsWith('{')) {
+    try {
+      const parsed = JSON.parse(raw) as { verdict?: unknown; edits?: unknown };
+      if (parsed && typeof parsed === 'object' && 'verdict' in parsed) {
+        const base = VERDICT_LABELS[String(parsed.verdict).toLowerCase()] ?? String(parsed.verdict);
+        const edited = parsed.edits && typeof parsed.edits === 'object' && Object.keys(parsed.edits as object).length > 0;
+        return edited ? `${base} — message modifié` : base;
+      }
+    } catch { /* not our payload — fall through */ }
+  }
+  return VERDICT_LABELS[raw.toLowerCase()] ?? content;
+}
+
 export function getUserMessageDisplayText(msg: Message): string {
   if (msg.interactions?.length) {
     const displayTexts = msg.interactions.map((interaction) => interaction.displayText).filter(Boolean);
