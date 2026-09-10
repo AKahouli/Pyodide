@@ -1,4 +1,5 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, type KeyboardEvent } from 'react';
+import { Pencil, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
@@ -32,6 +33,7 @@ export function ChoicePartRenderer({ componentId, onAction, submittedInteraction
   const isEditable = Boolean(choice.editable) && Boolean(choice.fields?.length);
   const [fieldValues, setFieldValues] = useState<Record<string, string>>(() =>
     Object.fromEntries((choice.fields ?? []).map((f) => [f.key, f.value ?? ''])));
+  const [editing, setEditing] = useState(false);
   const editSubmitText = (option: ChoiceComponentData['options'][number]) =>
     isEditable && APPROVE_WORDS.has(option.submitText.trim().toLowerCase())
       ? JSON.stringify({ verdict: 'approve', edits: fieldValues })
@@ -91,10 +93,43 @@ export function ChoicePartRenderer({ componentId, onAction, submittedInteraction
       setState('submitted');
     } catch { setState('error'); }
   };
+  const approveOption = choice.options.find((option) => APPROVE_WORDS.has(option.submitText.trim().toLowerCase()));
+  const cancelEdit = () => {
+    setFieldValues(Object.fromEntries((choice.fields ?? []).map((f) => [f.key, f.value ?? ''])));
+    setEditing(false);
+  };
+  const onEditKeyDown = (event: KeyboardEvent) => {
+    if (event.key === 'Escape') { event.preventDefault(); cancelEdit(); }
+    else if ((event.metaKey || event.ctrlKey) && event.key === 'Enter' && approveOption) { event.preventDefault(); void submitOption(approveOption); }
+  };
   if (state === 'submitted') return <div className='rounded-lg border bg-muted/40 p-3 text-sm'>{submittedInteraction?.dismissed ? t('choice.dismissed') : t('choice.submitted')}</div>;
   return <section className='space-y-3 rounded-xl border bg-card p-4' aria-label={choice.prompt}>
     <div><h3 className='font-medium'>{choice.prompt}</h3>{choice.description && !isEditable && <p className='mt-1 text-sm text-muted-foreground'>{choice.description}</p>}{choice.progress && <p className='mt-1 text-xs text-muted-foreground'>{choice.progress.label || `${choice.progress.current} / ${choice.progress.total}`}</p>}</div>
-    {isEditable && <div className='flex flex-col gap-2'>{(choice.fields ?? []).map((field) => <label key={field.key} className='flex flex-col gap-1 text-sm'><span className='text-muted-foreground'>{field.label}</span>{field.multiline ? <Textarea value={fieldValues[field.key] ?? ''} disabled={disabled} onChange={(event) => setFieldValues((prev) => ({ ...prev, [field.key]: event.target.value }))} /> : <Input value={fieldValues[field.key] ?? ''} disabled={disabled} onChange={(event) => setFieldValues((prev) => ({ ...prev, [field.key]: event.target.value }))} />}</label>)}</div>}
+    {isEditable && <div className='overflow-hidden rounded-lg border bg-muted/30'>
+      <div className='flex items-center justify-between gap-2 border-b bg-muted/40 px-3 py-1.5'>
+        <span className='text-[11px] font-medium uppercase tracking-wide text-muted-foreground'>Message</span>
+        {editing
+          ? <button type='button' onClick={cancelEdit} className='inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground'><X className='h-3.5 w-3.5' />Annuler</button>
+          : <button type='button' disabled={disabled} onClick={() => setEditing(true)} className='inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50'><Pencil className='h-3.5 w-3.5' />Modifier</button>}
+      </div>
+      <div className='flex flex-col gap-2.5 p-3' onKeyDown={editing ? onEditKeyDown : undefined}>
+        {(choice.fields ?? []).map((field) => {
+          const value = fieldValues[field.key] ?? '';
+          if (!editing) {
+            return field.multiline
+              ? <p key={field.key} className='whitespace-pre-wrap break-words text-sm leading-relaxed'>{value || <span className='text-muted-foreground'>—</span>}</p>
+              : <p key={field.key} className='flex flex-wrap gap-x-2 text-sm'><span className='shrink-0 text-muted-foreground'>{field.label} :</span><span className='min-w-0 break-words font-medium'>{value || '—'}</span></p>;
+          }
+          return <label key={field.key} className='flex flex-col gap-1'>
+            <span className='text-[11px] font-medium uppercase tracking-wide text-muted-foreground'>{field.label}</span>
+            {field.multiline
+              ? <Textarea value={value} disabled={disabled} autoFocus className='min-h-[140px] resize-y bg-background leading-relaxed' onChange={(event) => setFieldValues((prev) => ({ ...prev, [field.key]: event.target.value }))} />
+              : <Input value={value} disabled={disabled} className='bg-background' onChange={(event) => setFieldValues((prev) => ({ ...prev, [field.key]: event.target.value }))} />}
+          </label>;
+        })}
+        {editing && <p className='text-[11px] text-muted-foreground'>Astuce : Ctrl/⌘ + Entrée pour approuver, Échap pour annuler.</p>}
+      </div>
+    </div>}
     <div className={choice.presentation === 'quick_replies' ? 'flex flex-wrap gap-2' : 'flex flex-col gap-2'} role={choice.selectionMode === 'single' ? 'radiogroup' : 'group'}>
       {choice.options.map((option) => {
         const isSelected = selected.includes(option.id);

@@ -193,6 +193,9 @@ it('edit-on-card: approve submits the edited fields as JSON edits', async () => 
       onAction={onAction}
     />,
   );
+  // Preview by default — reveal the inputs first, then edit.
+  expect(screen.queryByDisplayValue('Status')).not.toBeInTheDocument();
+  await user.click(screen.getByRole('button', { name: /Modifier/ }));
   const subject = screen.getByDisplayValue('Status');
   await user.clear(subject);
   await user.type(subject, 'URGENT');
@@ -200,6 +203,42 @@ it('edit-on-card: approve submits the edited fields as JSON edits', async () => 
   expect(onAction).toHaveBeenCalledWith(expect.objectContaining({
     submitText: JSON.stringify({ verdict: 'approve', edits: { subject: 'URGENT', body: 'Hi' } }),
   }));
+});
+
+it('edit-on-card: shows a read-only preview until Modifier is clicked, and Cancel reverts', async () => {
+  const user = userEvent.setup();
+  const onAction = vi.fn().mockResolvedValue(undefined);
+  render(
+    <ChoicePartRenderer
+      componentId='c3'
+      schemaVersion={1}
+      questionId='confirm::adk-z'
+      prompt='Approuver ?'
+      presentation='quick_replies'
+      selectionMode='single'
+      submitBehavior='immediate'
+      status='ready'
+      dismissible={false}
+      editable
+      fields={[{ key: 'subject', label: 'Objet', value: 'Status' }]}
+      options={[
+        { id: 'approve', label: 'Approuver', submitText: 'approve' },
+        { id: 'decline', label: 'Refuser', submitText: 'decline' },
+      ]}
+      onAction={onAction}
+    />,
+  );
+  // Preview: value shown, no input.
+  expect(screen.getByText('Status')).toBeInTheDocument();
+  expect(screen.queryByDisplayValue('Status')).not.toBeInTheDocument();
+  await user.click(screen.getByRole('button', { name: /Modifier/ }));
+  const subject = screen.getByDisplayValue('Status');
+  await user.clear(subject);
+  await user.type(subject, 'CHANGED');
+  // Cancel reverts and returns to preview.
+  await user.click(screen.getByRole('button', { name: /Annuler/ }));
+  expect(screen.queryByDisplayValue('CHANGED')).not.toBeInTheDocument();
+  expect(screen.getByText('Status')).toBeInTheDocument();
 });
 
 it('edit-on-card: decline stays a plain verdict', async () => {
