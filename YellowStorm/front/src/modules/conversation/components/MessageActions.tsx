@@ -23,7 +23,7 @@ import { useNavigate } from 'react-router-dom';
 import { useApiAction } from '@/lib/use-api-action';
 import { branchConversation, prepareConversationPlaybookHandoff } from '../api';
 import { useModelById } from '@/modules/models';
-import { playbookFeatures } from '@/modules/playbook/features';
+import { useFeatureVisibilityStore } from '@/modules/admin/featureVisibilityStore';
 import { usePlatformCopilotPanelStore } from '@/modules/platform-copilot/platformCopilotPanelStore';
 
 import { cn } from '@/lib/utils';
@@ -50,6 +50,7 @@ export const MessageActions = memo(function MessageActions({ message, isLastAiMe
   const [sourcesOpen, setSourcesOpen] = useState(false);
   const handoffCreationRequest = useRef<{ fingerprint: string; requestId: string }>();
   const openHandoff = usePlatformCopilotPanelStore((state) => state.openHandoff);
+  const playbookMcpAssistant = useFeatureVisibilityStore((state) => state.visibility.playbookMcpAssistant);
   const [isExportingPdf, setIsExportingPdf] = useState(false);
   const [isExportingDocx, setIsExportingDocx] = useState(false);
   const { t, language } = useModuleTranslation('conversation');
@@ -79,7 +80,7 @@ export const MessageActions = memo(function MessageActions({ message, isLastAiMe
       openHandoff(handoff);
     },
   });
-  const canPrepareHandoff = playbookFeatures.mcpAssistantEnabled && message.isComplete && !message.isStreaming;
+  const canPrepareHandoff = playbookMcpAssistant && message.isComplete && !message.isStreaming;
   const createdAt = new Date(message.createdAt);
   const formattedCreatedAt = Number.isNaN(createdAt.getTime())
     ? t('messageActions.dateUnavailable')

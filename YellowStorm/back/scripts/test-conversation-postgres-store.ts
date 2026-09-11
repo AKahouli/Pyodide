@@ -515,13 +515,13 @@ async function main(): Promise<void> {
       [ids.platformEmpty, ids.platformActive],
     );
 
-    assert.equal(await store.countByProject(ids.owner, ids.project), 1);
+    // Projects are shared containers: counts and detaches are project-scoped (any creator).
+    assert.equal(await store.countByProject(ids.project), 1);
     assert.deepEqual(
-      await store.countByProjects(ids.owner, [ids.project]),
+      await store.countByProjects([ids.project]),
       new Map([[ids.project, 1]]),
     );
-    assert.equal(await store.detachProject(ids.outsider, ids.project), 0);
-    assert.equal(await store.detachProject(ids.owner, ids.project), 1);
+    assert.equal(await store.detachProject(ids.project), 1);
     assert.equal(await store.removeWorkspaceFromAll(ids.workspaceB), 3);
     assert.deepEqual((await store.findById(ids.group))?.workspaces, [ids.workspaceA]);
 

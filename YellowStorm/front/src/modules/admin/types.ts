@@ -205,6 +205,12 @@ export interface FeatureVisibility {
   agents: boolean;
   semanticModel: boolean;
   platformCopilot: boolean;
+  playbookDevtools: boolean;
+  playbookDeltaAutosave: boolean;
+  playbookMcpAssistant: boolean;
+  governedConversations: boolean;
+  governedScopeCarousel: boolean;
+  dataRoomDecisionFlows: boolean;
 }
 
 export interface CorsOriginEntry {

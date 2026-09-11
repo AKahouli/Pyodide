@@ -62,5 +62,10 @@
   "projects.page.noResults": "No conversations match your search.",
   "projects.page.emptyTitle": "No conversations yet",
   "projects.page.emptyHint": "Use the composer above to start your first conversation in this project.",
-  "projects.page.messageCount": "{{count}} message(s)"
+  "projects.page.messageCount": "{{count}} message(s)",
+  "projects.sharedWithMe": "Shared with me",
+  "projects.page.readOnlyHint": "Read-only: you can view this project's conversations",
+  "projects.toasts.shareNotFound": "No Yellomind account: {{emails}}",
+  "projects.toasts.visibilityError": "Could not update visibility",
+  "projects.toasts.shareError": "Could not share project"
 }

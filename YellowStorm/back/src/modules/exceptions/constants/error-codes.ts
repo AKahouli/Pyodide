@@ -258,6 +258,10 @@ export enum ErrorCode {
   PROJECT_NOT_FOUND = 'ERR_2700',
   PROJECT_ALREADY_EXISTS = 'ERR_2701',
   PROJECT_FORBIDDEN = 'ERR_2702',
+  PROJECT_SHARE_NOT_FOUND = 'ERR_2704',
+  PROJECT_SHARE_SELF = 'ERR_2705',
+  PROJECT_SHARE_PUBLIC = 'ERR_2706',
+  PROJECT_SHARE_READ_ONLY = 'ERR_2707',
 
   // Classifier errors (2800-2899)
   CLASSIFIER_FOLDER_NOT_FOUND = 'ERR_2800',
@@ -669,6 +673,10 @@ export const ErrorMessages: Record<ErrorCode, string> = {
   [ErrorCode.PROJECT_NOT_FOUND]: 'Project not found.',
   [ErrorCode.PROJECT_ALREADY_EXISTS]: 'A project with this name already exists.',
   [ErrorCode.PROJECT_FORBIDDEN]: 'You do not have access to this project.',
+  [ErrorCode.PROJECT_SHARE_NOT_FOUND]: 'Project share not found.',
+  [ErrorCode.PROJECT_SHARE_SELF]: 'You cannot share a project with yourself.',
+  [ErrorCode.PROJECT_SHARE_PUBLIC]: 'This project is public and cannot be shared.',
+  [ErrorCode.PROJECT_SHARE_READ_ONLY]: 'You have read-only access to this project.',
 
   [ErrorCode.CLASSIFIER_FOLDER_NOT_FOUND]: 'Classifier folder not found.',
   [ErrorCode.CLASSIFIER_FOLDER_NAME_EXISTS]: 'A folder with this name already exists at this location.',

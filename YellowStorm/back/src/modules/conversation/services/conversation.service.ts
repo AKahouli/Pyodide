@@ -1,4 +1,4 @@
-import { Inject, Injectable, Optional } from '@nestjs/common';
+import { Inject, Injectable, Optional, forwardRef } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { InjectModel } from '@nestjs/mongoose';
@@ -39,6 +39,7 @@ import {
   type ConversationStore,
 } from '../persistence/conversation-store';
 import { newOwnedId } from '../persistence/owned-id';
+import { ProjectShareService } from '../../project/project-share.service';
 import { PG_POOL } from '../../postgres/postgres.constants';
 import type { Pool, PoolClient } from 'pg';
 
@@ -56,6 +57,8 @@ export class ConversationService {
     private readonly emailService: EmailService,
     private readonly agentRepository: AgentRepository,
     private readonly featureVisibility: FeatureVisibilityService,
+    @Inject(forwardRef(() => ProjectShareService))
+    private readonly projectShareService: ProjectShareService,
     @Optional() @Inject(PG_POOL) private readonly postgresPool?: Pool,
   ) {
     this.logger.setContext('ConversationService');
@@ -70,6 +73,9 @@ export class ConversationService {
         undefined,
         'creationRequestId is only supported for platform-copilot conversations',
       );
+    }
+    if (data.projectId) {
+      await this.projectShareService.assertProjectWriteAccess(userId, data.projectId);
     }
     const emails =
       data.participants?.map((participant) => participant.email) ?? data.participantEmails;
@@ -237,6 +243,12 @@ export class ConversationService {
     userId: string,
     params: ConversationQueryParams,
   ): Promise<PaginatedConversations | import('../interfaces/conversation.interface').CursorPaginatedConversations> {
+    // A project the user can access (own, shared with them, or public) lists
+    // every conversation in it, including collaborators' conversations.
+    const projectAccessible =
+      Boolean(params.projectId) &&
+      params.projectId !== 'none' &&
+      (await this.projectShareService.hasAccess(userId, params.projectId!));
     if ((params.mode ?? 'legacy') === 'cursor') {
       if (params.page !== undefined) {
         throw new BadRequestException(ErrorCode.VALIDATION_ERROR, 'page is not valid in cursor mode');
@@ -251,6 +263,7 @@ export class ConversationService {
         sortOrder: params.sortOrder ?? 'desc',
         isArchived: params.isArchived,
         projectId: params.projectId,
+        projectIdUnscoped: projectAccessible,
         searchScope: params.searchScope,
         runtimePurpose: params.runtimePurpose,
       });
@@ -280,6 +293,7 @@ export class ConversationService {
       sortOrder: params.sortOrder ?? 'desc',
       isArchived: params.isArchived,
       projectId: params.projectId,
+      projectIdUnscoped: projectAccessible,
       searchScope: params.searchScope,
       runtimePurpose: params.runtimePurpose,
     });
@@ -303,6 +317,9 @@ export class ConversationService {
     data: UpdateConversationData,
   ): Promise<ConversationResponse> {
     const current = await this.requireOwned(conversationId, userId);
+    if (data.projectId) {
+      await this.projectShareService.assertProjectWriteAccess(userId, data.projectId);
+    }
     if (
       current.runtimeMode === 'governed' &&
       [

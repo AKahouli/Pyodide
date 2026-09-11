@@ -14,6 +14,12 @@ export class Project extends Document {
   @Prop({ type: Types.ObjectId, ref: 'User', required: true, index: true })
   createdBy!: Types.ObjectId;
 
+  @Prop({ type: Boolean, default: false })
+  isPublic!: boolean;
+
+  @Prop({ type: Number, default: 0 })
+  shareCount!: number;
+
   createdAt!: Date;
   updatedAt!: Date;
 }

@@ -99,6 +99,12 @@ describe('admin api', () => {
       agents: true,
       semanticModel: true,
       platformCopilot: false,
+      playbookDevtools: false,
+      playbookDeltaAutosave: true,
+      playbookMcpAssistant: true,
+      governedConversations: true,
+      governedScopeCarousel: true,
+      dataRoomDecisionFlows: true,
     };
     getMock.mockResolvedValue({ data: { data: visibility } });
     putMock.mockResolvedValue({ data: { data: visibility } });

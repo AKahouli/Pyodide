@@ -618,6 +618,12 @@ export const API_ENDPOINTS = {
     list: '/projects',
     create: '/projects',
     byId: (id: string) => `/projects/${id}`,
+    sharedWithMe: '/projects/shared-with-me',
+    visibility: (id: string) => `/projects/${id}/visibility`,
+  },
+  projectShares: {
+    list: (id: string) => `/projects/${id}/shares`,
+    byId: (id: string, shareId: string) => `/projects/${id}/shares/${shareId}`,
   },
   classifier: {
     folders: (workspaceId: string) => `/classifier/workspaces/${workspaceId}/folders`,

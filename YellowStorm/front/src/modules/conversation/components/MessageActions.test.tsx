@@ -66,7 +66,9 @@ vi.mock('../api', () => ({
 vi.mock('@/modules/models', () => ({
   useModelById: (id: string) => id === 'model-1' ? modelMock.value : undefined,
 }));
-vi.mock('@/modules/playbook/features', () => ({ playbookFeatures: { mcpAssistantEnabled: true } }));
+vi.mock('@/modules/admin/featureVisibilityStore', () => ({
+  useFeatureVisibilityStore: (selector: (state: { visibility: { playbookMcpAssistant: boolean } }) => unknown) => selector({ visibility: { playbookMcpAssistant: true } }),
+}));
 vi.mock('@/modules/platform-copilot/platformCopilotPanelStore', () => ({
   usePlatformCopilotPanelStore: (selector: (state: Record<string, unknown>) => unknown) => selector({ openHandoff: openHandoffMock }),
 }));

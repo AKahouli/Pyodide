@@ -85,6 +85,10 @@ describe('ConversationService neutral persistence', () => {
       emailService as never,
       agentRepository as never,
       featureVisibility as never,
+      {
+        hasAccess: jest.fn().mockResolvedValue(false),
+        assertProjectWriteAccess: jest.fn().mockResolvedValue(undefined),
+      } as never,
     );
   });
 

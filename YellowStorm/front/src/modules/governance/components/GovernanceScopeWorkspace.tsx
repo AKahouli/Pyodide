@@ -51,7 +51,8 @@ import { WorkspaceBindingList as WorkspaceBindingListPanel } from './bindings/Wo
 import { governanceQueryKeys } from '../query/queryKeys';
 import { ScopeAudienceTab } from './scope/ScopeAudienceTab';
 import { KnowledgeSourcesCard } from './scope/KnowledgeSourcesCard';
-import { getLatestDryRunRevisionNumber, governanceScopeTabs, isCurrentDraftDryRunPassed, type TabKey } from './scope-readiness';
+import { getGovernanceScopeTabs, getLatestDryRunRevisionNumber, isCurrentDraftDryRunPassed, type TabKey } from './scope-readiness';
+import { useFeatureVisibilityStore } from '@/modules/admin/featureVisibilityStore';
 
 export type { TabKey } from './scope-readiness';
 
@@ -151,6 +152,8 @@ export function GovernanceScopeWorkspace({ programId, scopeId, overview, members
   const [isChangingTab, setIsChangingTab] = useState(false);
   const updateScope = useUpdateGovernanceScope(programId, scopeId);
   const queryClient = useQueryClient();
+  const governedConversations = useFeatureVisibilityStore((state) => state.visibility.governedConversations);
+  const governanceScopeTabs = getGovernanceScopeTabs(governedConversations);
 
   useEffect(() => {
     if (!overview) return;

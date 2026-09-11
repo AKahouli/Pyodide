@@ -4,9 +4,10 @@ import { LayoutGrid, RefreshCcw } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { useModuleTranslation } from '@/modules/localization';
 import { NodeDataActionsContext } from './PlaybookNode';
+import { PlaybookStatusBadge } from './PlaybookStatusBadge';
 import { PortLabel } from './PortLabel';
 import { usePlaybookStore } from '../store';
-import type { PlaybookNodeData } from '../types';
+import type { PlaybookNodeData, StepStatus } from '../types';
 import { PORT_COLORS } from '../utils/port-colors';
 
 const ITERATOR_MIN_WIDTH = 360;
@@ -206,6 +207,7 @@ export function PlaybookIteratorContainerNode({ data, selected }: NodeProps) {
           </div>
         </div>
         <div className="flex shrink-0 items-center gap-2">
+          {nodeData.stepStatus ? <PlaybookStatusBadge status={nodeData.stepStatus as StepStatus} size="xs" /> : null}
           {nodeActions?.repackIteratorChildren ? (
             <button
               type="button"

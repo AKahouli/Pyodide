@@ -17,7 +17,27 @@ export const DEFAULT_FEATURE_VISIBILITY: FeatureVisibility = Object.freeze({
   agents: true,
   semanticModel: true,
   platformCopilot: false,
+  playbookDevtools: false,
+  playbookDeltaAutosave: true,
+  playbookMcpAssistant: true,
+  governedConversations: true,
+  governedScopeCarousel: true,
+  dataRoomDecisionFlows: true,
 });
+
+export const FEATURE_SETTING_ITEMS: {
+  key: keyof FeatureVisibility;
+  group: 'playbook' | 'governance' | 'workspace';
+  labelKey: ModuleTranslationKey<'admin'>;
+  descriptionKey: ModuleTranslationKey<'admin'>;
+}[] = [
+  { key: 'playbookDevtools', group: 'playbook', labelKey: 'system.features.items.playbookDevtools.label', descriptionKey: 'system.features.items.playbookDevtools.description' },
+  { key: 'playbookDeltaAutosave', group: 'playbook', labelKey: 'system.features.items.playbookDeltaAutosave.label', descriptionKey: 'system.features.items.playbookDeltaAutosave.description' },
+  { key: 'playbookMcpAssistant', group: 'playbook', labelKey: 'system.features.items.playbookMcpAssistant.label', descriptionKey: 'system.features.items.playbookMcpAssistant.description' },
+  { key: 'governedConversations', group: 'governance', labelKey: 'system.features.items.governedConversations.label', descriptionKey: 'system.features.items.governedConversations.description' },
+  { key: 'governedScopeCarousel', group: 'governance', labelKey: 'system.features.items.governedScopeCarousel.label', descriptionKey: 'system.features.items.governedScopeCarousel.description' },
+  { key: 'dataRoomDecisionFlows', group: 'workspace', labelKey: 'system.features.items.dataRoomDecisionFlows.label', descriptionKey: 'system.features.items.dataRoomDecisionFlows.description' },
+];
 
 export const FEATURE_PERMISSION_ITEMS: {
   key: keyof FeatureVisibility;

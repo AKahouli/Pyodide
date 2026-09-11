@@ -60,6 +60,7 @@ import { SemanticModelModule } from '../semantic-model/semantic-model.module';
 import { ConversationArtifactService } from './services/conversation-artifact.service';
 import { UserModule } from '../user/user.module';
 import { ConversationPersistenceModule } from './persistence/conversation-persistence.module';
+import { ProjectModule } from '../project/project.module';
 
 @Module({
   imports: [
@@ -81,6 +82,7 @@ import { ConversationPersistenceModule } from './persistence/conversation-persis
     forwardRef(() => EvaluationModule),
     UserModule,
     SemanticModelModule,
+    ProjectModule,
   ],
   controllers: [
     StreamController, // Must be before ConversationController to avoid route conflict with :id param

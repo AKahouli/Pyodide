@@ -82,6 +82,23 @@ describe('PlaybookFlowSettingsService inference model resolution', () => {
     expect(modelsService.validateModelActive).not.toHaveBeenCalled();
   });
 
+  it('resolves the advisor evaluation model identifier and capability', async () => {
+    const { service, modelsService, systemService } = createService();
+    systemService.getPlaybookSettings.mockResolvedValue({
+      ...adminSettings,
+      advisorEvaluationModelId: 'advisor-model',
+    });
+    modelsService.validateModelActive.mockResolvedValue({
+      valid: true,
+      model: { id: 'advisor-model', litellmModel: 'azure/advisor-model', omitTemperature: true },
+    });
+
+    await expect(service.resolveAdvisorEvaluationModelConfig()).resolves.toEqual({
+      model: 'azure/advisor-model',
+      omitTemperature: true,
+    });
+  });
+
   it('uses the effective inference model for a model-less planner', async () => {
     const { service, agentService, modelsService } = createService('admin-model');
     agentService.findPlaybookPlannerById.mockResolvedValue({

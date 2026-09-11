@@ -25,6 +25,7 @@ import { DEFAULT_FEATURE_VISIBILITY, getFeatureVisibility } from '@/modules/admi
 import { usePermissions } from '@/modules/admin/hooks/usePermissions';
 import { PlatformCopilotMascot } from '@/modules/platform-copilot';
 import { isPendingAdminApproval } from '../utils/isPendingAdminApproval';
+import { useFeatureVisibilityStore } from '@/modules/admin/featureVisibilityStore';
 
 export function RootGuard() {
   const {
@@ -42,6 +43,7 @@ export function RootGuard() {
   const [platformCopilotEnabled, setPlatformCopilotEnabled] = React.useState(
     DEFAULT_FEATURE_VISIBILITY.platformCopilot,
   );
+  const setFeatureVisibility = useFeatureVisibilityStore((state) => state.setVisibility);
 
   const wasPendingRef = React.useRef(pendingApproval);
   const [justApproved, setJustApproved] = React.useState(false);
@@ -97,13 +99,16 @@ export function RootGuard() {
     let active = true;
     void getFeatureVisibility()
       .then((visibility) => {
-        if (active) setPlatformCopilotEnabled(visibility.platformCopilot);
+        if (active) {
+          setPlatformCopilotEnabled(visibility.platformCopilot);
+          setFeatureVisibility(visibility);
+        }
       })
       .catch(() => {
         if (active) setPlatformCopilotEnabled(false);
       });
     return () => { active = false; };
-  }, [isAuthenticated, requiresEmailVerification, requiresProfileCompletion, pendingApproval, justApproved]);
+  }, [isAuthenticated, requiresEmailVerification, requiresProfileCompletion, pendingApproval, justApproved, setFeatureVisibility]);
 
   // Still loading auth state - show spinner to prevent flash of wrong content
   if (isLoading) {

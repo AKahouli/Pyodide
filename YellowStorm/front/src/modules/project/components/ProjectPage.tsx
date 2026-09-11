@@ -9,6 +9,7 @@ import {
   MoreHorizontal,
   Pencil,
   Search,
+  Share2,
   Sparkles,
   Trash2,
   X,
@@ -25,6 +26,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { useModuleTranslation } from '@/modules/localization';
+import { useAuth } from '@/modules/auth';
 import { useUsage } from '@/modules/usage/UsageContext';
 import { useConversationFileUpload } from '@/modules/conversation/hooks/useConversationFileUpload';
 import { useAllowedUploadExtensions } from '@/modules/workspace/hooks/useAllowedUploadExtensions';
@@ -38,7 +40,16 @@ import { ReasoningEffortSelect, useReasoningEffortState } from '@/modules/conver
 import { translateConversation } from '@/modules/conversation/translation';
 import { RenameDialog } from '@/modules/conversation/components/RenameDialog';
 import { DeleteConversationDialog } from '@/modules/conversation/components/DeleteConversationDialog';
-import { useProjects, useProjectStore, RenameProjectDialog, DeleteProjectDialog } from '@/modules/project';
+import {
+  useProjects,
+  useProjectStore,
+  useSharedProjects,
+  RenameProjectDialog,
+  ShareProjectDialog,
+  DeleteProjectDialog,
+} from '@/modules/project';
+import { getProject } from '@/modules/project/api';
+import type { Project } from '@/modules/project/types';
 import { formatRelativeTimeLabel } from '@/utils/date';
 import type { Conversation } from '@/modules/conversation/types';
 
@@ -47,21 +58,40 @@ export function ProjectPage() {
   const navigate = useNavigate();
   const { t } = useModuleTranslation('sidebar');
   const { accept } = useAllowedUploadExtensions();
+  const { user } = useAuth();
 
   const projects = useProjects();
+  const sharedProjects = useSharedProjects();
   const fetchProjects = useProjectStore((s) => s.fetchProjects);
   const projectsInitialized = useProjectStore((s) => s.initialized);
   const renameProject = useProjectStore((s) => s.renameProject);
   const deleteProject = useProjectStore((s) => s.deleteProject);
   const incrementCount = useProjectStore((s) => s.incrementCount);
 
-  const project = useMemo(() => projects.find((p) => p.id === projectId), [projects, projectId]);
+  const [externalProject, setExternalProject] = useState<Project | null>(null);
+  const project = useMemo(
+    () => projects.find((p) => p.id === projectId) ?? externalProject,
+    [projects, projectId, externalProject],
+  );
 
   useEffect(() => {
-    if (projectsInitialized && !project) {
-      navigate('/', { replace: true });
+    if (projectsInitialized && !project && projectId) {
+      let cancelled = false;
+      getProject(projectId)
+        .then((shared) => {
+          if (!cancelled) setExternalProject(shared);
+        })
+        .catch(() => navigate('/', { replace: true }));
+      return () => {
+        cancelled = true;
+      };
     }
-  }, [projectsInitialized, project, navigate]);
+  }, [projectsInitialized, project, projectId, navigate]);
+
+  const isOwner = project ? project.createdBy === user?.id : false;
+  const permission: 'owner' | 'readwrite' | 'read' = isOwner
+    ? 'owner'
+    : (sharedProjects.find((p) => p.id === projectId)?.permission ?? 'read');
 
   const conversations = useConversationsByProject(projectId);
   const fetchProjectConversations = useConversationStore((s) => s.fetchProjectConversations);
@@ -78,6 +108,7 @@ export function ProjectPage() {
   const [silentConvId, setSilentConvId] = useState<string | null>(null);
   const [renameOpen, setRenameOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
+  const [shareOpen, setShareOpen] = useState(false);
 
   useEffect(() => {
     if (projects.length === 0) {
@@ -210,7 +241,7 @@ export function ProjectPage() {
               </p>
             </div>
 
-            {project && (
+            {project && isOwner && (
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
                   <Button variant='outline' size='icon' className='h-9 w-9 shrink-0'>
@@ -221,6 +252,10 @@ export function ProjectPage() {
                   <DropdownMenuItem className='cursor-pointer' onClick={() => setRenameOpen(true)}>
                     <Pencil className='mr-2 h-4 w-4' />
                     {t('conversations.rename')}
+                  </DropdownMenuItem>
+                  <DropdownMenuItem className='cursor-pointer' onClick={() => setShareOpen(true)}>
+                    <Share2 className='mr-2 h-4 w-4' />
+                    {t('conversations.share')}
                   </DropdownMenuItem>
                   <DropdownMenuItem
                     className='cursor-pointer text-destructive'
@@ -242,9 +277,13 @@ export function ProjectPage() {
             <Input
               onSubmit={handleSubmit}
               status={isSending ? 'submitted' : 'ready'}
-              disabled={isSending || inputDisabled || isLimitExceeded}
+              disabled={isSending || inputDisabled || isLimitExceeded || permission === 'read'}
               submitDisabled={isUploading || isSending}
-              placeholder={t('projects.page.composerPlaceholder')}
+              placeholder={
+                permission === 'read'
+                  ? t('projects.page.readOnlyHint')
+                  : t('projects.page.composerPlaceholder')
+              }
               onFilesAdded={(rawFiles, ids) => addFiles(rawFiles, ids)}
               onFileRemoved={(id) => removeFile(id)}
               uploadingFiles={uploadFiles}
@@ -295,7 +334,12 @@ export function ProjectPage() {
           ) : (
             <div className='grid gap-3 sm:grid-cols-2'>
               {filteredConversations.map((conv) => (
-                <ConversationCard key={conv.id} conversation={conv} projectId={projectId} />
+                <ConversationCard
+                  key={conv.id}
+                  conversation={conv}
+                  projectId={projectId}
+                  canManage={permission === 'owner' || conv.createdBy === user?.id}
+                />
               ))}
             </div>
           )}
@@ -308,6 +352,11 @@ export function ProjectPage() {
         currentName={project.name}
         onRename={(name) => renameProject(project.id, name)}
       />
+      <ShareProjectDialog
+        open={shareOpen}
+        onOpenChange={setShareOpen}
+        project={project}
+      />
       <DeleteProjectDialog
         open={deleteOpen}
         onOpenChange={setDeleteOpen}
@@ -318,7 +367,14 @@ export function ProjectPage() {
   );
 }
 
-function ConversationCard({ conversation, projectId }: { conversation: Conversation; projectId: string }) {
+function ConversationCard({
+  conversation,
+  canManage,
+}: {
+  conversation: Conversation;
+  projectId: string;
+  canManage: boolean;
+}) {
   const { t } = useModuleTranslation('sidebar');
   const navigate = useNavigate();
   const moveConversationToProject = useConversationStore((s) => s.moveConversationToProject);
@@ -362,34 +418,36 @@ function ConversationCard({ conversation, projectId }: { conversation: Conversat
             {lastActivity && <span>{lastActivity}</span>}
           </div>
         </button>
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <button
-              type='button'
-              onClick={(e) => e.stopPropagation()}
-              className='absolute right-2 top-2 flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground opacity-0 transition-opacity hover:bg-accent hover:text-foreground group-hover:opacity-100 data-[state=open]:opacity-100'
-            >
-              <MoreHorizontal className='h-4 w-4' />
-            </button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align='end'>
-            <DropdownMenuItem className='cursor-pointer' onClick={() => setRenameOpen(true)}>
-              <Pencil className='mr-2 h-4 w-4' />
-              {t('conversations.rename')}
-            </DropdownMenuItem>
-            <DropdownMenuItem className='cursor-pointer' onClick={handleRemoveFromProject}>
-              <FolderMinus className='mr-2 h-4 w-4' />
-              {t('conversations.removeFromProject')}
-            </DropdownMenuItem>
-            <DropdownMenuItem
-              className='cursor-pointer text-destructive'
-              onClick={() => setDeleteOpen(true)}
-            >
-              <Trash2 className='mr-2 h-4 w-4' />
-              {t('conversations.delete')}
-            </DropdownMenuItem>
-          </DropdownMenuContent>
-        </DropdownMenu>
+        {canManage && (
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <button
+                type='button'
+                onClick={(e) => e.stopPropagation()}
+                className='absolute right-2 top-2 flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground opacity-0 transition-opacity hover:bg-accent hover:text-foreground group-hover:opacity-100 data-[state=open]:opacity-100'
+              >
+                <MoreHorizontal className='h-4 w-4' />
+              </button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align='end'>
+              <DropdownMenuItem className='cursor-pointer' onClick={() => setRenameOpen(true)}>
+                <Pencil className='mr-2 h-4 w-4' />
+                {t('conversations.rename')}
+              </DropdownMenuItem>
+              <DropdownMenuItem className='cursor-pointer' onClick={handleRemoveFromProject}>
+                <FolderMinus className='mr-2 h-4 w-4' />
+                {t('conversations.removeFromProject')}
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                className='cursor-pointer text-destructive'
+                onClick={() => setDeleteOpen(true)}
+              >
+                <Trash2 className='mr-2 h-4 w-4' />
+                {t('conversations.delete')}
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        )}
       </div>
 
       <RenameDialog

@@ -228,6 +228,61 @@ export class PlaybookFlowStreamEventsService {
     });
   }
 
+  emitIteratorChildStepStarted(
+    executionId: string,
+    iteratorNodeId: string,
+    child: { iterationIndex: number; taskId: string; taskTitle?: string; status: string },
+  ): void {
+    const ownerId = this.executionOwnerCache.get(executionId);
+    if (!ownerId) return;
+
+    this.streamGateway.sendToUser(ownerId, {
+      type: 'playbook_iterator_child_step_start',
+      data: {
+        executionId,
+        parentIteratorId: iteratorNodeId,
+        iterationIndex: child.iterationIndex,
+        taskId: child.taskId,
+        ...(child.taskTitle !== undefined ? { taskTitle: child.taskTitle } : {}),
+        status: child.status,
+      },
+    });
+  }
+
+  emitIteratorChildStepCompleted(
+    executionId: string,
+    iteratorNodeId: string,
+    child: {
+      iterationIndex: number;
+      taskId: string;
+      taskTitle?: string;
+      status: string;
+      output?: string;
+      error?: string;
+      components?: Array<Record<string, unknown>>;
+      artifacts?: Array<Record<string, unknown>>;
+    },
+  ): void {
+    const ownerId = this.executionOwnerCache.get(executionId);
+    if (!ownerId) return;
+
+    this.streamGateway.sendToUser(ownerId, {
+      type: 'playbook_iterator_child_step_complete',
+      data: {
+        executionId,
+        parentIteratorId: iteratorNodeId,
+        iterationIndex: child.iterationIndex,
+        taskId: child.taskId,
+        ...(child.taskTitle !== undefined ? { taskTitle: child.taskTitle } : {}),
+        status: child.status,
+        ...(child.output !== undefined ? { output: child.output } : {}),
+        ...(child.error !== undefined ? { error: child.error } : {}),
+        ...(child.components !== undefined ? { components: child.components } : {}),
+        ...(child.artifacts !== undefined ? { artifacts: child.artifacts } : {}),
+      },
+    });
+  }
+
   emitStepJudgeStarted(
     ownerId: string,
     executionId: string,

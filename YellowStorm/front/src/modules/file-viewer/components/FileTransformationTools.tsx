@@ -15,6 +15,7 @@ import type { FileTab } from '../types';
 import { useFileViewerStore } from '../store';
 import { PageRangeField } from '../transformations/decision-flow/PageRangeField';
 import { PageRangeError, parsePageRange } from '../transformations/decision-flow/page-range';
+import { useFeatureVisibilityStore } from '@/modules/admin/featureVisibilityStore';
 
 const defaultOptions: DecisionFlowGenerationOptions = {
   flowType: 'eligibility',
@@ -48,6 +49,7 @@ export function FileTransformationTools({ tab }: Readonly<{ tab: FileTab }>) {
   const [options, setOptions] = useState<DecisionFlowGenerationOptions>(defaultOptions);
   const [saving, setSaving] = useState(false);
   const [configured, setConfigured] = useState<boolean | null>(null);
+  const decisionFlowsEnabled = useFeatureVisibilityStore((state) => state.visibility.dataRoomDecisionFlows);
 
   useEffect(() => {
     if (dialogOpenTimeoutRef.current !== null) {
@@ -67,12 +69,12 @@ export function FileTransformationTools({ tab }: Readonly<{ tab: FileTab }>) {
   }, []);
 
   useEffect(() => {
-    if (!tab.workspaceId) return;
+    if (!decisionFlowsEnabled || !tab.workspaceId) return;
     setConfigured(null);
     void getWorkspaceArtifactConfiguration(tab.workspaceId).then((value) => setConfigured(value.configured)).catch(() => setConfigured(false));
-  }, [tab.workspaceId]);
+  }, [decisionFlowsEnabled, tab.workspaceId]);
 
-  if (tab.mimeType !== 'application/pdf' || !tab.workspaceId || !tab.documentId || !tab.path || !tab.canWriteWorkspace) return null;
+  if (!decisionFlowsEnabled || tab.mimeType !== 'application/pdf' || !tab.workspaceId || !tab.documentId || !tab.path || !tab.canWriteWorkspace) return null;
 
   const selectAudience = (audience: DecisionFlowTargetAudience, checked: boolean) => {
     setOptions((current) => {

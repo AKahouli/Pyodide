@@ -1,6 +1,7 @@
-import { Injectable, ServiceUnavailableException } from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
+import { ServiceUnavailableException } from '@modules/exceptions/exceptions/http.exceptions';
 import { ErrorCode } from '@modules/exceptions/constants/error-codes';
-import { LiteLLMConnectionService } from '@modules/models/litellm-connection.service';
+import { LiteLLMConnectionService, describeLiteLlmHttpError } from '@modules/models/litellm-connection.service';
 import { LoggerService } from '@modules/logger';
 import { UsageService } from '@modules/usage/usage.service';
 import { UsageType } from '@modules/usage/schemas/usage.schema';
@@ -50,15 +51,25 @@ export class PlaybookFlowLlmAdvisorEvaluatorService {
       throw new ServiceUnavailableException(ErrorCode.AI_SERVICE_ERROR, 'LiteLLM is unavailable.');
     }
 
-    const model = await this.modelService.resolveEvaluationModel('llm');
+    const { model, omitTemperature } = await this.modelService.resolveEvaluationModelConfig('llm');
     const prompt = await this.buildPrompt({ ...params, model });
 
-    const response = await httpClient.post('/v1/chat/completions', {
-      model,
-      temperature: 0,
-      response_format: { type: 'json_object' },
-      messages: prompt.messages,
-    }, { timeout: 345000 });
+    let response: { data: unknown };
+    try {
+      response = await httpClient.post('/v1/chat/completions', {
+        model,
+        ...(omitTemperature ? {} : { temperature: 0 }),
+        response_format: { type: 'json_object' },
+        messages: prompt.messages,
+      }, { timeout: 345000 });
+    } catch (error) {
+      // The proxy's body names the real cause (unknown model, context overflow,
+      // unsupported response_format...) — keep it instead of Axios's generic message.
+      throw new ServiceUnavailableException(
+        ErrorCode.AI_SERVICE_ERROR,
+        `Advisor evaluation LLM request failed (${describeLiteLlmHttpError(error)})`,
+      );
+    }
 
     const content = this.extractContent(response.data);
     const judgeResult = this.mapper.mapLlmJudgeResult(content);

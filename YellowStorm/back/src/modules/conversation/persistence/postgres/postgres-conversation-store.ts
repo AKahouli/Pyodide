@@ -43,6 +43,7 @@ export class PostgresConversationStore implements ConversationStore {
       .select({
         id: schema.conversations.id,
         createdBy: schema.conversations.createdBy,
+        projectId: schema.conversations.projectId,
         memberIds: sql<string[]>`COALESCE((SELECT array_agg(gm.user_id ORDER BY gm.position) FROM conversation.conversation_group_members gm WHERE gm.conversation_id = ${schema.conversations.id}), ARRAY[]::bpchar[])`,
         invitedEmails: sql<string[]>`COALESCE((SELECT array_agg(gi.email ORDER BY gi.position) FROM conversation.conversation_group_invites gi WHERE gi.conversation_id = ${schema.conversations.id}), ARRAY[]::varchar[])`,
       })
@@ -58,51 +59,37 @@ export class PostgresConversationStore implements ConversationStore {
     return {
       id: conversation.id.trim(),
       createdBy: conversation.createdBy.trim(),
+      projectId: conversation.projectId?.trim() ?? null,
       memberIds: conversation.memberIds.map((value) => value.trim()),
       invitedEmails: conversation.invitedEmails,
     };
   }
 
-  async countByProject(userId: string, projectId: string): Promise<number> {
+  async countByProject(projectId: string): Promise<number> {
     const [row] = await this.db
       .select({ count: sql<number>`count(*)::int` })
       .from(schema.conversations)
-      .where(
-        and(
-          eq(schema.conversations.createdBy, userId),
-          eq(schema.conversations.projectId, projectId),
-        ),
-      );
+      .where(eq(schema.conversations.projectId, projectId));
     return row?.count ?? 0;
   }
 
-  async countByProjects(userId: string, projectIds: string[]): Promise<Map<string, number>> {
+  async countByProjects(projectIds: string[]): Promise<Map<string, number>> {
     if (!projectIds.length) return new Map();
     const rows = await this.db
       .select({ projectId: schema.conversations.projectId, count: sql<number>`count(*)::int` })
       .from(schema.conversations)
-      .where(
-        and(
-          eq(schema.conversations.createdBy, userId),
-          inArray(schema.conversations.projectId, projectIds),
-        ),
-      )
+      .where(inArray(schema.conversations.projectId, projectIds))
       .groupBy(schema.conversations.projectId);
     return new Map(
       rows.filter((row) => row.projectId).map((row) => [row.projectId!.trim(), row.count]),
     );
   }
 
-  async detachProject(userId: string, projectId: string): Promise<number> {
+  async detachProject(projectId: string): Promise<number> {
     const rows = await this.db
       .update(schema.conversations)
       .set({ projectId: null, updatedAt: new Date() })
-      .where(
-        and(
-          eq(schema.conversations.createdBy, userId),
-          eq(schema.conversations.projectId, projectId),
-        ),
-      )
+      .where(eq(schema.conversations.projectId, projectId))
       .returning({ id: schema.conversations.id });
     return rows.length;
   }
@@ -525,8 +512,13 @@ export class PostgresConversationStore implements ConversationStore {
   async list(
     input: ConversationListInput,
   ): Promise<{ records: ConversationRecord[]; total: number }> {
-    const access =
-      input.runtimePurpose === 'platform_copilot'
+    // Unscoped project listing: the service already verified the requester's
+    // project access, so the per-user ownership predicate is dropped and all
+    // collaborators' conversations in the project are returned.
+    const unscopedProject = Boolean(input.projectIdUnscoped && input.projectId && input.projectId !== 'none');
+    const access = unscopedProject
+      ? undefined
+      : input.runtimePurpose === 'platform_copilot'
         ? and(
             eq(schema.conversations.createdBy, input.userId),
             eq(schema.conversations.runtimePurpose, 'platform_copilot'),
@@ -539,7 +531,7 @@ export class PostgresConversationStore implements ConversationStore {
             ),
           );
     const conditions = [
-      access,
+      ...(access ? [access] : []),
        eq(schema.conversations.initializationStatus, 'ready'),
     ];
     if (input.isArchived !== undefined)
@@ -602,6 +594,7 @@ export class PostgresConversationStore implements ConversationStore {
       searchScope: input.searchScope ?? null,
       isArchived: input.isArchived ?? null,
       projectId: input.projectId ?? null,
+      projectIdUnscoped: input.projectIdUnscoped ?? null,
       runtimePurpose: input.runtimePurpose ?? null,
       sortBy: input.sortBy,
       sortOrder: input.sortOrder,
@@ -611,19 +604,22 @@ export class PostgresConversationStore implements ConversationStore {
     if (cursor && (cursor.f !== filterHash || cursor.s !== input.sortBy || cursor.d !== input.sortOrder)) {
       throw new BadRequestException(ErrorCode.VALIDATION_ERROR, 'Conversation cursor does not match the request filters');
     }
+    const unscopedProject = Boolean(input.projectIdUnscoped && input.projectId && input.projectId !== 'none');
     const conditions = [
       eq(schema.conversations.initializationStatus, 'ready'),
-      input.runtimePurpose === 'platform_copilot'
-        ? and(eq(schema.conversations.createdBy, input.userId), eq(schema.conversations.runtimePurpose, 'platform_copilot'))!
-        : and(
-            ne(schema.conversations.runtimePurpose, 'platform_copilot'),
-            sql`${schema.conversations.id} IN (
-              SELECT c.id FROM conversation.conversations c WHERE c.created_by = ${input.userId}
-              UNION
-              SELECT gm.conversation_id FROM conversation.conversation_group_members gm WHERE gm.user_id = ${input.userId}
-            )`,
-          )!,
-    ];
+      unscopedProject
+        ? undefined
+        : input.runtimePurpose === 'platform_copilot'
+          ? and(eq(schema.conversations.createdBy, input.userId), eq(schema.conversations.runtimePurpose, 'platform_copilot'))!
+          : and(
+              ne(schema.conversations.runtimePurpose, 'platform_copilot'),
+              sql`${schema.conversations.id} IN (
+                SELECT c.id FROM conversation.conversations c WHERE c.created_by = ${input.userId}
+                UNION
+                SELECT gm.conversation_id FROM conversation.conversation_group_members gm WHERE gm.user_id = ${input.userId}
+              )`,
+            )!,
+    ].filter((condition) => condition !== undefined);
     if (input.isArchived !== undefined) conditions.push(eq(schema.conversations.isArchived, input.isArchived));
     if (input.projectId === 'none') conditions.push(isNull(schema.conversations.projectId));
     else if (input.projectId) conditions.push(eq(schema.conversations.projectId, input.projectId));

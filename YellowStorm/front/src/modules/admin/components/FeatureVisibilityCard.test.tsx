@@ -42,7 +42,14 @@ const visibility = {
   appMarketplace: true,
   worky: true,
   agents: true,
+  semanticModel: true,
   platformCopilot: false,
+  playbookDevtools: false,
+  playbookDeltaAutosave: true,
+  playbookMcpAssistant: true,
+  governedConversations: true,
+  governedScopeCarousel: true,
+  dataRoomDecisionFlows: true,
 };
 
 describe('FeatureVisibilityCard', () => {

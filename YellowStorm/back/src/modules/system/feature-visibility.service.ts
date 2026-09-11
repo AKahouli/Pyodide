@@ -45,8 +45,8 @@ export class FeatureVisibilityService {
     return value;
   }
 
-  async updateVisibility(value: FeatureVisibility): Promise<FeatureVisibility> {
-    const persisted = { ...value };
+  async updateVisibility(value: Partial<FeatureVisibility>): Promise<FeatureVisibility> {
+    const persisted = normalizeFeatureVisibility({ ...await this.getVisibility(), ...value });
     await this.settings.findOneAndUpdate(
       { key: KEY },
       { key: KEY, value: persisted },
