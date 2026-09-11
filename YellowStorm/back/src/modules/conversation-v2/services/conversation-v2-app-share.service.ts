@@ -281,17 +281,30 @@ export class ConversationV2AppShareService {
     let inviteToken = token;
     if (this.appDataClient?.isEnabled()) {
       try {
-        const app = await this.appDataClient.getAppByWorkspace(params.sessionId);
-        if (app) {
-          const ttlDays = this.config.get<number>('conversationV2.appShareInviteTtlDays', 7);
-          const remote = await this.appDataClient.createInvite(app.id, email, ttlDays);
-          inviteToken = remote.token;
+        // params.sessionId is a MongoDB ObjectId; the microservice stores the
+        // AI workspace ID (aiSessionId) as workspace_id. Resolve it first.
+        const session = await this.sessionModel.findById(params.sessionId).lean().exec();
+        const workspaceId = (session as { aiSessionId?: string } | null)?.aiSessionId;
+        if (workspaceId) {
+          const app = await this.appDataClient.getAppByWorkspace(workspaceId);
+          if (app) {
+            const ttlDays = this.config.get<number>('conversationV2.appShareInviteTtlDays', 7);
+            const remote = await this.appDataClient.createInvite(app.id, email, ttlDays);
+            inviteToken = remote.token;
+          }
         }
       } catch (err) {
-        this.logger.warn(
-          `Failed to create invite in microservice for session=${params.sessionId}: ${
+        // In remote mode the deployed app resolves invites against the
+        // microservice, so a locally-minted token is useless — the user
+        // would hit a 404 on the register page. Fail the share instead.
+        this.logger.error(
+          `Cannot share: microservice invite creation failed for session=${params.sessionId}: ${
             err instanceof Error ? err.message : String(err)
           }`,
+        );
+        throw new ServiceUnavailableException(
+          ErrorCode.SERVICE_UNAVAILABLE,
+          'Failed to create invitation in the data service. Please try again.',
         );
       }
     }
