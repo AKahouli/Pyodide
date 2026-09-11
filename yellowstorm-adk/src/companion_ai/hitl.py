@@ -75,16 +75,24 @@ def confirm_fc_id(interrupt_id: str) -> str:
 
 
 def _make_blocking_node(name: str, message: str, *, prefix: str,
-                        state_key: str | None = None) -> FunctionNode:
+                        state_key: str | None = None,
+                        fixed_iid: str | None = None) -> FunctionNode:
     """A node that parks the run until someone supplies `message`'s answer.
 
     A FunctionNode, deliberately: its interrupt id derives from the node path, so
     it is stable across replays and a resume still matches — an LLM tool-call id
-    is random on every rerun and never would."""
+    is random on every rerun and never would.
+
+    `fixed_iid`, when given, is used as the interrupt id INSTEAD of the node
+    path. A step that already parked once (its id was bound to a mail wait) must
+    re-park under that SAME id on a later rebuild: the node path shifts as the
+    plan grows mid-session (create_task adds steps), so a path-derived id would
+    orphan the bound wait and strand the step. The factory passes the step's
+    stored interrupt_id here for an already-BLOCKED ask/await."""
     key = state_key or name
 
     async def block(ctx: Context):
-        iid = f"{prefix}:{ctx.node_path}"
+        iid = fixed_iid or f"{prefix}:{ctx.node_path}"
         answer = ctx.resume_inputs.get(iid)
         if answer is None:
             return RequestInput(interrupt_id=iid, message=message)
@@ -97,19 +105,26 @@ def _make_blocking_node(name: str, message: str, *, prefix: str,
     return FunctionNode(func=block, name=name, rerun_on_resume=True)
 
 
-def make_ask_user_node(name: str, question: str, *, state_key: str | None = None) -> FunctionNode:
+def make_ask_user_node(name: str, question: str, *, state_key: str | None = None,
+                       fixed_iid: str | None = None) -> FunctionNode:
     """A node that blocks asking the user `question`. On resume it writes the
     answer to session state under `state_key` (default: the node name) and
-    returns it so downstream steps can use it."""
-    return _make_blocking_node(name, question, prefix=ASK, state_key=state_key)
+    returns it so downstream steps can use it. `fixed_iid` pins the interrupt id
+    for a step that already parked (see _make_blocking_node)."""
+    return _make_blocking_node(name, question, prefix=ASK, state_key=state_key,
+                               fixed_iid=fixed_iid)
 
 
-def make_await_reply_node(name: str, expect: str, *, state_key: str | None = None) -> FunctionNode:
+def make_await_reply_node(name: str, expect: str, *, state_key: str | None = None,
+                          fixed_iid: str | None = None) -> FunctionNode:
     """A node that blocks until an email reply arrives, `expect` describing what
     is awaited. Resumed out of band by the mail webhook, not by the chat; on
     resume the reply body lands in session state under `state_key` (default: the
-    node name) so downstream steps read it exactly like an answered question."""
-    return _make_blocking_node(name, expect, prefix=MAIL, state_key=state_key)
+    node name) so downstream steps read it exactly like an answered question.
+    `fixed_iid` pins the interrupt id for a step that already parked (see
+    _make_blocking_node)."""
+    return _make_blocking_node(name, expect, prefix=MAIL, state_key=state_key,
+                               fixed_iid=fixed_iid)
 
 
 def interrupt_ids(event: Event) -> List[str]:

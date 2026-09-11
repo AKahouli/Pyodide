@@ -1277,6 +1277,104 @@ def test_persona_create_task_await_reply_survives_a_real_turn_boundary():
         assert followup_final.result == "REAL FINAL ANSWER — reply seen: True"
 
 
+def test_mixed_planner_await_and_create_task_await_no_stuck_step_no_divergence():
+    """The live regression (session d3635052 / 8cf41ed8): a MIXED plan holding a
+    planner-emitted await_reply (parks in pass 1) AND a persona step that spawns
+    a create_task(await_reply). Running the spawned await needs a _drive_loop
+    rebuild; that rebuild used to re-run the already-parked planner await under a
+    SHIFTED node-path id — orphaning its mail wait and leaving it stuck RUNNING —
+    and the nested-run design diverged ADK's replay barrier on the resume.
+
+    Fix under test: the runtime await is a TOP-LEVEL step (never nested), and a
+    blocked ask/await re-parks under its STORED interrupt id (fixed_iid). Asserts
+    turn 1 parks both awaits with no stuck step and one stable id, and the resume
+    runs the follow-up with the reply WITHOUT divergence or disturbing the other
+    await."""
+    from pydantic import PrivateAttr
+    from google.adk.models import BaseLlm
+    from google.adk.models.llm_response import LlmResponse
+    from google.adk.runners import Runner
+    from google.adk.sessions import InMemorySessionService
+    from google.genai import types
+    import unittest.mock as mock
+    from src.companion_ai import nodes as nodes_mod
+
+    class _ScriptedLlm(BaseLlm):
+        _n: int = PrivateAttr(default=0)
+        def __init__(self): super().__init__(model="fake"); object.__setattr__(self, "_n", 0)
+        async def generate_content_async(self, llm_request, stream=False):
+            object.__setattr__(self, "_n", self._n + 1)
+            txt = "\n".join((p.text or "") for c in llm_request.contents
+                            for p in (c.parts or []) if getattr(p, "text", None))
+            if "Give the real final answer" in txt:
+                yield LlmResponse(content=types.Content(role="model",
+                    parts=[types.Part(text="ACTED ON REPLY")])); return
+            if self._n == 1:
+                yield LlmResponse(content=types.Content(role="model", parts=[types.Part(
+                    function_call=types.FunctionCall(name="create_task",
+                        args={"description": "Give the real final answer once X replies.",
+                              "kind": "await_reply"}, id="call_1"))])); return
+            yield LlmResponse(content=types.Content(role="model",
+                parts=[types.Part(text="Draft sent, awaiting reply.")]))
+
+    session_id = "sessMIX"
+    plan = Plan(id="p", title="t", goal="g", executor_id="exec1", executor_name="Worky executor", steps=[
+        Step(id="s1", kind="execute", is_persona=True, assignee="hamdi", assignee_name="Hamdi",
+             description="Ask Hamdi"),
+        Step(id="s2", kind="await_reply", description="Await the collaboration reply", depends_on=[])])
+
+    binds = []
+    rm = MagicMock()
+    for m in ("upsert_steps", "set_step_status", "upsert_plan", "cancel_mail_waits", "set_waiting",
+              "set_session_status", "add_message", "rebind_mail_wait", "register_mail_wait",
+              "snapshot", "outstanding_interrupts"):
+        setattr(rm, m, AsyncMock())
+    rm.mail_token_for = AsyncMock(return_value=None)
+    rm.bind_mail_wait_interrupt = AsyncMock(side_effect=lambda sid, step_id, iid: binds.append((step_id, iid)))
+    rm.outstanding_interrupts.return_value = []
+
+    ss = InMemorySessionService()
+    def runner_factory(node, app_name): return Runner(app_name=app_name, agent=node, session_service=ss)
+    scripted = _ScriptedLlm()
+    with mock.patch.object(nodes_mod, "build_llm", lambda *a, **k: scripted):
+        service = svc.OrchestratorService(runner_factory, rm, planner_model="m")
+        wf, n2s = service._build_workflow(session_id, "u1", plan, "fake", None, None)
+        runner1 = runner_factory(wf, f"orch_{session_id}")
+        asyncio.run(ss.create_session(app_name=f"orch_{session_id}", user_id="u1", session_id=session_id))
+        interrupts = asyncio.run(service._drive_loop(
+            runner1, session_id, "u1", plan, n2s,
+            types.Content(role="user", parts=[types.Part(text="go")]),
+            model="fake", connectors=None, executor_prompt=None))
+        rm.outstanding_interrupts.return_value = list(interrupts)
+        asyncio.run(service._finalize(session_id, plan, interrupts))
+
+        s2 = plan.step("s2")
+        spawned = next(s for s in plan.steps if s.kind == "await_reply" and s.is_dynamic_delegate)
+        act = next(s for s in plan.steps if "final answer" in (s.description or "").lower())
+        assert not [s.id for s in plan.steps if s.status == Status.RUNNING], "a step is stuck RUNNING"
+        assert s2.status is Status.BLOCKED and spawned.status is Status.BLOCKED
+        assert len({iid for sid, iid in binds if sid == "s2"}) == 1, "planner await id not stable"
+
+        def row(s):
+            return {"step_id": s.id, "description": s.description, "kind": s.kind, "question": s.question,
+                    "status": s.status.value, "wave": s.wave, "depends_on": ",".join(s.depends_on),
+                    "result": s.result, "assignee": s.assignee, "assignee_name": s.assignee_name,
+                    "assignee_role": s.assignee_role, "is_persona": s.is_persona,
+                    "is_dynamic_delegate": s.is_dynamic_delegate, "interrupt_id": s.interrupt_id}
+        rm.snapshot.return_value = {
+            "session": {"id": session_id, "status": "blocked", "interrupt_id": None},
+            "plan": {"id": plan.id, "title": plan.title, "goal": plan.goal, "status": "blocked",
+                     "executor_id": plan.executor_id, "executor_name": plan.executor_name},
+            "steps": [row(s) for s in plan.steps]}
+        rm.outstanding_interrupts.return_value = [(s2.interrupt_id, s2.id),
+                                                  (spawned.interrupt_id, spawned.id)]
+        plan2 = asyncio.run(service.resume_turn(session_id=session_id, user_id="u1",
+                            answer="X says: APPROVED.", model="fake",
+                            interrupt_id=spawned.interrupt_id))
+        assert plan2.step(act.id).status is Status.COMPLETED, "follow-up (act) step didn't run"
+        assert plan2.step("s2").status is Status.BLOCKED, "resume disturbed the other await"
+
+
 async def test_inject_steps_appends_to_live_plan_with_fresh_ids():
     """converse_turn amends a running plan by appending the planner's steps to
     the live Plan object; the drive loop then runs them (same path create_task

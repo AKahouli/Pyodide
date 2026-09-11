@@ -285,7 +285,8 @@ def _plan_from_snapshot(snap: dict) -> Plan:
             wave=row.get("wave") or 0, result=row.get("result"),
             assignee=row.get("assignee"), assignee_name=row.get("assignee_name"),
             assignee_role=row.get("assignee_role"), is_persona=bool(row.get("is_persona")),
-            is_dynamic_delegate=bool(row.get("is_dynamic_delegate"))))
+            is_dynamic_delegate=bool(row.get("is_dynamic_delegate")),
+            interrupt_id=row.get("interrupt_id")))
     return Plan(id=p.get("id") or "", title=p.get("title") or "",
                 goal=p.get("goal") or "", status=Status(p.get("status") or "running"),
                 steps=steps, executor_id=p.get("executor_id"),
@@ -1978,6 +1979,9 @@ class OrchestratorService:
                 continue
             step = plan.step(step_id)
             step.status = Status.BLOCKED
+            # Remember the exact id so a later same-turn rebuild re-parks this
+            # ask/await under it rather than a shifted node-path id (see Step).
+            step.interrupt_id = interrupt_id
             step.blocked_reason = ("awaiting your approval" if hitl.is_confirm(interrupt_id)
                                    else "awaiting user input" if hitl.is_ask(interrupt_id)
                                    else "awaiting email reply")

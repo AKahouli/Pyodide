@@ -689,13 +689,22 @@ def make_llm_node_factory(
         # An "ask" step blocks deterministically asking the user (FunctionNode:
         # its interrupt id is stable across replays, so resume matches — unlike an
         # LLM tool call whose id is random each rerun).
+        # A step that already parked carries its bound interrupt id; re-park
+        # under that SAME id (fixed_iid), never a fresh node-path one — the path
+        # shifts as the plan grows mid-session (create_task adds steps) and a
+        # shifted id would orphan the bound mail wait, leaving the step stuck
+        # 'running' on a rebuild that runs a newly-ready sibling. None for a
+        # fresh wait, which parks under its node path as before.
         if step.kind == "ask":
-            return hitl.make_ask_user_node(name, step.question or step.description or "Please provide input.")
+            return hitl.make_ask_user_node(
+                name, step.question or step.description or "Please provide input.",
+                fixed_iid=step.interrupt_id)
         # An "await_reply" step parks the same way, but only an incoming email
         # reply can answer it — never the chat.
         if step.kind == "await_reply":
             return hitl.make_await_reply_node(
-                name, step.question or step.description or "Awaiting an email reply.")
+                name, step.question or step.description or "Awaiting an email reply.",
+                fixed_iid=step.interrupt_id)
         # A persona step already has an identity ("You are Rabeb."); a second,
         # contradicting "You are an execution agent" right after undermines it.
         identity = ("You are working on ONE step of a larger plan." if step.is_persona else
