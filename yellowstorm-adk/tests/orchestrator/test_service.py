@@ -1354,6 +1354,11 @@ def test_mixed_planner_await_and_create_task_await_no_stuck_step_no_divergence()
         assert not [s.id for s in plan.steps if s.status == Status.RUNNING], "a step is stuck RUNNING"
         assert s2.status is Status.BLOCKED and spawned.status is Status.BLOCKED
         assert len({iid for sid, iid in binds if sid == "s2"}) == 1, "planner await id not stable"
+        # BOTH awaits must be bound — _drive_loop returns the union of interrupts
+        # across passes, so a step that parked before the rebuild isn't dropped
+        # (the d624d1df stuck-'running', unbound-wait bug).
+        bound = {sid for sid, _ in binds}
+        assert "s2" in bound and spawned.id in bound, f"an await was not bound: {bound}"
 
         def row(s):
             return {"step_id": s.id, "description": s.description, "kind": s.kind, "question": s.question,

@@ -1870,6 +1870,15 @@ class OrchestratorService:
         in_graph = {s.id for s in plan.steps}
         interrupts = await self._drive(
             runner, session_id, user_id, plan, name_to_step, new_message)
+        # Accumulate every parked interrupt ACROSS passes, keyed by step. A step
+        # that parked in an earlier pass is replayed SILENTLY on a later rebuild
+        # (ADK emits no fresh request_input event for it), so that pass's list
+        # omits it. Returning only the last pass's list left _finalize unable to
+        # bind the earlier-parked step, which then stayed stuck 'running' with its
+        # mail wait unbound — seen live in session d624d1df: planner await 's3'
+        # was dropped when the rebuild ran the Firas create_task await. fixed_iid
+        # keeps each step's id stable across passes, so the key/value stay right.
+        parked: dict = {sid: iid for iid, sid in interrupts if sid}
         # A step spawned mid-pass (create_task / delegate) is not in the graph
         # this pass ran, so it never executed — only a rebuild runs it. This now
         # includes create_task(kind='await_reply'), left PENDING as a top-level
@@ -1887,7 +1896,7 @@ class OrchestratorService:
             ready = [s.id for s in plan.steps
                      if s.status == Status.PENDING and s.id not in in_graph and not unmet(s)]
             if not ready:
-                return interrupts
+                break
             logger.info("[worky] 9b. %d spawned step(s) ready mid-turn — continuing session=%s %s",
                         len(ready), session_id, [s[:12] for s in ready])
             in_graph = {s.id for s in plan.steps}
@@ -1901,6 +1910,9 @@ class OrchestratorService:
             await _ensure_session(runner, f"orch_{session_id}", user_id, session_id)
             interrupts = await self._drive(
                 runner, session_id, user_id, plan, name_to_step, new_message)
+            for iid, sid in interrupts:
+                if sid:
+                    parked[sid] = iid
             stuck = [s for s in ready
                      if (st := plan.step(s)) and st.status == Status.PENDING and not unmet(st)]
             if stuck:
@@ -1909,7 +1921,12 @@ class OrchestratorService:
                 logger.warning("[worky] 9b. ready spawned step(s) still pending after a "
                                "continuation pass — stopping session=%s %s", session_id,
                                [s[:12] for s in stuck])
-                return interrupts
+                break
+        # The union of everything parked this turn — a still-parked step (not
+        # terminal) must be bound by _finalize even if a later pass didn't re-emit
+        # its interrupt.
+        return [(iid, sid) for sid, iid in parked.items()
+                if (st := plan.step(sid)) is not None and not st.is_done()]
 
     async def _drive(self, runner, session_id, user_id, plan, name_to_step, new_message):
         """Run the workflow, project step statuses, and capture every
