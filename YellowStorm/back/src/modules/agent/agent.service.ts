@@ -788,6 +788,8 @@ export class AgentService {
         effectiveConnectorIds,
         userId,
         this.buildRuntimeConnectorActionKeysByConnectorId(agent, effectiveConnectorIds, connectorsMap),
+        undefined,
+        agent.id,
       );
       if (agent.agentTypeSlug === PLATFORM_COPILOT && runtimeContext) {
         for (const binding of connectorBindings) {
@@ -1025,6 +1027,8 @@ export class AgentService {
           agent.connectorIds || [],
           userId,
           this.buildConnectorActionKeysByConnectorId(agent.connectorActionSelections),
+          undefined,
+          agent.id,
         );
         for (const binding of connectorBindings) {
           if (String(binding.connector_slug || '').toLowerCase() !== 'playbook-mcp') continue;
@@ -1934,6 +1938,7 @@ export class AgentService {
     userId?: string,
     actionKeysByConnectorId?: Map<string, Set<string>>,
     fixedParamsByConnectorId?: Map<string, Record<string, unknown>>,
+    agentId?: string,
   ): Promise<Record<string, unknown>[]> {
     return this.getConnectorRuntime().buildConnectorBindings(
       connectorsMap,
@@ -1941,6 +1946,7 @@ export class AgentService {
       userId,
       actionKeysByConnectorId,
       fixedParamsByConnectorId,
+      agentId,
     );
   }
 

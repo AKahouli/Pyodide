@@ -2,7 +2,9 @@ import { Injectable, OnModuleDestroy, OnModuleInit, Inject, forwardRef } from '@
 import { ConfigService } from '@nestjs/config';
 import * as QRCode from 'qrcode';
 import pino from 'pino';
+import { Types } from 'mongoose';
 import { LoggerService } from '@modules/logger';
+import { ConflictException, ErrorCode } from '@modules/exceptions';
 import { WorkyWhatsAppIngressService } from '@modules/worky/services/worky-whatsapp-ingress.service';
 import { WorkyWhatsAppIntegrationService } from '@modules/worky/services/worky-whatsapp-integration.service';
 import { WorkyWhatsAppSystemBotService } from '@modules/worky/services/worky-whatsapp-system-bot.service';
@@ -125,6 +127,54 @@ export class WhatsAppSessionManager implements OnModuleInit, OnModuleDestroy {
 
   getActiveSessionCount(): number {
     return this.sessions.size;
+  }
+
+  /**
+   * Sends a proactive outbound text on an agent's paired session (internal
+   * send endpoint / MCP façade). Returns the WhatsApp message id.
+   * Throws ConflictException when the integration has no live socket.
+   */
+  async sendAgentMessage(
+    integrationId: Types.ObjectId,
+    remoteJid: string,
+    text: string,
+  ): Promise<string | undefined> {
+    const active = [...this.sessions.values()].find(
+      (candidate) =>
+        candidate.integrationRef.kind === 'agent' &&
+        candidate.integrationRef.integrationId.toString() === integrationId.toString(),
+    );
+    if (!active) {
+      throw new ConflictException(
+        ErrorCode.WHATSAPP_SESSION_NOT_FOUND,
+        'WhatsApp session is not connected for this integration',
+      );
+    }
+
+    try {
+      const sent = await active.socket.sendMessage(remoteJid, { text });
+      const sentId = sent?.key?.id;
+      if (sentId) {
+        // Echo guard: the send comes back as a fromMe messages.upsert; the
+        // self-chat capture must not mistake it for an owner-typed validation.
+        this.botSentMessageIds.add(sentId);
+        setTimeout(() => this.botSentMessageIds.delete(sentId), 60_000);
+      }
+      this.logger.log('WhatsApp proactive message sent', {
+        integrationId: integrationId.toString(),
+        remoteJid,
+        sentId,
+      });
+      return sentId ?? undefined;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.logger.error('WhatsApp proactive sendMessage failed', {
+        integrationId: integrationId.toString(),
+        remoteJid,
+        error: message,
+      });
+      throw error;
+    }
   }
 
   /** Returns the active Baileys socket for the Worky system bot, if connected. */
@@ -290,9 +340,22 @@ export class WhatsAppSessionManager implements OnModuleInit, OnModuleDestroy {
     if (integrationRef.kind === 'agent') {
       socket.ev.on('messages.upsert', ({ messages, type }) => {
         if (type !== 'notify') return;
+        const selfJids = [
+          socket.user?.jid,
+          socket.user?.lid,
+          socket.user?.id,
+          active.credsMeJid,
+        ].filter((jid): jid is string => Boolean(jid));
         const sendReply = async (remoteJid: string, text: string): Promise<void> => {
           try {
-            await socket.sendMessage(remoteJid, { text });
+            const sent = await socket.sendMessage(remoteJid, { text });
+            const sentId = sent?.key?.id;
+            if (sentId) {
+              // Echo guard: the reply comes back as a fromMe upsert and must
+              // not be routed again as a self-chat user message.
+              this.botSentMessageIds.add(sentId);
+              setTimeout(() => this.botSentMessageIds.delete(sentId), 60_000);
+            }
           } catch (sendError: unknown) {
             const msg = sendError instanceof Error ? sendError.message : String(sendError);
             this.logger.error('WhatsApp sendMessage failed', {
@@ -303,8 +366,19 @@ export class WhatsAppSessionManager implements OnModuleInit, OnModuleDestroy {
             throw sendError;
           }
         };
+        const ownerTypedMessages = messages.filter(
+          (message) => !message.key.id || !this.botSentMessageIds.has(message.key.id),
+        );
         void this.messageService
-          .handleIncomingMessages(active.integrationRef, messages, sendReply)
+          .captureSelfChatText(active.integrationRef, ownerTypedMessages, selfJids)
+          .catch((error: unknown) => {
+            this.logger.error('WhatsApp self-chat capture failed', {
+              integrationId: active.integrationRef.integrationId.toString(),
+              error: error instanceof Error ? error.message : String(error),
+            });
+          });
+        void this.messageService
+          .handleIncomingMessages(active.integrationRef, ownerTypedMessages, sendReply, selfJids)
           .catch((error: unknown) => {
             this.logger.error('WhatsApp messages.upsert failed', {
               integrationId: active.integrationRef.integrationId.toString(),

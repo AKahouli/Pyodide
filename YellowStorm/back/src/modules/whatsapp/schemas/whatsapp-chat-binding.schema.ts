@@ -29,6 +29,10 @@ export class WhatsAppChatBinding extends Document {
   @Prop()
   lastMessageAt?: Date;
 
+  /** Last text typed by the owner in the paired number's own self-chat (validation channel). */
+  @Prop({ trim: true })
+  lastInboundText?: string;
+
   createdAt!: Date;
   updatedAt!: Date;
 }

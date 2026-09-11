@@ -226,6 +226,20 @@ def _inject_task_turn(task_text):
     return _cb
 
 
+def _mark_running(step: Step, on_model_start):
+    """Project the step RUNNING the moment the request goes to the model, so the
+    UI shows it in-progress at once instead of lagging on 'pending' until ADK
+    returns the first event (very visible with a slow model). PENDING-only: a
+    re-entered terminal step is left as-is so _trace_execution's re-run
+    diagnostic still fires."""
+    async def _cb(callback_context, llm_request):
+        if on_model_start is not None and step.status == Status.PENDING:
+            step.status = Status.RUNNING
+            await on_model_start(step)
+        return None
+    return _cb
+
+
 def _trace_execution(step: Step, name: str):
     """DIAGNOSTIC (remove once replay-vs-rerun is confirmed): fires ONLY on a
     real model call for this step. ADK replays an already-completed node from
@@ -572,6 +586,7 @@ def make_llm_node_factory(
     instruction_for_step: Optional[Callable[[Step], Optional[str]]] = None,
     context_for_step: Optional[Callable[[Step], Optional[str]]] = None,
     replay_completed: bool = False,
+    on_model_start: Optional[Callable[[Step], Awaitable[None]]] = None,
 ) -> NodeFactory:
     """Build a NodeFactory that creates one LlmAgent per step.
 
@@ -833,7 +848,8 @@ def make_llm_node_factory(
             # as the user turn, then the call-budget guard on the resulting
             # contents (so its forced-answer fallback carries the task).
             before_model_callback=_compose_before_model(
-                _skip_if_cancelled(step), _trace_execution(step, name),
+                _skip_if_cancelled(step), _mark_running(step, on_model_start),
+                _trace_execution(step, name),
                 _inject_task_turn(task_text), stop_cb),
         )
 
