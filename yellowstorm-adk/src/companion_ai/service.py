@@ -330,6 +330,27 @@ def _parse_verdict(answer: str):
     return a.lower() in _APPROVE_WORDS, None
 
 
+def _answer_target(answer: str) -> Optional[str]:
+    """The specific interrupt id an approval is FOR, if the card sent one.
+
+    With several confirm gates open at once the session-level interrupt id is a
+    single value, so every plain 'approve' resolved whichever gate it happened to
+    point at — a second card's approval then hit the FIRST card's gate (seen live:
+    session 33dfebfa, Firas's approval applied to Rabeb's send and Firas's own
+    gate left unanswered). The card carries its own questionId; when the approval
+    JSON echoes it we target THAT gate instead of the session default. Only a
+    confirm id is honoured — an ask/mail id or none falls back to the old
+    behaviour."""
+    a = (answer or "").strip()
+    if not a.startswith("{"):
+        return None
+    try:
+        qid = json.loads(a).get("questionId")
+    except (ValueError, TypeError):
+        return None
+    return qid if isinstance(qid, str) and qid.startswith(f"{hitl.CONFIRM}::") else None
+
+
 def requester_context(requester: Optional[dict]) -> str:
     """A short preamble naming who the turn is for, so the planner and executor
     address the requester directly and never email or delegate a task back to the
@@ -1624,9 +1645,21 @@ class OrchestratorService:
         snap = await self._rm.snapshot(session_id)
         if not snap:
             raise RuntimeError(f"session {session_id} unknown; nothing to resume")
-        interrupt_id = interrupt_id or snap["session"].get("interrupt_id")
+        # A caller-supplied id wins; else the approval card's own questionId (so a
+        # specific gate is answered when several are open — see _answer_target);
+        # else the session default. The old order collapsed parallel gates onto
+        # one, mis-applying one card's edits to another's send.
+        card_target = _answer_target(answer)
+        interrupt_id = interrupt_id or card_target or snap["session"].get("interrupt_id")
         if not interrupt_id:
             raise RuntimeError(f"session {session_id} is not waiting on input")
+        # Guard: edit-on-card edits are specific to the gate the card was for. If
+        # we end up answering a DIFFERENT gate than the card explicitly targeted
+        # (its id drifted / is gone), the edits must NOT ride along — applying one
+        # send's edited fields (recipient, subject, body) to another send is how a
+        # mis-routed approval emailed the wrong person. Drop them on any such
+        # mismatch; the send still goes with its own drafted args.
+        drop_edits = False
         # Resuming an id that is not parked would answer nothing yet still let
         # _finalize complete the plan; refuse instead. Sessions parked before
         # per-step ids existed have no rows, so an empty set skips the check.
@@ -1651,6 +1684,11 @@ class OrchestratorService:
                 "[worky] resume: stored interrupt %s not outstanding (outstanding=%s) "
                 "— answering %s instead (parallel-gate id drift)",
                 interrupt_id, sorted(outstanding), fallback)
+            # If the card targeted a specific gate and we're now answering a
+            # different one, its edits belong to the gate that's gone — not this
+            # one. Drop them so we can't email the wrong recipient.
+            if card_target and fallback != card_target:
+                drop_edits = True
             interrupt_id = fallback
 
         # STEP 8 (resume) — same step ids + depends_on ⇒ same node names + edges,
@@ -1717,6 +1755,11 @@ class OrchestratorService:
             # the edits ride along as the ToolConfirmation payload and the
             # connector tool merges them into the send. Plain text still works.
             confirmed, edits = _parse_verdict(answer)
+            if drop_edits and edits:
+                logger.warning("[worky] resume: dropping edit-on-card edits — the approval "
+                               "targeted a gate that is no longer outstanding (session=%s)",
+                               session_id)
+                edits = None
             resume = hitl.confirmation_resume_part(
                 hitl.confirm_fc_id(interrupt_id), confirmed=confirmed, payload=edits)
         else:

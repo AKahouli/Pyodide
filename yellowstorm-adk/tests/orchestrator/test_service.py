@@ -1380,6 +1380,58 @@ def test_mixed_planner_await_and_create_task_await_no_stuck_step_no_divergence()
         assert plan2.step("s2").status is Status.BLOCKED, "resume disturbed the other await"
 
 
+def test_resume_targets_the_card_questionId_across_parallel_gates(monkeypatch):
+    """Two confirm gates open at once (session 33dfebfa live bug): the session's
+    single interrupt id made every approval hit whichever gate it pointed at, so
+    a second card's approval landed on the first card's gate and mis-applied its
+    edits. resume_turn must answer the gate the CARD names (its questionId), and
+    if it has to fall back to a different gate, it must DROP the edits."""
+    import unittest.mock as mock
+    from google.genai import types
+    gateA, gateB = "confirm::adk-AAAA", "confirm::adk-BBBB"
+
+    rm = MagicMock()
+    rm.snapshot = AsyncMock(return_value={
+        "session": {"id": "s", "status": "waiting", "interrupt_id": gateA},  # default = A
+        "plan": {"id": "p", "title": "t", "goal": "g", "status": "blocked",
+                 "executor_id": "e", "executor_name": "E"},
+        "steps": [
+            {"step_id": "sA", "kind": "execute", "status": "blocked", "depends_on": "",
+             "description": "email rabeb", "interrupt_id": gateA, "is_persona": False},
+            {"step_id": "sB", "kind": "execute", "status": "blocked", "depends_on": "",
+             "description": "email firas", "interrupt_id": gateB, "is_persona": True}]})
+    rm.outstanding_interrupts = AsyncMock(return_value=[(gateA, "sA"), (gateB, "sB")])
+    for m in ("set_step_status", "upsert_plan", "set_session_status", "add_message",
+              "cancel_mail_waits", "bind_mail_wait_interrupt", "set_waiting"):
+        setattr(rm, m, AsyncMock())
+
+    service = svc.OrchestratorService(MagicMock(), rm, planner_model="m")
+    monkeypatch.setattr(svc, "_ensure_session", AsyncMock())
+    monkeypatch.setattr(service, "_build_workflow", lambda *a, **k: (MagicMock(), {}))
+    captured = {}
+    async def fake_drive(runner, session_id, user_id, plan, n2s, new_message, **kw):
+        fr = new_message.parts[0].function_response
+        captured["fc_id"] = fr.id
+        captured["payload"] = (fr.response or {}).get("payload")
+        return []
+    monkeypatch.setattr(service, "_drive_until_quiescent", fake_drive)
+    monkeypatch.setattr(service, "_finalize", AsyncMock())
+
+    # Approve gate B (Firas) with its own questionId + edits. Must target B, not A.
+    answer = '{"verdict":"approve","questionId":"confirm::adk-BBBB","edits":{"subject":"x"}}'
+    asyncio.run(service.resume_turn(session_id="s", user_id="u", answer=answer, model="fake"))
+    assert captured["fc_id"] == "adk-BBBB", f"answered the wrong gate: {captured['fc_id']}"
+    assert captured["payload"] == {"subject": "x"}, "edits should ride to the targeted gate"
+
+    # Now B's id has drifted (no longer outstanding); the approval must fall back
+    # to A but DROP B's edits (never apply one send's edits to another).
+    rm.outstanding_interrupts = AsyncMock(return_value=[(gateA, "sA")])
+    captured.clear()
+    asyncio.run(service.resume_turn(session_id="s", user_id="u", answer=answer, model="fake"))
+    assert captured["fc_id"] == "adk-AAAA", "should fall back to the only outstanding gate"
+    assert captured["payload"] is None, "edits for a gone gate must be dropped, not applied to A"
+
+
 async def test_inject_steps_appends_to_live_plan_with_fresh_ids():
     """converse_turn amends a running plan by appending the planner's steps to
     the live Plan object; the drive loop then runs them (same path create_task
