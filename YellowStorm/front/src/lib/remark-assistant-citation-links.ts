@@ -53,7 +53,8 @@ function visitNode(node: MdastNode): void {
     if (splitCitation) {
       nextChildren.push(...splitCitation.nodes);
       // Revisit the remainder: it may open another GFM-split citation.
-      afterNext.value = splitCitation.remainder;
+      // parseSplitCitation guarantees afterNext is MdastText (isText check inside).
+      (afterNext as MdastText).value = splitCitation.remainder;
       index += 1;
       changed = true;
       continue;
