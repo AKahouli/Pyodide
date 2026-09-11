@@ -1,0 +1,23 @@
+{
+  "grpc_target": "localhost:50051",
+  "grpc_secure": false,
+  "request_template_path": "uploads/eval/87cb2775-a1c4-4fa9-8aa9-281a690fb879/request_template.json",
+  "answer_node_id": "dd268675-bfbd-4e54-bb6e-c5e2252f95f5",
+  "benchmark_zip_path": "C:\\Users\\Feriel\\PycharmProjects\\YellowStorm-poc\\YellowStorm\\back\\uploads\\eval\\87cb2775-a1c4-4fa9-8aa9-281a690fb879\\dataset.zip",
+  "benchmark_queries_member": "benchmark_queries.json",
+  "output_directory": "C:\\Users\\Feriel\\PycharmProjects\\YellowStorm-poc\\YellowStorm\\back\\uploads\\eval\\87cb2775-a1c4-4fa9-8aa9-281a690fb879\\outputs",
+  "timeout_seconds": 600,
+  "query_path": [
+    "input_context",
+    "query"
+  ],
+  "additional_query_paths": [
+    [
+      "snapshot",
+      "nodes",
+      "0",
+      "metadata",
+      "description"
+    ]
+  ]
+}

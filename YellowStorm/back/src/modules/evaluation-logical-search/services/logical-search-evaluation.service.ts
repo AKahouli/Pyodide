@@ -1,0 +1,449 @@
+import { BadRequestException, Injectable, Logger } from '@nestjs/common';
+import { InjectModel } from '@nestjs/mongoose';
+import { ConfigService } from '@nestjs/config';
+import { Model } from 'mongoose';
+import AdmZip = require('adm-zip');
+import { mkdir, writeFile, readFile } from 'fs/promises';
+import { join } from 'path';
+import * as XLSX from 'xlsx';
+import {
+  FlowExecution,
+  FlowExecutionDocument,
+} from '../../playbook-flow/schemas/playbook-flow-execution.schema';
+import { PlaybookFlowExecutionService } from '../../playbook-flow/services/playbook-flow-execution.service';
+import { ErrorCode } from '../../exceptions/constants/error-codes';
+import { NotFoundException } from '../../exceptions/exceptions/http.exceptions';
+import { LogicalSearchEvaluationRepository } from '../repositories/logical-search-evaluation.repository';
+import { parseBenchmarkWorkbook } from './xlsx-benchmark-parser';
+import {
+  buildQueryResult,
+  buildSummary,
+  EvaluationQueryResult,
+  EvaluationRunSummary,
+} from './evaluation-metrics';
+
+const ALLOWED_EXTENSIONS = ['.xlsx', '.csv'];
+const EVAL_TIMEOUT_SECONDS = 600;
+
+interface SnapshotLike {
+  nodes?: { id?: string }[];
+  [key: string]: unknown;
+}
+
+interface PreparedConfig {
+  request_template_path?: string;
+  answer_node_id?: string;
+  benchmark_queries_member?: string;
+  output_directory?: string;
+  query_path?: string[];
+  additional_query_paths?: string[][];
+}
+
+interface PreparedTemplate {
+  execution_id: string;
+  flow_id: string;
+  owner_id: string;
+  snapshot: Record<string, unknown>;
+  [key: string]: unknown;
+}
+
+interface BenchmarkQuery {
+  query_id: string;
+  query: string;
+  answer?: string;
+  required_file?: unknown;
+  page?: unknown;
+}
+
+function setDeepPath(target: Record<string, unknown>, path: string[], value: unknown): void {
+  let current: Record<string, unknown> = target;
+  for (let i = 0; i < path.length - 1; i++) {
+    const key = path[i];
+    const existing = current[key];
+    if (existing && typeof existing === 'object' && !Array.isArray(existing)) {
+      current = existing as Record<string, unknown>;
+    } else {
+      const next: Record<string, unknown> = {};
+      current[key] = next;
+      current = next;
+    }
+  }
+  current[path[path.length - 1]] = value;
+}
+
+async function readJson<T>(filePath: string): Promise<T> {
+  return JSON.parse(await readFile(filePath, 'utf-8')) as T;
+}
+
+@Injectable()
+export class LogicalSearchEvaluationService {
+  private readonly logger = new Logger(LogicalSearchEvaluationService.name);
+
+  constructor(
+    private readonly repository: LogicalSearchEvaluationRepository,
+    @InjectModel(FlowExecution.name) private readonly executionModel: Model<FlowExecutionDocument>,
+    private readonly config: ConfigService,
+    private readonly executionService: PlaybookFlowExecutionService,
+  ) {}
+
+  async uploadAndParse(
+    ownerId: string,
+    fileName: string,
+    buffer: Buffer,
+  ) {
+    const extension = fileName.slice(fileName.lastIndexOf('.')).toLowerCase();
+    if (!ALLOWED_EXTENSIONS.includes(extension)) {
+      throw new BadRequestException(
+        `Unsupported file type "${extension}". Accepted: ${ALLOWED_EXTENSIONS.join(', ')}.`,
+      );
+    }
+    const parsed = parseBenchmarkWorkbook(buffer);
+    const evaluation = await this.repository.create({
+      ownerId,
+      name: fileName.replace(/\.[^.]+$/, ''),
+      sourceFileName: fileName,
+      queryCount: parsed.queries.length,
+      queries: { queries: parsed.queries },
+    });
+    return {
+      evaluationId: evaluation.id,
+      fileName,
+      sheetName: parsed.sheetName,
+      queryCount: parsed.queries.length,
+      skippedRows: parsed.skippedRows,
+      preview: parsed.queries.slice(0, 5),
+    };
+  }
+
+  async getById(ownerId: string, id: string) {
+    const evaluation = await this.repository.findById(id);
+    if (!evaluation || evaluation.ownerId !== ownerId) {
+      throw new NotFoundException(ErrorCode.NOT_FOUND, 'Evaluation not found');
+    }
+    return evaluation;
+  }
+
+  async listByOwner(ownerId: string) {
+    return this.repository.listByOwner(ownerId);
+  }
+
+  /**
+   * Capture the snapshot persisted on a playbook execution and materialize the
+   * evaluator inputs (request_template.json, config.json, dataset.zip) under
+   * uploads/eval/{evaluationId}/.
+   */
+  async prepare(
+    ownerId: string,
+    evaluationId: string,
+    input: { executionId: string; agentId?: string; workspaceId?: string },
+  ) {
+    const evaluation = await this.getById(ownerId, evaluationId);
+    if (evaluation.status === 'running' || evaluation.status === 'completed') {
+      throw new BadRequestException(
+        `Evaluation is ${evaluation.status}; create a new evaluation to re-prepare.`,
+      );
+    }
+
+    const execution = await this.executionModel
+      .findById(input.executionId)
+      .select('+snapshot')
+      .lean<{ _id?: unknown; ownerId?: string; flowId?: string; snapshot?: SnapshotLike; recursionLimit?: number; maxParallelism?: number }>();
+    if (!execution || String(execution.ownerId) !== ownerId) {
+      throw new NotFoundException(ErrorCode.NOT_FOUND, 'Execution not found');
+    }
+    const snapshot = execution.snapshot;
+    if (!snapshot || !Array.isArray(snapshot.nodes) || snapshot.nodes.length === 0) {
+      throw new BadRequestException(
+        'Execution has no persisted snapshot; run the playbook first.',
+      );
+    }
+    // ponytail: mono-node flows only; multi-step flows need an explicit answer node picker.
+    const answerNodeId = snapshot.nodes[0]?.id;
+    if (!answerNodeId) {
+      throw new BadRequestException('Snapshot answer node has no id.');
+    }
+
+    const grpcTarget = this.config.get<string>('playbook-flow.grpcUrl') ?? 'localhost:50051';
+    const runDir = join(process.cwd(), 'uploads', 'eval', evaluationId);
+    const benchmarkPayload = evaluation.queries as { queries?: unknown[] };
+    const zipPath = join(runDir, 'dataset.zip');
+
+    const requestTemplate = {
+      execution_id: input.executionId,
+      flow_id: execution.flowId,
+      owner_id: ownerId,
+      snapshot,
+      input_context: { query: '' },
+      settings: {
+        recursion_limit: execution.recursionLimit ?? 25,
+        max_parallelism: execution.maxParallelism ?? 5,
+      },
+      seeded_task_outputs: [],
+    };
+    const evaluatorConfig = {
+      grpc_target: grpcTarget,
+      grpc_secure: false,
+      request_template_path: 'uploads/eval/' + evaluationId + '/request_template.json',
+      answer_node_id: answerNodeId,
+      benchmark_zip_path: zipPath,
+      benchmark_queries_member: 'benchmark_queries.json',
+      output_directory: join(runDir, 'outputs'),
+      timeout_seconds: EVAL_TIMEOUT_SECONDS,
+      query_path: ['input_context', 'query'],
+      // The captured node keeps the manual question in metadata.description;
+      // overwrite it or the agent answers the stale question.
+      additional_query_paths: [['snapshot', 'nodes', '0', 'metadata', 'description']],
+    };
+
+    try {
+      await mkdir(runDir, { recursive: true });
+      await writeFile(join(runDir, 'benchmark_queries.json'), JSON.stringify(benchmarkPayload), 'utf-8');
+      const zip = new AdmZip();
+      zip.addFile(
+        'benchmark_queries.json',
+        Buffer.from(JSON.stringify(benchmarkPayload), 'utf-8'),
+      );
+      await zip.writeZipPromise(zipPath);
+      await writeFile(
+        join(runDir, 'request_template.json'),
+        JSON.stringify(requestTemplate, null, 2),
+        'utf-8',
+      );
+      await writeFile(join(runDir, 'config.json'), JSON.stringify(evaluatorConfig, null, 2), 'utf-8');
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.logger.error(`Failed to write evaluator inputs for ${evaluationId}: ${message}`);
+      await this.repository.applyPrepare({
+        id: evaluationId,
+        agentId: input.agentId ?? evaluation.agentId,
+        flowId: execution.flowId ?? null,
+        workspaceId: input.workspaceId ?? evaluation.workspaceId,
+        executionId: input.executionId,
+        answerNodeId: null,
+        status: 'failed',
+        error: message,
+      });
+      throw new BadRequestException(`Failed to generate evaluator inputs: ${message}`);
+    }
+
+    const updated = await this.repository.applyPrepare({
+      id: evaluationId,
+      agentId: input.agentId ?? evaluation.agentId,
+      flowId: execution.flowId ?? null,
+      workspaceId: input.workspaceId ?? evaluation.workspaceId,
+      executionId: input.executionId,
+      answerNodeId,
+      status: 'prepared',
+    });
+    return {
+      evaluationId,
+      runDir,
+      answerNodeId,
+      flowId: execution.flowId,
+      files: ['benchmark_queries.json', 'dataset.zip', 'request_template.json', 'config.json'],
+      status: updated?.status ?? 'prepared',
+    };
+  }
+
+  async run(ownerId: string, evaluationId: string) {
+    const evaluation = await this.getById(ownerId, evaluationId);
+    if (evaluation.status === 'running') {
+      throw new BadRequestException(`Evaluation is already running.`);
+    }
+    if (evaluation.status === 'completed') {
+      throw new BadRequestException(`Evaluation is already completed; create a new evaluation to re-run.`);
+    }
+    if (evaluation.status !== 'prepared') {
+      throw new BadRequestException(`Evaluation is ${evaluation.status}; run prepare first.`);
+    }
+
+    const runDir = join(process.cwd(), 'uploads', 'eval', evaluationId);
+    const config = await readJson<PreparedConfig>(join(runDir, 'config.json'));
+    const template = await readJson<PreparedTemplate>(join(runDir, 'request_template.json'));
+    const benchmark = await readJson<{ queries: BenchmarkQuery[] }>(join(runDir, 'benchmark_queries.json'));
+    const queries = Array.isArray(benchmark.queries) ? benchmark.queries : [];
+    if (queries.length === 0) {
+      throw new BadRequestException('Benchmark has no queries.');
+    }
+
+    await this.repository.applyRunStart(evaluationId);
+
+    const queryPath = config.query_path ?? ['input_context', 'query'];
+    const additionalQueryPaths = config.additional_query_paths ?? [];
+    const answerNodeId = config.answer_node_id ?? evaluation.answerNodeId ?? undefined;
+    const results: EvaluationQueryResult[] = [];
+    let runError: string | null = null;
+
+    try {
+      for (const benchmarkQuery of queries) {
+        const queryId = benchmarkQuery.query_id;
+        const queryText = benchmarkQuery.query;
+        const snapshot = JSON.parse(JSON.stringify(template.snapshot)) as Record<string, unknown>;
+
+        setDeepPath(snapshot, queryPath, queryText);
+        for (const path of additionalQueryPaths) {
+          setDeepPath(snapshot, path, queryText);
+        }
+
+        const startedAt = Date.now();
+        try {
+          const runResult = await this.executionService.runEvaluationQuery({
+            executionId: `eval-${evaluationId}-${queryId}`,
+            flowId: template.flow_id,
+            ownerId,
+            snapshot,
+            inputContext: { query: queryText },
+            answerNodeId: answerNodeId ?? undefined,
+          });
+
+          results.push(buildQueryResult({
+            queryId,
+            query: queryText,
+            expectedAnswer: benchmarkQuery.answer ?? '',
+            requiredFile: benchmarkQuery.required_file ?? null,
+            page: benchmarkQuery.page ?? null,
+            generatedAnswer: runResult.generatedAnswer,
+            status: runResult.status,
+            durationMs: runResult.durationMs,
+            error: runResult.error,
+            toolCalls: runResult.toolCalls,
+          }));
+          this.logger.log(`[${queryId}] ${runResult.status} in ${String(runResult.durationMs)}ms`);
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          const durationMs = Date.now() - startedAt;
+          results.push(buildQueryResult({
+            queryId,
+            query: queryText,
+            expectedAnswer: benchmarkQuery.answer ?? '',
+            requiredFile: benchmarkQuery.required_file ?? null,
+            page: benchmarkQuery.page ?? null,
+            generatedAnswer: '',
+            status: 'failed',
+            durationMs,
+            error: message,
+            toolCalls: [],
+          }));
+          this.logger.warn(`[${queryId}] failed: ${message}`);
+        }
+      }
+
+      await writeFile(join(runDir, 'results.json'), JSON.stringify(results, null, 2), 'utf-8');
+    } catch (error) {
+      runError = error instanceof Error ? error.message : String(error);
+    }
+
+    const summary: EvaluationRunSummary = buildSummary(results);
+    let finalStatus: 'completed' | 'failed' = runError ? 'failed' : 'completed';
+    try {
+      await writeFile(join(runDir, 'summary.json'), JSON.stringify(summary, null, 2), 'utf-8');
+    } catch (error) {
+      finalStatus = 'failed';
+      runError = (runError ? `${runError}; ` : '') + (error instanceof Error ? error.message : String(error));
+    }
+    await this.repository.applyRunComplete(evaluationId, { summary, error: runError });
+
+    return {
+      evaluationId,
+      status: finalStatus,
+      queryCount: results.length,
+      summary,
+    };
+  }
+
+  async exportXlsx(ownerId: string, evaluationId: string): Promise<Buffer> {
+    await this.getById(ownerId, evaluationId);
+    const runDir = join(process.cwd(), 'uploads', 'eval', evaluationId);
+    let results: EvaluationQueryResult[] = [];
+    try {
+      results = await readJson<EvaluationQueryResult[]>(join(runDir, 'results.json'));
+    } catch {
+      throw new BadRequestException('No run output yet; run the evaluation first.');
+    }
+    if (!Array.isArray(results) || results.length === 0) {
+      throw new BadRequestException('No run output yet; run the evaluation first.');
+    }
+    const summary = await readJson<EvaluationRunSummary>(join(runDir, 'summary.json'));
+
+    const summarySheetData = [
+      { Metric: 'Total Queries', Value: summary.query_count },
+      { Metric: 'Mean Answer Recall (Token)', Value: summary.mean_answer_token_recall },
+      { Metric: 'Mean Answer Precision (Token)', Value: summary.mean_answer_token_precision },
+      { Metric: 'Mean Answer F1', Value: summary.mean_answer_f1 },
+      { Metric: 'Mean Semantic Similarity', Value: summary.mean_semantic_similarity },
+      { Metric: 'Mean Fact Recall', Value: summary.mean_fact_recall },
+      { Metric: 'Mean Fact Precision', Value: summary.mean_fact_precision },
+      { Metric: 'Mean Answer Quality', Value: summary.mean_answer_quality },
+      { Metric: 'Answer Exact Match Rate', Value: summary.answer_exact_match_rate },
+      { Metric: 'Mean Retrieval Recall (File)', Value: summary.mean_file_recall },
+      { Metric: 'Mean Retrieval Precision (File)', Value: summary.mean_file_precision },
+      { Metric: 'Retrieval Exact Match Rate', Value: summary.retrieval_exact_match_rate },
+    ];
+
+    const toCellText = (value: unknown): string => {
+      if (value === null || value === undefined) return '';
+      if (typeof value === 'string') return value;
+      if (typeof value === 'object') return Array.isArray(value) ? value.map(toCellText).join(', ') : JSON.stringify(value);
+      return JSON.stringify(value);
+    };
+
+    const detailHeaders = [
+      'Query ID', 'Query', 'Expected Answer', 'Expected File', 'Expected Page',
+      'Generated Answer', 'Retrieved Files', 'Retrieved Pages', 'Retrieved Sources',
+      'Matched Sources', 'Retrieval Recall', 'Retrieval Precision', 'Retrieval Page Hit',
+      'Retrieval Exact Match', 'Answer Recall', 'Answer Precision', 'Answer F1',
+      'Semantic Similarity', 'Fact Recall', 'Fact Precision', 'Answer Quality',
+      'Answer Exact Match', 'Status', 'Duration (ms)', 'Error',
+    ] as const;
+
+    const detailsSheetData = results.map((r) => {
+      const ret = r.metrics.retrieval;
+      const ans = r.metrics.answer;
+      return {
+        'Query ID': r.query_id,
+        'Query': r.query,
+        'Expected Answer': r.expected_answer,
+        'Expected File': toCellText(r.required_file),
+        'Expected Page': toCellText(r.page),
+        'Generated Answer': r.generated_answer,
+        'Retrieved Files': toCellText(ret.retrieved_files),
+        'Retrieved Pages': toCellText(ret.retrieved_pages),
+        'Retrieved Sources': toCellText(ret.retrieved_sources),
+        'Matched Sources': toCellText(ret.matched_sources),
+        'Retrieval Recall': ret.file_recall,
+        'Retrieval Precision': ret.file_precision,
+        'Retrieval Page Hit': ret.page_hit,
+        'Retrieval Exact Match': ret.exact_match,
+        'Answer Recall': ans.token_recall,
+        'Answer Precision': ans.token_precision,
+        'Answer F1': ans.f1,
+        'Semantic Similarity': ans.semantic_similarity,
+        'Fact Recall': ans.fact_recall,
+        'Fact Precision': ans.fact_precision,
+        'Answer Quality': ans.answer_quality,
+        'Answer Exact Match': ans.exact_match,
+        'Status': r.status,
+        'Duration (ms)': r.duration_ms,
+        'Error': r.error ?? '',
+      };
+    });
+
+    const workbook = XLSX.utils.book_new();
+    const summarySheet = XLSX.utils.json_to_sheet(summarySheetData);
+    summarySheet['!cols'] = [{ wch: 35 }, { wch: 18 }];
+    XLSX.utils.book_append_sheet(workbook, summarySheet, 'Global Summary');
+
+    const detailsSheet = XLSX.utils.json_to_sheet(detailsSheetData);
+    detailsSheet['!cols'] = detailHeaders.map((header) => {
+      let maxLength = header.length;
+      for (const row of detailsSheetData) {
+        const width = toCellText(row[header]).length;
+        if (width > maxLength) maxLength = width;
+      }
+      return { wch: Math.min(maxLength + 2, 60) };
+    });
+    XLSX.utils.book_append_sheet(workbook, detailsSheet, 'Detailed Results');
+
+    return XLSX.write(workbook, { type: 'buffer', bookType: 'xlsx' }) as Buffer;
+  }
+}

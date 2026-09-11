@@ -65,6 +65,7 @@ import { UserGroupModule } from './modules/user-group';
 import { AnalyticsModule } from './modules/analytics';
 import { PlaybookFlowModule } from './modules/playbook-flow/playbook-flow.module';
 import { EvaluationModule } from './modules/evaluation/evaluation.module';
+import { EvaluationLogicalSearchModule } from './modules/evaluation-logical-search/evaluation-logical-search.module';
 import { SkillModule } from './modules/skill/skill.module';
 import { AuthProviderModule } from './modules/auth-provider/auth-provider.module';
 import { ConnectedAppModule } from './modules/connected-app/connected-app.module';
@@ -146,6 +147,7 @@ import { SemanticModelModule } from './modules/semantic-model/semantic-model.mod
     ClassifierModule,
     HealthModule,
     EvaluationModule,
+    EvaluationLogicalSearchModule,
     WidgetChatModule,
     WorkyModule,
     GuardrailsModule,

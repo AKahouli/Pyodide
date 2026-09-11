@@ -1,0 +1,57 @@
+{
+  "button": {
+    "label": "Évaluation Recherche Logique"
+  },
+  "upload": {
+    "title": "Importer un jeu de données benchmark",
+    "dropzone": "Glissez-déposez votre fichier Excel/CSV ici, ou parcousez",
+    "accept": "Formats acceptés : .xlsx, .csv",
+    "uploading": "Envoi en cours…",
+    "success": "Jeu de données analysé avec succès",
+    "error": "Échec de l'envoi"
+  },
+  "preview": {
+    "title": "Aperçu du jeu de données",
+    "questions": "{{count}} questions extraites",
+    "skipped": "{{count}} lignes ignorées",
+    "sheet": "Feuille : {{name}}",
+    "queryId": "ID",
+    "question": "Question",
+    "answer": "Réponse",
+    "files": "Fichiers requis"
+  },
+  "select": {
+    "agent": "Sélectionner un agent",
+    "agentPlaceholder": "Choisir un agent…",
+    "playbook": "Sélectionner un playbook",
+    "playbookPlaceholder": "Choisir un playbook…",
+    "workspace": "Sélectionner un espace de travail",
+    "workspacePlaceholder": "Choisir un espace de travail…",
+    "execution": "Sélectionner une exécution",
+    "executionPlaceholder": "Choisir une exécution…",
+    "noResults": "Aucun résultat"
+  },
+  "actions": {
+    "prepare": "Préparer l'évaluation",
+    "preparing": "Préparation en cours…",
+    "run": "Lancer l'évaluation",
+    "running": "Exécution en cours…",
+    "export": "Exporter les résultats",
+    "done": "Prêt pour l'évaluation",
+    "newEval": "Nouvelle évaluation"
+  },
+  "status": {
+    "dataset_ready": "Jeu de données prêt",
+    "prepared": "Préparé",
+    "running": "En cours",
+    "completed": "Terminé",
+    "failed": "Échoué"
+  },
+  "history": {
+    "title": "Évaluations précédentes",
+    "empty": "Aucune évaluation pour le moment",
+    "createdAt": "Créé",
+    "queries": "{{count}} questions",
+    "view": "Voir"
+  }
+}

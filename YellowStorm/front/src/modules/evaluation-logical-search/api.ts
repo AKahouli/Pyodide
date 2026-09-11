@@ -1,0 +1,79 @@
+import { apiClient } from '@/lib/api/client';
+import { API_ENDPOINTS } from '@/lib/api/config';
+import type { LogicalSearchEvaluation, UploadResult, PrepareResult } from './types';
+
+export interface EvaluationRunResult {
+  status: 'prepared' | 'running' | 'completed' | 'failed';
+}
+
+export interface EvaluationExportResult {
+  blob: Blob;
+  filename: string;
+}
+
+function parseFilenameFromContentDisposition(header?: string): string | null {
+  if (!header) return null;
+  const utf8Match = header.match(/filename\*=UTF-8''([^;]+)/i);
+  if (utf8Match?.[1]) {
+    try {
+      return decodeURIComponent(utf8Match[1]);
+    } catch {
+      // fall through to ascii
+    }
+  }
+  const asciiMatch = header.match(/filename="?([^";]+)"?/i);
+  return asciiMatch?.[1] ?? null;
+}
+
+export const evaluationLogicalSearchApi = {
+  async upload(file: File): Promise<UploadResult> {
+    const formData = new FormData();
+    formData.append('file', file);
+    const res = await apiClient.post<{ data: UploadResult }>(
+      `${API_ENDPOINTS.logicalSearchEvaluation.base}/upload`,
+      formData,
+    );
+    return res.data.data;
+  },
+
+  async list(): Promise<LogicalSearchEvaluation[]> {
+    const res = await apiClient.get<{ data: LogicalSearchEvaluation[] }>(
+      API_ENDPOINTS.logicalSearchEvaluation.base,
+    );
+    return res.data.data;
+  },
+
+  async getById(id: string): Promise<LogicalSearchEvaluation> {
+    const res = await apiClient.get<{ data: LogicalSearchEvaluation }>(
+      `${API_ENDPOINTS.logicalSearchEvaluation.base}/${id}`,
+    );
+    return res.data.data;
+  },
+
+  async prepare(
+    id: string,
+    payload: { executionId: string; agentId?: string; workspaceId?: string },
+  ): Promise<PrepareResult> {
+    const res = await apiClient.post<{ data: PrepareResult }>(
+      `${API_ENDPOINTS.logicalSearchEvaluation.base}/${id}/prepare`,
+      payload,
+    );
+    return res.data.data;
+  },
+
+  async run(id: string): Promise<EvaluationRunResult> {
+    const res = await apiClient.post<{ data: EvaluationRunResult }>(
+      `${API_ENDPOINTS.logicalSearchEvaluation.base}/${id}/run`,
+    );
+    return res.data.data;
+  },
+
+  async exportResults(id: string): Promise<EvaluationExportResult> {
+    const res = await apiClient.get<Blob>(`${API_ENDPOINTS.logicalSearchEvaluation.base}/${id}/export`, {
+      responseType: 'blob',
+    });
+    const disposition = res.headers?.['content-disposition'] as string | undefined;
+    const filename = parseFilenameFromContentDisposition(disposition) ?? `logical_search_evaluation_${id}.xlsx`;
+    return { blob: res.data, filename };
+  },
+};

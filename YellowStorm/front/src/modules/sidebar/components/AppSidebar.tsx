@@ -55,6 +55,7 @@ import { GroupsButton } from '@/modules/groups';
 import { PlaybookButton } from '@/modules/playbook/components/PlaybookButton';
 import { WorkyButton } from '@/modules/worky/components/WorkyButton';
 import { GovernanceButton } from '@/modules/governance';
+import { EvaluationLogicalSearchButton } from '@/modules/evaluation-logical-search/components/EvaluationLogicalSearchButton';
 import { ConnectedAppButton } from '@/modules/connected-app';
 import { AppBuilderButton } from '@/modules/app-builder';
 import { AdminButton, DEFAULT_FEATURE_VISIBILITY, getFeatureVisibility } from '@/modules/admin';
@@ -316,7 +317,7 @@ export const AppSidebar = memo(function AppSidebar() {
     ) {
       return 'automate';
     }
-    if (path.startsWith('/governance') || path.startsWith('/admin')) {
+    if (path.startsWith('/governance') || path.startsWith('/admin') || path.startsWith('/evaluation-logical-search')) {
       return 'govern';
     }
     return null;
@@ -668,6 +669,7 @@ export const AppSidebar = memo(function AppSidebar() {
         >
           <SidebarMenu>
             {featureVisibility.governance && canOpenGovernance && <GovernanceButton />}
+            {featureVisibility.governance && canOpenGovernance && <EvaluationLogicalSearchButton />}
             <AdminButton />
           </SidebarMenu>
         </OutcomeGroup>

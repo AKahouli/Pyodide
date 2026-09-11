@@ -1,0 +1,57 @@
+{
+  "button": {
+    "label": "Logical Search Eval"
+  },
+  "upload": {
+    "title": "Import benchmark dataset",
+    "dropzone": "Drag & drop your Excel/CSV file here, or browse",
+    "accept": "Accepted formats: .xlsx, .csv",
+    "uploading": "Uploading…",
+    "success": "Dataset parsed successfully",
+    "error": "Upload failed"
+  },
+  "preview": {
+    "title": "Dataset preview",
+    "questions": "{{count}} questions extracted",
+    "skipped": "{{count}} rows skipped",
+    "sheet": "Sheet: {{name}}",
+    "queryId": "ID",
+    "question": "Question",
+    "answer": "Answer",
+    "files": "Required files"
+  },
+  "select": {
+    "agent": "Select an agent",
+    "agentPlaceholder": "Choose an agent…",
+    "playbook": "Select a playbook",
+    "playbookPlaceholder": "Choose a playbook…",
+    "workspace": "Select a workspace",
+    "workspacePlaceholder": "Choose a workspace…",
+    "execution": "Select an execution",
+    "executionPlaceholder": "Choose an execution…",
+    "noResults": "No results found"
+  },
+  "actions": {
+    "prepare": "Prepare evaluation",
+    "preparing": "Preparing…",
+    "run": "Run evaluation",
+    "running": "Running…",
+    "export": "Export results",
+    "done": "Ready to evaluate",
+    "newEval": "New evaluation"
+  },
+  "status": {
+    "dataset_ready": "Dataset ready",
+    "prepared": "Prepared",
+    "running": "Running",
+    "completed": "Completed",
+    "failed": "Failed"
+  },
+  "history": {
+    "title": "Previous evaluations",
+    "empty": "No evaluations yet",
+    "createdAt": "Created",
+    "queries": "{{count}} queries",
+    "view": "View"
+  }
+}

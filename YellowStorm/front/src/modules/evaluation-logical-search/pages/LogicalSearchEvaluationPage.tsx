@@ -1,0 +1,400 @@
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Button } from '@/components/ui/button';
+import { Progress } from '@/components/ui/progress';
+import { useModuleTranslation } from '@/modules/localization';
+import { useAgents, useAgentStore, useAgentsLoading } from '@/modules/agent';
+import { apiClient } from '@/lib/api/client';
+import { API_ENDPOINTS } from '@/lib/api/config';
+import { evaluationLogicalSearchApi } from '../api';
+import type { LogicalSearchEvaluation, UploadResult, BenchmarkQuery } from '../types';
+
+interface PlaybookSummary {
+  id: string;
+  name: string;
+}
+interface WorkspaceSummary {
+  id: string;
+  name: string;
+}
+interface ExecutionSummary {
+  _id: string;
+  status: string;
+  flowId: string;
+  createdAt: string;
+}
+
+export function LogicalSearchEvaluationPage(): JSX.Element {
+  const navigate = useNavigate();
+  const { t } = useModuleTranslation('evaluation-logical-search');
+
+  // ── Agent store ─────────────────────────────────────────────
+  const agents = useAgents();
+  const agentsLoading = useAgentsLoading();
+  const fetchAgents = useAgentStore((s) => s.fetchAgents);
+
+  useEffect(() => { void fetchAgents(); }, [fetchAgents]);
+
+  // ── Selection state ─────────────────────────────────────────
+  const [selectedAgentId, setSelectedAgentId] = useState<string>('');
+  const [playbooks, setPlaybooks] = useState<PlaybookSummary[]>([]);
+  const [selectedPlaybookId, setSelectedPlaybookId] = useState<string>('');
+  const [workspaces, setWorkspaces] = useState<WorkspaceSummary[]>([]);
+  const [selectedWorkspaceId, setSelectedWorkspaceId] = useState<string>('');
+  const [executions, setExecutions] = useState<ExecutionSummary[]>([]);
+  const [selectedExecutionId, setSelectedExecutionId] = useState<string>('');
+
+  // ── Upload state ────────────────────────────────────────────
+  const [uploadResult, setUploadResult] = useState<UploadResult | null>(null);
+  const [uploading, setUploading] = useState(false);
+  const [uploadError, setUploadError] = useState<string | null>(null);
+  const [preparing, setPreparing] = useState(false);
+  const [prepareError, setPrepareError] = useState<string | null>(null);
+  const [runningEvalId, setRunningEvalId] = useState<string | null>(null);
+  const [runError, setRunError] = useState<string | null>(null);
+  const [exportError, setExportError] = useState<string | null>(null);
+
+  // ── History ─────────────────────────────────────────────────
+  const [evaluations, setEvaluations] = useState<LogicalSearchEvaluation[]>([]);
+  const [selectedEvalId, setSelectedEvalId] = useState<string | null>(null);
+
+  // ── Load playbooks when agent changes ───────────────────────
+  useEffect(() => {
+    if (!selectedAgentId) { setPlaybooks([]); setSelectedPlaybookId(''); return; }
+    let cancelled = false;
+    apiClient.get<{ data: { items: PlaybookSummary[] } }>(API_ENDPOINTS.playbooks.list)
+      .then((res) => { if (!cancelled) setPlaybooks(res.data.data.items ?? []); })
+      .catch(() => { if (!cancelled) setPlaybooks([]); });
+    return () => { cancelled = true; };
+  }, [selectedAgentId]);
+
+  // ── Load workspaces (personal + shared) ─────────────────────
+  useEffect(() => {
+    let cancelled = false;
+    Promise.allSettled([
+      apiClient.get<{ data: { workspaces: WorkspaceSummary[] } }>(API_ENDPOINTS.workspaces.list),
+      apiClient.get<{ data: { workspaces: WorkspaceSummary[] } }>(API_ENDPOINTS.workspaces.sharedWithMe),
+    ]).then(([ownRes, sharedRes]) => {
+      if (cancelled) return;
+      const own = ownRes.status === 'fulfilled' ? ownRes.value.data.data?.workspaces ?? [] : [];
+      const shared = sharedRes.status === 'fulfilled' ? sharedRes.value.data.data?.workspaces ?? [] : [];
+      const seen = new Set<string>();
+      const merged: WorkspaceSummary[] = [];
+      for (const w of [...own, ...shared]) {
+        if (seen.has(w.id)) continue;
+        seen.add(w.id);
+        merged.push(w);
+      }
+      setWorkspaces(merged);
+    });
+    return () => { cancelled = true; };
+  }, []);
+
+  // ── Load executions when playbook changes ────────────────────
+  useEffect(() => {
+    if (!selectedPlaybookId) { setExecutions([]); setSelectedExecutionId(''); return; }
+    let cancelled = false;
+    apiClient.get<{ data: { items?: ExecutionSummary[]; executions?: ExecutionSummary[] } }>(API_ENDPOINTS.playbookFlows.executions(selectedPlaybookId))
+      .then((res) => {
+        if (cancelled) return;
+        const { items, executions } = res.data.data ?? {};
+        setExecutions(items ?? executions ?? []);
+      })
+      .catch(() => { if (!cancelled) setExecutions([]); });
+    return () => { cancelled = true; };
+  }, [selectedPlaybookId]);
+
+  // ── Load previous evaluations ────────────────────────────────
+  const refreshEvaluations = useCallback(() => {
+    evaluationLogicalSearchApi.list().then(setEvaluations).catch(() => setEvaluations([]));
+  }, []);
+  useEffect(() => { refreshEvaluations(); }, [refreshEvaluations]);
+
+  // ── Handlers ────────────────────────────────────────────────
+  const handleFileChange = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setUploading(true);
+    setUploadError(null);
+    try {
+      const result = await evaluationLogicalSearchApi.upload(file);
+      setUploadResult(result);
+      setSelectedEvalId(result.evaluationId);
+    } catch (err) {
+      setUploadError(err instanceof Error ? err.message : 'Upload failed');
+    } finally {
+      setUploading(false);
+      e.target.value = '';
+    }
+  }, []);
+
+  const handlePrepare = useCallback(async () => {
+    if (!selectedEvalId || !selectedExecutionId) return;
+    setPreparing(true);
+    setPrepareError(null);
+    try {
+      await evaluationLogicalSearchApi.prepare(selectedEvalId, {
+        executionId: selectedExecutionId,
+        agentId: selectedAgentId || undefined,
+        workspaceId: selectedWorkspaceId || undefined,
+      });
+      refreshEvaluations();
+    } catch (err) {
+      setPrepareError(err instanceof Error ? err.message : 'Prepare failed');
+    } finally {
+      setPreparing(false);
+    }
+  }, [selectedEvalId, selectedExecutionId, selectedAgentId, selectedWorkspaceId, refreshEvaluations]);
+
+  const handleRun = useCallback(async (id: string) => {
+    setRunningEvalId(id);
+    setRunError(null);
+    try {
+      await evaluationLogicalSearchApi.run(id);
+    } catch (err) {
+      setRunError(err instanceof Error ? err.message : 'Run failed');
+    } finally {
+      setRunningEvalId(null);
+      refreshEvaluations();
+    }
+  }, [refreshEvaluations]);
+
+  const handleExport = useCallback(async (id: string) => {
+    setExportError(null);
+    try {
+      const { blob, filename } = await evaluationLogicalSearchApi.exportResults(id);
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = filename;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      setExportError(err instanceof Error ? err.message : 'Export failed');
+    }
+  }, []);
+
+  // Poll while a run request is in flight or any evaluation is still running.
+  useEffect(() => {
+    const running = runningEvalId !== null || evaluations.some((e) => e.status === 'running');
+    if (!running) return;
+    const interval = window.setInterval(() => { void refreshEvaluations(); }, 2500);
+    return () => window.clearInterval(interval);
+  }, [runningEvalId, evaluations, refreshEvaluations]);
+
+  // ── Derived ─────────────────────────────────────────────────
+  const latestExecution = useMemo(() => executions.find((e) => e.status === 'completed'), [executions]);
+  const previewRows: BenchmarkQuery[] = useMemo(() => uploadResult?.preview ?? [], [uploadResult]);
+
+  return (
+    <div className='h-full w-full overflow-auto'>
+      <div className='mx-auto max-w-4xl space-y-6 p-6'>
+      <h1 className='text-2xl font-bold'>{t('upload.title')}</h1>
+
+      {/* ── Upload ─────────────────────────────────────────── */}
+      <Card>
+        <CardHeader><CardTitle>{t('upload.title')}</CardTitle></CardHeader>
+        <CardContent>
+          <label className='flex flex-col items-center gap-3 rounded-xl border-2 border-dashed p-8 text-center cursor-pointer hover:border-primary/50 transition-colors'>
+            <span className='text-sm text-muted-foreground'>{t('upload.dropzone')}</span>
+            <span className='text-xs text-muted-foreground'>{t('upload.accept')}</span>
+            <input type='file' accept='.xlsx,.csv' className='hidden' onChange={handleFileChange} />
+            {uploading && <Progress value={50} className='w-full' />}
+          </label>
+          {uploadError && <p className='mt-2 text-sm text-destructive'>{uploadError}</p>}
+          {uploadResult && (
+            <div className='mt-4 rounded-lg bg-muted/50 p-4 text-sm'>
+              <p className='font-medium'>{t('upload.success')}</p>
+              <p>{t('preview.sheet', { name: uploadResult.sheetName })}</p>
+              <p>{t('preview.questions', { count: uploadResult.queryCount })}</p>
+              {uploadResult.skippedRows > 0 && (
+                <p className='text-muted-foreground'>{t('preview.skipped', { count: uploadResult.skippedRows })}</p>
+              )}
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* ── Preview ─────────────────────────────────────────── */}
+      {previewRows.length > 0 && (
+        <Card>
+          <CardHeader><CardTitle>{t('preview.title')}</CardTitle></CardHeader>
+          <CardContent>
+            <div className='overflow-x-auto'>
+              <table className='w-full text-sm'>
+                <thead>
+                  <tr className='border-b text-left text-muted-foreground'>
+                    <th className='pb-2 pr-4'>{t('preview.queryId')}</th>
+                    <th className='pb-2 pr-4'>{t('preview.question')}</th>
+                    <th className='pb-2 pr-4'>{t('preview.answer')}</th>
+                    <th className='pb-2'>{t('preview.files')}</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {previewRows.map((q) => (
+                    <tr key={q.query_id} className='border-b last:border-0'>
+                      <td className='py-2 pr-4 font-mono text-xs'>{q.query_id}</td>
+                      <td className='py-2 pr-4 max-w-xs truncate'>{q.query}</td>
+                      <td className='py-2 pr-4 max-w-xs truncate text-muted-foreground'>{q.answer || '—'}</td>
+                      <td className='py-2 text-xs text-muted-foreground'>{q.required_file.length} files, {q.page.length} pages</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* ── Selection: Agent → Playbook → Workspace ─────────── */}
+      <Card>
+        <CardHeader><CardTitle>Configuration</CardTitle></CardHeader>
+        <CardContent className='space-y-4'>
+          {/* Agent */}
+          <div className='space-y-1'>
+            <label className='text-sm font-medium'>{t('select.agent')}</label>
+            <select
+              className='w-full rounded-md border bg-background px-3 py-2 text-sm'
+              value={selectedAgentId}
+              onChange={(e) => { setSelectedAgentId(e.target.value); setSelectedPlaybookId(''); setSelectedExecutionId(''); }}
+            >
+              <option value=''>{agentsLoading ? 'Loading…' : t('select.agentPlaceholder')}</option>
+              {agents.map((a) => (
+                <option key={a.id} value={a.id}>{a.name} ({a.agentType?.name ?? 'agent'})</option>
+              ))}
+            </select>
+          </div>
+
+          {/* Playbook */}
+          <div className='space-y-1'>
+            <label className='text-sm font-medium'>{t('select.playbook')}</label>
+            <select
+              className='w-full rounded-md border bg-background px-3 py-2 text-sm'
+              value={selectedPlaybookId}
+              onChange={(e) => { setSelectedPlaybookId(e.target.value); setSelectedExecutionId(''); }}
+              disabled={!selectedAgentId}
+            >
+              <option value=''>{t('select.playbookPlaceholder')}</option>
+              {playbooks.map((p) => (
+                <option key={p.id} value={p.id}>{p.name}</option>
+              ))}
+              {selectedAgentId && playbooks.length === 0 && <option value='' disabled>{t('select.noResults')}</option>}
+            </select>
+          </div>
+
+          {/* Workspace */}
+          <div className='space-y-1'>
+            <label className='text-sm font-medium'>{t('select.workspace')}</label>
+            <select
+              className='w-full rounded-md border bg-background px-3 py-2 text-sm'
+              value={selectedWorkspaceId}
+              onChange={(e) => setSelectedWorkspaceId(e.target.value)}
+            >
+              <option value=''>{t('select.workspacePlaceholder')}</option>
+              {workspaces.map((w) => (
+                <option key={w.id} value={w.id}>{w.name}</option>
+              ))}
+            </select>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* ── Execution selection + prepare ────────────────────── */}
+      {selectedPlaybookId && executions.length > 0 && (
+        <Card>
+          <CardHeader><CardTitle>{t('select.execution')}</CardTitle></CardHeader>
+          <CardContent className='space-y-4'>
+            <select
+              className='w-full rounded-md border bg-background px-3 py-2 text-sm'
+              value={selectedExecutionId}
+              onChange={(e) => setSelectedExecutionId(e.target.value)}
+            >
+              <option value=''>{t('select.executionPlaceholder')}</option>
+              {latestExecution && (
+                <option value={latestExecution._id}>
+                  {latestExecution._id.slice(-8)} — {t('status.completed')} ({new Date(latestExecution.createdAt).toLocaleDateString()})
+                </option>
+              )}
+              {executions.filter((e) => e !== latestExecution).map((ex) => (
+                <option key={ex._id} value={ex._id}>
+                  {ex._id.slice(-8)} — {t(`status.${ex.status}` as any) ?? ex.status} ({new Date(ex.createdAt).toLocaleDateString()})
+                </option>
+              ))}
+            </select>
+
+            {selectedEvalId && (
+              <Button
+                onClick={handlePrepare}
+                disabled={!selectedExecutionId || preparing}
+                className='w-full'
+              >
+                {preparing ? t('actions.preparing') : t('actions.prepare')}
+              </Button>
+            )}
+            {prepareError && <p className='text-sm text-destructive'>{prepareError}</p>}
+          </CardContent>
+        </Card>
+      )}
+
+      {/* ── History ──────────────────────────────────────────── */}
+      {evaluations.length > 0 && (
+        <Card>
+          <CardHeader><CardTitle>{t('history.title')}</CardTitle></CardHeader>
+          <CardContent>
+            {runError && <p className='mb-2 text-sm text-destructive'>{runError}</p>}
+            {exportError && <p className='mb-2 text-sm text-destructive'>{exportError}</p>}
+            <div className='space-y-2'>
+              {evaluations.map((ev) => (
+                <div
+                  key={ev.id}
+                  className={`flex items-center justify-between rounded-lg border p-3 text-sm cursor-pointer transition-colors ${
+                    selectedEvalId === ev.id ? 'border-primary bg-primary/5' : 'hover:bg-muted/50'
+                  }`}
+                  onClick={() => setSelectedEvalId(ev.id)}
+                >
+                  <div className='min-w-0'>
+                    <p className='truncate font-medium'>{ev.name}</p>
+                    <p className='text-xs text-muted-foreground'>
+                      {t('history.createdAt')}: {new Date(ev.createdAt).toLocaleDateString()} · {t('history.queries', { count: ev.queryCount })}
+                    </p>
+                  </div>
+                  <div className='flex shrink-0 items-center gap-2'>
+                    <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${
+                      ev.status === 'completed' ? 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-300'
+                      : ev.status === 'failed' ? 'bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-300'
+                      : 'bg-muted text-muted-foreground'
+                    }`}>
+                      {t(`status.${ev.status}` as any) ?? ev.status}
+                    </span>
+                    {ev.status === 'prepared' && (
+                      <Button
+                        size='sm'
+                        onClick={(e) => { e.stopPropagation(); void handleRun(ev.id); }}
+                        disabled={runningEvalId !== null}
+                      >
+                        {runningEvalId === ev.id ? t('actions.running') : t('actions.run')}
+                      </Button>
+                    )}
+                    {(ev.status === 'completed' || ev.status === 'failed') && (
+                      <Button
+                        size='sm'
+                        variant='outline'
+                        onClick={(e) => { e.stopPropagation(); void handleExport(ev.id); }}
+                      >
+                        {t('actions.export')}
+                      </Button>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </CardContent>
+        </Card>
+      )}
+      </div>
+    </div>
+  );
+}

@@ -66,7 +66,7 @@ import { PlaybookFlowReplayPostRunEvaluationService } from './playbook-flow-repl
 import { PlaybookFlowTokenBufferService } from './playbook-flow-token-buffer.service';
 import { PlaybookFlowExecutionLeaseService } from './playbook-flow-execution-lease.service';
 export { buildGrpcHumanApprovalConfig, toGrpcStruct, toGrpcValue } from '../execution/grpc/grpc-struct.mapper';
-import { buildGrpcHumanApprovalConfig, toGrpcStruct, toGrpcValue } from '../execution/grpc/grpc-struct.mapper';
+import { buildGrpcHumanApprovalConfig, toGrpcStruct, toGrpcValue, fromGrpcValue } from '../execution/grpc/grpc-struct.mapper';
 import { PlaybookFlowRuntimeClientService } from '../execution/grpc/playbook-flow-runtime-client.service';
 import { FlowGraphSanitizerService } from '../domain/flow-graph-sanitizer.service';
 import { PlaybookExecutionDispatcherService } from '../execution/runtime/playbook-execution-dispatcher.service';
@@ -86,6 +86,14 @@ import { PlaybookFlowArtifactService } from './playbook-flow-artifact.service';
 import { FlowDynamicReasoningAttempt, FlowDynamicReasoningAttemptDocument } from '../schemas/playbook-flow-dynamic-reasoning-attempt.schema';
 import { PlaybookInputContractService, type PlaybookInputDescriptor } from './playbook-input-contract.service';
 import { hasRequiredInputValue, readOwnPath } from '../utils/playbook-managed-input.util';
+
+export interface EvaluationQueryRunResult {
+  status: 'completed' | 'failed';
+  generatedAnswer: string;
+  toolCalls: Array<{ nodeId: string; iteration: number; trace: unknown[] }>;
+  durationMs: number;
+  error: string | null;
+}
 
 const TERMINAL_STATUSES = ['completed', 'failed', 'cancelled'] as const;
 const RUNTIME_AGENT_METADATA_KEYS = [
@@ -162,6 +170,41 @@ function getSkillIdsFromRuntimeSkills(skills: unknown): Set<string> {
       .map((skill) => String(skill.id || '').trim())
       .filter(Boolean),
   );
+}
+
+function extractEvaluationAnswer(value: unknown): string | null {
+  if (value === null || value === undefined) return null;
+  if (typeof value === 'string') {
+    const text = value.trim();
+    if (!text) return null;
+    // Handle dict-like strings embedded in trace
+    if (text.includes("'content':") || text.includes('"content":')) {
+      const match = text.match(/['"]content['"]\s*:\s*['"](.+?)['"](?:\s*,\s*['"]output_port_id|['"]\s*})/s);
+      if (match) return match[1].trim();
+    }
+    return text;
+  }
+  if (typeof value === 'object' && !Array.isArray(value)) {
+    const obj = value as Record<string, unknown>;
+    for (const key of ['content', 'answer', 'text', 'message', 'output']) {
+      const candidate = obj[key];
+      if (typeof candidate === 'string') return candidate.trim();
+    }
+    for (const nested of Object.values(obj)) {
+      const extracted = extractEvaluationAnswer(nested);
+      if (extracted) return extracted;
+    }
+    return null;
+  }
+  if (Array.isArray(value)) {
+    const parts: string[] = [];
+    for (const item of value) {
+      const extracted = extractEvaluationAnswer(item);
+      if (extracted) parts.push(extracted);
+    }
+    return parts.length > 0 ? parts.join('\n') : null;
+  }
+  return String(value).trim() || null;
 }
 
 function filterRuntimeHitlBlockers(blockers: unknown): Record<string, unknown>[] {
@@ -1706,6 +1749,216 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
       this.streamEvents.emitExecutionComplete(executionId, 'failed', err instanceof Error ? err.message : String(err));
       this.scheduleQueueDrain(ownerId);
     }
+  }
+
+  async runEvaluationQuery(input: {
+    executionId: string;
+    flowId: string;
+    ownerId: string;
+    snapshot: Record<string, unknown>;
+    inputContext: Record<string, unknown>;
+    answerNodeId?: string;
+  }): Promise<EvaluationQueryRunResult> {
+    const { executionId, flowId, ownerId, snapshot, inputContext, answerNodeId } = input;
+    const normalizedOwnerId = String(ownerId);
+    const nodes = Array.isArray(snapshot.nodes) ? (snapshot.nodes as any[]) : [];
+    const recursionLimit = Number((snapshot.settings as Record<string, unknown>)?.recursionLimit) || 25;
+    const maxParallelism = Number((snapshot.settings as Record<string, unknown>)?.maxParallelism) || 5;
+    const startedAt = Date.now();
+
+    // Resolve agents
+    const agentIds = new Set<string>();
+    for (const node of nodes) {
+      const assignedAgentId = node.metadata?.assignedAgentId;
+      if (assignedAgentId && typeof assignedAgentId === 'string') {
+        agentIds.add(assignedAgentId);
+      }
+    }
+    const agentMap = new Map<string, Record<string, unknown>>();
+    if (agentIds.size > 0) {
+      const resolved = await this.agentService.buildGrpcAgentsForPlaybook(
+        normalizedOwnerId,
+        [...agentIds],
+        undefined,
+        executionId,
+        { userId: normalizedOwnerId, scopeType: 'playbook', scopeId: `playbook:${executionId}`, laneId: 'main' },
+      );
+      for (const agent of resolved) {
+        agentMap.set(agent.id, {
+          agent_name: agent.name,
+          agent_description: agent.description,
+          agent_model: agent.chatbot?.model,
+          agent_prompt: agent.prompt,
+          agent_type: agent.agent_type,
+          agent_tools: agent.tools,
+          skills: agent.skills || [],
+          agent_params: agent.agent_params?.params || {},
+          connector_bindings: agent.connector_bindings || [],
+          connector_ids: agent.connectorIds || [],
+          brain_context: agent.brain_context || [],
+        });
+      }
+    }
+
+    // Enrich node metadata
+    const enrichedNodes = await Promise.all(nodes.map(async (n: any) => {
+      const baseMetadata = stripRuntimeAgentMetadata((n.metadata || {}) as Record<string, unknown>);
+      const assignedAgentId = n.metadata?.assignedAgentId;
+      const resolvedAgent = typeof assignedAgentId === 'string' ? agentMap.get(assignedAgentId) : undefined;
+      const runtimeAgentMetadata = await this.buildNodeRuntimeAgentMetadata(normalizedOwnerId, String(n.id || ''), baseMetadata, resolvedAgent);
+      const description = typeof n.description === 'string' && n.description.trim()
+        ? n.description.trim()
+        : typeof n.metadata?.description === 'string' && (n.metadata.description as string).trim()
+          ? (n.metadata.description as string).trim()
+          : '';
+      return {
+        ...n,
+        modelId: n.modelId || (runtimeAgentMetadata?.agent_model as string) || '',
+        metadata: { ...baseMetadata, ...(description ? { description } : {}), ...(runtimeAgentMetadata || {}) },
+      };
+    }));
+
+    // Workspace paths
+    const workspaceIds: string[] = Array.isArray((snapshot as any).workspaces) ? (snapshot as any).workspaces : [];
+    const defaultWorkspaceId = workspaceIds[0] || '';
+    const workspacePathsById = this.workspaceService
+      ? await this.workspaceService.getStoragePathMapByIds(workspaceIds)
+      : {};
+    const runtimeInputContext = this.buildRuntimeInputContext({
+      ...inputContext,
+      __playbook_workspace_ids: workspaceIds,
+      __playbook_default_workspace_id: defaultWorkspaceId,
+      __playbook_workspace_paths: workspacePathsById,
+      __playbook_default_workspace_path: workspacePathsById[defaultWorkspaceId] || '',
+    }, []);
+
+    const dataBindingsProto = await this.buildDataBindingsProto(
+      (snapshot.dataBindings as any[] || []),
+      workspacePathsById,
+    );
+
+    const request = {
+      execution_id: executionId,
+      flow_id: flowId,
+      owner_id: normalizedOwnerId,
+      snapshot: {
+        nodes: (enrichedNodes as any[]).map((n) => ({
+          id: n.id,
+          kind: n.kind,
+          label: n.label || '',
+          task_template_id: n.taskTemplateId || '',
+          prompt_template_id: n.promptTemplateId || '',
+          output_format_id: n.outputFormatId || '',
+          input: n.input ? {
+            raw: n.input.raw || '',
+            ports: (n.input.ports || []).map((p: Record<string, unknown>) => ({ id: p.id || '', label: p.label || '', type: p.type || '', required: Boolean(p.required) })),
+          } : undefined,
+          output: n.output ? {
+            raw: n.output.raw || '',
+            ports: (n.output.ports || []).map((p: Record<string, unknown>) => ({ id: p.id || '', label: p.label || '', type: p.type || '', required: Boolean(p.required) })),
+          } : undefined,
+          router_config: n.routerConfig ? {
+            output_labels: n.routerConfig.outputLabels || [],
+            max_iterations: n.routerConfig.maxIterations || 0,
+            conditions: (n.routerConfig.conditions || []).map((condition: Record<string, unknown>) => ({
+              label: condition.label || '', source_node: condition.sourceNode || '', source_port: condition.sourcePort || '',
+              path: condition.path || '', operator: condition.operator || '', value: toGrpcValue(condition.value),
+            })),
+            default_label: n.routerConfig.defaultLabel || '',
+          } : undefined,
+          iterator_config: n.iteratorConfig ? { collection_path: n.iteratorConfig.collectionPath || '', max_items: n.iteratorConfig.maxItems || 0 } : undefined,
+          human_approval_config: buildGrpcHumanApprovalConfig(n.humanApprovalConfig),
+          retry_policy: n.retryPolicy ? { max_retries: n.retryPolicy.maxRetries || 0, delay_ms: n.retryPolicy.delayMs || 0 } : undefined,
+          model_id: n.modelId || '',
+          metadata: toGrpcStruct(buildGrpcNodeMetadata(n, snapshot as Record<string, unknown>)),
+          dynamic_reasoning: n.dynamicReasoning ? { enabled: n.dynamicReasoning.enabled === true } : undefined,
+        })),
+        control_edges: ((snapshot.controlEdges as any[]) || []).map((e) => ({
+          id: e.id, kind: e.kind, source: e.source, target: e.target,
+          router_label: e.routerLabel || '', priority: e.priority || 0,
+          source_output_port_id: e.sourceOutputPortId || '', target_input_port_id: e.targetInputPortId || '',
+        })),
+        data_bindings: dataBindingsProto,
+        settings: { recursion_limit: recursionLimit, max_parallelism: maxParallelism },
+      },
+      input_context: toGrpcStruct(runtimeInputContext),
+      settings: { recursion_limit: recursionLimit, max_parallelism: maxParallelism },
+    };
+
+    // Stream consumption
+    const call = this.runRuntime(request);
+    return new Promise<EvaluationQueryRunResult>((resolve) => {
+      let generatedAnswer = '';
+      const tracesByNode = new Map<string, { nodeId: string; iteration: number; trace: unknown[] }>();
+      let status: 'completed' | 'failed' = 'failed';
+      let error: string | null = null;
+      let resolved = false;
+      const timeoutMs = 600_000;
+      let timer: NodeJS.Timeout;
+      const finalize = () => { if (!resolved) { resolved = true; clearTimeout(timer); resolve({ status, generatedAnswer, toolCalls: [...tracesByNode.values()], durationMs: Date.now() - startedAt, error }); } };
+      timer = setTimeout(() => {
+        status = 'failed';
+        error = `Evaluation query timed out after ${String(timeoutMs / 1000)}s`;
+        call.cancel();
+        finalize();
+      }, timeoutMs);
+
+      call.on('data', (event: Record<string, unknown>) => {
+        try {
+          const eventType = String(event.event_type || '');
+          const nodeId = String(event.node_id || '');
+          const iteration = Number(event.iteration ?? 0);
+          const rawPayload = (event.payload as Record<string, unknown>) || {};
+          const payload = (fromGrpcValue(rawPayload) as Record<string, unknown>) || {};
+
+          // Tool trace (matches python evaluator._collect_tool_trace: replace on >= length)
+          const trace = payload.tool_trace;
+          if (Array.isArray(trace) && trace.length > 0) {
+            const key = `${nodeId}:${iteration}`;
+            const existing = tracesByNode.get(key);
+            if (!existing || trace.length >= existing.trace.length) {
+              tracesByNode.set(key, {
+                nodeId,
+                iteration,
+                trace: trace.filter((item): item is Record<string, unknown> =>
+                  item !== null && typeof item === 'object' && !Array.isArray(item)),
+              });
+            }
+          }
+
+          // Answer extraction (matches python evaluator's _extract_node_outputs + _extract_answer_content)
+          if (answerNodeId && nodeId === answerNodeId && (eventType === 'NodeCompleted' || eventType === 'OUTPUT' || eventType === 'ExecutionCompleted')) {
+            const nodeExecution = (payload.node_execution && typeof payload.node_execution === 'object') ? payload.node_execution as Record<string, unknown> : null;
+            const outputs = nodeExecution?.outputs || payload.outputs || null;
+            if (outputs) {
+              let candidate: unknown = null;
+              if (typeof outputs === 'object' && outputs !== null && !Array.isArray(outputs)) {
+                const outObj = outputs as Record<string, unknown>;
+                candidate = outObj.text || outObj.answer || outObj.output || outputs;
+              } else {
+                candidate = outputs;
+              }
+              const extracted = extractEvaluationAnswer(candidate);
+              if (extracted) generatedAnswer = extracted;
+            }
+          }
+
+          if (eventType === 'ExecutionCompleted') status = 'completed';
+          else if (eventType === 'ExecutionFailed') {
+            status = 'failed';
+            error = (typeof payload.error === 'string' ? payload.error : null) ?? 'Execution failed';
+          }
+        } catch { /* swallow per-event errors in eval */ }
+      });
+
+      call.on('error', (err: Error) => {
+        status = 'failed';
+        error = err.message;
+        finalize();
+      });
+
+      call.on('end', () => finalize());
+    });
   }
 
   private async handleRunEvent(executionId: string, event: Record<string, unknown>): Promise<void> {

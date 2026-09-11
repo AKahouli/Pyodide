@@ -356,6 +356,7 @@ import { PlaybookAssistantAttachmentService } from './assistant/playbook-assista
     PlaybookFlowRepeatabilityService,
     PlaybookFlowObservabilityService,
     PlaybookPlanValidationClientService,
+    PlaybookFlowRuntimeClientService,
   ],
 })
 export class PlaybookFlowModule {}

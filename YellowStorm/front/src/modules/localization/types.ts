@@ -8,6 +8,7 @@ import type auth from '../auth/locales/en.json';
 import type connectedApp from '../connected-app/locales/en.json';
 import type conversation from '../conversation/locales/en.json';
 import type conversationV2 from '../conversation-v2/locales/en.json';
+import type evaluationLogicalSearch from '../evaluation-logical-search/locales/en.json';
 import type fileViewer from '../file-viewer/locales/en.json';
 import type governance from '../governance/locales/en.json';
 import type groups from '../groups/locales/en.json';
@@ -37,6 +38,7 @@ export type NamespaceResourceMap = {
   'connected-app': typeof connectedApp;
   conversation: typeof conversation;
   'conversation-v2': typeof conversationV2;
+  'evaluation-logical-search': typeof evaluationLogicalSearch;
   'file-viewer': typeof fileViewer;
   governance: typeof governance;
   groups: typeof groups;
