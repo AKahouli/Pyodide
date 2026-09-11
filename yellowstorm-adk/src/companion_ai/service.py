@@ -1693,25 +1693,17 @@ class OrchestratorService:
 
         # STEP 8 (resume) — same step ids + depends_on ⇒ same node names + edges,
         # which is what lets the interrupt id from the earlier run still match.
-        # That stability assumption does NOT hold for a step create_task/
-        # delegate_to_human_agent spawned mid-turn: its first-ever park happened
-        # inside a throwaway nested run (ctx.run_node), whose node path this flat
-        # rebuild structurally cannot reproduce — ADK would just re-block it
-        # under a brand new interrupt id, silently dropping the answer we have
-        # right here. Apply it directly and let the SAME short-circuit that
-        # replays an already-completed dynamic step (see nodes.py factory)
-        # carry it, instead of routing through node-path matching that can
-        # never succeed for this category of step.
         plan = _plan_from_snapshot(snap)
-        target_step_id = next((s for i, s in outstanding_pairs if i == interrupt_id), None)
-        target_step = plan.step(target_step_id) if target_step_id else None
-        resumed_out_of_band = bool(
-            target_step and target_step.is_dynamic_delegate and target_step.kind == "await_reply")
-        if resumed_out_of_band:
-            target_step.status = Status.COMPLETED
-            target_step.result = answer
-            await self._project(self._rm.set_step_status(
-                session_id, target_step.id, "completed", result=answer))
+        # A create_task(await_reply) step now parks as a real TOP-LEVEL node (see
+        # create_task — it is no longer a nested ctx.run_node), so its node path
+        # and interrupt id ARE reproducible and it resumes through resume_part
+        # exactly like a planner-emitted await. The old out-of-band shortcut
+        # (mark it completed + replay it as a stored-result node) was for the
+        # nested era; it is now HARMFUL — swapping the recorded park events for a
+        # stored-result node diverges ADK's replay barrier on the await's own
+        # sequence key (seen live: session 188cbdbe, "Replay divergence …
+        # c593f1e04dfa@1"). So resume every await, dynamic or planned, the same
+        # normal way.
 
         wf, name_to_step = self._build_workflow(session_id, user_id, plan, model, connectors, executor_prompt)
         runner = self._runner_factory(wf, f"orch_{session_id}")
@@ -1741,8 +1733,8 @@ class OrchestratorService:
         # never gets rebuilt as a real await_reply node this turn at all
         # (see nodes.py's is_dynamic_delegate short-circuit), so it doesn't
         # matter that this exact id can't match anything current.
-        logger.info("[worky] 9. Runner.run_async → resuming session=%s interrupt=%s%s",
-                    session_id, interrupt_id, " (out-of-band dynamic step)" if resumed_out_of_band else "")
+        logger.info("[worky] 9. Runner.run_async → resuming session=%s interrupt=%s",
+                    session_id, interrupt_id)
         # A confirm interrupt resumes with a tool-confirmation VERDICT, which ADK's
         # native processor turns back into a real re-invocation of the gated send
         # (approve) or a rejection to the model (decline) — the send's reasoning

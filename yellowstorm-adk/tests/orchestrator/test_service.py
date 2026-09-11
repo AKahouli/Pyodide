@@ -401,21 +401,17 @@ def test_plan_from_snapshot_restores_is_dynamic_delegate():
     assert plan.steps[0].is_dynamic_delegate is True
 
 
-def test_resume_turn_completes_a_dynamic_await_reply_step_out_of_band():
-    """A create_task(kind='await_reply')-spawned step's first park happened
-    inside a throwaway nested run (ctx.run_node) whose node path a later
-    flat resume rebuild can never reproduce — so hitl.resume_part's
-    node-path-keyed matching can never actually reach IT; ADK just re-blocks
-    it under a brand new interrupt id and the real answer is silently
-    dropped. Live example: a persona's create_task(kind='await_reply') step
-    got its reply matched and claimed in mail_waits, yet stayed blocked
-    forever because the resume never landed on the right node. resume_turn
-    must apply the answer directly to the step instead of relying on that
-    match. It must still drive with hitl.resume_part, though (see the next
-    test) — a generic trigger was tried and reverted after live sessions
-    showed it makes the CALLER (e.g. the persona that spawned this step)
-    replay as a fresh turn instead of a continuation, redoing its entire
-    reasoning including sending a second real email."""
+def test_resume_turn_resumes_a_dynamic_await_reply_step_normally_not_out_of_band():
+    """A create_task(kind='await_reply') step now parks as a real TOP-LEVEL node
+    (create_task no longer runs it as a nested ctx.run_node), so its node path
+    and interrupt id are reproducible and it resumes through hitl.resume_part
+    exactly like a planner-emitted await. The old out-of-band shortcut — mark the
+    step completed and replay it as a stored-result node — is GONE: with a
+    top-level node it swapped the recorded park events for a stored-result node
+    and diverged ADK's replay barrier on the await's own sequence key (seen live:
+    session 188cbdbe, 'Replay divergence … c593f1e04dfa@1'). This guards against
+    re-introducing it: a dynamic await must NOT be force-completed at resume; the
+    drive (via resume_part) completes it, same as any top-level await."""
     session = MagicMock()
     session.session_service.get_session = AsyncMock(return_value=object())
     rm = MagicMock()
@@ -429,10 +425,10 @@ def test_resume_turn_completes_a_dynamic_await_reply_step_out_of_band():
              "is_persona": True, "assignee": "hamdi", "assignee_name": "Hamdi Imed"},
             {"step_id": "n1", "description": "", "kind": "await_reply",
              "status": "blocked", "wave": 1, "depends_on": "s0", "result": None,
-             "is_dynamic_delegate": True},
+             "is_dynamic_delegate": True, "interrupt_id": "mail:plan_s1@1/n1@1"},
         ],
     })
-    rm.outstanding_interrupts = AsyncMock(return_value=[("mail:task_n1@1/n_n1@1", "n1")])
+    rm.outstanding_interrupts = AsyncMock(return_value=[("mail:plan_s1@1/n1@1", "n1")])
     rm.set_step_status = AsyncMock()
 
     service = svc.OrchestratorService(lambda node, app_name: session, rm, planner_model="m")
@@ -440,20 +436,17 @@ def test_resume_turn_completes_a_dynamic_await_reply_step_out_of_band():
     service._drive = AsyncMock(return_value=[])
     service._finalize = AsyncMock()
 
-    plan = asyncio.run(service.resume_turn(
+    asyncio.run(service.resume_turn(
         session_id="s1", user_id="u1", answer="Go ahead, migrate.", model="m",
-        interrupt_id="mail:task_n1@1/n_n1@1"))
+        interrupt_id="mail:plan_s1@1/n1@1"))
 
-    assert plan.step("n1").status is Status.COMPLETED
-    assert plan.step("n1").result == "Go ahead, migrate."
-    rm.set_step_status.assert_awaited_once_with(
-        "s1", "n1", "completed", result="Go ahead, migrate.")
-
-    # Still driven with hitl.resume_part (using the stale-but-real id) — it
-    # doesn't need to match anything current since this step's own node
-    # never gets rebuilt as a real await_reply this turn (short-circuited
-    # above); what matters is that the trigger correctly resolves to a real
-    # prior invocation so ADK replays the caller instead of re-running it.
+    # NOT force-completed out-of-band — no set_step_status(..., 'completed') before
+    # the drive; the drive resolves it like any top-level await.
+    for call in rm.set_step_status.await_args_list:
+        assert not (call.args[1] == "n1" and call.args[2] == "completed"), \
+            "dynamic await must not be force-completed out-of-band"
+    # Driven with a real resume_part (function_response), keyed on the await's own
+    # (reproducible, top-level) interrupt id.
     trigger = service._drive.await_args.args[-1]
     assert trigger.parts[0].text is None
     assert trigger.parts[0].function_response is not None
