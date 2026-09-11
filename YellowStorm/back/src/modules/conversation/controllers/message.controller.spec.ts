@@ -141,11 +141,11 @@ describe('MessageController.sendMessage sticky routing', () => {
       url: 'https://storage.example/report', fileName: 'report.pdf', mimeType: 'application/pdf',
     });
 
-    await expect(controller.getCitationUrl(conversationId, 'message-1', {
+    await expect(controller.getCitationUrl({ _id: 'user-1' }, conversationId, 'message-1', {
       source: 'deepsearch', fileName: 'report.pdf',
     })).resolves.toEqual(expect.objectContaining({ fileName: 'report.pdf' }));
     expect(conversationArtifactService.resolveCitationUrl).toHaveBeenCalledWith(
-      conversationId, 'message-1', { source: 'deepsearch', fileName: 'report.pdf' },
+      conversationId, 'message-1', { source: 'deepsearch', fileName: 'report.pdf' }, 'user-1',
     );
   });
 

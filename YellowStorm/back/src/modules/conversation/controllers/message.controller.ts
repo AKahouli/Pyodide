@@ -95,11 +95,17 @@ export class MessageController {
 
   @Post(':messageId/citations/url')
   async getCitationUrl(
+    @CurrentUser() user: { _id: string },
     @Param('conversationId') conversationId: string,
     @Param('messageId') messageId: string,
     @Body() dto: ResolveCitationUrlDto,
   ): Promise<{ url: string; fileName: string; mimeType: string }> {
-    return this.conversationArtifactService.resolveCitationUrl(conversationId, messageId, dto);
+    return this.conversationArtifactService.resolveCitationUrl(
+      conversationId,
+      messageId,
+      dto,
+      user._id.toString(),
+    );
   }
 
   /**

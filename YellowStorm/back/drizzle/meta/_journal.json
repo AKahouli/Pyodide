@@ -85,6 +85,13 @@
       "when": 1788950500000,
       "tag": "0011_conversation_executions",
       "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1789132471601,
+      "tag": "0012_conversation_direct_share_recipients",
+      "breakpoints": true
     }
   ]
 }

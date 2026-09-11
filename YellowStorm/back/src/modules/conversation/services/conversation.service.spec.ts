@@ -92,6 +92,12 @@ describe('ConversationService neutral persistence', () => {
     );
   });
 
+  it('fails closed when workspace authorization is unavailable for a requester', async () => {
+    await expect(
+      service.filterAccessibleWorkspaceIds('user-1', ['workspace-1']),
+    ).resolves.toEqual([]);
+  });
+
   describe('group conversion', () => {
     it('materializes the owner and invitations when participant emails create a group', async () => {
       const ownerId = new Types.ObjectId().toString();

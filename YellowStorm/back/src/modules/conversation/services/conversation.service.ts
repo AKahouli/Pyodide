@@ -28,6 +28,7 @@ import {
 import { FeatureVisibilityService } from '../../system/feature-visibility.service';
 import { WorkspaceService } from '../../workspace/workspace.service';
 import { WorkspaceDocumentService } from '../../workspace/workspace-document.service';
+import { WorkspaceShareService } from '../../workspace/workspace-share.service';
 import { EmailService } from '../../email/email.service';
 import {
   DocumentQueryParams,
@@ -60,6 +61,7 @@ export class ConversationService {
     @Inject(forwardRef(() => ProjectShareService))
     private readonly projectShareService: ProjectShareService,
     @Optional() @Inject(PG_POOL) private readonly postgresPool?: Pool,
+    @Optional() private readonly workspaceShareService?: WorkspaceShareService,
   ) {
     this.logger.setContext('ConversationService');
   }
@@ -516,10 +518,14 @@ export class ConversationService {
   async getWorkspaceDocuments(
     conversationId: string,
     params: DocumentQueryParams,
+    userId?: string,
   ): Promise<PaginatedDocuments> {
     const record = await this.conversationStore.findById(conversationId, true);
     if (!record) throw new NotFoundException(ErrorCode.CHAT_NOT_FOUND, 'Conversation not found');
-    const workspaceIds = record.workspaces.filter((id) => id !== record.systemWorkspaceId);
+    const workspaceIds = await this.filterAccessibleWorkspaceIds(
+      userId,
+      record.workspaces.filter((id) => id !== record.systemWorkspaceId),
+    );
     if (!workspaceIds.length) {
       return {
         documents: [],
@@ -527,6 +533,18 @@ export class ConversationService {
       };
     }
     return this.workspaceDocumentService.findByMultipleWorkspaces(workspaceIds, params);
+  }
+
+  async filterAccessibleWorkspaceIds(
+    userId: string | undefined,
+    workspaceIds: string[],
+  ): Promise<string[]> {
+    if (!userId) return workspaceIds;
+    if (!this.workspaceShareService) return [];
+    const access = await Promise.all(
+      workspaceIds.map((workspaceId) => this.workspaceShareService!.hasAccess(userId, workspaceId)),
+    );
+    return workspaceIds.filter((_, index) => access[index]);
   }
 
   @Cron(CronExpression.EVERY_HOUR)

@@ -54,6 +54,7 @@ export class ConversationArtifactService {
     conversationId: string,
     messageId: string,
     selector: ResolveCitationUrlDto,
+    userId?: string,
   ): Promise<{ url: string; fileName: string; mimeType: string }> {
     const message = await this.messageService.getMessageDocument(messageId);
     if (message.conversationId.toString() !== conversationId) {
@@ -79,7 +80,12 @@ export class ConversationArtifactService {
     const persistedCitation = [...uniqueCitations.values()][0];
 
     const conversation = await this.conversationService.getConversationDocument(conversationId);
-    const allowedWorkspaceIds = new Set((conversation.workspaces || []).map((id) => id.toString()));
+    const allowedWorkspaceIds = new Set(
+      await this.conversationService.filterAccessibleWorkspaceIds(
+        userId,
+        (conversation.workspaces || []).map((id) => id.toString()),
+      ),
+    );
     if (conversation.systemWorkspaceId) {
       allowedWorkspaceIds.add(conversation.systemWorkspaceId.toString());
     }

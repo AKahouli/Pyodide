@@ -6,6 +6,7 @@ import {
   ChevronRight,
   History,
   LayoutGrid,
+  MessageSquarePlus,
   Network,
   Plug,
   ShieldCheck,
@@ -103,11 +104,10 @@ function OutcomeGroup({
   const resolvedOpen = !collapsed && open;
 
   return (
-    <SidebarGroup className={cn('min-h-0 shrink-0 py-1', resolvedOpen && 'flex flex-1 flex-col overflow-hidden')}>
+    <SidebarGroup className='min-h-0 shrink-0 py-1'>
       <Collapsible
         open={resolvedOpen}
         onOpenChange={onOpenChange}
-        className={cn(resolvedOpen && 'flex min-h-0 flex-1 flex-col overflow-hidden')}
       >
         <SidebarMenu>
           <SidebarMenuItem>
@@ -131,7 +131,7 @@ function OutcomeGroup({
             </CollapsibleTrigger>
           </SidebarMenuItem>
         </SidebarMenu>
-        <CollapsibleContent className='min-h-0 overflow-y-auto overscroll-y-contain'>
+        <CollapsibleContent>
           <div className='ml-4 border-l border-sidebar-border pl-1.5'>{children}</div>
         </CollapsibleContent>
       </Collapsible>
@@ -237,7 +237,7 @@ function HistoryDropZone({
 }
 
 export const AppSidebar = memo(function AppSidebar() {
-  const { state, toggleSidebar } = useAutoCollapse();
+  const { isMobile, state, toggleSidebar } = useAutoCollapse();
   const navigate = useNavigate();
   const location = useLocation();
   const { t } = useModuleTranslation('sidebar');
@@ -319,15 +319,21 @@ export const AppSidebar = memo(function AppSidebar() {
 
   const handleGroupOpenChange = useCallback(
     (group: OutcomeGroupKey, open: boolean) => {
-      if (state === 'collapsed') {
+      if (!isMobile && state === 'collapsed') {
         toggleSidebar();
         setOpenGroups(getOpenOutcomeGroups(group));
         return;
       }
       setOpenGroups(getOpenOutcomeGroups(open ? group : null));
     },
-    [state, toggleSidebar],
+    [isMobile, state, toggleSidebar],
   );
+
+  const handleNewConversation = useCallback(() => {
+    setOpenGroups(getOpenOutcomeGroups('ask'));
+    if (!isMobile && state === 'collapsed') toggleSidebar();
+    navigate('/');
+  }, [isMobile, navigate, state, toggleSidebar]);
 
   useEffect(() => {
     if (activeGroup && activeGroup !== 'ask') {
@@ -451,17 +457,17 @@ export const AppSidebar = memo(function AppSidebar() {
 
   return (
     <Sidebar collapsible='icon' className='shrink-0 z-30'>
-      <SidebarHeader className='pt-8 gap-0 duration-500 ease-linear '>
+      <SidebarHeader className='gap-2 pt-8 duration-500 ease-linear group-data-[collapsible=icon]:pt-4'>
         <NavLink
           to='/'
           aria-label={t('actions.home')}
-          className='flex items-center h-12 mb-4 overflow-hidden duration-500 ease-linear group-data-[collapsible=icon]:w-0 group-data-[collapsible=icon]:opacity-0'
+          className='mb-2 flex h-12 items-center overflow-hidden duration-500 ease-linear group-data-[collapsible=icon]:mb-0 group-data-[collapsible=icon]:h-0 group-data-[collapsible=icon]:w-0 group-data-[collapsible=icon]:opacity-0'
         >
           <AppBrandLogo className='h-12 shrink-0' />
         </NavLink>
       </SidebarHeader>
 
-      <SidebarContent className='my-3 flex min-h-0 w-full flex-col overflow-hidden'>
+      <SidebarContent className='my-3 flex min-h-0 w-full flex-col overflow-y-auto'>
         {canSeeMenu('platform') && <SidebarGroup className='pb-1'>
           <SidebarMenu>
             <SidebarMenuItem>
@@ -479,26 +485,32 @@ export const AppSidebar = memo(function AppSidebar() {
           </SidebarMenu>
         </SidebarGroup>}
 
+        {featureVisibility.conversation && canUseFeature('conversation') && canSeeMenu('newChat') && (
+          <SidebarGroup className='py-1'>
+            <SidebarMenu>
+              <SidebarMenuItem>
+                <SidebarMenuButton
+                  tooltip={t('actions.newChat.tooltip')}
+                  onClick={handleNewConversation}
+                  className='bg-primary font-medium text-primary-foreground hover:bg-primary/90 hover:text-primary-foreground'
+                >
+                  <MessageSquarePlus />
+                  <span>{t('actions.newChat.label')}</span>
+                </SidebarMenuButton>
+              </SidebarMenuItem>
+            </SidebarMenu>
+          </SidebarGroup>
+        )}
+
         {canSeeMenu('ask') && <OutcomeGroup
           label={t('groups.ask.label')}
           tooltip={t('groups.ask.tooltip')}
           icon={<ChatBubbleIcon />}
           active={activeGroup === 'ask'}
-          collapsed={state === 'collapsed'}
+          collapsed={!isMobile && state === 'collapsed'}
           open={openGroups.ask}
           onOpenChange={(open) => handleGroupOpenChange('ask', open)}
         >
-          <SidebarMenu>
-            {featureVisibility.conversation && canUseFeature('conversation') && canSeeMenu('newChat') && (
-              <SidebarMenuItem>
-                <SidebarMenuButton tooltip={t('actions.newChat.tooltip')} onClick={() => navigate('/')}>
-                  <Sparkles />
-                  <span>{t('actions.newChat.label')}</span>
-                </SidebarMenuButton>
-              </SidebarMenuItem>
-            )}
-          </SidebarMenu>
-
           {canSeeMenu('projects') && <ProjectsSection />}
 
           {canSeeMenu('history') && <Collapsible open={historyPanelOpen} onOpenChange={toggleHistoryPanel}>
@@ -597,7 +609,7 @@ export const AppSidebar = memo(function AppSidebar() {
           tooltip={t('groups.knowledge.tooltip')}
           icon={<BookOpen />}
           active={activeGroup === 'knowledge'}
-          collapsed={state === 'collapsed'}
+          collapsed={!isMobile && state === 'collapsed'}
           open={openGroups.knowledge}
           onOpenChange={(open) => handleGroupOpenChange('knowledge', open)}
         >
@@ -612,7 +624,7 @@ export const AppSidebar = memo(function AppSidebar() {
           tooltip={t('groups.automate.tooltip')}
           icon={<Sparkles />}
           active={activeGroup === 'automate'}
-          collapsed={state === 'collapsed'}
+          collapsed={!isMobile && state === 'collapsed'}
           open={openGroups.automate}
           onOpenChange={(open) => handleGroupOpenChange('automate', open)}
         >
@@ -655,7 +667,7 @@ export const AppSidebar = memo(function AppSidebar() {
           tooltip={t('groups.govern.tooltip')}
           icon={<ShieldCheck />}
           active={activeGroup === 'govern'}
-          collapsed={state === 'collapsed'}
+          collapsed={!isMobile && state === 'collapsed'}
           open={openGroups.govern}
           onOpenChange={(open) => handleGroupOpenChange('govern', open)}
         >

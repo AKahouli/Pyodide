@@ -625,6 +625,7 @@ export interface CreateSharePayload {
   shareType: ShareType;
   title?: string;
   recipientEmails?: string[]; // For private shares
+  shareWorkspaces?: boolean;
   expiresInDays?: number; // For public shares (1-365, default 30)
 }
 
@@ -637,6 +638,9 @@ export interface ShareResponse {
   accessToken?: string; // For public shares
   recipientEmails?: string[]; // For private shares
   forkedConversationIds?: string[];
+  notFound?: string[];
+  invalid?: string[];
+  sharedWorkspaceCount?: number;
   expiresAt?: string;
   viewCount: number;
   isRevoked: boolean;

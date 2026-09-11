@@ -127,10 +127,11 @@ export class ConversationController {
   @Get(':id/workspace-documents')
   @UseGuards(ConversationOwnerGuard)
   async getWorkspaceDocuments(
+    @CurrentUser() user: { _id: string },
     @Param('id') id: string,
     @Query() query: DocumentQueryDto,
   ) {
-    return this.conversationService.getWorkspaceDocuments(id, query);
+    return this.conversationService.getWorkspaceDocuments(id, query, user._id.toString());
   }
 
   @Get(':id/tagged-agents')

@@ -404,6 +404,7 @@ export const sharedConversations = conversationSchema.table(
     messages: jsonb('messages'),
     accessToken: text('access_token'),
     recipientEmails: text('recipient_emails').array(),
+    recipientUserIds: varchar('recipient_user_ids', { length: 24 }).array(),
     forkedConversationIds: varchar('forked_conversation_ids', { length: 24 }).array(),
     expiresAt: timestamp('expires_at', { withTimezone: true }),
     viewCount: integer('view_count').notNull().default(0),

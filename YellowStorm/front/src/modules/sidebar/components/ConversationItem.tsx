@@ -102,7 +102,13 @@ export const ConversationItem = memo(function ConversationItem({
         draggable={draggable}
         onDragStart={draggable ? handleDragStart : undefined}
       >
-        <SidebarMenuButton asChild tooltip={displayTitle} isActive={resolvedActive}>
+        <SidebarMenuButton
+          asChild
+          size='sm'
+          tooltip={displayTitle}
+          isActive={resolvedActive}
+          className='text-[13px] font-normal data-[active=true]:font-medium'
+        >
           <NavLink
             to={resolvedTo}
             draggable={false}

@@ -5,7 +5,7 @@ import { useSidebar } from '@/components/ui/sidebar';
  * Hook that auto-collapses the sidebar when the window gets smaller
  */
 export function useAutoCollapse() {
-  const { toggleSidebar, state } = useSidebar();
+  const { isMobile, toggleSidebar, state } = useSidebar();
 
   useEffect(() => {
     let prevWidth = window.innerWidth;
@@ -27,5 +27,5 @@ export function useAutoCollapse() {
     return () => window.removeEventListener('resize', handleResize);
   }, [state, toggleSidebar]);
 
-  return { state, toggleSidebar };
+  return { isMobile, state, toggleSidebar };
 }

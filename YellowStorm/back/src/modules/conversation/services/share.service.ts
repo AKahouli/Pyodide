@@ -1,11 +1,13 @@
 import { Inject, Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { nanoid } from 'nanoid';
-import { BadRequestException, ForbiddenException, NotFoundException, ServiceUnavailableException } from '../../exceptions';
+import { BadRequestException, ForbiddenException, NotFoundException } from '../../exceptions';
 import { ErrorCode } from '../../exceptions/constants/error-codes';
 import { EmailService } from '../../email/email.service';
 import { LoggerService } from '../../logger';
 import { UserService } from '../../user/user.service';
+import { WorkspaceService } from '../../workspace/workspace.service';
+import { WorkspaceShareService } from '../../workspace/workspace-share.service';
 import type {
   CreateShareData,
   EmbeddedMessage,
@@ -13,7 +15,6 @@ import type {
   ShareResponse,
 } from '../interfaces/share.interface';
 import {
-  ConversationCloneLimitError,
   SHARE_STORE,
   type SharedConversationRecord,
   type ShareSourceConversationRecord,
@@ -79,6 +80,8 @@ export class ShareService {
     private readonly logger: LoggerService,
     private readonly userService: UserService,
     private readonly emailService: EmailService,
+    private readonly workspaceService: WorkspaceService,
+    private readonly workspaceShareService: WorkspaceShareService,
   ) {
     this.logger.setContext('ShareService');
   }
@@ -88,26 +91,34 @@ export class ShareService {
     if (!conversation) {
       throw new NotFoundException(ErrorCode.CHAT_NOT_FOUND, 'Conversation not found');
     }
+    if (conversation.createdBy !== userId) {
+      throw new ForbiddenException(
+        ErrorCode.CHAT_SHARE_FORBIDDEN,
+        'Only the conversation owner can share it',
+      );
+    }
     if (conversation.runtimeMode === 'governed') {
       throw new ForbiddenException(
         ErrorCode.CHAT_FORBIDDEN,
         'Governed conversations cannot be shared',
       );
     }
-    const maxCloneMessages = this.configService.get<number>('conversation.maxCloneMessages', 2000);
-    const sourceMessages = await this.shareStore.listSnapshotMessages(
-      conversation.id,
-      maxCloneMessages + 1,
-    );
-    if (sourceMessages.length > maxCloneMessages) {
-      throw new BadRequestException(
-        ErrorCode.CHAT_BRANCH_INVALID,
-        `Conversation exceeds the ${maxCloneMessages} message sharing limit`,
+    if (data.shareType === 'public') {
+      const maxCloneMessages = this.configService.get<number>('conversation.maxCloneMessages', 2000);
+      const sourceMessages = await this.shareStore.listSnapshotMessages(
+        conversation.id,
+        maxCloneMessages + 1,
       );
+      if (sourceMessages.length > maxCloneMessages) {
+        throw new BadRequestException(
+          ErrorCode.CHAT_BRANCH_INVALID,
+          `Conversation exceeds the ${maxCloneMessages} message sharing limit`,
+        );
+      }
+      return this.createPublicShare(userId, conversation, data, sourceMessages);
     }
-    return data.shareType === 'public'
-      ? this.createPublicShare(userId, conversation, data, sourceMessages)
-      : this.createPrivateShare(userId, conversation, data, maxCloneMessages, sourceMessages);
+    const emailPreviewMessages = await this.shareStore.listSnapshotMessages(conversation.id, 40);
+    return this.createPrivateShare(userId, conversation, data, emailPreviewMessages);
   }
 
   private async createPublicShare(
@@ -141,7 +152,6 @@ export class ShareService {
     userId: string,
     conversation: ShareSourceConversationRecord,
     data: CreateShareData,
-    maxCloneMessages: number,
     sourceMessages: EmbeddedMessage[],
   ): Promise<ShareResponse> {
     const recipientEmails = data.recipientEmails || [];
@@ -152,98 +162,177 @@ export class ShareService {
       email,
       user: await this.userService.findByEmail(email),
     })));
-    const forkedConversationIds: string[] = [];
-    let publicShare: SharedConversationRecord | undefined;
+    const notFound: string[] = [];
+    const invalid: string[] = [];
+    const existingMemberIds = new Set(conversation.memberIds);
+    const selectedRecipientIds = new Set<string>();
+    const accepted: Array<{ email: string; userId: string }> = [];
+    for (const { email, user } of recipients) {
+      if (!user) {
+        notFound.push(email);
+        continue;
+      }
+      const recipientId = user._id.toString();
+      if (
+        recipientId === userId ||
+        existingMemberIds.has(recipientId) ||
+        selectedRecipientIds.has(recipientId)
+      ) {
+        invalid.push(email);
+        continue;
+      }
+      selectedRecipientIds.add(recipientId);
+      accepted.push({ email, userId: recipientId });
+    }
+    if (!accepted.length) {
+      throw new BadRequestException(
+        ErrorCode.CHAT_BRANCH_INVALID,
+        'No eligible registered recipients were selected',
+      );
+    }
+
+    let shared: SharedConversationRecord | undefined;
+    let addedMemberIds: string[] = [];
     try {
-      // Account holders receive a forked copy (including the owner sharing to
-      // themselves); recipients without an account get a sanitized public
-      // snapshot link instead.
-      for (const { user } of recipients) {
-        if (!user) continue;
-        forkedConversationIds.push(
-          await this.shareStore.forkConversation({
-            original: conversation,
-            ownerId: user._id.toString(),
-            sharedBy: userId,
-            maxMessages: maxCloneMessages,
-          }),
+      addedMemberIds = await this.shareStore.addConversationMembers(
+        conversation.id,
+        accepted.map(({ userId: recipientId }) => recipientId),
+        new Date(),
+      );
+      const addedIdSet = new Set(addedMemberIds);
+      const grantedRecipients = accepted.filter(({ userId: recipientId, email }) => {
+        if (addedIdSet.has(recipientId)) return true;
+        invalid.push(email);
+        return false;
+      });
+      if (!grantedRecipients.length) {
+        throw new BadRequestException(
+          ErrorCode.CHAT_BRANCH_INVALID,
+          'No eligible registered recipients were selected',
         );
       }
-      const frontBase = this.configService.get<string>('app.frontendUrl', 'http://localhost:5173').replace(/\/$/, '');
-      let publicUrl: string | undefined;
-      if (recipients.some(({ user }) => !user)) {
-        const expiryDays = data.expiresInDays || this.configService.get<number>('conversation.shareExpiryDays', 30);
-        publicShare = await this.shareStore.createPublic({
-          originalConversationId: conversation.id,
-          sharedBy: userId,
-          title: data.title || conversation.title,
-          messages: sanitizePublicShareMessages(sourceMessages),
-          accessToken: nanoid(32),
-          expiresAt: new Date(Date.now() + expiryDays * 24 * 60 * 60 * 1000),
-        });
-        publicUrl = `${frontBase}/#/share/${publicShare.accessToken}`;
-      }
-      let forkIndex = 0;
-      const recipientLinks = recipients.map(({ email, user }) => ({
-        email,
-        url: user ? `${frontBase}/#/conversation/${forkedConversationIds[forkIndex++]}` : publicUrl!,
-      }));
-      const emailResult = await this.emailService.sendBulk({
-        emails: recipientLinks.map(({ email, url }) => {
-          const body = buildShareEmailBody(data.title || conversation.title, url, sourceMessages);
-          return {
-            to: email,
-            subject: `${data.title || conversation.title} has been shared with you`,
-            text: body.text,
-            html: body.html,
-          };
-        }),
-        stopOnError: false,
-      });
-      if (emailResult.failed > 0) {
-        throw new ServiceUnavailableException(ErrorCode.SERVICE_UNAVAILABLE, 'Failed to send one or more conversation share emails');
-      }
-      const shared = await this.shareStore.createPrivate({
+      shared = await this.shareStore.createPrivate({
         originalConversationId: conversation.id,
         sharedBy: userId,
         title: data.title || conversation.title,
-        recipientEmails,
-        forkedConversationIds,
+        recipientEmails: grantedRecipients.map(({ email }) => email),
+        recipientUserIds: grantedRecipients.map(({ userId: recipientId }) => recipientId),
+        forkedConversationIds: [],
       });
+
+      const sharedWorkspaceCount = data.shareWorkspaces
+        ? await this.shareReferencedWorkspaces(userId, conversation.workspaceIds, grantedRecipients)
+        : 0;
+      const frontBase = this.configService.get<string>('app.frontendUrl', 'http://localhost:5173').replace(/\/$/, '');
+      try {
+        const emailResult = await this.emailService.sendBulk({
+          emails: grantedRecipients.map(({ email }) => {
+            const body = buildShareEmailBody(
+              data.title || conversation.title,
+              `${frontBase}/#/conversation/${conversation.id}`,
+              sourceMessages,
+            );
+            return {
+              to: email,
+              subject: `${data.title || conversation.title} has been shared with you`,
+              text: body.text,
+              html: body.html,
+            };
+          }),
+          stopOnError: false,
+        });
+        if (emailResult.failed > 0) {
+          this.logger.warn('Failed to send one or more conversation share emails', {
+            conversationId: conversation.id,
+            failedCount: emailResult.failed,
+          });
+        }
+      } catch (error) {
+        this.logger.warn('Failed to send conversation share emails', {
+          conversationId: conversation.id,
+          error: error instanceof Error ? error.message : 'Unknown error',
+        });
+      }
       this.logger.log('Private share created', {
         shareId: shared.id,
         conversationId: conversation.id,
         userId,
-        recipientCount: recipientEmails.length,
+        recipientCount: grantedRecipients.length,
+        sharedWorkspaceCount,
       });
-      return this.mapToResponse(shared);
+      return {
+        ...this.mapToResponse(shared),
+        notFound,
+        invalid,
+        sharedWorkspaceCount,
+      };
     } catch (error) {
       try {
-        await this.shareStore.deleteForkConversations(forkedConversationIds);
+        await this.shareStore.removeConversationMembers(
+          conversation.id,
+          addedMemberIds,
+        );
       } catch (cleanupError) {
-        this.logger.error('Failed to delete fork conversations during share rollback', {
+        this.logger.error('Failed to remove conversation members during share rollback', {
           conversationId: conversation.id,
           error: String(cleanupError),
         });
       }
-      try {
-        if (publicShare) {
-          await this.shareStore.markRevoked(publicShare.id);
-        }
-      } catch (cleanupError) {
-        this.logger.error('Failed to revoke guest share link during share rollback', {
-          shareId: publicShare?.id,
-          error: String(cleanupError),
-        });
-      }
-      if (error instanceof ConversationCloneLimitError) {
-        throw new BadRequestException(ErrorCode.CHAT_BRANCH_INVALID, error.message);
-      }
+      if (shared) await this.shareStore.markRevoked(shared.id);
       throw error;
     }
   }
 
-  async getSharesForConversation(conversationId: string): Promise<ShareResponse[]> {
+  private async shareReferencedWorkspaces(
+    ownerId: string,
+    workspaceIds: string[],
+    recipients: Array<{ email: string; userId: string }>,
+  ): Promise<number> {
+    let sharedCount = 0;
+    for (const workspaceId of workspaceIds) {
+      try {
+        const workspace = await this.workspaceService.findById(workspaceId);
+        if (
+          workspace.createdBy !== ownerId ||
+          workspace.isSystem ||
+          workspace.isPublic
+        ) {
+          continue;
+        }
+        const needsAccess = (
+          await Promise.all(
+            recipients.map(async (recipient) => ({
+              ...recipient,
+              hasAccess: await this.workspaceShareService.hasAccess(recipient.userId, workspaceId),
+            })),
+          )
+        ).filter((recipient) => !recipient.hasAccess);
+        if (!needsAccess.length) continue;
+        const result = await this.workspaceShareService.share(workspaceId, ownerId, {
+          shares: needsAccess.map(({ email }) => ({ email, permission: 'read' })),
+        });
+        sharedCount += result.shared.length;
+      } catch (error) {
+        this.logger.warn('Failed to share a referenced workspace', {
+          workspaceId,
+          error: error instanceof Error ? error.message : 'Unknown error',
+        });
+      }
+    }
+    return sharedCount;
+  }
+
+  async getSharesForConversation(conversationId: string, userId: string): Promise<ShareResponse[]> {
+    const conversation = await this.shareStore.findSourceConversation(conversationId);
+    if (!conversation) {
+      throw new NotFoundException(ErrorCode.CHAT_NOT_FOUND, 'Conversation not found');
+    }
+    if (conversation.createdBy !== userId) {
+      throw new ForbiddenException(
+        ErrorCode.CHAT_SHARE_FORBIDDEN,
+        'Only the conversation owner can view its shares',
+      );
+    }
     const shares = await this.shareStore.listForConversation(conversationId);
     return shares.map((share) => this.mapToResponse(share));
   }
@@ -257,6 +346,12 @@ export class ShareService {
       throw new ForbiddenException(
         ErrorCode.CHAT_SHARE_FORBIDDEN,
         'You do not have access to this share',
+      );
+    }
+    if (share.shareType === 'private' && share.recipientUserIds?.length) {
+      await this.shareStore.removeConversationMembers(
+        share.originalConversationId,
+        share.recipientUserIds,
       );
     }
     await this.shareStore.markRevoked(shareId);

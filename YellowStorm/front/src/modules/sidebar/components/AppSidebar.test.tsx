@@ -31,6 +31,7 @@ const convoState = vi.hoisted(() => ({
 }));
 
 const autoCollapseState = vi.hoisted(() => ({
+  isMobile: false,
   state: 'expanded' as 'expanded' | 'collapsed',
   toggleSidebar: vi.fn(),
 }));
@@ -51,7 +52,7 @@ vi.mock('@/components/ui/sidebar', () => ({
   Sidebar: ({ children }: { children: ReactNode }) => <div>{children}</div>,
   SidebarHeader: ({ children }: { children: ReactNode }) => <div>{children}</div>,
   SidebarContent: ({ children }: { children: ReactNode }) => <div>{children}</div>,
-  SidebarGroup: ({ children }: { children: ReactNode }) => <div>{children}</div>,
+  SidebarGroup: ({ children }: { children: ReactNode }) => <div data-sidebar='group'>{children}</div>,
   SidebarMenu: ({ children }: { children: ReactNode }) => <div>{children}</div>,
   SidebarMenuItem: ({ children }: { children: ReactNode }) => <div>{children}</div>,
   SidebarMenuButton: ({ children, onClick, disabled, asChild }: { children: ReactNode; onClick?: () => void; disabled?: boolean; asChild?: boolean }) =>
@@ -155,6 +156,7 @@ vi.mock('./ConversationItem', () => ({
 describe('AppSidebar', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    autoCollapseState.isMobile = false;
     autoCollapseState.state = 'expanded';
     convoState.loading = false;
     convoState.hasMore = true;
@@ -238,6 +240,52 @@ describe('AppSidebar', () => {
 
     await userEvent.click(screen.getByRole('button', { name: 'groups.ask.label' }));
     expect(autoCollapseState.toggleSidebar).toHaveBeenCalled();
+  });
+
+  it('expands Ask and the sidebar when starting a conversation from collapsed mode', async () => {
+    autoCollapseState.state = 'collapsed';
+    render(
+      <MemoryRouter initialEntries={['/conversation/c1']}>
+        <AppSidebar />
+      </MemoryRouter>,
+    );
+
+    await userEvent.click(screen.getByRole('button', { name: 'actions.newChat.label' }));
+
+    expect(navigateMock).toHaveBeenCalledWith('/');
+    expect(autoCollapseState.toggleSidebar).toHaveBeenCalled();
+  });
+
+  it('places New Chat immediately above Ask and opens Ask when clicked', async () => {
+    render(
+      <MemoryRouter initialEntries={['/workspace']}>
+        <AppSidebar />
+      </MemoryRouter>,
+    );
+
+    const newChat = screen.getByRole('button', { name: 'actions.newChat.label' });
+    const ask = screen.getByRole('button', { name: 'groups.ask.label' });
+
+    expect(newChat.closest('[data-sidebar="group"]')?.nextElementSibling).toContainElement(ask);
+    await userEvent.click(newChat);
+
+    expect(ask.closest('[data-open]')).toHaveAttribute('data-open', 'true');
+    expect(screen.getByRole('button', { name: 'groups.knowledge.label' }).closest('[data-open]')).toHaveAttribute('data-open', 'false');
+  });
+
+  it('opens Ask without closing the mobile sidebar', async () => {
+    autoCollapseState.isMobile = true;
+    autoCollapseState.state = 'collapsed';
+    render(
+      <MemoryRouter>
+        <AppSidebar />
+      </MemoryRouter>,
+    );
+
+    await userEvent.click(screen.getByRole('button', { name: 'actions.newChat.label' }));
+
+    expect(screen.getByRole('button', { name: 'groups.ask.label' }).closest('[data-open]')).toHaveAttribute('data-open', 'true');
+    expect(autoCollapseState.toggleSidebar).not.toHaveBeenCalled();
   });
 
   it('opens only the active outcome group automatically', async () => {
