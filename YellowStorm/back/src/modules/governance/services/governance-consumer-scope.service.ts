@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
+import { FeatureVisibilityService } from '@modules/system/feature-visibility.service';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
 import { ServiceUnavailableException } from '@modules/exceptions';
@@ -34,11 +34,11 @@ export class GovernanceConsumerScopeService {
     @InjectModel(GovernanceDeploymentRevision.name) private readonly revisionModel: Model<GovernanceDeploymentRevisionDocument>,
     private readonly agentRepository: AgentRepository,
     private readonly audienceService: GovernanceScopeAudienceService,
-    private readonly configService: ConfigService,
+    private readonly featureVisibility: FeatureVisibilityService,
   ) {}
 
   async listAvailable(userId: string): Promise<AvailableGovernedScope[]> {
-    if (!this.configService.get<boolean>('governedConversations.carouselEnabled', false)) {
+    if (!this.featureVisibility.isEnabled('governedScopeCarousel')) {
       throw new ServiceUnavailableException(ErrorCode.SERVICE_UNAVAILABLE, 'Governed scope catalogue is not enabled');
     }
     const scopes = await this.scopeModel.find({ status: 'active' }).select('programId name type metadata audience').lean().exec();

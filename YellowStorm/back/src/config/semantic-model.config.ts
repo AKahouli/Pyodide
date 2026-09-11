@@ -1,7 +1,6 @@
 import { registerAs } from '@nestjs/config';
 
 export default registerAs('semanticModel', () => ({
-  enabled: process.env.SEMANTIC_MODELS_ENABLED === 'true',
   autoProvision: process.env.SEMANTIC_MODELS_AUTO_PROVISION === 'true',
   host: process.env.SEMANTIC_PG_HOST || '',
   port: Number.parseInt(process.env.SEMANTIC_PG_PORT || '5432', 10),

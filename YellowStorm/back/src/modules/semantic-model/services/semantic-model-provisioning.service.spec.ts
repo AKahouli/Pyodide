@@ -13,10 +13,11 @@ describe('SemanticModelProvisioningService', () => {
 
   it('does not fail a completed workspace rename when PostgreSQL is unavailable', async () => {
     const database = {
+      isEnabled: jest.fn().mockReturnValue(true),
       query: jest.fn().mockRejectedValue(new Error('unavailable')),
     };
     const service = new SemanticModelProvisioningService(
-      { enabled: true } as never,
+      {} as never,
       {} as never,
       database as never,
       logger as never,
@@ -34,10 +35,11 @@ describe('SemanticModelProvisioningService', () => {
 
   it('does not fail completed workspace deletion when PostgreSQL is unavailable', async () => {
     const database = {
+      isEnabled: jest.fn().mockReturnValue(true),
       transaction: jest.fn().mockRejectedValue(new Error('unavailable')),
     };
     const service = new SemanticModelProvisioningService(
-      { enabled: true } as never,
+      {} as never,
       {} as never,
       database as never,
       logger as never,

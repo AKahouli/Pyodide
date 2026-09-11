@@ -20,9 +20,18 @@ export const DEFAULT_FEATURE_VISIBILITY: FeatureVisibility = Object.freeze({
   playbookDevtools: false,
   playbookDeltaAutosave: true,
   playbookMcpAssistant: true,
+  playbookMcpConnectorReconciliation: true,
   governedConversations: true,
+  governanceScopeAudience: true,
   governedScopeCarousel: true,
   dataRoomDecisionFlows: true,
+  dataRoomGovernance: true,
+  dataRoomSourceVersioning: true,
+  dataRoomWorkspaceEvents: true,
+  dataRoomAutoSourceCreation: true,
+  dataRoomOutboxDispatch: true,
+  dataRoomValidityIntelligence: true,
+  dataRoomKnowledgeAssessment: true,
 });
 
 export const FEATURE_SETTING_ITEMS: {
@@ -34,9 +43,18 @@ export const FEATURE_SETTING_ITEMS: {
   { key: 'playbookDevtools', group: 'playbook', labelKey: 'system.features.items.playbookDevtools.label', descriptionKey: 'system.features.items.playbookDevtools.description' },
   { key: 'playbookDeltaAutosave', group: 'playbook', labelKey: 'system.features.items.playbookDeltaAutosave.label', descriptionKey: 'system.features.items.playbookDeltaAutosave.description' },
   { key: 'playbookMcpAssistant', group: 'playbook', labelKey: 'system.features.items.playbookMcpAssistant.label', descriptionKey: 'system.features.items.playbookMcpAssistant.description' },
+  { key: 'playbookMcpConnectorReconciliation', group: 'playbook', labelKey: 'system.features.items.playbookMcpConnectorReconciliation.label', descriptionKey: 'system.features.items.playbookMcpConnectorReconciliation.description' },
   { key: 'governedConversations', group: 'governance', labelKey: 'system.features.items.governedConversations.label', descriptionKey: 'system.features.items.governedConversations.description' },
+  { key: 'governanceScopeAudience', group: 'governance', labelKey: 'system.features.items.governanceScopeAudience.label', descriptionKey: 'system.features.items.governanceScopeAudience.description' },
   { key: 'governedScopeCarousel', group: 'governance', labelKey: 'system.features.items.governedScopeCarousel.label', descriptionKey: 'system.features.items.governedScopeCarousel.description' },
   { key: 'dataRoomDecisionFlows', group: 'workspace', labelKey: 'system.features.items.dataRoomDecisionFlows.label', descriptionKey: 'system.features.items.dataRoomDecisionFlows.description' },
+  { key: 'dataRoomGovernance', group: 'workspace', labelKey: 'system.features.items.dataRoomGovernance.label', descriptionKey: 'system.features.items.dataRoomGovernance.description' },
+  { key: 'dataRoomSourceVersioning', group: 'workspace', labelKey: 'system.features.items.dataRoomSourceVersioning.label', descriptionKey: 'system.features.items.dataRoomSourceVersioning.description' },
+  { key: 'dataRoomWorkspaceEvents', group: 'workspace', labelKey: 'system.features.items.dataRoomWorkspaceEvents.label', descriptionKey: 'system.features.items.dataRoomWorkspaceEvents.description' },
+  { key: 'dataRoomAutoSourceCreation', group: 'workspace', labelKey: 'system.features.items.dataRoomAutoSourceCreation.label', descriptionKey: 'system.features.items.dataRoomAutoSourceCreation.description' },
+  { key: 'dataRoomOutboxDispatch', group: 'workspace', labelKey: 'system.features.items.dataRoomOutboxDispatch.label', descriptionKey: 'system.features.items.dataRoomOutboxDispatch.description' },
+  { key: 'dataRoomValidityIntelligence', group: 'workspace', labelKey: 'system.features.items.dataRoomValidityIntelligence.label', descriptionKey: 'system.features.items.dataRoomValidityIntelligence.description' },
+  { key: 'dataRoomKnowledgeAssessment', group: 'workspace', labelKey: 'system.features.items.dataRoomKnowledgeAssessment.label', descriptionKey: 'system.features.items.dataRoomKnowledgeAssessment.description' },
 ];
 
 export const FEATURE_PERMISSION_ITEMS: {

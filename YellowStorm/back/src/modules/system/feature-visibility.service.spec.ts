@@ -40,6 +40,18 @@ describe('FeatureVisibilityService', () => {
     });
   });
 
+  it('serves runtime checks from the persisted cache', async () => {
+    findOne.mockReturnValue({
+      lean: () => ({ exec: jest.fn().mockResolvedValue({ value: { dataRoomOutboxDispatch: false } }) }),
+    });
+    const service = new FeatureVisibilityService(model as any);
+
+    await service.getVisibility();
+
+    expect(service.isEnabled('dataRoomOutboxDispatch')).toBe(false);
+    expect(service.isEnabled('dataRoomWorkspaceEvents')).toBe(true);
+  });
+
   it('persists the complete visibility map', async () => {
     findOne.mockReturnValue({ lean: () => ({ exec: jest.fn().mockResolvedValue(null) }) });
     const value = { ...DEFAULT_FEATURE_VISIBILITY, governance: false };

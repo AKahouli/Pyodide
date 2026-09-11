@@ -23,6 +23,7 @@ import {
 } from '../exceptions';
 import { ErrorCode } from '../exceptions/constants/error-codes';
 import { IntegrationEventOutboxService } from '../integration-events/services/integration-event-outbox.service';
+import { FeatureVisibilityService } from '../system/feature-visibility.service';
 import { WorkspaceIntegrationEvents } from '../integration-events/contracts';
 import { v4 as uuidv4 } from 'uuid';
 
@@ -48,6 +49,7 @@ export class IndexingService {
     private readonly configService: ConfigService,
     private readonly logger: LoggerService,
     @Optional() private readonly outbox?: IntegrationEventOutboxService,
+    @Optional() private readonly featureVisibility?: FeatureVisibilityService,
   ) {
     this.logger.setContext('IndexingService');
     this.batchSize = this.configService.get<number>('indexing.batchSize', 10);
@@ -255,7 +257,7 @@ export class IndexingService {
   }
 
   private async recordIndexingEvent(eventType: string, document: WorkspaceDocumentDoc): Promise<void> {
-    if (!this.outbox || !this.configService.get<boolean>('dataRoom.workspaceEventsEnabled')) return;
+    if (!this.outbox || this.featureVisibility?.isEnabled('dataRoomWorkspaceEvents') === false) return;
     await this.outbox.record({ eventId: uuidv4(), eventType, aggregateType: 'workspace_document', aggregateId: document._id.toString(), payload: { workspaceId: document.workspaceId.toString(), documentId: document._id.toString(), createdBy: document.createdBy.toString(), documentType: document.type, originalName: document.originalName, mimeType: document.mimeType, sourceUrl: document.sourceUrl, normalizedSourceUrl: document.metadata?.normalizedSourceUrl, contentHash: document.contentHash, documentStatus: document.status, indexingStatus: document.indexingStatus, indexingTaskId: document.indexingTaskId, indexingAttemptId: document.indexingAttemptId, deepSearchRequested: document.metadata?.deepSearchRequested === 'true', metadata: document.metadata }, occurredAt: new Date() });
   }
 

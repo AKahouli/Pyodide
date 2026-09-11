@@ -14,6 +14,7 @@ describe('WorkspaceGovernanceEventHandler', () => {
     const handler = new WorkspaceGovernanceEventHandler(
       { register: jest.fn() } as never,
       { get: jest.fn().mockReturnValue(eventConsumerEnabled) } as never,
+      { isEnabled: jest.fn().mockReturnValue(true) } as never,
       { enabledForWorkspace: jest.fn().mockResolvedValue([binding]) } as never,
       documents as never,
       intelligence as never,

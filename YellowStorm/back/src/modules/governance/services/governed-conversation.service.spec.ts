@@ -23,7 +23,7 @@ describe('GovernedConversationService create', () => {
     const agentRepository = { findByIds: jest.fn().mockResolvedValue([]) };
     const audienceService = { assertUserAuthorized: jest.fn().mockResolvedValue(undefined) };
     const conversationService = { createGoverned: jest.fn().mockResolvedValue({ id: 'conversation-1' }) };
-    const configService = { get: jest.fn().mockReturnValue(true) };
+    const featureVisibility = { isEnabled: jest.fn().mockReturnValue(true) };
     const service = new GovernedConversationService(
       scopeModel as never,
       deploymentModel as never,
@@ -31,7 +31,7 @@ describe('GovernedConversationService create', () => {
       agentRepository as never,
       audienceService as never,
       conversationService as never,
-      configService as never,
+      featureVisibility as never,
     );
     return { service, conversationService };
   }

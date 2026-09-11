@@ -18,7 +18,7 @@ export class SemanticModelProvisioningService {
   }
 
   async afterWorkspaceCreated(ownerId: string, workspaceId: string): Promise<void> {
-    if (!this.config.enabled || !this.config.autoProvision) return;
+    if (!this.database.isEnabled() || !this.config.autoProvision) return;
     try {
       await this.models.ensureWorkspaceDefault(ownerId, workspaceId);
     } catch (error) {
@@ -30,7 +30,7 @@ export class SemanticModelProvisioningService {
   }
 
   async afterWorkspaceUpdated(ownerId: string, workspaceId: string, workspaceName: string): Promise<void> {
-    if (!this.config.enabled) return;
+    if (!this.database.isEnabled()) return;
     await this.runBestEffort('Semantic Model workspace name synchronization', workspaceId, () =>
       this.database.query(
         `UPDATE semantic_model.models SET name=$3,revision=revision+1,updated_at=now()
@@ -41,7 +41,7 @@ export class SemanticModelProvisioningService {
   }
 
   async afterWorkspaceDeleted(ownerId: string, workspaceId: string): Promise<void> {
-    if (!this.config.enabled) return;
+    if (!this.database.isEnabled()) return;
     await this.runBestEffort('Semantic Model workspace deletion synchronization', workspaceId, () =>
       this.database.transaction(async (client) => {
         await client.query(

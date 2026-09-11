@@ -57,7 +57,17 @@ export class UpdateFeatureVisibilityDto implements Partial<FeatureVisibility> {
   @ApiProperty({ required: false })
   @IsOptional()
   @IsBoolean()
+  playbookMcpConnectorReconciliation?: boolean;
+
+  @ApiProperty({ required: false })
+  @IsOptional()
+  @IsBoolean()
   governedConversations?: boolean;
+
+  @ApiProperty({ required: false })
+  @IsOptional()
+  @IsBoolean()
+  governanceScopeAudience?: boolean;
 
   @ApiProperty({ required: false })
   @IsOptional()
@@ -68,4 +78,39 @@ export class UpdateFeatureVisibilityDto implements Partial<FeatureVisibility> {
   @IsOptional()
   @IsBoolean()
   dataRoomDecisionFlows?: boolean;
+
+  @ApiProperty({ required: false })
+  @IsOptional()
+  @IsBoolean()
+  dataRoomGovernance?: boolean;
+
+  @ApiProperty({ required: false })
+  @IsOptional()
+  @IsBoolean()
+  dataRoomSourceVersioning?: boolean;
+
+  @ApiProperty({ required: false })
+  @IsOptional()
+  @IsBoolean()
+  dataRoomWorkspaceEvents?: boolean;
+
+  @ApiProperty({ required: false })
+  @IsOptional()
+  @IsBoolean()
+  dataRoomAutoSourceCreation?: boolean;
+
+  @ApiProperty({ required: false })
+  @IsOptional()
+  @IsBoolean()
+  dataRoomOutboxDispatch?: boolean;
+
+  @ApiProperty({ required: false })
+  @IsOptional()
+  @IsBoolean()
+  dataRoomValidityIntelligence?: boolean;
+
+  @ApiProperty({ required: false })
+  @IsOptional()
+  @IsBoolean()
+  dataRoomKnowledgeAssessment?: boolean;
 }

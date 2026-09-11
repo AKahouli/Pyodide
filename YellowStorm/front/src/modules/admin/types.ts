@@ -208,9 +208,18 @@ export interface FeatureVisibility {
   playbookDevtools: boolean;
   playbookDeltaAutosave: boolean;
   playbookMcpAssistant: boolean;
+  playbookMcpConnectorReconciliation: boolean;
   governedConversations: boolean;
+  governanceScopeAudience: boolean;
   governedScopeCarousel: boolean;
   dataRoomDecisionFlows: boolean;
+  dataRoomGovernance: boolean;
+  dataRoomSourceVersioning: boolean;
+  dataRoomWorkspaceEvents: boolean;
+  dataRoomAutoSourceCreation: boolean;
+  dataRoomOutboxDispatch: boolean;
+  dataRoomValidityIntelligence: boolean;
+  dataRoomKnowledgeAssessment: boolean;
 }
 
 export interface CorsOriginEntry {

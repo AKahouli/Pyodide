@@ -1,5 +1,4 @@
 import { Module, forwardRef } from '@nestjs/common';
-import { ConfigModule } from '@nestjs/config';
 import { MongooseModule } from '@nestjs/mongoose';
 import { AuthorizationModule } from '@modules/authorization';
 import { LoggerModule } from '@modules/logger';
@@ -50,7 +49,6 @@ import { GovernanceDocumentTransitionService } from './services/governance-docum
 import { GovernanceDocumentEventService } from './services/governance-document-event.service';
 import { GovernancePublicationAttempt, GovernancePublicationAttemptSchema } from './schemas/governance-publication-attempt.schema';
 import { User, UserSchema } from '@modules/user/schemas/user.schema';
-import governedConversationsConfig from '../../config/governed-conversations.config';
 import { GovernanceRuntimeModule } from './governance-runtime.module';
 import { IntegrationEventsModule } from '@modules/integration-events/integration-events.module';
 import { WorkspaceDoc, WorkspaceDocumentSchema } from '@modules/workspace/schemas/workspace-document.schema';
@@ -83,7 +81,6 @@ import { GovernanceQualityEvaluator } from './services/knowledge-evaluators/gove
 
 @Module({
   imports: [
-    ConfigModule.forFeature(governedConversationsConfig),
     GovernanceRuntimeModule,
     MongooseModule.forFeature([
       { name: GovernanceProgram.name, schema: GovernanceProgramSchema },
