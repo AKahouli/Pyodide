@@ -1148,6 +1148,7 @@ class OrchestratorService:
             tools_for_step=tools_for_step,
             instruction_for_step=instruction_for_step,
             context_for_step=self._dep_results_context(plan),
+            gate_for_step=self._unmet_deps(plan),
             custom_instruction=executor_prompt,
             replay_completed=replay_completed,
             on_model_start=self._mark_step_running(session_id))
@@ -2198,8 +2199,29 @@ class OrchestratorService:
                 return None
             return ("Résultats des étapes précédentes dont dépend la tienne "
                     "(sers-t'en, ne les refais pas) :\n\n" + "\n\n".join(blocks))
-
         return ctx
+
+    @staticmethod
+    def _unmet_deps(plan: Plan):
+        """Per-step hook: the ids of this step's dependencies that are still
+        non-terminal (pending/running/blocked), read LIVE at model-call time.
+
+        The gate (nodes._defer_if_deps_unmet) uses it to decline a node ADK
+        fired before a runtime-added dependency finished — see that callback.
+        Reads the CURRENT plan (plan.step), never a build-time snapshot, so a
+        dependency a mid-pass create_task/delegate just re-parented onto this
+        step (and appended to plan.steps) is seen. A missing or terminal dep is
+        NOT unmet: a terminal-failed dep can never become ready, so deferring on
+        it would hang — let the step proceed as it did before the gate existed."""
+        def unmet(step: Step) -> list:
+            out = []
+            for dep_id in step.depends_on:
+                dep = plan.step(dep_id)
+                if dep is not None and dep.status in (
+                        Status.PENDING, Status.RUNNING, Status.BLOCKED):
+                    out.append(dep_id)
+            return out
+        return unmet
 
     def _build_planner_model(self, model_name: Optional[str] = None):
         # Always has the find_human_agents discovery tool now.
@@ -2293,6 +2315,15 @@ class OrchestratorService:
         # call). Ignore those events so its status stays CANCELLED instead of
         # being flipped back to running/completed here.
         if step is not None and step.status == Status.CANCELLED:
+            return
+        # The live-dependency gate (nodes._defer_if_deps_unmet) short-circuited
+        # this node — ADK fired it before a runtime-added dependency finished.
+        # Its emission is a no-op: ignore it and leave the step PENDING so a
+        # later rebuild / mail-reply resume runs it for real once the dep is in.
+        if step is not None and step.gated_out:
+            step.gated_out = False
+            logger.info("[worky] 9. step deferred (deps not yet met) session=%s step=%s",
+                        session_id, step_id)
             return
         # Which step called which tool, with what args — logged here (not at the
         # MCP call site) because that log line carries no step id, and during a
