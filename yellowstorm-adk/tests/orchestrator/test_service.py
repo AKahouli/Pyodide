@@ -1225,14 +1225,9 @@ def test_persona_create_task_await_reply_survives_a_real_turn_boundary():
         runner1 = runner_factory(wf, f"orch_{session_id}")
         asyncio.run(session_service.create_session(
             app_name=f"orch_{session_id}", user_id="u1", session_id=session_id))
-        # _drive_loop, not raw _drive: create_task(await_reply) now leaves the
-        # wait PENDING as a top-level step (never nested — nesting diverges ADK's
-        # replay barrier), so it runs on this turn's rebuild inside _drive_loop —
-        # the real production turn-1 path (_drive_until_quiescent → _drive_loop).
-        interrupts = asyncio.run(service._drive_loop(
+        interrupts = asyncio.run(service._drive(
             runner1, session_id, "u1", plan, n2s,
-            types.Content(role="user", parts=[types.Part(text="go")]),
-            model="fake", connectors=None, executor_prompt=None))
+            types.Content(role="user", parts=[types.Part(text="go")])))
         asyncio.run(service._finalize(session_id, plan, interrupts))
 
         await_step = next(s for s in plan.steps if s.kind == "await_reply")

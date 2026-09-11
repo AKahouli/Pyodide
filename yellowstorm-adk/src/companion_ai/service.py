@@ -950,25 +950,15 @@ class OrchestratorService:
             for other in affected:
                 await self._project_step(session_id, plan, other)
 
-            # await_reply is NOT run nested. It used to run here via
-            # tool_context.run_node in an isolation sub-branch, but that nested
-            # branch is what diverges ADK's replay barrier on a later resume —
-            # reproduced: the same plan growth over a TOP-LEVEL await does not
-            # diverge, a nested one does. So leave it PENDING as a top-level
-            # step; _drive_loop runs it on this turn's rebuild as a real graph
-            # node (the exact replay-safe shape a planner-emitted await_reply
-            # uses), where it parks and _finalize binds its mail wait. The
-            # caller completes normally when its turn ends — no BLOCKED/RUNNING
-            # dance, which also removes the phantom-running the finally caused.
-            if kind == "await_reply":
-                return ("Await-reply step created. A separate follow-up step will "
-                        "read the reply and give the real answer once it arrives — "
-                        "end your own turn now reporting the draft as sent and "
-                        "awaiting reply, and do not guess what they will decide.")
-            # 'ask' still runs its WAIT node HERE: it is answered in-chat on the
-            # same turn's flow and is not subject to the mail-reply rebuild path.
-            # One shot, no LLM loop, so it parks and registers its interrupt now.
-            if kind == "ask":
+            # 'ask' and 'await_reply' build a WAIT node (hitl.make_ask_user_node /
+            # make_await_reply_node), not an LlmAgent: one shot, no LLM loop, and
+            # it must run HERE so it actually parks and registers its interrupt
+            # within this turn — that interrupt is what a chat answer or an
+            # incoming mail reply later resumes. Leaving it merely PENDING would
+            # strand the wait with nothing to resume, silently breaking the whole
+            # reply path. Having no LLM loop, it is immune to the nested-run
+            # amnesia described below.
+            if kind in ("ask", "await_reply"):
                 blocked_reason = "waiting on a follow-up task"
                 if caller is not None:
                     caller.status = Status.BLOCKED
@@ -992,6 +982,14 @@ class OrchestratorService:
                         caller.blocked_reason = None
                     await self._project(self._rm and self._rm.set_step_status(
                         session_id, caller_step_id, "running"))
+                if kind == "await_reply":
+                    # Deliberately not the reply's content — it isn't in yet, and
+                    # won't be before this call returns. A separate follow-up
+                    # step (already created above) reads it once it arrives.
+                    return ("Await-reply step created. A separate follow-up step will "
+                            "read the reply and give the real answer once it arrives — "
+                            "end your own turn now reporting the draft as sent and "
+                            "awaiting reply, and do not guess what they will decide.")
                 return "Question put to the user; their answer resumes this plan."
             # 'execute' builds an LlmAgent, and THAT cannot run nested: run_node
             # buffers the sub-node's events until it finishes, while ADK rebuilds
@@ -1869,26 +1867,19 @@ class OrchestratorService:
         in_graph = {s.id for s in plan.steps}
         interrupts = await self._drive(
             runner, session_id, user_id, plan, name_to_step, new_message)
-        # A step spawned mid-pass (create_task / delegate) is not in the graph
-        # this pass ran, so it never executed — only a rebuild runs it. This now
-        # includes create_task(kind='await_reply'), left PENDING as a top-level
-        # step (never nested — a nested run diverges replay): its wait must run
-        # on a rebuild to park and register its interrupt, or the reply path is
-        # stranded. So re-drive whenever a spawned step is READY (all deps
-        # complete) but hasn't run — even if the pass already parked OTHER
-        # interrupts (a gate, or a sibling wait). Keying on readiness rather than
-        # "no interrupts" is what lets a spawned await run alongside a parked one
-        # instead of being abandoned. A spawned step whose deps aren't met yet
-        # (e.g. the act step waiting on the await) is not "ready", so it doesn't
-        # spin the loop; it runs on a later resume once its dep completes.
-        unmet = self._unmet_deps(plan)
-        while True:
-            ready = [s.id for s in plan.steps
-                     if s.status == Status.PENDING and s.id not in in_graph and not unmet(s)]
-            if not ready:
+        # A parked interrupt means the turn is legitimately over: the plan is
+        # waiting on a human, not on us.
+        while not interrupts:
+            # Only steps that did not exist when this graph was built. A step
+            # left pending for any other reason (its dependency errored, say)
+            # would not run on a rebuild either, so re-driving for it just
+            # burns a pass.
+            spawned = {s.id for s in plan.steps
+                       if s.status == Status.PENDING and s.id not in in_graph}
+            if not spawned:
                 return interrupts
-            logger.info("[worky] 9b. %d spawned step(s) ready mid-turn — continuing session=%s %s",
-                        len(ready), session_id, [s[:12] for s in ready])
+            logger.info("[worky] 9b. %d step(s) spawned mid-turn — continuing session=%s %s",
+                        len(spawned), session_id, [s[:12] for s in spawned])
             in_graph = {s.id for s in plan.steps}
             # replay_completed: this re-drive passes the same plain new_message, so
             # ADK re-runs the whole graph — rebuild completed steps as their stored
@@ -1900,15 +1891,13 @@ class OrchestratorService:
             await _ensure_session(runner, f"orch_{session_id}", user_id, session_id)
             interrupts = await self._drive(
                 runner, session_id, user_id, plan, name_to_step, new_message)
-            stuck = [s for s in ready
-                     if (st := plan.step(s)) and st.status == Status.PENDING and not unmet(st)]
-            if stuck:
-                # A ready step still pending after its own rebuild pass won't make
-                # progress on another — stop rather than spin.
-                logger.warning("[worky] 9b. ready spawned step(s) still pending after a "
-                               "continuation pass — stopping session=%s %s", session_id,
-                               [s[:12] for s in stuck])
+            if spawned & {s.id for s in plan.steps if s.status == Status.PENDING}:
+                # The pass that was supposed to run them left them pending —
+                # running again would only repeat itself.
+                logger.warning("[worky] 9b. spawned step(s) still pending after a "
+                               "continuation pass — stopping session=%s", session_id)
                 return interrupts
+        return interrupts
 
     async def _drive(self, runner, session_id, user_id, plan, name_to_step, new_message):
         """Run the workflow, project step statuses, and capture every
