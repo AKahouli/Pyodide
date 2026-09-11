@@ -1,9 +1,11 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, Optional } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { ConfigService } from '@nestjs/config';
 import { Model, Types } from 'mongoose';
 import { UserService } from '@modules/user/user.service';
 import { EmailService } from '@modules/email';
+import { EmailTemplateRenderer } from '@modules/email/email-template-renderer.service';
+import { EmailTemplate } from '@modules/email/email-template.constants';
 import { NotificationsService } from '@modules/notifications/notifications.service';
 import { NotificationType } from '@modules/notifications/schemas/notification.schema';
 import {
@@ -22,7 +24,7 @@ import {
 } from '../schemas/conversation-v2-session.schema';
 import type { DeployedAppSummary } from './conversation-v2-session.service';
 import { ConversationV2ShareService } from './conversation-v2-share.service';
-import { buildAppShareInviteEmail } from '../templates/app-share-invite.email';
+import { AppDataClientService } from '@modules/app-data/services/app-data-client.service';
 
 export interface ShareAppsBatchResult {
   shared: Array<{ shareId: string; recipientEmail: string }>;
@@ -57,8 +59,10 @@ export class ConversationV2AppShareService {
     private readonly users: UserService,
     private readonly email: EmailService,
     private readonly notifications: NotificationsService,
+    private readonly emailRenderer: EmailTemplateRenderer,
     private readonly config: ConfigService,
     private readonly shareTokens: ConversationV2ShareService,
+    @Optional() private readonly appDataClient?: AppDataClientService,
   ) {}
 
   async shareByEmails(params: {
@@ -274,6 +278,24 @@ export class ConversationV2AppShareService {
       inviteConsumedAt: null as Date | null,
     };
 
+    let inviteToken = token;
+    if (this.appDataClient?.isEnabled()) {
+      try {
+        const app = await this.appDataClient.getAppByWorkspace(params.sessionId);
+        if (app) {
+          const ttlDays = this.config.get<number>('conversationV2.appShareInviteTtlDays', 7);
+          const remote = await this.appDataClient.createInvite(app.id, email, ttlDays);
+          inviteToken = remote.token;
+        }
+      } catch (err) {
+        this.logger.warn(
+          `Failed to create invite in microservice for session=${params.sessionId}: ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        );
+      }
+    }
+
     const recipient = await this.users.findByEmail(email);
     const share = recipient
       ? await this.upsertKnownRecipientShare(params, recipient._id, email, inviteFields)
@@ -284,7 +306,7 @@ export class ConversationV2AppShareService {
       title: params.title,
       deployedUrl: params.deployedUrl,
       sessionId: params.sessionId,
-      inviteToken: token,
+      inviteToken,
     });
 
     if (recipient) {
@@ -426,11 +448,16 @@ export class ConversationV2AppShareService {
   }): Promise<void> {
     const registerUrl = this.buildRegisterInviteUrl(params.deployedUrl, params.inviteToken);
     const inviteTtlDays = this.config.get<number>('conversationV2.appShareInviteTtlDays', 7);
-    const { subject, html, text, attachments } = buildAppShareInviteEmail({
-      appTitle: params.title,
-      registerUrl,
-      inviteTtlDays,
-    });
+    const ttl = Number.isFinite(inviteTtlDays) && inviteTtlDays >= 1 ? inviteTtlDays : 7;
+    const { subject, html, text, attachments } = await this.emailRenderer.render(
+      EmailTemplate.APP_SHARE_INVITE,
+      {
+        appTitle: params.title || 'An app',
+        registerUrl,
+        inviteTtlDays: String(ttl),
+        inviteTtlDaysSuffix: ttl === 1 ? '' : 's',
+      },
+    );
 
     const result = await this.email.send({ to: params.to, subject, html, text, attachments });
     if (!result.success) {

@@ -27,23 +27,67 @@
       }
       document.getElementById('pv').src = src;
 
+      // When the YellowStorm tab is open, relay App Data requests through
+      // BroadcastChannel so BrowserRuntimeHost injects the owner ticket.
+      var proxyChannel = null;
+      try { proxyChannel = new BroadcastChannel('ym-app-data-proxy'); } catch (e) {}
+
+      var pending = {};
+      var pxId = 0;
+
+      function isAppDataUrl(url) {
+        try {
+          var p = new URL(url, window.location.href);
+          return p.pathname.indexOf('/app-data/public/') !== -1 || p.pathname.indexOf('/v1/apps/') === 0;
+        } catch (e) { return false; }
+      }
+
+      // Receive responses from BroadcastChannel and forward to the iframe.
+      if (proxyChannel) {
+        proxyChannel.onmessage = function (e) {
+          if (!e.data || e.data.type !== 'ym-app-data-response') return;
+          var rec = pending[e.data.id];
+          if (!rec) return;
+          delete pending[e.data.id];
+          clearTimeout(rec.tm);
+          rec.resolve(e.data);
+        };
+      }
+
       window.addEventListener('message', function (e) {
         if (!e.data || e.data.type !== 'ym-app-data-fetch') return;
         var d = e.data;
         var s = e.source;
         if (!s) return;
         var url = typeof d.url === 'string' ? d.url : '';
-        try {
-          var parsedUrl = new URL(url, window.location.href);
-          // Accept both the legacy gateway shape and the direct app-data
-          // microservice data plane.
-          var isAppDataUrl =
-            parsedUrl.pathname.indexOf('/app-data/public/') !== -1 ||
-            parsedUrl.pathname.indexOf('/v1/apps/') === 0;
-          if (!isAppDataUrl) return;
-        } catch (err) {
+        if (!isAppDataUrl(url)) return;
+
+        // Try BroadcastChannel relay (owner ticket injected by YellowStorm tab).
+        if (proxyChannel) {
+          var id = 'pxy-' + (++pxId) + '-' + Date.now();
+          var tm = setTimeout(function () {
+            delete pending[id];
+            // Fallback: direct fetch without auth.
+            directFetch(d, s, e.origin);
+          }, 8000);
+          pending[id] = { resolve: function (msg) { s.postMessage(msg, e.origin && e.origin !== 'null' ? e.origin : '*'); }, tm: tm };
+          proxyChannel.postMessage({
+            type: 'ym-app-data-fetch',
+            id: id,
+            url: url,
+            method: d.method || 'GET',
+            headers: d.headers || undefined,
+            body: d.body || undefined,
+          });
           return;
         }
+
+        // Fallback: direct fetch (no auth — preview without YellowStorm tab).
+        directFetch(d, s, e.origin);
+      });
+
+      function directFetch(d, s, origin) {
+        var url = typeof d.url === 'string' ? d.url : '';
         fetch(url, {
           method: d.method || 'GET',
           headers: d.headers || undefined,
@@ -55,17 +99,17 @@
               r.headers.forEach(function (v, k) { h[k] = v; });
               s.postMessage(
                 { type: 'ym-app-data-response', id: d.id, status: r.status, headers: h, body: b },
-                e.origin && e.origin !== 'null' ? e.origin : '*',
+                origin && origin !== 'null' ? origin : '*',
               );
             });
           })
           .catch(function (err) {
             s.postMessage(
               { type: 'ym-app-data-response', id: d.id, error: err.message },
-              e.origin && e.origin !== 'null' ? e.origin : '*',
+              origin && origin !== 'null' ? origin : '*',
             );
           });
-      });
+      }
 
       document.getElementById('pv').addEventListener('load', function () {
         try {

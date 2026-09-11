@@ -301,6 +301,20 @@ export class AppDataClientService {
     return res.body;
   }
 
+  /** Create a register-invite in the microservice. Returns raw token + expiry. */
+  async createInvite(
+    appDataId: string,
+    email: string,
+    ttlDays = 7,
+  ): Promise<{ token: string; expiresAt: string }> {
+    const res = await this.request<{ token: string; expiresAt: string }>(
+      'POST',
+      `/v1/internal/apps/${encodeURIComponent(appDataId)}/invites`,
+      { body: { email, ttlDays } },
+    );
+    return res.body;
+  }
+
   /**
    * Raw passthrough for proxy controllers. Returns the upstream status and
    * parsed body verbatim for successful responses. For non-2xx responses,

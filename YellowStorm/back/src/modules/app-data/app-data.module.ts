@@ -108,13 +108,14 @@ const REMOTE_PROVIDERS = [
   controllers: APP_DATA_USE_REMOTE ? REMOTE_CONTROLLERS : LOCAL_CONTROLLERS,
   providers: APP_DATA_USE_REMOTE ? REMOTE_PROVIDERS : LOCAL_PROVIDERS,
   exports: APP_DATA_USE_REMOTE
-    ? [AppDataDeploymentService, AppDataReleaseBindingService, AppDataMcpDispatcherService]
+    ? [AppDataDeploymentService, AppDataReleaseBindingService, AppDataMcpDispatcherService, AppDataClientService]
     : [
         AppDataCatalogService,
         AppDataDeploymentService,
         AppDataReleaseBindingService,
         AppDataProvisioningService,
         AppDataMcpDispatcherService,
+        AppDataClientService,
       ],
 })
 export class AppDataModule {}

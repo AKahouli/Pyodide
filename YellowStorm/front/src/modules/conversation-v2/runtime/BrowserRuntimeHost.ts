@@ -36,7 +36,7 @@ let appDataFetchProxyInstalled = false;
  * one fails with 403 "Token binding mismatch"). Registered by the active
  * host (start()); the module-level relay stays install-once.
  */
-type AppDataTicketFetcher = (appDataId: string, force?: boolean) => Promise<string | null>;
+type AppDataTicketFetcher = (appDataId: string, force?: boolean, env?: string) => Promise<string | null>;
 let appDataTicketFetcher: AppDataTicketFetcher | null = null;
 
 export function setAppDataTicketFetcher(fetcher: AppDataTicketFetcher | null): void {
@@ -108,12 +108,14 @@ function installAppDataFetchProxyOnce(): void {
 
     try {
       const appDataId = appDataIdFromUrl(url);
+      const envMatch = url.match(/\/v1\/apps\/[^/]+\/(dev|prod)\//);
+      const urlEnv = envMatch?.[1] ?? 'dev';
       let ticket =
-        appDataId && appDataTicketFetcher ? await appDataTicketFetcher(appDataId) : null;
+        appDataId && appDataTicketFetcher ? await appDataTicketFetcher(appDataId, false, urlEnv) : null;
       let res = await attempt(ticket);
       if (res.status === 401 && appDataId && appDataTicketFetcher) {
         // Ticket expired/rotated — force-refresh once and retry.
-        const fresh = await appDataTicketFetcher(appDataId, true);
+        const fresh = await appDataTicketFetcher(appDataId, true, urlEnv);
         if (fresh) {
           ticket = fresh;
           res = await attempt(fresh);
@@ -189,7 +191,7 @@ export class BrowserRuntimeHost {
   private sessionId: string | null = null;
   private workspaceId: string | null = null;
   private ticket: RuntimeTicketResponse | null = null;
-  private appDataTickets = new Map<string, { ticket: string; at: number }>();
+  private appDataTickets = new Map<string, { ticket: string; at: number; env: string }>();
   private revisionId = 'rev_0';
   private _status: RuntimeHostStatus = 'idle';
   private _error: string | null = null;
@@ -218,19 +220,24 @@ export class BrowserRuntimeHost {
    * Owner data ticket for the relay (`Authorization: Bearer <ticket>` on
    * preview App Data calls), keyed by appDataId. Acquired from the backend
    * (owner-guarded) and cached; force-refreshed once when the microservice
-   * returns 401.
+   * returns 401. `expectedEnv` validates the cached ticket's environment;
+   * a mismatch discards the stale entry and re-fetches.
    */
-  private async acquireAppDataTicket(appDataId: string, force = false): Promise<string | null> {
+  private async acquireAppDataTicket(
+    appDataId: string,
+    force = false,
+    expectedEnv: string = 'dev',
+  ): Promise<string | null> {
     const TICKET_TTL_MS = 10 * 60_000;
     const cached = this.appDataTickets.get(appDataId);
-    if (!force && cached && Date.now() - cached.at < TICKET_TTL_MS) {
+    if (!force && cached && cached.env === expectedEnv && Date.now() - cached.at < TICKET_TTL_MS) {
       return cached.ticket;
     }
     if (!this.sessionId) return cached?.ticket ?? null;
     try {
       const res = await conversationV2Api.getAppDataTicket(this.sessionId);
-      this.appDataTickets.set(res.appDataId, { ticket: res.ticket, at: Date.now() });
-      console.log(LOG, 'app-data ticket acquired', { appDataId: res.appDataId });
+      this.appDataTickets.set(res.appDataId, { ticket: res.ticket, at: Date.now(), env: expectedEnv });
+      console.log(LOG, 'app-data ticket acquired', { appDataId: res.appDataId, env: expectedEnv });
     } catch (err) {
       // Not provisioned yet, backend hiccup, or local mode — the relay then
       // sends the call without Authorization, which the microservice rejects.
@@ -295,7 +302,7 @@ export class BrowserRuntimeHost {
     this.legacyMode = false;
     this.setupAppDataFetchProxy();
     // Owner data tickets for relayed preview App Data calls (refreshed on 401).
-    setAppDataTicketFetcher((appDataId, force) => this.acquireAppDataTicket(appDataId, force));
+    setAppDataTicketFetcher((appDataId, force, env) => this.acquireAppDataTicket(appDataId, force, env));
 
     const cephPath = existingCephPath ?? null;
     const filesTree = (existingFilesTree as FilesTreeNode | null) ?? null;
@@ -320,6 +327,16 @@ export class BrowserRuntimeHost {
       // 2. Connect socket — ticket string is handed to the client then discarded from React surface
       await this.client.connect(this.ticket.ticket);
       if (this._destroyed) return;
+
+      // 2b. Proactively acquire the owner data ticket so the relay has it
+      //     before the preview makes its first app-data call.
+      if (this.ticket.appDataRuntimeEnv) {
+        void this.acquireAppDataTicket(
+          this.ticket.appDataRuntimeEnv.appDataId,
+          false,
+          this.ticket.appDataRuntimeEnv.environment,
+        );
+      }
 
       // 3. Wire event handlers
       this.wireClientEvents();
@@ -858,6 +875,7 @@ export class BrowserRuntimeHost {
     try {
       this.setStatus('connecting');
       this.ticket = await conversationV2Api.createRuntimeTicket(this.sessionId);
+      this.appDataTickets.clear();
       await this.client.connect(this.ticket.ticket);
       if (this._destroyed) return;
 
