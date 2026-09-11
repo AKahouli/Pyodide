@@ -489,8 +489,14 @@ class CompanionAiServicer(pb_grpc.CompanionAiServicer):
         else:
             wait = await self._rm.claim_mail_wait(request.token, reply_from=request.reply_from)
         if wait is None:
-            logger.info("[worky] DeliverMailReply ignored — token/chat unknown, wrong sender, "
-                        "already delivered, expired or cancelled")
+            # Include the token/chat + sender so a real reply that fails to route
+            # is distinguishable from routine catch-up noise (the poller re-offers
+            # every token it finds in the inbox, and most belong to other/old
+            # sessions or are already delivered).
+            ref = f"chat={request.chat_id}" if request.chat_id else f"token={request.token}"
+            logger.info("[worky] DeliverMailReply ignored (%s from=%r) — unknown, wrong "
+                        "sender, not-yet-parked, already delivered, expired or cancelled",
+                        ref, request.reply_from or "?")
             return pb.DeliverMailReplyResponse(delivered=False)
 
         session_id, user_id = wait["session_id"], wait["user_id"]
