@@ -103,6 +103,7 @@ export function ApplicationComponentView({
   const sessionId = useConversationV2Store((s) => s.sessionId);
   const appViewMode = useConversationV2Store((s) => s.appViewMode);
   const deployedUrl = useConversationV2Store((s) => s.deployedUrl);
+  const ownerInviteToken = useConversationV2Store((s) => s.ownerInviteToken);
   const workspaceRevisionId = useConversationV2Store(
     (s) => s.previewRevisionId ?? s.applicationComponent?.workspaceRevisionId,
   );
@@ -129,10 +130,17 @@ export function ApplicationComponentView({
     }
   }, [deployedUrl]);
 
+  const deployedSrc = useMemo(() => {
+    if (!deployedUrl) return '';
+    if (!ownerInviteToken) return deployedUrl;
+    const base = deployedUrl.replace(/\/?$/, '/');
+    return `${base}register?invite=${encodeURIComponent(ownerInviteToken)}`;
+  }, [deployedUrl, ownerInviteToken]);
+
   const handleOpenDeployed = useCallback(() => {
-    if (!deployedUrl) return;
-    window.open(deployedUrl, '_blank', 'noopener,noreferrer');
-  }, [deployedUrl]);
+    if (!deployedSrc) return;
+    window.open(deployedSrc, '_blank', 'noopener,noreferrer');
+  }, [deployedSrc]);
 
   const badgeKey = statusBadgeKey(status);
   const badgeClass = statusBadgeClass(status);
@@ -471,7 +479,7 @@ export function ApplicationComponentView({
                 */}
                 <iframe
                   title={title || t('nodepod.previewTitle')}
-                  src={deployedUrl}
+                  src={deployedSrc}
                   className='absolute inset-0 size-full border-0 bg-white'
                   referrerPolicy='strict-origin-when-cross-origin'
                   allow='accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share'

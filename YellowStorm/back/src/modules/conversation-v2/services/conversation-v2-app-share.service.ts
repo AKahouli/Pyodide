@@ -254,6 +254,102 @@ export class ConversationV2AppShareService {
       .exec();
   }
 
+  /**
+   * Create an invite for the session owner so their email is pre-filled on
+   * the deployed app's Register page. Unlike `shareOne`, this does NOT send
+   * an email or create a conversation share record.
+   *
+   * Returns the plain-text invite token, or null when the owner lookup or
+   * invite creation fails (the deploy still succeeds — auto-fill is best-effort).
+   */
+  async createOwnerInvite(params: {
+    ownerId: string;
+    sessionId: string;
+    title: string;
+    deployedUrl: string;
+  }): Promise<string | null> {
+    this.logger.debug(
+      `createOwnerInvite: ownerId=${params.ownerId} sessionId=${params.sessionId}`,
+    );
+    const owner = await this.users.findById(params.ownerId);
+    if (!owner?.email) {
+      this.logger.warn(
+        `createOwnerInvite: owner not found or missing email for ownerId=${params.ownerId}`,
+      );
+      return null;
+    }
+
+    const email = owner.email.trim().toLowerCase();
+    const { token, hash } = this.shareTokens.issue();
+    const inviteFields = {
+      inviteTokenHash: hash,
+      inviteExpiresAt: this.buildInviteExpiry(),
+      inviteConsumedAt: null as Date | null,
+    };
+
+    let inviteToken = token;
+
+    if (this.appDataClient?.isEnabled()) {
+      try {
+        const session = await this.sessionModel.findById(params.sessionId).lean().exec();
+        const workspaceId = (session as { aiSessionId?: string } | null)?.aiSessionId;
+        this.logger.debug(
+          `createOwnerInvite: workspaceId=${workspaceId ?? 'null'} for session=${params.sessionId}`,
+        );
+        if (workspaceId) {
+          const app = await this.appDataClient.getAppByWorkspace(workspaceId);
+          if (app) {
+            const ttlDays = this.config.get<number>('conversationV2.appShareInviteTtlDays', 7);
+            const remote = await this.appDataClient.createInvite(app.id, email, ttlDays);
+            inviteToken = remote.token;
+            this.logger.debug(
+              `createOwnerInvite: remote invite created for app=${app.id} email=${email}`,
+            );
+          } else {
+            this.logger.warn(
+              `createOwnerInvite: app not found for workspaceId=${workspaceId}`,
+            );
+          }
+        }
+      } catch (err) {
+        this.logger.warn(
+          `Owner auto-invite: microservice creation failed for session=${params.sessionId}: ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        );
+      }
+    } else {
+      this.logger.debug('createOwnerInvite: appDataClient not enabled, using local token');
+    }
+
+    // Store a local invite record so resolveInviteToken can find it.
+    await this.model
+      .findOneAndUpdate(
+        {
+          sessionId: new Types.ObjectId(params.sessionId),
+          recipientEmail: email,
+        },
+        {
+          $set: {
+            ownerId: new Types.ObjectId(params.ownerId),
+            title: params.title,
+            deployedUrl: params.deployedUrl,
+            includeConversation: false,
+            recipientEmail: email,
+            ...inviteFields,
+          },
+          $setOnInsert: {
+            sessionId: new Types.ObjectId(params.sessionId),
+          },
+        },
+        { upsert: true, new: true },
+      )
+      .exec();
+
+    this.logger.debug(`createOwnerInvite: returning token for email=${email}`);
+    return inviteToken;
+  }
+
   private async shareOne(params: {
     ownerId: string;
     sessionId: string;

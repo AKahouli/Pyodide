@@ -6,6 +6,7 @@ import {
   Get,
   HttpCode,
   HttpStatus,
+  Logger,
   NotFoundException,
   NotImplementedException,
   Param,
@@ -74,6 +75,8 @@ interface ConversationV2Request {
 @ApiBearerAuth()
 @Controller('conversation-v2')
 export class ConversationV2Controller {
+  private readonly logger = new Logger(ConversationV2Controller.name);
+
   constructor(
     private readonly grpcClient: ConversationV2GrpcClientService,
     private readonly sessions: ConversationV2SessionService,
@@ -482,6 +485,7 @@ export class ConversationV2Controller {
     deployStatus: string;
     deployedUrl: string | null;
     lastDeployedAt: string | null;
+    ownerInviteToken: string | null;
   }> {
     const pointer = session.pointer;
     const ownerId = session.ownerId;
@@ -528,10 +532,24 @@ export class ConversationV2Controller {
       deployedUrl,
       lastDeployedAt,
     });
+
+    let ownerInviteToken: string | null = null;
+    try {
+      ownerInviteToken = await this.appShares.createOwnerInvite({
+        ownerId,
+        sessionId: id,
+        title: deployedAppTitle || 'Untitled app',
+        deployedUrl,
+      });
+    } catch (err) {
+      this.logger.warn(`Owner auto-invite failed for session ${id}: ${err}`);
+    }
+
     return {
       deployStatus: 'deployed',
       deployedUrl,
       lastDeployedAt: lastDeployedAt.toISOString(),
+      ownerInviteToken,
     };
   }
 
