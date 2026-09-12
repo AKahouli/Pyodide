@@ -15,17 +15,3 @@ class WebSearchCandidate:
     connector_slug: str = ""
     action_key: str = ""
     provider_metadata: dict[str, Any] = field(default_factory=dict)
-
-
-@dataclass
-class WebPageContent:
-    url: str
-    title: Optional[str]
-    content: str
-    content_format: Literal["markdown", "text", "html_extracted", "unknown"] = "unknown"
-
-
-@dataclass
-class WebConnectorCapabilities:
-    search_actions: list[str]
-    fetch_actions: list[str]
