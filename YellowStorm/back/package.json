@@ -26,6 +26,7 @@
     "db:migrate": "drizzle-kit migrate --config=drizzle.config.ts",
     "db:studio": "drizzle-kit studio",
     "backfill:agents": "ts-node scripts/backfill-agents-to-postgres.ts",
+    "backfill:usage": "ts-node scripts/backfill-usage-to-postgres.ts",
     "test:migration:conversations": "ts-node scripts/test-conversation-postgres-migration.ts",
     "test:store:conversations": "ts-node -r tsconfig-paths/register scripts/test-conversation-postgres-store.ts",
     "backfill:humain-embeddings": "ts-node scripts/backfill-humain-role-embeddings.ts",

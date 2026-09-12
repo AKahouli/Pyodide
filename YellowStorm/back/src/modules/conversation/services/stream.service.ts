@@ -27,7 +27,7 @@ import {
 } from '../utils/component-mapper';
 import { GrpcHealthStatus } from '../interfaces/stream.interface';
 import { LoggerService, LogOptions } from '../../logger';
-import { ServiceUnavailableException, ConflictException } from '../../exceptions';
+import { ServiceUnavailableException, ConflictException, BadRequestException } from '../../exceptions';
 import { AppException } from '../../exceptions/exceptions/base.exception';
 import { ErrorCode } from '../../exceptions/constants/error-codes';
 import { UsageService } from '../../usage';
@@ -39,6 +39,7 @@ import type { RunCodeAttachmentSource } from '../../workspace/interfaces/run-cod
 import { DocumentStatus } from '../../workspace/schemas/workspace-document.schema';
 import { AgentService } from '../../agent/agent.service';
 import { IGrpcAgent, IGrpcCompaction, IGrpcWorkspaceContext } from '../../agent/interfaces/agent.interface';
+import { TeamService } from '../../team/team.service';
 import { ModelsService } from '../../models/models.service';
 import { SkillService } from '../../skill/skill.service';
 import {
@@ -75,6 +76,7 @@ export interface StreamRequest {
   semanticModelId?: string;
   reasoningEffort?: string;
   agentIds?: string[];
+  teamId?: string;
   connectorRepo?: {
     connectorId: string;
     connectorName: string;
@@ -158,6 +160,7 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
     private readonly semanticModelService: SemanticModelService,
     @Inject(CONVERSATION_EXECUTION_STORE)
     private readonly executionStore: ConversationExecutionStore,
+    private readonly teamService?: TeamService,
   ) {
     this.logger.setContext('StreamService');
     this.fleetAdmissionEnabled = this.configService.get<boolean>(
@@ -891,6 +894,7 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
         modelId: request.modelId,
         semanticModelId: request.semanticModelId,
         agentIds: request.agentIds ?? [],
+        teamId: request.teamId,
         skillIds: request.skillIds ?? [],
         connectorRepo: request.connectorRepo,
         clientContext: request.clientContext,
@@ -1077,12 +1081,22 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
       }
       : undefined;
     beginBackendPreAdkStage('workspaceAgentResolutionMs');
+    const teamDefinition = request.teamId
+      ? await this.teamService!.resolveExecutionDefinition(userId, request.teamId)
+      : undefined;
     const semanticSchemaName = request.semanticModelId
       ? await this.semanticModelService.resolveSearchSchema(userId, request.semanticModelId)
       : undefined;
     const [workspaceContexts, agents] = await Promise.all([
       request.semanticModelId ? Promise.resolve([]) : this.buildWorkspaceContexts(conversationId, logOpts, conversation),
-      governanceOverride
+      teamDefinition
+        ? this.agentService.buildGrpcAgentsForPlaybook(
+          userId,
+          teamDefinition.nodes.map((node) => node.agentId),
+          request.modelId,
+          sessionId,
+        )
+        : governanceOverride
         ? this.agentService.buildGovernedAgentsForStream(userId, requestedGovernedAgentIds ?? [], governanceOverride.workspaceIds)
         : this.agentService.buildAgentsForStream(
           userId,
@@ -1102,6 +1116,12 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
           request.webConnectorAccessEnabled,
         ),
     ]);
+    if (teamDefinition) {
+      const topologyIds = new Set(teamDefinition.nodes.map((node) => node.agentId));
+      if (agents.length !== topologyIds.size || agents.some((agent) => !topologyIds.has(agent.id))) {
+        throw new BadRequestException(ErrorCode.TEAM_NOT_EXECUTABLE, 'Team agents no longer match its hierarchy.');
+      }
+    }
     endBackendPreAdkStage('workspaceAgentResolutionMs');
     if (conversation.runtimePurpose === PLATFORM_COPILOT) {
       const pinnedAgentId = conversation.pinnedAgentId?.toString();
@@ -1147,6 +1167,7 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
       previousAttachedFiles,
       skills,
       correctionReplayContext,
+      teamDefinition,
     });
   }
 

@@ -296,6 +296,79 @@ export const messages = conversationSchema.table(
   ],
 );
 
+export const usageWindows = conversationSchema.table(
+  'usage_windows',
+  {
+    id: char('id', { length: 24 }).primaryKey(),
+    userId: varchar('user_id', { length: 100 }).notNull(),
+    windowStart: timestamp('window_start', { withTimezone: true }).notNull(),
+    windowEnd: timestamp('window_end', { withTimezone: true }).notNull(),
+    windowHours: integer('window_hours').notNull(),
+    inputTokens: integer('input_tokens').notNull().default(0),
+    outputTokens: integer('output_tokens').notNull().default(0),
+    totalTokens: integer('total_tokens').notNull().default(0),
+    requestCount: integer('request_count').notNull().default(0),
+    planId: varchar('plan_id', { length: 100 }),
+    planSlug: varchar('plan_slug', { length: 50 }),
+    tokenLimitAtCreation: integer('token_limit_at_creation'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    check('usage_windows_id_object_id', objectIdCheck(t.id)),
+    check('usage_windows_window_hours_positive', sql`${t.windowHours} > 0`),
+    check(
+      'usage_windows_counts_non_negative',
+      sql`${t.inputTokens} >= 0 AND ${t.outputTokens} >= 0 AND ${t.totalTokens} >= 0 AND ${t.requestCount} >= 0`,
+    ),
+    check('usage_windows_valid_range', sql`${t.windowEnd} > ${t.windowStart}`),
+    uniqueIndex('uq_usage_windows_user_window').on(t.userId, t.windowStart, t.windowEnd),
+    index('idx_usage_windows_user_end').on(t.userId, sql`${t.windowEnd} DESC`),
+    index('idx_usage_windows_start_plan').on(t.windowStart, t.planSlug),
+  ],
+);
+
+export const usageLogs = conversationSchema.table(
+  'usage_logs',
+  {
+    id: char('id', { length: 24 }).primaryKey(),
+    userId: varchar('user_id', { length: 100 }).notNull(),
+    usageType: varchar('usage_type', { length: 20 }).notNull().default('chat'),
+    modelName: varchar('model_name', { length: 100 }),
+    inputTokens: integer('input_tokens').notNull(),
+    outputTokens: integer('output_tokens').notNull(),
+    totalTokens: integer('total_tokens').notNull(),
+    durationMs: integer('duration_ms'),
+    conversationId: varchar('conversation_id', { length: 100 }),
+    endpoint: varchar('endpoint', { length: 200 }),
+    ipAddress: varchar('ip_address', { length: 45 }),
+    userAgent: varchar('user_agent', { length: 500 }),
+    success: boolean('success').notNull().default(true),
+    errorCode: varchar('error_code', { length: 50 }),
+    metadata: jsonb('metadata').notNull().default(sql`'{}'::jsonb`),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    check('usage_logs_id_object_id', objectIdCheck(t.id)),
+    check(
+      'usage_logs_type',
+      sql`${t.usageType} IN ('chat', 'completion', 'embedding', 'playbook', 'other')`,
+    ),
+    check(
+      'usage_logs_metrics_non_negative',
+      sql`${t.inputTokens} >= 0 AND ${t.outputTokens} >= 0 AND ${t.totalTokens} >= 0 AND COALESCE(${t.durationMs}, 0) >= 0`,
+    ),
+    index('idx_usage_logs_user_created').on(t.userId, sql`${t.createdAt} DESC`),
+    index('idx_usage_logs_type_model_created').on(
+      t.usageType,
+      t.modelName,
+      sql`${t.createdAt} DESC`,
+    ),
+    index('idx_usage_logs_created').on(sql`${t.createdAt} DESC`),
+  ],
+);
+
 // Shared standard-run admission state (WP07): one row per admitted execution.
 // The partial unique index on (conversation_id) WHERE status='running' makes
 // same-conversation exclusivity enforceable by the database itself, across

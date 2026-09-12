@@ -338,6 +338,7 @@ export enum ErrorCode {
   TEAM_SHARE_USER_NOT_FOUND = 'ERR_3311',
   TEAM_GENERATE_FAILED = 'ERR_3312',
   TEAM_AUTO_BUILDER_NOT_CONFIGURED = 'ERR_3313',
+  TEAM_NOT_EXECUTABLE = 'ERR_3314',
 
   // User Group errors (3350-3399)
   USER_GROUP_NOT_FOUND = 'ERR_3350',
@@ -847,4 +848,5 @@ export const ErrorMessages: Record<ErrorCode, string> = {
   [ErrorCode.TEAM_GENERATE_FAILED]: 'Failed to generate team hierarchy.',
   [ErrorCode.TEAM_AUTO_BUILDER_NOT_CONFIGURED]:
     'Team auto-builder is not configured. Please contact an administrator.',
+  [ErrorCode.TEAM_NOT_EXECUTABLE]: 'This team is not executable. Repair its hierarchy and try again.',
 };

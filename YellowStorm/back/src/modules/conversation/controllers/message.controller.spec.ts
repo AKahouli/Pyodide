@@ -363,6 +363,36 @@ describe('MessageController.sendMessage sticky routing', () => {
     );
   });
 
+  it('preserves one team without expanding or reusing sticky agents', async () => {
+    conversationService.getConversationDocument.mockResolvedValue({
+      isFirstMessage: false,
+      taggedAgentIds: [new Types.ObjectId(stickyAgentId)],
+    });
+    const teamId = new Types.ObjectId().toString();
+
+    await controller.sendMessage(user, conversationId, { content: '@Team', teamIds: [teamId] } as any);
+
+    expect(teamService.resolveAgentIds).not.toHaveBeenCalled();
+    expect(conversationService.replaceTaggedAgentIds).not.toHaveBeenCalled();
+    expect(streamService.startStream).toHaveBeenCalledWith(
+      userId.toString(), conversationId, expect.any(String),
+      expect.objectContaining({ teamId, agentIds: [] }),
+      'req-1', undefined, 'Ada Lovelace', undefined, expect.any(Object),
+    );
+    expect(messageService.createUserMessage).toHaveBeenCalledWith(expect.objectContaining({
+      replayContext: expect.objectContaining({ teamId, agentIds: [] }),
+    }));
+  });
+
+  it.each([
+    { teamIds: ['team-1', 'team-2'] },
+    { teamIds: ['team-1'], agentIds: ['agent-1'] },
+  ])('rejects mixed or multiple team routing', async (routing) => {
+    conversationService.getConversationDocument.mockResolvedValue({ isFirstMessage: false, taggedAgentIds: [] });
+    await expect(controller.sendMessage(user, conversationId, { content: 'invalid', ...routing } as any)).rejects.toThrow();
+    expect(messageService.createUserMessage).not.toHaveBeenCalled();
+  });
+
   it('member-only turn skips AI and does not reuse sticky on the message', async () => {
     conversationService.getConversationDocument.mockResolvedValue({
       isFirstMessage: false,

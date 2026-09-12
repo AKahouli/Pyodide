@@ -17,6 +17,8 @@ import {
   ConnectorDocument,
   ConnectorAction,
   ConnectorDynamicHeader,
+  ConnectorActionResultKind,
+  ConnectorCitationMode,
   DynamicHeaderSource,
 } from './schemas/connector.schema';
 import { ConnectorCategory } from './schemas/connector-category.schema';
@@ -190,6 +192,9 @@ export class ConnectorService {
           label: action.label || action.key,
           description: action.description || '',
           parameter_schema_json: JSON.stringify(action.parameterSchema || {}),
+          result_kind: action.resultKind || ConnectorActionResultKind.GENERIC,
+          citation_mode: action.citationMode || ConnectorCitationMode.NONE,
+          result_mapping_json: JSON.stringify(action.resultMapping || {}),
         }));
       if (actions.length === 0) continue;
 
@@ -707,6 +712,9 @@ export class ConnectorService {
     supportsBatch?: boolean;
     supportsIteration?: boolean;
     isEnabled?: boolean;
+    resultKind?: ConnectorActionResultKind;
+    citationMode?: ConnectorCitationMode;
+    resultMapping?: Record<string, unknown>;
   }>): ConnectorAction[] {
     return (actions ?? []).map((action) => {
       // Replace {variable_name} with [variable_name] to prevent Google ADK template substitution
@@ -724,6 +732,9 @@ export class ConnectorService {
         supportsBatch: action.supportsBatch ?? false,
         supportsIteration: action.supportsIteration ?? false,
         isEnabled: action.isEnabled ?? true,
+        resultKind: action.resultKind ?? ConnectorActionResultKind.GENERIC,
+        citationMode: action.citationMode ?? ConnectorCitationMode.NONE,
+        ...(action.resultMapping ? { resultMapping: action.resultMapping } : {}),
       };
     }) as ConnectorAction[];
   }
@@ -766,6 +777,9 @@ export class ConnectorService {
         supportsBatch: a.supportsBatch ?? false,
         supportsIteration: a.supportsIteration ?? false,
         isEnabled: a.isEnabled ?? true,
+        resultKind: a.resultKind ?? ConnectorActionResultKind.GENERIC,
+        citationMode: a.citationMode ?? ConnectorCitationMode.NONE,
+        ...(a.resultMapping ? { resultMapping: a.resultMapping } : {}),
       })),
       referencedSkillIds: (doc.referencedSkillIds ?? []).map((id: any) => id.toString()),
       isActive: doc.isActive,

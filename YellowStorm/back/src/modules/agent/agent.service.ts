@@ -841,7 +841,7 @@ export class AgentService {
         name: agent.name,
         description: agent.role || `you are the ${agent.name}`,
         prompt,
-        agent_type: agent.agentTypeName.toLowerCase(),
+        agent_type: agent.agentTypeSlug,
         save_memory: false,
         tools: (await this.buildToolsWithTokens(agentTools, userId)).concat(connectorToolDefs),
         skills: effectiveSkills.map((skill) => this.toGrpcSkill(skill)),
@@ -1092,7 +1092,7 @@ export class AgentService {
           name: agent.name,
           description: agent.role || `you are the ${agent.name}`,
           prompt,
-          agent_type: agent.agentTypeName.toLowerCase(),
+          agent_type: agent.agentTypeSlug,
           save_memory: false,
           tools: (await this.buildToolsWithTokens(agentTools, userId)).concat(connectorToolDefs),
           skills: effectiveSkills.map((skill) => this.toGrpcSkill(skill)),
@@ -1642,11 +1642,11 @@ export class AgentService {
 
   private toResponse(
     doc: Record<string, unknown>,
-    agentTypeDoc?: { id: string; name: string },
+    agentTypeDoc?: { id: string; name: string; slug: string },
   ): IAgentResponse {
     const d = doc as Record<string, unknown>;
     const populatedAgentType = d.agentType as Record<string, unknown> | undefined;
-    let agentTypeInfo: { id: string; name: string };
+    let agentTypeInfo: { id: string; name: string; slug: string };
 
     if (agentTypeDoc) {
       agentTypeInfo = agentTypeDoc;
@@ -1654,11 +1654,13 @@ export class AgentService {
       agentTypeInfo = {
         id: (populatedAgentType._id as { toString(): string }).toString(),
         name: (populatedAgentType.name as string) || '',
+        slug: (populatedAgentType.slug as string) || '',
       };
     } else {
       agentTypeInfo = {
         id: d.agentType ? (d.agentType as { toString(): string }).toString() : '',
         name: '',
+        slug: (d.agentTypeSlug as string) || '',
       };
     }
 

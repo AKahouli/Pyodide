@@ -440,8 +440,46 @@ Do not render charts for single values or non-numeric content.
         """
         return self.delegation_factory.make_delegate_function(agent_name, q, search_web)
 
+    async def _attach_required_temporary_child_tool(
+        self,
+        agent: Any,
+        agent_config: Dict[str, Any],
+        task_description: str,
+        expected_output: str = "",
+        image_input: Optional[List[Dict]] = None,
+        preserve_existing_tools: bool = False,
+    ) -> str:
+        if not should_enable_temporary_child_agent_tool(agent_config):
+            return task_description
+
+        agent.instruction = (
+            f"{agent.instruction}\n\n{TEMPORARY_CHILD_AGENT_PARENT_INSTRUCTION}"
+        )
+        temporary_child_tool = make_temporary_child_agent_tool(
+            self,
+            agent_config,
+            image_input=image_input,
+        )
+        existing_tools = agent.tools or [] if preserve_existing_tools else []
+        agent.tools = [*existing_tools, temporary_child_tool]
+        logger.info(
+            "[TEMP CHILD] Tool attached agent=%s session=%s",
+            agent_config.get("id") or agent_config.get("name"),
+            self.config.session_id,
+        )
+        required_child_result = await temporary_child_tool(
+            build_required_temporary_child_task(task_description),
+            expected_output,
+            bool(image_input),
+        )
+        return append_required_temporary_child_context(
+            task_description,
+            required_child_result,
+        )
+
     async def run_agent_team(self, user_prompt: str, manager_prompt: str,  session_id: str, manager_memory:bool,
-                             q: Optional[asyncio.Queue[dict]] = None, manager_temperature: float=None, image_input: Optional[List[Dict]] = None, original_agents: Optional[List] = None) -> None:
+                             q: Optional[asyncio.Queue[dict]] = None, manager_temperature: float=None, image_input: Optional[List[Dict]] = None, original_agents: Optional[List] = None,
+                             delegate_agent_ids: Optional[List[str]] = None, manager_agent_id: Optional[str] = None) -> None:
         """Run the agent team based on user prompt.
 
         Orchestrates the execution of the entire agent team to handle a user query.
@@ -508,15 +546,48 @@ Do not render charts for single values or non-numeric content.
 
             # Set image input on delegation factory so delegate functions can pass images to subagents
             self.delegation_factory.set_image_input(image_input)
+            self.current_queue = q
 
             # Now create tools AFTER setting citation manager
-            tools = self.agent_tools_manager.create_tools_from_all_agents(q, True)
+            tools = (
+                self.agent_tools_manager.create_tools_for_agent_ids(delegate_agent_ids, q, True)
+                if delegate_agent_ids is not None
+                else self.agent_tools_manager.create_tools_from_all_agents(q, True)
+            )
 
-            manager_agent = self.manager_factory.create_manager_agent(enriched_manager_prompt, tools,
-                                                                      self.delegation_factory, manager_temperature,
-                                                                      manager_specific_tools=manager_tools)
+            if manager_agent_id:
+                manager_config = self.agent_repository.get_agent_by_id(manager_agent_id)
+                if not manager_config:
+                    raise ValueError("Root manager configuration not found")
+                manager_name = manager_config.get("name", "manager_agent")
+                manager_agent, _ = await self.delegation_factory._create_agent_with_error_handling(
+                    manager_config,
+                    manager_name,
+                    self.agent_helper.normalize_agent_name(manager_name),
+                    "",
+                    True,
+                    self.citation_manager,
+                )
+                if manager_agent is None:
+                    raise ValueError("Root manager could not be created")
+                manager_agent.tools = [*(manager_agent.tools or []), *tools]
+                manager_agent.instruction = f"{manager_agent.instruction}\n\n{enriched_manager_prompt}"
+                user_prompt = await self._attach_required_temporary_child_tool(
+                    manager_agent,
+                    manager_config,
+                    user_prompt,
+                    image_input=image_input,
+                    preserve_existing_tools=True,
+                )
+            else:
+                manager_agent = self.manager_factory.create_manager_agent(
+                    enriched_manager_prompt,
+                    tools,
+                    self.delegation_factory,
+                    manager_temperature,
+                    manager_specific_tools=manager_tools,
+                )
             _mark_first_model_agent_ready()
-            self.current_queue = q
 
             # Session initialization (timings live in the structured
             # conversation_latency_diag.* logs, not ad hoc lines).
@@ -708,30 +779,12 @@ Do not render charts for single values or non-numeric content.
                 raise RuntimeError(f"Failed to create single agent: {agent_name}")
             _mark_first_model_agent_ready()
 
-            if should_enable_temporary_child_agent_tool(agent_config):
-                agent.instruction = (
-                    f"{agent.instruction}\n\n{TEMPORARY_CHILD_AGENT_PARENT_INSTRUCTION}"
-                )
-                temporary_child_tool = make_temporary_child_agent_tool(
-                    self,
-                    agent_config,
-                    image_input=image_input,
-                )
-                agent.tools = [temporary_child_tool]
-                logger.info(
-                    "[TEMP CHILD] Tool attached agent=%s session=%s",
-                    agent_config.get("id") or agent_config.get("name"),
-                    session_id,
-                )
-                required_child_result = await temporary_child_tool(
-                    build_required_temporary_child_task(user_prompt),
-                    "",
-                    bool(image_input),
-                )
-                user_prompt = append_required_temporary_child_context(
-                    user_prompt,
-                    required_child_result,
-                )
+            user_prompt = await self._attach_required_temporary_child_tool(
+                agent,
+                agent_config,
+                user_prompt,
+                image_input=image_input,
+            )
 
             # Persist the mono conversation so memory carries across turns, keyed
             # on the conversation's session_id.

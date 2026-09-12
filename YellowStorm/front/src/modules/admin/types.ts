@@ -1622,6 +1622,17 @@ export interface ConnectorActionResponse {
   supportsBatch: boolean;
   supportsIteration: boolean;
   isEnabled: boolean;
+  resultKind?: ConnectorActionResultKind;
+  citationMode?: ConnectorCitationMode;
+  resultMapping?: ConnectorResultMapping;
+}
+
+export type ConnectorActionResultKind = 'generic' | 'web_search' | 'web_fetch' | 'document_search' | 'file_read' | 'database_query';
+export type ConnectorCitationMode = 'none' | 'source_only' | 'text_fragment' | 'document_evidence';
+
+export interface ConnectorResultMapping {
+  itemsPath?: string;
+  fields?: Partial<Record<'title' | 'url' | 'snippet' | 'content' | 'publishedAt' | 'author' | 'prefix' | 'suffix', string[]>>;
 }
 
 export type ConnectorDynamicHeaderSource =
@@ -1702,6 +1713,9 @@ export interface CreateConnectorRequest {
     supportsBatch?: boolean;
     supportsIteration?: boolean;
     isEnabled?: boolean;
+    resultKind?: ConnectorActionResultKind;
+    citationMode?: ConnectorCitationMode;
+    resultMapping?: ConnectorResultMapping;
   }>;
   referencedSkillIds?: string[];
   isActive?: boolean;

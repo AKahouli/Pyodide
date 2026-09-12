@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { Bot, Check, ChevronDown, ChevronRight, Download, Eye, FileText, Loader2 } from 'lucide-react';
 import { AIMessageContent, type MarkdownHeadingInfo, type MessageContentPart } from '@/components/ai-elements/ai-message-content';
 import { useAgentStore } from '@/modules/agent/store';
+import type { Agent } from '@/modules/agent/types';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { cn } from '@/lib/utils';
 import { showError } from '@/lib/notifications';
@@ -257,9 +258,36 @@ function sameContentPart(previous: MessageContentPart, next: MessageContentPart)
   return keys.every((key) => Object.is(left[key], right[key]));
 }
 
+function resolvePersistedHierarchyNames(
+  component: MessageComponent,
+  agents: readonly Agent[],
+  delegationLabel: (name: string) => string,
+): MessageComponent {
+  if (component.type !== 'toolActivity') return component;
+  const data = component.data as ToolActivityData;
+  const actor = data.actorId && data.actorName === `agent_${data.actorId}`
+    ? agents.find((agent) => agent.id === data.actorId)
+    : undefined;
+  const delegatedId = data.toolName?.startsWith('delegate_to_agent_')
+    ? data.toolName.slice('delegate_to_agent_'.length)
+    : undefined;
+  const delegated = delegatedId ? agents.find((agent) => agent.id === delegatedId) : undefined;
+  if (!actor && !delegated) return component;
+  return {
+    ...component,
+    data: {
+      ...data,
+      ...(actor ? { actorName: actor.name } : {}),
+      ...(delegated ? { fallbackDisplayName: delegationLabel(delegated.name) } : {}),
+    },
+  };
+}
+
 export function ConversationAssistantBubble(props: Readonly<NarrativeProps>) {
   const { t } = useModuleTranslation('conversation');
   const navigate = useNavigate();
+  const agents = useAgentStore((state) => state.agents);
+  const agentDirectoryInitialized = useAgentStore((state) => state.isInitialized);
   const activityPaneRef = useRef<HTMLDivElement>(null);
   const redactSensitiveText = false;
   const messageId = props.messageId;
@@ -314,12 +342,32 @@ export function ConversationAssistantBubble(props: Readonly<NarrativeProps>) {
   const source = useOriginalAnswer
     ? props.components
     : [...props.components.filter((component) => ['agentActivity', 'toolActivity', 'artifact'].includes(component.type)), ...props.answerComponents!];
+  useEffect(() => {
+    if (agentDirectoryInitialized) return;
+    const unresolvedHierarchyId = source.some((component) => {
+      if (component.type !== 'toolActivity') return false;
+      const data = component.data as ToolActivityData;
+      const actorId = data.actorName === `agent_${data.actorId}` ? data.actorId : undefined;
+      const delegatedId = data.toolName?.startsWith('delegate_to_agent_')
+        ? data.toolName.slice('delegate_to_agent_'.length)
+        : undefined;
+      return [actorId, delegatedId].some((id) => id && !agents.some((agent) => agent.id === id));
+    });
+    if (!unresolvedHierarchyId) return;
+    void useAgentStore.getState().fetchAgents().catch((error) => {
+      console.error('Failed to load agent names for conversation activity', error);
+    });
+  }, [agentDirectoryInitialized, agents, source]);
   const activityNodes: ReactNode[] = [];
   const answerNodes: ReactNode[] = [];
   const activityComponents = projectActivityComponents(source.filter(
     (component): component is MessageComponent & { type: 'agentActivity' | 'toolActivity' | 'artifact' } =>
       component.type === 'agentActivity' || component.type === 'toolActivity' || component.type === 'artifact',
-  ), redactSensitiveText);
+  ).map((component) => resolvePersistedHierarchyNames(
+    component,
+    agents,
+    (name) => t('stream.activity.delegateTo', { name }),
+  )), redactSensitiveText);
   const activityCount = activityComponents.length;
   const activityDuration = resolveActivityDuration(activityComponents);
   const reasoningTexts = [...new Set(activityComponents.flatMap((component) => {
@@ -379,7 +427,7 @@ export function ConversationAssistantBubble(props: Readonly<NarrativeProps>) {
   });
   if (!activityNodes.length && props.showWorking) activityNodes.push(<div key='working' className='flex items-center gap-2 text-sm text-muted-foreground'><Loader2 className='size-4 animate-spin text-primary' />{t('stream.activity.usingTools')}</div>);
   if (!activityNodes.length && !answerNodes.length) return null;
-  const actorName = source.reduce<string>((name, component) => {
+  const actorName = activityComponents.reduce<string>((name, component) => {
     if (component.type !== 'toolActivity') return name;
     const safeName = sanitizeActivityActorName((component.data as ToolActivityData).actorName);
     return safeName ? humanizeToolTitle(safeName) : name;

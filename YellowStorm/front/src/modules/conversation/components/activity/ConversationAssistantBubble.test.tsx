@@ -21,11 +21,12 @@ vi.mock('../../hooks/useConversationSettings', () => ({
 }));
 
 vi.mock('@/modules/localization', () => ({
-  useModuleTranslation: () => ({ language: 'en', t: (key: string, options?: { description?: string; tool?: string; status?: string; current?: number; total?: number; duration?: string; count?: number }) => ({
+  useModuleTranslation: () => ({ language: 'en', t: (key: string, options?: { description?: string; tool?: string; status?: string; current?: number; total?: number; duration?: string; count?: number; name?: string }) => ({
     'stream.activity.agent': 'Activity',
     'stream.activity.agentRowAria': `${options?.description || ''}, ${options?.status || ''}. Show full reasoning`,
     'stream.activity.agentPlanning': 'Preparing your request',
     'stream.activity.assistant': 'Assistant',
+    'stream.activity.delegateTo': `Delegate to ${options?.name || ''}`,
     'stream.activity.usingTools': 'Using tools',
     'stream.activity.tool.runCode': 'Run code',
     'stream.activity.tool.search': 'Search',
@@ -515,7 +516,7 @@ describe('ConversationAssistantBubble', () => {
     expect(screen.queryByText(/private code/)).not.toBeInTheDocument();
   });
 
-  it('keeps the reasoning summary visible while moving the full tool name into compact details', () => {
+  it('keeps the activity description in one row and moves the tool name into details', () => {
     const { container } = render(<ConversationAssistantBubble
       conversationId='conversation-1'
       messageId='message-1'
@@ -535,11 +536,9 @@ describe('ConversationAssistantBubble', () => {
     />);
 
     const trigger = screen.getByRole('button', { name: 'Getting the page count and structure of the 2025 annual financial report., Tool response: Read document map (Completed)' });
-    const toolName = trigger.querySelector('[data-tool-name]') as HTMLElement;
     const toolSummary = trigger.querySelector('[data-tool-summary]') as HTMLElement;
-    expect(toolName).toHaveTextContent('Read document map');
     expect(toolSummary).toHaveTextContent('Getting the page count and structure');
-    expect(toolSummary.compareDocumentPosition(toolName) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(trigger.querySelector('[data-tool-name]')).not.toBeInTheDocument();
     expect(container.querySelector('[data-tool-full-name]')).not.toBeInTheDocument();
 
     fireEvent.click(trigger);
@@ -593,6 +592,48 @@ describe('ConversationAssistantBubble', () => {
     expect(container.querySelector('[data-agent-activity-spinner]')).not.toBeInTheDocument();
     expect(container.querySelector('[data-tool-spinner]')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Read the research explanation, Tool response: Run code (Running)' })).toBeInTheDocument();
+  });
+
+  it('resolves persisted hierarchy runtime ids to authored agent names', () => {
+    useAgentStore.setState({ agents: [{ id: 'child-1', name: 'Smart Agent' }] as never });
+    const { container } = render(<ConversationAssistantBubble
+      conversationId='conversation-1'
+      messageId='message-1'
+      isStreaming={false}
+      components={[
+        { id: 'delegate-1', type: 'toolActivity', data: { toolName: 'delegate_to_agent_child-1', summary: '', renderKind: 'generic', status: 'completed' } },
+        { id: 'tool-1', type: 'toolActivity', data: { toolName: 'generate_web_preview', summary: '', renderKind: 'generic', status: 'completed', actorId: 'child-1', actorName: 'agent_child-1' } },
+      ]}
+    />);
+
+    expect(screen.getAllByText(/Smart Agent/)).not.toHaveLength(0);
+    expect(container.querySelector('[data-agent-activity-mobile]')).toHaveTextContent('Smart Agent');
+    expect(container.querySelector('[data-agent-activity-mobile]')).not.toHaveTextContent('Agent child-1');
+    expect(container).not.toHaveTextContent('agent_child-1');
+  });
+
+  it('loads agent names when a persisted hierarchy id is not cached', async () => {
+    const originalFetchAgents = useAgentStore.getState().fetchAgents;
+    const fetchAgents = vi.fn(async () => {
+      useAgentStore.setState({
+        agents: [{ id: 'child-1', name: 'Smart Agent' }] as never,
+        isInitialized: true,
+      });
+    });
+    useAgentStore.setState({ agents: [], fetchAgents, isInitialized: false });
+
+    render(<ConversationAssistantBubble
+      conversationId='conversation-1'
+      messageId='message-1'
+      isStreaming={false}
+      components={[
+        { id: 'delegate-1', type: 'toolActivity', data: { actorId: 'child-1', actorName: 'agent_child-1', toolName: 'delegate_to_agent_child-1', summary: '', renderKind: 'generic', status: 'completed' } },
+      ]}
+    />);
+
+    await waitFor(() => expect(screen.getAllByText(/Smart Agent/)).not.toHaveLength(0));
+    expect(fetchAgents).toHaveBeenCalledOnce();
+    useAgentStore.setState({ fetchAgents: originalFetchAgents });
   });
 
   it('opens the tool response modal and renders the payload verbatim', async () => {

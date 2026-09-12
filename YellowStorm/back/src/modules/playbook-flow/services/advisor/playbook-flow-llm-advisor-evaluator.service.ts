@@ -4,7 +4,7 @@ import { ErrorCode } from '@modules/exceptions/constants/error-codes';
 import { LiteLLMConnectionService, describeLiteLlmHttpError } from '@modules/models/litellm-connection.service';
 import { LoggerService } from '@modules/logger';
 import { UsageService } from '@modules/usage/usage.service';
-import { UsageType } from '@modules/usage/schemas/usage.schema';
+import { UsageType } from '@modules/usage/usage-type.enum';
 import { PlaybookFlowPromptRendererService } from '../playbook-flow-prompt-renderer.service';
 import { PlaybookFlowPromptTemplateService } from '../playbook-flow-prompt-template.service';
 import { PlaybookFlowAdvisorModelService } from './playbook-flow-advisor-model.service';

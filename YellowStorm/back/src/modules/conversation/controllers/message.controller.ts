@@ -109,24 +109,6 @@ export class MessageController {
   }
 
   /**
-   * Merge directly-mentioned agents with the agents of any mentioned teams,
-   * deduped. Returns undefined when nothing is mentioned, so downstream behaviour
-   * is identical to a plain agent mention with no teams.
-   */
-  private async resolveAgentIds(
-    userId: string,
-    agentIds?: string[],
-    teamIds?: string[],
-  ): Promise<string[] | undefined> {
-    const merged = new Set<string>(agentIds || []);
-    if (teamIds?.length) {
-      const teamAgentIds = await this.teamService.resolveAgentIds(teamIds, userId);
-      teamAgentIds.forEach((id) => merged.add(id));
-    }
-    return merged.size > 0 ? [...merged] : undefined;
-  }
-
-  /**
    * Human-readable display name for logs/observability: "First Last" when a
    * profile name is set, otherwise falls back to the user's email.
    */
@@ -168,6 +150,10 @@ export class MessageController {
 
     const conversation = await this.conversationService.getConversationDocument(conversationId);
     const platformCopilot = conversation.runtimePurpose === PLATFORM_COPILOT;
+    const teamId = dto.teamIds?.[0];
+    if ((dto.teamIds?.length ?? 0) > 1 || (teamId && (dto.agentIds?.length ?? 0) > 0)) {
+      throw new BadRequestException(ErrorCode.TEAM_NOT_EXECUTABLE, 'Select one team without standalone agents.');
+    }
     if (platformCopilot) {
       const hasRuntimeOverride = [
         dto.agentIds,
@@ -226,9 +212,7 @@ export class MessageController {
       settle(!governedConversation && !platformCopilot && dto.modelId
         ? this.modelsService.validateModelActive(dto.modelId, 'chat')
         : Promise.resolve(undefined)),
-      settle(!platformCopilot
-        ? this.resolveAgentIds(user._id.toString(), dto.agentIds, dto.teamIds)
-        : Promise.resolve(undefined)),
+      settle(!platformCopilot ? Promise.resolve(dto.agentIds) : Promise.resolve(undefined)),
       settle(dto.reasoningEffort && dto.modelId && !platformCopilot
         ? this.modelsService.findById(dto.modelId)
         : Promise.resolve(undefined)),
@@ -336,8 +320,9 @@ export class MessageController {
     const stickyAgentIds =
       conversation.taggedAgentIds?.map((id) => id.toString()) ?? [];
     const willRunAi = !dto.memberIds?.length;
-    const { effectiveAgentIds, shouldReplaceSticky } =
-      resolveStickyAgentRouting({
+    const { effectiveAgentIds, shouldReplaceSticky } = teamId
+      ? { effectiveAgentIds: [] as string[], shouldReplaceSticky: false }
+      : resolveStickyAgentRouting({
         mentionedAgentIds,
         stickyAgentIds,
         reuseSticky: willRunAi,
@@ -438,6 +423,7 @@ export class MessageController {
             semanticModelId: effectiveSemanticModelId,
             reasoningEffort: effectiveReasoningEffort,
             agentIds: effectiveAgentIds ?? [],
+            teamId,
             skillIds: dto.skillIds ?? [],
             connectorRepo: dto.connectorRepo,
             clientContext: dto.clientContext,
@@ -488,6 +474,7 @@ export class MessageController {
             semanticModelId: effectiveSemanticModelId,
             reasoningEffort: effectiveReasoningEffort,
             agentIds: effectiveAgentIds ?? [],
+            teamId,
             skillIds: dto.skillIds ?? [],
             connectorRepo: dto.connectorRepo,
             clientContext: dto.clientContext,
@@ -579,6 +566,7 @@ export class MessageController {
           semanticModelId: effectiveSemanticModelId,
           reasoningEffort: effectiveReasoningEffort,
           agentIds: effectiveAgentIds,
+          teamId,
           connectorRepo: dto.connectorRepo,
           skillIds: dto.skillIds,
           clientContext: dto.clientContext,

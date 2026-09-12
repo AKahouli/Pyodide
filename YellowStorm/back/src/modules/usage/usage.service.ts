@@ -1,12 +1,10 @@
-import { Injectable, OnApplicationBootstrap } from '@nestjs/common';
+import { Inject, Injectable, OnApplicationBootstrap } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
+import { Cron, CronExpression } from '@nestjs/schedule';
 import { Model, Types } from 'mongoose';
 import { Plan, PlanDocument, PlanTier } from './schemas/plan.schema';
-import { Usage, UsageDocument, UsageType } from './schemas/usage.schema';
-import { UsageLog, UsageLogDocument } from './schemas/usage-log.schema';
 import {
   PlanResponse,
-  PlanSummary,
   CreatePlanData,
   UpdatePlanData,
   DEFAULT_PLANS,
@@ -22,16 +20,22 @@ import { LoggerService } from '../logger';
 import {
   NotFoundException,
   ConflictException,
-  ForbiddenException,
 } from '../exceptions';
 import { ErrorCode } from '../exceptions/constants/error-codes';
+import {
+  USAGE_STORE,
+  type UsageStore,
+  type UsageWindowRecord,
+} from './persistence/usage-store';
+
+const USAGE_LOG_RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
+const USAGE_LOG_CLEANUP_BATCH_SIZE = 1000;
 
 @Injectable()
 export class UsageService implements OnApplicationBootstrap {
   constructor(
     @InjectModel(Plan.name) private readonly planModel: Model<PlanDocument>,
-    @InjectModel(Usage.name) private readonly usageModel: Model<UsageDocument>,
-    @InjectModel(UsageLog.name) private readonly usageLogModel: Model<UsageLogDocument>,
+    @Inject(USAGE_STORE) private readonly usageStore: UsageStore,
     private readonly logger: LoggerService,
   ) {
     this.logger.setContext('UsageService');
@@ -47,6 +51,24 @@ export class UsageService implements OnApplicationBootstrap {
     } catch (error) {
       this.logger.warn('Failed to seed default plans on startup', { error });
       // Non-fatal - plans can be created manually or will be created on next restart
+    }
+  }
+
+  @Cron(CronExpression.EVERY_HOUR)
+  async cleanupExpiredUsageLogs(): Promise<void> {
+    try {
+      const cutoff = new Date(Date.now() - USAGE_LOG_RETENTION_MS);
+      let deleted: number;
+      do {
+        deleted = await this.usageStore.deleteLogsBefore(
+          cutoff,
+          USAGE_LOG_CLEANUP_BATCH_SIZE,
+        );
+      } while (deleted === USAGE_LOG_CLEANUP_BATCH_SIZE);
+    } catch (error) {
+      this.logger.error('Failed to clean up expired usage logs', {
+        error: error instanceof Error ? error.message : 'Unknown error',
+      });
     }
   }
 
@@ -114,7 +136,7 @@ export class UsageService implements OnApplicationBootstrap {
     let plan = await this.planModel.findOne({ slug: PlanTier.UNLIMITED, isActive: true });
     if (!plan) {
       // Fallback to any plan marked as default
-      plan = await this.planModel.findOne({ isDefault: true, isActive: true });
+      plan ??= await this.planModel.findOne({ isDefault: true, isActive: true });
     }
     if (!plan) {
       throw new NotFoundException(ErrorCode.PLAN_NOT_FOUND, 'No default plan configured');
@@ -191,99 +213,28 @@ export class UsageService implements OnApplicationBootstrap {
   async getOrCreateCurrentWindow(
     userId: string,
     plan: PlanDocument,
-  ): Promise<UsageDocument> {
-    const now = new Date();
-    const windowHours = plan.windowHours;
-
-    // Calculate window boundaries
-    // Windows align to start of the hour for predictability
-    const windowStartHour = Math.floor(now.getHours() / windowHours) * windowHours;
-    const windowStart = new Date(now);
-    windowStart.setHours(windowStartHour, 0, 0, 0);
-
-    const windowEnd = new Date(windowStart);
-    windowEnd.setHours(windowEnd.getHours() + windowHours);
-
-    // Try to find existing window
-    let usage = await this.usageModel.findOne({
-      userId: new Types.ObjectId(userId),
-      windowStart: { $lte: now },
-      windowEnd: { $gt: now },
-    });
-
-    if (!usage) {
-      // Create new window
-      usage = await this.usageModel.create({
-        userId: new Types.ObjectId(userId),
-        windowStart,
-        windowEnd,
-        windowHours,
-        inputTokens: 0,
-        outputTokens: 0,
-        totalTokens: 0,
-        requestCount: 0,
-        planId: plan._id,
-        planSlug: plan.slug,
-        tokenLimitAtCreation: plan.tokenLimit,
-      });
-    }
-
-    return usage;
+  ): Promise<UsageWindowRecord> {
+    return this.usageStore.getOrCreateCurrentWindow(userId, plan);
   }
 
   /**
    * Record usage for a user
    */
-  async recordUsage(data: RecordUsageData): Promise<UsageDocument> {
-    const totalTokens = data.inputTokens + data.outputTokens;
-
+  async recordUsage(data: RecordUsageData): Promise<UsageWindowRecord> {
     // Get user's plan (we need to look this up or have it passed in)
     // For now, we'll use the default plan if not found
     const plan = await this.getDefaultPlan();
 
-    // Get or create current window
-    const usage = await this.getOrCreateCurrentWindow(data.userId, plan);
-
-    // Update usage atomically
-    const updatedUsage = await this.usageModel.findByIdAndUpdate(
-      usage._id,
-      {
-        $inc: {
-          inputTokens: data.inputTokens,
-          outputTokens: data.outputTokens,
-          totalTokens,
-          requestCount: 1,
-        },
-      },
-      { new: true },
-    );
-
-    // Log the individual request
-    await this.usageLogModel.create({
-      userId: new Types.ObjectId(data.userId),
-      usageType: data.usageType || UsageType.CHAT,
-      modelName: data.modelName,
-      inputTokens: data.inputTokens,
-      outputTokens: data.outputTokens,
-      totalTokens,
-      durationMs: data.durationMs,
-      conversationId: data.conversationId ? new Types.ObjectId(data.conversationId) : undefined,
-      endpoint: data.endpoint,
-      ipAddress: data.ipAddress,
-      userAgent: data.userAgent,
-      success: data.success ?? true,
-      errorCode: data.errorCode,
-      metadata: data.metadata,
-    });
+    const updatedUsage = await this.usageStore.record(data, plan);
 
     this.logger.debug('Usage recorded', {
       userId: data.userId,
       inputTokens: data.inputTokens,
       outputTokens: data.outputTokens,
-      totalTokens,
+      totalTokens: data.inputTokens + data.outputTokens,
     });
 
-    return updatedUsage!;
+    return updatedUsage;
   }
 
   /**
@@ -292,45 +243,8 @@ export class UsageService implements OnApplicationBootstrap {
   async recordUsageWithPlan(
     data: RecordUsageData,
     plan: PlanDocument,
-  ): Promise<UsageDocument> {
-    const totalTokens = data.inputTokens + data.outputTokens;
-
-    // Get or create current window
-    const usage = await this.getOrCreateCurrentWindow(data.userId, plan);
-
-    // Update usage atomically
-    const updatedUsage = await this.usageModel.findByIdAndUpdate(
-      usage._id,
-      {
-        $inc: {
-          inputTokens: data.inputTokens,
-          outputTokens: data.outputTokens,
-          totalTokens,
-          requestCount: 1,
-        },
-      },
-      { new: true },
-    );
-
-    // Log the individual request
-    await this.usageLogModel.create({
-      userId: new Types.ObjectId(data.userId),
-      usageType: data.usageType || UsageType.CHAT,
-      modelName: data.modelName,
-      inputTokens: data.inputTokens,
-      outputTokens: data.outputTokens,
-      totalTokens,
-      durationMs: data.durationMs,
-      conversationId: data.conversationId ? new Types.ObjectId(data.conversationId) : undefined,
-      endpoint: data.endpoint,
-      ipAddress: data.ipAddress,
-      userAgent: data.userAgent,
-      success: data.success ?? true,
-      errorCode: data.errorCode,
-      metadata: data.metadata,
-    });
-
-    return updatedUsage!;
+  ): Promise<UsageWindowRecord> {
+    return this.usageStore.record(data, plan);
   }
 
   /**
@@ -440,46 +354,12 @@ export class UsageService implements OnApplicationBootstrap {
   ): Promise<UsageHistoryResponse> {
     const { startDate, endDate, limit = 30, skip = 0 } = options;
 
-    const query: Record<string, unknown> = { userId: new Types.ObjectId(userId) };
-
-    if (startDate || endDate) {
-      query.windowStart = {};
-      if (startDate) (query.windowStart as Record<string, Date>).$gte = startDate;
-      if (endDate) (query.windowStart as Record<string, Date>).$lte = endDate;
-    }
-
-    const [records, total, aggregation] = await Promise.all([
-      this.usageModel
-        .find(query)
-        .sort({ windowStart: -1 })
-        .skip(skip)
-        .limit(limit)
-        .exec(),
-      this.usageModel.countDocuments(query),
-      this.usageModel.aggregate([
-        { $match: query },
-        {
-          $group: {
-            _id: null,
-            totalInputTokens: { $sum: '$inputTokens' },
-            totalOutputTokens: { $sum: '$outputTokens' },
-            totalTokens: { $sum: '$totalTokens' },
-            totalRequests: { $sum: '$requestCount' },
-            minDate: { $min: '$windowStart' },
-            maxDate: { $max: '$windowEnd' },
-          },
-        },
-      ]),
-    ]);
-
-    const summary = aggregation[0] || {
-      totalInputTokens: 0,
-      totalOutputTokens: 0,
-      totalTokens: 0,
-      totalRequests: 0,
-      minDate: new Date(),
-      maxDate: new Date(),
-    };
+    const { records, total, summary } = await this.usageStore.getHistory(userId, {
+      startDate,
+      endDate,
+      limit,
+      skip,
+    });
 
     return {
       records: records.map((r) => this.mapUsageToResponse(r)),
@@ -489,8 +369,8 @@ export class UsageService implements OnApplicationBootstrap {
         totalOutputTokens: summary.totalOutputTokens,
         totalTokens: summary.totalTokens,
         totalRequests: summary.totalRequests,
-        periodStart: summary.minDate?.toISOString() || new Date().toISOString(),
-        periodEnd: summary.maxDate?.toISOString() || new Date().toISOString(),
+        periodStart: summary.minDate?.toISOString() ?? new Date().toISOString(),
+        periodEnd: summary.maxDate?.toISOString() ?? new Date().toISOString(),
       },
     };
   }
@@ -521,10 +401,10 @@ export class UsageService implements OnApplicationBootstrap {
     };
   }
 
-  private mapUsageToResponse(usage: UsageDocument): UsageResponse {
+  private mapUsageToResponse(usage: UsageWindowRecord): UsageResponse {
     return {
-      id: usage._id.toString(),
-      userId: usage.userId.toString(),
+      id: usage.id,
+      userId: usage.userId,
       windowStart: usage.windowStart.toISOString(),
       windowEnd: usage.windowEnd.toISOString(),
       windowHours: usage.windowHours,
@@ -563,7 +443,7 @@ export class UsageService implements OnApplicationBootstrap {
     planStartedAt: Date;
   } {
     return {
-      planId: plan._id as Types.ObjectId,
+      planId: plan._id,
       planSlug: plan.slug,
       planStartedAt: new Date(),
     };

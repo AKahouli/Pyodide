@@ -32,6 +32,7 @@ import { ToolService } from '../tool/tool.service';
 import { ModelsService } from '../models/models.service';
 import { TeamShareService } from './services/team-share.service';
 import { TeamAutoBuilderConfigService } from './services/team-auto-builder-config.service';
+import { TeamExecutionDefinition, TeamExecutionNode, validateExecutableTeam } from './team-execution';
 
 /** Fields stripped from a real agent when building the AI template. */
 const AGENT_TEMPLATE_STRIP_FIELDS = new Set([
@@ -44,7 +45,7 @@ const AGENT_TEMPLATE_STRIP_FIELDS = new Set([
 type MemberAgentInfo = {
   id: string;
   name: string;
-  agentType: { id: string; name: string };
+  agentType: { id: string; name: string; slug: string };
   role: string;
   description: string;
 };
@@ -606,6 +607,29 @@ Rules:
       }
     }
     return [...agentIds];
+  }
+
+  async resolveExecutionDefinition(userId: string, teamId: string): Promise<TeamExecutionDefinition> {
+    if (!Types.ObjectId.isValid(teamId)) throw new NotFoundException(ErrorCode.TEAM_NOT_FOUND);
+    const team = await this.teamModel.findById(teamId).lean().exec();
+    if (!team || !team.isActive) throw new NotFoundException(ErrorCode.TEAM_NOT_FOUND);
+
+    if (team.createdBy.toString() !== userId) {
+      const permission = await this.teamShareService.getSharePermission(userId, teamId);
+      if (permission !== 'read' && permission !== 'write') throw new ForbiddenException(ErrorCode.TEAM_FORBIDDEN);
+    }
+
+    const nodes: TeamExecutionNode[] = this.readMembers(team as unknown as Record<string, unknown>).map((member) => ({
+      agentId: member.agentId.toString(),
+      parentAgentId: member.parentAgentId?.toString() ?? null,
+      order: member.order ?? 0,
+    }));
+    const agents = await this.agentService.findByIdsUnrestricted(nodes.map((node) => node.agentId));
+    const ordered = validateExecutableTeam(
+      nodes,
+      agents.filter((agent) => agent.isActive).map((agent) => ({ id: agent.id, agentTypeSlug: agent.agentType.slug })),
+    );
+    return { teamId, nodes: ordered };
   }
 
   /** Ordered (BFS) agent IDs of a single team. */

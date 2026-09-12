@@ -117,6 +117,16 @@ class StreamingEventProcessor:
 
         return manager_id or "manager", manager_name
 
+    def _get_actor_info(self, event: Any, manager_agent: Any = None) -> tuple[str, str]:
+        author = getattr(event, "author", None)
+        if author and self.agent_repository:
+            agent = self.agent_repository.get_agent_by_name(author)
+            if not agent and author.startswith("agent_"):
+                agent = self.agent_repository.get_agent_by_id(author.removeprefix("agent_"))
+            if agent:
+                return agent.get("id") or author, agent.get("display_name") or agent.get("name") or author
+        return self._get_manager_info(manager_agent)
+
     async def process_streaming_events(
         self,
         session_id: str,
@@ -199,7 +209,7 @@ class StreamingEventProcessor:
 
                 # Track manager as current agent at the start (first event)
                 if event_count == 1:
-                    _, manager_name = self._get_manager_info(manager_agent)
+                    _, manager_name = self._get_actor_info(event, manager_agent)
                     current_agent = manager_name
 
                 # Track token usage if available
@@ -343,7 +353,7 @@ class StreamingEventProcessor:
                 thought_activity_tracker.end_for_tool_boundary()
 
             if is_thought:
-                manager_id, manager_name = self._get_manager_info(manager_agent)
+                manager_id, manager_name = self._get_actor_info(event, manager_agent)
                 observed_at = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
                 update = thought_activity_tracker.observe(
                     part.text,
@@ -380,7 +390,7 @@ class StreamingEventProcessor:
             ):
                 summary = sanitize_activity_summary(part.text)
                 if summary and q:
-                    manager_id, manager_name = self._get_manager_info(manager_agent)
+                    manager_id, manager_name = self._get_actor_info(event, manager_agent)
                     observed_at = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
                     await q.put(self.streaming_formatter.format_component_event(
                         agent_id=manager_id,
@@ -402,7 +412,8 @@ class StreamingEventProcessor:
                 accumulated_manager_text += event_text
                 if not guarded_output:
                     current_agent = await self._handle_text_event(
-                        event_text, current_message_id, q, manager_agent, current_agent
+                        event_text, current_message_id, q, manager_agent, current_agent,
+                        self._get_actor_info(event, manager_agent),
                     )
 
             # Track function calls to agents
@@ -416,7 +427,7 @@ class StreamingEventProcessor:
                 if q:
                     raw_call_id = getattr(part.function_call, "id", None)
                     call_id = raw_call_id if isinstance(raw_call_id, str) and raw_call_id else str(uuid.uuid4())
-                    manager_id, manager_name = self._get_manager_info(manager_agent)
+                    manager_id, manager_name = self._get_actor_info(event, manager_agent)
                     tool_component_id = f"tool-{manager_id}-{call_id}"
                     if tool_component_id in self._manager_seen_tool_ids:
                         tool_component_id = f"{tool_component_id}-{uuid.uuid4()}"
@@ -572,7 +583,7 @@ class StreamingEventProcessor:
                         result_json = ""
                         if getattr(q, "include_tool_results", False) and func_name != "generate_web_preview" and not func_name.startswith("delegate_to_"):
                             result_json = serialize_tool_result(part.function_response.response)
-                        manager_id, _ = self._get_manager_info(manager_agent)
+                        manager_id, _ = self._get_actor_info(event, manager_agent)
                         failed = getattr(part.function_response, "is_error", False)
                         response_payload = part.function_response.response
                         if func_name == "run_code" and isinstance(response_payload, dict) and response_payload.get("ok") is False:
@@ -653,6 +664,7 @@ class StreamingEventProcessor:
                         q,
                         manager_agent,
                         current_agent,
+                        self._get_actor_info(event, manager_agent),
                     )
                 await self._handle_final_response(current_message_id, q)
 
@@ -670,6 +682,7 @@ class StreamingEventProcessor:
         q: Optional[asyncio.Queue[dict]] = None,
         manager_agent: Any = None,
         current_agent: str = None,
+        actor_info: Optional[tuple[str, str]] = None,
     ) -> str:
         """Handle text events from the stream.
 
@@ -687,7 +700,7 @@ class StreamingEventProcessor:
             str: Updated current_agent name
         """
         if q:
-            manager_id, manager_name = self._get_manager_info(manager_agent)
+            manager_id, manager_name = actor_info or self._get_manager_info(manager_agent)
 
             # Reset manager's component tracking when manager speaks again after delegation
             if current_agent and current_agent != manager_name:

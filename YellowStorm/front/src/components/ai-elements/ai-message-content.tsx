@@ -35,6 +35,7 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import { rehypeCitationMarkers } from '@/lib/rehype-citation-markers';
 import { remarkAssistantCitationLinks } from '@/lib/remark-assistant-citation-links';
 import { isUrlCitation } from '@/modules/conversation/utils/message-citations';
+import { buildTextFragmentUrl } from '@/lib/text-fragment';
 import { applyOutlineHeadingOverrides, type MarkdownHeadingInfo } from './ai-message-outline';
 import { formatLabel } from './format-label';
 
@@ -50,7 +51,8 @@ export type CitationBBox = [number, number, number, number];
 
 export interface CitationData {
   parentId: string;
-  sourceType: 'text' | 'image';
+  sourceType: 'text' | 'image' | 'web';
+  sourceKind?: 'document' | 'image' | 'web';
   source: string;
   fileName?: string;
   externalId: string;
@@ -64,6 +66,11 @@ export interface CitationData {
   highlightText?: string;
   highlightBBox?: CitationBBox;
   blockBBox?: CitationBBox;
+  title?: string;
+  exactText?: string;
+  prefix?: string;
+  suffix?: string;
+  evidenceOrigin?: 'page_content' | 'search_snippet';
 }
 
 export interface TextPart {
@@ -173,23 +180,8 @@ export interface ArtifactPart {
   filename: string;
 }
 
-export interface CitationPart {
+export interface CitationPart extends CitationData {
   type: 'citation';
-  parentId: string;
-  sourceType: 'text' | 'image';
-  source: string;
-  fileName?: string;
-  externalId: string;
-  page: string;
-  pageContent: string;
-  workspaceId: string;
-  reference?: string;
-  path?: string;
-  height?: string;
-  width?: string;
-  highlightText?: string;
-  highlightBBox?: CitationBBox;
-  blockBBox?: CitationBBox;
 }
 
 export interface ToolActivityPart {
@@ -490,7 +482,15 @@ export async function openCitationSource(
   // Web citations point at a page, not a workspace document — the citations
   // API can only 404 for them, so open the source directly.
   if (isUrlCitation(citation)) {
-    window.open(objectKey, '_blank', 'noopener,noreferrer');
+    let target = objectKey;
+    if (citation.sourceKind === 'web' || citation.sourceType === 'web') {
+      try {
+        target = buildTextFragmentUrl(objectKey, { exact: citation.exactText ?? '', prefix: citation.prefix, suffix: citation.suffix });
+      } catch {
+        return;
+      }
+    }
+    window.open(target, '_blank', 'noopener,noreferrer');
     return;
   }
 

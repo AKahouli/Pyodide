@@ -19,7 +19,7 @@ import { AgentService } from '../../agent/agent.service';
 import { ModelsService } from '../../models/models.service';
 import { LiteLLMConnectionService } from '../../models/litellm-connection.service';
 import { UsageService } from '../../usage/usage.service';
-import { UsageType } from '../../usage/schemas/usage.schema';
+import { UsageType } from '../../usage/usage-type.enum';
 import type { AxiosResponse } from 'axios';
 import { PlaybookPromptService } from './playbook-prompt.service';
 

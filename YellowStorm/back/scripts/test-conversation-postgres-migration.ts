@@ -24,14 +24,17 @@ async function main(): Promise<void> {
     await migrate(drizzle(pool), { migrationsFolder: 'drizzle' });
     const result = await pool.query<{
       tables: number;
+      usage_tables: number;
       trgm: boolean;
       trigram_indexes: number;
       expected_indexes: number;
       invalid_indexes: number;
       superseded_indexes: number;
     }>(`
-      SELECT
-        (SELECT count(*)::int FROM information_schema.tables WHERE table_schema = 'conversation') AS tables,
+       SELECT
+         (SELECT count(*)::int FROM information_schema.tables WHERE table_schema = 'conversation') AS tables,
+        (SELECT count(*)::int FROM information_schema.tables
+          WHERE table_schema = 'conversation' AND table_name IN ('usage_windows', 'usage_logs')) AS usage_tables,
         EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'pg_trgm') AS trgm,
         (SELECT count(*)::int FROM pg_indexes
           WHERE schemaname = 'conversation' AND indexdef ILIKE '%gin%gin_trgm_ops%') AS trigram_indexes,
@@ -46,7 +49,10 @@ async function main(): Promise<void> {
           'idx_messages_streaming_updated_v2', 'idx_messages_pending_reliability_v2',
           'idx_shared_original_created_v2', 'idx_shared_expires_v2',
           'idx_handoffs_expires_v2', 'idx_reports_created_v2',
-          'idx_reports_status_created_v2', 'idx_reports_reason_created_v2'
+          'idx_reports_status_created_v2', 'idx_reports_reason_created_v2',
+          'uq_usage_windows_user_window', 'idx_usage_windows_user_end',
+          'idx_usage_windows_start_plan', 'idx_usage_logs_user_created',
+          'idx_usage_logs_type_model_created', 'idx_usage_logs_created'
         ])) AS expected_indexes,
         (SELECT count(*)::int FROM pg_index i JOIN pg_class c ON c.oid = i.indexrelid
           JOIN pg_namespace n ON n.oid = c.relnamespace
@@ -61,10 +67,10 @@ async function main(): Promise<void> {
     `);
     const summary = result.rows[0];
     if (
-      summary.tables !== 12 ||
+      summary.usage_tables !== 2 ||
       !summary.trgm ||
       summary.trigram_indexes !== 2 ||
-      summary.expected_indexes !== 22 ||
+      summary.expected_indexes !== 28 ||
       summary.invalid_indexes !== 0 ||
       summary.superseded_indexes !== 0
     ) {

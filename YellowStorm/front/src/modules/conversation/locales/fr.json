@@ -332,6 +332,7 @@
   "stream.activity.agentRowAria": "{{description}}, {{status}}. Afficher le raisonnement complet",
   "stream.activity.agentPlanning": "Préparation de votre demande",
   "stream.activity.assistant": "Assistant",
+  "stream.activity.delegateTo": "Déléguer à {{name}}",
   "stream.activity.openAgentEditor": "Ouvrir l'éditeur de l'agent",
   "stream.activity.code": "Code",
   "stream.activity.request": "Requête",

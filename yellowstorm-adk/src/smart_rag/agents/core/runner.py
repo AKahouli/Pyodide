@@ -96,6 +96,7 @@ class _latency_diag_phase:
 APP_NAME = "manager_app"
 _STATE_KEY_CONNECTOR_TEXT_SOURCES = "_connector_text_sources"
 _STATE_KEY_CONNECTOR_IMAGE_SOURCES = "_connector_image_sources"
+_STATE_KEY_CONNECTOR_WEB_SOURCES = "_connector_web_sources"
 _STATE_KEY_CONNECTOR_SOURCE_SIGNATURES = "_connector_source_signatures"
 _STATE_KEY_CONNECTOR_REFERENCE_COUNTER = "_connector_reference_counter"
 
@@ -412,6 +413,7 @@ class AgentRunner:
             if agent_config and agent_config.get("_is_temporary_child_agent")
             else "parent"
         )
+        activity_actor_name = str((agent_config or {}).get("display_name") or agent_name or "")
         accumulated_text = ""
         # Citation buffering using MessageTransformer
         citation_buffer = ""
@@ -425,6 +427,7 @@ class AgentRunner:
         pending_tool_metadata: Dict[str, Dict[str, Any]] = {}
         seen_tool_component_ids: set[str] = set()
         thought_activity_tracker = ThoughtActivityTracker()
+        citation_session_state = dict(getattr(session, "state", {}) or {})
 
         _mark_session_stage("mark_runner_construction_start")
         runner = make_chat_runner(agent, session_helper)
@@ -448,6 +451,9 @@ class AgentRunner:
 
         try:
             async for event in stream:
+                state_delta = getattr(getattr(event, "actions", None), "state_delta", None)
+                if isinstance(state_delta, dict):
+                    citation_session_state.update(state_delta)
                 if q and event.usage_metadata:
                     model_name = event.model_version if getattr(event, "model_version", None) else "unknown"
                     await q.put({
@@ -503,7 +509,7 @@ class AgentRunner:
                                         "started_at": update.started_at,
                                         "completed_at": observed_at,
                                         "actor_id": str(agent_id or ""),
-                                        "actor_name": str(agent_name or ""),
+                                        "actor_name": activity_actor_name,
                                     },
                                     message_id=session_id,
                                     component_id=update.component_id,
@@ -536,7 +542,7 @@ class AgentRunner:
                                         "started_at": observed_at,
                                         "completed_at": observed_at,
                                         "actor_id": str(agent_id or ""),
-                                        "actor_name": str(agent_name or ""),
+                                        "actor_name": activity_actor_name,
                                     },
                                     message_id=session_id,
                                     component_id=f"activity-{uuid.uuid4()}",
@@ -586,7 +592,7 @@ class AgentRunner:
                                 source_info = self._find_source_by_reference(
                                     citation_ref,
                                     toolkit,
-                                    getattr(session, "state", {}),
+                                    citation_session_state,
                                 )
                                 if not source_info:
                                     logger.debug(f"No source found for {citation_ref}")
@@ -698,7 +704,7 @@ class AgentRunner:
                                 "presentation": presentation,
                                 "params_json": serialize_tool_args(tool_args),
                                 "actor_id": actor_id,
-                                "actor_name": str(agent_name or ""),
+                                "actor_name": activity_actor_name,
                             }
                             await q.put(
                                 self.streaming_formatter.format_component_event(
@@ -714,7 +720,7 @@ class AgentRunner:
                                         "summary": presentation.summary,
                                         "render_kind": presentation.render_kind,
                                         "actor_id": actor_id,
-                                        "actor_name": str(agent_name or ""),
+                                        "actor_name": activity_actor_name,
                                         **({
                                             "primary_input": sanitize_tool_result_value(tool_args.get("code", "")),
                                             "primary_input_language": tool_args.get("language", ""),
@@ -932,7 +938,7 @@ class AgentRunner:
                                 agent_id,
                                 session_id,
                                 q,
-                                getattr(session, "state", {}),
+                                citation_session_state,
                                 agent_role,
                                 agent_name,
                                 str(
@@ -940,6 +946,7 @@ class AgentRunner:
                                     if agent_config
                                     else session_id
                                 ),
+                                toolkit,
                             )
 
                         # Check if this is a python_interpreter tool response
@@ -999,7 +1006,7 @@ class AgentRunner:
                             source_info = self._find_source_by_reference(
                                 citation_ref,
                                 toolkit,
-                                getattr(session, "state", {}),
+                                citation_session_state,
                             )
                             if not source_info:
                                 logger.debug(f"No source found for {citation_ref}")
@@ -1566,6 +1573,7 @@ class AgentRunner:
         agent_role: str = "parent",
         agent_name: str = "",
         summary_session_id: str = "",
+        toolkit: Any = None,
     ) -> None:
         """Emit supported source components from structured tool responses."""
         try:
@@ -1604,6 +1612,7 @@ class AgentRunner:
                     response_data,
                     session_state if session_state is not None else {},
                     tool_name,
+                    toolkit,
                 )
 
             sources = _normalize_structured_sources(response_data.get("sources"))
@@ -1809,12 +1818,24 @@ class AgentRunner:
                 )
                 return {"source_object": source.get("object", {}), "type": "image"}
 
+        for source in (session_state or {}).get(_STATE_KEY_CONNECTOR_WEB_SOURCES, []):
+            if _matches_reference(source):
+                return {"source_object": source.get("object", {}), "type": "web"}
+
         logger.info("[CITATION LOOKUP] not_found reference=%s", citation_ref)
         return None
 
     def _build_connector_source_signature(self, source: Dict[str, Any]) -> str:
         source_type = str(source.get("type") or "text")
-        if source_type == "image":
+        if source_type == "web":
+            parts = [
+                source_type,
+                str(source.get("source") or ""),
+                str(source.get("exact_text") or ""),
+                str(source.get("prefix") or ""),
+                str(source.get("suffix") or ""),
+            ]
+        elif source_type == "image":
             parts = [
                 source_type,
                 str(source.get("source") or source.get("path") or ""),
@@ -1838,6 +1859,7 @@ class AgentRunner:
         response_data: Dict[str, Any],
         session_state: Dict[str, Any],
         tool_name: str,
+        toolkit: Any = None,
     ) -> None:
         citation_sources = response_data.get("citation_sources")
         if not isinstance(citation_sources, list):
@@ -1852,7 +1874,24 @@ class AgentRunner:
         image_sources = session_state.setdefault(
             _STATE_KEY_CONNECTOR_IMAGE_SOURCES, []
         )
+        web_sources = session_state.setdefault(_STATE_KEY_CONNECTOR_WEB_SOURCES, [])
         signatures = session_state.setdefault(_STATE_KEY_CONNECTOR_SOURCE_SIGNATURES, {})
+        reserved_references = [
+            _normalize_reference_token(source.get("reference"))
+            for collection in (
+                getattr(toolkit, "sources_text", []) if toolkit else [],
+                getattr(toolkit, "sources_image", []) if toolkit else [],
+            )
+            for source in collection
+            if isinstance(source, dict)
+        ]
+        reference_floor = max(
+            [int(ref) for ref in reserved_references if ref.isdigit()] or [0]
+        )
+        session_state[_STATE_KEY_CONNECTOR_REFERENCE_COUNTER] = max(
+            int(session_state.get(_STATE_KEY_CONNECTOR_REFERENCE_COUNTER, 0)),
+            reference_floor,
+        )
 
         logger.info(
             "[STRUCTURED TOOL RESPONSE] tool=%s citation_source_count_in_response=%s existing_connector_text_count=%s existing_connector_image_count=%s",
@@ -1880,7 +1919,24 @@ class AgentRunner:
                 signatures[signature] = reference
 
                 source_type = str(normalized_source.get("type") or "text")
-                if source_type == "image":
+                if source_type == "web":
+                    web_sources.append(
+                        {
+                            "reference": reference,
+                            "reference_aliases": [],
+                            "object": {
+                                "content": {
+                                    "source": str(normalized_source.get("source") or ""),
+                                    "title": str(normalized_source.get("title") or ""),
+                                    "exact_text": str(normalized_source.get("exact_text") or ""),
+                                    "prefix": str(normalized_source.get("prefix") or ""),
+                                    "suffix": str(normalized_source.get("suffix") or ""),
+                                    "evidence_origin": str(normalized_source.get("evidence_origin") or ""),
+                                }
+                            },
+                        }
+                    )
+                elif source_type == "image":
                     image_sources.append(
                         {
                             "reference": reference,
@@ -1951,7 +2007,7 @@ class AgentRunner:
                             },
                         }
                     )
-                target_sources = image_sources if source_type == "image" else text_sources
+                target_sources = web_sources if source_type == "web" else image_sources if source_type == "image" else text_sources
                 if source_reference and source_reference != reference:
                     target_sources[-1]["reference_aliases"].append(source_reference)
                 source_id_field = normalized_source.get("type", "text") == "image" and normalized_source.get("workspace_name") or normalized_source.get("file_name") or ""
@@ -2192,7 +2248,21 @@ class AgentRunner:
         content = source_obj.get("content", {})
 
         # Build component data based on type
-        if source_type == "text":
+        if source_type == "web":
+            component_data = {
+                "parent_id": parent_text_component_id,
+                "web_source": {
+                    "type": "web",
+                    "source": content.get("source", ""),
+                    "title": content.get("title", ""),
+                    "reference": citation_ref,
+                    "exact_text": content.get("exact_text", ""),
+                    "prefix": content.get("prefix", ""),
+                    "suffix": content.get("suffix", ""),
+                    "evidence_origin": content.get("evidence_origin", ""),
+                },
+            }
+        elif source_type == "text":
             component_data = {
                 "parent_id": parent_text_component_id,
                 "text_source": {

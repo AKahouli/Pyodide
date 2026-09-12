@@ -80,7 +80,7 @@ function oneofPayloadHasContent(type: ComponentType, payload: Record<string, unk
         (typeof payload.file_path === 'string' && payload.file_path.length > 0)
       );
     case 'citation':
-      return Boolean(payload.text_source || payload.image_source);
+      return Boolean(payload.text_source || payload.image_source || payload.web_source);
     case 'agentActivity':
       return typeof payload.summary === 'string' && payload.summary.length > 0;
     case 'toolActivity':
@@ -329,7 +329,17 @@ export function extractComponentData(comp: any, agentId?: string): { type: Compo
       const citation = comp.citation;
       const sourceData: Record<string, unknown> = { parentId: citation?.parent_id || '' };
 
-      if (citation?.text_source) {
+      if (citation?.web_source) {
+        sourceData.sourceKind = 'web';
+        sourceData.sourceType = 'web';
+        sourceData.source = citation.web_source.source || '';
+        sourceData.title = citation.web_source.title || '';
+        sourceData.reference = citation.web_source.reference || '';
+        sourceData.exactText = citation.web_source.exact_text || '';
+        sourceData.prefix = citation.web_source.prefix || '';
+        sourceData.suffix = citation.web_source.suffix || '';
+        sourceData.evidenceOrigin = citation.web_source.evidence_origin || '';
+      } else if (citation?.text_source) {
         sourceData.sourceType = 'text';
         sourceData.source = citation.text_source.source || '';
         sourceData.fileName = citation.text_source.file_name || '';

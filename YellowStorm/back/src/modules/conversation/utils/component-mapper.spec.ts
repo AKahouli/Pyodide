@@ -299,6 +299,18 @@ describe('component-mapper chart extraction', () => {
       },
     });
   });
+
+  it('maps web citation evidence from grpc components', () => {
+    expect(extractComponentData({ citation: { parent_id: 'text-1', web_source: {
+      source: 'https://example.com/article', title: 'Article', reference: '[2]',
+      exact_text: 'Revenue increased by 38%.', prefix: 'Results:', suffix: 'Outlook.',
+      evidence_origin: 'page_content',
+    } } })).toEqual({ type: 'citation', data: {
+      parentId: 'text-1', sourceKind: 'web', sourceType: 'web', source: 'https://example.com/article',
+      title: 'Article', reference: '[2]', exactText: 'Revenue increased by 38%.',
+      prefix: 'Results:', suffix: 'Outlook.', evidenceOrigin: 'page_content',
+    } });
+  });
 });
 
 describe('component-mapper choice extraction', () => {

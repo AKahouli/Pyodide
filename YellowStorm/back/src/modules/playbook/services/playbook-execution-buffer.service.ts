@@ -7,7 +7,7 @@ import {
   StepStatus,
 } from '../schemas/playbook-execution.schema';
 import { UsageService } from '../../usage/usage.service';
-import { UsageType } from '../../usage/schemas/usage.schema';
+import { UsageType } from '../../usage/usage-type.enum';
 import { LoggerService } from '../../logger';
 import {
   mergeWithExistingHumanFeedback,

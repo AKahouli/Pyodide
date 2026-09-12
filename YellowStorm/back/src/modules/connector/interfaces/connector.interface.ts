@@ -8,6 +8,9 @@ export interface IConnectorActionResponse {
   supportsBatch: boolean;
   supportsIteration: boolean;
   isEnabled: boolean;
+  resultKind: string;
+  citationMode: string;
+  resultMapping?: Record<string, unknown>;
 }
 
 export interface IConnectorDynamicHeader {
@@ -23,6 +26,9 @@ export interface IGrpcConnectorAction {
   description: string;
   /** JSON Schema of the action params, serialized as a string (proto carries it as a string). */
   parameter_schema_json: string;
+  result_kind: string;
+  citation_mode: string;
+  result_mapping_json: string;
 }
 
 /** A connector binding in the gRPC `ConnectorBinding` wire shape, with per-user auth resolved. */

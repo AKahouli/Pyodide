@@ -506,6 +506,7 @@ describe('AgentService connector skill inheritance', () => {
     expect(agentRepository.findDefaultByType).toHaveBeenCalledWith('555555555555555555555555');
     expect(result).toHaveLength(1);
     expect(result[0].name).toBe('Mono Agent Instance');
+    expect(result[0].agent_type).toBe('mono-agent');
   });
 
   it('uses the selected model for an untagged mono-agent request', async () => {
@@ -742,6 +743,7 @@ describe('AgentService connector skill inheritance', () => {
       'connector-skill',
     ]);
     expect(result).toHaveLength(1);
+    expect(result[0].agent_type).toBe('worker');
     expect(result[0].tools.map((tool) => tool.name)).toEqual([
       'workspace_run_code',
       'workspace_upload_file',

@@ -5,7 +5,7 @@ import { LoggerService } from '../../logger';
 import { LiteLLMConnectionService } from '../../models/litellm-connection.service';
 import { ModelsService } from '../../models/models.service';
 import { UsageService } from '../../usage/usage.service';
-import { UsageType } from '../../usage/schemas/usage.schema';
+import { UsageType } from '../../usage/usage-type.enum';
 import { PlaybookExecution, PlaybookExecutionDocument, StepStatus, JudgeStatus } from '../schemas/playbook-execution.schema';
 import { PlaybookValidatedReplay, PlaybookValidatedReplayDocument, ReplayValidationStatus } from '../schemas/playbook-validated-replay.schema';
 import { PlaybookService } from './playbook.service';

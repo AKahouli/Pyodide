@@ -128,6 +128,9 @@ def _connectors_to_dicts(connectors) -> list:
                 "label": a.label,
                 "description": a.description,
                 "parameter_schema": schema,
+                "result_kind": a.result_kind or "generic",
+                "citation_mode": a.citation_mode or "none",
+                "result_mapping": _parse_mcp_config(a.result_mapping_json),
             })
         out.append({
             "connector_id": c.connector_id,

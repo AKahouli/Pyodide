@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import type { ChatMessage } from '@/components/ai-elements/chat-conversation';
-import type { CitationBBox, MessageContentPart } from '@/components/ai-elements/ai-message-content';
+import type { CitationBBox, CitationData, MessageContentPart } from '@/components/ai-elements/ai-message-content';
 import type { ModuleTranslationKey } from '@/modules/localization';
 import type { ChartComponentData, ChartKind, ChartLayout, ChoiceComponentData, Message, MessageComponent } from './types';
 import { translateConversation } from './translation';
@@ -147,31 +147,19 @@ function asCitationBBox(value: unknown): CitationBBox | undefined {
   return bbox.every(Number.isFinite) ? bbox as CitationBBox : undefined;
 }
 
-function buildCitationData(data: Record<string, unknown>): {
-  parentId: string;
-  sourceType: 'text' | 'image';
-  source: string;
-  fileName?: string;
-  externalId: string;
-  page: string;
-  pageContent: string;
-  workspaceId: string;
-  reference?: string;
-  path?: string;
-  height?: string;
-  width?: string;
-  highlightText?: string;
-  highlightBBox?: CitationBBox;
-  blockBBox?: CitationBBox;
-} {
+function buildCitationData(data: Record<string, unknown>): CitationData {
   const textSource = data.text_source as Record<string, unknown> | undefined;
   const imageSource = data.image_source as Record<string, unknown> | undefined;
-  const sourceData = textSource || imageSource || data;
-  const sourceType = imageSource ? 'image' : ((sourceData.sourceType as 'text' | 'image') || 'text');
+  const webSource = data.web_source as Record<string, unknown> | undefined;
+  const sourceData = webSource || textSource || imageSource || data;
+  const sourceType = webSource || sourceData.sourceKind === 'web' || sourceData.sourceType === 'web'
+    ? 'web'
+    : imageSource ? 'image' : ((sourceData.sourceType as 'text' | 'image') || 'text');
 
   return {
     parentId: (data.parentId as string) || (data.parent_id as string) || '',
     sourceType,
+    ...(sourceType === 'web' ? { sourceKind: 'web' as const } : {}),
     source: (sourceData.source as string) || (sourceData.fileName as string) || (sourceData.file_name as string) || '',
     fileName: (sourceData.fileName as string) || (sourceData.file_name as string) || undefined,
     externalId: (sourceData.externalId as string) || (sourceData.external_id as string) || '',
@@ -185,6 +173,15 @@ function buildCitationData(data: Record<string, unknown>): {
     highlightText: (sourceData.highlightText as string) || (sourceData.highlight_text as string) || undefined,
     highlightBBox: asCitationBBox(sourceData.highlightBBox ?? sourceData.highlight_bbox),
     blockBBox: asCitationBBox(sourceData.blockBBox ?? sourceData.block_bbox),
+    title: (sourceData.title as string) || undefined,
+    exactText: (sourceData.exactText as string) || (sourceData.exact_text as string) || undefined,
+    prefix: (sourceData.prefix as string) || undefined,
+    suffix: (sourceData.suffix as string) || undefined,
+    evidenceOrigin: sourceData.evidenceOrigin === 'page_content' || sourceData.evidence_origin === 'page_content'
+      ? 'page_content'
+      : sourceData.evidenceOrigin === 'search_snippet' || sourceData.evidence_origin === 'search_snippet'
+        ? 'search_snippet'
+        : undefined,
   };
 }
 

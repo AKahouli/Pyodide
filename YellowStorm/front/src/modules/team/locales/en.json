@@ -70,6 +70,7 @@
   "orgChart.noAgentsAvailable": "No agents available to add.",
   "orgChart.emptyState": "No agents in this team. Add agents to build your org chart.",
   "orgChart.cyclePrevented": "Cannot create this relationship — it would cause a cycle.",
+  "orgChart.managerSourceOnly": "Only manager agents can have children.",
   "orgChart.revert": "Revert",
   "orgChart.save": "Save",
   "orgChart.saving": "Saving...",
@@ -79,6 +80,8 @@
   "orgChart.readOnly": "Read-only — you have view access to this team",
 
   "node.root": "Root",
+  "node.connectFrom": "Drag to connect from {{name}}",
+  "node.connectTo": "Drop here to connect to {{name}}",
   "node.removeFromTeam": "Remove from team",
   "node.setAsRoot": "Set as root",
   "node.noDescription": "No description",

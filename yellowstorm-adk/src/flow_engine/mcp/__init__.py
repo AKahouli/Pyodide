@@ -623,7 +623,8 @@ async def call_mcp_tool(
         serialized_parts = _serialize_mcp_content_parts(content_parts)
         _log_mcp_image_bridge(action_key, serialized_parts)
         texts = []
-        parsed_payload = None
+        structured_content = _part_field(result, "structuredContent", "structured_content")
+        parsed_payload = _coerce_json(structured_content) if structured_content is not None else None
         for part in content_parts:
             if str(_part_field(part, "type") or "").lower() == "image":
                 continue

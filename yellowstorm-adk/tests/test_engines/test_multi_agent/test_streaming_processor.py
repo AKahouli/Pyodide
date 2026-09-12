@@ -87,6 +87,30 @@ class TestStreamingEventProcessor:
     assert manager_id == "fallback-id"
     assert manager_name == "Fallback Manager"
 
+  def test_actor_info_uses_event_author_and_platform_identity(self, processor):
+    processor.agent_repository.get_agent_by_name.return_value = {
+      "id": "child-1", "name": "agent_child_1", "display_name": "Researcher",
+    }
+    actor_id, actor_name = processor._get_actor_info(
+      SimpleNamespace(author="agent_child_1"),
+      SimpleNamespace(id="mgr-1", name="Manager"),
+    )
+    assert (actor_id, actor_name) == ("child-1", "Researcher")
+
+  def test_actor_info_resolves_hierarchical_runtime_name_by_id(self, processor):
+    processor.agent_repository.get_agent_by_name.return_value = None
+    processor.agent_repository.get_agent_by_id.return_value = {
+      "id": "child-1", "name": "agent_child-1", "display_name": "Researcher",
+    }
+
+    actor_id, actor_name = processor._get_actor_info(
+      SimpleNamespace(author="agent_child-1"),
+      SimpleNamespace(id="mgr-1", name="Manager"),
+    )
+
+    processor.agent_repository.get_agent_by_id.assert_called_once_with("child-1")
+    assert (actor_id, actor_name) == ("child-1", "Researcher")
+
   @pytest.mark.asyncio
   async def test_process_streaming_events_streams_text_and_usage(self, processor):
     queue = AsyncMock()

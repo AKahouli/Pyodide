@@ -23,4 +23,25 @@ describe('AgentConnectorRuntimeService', () => {
       expect.objectContaining({ action_key: 'read', safety: 'unknown' }),
     ]));
   });
+
+  it('propagates provider-neutral web result semantics', async () => {
+    const service = new AgentConnectorRuntimeService(
+      { setContext: jest.fn(), warn: jest.fn() } as never,
+      {} as never,
+      {} as never,
+      { resolveRuntimeAuth: jest.fn() } as never,
+      { get: jest.fn((_key: string, fallback: string) => fallback) } as never,
+    );
+    const bindings = await service.buildConnectorBindings(new Map([['connector-1', {
+      id: 'connector-1', name: 'Search', slug: 'search', actions: [{
+        key: 'find', parameterSchema: {}, resultKind: 'web_search', citationMode: 'text_fragment',
+        resultMapping: { itemsPath: 'results', fields: { url: ['href'] } },
+      }],
+    } as never]]), ['connector-1']);
+
+    expect(bindings[0].actions).toEqual([expect.objectContaining({
+      result_kind: 'web_search', citation_mode: 'text_fragment',
+      result_mapping_json: JSON.stringify({ itemsPath: 'results', fields: { url: ['href'] } }),
+    })]);
+  });
 });

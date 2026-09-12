@@ -29,7 +29,7 @@ import { AgentService } from '../../agent/agent.service';
 import { IGrpcAgent } from '../../agent/interfaces/agent.interface';
 import { ModelsService } from '../../models/models.service';
 import { UsageService } from '../../usage/usage.service';
-import { UsageType } from '../../usage/schemas/usage.schema';
+import { UsageType } from '../../usage/usage-type.enum';
 import { EmailService } from '../../email/email.service';
 import { UserService } from '../../user/user.service';
 import { PlaybookReplayService } from './playbook-replay.service';
@@ -274,7 +274,10 @@ export class PlaybookExecutionService {
           label: action.label || action.key,
           description: action.description || '',
           parameter_schema: this.toGrpcStruct(action.parameterSchema || {}),
-          parameter_schema_json: JSON.stringify(action.parameterSchema || {}),
+           parameter_schema_json: JSON.stringify(action.parameterSchema || {}),
+           result_kind: action.resultKind || 'generic',
+           citation_mode: action.citationMode || 'none',
+           result_mapping_json: JSON.stringify(action.resultMapping || {}),
         })),
         credential_id: null,
         fixed_params: {},
@@ -310,9 +313,12 @@ export class PlaybookExecutionService {
               parameter_schema: this.toGrpcStruct(
                 ca?.parameterSchema || action.parameterSchema || {},
               ),
-              parameter_schema_json: JSON.stringify(
-                ca?.parameterSchema || action.parameterSchema || {},
-              ),
+               parameter_schema_json: JSON.stringify(
+                 ca?.parameterSchema || action.parameterSchema || {},
+               ),
+               result_kind: ca?.resultKind || 'generic',
+               citation_mode: ca?.citationMode || 'none',
+               result_mapping_json: JSON.stringify(ca?.resultMapping || {}),
             };
           }),
         credential_id: binding.credential_id || binding.credentialId || null,

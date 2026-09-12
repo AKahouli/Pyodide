@@ -130,6 +130,7 @@ export interface MessageReplayContext {
   semanticModelId?: string;
   reasoningEffort?: string;
   agentIds: string[];
+  teamId?: string;
   skillIds: string[];
   connectorRepo?: {
     connectorId: string;
