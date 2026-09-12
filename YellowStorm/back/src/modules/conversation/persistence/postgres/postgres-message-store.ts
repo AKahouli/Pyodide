@@ -4,28 +4,15 @@ import { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import { alias } from 'drizzle-orm/pg-core';
 import { DRIZZLE_DB } from '@modules/postgres/postgres.constants';
 import * as schema from '@modules/postgres/schema';
-import type {
-  MessageComponent,
-  ResponseCorrectionAttempt,
-} from '../../interfaces/message.interface';
+import type { MessageComponent, ResponseCorrectionAttempt } from '../../interfaces/message.interface';
 import type { FrontendLatencyPatch } from '../../interfaces/latency.interface';
 import { newOwnedId } from '../owned-id';
-import type {
-  AiMessageComponentsRecord,
-  MessageCursorInput,
-  MessagePageInput,
-  MessageRecord,
-  MessageStore,
-  ReportMessageRecord,
-} from '../message-store';
+import type { AiMessageComponentsRecord, MessageCursorInput, MessagePageInput, MessageRecord, MessageStore, ReportMessageRecord } from '../message-store';
 import { mapPostgresMessage } from './postgres-message-record.mapper';
-import {
-  decodeMessageCursor,
-  encodeMessageCursor,
-  messageFilterHash,
-} from '../../utils/message-cursor';
+import { decodeMessageCursor, encodeMessageCursor, messageFilterHash } from '../../utils/message-cursor';
 import { BadRequestException } from '../../../exceptions';
 import { ErrorCode } from '../../../exceptions/constants/error-codes';
+import type { ConversationUsageMetrics } from '../../utils/usage-metrics';
 
 @Injectable()
 export class PostgresMessageStore implements MessageStore {
@@ -71,9 +58,7 @@ export class PostgresMessageStore implements MessageStore {
     });
   }
 
-  async createAiPlaceholder(
-    input: Parameters<MessageStore['createAiPlaceholder']>[0],
-  ): Promise<MessageRecord> {
+  async createAiPlaceholder(input: Parameters<MessageStore['createAiPlaceholder']>[0]): Promise<MessageRecord> {
     return this.db.transaction(async (tx) => {
       const now = new Date();
       const id = newOwnedId();
@@ -98,12 +83,7 @@ export class PostgresMessageStore implements MessageStore {
       await tx
         .update(schema.messages)
         .set({ answerMessageId: id, updatedAt: now })
-        .where(
-          and(
-            eq(schema.messages.id, input.questionMessageId),
-            isNull(schema.messages.answerMessageId),
-          ),
-        );
+        .where(and(eq(schema.messages.id, input.questionMessageId), isNull(schema.messages.answerMessageId)));
       return mapPostgresMessage(row);
     });
   }
@@ -113,9 +93,7 @@ export class PostgresMessageStore implements MessageStore {
    * counters, the AI placeholder, and the question.answerMessageId linkage
    * commit together (was two awaited round trips).
    */
-  async createUserWithAiPlaceholder(
-    input: Parameters<MessageStore['createUserWithAiPlaceholder']>[0],
-  ): Promise<{ user: MessageRecord; placeholder: MessageRecord }> {
+  async createUserWithAiPlaceholder(input: Parameters<MessageStore['createUserWithAiPlaceholder']>[0]): Promise<{ user: MessageRecord; placeholder: MessageRecord }> {
     return this.db.transaction(async (tx) => {
       const now = new Date();
       const placeholderCreatedAt = new Date(now.getTime() + 1);
@@ -177,55 +155,42 @@ export class PostgresMessageStore implements MessageStore {
       await tx
         .update(schema.messages)
         .set({ answerMessageId: placeholderId, updatedAt: now })
-        .where(
-          and(
-            eq(schema.messages.id, userId),
-            isNull(schema.messages.answerMessageId),
-          ),
-        );
+        .where(and(eq(schema.messages.id, userId), isNull(schema.messages.answerMessageId)));
       return { user: mapPostgresMessage(userRow), placeholder: mapPostgresMessage(placeholderRow) };
     });
   }
 
-  async completeAi(
-    input: Parameters<MessageStore['completeAi']>[0],
-  ): Promise<MessageRecord | null> {
+  async completeAi(input: Parameters<MessageStore['completeAi']>[0]): Promise<MessageRecord | null> {
     return this.db.transaction(async (tx) => {
       const now = new Date();
-      const conditions = [
-        eq(schema.messages.id, input.messageId),
-        eq(schema.messages.conversationType, 'ai'),
-        eq(schema.messages.isComplete, false),
-      ];
+      const conditions = [eq(schema.messages.id, input.messageId), eq(schema.messages.conversationType, 'ai'), eq(schema.messages.isComplete, false)];
       if (input.streamExecutionLeaseId) {
         conditions.push(eq(schema.messages.streamExecutionLeaseId, input.streamExecutionLeaseId));
       }
-    const [row] = await tx
-      .update(schema.messages)
-      .set({
-        components: input.components,
-        isStreaming: false,
-        isComplete: true,
-        executionStatus: 'completed',
-        executionTerminalAt: now,
-        interruptionReason: null,
-        inputTokens: input.inputTokens,
-        outputTokens: input.outputTokens,
-        durationMs: input.durationMs,
-        timeToFirstChunk: input.timeToFirstChunk,
-        timeToFirstToken: input.timeToFirstToken,
-        modelRequestTelemetry: input.modelRequestTelemetry,
-        guardrailDecision: input.guardrailDecision,
-        // Shallow JSONB merge: a browser-reported frontend paint metric that
-        // landed first (racing completion) is preserved because the server-side
-        // metrics object never carries that key.
-        latencyMetrics: input.latencyMetrics
-          ? sql`COALESCE(${schema.messages.latencyMetrics}, '{}'::jsonb) || ${JSON.stringify(input.latencyMetrics)}::jsonb`
-          : undefined,
-        updatedAt: now,
-      })
-      .where(and(...conditions))
-      .returning();
+      const [row] = await tx
+        .update(schema.messages)
+        .set({
+          components: input.components,
+          isStreaming: false,
+          isComplete: true,
+          executionStatus: 'completed',
+          executionTerminalAt: now,
+          interruptionReason: null,
+          inputTokens: input.inputTokens,
+          outputTokens: input.outputTokens,
+          durationMs: input.durationMs,
+          timeToFirstChunk: input.timeToFirstChunk,
+          timeToFirstToken: input.timeToFirstToken,
+          modelRequestTelemetry: input.modelRequestTelemetry,
+          guardrailDecision: input.guardrailDecision,
+          // Shallow JSONB merge: a browser-reported frontend paint metric that
+          // landed first (racing completion) is preserved because the server-side
+          // metrics object never carries that key.
+          latencyMetrics: input.latencyMetrics ? sql`COALESCE(${schema.messages.latencyMetrics}, '{}'::jsonb) || ${JSON.stringify(input.latencyMetrics)}::jsonb` : undefined,
+          updatedAt: now,
+        })
+        .where(and(...conditions))
+        .returning();
       if (!row) return null;
       await tx
         .update(schema.conversations)
@@ -239,22 +204,64 @@ export class PostgresMessageStore implements MessageStore {
     });
   }
 
-  async findById(id: string): Promise<MessageRecord | null> {
+  async recordConversationUsageEvents(events: Parameters<MessageStore['recordConversationUsageEvents']>[0]): Promise<void> {
+    if (!events.length) return;
+    await this.db
+      .insert(schema.conversationUsageEvents)
+      .values(events.map((event) => ({ id: newOwnedId(), ...event })))
+      .onConflictDoNothing({ target: schema.conversationUsageEvents.eventKey });
+  }
+
+  async getConversationUsage(conversationId: string): Promise<ConversationUsageMetrics> {
     const [row] = await this.db
-      .select()
-      .from(schema.messages)
-      .where(eq(schema.messages.id, id))
-      .limit(1);
+      .select({
+        input: sql<number>`COALESCE(sum(${schema.conversationUsageEvents.inputTokens}), 0)::float8`,
+        output: sql<number>`COALESCE(sum(${schema.conversationUsageEvents.outputTokens}), 0)::float8`,
+        cachedInput: sql<number>`COALESCE(sum(${schema.conversationUsageEvents.cachedInputTokens}), 0)::float8`,
+        reasoning: sql<number>`COALESCE(sum(${schema.conversationUsageEvents.reasoningTokens}), 0)::float8`,
+        total: sql<number>`COALESCE(sum(${schema.conversationUsageEvents.totalTokens}), 0)::float8`,
+        costUsd: sql<number>`COALESCE(sum(${schema.conversationUsageEvents.costUsd}), 0)::float8`,
+        carbonGramsCo2e: sql<number>`COALESCE(sum(${schema.conversationUsageEvents.carbonGramsCo2e}), 0)::float8`,
+        eventCount: sql<number>`count(*)::int`,
+        pricedCount: sql<number>`count(${schema.conversationUsageEvents.costUsd})::int`,
+        carbonCount: sql<number>`count(${schema.conversationUsageEvents.carbonGramsCo2e})::int`,
+        pricingVersions: sql<string[]>`COALESCE(array_agg(DISTINCT ${schema.conversationUsageEvents.pricingVersion}) FILTER (WHERE ${schema.conversationUsageEvents.pricingVersion} IS NOT NULL), ARRAY[]::varchar[])`,
+        methodologies: sql<string[]>`COALESCE(array_agg(DISTINCT ${schema.conversationUsageEvents.carbonMethodology}) FILTER (WHERE ${schema.conversationUsageEvents.carbonMethodology} IS NOT NULL), ARRAY[]::varchar[])`,
+        factorVersions: sql<string[]>`COALESCE(array_agg(DISTINCT ${schema.conversationUsageEvents.carbonFactorVersion}) FILTER (WHERE ${schema.conversationUsageEvents.carbonFactorVersion} IS NOT NULL), ARRAY[]::varchar[])`,
+      })
+      .from(schema.conversationUsageEvents)
+      .where(eq(schema.conversationUsageEvents.conversationId, conversationId));
+    const hasEvents = row.eventCount > 0;
+    return {
+      tokens: {
+        input: row.input,
+        output: row.output,
+        cachedInput: row.cachedInput,
+        reasoning: row.reasoning,
+        total: row.total,
+      },
+      cost: {
+        usd: row.pricedCount > 0 ? row.costUsd : null,
+        complete: hasEvents && row.pricedCount === row.eventCount,
+        ...(row.pricingVersions.length ? { pricingVersions: row.pricingVersions } : {}),
+      },
+      carbon: {
+        gramsCo2e: row.carbonCount > 0 ? row.carbonGramsCo2e : null,
+        estimated: true,
+        complete: hasEvents && row.carbonCount === row.eventCount,
+        ...(row.methodologies.length ? { methodologies: row.methodologies } : {}),
+        ...(row.factorVersions.length ? { factorVersions: row.factorVersions } : {}),
+      },
+    };
+  }
+
+  async findById(id: string): Promise<MessageRecord | null> {
+    const [row] = await this.db.select().from(schema.messages).where(eq(schema.messages.id, id)).limit(1);
     return row ? mapPostgresMessage(row) : null;
   }
 
   async listPage(input: MessagePageInput): Promise<{ records: MessageRecord[]; total: number }> {
-    const where = input.conversationType
-      ? and(
-          eq(schema.messages.conversationId, input.conversationId),
-          eq(schema.messages.conversationType, input.conversationType),
-        )
-      : eq(schema.messages.conversationId, input.conversationId);
+    const where = input.conversationType ? and(eq(schema.messages.conversationId, input.conversationId), eq(schema.messages.conversationType, input.conversationType)) : eq(schema.messages.conversationId, input.conversationId);
     const [rows, count] = await Promise.all([
       this.db
         .select()
@@ -282,10 +289,7 @@ export class PostgresMessageStore implements MessageStore {
     const filterHash = messageFilterHash(input.conversationType);
     const cursor = input.cursor ? decodeMessageCursor(input.cursor) : undefined;
     if (cursor && cursor.f !== filterHash) {
-      throw new BadRequestException(
-        ErrorCode.VALIDATION_ERROR,
-        'Message cursor does not match the request filters',
-      );
+      throw new BadRequestException(ErrorCode.VALIDATION_ERROR, 'Message cursor does not match the request filters');
     }
     const conditions = [eq(schema.messages.conversationId, input.conversationId)];
     if (input.conversationType) {
@@ -293,12 +297,7 @@ export class PostgresMessageStore implements MessageStore {
     }
     if (cursor) {
       const createdAt = new Date(cursor.createdAt);
-      conditions.push(
-        or(
-          lt(schema.messages.createdAt, createdAt),
-          and(eq(schema.messages.createdAt, createdAt), lt(schema.messages.id, cursor.id)),
-        )!,
-      );
+      conditions.push(or(lt(schema.messages.createdAt, createdAt), and(eq(schema.messages.createdAt, createdAt), lt(schema.messages.id, cursor.id)))!);
     }
     const rows = await this.db
       .select()
@@ -325,42 +324,17 @@ export class PostgresMessageStore implements MessageStore {
   }
 
   async listByConversation(conversationId: string, limit?: number): Promise<MessageRecord[]> {
-    const query = this.db
-        .select()
-        .from(schema.messages)
-        .where(eq(schema.messages.conversationId, conversationId))
-        .orderBy(asc(schema.messages.createdAt), asc(schema.messages.id))
-        .$dynamic();
+    const query = this.db.select().from(schema.messages).where(eq(schema.messages.conversationId, conversationId)).orderBy(asc(schema.messages.createdAt), asc(schema.messages.id)).$dynamic();
     return (await (limit === undefined ? query : query.limit(limit))).map(mapPostgresMessage);
   }
 
-  async findTurnByRequestId(
-    conversationId: string,
-    senderId: string,
-    requestId: string,
-  ): Promise<{ user: MessageRecord; aiId?: string } | null> {
+  async findTurnByRequestId(conversationId: string, senderId: string, requestId: string): Promise<{ user: MessageRecord; aiId?: string } | null> {
     const ai = alias(schema.messages, 'request_ai');
     const [turn] = await this.db
       .select({ user: schema.messages, aiId: ai.id })
       .from(schema.messages)
-      .leftJoin(
-        ai,
-        and(
-          eq(ai.conversationId, conversationId),
-          eq(ai.senderId, senderId),
-          eq(ai.conversationType, 'ai'),
-          eq(ai.questionMessageId, schema.messages.id),
-          eq(ai.requestId, requestId),
-        ),
-      )
-      .where(
-        and(
-          eq(schema.messages.conversationId, conversationId),
-          eq(schema.messages.senderId, senderId),
-          eq(schema.messages.conversationType, 'user'),
-          eq(schema.messages.requestId, requestId),
-        ),
-      )
+      .leftJoin(ai, and(eq(ai.conversationId, conversationId), eq(ai.senderId, senderId), eq(ai.conversationType, 'ai'), eq(ai.questionMessageId, schema.messages.id), eq(ai.requestId, requestId)))
+      .where(and(eq(schema.messages.conversationId, conversationId), eq(schema.messages.senderId, senderId), eq(schema.messages.conversationType, 'user'), eq(schema.messages.requestId, requestId)))
       .limit(1);
     if (!turn) return null;
     return { user: mapPostgresMessage(turn.user), aiId: turn.aiId?.trim() };
@@ -370,10 +344,7 @@ export class PostgresMessageStore implements MessageStore {
     return this.update(id, { feedback, feedbackAt });
   }
 
-  async updateReliability(
-    id: string,
-    evaluation: NonNullable<MessageRecord['reliabilityEvaluation']>,
-  ) {
+  async updateReliability(id: string, evaluation: NonNullable<MessageRecord['reliabilityEvaluation']>) {
     return this.update(id, {
       reliabilityEvaluation: evaluation,
       reliabilityEvaluationHeartbeatAt: evaluation.status === 'pending' ? new Date() : null,
@@ -395,17 +366,7 @@ export class PostgresMessageStore implements MessageStore {
         interruptionReason: null,
         updatedAt: now,
       })
-      .where(
-        and(
-          eq(schema.messages.id, id),
-          eq(schema.messages.conversationType, 'ai'),
-          eq(schema.messages.isComplete, false),
-          or(
-            isNull(schema.messages.streamExecutionLeaseExpiresAt),
-            lte(schema.messages.streamExecutionLeaseExpiresAt, now),
-          ),
-        ),
-      )
+      .where(and(eq(schema.messages.id, id), eq(schema.messages.conversationType, 'ai'), eq(schema.messages.isComplete, false), or(isNull(schema.messages.streamExecutionLeaseExpiresAt), lte(schema.messages.streamExecutionLeaseExpiresAt, now))))
       .returning({ id: schema.messages.id });
     return rows.length === 1;
   }
@@ -419,13 +380,7 @@ export class PostgresMessageStore implements MessageStore {
         lastProgressAt: now,
         updatedAt: now,
       })
-      .where(
-        and(
-          eq(schema.messages.id, id),
-          eq(schema.messages.streamExecutionLeaseId, leaseId),
-          eq(schema.messages.isComplete, false),
-        ),
-      )
+      .where(and(eq(schema.messages.id, id), eq(schema.messages.streamExecutionLeaseId, leaseId), eq(schema.messages.isComplete, false)))
       .returning({ id: schema.messages.id });
     return rows.length === 1;
   }
@@ -446,12 +401,7 @@ export class PostgresMessageStore implements MessageStore {
       .where(and(eq(schema.messages.id, id), eq(schema.messages.streamExecutionLeaseId, leaseId)));
   }
 
-  async claimReliability(
-    conversationId: string,
-    id: string,
-    manual: boolean,
-    requestedAt: string,
-  ): Promise<MessageRecord | null> {
+  async claimReliability(conversationId: string, id: string, manual: boolean, requestedAt: string): Promise<MessageRecord | null> {
     return this.db.transaction(async (tx) => {
       const [row] = await tx
         .select()
@@ -462,28 +412,9 @@ export class PostgresMessageStore implements MessageStore {
       if (!row) return null;
       const record = mapPostgresMessage(row);
       const components = record.components ?? [];
-      const hasAnswer =
-        record.conversationType === 'ai' &&
-        record.isComplete &&
-        !record.isStreaming &&
-        Boolean(record.questionMessageId) &&
-        components.some(
-          (component) =>
-            component.type === 'text' &&
-            typeof component.data?.content === 'string' &&
-            component.data.content.trim(),
-        ) &&
-        !components.some((component) => component.type === 'error');
-      const correctionInProgress = ['queued', 'correcting', 're_evaluating'].includes(
-        record.correctionWorkflow?.status ?? '',
-      );
-      if (
-        !hasAnswer ||
-        correctionInProgress ||
-        (manual
-          ? record.reliabilityEvaluation?.status === 'pending'
-          : record.reliabilityEvaluation !== undefined)
-      ) {
+      const hasAnswer = record.conversationType === 'ai' && record.isComplete && !record.isStreaming && Boolean(record.questionMessageId) && components.some((component) => component.type === 'text' && typeof component.data?.content === 'string' && component.data.content.trim()) && !components.some((component) => component.type === 'error');
+      const correctionInProgress = ['queued', 'correcting', 're_evaluating'].includes(record.correctionWorkflow?.status ?? '');
+      if (!hasAnswer || correctionInProgress || (manual ? record.reliabilityEvaluation?.status === 'pending' : record.reliabilityEvaluation !== undefined)) {
         return null;
       }
       const [claimed] = await tx
@@ -499,56 +430,26 @@ export class PostgresMessageStore implements MessageStore {
     });
   }
 
-  async updateCorrectionWorkflow(
-    id: string,
-    workflow: NonNullable<MessageRecord['correctionWorkflow']>,
-    correctionRunId?: string,
-  ): Promise<MessageRecord | null> {
+  async updateCorrectionWorkflow(id: string, workflow: NonNullable<MessageRecord['correctionWorkflow']>, correctionRunId?: string): Promise<MessageRecord | null> {
     return this.db.transaction(async (tx) => {
-      const [row] = await tx
-        .select()
-        .from(schema.messages)
-        .where(eq(schema.messages.id, id))
-        .for('update')
-        .limit(1);
+      const [row] = await tx.select().from(schema.messages).where(eq(schema.messages.id, id)).for('update').limit(1);
       if (!row || row.conversationType !== 'ai') return null;
       const current = row.correctionWorkflow as MessageRecord['correctionWorkflow'];
       if (correctionRunId && current?.correctionRunId !== correctionRunId) return null;
       const next = { ...current, ...workflow, attempts: workflow.attempts ?? current?.attempts };
-      const [updated] = await tx
-        .update(schema.messages)
-        .set({ correctionWorkflow: next, updatedAt: new Date() })
-        .where(eq(schema.messages.id, id))
-        .returning();
+      const [updated] = await tx.update(schema.messages).set({ correctionWorkflow: next, updatedAt: new Date() }).where(eq(schema.messages.id, id)).returning();
       return mapPostgresMessage(updated);
     });
   }
 
-  async claimCorrectionRun(
-    id: string,
-    runId: string,
-    leaseExpiresAt: string,
-    now: string,
-  ): Promise<boolean> {
+  async claimCorrectionRun(id: string, runId: string, leaseExpiresAt: string, now: string): Promise<boolean> {
     return this.db.transaction(async (tx) => {
-      const [row] = await tx
-        .select()
-        .from(schema.messages)
-        .where(eq(schema.messages.id, id))
-        .for('update')
-        .limit(1);
+      const [row] = await tx.select().from(schema.messages).where(eq(schema.messages.id, id)).for('update').limit(1);
       if (!row || row.conversationType !== 'ai') return false;
       const record = mapPostgresMessage(row);
       const workflow = record.correctionWorkflow;
-      const terminal = ['corrected', 'failed', 'abstained', 'human_review_required'].includes(
-        workflow?.status ?? '',
-      );
-      if (
-        record.reliabilityEvaluation?.status === 'pending' ||
-        (workflow?.correctionRunId &&
-          !terminal &&
-          !(workflow.leaseExpiresAt && workflow.leaseExpiresAt < now))
-      ) {
+      const terminal = ['corrected', 'failed', 'abstained', 'human_review_required'].includes(workflow?.status ?? '');
+      if (record.reliabilityEvaluation?.status === 'pending' || (workflow?.correctionRunId && !terminal && !(workflow.leaseExpiresAt && workflow.leaseExpiresAt < now))) {
         return false;
       }
       const next = {
@@ -558,30 +459,17 @@ export class PostgresMessageStore implements MessageStore {
         status: 'queued' as const,
         activeVersion: 'original' as const,
       } as NonNullable<MessageRecord['correctionWorkflow']>;
-      await tx
-        .update(schema.messages)
-        .set({ correctionWorkflow: next, updatedAt: new Date() })
-        .where(eq(schema.messages.id, id));
+      await tx.update(schema.messages).set({ correctionWorkflow: next, updatedAt: new Date() }).where(eq(schema.messages.id, id));
       return true;
     });
   }
 
-  async upsertCorrectionAttempt(
-    id: string,
-    attempt: ResponseCorrectionAttempt,
-    correctionRunId?: string,
-  ): Promise<MessageRecord | null> {
+  async upsertCorrectionAttempt(id: string, attempt: ResponseCorrectionAttempt, correctionRunId?: string): Promise<MessageRecord | null> {
     return this.db.transaction(async (tx) => {
-      const [row] = await tx
-        .select()
-        .from(schema.messages)
-        .where(eq(schema.messages.id, id))
-        .for('update')
-        .limit(1);
+      const [row] = await tx.select().from(schema.messages).where(eq(schema.messages.id, id)).for('update').limit(1);
       if (!row || row.conversationType !== 'ai') return null;
       const workflow = row.correctionWorkflow as MessageRecord['correctionWorkflow'];
-      if (!workflow || (correctionRunId && workflow.correctionRunId !== correctionRunId))
-        return null;
+      if (!workflow || (correctionRunId && workflow.correctionRunId !== correctionRunId)) return null;
       const attempts = [...(workflow.attempts ?? [])];
       const index = attempts.findIndex((item) => item.attemptId === attempt.attemptId);
       if (index < 0) attempts.push(attempt);
@@ -640,10 +528,7 @@ export class PostgresMessageStore implements MessageStore {
       }
 
       if (!updatedIds.length) return [];
-      const rows = await tx
-        .select()
-        .from(schema.messages)
-        .where(inArray(schema.messages.id, updatedIds));
+      const rows = await tx.select().from(schema.messages).where(inArray(schema.messages.id, updatedIds));
       return rows.map(mapPostgresMessage);
     });
   }
@@ -653,12 +538,7 @@ export class PostgresMessageStore implements MessageStore {
     await this.db
       .update(schema.messages)
       .set({ reliabilityEvaluationHeartbeatAt: now, updatedAt: now })
-      .where(
-        and(
-          inArray(schema.messages.id, ids),
-          sql`${schema.messages.reliabilityEvaluation}->>'status' = 'pending'`,
-        ),
-      );
+      .where(and(inArray(schema.messages.id, ids), sql`${schema.messages.reliabilityEvaluation}->>'status' = 'pending'`));
   }
 
   async markStreamFailed(id: string, leaseId?: string): Promise<void> {
@@ -684,11 +564,7 @@ export class PostgresMessageStore implements MessageStore {
    * overwritten and two replicas racing converge on one write. Returns the
    * interrupted execution, or null when the attempt was not claimable.
    */
-  async markExecutionInterrupted(
-    id: string,
-    reason: string,
-    now: Date,
-  ): Promise<{ id: string; conversationId: string; executionAttemptId: string | null } | null> {
+  async markExecutionInterrupted(id: string, reason: string, now: Date): Promise<{ id: string; conversationId: string; executionAttemptId: string | null } | null> {
     const rows = await this.db
       .update(schema.messages)
       .set({
@@ -708,10 +584,7 @@ export class PostgresMessageStore implements MessageStore {
           eq(schema.messages.isComplete, false),
           // Lease expiry is the ownership boundary: no live lease may be
           // interrupted by the recovery worker.
-          or(
-            isNull(schema.messages.streamExecutionLeaseExpiresAt),
-            lte(schema.messages.streamExecutionLeaseExpiresAt, now),
-          ),
+          or(isNull(schema.messages.streamExecutionLeaseExpiresAt), lte(schema.messages.streamExecutionLeaseExpiresAt, now)),
         ),
       )
       .returning({
@@ -746,58 +619,29 @@ export class PostgresMessageStore implements MessageStore {
         leaseExpiresAt: schema.messages.streamExecutionLeaseExpiresAt,
       })
       .from(schema.messages)
-      .where(
-        and(
-          eq(schema.messages.isStreaming, true),
-          eq(schema.messages.isComplete, false),
-          eq(schema.messages.conversationType, 'ai'),
-          or(
-            isNull(schema.messages.streamExecutionLeaseExpiresAt),
-            lte(schema.messages.streamExecutionLeaseExpiresAt, cutoff),
-          ),
-        ),
-      )
+      .where(and(eq(schema.messages.isStreaming, true), eq(schema.messages.isComplete, false), eq(schema.messages.conversationType, 'ai'), or(isNull(schema.messages.streamExecutionLeaseExpiresAt), lte(schema.messages.streamExecutionLeaseExpiresAt, cutoff))))
       .orderBy(schema.messages.streamExecutionLeaseExpiresAt, schema.messages.id)
       .limit(limit);
     return rows;
   }
 
-  async updateFrontendLatency(
-    messageId: string,
-    requestId: string,
-    patch: FrontendLatencyPatch,
-  ): Promise<MessageRecord | null> {
+  async updateFrontendLatency(messageId: string, requestId: string, patch: FrontendLatencyPatch): Promise<MessageRecord | null> {
     return this.db.transaction(async (tx) => {
-      const [current] = await tx
-        .select()
-        .from(schema.messages)
-        .where(eq(schema.messages.id, messageId))
-        .limit(1)
-        .for('update');
+      const [current] = await tx.select().from(schema.messages).where(eq(schema.messages.id, messageId)).limit(1).for('update');
       if (!current || current.conversationType !== 'ai') return null;
       // Idempotency/correlation: reject when the persisted turn carries a
       // different requestId; skip entirely once a frontend paint value exists.
       if (current.requestId && requestId !== current.requestId) return null;
       const existing = (current.latencyMetrics ?? {}) as Record<string, unknown>;
-      if (
-        existing.frontendRenderMs !== undefined ||
-        existing.frontendFirstChunkPaintedEpochMs !== undefined
-      ) {
+      if (existing.frontendRenderMs !== undefined || existing.frontendFirstChunkPaintedEpochMs !== undefined) {
         return mapPostgresMessage(current);
       }
       // The worse quality wins so a clock-skew signal cannot be lost to a
       // later, more optimistic report.
       const qualityRank: Record<string, number> = { ok: 0, partial: 1, 'clock-skew': 2 };
-      const worstQuality =
-        [existing.quality, patch.quality]
-          .filter((value): value is string => typeof value === 'string' && value in qualityRank)
-          .sort((left, right) => qualityRank[right] - qualityRank[left])[0] ?? patch.quality;
+      const worstQuality = [existing.quality, patch.quality].filter((value): value is string => typeof value === 'string' && value in qualityRank).sort((left, right) => qualityRank[right] - qualityRank[left])[0] ?? patch.quality;
       const merged = { ...existing, ...patch, quality: worstQuality };
-      const [row] = await tx
-        .update(schema.messages)
-        .set({ latencyMetrics: merged, updatedAt: new Date() })
-        .where(eq(schema.messages.id, messageId))
-        .returning();
+      const [row] = await tx.update(schema.messages).set({ latencyMetrics: merged, updatedAt: new Date() }).where(eq(schema.messages.id, messageId)).returning();
       return row ? mapPostgresMessage(row) : null;
     });
   }
@@ -828,10 +672,7 @@ export class PostgresMessageStore implements MessageStore {
     return result.rowCount ?? 0;
   }
 
-  async updateUser(
-    id: string,
-    input: { content: string; agentIds?: string[]; memberIds?: string[]; editedAt: Date },
-  ): Promise<MessageRecord | null> {
+  async updateUser(id: string, input: { content: string; agentIds?: string[]; memberIds?: string[]; editedAt: Date }): Promise<MessageRecord | null> {
     const [row] = await this.db
       .update(schema.messages)
       .set({
@@ -848,12 +689,7 @@ export class PostgresMessageStore implements MessageStore {
   }
 
   async deleteByConversation(conversationId: string): Promise<number> {
-    return (
-      await this.db
-        .delete(schema.messages)
-        .where(eq(schema.messages.conversationId, conversationId))
-        .returning({ id: schema.messages.id })
-    ).length;
+    return (await this.db.delete(schema.messages).where(eq(schema.messages.conversationId, conversationId)).returning({ id: schema.messages.id })).length;
   }
 
   async findBranchesByQuestion(questionMessageId: string): Promise<MessageRecord[]> {
@@ -861,12 +697,7 @@ export class PostgresMessageStore implements MessageStore {
       await this.db
         .select()
         .from(schema.messages)
-        .where(
-          and(
-            eq(schema.messages.questionMessageId, questionMessageId),
-            eq(schema.messages.conversationType, 'ai'),
-          ),
-        )
+        .where(and(eq(schema.messages.questionMessageId, questionMessageId), eq(schema.messages.conversationType, 'ai')))
         .orderBy(asc(schema.messages.createdAt), asc(schema.messages.id))
     ).map(mapPostgresMessage);
   }
@@ -876,17 +707,8 @@ export class PostgresMessageStore implements MessageStore {
     const rows = await this.db
       .select()
       .from(schema.messages)
-      .where(
-        and(
-          inArray(schema.messages.questionMessageId, questionMessageIds),
-          eq(schema.messages.conversationType, 'ai'),
-        ),
-      )
-      .orderBy(
-        asc(schema.messages.questionMessageId),
-        asc(schema.messages.createdAt),
-        asc(schema.messages.id),
-      );
+      .where(and(inArray(schema.messages.questionMessageId, questionMessageIds), eq(schema.messages.conversationType, 'ai')))
+      .orderBy(asc(schema.messages.questionMessageId), asc(schema.messages.createdAt), asc(schema.messages.id));
     const result = new Map<string, MessageRecord[]>();
     for (const row of rows) {
       const questionId = row.questionMessageId?.trim();
@@ -898,24 +720,13 @@ export class PostgresMessageStore implements MessageStore {
     return result;
   }
 
-  async findAiComponents(
-    conversationId: string,
-    messageId: string,
-  ): Promise<AiMessageComponentsRecord | null> {
+  async findAiComponents(conversationId: string, messageId: string): Promise<AiMessageComponentsRecord | null> {
     const [row] = await this.db
       .select({ id: schema.messages.id, components: schema.messages.components })
       .from(schema.messages)
-      .where(
-        and(
-          eq(schema.messages.id, messageId),
-          eq(schema.messages.conversationId, conversationId),
-          eq(schema.messages.conversationType, 'ai'),
-        ),
-      )
+      .where(and(eq(schema.messages.id, messageId), eq(schema.messages.conversationId, conversationId), eq(schema.messages.conversationType, 'ai')))
       .limit(1);
-    return row
-      ? { id: row.id.trim(), components: (row.components ?? []) as MessageComponent[] }
-      : null;
+    return row ? { id: row.id.trim(), components: (row.components ?? []) as MessageComponent[] } : null;
   }
 
   async findReportMessageById(messageId: string): Promise<ReportMessageRecord | null> {
@@ -940,10 +751,7 @@ export class PostgresMessageStore implements MessageStore {
     };
   }
 
-  private async update(
-    id: string,
-    patch: Partial<typeof schema.messages.$inferInsert>,
-  ): Promise<MessageRecord | null> {
+  private async update(id: string, patch: Partial<typeof schema.messages.$inferInsert>): Promise<MessageRecord | null> {
     const [row] = await this.db
       .update(schema.messages)
       .set({ ...patch, updatedAt: new Date() })

@@ -201,10 +201,6 @@ class StreamingEventProcessor:
         runner_phase_token = set_latency_diag_phase(PHASE_GOOGLE_ADK_RUNNER)
         try:
             async for event in stream:
-                if not event.content or not event.content.parts:
-                    continue
-                if guarded_output and event.is_final_response():
-                    validated_final_received = True
                 event_count += 1
 
                 # Track manager as current agent at the start (first event)
@@ -214,6 +210,7 @@ class StreamingEventProcessor:
 
                 # Track token usage if available
                 if event.usage_metadata:
+                    actor_id, _ = self._get_actor_info(event, manager_agent)
                     prompt_tokens = event.usage_metadata.prompt_token_count or 0
                     response_tokens = event.usage_metadata.candidates_token_count or 0
                     event_total_tokens = event.usage_metadata.total_token_count or 0
@@ -238,10 +235,12 @@ class StreamingEventProcessor:
                                 "input_tokens": prompt_tokens,
                                 "output_tokens": response_tokens,
                                 "total_tokens": event_total_tokens,
+                                "cached_input_tokens": getattr(event.usage_metadata, "cached_content_token_count", 0) or 0,
+                                "reasoning_tokens": getattr(event.usage_metadata, "thoughts_token_count", 0) or 0,
                                 "model": model_name,
                                 "context_window_tokens": get_context_window_for_model(model_name) or 0,
                             },
-                            "metadata": {"message_id": session_id},
+                            "metadata": {"message_id": session_id, "agent_id": actor_id},
                         }
                         await q.put(usage_chunk)
                         logger.info(
@@ -251,6 +250,11 @@ class StreamingEventProcessor:
                     logger.debug(
                         f"[TOKEN USAGE] Event #{event_count} has no usage_metadata"
                     )
+
+                if not event.content or not event.content.parts:
+                    continue
+                if guarded_output and event.is_final_response():
+                    validated_final_received = True
 
                 (
                     message_id,

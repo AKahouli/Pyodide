@@ -533,6 +533,8 @@ message Usage {
     int32 total_tokens = 3;      // Total tokens (input + output)
     string model = 4;            // Model/chatbot name used (e.g., "gpt-4.1")
     int32 context_window_tokens = 5; // Capacity associated with this individual model request
+    int32 cached_input_tokens = 6; // Cached input included in input_tokens
+    int32 reasoning_tokens = 7; // Reasoning/thought tokens included in output_tokens
 }
 
 // ADK-local timing envelope attached to the first post-model StreamChunk.

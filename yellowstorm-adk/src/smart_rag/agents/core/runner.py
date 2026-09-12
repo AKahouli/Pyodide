@@ -461,6 +461,8 @@ class AgentRunner:
                             "input_tokens": event.usage_metadata.prompt_token_count or 0,
                             "output_tokens": event.usage_metadata.candidates_token_count or 0,
                             "total_tokens": event.usage_metadata.total_token_count or 0,
+                            "cached_input_tokens": getattr(event.usage_metadata, "cached_content_token_count", 0) or 0,
+                            "reasoning_tokens": getattr(event.usage_metadata, "thoughts_token_count", 0) or 0,
                             "model": model_name,
                             "context_window_tokens": get_context_window_for_model(model_name) or 0,
                         },

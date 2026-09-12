@@ -274,6 +274,8 @@ export const AppSidebar = memo(function AppSidebar() {
   const updateConversation = useConversationStore((s) => s.updateConversation);
   const moveConversationToProject = useConversationStore((s) => s.moveConversationToProject);
   const currentConversationId = useConversationStore((s) => s.currentConversationId);
+  const v1StreamingConversationId = useConversationStore((s) => (s.isStreaming ? s.streamingConversationId : null));
+  const v1StreamingCache = useConversationStore((s) => s.streamingStateCache);
 
   // conversation-v2 sessions live in their own store; merge them into history.
   const v2Pointers = useConversationV2PointersStore((s) => s.items);
@@ -281,6 +283,8 @@ export const AppSidebar = memo(function AppSidebar() {
   const renameV2 = useConversationV2PointersStore((s) => s.rename);
   const removeV2 = useConversationV2PointersStore((s) => s.remove);
   const currentV2SessionId = useConversationV2Store((s) => s.sessionId);
+  const v2Streaming = useConversationV2Store((s) => s.streaming);
+  const v2StreamingCache = useConversationV2Store((s) => s.streamingStateCache);
 
   const createProject = useProjectStore((s) => s.createProject);
 
@@ -550,6 +554,7 @@ export const AppSidebar = memo(function AppSidebar() {
                           to={`/conversation-v2/${row.ptr.sessionId}`}
                           icon={<Bot className='h-4 w-4' />}
                           isActive={currentV2SessionId === row.ptr.sessionId}
+                          streaming={(v2Streaming && currentV2SessionId === row.ptr.sessionId) || v2StreamingCache.get(row.ptr.sessionId)?.streaming === true}
                           draggable={false}
                           onRename={(newTitle) => renameV2(row.ptr.sessionId, newTitle)}
                           onDelete={() => handleDeleteV2(row.ptr.sessionId)}
@@ -566,6 +571,7 @@ export const AppSidebar = memo(function AppSidebar() {
                         projectId={conv.projectId ?? null}
                         isGroup={conv.isGroup}
                         mentionCount={conv.unseenMentionCount}
+                        streaming={v1StreamingConversationId === conv.id || v1StreamingCache.has(conv.id)}
                         onRename={(newTitle) => handleRename(conv.id, newTitle)}
                         onDelete={() => handleDelete(conv.id)}
                         onShare={() => handleShare(conv.id, conv.title)}

@@ -21,6 +21,7 @@ const storeFns = vi.hoisted(() => ({
   deleteConversation: vi.fn(async () => undefined),
   updateConversation: vi.fn(async () => undefined),
   currentConversationId: 'c1',
+  streamingStateCache: new Map(),
 }));
 
 const convoState = vi.hoisted(() => ({
@@ -137,7 +138,9 @@ vi.mock('@/modules/conversation/store', () => ({
 
 vi.mock('@/modules/conversation-v2/store', () => ({
   useConversationV2PointersStore: (selector: (state: { items: never[]; fetch: () => void; rename: () => void; remove: () => void }) => unknown) => selector({ items: [], fetch: vi.fn(), rename: vi.fn(), remove: vi.fn() }),
-  useConversationV2Store: (selector: (state: { sessionId: null }) => unknown) => selector({ sessionId: null }),
+  useConversationV2Store: (
+    selector: (state: { sessionId: null; streaming: boolean; streamingStateCache: Map<string, { streaming: boolean }> }) => unknown,
+  ) => selector({ sessionId: null, streaming: false, streamingStateCache: new Map() }),
 }));
 
 vi.mock('./ProjectsSection', () => ({ ProjectsSection: () => <div>projects-section</div> }));

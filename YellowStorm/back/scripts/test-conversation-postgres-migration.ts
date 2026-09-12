@@ -52,7 +52,10 @@ async function main(): Promise<void> {
           'idx_reports_status_created_v2', 'idx_reports_reason_created_v2',
           'uq_usage_windows_user_window', 'idx_usage_windows_user_end',
           'idx_usage_windows_start_plan', 'idx_usage_logs_user_created',
-          'idx_usage_logs_type_model_created', 'idx_usage_logs_created'
+          'idx_usage_logs_type_model_created', 'idx_usage_logs_created',
+          'uq_conversation_usage_events_event_key',
+          'idx_conversation_usage_events_conversation_created',
+          'idx_conversation_usage_events_model_created'
         ])) AS expected_indexes,
         (SELECT count(*)::int FROM pg_index i JOIN pg_class c ON c.oid = i.indexrelid
           JOIN pg_namespace n ON n.oid = c.relnamespace
@@ -66,14 +69,7 @@ async function main(): Promise<void> {
         ])) AS superseded_indexes
     `);
     const summary = result.rows[0];
-    if (
-      summary.usage_tables !== 2 ||
-      !summary.trgm ||
-      summary.trigram_indexes !== 2 ||
-      summary.expected_indexes !== 28 ||
-      summary.invalid_indexes !== 0 ||
-      summary.superseded_indexes !== 0
-    ) {
+    if (summary.usage_tables !== 2 || !summary.trgm || summary.trigram_indexes !== 2 || summary.expected_indexes !== 31 || summary.invalid_indexes !== 0 || summary.superseded_indexes !== 0) {
       throw new Error(`Unexpected migration summary: ${JSON.stringify(summary)}`);
     }
     process.stdout.write(`${JSON.stringify(summary)}\n`);

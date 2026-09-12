@@ -1937,6 +1937,8 @@ class ChatbotServicer(
                     total_tokens=usage_data.get("total_tokens", 0),
                     model=usage_data.get("model", ""),
                     context_window_tokens=usage_data.get("context_window_tokens", 0),
+                    cached_input_tokens=usage_data.get("cached_input_tokens", 0),
+                    reasoning_tokens=usage_data.get("reasoning_tokens", 0),
                 ),
             )
 

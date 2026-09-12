@@ -1,11 +1,4 @@
-import {
-  Injectable,
-  Inject,
-  forwardRef,
-  OnModuleInit,
-  OnModuleDestroy,
-  HttpStatus,
-} from '@nestjs/common';
+import { Injectable, Inject, forwardRef, OnModuleInit, OnModuleDestroy, HttpStatus } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import * as grpc from '@grpc/grpc-js';
@@ -15,22 +8,16 @@ import * as path from 'node:path';
 import { StreamGatewayService } from './stream-gateway.service';
 import { MessageService } from './message.service';
 import { ConversationService } from './conversation.service';
-import {
-  CONVERSATION_EXECUTION_STORE,
-  ConversationExecutionStore,
-} from '../persistence/conversation-execution-store';
+import { CONVERSATION_EXECUTION_STORE, ConversationExecutionStore } from '../persistence/conversation-execution-store';
 import { MessageComponent, ComponentType, type ConversationClientContextV1, type CorrectionReplayContext, type MessageReplayContext } from '../interfaces/message.interface';
-import {
-  getComponentType as sharedGetComponentType,
-  extractComponentData as sharedExtractComponentData,
-  mapTaskStatus as sharedMapTaskStatus,
-} from '../utils/component-mapper';
+import { getComponentType as sharedGetComponentType, extractComponentData as sharedExtractComponentData, mapTaskStatus as sharedMapTaskStatus } from '../utils/component-mapper';
 import { GrpcHealthStatus } from '../interfaces/stream.interface';
 import { LoggerService, LogOptions } from '../../logger';
 import { ServiceUnavailableException, ConflictException, BadRequestException } from '../../exceptions';
 import { AppException } from '../../exceptions/exceptions/base.exception';
 import { ErrorCode } from '../../exceptions/constants/error-codes';
 import { UsageService } from '../../usage';
+import { normalizeTokenUsage, type AttributedTokenUsage, type ConversationUsageAttribution } from '../utils/usage-metrics';
 import { WorkspaceDocumentService } from '../../workspace/workspace-document.service';
 import { WorkspaceService } from '../../workspace/workspace.service';
 import { WorkspaceShareService } from '../../workspace/workspace-share.service';
@@ -42,28 +29,16 @@ import { IGrpcAgent, IGrpcCompaction, IGrpcWorkspaceContext } from '../../agent/
 import { TeamService } from '../../team/team.service';
 import { ModelsService } from '../../models/models.service';
 import { SkillService } from '../../skill/skill.service';
-import {
-  buildGrpcChannelCredentials,
-  createGrpcMetadata,
-} from '../../../common/grpc/grpc-security.util';
+import { buildGrpcChannelCredentials, createGrpcMetadata } from '../../../common/grpc/grpc-security.util';
 import { randomUUID } from 'node:crypto';
 import { ResponseReliabilityService } from './response-reliability.service';
 import { ConversationAgentRequestBuilder, type BuiltAgentExecutionRequest } from './conversation-agent-request.builder';
 import { SemanticModelService } from '../../semantic-model/services/semantic-model.service';
 import { PLATFORM_COPILOT } from '../../agent/constants/platform-copilot.constants';
 import { ConversationSettingsService } from '../../system/conversation-settings.service';
-import type {
-  ConversationLatencyMetricsV1,
-  ConversationLatencyStartContext,
-  StreamChunkLatencyData,
-} from '../interfaces/latency.interface';
+import type { ConversationLatencyMetricsV1, ConversationLatencyStartContext, StreamChunkLatencyData } from '../interfaces/latency.interface';
 import { LatencyEnvelopeTracker } from '../utils/latency-metrics';
-import {
-  beginBackendPreAdkStage,
-  endBackendPreAdkStage,
-  getBackendPreAdkTracker,
-  markGrpcDispatchedForLatency,
-} from '../utils/backend-latency-tracker';
+import { beginBackendPreAdkStage, endBackendPreAdkStage, getBackendPreAdkTracker, markGrpcDispatchedForLatency } from '../utils/backend-latency-tracker';
 
 export interface StreamRequest {
   content: string;
@@ -103,6 +78,14 @@ export interface ConversationHistoryEntry {
   text: string;
 }
 
+export interface PrivateAgentUsage {
+  inputTokens: number;
+  outputTokens: number;
+  model?: string;
+  durationMs: number;
+  entries: AttributedTokenUsage[];
+}
+
 export interface ActiveStreamSnapshot {
   conversationId: string;
   messageId: string;
@@ -136,7 +119,13 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
   private streamTerminalCoordinators = new Map<string, StreamTerminalCoordinator>();
   private streamUsage = new Map<
     string,
-    { inputTokens: number; outputTokens: number; model: string; modelId?: string }
+    {
+      inputTokens: number;
+      outputTokens: number;
+      model: string;
+      modelId?: string;
+      byAttribution: Map<string, AttributedTokenUsage>;
+    }
   >(); // streamKey -> accumulated usage
 
   constructor(
@@ -163,19 +152,11 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
     private readonly teamService?: TeamService,
   ) {
     this.logger.setContext('StreamService');
-    this.fleetAdmissionEnabled = this.configService.get<boolean>(
-      'conversation.fleetAdmissionEnabled',
-      true,
-    );
+    this.fleetAdmissionEnabled = this.configService.get<boolean>('conversation.fleetAdmissionEnabled', true);
     this.replicaId = this.configService.get<string>('REPLICA_ID') || null;
   }
 
-  async seedConversationSession(
-    userId: string,
-    sessionId: string,
-    idempotencyKey: string,
-    history: ConversationHistoryEntry[],
-  ): Promise<void> {
+  async seedConversationSession(userId: string, sessionId: string, idempotencyKey: string, history: ConversationHistoryEntry[]): Promise<void> {
     await this.callConversationSessionRpc('SeedConversationSession', {
       user_id: userId,
       session_id: sessionId,
@@ -194,10 +175,7 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
 
   private async callConversationSessionRpc(method: string, request: Record<string, unknown>): Promise<void> {
     if (!this.isGrpcAvailable || !this.chatbotClient) {
-      throw new ServiceUnavailableException(
-        ErrorCode.CHAT_GRPC_UNAVAILABLE,
-        'AI service is currently unavailable',
-      );
+      throw new ServiceUnavailableException(ErrorCode.CHAT_GRPC_UNAVAILABLE, 'AI service is currently unavailable');
     }
 
     const metadata = createGrpcMetadata(this.configService);
@@ -225,7 +203,9 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
       const [, conversationId, messageId] = streamKey.split(':');
       if (messageId && buffer.size > 0) {
         try {
-          await this.finalizeRunningTools(buffer, 'stopped', conversationId, [], { broadcast: false });
+          await this.finalizeRunningTools(buffer, 'stopped', conversationId, [], {
+            broadcast: false,
+          });
           await this.messageService.completeAIMessage({
             messageId,
             components: Array.from(buffer.values()),
@@ -270,10 +250,7 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
 
       const grpcUrl = this.configService.get<string>('conversation.grpcUrl', 'localhost:50051');
 
-      const { credentials, options } = buildGrpcChannelCredentials(
-        this.configService,
-        (msg) => this.logger.warn(msg),
-      );
+      const { credentials, options } = buildGrpcChannelCredentials(this.configService, (msg) => this.logger.warn(msg));
 
       this.chatbotClient = new chatbotPackage.ChatbotService(grpcUrl, credentials, options);
 
@@ -305,11 +282,7 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
   }
 
   private resolveChatbotProtoPath(): string {
-    const candidatePaths = [
-      path.join(__dirname, '..', 'proto', 'chatbot.proto'),
-      path.resolve(process.cwd(), 'dist', 'modules', 'conversation', 'proto', 'chatbot.proto'),
-      path.resolve(process.cwd(), 'src', 'modules', 'conversation', 'proto', 'chatbot.proto'),
-    ];
+    const candidatePaths = [path.join(__dirname, '..', 'proto', 'chatbot.proto'), path.resolve(process.cwd(), 'dist', 'modules', 'conversation', 'proto', 'chatbot.proto'), path.resolve(process.cwd(), 'src', 'modules', 'conversation', 'proto', 'chatbot.proto')];
 
     const existingPath = candidatePaths.find((candidatePath) => fs.existsSync(candidatePath));
     if (!existingPath) {
@@ -385,8 +358,7 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
     }>
   > {
     try {
-      const conversation =
-        conversationDoc ?? (await this.conversationService.getConversationDocument(conversationId));
+      const conversation = conversationDoc ?? (await this.conversationService.getConversationDocument(conversationId));
       const workspaceIds = (conversation.workspaces || []).map((w) => w.toString());
 
       if (workspaceIds.length === 0) {
@@ -496,9 +468,7 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
     }
 
     for (const agent of agents) {
-      agent.brain_context = agent.brain_context
-        .map((c) => contextMap.get(c.workspace_id))
-        .filter(Boolean) as IGrpcWorkspaceContext[];
+      agent.brain_context = agent.brain_context.map((c) => contextMap.get(c.workspace_id)).filter(Boolean) as IGrpcWorkspaceContext[];
     }
   }
 
@@ -506,9 +476,7 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
    * Build AttachedFile[] for the current turn's files in the proto format.
    * Distinguishes images from documents based on MIME type.
    */
-  private async buildAttachedFiles(
-    attachedFileIds: string[],
-  ): Promise<
+  private async buildAttachedFiles(attachedFileIds: string[]): Promise<
     Array<{
       type: string;
       image?: { filepath: string };
@@ -539,9 +507,7 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
         this.logger.warn('Some attached files not found in database', {
           requested: attachedFileIds.length,
           found: documents.length,
-          missingIds: attachedFileIds.filter(
-            (id) => !documents.some((d) => d.id === id),
-          ),
+          missingIds: attachedFileIds.filter((id) => !documents.some((d) => d.id === id)),
         });
       }
 
@@ -598,19 +564,19 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
       in_memory: boolean;
       language: string;
       indexing_token: number;
-        workspace_id: string;
-        workspace_name: string;
-        file_name: string;
-        createdAt: string;
-      }>
+      workspace_id: string;
+      workspace_name: string;
+      file_name: string;
+      createdAt: string;
+    }>
   > {
     if (!systemWorkspaceId) return [];
 
     try {
-      const result = await this.workspaceDocumentService.findAllByWorkspace(
-        systemWorkspaceId,
-        { limit: 1000, status: DocumentStatus.COMPLETED },
-      );
+      const result = await this.workspaceDocumentService.findAllByWorkspace(systemWorkspaceId, {
+        limit: 1000,
+        status: DocumentStatus.COMPLETED,
+      });
 
       const currentIdSet = new Set(currentFileIds);
       const previousDocs = result.documents.filter((doc) => !currentIdSet.has(doc.id));
@@ -643,17 +609,7 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
-  async startStream(
-    userId: string,
-    conversationId: string,
-    messageId: string,
-    request: StreamRequest,
-    requestId?: string,
-    userEmail: string = '',
-    username?: string,
-    governanceOverride?: StreamGovernanceOverride,
-    latencyStart?: ConversationLatencyStartContext,
-  ): Promise<void> {
+  async startStream(userId: string, conversationId: string, messageId: string, request: StreamRequest, requestId?: string, userEmail: string = '', username?: string, governanceOverride?: StreamGovernanceOverride, latencyStart?: ConversationLatencyStartContext): Promise<void> {
     const logOpts: LogOptions = { requestId };
     // Stream bootstrap: entry (latency setting sample included) until the
     // agent execution request build starts.
@@ -680,19 +636,13 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
     if (!this.isGrpcAvailable) {
       this.logger.error('gRPC unavailable', { conversationId, messageId }, logOpts);
       await this.sendErrorEvent(userId, conversationId, messageId, ErrorCode.CHAT_GRPC_UNAVAILABLE);
-      throw new ServiceUnavailableException(
-        ErrorCode.CHAT_GRPC_UNAVAILABLE,
-        'AI service is currently unavailable',
-      );
+      throw new ServiceUnavailableException(ErrorCode.CHAT_GRPC_UNAVAILABLE, 'AI service is currently unavailable');
     }
     const leaseId = randomUUID();
     const leaseDurationMs = 90_000;
     const claimed = await this.messageService.claimStreamExecution(messageId, leaseId, leaseDurationMs);
     if (!claimed) {
-      throw new ConflictException(
-        ErrorCode.CHAT_ALREADY_STREAMING,
-        'This response is already streaming',
-      );
+      throw new ConflictException(ErrorCode.CHAT_ALREADY_STREAMING, 'This response is already streaming');
     }
     // Owned execution identity for the whole lifecycle (bootstrap through
     // terminal persistence). Local cleanup keys off this identity.
@@ -708,265 +658,256 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
     // Set once the shared fleet admission slot is granted (WP07).
     let fleetAdmitted = false;
     try {
-    // Check concurrency
-    const maxStreams = this.configService.get<number>('conversation.maxConcurrentStreams', 5);
-    const userStreams = this.activeStreams.get(userId);
-    this.logger.debug(
-      'Checking stream concurrency',
-      {
-        userId,
-        currentStreams: userStreams?.size || 0,
-        maxStreams,
-      },
-      logOpts,
-    );
-
-    if (userStreams && userStreams.size >= maxStreams) {
-      this.logger.warn(
-        'Stream limit reached',
+      // Check concurrency
+      const maxStreams = this.configService.get<number>('conversation.maxConcurrentStreams', 5);
+      const userStreams = this.activeStreams.get(userId);
+      this.logger.debug(
+        'Checking stream concurrency',
         {
           userId,
-          currentStreams: userStreams.size,
+          currentStreams: userStreams?.size || 0,
           maxStreams,
         },
         logOpts,
       );
-      await this.sendErrorEvent(userId, conversationId, messageId, ErrorCode.CHAT_STREAM_LIMIT);
-      throw new AppException({
-        code: ErrorCode.CHAT_STREAM_LIMIT,
-        message: 'Maximum concurrent streams reached',
-        statusCode: HttpStatus.TOO_MANY_REQUESTS,
-      });
-    }
 
-    // Check if conversation already streaming
-    if (userStreams?.has(conversationId)) {
-      this.logger.warn('Conversation already streaming', { conversationId }, logOpts);
-      await this.sendErrorEvent(userId, conversationId, messageId, ErrorCode.CHAT_ALREADY_STREAMING);
-      throw new ConflictException(
-        ErrorCode.CHAT_ALREADY_STREAMING,
-        'This conversation is already streaming',
-      );
-    }
-
-    // Same-conversation execution is exclusive across ACTORS, not just per
-    // user: group members must not concurrently mutate the same ADK session.
-    if (this.activeConversationExecutions.has(conversationId)) {
-      this.logger.warn('Conversation already streaming for another member', { conversationId }, logOpts);
-      await this.sendErrorEvent(userId, conversationId, messageId, ErrorCode.CHAT_ALREADY_STREAMING);
-      throw new ConflictException(
-        ErrorCode.CHAT_ALREADY_STREAMING,
-        'This conversation is already streaming',
-      );
-    }
-
-    // Register active stream — after every admission guard, so a rejected
-    // duplicate leaves no ghost registration behind.
-    if (!this.activeStreams.has(userId)) {
-      this.activeStreams.set(userId, new Set());
-    }
-    this.activeStreams.get(userId)!.add(conversationId);
-    this.activeConversationExecutions.add(conversationId);
-    this.streamExecutionLeases.set(streamKey, leaseId);
-    registeredLocally = true;
-
-    // Fleet admission (WP07): shared per-user/global capacity plus durable
-    // same-conversation exclusivity across actors AND replicas. A missing
-    // admission table (migration pending) degrades to process-local limits.
-    if (this.fleetAdmissionEnabled) {
-      const admitted = await this.executionStore.admit({
-        executionId: randomUUID().replaceAll('-', '').slice(0, 24),
-        conversationId,
-        userId,
-        messageId,
-        ownerReplicaId: this.replicaId,
-        expiresAt: new Date(Date.now() + leaseDurationMs * 2),
-        maxActiveRunsPerUser: maxStreams,
-        maxActiveRunsFleet: this.configService.get<number>('conversation.fleetMaxActiveRuns', 50),
-      });
-      if (!admitted.admitted) {
-        if (admitted.reason === 'capacity') {
-          this.logger.warn('Fleet admission rejected: capacity full', { userId, conversationId }, logOpts);
-          await this.sendErrorEvent(userId, conversationId, messageId, ErrorCode.CHAT_STREAM_LIMIT);
-          throw new AppException({
-            code: ErrorCode.CHAT_STREAM_LIMIT,
-            message: 'Maximum concurrent generations reached, please retry shortly',
-            statusCode: HttpStatus.TOO_MANY_REQUESTS,
-          });
-        }
-        this.logger.warn('Fleet admission rejected: execution conflict', {
-          userId,
-          conversationId,
-          reason: admitted.reason,
-        }, logOpts);
-        await this.sendErrorEvent(userId, conversationId, messageId, ErrorCode.CHAT_ALREADY_STREAMING);
-        throw new ConflictException(
-          ErrorCode.CHAT_ALREADY_STREAMING,
-          'This conversation is already streaming',
+      if (userStreams && userStreams.size >= maxStreams) {
+        this.logger.warn(
+          'Stream limit reached',
+          {
+            userId,
+            currentStreams: userStreams.size,
+            maxStreams,
+          },
+          logOpts,
         );
-      }
-      fleetAdmitted = true;
-    }
-
-    const assertLeaseOwned = () => {
-      if (leaseLost) {
-        throw new ConflictException(ErrorCode.CHAT_ALREADY_STREAMING, 'Stream execution lease was lost');
-      }
-      if (this.bootstrapCancelRequested.has(streamKey)) {
-        throw new ConflictException(ErrorCode.CHAT_STREAM_FAILED, 'Stream was cancelled during bootstrap');
-      }
-    };
-    leaseHeartbeat = setInterval(() => {
-      void this.messageService.renewStreamExecution(messageId, leaseId, leaseDurationMs)
-        .then((renewed) => {
-          if (!renewed) {
-            leaseLost = true;
-            this.activeCalls.get(streamKey)?.cancel();
-          }
-        })
-        .catch((error: unknown) => {
-          leaseLost = true;
-          this.activeCalls.get(streamKey)?.cancel();
-          this.logger.error('Stream execution lease renewal failed', {
-            conversationId,
-            messageId,
-            error: error instanceof Error ? error.message : String(error),
-          }, logOpts);
+        await this.sendErrorEvent(userId, conversationId, messageId, ErrorCode.CHAT_STREAM_LIMIT);
+        throw new AppException({
+          code: ErrorCode.CHAT_STREAM_LIMIT,
+          message: 'Maximum concurrent streams reached',
+          statusCode: HttpStatus.TOO_MANY_REQUESTS,
         });
-      if (fleetAdmitted) {
-        // Keep the shared capacity slot alive and observe cross-replica stop
-        // requests (bounded polling fallback; the serving replica settles).
-        void this.executionStore
-          .extendExpiry(messageId, new Date(Date.now() + leaseDurationMs * 2))
-          .then(() => this.executionStore.isCancelRequested(messageId))
-          .then((cancelRequested) => {
-            if (cancelRequested) {
-              this.logger.log('Remote stop observed for owned execution', { conversationId, messageId }, logOpts);
-              void this.stopStream(userId, conversationId, messageId).catch(() => undefined);
+      }
+
+      // Check if conversation already streaming
+      if (userStreams?.has(conversationId)) {
+        this.logger.warn('Conversation already streaming', { conversationId }, logOpts);
+        await this.sendErrorEvent(userId, conversationId, messageId, ErrorCode.CHAT_ALREADY_STREAMING);
+        throw new ConflictException(ErrorCode.CHAT_ALREADY_STREAMING, 'This conversation is already streaming');
+      }
+
+      // Same-conversation execution is exclusive across ACTORS, not just per
+      // user: group members must not concurrently mutate the same ADK session.
+      if (this.activeConversationExecutions.has(conversationId)) {
+        this.logger.warn('Conversation already streaming for another member', { conversationId }, logOpts);
+        await this.sendErrorEvent(userId, conversationId, messageId, ErrorCode.CHAT_ALREADY_STREAMING);
+        throw new ConflictException(ErrorCode.CHAT_ALREADY_STREAMING, 'This conversation is already streaming');
+      }
+
+      // Register active stream — after every admission guard, so a rejected
+      // duplicate leaves no ghost registration behind.
+      if (!this.activeStreams.has(userId)) {
+        this.activeStreams.set(userId, new Set());
+      }
+      this.activeStreams.get(userId)!.add(conversationId);
+      this.activeConversationExecutions.add(conversationId);
+      this.streamExecutionLeases.set(streamKey, leaseId);
+      registeredLocally = true;
+
+      // Fleet admission (WP07): shared per-user/global capacity plus durable
+      // same-conversation exclusivity across actors AND replicas. A missing
+      // admission table (migration pending) degrades to process-local limits.
+      if (this.fleetAdmissionEnabled) {
+        const admitted = await this.executionStore.admit({
+          executionId: randomUUID().replaceAll('-', '').slice(0, 24),
+          conversationId,
+          userId,
+          messageId,
+          ownerReplicaId: this.replicaId,
+          expiresAt: new Date(Date.now() + leaseDurationMs * 2),
+          maxActiveRunsPerUser: maxStreams,
+          maxActiveRunsFleet: this.configService.get<number>('conversation.fleetMaxActiveRuns', 50),
+        });
+        if (!admitted.admitted) {
+          if (admitted.reason === 'capacity') {
+            this.logger.warn('Fleet admission rejected: capacity full', { userId, conversationId }, logOpts);
+            await this.sendErrorEvent(userId, conversationId, messageId, ErrorCode.CHAT_STREAM_LIMIT);
+            throw new AppException({
+              code: ErrorCode.CHAT_STREAM_LIMIT,
+              message: 'Maximum concurrent generations reached, please retry shortly',
+              statusCode: HttpStatus.TOO_MANY_REQUESTS,
+            });
+          }
+          this.logger.warn(
+            'Fleet admission rejected: execution conflict',
+            {
+              userId,
+              conversationId,
+              reason: admitted.reason,
+            },
+            logOpts,
+          );
+          await this.sendErrorEvent(userId, conversationId, messageId, ErrorCode.CHAT_ALREADY_STREAMING);
+          throw new ConflictException(ErrorCode.CHAT_ALREADY_STREAMING, 'This conversation is already streaming');
+        }
+        fleetAdmitted = true;
+      }
+
+      const assertLeaseOwned = () => {
+        if (leaseLost) {
+          throw new ConflictException(ErrorCode.CHAT_ALREADY_STREAMING, 'Stream execution lease was lost');
+        }
+        if (this.bootstrapCancelRequested.has(streamKey)) {
+          throw new ConflictException(ErrorCode.CHAT_STREAM_FAILED, 'Stream was cancelled during bootstrap');
+        }
+      };
+      leaseHeartbeat = setInterval(() => {
+        void this.messageService
+          .renewStreamExecution(messageId, leaseId, leaseDurationMs)
+          .then((renewed) => {
+            if (!renewed) {
+              leaseLost = true;
+              this.activeCalls.get(streamKey)?.cancel();
             }
           })
-          .catch(() => undefined);
-      }
-    }, 30_000);
-    leaseHeartbeat.unref?.();
-    this.componentBuffers.set(streamKey, new Map());
-    this.streamRevisions.set(streamKey, 0);
-    this.streamUsage.set(streamKey, {
-      inputTokens: 0,
-      outputTokens: 0,
-      model: '',
-      modelId: request.modelId,
-    });
-
-    this.logger.debug(
-      'Stream registered, starting gRPC call',
-      {
-        streamKey,
-        conversationId,
-        messageId,
-      },
-      logOpts,
-    );
-
-    // Resolve conversation members for broadcasting
-    const memberIds = await this.resolveMemberIds(conversationId);
-    assertLeaseOwned();
-
-    // Send stream_start event to all members
-    await this.streamGateway.broadcastToConversation(
-      memberIds, {
-      type: 'stream_start',
-      data: { conversationId, messageId },
-    });
-    assertLeaseOwned();
-
-    endBackendPreAdkStage('streamBootstrapMs');
-    const builtRequest = await this.buildAgentExecutionRequest(
-      userId,
-      conversationId,
-      {
-        content: request.content,
-        taskSummary: request.taskSummary,
-        attachedFileIds: request.attachedFileIds ?? [],
-        webSearchEnabled: request.webSearchEnabled ?? false,
-        webConnectorAccessEnabled: request.webConnectorAccessEnabled ?? true,
-        deepSearchEnabled: request.deepSearchEnabled ?? false,
+          .catch((error: unknown) => {
+            leaseLost = true;
+            this.activeCalls.get(streamKey)?.cancel();
+            this.logger.error(
+              'Stream execution lease renewal failed',
+              {
+                conversationId,
+                messageId,
+                error: error instanceof Error ? error.message : String(error),
+              },
+              logOpts,
+            );
+          });
+        if (fleetAdmitted) {
+          // Keep the shared capacity slot alive and observe cross-replica stop
+          // requests (bounded polling fallback; the serving replica settles).
+          void this.executionStore
+            .extendExpiry(messageId, new Date(Date.now() + leaseDurationMs * 2))
+            .then(() => this.executionStore.isCancelRequested(messageId))
+            .then((cancelRequested) => {
+              if (cancelRequested) {
+                this.logger.log('Remote stop observed for owned execution', { conversationId, messageId }, logOpts);
+                void this.stopStream(userId, conversationId, messageId).catch(() => undefined);
+              }
+            })
+            .catch(() => undefined);
+        }
+      }, 30_000);
+      leaseHeartbeat.unref?.();
+      this.componentBuffers.set(streamKey, new Map());
+      this.streamRevisions.set(streamKey, 0);
+      this.streamUsage.set(streamKey, {
+        inputTokens: 0,
+        outputTokens: 0,
+        model: '',
         modelId: request.modelId,
-        semanticModelId: request.semanticModelId,
-        agentIds: request.agentIds ?? [],
-        teamId: request.teamId,
-        skillIds: request.skillIds ?? [],
-        connectorRepo: request.connectorRepo,
-        clientContext: request.clientContext,
-        playbookHandoffId: request.playbookHandoffId,
-        governanceOverride,
-      },
-      username,
-      undefined,
-      logOpts,
-      conversationId,
-      messageId,
-    );
-    assertLeaseOwned();
-    if (!await this.messageService.renewStreamExecution(messageId, leaseId, leaseDurationMs)) {
-      leaseLost = true;
-      assertLeaseOwned();
-    }
-    const useSingleAgent = builtRequest.rpc === 'RunSingleAgent';
-    const grpcRequest = builtRequest.payload;
+        byAttribution: new Map(),
+      });
 
-    const timeoutMs = this.configService.get<number>('conversation.grpcTimeoutMs', 120000);
-    this.logger.debug(
-      'gRPC request prepared',
-      {
-        streamKey,
-        conversationId,
-        messageId,
-        rpc: builtRequest.rpc,
-        timeoutMs,
-      },
-      logOpts,
-    );
-    try {
-      await this.executeGrpcStream(
-        userId,
-        conversationId,
-        messageId,
-        streamKey,
-        grpcRequest,
-        timeoutMs,
-        memberIds,
-        requestId,
-        username,
-        useSingleAgent,
-        latencyStart,
-        latencyInstrumentationEnabled,
-      );
-    } catch (error) {
-      this.logger.error(
-        'Stream execution failed',
+      this.logger.debug(
+        'Stream registered, starting gRPC call',
         {
           streamKey,
           conversationId,
           messageId,
-          error: (error as Error).message,
         },
         logOpts,
       );
-      this.cleanupStream(userId, conversationId, streamKey);
-      throw error;
-    }
+
+      // Resolve conversation members for broadcasting
+      const memberIds = await this.resolveMemberIds(conversationId);
+      assertLeaseOwned();
+
+      // Send stream_start event to all members
+      await this.streamGateway.broadcastToConversation(memberIds, {
+        type: 'stream_start',
+        data: { conversationId, messageId },
+      });
+      assertLeaseOwned();
+
+      endBackendPreAdkStage('streamBootstrapMs');
+      const builtRequest = await this.buildAgentExecutionRequest(
+        userId,
+        conversationId,
+        {
+          content: request.content,
+          taskSummary: request.taskSummary,
+          attachedFileIds: request.attachedFileIds ?? [],
+          webSearchEnabled: request.webSearchEnabled ?? false,
+          webConnectorAccessEnabled: request.webConnectorAccessEnabled ?? true,
+          deepSearchEnabled: request.deepSearchEnabled ?? false,
+          modelId: request.modelId,
+          semanticModelId: request.semanticModelId,
+          agentIds: request.agentIds ?? [],
+          teamId: request.teamId,
+          skillIds: request.skillIds ?? [],
+          connectorRepo: request.connectorRepo,
+          clientContext: request.clientContext,
+          playbookHandoffId: request.playbookHandoffId,
+          governanceOverride,
+        },
+        username,
+        undefined,
+        logOpts,
+        conversationId,
+        messageId,
+      );
+      assertLeaseOwned();
+      if (!(await this.messageService.renewStreamExecution(messageId, leaseId, leaseDurationMs))) {
+        leaseLost = true;
+        assertLeaseOwned();
+      }
+      const useSingleAgent = builtRequest.rpc === 'RunSingleAgent';
+      const grpcRequest = builtRequest.payload;
+
+      const timeoutMs = this.configService.get<number>('conversation.grpcTimeoutMs', 120000);
+      this.logger.debug(
+        'gRPC request prepared',
+        {
+          streamKey,
+          conversationId,
+          messageId,
+          rpc: builtRequest.rpc,
+          timeoutMs,
+        },
+        logOpts,
+      );
+      try {
+        await this.executeGrpcStream(userId, conversationId, messageId, streamKey, grpcRequest, timeoutMs, memberIds, requestId, username, useSingleAgent, latencyStart, latencyInstrumentationEnabled);
+      } catch (error) {
+        this.logger.error(
+          'Stream execution failed',
+          {
+            streamKey,
+            conversationId,
+            messageId,
+            error: (error as Error).message,
+          },
+          logOpts,
+        );
+        this.cleanupStream(userId, conversationId, streamKey);
+        throw error;
+      }
     } catch (error) {
       if ((error as { code?: ErrorCode }).code !== ErrorCode.CHAT_ALREADY_STREAMING) {
         // Ownership-checked and best-effort: a failing database must not mask
         // the original failure nor skip local cleanup below. The recovery
         // worker reclaims un-finalized attempts.
         await this.messageService.markStreamFailed(messageId, leaseId).catch((markError: unknown) => {
-          this.logger.error('Failed to mark stream failed during cleanup', {
-            conversationId,
-            messageId,
-            error: markError instanceof Error ? markError.message : String(markError),
-          }, logOpts);
+          this.logger.error(
+            'Failed to mark stream failed during cleanup',
+            {
+              conversationId,
+              messageId,
+              error: markError instanceof Error ? markError.message : String(markError),
+            },
+            logOpts,
+          );
         });
       }
       throw error;
@@ -977,21 +918,29 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
         // terminal state. Best-effort: expired rows are reclaimed by the
         // recovery worker, so a failed finalize cannot leak the slot forever.
         await this.executionStore.finalizeByMessage(messageId).catch((finalizeError: unknown) => {
-          this.logger.error('Failed to finalize fleet admission row', {
-            conversationId,
-            messageId,
-            error: finalizeError instanceof Error ? finalizeError.message : String(finalizeError),
-          }, logOpts);
+          this.logger.error(
+            'Failed to finalize fleet admission row',
+            {
+              conversationId,
+              messageId,
+              error: finalizeError instanceof Error ? finalizeError.message : String(finalizeError),
+            },
+            logOpts,
+          );
         });
       }
       // Durable release is ownership-checked and best-effort; its failure
       // must not leak the lease map entry or the local execution slots.
       await this.messageService.releaseStreamExecution(messageId, leaseId).catch((releaseError: unknown) => {
-        this.logger.error('Failed to release stream execution lease', {
-          conversationId,
-          messageId,
-          error: releaseError instanceof Error ? releaseError.message : String(releaseError),
-        }, logOpts);
+        this.logger.error(
+          'Failed to release stream execution lease',
+          {
+            conversationId,
+            messageId,
+            error: releaseError instanceof Error ? releaseError.message : String(releaseError),
+          },
+          logOpts,
+        );
       });
       // Local cleanup never depends on database success (idempotent with the
       // terminal/gRPC paths that may have cleaned up earlier).
@@ -1012,16 +961,10 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
-  private async buildRunCodeAttachmentSources(
-    attachedFileIds: string[],
-  ): Promise<RunCodeAttachmentSource[]> {
+  private async buildRunCodeAttachmentSources(attachedFileIds: string[]): Promise<RunCodeAttachmentSource[]> {
     if (attachedFileIds.length === 0) return [];
     const documents = await this.workspaceDocumentService.findByIds(attachedFileIds);
-    return documents.flatMap((document) =>
-      document.workspaceId && document.path
-        ? [{ workspaceId: document.workspaceId, path: document.path }]
-        : [],
-    );
+    return documents.flatMap((document) => (document.workspaceId && document.path ? [{ workspaceId: document.workspaceId, path: document.path }] : []));
   }
 
   isConversationStreaming(userId: string, conversationId: string): boolean {
@@ -1044,77 +987,62 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
     return null;
   }
 
-  async buildAgentExecutionRequest(
-    userId: string,
-    conversationId: string,
-    request: MessageReplayContext,
-    username?: string,
-    correctionReplayContext?: CorrectionReplayContext,
-    logOpts: LogOptions = {},
-    sessionId = conversationId,
-    runtimeCorrelationId = sessionId,
-  ): Promise<BuiltAgentExecutionRequest> {
+  async buildAgentExecutionRequest(userId: string, conversationId: string, request: MessageReplayContext, username?: string, correctionReplayContext?: CorrectionReplayContext, logOpts: LogOptions = {}, sessionId = conversationId, runtimeCorrelationId = sessionId): Promise<BuiltAgentExecutionRequest> {
     beginBackendPreAdkStage('conversationContextLoadMs');
     const conversation = await this.conversationService.getConversationDocument(conversationId);
     const systemWorkspaceId = conversation.systemWorkspaceId;
-    const groupMembers = conversation.isGroup
-      ? await this.conversationService.getGroupMembers(conversationId)
-      : [];
+    const groupMembers = conversation.isGroup ? await this.conversationService.getGroupMembers(conversationId) : [];
     endBackendPreAdkStage('conversationContextLoadMs');
     const sharedAgentIds = conversation.isGroup ? conversation.groupTaggedAgentIds : [];
     const governanceOverride = request.governanceOverride;
-    const requestedGovernedAgentIds = governanceOverride
-      ? (request.agentIds.length ? request.agentIds : [governanceOverride.primaryAgentId])
-      : undefined;
+    const requestedGovernedAgentIds = governanceOverride ? (request.agentIds.length ? request.agentIds : [governanceOverride.primaryAgentId]) : undefined;
     // Admin-configured compaction default, sent to the engine on every chat
     // request; the engine derives token_threshold from token_fraction * context
     // window. Omitted when disabled, so the engine keeps its no-compaction path.
     const compactionSettings = (await this.conversationSettings.getSettings()).compaction;
     const compaction: IGrpcCompaction | undefined = compactionSettings?.enabled
       ? {
-        enabled: true,
-        compaction_interval: compactionSettings.compactionInterval,
-        overlap_size: compactionSettings.overlapSize,
-        token_fraction: compactionSettings.tokenFraction,
-        event_retention_size: compactionSettings.eventRetentionSize,
-        summarizer_model: compactionSettings.summarizerModel ?? '',
-      }
+          enabled: true,
+          compaction_interval: compactionSettings.compactionInterval,
+          overlap_size: compactionSettings.overlapSize,
+          token_fraction: compactionSettings.tokenFraction,
+          event_retention_size: compactionSettings.eventRetentionSize,
+          summarizer_model: compactionSettings.summarizerModel ?? '',
+        }
       : undefined;
     beginBackendPreAdkStage('workspaceAgentResolutionMs');
-    const teamDefinition = request.teamId
-      ? await this.teamService!.resolveExecutionDefinition(userId, request.teamId)
-      : undefined;
-    const semanticSchemaName = request.semanticModelId
-      ? await this.semanticModelService.resolveSearchSchema(userId, request.semanticModelId)
-      : undefined;
+    const teamDefinition = request.teamId ? await this.teamService!.resolveExecutionDefinition(userId, request.teamId) : undefined;
+    const semanticSchemaName = request.semanticModelId ? await this.semanticModelService.resolveSearchSchema(userId, request.semanticModelId) : undefined;
     const [workspaceContexts, agents] = await Promise.all([
       request.semanticModelId ? Promise.resolve([]) : this.buildWorkspaceContexts(conversationId, logOpts, conversation),
       teamDefinition
         ? this.agentService.buildGrpcAgentsForPlaybook(
-          userId,
-          teamDefinition.nodes.map((node) => node.agentId),
-          request.modelId,
-          sessionId,
-        )
+            userId,
+            teamDefinition.nodes.map((node) => node.agentId),
+            request.modelId,
+            sessionId,
+          )
         : governanceOverride
-        ? this.agentService.buildGovernedAgentsForStream(userId, requestedGovernedAgentIds ?? [], governanceOverride.workspaceIds)
-        : this.agentService.buildAgentsForStream(
-          userId,
-          request.modelId,
-          request.agentIds,
-          sharedAgentIds,
-          groupMembers,
-          request.connectorRepo?.connectorId,
-          semanticSchemaName,
-          conversation.runtimePurpose === PLATFORM_COPILOT ? {
-            conversationId,
-            correlationId: runtimeCorrelationId,
-            playbookHandoffAttached: Boolean(request.playbookHandoffId),
-          } : undefined,
-          request.reasoningEffort,
-          compaction,
-          request.webConnectorAccessEnabled,
-        ),
+          ? this.agentService.buildGovernedAgentsForStream(userId, requestedGovernedAgentIds ?? [], governanceOverride.workspaceIds)
+          : this.agentService.buildAgentsForStream(
+              userId,
+              request.modelId,
+              request.agentIds,
+              sharedAgentIds,
+              groupMembers,
+              request.connectorRepo?.connectorId,
+              semanticSchemaName,
+              conversation.runtimePurpose === PLATFORM_COPILOT
+                ? {
+                    conversationId,
+                    correlationId: runtimeCorrelationId,
+                    playbookHandoffAttached: Boolean(request.playbookHandoffId),
+                  }
+                : undefined,
+              request.reasoningEffort,
+              compaction,
+              request.webConnectorAccessEnabled,
+            ),
     ]);
     if (teamDefinition) {
       const topologyIds = new Set(teamDefinition.nodes.map((node) => node.agentId));
@@ -1126,33 +1054,17 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
     if (conversation.runtimePurpose === PLATFORM_COPILOT) {
       const pinnedAgentId = conversation.pinnedAgentId?.toString();
       if (!pinnedAgentId || agents.length !== 1 || agents[0]?.id !== pinnedAgentId) {
-        throw new ServiceUnavailableException(
-          ErrorCode.AGENT_UNAVAILABLE,
-          'Yellowmind must resolve exactly one pinned platform copilot agent',
-        );
+        throw new ServiceUnavailableException(ErrorCode.AGENT_UNAVAILABLE, 'Yellowmind must resolve exactly one pinned platform copilot agent');
       }
     }
     beginBackendPreAdkStage('supplementalContextAssemblyMs');
-    const [, attachedFiles, previousAttachedFiles, skills, currentAttachmentSources] = await Promise.all([
-      this.resolveAgentBrainContexts(agents),
-      this.buildAttachedFiles(request.attachedFileIds),
-      this.buildPreviousAttachedFiles(systemWorkspaceId, request.attachedFileIds),
-      request.skillIds.length ? this.skillService.findByIdsForGrpc(request.skillIds) : Promise.resolve([]),
-      this.buildRunCodeAttachmentSources(request.attachedFileIds),
-    ]);
+    const [, attachedFiles, previousAttachedFiles, skills, currentAttachmentSources] = await Promise.all([this.resolveAgentBrainContexts(agents), this.buildAttachedFiles(request.attachedFileIds), this.buildPreviousAttachedFiles(systemWorkspaceId, request.attachedFileIds), request.skillIds.length ? this.skillService.findByIdsForGrpc(request.skillIds) : Promise.resolve([]), this.buildRunCodeAttachmentSources(request.attachedFileIds)]);
     await this.attachRunCodeContexts(
       agents,
       userId,
       runtimeCorrelationId,
       workspaceContexts.map((context) => context.workspace_id),
-      [
-        ...currentAttachmentSources,
-        ...previousAttachedFiles.flatMap((file) =>
-          file.workspace_id && file.filepath
-            ? [{ workspaceId: file.workspace_id, path: file.filepath }]
-            : [],
-        ),
-      ],
+      [...currentAttachmentSources, ...previousAttachedFiles.flatMap((file) => (file.workspace_id && file.filepath ? [{ workspaceId: file.workspace_id, path: file.filepath }] : []))],
     );
     endBackendPreAdkStage('supplementalContextAssemblyMs');
     beginBackendPreAdkStage('grpcPayloadPreparationMs');
@@ -1171,36 +1083,23 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
     });
   }
 
-  private async attachRunCodeContexts(
-    agents: IGrpcAgent[],
-    userId: string,
-    runId: string,
-    selectedWorkspaceIds: string[],
-    attachments: RunCodeAttachmentSource[] = [],
-  ): Promise<void> {
-    const eligibleAgents = agents.filter((agent) =>
-      agent.tools.some((tool) => tool.name === 'run_code'),
-    );
+  private async attachRunCodeContexts(agents: IGrpcAgent[], userId: string, runId: string, selectedWorkspaceIds: string[], attachments: RunCodeAttachmentSource[] = []): Promise<void> {
+    const eligibleAgents = agents.filter((agent) => agent.tools.some((tool) => tool.name === 'run_code'));
     if (eligibleAgents.length === 0) return;
 
-    const uniqueAttachmentWorkspaceIds = [...new Set(
-      attachments.map((attachment) => attachment.workspaceId).filter(Boolean),
-    )];
-    await this.workspaceShareService.assertUserHasAccess(
-      userId,
-      [...new Set([...selectedWorkspaceIds.filter(Boolean), ...uniqueAttachmentWorkspaceIds])],
+    const uniqueAttachmentWorkspaceIds = [...new Set(attachments.map((attachment) => attachment.workspaceId).filter(Boolean))];
+    await this.workspaceShareService.assertUserHasAccess(userId, [...new Set([...selectedWorkspaceIds.filter(Boolean), ...uniqueAttachmentWorkspaceIds])]);
+    await Promise.all(
+      eligibleAgents.map(async (agent) => {
+        const sources = await this.runCodeSourceScopeService.buildSources([...new Set([...selectedWorkspaceIds.filter(Boolean), ...agent.brain_context.map((context) => context.workspace_id).filter(Boolean)])], attachments);
+        agent.agent_params ??= { params: {} };
+        agent.agent_params.params.run_code_context_json = JSON.stringify({
+          userId,
+          runId,
+          sources,
+        });
+      }),
     );
-    await Promise.all(eligibleAgents.map(async (agent) => {
-      const sources = await this.runCodeSourceScopeService.buildSources(
-        [...new Set([
-          ...selectedWorkspaceIds.filter(Boolean),
-          ...agent.brain_context.map((context) => context.workspace_id).filter(Boolean),
-        ])],
-        attachments,
-      );
-      agent.agent_params ??= { params: {} };
-      agent.agent_params.params.run_code_context_json = JSON.stringify({ userId, runId, sources });
-    }));
   }
 
   executePrivateAgentRequest(
@@ -1209,7 +1108,11 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
     username?: string,
   ): {
     started: Promise<void>;
-    result: Promise<{ components: MessageComponent[]; usage: { inputTokens: number; outputTokens: number; model?: string; durationMs: number } }>;
+    result: Promise<{
+      components: MessageComponent[];
+      usage: PrivateAgentUsage;
+    }>;
+    usage: Promise<PrivateAgentUsage>;
   } {
     if (!this.isGrpcAvailable || !this.chatbotClient) {
       throw new ServiceUnavailableException(ErrorCode.CHAT_GRPC_UNAVAILABLE, 'AI service is currently unavailable');
@@ -1229,28 +1132,48 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
     } catch (error) {
       const transportError = error instanceof Error ? error : new Error(String(error));
       rejectStarted(transportError);
-      return { started, result: Promise.reject(transportError) };
+      return {
+        started,
+        result: Promise.reject(transportError),
+        usage: Promise.resolve({ inputTokens: 0, outputTokens: 0, durationMs: 0, entries: [] }),
+      };
     }
-    const result = new Promise<{ components: MessageComponent[]; usage: { inputTokens: number; outputTokens: number; model?: string; durationMs: number } }>((resolve, reject) => {
+    let resolveUsage!: (usage: PrivateAgentUsage) => void;
+    const usage = new Promise<PrivateAgentUsage>((resolve) => {
+      resolveUsage = resolve;
+    });
+    const result = new Promise<{
+      components: MessageComponent[];
+      usage: PrivateAgentUsage;
+    }>((resolve, reject) => {
       const buffer = new Map<string, MessageComponent>();
       const started = Date.now();
       let inputTokens = 0;
       let outputTokens = 0;
       let model: string | undefined;
+      const byAttribution = new Map<string, AttributedTokenUsage>();
       let settled = false;
       let timeoutHandle: NodeJS.Timeout;
       const finish = (error?: Error) => {
         if (settled) return;
         settled = true;
         clearTimeout(timeoutHandle);
+        const usageSnapshot: PrivateAgentUsage = {
+          inputTokens,
+          outputTokens,
+          model,
+          durationMs: Date.now() - started,
+          entries: [...byAttribution.values()].filter((entry) => entry.totalTokens > 0),
+        };
+        resolveUsage(usageSnapshot);
         if (error) {
           if (!acknowledged) rejectStarted(error);
           reject(error);
-        }
-        else resolve({
-          components: Array.from(buffer.values()),
-          usage: { inputTokens, outputTokens, model, durationMs: Date.now() - started },
-        });
+        } else
+          resolve({
+            components: Array.from(buffer.values()),
+            usage: usageSnapshot,
+          });
       };
       const resetTimeout = () => {
         clearTimeout(timeoutHandle);
@@ -1276,12 +1199,32 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
           inputTokens += chunk.usage.input_tokens || 0;
           outputTokens += chunk.usage.output_tokens || 0;
           model = chunk.usage.model || model;
+          const entryModel = chunk.usage.model || model || 'unknown';
+          const agentId = chunk.metadata?.agent_id || undefined;
+          const key = `${agentId ?? ''}\u0000${entryModel}`;
+          const current = byAttribution.get(key);
+          const normalized = normalizeTokenUsage({
+            inputTokens: chunk.usage.input_tokens,
+            outputTokens: chunk.usage.output_tokens,
+            cachedInputTokens: chunk.usage.cached_input_tokens,
+            reasoningTokens: chunk.usage.reasoning_tokens,
+            totalTokens: chunk.usage.total_tokens,
+          });
+          byAttribution.set(key, {
+            model: entryModel,
+            agentId,
+            inputTokens: (current?.inputTokens ?? 0) + normalized.inputTokens,
+            outputTokens: (current?.outputTokens ?? 0) + normalized.outputTokens,
+            cachedInputTokens: (current?.cachedInputTokens ?? 0) + normalized.cachedInputTokens,
+            reasoningTokens: (current?.reasoningTokens ?? 0) + normalized.reasoningTokens,
+            totalTokens: (current?.totalTokens ?? 0) + normalized.totalTokens,
+          });
         }
       });
       call.on('error', (error: Error) => finish(error));
       call.on('end', () => finish(acknowledged ? undefined : new Error('corrective_replay_not_started')));
     });
-    return { started, result };
+    return { started, result, usage };
   }
 
   async stopStream(userId: string, conversationId: string, messageId: string): Promise<void> {
@@ -1362,24 +1305,22 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
       try {
         // Persist current buffer
         const buffer = this.componentBuffers.get(streamKey) || new Map();
-        await this.finalizeRunningTools(
-          buffer,
-          'stopped',
-          conversationId,
-          await this.resolveMemberIds(conversationId),
-          { streamKey, messageId },
-        );
+        await this.finalizeRunningTools(buffer, 'stopped', conversationId, await this.resolveMemberIds(conversationId), { streamKey, messageId });
         if (buffer.size > 0) {
           this.logger.debug('Persisting buffer on stop', {
             streamKey,
             bufferSize: buffer.size,
           });
         }
+        const usageData = this.streamUsage.get(streamKey);
         try {
           await this.messageService.completeAIMessage({
             messageId,
             streamExecutionLeaseId,
             components: Array.from(buffer.values()),
+            inputTokens: usageData?.inputTokens,
+            outputTokens: usageData?.outputTokens,
+            usageAttribution: this.buildUsageAttribution(streamKey, streamExecutionLeaseId),
           });
         } catch (err) {
           this.logger.error('Failed to persist buffer on stop', {
@@ -1390,7 +1331,6 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
         }
 
         // Record partial usage on stop
-        const usageData = this.streamUsage.get(streamKey);
         if (usageData && (usageData.inputTokens > 0 || usageData.outputTokens > 0)) {
           this.logger.debug('Recording partial usage on stop', {
             streamKey,
@@ -1449,20 +1389,7 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
     await terminal!.settlement;
   }
 
-  private executeGrpcStream(
-    userId: string,
-    conversationId: string,
-    messageId: string,
-    streamKey: string,
-    grpcRequest: any,
-    timeoutMs: number,
-    memberIds: string[],
-    requestId?: string,
-    username?: string,
-    useSingleAgent = false,
-    latencyStart?: ConversationLatencyStartContext,
-    latencyInstrumentationEnabled = true,
-  ): Promise<void> {
+  private executeGrpcStream(userId: string, conversationId: string, messageId: string, streamKey: string, grpcRequest: any, timeoutMs: number, memberIds: string[], requestId?: string, username?: string, useSingleAgent = false, latencyStart?: ConversationLatencyStartContext, latencyInstrumentationEnabled = true): Promise<void> {
     const logOpts: LogOptions = { requestId };
 
     return new Promise<void>((resolve, reject) => {
@@ -1508,18 +1435,12 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
       markGrpcDispatchedForLatency();
       if (this.bootstrapCancelRequested.has(streamKey)) {
         // Stop arrived during bootstrap: refuse dispatch, zero upstream calls.
-        throw new ConflictException(
-          ErrorCode.CHAT_STREAM_FAILED,
-          'Stream was cancelled during bootstrap',
-        );
+        throw new ConflictException(ErrorCode.CHAT_STREAM_FAILED, 'Stream was cancelled during bootstrap');
       }
-      const call = useSingleAgent
-        ? this.chatbotClient.RunSingleAgent(grpcRequest, metadata)
-        : this.chatbotClient.RunAgentTeam(grpcRequest, metadata);
+      const call = useSingleAgent ? this.chatbotClient.RunSingleAgent(grpcRequest, metadata) : this.chatbotClient.RunAgentTeam(grpcRequest, metadata);
       // Reuse the coordinator created at admission so stop/end/error share
       // exactly one terminal settlement.
-      const terminal = this.streamTerminalCoordinators.get(streamKey)
-        ?? this.createStreamTerminalCoordinator(streamKey);
+      const terminal = this.streamTerminalCoordinators.get(streamKey) ?? this.createStreamTerminalCoordinator(streamKey);
       this.activeCalls.set(streamKey, call);
 
       let totalInputTokens = 0;
@@ -1531,9 +1452,7 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
       let timeToFirstToken: number | null = null;
       // Latency instrumentation: the ADK attaches its timing envelope to the
       // first post-model StreamChunk; it is parsed once and forwarded once.
-      const latencyTracker = new LatencyEnvelopeTracker(
-        latencyInstrumentationEnabled ? latencyStart : undefined,
-      );
+      const latencyTracker = new LatencyEnvelopeTracker(latencyInstrumentationEnabled ? latencyStart : undefined);
       let latencyMetrics: ConversationLatencyMetricsV1 | undefined;
       const takeLatencyEnvelope = (): StreamChunkLatencyData | undefined => {
         // Read before take(): the tracker clears the captured trace on take.
@@ -1576,15 +1495,7 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
             streamKey,
             async () => {
               call.cancel();
-              await this.handleStreamError(
-                userId,
-                conversationId,
-                messageId,
-                streamKey,
-                ErrorCode.CHAT_STREAM_TIMEOUT,
-                requestId,
-                latencyMetrics,
-              );
+              await this.handleStreamError(userId, conversationId, messageId, streamKey, ErrorCode.CHAT_STREAM_TIMEOUT, requestId, latencyMetrics);
             },
             timeoutError,
           );
@@ -1626,20 +1537,21 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
               // Send chunk immediately to frontend (only id needed for delete)
               const revision = this.nextStreamRevision(streamKey);
               const latencyData = takeLatencyEnvelope();
-              this.streamGateway.broadcastToConversation(
-                memberIds, {
-                type: 'stream_chunk',
-                data: {
-                  conversationId,
-                  messageId,
-                  revision,
-                  action,
-                  component: { id: comp.id } as MessageComponent,
-                  ...(latencyData ? { latency: latencyData } : {}),
-                },
-              }).catch((err) => {
-                this.logger.error('Failed to broadcast delete chunk', { error: err.message, streamKey }, logOpts);
-              });
+              this.streamGateway
+                .broadcastToConversation(memberIds, {
+                  type: 'stream_chunk',
+                  data: {
+                    conversationId,
+                    messageId,
+                    revision,
+                    action,
+                    component: { id: comp.id } as MessageComponent,
+                    ...(latencyData ? { latency: latencyData } : {}),
+                  },
+                })
+                .catch((err) => {
+                  this.logger.error('Failed to broadcast delete chunk', { error: err.message, streamKey }, logOpts);
+                });
             } else {
               const buffer = this.componentBuffers.get(streamKey);
               if (buffer) {
@@ -1654,17 +1566,21 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
 
               // Debug logging for chart components
               if (type === 'chart') {
-                this.logger.debug('[Chart chunk] Sending to frontend', {
-                  id: comp.id,
-                  action,
-                  dataKeys: Object.keys(data),
-                  hasData: 'data' in data,
-                  hasChartData: 'chartData' in data,
-                  dataDataType: typeof data.data,
-                  chartDataDataType: typeof data.chartData,
-                  dataValue: data.data,
-                  chartDataValue: data.chartData,
-                }, logOpts);
+                this.logger.debug(
+                  '[Chart chunk] Sending to frontend',
+                  {
+                    id: comp.id,
+                    action,
+                    dataKeys: Object.keys(data),
+                    hasData: 'data' in data,
+                    hasChartData: 'chartData' in data,
+                    dataDataType: typeof data.data,
+                    chartDataDataType: typeof data.chartData,
+                    dataValue: data.data,
+                    chartDataValue: data.chartData,
+                  },
+                  logOpts,
+                );
               }
 
               // Capture time to first token when first text/reasoning content appears
@@ -1680,20 +1596,21 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
               // backend.first_delta_written boundary: stamped immediately
               // before the first model-derived event enters SSE fan-out.
               const latencyData = takeLatencyEnvelope();
-              this.streamGateway.broadcastToConversation(
-                memberIds, {
-                type: 'stream_chunk',
-                data: {
-                  conversationId,
-                  messageId,
-                  revision,
-                  action,
-                  component: publicComponent,
-                  ...(latencyData ? { latency: latencyData } : {}),
-                },
-              }).catch((err) => {
-                this.logger.error('Failed to broadcast stream chunk', { error: err.message, streamKey }, logOpts);
-              });
+              this.streamGateway
+                .broadcastToConversation(memberIds, {
+                  type: 'stream_chunk',
+                  data: {
+                    conversationId,
+                    messageId,
+                    revision,
+                    action,
+                    component: publicComponent,
+                    ...(latencyData ? { latency: latencyData } : {}),
+                  },
+                })
+                .catch((err) => {
+                  this.logger.error('Failed to broadcast stream chunk', { error: err.message, streamKey }, logOpts);
+                });
             }
           }
 
@@ -1715,6 +1632,26 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
               if (chunk.usage.model) {
                 usageData.model = chunk.usage.model;
               }
+              const model = chunk.usage.model || usageData.modelId || 'unknown';
+              const agentId = chunk.metadata?.agent_id || undefined;
+              const key = `${agentId ?? ''}\u0000${model}`;
+              const current = usageData.byAttribution.get(key);
+              const normalized = normalizeTokenUsage({
+                inputTokens: chunk.usage.input_tokens,
+                outputTokens: chunk.usage.output_tokens,
+                cachedInputTokens: chunk.usage.cached_input_tokens,
+                reasoningTokens: chunk.usage.reasoning_tokens,
+                totalTokens: chunk.usage.total_tokens,
+              });
+              usageData.byAttribution.set(key, {
+                model,
+                agentId,
+                inputTokens: (current?.inputTokens ?? 0) + normalized.inputTokens,
+                outputTokens: (current?.outputTokens ?? 0) + normalized.outputTokens,
+                cachedInputTokens: (current?.cachedInputTokens ?? 0) + normalized.cachedInputTokens,
+                reasoningTokens: (current?.reasoningTokens ?? 0) + normalized.reasoningTokens,
+                totalTokens: (current?.totalTokens ?? 0) + normalized.totalTokens,
+              });
             }
           }
         } catch (error) {
@@ -1750,123 +1687,136 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
         this.beginStreamTerminal(streamKey, async () => {
           try {
             const buffer = this.componentBuffers.get(streamKey) || new Map();
-            await this.finalizeRunningTools(buffer, 'failed', conversationId, memberIds, { streamKey, messageId });
+            await this.finalizeRunningTools(buffer, 'failed', conversationId, memberIds, {
+              streamKey,
+              messageId,
+            });
             const components = Array.from(buffer.values());
 
-          this.logger.debug(
-            'Persisting stream components',
-            {
-              streamKey,
-              componentCount: components.length,
-            },
-            logOpts,
-          );
-
-          // Persist the complete message
-          await this.messageService.completeAIMessage({
-            messageId,
-            streamExecutionLeaseId: this.streamExecutionLeases.get(streamKey),
-            components,
-            inputTokens: totalInputTokens,
-            outputTokens: totalOutputTokens,
-            durationMs,
-            timeToFirstChunk: timeToFirstChunk ?? undefined,
-            timeToFirstToken: timeToFirstToken ?? undefined,
-            modelRequestTelemetry: latestModelRequestTelemetry,
-            latencyMetrics,
-          });
-
-          if (latencyMetrics) {
-            // Single structured summary per completed request (never per token).
-            this.logger.log('conversation_latency', {
-              event: 'conversation_latency',
-              schemaVersion: latencyMetrics.schemaVersion,
-              requestId,
-              conversationId,
-              messageId,
-              backendPreAdkMs: latencyMetrics.backendPreAdkMs,
-              adkPreProviderMs: latencyMetrics.adkPreProviderMs,
-              providerTtftMs: latencyMetrics.providerTtftMs,
-              adkForwardingMs: latencyMetrics.adkForwardingMs,
-              backendForwardingMs: latencyMetrics.backendForwardingMs,
-              quality: latencyMetrics.quality,
-            }, logOpts);
-          }
-
-          // Record usage
-          const usageData = this.streamUsage.get(streamKey);
-          this.logger.debug(
-            'Recording usage',
-            {
-              streamKey,
-              inputTokens: totalInputTokens,
-              outputTokens: totalOutputTokens,
-              model: usageData?.model,
-            },
-            logOpts,
-          );
-          try {
-            await this.usageService.recordUsage({
-              userId,
-              inputTokens: totalInputTokens,
-              outputTokens: totalOutputTokens,
-              modelName: usageData?.model || usageData?.modelId || undefined,
-              conversationId,
-              durationMs,
-              success: true,
-            });
-          } catch (err) {
-            this.logger.error(
-              'Failed to record usage',
+            this.logger.debug(
+              'Persisting stream components',
               {
-                error: (err as Error).message,
                 streamKey,
+                componentCount: components.length,
               },
               logOpts,
             );
-          }
 
-          // Send complete event
-          await this.streamGateway.broadcastToConversation(
-            memberIds, {
-            type: 'stream_complete',
-            data: {
-              conversationId,
+            // Persist the complete message
+            await this.messageService.completeAIMessage({
               messageId,
-              usage: {
+              streamExecutionLeaseId: this.streamExecutionLeases.get(streamKey),
+              components,
+              inputTokens: totalInputTokens,
+              outputTokens: totalOutputTokens,
+              durationMs,
+              timeToFirstChunk: timeToFirstChunk ?? undefined,
+              timeToFirstToken: timeToFirstToken ?? undefined,
+              modelRequestTelemetry: latestModelRequestTelemetry,
+              latencyMetrics,
+              usageAttribution: this.buildUsageAttribution(streamKey, this.streamExecutionLeases.get(streamKey)),
+            });
+
+            if (latencyMetrics) {
+              // Single structured summary per completed request (never per token).
+              this.logger.log(
+                'conversation_latency',
+                {
+                  event: 'conversation_latency',
+                  schemaVersion: latencyMetrics.schemaVersion,
+                  requestId,
+                  conversationId,
+                  messageId,
+                  backendPreAdkMs: latencyMetrics.backendPreAdkMs,
+                  adkPreProviderMs: latencyMetrics.adkPreProviderMs,
+                  providerTtftMs: latencyMetrics.providerTtftMs,
+                  adkForwardingMs: latencyMetrics.adkForwardingMs,
+                  backendForwardingMs: latencyMetrics.backendForwardingMs,
+                  quality: latencyMetrics.quality,
+                },
+                logOpts,
+              );
+            }
+
+            // Record usage
+            const usageData = this.streamUsage.get(streamKey);
+            this.logger.debug(
+              'Recording usage',
+              {
+                streamKey,
                 inputTokens: totalInputTokens,
                 outputTokens: totalOutputTokens,
-                durationMs,
+                model: usageData?.model,
               },
-              ...(latencyMetrics ? { latencyMetrics } : {}),
-            },
-          });
+              logOpts,
+            );
+            try {
+              await this.usageService.recordUsage({
+                userId,
+                inputTokens: totalInputTokens,
+                outputTokens: totalOutputTokens,
+                modelName: usageData?.model || usageData?.modelId || undefined,
+                conversationId,
+                durationMs,
+                success: true,
+              });
+            } catch (err) {
+              this.logger.error(
+                'Failed to record usage',
+                {
+                  error: (err as Error).message,
+                  streamKey,
+                },
+                logOpts,
+              );
+            }
 
-          // Informative evaluation starts only after users receive stream_complete.
-          void this.responseReliabilityService.schedule({
-            messageId,
-            conversationId,
-            userId,
-            requestId,
-          }).catch((error) => {
-            this.logger.warn('Unable to schedule response reliability evaluation', {
-              messageId,
-              error: error instanceof Error ? error.message : String(error),
-            }, logOpts);
-          });
+            // Send complete event
+            await this.streamGateway.broadcastToConversation(memberIds, {
+              type: 'stream_complete',
+              data: {
+                conversationId,
+                messageId,
+                usage: {
+                  inputTokens: totalInputTokens,
+                  outputTokens: totalOutputTokens,
+                  durationMs,
+                },
+                ...(latencyMetrics ? { latencyMetrics } : {}),
+              },
+            });
+
+            // Informative evaluation starts only after users receive stream_complete.
+            void this.responseReliabilityService
+              .schedule({
+                messageId,
+                conversationId,
+                userId,
+                requestId,
+              })
+              .catch((error) => {
+                this.logger.warn(
+                  'Unable to schedule response reliability evaluation',
+                  {
+                    messageId,
+                    error: error instanceof Error ? error.message : String(error),
+                  },
+                  logOpts,
+                );
+              });
 
             this.cleanupStream(userId, conversationId, streamKey);
 
             this.logger.debug(
-            'Stream completed successfully',
-            {
-              streamKey,
-              conversationId,
-              messageId,
-              totalChunks: chunkCount,
-              durationMs,
-            },
-            logOpts,
+              'Stream completed successfully',
+              {
+                streamKey,
+                conversationId,
+                messageId,
+                totalChunks: chunkCount,
+                durationMs,
+              },
+              logOpts,
             );
           } catch (error) {
             this.logger.error(
@@ -1902,37 +1852,14 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
         // UNAUTHENTICATED (16) means a wrong/missing/rotated API key, not a
         // transient outage. Surface it distinctly instead of the generic
         // stream-failed so it doesn't get mistaken for "AI service down".
-        const errorCode =
-          error?.code === grpc.status.UNAUTHENTICATED
-            ? ErrorCode.CHAT_GRPC_UNAUTHENTICATED
-            : ErrorCode.CHAT_STREAM_FAILED;
+        const errorCode = error?.code === grpc.status.UNAUTHENTICATED ? ErrorCode.CHAT_GRPC_UNAUTHENTICATED : ErrorCode.CHAT_STREAM_FAILED;
 
-        this.beginStreamTerminal(
-          streamKey,
-          () => this.handleStreamError(
-            userId,
-            conversationId,
-            messageId,
-            streamKey,
-            errorCode,
-            requestId,
-            latencyMetrics,
-          ),
-          error,
-        );
+        this.beginStreamTerminal(streamKey, () => this.handleStreamError(userId, conversationId, messageId, streamKey, errorCode, requestId, latencyMetrics), error);
       });
     });
   }
 
-  private async handleStreamError(
-    userId: string,
-    conversationId: string,
-    messageId: string,
-    streamKey: string,
-    errorCode: ErrorCode,
-    requestId?: string,
-    latencyMetrics?: ConversationLatencyMetricsV1,
-  ): Promise<void> {
+  private async handleStreamError(userId: string, conversationId: string, messageId: string, streamKey: string, errorCode: ErrorCode, requestId?: string, latencyMetrics?: ConversationLatencyMetricsV1): Promise<void> {
     const logOpts: LogOptions = { requestId };
 
     this.logger.error(
@@ -1949,13 +1876,7 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
 
     // Persist partial buffer with an error component appended
     const buffer = this.componentBuffers.get(streamKey) || new Map();
-    await this.finalizeRunningTools(
-      buffer,
-      'failed',
-      conversationId,
-      await this.resolveMemberIds(conversationId),
-      { streamKey, messageId },
-    );
+    await this.finalizeRunningTools(buffer, 'failed', conversationId, await this.resolveMemberIds(conversationId), { streamKey, messageId });
 
     // Add an error component so the message itself shows the error visually
     const errorComponentId = `error-${randomUUID()}`;
@@ -1976,12 +1897,16 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
       },
       logOpts,
     );
+    const usageData = this.streamUsage.get(streamKey);
     try {
       await this.messageService.completeAIMessage({
         messageId,
         streamExecutionLeaseId: this.streamExecutionLeases.get(streamKey),
         components: Array.from(buffer.values()),
+        inputTokens: usageData?.inputTokens,
+        outputTokens: usageData?.outputTokens,
         latencyMetrics,
+        usageAttribution: this.buildUsageAttribution(streamKey, this.streamExecutionLeases.get(streamKey)),
       });
     } catch (err) {
       this.logger.error(
@@ -1995,7 +1920,6 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
     }
 
     // Record partial usage
-    const usageData = this.streamUsage.get(streamKey);
     if (usageData && (usageData.inputTokens > 0 || usageData.outputTokens > 0)) {
       this.logger.debug(
         'Recording partial usage on error',
@@ -2042,6 +1966,23 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
     );
   }
 
+  private buildUsageAttribution(streamKey: string, executionId: string | undefined): ConversationUsageAttribution | undefined {
+    if (!executionId) return undefined;
+    const usage = this.streamUsage.get(streamKey);
+    if (!usage) return undefined;
+    const entries = usage.byAttribution ? [...usage.byAttribution.values()].filter((entry) => entry.totalTokens > 0) : [];
+    if (!entries.length && (usage.inputTokens > 0 || usage.outputTokens > 0)) {
+      entries.push({
+        model: usage.model || usage.modelId || 'unknown',
+        ...normalizeTokenUsage({
+          inputTokens: usage.inputTokens,
+          outputTokens: usage.outputTokens,
+        }),
+      });
+    }
+    return entries.length ? { executionId, entries } : undefined;
+  }
+
   private parseGuardrailDecision(value?: string): Record<string, unknown> | undefined {
     if (!value) return undefined;
     try {
@@ -2055,13 +1996,7 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
-  private async finalizeRunningTools(
-    buffer: Map<string, MessageComponent>,
-    status: 'failed' | 'stopped',
-    conversationId: string,
-    memberIds: string[],
-    options: { streamKey?: string; messageId?: string; broadcast?: boolean } = {},
-  ): Promise<void> {
+  private async finalizeRunningTools(buffer: Map<string, MessageComponent>, status: 'failed' | 'stopped', conversationId: string, memberIds: string[], options: { streamKey?: string; messageId?: string; broadcast?: boolean } = {}): Promise<void> {
     const completedAt = new Date().toISOString();
     for (const component of buffer.values()) {
       if (component.type !== 'toolActivity' || component.data.status !== 'running') continue;
@@ -2097,16 +2032,10 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
-  private async sendErrorEvent(
-    userId: string,
-    conversationId: string,
-    messageId: string,
-    errorCode: ErrorCode,
-  ): Promise<void> {
+  private async sendErrorEvent(userId: string, conversationId: string, messageId: string, errorCode: ErrorCode): Promise<void> {
     try {
       const memberIds = await this.resolveMemberIds(conversationId);
-      await this.streamGateway.broadcastToConversation(
-        memberIds, {
+      await this.streamGateway.broadcastToConversation(memberIds, {
         type: 'stream_error',
         data: {
           conversationId,
@@ -2155,17 +2084,13 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
     return terminal;
   }
 
-  private beginStreamTerminal(
-    streamKey: string,
-    operation: () => Promise<void>,
-    terminalError?: unknown,
-  ): boolean {
+  private beginStreamTerminal(streamKey: string, operation: () => Promise<void>, terminalError?: unknown): boolean {
     const terminal = this.streamTerminalCoordinators.get(streamKey);
     if (!terminal || terminal.started) return false;
     terminal.started = true;
     terminal.cancelIdleTimeout?.();
     void operation().then(
-      () => terminalError === undefined ? terminal.resolve() : terminal.reject(terminalError),
+      () => (terminalError === undefined ? terminal.resolve() : terminal.reject(terminalError)),
       (error) => terminal.reject(error),
     );
     return true;
@@ -2194,13 +2119,7 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
    * - text/code: Append to content string
    * - queue/plan/checkpoint/task: Replace entire data (arrives in one chunk)
    */
-  private applyChunkToBuffer(
-    buffer: Map<string, MessageComponent>,
-    action: string,
-    comp: any,
-    guardrailDecision?: Record<string, unknown>,
-    agentId?: string,
-  ): void {
+  private applyChunkToBuffer(buffer: Map<string, MessageComponent>, action: string, comp: any, guardrailDecision?: Record<string, unknown>, agentId?: string): void {
     const componentId = comp.id;
     const { type, data } = this.extractComponentData(comp, agentId);
     if (guardrailDecision) {
@@ -2234,14 +2153,9 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
   /**
    * Merge incoming data into existing component data based on type.
    */
-  private mergeComponentData(
-    type: ComponentType,
-    existing: Record<string, unknown>,
-    incoming: Record<string, unknown>,
-  ): Record<string, unknown> {
+  private mergeComponentData(type: ComponentType, existing: Record<string, unknown>, incoming: Record<string, unknown>): Record<string, unknown> {
     switch (type) {
-      case 'text':
-      {
+      case 'text': {
         if (incoming.guardrailDecision) {
           return { ...existing, ...incoming };
         }
@@ -2323,8 +2237,7 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
   private getErrorMessage(code: ErrorCode): string {
     const messages: Record<string, string> = {
       [ErrorCode.CHAT_GRPC_UNAVAILABLE]: 'AI service is currently unavailable.',
-      [ErrorCode.CHAT_GRPC_UNAUTHENTICATED]:
-        'AI service rejected the request (authentication failed).',
+      [ErrorCode.CHAT_GRPC_UNAUTHENTICATED]: 'AI service rejected the request (authentication failed).',
       [ErrorCode.CHAT_STREAM_LIMIT]: 'Maximum concurrent streams reached.',
       [ErrorCode.CHAT_STREAM_FAILED]: 'AI stream failed unexpectedly.',
       [ErrorCode.CHAT_STREAM_TIMEOUT]: 'AI stream timed out.',
@@ -2381,10 +2294,7 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
 
   @Cron(CronExpression.EVERY_10_MINUTES)
   async cleanupStaleStreams() {
-    const staleMinutes = this.configService.get<number>(
-      'conversation.staleStreamCleanupMinutes',
-      30,
-    );
+    const staleMinutes = this.configService.get<number>('conversation.staleStreamCleanupMinutes', 30);
 
     const count = await this.messageService.cleanupStaleStreams(staleMinutes);
     if (count > 0) {
@@ -2396,12 +2306,7 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
    * Generates a conversation name asynchronously (fire-and-forget).
    * Sends the result via SSE to the user.
    */
-  generateConversationNameAsync(
-    userId: string,
-    conversationId: string,
-    query: string,
-    username?: string,
-  ): void {
+  generateConversationNameAsync(userId: string, conversationId: string, query: string, username?: string): void {
     // Fire and forget - don't await at call site
     this.generateConversationName(userId, conversationId, query, username).catch((err) => {
       this.logger.error('Failed to generate conversation name', {
@@ -2411,29 +2316,20 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
     });
   }
 
-  private async generateConversationName(
-    userId: string,
-    conversationId: string,
-    query: string,
-    username?: string,
-  ): Promise<void> {
+  private async generateConversationName(userId: string, conversationId: string, query: string, username?: string): Promise<void> {
     try {
       // Naming model is admin-configurable (Paramètres de conversation). Use the
       // chosen model when set; otherwise fall back to the platform default.
       // An empty model makes the gRPC name generation fail and the conversation
       // keeps its default title.
       const { conversationName } = await this.conversationSettings.getSettings();
-      const chosen = conversationName.modelId
-        ? await this.modelsService.findById(conversationName.modelId).catch(() => null)
-        : null;
+      const chosen = conversationName.modelId ? await this.modelsService.findById(conversationName.modelId).catch(() => null) : null;
 
       // Chosen models are served by the LiteLLM proxy, so route via the proxy
       // alias ("litellm_proxy/<model_name>"). Their stored litellmModel is a
       // provider-prefixed target (e.g. "ollama/gemma3:4b") that would bypass the
       // proxy and fail. The platform default keeps its litellmModel (unchanged).
-      const litellmModel = chosen
-        ? `litellm_proxy/${chosen.id}`
-        : ((await this.modelsService.getDefaultModel())?.litellmModel || '');
+      const litellmModel = chosen ? `litellm_proxy/${chosen.id}` : (await this.modelsService.getDefaultModel())?.litellmModel || '';
 
       const response = await this.callGenerateNameGrpc(query, litellmModel, username);
       const generatedName = response.conversation_name || 'New Conversation';
@@ -2465,11 +2361,7 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
-  private callGenerateNameGrpc(
-    query: string,
-    modelId?: string,
-    username?: string,
-  ): Promise<{ conversation_name: string }> {
+  private callGenerateNameGrpc(query: string, modelId?: string, username?: string): Promise<{ conversation_name: string }> {
     return new Promise((resolve, reject) => {
       if (!this.chatbotClient) {
         reject(new Error('gRPC client not initialized'));
@@ -2482,15 +2374,10 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
       metadata.set('user', userHeader);
 
       const deadline = new Date(Date.now() + 60000); // 60s timeout
-      this.chatbotClient.GenerateConversationName(
-        { query, model: modelId || '' },
-        metadata,
-        { deadline },
-        (err: Error | null, response: { conversation_name: string }) => {
-          if (err) reject(err);
-          else resolve(response);
-        },
-      );
+      this.chatbotClient.GenerateConversationName({ query, model: modelId || '' }, metadata, { deadline }, (err: Error | null, response: { conversation_name: string }) => {
+        if (err) reject(err);
+        else resolve(response);
+      });
     });
   }
 
@@ -2531,7 +2418,9 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
   }
 
   private workspaceNameFromPath(filePath: string | undefined, fallback: string): string {
-    const parts = String(filePath || '').split('/').filter(Boolean);
+    const parts = String(filePath || '')
+      .split('/')
+      .filter(Boolean);
     return parts.length >= 2 ? parts[1] : fallback;
   }
 
@@ -2539,57 +2428,31 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
    * Runs a single linked agent via gRPC RunSingleAgent (agent_mode=mono on ADK side).
    * Used by WhatsApp inbound replies — no manager orchestration, no SSE gateway.
    */
-  async runSingleAgentStream(params: {
-    userId: string;
-    username: string;
-    conversationId: string;
-    messageId: string;
-    agentId: string;
-    query: string;
-    requestId?: string;
-  }): Promise<{ durationMs: number; componentCount: number; chunkCount: number }> {
+  async runSingleAgentStream(params: { userId: string; username: string; conversationId: string; messageId: string; agentId: string; query: string; requestId?: string }): Promise<{ durationMs: number; componentCount: number; chunkCount: number }> {
     if (!this.isGrpcAvailable) {
-      throw new ServiceUnavailableException(
-        ErrorCode.CHAT_GRPC_UNAVAILABLE,
-        'gRPC service is not available for single-agent streaming',
-      );
+      throw new ServiceUnavailableException(ErrorCode.CHAT_GRPC_UNAVAILABLE, 'gRPC service is not available for single-agent streaming');
     }
 
     const logOpts: LogOptions = { requestId: params.requestId };
     const defaultModel = await this.modelsService.getDefaultModel();
     const fallbackModelId = this.modelsService.getModelIdentifier(defaultModel) || '';
 
-    const grpcAgents = await this.agentService.buildGrpcAgentsForPlaybook(
-      params.userId,
-      [params.agentId],
-      fallbackModelId,
-      params.conversationId,
-    );
+    const grpcAgents = await this.agentService.buildGrpcAgentsForPlaybook(params.userId, [params.agentId], fallbackModelId, params.conversationId);
     if (grpcAgents.length === 0) {
-      throw new ServiceUnavailableException(
-        ErrorCode.AGENT_NOT_FOUND,
-        'Linked agent not found for single-agent stream',
-      );
+      throw new ServiceUnavailableException(ErrorCode.AGENT_NOT_FOUND, 'Linked agent not found for single-agent stream');
     }
 
     await this.resolveAgentBrainContexts(grpcAgents);
 
     const conversation = await this.conversationService.getConversationDocument(params.conversationId);
     const systemWorkspaceId = conversation.systemWorkspaceId?.toString();
-    const [workspaceContexts, previousAttachedFiles] = await Promise.all([
-      this.buildWorkspaceContexts(params.conversationId, logOpts, conversation),
-      this.buildPreviousAttachedFiles(systemWorkspaceId, []),
-    ]);
+    const [workspaceContexts, previousAttachedFiles] = await Promise.all([this.buildWorkspaceContexts(params.conversationId, logOpts, conversation), this.buildPreviousAttachedFiles(systemWorkspaceId, [])]);
     await this.attachRunCodeContexts(
       grpcAgents,
       params.userId,
       params.messageId,
       workspaceContexts.map((context) => context.workspace_id),
-      previousAttachedFiles.flatMap((file) =>
-        file.workspace_id && file.filepath
-          ? [{ workspaceId: file.workspace_id, path: file.filepath }]
-          : [],
-      ),
+      previousAttachedFiles.flatMap((file) => (file.workspace_id && file.filepath ? [{ workspaceId: file.workspace_id, path: file.filepath }] : [])),
     );
 
     const grpcRequest = {
@@ -2611,30 +2474,28 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
     };
 
     const timeoutMs = this.configService.get<number>('conversation.grpcTimeoutMs', 120000);
-    this.logger.log('RunSingleAgent gRPC request prepared', {
-      conversationId: params.conversationId,
-      messageId: params.messageId,
-      agentId: params.agentId,
-      agentName: grpcAgents[0].name,
-      model: grpcAgents[0].chatbot?.model,
-      toolCount: grpcAgents[0].tools?.length ?? 0,
-      workspaceCount: grpcRequest.workspace_context.length,
-      requestId: params.requestId,
-    }, logOpts);
+    this.logger.log(
+      'RunSingleAgent gRPC request prepared',
+      {
+        conversationId: params.conversationId,
+        messageId: params.messageId,
+        agentId: params.agentId,
+        agentName: grpcAgents[0].name,
+        model: grpcAgents[0].chatbot?.model,
+        toolCount: grpcAgents[0].tools?.length ?? 0,
+        workspaceCount: grpcRequest.workspace_context.length,
+        requestId: params.requestId,
+      },
+      logOpts,
+    );
 
     return this.executeSingleAgentGrpcStream(params.messageId, grpcRequest, timeoutMs, logOpts);
   }
 
-  private executeSingleAgentGrpcStream(
-    messageId: string,
-    grpcRequest: Record<string, unknown>,
-    timeoutMs: number,
-    logOpts?: LogOptions,
-  ): Promise<{ durationMs: number; componentCount: number; chunkCount: number }> {
+  private executeSingleAgentGrpcStream(messageId: string, grpcRequest: Record<string, unknown>, timeoutMs: number, logOpts?: LogOptions): Promise<{ durationMs: number; componentCount: number; chunkCount: number }> {
     return new Promise((resolve, reject) => {
       const metadata = createGrpcMetadata(this.configService);
-      const username =
-        (grpcRequest.user_context as { username?: string } | undefined)?.username || 'SYSTEM';
+      const username = (grpcRequest.user_context as { username?: string } | undefined)?.username || 'SYSTEM';
       metadata.set('user', username);
 
       const call = this.chatbotClient.RunSingleAgent(grpcRequest, metadata);

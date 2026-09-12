@@ -91,6 +91,7 @@ describe('ConversationPage', () => {
     expect(screen.getByRole('status', { name: 'page.loading' })).toHaveAttribute('aria-busy', 'true');
     expect(container.querySelector('[data-loading-header]')).toHaveClass('h-[68px]', 'md:h-[60px]');
     expect(container.querySelector('[data-loading-composer]')).toHaveClass('h-28');
+    expect(container.querySelector('[data-loading-spinner]')).toBeInTheDocument();
   });
 
   afterEach(() => {

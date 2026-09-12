@@ -16,6 +16,17 @@ const fullMetrics: ConversationLatencyMetricsV1 = {
 };
 
 describe('TimingIndicator', () => {
+  const conversationUsage = {
+    tokens: {
+      input: 93_210,
+      output: 31_505,
+      cachedInput: 4_019,
+      reasoning: 0,
+      total: 128_734,
+    },
+    cost: { usd: 0.287, complete: true },
+    carbon: { gramsCo2e: 6.2, estimated: true as const, complete: true },
+  };
   it('renders nothing when no timing data exists', () => {
     const { container } = render(<TimingIndicator />);
     expect(container.firstChild).toBeNull();
@@ -33,15 +44,35 @@ describe('TimingIndicator', () => {
   });
 
   it('renders the latency trigger when latency metrics exist', () => {
+    render(<TimingIndicator timeToFirstChunk={640} timeToFirstToken={700} durationMs={4000} latencyMetrics={fullMetrics} />);
+    expect(screen.getByRole('button', { name: 'latency.openDetails' })).toBeInTheDocument();
+  });
+
+  it('shows cumulative usage and impact in the existing details popover', async () => {
+    render(<TimingIndicator conversationUsage={conversationUsage} />);
+    await userEvent.click(screen.getByRole('button', { name: 'latency.openDetails' }));
+    expect(screen.getByText('128,734')).toBeInTheDocument();
+    expect(screen.getByText('$0.287')).toBeInTheDocument();
+    expect(screen.getByText('≈ 6.2 gCO₂e')).toBeInTheDocument();
+  });
+
+  it('does not present unavailable estimates as zero', async () => {
     render(
       <TimingIndicator
-        timeToFirstChunk={640}
-        timeToFirstToken={700}
-        durationMs={4000}
-        latencyMetrics={fullMetrics}
+        conversationUsage={{
+          ...conversationUsage,
+          cost: { usd: null, complete: false },
+          carbon: {
+            ...conversationUsage.carbon,
+            gramsCo2e: null,
+            complete: false,
+          },
+        }}
       />,
     );
-    expect(screen.getByRole('button', { name: 'latency.openDetails' })).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: 'latency.openDetails' }));
+    expect(screen.getByText('usage.costUnavailable')).toBeInTheDocument();
+    expect(screen.getByText('usage.carbonUnavailable')).toBeInTheDocument();
   });
 
   it('opens a popover showing all six latency stages', async () => {
@@ -80,7 +111,11 @@ describe('TimingIndicator', () => {
     const user = userEvent.setup();
     render(
       <TimingIndicator
-        latencyMetrics={{ schemaVersion: 1, backendPreAdkMs: 0, quality: 'clock-skew' }}
+        latencyMetrics={{
+          schemaVersion: 1,
+          backendPreAdkMs: 0,
+          quality: 'clock-skew',
+        }}
       />,
     );
     await user.click(screen.getByRole('button', { name: 'latency.openDetails' }));
@@ -174,7 +209,10 @@ describe('TimingIndicator', () => {
           ...fullMetrics,
           adkPreProviderBreakdown: {
             sessionRunnerSetupMs: 1380,
-            sessionRunnerSetupBreakdown: { sessionLookupMs: 120, runnerHandoffMs: 4 },
+            sessionRunnerSetupBreakdown: {
+              sessionLookupMs: 120,
+              runnerHandoffMs: 4,
+            },
           },
         }}
       />,
@@ -195,16 +233,7 @@ describe('TimingIndicator', () => {
   });
 
   it('hides the latency UI and legacy timing when the admin toggle is off but keeps token usage', () => {
-    render(
-      <TimingIndicator
-        timeToFirstChunk={250}
-        durationMs={1000}
-        inputTokens={120}
-        outputTokens={30}
-        latencyMetrics={fullMetrics}
-        latencyInstrumentationEnabled={false}
-      />,
-    );
+    render(<TimingIndicator timeToFirstChunk={250} durationMs={1000} inputTokens={120} outputTokens={30} latencyMetrics={fullMetrics} latencyInstrumentationEnabled={false} />);
     expect(screen.queryByRole('button', { name: 'latency.openDetails' })).not.toBeInTheDocument();
     expect(screen.queryByText('250ms')).not.toBeInTheDocument();
     expect(screen.getByText('timing.compactTokens: 120/30')).toBeInTheDocument();

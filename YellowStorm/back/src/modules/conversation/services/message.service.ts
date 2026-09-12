@@ -1,18 +1,6 @@
 import { Injectable, HttpStatus, Inject, forwardRef } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import {
-  CreateUserMessageData,
-  CreateAIPlaceholderData,
-  CompleteAIMessageData,
-  MessageQueryParams,
-  MessageResponse,
-  PaginatedMessages,
-  FeedbackType,
-  AttachedFileResponse,
-  MessageComponent,
-  ReliabilityEvaluation,
-  ResponseCorrectionAttempt,
-} from '../interfaces/message.interface';
+import { CreateUserMessageData, CreateAIPlaceholderData, CompleteAIMessageData, MessageQueryParams, MessageResponse, PaginatedMessages, FeedbackType, AttachedFileResponse, MessageComponent, ReliabilityEvaluation, ResponseCorrectionAttempt } from '../interfaces/message.interface';
 import type { ConversationLatencyMetricsV1, FrontendLatencyPatch } from '../interfaces/latency.interface';
 import { ConversationService } from './conversation.service';
 import { StreamGatewayService } from './stream-gateway.service';
@@ -25,6 +13,8 @@ import { StreamEvent } from '../interfaces/stream.interface';
 import { EmailService } from '../../email/email.service';
 import { ConversationSettingsService } from '../../system/conversation-settings.service';
 import { MESSAGE_STORE, type MessageRecord, type MessageStore } from '../persistence/message-store';
+import { ConversationUsageAccountingService } from './conversation-usage-accounting.service';
+import type { ConversationUsageAttribution, ConversationUsageMetrics } from '../utils/usage-metrics';
 
 const SETTINGS_LOOKUP_TIMEOUT_MS = 1_000;
 
@@ -42,6 +32,7 @@ export class MessageService {
     private readonly logger: LoggerService,
     private readonly emailService: EmailService,
     private readonly conversationSettings?: ConversationSettingsService,
+    private readonly usageAccounting?: ConversationUsageAccountingService,
   ) {
     this.logger.setContext('MessageService');
     this.appUrl = this.configService.get<string>('app.frontendUrl', 'http://localhost:5173');
@@ -105,9 +96,7 @@ export class MessageService {
     if (message.attachedFileIds?.length) {
       const fileIds = message.attachedFileIds;
       const fileMap = await this.resolveAttachedFiles(fileIds);
-      response.attachedFiles = fileIds
-        .map((fid) => fileMap.get(fid))
-        .filter((f): f is AttachedFileResponse => !!f);
+      response.attachedFiles = fileIds.map((fid) => fileMap.get(fid)).filter((f): f is AttachedFileResponse => !!f);
     }
 
     // Broadcast to group members
@@ -120,6 +109,32 @@ export class MessageService {
     });
 
     return response;
+  }
+
+  async recordConversationUsage(conversationId: string, messageId: string, attribution: ConversationUsageAttribution): Promise<void> {
+    const conversationUsage = await this.persistConversationUsage(conversationId, messageId, attribution);
+    if (!conversationUsage) return;
+    await this.broadcastMessage(conversationId, {
+      type: 'message_updated',
+      data: { conversationId, messageId, message: { conversationUsage } },
+    });
+  }
+
+  private async persistConversationUsage(conversationId: string, messageId: string, attribution?: ConversationUsageAttribution): Promise<ConversationUsageMetrics | undefined> {
+    try {
+      if (attribution && this.usageAccounting) {
+        const events = await this.usageAccounting.createEvents(conversationId, messageId, attribution);
+        await this.messageStore.recordConversationUsageEvents(events);
+      }
+      return await this.messageStore.getConversationUsage(conversationId);
+    } catch (error) {
+      this.logger.warn('Conversation usage accounting failed', {
+        conversationId,
+        messageId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return undefined;
+    }
   }
 
   async createAIPlaceholder(data: CreateAIPlaceholderData): Promise<MessageResponse> {
@@ -155,7 +170,11 @@ export class MessageService {
    * createUserMessage, then broadcasts the placeholder creation exactly as
    * createAIPlaceholder would — preserving event order (user first).
    */
-  async createUserMessageWithAiPlaceholder(data: CreateUserMessageData & { placeholder: Omit<CreateAIPlaceholderData, 'questionMessageId'> }): Promise<{ userMessage: MessageResponse; aiMessage: MessageResponse }> {
+  async createUserMessageWithAiPlaceholder(
+    data: CreateUserMessageData & {
+      placeholder: Omit<CreateAIPlaceholderData, 'questionMessageId'>;
+    },
+  ): Promise<{ userMessage: MessageResponse; aiMessage: MessageResponse }> {
     const maxLength = this.configService.get<number>('conversation.maxMessageLength', 50000);
     if (data.content.length > maxLength) {
       throw new AppException({
@@ -193,9 +212,7 @@ export class MessageService {
     if (user.attachedFileIds?.length) {
       const fileIds = user.attachedFileIds;
       const fileMap = await this.resolveAttachedFiles(fileIds);
-      userResponse.attachedFiles = fileIds
-        .map((fid) => fileMap.get(fid))
-        .filter((f): f is AttachedFileResponse => !!f);
+      userResponse.attachedFiles = fileIds.map((fid) => fileMap.get(fid)).filter((f): f is AttachedFileResponse => !!f);
     }
 
     void this.broadcastMessage(data.conversationId, {
@@ -221,8 +238,7 @@ export class MessageService {
       durationMs: data.durationMs,
     });
 
-    const guardrailDecision =
-      data.guardrailDecision ?? this.findGuardrailDecision(data.components);
+    const guardrailDecision = data.guardrailDecision ?? this.findGuardrailDecision(data.components);
     const message = await this.messageStore.completeAi({ ...data, guardrailDecision });
 
     if (!message) {
@@ -230,10 +246,7 @@ export class MessageService {
         messageId: data.messageId,
       });
       if (data.streamExecutionLeaseId) {
-        throw new ConflictException(
-          ErrorCode.CONFLICT,
-          'Stream execution lease no longer owns this response',
-        );
+        throw new ConflictException(ErrorCode.CONFLICT, 'Stream execution lease no longer owns this response');
       }
       throw new NotFoundException(ErrorCode.CHAT_MESSAGE_NOT_FOUND, 'AI message not found');
     }
@@ -250,7 +263,9 @@ export class MessageService {
       conversationId: message.conversationId,
     });
 
+    const conversationUsage = await this.persistConversationUsage(message.conversationId, message.id, data.usageAttribution);
     const response = this.mapToResponse(message);
+    if (conversationUsage) response.conversationUsage = conversationUsage;
 
     // Broadcast update
     await this.broadcastMessage(message.conversationId, {
@@ -270,12 +285,7 @@ export class MessageService {
    * AI message. Validates ownership boundaries; the store applies the merge
    * idempotently so duplicate reports never overwrite the accepted value.
    */
-  async reportFrontendLatency(
-    conversationId: string,
-    messageId: string,
-    requestId: string,
-    patch: FrontendLatencyPatch,
-  ): Promise<MessageResponse> {
+  async reportFrontendLatency(conversationId: string, messageId: string, requestId: string, patch: FrontendLatencyPatch): Promise<MessageResponse> {
     const message = await this.messageStore.findById(messageId);
     if (!message || message.conversationId !== conversationId) {
       throw new NotFoundException(ErrorCode.CHAT_MESSAGE_NOT_FOUND, 'AI message not found');
@@ -292,10 +302,7 @@ export class MessageService {
     return this.mapToResponse(updated);
   }
 
-  private async extractAndNotifyMentions(
-    message: MessageRecord,
-    conversationId: string,
-  ): Promise<void> {
+  private async extractAndNotifyMentions(message: MessageRecord, conversationId: string): Promise<void> {
     let fullText = '';
     if (message.conversationType === 'ai') {
       const textComponents = (message.components as any[])?.filter((c) => c.type === 'text') || [];
@@ -406,16 +413,13 @@ export class MessageService {
     }
   }
 
-  async findByConversation(
-    conversationId: string,
-    params: MessageQueryParams,
-  ): Promise<PaginatedMessages | import('../interfaces/message.interface').CursorPaginatedMessages> {
+  async findByConversation(conversationId: string, params: MessageQueryParams): Promise<PaginatedMessages | import('../interfaces/message.interface').CursorPaginatedMessages> {
     if ((params.mode ?? 'legacy') === 'cursor') {
       if (params.page !== undefined) {
         throw new BadRequestException(ErrorCode.VALIDATION_ERROR, 'page is not valid in cursor mode');
       }
       const limit = params.limit ?? 50;
-      const [window, redactSensitiveText] = await Promise.all([
+      const [window, redactSensitiveText, conversationUsage] = await Promise.all([
         this.messageStore.listCursor({
           conversationId,
           limit,
@@ -423,29 +427,23 @@ export class MessageService {
           conversationType: params.conversationType,
         }),
         this.resolveRedactSensitiveText(),
+        this.messageStore.getConversationUsage(conversationId),
       ]);
-      const questionIds = window.records
-        .filter((message) => message.conversationType === 'user')
-        .map((message) => message.id);
+      const questionIds = window.records.filter((message) => message.conversationType === 'user').map((message) => message.id);
       const branches = await this.messageStore.findBranchesByQuestions(questionIds);
       const allRecords = [...window.records, ...[...branches.values()].flat()];
-      const fileMap = await this.resolveAttachedFiles(
-        allRecords.flatMap((message) => message.attachedFileIds ?? []),
-      );
+      const fileMap = await this.resolveAttachedFiles(allRecords.flatMap((message) => message.attachedFileIds ?? []));
       const mapResponse = (message: MessageRecord): MessageResponse => {
         const response = this.mapToResponse(message, redactSensitiveText);
         if (message.attachedFileIds?.length) {
-          response.attachedFiles = message.attachedFileIds
-            .map((id) => fileMap.get(id))
-            .filter((file): file is AttachedFileResponse => Boolean(file));
+          response.attachedFiles = message.attachedFileIds.map((id) => fileMap.get(id)).filter((file): file is AttachedFileResponse => Boolean(file));
         }
         return response;
       };
       return {
         messages: window.records.map(mapResponse),
-        branchesByQuestion: Object.fromEntries(
-          [...branches].map(([id, records]) => [id, records.map(mapResponse)]),
-        ),
+        conversationUsage,
+        branchesByQuestion: Object.fromEntries([...branches].map(([id, records]) => [id, records.map(mapResponse)])),
         pagination: {
           mode: 'cursor',
           limit,
@@ -458,7 +456,7 @@ export class MessageService {
       throw new BadRequestException(ErrorCode.VALIDATION_ERROR, 'cursor requires cursor mode');
     }
     const { page = 1, limit = 50, conversationType } = params;
-    const [{ records: messages, total }, redactSensitiveText] = await Promise.all([
+    const [{ records: messages, total }, redactSensitiveText, conversationUsage] = await Promise.all([
       this.messageStore.listPage({
         conversationId,
         page,
@@ -466,6 +464,7 @@ export class MessageService {
         conversationType,
       }),
       this.resolveRedactSensitiveText(),
+      this.messageStore.getConversationUsage(conversationId),
     ]);
 
     // Batch-resolve attached files for all messages on this page
@@ -484,12 +483,11 @@ export class MessageService {
       messages: messages.map((m) => {
         const response = this.mapToResponse(m, redactSensitiveText);
         if (m.attachedFileIds?.length) {
-          response.attachedFiles = m.attachedFileIds
-            .map((fid) => fileMap.get(fid))
-            .filter((f): f is AttachedFileResponse => !!f);
+          response.attachedFiles = m.attachedFileIds.map((fid) => fileMap.get(fid)).filter((f): f is AttachedFileResponse => !!f);
         }
         return response;
       }),
+      conversationUsage,
       pagination: {
         page,
         limit,
@@ -500,23 +498,19 @@ export class MessageService {
   }
 
   async findById(messageId: string): Promise<MessageResponse> {
-    const [message, redactSensitiveText] = await Promise.all([
-      this.messageStore.findById(messageId),
-      this.resolveRedactSensitiveText(),
-    ]);
+    const [message, redactSensitiveText] = await Promise.all([this.messageStore.findById(messageId), this.resolveRedactSensitiveText()]);
 
     if (!message) {
       throw new NotFoundException(ErrorCode.CHAT_MESSAGE_NOT_FOUND, 'Message not found');
     }
 
     const response = this.mapToResponse(message, redactSensitiveText);
+    response.conversationUsage = await this.messageStore.getConversationUsage(message.conversationId);
 
     if (message.attachedFileIds?.length) {
       const fileIds = message.attachedFileIds;
       const fileMap = await this.resolveAttachedFiles(fileIds);
-      response.attachedFiles = fileIds
-        .map((fid) => fileMap.get(fid))
-        .filter((f): f is AttachedFileResponse => !!f);
+      response.attachedFiles = fileIds.map((fid) => fileMap.get(fid)).filter((f): f is AttachedFileResponse => !!f);
     }
 
     return response;
@@ -528,25 +522,26 @@ export class MessageService {
    * The payload passes through the same sanitizer as the include-results path.
    */
   async findToolActivityResult(conversationId: string, messageId: string, componentId: string): Promise<{ resultJson: string | null }> {
-    const [message, redactSensitiveText] = await Promise.all([
-      this.messageStore.findById(messageId),
-      this.resolveRedactSensitiveText(),
-    ]);
+    const [message, redactSensitiveText] = await Promise.all([this.messageStore.findById(messageId), this.resolveRedactSensitiveText()]);
 
     if (!message || String(message.conversationId) !== String(conversationId)) {
       throw new NotFoundException(ErrorCode.CHAT_MESSAGE_NOT_FOUND, 'Message not found');
     }
 
-    const components = Array.isArray(message.components) ? message.components as Array<{ id?: unknown; type?: unknown; data?: Record<string, unknown> }> : [];
+    const components = Array.isArray(message.components)
+      ? (message.components as Array<{
+          id?: unknown;
+          type?: unknown;
+          data?: Record<string, unknown>;
+        }>)
+      : [];
     const component = components.find((candidate) => candidate?.id === componentId && candidate?.type === 'toolActivity');
     if (!component) {
       throw new NotFoundException(ErrorCode.CHAT_MESSAGE_NOT_FOUND, 'Tool activity not found');
     }
 
     const [publicComponent] = this.publicComponents([component], true, redactSensitiveText) ?? [];
-    const resultJson = typeof publicComponent?.data?.resultJson === 'string' && publicComponent.data.resultJson.trim()
-      ? publicComponent.data.resultJson
-      : null;
+    const resultJson = typeof publicComponent?.data?.resultJson === 'string' && publicComponent.data.resultJson.trim() ? publicComponent.data.resultJson : null;
     return { resultJson };
   }
 
@@ -566,8 +561,7 @@ export class MessageService {
     }
 
     const message = await this.messageStore.updateFeedback(messageId, feedback, new Date());
-    if (!message)
-      throw new NotFoundException(ErrorCode.CHAT_MESSAGE_NOT_FOUND, 'Message not found');
+    if (!message) throw new NotFoundException(ErrorCode.CHAT_MESSAGE_NOT_FOUND, 'Message not found');
 
     this.logger.log('Message feedback updated', {
       messageId,
@@ -589,10 +583,7 @@ export class MessageService {
     return response;
   }
 
-  async updateReliabilityEvaluation(
-    messageId: string,
-    evaluation: ReliabilityEvaluation,
-  ): Promise<MessageResponse> {
+  async updateReliabilityEvaluation(messageId: string, evaluation: ReliabilityEvaluation): Promise<MessageResponse> {
     const existing = await this.messageStore.findById(messageId);
     if (!existing) {
       throw new NotFoundException(ErrorCode.CHAT_MESSAGE_NOT_FOUND, 'Message not found');
@@ -606,8 +597,7 @@ export class MessageService {
     }
 
     const message = await this.messageStore.updateReliability(messageId, evaluation);
-    if (!message)
-      throw new NotFoundException(ErrorCode.CHAT_MESSAGE_NOT_FOUND, 'Message not found');
+    if (!message) throw new NotFoundException(ErrorCode.CHAT_MESSAGE_NOT_FOUND, 'Message not found');
     const response = this.mapToResponse(message);
     await this.broadcastMessage(message.conversationId, {
       type: 'message_updated',
@@ -622,30 +612,13 @@ export class MessageService {
     return response;
   }
 
-  async claimStreamExecution(
-    messageId: string,
-    leaseId: string,
-    leaseDurationMs: number,
-  ): Promise<boolean> {
+  async claimStreamExecution(messageId: string, leaseId: string, leaseDurationMs: number): Promise<boolean> {
     const now = new Date();
-    return this.messageStore.claimStream(
-      messageId,
-      leaseId,
-      now,
-      new Date(now.getTime() + leaseDurationMs),
-    );
+    return this.messageStore.claimStream(messageId, leaseId, now, new Date(now.getTime() + leaseDurationMs));
   }
 
-  async renewStreamExecution(
-    messageId: string,
-    leaseId: string,
-    leaseDurationMs: number,
-  ): Promise<boolean> {
-    return this.messageStore.renewStream(
-      messageId,
-      leaseId,
-      new Date(Date.now() + leaseDurationMs),
-    );
+  async renewStreamExecution(messageId: string, leaseId: string, leaseDurationMs: number): Promise<boolean> {
+    return this.messageStore.renewStream(messageId, leaseId, new Date(Date.now() + leaseDurationMs));
   }
 
   async releaseStreamExecution(messageId: string, leaseId: string): Promise<void> {
@@ -670,11 +643,7 @@ export class MessageService {
     };
   }
 
-  async claimReliabilityEvaluation(
-    conversationId: string,
-    messageId: string,
-    manual: boolean,
-  ): Promise<MessageResponse | null> {
+  async claimReliabilityEvaluation(conversationId: string, messageId: string, manual: boolean): Promise<MessageResponse | null> {
     if (!/^[0-9a-f]{24}$/.test(conversationId) || !/^[0-9a-f]{24}$/.test(messageId)) {
       if (!manual) return null;
       throw new NotFoundException(ErrorCode.CHAT_MESSAGE_NOT_FOUND, 'Message not found');
@@ -686,18 +655,7 @@ export class MessageService {
     }
 
     const components = Array.isArray(message.components) ? message.components : [];
-    const hasAnswer =
-      message.conversationType === 'ai' &&
-      message.isComplete === true &&
-      message.isStreaming === false &&
-      components.some(
-        (component) =>
-          component.type === 'text' &&
-          typeof component.data?.content === 'string' &&
-          component.data.content.trim(),
-      ) &&
-      !components.some((component) => component.type === 'error') &&
-      !!message.questionMessageId;
+    const hasAnswer = message.conversationType === 'ai' && message.isComplete === true && message.isStreaming === false && components.some((component) => component.type === 'text' && typeof component.data?.content === 'string' && component.data.content.trim()) && !components.some((component) => component.type === 'error') && !!message.questionMessageId;
     if (!hasAnswer) {
       if (!manual) return null;
       throw new AppException({
@@ -708,10 +666,7 @@ export class MessageService {
     }
 
     const correctionInProgress = ['queued', 'correcting', 're_evaluating'];
-    if (
-      (manual && message.reliabilityEvaluation?.status === 'pending') ||
-      correctionInProgress.includes(message.correctionWorkflow?.status ?? '')
-    ) {
+    if ((manual && message.reliabilityEvaluation?.status === 'pending') || correctionInProgress.includes(message.correctionWorkflow?.status ?? '')) {
       if (!manual) return null;
       throw new AppException({
         code: ErrorCode.CONFLICT,
@@ -720,12 +675,7 @@ export class MessageService {
       });
     }
 
-    const claimed = await this.messageStore.claimReliability(
-      conversationId,
-      messageId,
-      manual,
-      new Date().toISOString(),
-    );
+    const claimed = await this.messageStore.claimReliability(conversationId, messageId, manual, new Date().toISOString());
     if (!claimed) {
       if (!manual) return null;
       throw new AppException({
@@ -749,10 +699,7 @@ export class MessageService {
     return response;
   }
 
-  async rerunReliabilityEvaluation(
-    conversationId: string,
-    messageId: string,
-  ): Promise<MessageResponse> {
+  async rerunReliabilityEvaluation(conversationId: string, messageId: string): Promise<MessageResponse> {
     const response = await this.claimReliabilityEvaluation(conversationId, messageId, true);
     if (!response) {
       throw new AppException({
@@ -764,21 +711,9 @@ export class MessageService {
     return response;
   }
 
-  async updateCorrectionWorkflow(
-    messageId: string,
-    workflow: NonNullable<MessageResponse['correctionWorkflow']>,
-    correctionRunId?: string,
-  ): Promise<MessageResponse> {
-    const message = await this.messageStore.updateCorrectionWorkflow(
-      messageId,
-      workflow,
-      correctionRunId,
-    );
-    if (!message)
-      throw new NotFoundException(
-        ErrorCode.CHAT_MESSAGE_NOT_FOUND,
-        correctionRunId ? 'Correction run ownership lost' : 'AI message not found',
-      );
+  async updateCorrectionWorkflow(messageId: string, workflow: NonNullable<MessageResponse['correctionWorkflow']>, correctionRunId?: string): Promise<MessageResponse> {
+    const message = await this.messageStore.updateCorrectionWorkflow(messageId, workflow, correctionRunId);
+    if (!message) throw new NotFoundException(ErrorCode.CHAT_MESSAGE_NOT_FOUND, correctionRunId ? 'Correction run ownership lost' : 'AI message not found');
     const response = this.mapToResponse(message);
     await this.broadcastMessage(message.conversationId, {
       type: 'message_updated',
@@ -791,35 +726,14 @@ export class MessageService {
     return response;
   }
 
-  async claimCorrectionRun(
-    messageId: string,
-    runId: string,
-    leaseExpiresAt: string,
-  ): Promise<boolean> {
-    return this.messageStore.claimCorrectionRun(
-      messageId,
-      runId,
-      leaseExpiresAt,
-      new Date().toISOString(),
-    );
+  async claimCorrectionRun(messageId: string, runId: string, leaseExpiresAt: string): Promise<boolean> {
+    return this.messageStore.claimCorrectionRun(messageId, runId, leaseExpiresAt, new Date().toISOString());
   }
 
-  async upsertCorrectionAttempt(
-    messageId: string,
-    attempt: ResponseCorrectionAttempt,
-    correctionRunId?: string,
-  ): Promise<MessageResponse> {
+  async upsertCorrectionAttempt(messageId: string, attempt: ResponseCorrectionAttempt, correctionRunId?: string): Promise<MessageResponse> {
     const sanitizedAttempt = { ...attempt, components: this.publicComponents(attempt.components) };
-    const message = await this.messageStore.upsertCorrectionAttempt(
-      messageId,
-      sanitizedAttempt,
-      correctionRunId,
-    );
-    if (!message)
-      throw new NotFoundException(
-        ErrorCode.CHAT_MESSAGE_NOT_FOUND,
-        correctionRunId ? 'Correction run ownership lost' : 'Correction workflow not found',
-      );
+    const message = await this.messageStore.upsertCorrectionAttempt(messageId, sanitizedAttempt, correctionRunId);
+    if (!message) throw new NotFoundException(ErrorCode.CHAT_MESSAGE_NOT_FOUND, correctionRunId ? 'Correction run ownership lost' : 'Correction workflow not found');
     const response = this.mapToResponse(message);
     await this.broadcastMessage(message.conversationId, {
       type: 'message_updated',
@@ -887,11 +801,7 @@ export class MessageService {
     return this.messageStore.findExpiredStreamExecutions(cutoff, limit);
   }
 
-  markExecutionInterrupted(
-    messageId: string,
-    reason: string,
-    now: Date,
-  ): Promise<{ id: string; conversationId: string; executionAttemptId: string | null } | null> {
+  markExecutionInterrupted(messageId: string, reason: string, now: Date): Promise<{ id: string; conversationId: string; executionAttemptId: string | null } | null> {
     return this.messageStore.markExecutionInterrupted(messageId, reason, now);
   }
 
@@ -900,12 +810,7 @@ export class MessageService {
     return this.messageStore.cleanupStaleStreams(cutoff);
   }
 
-  async updateUserMessage(
-    messageId: string,
-    content: string,
-    agentIds?: string[],
-    memberIds?: string[],
-  ): Promise<MessageResponse> {
+  async updateUserMessage(messageId: string, content: string, agentIds?: string[], memberIds?: string[]): Promise<MessageResponse> {
     const existing = await this.messageStore.findById(messageId);
 
     if (!existing) {
@@ -926,10 +831,8 @@ export class MessageService {
       memberIds,
       editedAt: new Date(),
     });
-    if (!message)
-      throw new NotFoundException(ErrorCode.CHAT_MESSAGE_NOT_FOUND, 'Message not found');
-    if (agentIds?.length)
-      await this.conversationService.updateTaggedAgents(message.conversationId, agentIds);
+    if (!message) throw new NotFoundException(ErrorCode.CHAT_MESSAGE_NOT_FOUND, 'Message not found');
+    if (agentIds?.length) await this.conversationService.updateTaggedAgents(message.conversationId, agentIds);
 
     this.logger.log('User message updated', { messageId });
 
@@ -962,9 +865,7 @@ export class MessageService {
    * Resolve attached file IDs to AttachedFileResponse objects with presigned download URLs.
    * Returns a Map for efficient lookup.
    */
-  private async resolveAttachedFiles(
-    fileIds: string[],
-  ): Promise<Map<string, AttachedFileResponse>> {
+  private async resolveAttachedFiles(fileIds: string[]): Promise<Map<string, AttachedFileResponse>> {
     const map = new Map<string, AttachedFileResponse>();
     if (fileIds.length === 0) return map;
 
@@ -974,9 +875,7 @@ export class MessageService {
       await Promise.all(
         documents.map(async (doc) => {
           try {
-            const downloadUrl = doc.path
-              ? await this.workspaceDocumentService.generateReadUrl(doc.path)
-              : '';
+            const downloadUrl = doc.path ? await this.workspaceDocumentService.generateReadUrl(doc.path) : '';
             map.set(doc.id, {
               id: doc.id,
               originalName: doc.originalName,
@@ -1040,25 +939,15 @@ export class MessageService {
             ...message.correctionWorkflow,
             ...(message.correctionWorkflow.correctedComponents
               ? {
-                  correctedComponents: this.publicComponents(
-                    message.correctionWorkflow.correctedComponents,
-                    false,
-                    redactSensitiveText,
-                  ),
+                  correctedComponents: this.publicComponents(message.correctionWorkflow.correctedComponents, false, redactSensitiveText),
                 }
               : {}),
             ...(message.correctionWorkflow.attempts
               ? {
-                  attempts: message.correctionWorkflow.attempts.map(
-                    (attempt: ResponseCorrectionAttempt) => ({
-                      ...attempt,
-                      components: this.publicComponents(
-                        attempt.components,
-                        false,
-                        redactSensitiveText,
-                      ),
-                    }),
-                  ),
+                  attempts: message.correctionWorkflow.attempts.map((attempt: ResponseCorrectionAttempt) => ({
+                    ...attempt,
+                    components: this.publicComponents(attempt.components, false, redactSensitiveText),
+                  })),
                 }
               : {}),
           } as MessageResponse['correctionWorkflow'])
@@ -1072,11 +961,7 @@ export class MessageService {
     };
   }
 
-  private publicComponents(
-    components: unknown,
-    includeToolResults = false,
-    _resolvedRedactSensitiveText?: boolean,
-  ): MessageComponent[] | undefined {
+  private publicComponents(components: unknown, includeToolResults = false, _resolvedRedactSensitiveText?: boolean): MessageComponent[] | undefined {
     if (!Array.isArray(components)) return undefined;
     // Conversation content is rendered exactly as stored: display-time
     // sanitization was removed by product decision (public share snapshots
@@ -1086,11 +971,7 @@ export class MessageService {
     return components.map((component) => {
       if (!component?.data) return component;
       if (component.type === 'toolActivity' && !includeToolResults) {
-        const {
-          resultJson: _resultJson,
-          result_json: _resultJsonSnake,
-          ...publicData
-        } = component.data;
+        const { resultJson: _resultJson, result_json: _resultJsonSnake, ...publicData } = component.data;
         return { id: component.id, type: component.type, data: publicData };
       }
       return { id: component.id, type: component.type, data: { ...component.data } };
@@ -1104,10 +985,7 @@ export class MessageService {
       const settings = await Promise.race([
         this.conversationSettings.getSettings(),
         new Promise<never>((_, reject) => {
-          timeout = setTimeout(
-            () => reject(new Error('Conversation redaction setting lookup timed out')),
-            SETTINGS_LOOKUP_TIMEOUT_MS,
-          );
+          timeout = setTimeout(() => reject(new Error('Conversation redaction setting lookup timed out')), SETTINGS_LOOKUP_TIMEOUT_MS);
         }),
       ]);
       return settings.redactSensitiveText !== false;
@@ -1121,9 +999,7 @@ export class MessageService {
     }
   }
 
-  private findGuardrailDecision(
-    components: MessageComponent[],
-  ): CompleteAIMessageData['guardrailDecision'] {
+  private findGuardrailDecision(components: MessageComponent[]): CompleteAIMessageData['guardrailDecision'] {
     for (const component of components) {
       const decision = component.data?.guardrailDecision;
       if (decision && typeof decision === 'object') {

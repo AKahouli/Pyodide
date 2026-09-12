@@ -40,6 +40,9 @@ export const configValidationSchema = Joi.object({
   CONVERSATION_MAX_CLONE_MESSAGES: Joi.number().min(1).max(10000).default(2000),
   CONVERSATION_MAX_PRIVATE_SHARE_RECIPIENTS: Joi.number().min(1).max(20).default(20),
   CONVERSATION_CLONE_INSERT_BATCH_SIZE: Joi.number().min(1).max(1000).default(250),
+  CONVERSATION_CARBON_FACTORS_JSON: Joi.string().default('{}'),
+  CONVERSATION_CARBON_METHODOLOGY: Joi.string().max(100).default('tokens-factor-v1'),
+  CONVERSATION_CARBON_FACTOR_VERSION: Joi.string().max(100).default('unconfigured'),
 
   // Semantic Model PostgreSQL / Apache AGE
   SEMANTIC_MODELS_AUTO_PROVISION: Joi.boolean().default(false),
@@ -50,7 +53,9 @@ export const configValidationSchema = Joi.object({
   SEMANTIC_PG_DATABASE: Joi.string().optional().allow(''),
   SEMANTIC_PG_SSL: Joi.boolean().default(false),
   SEMANTIC_PG_POOL_MAX: Joi.number().min(1).max(50).default(10),
-  SEMANTIC_AGE_GRAPH: Joi.string().pattern(/^[a-z][a-z0-9_]{0,62}$/).default('semantic_model_graph'),
+  SEMANTIC_AGE_GRAPH: Joi.string()
+    .pattern(/^[a-z][a-z0-9_]{0,62}$/)
+    .default('semantic_model_graph'),
   SEMANTIC_MODEL_NATIVE_SEARCH_URL: Joi.string().uri().default('http://localhost:8045/search_native'),
   SEMANTIC_MODEL_NATIVE_SEARCH_BATCH_URL: Joi.string().uri().default('http://localhost:8045/search_native/batch'),
   SEMANTIC_MODEL_NATIVE_SEARCH_AUTH_TOKEN: Joi.string().allow('').optional(),
@@ -379,9 +384,7 @@ export const configValidationSchema = Joi.object({
   WHATSAPP_CONNECTIVITY_PROBE_TIMEOUT_MS: Joi.number().min(1000).max(60000).default(10000),
   WHATSAPP_PROCESSING_TIMEOUT_MS: Joi.number().min(30000).max(600000).default(180000),
   WHATSAPP_MAX_INBOUND_PER_MINUTE: Joi.number().min(1).max(300).default(30),
-  WHATSAPP_FALLBACK_REPLY: Joi.string()
-    .max(500)
-    .default('I could not generate a response for this message.'),
+  WHATSAPP_FALLBACK_REPLY: Joi.string().max(500).default('I could not generate a response for this message.'),
   WHATSAPP_CIRCUIT_BREAKER_FAILURE_THRESHOLD: Joi.number().min(1).max(20).default(3),
   WHATSAPP_CIRCUIT_BREAKER_COOLDOWN_MS: Joi.number().min(5000).max(300000).default(60000),
 
@@ -429,9 +432,7 @@ export const configValidationSchema = Joi.object({
   WORKY_VOICE_NAME: Joi.string().default('Kore'),
   WORKY_VOICE_WS_BASE_URL: Joi.string()
     .uri({ scheme: ['wss'] })
-    .default(
-      'wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1alpha.GenerativeService.BidiGenerateContentConstrained',
-    ),
+    .default('wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1alpha.GenerativeService.BidiGenerateContentConstrained'),
   WORKY_VOICE_TOKEN_TTL_SEC: Joi.number().min(60).max(3600).default(1800),
   WORKY_VOICE_SESSION_START_TTL_SEC: Joi.number().min(30).max(600).default(60),
 

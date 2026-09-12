@@ -1,6 +1,6 @@
 import { useState, useCallback, memo } from 'react';
 import { NavLink } from 'react-router-dom';
-import { MoreHorizontal, Pencil, Share, Trash2, Users, FolderPlus, FolderInput, FolderMinus, Plus } from 'lucide-react';
+import { MoreHorizontal, Pencil, Loader2, Share, Trash2, Users, FolderPlus, FolderInput, FolderMinus, Plus } from 'lucide-react';
 import { SidebarMenuButton, SidebarMenuAction, useSidebar } from '@/components/ui/sidebar';
 import {
   DropdownMenu,
@@ -29,6 +29,8 @@ export interface ConversationItemProps {
   icon?: React.ReactNode;
   /** Active-state override. When omitted, falls back to the v1 current conversation. */
   isActive?: boolean;
+  /** Whether a response is currently streaming inside this conversation. */
+  streaming?: boolean;
   /** Whether the item can be dragged into projects. v2 items are not draggable. */
   draggable?: boolean;
   projectId?: string | null;
@@ -47,6 +49,7 @@ export const ConversationItem = memo(function ConversationItem({
   to,
   icon,
   isActive,
+  streaming,
   draggable = true,
   projectId,
   isGroup,
@@ -112,10 +115,18 @@ export const ConversationItem = memo(function ConversationItem({
           <NavLink
             to={resolvedTo}
             draggable={false}
+            className='relative'
             onClick={() => {
               if (isMobile) setOpenMobile(false);
             }}
           >
+            {streaming && (
+              <Loader2
+                aria-hidden='true'
+                data-slot='conversation-streaming-spinner'
+                className='pointer-events-none absolute inset-0 m-auto h-4 w-4 animate-spin text-primary/50'
+              />
+            )}
 
             {isGroup && (
               <div className='relative'>
@@ -127,7 +138,7 @@ export const ConversationItem = memo(function ConversationItem({
                 ) : null}
               </div>
             )}
-            <span className='truncate'>{displayTitle}</span>
+            <span className='relative truncate'>{displayTitle}</span>
             {icon}
           </NavLink>
         </SidebarMenuButton>
