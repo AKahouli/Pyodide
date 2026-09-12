@@ -10,5 +10,5 @@ export * from './interfaces/role.interface';
 export * from './interfaces/audit-log.interface';
 export * from './dto/create-role.dto';
 export * from './dto/update-role.dto';
-export * from './dto/assign-role.dto';
 export * from './dto/audit-log-query.dto';
+export * from './dto/assign-role.dto';

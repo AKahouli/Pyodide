@@ -115,19 +115,10 @@ export const ConversationItem = memo(function ConversationItem({
           <NavLink
             to={resolvedTo}
             draggable={false}
-            className='relative'
             onClick={() => {
               if (isMobile) setOpenMobile(false);
             }}
           >
-            {streaming && (
-              <Loader2
-                aria-hidden='true'
-                data-slot='conversation-streaming-spinner'
-                className='pointer-events-none absolute inset-0 m-auto h-4 w-4 animate-spin text-primary/50'
-              />
-            )}
-
             {isGroup && (
               <div className='relative'>
                 <Users className='h-4 w-4' />
@@ -138,7 +129,14 @@ export const ConversationItem = memo(function ConversationItem({
                 ) : null}
               </div>
             )}
-            <span className='relative truncate'>{displayTitle}</span>
+            {streaming && (
+              <Loader2
+                aria-hidden='true'
+                data-slot='conversation-streaming-spinner'
+                className='h-4 w-4 shrink-0 animate-spin text-primary/60'
+              />
+            )}
+            <span className='truncate'>{displayTitle}</span>
             {icon}
           </NavLink>
         </SidebarMenuButton>

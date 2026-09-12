@@ -344,10 +344,6 @@ Run from either `back/` or `front/` directory:
 ```bash
 npm run release          # Auto-determine bump from commits
 npm run release:patch    # Force patch (0.0.1 → 0.0.2)
-npm run release:minor    # Force minor (0.0.1 → 0.1.0)
-npm run release:major    # Force major (0.0.1 → 1.0.0)
-npm run release:first    # Initialize first release
-npm run release:exp      # Experimental pre-release (0.1.0 → 0.1.1-exp.0)
 ```
 
 After releasing, push with tags:

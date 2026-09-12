@@ -1,6 +1,6 @@
 import { Inject, Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { nanoid } from 'nanoid';
+import { randomUUID } from 'crypto';
 import { BadRequestException, ForbiddenException, NotFoundException } from '../../exceptions';
 import { ErrorCode } from '../../exceptions/constants/error-codes';
 import { EmailService } from '../../email/email.service';
@@ -137,7 +137,7 @@ export class ShareService {
       sharedBy: userId,
       title: data.title || conversation.title,
       messages,
-      accessToken: nanoid(32),
+      accessToken: randomUUID().replaceAll('-', ''),
       expiresAt: new Date(Date.now() + expiryDays * 24 * 60 * 60 * 1000),
     });
     this.logger.log('Public share created', {

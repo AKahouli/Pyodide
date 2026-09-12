@@ -22,6 +22,10 @@ const storeFns = vi.hoisted(() => ({
   updateConversation: vi.fn(async () => undefined),
   currentConversationId: 'c1',
   streamingStateCache: new Map(),
+  isStreaming: false,
+  streamingConversationId: null as string | null,
+  isAwaitingFirstChunk: false,
+  awaitingConversationId: null as string | null,
 }));
 
 const convoState = vi.hoisted(() => ({

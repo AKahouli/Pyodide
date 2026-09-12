@@ -392,7 +392,6 @@ export const configValidationSchema = Joi.object({
   LOGGING_MONGODB_URI: Joi.string().optional(),
   LOGGING_BUFFER_SIZE: Joi.number().min(10).max(10000).default(100),
   LOGGING_FLUSH_INTERVAL_MS: Joi.number().min(1000).max(60000).default(5000),
-  LOGGING_TTL_DAYS: Joi.number().min(1).max(365).default(30),
   LOGGING_PERSISTENCE_ENABLED: Joi.boolean().default(true),
   LOGGING_DEFAULT_SAVE: Joi.boolean().default(true),
   LOGGING_DEFAULT_DISPLAY: Joi.boolean().default(true),
