@@ -235,13 +235,13 @@ Le seed est **idempotent** : les rows portant un `id` existant sont ignorées.
    → startDevServer(pod, env) — kill l'ancien process Vite
    → setAppDataTicketProvider(...) (cache 10 min, refresh sur 401)
 
-3. App générée (iframe)
-   ──postMessage ym-app-data-fetch──▶ parent relay
-    └─ filtre /app-data/public/ OU /v1/apps/
-    └─ injecte Authorization: Bearer <dataTicket>  (+ retry ×1 sur 401)
-    └─ fetch http://localhost:8443/v1/apps/{id}/dev/tables/...
+ 3. App générée (iframe)
+    ──postMessage ym-app-data-fetch──▶ parent relay
+     └─ filtre /v1/apps/
+     └─ injecte Authorization: Bearer <dataTicket>  (+ retry ×1 sur 401)
+     └─ fetch http://localhost:8443/v1/apps/{id}/dev/tables/...
 
-4. Réponse ──postMessage '*'──▶ iframe
+ 4. Réponse ──postMessage '*'──▶ iframe
 ```
 
 Bypass login en preview : `isDevPreview()` (`import.meta.env.DEV &&
@@ -250,9 +250,11 @@ VITE_YM_APP_DATA_ENV === 'dev'`).
 ### 5.4 Deploy PROD
 
 ```
-Deploy (backend) → RemoteAppDataDeploymentService.prepareProduction
-  → client.bindRelease(workspaceId, revisionId)   // copie DEV→PROD + registre
+Deploy (backend) → AppDataDeploymentService.prepareProduction
+  (local: gère le replay schema DEV→PROD en local ;
+   remote: POST /internal/releases/bind côté microservice)
   → buildRuntimeEnv(appDataId, 'prod') → publicUrl PROD
+     (pointe toujours sur le microservice : APP_DATA_REMOTE_PUBLIC_BASE_URL_PROD)
   → VITE_YM_APP_DATA_URL cuite au build
 ```
 
@@ -330,7 +332,7 @@ Starter courant : **`starter_react_vite_v4`**.
 | `src/lib/yellowmind-data.ts` | Client data — mutations attendent `{ row }`, liste `{ rows }` |
 | `src/lib/yellowmind-auth.tsx` | Register/login → `{ token, user }`, `me` → `{ user }` |
 | `src/components/auth/ProtectedRoute.tsx` | Bypass login en dev preview |
-| `preview-wrapper.html` (front `public/`) | Relay postMessage (accepte `/app-data/public/` et `/v1/apps/`) |
+| `preview-wrapper.html` (front `public/`) | Relay postMessage (accepte `/v1/apps/`) |
 
 Le starter est **URL-agnifique** : construit tout à partir de `VITE_YM_APP_DATA_URL`.
 

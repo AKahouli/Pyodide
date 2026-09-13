@@ -26,6 +26,7 @@ import { useConversationV2Store } from '../../store';
 import { useConversationV2Translation } from '../../translation';
 import type { FilesTreeNode } from '../../types';
 import { useNodepodPreview, type NodepodPreviewStatus } from '../../hooks/useNodepodPreview';
+import { getOrCreateHost } from '../../runtime/BrowserRuntimeHost';
 import { AppSourceFileTree } from './AppSourceFileTree';
 import { AppSourceFileViewer } from './AppSourceFileViewer';
 import { resolveSourceFilesTree } from '../../utils/files-tree';
@@ -194,11 +195,16 @@ export function ApplicationComponentView({
     const base = import.meta.env.BASE_URL || '/';
     const wrapper = new URL('preview-wrapper.html', `${window.location.origin}${base}`);
     wrapper.searchParams.set('src', previewUrl);
-    const opened = window.open(wrapper.toString(), '_blank', 'noopener,noreferrer');
-    if (!opened) {
-      window.open(previewUrl, '_blank', 'noopener,noreferrer');
+    // No noopener/noreferrer: preview-wrapper.html needs window.opener to relay
+    // App Data through this tab's host. The host authenticates the popup by its
+    // exact WindowProxy + origin before serving any ticket-backed request.
+    const opened = window.open(wrapper.toString(), '_blank');
+    if (opened && sessionId) {
+      getOrCreateHost(sessionId).registerExternalPreviewRelayPeer(opened, window.location.origin);
+      return;
     }
-  }, [previewUrl]);
+    window.open(previewUrl, '_blank', 'noopener,noreferrer');
+  }, [previewUrl, sessionId]);
 
   const setPreviewOnly = () => {
     setLayoutMode('preview-only');

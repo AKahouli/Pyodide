@@ -29,6 +29,46 @@ const HIDDEN_IFRAME_SANDBOX =
 
 let appDataFetchProxyInstalled = false;
 
+interface AppDataRelayPeer {
+  source: WindowProxy;
+  origin: string;
+}
+
+/**
+ * Preview iframe windows the module-level relay may serve, each paired with
+ * the preview origin it was registered for. A `ym-app-data-fetch` message is
+ * only relayed when `event.source` matches a registered peer AND `event.origin`
+ * equals that peer's origin — so an embedding page or sibling iframe can never
+ * borrow the owner data ticket.
+ */
+const appDataRelayPeers: AppDataRelayPeer[] = [];
+
+export function registerAppDataRelayFrame(source: WindowProxy, origin: string | null): void {
+  const existing = appDataRelayPeers.findIndex((p) => p.source === source);
+  if (existing === -1) appDataRelayPeers.push({ source, origin: origin ?? '' });
+  else appDataRelayPeers[existing].origin = origin ?? '';
+}
+
+export function updateAppDataRelayFrameOrigin(source: WindowProxy, origin: string | null): void {
+  registerAppDataRelayFrame(source, origin);
+}
+
+export function unregisterAppDataRelayFrame(source: WindowProxy): void {
+  const index = appDataRelayPeers.findIndex((p) => p.source === source);
+  if (index !== -1) appDataRelayPeers.splice(index, 1);
+}
+
+/** http(s) origin of a relayable sender, or null when unusable (e.g. 'null'). */
+function validateRelayOrigin(origin: unknown): string | null {
+  if (typeof origin !== 'string' || origin === 'null') return null;
+  if (!origin.startsWith('http://') && !origin.startsWith('https://')) return null;
+  return origin;
+}
+
+function isTrustedAppDataRelaySource(source: WindowProxy | null, origin: string): boolean {
+  return appDataRelayPeers.some((p) => p.source === source && p.origin === origin);
+}
+
 /**
  * Resolves the owner's App Data data ticket for relayed preview requests,
  * **keyed by appDataId** so two concurrently open previews can never swap
@@ -142,29 +182,31 @@ function installAppDataFetchProxyOnce(): void {
     }
   };
 
+  let lastUntrustedSenderWarn = 0;
+
   window.addEventListener('message', (event: MessageEvent) => {
     if (event.data?.type !== 'ym-app-data-fetch') return;
     const source = event.source as WindowProxy | null;
     if (!source) return;
+    const origin = validateRelayOrigin(event.origin);
+    if (!origin || !isTrustedAppDataRelaySource(source, origin)) {
+      // Dropping untrusted senders must be quiet by default; rate-limit so a
+      // probing page cannot flood the console.
+      if (Date.now() - lastUntrustedSenderWarn > 5_000) {
+        lastUntrustedSenderWarn = Date.now();
+        console.warn(LOG, 'dropped ym-app-data-fetch from an untrusted sender', {
+          origin: event.origin,
+        });
+      }
+      return;
+    }
+    // Reply only to the verified preview frame, targeting the exact origin we
+    // just validated. The sender may navigate away while the proxy fetch runs,
+    // in which case the caller's own 30 s timeout fires — never fall back to '*'.
     void handleProxyRequest(event.data, (response) => {
-      // '*' on purpose: the preview iframe may navigate (dev-server restart
-      // reassigns src) between the request and the reply — a precise
-      // targetOrigin would silently swallow the response and the caller
-      // would hit its 30 s timeout. The payload carries only what the
-      // caller itself posted, so wildcard delivery is safe here.
-      source.postMessage(response, '*');
+      source.postMessage(response, origin);
     });
   });
-
-  try {
-    const channel = new BroadcastChannel('ym-app-data-proxy');
-    channel.onmessage = (event: MessageEvent) => {
-      if (event.data?.type !== 'ym-app-data-fetch') return;
-      void handleProxyRequest(event.data, (response) => channel.postMessage(response));
-    };
-  } catch {
-    // BroadcastChannel not supported — new-tab proxy unavailable
-  }
 }
 
 export type HostStateListener = (state: HostState) => void;
@@ -200,6 +242,8 @@ export class BrowserRuntimeHost {
   private listeners = new Set<HostStateListener>();
   private pendingIframe: HTMLIFrameElement | null = null;
   private refreshPreviewInFlight: Promise<void> | null = null;
+  /** Popup relay peers from "Open in New Tab", dropped on teardown. */
+  private externalRelayPeers: WindowProxy[] = [];
 
   private buildAppDataViteEnv(): Record<string, string> | undefined {
     const env = this.ticket?.appDataRuntimeEnv;
@@ -254,6 +298,64 @@ export class BrowserRuntimeHost {
   private rehydrating = false;
   /** When true, Nodepod runs without Socket.IO (flag off / ticket failure + cephPath). */
   private legacyMode = false;
+
+  // -------------------------------------------------------------------------
+  // App Data relay peer registration
+  // -------------------------------------------------------------------------
+
+  /**
+   * Compute the preview origin from the current preview URL. Returns `null`
+   * when the dev server has not started or the URL is invalid.
+   */
+  private previewRelayOrigin(): string | null {
+    const url = this.previewCtrl.previewUrl;
+    if (!url) return null;
+    try {
+      const parsed = new URL(url, window.location.href);
+      return parsed.protocol === 'http:' || parsed.protocol === 'https:' ? parsed.origin : null;
+    } catch {
+      return null;
+    }
+  }
+
+  private registerPreviewRelayPeer(iframe: HTMLIFrameElement | null): void {
+    const win = iframe?.contentWindow;
+    const origin = this.previewRelayOrigin();
+    if (win && origin) registerAppDataRelayFrame(win, origin);
+  }
+
+  private unregisterPreviewRelayPeer(iframe: HTMLIFrameElement | null): void {
+    const win = iframe?.contentWindow;
+    if (win) unregisterAppDataRelayFrame(win);
+  }
+
+  /**
+   * Called after the dev-server URL is set or changes so that previously
+   * registered peers pick up the new origin (e.g. port change on restart).
+   */
+  private syncPreviewRelayOrigins(): void {
+    const origin = this.previewRelayOrigin();
+    if (!origin) return;
+    for (const frame of [this.pendingIframe, this.hiddenIframe]) {
+      const win = frame?.contentWindow;
+      if (win) updateAppDataRelayFrameOrigin(win, origin);
+    }
+  }
+
+  /**
+   * Registers a preview-wrapper popup (opened via "Open in New Tab") as an App
+   * Data relay peer. preview-wrapper.html is served from this host's origin,
+   * so its messages arrive with `event.origin` equal to it; the peer is paired
+   * with that exact origin and only served along exact-origin replies. Tracked
+   * on the host so teardown drops the peer — a stale popup WindowProxy must
+   * never be served by a later session's host.
+   */
+  registerExternalPreviewRelayPeer(source: WindowProxy, origin: string): void {
+    const validated = validateRelayOrigin(origin);
+    if (!validated) return;
+    this.externalRelayPeers.push(source);
+    registerAppDataRelayFrame(source, validated);
+  }
 
   get state(): HostState {
     return {
@@ -369,6 +471,7 @@ export class BrowserRuntimeHost {
       const viteEnv = await this.refreshAppDataViteEnv();
       await this.adapter.startDevServer(this.previewCtrl, () => this._destroyed, undefined, viteEnv);
       if (this._destroyed) return;
+      this.syncPreviewRelayOrigins();
       this.flushPendingIframe();
       await this.ensureHiddenPreviewIframe();
 
@@ -436,6 +539,7 @@ export class BrowserRuntimeHost {
       this.setStatus('starting');
       await this.adapter.startDevServer(this.previewCtrl, () => this._destroyed, undefined, this.buildAppDataViteEnv());
       if (this._destroyed) return;
+      this.syncPreviewRelayOrigins();
       this.flushPendingIframe();
       await this.ensureHiddenPreviewIframe();
 
@@ -523,6 +627,7 @@ export class BrowserRuntimeHost {
     if (!viteEnv) return;
     console.log(LOG, 'restarting dev server for App Data env');
     await this.adapter.startDevServer(this.previewCtrl, () => this._destroyed, undefined, viteEnv);
+    this.syncPreviewRelayOrigins();
     await this.refreshPreview();
   }
 
@@ -630,6 +735,7 @@ export class BrowserRuntimeHost {
       const viteEnv = await this.refreshAppDataViteEnv();
       await this.adapter.startDevServer(this.previewCtrl, () => this._destroyed, undefined, viteEnv);
       if (this._destroyed) return;
+      this.syncPreviewRelayOrigins();
 
       await this.refreshPreview();
       this.setStatus('ready');
@@ -742,7 +848,11 @@ export class BrowserRuntimeHost {
    */
   attachPreviewIframe(iframe: HTMLIFrameElement): void {
     this.removeHiddenPreviewIframe();
+    if (this.pendingIframe && this.pendingIframe !== iframe) {
+      this.unregisterPreviewRelayPeer(this.pendingIframe);
+    }
     this.pendingIframe = iframe;
+    this.registerPreviewRelayPeer(iframe);
     this.flushPendingIframe();
     const url = this.previewCtrl.previewUrl;
     if (!url) return;
@@ -774,6 +884,7 @@ export class BrowserRuntimeHost {
       await this.previewCtrl.probeAndPromote(pod, url, port, () => this._destroyed);
     }
     if (this._destroyed) return;
+    this.syncPreviewRelayOrigins();
     this.flushPendingIframe();
     if (this.pendingIframe) {
       this.reloadPreviewIframe(this.pendingIframe);
@@ -802,6 +913,7 @@ export class BrowserRuntimeHost {
   }
 
   detachPreviewIframe(): void {
+    this.unregisterPreviewRelayPeer(this.pendingIframe);
     this.pendingIframe = null;
     this.previewCtrl.detachIframe(this.adapter.currentPod ?? undefined);
     void this.ensureHiddenPreviewIframe();
@@ -828,6 +940,7 @@ export class BrowserRuntimeHost {
       this.hiddenIframe.title = 'YellowMind runtime preview';
       document.body.appendChild(this.hiddenIframe);
     }
+    this.registerPreviewRelayPeer(this.hiddenIframe);
 
     if (this.hiddenIframe.src !== url) {
       await new Promise<void>((resolve) => {
@@ -849,6 +962,7 @@ export class BrowserRuntimeHost {
 
   private removeHiddenPreviewIframe(): void {
     if (!this.hiddenIframe) return;
+    this.unregisterPreviewRelayPeer(this.hiddenIframe);
     this.previewCtrl.detachIframe(this.adapter.currentPod ?? undefined);
     this.hiddenIframe.remove();
     this.hiddenIframe = null;
@@ -926,6 +1040,9 @@ export class BrowserRuntimeHost {
     this._destroyed = true;
     this.client.disconnect();
     this.removeHiddenPreviewIframe();
+    this.unregisterPreviewRelayPeer(this.pendingIframe);
+    for (const peer of this.externalRelayPeers) unregisterAppDataRelayFrame(peer);
+    this.externalRelayPeers = [];
     this.previewCtrl.detachIframe(this.adapter.currentPod ?? undefined);
     this.previewCtrl.reset();
     this.pendingIframe = null;

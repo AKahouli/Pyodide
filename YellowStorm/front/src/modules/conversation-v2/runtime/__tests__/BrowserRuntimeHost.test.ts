@@ -4,6 +4,8 @@ import {
   getOrCreateHost,
   removeHost,
   isAppDataPublicUrl,
+  registerAppDataRelayFrame,
+  unregisterAppDataRelayFrame,
 } from '../BrowserRuntimeHost';
 import { ToolError } from '../ToolError';
 import { RuntimeErrorCodes } from '../runtime.types';
@@ -550,5 +552,204 @@ describe('isAppDataPublicUrl', () => {
       false,
     );
     expect(isAppDataPublicUrl('not a url')).toBe(false);
+  });
+});
+
+describe('App Data fetch relay sender enforcement', () => {
+  const previewOrigin = 'http://preview.yellowstorm.test';
+  let relaySource: { source: WindowProxy | null; postMessage: ReturnType<typeof vi.fn> };
+
+  beforeEach(() => {
+    relaySource = { source: null, postMessage: vi.fn() };
+  });
+
+  afterEach(() => {
+    if (relaySource.source) unregisterAppDataRelayFrame(relaySource.source);
+    vi.unstubAllGlobals();
+  });
+
+  function dispatchFetch(origin: string, source: WindowProxy | null) {
+    window.dispatchEvent(
+      new MessageEvent('message', {
+        data: {
+          type: 'ym-app-data-fetch',
+          id: 'r_1',
+          url: 'http://localhost:8443/v1/apps/app_test/dev/tables/tasks/rows',
+          method: 'GET',
+        },
+        origin,
+        source: source as WindowProxy,
+      }),
+    );
+  }
+
+  it('does not serve a request from an unregistered window', async () => {
+    const fetchSpy = vi.fn().mockResolvedValue({ ok: false, status: 404, text: async () => '', headers: new Headers() });
+    vi.stubGlobal('fetch', fetchSpy);
+    // Default registerAppDataRelayFrame exists; the host relay leads.
+    const fakeSource = { postMessage: vi.fn() } as unknown as WindowProxy;
+    relaySource.source = fakeSource;
+
+    dispatchFetch(previewOrigin, fakeSource);
+    await new Promise((r) => setTimeout(r, 50));
+
+    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(fakeSource.postMessage).not.toHaveBeenCalled();
+  });
+
+  it('serves a request only from a registered peer and replies to its exact origin', async () => {
+    const fetchSpy = vi.fn().mockResolvedValue({
+      status: 200,
+      text: async () => '{"rows":[]}',
+      headers: new Headers({ 'content-type': 'application/json' }),
+    });
+    vi.stubGlobal('fetch', fetchSpy);
+    const postMessage = vi.fn();
+    const fakeSource = { postMessage } as unknown as WindowProxy;
+    relaySource.source = fakeSource;
+    registerAppDataRelayFrame(fakeSource, previewOrigin);
+
+    dispatchFetch(previewOrigin, fakeSource);
+    await vi.waitFor(() => expect(fetchSpy).toHaveBeenCalled());
+    await vi.waitFor(() => expect(postMessage).toHaveBeenCalled());
+
+    const [_data, targetOrigin] = postMessage.mock.calls[0];
+    // Reply must target the verified peer origin — never '*'.
+    expect(targetOrigin).toBe(previewOrigin);
+  });
+
+  it('drops a request whose origin does not match the registered peer', async () => {
+    const fetchSpy = vi.fn();
+    vi.stubGlobal('fetch', fetchSpy);
+    const fakeSource = { postMessage: vi.fn() } as unknown as WindowProxy;
+    relaySource.source = fakeSource;
+    registerAppDataRelayFrame(fakeSource, previewOrigin);
+
+    dispatchFetch('http://evil.example', fakeSource);
+    await new Promise((r) => setTimeout(r, 50));
+
+    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(fakeSource.postMessage).not.toHaveBeenCalled();
+  });
+
+  it('drops requests from a trusted origin sent by an untrusted window', async () => {
+    const fetchSpy = vi.fn();
+    vi.stubGlobal('fetch', fetchSpy);
+    const trustedSource = { postMessage: vi.fn() } as unknown as WindowProxy;
+    const untrustedSource = { postMessage: vi.fn() } as unknown as WindowProxy;
+    registerAppDataRelayFrame(trustedSource, previewOrigin);
+
+    dispatchFetch(previewOrigin, untrustedSource);
+    await new Promise((r) => setTimeout(r, 50));
+
+    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(untrustedSource.postMessage).not.toHaveBeenCalled();
+  });
+
+  it('re-checks trust per message and drops a peer after unregistration', async () => {
+    const fetchSpy = vi
+      .fn()
+      .mockResolvedValue({ ok: false, status: 404, text: async () => '', headers: new Headers() });
+    vi.stubGlobal('fetch', fetchSpy);
+    const fakeSource = { postMessage: vi.fn() } as unknown as WindowProxy;
+    relaySource.source = fakeSource;
+    registerAppDataRelayFrame(fakeSource, previewOrigin);
+
+    unregisterAppDataRelayFrame(fakeSource);
+    dispatchFetch(previewOrigin, fakeSource);
+    await new Promise((r) => setTimeout(r, 50));
+
+    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(fakeSource.postMessage).not.toHaveBeenCalled();
+  });
+});
+
+describe('new-tab preview popup relay', () => {
+  const appOrigin = 'http://app.yellowstorm.test';
+
+  function dispatchFetch(origin: string, source: WindowProxy | null) {
+    window.dispatchEvent(
+      new MessageEvent('message', {
+        data: {
+          type: 'ym-app-data-fetch',
+          id: 'r_1',
+          url: 'http://localhost:8443/v1/apps/app_test/dev/tables/tasks/rows',
+          method: 'GET',
+        },
+        origin,
+        source: source as WindowProxy,
+      }),
+    );
+  }
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('serves only after the popup is registered, injecting the owner data ticket and replying to the exact origin', async () => {
+    const fetchSpy = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      text: async () => '{"rows":[]}',
+      headers: new Headers({ 'content-type': 'application/json' }),
+    });
+    vi.stubGlobal('fetch', fetchSpy);
+    const postMessage = vi.fn();
+    const popup = { postMessage } as unknown as WindowProxy;
+
+    const host = new BrowserRuntimeHost();
+    await host.start('sess_1');
+
+    // Not yet registered → fetch never invoked, popup never messaged.
+    dispatchFetch(appOrigin, popup);
+    await new Promise((r) => setTimeout(r, 50));
+    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(postMessage).not.toHaveBeenCalled();
+
+    host.registerExternalPreviewRelayPeer(popup, appOrigin);
+    fetchSpy.mockClear();
+
+    dispatchFetch(appOrigin, popup);
+    await vi.waitFor(() => expect(fetchSpy).toHaveBeenCalled());
+    await vi.waitFor(() => expect(postMessage).toHaveBeenCalled());
+
+    // Authorization header must reflect the host's owner data ticket.
+    const [, init] = fetchSpy.mock.calls[0];
+    expect(init.headers['Authorization']).toBe('Bearer data_ticket_xyz');
+    // Reply target is the verified peer origin — never '*'.
+    const [, replyOrigin] = postMessage.mock.calls[postMessage.mock.calls.length - 1];
+    expect(replyOrigin).toBe(appOrigin);
+
+    host.destroy();
+  });
+
+  it('drops a registered popup peer after host teardown', async () => {
+    const fetchSpy = vi.fn();
+    vi.stubGlobal('fetch', fetchSpy);
+    const popup = { postMessage: vi.fn() } as unknown as WindowProxy;
+
+    const host = new BrowserRuntimeHost();
+    await host.start('sess_1');
+    host.registerExternalPreviewRelayPeer(popup, appOrigin);
+
+    host.destroy();
+
+    dispatchFetch(appOrigin, popup);
+    await new Promise((r) => setTimeout(r, 50));
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it('ignores a non-http origin passed to registerExternalPreviewRelayPeer', async () => {
+    const fetchSpy = vi.fn();
+    vi.stubGlobal('fetch', fetchSpy);
+    const popup = { postMessage: vi.fn() } as unknown as WindowProxy;
+
+    const host = new BrowserRuntimeHost();
+    host.registerExternalPreviewRelayPeer(popup, 'data:text/html,<h1>x</h1>');
+
+    dispatchFetch('data:text/html,<h1>x</h1>', popup);
+    await new Promise((r) => setTimeout(r, 50));
+    expect(fetchSpy).not.toHaveBeenCalled();
+    host.destroy();
   });
 });

@@ -48,8 +48,10 @@ import { AppDataRemoteHealthController } from './controllers/remote/app-data-rem
  *
  * Generated apps NEVER talk to this backend for App Data: the public CRUD /
  * auth / invite controllers were removed. Their `VITE_YM_APP_DATA_URL` points
- * straight at the microservice (APP_DATA_REMOTE_PUBLIC_BASE_URL). Only the
- * agent-facing MCP, the owner Data tab and health remain exposed here.
+ * straight at the app-data microservice in every mode (local microservice for
+ * dev/preview at APP_DATA_REMOTE_PUBLIC_BASE_URL, deployed microservice for
+ * PROD at APP_DATA_REMOTE_PUBLIC_BASE_URL_PROD). Only the agent-facing MCP,
+ * the owner Data tab and health remain exposed here.
  */
 const APP_DATA_USE_REMOTE = appDataConfig().remote;
 
@@ -115,7 +117,6 @@ const REMOTE_PROVIDERS = [
         AppDataReleaseBindingService,
         AppDataProvisioningService,
         AppDataMcpDispatcherService,
-        AppDataClientService,
       ],
 })
 export class AppDataModule {}
