@@ -536,15 +536,21 @@ class CompanionAiServicer(pb_grpc.CompanionAiServicer):
                                  channel: str = "Email") -> None:
         session_id = wait["session_id"]
         try:
-            # Same last-answer-wins handshake as RunTask: never let two turns run
-            # on one session, or the reply races whatever is already in flight.
+            # SERIALIZE, don't supersede. Two turns must never run at once on one
+            # session (they'd race the plan/ADK session), but a mail reply must
+            # NOT cancel what's already in flight: unlike a RunTask correction,
+            # each reply answers its OWN distinct wait (claimed atomically before
+            # this task), so cancelling would drop a real answer. Seen live
+            # (session 98daf300): two replies swept together — Firas + Rabeb —
+            # arrived ~56ms apart; the second cancelled the first, and Firas's
+            # step stayed blocked with its wait already consumed. Wait for the
+            # prior turn to finish, then run this one.
             if prev is not None and not prev.done():
-                logger.info("[worky] superseding in-flight turn for mail reply (session=%s)",
+                logger.info("[worky] serializing mail reply behind an in-flight turn (session=%s)",
                             session_id)
-                prev.cancel()
                 try:
                     await prev
-                except BaseException:  # noqa: BLE001 — prev's cancellation is expected
+                except BaseException:  # noqa: BLE001 — prev's own failure is its turn's problem
                     pass
             executor = _agent_by_type(request.agents, EXECUTOR_AGENT_TYPE)
             # A reply quotes the mail it answers, so it carries our own
