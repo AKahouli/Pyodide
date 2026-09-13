@@ -117,27 +117,33 @@ export class AppDataRemoteOwnerController {
   }
 
   /**
-   * Owner-scoped data ticket for the dev preview. The Nodepod relay attaches
-   * it as `Authorization: Bearer <ticket>` so App Data rows are attributed to
-   * the YellowStorm owner instead of an anonymous principal — without any
-   * login inside the generated app.
+   * Session-scoped data ticket for the dev preview. The Nodepod relay attaches
+   * it as `Authorization: Bearer <ticket>` so App Data operations are attributed
+   * to the requesting user — the owner, or a Share-by-Email recipient — without
+   * any login inside the generated app.
    */
   @Get('ticket')
-  @ApiOperation({ summary: 'Issue an owner-scoped App Data data ticket (dev preview)' })
+  @ApiOperation({ summary: 'Issue a session-scoped App Data data ticket (dev preview)' })
   async ticket(@Param('id') sessionId: string, @Req() req: Request) {
     if (!this.config.get<boolean>('appData.enabled', false)) {
       throw new ServiceUnavailableException('App Data is disabled');
     }
-    const ownerUserId = (req as Request & { user?: { id: string } }).user?.id;
-    if (!ownerUserId) {
-      throw new ServiceUnavailableException('Owner identity missing on request');
+    // ConversationV2OwnerGuard resolved the session and set this. `actorUserId`
+    // is the requesting owner or shared recipient; `ownerId` is the session owner
+    // who must own the provisioned app row regardless of who asked first.
+    const resolved = (req as Request & { conversationV2Session?: unknown })
+      .conversationV2Session as
+      | { ownerId?: string; actorUserId?: string }
+      | undefined;
+    if (!resolved?.ownerId || !resolved?.actorUserId) {
+      throw new ServiceUnavailableException('Session identity missing on request');
     }
     const ws = await this.workspaceId(sessionId);
     // Idempotent upsert — also lazily attaches the owner to pre-existing apps.
-    const ensured = await this.client.ensureApp(ws, undefined, ownerUserId);
+    const ensured = await this.client.ensureApp(ws, undefined, resolved.ownerId);
     const { ticket } = await this.client.issueTicket({
       workspaceId: ws,
-      userId: ownerUserId,
+      userId: resolved.actorUserId,
       appDataId: ensured.id,
       env: 'dev',
     });
