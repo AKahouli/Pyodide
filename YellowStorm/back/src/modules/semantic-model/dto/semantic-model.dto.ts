@@ -318,3 +318,300 @@ export class UpdateBusinessRequirementsDto {
   @IsObject({ each: true })
   businessRequirements!: Record<string, unknown>[];
 }
+
+export class SourceFieldMappingDto {
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  @MaxLength(200)
+  sourceField!: string | null;
+
+  // Empty when mode='ignore'; service validates non-empty targets for direct/constant modes.
+  @ApiPropertyOptional({ maxLength: 80 })
+  @IsOptional()
+  @IsString()
+  @MaxLength(80)
+  targetAttribute!: string;
+
+  @ApiProperty({ enum: ['direct', 'extract', 'metadata', 'constant', 'ignore'] })
+  @IsIn(['direct', 'extract', 'metadata', 'constant', 'ignore'])
+  mode!: 'direct' | 'extract' | 'metadata' | 'constant' | 'ignore';
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  constantValue?: unknown;
+}
+
+export class CreateSourceMappingDto {
+  @ApiProperty()
+  @Type(() => Number)
+  @IsInt()
+  @Min(0)
+  expectedRevision!: number;
+
+  @ApiProperty()
+  @IsUUID()
+  conceptId!: string;
+
+  @ApiProperty()
+  @IsString()
+  @MinLength(1)
+  workspaceId!: string;
+
+  @ApiProperty()
+  @IsString()
+  @MinLength(1)
+  documentId!: string;
+
+  @ApiPropertyOptional({ maxLength: 200 })
+  @IsOptional()
+  @IsString()
+  @MaxLength(200)
+  sheetName?: string;
+
+  @ApiPropertyOptional({ enum: ['excel_sheet', 'csv', 'document'] })
+  @IsOptional()
+  @IsIn(['excel_sheet', 'csv', 'document'])
+  assetKind?: 'excel_sheet' | 'csv' | 'document';
+
+  @ApiProperty({ type: [SourceFieldMappingDto], maxItems: 100 })
+  @IsArray()
+  @ArrayMaxSize(100)
+  @ValidateNested({ each: true })
+  @Type(() => SourceFieldMappingDto)
+  fieldMappings!: SourceFieldMappingDto[];
+
+  @ApiPropertyOptional({ type: [String], maxItems: 5 })
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(5)
+  @IsString({ each: true })
+  @MaxLength(200, { each: true })
+  identityFields?: string[];
+}
+
+export class SourceMappingPreviewDto {
+  @ApiProperty()
+  @IsUUID()
+  conceptId!: string;
+
+  @ApiProperty()
+  @IsString()
+  @MinLength(1)
+  workspaceId!: string;
+
+  @ApiProperty()
+  @IsString()
+  @MinLength(1)
+  documentId!: string;
+
+  @ApiPropertyOptional({ maxLength: 200 })
+  @IsOptional()
+  @IsString()
+  @MaxLength(200)
+  sheetName?: string;
+
+  @ApiPropertyOptional({ enum: ['excel_sheet', 'csv', 'document'] })
+  @IsOptional()
+  @IsIn(['excel_sheet', 'csv', 'document'])
+  assetKind?: 'excel_sheet' | 'csv' | 'document';
+
+  @ApiProperty({ type: [SourceFieldMappingDto], maxItems: 100 })
+  @IsArray()
+  @ArrayMaxSize(100)
+  @ValidateNested({ each: true })
+  @Type(() => SourceFieldMappingDto)
+  fieldMappings!: SourceFieldMappingDto[];
+
+  @ApiPropertyOptional({ type: [String], maxItems: 5 })
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(5)
+  @IsString({ each: true })
+  @MaxLength(200, { each: true })
+  identityFields?: string[];
+
+  @ApiPropertyOptional({ default: 50 })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @Max(200)
+  limit?: number;
+}
+
+export class DocumentSourceRefDto {
+  @ApiProperty()
+  @IsString()
+  @MinLength(1)
+  workspaceId!: string;
+
+  @ApiProperty()
+  @IsString()
+  @MinLength(1)
+  documentId!: string;
+}
+
+export class BulkDocumentSourceMappingDto {
+  @ApiProperty()
+  @Type(() => Number)
+  @IsInt()
+  @Min(0)
+  expectedRevision!: number;
+
+  @ApiProperty()
+  @IsUUID()
+  conceptId!: string;
+
+  @ApiProperty({ type: [DocumentSourceRefDto], maxItems: 50 })
+  @IsArray()
+  @ArrayMinSize(1)
+  @ArrayMaxSize(50)
+  @ValidateNested({ each: true })
+  @Type(() => DocumentSourceRefDto)
+  documents!: DocumentSourceRefDto[];
+
+  @ApiProperty({ type: [SourceFieldMappingDto], maxItems: 100 })
+  @IsArray()
+  @ArrayMaxSize(100)
+  @ValidateNested({ each: true })
+  @Type(() => SourceFieldMappingDto)
+  fieldMappings!: SourceFieldMappingDto[];
+
+  @ApiPropertyOptional({ type: [String], maxItems: 5 })
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(5)
+  @IsString({ each: true })
+  @MaxLength(200, { each: true })
+  identityFields?: string[];
+}
+
+export class SourceAssetProfileQueryDto {
+  @ApiProperty()
+  @IsString()
+  @MinLength(1)
+  workspaceId!: string;
+
+  @ApiPropertyOptional({ maxLength: 200 })
+  @IsOptional()
+  @IsString()
+  @MaxLength(200)
+  sheetName?: string;
+}
+
+export class SaveRelationResolutionRuleDto {
+  @ApiProperty()
+  @Type(() => Number)
+  @IsInt()
+  @Min(0)
+  expectedRevision!: number;
+
+  @ApiProperty()
+  @IsUUID()
+  relationId!: string;
+
+  @ApiProperty({ maxLength: 80 })
+  @IsString()
+  @MinLength(1)
+  @MaxLength(80)
+  sourceAttribute!: string;
+
+  @ApiProperty({ maxLength: 80 })
+  @IsString()
+  @MinLength(1)
+  @MaxLength(80)
+  targetAttribute!: string;
+
+  @ApiProperty({ enum: ['exact', 'case_insensitive', 'normalized'] })
+  @IsIn(['exact', 'case_insensitive', 'normalized'])
+  strategy!: 'exact' | 'case_insensitive' | 'normalized';
+
+  @ApiProperty({ enum: ['review', 'unresolved'] })
+  @IsIn(['review', 'unresolved'])
+  ambiguityPolicy!: 'review' | 'unresolved';
+}
+
+export class SourcePriorityDto {
+  @ApiProperty()
+  @IsUUID()
+  mappingId!: string;
+
+  @ApiProperty()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @Max(50)
+  rank!: number;
+}
+
+export class SaveSourceResolutionPolicyDto {
+  @ApiProperty()
+  @Type(() => Number)
+  @IsInt()
+  @Min(0)
+  expectedRevision!: number;
+
+  @ApiProperty({ type: [SourcePriorityDto], maxItems: 50 })
+  @IsArray()
+  @ArrayMinSize(1)
+  @ArrayMaxSize(50)
+  @ValidateNested({ each: true })
+  @Type(() => SourcePriorityDto)
+  priorities!: SourcePriorityDto[];
+
+  @ApiProperty({ enum: ['primary_then_fallback'] })
+  @IsIn(['primary_then_fallback'])
+  defaultStrategy!: 'primary_then_fallback';
+}
+
+export class DataPreviewDto {
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsUUID()
+  conceptId?: string;
+
+  @ApiPropertyOptional({ default: 25, maximum: 50 })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @Max(50)
+  limit: number = 25;
+}
+
+export class ListReviewItemsQueryDto {
+  @ApiPropertyOptional({ enum: ['open', 'resolved'], default: 'open' })
+  @IsOptional()
+  @IsIn(['open', 'resolved'])
+  status: 'open' | 'resolved' = 'open';
+}
+
+export class ResolveReviewItemDto {
+  @ApiProperty()
+  @Type(() => Number)
+  @IsInt()
+  @Min(0)
+  expectedRevision!: number;
+
+  @ApiProperty({ enum: ['accepted', 'dismissed', 'leave_unresolved'] })
+  @IsIn(['accepted', 'dismissed', 'leave_unresolved'])
+  decision!: 'accepted' | 'dismissed' | 'leave_unresolved';
+
+  @ApiPropertyOptional({ maxLength: 300 })
+  @IsOptional()
+  @IsString()
+  @MaxLength(300)
+  selectedTargetId?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsUUID()
+  selectedMappingId?: string;
+
+  @ApiPropertyOptional({ maxLength: 500 })
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  note?: string;
+}

@@ -53,6 +53,8 @@ vi.mock("../query/hooks", () => ({
     isError: false,
   }),
   useSemanticGraph: () => ({ data: graph, isLoading: false, isError: false }),
+  useSemanticReadiness: () => ({ data: { score: 40, completeAreas: 2, totalAreas: 5, areas: [] }, isLoading: false, isError: false }),
+  useSourceMappings: () => ({ data: [], isLoading: false, isError: false }),
 }));
 
 vi.mock("../hooks/use-knowledge-linking", () => ({

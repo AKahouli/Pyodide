@@ -14,6 +14,7 @@ import {
   Plus,
   Redo2,
   Save,
+  ShieldCheck,
   Undo2,
   Zap,
 } from "lucide-react";
@@ -47,10 +48,14 @@ import { SemanticModelInspector } from "../components/editor/SemanticModelInspec
 import { SemanticModelGraphViewer } from "../components/editor/SemanticModelGraphViewer";
 import { SemanticModelValidateDialog } from "../components/editor/SemanticModelValidateDialog";
 import { SemanticModelBuildProgressBanner } from "../components/editor/SemanticModelBuildProgressBanner";
+import { SourceMappingDrawer, sourceMappingTargetFromResource, type SourceMappingTarget } from "../components/mapping/SourceMappingDrawer";
+import { SemanticMappingsView } from '../components/mapping/SemanticMappingsView';
+import { SemanticDataPreview } from '../components/preview/SemanticDataPreview';
+import { SemanticTrustPanel } from '../components/review/SemanticTrustPanel';
 import { isBuildActive, useSemanticBuildJob } from "../hooks/use-semantic-build-job";
 import { VersionsPanel } from "../components/versions/VersionsPanel";
 import { useKnowledgeLinking } from "../hooks/use-knowledge-linking";
-import { useSemanticGraph, useSemanticModel } from "../query/hooks";
+import { useSemanticGraph, useSemanticModel, useSemanticReadiness } from "../query/hooks";
 import { semanticModelQueryKeys } from '../query/queryKeys';
 import { isPendingSaveCurrent, isSemanticGraphSaved, selectPendingOperations, useSemanticModelEditorStore } from "../store";
 import type { EditorMode } from "../types";
@@ -67,6 +72,7 @@ export function SemanticModelEditorPage() {
   const queryClient = useQueryClient();
   const model = useSemanticModel(modelId);
   const graphQuery = useSemanticGraph(modelId);
+  const readiness = useSemanticReadiness(modelId);
   const knowledge = useKnowledgeLinking(modelId);
   const graph = useSemanticModelEditorStore((state) => state.graph);
   const mode = useSemanticModelEditorStore((state) => state.mode);
@@ -103,6 +109,8 @@ export function SemanticModelEditorPage() {
   const [leaveOpen, setLeaveOpen] = useState(false);
   const [validateOpen, setValidateOpen] = useState(false);
   const [graphViewerOpen, setGraphViewerOpen] = useState(false);
+  const [trustOpen, setTrustOpen] = useState(false);
+  const [mappingTarget, setMappingTarget] = useState<SourceMappingTarget | null>(null);
   const savingRef = useRef(false);
   const hydratedVersionRef = useRef<string | null>(null);
   const knowledgeClosedAtRef = useRef(0);
@@ -215,7 +223,7 @@ export function SemanticModelEditorPage() {
   }, [redo, undo, validate]);
 
   const autoLayout = () => {
-    if (!graph || mode === "records") return;
+    if (!graph || mode !== "structure") return;
     const positions = layoutStructure(graph.nodes, graph.relations);
     const updates = [...positions].map(([id, position]) => ({ id, position }));
     commit({ type: "layout.update", positions: updates }, (current) => ({
@@ -316,13 +324,17 @@ export function SemanticModelEditorPage() {
           <span className={`h-2 w-2 rounded-full ${model.data?.indexStatus === 'indexed' ? 'bg-emerald-500' : model.data?.indexStatus === 'failed' ? 'bg-red-500' : `bg-amber-500 ${model.data?.indexStatus === 'pending' || model.data?.indexStatus === 'in_progress' ? 'animate-pulse' : ''}`}`} />
           {t(model.data?.indexStatus === 'indexed' ? 'indexStatus.indexed' : model.data?.indexStatus === 'failed' ? 'indexStatus.failed' : 'indexStatus.working')}
         </div>
+        <Button variant="outline" size="sm" onClick={() => setTrustOpen((open) => !open)} aria-expanded={trustOpen}>
+          <ShieldCheck className="mr-1.5 h-4 w-4" />
+          {t('trust.button', { score: readiness.data?.score ?? 0 })}
+        </Button>
         <Tabs
           value={mode}
           onValueChange={(value) => setMode(value as EditorMode)}
           className="order-last w-full overflow-x-auto lg:order-none lg:ml-auto lg:w-auto"
         >
           <TabsList className="w-max">
-            {(["structure", "records"] as const).map(
+            {(["structure", "records", "mappings"] as const).map(
               (item) => (
                 <TabsTrigger key={item} value={item}>
                   {t(`mode.${item}`)}
@@ -353,7 +365,7 @@ export function SemanticModelEditorPage() {
           <Button
             size="icon"
             variant="ghost"
-            disabled={mode === "records"}
+            disabled={mode !== "structure"}
             onClick={autoLayout}
             aria-label={t("action.autoLayout")}
           >
@@ -420,6 +432,7 @@ export function SemanticModelEditorPage() {
         />
       )}
       <main className="relative flex min-h-0 flex-1">
+        {trustOpen && modelId && <SemanticTrustPanel modelId={modelId} canEdit={canEdit && pending.length === 0} onClose={() => setTrustOpen(false)} />}
         {versionsOpen && (
           <VersionsPanel
             modelId={modelId!}
@@ -433,7 +446,7 @@ export function SemanticModelEditorPage() {
           />
         )}
         <section className="relative min-w-0 flex-1">
-          <SemanticModelCanvas
+          {mode === 'structure' && <SemanticModelCanvas
             canEdit={canEdit}
             knowledge={knowledge}
             onOpenKnowledge={(nodeId) => openKnowledge(nodeId)}
@@ -441,8 +454,11 @@ export function SemanticModelEditorPage() {
               setRelationConnection(connection);
               setRelationOpen(true);
             }}
-          />
-          {canEdit && graph.nodes.length > 0 && (
+            onMapStructuredDrop={(resource, nodeId) => setMappingTarget(sourceMappingTargetFromResource(resource, nodeId))}
+          />}
+          {mode === 'records' && modelId && <SemanticDataPreview modelId={modelId} />}
+          {mode === 'mappings' && modelId && <SemanticMappingsView modelId={modelId} canEdit={canEdit} onRepairMapping={(mapping) => setMappingTarget({ workspaceId: mapping.workspaceId, documentId: mapping.documentId, documentName: mapping.documentName ?? mapping.documentId, assetKind: mapping.assetKind, mimeType: mapping.mimeType, path: mapping.documentPath, conceptId: mapping.conceptId, mapping })} />}
+          {mode === 'structure' && canEdit && graph.nodes.length > 0 && (
             <div className="absolute bottom-5 right-5 z-10 flex gap-2">
               <Button
                 size="lg"
@@ -465,7 +481,7 @@ export function SemanticModelEditorPage() {
               </Button>
             </div>
           )}
-          {!graph.nodes.length && mode !== "records" && (
+          {!graph.nodes.length && mode === "structure" && (
             <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
               <div className="pointer-events-auto max-w-sm rounded-3xl border bg-background/95 p-7 text-center shadow-xl">
                 <Network className="mx-auto h-8 w-8 text-primary" />
@@ -483,7 +499,8 @@ export function SemanticModelEditorPage() {
             </div>
           )}
         </section>
-        <SemanticModelInspector modelId={modelId!} canEdit={canEdit} knowledge={knowledge} knowledgeOpen={knowledgeOpen} knowledgeTargetId={knowledgeTargetId} onKnowledgeClose={closeKnowledge} />
+        {mode === 'structure' && <SemanticModelInspector modelId={modelId!} canEdit={canEdit} knowledge={knowledge} knowledgeOpen={knowledgeOpen} knowledgeTargetId={knowledgeTargetId} onKnowledgeClose={closeKnowledge} onMapData={setMappingTarget} />}
+        {modelId && <SourceMappingDrawer modelId={modelId} target={mappingTarget} onClose={() => setMappingTarget(null)} />}
         {validationOpen && (
           <aside className="absolute bottom-4 right-4 z-30 max-h-[60%] w-[min(24rem,calc(100%-2rem))] overflow-y-auto rounded-2xl border bg-background p-4 shadow-2xl">
             <div className="mb-3 flex items-center justify-between">

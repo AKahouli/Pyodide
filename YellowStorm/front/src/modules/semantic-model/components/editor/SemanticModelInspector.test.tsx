@@ -1,4 +1,5 @@
 import { fireEvent, render, screen } from '@testing-library/react';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { KnowledgeLinkingController } from '../../hooks/use-knowledge-linking';
 import type { SemanticGraph } from '../../types';
@@ -6,13 +7,17 @@ import { useSemanticModelEditorStore } from '../../store';
 import { SemanticModelInspector } from './SemanticModelInspector';
 
 vi.mock('../knowledge/KnowledgePanel',()=>({KnowledgePanel:()=> <div>knowledge-tray</div>}));
+vi.mock('../../query/hooks',()=>({useSourceMappings:()=>({data:[],isLoading:false})}));
 
 const graph: SemanticGraph = {
   modelId:'model',versionId:'version',revision:0,relations:[],records:[],recordRelations:[],
   nodes:[{id:'customer',key:'customer',label:'Customer',description:'Customer account',category:'business_object',recordPolicy:'none',systemKey:null,aliases:[],attributes:[],position:{x:120,y:120}}],
 };
 const knowledge={bindings:[],workspaceLinks:[],countsByNode:{},draggedResource:null,isBusy:false,setDraggedResource:vi.fn(),hasBinding:vi.fn(),link:vi.fn(),remove:vi.fn()} as unknown as KnowledgeLinkingController;
-const renderInspector=(canEdit:boolean)=>render(<SemanticModelInspector canEdit={canEdit} knowledge={knowledge} knowledgeOpen={false} knowledgeTargetId={null} onKnowledgeClose={vi.fn()}/>);
+const renderInspector=(canEdit:boolean)=>render(
+  <QueryClientProvider client={new QueryClient({defaultOptions:{queries:{retry:false}}})}>
+    <SemanticModelInspector modelId="model" canEdit={canEdit} knowledge={knowledge} knowledgeOpen={false} knowledgeTargetId={null} onKnowledgeClose={vi.fn()}/>
+  </QueryClientProvider>);
 
 describe('SemanticModelInspector', () => {
   beforeEach(() => { useSemanticModelEditorStore.getState().hydrate(graph);useSemanticModelEditorStore.getState().select('customer'); });

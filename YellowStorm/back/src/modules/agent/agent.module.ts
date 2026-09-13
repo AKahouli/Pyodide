@@ -26,6 +26,7 @@ import { UserModule } from '../user/user.module';
 import { GuardrailsModule } from '../guardrails/guardrails.module';
 import { ConversationModule } from '../conversation/conversation.module';
 import { AgentTaskExecutionService } from './services/agent-task-execution.service';
+import { AGENT_TASK_EXECUTION } from './agent-task-execution.token';
 import { UsageModule } from '../usage/usage.module';
 import { AgentRepositoryModule } from './repositories/agent-repository.module';
 
@@ -51,7 +52,7 @@ import { AgentRepositoryModule } from './repositories/agent-repository.module';
     AgentRepositoryModule,
   ],
   controllers: [AgentController, PublicAgentController, AdminAgentController, AgentA2AController, AgentShareController],
-  providers: [AgentService, AgentShareService, AgentConnectorRuntimeService, AgentPermissionGuard, A2AAdminGrpcClientService, A2APublishService, AgentTaskExecutionService],
+  providers: [AgentService, AgentShareService, AgentConnectorRuntimeService, AgentPermissionGuard, A2AAdminGrpcClientService, A2APublishService, AgentTaskExecutionService, { provide: AGENT_TASK_EXECUTION, useExisting: AgentTaskExecutionService }],
   exports: [
     AgentService,
     AgentShareService,
@@ -60,6 +61,7 @@ import { AgentRepositoryModule } from './repositories/agent-repository.module';
     A2AAdminGrpcClientService,
     A2APublishService,
     AgentTaskExecutionService,
+    AGENT_TASK_EXECUTION,
   ],
 })
 export class AgentModule {}

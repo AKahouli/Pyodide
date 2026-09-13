@@ -1,8 +1,9 @@
-import { Body, Controller, Delete, Get, HttpCode, HttpStatus, Param, Patch, Post, Query, UseGuards } from '@nestjs/common';
+import { Body, Controller, Delete, Get, HttpCode, HttpStatus, Param, Patch, Post, Put, Query, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { CurrentUser } from '@modules/auth/decorators/current-user.decorator';
 import { UserDocument } from '@modules/user/schemas/user.schema';
 import { Permissions, PermissionsGuard, RequirePermissions } from '@modules/authorization';
+import { RateLimit } from '@modules/rate-limiter';
 import {
   CloneSemanticModelDto,
   ConnectWorkspaceDto,
@@ -18,6 +19,15 @@ import {
   StartSemanticModelBuildDto,
   UpdateBindingDto,
   UpdateSemanticModelDto,
+  CreateSourceMappingDto,
+  BulkDocumentSourceMappingDto,
+  SourceAssetProfileQueryDto,
+  SourceMappingPreviewDto,
+  DataPreviewDto,
+  SaveRelationResolutionRuleDto,
+  SaveSourceResolutionPolicyDto,
+  ListReviewItemsQueryDto,
+  ResolveReviewItemDto,
 } from '../dto';
 import { ShareSemanticModelDto, UpdateSemanticModelShareDto } from '../dto/semantic-model-share.dto';
 import { SemanticModelShareService } from '../services/semantic-model-share.service';
@@ -26,11 +36,14 @@ import { SemanticKnowledgeBindingService } from '../services/semantic-knowledge-
 import { SemanticModelService } from '../services/semantic-model.service';
 import { SemanticModelVersionService } from '../services/semantic-model-version.service';
 import { SemanticModelWorkspaceService } from '../services/semantic-model-workspace.service';
+import { SemanticSourceMappingService } from '../services/semantic-source-mapping.service';
 import { SemanticModelOntologyGenerationService } from '../services/semantic-model-ontology-generation.service';
 import { SemanticModelCorpusPreparationService } from '../services/semantic-model-corpus-preparation.service';
 import { SemanticModelEvidenceSearchService } from '../services/semantic-model-evidence-search.service';
 import { SemanticModelMappingProposalService } from '../services/semantic-model-mapping-proposal.service';
 import { SemanticModelBuildOrchestratorService } from '../services/semantic-model-build-orchestrator.service';
+import { SemanticCrossSourceService } from '../services/semantic-cross-source.service';
+import { SemanticBusinessTrustService } from '../services/semantic-business-trust.service';
 
 @ApiTags('Semantic Models')
 @ApiBearerAuth()
@@ -49,6 +62,9 @@ export class SemanticModelController {
     private readonly mappingProposals: SemanticModelMappingProposalService,
     private readonly builds: SemanticModelBuildOrchestratorService,
     private readonly shares: SemanticModelShareService,
+    private readonly sourceMappings: SemanticSourceMappingService,
+    private readonly crossSource: SemanticCrossSourceService,
+    private readonly businessTrust: SemanticBusinessTrustService,
   ) {}
 
   @Get()
@@ -283,6 +299,118 @@ export class SemanticModelController {
   @RequirePermissions([Permissions.SEMANTIC_MODELS_UPDATE,Permissions.SEMANTIC_MODELS_ALL],'any')
   deleteBinding(@CurrentUser() user: UserDocument,@Param('modelId') modelId: string,@Param('bindingId') bindingId: string,@Body() dto: ExpectedModelRevisionDto) {
     return this.bindings.delete(user._id.toString(),modelId,bindingId,dto.expectedRevision);
+  }
+
+  // ── Structured source mappings ─────────────────────────────────────────────
+
+  @Get(':modelId/source-assets')
+  @ApiOperation({ summary: 'List mappable files available from the workspaces linked to this model' })
+  @RequirePermissions([Permissions.SEMANTIC_MODELS_READ,Permissions.SEMANTIC_MODELS_ALL],'any')
+  listSourceAssets(@CurrentUser() user: UserDocument,@Param('modelId') modelId: string) {
+    return this.sourceMappings.listAssets(user._id.toString(),modelId);
+  }
+
+  @Get(':modelId/source-assets/:documentId/profile')
+  @ApiOperation({ summary: 'Profile a structured asset: sheet list, or fields + sample rows for one sheet' })
+  @RequirePermissions([Permissions.SEMANTIC_MODELS_READ,Permissions.SEMANTIC_MODELS_ALL],'any')
+  profileSourceAsset(@CurrentUser() user: UserDocument,@Param('modelId') modelId: string,@Param('documentId') documentId: string,@Query() query: SourceAssetProfileQueryDto) {
+    return this.sourceMappings.profileAsset(user._id.toString(),modelId,query.workspaceId,documentId,query);
+  }
+
+  @Get(':modelId/source-mappings')
+  @RequirePermissions([Permissions.SEMANTIC_MODELS_READ,Permissions.SEMANTIC_MODELS_ALL],'any')
+  listSourceMappings(@CurrentUser() user: UserDocument,@Param('modelId') modelId: string) {
+    return this.sourceMappings.list(user._id.toString(),modelId);
+  }
+
+  @Post(':modelId/source-mappings')
+  @RequirePermissions([Permissions.SEMANTIC_MODELS_UPDATE,Permissions.SEMANTIC_MODELS_ALL],'any')
+  createSourceMapping(@CurrentUser() user: UserDocument,@Param('modelId') modelId: string,@Body() dto: CreateSourceMappingDto) {
+    return this.sourceMappings.create(user._id.toString(),modelId,dto);
+  }
+
+  @Post(':modelId/source-mappings/bulk-documents')
+  @RequirePermissions([Permissions.SEMANTIC_MODELS_UPDATE,Permissions.SEMANTIC_MODELS_ALL],'any')
+  createBulkDocumentSourceMappings(@CurrentUser() user: UserDocument,@Param('modelId') modelId: string,@Body() dto: BulkDocumentSourceMappingDto) {
+    return this.sourceMappings.createBulkDocuments(user._id.toString(),modelId,dto);
+  }
+
+  @Post(':modelId/source-mappings/preview')
+  @ApiOperation({ summary: 'Resolve entities from a spreadsheet or document using a draft field mapping' })
+  @RateLimit({ limit: 5, windowMs: 60_000, keyPrefix: 'semantic-model:source-preview' })
+  @RequirePermissions([Permissions.SEMANTIC_MODELS_UPDATE,Permissions.SEMANTIC_MODELS_ALL],'any')
+  previewSourceMapping(@CurrentUser() user: UserDocument,@Param('modelId') modelId: string,@Body() dto: SourceMappingPreviewDto) {
+    return this.sourceMappings.preview(user._id.toString(),modelId,dto);
+  }
+
+  @Delete(':modelId/source-mappings/:mappingId')
+  @HttpCode(HttpStatus.OK)
+  @RequirePermissions([Permissions.SEMANTIC_MODELS_UPDATE,Permissions.SEMANTIC_MODELS_ALL],'any')
+  deleteSourceMapping(@CurrentUser() user: UserDocument,@Param('modelId') modelId: string,@Param('mappingId') mappingId: string,@Body() dto: ExpectedModelRevisionDto) {
+    return this.sourceMappings.delete(user._id.toString(),modelId,mappingId,dto.expectedRevision);
+  }
+
+  @Get(':modelId/relation-resolution-rules')
+  @RequirePermissions([Permissions.SEMANTIC_MODELS_READ,Permissions.SEMANTIC_MODELS_ALL],'any')
+  listRelationResolutionRules(@CurrentUser() user: UserDocument,@Param('modelId') modelId: string) {
+    return this.crossSource.listRules(user._id.toString(), modelId);
+  }
+
+  @Post(':modelId/relation-resolution-rules')
+  @RequirePermissions([Permissions.SEMANTIC_MODELS_UPDATE,Permissions.SEMANTIC_MODELS_ALL],'any')
+  saveRelationResolutionRule(@CurrentUser() user: UserDocument,@Param('modelId') modelId: string,@Body() dto: SaveRelationResolutionRuleDto) {
+    return this.crossSource.saveRule(user._id.toString(), modelId, dto);
+  }
+
+  @Post(':modelId/relation-resolution-rules/:ruleId/preview')
+  @RateLimit({ limit: 5, windowMs: 60_000, keyPrefix: 'semantic-model:relation-preview' })
+  @RequirePermissions([Permissions.SEMANTIC_MODELS_UPDATE,Permissions.SEMANTIC_MODELS_ALL],'any')
+  previewRelationResolutionRule(@CurrentUser() user: UserDocument,@Param('modelId') modelId: string,@Param('ruleId') ruleId: string,@Body() dto: DataPreviewDto) {
+    return this.crossSource.previewRule(user._id.toString(), modelId, ruleId, dto.limit);
+  }
+
+  @Get(':modelId/source-resolution-policies')
+  @RequirePermissions([Permissions.SEMANTIC_MODELS_READ,Permissions.SEMANTIC_MODELS_ALL],'any')
+  listSourceResolutionPolicies(@CurrentUser() user: UserDocument,@Param('modelId') modelId: string) {
+    return this.crossSource.listPolicies(user._id.toString(), modelId);
+  }
+
+  @Put(':modelId/source-resolution-policies/:conceptId')
+  @RequirePermissions([Permissions.SEMANTIC_MODELS_UPDATE,Permissions.SEMANTIC_MODELS_ALL],'any')
+  saveSourceResolutionPolicy(@CurrentUser() user: UserDocument,@Param('modelId') modelId: string,@Param('conceptId') conceptId: string,@Body() dto: SaveSourceResolutionPolicyDto) {
+    return this.crossSource.savePolicy(user._id.toString(), modelId, conceptId, dto);
+  }
+
+  @Post(':modelId/data-preview')
+  @RateLimit({ limit: 5, windowMs: 60_000, keyPrefix: 'semantic-model:data-preview' })
+  @RequirePermissions([Permissions.SEMANTIC_MODELS_READ,Permissions.SEMANTIC_MODELS_ALL],'any')
+  dataPreview(@CurrentUser() user: UserDocument,@Param('modelId') modelId: string,@Body() dto: DataPreviewDto) {
+    return this.crossSource.dataPreview(user._id.toString(), modelId, dto);
+  }
+
+  @Post(':modelId/mapping-health')
+  @RateLimit({ limit: 5, windowMs: 60_000, keyPrefix: 'semantic-model:mapping-health' })
+  @RequirePermissions([Permissions.SEMANTIC_MODELS_READ,Permissions.SEMANTIC_MODELS_ALL],'any')
+  mappingHealth(@CurrentUser() user: UserDocument,@Param('modelId') modelId: string) {
+    return this.businessTrust.mappingHealth(user._id.toString(), modelId);
+  }
+
+  @Get(':modelId/readiness')
+  @RequirePermissions([Permissions.SEMANTIC_MODELS_READ,Permissions.SEMANTIC_MODELS_ALL],'any')
+  readiness(@CurrentUser() user: UserDocument,@Param('modelId') modelId: string) {
+    return this.businessTrust.readiness(user._id.toString(), modelId);
+  }
+
+  @Get(':modelId/review-items')
+  @RequirePermissions([Permissions.SEMANTIC_MODELS_READ,Permissions.SEMANTIC_MODELS_ALL],'any')
+  reviewItems(@CurrentUser() user: UserDocument,@Param('modelId') modelId: string,@Query() query: ListReviewItemsQueryDto) {
+    return this.businessTrust.reviewItems(user._id.toString(), modelId, query);
+  }
+
+  @Post(':modelId/review-items/:reviewItemId/resolve')
+  @RequirePermissions([Permissions.SEMANTIC_MODELS_UPDATE,Permissions.SEMANTIC_MODELS_ALL],'any')
+  resolveReviewItem(@CurrentUser() user: UserDocument,@Param('modelId') modelId: string,@Param('reviewItemId') reviewItemId: string,@Body() dto: ResolveReviewItemDto) {
+    return this.businessTrust.resolveReviewItem(user._id.toString(), modelId, reviewItemId, dto);
   }
 
   @Get(':modelId/versions')
