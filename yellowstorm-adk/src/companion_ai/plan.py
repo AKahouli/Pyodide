@@ -50,6 +50,13 @@ class Step(BaseModel):
     result: Optional[str] = None
     error: Optional[str] = None
     blocked_reason: Optional[str] = None
+    # The interrupt id this step is parked on (mail:/ask:), set when it blocks.
+    # Load-bearing on a rebuild: a still-parked ask/await node must re-park under
+    # this EXACT id, not a fresh node-path-derived one — the node path shifts as
+    # the plan grows mid-session (create_task adds steps), and a shifted id would
+    # orphan the bound mail wait and leave the step stuck 'running'. See
+    # nodes.factory's blocked-await branch.
+    interrupt_id: Optional[str] = None
     # True only for a human-agent persona (human_agents.py); a plain step's
     # assignee/assignee_name are also populated (with the executor's own
     # id/name — see plan_turn), so this is the actual gate for persona
@@ -66,11 +73,6 @@ class Step(BaseModel):
     # re-call the LLM. nodes.py short-circuits it with the stored result
     # instead once it's done, so this flag is the signal for that.
     is_dynamic_delegate: bool = False
-    # Transient, per-pass only (never persisted): set when the live-dependency
-    # gate (nodes._defer_if_deps_unmet) short-circuits a node ADK triggered
-    # before a runtime-added dependency was satisfied. _apply_event reads it to
-    # ignore that no-op emission and leave the step PENDING for a later rebuild.
-    gated_out: bool = Field(default=False, exclude=True)
 
     def is_done(self) -> bool:
         return self.status.is_terminal()

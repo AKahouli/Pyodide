@@ -285,7 +285,8 @@ def _plan_from_snapshot(snap: dict) -> Plan:
             wave=row.get("wave") or 0, result=row.get("result"),
             assignee=row.get("assignee"), assignee_name=row.get("assignee_name"),
             assignee_role=row.get("assignee_role"), is_persona=bool(row.get("is_persona")),
-            is_dynamic_delegate=bool(row.get("is_dynamic_delegate"))))
+            is_dynamic_delegate=bool(row.get("is_dynamic_delegate")),
+            interrupt_id=row.get("interrupt_id")))
     return Plan(id=p.get("id") or "", title=p.get("title") or "",
                 goal=p.get("goal") or "", status=Status(p.get("status") or "running"),
                 steps=steps, executor_id=p.get("executor_id"),
@@ -327,6 +328,27 @@ def _parse_verdict(answer: str):
         except (ValueError, TypeError):
             pass
     return a.lower() in _APPROVE_WORDS, None
+
+
+def _answer_target(answer: str) -> Optional[str]:
+    """The specific interrupt id an approval is FOR, if the card sent one.
+
+    With several confirm gates open at once the session-level interrupt id is a
+    single value, so every plain 'approve' resolved whichever gate it happened to
+    point at — a second card's approval then hit the FIRST card's gate (seen live:
+    session 33dfebfa, Firas's approval applied to Rabeb's send and Firas's own
+    gate left unanswered). The card carries its own questionId; when the approval
+    JSON echoes it we target THAT gate instead of the session default. Only a
+    confirm id is honoured — an ask/mail id or none falls back to the old
+    behaviour."""
+    a = (answer or "").strip()
+    if not a.startswith("{"):
+        return None
+    try:
+        qid = json.loads(a).get("questionId")
+    except (ValueError, TypeError):
+        return None
+    return qid if isinstance(qid, str) and qid.startswith(f"{hitl.CONFIRM}::") else None
 
 
 def requester_context(requester: Optional[dict]) -> str:
@@ -950,15 +972,25 @@ class OrchestratorService:
             for other in affected:
                 await self._project_step(session_id, plan, other)
 
-            # 'ask' and 'await_reply' build a WAIT node (hitl.make_ask_user_node /
-            # make_await_reply_node), not an LlmAgent: one shot, no LLM loop, and
-            # it must run HERE so it actually parks and registers its interrupt
-            # within this turn — that interrupt is what a chat answer or an
-            # incoming mail reply later resumes. Leaving it merely PENDING would
-            # strand the wait with nothing to resume, silently breaking the whole
-            # reply path. Having no LLM loop, it is immune to the nested-run
-            # amnesia described below.
-            if kind in ("ask", "await_reply"):
+            # await_reply is NOT run nested. It used to run here via
+            # tool_context.run_node in an isolation sub-branch, but that nested
+            # branch is what diverges ADK's replay barrier on a later resume —
+            # reproduced: the same plan growth over a TOP-LEVEL await does not
+            # diverge, a nested one does. So leave it PENDING as a top-level
+            # step; _drive_loop runs it on this turn's rebuild as a real graph
+            # node (the exact replay-safe shape a planner-emitted await_reply
+            # uses), where it parks and _finalize binds its mail wait. The
+            # caller completes normally when its turn ends — no BLOCKED/RUNNING
+            # dance, which also removes the phantom-running the finally caused.
+            if kind == "await_reply":
+                return ("Await-reply step created. A separate follow-up step will "
+                        "read the reply and give the real answer once it arrives — "
+                        "end your own turn now reporting the draft as sent and "
+                        "awaiting reply, and do not guess what they will decide.")
+            # 'ask' still runs its WAIT node HERE: it is answered in-chat on the
+            # same turn's flow and is not subject to the mail-reply rebuild path.
+            # One shot, no LLM loop, so it parks and registers its interrupt now.
+            if kind == "ask":
                 blocked_reason = "waiting on a follow-up task"
                 if caller is not None:
                     caller.status = Status.BLOCKED
@@ -982,14 +1014,6 @@ class OrchestratorService:
                         caller.blocked_reason = None
                     await self._project(self._rm and self._rm.set_step_status(
                         session_id, caller_step_id, "running"))
-                if kind == "await_reply":
-                    # Deliberately not the reply's content — it isn't in yet, and
-                    # won't be before this call returns. A separate follow-up
-                    # step (already created above) reads it once it arrives.
-                    return ("Await-reply step created. A separate follow-up step will "
-                            "read the reply and give the real answer once it arrives — "
-                            "end your own turn now reporting the draft as sent and "
-                            "awaiting reply, and do not guess what they will decide.")
                 return "Question put to the user; their answer resumes this plan."
             # 'execute' builds an LlmAgent, and THAT cannot run nested: run_node
             # buffers the sub-node's events until it finishes, while ADK rebuilds
@@ -1621,9 +1645,21 @@ class OrchestratorService:
         snap = await self._rm.snapshot(session_id)
         if not snap:
             raise RuntimeError(f"session {session_id} unknown; nothing to resume")
-        interrupt_id = interrupt_id or snap["session"].get("interrupt_id")
+        # A caller-supplied id wins; else the approval card's own questionId (so a
+        # specific gate is answered when several are open — see _answer_target);
+        # else the session default. The old order collapsed parallel gates onto
+        # one, mis-applying one card's edits to another's send.
+        card_target = _answer_target(answer)
+        interrupt_id = interrupt_id or card_target or snap["session"].get("interrupt_id")
         if not interrupt_id:
             raise RuntimeError(f"session {session_id} is not waiting on input")
+        # Guard: edit-on-card edits are specific to the gate the card was for. If
+        # we end up answering a DIFFERENT gate than the card explicitly targeted
+        # (its id drifted / is gone), the edits must NOT ride along — applying one
+        # send's edited fields (recipient, subject, body) to another send is how a
+        # mis-routed approval emailed the wrong person. Drop them on any such
+        # mismatch; the send still goes with its own drafted args.
+        drop_edits = False
         # Resuming an id that is not parked would answer nothing yet still let
         # _finalize complete the plan; refuse instead. Sessions parked before
         # per-step ids existed have no rows, so an empty set skips the check.
@@ -1648,29 +1684,26 @@ class OrchestratorService:
                 "[worky] resume: stored interrupt %s not outstanding (outstanding=%s) "
                 "— answering %s instead (parallel-gate id drift)",
                 interrupt_id, sorted(outstanding), fallback)
+            # If the card targeted a specific gate and we're now answering a
+            # different one, its edits belong to the gate that's gone — not this
+            # one. Drop them so we can't email the wrong recipient.
+            if card_target and fallback != card_target:
+                drop_edits = True
             interrupt_id = fallback
 
         # STEP 8 (resume) — same step ids + depends_on ⇒ same node names + edges,
         # which is what lets the interrupt id from the earlier run still match.
-        # That stability assumption does NOT hold for a step create_task/
-        # delegate_to_human_agent spawned mid-turn: its first-ever park happened
-        # inside a throwaway nested run (ctx.run_node), whose node path this flat
-        # rebuild structurally cannot reproduce — ADK would just re-block it
-        # under a brand new interrupt id, silently dropping the answer we have
-        # right here. Apply it directly and let the SAME short-circuit that
-        # replays an already-completed dynamic step (see nodes.py factory)
-        # carry it, instead of routing through node-path matching that can
-        # never succeed for this category of step.
         plan = _plan_from_snapshot(snap)
-        target_step_id = next((s for i, s in outstanding_pairs if i == interrupt_id), None)
-        target_step = plan.step(target_step_id) if target_step_id else None
-        resumed_out_of_band = bool(
-            target_step and target_step.is_dynamic_delegate and target_step.kind == "await_reply")
-        if resumed_out_of_band:
-            target_step.status = Status.COMPLETED
-            target_step.result = answer
-            await self._project(self._rm.set_step_status(
-                session_id, target_step.id, "completed", result=answer))
+        # A create_task(await_reply) step now parks as a real TOP-LEVEL node (see
+        # create_task — it is no longer a nested ctx.run_node), so its node path
+        # and interrupt id ARE reproducible and it resumes through resume_part
+        # exactly like a planner-emitted await. The old out-of-band shortcut
+        # (mark it completed + replay it as a stored-result node) was for the
+        # nested era; it is now HARMFUL — swapping the recorded park events for a
+        # stored-result node diverges ADK's replay barrier on the await's own
+        # sequence key (seen live: session 188cbdbe, "Replay divergence …
+        # c593f1e04dfa@1"). So resume every await, dynamic or planned, the same
+        # normal way.
 
         wf, name_to_step = self._build_workflow(session_id, user_id, plan, model, connectors, executor_prompt)
         runner = self._runner_factory(wf, f"orch_{session_id}")
@@ -1700,8 +1733,8 @@ class OrchestratorService:
         # never gets rebuilt as a real await_reply node this turn at all
         # (see nodes.py's is_dynamic_delegate short-circuit), so it doesn't
         # matter that this exact id can't match anything current.
-        logger.info("[worky] 9. Runner.run_async → resuming session=%s interrupt=%s%s",
-                    session_id, interrupt_id, " (out-of-band dynamic step)" if resumed_out_of_band else "")
+        logger.info("[worky] 9. Runner.run_async → resuming session=%s interrupt=%s",
+                    session_id, interrupt_id)
         # A confirm interrupt resumes with a tool-confirmation VERDICT, which ADK's
         # native processor turns back into a real re-invocation of the gated send
         # (approve) or a rejection to the model (decline) — the send's reasoning
@@ -1714,6 +1747,11 @@ class OrchestratorService:
             # the edits ride along as the ToolConfirmation payload and the
             # connector tool merges them into the send. Plain text still works.
             confirmed, edits = _parse_verdict(answer)
+            if drop_edits and edits:
+                logger.warning("[worky] resume: dropping edit-on-card edits — the approval "
+                               "targeted a gate that is no longer outstanding (session=%s)",
+                               session_id)
+                edits = None
             resume = hitl.confirmation_resume_part(
                 hitl.confirm_fc_id(interrupt_id), confirmed=confirmed, payload=edits)
         else:
@@ -1867,19 +1905,35 @@ class OrchestratorService:
         in_graph = {s.id for s in plan.steps}
         interrupts = await self._drive(
             runner, session_id, user_id, plan, name_to_step, new_message)
-        # A parked interrupt means the turn is legitimately over: the plan is
-        # waiting on a human, not on us.
-        while not interrupts:
-            # Only steps that did not exist when this graph was built. A step
-            # left pending for any other reason (its dependency errored, say)
-            # would not run on a rebuild either, so re-driving for it just
-            # burns a pass.
-            spawned = {s.id for s in plan.steps
-                       if s.status == Status.PENDING and s.id not in in_graph}
-            if not spawned:
-                return interrupts
-            logger.info("[worky] 9b. %d step(s) spawned mid-turn — continuing session=%s %s",
-                        len(spawned), session_id, [s[:12] for s in spawned])
+        # Accumulate every parked interrupt ACROSS passes, keyed by step. A step
+        # that parked in an earlier pass is replayed SILENTLY on a later rebuild
+        # (ADK emits no fresh request_input event for it), so that pass's list
+        # omits it. Returning only the last pass's list left _finalize unable to
+        # bind the earlier-parked step, which then stayed stuck 'running' with its
+        # mail wait unbound — seen live in session d624d1df: planner await 's3'
+        # was dropped when the rebuild ran the Firas create_task await. fixed_iid
+        # keeps each step's id stable across passes, so the key/value stay right.
+        parked: dict = {sid: iid for iid, sid in interrupts if sid}
+        # A step spawned mid-pass (create_task / delegate) is not in the graph
+        # this pass ran, so it never executed — only a rebuild runs it. This now
+        # includes create_task(kind='await_reply'), left PENDING as a top-level
+        # step (never nested — a nested run diverges replay): its wait must run
+        # on a rebuild to park and register its interrupt, or the reply path is
+        # stranded. So re-drive whenever a spawned step is READY (all deps
+        # complete) but hasn't run — even if the pass already parked OTHER
+        # interrupts (a gate, or a sibling wait). Keying on readiness rather than
+        # "no interrupts" is what lets a spawned await run alongside a parked one
+        # instead of being abandoned. A spawned step whose deps aren't met yet
+        # (e.g. the act step waiting on the await) is not "ready", so it doesn't
+        # spin the loop; it runs on a later resume once its dep completes.
+        unmet = self._unmet_deps(plan)
+        while True:
+            ready = [s.id for s in plan.steps
+                     if s.status == Status.PENDING and s.id not in in_graph and not unmet(s)]
+            if not ready:
+                break
+            logger.info("[worky] 9b. %d spawned step(s) ready mid-turn — continuing session=%s %s",
+                        len(ready), session_id, [s[:12] for s in ready])
             in_graph = {s.id for s in plan.steps}
             # replay_completed: this re-drive passes the same plain new_message, so
             # ADK re-runs the whole graph — rebuild completed steps as their stored
@@ -1891,13 +1945,23 @@ class OrchestratorService:
             await _ensure_session(runner, f"orch_{session_id}", user_id, session_id)
             interrupts = await self._drive(
                 runner, session_id, user_id, plan, name_to_step, new_message)
-            if spawned & {s.id for s in plan.steps if s.status == Status.PENDING}:
-                # The pass that was supposed to run them left them pending —
-                # running again would only repeat itself.
-                logger.warning("[worky] 9b. spawned step(s) still pending after a "
-                               "continuation pass — stopping session=%s", session_id)
-                return interrupts
-        return interrupts
+            for iid, sid in interrupts:
+                if sid:
+                    parked[sid] = iid
+            stuck = [s for s in ready
+                     if (st := plan.step(s)) and st.status == Status.PENDING and not unmet(st)]
+            if stuck:
+                # A ready step still pending after its own rebuild pass won't make
+                # progress on another — stop rather than spin.
+                logger.warning("[worky] 9b. ready spawned step(s) still pending after a "
+                               "continuation pass — stopping session=%s %s", session_id,
+                               [s[:12] for s in stuck])
+                break
+        # The union of everything parked this turn — a still-parked step (not
+        # terminal) must be bound by _finalize even if a later pass didn't re-emit
+        # its interrupt.
+        return [(iid, sid) for sid, iid in parked.items()
+                if (st := plan.step(sid)) is not None and not st.is_done()]
 
     async def _drive(self, runner, session_id, user_id, plan, name_to_step, new_message):
         """Run the workflow, project step statuses, and capture every
@@ -1967,6 +2031,9 @@ class OrchestratorService:
                 continue
             step = plan.step(step_id)
             step.status = Status.BLOCKED
+            # Remember the exact id so a later same-turn rebuild re-parks this
+            # ask/await under it rather than a shifted node-path id (see Step).
+            step.interrupt_id = interrupt_id
             step.blocked_reason = ("awaiting your approval" if hitl.is_confirm(interrupt_id)
                                    else "awaiting user input" if hitl.is_ask(interrupt_id)
                                    else "awaiting email reply")
@@ -2315,15 +2382,6 @@ class OrchestratorService:
         # call). Ignore those events so its status stays CANCELLED instead of
         # being flipped back to running/completed here.
         if step is not None and step.status == Status.CANCELLED:
-            return
-        # The live-dependency gate (nodes._defer_if_deps_unmet) short-circuited
-        # this node — ADK fired it before a runtime-added dependency finished.
-        # Its emission is a no-op: ignore it and leave the step PENDING so a
-        # later rebuild / mail-reply resume runs it for real once the dep is in.
-        if step is not None and step.gated_out:
-            step.gated_out = False
-            logger.info("[worky] 9. step deferred (deps not yet met) session=%s step=%s",
-                        session_id, step_id)
             return
         # Which step called which tool, with what args — logged here (not at the
         # MCP call site) because that log line carries no step id, and during a

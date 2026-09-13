@@ -350,19 +350,29 @@ async def test_an_unknown_token_is_not_an_error():
     ctx.set_code.assert_not_called()
 
 
-async def test_mail_reply_supersedes_an_in_flight_turn():
+async def test_mail_reply_serializes_behind_an_in_flight_turn_not_cancels():
+    """Two mail replies for DIFFERENT waits must BOTH resume: the second waits for
+    the in-flight turn to finish, it does NOT cancel it. Each reply answers its
+    own atomically-claimed wait, so cancelling drops a real answer — seen live in
+    session 98daf300, where Rabeb's reply cancelled Firas's and Firas's step
+    stayed blocked with its wait already consumed."""
     rm = MagicMock(claim_mail_wait=AsyncMock(return_value=dict(_WAIT)))
     service = MagicMock(resume_turn=AsyncMock())
     s = _servicer(rm=rm, service=service)
 
-    async def forever():
-        await asyncio.sleep(60)
-    prev = asyncio.create_task(forever())
+    done = asyncio.Event()
+    async def prior():
+        await done.wait()
+    prev = asyncio.create_task(prior())
     s._running["s1"] = prev
 
     await s.DeliverMailReply(pb.DeliverMailReplyRequest(
         token="YW-tok", reply_body="reply", agents=_AGENTS), _ctx())
-    await _drain(s)
+    await asyncio.sleep(0.05)  # let the reply task start and hit the serialize wait
+    assert not prev.cancelled(), "a mail reply must NOT cancel an in-flight turn"
+    assert service.resume_turn.await_count == 0, "the reply must wait for the in-flight turn"
 
-    assert prev.cancelled(), "two turns must never run on one session"
+    done.set()  # in-flight turn finishes → the serialized reply proceeds
+    await _drain(s)
+    assert not prev.cancelled()
     service.resume_turn.assert_awaited_once()
