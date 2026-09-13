@@ -1,5 +1,6 @@
 import { ServiceUnavailableException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import type { Request } from 'express';
 import { AppDataRemoteOwnerController } from './app-data-remote-owner.controller';
 import { AppDataClientService } from '../../services/app-data-client.service';
 import { AppDataDeploymentService } from '../../services/app-data-deployment.service';
@@ -43,9 +44,8 @@ describe('AppDataRemoteOwnerController', () => {
     return { controller, client, deployment, sessions };
   };
 
-  const resolvedSession = (ownerId: string, actorUserId: string) => ({
-    conversationV2Session: { ownerId, actorUserId },
-  });
+  const resolvedSession = (ownerId: string, actorUserId: string) =>
+    ({ conversationV2Session: { ownerId, actorUserId } }) as unknown as Request;
 
   it('issues an owner-scoped ticket when the caller is the session owner', async () => {
     const { controller, client, deployment } = buildController();
@@ -76,7 +76,7 @@ describe('AppDataRemoteOwnerController', () => {
 
   it('rejects with ServiceUnavailableException when the guard did not resolve a session', async () => {
     const { controller, client } = buildController();
-    await expect(controller.ticket('s-1', {})).rejects.toBeInstanceOf(
+    await expect(controller.ticket('s-1', {} as Request)).rejects.toBeInstanceOf(
       ServiceUnavailableException,
     );
     expect(client.ensureApp).not.toHaveBeenCalled();
