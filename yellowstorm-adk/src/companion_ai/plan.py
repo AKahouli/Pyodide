@@ -66,6 +66,11 @@ class Step(BaseModel):
     # re-call the LLM. nodes.py short-circuits it with the stored result
     # instead once it's done, so this flag is the signal for that.
     is_dynamic_delegate: bool = False
+    # Transient, per-pass only (never persisted): set when the live-dependency
+    # gate (nodes._defer_if_deps_unmet) short-circuits a node ADK triggered
+    # before a runtime-added dependency was satisfied. _apply_event reads it to
+    # ignore that no-op emission and leave the step PENDING for a later rebuild.
+    gated_out: bool = Field(default=False, exclude=True)
 
     def is_done(self) -> bool:
         return self.status.is_terminal()

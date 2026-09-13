@@ -21,6 +21,7 @@ import {
   type WhatsAppIntegrationRef,
 } from '../interfaces/whatsapp-integration-ref.interface';
 import { extractWhatsAppReplyText } from '../utils/whatsapp-reply-text.util';
+import { normalizeWhatsappUserJid } from '../utils/whatsapp-user-jid.util';
 
 @Injectable()
 export class WhatsAppMessageService {
@@ -45,6 +46,7 @@ export class WhatsAppMessageService {
     integrationRef: WhatsAppIntegrationRef,
     messages: import('@whiskeysockets/baileys').WAMessage[],
     sendReply?: (remoteJid: string, text: string) => Promise<void>,
+    selfJids: string[] = [],
   ): Promise<void> {
     if (integrationRef.kind === 'worky_stream') {
       return;
@@ -74,12 +76,23 @@ export class WhatsAppMessageService {
       return;
     }
 
+    // Device suffixes must be stripped on both sides: socket.user carries
+    // `81673265873042:74@lid` while self-chat messages arrive on the bare LID.
+    const selfSet = new Set(
+      selfJids.filter(Boolean).map((jid) => normalizeWhatsappUserJid(jid).toLowerCase()),
+    );
     for (const message of messages) {
-      if (message.key.fromMe) continue;
       const remoteJid = message.key.remoteJid;
       if (!remoteJid || remoteJid.endsWith('@g.us') || remoteJid === 'status@broadcast') {
         continue;
       }
+      // Owner messages typed in the paired number's own self-chat are routed
+      // like normal inbound traffic; other fromMe traffic (owner writing to
+      // other contacts, bot send echoes) stays ignored.
+      const isSelfChat =
+        Boolean(message.key.fromMe) &&
+        selfSet.has(normalizeWhatsappUserJid(remoteJid).toLowerCase());
+      if (message.key.fromMe && !isSelfChat) continue;
 
       const text = this.extractText(message);
       if (!text) continue;
@@ -118,6 +131,60 @@ export class WhatsAppMessageService {
       return toWorkyIntegrationRef(workyDoc);
     }
     return null;
+  }
+
+  /**
+   * Captures texts the owner types in the paired number's own self-chat
+   * (fromMe + remoteJid == own JID) into the self binding so the MCP
+   * validation tool can long-poll them. Messages the owner sends to other
+   * contacts (fromMe + remoteJid == contact) stay ignored, and no agent run
+   * is triggered for these captures.
+   */
+  async captureSelfChatText(
+    integrationRef: WhatsAppIntegrationRef,
+    messages: import('@whiskeysockets/baileys').WAMessage[],
+    selfJids: string[],
+  ): Promise<void> {
+    if (
+      integrationRef.kind !== 'agent' ||
+      !integrationRef.enabled ||
+      integrationRef.status !== WhatsAppIntegrationStatus.CONNECTED ||
+      !integrationRef.agentId
+    ) {
+      return;
+    }
+    const phoneDigits = integrationRef.phoneNumber?.replace(/\D/g, '');
+    const selfSet = new Set(
+      selfJids.filter(Boolean).map((jid) => normalizeWhatsappUserJid(jid).toLowerCase()),
+    );
+    if (!selfSet.size || !phoneDigits) return;
+
+    for (const message of messages) {
+      if (!message.key.fromMe) continue;
+      const remoteJid = message.key.remoteJid;
+      if (!remoteJid || !selfSet.has(normalizeWhatsappUserJid(remoteJid).toLowerCase())) continue;
+      const text = this.extractText(message);
+      if (!text) continue;
+
+      await this.bindingModel
+        .updateOne(
+          { integrationId: integrationRef.integrationId, remoteJid: `${phoneDigits}@s.whatsapp.net` },
+          {
+            $set: {
+              userId: integrationRef.userId,
+              agentId: integrationRef.agentId,
+              lastMessageAt: new Date(),
+              lastInboundText: text,
+            },
+          },
+          { upsert: true },
+        )
+        .exec();
+      this.logger.log('WhatsApp self-chat text captured', {
+        integrationId: integrationRef.integrationId.toString(),
+        textLength: text.length,
+      });
+    }
   }
 
   private extractText(message: import('@whiskeysockets/baileys').WAMessage): string {

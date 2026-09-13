@@ -165,8 +165,11 @@ export class ResponseReliabilityService implements OnModuleInit {
       );
       if (count) this.logger.warn('Marked stale reliability evaluations failed', { count });
     } catch (error) {
+      const cause =
+        error instanceof Error && error.cause instanceof Error ? { cause: error.cause.message } : {};
       this.logger.error('Unable to clean stale reliability evaluations', {
         error: error instanceof Error ? error.message : String(error),
+        ...cause,
       });
     }
   }

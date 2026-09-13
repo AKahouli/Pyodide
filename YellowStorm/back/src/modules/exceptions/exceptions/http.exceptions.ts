@@ -100,3 +100,13 @@ export class ServiceUnavailableException extends AppException {
     });
   }
 }
+
+export class BadGatewayException extends AppException {
+  constructor(code: ErrorCode, message?: string) {
+    super({
+      code,
+      message,
+      statusCode: HttpStatus.BAD_GATEWAY,
+    });
+  }
+}

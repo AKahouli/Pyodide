@@ -178,6 +178,38 @@ def _skip_if_cancelled(step: Step):
     return _cb
 
 
+def _defer_if_deps_unmet(step: Step, unmet):
+    """Gate a node on its LIVE dependencies, not the frozen graph edges.
+
+    The ADK Workflow graph is built once at the start of a turn; a dependency
+    added mid-pass (create_task(kind='await_reply') / delegate_to_human_agent
+    re-parent a step onto the task they spawn) is NOT in those edges, so ADK
+    fires the dependent the moment its ORIGINAL edges clear — before the new
+    task finished. That is the phantom-run / early-report bug: a report step
+    ran while the reply it needed was still outstanding.
+
+    So re-check `depends_on` off the live plan at model-call time. If any dep
+    is still non-terminal (pending/running/blocked), this trigger is premature:
+    short-circuit with an empty response — no model call, no tools, NO email —
+    and flag the step so _apply_event ignores the no-op and leaves it PENDING.
+    The drive loop's rebuild (and the mail-reply resume) re-runs it for real
+    once the dep completes. Deliberately does NOT defer on a TERMINAL-but-failed
+    dep: that step can never become ready, so deferring would hang — let it
+    proceed exactly as before. Placed FIRST in the before_model chain so it
+    wins before _mark_running ever projects the step 'running'."""
+    async def _cb(callback_context, llm_request):
+        if unmet(step):
+            from google.adk.models.llm_response import LlmResponse
+            step.gated_out = True
+            # Text is never stored (gated_out makes _apply_event ignore this
+            # event) — a non-empty marker only avoids ADK empty-content quirks.
+            return LlmResponse(content=genai_types.Content(
+                role="model", parts=[genai_types.Part(
+                    text="Deferred: a dependency is not yet complete.")]))
+        return None
+    return _cb
+
+
 def _inject_task_turn(task_text):
     """Deliver the step's task as a USER turn instead of baking it into the
     system prompt.
@@ -222,6 +254,20 @@ def _inject_task_turn(task_text):
         else:
             return None                              # already spliced
         llm_request.contents = contents
+        return None
+    return _cb
+
+
+def _mark_running(step: Step, on_model_start):
+    """Project the step RUNNING the moment the request goes to the model, so the
+    UI shows it in-progress at once instead of lagging on 'pending' until ADK
+    returns the first event (very visible with a slow model). PENDING-only: a
+    re-entered terminal step is left as-is so _trace_execution's re-run
+    diagnostic still fires."""
+    async def _cb(callback_context, llm_request):
+        if on_model_start is not None and step.status == Status.PENDING:
+            step.status = Status.RUNNING
+            await on_model_start(step)
         return None
     return _cb
 
@@ -472,6 +518,20 @@ def stamp_send_email_tool(tool, *, token_provider: Callable[[], Awaitable[Option
                 kwargs["subject"] = mail_token.stamp_subject(kwargs["subject"], token)
             if kwargs.get("body"):
                 kwargs["body"] = mail_token.stamp_body(kwargs["body"], token)
+            # Edit-on-card: on the approval resume the connector re-applies the
+            # owner's confirmation payload OVER these args (connector_tools.py),
+            # and that payload is the pre-stamp DRAFT — it would overwrite the
+            # subject/body above and drop the token, so the sent mail carried no
+            # token and its reply could never route (seen live). The token is a
+            # routing invariant that must survive any edit, so stamp it into the
+            # payload too — onto whatever wording the owner approved/edited.
+            tc = kwargs.get("tool_context")
+            payload = getattr(getattr(tc, "tool_confirmation", None), "payload", None)
+            if isinstance(payload, dict):
+                if payload.get("subject") and token not in payload["subject"]:
+                    payload["subject"] = mail_token.stamp_subject(payload["subject"], token)
+                if payload.get("body") and token not in payload["body"]:
+                    payload["body"] = mail_token.stamp_body(payload["body"], token)
         else:
             # The step still sends; it just cannot be replied *to*. Better a mail
             # that lands than a step that refuses to run.
@@ -571,7 +631,9 @@ def make_llm_node_factory(
     tools_for_step: Optional[Callable[[Step, List], List]] = None,
     instruction_for_step: Optional[Callable[[Step], Optional[str]]] = None,
     context_for_step: Optional[Callable[[Step], Optional[str]]] = None,
+    gate_for_step: Optional[Callable[[Step], list]] = None,
     replay_completed: bool = False,
+    on_model_start: Optional[Callable[[Step], Awaitable[None]]] = None,
 ) -> NodeFactory:
     """Build a NodeFactory that creates one LlmAgent per step.
 
@@ -833,7 +895,9 @@ def make_llm_node_factory(
             # as the user turn, then the call-budget guard on the resulting
             # contents (so its forced-answer fallback carries the task).
             before_model_callback=_compose_before_model(
-                _skip_if_cancelled(step), _trace_execution(step, name),
+                *([_defer_if_deps_unmet(step, gate_for_step)] if gate_for_step else []),
+                _skip_if_cancelled(step), _mark_running(step, on_model_start),
+                _trace_execution(step, name),
                 _inject_task_turn(task_text), stop_cb),
         )
 

@@ -106,6 +106,32 @@ export function formatTimingMs(ms: number | undefined): string {
  * the canonical per-interaction displayText (readable) over the raw canonical
  * JSON that is persisted as message.content.
  */
+const VERDICT_LABELS: Record<string, string> = {
+  approve: 'Approuvé', approuver: 'Approuvé', yes: 'Approuvé', oui: 'Approuvé',
+  decline: 'Refusé', refuser: 'Refusé', no: 'Refusé', non: 'Refusé',
+};
+
+/**
+ * A gate approval/decline is sent as the machine payload ("approve", or the
+ * edit-on-card JSON {"verdict","edits"}). Render a friendly label for the user
+ * bubble instead of the raw payload; any other content passes through unchanged.
+ */
+export function formatChoiceSubmissionContent(content: string): string {
+  const raw = (content ?? '').trim();
+  if (!raw) return content;
+  if (raw.startsWith('{')) {
+    try {
+      const parsed = JSON.parse(raw) as { verdict?: unknown; edits?: unknown };
+      if (parsed && typeof parsed === 'object' && 'verdict' in parsed) {
+        const base = VERDICT_LABELS[String(parsed.verdict).toLowerCase()] ?? String(parsed.verdict);
+        const edited = parsed.edits && typeof parsed.edits === 'object' && Object.keys(parsed.edits as object).length > 0;
+        return edited ? `${base} — message modifié` : base;
+      }
+    } catch { /* not our payload — fall through */ }
+  }
+  return VERDICT_LABELS[raw.toLowerCase()] ?? content;
+}
+
 export function getUserMessageDisplayText(msg: Message): string {
   if (msg.interactions?.length) {
     const displayTexts = msg.interactions.map((interaction) => interaction.displayText).filter(Boolean);
@@ -566,7 +592,13 @@ export function normalizeChoiceComponentData(data: unknown): ChoiceComponentData
     : undefined;
   const labels = raw.labels && typeof raw.labels === 'object' ? raw.labels as ChoiceComponentData['labels'] : undefined;
   const progress = raw.progress && typeof raw.progress === 'object' && typeof (raw.progress as Record<string, unknown>).current === 'number' && typeof (raw.progress as Record<string, unknown>).total === 'number' ? raw.progress as ChoiceComponentData['progress'] : undefined;
-  return { schemaVersion: 1, questionId: raw.questionId, prompt: raw.prompt, ...(typeof raw.description === 'string' ? { description: raw.description } : {}), presentation, selectionMode, submitBehavior: selectionMode === 'multiple' || presentation === 'list' || otherOption || raw.submitBehavior === 'explicit' ? 'explicit' : 'immediate', options: normalizedOptions as ChoiceComponentData['options'], ...(otherOption ? { otherOption } : {}), ...(labels ? { labels } : {}), ...(progress ? { progress } : {}), ...(typeof raw.fallbackText === 'string' ? { fallbackText: raw.fallbackText } : {}), dismissible: raw.dismissible === true, status: raw.status === 'submitted' || raw.status === 'disabled' ? raw.status : 'ready' };
+  // Edit-on-card: keep editable draft fields so the renderer can show inputs.
+  const fields = (Array.isArray(raw.fields) ? raw.fields : [])
+    .filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === 'object' && !Array.isArray(item))
+    .filter((f) => typeof f.key === 'string' && typeof f.label === 'string')
+    .map((f) => ({ key: f.key as string, label: f.label as string, value: typeof f.value === 'string' ? f.value : '', ...(f.multiline === true ? { multiline: true } : {}), ...(f.type === 'list' || f.type === 'text' ? { type: f.type as 'list' | 'text' } : {}), ...(f.markdown === true ? { markdown: true } : {}) }));
+  const editable = raw.editable === true && fields.length > 0;
+  return { schemaVersion: 1, questionId: raw.questionId, prompt: raw.prompt, ...(typeof raw.description === 'string' ? { description: raw.description } : {}), presentation, selectionMode, submitBehavior: selectionMode === 'multiple' || presentation === 'list' || otherOption || raw.submitBehavior === 'explicit' ? 'explicit' : 'immediate', options: normalizedOptions as ChoiceComponentData['options'], ...(otherOption ? { otherOption } : {}), ...(labels ? { labels } : {}), ...(progress ? { progress } : {}), ...(typeof raw.fallbackText === 'string' ? { fallbackText: raw.fallbackText } : {}), dismissible: raw.dismissible === true, status: raw.status === 'submitted' || raw.status === 'disabled' ? raw.status : 'ready', ...(editable ? { editable: true, fields } : {}) };
 }
 
 /**
