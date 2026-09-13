@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { countSelectedRolePermissions, getMenuBranchPermissions, isScopedPermissionSelected, toggleScopedPermission, toggleScopedPermissions } from './RolePermissionsEditor';
+import { countSelectedRolePermissions, getManagedBranchPermissions, getMenuBranchPermissions, isScopedPermissionSelected, toggleScopedPermission, toggleScopedPermissions } from './RolePermissionsEditor';
+import { DEFAULT_NAVIGATION_SETTINGS } from '../navigation';
 
 describe('toggleScopedPermission', () => {
   const available = ['menu.platform', 'menu.admin'];
@@ -27,5 +28,20 @@ describe('toggleScopedPermission', () => {
     const branch = getMenuBranchPermissions('agentNetwork');
     expect(branch).toEqual(['menu.agent_network', 'menu.agents', 'menu.teams', 'menu.groups']);
     expect(toggleScopedPermissions([], 'menu', branch, branch)).toEqual(['menu.restricted']);
+  });
+
+  it('derives role branches from the managed navigation tree', () => {
+    expect(getManagedBranchPermissions(DEFAULT_NAVIGATION_SETTINGS, 'knowledge')).toEqual([
+      'menu.workspace',
+      'menu.semantic_models',
+    ]);
+    expect(getManagedBranchPermissions(DEFAULT_NAVIGATION_SETTINGS, 'build')).toEqual([
+      'menu.workspace',
+      'menu.semantic_models',
+      'menu.agents',
+      'menu.playbook',
+      'menu.worky',
+      'menu.connected_apps',
+    ]);
   });
 });

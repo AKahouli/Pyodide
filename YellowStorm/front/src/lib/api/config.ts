@@ -90,6 +90,7 @@ export const API_ENDPOINTS = {
     appearanceLogoFile: (id: string) => `/experimental/system/appearance/logos/${id}/file`,
     cors: '/experimental/system/cors',
     features: '/experimental/system/features',
+    navigation: '/experimental/system/navigation',
     documentTreeInjection: '/experimental/system/document-tree-injection',
     emailLogo: '/experimental/system/email-logo',
   },

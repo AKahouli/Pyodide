@@ -3,6 +3,7 @@ import { Plug } from 'lucide-react';
 import { useModuleTranslation } from '@/modules/localization';
 import { useConnectedAppStore, useConnectedApps, useConnectedAppsLoading } from '../store';
 import { AppCard } from './AppCard';
+import { IntegrationsTabs } from './IntegrationsTabs';
 
 export function ConnectedAppsPage() {
   const { t } = useModuleTranslation('connected-app');
@@ -25,6 +26,9 @@ export function ConnectedAppsPage() {
             <h1 className="text-xl font-semibold">{t('page.title')}</h1>
             <p className="text-sm text-muted-foreground">{t('page.description')}</p>
           </div>
+        </div>
+        <div className="mt-4">
+          <IntegrationsTabs />
         </div>
       </div>
 

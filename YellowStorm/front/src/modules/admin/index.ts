@@ -1,5 +1,5 @@
 // Admin Module - Public API
-export { usePermissions, useAdminAccess } from './hooks';
+export { usePermissions, useAdminAccess, useNavigationSettings } from './hooks';
 export {
   AdminGuard,
   AdminLayout,
@@ -35,6 +35,15 @@ export {
   EvaluationSettingsPage,
 } from './pages';
 export { ADMIN_ACCESS_PERMISSIONS, ADMIN_MENU_ITEMS, DEFAULT_FEATURE_VISIBILITY } from './constants';
+export {
+  DEFAULT_NAVIGATION_SETTINGS,
+  NAVIGATION_TARGETS,
+  findNavigationTarget,
+  isNavigationNodeVisible,
+  navigationLabel,
+  sortNavigationNodes,
+  visibleNavigationItems,
+} from './navigation';
 export type {
   AdminMenuItem,
   AgentTypeResponse,
@@ -59,6 +68,9 @@ export type {
   MaintenanceStatus,
   SetMaintenanceRequest,
   FeatureVisibility,
+  NavigationSettings,
+  NavigationNode,
+  NavigationTargetKey,
   PlanResponse,
   CreatePlanRequest,
   UpdatePlanRequest,
@@ -142,6 +154,8 @@ export {
   setMaintenanceMode,
   getFeatureVisibility,
   updateFeatureVisibility,
+  getNavigationSettings,
+  updateNavigationSettings,
   getAllPlans,
   createPlan,
   updatePlan,

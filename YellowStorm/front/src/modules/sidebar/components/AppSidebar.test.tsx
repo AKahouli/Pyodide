@@ -1,14 +1,16 @@
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, fireEvent } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type { ReactNode } from 'react';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { MemoryRouter } from 'react-router-dom';
+import { SidebarProvider } from '@/components/ui/sidebar';
 import { AppSidebar } from './AppSidebar';
 
 const navigateMock = vi.hoisted(() => vi.fn());
 const featureVisibility = vi.hoisted(() => ({
   conversation: true,
   workspace: true,
+  semanticModel: true,
   playbook: true,
   governance: true,
   appMarketplace: true,
@@ -29,23 +31,32 @@ const storeFns = vi.hoisted(() => ({
 }));
 
 const convoState = vi.hoisted(() => ({
-  conversations: [{ id: 'c1', title: 'First' }, { id: 'c2', title: 'Second' }],
+  conversations: [
+    { id: 'c1', title: 'First', updatedAt: new Date().toISOString() },
+    { id: 'c2', title: 'Second', updatedAt: new Date().toISOString() },
+  ],
   loading: false,
-  hasMore: true,
-  historyOpen: true,
 }));
+const defaultConversations = vi.hoisted(() => [
+  { id: 'c1', title: 'First', updatedAt: '2026-09-13T10:00:00.000Z' },
+  { id: 'c2', title: 'Second', updatedAt: '2026-09-13T09:00:00.000Z' },
+]);
 
 const autoCollapseState = vi.hoisted(() => ({
   isMobile: false,
   state: 'expanded' as 'expanded' | 'collapsed',
+  setOpen: vi.fn(),
   toggleSidebar: vi.fn(),
 }));
 
-const toggleHistoryPanelMock = vi.hoisted(() => vi.fn());
 const permissionState = vi.hoisted(() => ({ governance: true, semanticModels: true }));
 const visibilityPermissionState = vi.hoisted(() => ({
   deniedFeatures: new Set<string>(),
   deniedMenus: new Set<string>(),
+}));
+const projectState = vi.hoisted(() => ({
+  projects: [{ id: 'p1', name: 'Project Alpha' }],
+  createProject: vi.fn(),
 }));
 
 vi.mock('react-router-dom', async () => {
@@ -53,65 +64,38 @@ vi.mock('react-router-dom', async () => {
   return { ...actual, useNavigate: () => navigateMock };
 });
 
-vi.mock('@/components/ui/sidebar', () => ({
-  Sidebar: ({ children }: { children: ReactNode }) => <div>{children}</div>,
-  SidebarHeader: ({ children }: { children: ReactNode }) => <div>{children}</div>,
-  SidebarContent: ({ children }: { children: ReactNode }) => <div>{children}</div>,
-  SidebarGroup: ({ children }: { children: ReactNode }) => <div data-sidebar='group'>{children}</div>,
-  SidebarMenu: ({ children }: { children: ReactNode }) => <div>{children}</div>,
-  SidebarMenuItem: ({ children }: { children: ReactNode }) => <div>{children}</div>,
-  SidebarMenuButton: ({ children, onClick, disabled, asChild }: { children: ReactNode; onClick?: () => void; disabled?: boolean; asChild?: boolean }) =>
-    asChild ? children : <button type='button' disabled={disabled} onClick={onClick}>{children}</button>,
-  SidebarMenuSkeleton: ({ index }: { index: number }) => <div>skel-{index}</div>,
-  SidebarFooter: ({ children }: { children: ReactNode }) => <div>{children}</div>,
-  SidebarTrigger: () => <button type='button'>trigger</button>,
-  SidebarRail: () => null,
+vi.mock('@/components/ui/command', () => ({
+  CommandDialog: ({ children, open }: { children: ReactNode; open: boolean }) =>
+    open ? <div data-testid='global-search-dialog'>{children}</div> : null,
+  CommandInput: (props: { placeholder?: string }) => <input data-testid='global-search-input' {...props} />,
+  CommandList: ({ children }: { children: ReactNode }) => <div>{children}</div>,
+  CommandEmpty: () => null,
+  CommandGroup: ({ children, heading }: { children: ReactNode; heading?: string }) => (
+    <div><div>{heading}</div>{children}</div>
+  ),
+  CommandItem: ({ children, onSelect }: { children: ReactNode; onSelect?: () => void }) => (
+    <button type='button' onClick={onSelect}>{children}</button>
+  ),
 }));
-
-vi.mock('@/components/ui/button', () => ({
-  Button: ({ children, onClick }: { children: ReactNode; onClick: () => void }) => <button type='button' onClick={onClick}>{children}</button>,
-}));
-
-vi.mock('@/components/ui/collapsible', async () => {
-  const { cloneElement, createContext, isValidElement, useContext } = await vi.importActual<typeof import('react')>('react');
-  const CollapsibleContext = createContext<{ open: boolean; onOpenChange: (open: boolean) => void } | null>(null);
-
-  return {
-    Collapsible: ({ children, open, onOpenChange }: { children: ReactNode; open?: boolean; onOpenChange: (open: boolean) => void }) => (
-      <CollapsibleContext.Provider value={{ open: Boolean(open), onOpenChange }}>
-        <div data-open={String(Boolean(open))}>{children}</div>
-      </CollapsibleContext.Provider>
-    ),
-    CollapsibleTrigger: ({ children }: { children: ReactNode }) => {
-      const context = useContext(CollapsibleContext);
-      if (!context || !isValidElement<{ onClick?: () => void }>(children)) return children;
-      return cloneElement(children, { onClick: () => context.onOpenChange(!context.open) });
-    },
-    CollapsibleContent: ({ children }: { children: ReactNode }) => {
-      const context = useContext(CollapsibleContext);
-      return context?.open ? <div>{children}</div> : null;
-    },
-  };
-});
 
 vi.mock('@/components/AppBrandLogo', () => ({ AppBrandLogo: () => <div>logo</div> }));
 vi.mock('@/components/ui/profile-menu', () => ({ ProfileMenu: () => <div>profile-menu</div> }));
 vi.mock('@/components/mode-toggle', () => ({ ModeToggle: () => <div>mode-toggle</div> }));
 vi.mock('@/modules/workspace', () => ({ WorkspaceButton: () => <div>workspace-btn</div> }));
 vi.mock('@/modules/semantic-model/components/SemanticModelButton', () => ({ SemanticModelButton: () => <div>semantic-model-btn</div> }));
-vi.mock('@/modules/agent', () => ({ AgentButton: () => <div>agent-btn</div> }));
-vi.mock('@/modules/team', () => ({ TeamButton: () => <div>team-btn</div> }));
-vi.mock('@/modules/groups', () => ({ GroupsButton: () => <div>groups-btn</div> }));
-vi.mock('@/modules/connected-app', () => ({ ConnectedAppButton: () => <div>connected-app-btn</div> }));
 vi.mock('@/modules/playbook/components/PlaybookButton', () => ({ PlaybookButton: () => <div>playbook-btn</div> }));
 vi.mock('@/modules/governance', () => ({ GovernanceButton: () => <div>governance-btn</div> }));
 vi.mock('@/modules/worky/components/WorkyButton', () => ({ WorkyButton: () => <div>worky-btn</div> }));
-vi.mock('@/modules/app-marketplace', () => ({ AppMarketplaceButton: () => <div>app-marketplace-btn</div> }));
-vi.mock('@/modules/admin', () => ({
-  AdminButton: () => <div>admin-btn</div>,
-  DEFAULT_FEATURE_VISIBILITY: { conversation: true, workspace: true, playbook: true, governance: true, appMarketplace: true, worky: true, agents: true },
-  getFeatureVisibility: vi.fn(async () => ({ ...featureVisibility })),
-}));
+vi.mock('@/modules/admin', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/modules/admin')>();
+  return {
+    ...actual,
+    AdminButton: () => <div>admin-btn</div>,
+    DEFAULT_FEATURE_VISIBILITY: { conversation: true, workspace: true, semanticModel: true, playbook: true, governance: true, appMarketplace: true, worky: true, agents: true },
+    getFeatureVisibility: vi.fn(async () => ({ ...featureVisibility })),
+    useNavigationSettings: () => actual.DEFAULT_NAVIGATION_SETTINGS,
+  };
+});
 vi.mock('@/modules/admin/hooks/usePermissions', () => ({
   usePermissions: () => ({
     hasAnyPermission: (permissions: string[]) => permissions.some((permission) => permission.startsWith('governance'))
@@ -131,13 +115,9 @@ vi.mock('@/modules/conversation/components/ShareDialog', () => ({
 vi.mock('../hooks/useAutoCollapse', () => ({ useAutoCollapse: () => autoCollapseState }));
 
 vi.mock('@/modules/conversation/store', () => ({
-  DEFAULT_CONVERSATIONS_LIMIT: 20,
   useConversationStore: (selector: (state: typeof storeFns) => unknown) => selector(storeFns),
   useHistoryConversations: () => convoState.conversations,
   useConversationsLoading: () => convoState.loading,
-  useConversationsHasMore: () => convoState.hasMore,
-  useHistoryPanelOpen: () => convoState.historyOpen,
-  useToggleHistoryPanel: () => toggleHistoryPanelMock,
 }));
 
 vi.mock('@/modules/conversation-v2/store', () => ({
@@ -145,6 +125,11 @@ vi.mock('@/modules/conversation-v2/store', () => ({
   useConversationV2Store: (
     selector: (state: { sessionId: null; streaming: boolean; streamingStateCache: Map<string, { streaming: boolean }> }) => unknown,
   ) => selector({ sessionId: null, streaming: false, streamingStateCache: new Map() }),
+}));
+
+vi.mock('@/modules/project/store', () => ({
+  useProjects: () => projectState.projects,
+  useProjectStore: (selector: (state: typeof projectState) => unknown) => selector(projectState),
 }));
 
 vi.mock('./ProjectsSection', () => ({ ProjectsSection: () => <div>projects-section</div> }));
@@ -163,11 +148,11 @@ vi.mock('./ConversationItem', () => ({
 describe('AppSidebar', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    localStorage.clear();
     autoCollapseState.isMobile = false;
     autoCollapseState.state = 'expanded';
     convoState.loading = false;
-    convoState.hasMore = true;
-    convoState.historyOpen = true;
+    convoState.conversations = defaultConversations;
     storeFns.currentConversationId = 'c1';
     permissionState.governance = true;
     permissionState.semanticModels = true;
@@ -176,7 +161,133 @@ describe('AppSidebar', () => {
     Object.assign(featureVisibility, { conversation: true, workspace: true, playbook: true, governance: true, appMarketplace: true, worky: true, agents: true });
   });
 
-  it('hides disabled feature buttons but keeps conversation history', async () => {
+  afterEach(() => {
+    convoState.conversations = defaultConversations;
+  });
+
+  it('renders the target information architecture', async () => {
+    localStorage.setItem('sidebar:knowledgeOpen', 'true');
+    render(
+      <MemoryRouter>
+        <SidebarProvider>
+          <AppSidebar />
+        </SidebarProvider>
+      </MemoryRouter>,
+    );
+
+    // Header
+    expect(screen.getByRole('link', { name: 'actions.home' })).toHaveAttribute('href', '/');
+    expect(screen.getByRole('button', { name: 'New chat' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'search.label' })).toBeInTheDocument();
+
+    // WORK group
+    expect(screen.getByText('Work')).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Overview' })).toHaveAttribute('href', '/platform');
+    expect(screen.getByText('projects-section')).toBeInTheDocument();
+
+    // BUILD group
+    expect(screen.getByText('Build')).toBeInTheDocument();
+    expect(screen.getByText('workspace-btn')).toBeInTheDocument();
+    expect(screen.getByText('semantic-model-btn')).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Agents & teams' })).toHaveAttribute('href', '/agents');
+    expect(screen.getByText('playbook-btn')).toBeInTheDocument();
+    expect(screen.getByText('worky-btn')).toBeInTheDocument();
+    // Integrations (connected apps + app marketplace) mirrors the menu tree's automate branch.
+    expect(screen.getByRole('link', { name: 'Integrations' })).toHaveAttribute('href', '/apps');
+
+    // Managed governance destinations
+    expect(screen.getByRole('link', { name: 'Governance' })).toHaveAttribute('href', '/governance');
+    expect(screen.getByRole('link', { name: 'Administration' })).toHaveAttribute('href', '/admin');
+    expect(screen.getByText('profile-menu')).toBeInTheDocument();
+
+    // Recent chats is the only list region
+    expect(screen.getByText('History')).toBeInTheDocument();
+    expect(screen.getByText('conversation-c1')).toBeInTheDocument();
+    expect(screen.getByText('conversation-c2')).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: /recentChats\.allChats/ })).toHaveAttribute('href', '/chats');
+    expect(screen.queryByText('history.showMore')).not.toBeInTheDocument();
+  });
+
+  it('fetches conversations on mount', () => {
+    render(
+      <MemoryRouter>
+        <SidebarProvider>
+          <AppSidebar />
+        </SidebarProvider>
+      </MemoryRouter>,
+    );
+    expect(storeFns.fetchConversations).toHaveBeenCalledWith({ reset: true, limit: 25 });
+  });
+
+  it('caps recent chats at 25 rows and links to All chats', () => {
+    convoState.conversations = Array.from({ length: 30 }, (_, i) => ({
+      id: `c${i}`,
+      title: `Chat ${i}`,
+      updatedAt: new Date(Date.now() - i * 60_000).toISOString(),
+    }));
+    const { container } = render(
+      <MemoryRouter>
+        <SidebarProvider>
+          <AppSidebar />
+        </SidebarProvider>
+      </MemoryRouter>,
+    );
+
+    expect(screen.getAllByText(/^conversation-c\d+$/)).toHaveLength(25);
+    const allChatsLink = screen.getByRole('link', { name: /recentChats\.allChats/ });
+    const history = screen.getByRole('button', { name: 'History' }).closest<HTMLElement>('[data-slot="collapsible"]');
+    expect(allChatsLink).toHaveAttribute('href', '/chats');
+    expect(container.querySelector('nav')).toHaveClass('min-h-0', 'flex-1', 'overflow-hidden');
+    expect(container.querySelector('nav')?.firstElementChild).toHaveClass('max-h-[65%]', 'overflow-y-auto');
+    expect(container.querySelector('nav')?.firstElementChild).not.toContainElement(history);
+    expect(history).toHaveClass('min-h-0', 'flex-1', 'flex-col');
+    expect(history?.querySelector('[data-slot="collapsible-content"]')).toHaveClass('min-h-0', 'flex-1', 'overflow-y-auto');
+    expect(allChatsLink.closest('[data-sidebar="menu"]')).toHaveClass('sticky', 'bottom-0');
+  });
+
+  it('does not remap the agents target when its permission is denied', () => {
+    visibilityPermissionState.deniedMenus.add('agents');
+    render(
+      <MemoryRouter>
+        <SidebarProvider>
+          <AppSidebar />
+        </SidebarProvider>
+      </MemoryRouter>,
+    );
+
+    expect(screen.queryByRole('link', { name: 'Agents & teams' })).not.toBeInTheDocument();
+  });
+
+  it('does not remap the connected apps target when its permission is denied', () => {
+    visibilityPermissionState.deniedMenus.add('connectedApps');
+    render(
+      <MemoryRouter>
+        <SidebarProvider>
+          <AppSidebar />
+        </SidebarProvider>
+      </MemoryRouter>,
+    );
+
+    expect(screen.queryByRole('link', { name: 'Integrations' })).not.toBeInTheDocument();
+  });
+
+  it('hides the recent chats region when the history menu is denied', () => {
+    visibilityPermissionState.deniedMenus.add('history');
+    const { container } = render(
+      <MemoryRouter>
+        <SidebarProvider>
+          <AppSidebar />
+        </SidebarProvider>
+      </MemoryRouter>,
+    );
+
+    expect(screen.queryByText('History')).not.toBeInTheDocument();
+    expect(container.querySelector('.max-h-\\[65\\%\\]')).not.toBeInTheDocument();
+    expect(container.querySelector('nav')).toHaveClass('flex-1', 'overflow-y-auto');
+    expect(screen.queryByText('conversation-c1')).not.toBeInTheDocument();
+  });
+
+  it('hides gated features but keeps recent chats', async () => {
     Object.assign(featureVisibility, {
       conversation: false,
       workspace: false,
@@ -186,42 +297,34 @@ describe('AppSidebar', () => {
       worky: false,
       agents: false,
     });
+    visibilityPermissionState.deniedMenus.add('agents');
+    visibilityPermissionState.deniedMenus.add('teams');
+    visibilityPermissionState.deniedMenus.add('groups');
     render(
       <MemoryRouter>
-        <AppSidebar />
+        <SidebarProvider>
+          <AppSidebar />
+        </SidebarProvider>
       </MemoryRouter>,
     );
 
-    await userEvent.click(screen.getByRole('button', { name: 'groups.ask.label' }));
-    await waitFor(() => expect(screen.queryByRole('button', { name: 'actions.newChat.label' })).not.toBeInTheDocument());
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'New chat' })).not.toBeInTheDocument());
     expect(screen.queryByText('workspace-btn')).not.toBeInTheDocument();
-    expect(screen.queryByText('agent-btn')).not.toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: 'Agents & teams' })).not.toBeInTheDocument();
     expect(screen.queryByText('playbook-btn')).not.toBeInTheDocument();
-    expect(screen.queryByText('governance-btn')).not.toBeInTheDocument();
-    expect(screen.queryByText('app-marketplace-btn')).not.toBeInTheDocument();
     expect(screen.queryByText('worky-btn')).not.toBeInTheDocument();
-    expect(screen.getByText('history.label')).toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: 'Governance' })).not.toBeInTheDocument();
     expect(screen.getByText('conversation-c1')).toBeInTheDocument();
   });
 
-  it('fetches conversations on mount and supports key actions', async () => {
+  it('supports row actions from the recent chats region', async () => {
     render(
       <MemoryRouter>
-        <AppSidebar />
+        <SidebarProvider>
+          <AppSidebar />
+        </SidebarProvider>
       </MemoryRouter>,
     );
-
-    expect(storeFns.fetchConversations).toHaveBeenCalledWith({ reset: true, limit: 20 });
-    expect(screen.getByRole('link', { name: 'actions.home' })).toHaveAttribute('href', '/');
-    expect(screen.getByRole('link', { name: 'actions.platformOverview.label' })).toHaveAttribute('href', '/platform');
-    expect(screen.getByText('groups.ask.label')).toBeInTheDocument();
-    expect(screen.getByText('groups.knowledge.label')).toBeInTheDocument();
-    expect(screen.getByText('groups.automate.label')).toBeInTheDocument();
-    expect(screen.getByText('groups.govern.label')).toBeInTheDocument();
-
-    await userEvent.click(screen.getByRole('button', { name: 'groups.ask.label' }));
-    await userEvent.click(screen.getByRole('button', { name: 'actions.newChat.label' }));
-    expect(navigateMock).toHaveBeenCalledWith('/');
 
     await userEvent.click(screen.getByRole('button', { name: 'rename-c1' }));
     expect(storeFns.updateConversation).toHaveBeenCalledWith('c1', { title: 'Renamed' });
@@ -232,139 +335,146 @@ describe('AppSidebar', () => {
 
     await userEvent.click(screen.getByRole('button', { name: 'share-c2' }));
     expect(screen.getByText('share-dialog-c2')).toBeInTheDocument();
-
-    await userEvent.click(screen.getByRole('button', { name: 'history.showMore' }));
-    expect(storeFns.fetchConversations).toHaveBeenCalledWith({ limit: 20 });
   });
 
-  it('expands the sidebar when an outcome group is opened from collapsed mode', async () => {
+  it('expands the rail and navigates home when starting a chat from collapsed mode', async () => {
     autoCollapseState.state = 'collapsed';
     render(
       <MemoryRouter>
-        <AppSidebar />
+        <SidebarProvider>
+          <AppSidebar />
+        </SidebarProvider>
       </MemoryRouter>,
     );
 
-    await userEvent.click(screen.getByRole('button', { name: 'groups.ask.label' }));
-    expect(autoCollapseState.toggleSidebar).toHaveBeenCalled();
-  });
-
-  it('expands Ask and the sidebar when starting a conversation from collapsed mode', async () => {
-    autoCollapseState.state = 'collapsed';
-    render(
-      <MemoryRouter initialEntries={['/conversation/c1']}>
-        <AppSidebar />
-      </MemoryRouter>,
-    );
-
-    await userEvent.click(screen.getByRole('button', { name: 'actions.newChat.label' }));
+    await userEvent.click(screen.getByRole('button', { name: 'New chat' }));
 
     expect(navigateMock).toHaveBeenCalledWith('/');
     expect(autoCollapseState.toggleSidebar).toHaveBeenCalled();
   });
 
-  it('places New Chat immediately above Ask and opens Ask when clicked', async () => {
-    render(
-      <MemoryRouter initialEntries={['/workspace']}>
-        <AppSidebar />
+  it('re-opens the rail from a click anywhere on the collapsed rail', () => {
+    autoCollapseState.state = 'collapsed';
+    const { container } = render(
+      <MemoryRouter>
+        <SidebarProvider>
+          <AppSidebar />
+        </SidebarProvider>
       </MemoryRouter>,
     );
 
-    const newChat = screen.getByRole('button', { name: 'actions.newChat.label' });
-    const ask = screen.getByRole('button', { name: 'groups.ask.label' });
+    expect(container.querySelector('[data-sidebar="content"]')).toHaveClass('[&_[data-slot=collapsible-content]]:hidden');
+    expect(container.querySelector('[data-sidebar="footer"]')?.firstElementChild).toHaveClass('flex-col');
 
-    expect(newChat.closest('[data-sidebar="group"]')?.nextElementSibling).toContainElement(ask);
-    await userEvent.click(newChat);
+    fireEvent.click(screen.getByText('Build'));
 
-    expect(ask.closest('[data-open]')).toHaveAttribute('data-open', 'true');
-    expect(screen.getByRole('button', { name: 'groups.knowledge.label' }).closest('[data-open]')).toHaveAttribute('data-open', 'false');
+    expect(autoCollapseState.setOpen).toHaveBeenCalledWith(true);
   });
 
-  it('opens Ask without closing the mobile sidebar', async () => {
-    autoCollapseState.isMobile = true;
-    autoCollapseState.state = 'collapsed';
+  it('ignores rail clicks while expanded', () => {
     render(
       <MemoryRouter>
-        <AppSidebar />
+        <SidebarProvider>
+          <AppSidebar />
+        </SidebarProvider>
       </MemoryRouter>,
     );
 
-    await userEvent.click(screen.getByRole('button', { name: 'actions.newChat.label' }));
+    fireEvent.click(screen.getByText('Build'));
 
-    expect(screen.getByRole('button', { name: 'groups.ask.label' }).closest('[data-open]')).toHaveAttribute('data-open', 'true');
-    expect(autoCollapseState.toggleSidebar).not.toHaveBeenCalled();
+    expect(autoCollapseState.setOpen).not.toHaveBeenCalled();
   });
 
-  it('opens only the active outcome group automatically', async () => {
-    render(
-      <MemoryRouter initialEntries={['/workspace']}>
-        <AppSidebar />
+  it('never expands from a rail click on mobile', () => {
+    autoCollapseState.isMobile = true;
+    autoCollapseState.state = 'collapsed';
+    const { container } = render(
+      <MemoryRouter>
+        <SidebarProvider>
+          <AppSidebar />
+        </SidebarProvider>
       </MemoryRouter>,
     );
 
-    await waitFor(() => expect(screen.getByRole('button', { name: 'groups.ask.label' }).closest('[data-open]')).toHaveAttribute('data-open', 'false'));
-    expect(screen.getByRole('button', { name: 'groups.knowledge.label' }).closest('[data-open]')).toHaveAttribute('data-open', 'true');
-    expect(screen.getByRole('button', { name: 'groups.automate.label' }).closest('[data-open]')).toHaveAttribute('data-open', 'false');
-    expect(screen.getByRole('button', { name: 'groups.govern.label' }).closest('[data-open]')).toHaveAttribute('data-open', 'false');
+    fireEvent.click(screen.getByText('New chat'));
+
+    expect(autoCollapseState.setOpen).not.toHaveBeenCalled();
+    expect(container.querySelector('.max-h-\\[65\\%\\]')).not.toBeInTheDocument();
+    expect(container.querySelector('nav')).toHaveClass('overflow-y-auto');
   });
 
-  it('keeps top-level navigation available by opening one outcome group at a time', async () => {
+  it('keeps Knowledge and Projects independently openable (multi-open)', async () => {
     render(
-      <MemoryRouter initialEntries={['/']}>
-        <AppSidebar />
+      <MemoryRouter>
+        <SidebarProvider>
+          <AppSidebar />
+        </SidebarProvider>
       </MemoryRouter>,
     );
 
-    await waitFor(() => expect(screen.getByRole('button', { name: 'groups.ask.label' }).closest('[data-open]')).toHaveAttribute('data-open', 'false'));
-    await userEvent.click(screen.getByRole('button', { name: 'groups.knowledge.label' }));
-
-    expect(screen.getByRole('button', { name: 'groups.ask.label' }).closest('[data-open]')).toHaveAttribute('data-open', 'false');
-    expect(screen.getByRole('button', { name: 'groups.knowledge.label' }).closest('[data-open]')).toHaveAttribute('data-open', 'true');
-    expect(screen.queryByText('conversation-c1')).not.toBeInTheDocument();
-  });
-
-  it('matches governance and semantic model sidebar visibility to permissions', async () => {
-    permissionState.governance = false;
-    permissionState.semanticModels = false;
-
-    render(
-      <MemoryRouter initialEntries={['/workspace']}>
-        <AppSidebar />
-      </MemoryRouter>,
-    );
-
-    expect(screen.queryByText('governance-btn')).not.toBeInTheDocument();
-    expect(screen.queryByText('semantic-model-btn')).not.toBeInTheDocument();
-    expect(await screen.findByText('workspace-btn')).toBeInTheDocument();
-  });
-
-  it('hides menus and features excluded by the role allowlists', async () => {
-    visibilityPermissionState.deniedFeatures.add('workspace');
-    visibilityPermissionState.deniedMenus.add('admin');
-
-    render(
-      <MemoryRouter initialEntries={['/admin']}>
-        <AppSidebar />
-      </MemoryRouter>,
-    );
-
+    const knowledge = screen.getByRole('button', { name: 'Knowledge' });
+    expect(knowledge).toHaveAttribute('aria-expanded', 'false');
     expect(screen.queryByText('workspace-btn')).not.toBeInTheDocument();
-    expect(screen.queryByText('admin-btn')).not.toBeInTheDocument();
-    expect(await screen.findByText('governance-btn')).toBeInTheDocument();
+
+    await userEvent.click(knowledge);
+    expect(knowledge).toHaveAttribute('aria-expanded', 'true');
+    expect(screen.getByText('workspace-btn')).toBeInTheDocument();
+    // Projects section is still rendered alongside — no single-open coupling.
+    expect(screen.getByText('projects-section')).toBeInTheDocument();
+    expect(localStorage.getItem('sidebar:knowledgeOpen')).toBe('true');
   });
 
-  it('hides a complete nested hierarchy when its parent menu is excluded', async () => {
-    visibilityPermissionState.deniedMenus.add('agentNetwork');
-
+  it('opens the global search palette from the trigger', async () => {
     render(
-      <MemoryRouter initialEntries={['/agents']}>
-        <AppSidebar />
+      <MemoryRouter>
+        <SidebarProvider>
+          <AppSidebar />
+        </SidebarProvider>
       </MemoryRouter>,
     );
 
-    expect(await screen.findByText('playbook-btn')).toBeInTheDocument();
-    expect(screen.queryByText('agent-btn')).not.toBeInTheDocument();
-    expect(screen.queryByText('team-btn')).not.toBeInTheDocument();
-    expect(screen.queryByText('groups-btn')).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: 'search.label' }));
+    expect(screen.getByTestId('global-search-dialog')).toBeInTheDocument();
+  });
+
+  it('hides chats from global search when History is denied', async () => {
+    visibilityPermissionState.deniedMenus.add('history');
+    render(
+      <MemoryRouter>
+        <SidebarProvider>
+          <AppSidebar />
+        </SidebarProvider>
+      </MemoryRouter>,
+    );
+
+    await userEvent.click(screen.getByRole('button', { name: 'search.label' }));
+    expect(screen.queryByText('First')).not.toBeInTheDocument();
+  });
+
+  it('hides projects from global search when Projects is denied', async () => {
+    visibilityPermissionState.deniedMenus.add('projects');
+    render(
+      <MemoryRouter>
+        <SidebarProvider>
+          <AppSidebar />
+        </SidebarProvider>
+      </MemoryRouter>,
+    );
+
+    await userEvent.click(screen.getByRole('button', { name: 'search.label' }));
+    expect(screen.queryByText('Project Alpha')).not.toBeInTheDocument();
+  });
+
+  it('opens the global search palette via Ctrl+K', () => {
+    render(
+      <MemoryRouter>
+        <SidebarProvider>
+          <AppSidebar />
+        </SidebarProvider>
+      </MemoryRouter>,
+    );
+
+    fireEvent.keyDown(window, { key: 'k', ctrlKey: true });
+    expect(screen.getByTestId('global-search-dialog')).toBeInTheDocument();
   });
 });

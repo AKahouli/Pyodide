@@ -167,7 +167,7 @@ const ProjectRow = memo(function ProjectRow({ project, onRename, onDelete, insid
   );
 });
 
-export const ProjectsSection = memo(function ProjectsSection() {
+export const ProjectsSection = memo(function ProjectsSection({ label }: { label?: string }) {
   const { t } = useModuleTranslation('sidebar');
   const projects = useProjects();
   const sharedProjects = useSharedProjects();
@@ -228,9 +228,9 @@ export const ProjectsSection = memo(function ProjectsSection() {
         <SidebarMenu>
           <SidebarMenuItem>
             <CollapsibleTrigger asChild>
-              <SidebarMenuButton tooltip={t('actions.projects.label')}>
+              <SidebarMenuButton tooltip={label ?? t('actions.projects.label')}>
                 <Folder />
-                <span>{t('actions.projects.label')}</span>
+                <span>{label ?? t('actions.projects.label')}</span>
                 <ChevronDown
                   className={`ml-auto h-4 w-4 transition-transform ${open ? '' : '-rotate-90'}`}
                 />

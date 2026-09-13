@@ -4,6 +4,11 @@
     "description": "Connect your external apps to enable file access, email integration, and more.",
     "empty": "No apps available yet."
   },
+  "tabs": {
+    "label": "Integrations",
+    "apps": "Apps",
+    "marketplace": "Marketplace"
+  },
   "card": {
     "connected": "Connected",
     "notConnected": "Not connected",

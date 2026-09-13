@@ -28,6 +28,7 @@ import {
   notifyAppearanceSettingsUpdated,
   replaceMissingLogos,
 } from '../appearance/utils';
+import { NavigationSettingsCard } from '../appearance/NavigationSettingsCard';
 
 type LoadState = 'loading' | 'ready' | 'error';
 
@@ -389,6 +390,7 @@ export function AppearancePage() {
             </div>
           </CardContent>
         </Card>
+        <NavigationSettingsCard />
         </>
       )}
     </div>

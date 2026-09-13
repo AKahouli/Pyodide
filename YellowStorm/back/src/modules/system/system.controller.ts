@@ -23,6 +23,9 @@ import { UpdateDocumentTreeInjectionDto } from './dto/update-document-tree-injec
 import type { DocumentTreeInjectionSettings } from './interfaces/document-tree-settings.interface';
 import type { LoginSettings } from './interfaces/login-settings.interface';
 import { SetLoginSettingsDto } from './dto/set-login-settings.dto';
+import { NavigationSettingsService } from './navigation-settings.service';
+import type { NavigationSettings } from './interfaces/navigation-settings.interface';
+import { UpdateNavigationSettingsDto } from './dto/update-navigation-settings.dto';
 
 interface MulterFile {
   originalname: string;
@@ -62,6 +65,7 @@ export class SystemController {
     private readonly systemService: SystemService,
     private readonly auditLogService: AuditLogService,
     private readonly featureVisibilityService: FeatureVisibilityService,
+    private readonly navigationSettingsService: NavigationSettingsService,
   ) {}
 
   @Get('features')
@@ -173,6 +177,35 @@ export class SystemController {
       actorEmail: user.email,
       action: 'system.loginSettings',
       metadata: { ...result },
+      ipAddress: req.ip,
+      userAgent: req.headers['user-agent'],
+    });
+    return result;
+  }
+
+  @Get('navigation')
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Get main sidebar navigation settings' })
+  getNavigationSettings(): Promise<NavigationSettings> {
+    return this.navigationSettingsService.getSettings();
+  }
+
+  @Put('navigation')
+  @UseGuards(PermissionsGuard)
+  @RequirePermissions(Permissions.SYSTEM_MAINTENANCE)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Update main sidebar navigation settings' })
+  async updateNavigationSettings(
+    @Body() body: UpdateNavigationSettingsDto,
+    @CurrentUser() user: UserDocument,
+    @Req() req: Request,
+  ): Promise<NavigationSettings> {
+    const result = await this.navigationSettingsService.updateSettings(body.nodes);
+    this.auditLogService.logSuccess({
+      actorId: user._id.toString(),
+      actorEmail: user.email,
+      action: 'system.navigation',
+      metadata: { revision: result.revision, nodeCount: result.nodes.length },
       ipAddress: req.ip,
       userAgent: req.headers['user-agent'],
     });

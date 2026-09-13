@@ -38,6 +38,9 @@ const SharedConversationPage = React.lazy(() =>
 const SharedConversationV2Page = React.lazy(() =>
   import('./modules/conversation-v2/SharedConversationV2Page')
 );
+const AllChatsPage = React.lazy(() =>
+  import('./modules/sidebar').then((m) => ({ default: m.AllChatsPage }))
+);
 const UpgradePage = React.lazy(() =>
   import('./modules/usage/components/UpgradePage').then((m) => ({ default: m.UpgradePage }))
 );
@@ -245,6 +248,10 @@ export const router = createHashRouter([
       {
         path: 'conversation-v2/:sessionId',
         element: lazyPage(<ConversationV2SessionPage />),
+      },
+      {
+        path: 'chats',
+        element: lazyPage(<AllChatsPage />),
       },
       {
         path: 'apps',

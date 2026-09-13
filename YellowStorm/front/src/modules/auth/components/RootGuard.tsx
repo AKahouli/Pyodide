@@ -160,8 +160,12 @@ export function RootGuard() {
     matchPath({ path: '/worky/:streamId', end: true }, location.pathname),
   );
 
+  // Restore the persisted sidebar state before first paint to avoid a visible flip.
+  const sidebarOpen =
+    typeof document === 'undefined' || !/(?:^|;\s*)sidebar_state=false(?:;|$)/.test(document.cookie);
+
   return (
-    <SidebarProvider>
+    <SidebarProvider defaultOpen={sidebarOpen}>
       <AppSidebar />
       <SidebarInset className='bg-transparent'>
         <header className='flex h-14 shrink-0 items-center gap-2 md:hidden'>

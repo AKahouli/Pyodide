@@ -1,5 +1,5 @@
 {
-  "navigation": { "label": "Business Models", "tooltip": "Organize business concepts and knowledge" },
+  "navigation": { "label": "Business models", "tooltip": "Organize business concepts and knowledge" },
   "sourceMaterialization": { "title": "Document instances from sources", "help": "When enabled, every linked source document is materialized as one instance.", "applyAll": "Create one instance for every source document", "choose": "Choose source documents", "selected": "{{count}} document(s) selected", "selectAll": "Select all", "deselectAll": "Deselect all", "alreadyCreated": "Already created", "create": "Create {{count}} instance(s)" },
   "status": { "draft": "Draft", "published": "Published", "archived": "Archived" },
   "indexStatus": { "indexed": "Indexed", "failed": "Index failed", "working": "Indexing" },

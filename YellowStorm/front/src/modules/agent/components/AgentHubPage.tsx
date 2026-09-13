@@ -21,6 +21,7 @@ import { AgentHubOverview } from './hub/AgentHubOverview';
 import { AgentHubFilters } from './hub/AgentHubFilters';
 import { AgentHubGrid } from './hub/AgentHubGrid';
 import { AgentHubBulkActionBar } from './hub/AgentHubBulkActionBar';
+import { AgentNetworkTabs } from './AgentNetworkTabs';
 import { CreateEditAgentDialog } from './CreateEditAgentDialog';
 import { A2APublishDialog } from './A2APublishDialog';
 import { ShareAgentDialog } from './ShareAgentDialog';
@@ -120,6 +121,9 @@ export function AgentHubPage() {
               {t('hub.newAgent')}
             </Button>
           </div>
+        </div>
+        <div className="mt-6">
+          <AgentNetworkTabs />
         </div>
       </header>
 

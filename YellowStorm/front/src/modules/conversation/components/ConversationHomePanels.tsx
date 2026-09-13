@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Bot, FileOutput, MessageSquare, Network, Play, ScrollText } from 'lucide-react';
+import { AppWindow, Bot, Database, FileOutput, MessageSquare, Network, Play, ScrollText } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { showError } from '@/lib/notifications';
@@ -7,46 +7,105 @@ import { fetchConversations, fetchRecentConversationArtifacts, getArtifactDownlo
 import type { ConversationSummary, RecentConversationArtifact } from '../types';
 import { fetchRecentPlaybookArtifacts, getPlaybooks, requestPlaybookArtifactAccess } from '@/modules/playbook/api';
 import type { PlaybookSummary, RecentPlaybookArtifact } from '@/modules/playbook/types';
+import { DEFAULT_FEATURE_VISIBILITY, getFeatureVisibility } from '@/modules/admin';
+import { usePermissions } from '@/modules/admin/hooks/usePermissions';
+import type { FeatureVisibility } from '@/modules/admin';
 import { useModuleTranslation } from '@/modules/localization';
 import { formatRelativeTimeLabel } from '@/utils/date';
 
 type RecentArtifact = RecentConversationArtifact | RecentPlaybookArtifact;
 
-const starters = [
+const STARTER_DEFS = [
   { key: 'work', path: '/worky', icon: Bot },
   { key: 'playbook', path: '/playbooks', icon: Network },
   { key: 'agent', path: '/agents', icon: ScrollText },
+  { key: 'appBuilder', path: '/app-market', icon: AppWindow },
+  { key: 'semanticModel', path: '/semantic-models', icon: Database },
 ] as const;
 
 export function ConversationHomePanels() {
   const navigate = useNavigate();
   const { t, language } = useModuleTranslation('conversation');
+  const { hasAnyPermission, canUseFeature, canSeeMenu } = usePermissions();
+  const [featureVisibility, setFeatureVisibility] = useState<FeatureVisibility>(DEFAULT_FEATURE_VISIBILITY);
   const [conversations, setConversations] = useState<ConversationSummary[]>([]);
   const [playbooks, setPlaybooks] = useState<PlaybookSummary[]>([]);
   const [artifacts, setArtifacts] = useState<RecentArtifact[]>([]);
   const [activityState, setActivityState] = useState<'loading' | 'ready' | 'error'>('loading');
   const [artifactState, setArtifactState] = useState<'loading' | 'ready' | 'error'>('loading');
 
+  useEffect(() => {
+    let active = true;
+    getFeatureVisibility()
+      .then((value) => {
+        if (active) setFeatureVisibility(value);
+      })
+      .catch(() => undefined);
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  // Feature zone mirrors the sidebar gating exactly (feature visibility +
+  // role permissions), so a card never advertises a page the role cannot open.
+  const canOpenSemanticModels = hasAnyPermission(['semantic_models.read', 'semantic_models.*', '*']);
+  const starters = useMemo(
+    () =>
+      STARTER_DEFS.filter(({ key }) => {
+        switch (key) {
+          case 'work':
+            return featureVisibility.worky && canUseFeature('worky') && canSeeMenu('worky');
+          case 'playbook':
+            return featureVisibility.playbook && canUseFeature('playbook') && canSeeMenu('playbook');
+          case 'agent':
+            return featureVisibility.agents && canUseFeature('agents') && canSeeMenu('agents');
+          case 'appBuilder':
+            return featureVisibility.appMarketplace && canUseFeature('appMarketplace') && canSeeMenu('appMarketplace');
+          case 'semanticModel':
+            return (
+              featureVisibility.semanticModel &&
+              canUseFeature('semanticModel') &&
+              canSeeMenu('semanticModels') &&
+              canOpenSemanticModels
+            );
+        }
+      }),
+    [featureVisibility, canUseFeature, canSeeMenu, canOpenSemanticModels],
+  );
+
+  // Playbook endpoints require playbook permissions — a role without the
+  // playbook feature gets 403s, so never call them (and never error the panel).
+  const canQueryPlaybooks = featureVisibility.playbook && canUseFeature('playbook');
+
   const loadActivity = useCallback(async () => {
     setActivityState('loading');
     const results = await Promise.allSettled([
       fetchConversations({ mode: 'cursor', limit: 6 }),
-      getPlaybooks({ page: 1, limit: 6, sortBy: 'activityAt', sortOrder: 'desc' }),
+      canQueryPlaybooks ? getPlaybooks({ page: 1, limit: 6, sortBy: 'activityAt', sortOrder: 'desc' }) : Promise.resolve(null),
     ]);
     setConversations(results[0].status === 'fulfilled' ? results[0].value.items : []);
-    setPlaybooks(results[1].status === 'fulfilled' ? results[1].value.playbooks : []);
-    setActivityState(results.every((result) => result.status === 'fulfilled') ? 'ready' : 'error');
-  }, []);
+    setPlaybooks(results[1].status === 'fulfilled' && results[1].value ? results[1].value.playbooks : []);
+    // A panel only errors when every source it attempted failed; a single
+    // failing source degrades to showing the others.
+    const attempted = 1 + (canQueryPlaybooks ? 1 : 0);
+    const failed = results.filter((r) => r.status === 'rejected').length;
+    setActivityState(failed >= attempted ? 'error' : 'ready');
+  }, [canQueryPlaybooks]);
 
   const loadArtifacts = useCallback(async () => {
     setArtifactState('loading');
-    const results = await Promise.allSettled([fetchRecentConversationArtifacts(6), fetchRecentPlaybookArtifacts(6)]);
-      const conversationArtifacts = results[0].status === 'fulfilled' ? results[0].value : [];
-      const playbookArtifacts = results[1].status === 'fulfilled' ? results[1].value : [];
-      const items: RecentArtifact[] = [...conversationArtifacts, ...playbookArtifacts];
-      setArtifacts(items.sort((a, b) => Date.parse(b.generatedAt) - Date.parse(a.generatedAt)).slice(0, 6));
-      setArtifactState(results.every((result) => result.status === 'fulfilled') ? 'ready' : 'error');
-  }, []);
+    const results = await Promise.allSettled([
+      fetchRecentConversationArtifacts(6),
+      canQueryPlaybooks ? fetchRecentPlaybookArtifacts(6) : Promise.resolve([] as RecentPlaybookArtifact[]),
+    ]);
+    const conversationArtifacts = results[0].status === 'fulfilled' ? results[0].value : [];
+    const playbookArtifacts = results[1].status === 'fulfilled' ? results[1].value : [];
+    const items: RecentArtifact[] = [...conversationArtifacts, ...playbookArtifacts];
+    setArtifacts(items.sort((a, b) => Date.parse(b.generatedAt) - Date.parse(a.generatedAt)).slice(0, 6));
+    const attempted = 1 + (canQueryPlaybooks ? 1 : 0);
+    const failed = results.filter((r) => r.status === 'rejected').length;
+    setArtifactState(failed >= attempted ? 'error' : 'ready');
+  }, [canQueryPlaybooks]);
 
   useEffect(() => {
     void loadActivity();
@@ -91,25 +150,27 @@ export function ConversationHomePanels() {
 
   return (
     <div className='w-full space-y-7'>
-      <section aria-labelledby='conversation-starters-heading'>
-        <div className='mb-3 flex items-end justify-between gap-4'>
-          <div>
-            <h2 id='conversation-starters-heading' className='font-semibold'>{t('home.starters.title')}</h2>
-            <p className='text-xs text-muted-foreground'>{t('home.starters.description')}</p>
+      {starters.length > 0 && (
+        <section aria-labelledby='conversation-starters-heading'>
+          <div className='mb-3 flex items-end justify-between gap-4'>
+            <div>
+              <h2 id='conversation-starters-heading' className='font-semibold'>{t('home.starters.title')}</h2>
+              <p className='text-xs text-muted-foreground'>{t('home.starters.description')}</p>
+            </div>
           </div>
-        </div>
-        <div className='grid gap-3 md:grid-cols-3'>
-          {starters.map(({ key, path, icon: Icon }) => (
-            <button key={key} type='button' onClick={() => navigate(path)} className='group flex min-h-28 items-start gap-4 rounded-2xl border bg-card/70 p-4 text-left transition-colors hover:border-primary/40 hover:bg-card'>
-              <span className='flex size-10 shrink-0 items-center justify-center rounded-xl bg-primary/10 text-primary'><Icon className='size-5' /></span>
-              <span>
-                <span className='block text-sm font-semibold'>{t(`home.starters.${key}.title`)}</span>
-                <span className='mt-1 block text-xs leading-5 text-muted-foreground'>{t(`home.starters.${key}.description`)}</span>
-              </span>
-            </button>
-          ))}
-        </div>
-      </section>
+          <div className='grid gap-3 md:grid-cols-3'>
+            {starters.map(({ key, path, icon: Icon }) => (
+              <button key={key} type='button' onClick={() => navigate(path)} className='group flex min-h-28 items-start gap-4 rounded-2xl border bg-card/70 p-4 text-left transition-colors hover:border-primary/40 hover:bg-card'>
+                <span className='flex size-10 shrink-0 items-center justify-center rounded-xl bg-primary/10 text-primary'><Icon className='size-5' /></span>
+                <span>
+                  <span className='block text-sm font-semibold'>{t(`home.starters.${key}.title`)}</span>
+                  <span className='mt-1 block text-xs leading-5 text-muted-foreground'>{t(`home.starters.${key}.description`)}</span>
+                </span>
+              </button>
+            ))}
+          </div>
+        </section>
+      )}
 
       <div className='grid gap-5 lg:grid-cols-[minmax(0,1.7fr)_minmax(18rem,1fr)]'>
         <section aria-labelledby='recent-activity-heading' className='min-w-0'>

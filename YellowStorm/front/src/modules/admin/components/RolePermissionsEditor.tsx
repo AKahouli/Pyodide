@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react';
 import { ChevronDown, ChevronRight } from 'lucide-react';
 
 import { Badge } from '@/components/ui/badge';
@@ -6,9 +7,12 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { Label } from '@/components/ui/label';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import type { ModuleTranslationKey, TranslationParams } from '@/modules/localization';
+import { useModuleTranslation, type ModuleTranslationKey, type TranslationParams } from '@/modules/localization';
 import { FEATURE_PERMISSION_ITEMS, getMenuBranchPermissions, MENU_PERMISSION_ITEMS } from '../constants';
 import { PERMISSION_GROUPS } from '../types';
+import { getNavigationSettings } from '../api';
+import { DEFAULT_NAVIGATION_SETTINGS, flattenNavigationNodes, navigationLabel, NAVIGATION_TARGETS } from '../navigation';
+import type { NavigationSettings } from '../types';
 
 type AdminTranslate = (key: ModuleTranslationKey<'admin'>, params?: TranslationParams) => string;
 type VisibilityNamespace = 'feature' | 'menu';
@@ -62,6 +66,18 @@ export function countSelectedRolePermissions(permissions: string[]) {
   return adminCount + featureCount + menuCount;
 }
 
+export function getManagedBranchPermissions(settings: NavigationSettings, nodeId: string): string[] {
+  const ids = new Set([nodeId]);
+  let previousSize = 0;
+  while (previousSize !== ids.size) {
+    previousSize = ids.size;
+    for (const node of settings.nodes) if (node.parentId && ids.has(node.parentId)) ids.add(node.id);
+  }
+  return settings.nodes
+    .filter((node) => ids.has(node.id) && node.targetKey)
+    .map((node) => NAVIGATION_TARGETS[node.targetKey!].permission);
+}
+
 interface RolePermissionsEditorProps {
   permissions: string[];
   expandedGroups: Set<string>;
@@ -81,6 +97,22 @@ export function RolePermissionsEditor({
   onChange,
   t,
 }: RolePermissionsEditorProps) {
+  const { language } = useModuleTranslation('admin');
+  const [navigation, setNavigation] = useState(DEFAULT_NAVIGATION_SETTINGS);
+
+  useEffect(() => {
+    let active = true;
+    getNavigationSettings().then((settings) => { if (active) setNavigation(settings); }).catch(() => undefined);
+    const handleUpdate = (event: Event) => {
+      if (active) setNavigation((event as CustomEvent<NavigationSettings>).detail);
+    };
+    window.addEventListener('navigation-settings-updated', handleUpdate);
+    return () => {
+      active = false;
+      window.removeEventListener('navigation-settings-updated', handleUpdate);
+    };
+  }, []);
+
   const featurePermissions = FEATURE_PERMISSION_ITEMS.map((item) => item.permission);
   const menuPermissions = MENU_PERMISSION_ITEMS.map((item) => item.permission);
 
@@ -151,24 +183,24 @@ export function RolePermissionsEditor({
 
       <TabsContent value="menus" className="mt-2 max-h-64 overflow-y-auto rounded-lg border">
         <p className="border-b p-3 text-xs text-muted-foreground">{t('roles.permissions.menuHelp')}</p>
-        {MENU_PERMISSION_ITEMS.map((item) => {
-          const branchPermissions = getMenuBranchPermissions(item.key);
+        {flattenNavigationNodes(navigation).map(({ node, depth }) => {
+          const branchPermissions = getManagedBranchPermissions(navigation, node.id);
           const selectedCount = branchPermissions.filter((permission) => isScopedPermissionSelected(permissions, 'menu', permission)).length;
           const allSelected = selectedCount === branchPermissions.length;
           const someSelected = selectedCount > 0 && !allSelected;
           const hasChildren = branchPermissions.length > 1;
 
           return (
-            <div key={item.key} className="border-b py-3 pr-3 last:border-b-0">
-              <div className="flex items-center gap-3" style={{ marginLeft: `${item.depth * 24 + 12}px` }}>
+            <div key={node.id} className="border-b py-3 pr-3 last:border-b-0">
+              <div className="flex items-center gap-3" style={{ marginLeft: `${depth * 24 + 12}px` }}>
                 <Checkbox
-                  id={`role-${item.permission}`}
+                  id={`role-menu-${node.id}`}
                   checked={someSelected ? 'indeterminate' : allSelected}
-                  disabled={permissions.includes('*')}
+                  disabled={permissions.includes('*') || branchPermissions.length === 0}
                   onCheckedChange={() => onChange(toggleScopedPermissions(permissions, 'menu', menuPermissions, branchPermissions))}
                 />
-                <Label htmlFor={`role-${item.permission}`} className={`cursor-pointer text-sm ${hasChildren ? 'font-semibold' : ''}`}>
-                  {t(item.labelKey)}
+                <Label htmlFor={`role-menu-${node.id}`} className={`cursor-pointer text-sm ${hasChildren || node.type === 'group' ? 'font-semibold' : ''}`}>
+                  {navigationLabel(node.labels, language)}
                 </Label>
               </div>
             </div>

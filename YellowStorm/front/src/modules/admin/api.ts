@@ -30,6 +30,7 @@ import type {
   SetRegistrationRequest,
   DocumentTreeInjectionSettings,
   FeatureVisibility,
+  NavigationSettings,
   CorsSettings,
   SetCorsSettingsRequest,
   AppearanceSettings,
@@ -277,6 +278,19 @@ export async function updateFeatureVisibility(data: FeatureVisibility): Promise<
   const response = await apiClient.put<ApiResponse<FeatureVisibility>>(
     API_ENDPOINTS.system.features,
     data,
+  );
+  return response.data.data;
+}
+
+export async function getNavigationSettings(): Promise<NavigationSettings> {
+  const response = await apiClient.get<ApiResponse<NavigationSettings>>(API_ENDPOINTS.system.navigation);
+  return response.data.data;
+}
+
+export async function updateNavigationSettings(data: NavigationSettings): Promise<NavigationSettings> {
+  const response = await apiClient.put<ApiResponse<NavigationSettings>>(
+    API_ENDPOINTS.system.navigation,
+    { nodes: data.nodes },
   );
   return response.data.data;
 }

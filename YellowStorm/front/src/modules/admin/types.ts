@@ -176,6 +176,26 @@ export interface SetMaintenanceRequest {
   estimatedEndAt?: string;
 }
 
+export type NavigationTargetKey =
+  | 'platform' | 'newChat' | 'projects' | 'history' | 'workspace' | 'semanticModels'
+  | 'playbook' | 'agents' | 'teams' | 'groups' | 'worky' | 'connectedApps'
+  | 'appMarketplace' | 'governance' | 'admin';
+
+export interface NavigationNode {
+  id: string;
+  type: 'group' | 'item';
+  parentId: string | null;
+  position: number;
+  visible: boolean;
+  labels: { en: string; fr: string };
+  targetKey?: NavigationTargetKey;
+}
+
+export interface NavigationSettings {
+  revision: number;
+  nodes: NavigationNode[];
+}
+
 export interface LoginSettings {
   accessExpiry: string;
   refreshExpiry: string;

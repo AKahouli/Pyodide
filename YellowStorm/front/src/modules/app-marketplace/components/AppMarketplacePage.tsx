@@ -2,6 +2,7 @@ import { useEffect } from 'react';
 import { Loader2, Store, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { useModuleTranslation } from '@/modules/localization';
+import { IntegrationsTabs } from '@/modules/connected-app/components/IntegrationsTabs';
 import { useAppMarketplaceFilters } from '../hooks/useAppMarketplaceFilters';
 import { useAppMarketplaceStore } from '../store';
 import { AppMarketplaceFilters } from './hub/AppMarketplaceFilters';
@@ -35,6 +36,9 @@ export function AppMarketplacePage() {
             <h1 className='text-3xl font-semibold tracking-tight sm:text-4xl'>{t('page.title')}</h1>
             <p className='mt-2 max-w-xl text-sm text-muted-foreground'>{t('page.description')}</p>
           </div>
+        </div>
+        <div className='mt-6'>
+          <IntegrationsTabs />
         </div>
       </header>
 
