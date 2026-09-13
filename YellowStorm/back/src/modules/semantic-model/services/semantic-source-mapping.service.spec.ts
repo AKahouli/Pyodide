@@ -1,4 +1,5 @@
 import * as ExcelJS from 'exceljs';
+import AdmZip = require('adm-zip');
 import type { DocumentService } from '@modules/document/document.service';
 import type { WorkspaceDocumentService } from '@modules/workspace/workspace-document.service';
 import {
@@ -137,6 +138,32 @@ describe('SpreadsheetConceptResolver.parse', () => {
       { customer_id: 'C001', legal_name: 'Sony Europe B.V.', [SHEET_ROW_KEY]: 2 },
       { customer_id: 'C002', legal_name: 'Sony France SAS', [SHEET_ROW_KEY]: 3 },
     ]);
+  });
+
+  it('parses namespace-prefixed OOXML produced by standards-compliant generators', async () => {
+    const service = await withSheet('application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', async (workbook) => {
+      const sheet = workbook.addWorksheet('Customers');
+      sheet.addRow(['customer_id', 'legal_name']);
+      sheet.addRow(['C041', 'Sony Demo Organization']);
+      sheet.addTable({ name: 'CustomersTable', ref: 'A1', headerRow: true, columns: [{ name: 'customer_id' }, { name: 'legal_name' }], rows: [['C041', 'Sony Demo Organization']] });
+      const archive = new AdmZip(Buffer.from(await workbook.xlsx.writeBuffer()));
+      for (const entry of archive.getEntries()) {
+        if (!entry.entryName.endsWith('.xml')) continue;
+        const xml = entry.getData().toString('utf8');
+        if (!xml.includes('xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"')) continue;
+        archive.updateFile(entry.entryName, Buffer.from(
+          xml.replace(/xmlns="http:\/\/schemas\.openxmlformats\.org\/spreadsheetml\/2006\/main"/, 'xmlns:x="http://schemas.openxmlformats.org/spreadsheetml/2006/main"')
+            .replace(/<(\/?)((?!\?xml)[A-Za-z][\w.-]*)(?=[\s/>])/g, '<$1x:$2'),
+        ));
+      }
+      const worksheetRels = archive.getEntry('xl/worksheets/_rels/sheet1.xml.rels');
+      if (worksheetRels) archive.updateFile(worksheetRels.entryName, Buffer.from(worksheetRels.getData().toString('utf8').replace(/Target="\.\.\/tables\//g, 'Target="/xl/tables/')));
+      return archive.toBuffer();
+    });
+
+    const result = await parse(service, 'Customers');
+
+    expect(result.rows[0]).toMatchObject({ customer_id: 'C041', legal_name: 'Sony Demo Organization' });
   });
 
   it('resolves rows from the requested sheet, not the first one', async () => {

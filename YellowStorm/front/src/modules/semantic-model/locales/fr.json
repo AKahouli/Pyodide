@@ -56,4 +56,5 @@
     "started": "Construction lanc\u00e9e en arri\u00e8re-plan.",
     "startError": "Impossible de lancer la construction."
   }
+  ,"readinessState": { "notConfigured": "Non configuré", "notConfiguredAction": "Commencez par ajouter les concepts métier que ce modèle doit relier.", "loading": "Vérification de la préparation…", "unavailable": "Préparation indisponible" }
 }

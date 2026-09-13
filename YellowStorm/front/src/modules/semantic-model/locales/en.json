@@ -62,4 +62,5 @@
     "startError": "Could not start the build."
   },
   "workspace": { "eyebrow": "Workspace business map", "title": "Semantic Model", "description": "Give the documents in this workspace a shared business structure.", "documents": "Back to documents", "defaultDescription": "This automatic model always includes the workspace Documents collection.", "openDefault": "Open automatic model", "otherModels": "Other connected models", "otherModelsDescription": "Models that also use knowledge from this workspace.", "browse": "Browse models", "noOtherModels": "No other model uses this workspace yet.", "loadError": "Semantic Models could not be loaded" }
+  ,"readinessState": { "notConfigured": "Not configured", "notConfiguredAction": "Start by adding the business concepts this model should connect.", "loading": "Checking readiness…", "unavailable": "Readiness unavailable" }
 }

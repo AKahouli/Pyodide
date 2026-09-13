@@ -17,7 +17,10 @@ vi.mock('../../api', () => ({ semanticModelApi: api }));
 
 const graph: SemanticGraph = {
   modelId: 'model-1', versionId: 'version-1', revision: 0, relations: [], records: [], recordRelations: [],
-  nodes: [{ id: 'concept-1', key: 'contract', label: 'Contract', description: '', category: 'business_object', recordPolicy: 'none', systemKey: null, aliases: [], attributes: [{ key: 'contract_number', label: 'Contract number', type: 'text', required: true }], position: { x: 0, y: 0 } }],
+  nodes: [{ id: 'concept-1', key: 'contract', label: 'Contract', description: '', category: 'business_object', recordPolicy: 'none', systemKey: null, aliases: [], attributes: [
+    { key: 'contract_number', label: 'Contract number', type: 'text', required: true },
+    { key: 'amendment_number', label: 'Amendment number', type: 'text', required: true },
+  ], position: { x: 0, y: 0 } }],
 };
 
 describe('DocumentSourceMappingDrawer', () => {
@@ -44,8 +47,11 @@ describe('DocumentSourceMappingDrawer', () => {
       workspaceId: 'workspace-1', documentId: 'document-1', documentName: 'One.pdf', assetKind: 'document', conceptId: 'concept-1', mimeType: 'application/pdf', path: 'one.pdf',
     }} onClose={vi.fn()} /></QueryClientProvider>);
 
-    const checkboxes = await screen.findAllByRole('checkbox');
+    await screen.findByText('Two.pdf');
+    const checkboxes = screen.getAllByRole('checkbox');
     fireEvent.click(checkboxes[1]);
+    fireEvent.click(checkboxes[2]);
+    fireEvent.click(checkboxes[3]);
     fireEvent.click(screen.getByRole('button', { name: 'mapping.previewButton' }));
 
     await waitFor(() => expect(api.previewSourceMapping).toHaveBeenCalledTimes(1));
@@ -53,7 +59,7 @@ describe('DocumentSourceMappingDrawer', () => {
     await waitFor(() => expect(api.previewSourceMapping).toHaveBeenCalledTimes(2));
     expect(api.previewSourceMapping).toHaveBeenCalledWith('model-1', expect.objectContaining({ conceptId: 'concept-1', assetKind: 'document' }));
     fireEvent.click(screen.getByRole('button', { name: 'mapping.save' }));
-    await waitFor(() => expect(api.createBulkDocumentSourceMappings).toHaveBeenCalledWith('model-1', expect.objectContaining({ documents: expect.arrayContaining([
+    await waitFor(() => expect(api.createBulkDocumentSourceMappings).toHaveBeenCalledWith('model-1', expect.objectContaining({ identityFields: ['contract_number', 'amendment_number'], documents: expect.arrayContaining([
       { workspaceId: 'workspace-1', documentId: 'document-1' },
       { workspaceId: 'workspace-1', documentId: 'document-2' },
     ]) })));

@@ -25,7 +25,7 @@ export function DocumentSourceMappingDrawer({ modelId, target, onClose }: Readon
   const graph = useSemanticModelEditorStore((state) => state.graph);
   const [conceptId, setConceptId] = useState('');
   const [mappings, setMappings] = useState<SourceFieldMapping[]>([]);
-  const [identityField, setIdentityField] = useState('');
+  const [identityFields, setIdentityFields] = useState<string[]>([]);
   const [selectedDocuments, setSelectedDocuments] = useState<Set<string>>(new Set());
   const concept = graph?.nodes.find((node) => node.id === conceptId);
   const sourceMappings = useSourceMappings(modelId).data ?? [];
@@ -46,7 +46,7 @@ export function DocumentSourceMappingDrawer({ modelId, target, onClose }: Readon
       targetAttribute: attribute.key,
       mode: attribute.key === 'source_document' ? 'metadata' : 'extract',
     })));
-    setIdentityField(target.mapping?.identityFields[0] ?? sourceMappings.find((mapping) => mapping.conceptId === nextConceptId)?.identityFields[0] ?? '');
+    setIdentityFields(target.mapping?.identityFields ?? sourceMappings.find((mapping) => mapping.conceptId === nextConceptId)?.identityFields ?? []);
     setSelectedDocuments(new Set([target.documentId]));
     preview.reset();
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -75,7 +75,7 @@ export function DocumentSourceMappingDrawer({ modelId, target, onClose }: Readon
             documentId: asset.documentId,
             assetKind: 'document',
             fieldMappings: activeMappings,
-            identityFields: identityField ? [identityField] : [],
+            identityFields,
           }),
         });
       }
@@ -89,7 +89,7 @@ export function DocumentSourceMappingDrawer({ modelId, target, onClose }: Readon
         conceptId,
         documents: selectedAssets.map((asset) => ({ workspaceId: asset.workspaceId, documentId: asset.documentId })),
         fieldMappings: activeMappings,
-        identityFields: identityField ? [identityField] : [],
+        identityFields,
       })
       : semanticModelApi.createSourceMapping(modelId, {
         conceptId,
@@ -98,7 +98,7 @@ export function DocumentSourceMappingDrawer({ modelId, target, onClose }: Readon
         sheetName: '',
         assetKind: 'document',
         fieldMappings: activeMappings,
-        identityFields: identityField ? [identityField] : [],
+        identityFields,
       }),
     onSuccess: async () => {
       await Promise.all([
@@ -113,11 +113,11 @@ export function DocumentSourceMappingDrawer({ modelId, target, onClose }: Readon
     },
     onError: (error) => showError(t('mapping.saveError'), { description: error instanceof Error ? error.message : undefined }),
   });
-  const identityValid = !identityField || activeMappings.some((mapping) => mapping.targetAttribute === identityField);
+  const identityValid = identityFields.every((field) => activeMappings.some((mapping) => mapping.targetAttribute === field));
   const canSave = Boolean(conceptId && selectedAssets.length && activeMappings.length && identityValid) && !save.isPending;
 
   const setMode = (index: number, mode: SourceFieldMapping['mode']) => {
-    if (mode === 'ignore' && mappings[index]?.targetAttribute === identityField) setIdentityField('');
+    if (mode === 'ignore') setIdentityFields((current) => current.filter((field) => field !== mappings[index]?.targetAttribute));
     setMappings(mappings.map((mapping, itemIndex) => itemIndex === index ? {
       ...mapping,
       mode,
@@ -139,7 +139,7 @@ export function DocumentSourceMappingDrawer({ modelId, target, onClose }: Readon
             setConceptId(value);
             const next = graph?.nodes.find((node) => node.id === value);
             setMappings((next?.attributes ?? []).map((attribute) => ({ sourceField: null, targetAttribute: attribute.key, mode: 'extract' })));
-            setIdentityField(sourceMappings.find((mapping) => mapping.conceptId === value)?.identityFields[0] ?? '');
+            setIdentityFields(sourceMappings.find((mapping) => mapping.conceptId === value)?.identityFields ?? []);
             preview.reset();
           }}>
             <SelectTrigger aria-label={t('mapping.concept')}><SelectValue placeholder={t('mapping.chooseConcept')} /></SelectTrigger>
@@ -185,10 +185,15 @@ export function DocumentSourceMappingDrawer({ modelId, target, onClose }: Readon
 
         {concept && <div className='space-y-2'>
           <Label>{t('mapping.identity')}</Label>
-          <Select value={identityField || '__none'} onValueChange={(value) => setIdentityField(value === '__none' ? '' : value)}>
-            <SelectTrigger aria-label={t('mapping.identity')}><SelectValue /></SelectTrigger>
-            <SelectContent><SelectItem value='__none'>{t('mapping.identityNone')}</SelectItem>{activeMappings.map((mapping) => <SelectItem key={mapping.targetAttribute} value={mapping.targetAttribute}>{concept.attributes.find((attribute) => attribute.key === mapping.targetAttribute)?.label ?? mapping.targetAttribute}</SelectItem>)}</SelectContent>
-          </Select>
+          <div className='space-y-1 rounded-xl border p-2'>
+            {activeMappings.map((mapping) => {
+              const label = concept.attributes.find((attribute) => attribute.key === mapping.targetAttribute)?.label ?? mapping.targetAttribute;
+              return <label key={mapping.targetAttribute} className='flex min-h-10 items-center gap-2 rounded-lg px-2 text-xs hover:bg-muted/60'>
+                <input type='checkbox' checked={identityFields.includes(mapping.targetAttribute)} onChange={(event) => setIdentityFields((current) => event.target.checked ? [...current, mapping.targetAttribute] : current.filter((field) => field !== mapping.targetAttribute))} />
+                <span>{label}</span>
+              </label>;
+            })}
+          </div>
         </div>}
 
         {preview.data?.map(({ asset, result }) => <div key={asset.documentId} className='space-y-2 rounded-xl border p-3'>

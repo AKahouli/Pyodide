@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { Readable } from 'node:stream';
+import AdmZip = require('adm-zip');
 import * as ExcelJS from 'exceljs';
 import { BadRequestException, NotFoundException } from '@modules/exceptions';
 import { ErrorCode } from '@modules/exceptions/constants/error-codes';
@@ -76,10 +77,19 @@ export class SpreadsheetConceptResolver implements ConceptResolver {
     // ponytail: hard 50 MB gate instead of streaming; revisit if large workbook previews become a real use case
     if (document.size > MAX_PARSED_FILE_BYTES) throw new BadRequestException(ErrorCode.SEMANTIC_MODEL_VALIDATION_FAILED, 'This file is too large to map (50 MB max)');
     const buffer = await this.storage.download(document.path);
-    const workbook = new ExcelJS.Workbook();
+    let workbook = new ExcelJS.Workbook();
     try {
       if (document.mimeType.includes('csv')) await workbook.csv.read(Readable.from(buffer), { sheetName: 'CSV' });
-      else await workbook.xlsx.load(buffer as unknown as ExcelJS.Buffer);
+      else {
+        try {
+          await workbook.xlsx.load(buffer as unknown as ExcelJS.Buffer);
+        } catch (error) {
+          const normalized = this.normalizeSpreadsheetXml(buffer);
+          if (!normalized) throw error;
+          workbook = new ExcelJS.Workbook();
+          await workbook.xlsx.load(normalized as unknown as ExcelJS.Buffer);
+        }
+      }
     } catch (error) {
       throw new BadRequestException(
         ErrorCode.SEMANTIC_MODEL_VALIDATION_FAILED,
@@ -100,6 +110,30 @@ export class SpreadsheetConceptResolver implements ConceptResolver {
       rows: selected ? this.objectRows(selected, PREVIEW_ROW_SCAN_LIMIT) : [],
       headers: selected ? this.headerNames(selected) : [],
     };
+  }
+
+  private normalizeSpreadsheetXml(buffer: Buffer): Buffer | null {
+    const archive = new AdmZip(buffer);
+    let changed = false;
+    for (const entry of archive.getEntries()) {
+      if (!entry.entryName.endsWith('.xml')) continue;
+      const xml = entry.getData().toString('utf8');
+      const namespace = xml.match(/xmlns:([A-Za-z_][\w.-]*)=["']http:\/\/schemas\.openxmlformats\.org\/spreadsheetml\/2006\/main["']/);
+      if (!namespace) continue;
+      const prefix = namespace[1].replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      archive.updateFile(entry.entryName, Buffer.from(
+        xml.replace(new RegExp(`<(/?)${prefix}:`, 'g'), '<$1').replace(`xmlns:${namespace[1]}=`, 'xmlns='),
+      ));
+      changed = true;
+    }
+    if (!changed) return null;
+    for (const entry of archive.getEntries()) {
+      if (!/^xl\/worksheets\/_rels\/.*\.rels$/.test(entry.entryName)) continue;
+      archive.updateFile(entry.entryName, Buffer.from(
+        entry.getData().toString('utf8').replace(/Target=(["'])\/xl\//g, 'Target=$1../'),
+      ));
+    }
+    return archive.toBuffer();
   }
 
   private warnings(entityCount: number, stats: ConceptResolutionResult['stats'], identityFields: string[], mappingCount: number): string[] {

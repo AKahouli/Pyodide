@@ -43,8 +43,8 @@ const UpgradePage = React.lazy(() =>
 );
 
 // Lazy-loaded playbook routes
-const PlaybookListPage = React.lazy(() =>
-  import("./modules/playbook/components/PlaybookListPage").then((m) => ({ default: m.PlaybookListPage }))
+const PlaybooksConsolePage = React.lazy(() =>
+  import("./modules/playbook/console/PlaybooksConsolePage").then((m) => ({ default: m.PlaybooksConsolePage }))
 );
 const PlaybookCanvasPage = React.lazy(() =>
   import("./modules/playbook/components/PlaybookCanvasPage").then((m) => ({ default: m.PlaybookCanvasPage }))
@@ -266,7 +266,7 @@ export const router = createHashRouter([
         path: 'playbooks',
         element: (
           <Suspense fallback={null}>
-            <PlaybookListPage />
+            <PlaybooksConsolePage />
           </Suspense>
         ),
       },

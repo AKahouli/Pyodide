@@ -7,7 +7,7 @@ import { SemanticTrustPanel } from './SemanticTrustPanel';
 
 vi.mock('../../query/hooks', () => ({
   useSemanticReadiness: () => ({ isLoading: false, data: {
-    score: 60, completeAreas: 3, totalAreas: 5,
+    status: 'needs_review', score: 60, completeAreas: 3, totalAreas: 5,
     areas: [
       { key: 'structure', complete: true, issues: [] },
       { key: 'sources', complete: false, issues: [{ severity: 'blocking', message: 'source issue' }] },

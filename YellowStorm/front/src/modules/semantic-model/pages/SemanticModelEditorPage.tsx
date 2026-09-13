@@ -122,6 +122,13 @@ export function SemanticModelEditorPage() {
   const canValidate = canEdit && isSemanticGraphSaved({ graph, pending, saveStatus });
   const buildJob = useSemanticBuildJob(modelId);
   const buildActive = isBuildActive(buildJob.data);
+  const readinessLabel = readiness.isLoading
+    ? t('readinessState.loading')
+    : readiness.isError
+      ? t('readinessState.unavailable')
+      : readiness.data?.status === 'not_configured'
+        ? t('readinessState.notConfigured')
+        : t('trust.button', { score: readiness.data?.score ?? 0 });
 
   useEffect(() => {
     if (
@@ -326,7 +333,7 @@ export function SemanticModelEditorPage() {
         </div>
         <Button variant="outline" size="sm" onClick={() => setTrustOpen((open) => !open)} aria-expanded={trustOpen}>
           <ShieldCheck className="mr-1.5 h-4 w-4" />
-          {t('trust.button', { score: readiness.data?.score ?? 0 })}
+          {readinessLabel}
         </Button>
         <Tabs
           value={mode}
