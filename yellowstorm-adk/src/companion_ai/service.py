@@ -2383,15 +2383,6 @@ class OrchestratorService:
         # being flipped back to running/completed here.
         if step is not None and step.status == Status.CANCELLED:
             return
-        # The live-dependency gate (nodes._defer_if_deps_unmet) short-circuited
-        # this node — ADK fired it before a runtime-added dependency finished.
-        # Its emission is a no-op: ignore it and leave the step PENDING so a
-        # later rebuild / mail-reply resume runs it for real once the dep is in.
-        if step is not None and step.gated_out:
-            step.gated_out = False
-            logger.info("[worky] 9. step deferred (deps not yet met) session=%s step=%s",
-                        session_id, step_id)
-            return
         # Which step called which tool, with what args — logged here (not at the
         # MCP call site) because that log line carries no step id, and during a
         # parallel wave several steps' calls interleave: log order alone cannot

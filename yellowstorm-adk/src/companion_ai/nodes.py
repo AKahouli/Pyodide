@@ -190,22 +190,22 @@ def _defer_if_deps_unmet(step: Step, unmet):
 
     So re-check `depends_on` off the live plan at model-call time. If any dep
     is still non-terminal (pending/running/blocked), this trigger is premature:
-    short-circuit with an empty response — no model call, no tools, NO email —
-    and flag the step so _apply_event ignores the no-op and leaves it PENDING.
-    The drive loop's rebuild (and the mail-reply resume) re-runs it for real
-    once the dep completes. Deliberately does NOT defer on a TERMINAL-but-failed
-    dep: that step can never become ready, so deferring would hang — let it
-    proceed exactly as before. Placed FIRST in the before_model chain so it
-    wins before _mark_running ever projects the step 'running'."""
+    short-circuit with `LlmResponse(content=None)` — no model call, no tools, NO
+    email, and CRUCIALLY no recorded event of any kind. That last part is
+    load-bearing: a deferral must produce NOTHING terminal, or it enters ADK's
+    replay-barrier sequence at the deferral's (early) position — AHEAD of the
+    await the step depends on — and a later resume deadlocks the barrier waiting
+    for the step to re-emit before its own dependency (seen live: session
+    e37a716, "Replay divergence … 'n_89d37a7ba357@1'"). content=None leaves the
+    step PENDING and unrecorded; the drive-loop rebuild / mail-reply resume
+    re-runs it for real once the dep completes. Verified: content=None yields no
+    event and records none. Deliberately does NOT defer on a TERMINAL-but-failed
+    dep (would hang). Placed FIRST in the before_model chain, before
+    _mark_running, so a deferred step is never even projected 'running'."""
     async def _cb(callback_context, llm_request):
         if unmet(step):
             from google.adk.models.llm_response import LlmResponse
-            step.gated_out = True
-            # Text is never stored (gated_out makes _apply_event ignore this
-            # event) — a non-empty marker only avoids ADK empty-content quirks.
-            return LlmResponse(content=genai_types.Content(
-                role="model", parts=[genai_types.Part(
-                    text="Deferred: a dependency is not yet complete.")]))
+            return LlmResponse(content=None)
         return None
     return _cb
 
