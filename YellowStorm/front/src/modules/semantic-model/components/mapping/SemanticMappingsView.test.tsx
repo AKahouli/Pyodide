@@ -28,7 +28,7 @@ describe('SemanticMappingsView', () => {
     render(<QueryClientProvider client={new QueryClient()}><SemanticMappingsView modelId='model' canEdit /></QueryClientProvider>);
     expect(screen.getByText('CRM Production / customers')).toBeInTheDocument();
     expect(screen.getByText('customers.xlsx / Customers')).toBeInTheDocument();
-    expect(screen.getByText('id = customerId · relationMatching.strategyOption.exact')).toBeInTheDocument();
+     expect(screen.getByText('id = customerId · cardinality.one_to_many · relationMatching.strategyOption.exact')).toBeInTheDocument();
     expect(screen.getByText('mappingHealth.allReady')).toBeInTheDocument();
   });
 

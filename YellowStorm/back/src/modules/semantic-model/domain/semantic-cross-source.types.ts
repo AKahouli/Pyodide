@@ -2,6 +2,7 @@ import { identityKeyOf, type ResolvedEntity, type SourceAssetKind } from './sema
 
 export type RelationMatchStrategy = 'exact' | 'case_insensitive' | 'normalized';
 export type AmbiguityPolicy = 'review' | 'unresolved';
+export type RelationCardinality = 'one_to_one' | 'one_to_many' | 'many_to_one' | 'many_to_many';
 
 export interface RelationResolutionRule {
   id: string;
@@ -10,6 +11,7 @@ export interface RelationResolutionRule {
   targetConceptId: string;
   sourceAttribute: string;
   targetAttribute: string;
+  cardinality: RelationCardinality;
   strategy: RelationMatchStrategy;
   ambiguityPolicy: AmbiguityPolicy;
 }
@@ -192,7 +194,10 @@ export function resolveRelationMatches(
       return {
         sourceEntityId: source.id,
         targetEntityIds: candidates.map((candidate) => candidate.id),
-        status: candidates.length === 1 && !partial ? 'resolved' : candidates.length > 1 ? 'ambiguous' : 'unresolved',
+        status: partial ? 'unresolved' : candidates.length === 0 ? 'unresolved' :
+          (rule.cardinality === 'one_to_one' || rule.cardinality === 'many_to_one') && candidates.length > 1
+            ? 'ambiguous'
+            : 'resolved',
         sourceValue,
         strategy: rule.strategy,
         partial,

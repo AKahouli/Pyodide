@@ -1,5 +1,5 @@
 import { Inject, Injectable } from '@nestjs/common';
-import { and, asc, desc, eq, inArray, isNull, lt, lte, or, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, inArray, isNull, lt, lte, ne, or, sql } from 'drizzle-orm';
 import { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import { alias } from 'drizzle-orm/pg-core';
 import { DRIZZLE_DB } from '@modules/postgres/postgres.constants';
@@ -7,7 +7,7 @@ import * as schema from '@modules/postgres/schema';
 import type { MessageComponent, ResponseCorrectionAttempt } from '../../interfaces/message.interface';
 import type { FrontendLatencyPatch } from '../../interfaces/latency.interface';
 import { newOwnedId } from '../owned-id';
-import type { AiMessageComponentsRecord, MessageCursorInput, MessagePageInput, MessageRecord, MessageStore, ReportMessageRecord } from '../message-store';
+import type { AiMessageComponentsRecord, MessageCursorInput, MessagePageInput, MessageRecord, MessageStore, RecentArtifactMessageRecord, ReportMessageRecord } from '../message-store';
 import { mapPostgresMessage } from './postgres-message-record.mapper';
 import { decodeMessageCursor, encodeMessageCursor, messageFilterHash } from '../../utils/message-cursor';
 import { BadRequestException } from '../../../exceptions';
@@ -56,6 +56,40 @@ export class PostgresMessageStore implements MessageStore {
         .where(eq(schema.conversations.id, input.conversationId));
       return mapPostgresMessage(row);
     });
+  }
+
+  async listRecentArtifactMessages(userId: string, limit: number): Promise<RecentArtifactMessageRecord[]> {
+    const rows = await this.db
+      .select({
+        id: schema.messages.id,
+        conversationId: schema.messages.conversationId,
+        conversationTitle: schema.conversations.title,
+        components: schema.messages.components,
+        updatedAt: schema.messages.updatedAt,
+      })
+      .from(schema.messages)
+      .innerJoin(schema.conversations, eq(schema.conversations.id, schema.messages.conversationId))
+      .where(and(
+        eq(schema.messages.conversationType, 'ai'),
+        eq(schema.messages.isComplete, true),
+        eq(schema.conversations.isArchived, false),
+        eq(schema.conversations.initializationStatus, 'ready'),
+        ne(schema.conversations.runtimePurpose, 'platform_copilot'),
+        or(
+          eq(schema.conversations.createdBy, userId),
+          sql`EXISTS (SELECT 1 FROM conversation.conversation_group_members gm WHERE gm.conversation_id = ${schema.conversations.id} AND gm.user_id = ${userId})`,
+        ),
+        sql`${schema.messages.components} @> '[{"type":"artifact"}]'::jsonb`,
+      ))
+      .orderBy(desc(schema.messages.updatedAt), desc(schema.messages.id))
+      .limit(limit);
+
+    return rows.map((row) => ({
+      ...row,
+      id: row.id.trim(),
+      conversationId: row.conversationId.trim(),
+      components: (row.components ?? []) as MessageComponent[],
+    }));
   }
 
   async createAiPlaceholder(input: Parameters<MessageStore['createAiPlaceholder']>[0]): Promise<MessageRecord> {

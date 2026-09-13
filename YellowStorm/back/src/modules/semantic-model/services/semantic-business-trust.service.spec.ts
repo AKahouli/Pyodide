@@ -77,6 +77,13 @@ describe('SemanticBusinessTrustService', () => {
     expect(database.query.mock.calls[0][1]).toEqual(['model', 'version']);
   });
 
+  it('does not advertise an empty model as ready', async () => {
+    const { service, database } = buildService();
+    database.query.mockResolvedValue({ rows: [{ nodeCount: '0', dataConceptCount: '0', sourcedConceptCount: '0', identityCount: '0', relationCount: '0', ruleCount: '0', unhealthyMappingCount: '0', openReviewCount: '0' }] });
+
+    await expect(service.readiness('user', 'model')).resolves.toMatchObject({ status: 'not_configured', score: 0 });
+  });
+
   it('resolves a review item with revision concurrency and an audit record', async () => {
     const { service, client, models } = buildService();
     client.query.mockResolvedValueOnce({ rows: [{ kind: 'ambiguous_relation', targetId: 'relation', status: 'open', details: { targetEntityIds: ['organization-1'] } }] }).mockResolvedValue({ rows: [] });
@@ -96,5 +103,5 @@ describe('SemanticBusinessTrustService', () => {
       expectedRevision: 7, decision: 'accepted', selectedTargetId: 'not-a-candidate',
     })).rejects.toThrow('candidate relationship targets');
     expect(models.advanceRevision).not.toHaveBeenCalled();
+    });
   });
-});

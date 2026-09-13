@@ -395,6 +395,7 @@ export interface MappingHealthResponse {
 }
 
 export interface SemanticReadiness {
+  status: 'not_configured' | 'needs_review' | 'ready';
   score: number;
   completeAreas: number;
   totalAreas: number;
@@ -455,6 +456,7 @@ export interface SourceMappingPreviewDraft {
 }
 
 export type RelationMatchStrategy = 'exact' | 'case_insensitive' | 'normalized';
+export type RelationCardinality = 'one_to_one' | 'one_to_many' | 'many_to_one' | 'many_to_many';
 
 export interface RelationResolutionRule {
   id: string;
@@ -466,6 +468,7 @@ export interface RelationResolutionRule {
   targetConceptLabel: string;
   sourceAttribute: string;
   targetAttribute: string;
+  cardinality: RelationCardinality;
   strategy: RelationMatchStrategy;
   ambiguityPolicy: 'review' | 'unresolved';
 }

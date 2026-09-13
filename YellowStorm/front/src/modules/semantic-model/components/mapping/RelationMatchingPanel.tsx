@@ -61,7 +61,8 @@ export function RelationMatchingPanel({ modelId, relation }: Readonly<{ modelId:
 
   return <div className='space-y-4'>
     <p className='rounded-xl bg-primary/5 p-3 text-xs text-muted-foreground'>
-      {t('relationMatching.question', { source: source?.label ?? '', target: target?.label ?? '' })}
+       {t('relationMatching.question', { source: source?.label ?? '', target: target?.label ?? '' })}
+       <span className='mt-1 block font-medium text-foreground'>{t(`cardinality.${relation.cardinality}`)}</span>
     </p>
     <div className='space-y-2'>
       <Label>{source?.label}</Label>

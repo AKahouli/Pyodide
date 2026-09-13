@@ -219,7 +219,7 @@ export class SemanticCrossSourceService {
       `SELECT rule.id, rule.relation_id AS "relationId", relation.label AS "relationLabel",
               relation.source_node_type_id AS "sourceConceptId", source.label AS "sourceConceptLabel",
               relation.target_node_type_id AS "targetConceptId", target.label AS "targetConceptLabel",
-              rule.source_attribute AS "sourceAttribute", rule.target_attribute AS "targetAttribute",
+               rule.source_attribute AS "sourceAttribute", rule.target_attribute AS "targetAttribute", relation.cardinality,
               rule.strategy, rule.ambiguity_policy AS "ambiguityPolicy"
        FROM semantic_model.relation_resolution_rules rule
        JOIN semantic_model.relation_types relation ON relation.version_id=$2 AND relation.id=rule.relation_id

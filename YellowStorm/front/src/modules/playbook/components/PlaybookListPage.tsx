@@ -16,7 +16,7 @@ import { useModuleTranslation } from '@/modules/localization';
 
 const DEBOUNCE_MS = 200;
 
-type SortByOption = NonNullable<PlaybookQueryParams['sortBy']>;
+type SortByOption = Exclude<NonNullable<PlaybookQueryParams['sortBy']>, 'activityAt'>;
 type SortOrderOption = NonNullable<PlaybookQueryParams['sortOrder']>;
 type DateFieldOption = NonNullable<PlaybookQueryParams['dateField']>;
 

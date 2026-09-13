@@ -1,5 +1,5 @@
 import { apiClient, API_ENDPOINTS, ApiResponse } from '@/lib/api';
-import type { ActiveStreamSnapshot, Conversation, ConversationSummary, ConversationSettings, Message, ConversationUsageMetrics, ConversationListParams, MessageListParams, PaginatedResponse, SendMessagePayload, CreateReportPayload, CreateSharePayload, ShareResponse, PublicShareViewResponse, BranchConversationPayload, ReliabilityRerunResponse, CreateConversationPayload, PrepareConversationPlaybookHandoffV1, PreparedConversationPlaybookHandoffV1, ReportFrontendLatencyPayload } from './types';
+import type { ActiveStreamSnapshot, Conversation, ConversationSummary, ConversationSettings, Message, ConversationUsageMetrics, ConversationListParams, MessageListParams, PaginatedResponse, SendMessagePayload, CreateReportPayload, CreateSharePayload, ShareResponse, PublicShareViewResponse, BranchConversationPayload, ReliabilityRerunResponse, CreateConversationPayload, PrepareConversationPlaybookHandoffV1, PreparedConversationPlaybookHandoffV1, ReportFrontendLatencyPayload, RecentConversationArtifact } from './types';
 
 // ===== Conversation APIs =====
 
@@ -61,6 +61,11 @@ export async function createConversation(data?: CreateConversationPayload): Prom
 
 export async function createGovernedConversation(scopeId: string, requestId: string): Promise<Conversation> {
   const response = await apiClient.post<ApiResponse<Conversation>>(API_ENDPOINTS.conversations.createGoverned, { scopeId, requestId });
+  return response.data.data;
+}
+
+export async function fetchRecentConversationArtifacts(limit = 6): Promise<RecentConversationArtifact[]> {
+  const response = await apiClient.get<ApiResponse<RecentConversationArtifact[]>>(API_ENDPOINTS.conversations.recentArtifacts, { params: { limit } });
   return response.data.data;
 }
 

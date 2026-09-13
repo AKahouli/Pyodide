@@ -69,7 +69,7 @@ describe('cross-source resolution domain', () => {
       entity('organization', 'organization-concept', { id: 'C001' }),
     ], {
       id: 'rule', relationId: 'relation', sourceConceptId: 'contract-concept', targetConceptId: 'organization-concept',
-      sourceAttribute: 'customerId', targetAttribute: 'id', strategy: 'exact', ambiguityPolicy: 'review',
+       sourceAttribute: 'customerId', targetAttribute: 'id', cardinality: 'many_to_one', strategy: 'exact', ambiguityPolicy: 'review',
     });
     expect(matches).toEqual([expect.objectContaining({ sourceEntityId: 'contract', targetEntityIds: ['organization'], status: 'resolved' })]);
   });
@@ -81,7 +81,7 @@ describe('cross-source resolution domain', () => {
       entity('sony-france', 'organization-concept', { name: 'SONY' }),
     ], {
       id: 'rule', relationId: 'relation', sourceConceptId: 'contract-concept', targetConceptId: 'organization-concept',
-      sourceAttribute: 'counterparty', targetAttribute: 'name', strategy: 'case_insensitive', ambiguityPolicy: 'review',
+       sourceAttribute: 'counterparty', targetAttribute: 'name', cardinality: 'many_to_one', strategy: 'case_insensitive', ambiguityPolicy: 'review',
     });
     expect(matches[0]).toMatchObject({ status: 'ambiguous', targetEntityIds: ['sony-europe', 'sony-france'] });
   });
@@ -92,10 +92,26 @@ describe('cross-source resolution domain', () => {
       entity('organization', 'organization-concept', { id: 'C001' }),
     ], {
       id: 'rule', relationId: 'relation', sourceConceptId: 'contract-concept', targetConceptId: 'organization-concept',
-      sourceAttribute: 'customerId', targetAttribute: 'id', strategy: 'exact', ambiguityPolicy: 'review',
+       sourceAttribute: 'customerId', targetAttribute: 'id', cardinality: 'many_to_one', strategy: 'exact', ambiguityPolicy: 'review',
     }, new Set(['organization-concept']));
 
     expect(matches[0]).toMatchObject({ status: 'unresolved', partial: true, targetEntityIds: ['organization'] });
+  });
+
+  it('resolves all valid targets for a one-to-many relationship', () => {
+    const matches = resolveRelationMatches([
+      entity('contract', 'contract-concept', { id: 'C-001' }),
+      entity('amendment-1', 'amendment-concept', { contractId: 'C-001', number: 1 }),
+      entity('amendment-2', 'amendment-concept', { contractId: 'C-001', number: 2 }),
+      entity('amendment-3', 'amendment-concept', { contractId: 'C-001', number: 3 }),
+      entity('amendment-4', 'amendment-concept', { contractId: 'C-001', number: 4 }),
+      entity('amendment-5', 'amendment-concept', { contractId: 'C-001', number: 5 }),
+    ], {
+      id: 'rule', relationId: 'relation', sourceConceptId: 'contract-concept', targetConceptId: 'amendment-concept',
+      sourceAttribute: 'id', targetAttribute: 'contractId', cardinality: 'one_to_many', strategy: 'exact', ambiguityPolicy: 'review',
+    });
+
+    expect(matches[0]).toMatchObject({ status: 'resolved', targetEntityIds: ['amendment-1', 'amendment-2', 'amendment-3', 'amendment-4', 'amendment-5'] });
   });
 
   it('marks a concept incomplete when complete sources overflow the displayed sample together', () => {
@@ -194,7 +210,7 @@ describe('SemanticCrossSourceService boundaries', () => {
         id: 'rule', relationId: 'relation', relationLabel: 'Customer',
         sourceConceptId: 'contract-concept', sourceConceptLabel: 'Contract',
         targetConceptId: 'organization-concept', targetConceptLabel: 'Organization',
-        sourceAttribute: 'customerId', targetAttribute: 'id', strategy: 'exact', ambiguityPolicy: 'review',
+         sourceAttribute: 'customerId', targetAttribute: 'id', cardinality: 'many_to_one', strategy: 'exact', ambiguityPolicy: 'review',
       }] });
       if (sql.includes('source_resolution_policies')) return Promise.resolve({ rows: [] });
       if (sql.includes('node_types node')) return Promise.resolve({ rows: [
@@ -227,7 +243,7 @@ describe('SemanticCrossSourceService boundaries', () => {
         id: 'rule', relationId: 'relation', relationLabel: 'Customer',
         sourceConceptId: 'contract-concept', sourceConceptLabel: 'Contract',
         targetConceptId: 'organization-concept', targetConceptLabel: 'Organization',
-        sourceAttribute: 'customer', targetAttribute: 'name', strategy: 'case_insensitive', ambiguityPolicy: 'review',
+         sourceAttribute: 'customer', targetAttribute: 'name', cardinality: 'many_to_one', strategy: 'case_insensitive', ambiguityPolicy: 'review',
       }] });
       if (sql.includes('source_resolution_policies')) return Promise.resolve({ rows: [] });
       if (sql.includes('node_types node')) return Promise.resolve({ rows: [
@@ -256,7 +272,7 @@ describe('SemanticCrossSourceService boundaries', () => {
       if (sql.includes('relation_resolution_rules')) return Promise.resolve({ rows: [{
         id: 'rule', relationId: 'relation', relationLabel: 'Customer', sourceConceptId: 'contract-concept',
         sourceConceptLabel: 'Contract', targetConceptId: 'organization-concept', targetConceptLabel: 'Organization',
-        sourceAttribute: 'customer', targetAttribute: 'name', strategy: 'case_insensitive', ambiguityPolicy: 'review',
+         sourceAttribute: 'customer', targetAttribute: 'name', cardinality: 'many_to_one', strategy: 'case_insensitive', ambiguityPolicy: 'review',
       }] });
       if (sql.includes('source_resolution_policies')) return Promise.resolve({ rows: [] });
       if (sql.includes('node_types node')) return Promise.resolve({ rows: [

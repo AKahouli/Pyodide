@@ -9,6 +9,12 @@ export interface AiMessageComponentsRecord {
   components: MessageComponent[];
 }
 
+export interface RecentArtifactMessageRecord extends AiMessageComponentsRecord {
+  conversationId: string;
+  conversationTitle: string;
+  updatedAt: Date;
+}
+
 export interface ReportMessageRecord {
   id: string;
   conversationType: 'user' | 'ai';
@@ -145,5 +151,6 @@ export interface MessageStore {
   findBranchesByQuestion(questionMessageId: string): Promise<MessageRecord[]>;
   findBranchesByQuestions(questionMessageIds: string[]): Promise<Map<string, MessageRecord[]>>;
   findAiComponents(conversationId: string, messageId: string): Promise<AiMessageComponentsRecord | null>;
+  listRecentArtifactMessages(userId: string, limit: number): Promise<RecentArtifactMessageRecord[]>;
   findReportMessageById(messageId: string): Promise<ReportMessageRecord | null>;
 }

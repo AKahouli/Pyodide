@@ -139,15 +139,16 @@ export class SemanticBusinessTrustService {
     );
     const counts = result.rows[0];
     const number = (value: string) => Number(value ?? 0);
+    const configured = number(counts.dataConceptCount) > 0;
     const areas = [
-      this.area('structure', number(counts.nodeCount) > 0, 'Add at least one business concept.'),
-      this.area('sources', number(counts.dataConceptCount) <= number(counts.sourcedConceptCount) && !number(counts.unhealthyMappingCount), 'Map every data-bearing concept to an available source.'),
-      this.area('identity', number(counts.dataConceptCount) <= number(counts.identityCount), 'Define an identity rule for every data-bearing concept.'),
-      this.area('relationships', number(counts.relationCount) <= number(counts.ruleCount), 'Configure matching for every relationship.'),
-      this.area('quality', !number(counts.openReviewCount) && !number(counts.unhealthyMappingCount), 'Resolve open reviews and source issues.'),
+      this.area('structure', configured, 'Add at least one business concept.'),
+      this.area('sources', configured && number(counts.dataConceptCount) <= number(counts.sourcedConceptCount) && !number(counts.unhealthyMappingCount), 'Map every data-bearing concept to an available source.'),
+      this.area('identity', configured && number(counts.dataConceptCount) <= number(counts.identityCount), 'Define an identity rule for every data-bearing concept.'),
+      this.area('relationships', configured && number(counts.relationCount) <= number(counts.ruleCount), 'Configure matching for every relationship.'),
+      this.area('quality', configured && !number(counts.openReviewCount) && !number(counts.unhealthyMappingCount), 'Resolve open reviews and source issues.'),
     ];
     const completeAreas = areas.filter((area) => area.complete).length;
-    return { score: completeAreas * 20, completeAreas, totalAreas: areas.length, areas };
+    return { status: configured ? completeAreas === areas.length ? 'ready' : 'needs_review' : 'not_configured', score: completeAreas * 20, completeAreas, totalAreas: areas.length, areas };
   }
 
   private area(key: string, complete: boolean, message: string) {

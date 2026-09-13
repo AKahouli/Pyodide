@@ -217,6 +217,7 @@ export const API_ENDPOINTS = {
     list: '/conversations',
     create: '/conversations',
     createGoverned: '/conversations/governed',
+    recentArtifacts: '/conversations/artifacts/recent',
     byId: (id: string) => `/conversations/${id}`,
     branch: (id: string) => `/conversations/${id}/branches`,
     playbookHandoffs: (id: string) => `/conversations/${id}/playbook-handoffs`,
@@ -602,6 +603,7 @@ export const API_ENDPOINTS = {
     repeatabilityTask: (id: string, taskId: string) => `/playbooks/${id}/repeatability/tasks/${taskId}`,
     bulkDelete: '/playbooks/bulk-delete',
     activeExecutions: '/playbooks/active-executions',
+    recentArtifacts: '/playbooks/recent-artifacts',
   },
   connectedApps: {
     list: '/connected-apps',

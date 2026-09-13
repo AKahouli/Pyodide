@@ -567,6 +567,18 @@ export interface ArtifactActivityData extends Record<string, unknown> {
   availability: 'pending' | 'ready' | 'failed';
 }
 
+export interface RecentConversationArtifact {
+  source: 'conversation';
+  artifactId: string;
+  filename: string;
+  artifactKind?: string;
+  mimeType?: string;
+  conversationId: string;
+  conversationTitle: string;
+  messageId: string;
+  generatedAt: string;
+}
+
 export interface MessageComponent {
   id?: string;
   type: 'text' | 'code' | 'agentActivity' | 'plan' | 'queue' | 'checkpoint' | 'chart' | 'task' | 'error' | 'sources' | 'sandbox' | 'webPreview' | 'artifact' | 'citation' | 'toolActivity' | 'choice';

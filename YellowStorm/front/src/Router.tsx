@@ -23,6 +23,9 @@ const PlatformOverviewPage = React.lazy(() =>
 const ConversationPage = React.lazy(() =>
   import('./modules/conversation/ConversationPage').then((m) => ({ default: m.ConversationPage }))
 );
+const NewConversationPage = React.lazy(() =>
+  import('./modules/conversation/NewConversationPage').then((m) => ({ default: m.NewConversationPage }))
+);
 const ConversationV2Page = React.lazy(() =>
   import('./modules/conversation-v2/ConversationV2Page')
 );
@@ -226,6 +229,10 @@ export const router = createHashRouter([
             <PlatformOverviewPage />
           </Suspense>
         ),
+      },
+      {
+        path: 'conversation',
+        element: lazyPage(<NewConversationPage />),
       },
       {
         path: 'conversation/:id',

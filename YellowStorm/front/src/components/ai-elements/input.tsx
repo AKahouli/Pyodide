@@ -579,8 +579,8 @@ const Input = memo(function Input({ onSubmit: externalSubmit, draftKey, onStop, 
               : <InputContextMenu onMentionAgent={handleContextMentionAgent} onCreateAgent={() => setShowCreateAgentDialog(true)}><PromptInputTextarea ref={textareaRef} disabled={disabled} placeholder={placeholder} onInput={handleTextareaInput} /></InputContextMenu>}
           </PromptInputBody>
           {belowTextarea}
-          <PromptInputFooter>
-            <PromptInputTools>
+          <PromptInputFooter className='flex-wrap'>
+            <PromptInputTools className='min-w-0 flex-wrap'>
               <PromptInputActionMenu>
                 <PromptInputActionMenuTrigger />
                 <PromptInputActionMenuContent>
@@ -645,7 +645,7 @@ const Input = memo(function Input({ onSubmit: externalSubmit, draftKey, onStop, 
                </ModelSelector>}
               {extraTools}
             </PromptInputTools>
-            <div className='flex flex-row w-fit gap-3 px-1'>
+            <div className='ml-auto flex w-fit shrink-0 flex-row gap-3 px-1'>
               <Usage />
 
               <PromptInputSubmit status={derivedStatus} disabled={disabled || submitDisabled} onStop={onStop} />

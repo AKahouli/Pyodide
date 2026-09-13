@@ -1,7 +1,7 @@
 import { ConversationArtifactService } from './conversation-artifact.service';
 
 describe('ConversationArtifactService', () => {
-  const messageService = { getMessageDocument: jest.fn() };
+  const messageService = { getMessageDocument: jest.fn(), listRecentArtifactMessages: jest.fn() };
   const documentService = { isAvailable: jest.fn(() => true), generateSasUrl: jest.fn() };
   const conversationService = {
     getConversationDocument: jest.fn(),
@@ -16,6 +16,17 @@ describe('ConversationArtifactService', () => {
   );
 
   beforeEach(() => jest.clearAllMocks());
+
+  it('projects recent ready artifacts without storage paths', async () => {
+    messageService.listRecentArtifactMessages.mockResolvedValue([{
+      id: 'message-1', conversationId: 'conversation-1', conversationTitle: 'Quarterly review', updatedAt: new Date('2026-09-13T10:00:00Z'),
+      components: [{ type: 'artifact', data: { artifactId: 'artifact-1', filename: 'review.pdf', artifactKind: 'document', mimeType: 'application/pdf', storagePath: 'private/path' } }],
+    }]);
+
+    const result = await service.listRecent('user-1', 6);
+    expect(result).toEqual([expect.objectContaining({ artifactId: 'artifact-1', filename: 'review.pdf', conversationId: 'conversation-1' })]);
+    expect(JSON.stringify(result)).not.toContain('private/path');
+  });
 
   it('resolves a persisted artifact by scoped opaque identity', async () => {
     messageService.getMessageDocument.mockResolvedValue({

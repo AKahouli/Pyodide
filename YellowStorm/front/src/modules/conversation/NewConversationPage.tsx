@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
+import { ShieldCheck } from 'lucide-react';
 import { StarsBackground } from '@/modules/conversation/effects/stars-background';
 import Input from '@/components/ai-elements/input';
 import { Shimmer } from '@/components/ai-elements/shimmer';
@@ -19,10 +20,13 @@ import { useAllowedUploadExtensions } from '@/modules/workspace/hooks/useAllowed
 import { useModuleTranslation } from '@/modules/localization';
 import { SelectedConnectorRepo } from './components/SelectedConnectorRepo';
 import { ComposerSuggestionChips } from './components/ComposerSuggestionChips';
-import { PlaybooksCarousel } from '@/modules/playbook/components/playbook-swiper';
-import { GovernedScopesCarousel } from '@/modules/governance/components/consumer/GovernedScopesCarousel';
 import { WebSearchConnectorToggle } from './components/WebSearchConnectorToggle';
 import { useAuth } from '@/modules/auth/useAuth';
+import { useAvailableGovernedScopes, type AvailableGovernedScope } from '@/modules/governance';
+import { useFeatureVisibilityStore } from '@/modules/admin/featureVisibilityStore';
+import { createGovernedConversation } from './api';
+import type { Conversation } from './types';
+import { ConversationHomePanels } from './components/ConversationHomePanels';
 
 export function NewConversationPage() {
   const { accept } = useAllowedUploadExtensions();
@@ -37,10 +41,19 @@ export function NewConversationPage() {
   const navigate = useNavigate();
   const [isSending, setIsSending] = useState(false);
   const [silentConvId, setSilentConvId] = useState<string | null>(null);
+  const [silentConversation, setSilentConversation] = useState<Conversation | null>(null);
+  const [selectedScopeId, setSelectedScopeId] = useState('');
+  const [creationStarted, setCreationStarted] = useState(false);
+  const conversationScopeRef = useRef<AvailableGovernedScope | null>();
+  const governedCreationRequestId = useRef(crypto.randomUUID());
   const { t } = useModuleTranslation('conversation');
   const inputDisabled = useInputDisabled();
   const { status: usageStatus } = useUsage();
   const { user } = useAuth();
+  const governedScopesEnabled = useFeatureVisibilityStore((state) => state.visibility.governedScopeCarousel);
+  const { data: governedScopes = [], isError: governedScopesError, refetch: refetchGovernedScopes } = useAvailableGovernedScopes(governedScopesEnabled);
+  const selectedScope = governedScopes.find((scope) => scope.scopeId === selectedScopeId);
+  const presentationScope = creationStarted ? conversationScopeRef.current : selectedScope;
   const isLimitExceeded = usageStatus?.isLimitExceeded ?? false;
 
   // Starting a brand-new conversation: no conversation is active yet, so clear
@@ -65,12 +78,23 @@ export function NewConversationPage() {
   }, [isLimitExceeded, usageStatus?.resetsAt, t]);
 
   const createConversationForUpload = useCallback(async () => {
+    setCreationStarted(true);
+    const conversationScope = conversationScopeRef.current === undefined
+      ? (conversationScopeRef.current = selectedScope ?? null)
+      : conversationScopeRef.current;
+    if (conversationScope) {
+      const conv = await createGovernedConversation(conversationScope.scopeId, governedCreationRequestId.current);
+      setSilentConvId(conv.id);
+      setSilentConversation(conv);
+      return conv;
+    }
     // Create conversation with currently selected workspaces if any
     const data = selectedWorkspaceIds?.length ? { workspaces: selectedWorkspaceIds } : undefined;
     const conv = await createConversation(data);
     setSilentConvId(conv.id);
+    setSilentConversation(conv);
     return conv;
-  }, [createConversation, selectedWorkspaceIds]);
+  }, [createConversation, selectedScope, selectedWorkspaceIds]);
 
   const {
     files: uploadFiles,
@@ -117,29 +141,34 @@ export function NewConversationPage() {
   ) => {
     if (!message.text?.trim() && !completedFileIds.length) return;
     setIsSending(true);
+    setCreationStarted(true);
 
     try {
+      const conversationScope = conversationScopeRef.current === undefined
+        ? (conversationScopeRef.current = selectedScope ?? null)
+        : conversationScopeRef.current;
       // Use existing conversation (from file upload) or create new one
       let convId = resolvedConvId || silentConvId;
-      let conversation = convId
+      let conversation = silentConversation ?? (convId
         ? useConversationStore.getState().conversations.find((candidate) => candidate.id === convId)
-        : undefined;
+        : undefined);
 
       if (!convId) {
-        // Create new conversation with workspaces if provided
-        conversation = await createConversation(workspaceIds?.length ? { workspaces: workspaceIds } : undefined);
+        conversation = conversationScope
+          ? await createGovernedConversation(conversationScope.scopeId, governedCreationRequestId.current)
+          : await createConversation(workspaceIds?.length ? { workspaces: workspaceIds } : undefined);
         convId = conversation.id;
-      } else {
+      } else if (!conversationScope) {
         // Uploads can create the conversation before workspace selection is final.
         await updateConversation(convId, { workspaces: workspaceIds ?? [] });
         conversation = useConversationStore.getState().conversations.find((candidate) => candidate.id === convId);
       }
 
-      claimCurrentConversation(convId, conversation, {
-        modelId: modelId || undefined,
-        semanticModelId: selectedSemanticModelId || undefined,
-        workspaceIds: workspaceIds ?? [],
-      });
+      claimCurrentConversation(convId, conversation, conversationScope ? undefined : {
+          modelId: modelId || undefined,
+          semanticModelId: selectedSemanticModelId || undefined,
+          workspaceIds: workspaceIds ?? [],
+        });
       navigate(`/conversation/${convId}`);
 
       // Build optimistic attachedFiles
@@ -157,16 +186,16 @@ export function NewConversationPage() {
         content: message.text || '',
         attachedFileIds: completedFileIds.length ? completedFileIds : undefined,
         attachedFiles: attachedFiles.length ? attachedFiles : undefined,
-        webConnectorAccessEnabled,
-        modelId: modelId || undefined,
-        semanticModelId: selectedSemanticModelId || undefined,
-        agentIds: agentIds?.length ? agentIds : undefined,
-        teamIds: teamIds?.length ? teamIds : undefined,
-        ...(!agentIds?.length && !memberIds?.length && !teamIds?.length && effectiveReasoningEffort
+        webConnectorAccessEnabled: conversationScope ? undefined : webConnectorAccessEnabled,
+        modelId: conversationScope ? undefined : (modelId || undefined),
+        semanticModelId: conversationScope ? undefined : (selectedSemanticModelId || undefined),
+        agentIds: !conversationScope && agentIds?.length ? agentIds : undefined,
+        teamIds: !conversationScope && teamIds?.length ? teamIds : undefined,
+        ...(!conversationScope && !agentIds?.length && !memberIds?.length && !teamIds?.length && effectiveReasoningEffort
           ? { reasoningEffort: effectiveReasoningEffort }
           : {}),
-        connectorRepo: connectorRepo ?? useConversationStore.getState().selectedConnectorRepo ?? undefined,
-        skillIds: useConversationStore.getState().selectedSkillIds.length
+        connectorRepo: conversationScope ? undefined : (connectorRepo ?? useConversationStore.getState().selectedConnectorRepo ?? undefined),
+        skillIds: !conversationScope && useConversationStore.getState().selectedSkillIds.length
           ? useConversationStore.getState().selectedSkillIds
           : undefined,
       });
@@ -180,44 +209,77 @@ export function NewConversationPage() {
     }
   };
 
+  const greetingKey = new Date().getHours() < 12
+    ? 'home.greeting.morning'
+    : new Date().getHours() < 18
+      ? 'home.greeting.afternoon'
+      : 'home.greeting.evening';
+  const displayName = user?.profile.firstName || user?.email.split('@')[0] || '';
+
+  const handleScopeChange = (scopeId: string) => {
+    setSelectedScopeId(scopeId);
+    governedCreationRequestId.current = crypto.randomUUID();
+  };
+
   return (
     <>
       <StarsBackground />
-      <div className='flex min-h-0 w-full flex-1 flex-col items-center justify-center-safe overflow-y-auto py-8'>
-        <div className='mb-8 text-center'>
-          <Shimmer as='h1' className='font-bold text-4xl pb-4' duration={5} spread={7}>
-            {t('newConversation.heroTitle')}
-          </Shimmer>
+      <div className='flex min-h-0 w-full flex-1 flex-col items-center overflow-y-auto px-4 py-7'>
+        <div className='relative z-10 w-full max-w-7xl space-y-7'>
+          <header className='flex flex-col justify-between gap-4 sm:flex-row sm:items-end'>
+            <div>
+              <Shimmer as='h1' className='pb-1 text-2xl font-bold' duration={5} spread={7}>
+                {t(greetingKey, { name: displayName })}
+              </Shimmer>
+              <p className='text-sm text-muted-foreground'>{t('home.subtitle')}</p>
+            </div>
+            {governedScopesEnabled && governedScopesError && <div role='alert' className='flex items-center gap-2 text-sm text-destructive'>
+              <span>{t('home.scope.loadError')}</span>
+              <button type='button' className='font-medium underline' onClick={() => void refetchGovernedScopes()}>{t('home.retry')}</button>
+            </div>}
+            {governedScopesEnabled && governedScopes.length > 0 && <label className='flex min-w-64 flex-col gap-1 text-xs font-medium text-muted-foreground'>
+              {t('home.scope.label')}
+              <select value={selectedScopeId} disabled={creationStarted} onChange={(event) => handleScopeChange(event.target.value)} className='h-10 rounded-xl border bg-background px-3 text-sm text-foreground shadow-sm outline-none focus-visible:ring-2 focus-visible:ring-ring'>
+                <option value=''>{t('home.scope.standard')}</option>
+                {governedScopes.map((scope) => <option key={scope.scopeId} value={scope.scopeId}>{scope.name}</option>)}
+              </select>
+            </label>}
+          </header>
+
+          <div className='mx-auto w-full max-w-4xl space-y-3'>
+            {presentationScope && <div className='flex items-center gap-3 rounded-xl border border-primary/30 bg-primary/5 px-4 py-3 text-sm'>
+              <ShieldCheck className='size-4 shrink-0 text-primary' />
+              <div className='min-w-0 flex-1'>
+                <p className='truncate font-medium'>{t('home.scope.governedBy', { name: presentationScope.name })}</p>
+                <p className='text-xs text-muted-foreground'>{t('home.scope.description', { version: presentationScope.revisionNumber })}</p>
+              </div>
+              {!creationStarted && <button type='button' className='shrink-0 text-xs font-medium text-primary hover:underline' onClick={() => handleScopeChange('')}>{t('home.scope.switchStandard')}</button>}
+            </div>}
+            <Input
+              draftKey={`${user?.id ?? 'anonymous'}:conversation:new`}
+              onSubmit={handleSubmit}
+              status={isSending ? 'submitted' : 'ready'}
+              disabled={isSending || inputDisabled || isLimitExceeded}
+              submitDisabled={isUploading || isSending}
+              placeholder={limitPlaceholder}
+              onFilesAdded={handleFilesAdded}
+              onFileRemoved={handleFileRemoved}
+              uploadingFiles={uploadFiles}
+              accept={accept}
+              maxFiles={5}
+              showWorkspaceSelect={!presentationScope}
+              preserveWorkspaceSelectionOnSubmit
+              showModelSelector={!presentationScope}
+              governedMode={Boolean(presentationScope)}
+              enableTeamMentions={!presentationScope}
+              extraTools={presentationScope ? <ReliabilityCheckToggle /> : <><ReasoningEffortSelect /><WebSearchConnectorToggle /><ReliabilityCheckToggle /></>}
+              belowTextarea={<ComposerSuggestionChips fetchDisabled={inputDisabled || isLimitExceeded || isUploading || isSending} />}
+            />
+            {!presentationScope && <SelectedConnectorRepo />}
+          </div>
+
+          <ConversationHomePanels />
         </div>
-        <div className='w-full max-w-3xl px-4'>
-          <Input
-            draftKey={`${user?.id ?? 'anonymous'}:conversation:new`}
-            onSubmit={handleSubmit}
-            status={isSending ? 'submitted' : 'ready'}
-            disabled={isSending || inputDisabled || isLimitExceeded}
-            submitDisabled={isUploading || isSending}
-            placeholder={limitPlaceholder}
-            onFilesAdded={handleFilesAdded}
-            onFileRemoved={handleFileRemoved}
-            uploadingFiles={uploadFiles}
-            accept={accept}
-            maxFiles={5}
-            showWorkspaceSelect={true}
-            preserveWorkspaceSelectionOnSubmit
-            showModelSelector
-            extraTools={<><ReasoningEffortSelect /><WebSearchConnectorToggle /><ReliabilityCheckToggle /></>}
-            belowTextarea={
-              <ComposerSuggestionChips
-                fetchDisabled={inputDisabled || isLimitExceeded || isUploading || isSending}
-              />
-            }
-          />
-          <SelectedConnectorRepo />
-        </div>
-        <div className='w-full max-w-7xl px-4'>
-          <PlaybooksCarousel />
-        </div>
-        <div className='mt-6 w-full max-w-7xl px-4'><GovernedScopesCarousel /></div>
       </div>
     </>
   );

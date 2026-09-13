@@ -8,6 +8,8 @@ import {
   Param,
   Query,
   UseGuards,
+  DefaultValuePipe,
+  ParseIntPipe,
 } from '@nestjs/common';
 import { ApiTags, ApiBearerAuth } from '@nestjs/swagger';
 import { ConversationService } from '../services/conversation.service';
@@ -23,6 +25,7 @@ import { StreamService } from '../services/stream.service';
 import { PreparePlaybookHandoffDto } from '../dto/prepare-playbook-handoff.dto';
 import { ConversationPlaybookHandoffService } from '../services/conversation-playbook-handoff.service';
 import { RateLimit } from '../../rate-limiter';
+import { ConversationArtifactService } from '../services/conversation-artifact.service';
 
 @ApiTags('Conversations')
 @Controller('conversations')
@@ -33,6 +36,7 @@ export class ConversationController {
     private readonly conversationBranchService: ConversationBranchService,
     private readonly streamService: StreamService,
     private readonly playbookHandoffService: ConversationPlaybookHandoffService,
+    private readonly artifactService: ConversationArtifactService,
   ) {}
 
   @Post()
@@ -49,6 +53,14 @@ export class ConversationController {
     @Query() query: ConversationQueryDto,
   ) {
     return this.conversationService.findAllByUser(user._id.toString(), query);
+  }
+
+  @Get('artifacts/recent')
+  async recentArtifacts(
+    @CurrentUser() user: { _id: string },
+    @Query('limit', new DefaultValuePipe(6), ParseIntPipe) limit: number,
+  ) {
+    return this.artifactService.listRecent(user._id.toString(), Math.min(Math.max(limit, 1), 20));
   }
 
   @Get(':id')

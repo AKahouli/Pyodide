@@ -111,6 +111,10 @@ export class MessageService {
     return response;
   }
 
+  listRecentArtifactMessages(userId: string, limit: number) {
+    return this.messageStore.listRecentArtifactMessages(userId, limit);
+  }
+
   async recordConversationUsage(conversationId: string, messageId: string, attribution: ConversationUsageAttribution): Promise<void> {
     const conversationUsage = await this.persistConversationUsage(conversationId, messageId, attribution);
     if (!conversationUsage) return;

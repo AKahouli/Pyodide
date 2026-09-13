@@ -41,7 +41,7 @@ export function SemanticMappingsView({ modelId, canEdit, onRepairMapping }: Read
       const rule = rules.data?.find((candidate) => candidate.relationId === relation.id);
       const source = graph?.nodes.find((node) => node.id === relation.sourceNodeTypeId);
       const target = graph?.nodes.find((node) => node.id === relation.targetNodeTypeId);
-      return <div key={relation.id} className='flex flex-wrap items-center gap-2 rounded-xl border p-3 text-sm'><span className='font-medium'>{source?.label}</span><ArrowRight className='h-4 w-4 text-muted-foreground' /><span className='font-medium'>{target?.label}</span><span className='ml-auto text-xs text-muted-foreground'>{rule ? `${rule.sourceAttribute} = ${rule.targetAttribute} · ${t(`relationMatching.strategyOption.${rule.strategy}`)}` : t('mappingsView.notConfigured')}</span></div>;
+       return <div key={relation.id} className='flex flex-wrap items-center gap-2 rounded-xl border p-3 text-sm'><span className='font-medium'>{source?.label}</span><ArrowRight className='h-4 w-4 text-muted-foreground' /><span className='font-medium'>{target?.label}</span><span className='ml-auto text-xs text-muted-foreground'>{rule ? `${rule.sourceAttribute} = ${rule.targetAttribute} · ${t(`cardinality.${relation.cardinality}`)} · ${t(`relationMatching.strategyOption.${rule.strategy}`)}` : t('mappingsView.notConfigured')}</span></div>;
     })}</div></section>
   </div></div>;
 }
