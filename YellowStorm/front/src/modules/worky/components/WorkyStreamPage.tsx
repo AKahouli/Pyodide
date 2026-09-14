@@ -306,7 +306,7 @@ function WorkyStreamBody({ streamId }: { streamId: string }): JSX.Element {
   const voice = useWorkyVoiceSession(streamId, voiceOpen && !isMobile);
   const [voiceSettingsOpen, setVoiceSettingsOpen] = useState(false);
   const [promptOpen, setPromptOpen] = useState(false);
-  const executiveModel = deriveExecutiveView(boardQuery.data ?? EMPTY_BOARD, streamQuery.data?.status);
+  const executiveModel = deriveExecutiveView(boardQuery.data ?? EMPTY_BOARD, streamQuery.data?.status, messagesQuery.data ?? []);
   // Close the slide-over automatically on stream switch so the next
   // stream doesn't inherit the open state of the previous one.
   useEffect(() => {

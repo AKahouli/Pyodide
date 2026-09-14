@@ -751,6 +751,7 @@ export const API_ENDPOINTS = {
     taskReview: (id: string) => `/worky/tasks/${id}/review`,
     taskResults: (id: string) => `/worky/tasks/${id}/results`,
     taskResultContent: (id: string) => `/worky/tasks/${id}/result-content`,
+    taskArtifactUrl: (id: string, artifactId: string) => `/worky/tasks/${id}/artifacts/${artifactId}/url`,
     taskHumanUpdate: (id: string) => `/worky/tasks/${id}/human-update`,
     streamBudget: (id: string) => `/worky/streams/${id}/budget`,
     executionReport: (id: string) => `/worky/streams/${id}/execution-report`,

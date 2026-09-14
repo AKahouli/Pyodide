@@ -209,6 +209,17 @@ export async function getTaskResultContent(taskId: string): Promise<WorkyTaskRes
   return unwrap(response);
 }
 
+/** Signed view/download URLs for a generated task artifact (10-min SAS). */
+export async function getTaskArtifactUrl(
+  taskId: string,
+  artifactId: string,
+): Promise<{ viewUrl: string; downloadUrl: string }> {
+  const response = await apiClient.get<ApiResponse<{ viewUrl: string; downloadUrl: string }>>(
+    API_ENDPOINTS.worky.taskArtifactUrl(taskId, artifactId),
+  );
+  return unwrap(response);
+}
+
 export async function getGovernancePolicy(workspaceId: string): Promise<WorkyGovernancePolicy> {
   const response = await apiClient.get<ApiResponse<WorkyGovernancePolicy>>(
     API_ENDPOINTS.worky.governancePolicy,

@@ -1,27 +1,93 @@
+import { useState } from 'react';
+import { Download, Eye, FileText, Loader2 } from 'lucide-react';
 import { useModuleTranslation } from '@/modules/localization';
+import { showError } from '@/lib/notifications';
 import { AIMessageContent } from '@/components/ai-elements/ai-message-content';
 import type { MessageContentPart } from '@/components/ai-elements/ai-message-content';
 import { MessageProvider } from '@/components/ai-elements/message-context';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { openFileViewerFromUrlLoader, getMimeTypeFromFilename } from '@/modules/file-viewer';
 import { mapComponentsToContentParts } from '@/modules/conversation/utils';
+import { getTaskArtifactUrl } from '../api';
 import { useTaskResultContent, useTaskResults } from '../query/hooks';
-import type { WorkyTask, WorkyTaskResult, WorkyTaskResultContent } from '../types';
+import type { WorkyArtifact, WorkyTask, WorkyTaskResult, WorkyTaskResultContent } from '../types';
 
 interface TaskDetailDrawerProps {
   task: WorkyTask | null;
   onClose: () => void;
 }
 
-/** Flattens step result-content into renderable parts: components first, then
- *  artifacts as downloadable `artifact` parts (rendered by ArtifactPartRenderer). */
+/** Renderable component parts from a step's result-content. Artifacts are NOT
+ *  included here — the generic 'artifact' part is a static card; the drawer
+ *  renders artifacts as clickable cards (TaskArtifactCard) that open the file
+ *  viewer, the same way the conversation does. */
 export function buildResultParts(content: WorkyTaskResultContent): MessageContentPart[] {
-  const componentParts = mapComponentsToContentParts(content.components);
-  const artifactParts: MessageContentPart[] = content.artifacts.map((a) => ({
-    type: 'artifact',
-    filePath: a.filePath,
-    filename: a.filename,
-  }));
-  return [...componentParts, ...artifactParts];
+  return mapComponentsToContentParts(content.components);
+}
+
+/** A generated artifact row — identical to the conversation's ArtifactRow: View
+ *  opens the file in the viewer via a short-lived signed URL, Download saves it,
+ *  both with a loading spinner and an error toast on failure. */
+function TaskArtifactCard({ taskId, artifact }: { taskId: string; artifact: WorkyArtifact }): JSX.Element {
+  const { t } = useModuleTranslation('conversation');
+  const [loadingAction, setLoadingAction] = useState<'view' | 'download' | null>(null);
+  const filename = artifact.filename || t('stream.activity.generated');
+  const mimeType = artifact.mimeType || getMimeTypeFromFilename(artifact.filename) || 'application/octet-stream';
+
+  const view = async () => {
+    if (loadingAction) return;
+    setLoadingAction('view');
+    try {
+      await openFileViewerFromUrlLoader(
+        JSON.stringify([taskId, artifact.id]),
+        filename,
+        mimeType,
+        async () => {
+          const { viewUrl } = await getTaskArtifactUrl(taskId, artifact.id);
+          return { url: viewUrl };
+        },
+      );
+    } catch {
+      showError(t('stream.activity.artifactError'));
+    } finally {
+      setLoadingAction(null);
+    }
+  };
+
+  const download = async () => {
+    if (loadingAction) return;
+    setLoadingAction('download');
+    try {
+      const { downloadUrl } = await getTaskArtifactUrl(taskId, artifact.id);
+      const anchor = document.createElement('a');
+      anchor.href = downloadUrl;
+      anchor.download = filename;
+      anchor.rel = 'noopener';
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+    } catch {
+      showError(t('stream.activity.artifactError'));
+    } finally {
+      setLoadingAction(null);
+    }
+  };
+
+  const disabled = Boolean(loadingAction);
+  return (
+    <div className='flex items-center gap-3 rounded-lg border bg-background/50 px-3 py-2 text-sm'>
+      <FileText className='size-4 text-primary' aria-hidden='true' />
+      <span className='min-w-0 flex-1 truncate'>{filename}</span>
+      <button type='button' disabled={disabled} onClick={view} className='inline-flex items-center gap-1 font-medium text-primary disabled:text-muted-foreground'>
+        {loadingAction === 'view' ? <Loader2 className='size-3.5 animate-spin' aria-hidden='true' /> : <Eye className='size-3.5' aria-hidden='true' />}
+        {t('stream.activity.viewArtifact')}
+      </button>
+      <button type='button' disabled={disabled} onClick={download} className='inline-flex items-center gap-1 font-medium text-primary disabled:text-muted-foreground'>
+        {loadingAction === 'download' ? <Loader2 className='size-3.5 animate-spin' aria-hidden='true' /> : <Download className='size-3.5' aria-hidden='true' />}
+        {t('stream.activity.downloadArtifact')}
+      </button>
+    </div>
+  );
 }
 
 /**
@@ -39,6 +105,7 @@ export function TaskDetailDrawer({ task, onClose }: TaskDetailDrawerProps): JSX.
   if (!task) return null;
   const latestResult = results.data?.[0] ?? null;
   const richParts = resultContent.data ? buildResultParts(resultContent.data) : [];
+  const artifacts = resultContent.data?.artifacts ?? [];
 
   return (
     <div
@@ -83,11 +150,18 @@ export function TaskDetailDrawer({ task, onClose }: TaskDetailDrawerProps): JSX.
             ) : null}
           </TabsContent>
           <TabsContent value='results' className='space-y-3'>
-            {richParts.length > 0 ? (
-              <div className='rounded-md border border-border bg-background px-3 py-2'>
-                <MessageProvider fileViewerDisplayMode='floating'>
-                  <AIMessageContent parts={richParts} />
-                </MessageProvider>
+            {richParts.length > 0 || artifacts.length > 0 ? (
+              <div className='space-y-3'>
+                {richParts.length > 0 ? (
+                  <div className='rounded-md border border-border bg-background px-3 py-2'>
+                    <MessageProvider fileViewerDisplayMode='floating'>
+                      <AIMessageContent parts={richParts} />
+                    </MessageProvider>
+                  </div>
+                ) : null}
+                {artifacts.map((a) => (
+                  <TaskArtifactCard key={a.id || a.filePath} taskId={task.id} artifact={a} />
+                ))}
               </div>
             ) : task.result ? (
               <div className='rounded-md border border-border bg-background px-3 py-2'>
