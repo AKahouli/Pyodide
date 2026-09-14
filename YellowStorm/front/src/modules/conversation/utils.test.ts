@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { componentsToMarkdown, formatTimingMs, getConversationStreamActivity, getStreamErrorMessage, getUserMessageDisplayText, mapComponentsToContentParts, mapConversationComponentsToContentParts, messageToChat, normalizeChoiceComponentData } from './utils';
+import { componentsToMarkdown, formatTimingMs, getConversationStreamActivity, getStreamErrorMessage, getUserMessageDisplayText, mapComponentsToContentParts, mapConversationComponentsToContentParts, formatChoiceSubmissionContent, messageToChat, normalizeChoiceComponentData } from './utils';
 
 describe('conversation utils', () => {
   it('formats timing values', () => {
@@ -212,5 +212,47 @@ describe('conversation utils', () => {
 
     expect(critical.isCritical).toBe(true);
     expect(fallback.isCritical).toBe(false);
+  });
+
+  it('preserves edit-on-card editable fields', () => {
+    const choice = normalizeChoiceComponentData({
+      schemaVersion: 1, questionId: 'confirm::x', prompt: 'Approve?', presentation: 'quick_replies',
+      selectionMode: 'single', submitBehavior: 'immediate', status: 'ready', editable: true,
+      fields: [
+        { key: 'subject', label: 'Objet', value: 'Status' },
+        { key: 'body', label: 'Message', value: 'Hi', multiline: true },
+        { key: 'to_recipients', label: 'À', value: 'a@b.co', type: 'list' },
+        { key: 'bad' },
+      ],
+      options: [{ id: 'approve', label: 'Approuver', submitText: 'approve' }, { id: 'decline', label: 'Refuser', submitText: 'decline' }],
+    });
+    expect(choice?.editable).toBe(true);
+    expect(choice?.fields).toEqual([
+      { key: 'subject', label: 'Objet', value: 'Status' },
+      { key: 'body', label: 'Message', value: 'Hi', multiline: true },
+      { key: 'to_recipients', label: 'À', value: 'a@b.co', type: 'list' },
+    ]);
+  });
+
+  it('omits editable when no valid fields', () => {
+    const choice = normalizeChoiceComponentData({
+      schemaVersion: 1, questionId: 'q', prompt: 'Pick', presentation: 'quick_replies',
+      selectionMode: 'single', submitBehavior: 'immediate', status: 'ready', editable: true, fields: [],
+      options: [{ id: 'a', label: 'A', submitText: 'a' }, { id: 'b', label: 'B', submitText: 'b' }],
+    });
+    expect(choice?.editable).toBeUndefined();
+    expect(choice?.fields).toBeUndefined();
+  });
+});
+
+describe('formatChoiceSubmissionContent', () => {
+  it('renders friendly labels for verdicts and edit payloads', () => {
+    expect(formatChoiceSubmissionContent('approve')).toBe('Approuvé');
+    expect(formatChoiceSubmissionContent('decline')).toBe('Refusé');
+    expect(formatChoiceSubmissionContent('{"verdict":"approve","edits":{"subject":"x"}}')).toBe('Approuvé — message modifié');
+    expect(formatChoiceSubmissionContent('{"verdict":"decline"}')).toBe('Refusé');
+    // ordinary content passes through untouched
+    expect(formatChoiceSubmissionContent('Bonjour, peux-tu vérifier ?')).toBe('Bonjour, peux-tu vérifier ?');
+    expect(formatChoiceSubmissionContent('{not json')).toBe('{not json');
   });
 });

@@ -101,7 +101,7 @@ export class AppDataMigrationService {
       }
 
       const timeoutMs = this.config.get<number>('appData.statementTimeoutMs', 30_000);
-      await client.query(`SET LOCAL statement_timeout = ${timeoutMs}`);
+      await client.query('SET LOCAL statement_timeout = $1', [timeoutMs]);
       await client.query(`SET LOCAL search_path TO ${quoteIdent(params.schemaName)}, public`);
 
       for (const op of params.plan.operations) {

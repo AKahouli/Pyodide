@@ -15,7 +15,7 @@ export default registerAs('conversationV2', () => ({
     10,
   ),
   maxMessageLength: Number.parseInt(
-    process.env.CONVERSATION_V2_MAX_MESSAGE_LENGTH || '16384',
+    process.env.CONVERSATION_V2_MAX_MESSAGE_LENGTH || '30000',
     10,
   ),
   grpcMaxMessageBytes: Number.parseInt(
@@ -75,4 +75,9 @@ export default registerAs('conversationV2', () => ({
   /** Path prefix for deployed app URLs (`/apps/{sessionId}/`). */
   appBuilderDeployedAppsPathPrefix:
     process.env.APP_BUILDER_DEPLOYED_APPS_PATH_PREFIX || '/apps',
+  /** TTL for deployed-app register invite tokens (days). */
+  appShareInviteTtlDays: Number.parseInt(
+    process.env.APP_SHARE_INVITE_TTL_DAYS || '7',
+    10,
+  ),
 }));

@@ -28,6 +28,7 @@ import type { AppDataEnvironment } from '../constants/app-data.constants';
 import type { AppDataEndUserGrants, AppDataEndUserStatus } from '../constants/app-data.types';
 import { assertIdentifier } from '../utils/app-data-sql.util';
 import { parseAppDataEnvironment, parsePositiveInt } from '../utils/app-data-request.util';
+import { assertAppDataEnabled, assertEndUserManagementEnabled } from '../utils/app-data-feature.util';
 
 @ApiTags('App Data Owner')
 @Controller('conversation-v2/sessions/:id/app-data')
@@ -46,21 +47,11 @@ export class AppDataOwnerController {
   ) {}
 
   private assertEnabled(): void {
-    if (
-      !this.config.get<boolean>('appData.enabled', false) ||
-      !this.config.get<boolean>('appData.dataTabEnabled', false)
-    ) {
-      throw new ServiceUnavailableException('App Data owner API is disabled');
-    }
+    assertAppDataEnabled(this.config);
   }
 
   private assertEndUserManagementEnabled(): void {
-    if (
-      !this.config.get<boolean>('appData.enabled', false) ||
-      !this.config.get<boolean>('appData.endUserAuthEnabled', true)
-    ) {
-      throw new ServiceUnavailableException('App Data end-user management is disabled');
-    }
+    assertEndUserManagementEnabled(this.config);
   }
 
   private async workspaceId(sessionId: string): Promise<string> {

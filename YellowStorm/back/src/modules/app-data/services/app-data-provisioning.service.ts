@@ -43,6 +43,9 @@ export class AppDataProvisioningService {
 
   /**
    * Idempotently register the workspace and provision DEV schema version 0.
+   * Handles race conditions: if two concurrent requests try to provision the
+   * same workspace, the second one catches the unique constraint violation
+   * and returns the existing app.
    */
   async provisionDev(params: {
     workspaceId: string;
@@ -52,24 +55,7 @@ export class AppDataProvisioningService {
     this.assertEnabled();
     const existing = await this.catalog.findByWorkspaceId(params.workspaceId);
     if (existing) {
-      const env = await this.catalog.getEnvironment(existing.id, 'dev');
-      if (env?.provisionedAt) {
-        return {
-          appDataId: existing.appDataId,
-          schemaName: env.schemaName,
-          currentVersion: env.currentVersion,
-        };
-      }
-      await this.createPhysicalSchema(env!.schemaName);
-      await this.db
-        .update(appDataEnvironments)
-        .set({ provisionedAt: new Date(), updatedAt: new Date() })
-        .where(eq(appDataEnvironments.id, env!.id));
-      return {
-        appDataId: existing.appDataId,
-        schemaName: env!.schemaName,
-        currentVersion: env!.currentVersion,
-      };
+      return this.completeProvisionIfNeeded(existing, params.workspaceId, params.actorPrincipal);
     }
 
     const appDataId = this.identifiers.generate();
@@ -78,56 +64,97 @@ export class AppDataProvisioningService {
     const jwtSecret = randomBytes(32).toString('hex');
     const endUserAuthEnabled = this.config.get<boolean>('appData.endUserAuthEnabled', true);
 
-    const [app] = await this.db
-      .insert(appDataApps)
-      .values({
-        appDataId,
-        workspaceId: params.workspaceId,
-        ownerUserId: params.ownerUserId,
-        lifecycleState: 'active',
-        jwtSecret,
-        endUserAuthEnabled,
-      })
-      .returning();
+    try {
+      const [app] = await this.db
+        .insert(appDataApps)
+        .values({
+          appDataId,
+          workspaceId: params.workspaceId,
+          ownerUserId: params.ownerUserId,
+          lifecycleState: 'active',
+          jwtSecret,
+          endUserAuthEnabled,
+        })
+        .returning();
 
-    await this.db.insert(appDataEnvironments).values([
-      {
-        appId: app.id,
-        environment: 'dev',
-        schemaName: devSchema,
-        currentVersion: 0,
-        provisionedAt: null,
-      },
-      {
-        appId: app.id,
-        environment: 'prod',
-        schemaName: prodSchema,
-        currentVersion: 0,
-        provisionedAt: null,
-      },
-    ]);
+      await this.db.insert(appDataEnvironments).values([
+        {
+          appId: app.id,
+          environment: 'dev',
+          schemaName: devSchema,
+          currentVersion: 0,
+          provisionedAt: null,
+        },
+        {
+          appId: app.id,
+          environment: 'prod',
+          schemaName: prodSchema,
+          currentVersion: 0,
+          provisionedAt: null,
+        },
+      ]);
 
-    await this.createPhysicalSchema(devSchema);
-    const devEnvRow = await this.catalog.getEnvironment(app.id, 'dev');
-    if (devEnvRow) {
-      await this.db
-        .update(appDataEnvironments)
-        .set({ provisionedAt: new Date(), updatedAt: new Date() })
-        .where(eq(appDataEnvironments.id, devEnvRow.id));
+      await this.createPhysicalSchema(devSchema);
+      const devEnvRow = await this.catalog.getEnvironment(app.id, 'dev');
+      if (devEnvRow) {
+        await this.db
+          .update(appDataEnvironments)
+          .set({ provisionedAt: new Date(), updatedAt: new Date() })
+          .where(eq(appDataEnvironments.id, devEnvRow.id));
+      }
+
+      await this.audit.record({
+        appId: app.id,
+        eventType: 'provision_dev',
+        actorPrincipal: params.actorPrincipal ?? 'system',
+        metadata: { workspaceId: params.workspaceId, schemaName: devSchema },
+      });
+
+      this.logger.log(
+        `Provisioned app data appDataId=${appDataId} workspaceId=${params.workspaceId} devSchema=${devSchema}`,
+      );
+
+      return { appDataId, schemaName: devSchema, currentVersion: 0 };
+    } catch (err) {
+      // Race condition: another request inserted the same workspaceId between
+      // our findByWorkspaceId check and this insert. Fetch and return the existing app.
+      const code = (err as { code?: string } | undefined)?.code;
+      if (code === '23505') {
+        const raceExisting = await this.catalog.findByWorkspaceId(params.workspaceId);
+        if (raceExisting) {
+          this.logger.log(
+            `Provision race condition resolved for workspaceId=${params.workspaceId}, using existing appDataId=${raceExisting.appDataId}`,
+          );
+          return this.completeProvisionIfNeeded(raceExisting, params.workspaceId, params.actorPrincipal);
+        }
+      }
+      throw err;
     }
+  }
 
-    await this.audit.record({
-      appId: app.id,
-      eventType: 'provision_dev',
-      actorPrincipal: params.actorPrincipal ?? 'system',
-      metadata: { workspaceId: params.workspaceId, schemaName: devSchema },
-    });
-
-    this.logger.log(
-      `Provisioned app data appDataId=${appDataId} workspaceId=${params.workspaceId} devSchema=${devSchema}`,
-    );
-
-    return { appDataId, schemaName: devSchema, currentVersion: 0 };
+  private async completeProvisionIfNeeded(
+    app: import('@modules/postgres/schema/app-data.schema').AppDataAppRow,
+    workspaceId: string,
+    actorPrincipal?: string,
+  ): Promise<{ appDataId: string; schemaName: string; currentVersion: number }> {
+    const env = await this.catalog.getEnvironment(app.id, 'dev');
+    if (env?.provisionedAt) {
+      return {
+        appDataId: app.appDataId,
+        schemaName: env.schemaName,
+        currentVersion: env.currentVersion,
+      };
+    }
+    await this.createPhysicalSchema(env!.schemaName);
+    await this.db
+      .update(appDataEnvironments)
+      .set({ provisionedAt: new Date(), updatedAt: new Date() })
+      .where(eq(appDataEnvironments.id, env!.id));
+    return {
+      appDataId: app.appDataId,
+      schemaName: env!.schemaName,
+      currentVersion: env!.currentVersion,
+    };
   }
 
   async provisionProdIfNeeded(appId: string): Promise<void> {
@@ -156,7 +183,7 @@ export class AppDataProvisioningService {
     const timeoutMs = this.config.get<number>('appData.statementTimeoutMs', 30_000);
     const client = await this.pool.connect();
     try {
-      await client.query(`SET statement_timeout = ${timeoutMs}`);
+      await client.query('SET statement_timeout = $1', [timeoutMs]);
       await client.query(`CREATE SCHEMA IF NOT EXISTS ${quoteIdent(schemaName)}`);
     } finally {
       client.release();

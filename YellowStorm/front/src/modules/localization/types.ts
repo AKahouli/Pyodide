@@ -3,7 +3,7 @@ import type common from './locales/en/common.json';
 import type errors from './locales/en/errors.json';
 import type admin from '../admin/locales/en.json';
 import type agent from '../agent/locales/en.json';
-import type appMarketplace from '../app-marketplace/locales/en.json';
+import type appBuilder from '../app-builder/locales/en.json';
 import type auth from '../auth/locales/en.json';
 import type connectedApp from '../connected-app/locales/en.json';
 import type conversation from '../conversation/locales/en.json';
@@ -32,7 +32,7 @@ export type NamespaceResourceMap = {
   errors: typeof errors;
   admin: typeof admin;
   agent: typeof agent;
-  'app-marketplace': typeof appMarketplace;
+  'app-builder': typeof appBuilder;
   auth: typeof auth;
   'connected-app': typeof connectedApp;
   conversation: typeof conversation;

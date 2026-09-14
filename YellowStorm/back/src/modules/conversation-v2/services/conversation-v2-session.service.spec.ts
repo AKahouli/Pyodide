@@ -62,6 +62,10 @@ describe('ConversationV2SessionService', () => {
         source: 'owned',
         shareId: null,
         canOpenConversation: true,
+        lastDeployedRevisionId: null,
+        latestFinalizedRevisionId: null,
+        latestFinalizedAt: null,
+        finalizedVersionCount: 0,
       },
     ]);
     expect(find).toHaveBeenCalledWith({
@@ -74,6 +78,48 @@ describe('ConversationV2SessionService', () => {
     expect(select).toHaveBeenCalledWith(
       'title deployedAppTitle deployedUrl lastDeployedAt',
     );
+  });
+
+  it('listDraftApps returns unpublished sessions with activity', async () => {
+    const id = new Types.ObjectId();
+    const select = jest.fn().mockReturnValue({
+      lean: () => ({
+        exec: () =>
+          Promise.resolve([
+            {
+              _id: id,
+              title: 'Work in progress',
+              deployedAppTitle: null,
+              deployStatus: 'idle',
+              lastEventAt: new Date('2026-07-15T10:00:00.000Z'),
+            },
+          ]),
+      }),
+    });
+    const sort = jest.fn().mockReturnValue({ select });
+    find.mockReturnValueOnce({ sort });
+
+    await expect(svc.listDraftApps('u1')).resolves.toEqual([
+      {
+        sessionId: id.toString(),
+        title: 'Work in progress',
+        lastUpdatedAt: '2026-07-15T10:00:00.000Z',
+        deployStatus: 'idle',
+        lastDeployedRevisionId: null,
+        latestFinalizedRevisionId: null,
+        latestFinalizedAt: null,
+        finalizedVersionCount: 0,
+      },
+    ]);
+    expect(find).toHaveBeenCalledWith({
+      ownerId: 'u1',
+      deletedAt: null,
+      aiSessionId: { $ne: null },
+      eventCount: { $gt: 0 },
+      $or: [{ deployStatus: { $ne: 'deployed' } }, { deployedUrl: null }],
+    });
+    expect(sort).toHaveBeenCalledWith({ lastEventAt: -1 });
+    expect(select).toHaveBeenCalledWith('title deployedAppTitle deployStatus lastEventAt');
   });
 
   it('removeDeployedApp clears deployment state without deleting the conversation', async () => {
@@ -97,10 +143,35 @@ describe('ConversationV2SessionService', () => {
           deployedUrl: null,
           deployedAppTitle: null,
           lastDeployedAt: null,
+          lastDeployedRevisionId: null,
         },
       },
       { new: true },
     );
+  });
+
+  it('resolveRevisionContextBySessionIds maps aiSessionId and lastDeployedRevisionId', async () => {
+    const id = new Types.ObjectId();
+    const select = jest.fn().mockReturnValue({
+      lean: () => ({
+        exec: () =>
+          Promise.resolve([
+            {
+              _id: id,
+              aiSessionId: 'ai-1',
+              lastDeployedRevisionId: 'rev_7',
+            },
+          ]),
+      }),
+    });
+    find.mockReturnValueOnce({ select });
+
+    const result = await svc.resolveRevisionContextBySessionIds([id.toString()]);
+
+    expect(result.get(id.toString())).toEqual({
+      aiSessionId: 'ai-1',
+      lastDeployedRevisionId: 'rev_7',
+    });
   });
 
   it('list filters by owner, excludes soft-deleted, sorts desc by lastEventAt', async () => {

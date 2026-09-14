@@ -73,12 +73,26 @@ def _requester(request) -> Optional[dict]:
     return {"name": name, "email": email, "role": role}
 
 
+def _agent_connectors(agent) -> list:
+    """The connectors bound to THIS agent, from its
+    agent_params.connector_bindings_json — for debugging whether an agent's
+    UI-linked connectors actually reached the request (separate from the
+    top-level request.connectors worky's executor runs on)."""
+    try:
+        raw = dict(agent.agent_params.params).get("connector_bindings_json", "")
+        bindings = json.loads(raw) if raw else []
+        return [b.get("connector_slug") or b.get("connector_name") for b in bindings]
+    except (ValueError, TypeError, AttributeError):
+        return []
+
+
 def _describe_request(request) -> str:
     """One-line dump of every RunRequest field, secrets redacted (connector
     auth_headers carry Bearer tokens; skill/agent instructions are large)."""
     skills = [{"id": s.id, "name": s.name} for s in request.skills]
     agents = [{"id": a.id, "name": a.name, "agent_type": a.agent_type,
-               "model": a.chatbot.model, "prompt_len": len(a.prompt)}
+               "model": a.chatbot.model, "prompt_len": len(a.prompt),
+               "connectors": _agent_connectors(a)}
               for a in request.agents]
     connectors = [
         {
@@ -145,6 +159,24 @@ def _connectors_to_dicts(connectors) -> list:
     return out
 
 
+def _agent_connector_bindings(agent) -> list:
+    """The connectors bound to ONE agent, parsed from its
+    agent_params.connector_bindings_json — already in the dict shape
+    create_connector_tools wants (the chat path json.loads's the same string).
+
+    Worky builds each agent's tools from its OWN connectors (like chat), not a
+    shared top-level request.connectors list: the executor's tools come from the
+    executor agent's bindings, the planner's from the planner agent's."""
+    if agent is None:
+        return []
+    try:
+        raw = dict(agent.agent_params.params).get("connector_bindings_json", "")
+        bindings = json.loads(raw) if raw else []
+        return bindings if isinstance(bindings, list) else []
+    except (ValueError, TypeError, AttributeError):
+        return []
+
+
 class CompanionAiServicer(pb_grpc.CompanionAiServicer):
     def __init__(self, service: OrchestratorService, read_model: Optional[ReadModel] = None):
         self._svc = service
@@ -167,6 +199,16 @@ class CompanionAiServicer(pb_grpc.CompanionAiServicer):
         run_id = request.turn_id or uuid.uuid4().hex
         logger.info("[worky] 1. RunTask ◄ incoming request: %s", _describe_request(request))
         logger.info("[worky] 1. RunTask ◄ models: %s", _agent_models(request))
+        # LOCAL CAPTURE (do NOT commit) — refresh connector tokens for the E2E
+        # driver. Writes live Bearer tokens under WORKY_CAPTURE_DIR only.
+        import os as _os
+        if _os.environ.get("WORKY_CAPTURE_DIR"):
+            _d = _os.environ["WORKY_CAPTURE_DIR"]; _os.makedirs(_d, exist_ok=True)
+            for _a in request.agents:
+                _raw = dict(_a.agent_params.params).get("connector_bindings_json", "")
+                if _raw:
+                    open(_os.path.join(_d, f"bindings_{_a.agent_type or _a.name}.json"), "w").write(_raw)
+                    logger.info("[worky][CAPTURE] wrote bindings_%s (%d bytes)", _a.agent_type or _a.name, len(_raw))
 
         # A message that arrives WHILE a plan is executing is NOT a supersede.
         # The old behaviour cancelled the running turn and replanned — which
@@ -225,14 +267,16 @@ class CompanionAiServicer(pb_grpc.CompanionAiServicer):
                 message=request.message,
                 planner_model=planner.chatbot.model if planner else None,
                 planner_prompt=planner.prompt if planner else None,
+                planner_connectors=_agent_connector_bindings(planner),
                 requester=_requester(request))
             logger.info("[worky] converse turn done (session=%s run=%s)",
                         request.session_id, run_id)
         except asyncio.CancelledError:
             raise
-        except Exception:
+        except Exception as exc:
             logger.exception("[worky] converse turn failed (session=%s run=%s)",
                              request.session_id, run_id)
+            await self._svc.fail_session(request.session_id, exc)
             await self._record_turn_failure(request.session_id, run_id, fail_session=False)
         finally:
             active_turn_id.reset(token)
@@ -262,7 +306,13 @@ class CompanionAiServicer(pb_grpc.CompanionAiServicer):
                 except BaseException:  # noqa: BLE001 — prev's cancellation is expected
                     pass
 
-            connectors = _connectors_to_dicts(request.connectors)
+            # Each worky agent runs on its OWN connectors (like the chat path):
+            # the executor's tools come from the executor agent's bindings, the
+            # planner's from the planner agent's — not a shared top-level list.
+            executor = _agent_by_type(request.agents, EXECUTOR_AGENT_TYPE)
+            planner = _agent_by_type(request.agents, PLANNER_AGENT_TYPE)
+            connectors = _agent_connector_bindings(executor)
+            planner_connectors = _agent_connector_bindings(planner)
             # STEP 4 — new turn, or the answer to a pending question? A pending
             # interrupt (set while blocked on ask-the-user, and NOT cleared until
             # the turn finishes) means this message is the answer → resume;
@@ -282,7 +332,6 @@ class CompanionAiServicer(pb_grpc.CompanionAiServicer):
                     else "continue — resume paused plan" if status == "paused"
                     else "new turn — planning")
             logger.info("[worky] 4. %s (session=%s)", mode, request.session_id)
-            executor = _agent_by_type(request.agents, EXECUTOR_AGENT_TYPE)
             executor_prompt = executor.prompt if executor else None
             # Who the turn is for. RunRequest carries the requester's identity so
             # the planner/executor address them directly and never delegate or
@@ -299,10 +348,10 @@ class CompanionAiServicer(pb_grpc.CompanionAiServicer):
                     model=model, connectors=connectors,
                     executor_prompt=_with_requester(executor_prompt, requester))
             else:
-                planner = _agent_by_type(request.agents, PLANNER_AGENT_TYPE)
                 await self._svc.plan_turn(
                     session_id=request.session_id, user_id=request.user_id,
                     message=request.message, model=model, connectors=connectors,
+                    planner_connectors=planner_connectors,
                     planner_model=planner.chatbot.model if planner else None,
                     planner_prompt=planner.prompt if planner else None,
                     executor_prompt=executor_prompt,
@@ -313,8 +362,9 @@ class CompanionAiServicer(pb_grpc.CompanionAiServicer):
         except asyncio.CancelledError:
             logger.info("RunTask turn superseded/cancelled (session=%s)", request.session_id)
             raise
-        except Exception:
+        except Exception as exc:
             logger.exception("RunTask turn failed (session=%s run=%s)", request.session_id, run_id)
+            await self._svc.fail_session(request.session_id, exc)
             await self._record_turn_failure(request.session_id, run_id)
         finally:
             active_turn_id.reset(token)
@@ -326,13 +376,6 @@ class CompanionAiServicer(pb_grpc.CompanionAiServicer):
         if self._rm is None:
             return
         try:
-            await self._rm.add_message(
-                uuid.uuid4().hex,
-                session_id,
-                "assistant",
-                "I couldn't complete that request. Please try again.",
-                run_id,
-            )
             if fail_session:
                 await self._rm.set_session_status(session_id, "failed")
         except Exception:
@@ -449,8 +492,14 @@ class CompanionAiServicer(pb_grpc.CompanionAiServicer):
         else:
             wait = await self._rm.claim_mail_wait(request.token, reply_from=request.reply_from)
         if wait is None:
-            logger.info("[worky] DeliverMailReply ignored — token/chat unknown, wrong sender, "
-                        "already delivered, expired or cancelled")
+            # Include the token/chat + sender so a real reply that fails to route
+            # is distinguishable from routine catch-up noise (the poller re-offers
+            # every token it finds in the inbox, and most belong to other/old
+            # sessions or are already delivered).
+            ref = f"chat={request.chat_id}" if request.chat_id else f"token={request.token}"
+            logger.info("[worky] DeliverMailReply ignored (%s from=%r) — unknown, wrong "
+                        "sender, not-yet-parked, already delivered, expired or cancelled",
+                        ref, request.reply_from or "?")
             return pb.DeliverMailReplyResponse(delivered=False)
 
         session_id, user_id = wait["session_id"], wait["user_id"]
@@ -490,15 +539,21 @@ class CompanionAiServicer(pb_grpc.CompanionAiServicer):
                                  channel: str = "Email") -> None:
         session_id = wait["session_id"]
         try:
-            # Same last-answer-wins handshake as RunTask: never let two turns run
-            # on one session, or the reply races whatever is already in flight.
+            # SERIALIZE, don't supersede. Two turns must never run at once on one
+            # session (they'd race the plan/ADK session), but a mail reply must
+            # NOT cancel what's already in flight: unlike a RunTask correction,
+            # each reply answers its OWN distinct wait (claimed atomically before
+            # this task), so cancelling would drop a real answer. Seen live
+            # (session 98daf300): two replies swept together — Firas + Rabeb —
+            # arrived ~56ms apart; the second cancelled the first, and Firas's
+            # step stayed blocked with its wait already consumed. Wait for the
+            # prior turn to finish, then run this one.
             if prev is not None and not prev.done():
-                logger.info("[worky] superseding in-flight turn for mail reply (session=%s)",
+                logger.info("[worky] serializing mail reply behind an in-flight turn (session=%s)",
                             session_id)
-                prev.cancel()
                 try:
                     await prev
-                except BaseException:  # noqa: BLE001 — prev's cancellation is expected
+                except BaseException:  # noqa: BLE001 — prev's own failure is its turn's problem
                     pass
             executor = _agent_by_type(request.agents, EXECUTOR_AGENT_TYPE)
             # A reply quotes the mail it answers, so it carries our own
@@ -529,7 +584,7 @@ class CompanionAiServicer(pb_grpc.CompanionAiServicer):
             await self._svc.resume_turn(
                 session_id=session_id, user_id=wait["user_id"],
                 answer=answer, model=model,
-                connectors=_connectors_to_dicts(request.connectors),
+                connectors=_agent_connector_bindings(executor),
                 interrupt_id=wait["interrupt_id"],
                 executor_prompt=executor.prompt if executor else None)
             logger.info("[worky] DeliverMailReply turn done (session=%s step=%s)",
@@ -538,6 +593,7 @@ class CompanionAiServicer(pb_grpc.CompanionAiServicer):
             logger.info("[worky] DeliverMailReply turn superseded/cancelled (session=%s)",
                         session_id)
             raise
-        except Exception:
+        except Exception as exc:
             logger.exception("[worky] DeliverMailReply turn failed (session=%s step=%s)",
                              session_id, wait["step_id"])
+            await self._svc.fail_session(session_id, exc)

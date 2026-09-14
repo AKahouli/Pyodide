@@ -35,7 +35,7 @@ describe('UserService human-agent sync', () => {
   };
 
   it('persists role/description and syncs the human agent on completeProfile', async () => {
-    const userDoc = makeUserDoc();
+    const userDoc = makeUserDoc({ registrationApproval: 'pending' });
     const { service, humainAgentService, registrationApprovalService } = makeService(userDoc);
 
     await service.completeProfile(userDoc._id.toString(), {

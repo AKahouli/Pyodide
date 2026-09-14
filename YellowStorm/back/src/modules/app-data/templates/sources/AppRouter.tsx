@@ -39,15 +39,10 @@ export function AppRouter() {
             path="/register"
             element={previewDev ? <AppHomeRedirect /> : <RegisterPage />}
           />
-          <Route
-            path="/*"
-            element={
-              <ProtectedRoute>
-                <App />
-              </ProtectedRoute>
-            }
-          />
-          <Route path="*" element={<AppHomeRedirect />} />
+          <Route element={<ProtectedRoute />}>
+            <Route path="/" element={<App />} />
+            <Route path="*" element={<App />} />
+          </Route>
         </Routes>
       </BrowserRouter>
     </AuthProvider>

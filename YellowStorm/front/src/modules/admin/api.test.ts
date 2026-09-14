@@ -93,6 +93,8 @@ describe('admin api', () => {
     const visibility = {
       ...DEFAULT_FEATURE_VISIBILITY,
       playbook: false,
+      governance: true,
+      appBuilder: true,
       worky: false,
     };
     getMock.mockResolvedValue({ data: { data: visibility } });

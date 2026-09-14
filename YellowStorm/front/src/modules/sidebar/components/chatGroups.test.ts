@@ -50,8 +50,11 @@ describe('disambiguateTitles', () => {
       { id: '3', title: 'Unique', sortTime: today(8) },
     ];
     const out = disambiguateTitles(rows, NOW);
+    // Today's duplicate carries a local time; the older one a date suffix
+    // (locale-dependent: "12 sept." or "Sep 12" — assert shape, not exact form).
     expect(out[0].displayTitle).toMatch(/^Poem · \d{2}:\d{2}/);
-    expect(out[1].displayTitle).toMatch(/^Poem · \w{3} \d{1,2}$/);
+    expect(out[1].displayTitle).toMatch(/^Poem · \S*.?\d/);
+    expect(out[1].displayTitle).not.toMatch(/^Poem · \d{2}:\d{2}/);
     expect(out[2].displayTitle).toBe('Unique');
   });
 });

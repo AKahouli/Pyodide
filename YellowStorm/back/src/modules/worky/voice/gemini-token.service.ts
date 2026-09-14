@@ -19,6 +19,9 @@ export interface VoiceSessionEnvelope {
    *  Tools NOT listed (e.g. human-agents lookup) must not get streamId injected,
    *  or their MCP rejects the unexpected argument. */
   streamIdTools: string[];
+  /** voice-memory sidecar WS (mic fork → long-term memory). Empty/absent ⇒ the
+   *  browser skips the fork (memory writes off). Runtime-configured server-side. */
+  memoryWsUrl: string;
   expiresAt: string;
 }
 
@@ -31,6 +34,7 @@ export class GeminiTokenService implements OnModuleInit {
   private readonly wsBaseUrl: string;
   private readonly tokenTtlSec: number;
   private readonly startTtlSec: number;
+  private readonly memoryWsUrl: string;
 
   constructor(
     private readonly config: ConfigService,
@@ -42,6 +46,7 @@ export class GeminiTokenService implements OnModuleInit {
     this.wsBaseUrl = this.config.get<string>('worky.voiceWsBaseUrl') ?? '';
     this.tokenTtlSec = this.config.get<number>('worky.voiceTokenTtlSec') ?? 1800;
     this.startTtlSec = this.config.get<number>('worky.voiceSessionStartTtlSec') ?? 60;
+    this.memoryWsUrl = this.config.get<string>('worky.voiceMemoryWsUrl') ?? '';
   }
 
   onModuleInit(): void {
@@ -128,6 +133,7 @@ export class GeminiTokenService implements OnModuleInit {
       setup: buildSetupMessage(this.model, this.voice, functionDeclarations, opts),
       toolEndpoints,
       streamIdTools,
+      memoryWsUrl: this.memoryWsUrl,
       expiresAt: new Date(expireMs).toISOString(),
     };
   }

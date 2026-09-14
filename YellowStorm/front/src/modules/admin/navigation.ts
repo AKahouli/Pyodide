@@ -18,7 +18,7 @@ export const NAVIGATION_TARGETS: Record<NavigationTargetKey, {
   groups: { permission: 'menu.groups', path: '/groups', defaultLabels: { en: 'Groups', fr: 'Groupes' } },
   worky: { permission: 'menu.worky', path: '/worky', defaultLabels: { en: 'Worky', fr: 'Worky' }, feature: 'worky' },
   connectedApps: { permission: 'menu.connected_apps', path: '/apps', defaultLabels: { en: 'Connected apps', fr: 'Applications connectees' } },
-  appMarketplace: { permission: 'menu.app_marketplace', path: '/app-market', defaultLabels: { en: 'App marketplace', fr: "Marketplace d'applications" }, feature: 'appMarketplace' },
+  appMarketplace: { permission: 'menu.app_marketplace', path: '/app-market', defaultLabels: { en: 'App marketplace', fr: "Marketplace d'applications" }, feature: 'appBuilder' },
   governance: { permission: 'menu.governance', path: '/governance', defaultLabels: { en: 'Governance', fr: 'Gouvernance' }, feature: 'governance' },
   admin: { permission: 'menu.admin', path: '/admin', defaultLabels: { en: 'Administration', fr: 'Administration' } },
 };

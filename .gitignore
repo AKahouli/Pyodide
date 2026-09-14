@@ -64,4 +64,4 @@ qa-artifacts/
 $/.scannerwork/
 .scannerwork/
 .scannerwork/
-$/
+ops/backup/.env

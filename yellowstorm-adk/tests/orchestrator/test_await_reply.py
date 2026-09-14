@@ -850,3 +850,51 @@ def test_recipients_extracted_as_bare_lowercased_addresses():
     assert nodes._recipients({"to_recipients": []}) == []
     assert nodes._recipients({}) == []
     print("ok  recipients: all, bare and lower-cased")
+
+
+def test_dep_gate_deferral_emits_no_terminal_event():
+    """The live replay-barrier divergence (session e37a716) came from the
+    dep-gate deferring a prematurely-fired step with a TEXT response — a terminal
+    event (message_as_output) that entered ADK's replay-barrier sequence AHEAD of
+    the await the step depended on, deadlocking the resume. The deferral must
+    therefore produce NO terminal event, so it never enters the barrier. Runs a
+    real gated node on the ADK engine and asserts it records nothing terminal."""
+    import asyncio
+    from google.adk.agents import LlmAgent
+    from google.adk.models import BaseLlm
+    from google.adk.models.llm_response import LlmResponse
+    from google.adk.runners import Runner
+    from google.adk.sessions import InMemorySessionService
+    from google.adk.workflow import START, Workflow
+    from google.adk.workflow.utils._rehydration_utils import is_terminal_event
+    from google.genai import types as gt
+    from src.companion_ai import nodes as nm
+    from src.companion_ai.plan import Step
+
+    class _Dummy(BaseLlm):
+        def __init__(self): super().__init__(model="fake")
+        async def generate_content_async(self, req, stream=False):
+            yield LlmResponse(content=gt.Content(role="model", parts=[gt.Part(text="REAL")]))
+
+    step = Step(id="d", kind="execute", description="deferred", depends_on=["x"])
+    # gate: dep 'x' is unmet → defer
+    gate = nm._defer_if_deps_unmet(step, lambda s: ["x"])
+    agent = LlmAgent(name="d", model=_Dummy(), instruction="i",
+                     before_model_callback=nm._compose_before_model(gate))
+
+    async def run():
+        ss = InMemorySessionService()
+        r = Runner(app_name="t", agent=Workflow(name="t", edges=[(START, agent)]),
+                   session_service=ss)
+        await ss.create_session(app_name="t", user_id="u", session_id="s")
+        yielded = [e async for e in r.run_async(user_id="u", session_id="s",
+                   new_message=gt.Content(role="user", parts=[gt.Part(text="go")]))]
+        sess = await ss.get_session(app_name="t", user_id="u", session_id="s")
+        return yielded, sess.events
+
+    yielded, recorded = asyncio.run(run())
+    assert not any(is_terminal_event(e) for e in yielded), "deferral yielded a terminal event"
+    # nothing terminal recorded for the node either (only the user input may exist)
+    node_terms = [e for e in recorded if is_terminal_event(e)
+                  and e.node_info and e.node_info.path]
+    assert not node_terms, f"deferral recorded a terminal node event: {node_terms}"

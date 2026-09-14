@@ -1,0 +1,39 @@
+name: PR Ticket Validation
+
+on:
+  pull_request:
+    types: [opened, edited, reopened, synchronize]
+    branches: [develop, main]
+
+jobs:
+  check-ticket:
+    name: "🎫 Ticket Number Required"
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check for ticket reference
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const pr = context.payload.pull_request;
+            const title = pr.title || '';
+            const body  = pr.body  || '';
+            const combined = `${title} ${body}`;
+
+            // Match #123 pattern (issue number)
+            const ticketPattern = /#\d+/;
+            const hasTicket = ticketPattern.test(combined);
+
+            if (!hasTicket) {
+              core.setFailed(
+                `❌ Aucun numéro de ticket trouvé dans cette PR.\n\n` +
+                `Vous devez inclure au moins un numéro de ticket (#XXX) dans le **titre** ou la **description** de votre PR.\n\n` +
+                `Exemples valides :\n` +
+                `  • Titre : "feat: add login page #820"\n` +
+                `  • Body  : "Closes #820"\n` +
+                `  • Body  : "Related to #510 and #511"\n\n` +
+                `💡 Cela permet au système de time tracking de lier automatiquement votre PR aux tickets concernés.`
+              );
+            } else {
+              const matches = combined.match(/#\d+/g);
+              core.info(`✅ Ticket(s) détecté(s) : ${matches.join(', ')}`);
+            }

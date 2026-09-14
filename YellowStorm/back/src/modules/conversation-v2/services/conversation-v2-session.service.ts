@@ -22,7 +22,14 @@ export interface PointerSummary {
   selectedConnectorIds: string[];
 }
 
-export interface DeployedAppSummary {
+export interface AppRevisionCatalogFields {
+  lastDeployedRevisionId: string | null;
+  latestFinalizedRevisionId: string | null;
+  latestFinalizedAt: string | null;
+  finalizedVersionCount: number;
+}
+
+export interface DeployedAppSummary extends AppRevisionCatalogFields {
   sessionId: string;
   title: string;
   deployedUrl: string;
@@ -32,6 +39,25 @@ export interface DeployedAppSummary {
   /** Recipient may open the conversation with full access (shared apps only). */
   canOpenConversation: boolean;
 }
+
+export interface DraftAppSummary extends AppRevisionCatalogFields {
+  sessionId: string;
+  title: string;
+  lastUpdatedAt: string;
+  deployStatus: Exclude<ConversationV2DeployStatus, 'deployed'>;
+}
+
+export interface SessionRevisionContext {
+  aiSessionId: string | null;
+  lastDeployedRevisionId: string | null;
+}
+
+const EMPTY_REVISION_CATALOG: AppRevisionCatalogFields = {
+  lastDeployedRevisionId: null,
+  latestFinalizedRevisionId: null,
+  latestFinalizedAt: null,
+  finalizedVersionCount: 0,
+};
 
 @Injectable()
 export class ConversationV2SessionService {
@@ -125,7 +151,68 @@ export class ConversationV2SessionService {
       source: 'owned' as const,
       shareId: null,
       canOpenConversation: true,
+      ...EMPTY_REVISION_CATALOG,
     }));
+  }
+
+  /**
+   * List the owner's in-progress app conversations that have not been published
+   * yet (or were unpublished from App Builder). Requires at least one persisted
+   * event so empty sessions do not appear as drafts.
+   */
+  async listDraftApps(ownerId: string): Promise<DraftAppSummary[]> {
+    const docs = await this.model
+      .find({
+        ownerId,
+        deletedAt: null,
+        aiSessionId: { $ne: null },
+        eventCount: { $gt: 0 },
+        $or: [{ deployStatus: { $ne: 'deployed' } }, { deployedUrl: null }],
+      })
+      .sort({ lastEventAt: -1 })
+      .select('title deployedAppTitle deployStatus lastEventAt')
+      .lean()
+      .exec();
+    return docs.map((doc) => ({
+      sessionId: doc._id.toString(),
+      title:
+        (doc.deployedAppTitle as string | undefined) ??
+        (doc.title as string | undefined) ??
+        '',
+      lastUpdatedAt: new Date(doc.lastEventAt).toISOString(),
+      deployStatus: (doc.deployStatus as DraftAppSummary['deployStatus']) ?? 'idle',
+      ...EMPTY_REVISION_CATALOG,
+    }));
+  }
+
+  async resolveRevisionContextBySessionIds(
+    sessionIds: string[],
+  ): Promise<Map<string, SessionRevisionContext>> {
+    const uniqueIds = [...new Set(sessionIds.filter((id) => Types.ObjectId.isValid(id)))];
+    if (!uniqueIds.length) return new Map();
+
+    const docs = await this.model
+      .find({ _id: { $in: uniqueIds.map((id) => new Types.ObjectId(id)) }, deletedAt: null })
+      .select('aiSessionId lastDeployedRevisionId')
+      .lean()
+      .exec();
+
+    return new Map(
+      docs.map((doc) => [
+        doc._id.toString(),
+        {
+          aiSessionId:
+            typeof doc.aiSessionId === 'string' && doc.aiSessionId.trim()
+              ? doc.aiSessionId.trim()
+              : null,
+          lastDeployedRevisionId:
+            typeof doc.lastDeployedRevisionId === 'string' &&
+            doc.lastDeployedRevisionId.trim()
+              ? doc.lastDeployedRevisionId.trim()
+              : null,
+        },
+      ]),
+    );
   }
 
   async list(ownerId: string, dto: ListSessionsDto): Promise<PointerSummary[]> {
@@ -220,6 +307,7 @@ export class ConversationV2SessionService {
       deployedUrl?: string | null;
       deployedAppTitle?: string | null;
       lastDeployedAt?: Date | null;
+      lastDeployedRevisionId?: string | null;
     },
   ) {
     if (!Types.ObjectId.isValid(id)) return null;
@@ -250,6 +338,7 @@ export class ConversationV2SessionService {
             deployedUrl: null,
             deployedAppTitle: null,
             lastDeployedAt: null,
+            lastDeployedRevisionId: null,
           },
         },
         { new: true },

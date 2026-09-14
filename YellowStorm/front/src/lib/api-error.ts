@@ -4,7 +4,7 @@
  */
 
 import { AxiosError } from "axios";
-import { getErrorMessage, requiresReAuth, ErrorCode } from "./error-codes";
+import { getErrorMessage, requiresReAuth, ErrorCode, resolveErrorCode } from "./error-codes";
 import { showError } from "./notifications";
 import { toast } from "sonner";
 
@@ -26,6 +26,7 @@ interface BackendErrorResponse {
   success: false;
   error: {
     code: string;
+    errorCode?: string;
     message: string;
     statusCode: number;
     details?: unknown;
@@ -57,7 +58,10 @@ export function parseApiError(error: unknown): ApiError {
     const response = error.response?.data as BackendErrorResponse | undefined;
 
     if (response?.error?.code) {
-      const code = response.error.code;
+      // Prefer the explicit errorCode field (e.g. ERR_4008) when present,
+      // then resolve APP_DATA_* strings to ERR_* codes.
+      const rawCode = response.error.errorCode || response.error.code;
+      const code = resolveErrorCode(rawCode);
       return {
         code,
         message: getErrorMessage(code),
@@ -102,11 +106,12 @@ export function parseApiError(error: unknown): ApiError {
   // The shared Axios client already unwraps non-401 responses into this
   // compact shape. Preserve its domain code instead of showing ERR_1000.
   if (isClientApiError(error)) {
+    const code = resolveErrorCode(error.code);
     return {
-      code: error.code,
-      message: error.message || getErrorMessage(error.code),
+      code,
+      message: error.message || getErrorMessage(code),
       statusCode: error.statusCode,
-      requiresReAuth: requiresReAuth(error.code),
+      requiresReAuth: requiresReAuth(code),
       raw: error,
     };
   }

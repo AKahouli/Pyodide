@@ -10,6 +10,7 @@ The auth module implements a secure authentication flow with:
 - Email verification flow
 - Forgot password / reset password flow
 - Profile completion flow
+- Pending Super Admin approval page (inactive users can sign in, then a full-screen wait page blocks the app until approval; a rejected request shows declined access instead of “upcoming”)
 - Automatic token refresh on 401 responses
 
 ## Architecture
@@ -26,6 +27,8 @@ src/modules/auth/
 ├── test-utils/
 │   └── makeAuthState.ts # shared auth state factory for tests
 ├── components/
+│   ├── PendingApprovalPage.tsx
+│   ├── PendingApprovalPage.test.tsx
 │   ├── RootGuard.tsx           # Route guard for "/"
 │   ├── RootGuard.test.tsx      # Root guard routing tests
 │   ├── LandingPage.tsx         # Landing page for guests
@@ -48,6 +51,8 @@ src/modules/auth/
 │   ├── StatusSection.test.tsx      # shared status section tests
 │   └── index.ts                    # Component exports
 ├── utils/
+│   ├── isPendingAdminApproval.ts
+│   ├── isPendingAdminApproval.test.ts
 │   └── errorHelpers.test.ts # auth error helper tests
 ├── locales/
 │   ├── en.json          # English translations
@@ -351,6 +356,7 @@ interface User {
     company?: string;
   };
   status: "active" | "inactive" | "suspended";
+  registrationApproval?: "pending" | "approved" | "rejected";
 }
 ```
 

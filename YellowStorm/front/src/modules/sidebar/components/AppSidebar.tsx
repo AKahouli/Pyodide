@@ -7,7 +7,6 @@ import {
   SidebarFooter,
   SidebarHeader,
   SidebarMenu,
-  SidebarMenuButton,
   SidebarMenuItem,
   SidebarRail,
   SidebarTrigger,
@@ -32,6 +31,8 @@ import {
 import type { FeatureVisibility } from '@/modules/admin';
 import { useAdminAccess } from '@/modules/admin/hooks/useAdminAccess';
 import { usePermissions } from '@/modules/admin/hooks/usePermissions';
+import { useAuth } from '@/modules/auth';
+import { isPendingAdminApproval } from '@/modules/auth/utils/isPendingAdminApproval';
 import { useModuleTranslation } from '@/modules/localization';
 import { GlobalSearch, type SearchDestination } from './GlobalSearch';
 import { ManagedNavigation, NAVIGATION_TARGET_ICONS, navigationTargetAllowed } from './ManagedNavigation';
@@ -46,8 +47,11 @@ export const AppSidebar = memo(function AppSidebar() {
   const { hasAdminAccess } = useAdminAccess();
   const navigation = useNavigationSettings();
   const [featureVisibility, setFeatureVisibility] = useState<FeatureVisibility>(DEFAULT_FEATURE_VISIBILITY);
+  const { user } = useAuth();
+  const pendingApproval = isPendingAdminApproval(user);
 
   useEffect(() => {
+    if (pendingApproval) return;
     let active = true;
     getFeatureVisibility()
       .then((value) => {
@@ -57,7 +61,7 @@ export const AppSidebar = memo(function AppSidebar() {
     return () => {
       active = false;
     };
-  }, []);
+  }, [pendingApproval]);
 
   const historyConversations = useHistoryConversations();
   const conversationsLoading = useConversationsLoading();

@@ -53,6 +53,7 @@ export enum McpTransportType {
 }
 
 export enum DynamicHeaderSource {
+  WORKSPACE = 'workspace',
   USER_ID = 'user_id',
   USER_EMAIL = 'user_email',
   USER_FIRST_NAME = 'user_first_name',

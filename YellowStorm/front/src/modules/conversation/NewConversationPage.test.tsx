@@ -23,6 +23,9 @@ const submitRoutingMock = vi.hoisted(() => ({
   memberIds: undefined as string[] | undefined,
   teamIds: undefined as string[] | undefined,
 }));
+const usageStatusMock = vi.hoisted(() => ({
+  value: { isLimitExceeded: false, plan: { name: 'Free' }, resetsAt: new Date(Date.now() + 3600000).toISOString() },
+}));
 
 vi.mock('@/components/ai-elements/input', () => ({
   default: ({
@@ -138,7 +141,11 @@ vi.mock('@/modules/localization', () => ({
 }));
 
 vi.mock('@/modules/usage/UsageContext', () => ({
-  useUsage: () => ({ status: { isLimitExceeded: false } }),
+  useUsage: () => ({ status: usageStatusMock.value }),
+}));
+
+vi.mock('@/modules/usage/components/UsageLimitBanner', () => ({
+  UsageLimitBanner: () => <div role='alert'>usage-limit-banner</div>,
 }));
 
 vi.mock('./components/SelectedConnectorRepo', () => ({
@@ -231,6 +238,11 @@ vi.mock('@/modules/conversation/effects/stars-background', () => ({
 describe('NewConversationPage', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    usageStatusMock.value = {
+      isLimitExceeded: false,
+      plan: { name: 'Free' },
+      resetsAt: new Date(Date.now() + 3600000).toISOString(),
+    };
     createConversationMock.mockResolvedValue({ id: 'conv-1' });
     createGovernedConversationMock.mockResolvedValue({ id: 'governed-1', runtimeMode: 'governed' });
     governedScopesMock.value = [{ scopeId: 'scope-1', name: 'Support', revisionNumber: 3 }];

@@ -9,12 +9,12 @@ import { isRuntimePreviewVisible } from '../../runtime/runtime.types';
 import { ToolDetailDispatch } from './tool-views/ToolDetailDispatch';
 import { ApplicationComponentView } from './ApplicationComponentView';
 import { AppBuildProgressPanel } from './AppBuildProgressPanel';
-import { DeployControls } from './DeployControls';
+import { AppViewModeToggle, DeployControls } from './DeployControls';
 import { AppDataPanel } from './AppDataPanel';
 
 const RIGHT_PANEL_STORAGE_KEY = 'conversation-v2-right-panel-width';
 const RIGHT_PANEL_DEFAULT_WIDTH = 560;
-const RIGHT_PANEL_MIN_WIDTH = 448;
+const RIGHT_PANEL_MIN_WIDTH = 360;
 const RIGHT_PANEL_MAX_WIDTH_RATIO = 0.75;
 
 export function RightPanel() {
@@ -70,7 +70,8 @@ export function RightPanel() {
 
   const tabClass = (active: boolean) =>
     cn(
-      'inline-flex items-center gap-1.5 rounded-md px-2.5 py-1 text-xs font-medium transition-colors',
+      'inline-flex shrink-0 items-center gap-1.5 rounded-md px-2.5 py-1 text-xs font-medium transition-colors',
+      '@max-[620px]/right-panel:gap-0 @max-[620px]/right-panel:px-2',
       active
         ? 'bg-background text-foreground shadow-sm'
         : 'text-muted-foreground hover:text-foreground',
@@ -89,37 +90,68 @@ export function RightPanel() {
       resizeHandleLabel={t('rightPanel.resizeHandle')}
       className='border-l bg-card/40'
     >
-      <aside className='flex h-full min-w-0 flex-col overflow-hidden'>
-        <header className='flex h-11 shrink-0 items-center justify-between gap-2 border-b px-3'>
-          {canToggle || showAppPanel ? (
-            <div className='inline-flex items-center rounded-lg border bg-muted/40 p-0.5'>
-              {hasCode && (
-                <button type='button' onClick={() => setRightPanelView('code')} className={tabClass(mode === 'tool')}>
-                  <CodeIcon className='size-3.5' />
-                  {t('rightPanel.tabCode')}
-                </button>
-              )}
-              {hasPreview && (
-                <>
-                  <button type='button' onClick={() => setRightPanelView('preview')} className={tabClass(showPreviewTab)}>
-                    <EyeIcon className='size-3.5' />
-                    {t('rightPanel.tabPreview')}
+      <aside className='@container/right-panel flex h-full min-w-0 flex-col overflow-hidden'>
+        <header className='grid h-11 shrink-0 grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-2 border-b px-3 @max-[620px]/right-panel:gap-1 @max-[620px]/right-panel:px-2'>
+          <div className='flex min-w-0 items-center justify-self-start overflow-hidden'>
+            {canToggle || showAppPanel ? (
+              <div className='inline-flex max-w-full items-center overflow-x-auto rounded-lg border bg-muted/40 p-0.5 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden'>
+                {hasCode && (
+                  <button
+                    type='button'
+                    onClick={() => setRightPanelView('code')}
+                    className={tabClass(mode === 'tool')}
+                    aria-label={t('rightPanel.tabCode')}
+                    title={t('rightPanel.tabCode')}
+                  >
+                    <CodeIcon className='size-3.5 shrink-0' />
+                    <span className='whitespace-nowrap @max-[620px]/right-panel:hidden'>
+                      {t('rightPanel.tabCode')}
+                    </span>
                   </button>
-                  <button type='button' onClick={() => setRightPanelView('data')} className={tabClass(showDataTab)}>
-                    <DatabaseIcon className='size-3.5' />
-                    {t('rightPanel.tabData')}
-                  </button>
-                </>
-              )}
-            </div>
-          ) : (
-            <span className='truncate text-sm font-semibold'>
-              {showAppPanel ? previewTitle : t('rightPanel.title')}
-            </span>
-          )}
-          <div className='flex shrink-0 items-center gap-1'>
-            {hasPreview && showNodepod && applicationComponent && <DeployControls />}
-            <Button variant='ghost' size='icon-sm' aria-label={t('rightPanel.close')} onClick={close}>
+                )}
+                {hasPreview && (
+                  <>
+                    <button
+                      type='button'
+                      onClick={() => setRightPanelView('preview')}
+                      className={tabClass(showPreviewTab)}
+                      aria-label={t('rightPanel.tabPreview')}
+                      title={t('rightPanel.tabPreview')}
+                    >
+                      <EyeIcon className='size-3.5 shrink-0' />
+                      <span className='whitespace-nowrap @max-[620px]/right-panel:hidden'>
+                        {t('rightPanel.tabPreview')}
+                      </span>
+                    </button>
+                    <button
+                      type='button'
+                      onClick={() => setRightPanelView('data')}
+                      className={tabClass(showDataTab)}
+                      aria-label={t('rightPanel.tabData')}
+                      title={t('rightPanel.tabData')}
+                    >
+                      <DatabaseIcon className='size-3.5 shrink-0' />
+                      <span className='whitespace-nowrap @max-[620px]/right-panel:hidden'>
+                        {t('rightPanel.tabData')}
+                      </span>
+                    </button>
+                  </>
+                )}
+              </div>
+            ) : (
+              <span className='truncate text-sm font-semibold'>
+                {showAppPanel ? previewTitle : t('rightPanel.title')}
+              </span>
+            )}
+          </div>
+          <div className='min-w-0 max-w-[10rem] justify-self-center overflow-hidden px-0.5 @max-[480px]/right-panel:hidden'>
+            {hasPreview && showNodepod && applicationComponent ? <AppViewModeToggle /> : null}
+          </div>
+          <div className='flex min-w-0 shrink items-center justify-self-end gap-0.5 @max-[620px]/right-panel:gap-0'>
+            {hasPreview && showNodepod && applicationComponent && (
+              <DeployControls />
+            )}
+            <Button variant='ghost' size='icon-sm' className='shrink-0' aria-label={t('rightPanel.close')} onClick={close}>
               <XIcon className='size-4' />
             </Button>
           </div>

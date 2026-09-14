@@ -3,7 +3,7 @@ export interface FeatureVisibility {
   workspace: boolean;
   playbook: boolean;
   governance: boolean;
-  appMarketplace: boolean;
+  appBuilder: boolean;
   worky: boolean;
   agents: boolean;
   semanticModel: boolean;
@@ -30,7 +30,7 @@ export const DEFAULT_FEATURE_VISIBILITY: FeatureVisibility = {
   workspace: true,
   playbook: true,
   governance: true,
-  appMarketplace: true,
+  appBuilder: true,
   worky: true,
   agents: true,
   semanticModel: true,

@@ -24,6 +24,9 @@ import type { IGrpcSkill } from '@modules/skill/interfaces/skill.interface';
 import { ConnectorService } from '@modules/connector/connector.service';
 import type { IGrpcConnector } from '@modules/connector/interfaces/connector.interface';
 import { ModelsService } from '@modules/models/models.service';
+import { RuntimeBindingService } from '@modules/app-runtime/services/runtime-binding.service';
+import { RuntimeFinalizedRevisionService } from '@modules/app-runtime/services/runtime-finalized-revision.service';
+import { RuntimeRevisionService } from '@modules/app-runtime/services/runtime-revision.service';
 import type { ConversationV2Event } from '../types/conversation-v2.types';
 
 export interface StartStreamRequest {
@@ -39,6 +42,12 @@ export interface StartStreamRequest {
   };
   skillIds?: string[];
   connectorIds?: string[];
+  /**
+   * Finalized revision the turn must build from (historical-version send).
+   * Validated, branched and pinned before the agent turn starts — see
+   * {@link ConversationV2StreamService.startStream}.
+   */
+  baseRevisionId?: string;
 }
 
 interface ActiveStream {
@@ -81,6 +90,9 @@ export class ConversationV2StreamService implements OnModuleDestroy {
     private readonly skillService: SkillService,
     private readonly connectorService: ConnectorService,
     private readonly modelsService: ModelsService,
+    private readonly finalizedRevisions: RuntimeFinalizedRevisionService,
+    private readonly runtimeRevisions: RuntimeRevisionService,
+    private readonly runtimeBindings: RuntimeBindingService,
   ) {}
 
   onModuleDestroy(): void {
@@ -104,7 +116,7 @@ export class ConversationV2StreamService implements OnModuleDestroy {
     sessionId: string,
     req: StartStreamRequest,
   ): Promise<void> {
-    const max = this.config.get<number>('conversationV2.maxMessageLength') ?? 16384;
+    const max = this.config.get<number>('conversationV2.maxMessageLength') ?? 30000;
     if (!req.message || req.message.length === 0 || req.message.length > max) {
       throw new BadRequestException(`message must be 1..${max} chars`);
     }
@@ -144,6 +156,19 @@ export class ConversationV2StreamService implements OnModuleDestroy {
     // model wins; otherwise the conversation-v2 default (admin-configured on an
     // existing model, reusing its config) and then the global default.
     const model = req.model ?? (await this.resolveConversationV2DefaultModel());
+
+    // Historical-version send: validate the selected revision, branch a fresh
+    // revision from it and pin the runtime binding, so the agent builds from
+    // the user-selected state without rewriting existing history. Runs BEFORE
+    // the user echo is persisted so an invalid revision fails the request
+    // cleanly with a 400.
+    let branchRevisionId: string | null = null;
+    if (req.baseRevisionId) {
+      await this.finalizedRevisions.assertFinalized(aiSessionId, req.baseRevisionId);
+      const branch = await this.runtimeRevisions.branchRevision(aiSessionId, req.baseRevisionId);
+      await this.runtimeBindings.updateRevision(aiSessionId, branch.revisionId);
+      branchRevisionId = branch.revisionId;
+    }
 
     // Persist + emit the user's prompt before invoking gRPC, so a reloading
     // client sees what was asked. event_id comes from the client when provided
@@ -211,7 +236,7 @@ export class ConversationV2StreamService implements OnModuleDestroy {
     // (mirrors v1's conversation-level `selectedSkills`). Refreshed every send.
     await this.sessions.setSelectedSkills(sessionId, req.skillIds ?? []);
     await this.sessions.setSelectedConnectors(sessionId, req.connectorIds ?? []);
-    this.runGrpc(userId, grpcUserId, sessionId, aiSessionId, systemWorkspaceId, req, model, skills, connectors);
+    this.runGrpc(userId, grpcUserId, sessionId, aiSessionId, systemWorkspaceId, req, model, skills, connectors, branchRevisionId);
   }
 
   /**
@@ -270,6 +295,7 @@ export class ConversationV2StreamService implements OnModuleDestroy {
     model: string | undefined,
     skills: IGrpcSkill[],
     connectors: IGrpcConnector[],
+    branchRevisionId: string | null = null,
   ): void {
     const key = `${actorUserId}:${sessionId}`;
     const idleMs = this.config.get<number>('conversationV2.grpcIdleTimeoutMs') ?? 120000;
@@ -343,13 +369,19 @@ export class ConversationV2StreamService implements OnModuleDestroy {
     };
 
     const isRepoBound = !!req.connectorRepo;
-    const gRpcMessage = isRepoBound
+    let gRpcMessage = isRepoBound
       ? `[system] The user has selected the GitHub repository "${
           req.connectorRepo!.repoName
         }" (${req.connectorRepo!.repoUrl ?? req.connectorRepo!.repoId}) for this conversation. Use the GitHub MCP tools scoped to this repository for any repository-level actions (issues, PRs, commits, branches, etc). Do NOT ask the user which repo to use — it has already been selected.\n\n${
           req.message
         }`
       : req.message;
+    if (req.baseRevisionId && branchRevisionId) {
+      gRpcMessage =
+        `[system] The user selected a previous version of the app (revision ${req.baseRevisionId}) and wants to continue working from it. ` +
+        `The workspace has been branched to revision ${branchRevisionId}, whose files are exactly the state of that version. ` +
+        `Treat revision ${branchRevisionId} as the current state — do NOT assume changes from newer revisions are present.\n\n${gRpcMessage}`;
+    }
 
     const subscription = this.grpcClient
       .chat(grpcUserId, aiSessionId, gRpcMessage, model, req.connectorRepo, skills, connectors)

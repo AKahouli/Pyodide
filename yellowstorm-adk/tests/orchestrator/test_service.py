@@ -92,11 +92,168 @@ def test_make_plan_extracts_a_plan_when_output_schema_is_combined_with_tools(mon
     plan = asyncio.run(service._make_plan("sess1", "u1", "search bitcoin then ask Rabeb"))
 
     assert plan.title == "Bitcoin investment check"
-    assert [s.id for s in plan.steps] == ["s1", "s2"]
+    # Step ids are namespaced with plan.id (_namespace_step_ids): the planner
+    # emits s1/s2 on every turn and one session is reused across turns, so bare
+    # ids collided with an earlier turn's rows in the read-model — the per-plan
+    # prefix makes them turn-unique. depends_on is remapped to match.
+    assert [s.id for s in plan.steps] == [f"{plan.id}_s1", f"{plan.id}_s2"]
+    assert plan.steps[1].depends_on == [f"{plan.id}_s1"]
     assert plan.steps[1].assignee_name == "Rabeb"
     assert plan.steps[1].assignee == "rabeb"
 
 
+def test_make_plan_survives_a_flaky_planner_duplicate_blank_and_dangling_deps(monkeypatch):
+    """A planner (seen live with glm-5.3-go) can emit a step twice, a blank id, a
+    self-dep, or a dep on a step it never wrote. Any of these makes
+    scheduler.validate raise and aborts the whole turn — nothing projected, the
+    session hangs 'running'. _make_plan must drop the offenders and yield a valid
+    plan instead."""
+    from pydantic import PrivateAttr
+    from google.adk.models import BaseLlm
+    from google.adk.models.llm_response import LlmResponse
+    from google.adk.runners import Runner
+    from google.adk.sessions import InMemorySessionService
+    from google.genai import types as genai_types
+
+    class _ScriptedLlm(BaseLlm):
+        _resp: object = PrivateAttr()
+
+        def __init__(self, resp):
+            super().__init__(model="fake")
+            object.__setattr__(self, "_resp", resp)
+
+        async def generate_content_async(self, llm_request, stream=False):
+            yield self._resp
+
+    plan_json = {
+        "title": "messy", "goal": "g", "answer": "", "steps": [
+            {"id": "s1", "kind": "execute", "title": "A", "description": "d", "depends_on": []},
+            {"id": "s2", "kind": "execute", "title": "B", "description": "d", "depends_on": ["s1"]},
+            {"id": "s2", "kind": "execute", "title": "B-dupe", "description": "d", "depends_on": ["s1"]},
+            {"id": "", "kind": "execute", "title": "blank", "description": "d", "depends_on": []},
+            {"id": "s3", "kind": "execute", "title": "C", "description": "d",
+             "depends_on": ["s1", "s3", "ghost"]},   # self-dep + dangling
+        ],
+    }
+    resp = LlmResponse(content=genai_types.Content(role="model", parts=[
+        genai_types.Part(function_call=genai_types.FunctionCall(
+            name="set_model_response", args=plan_json, id="c1"))]))
+    monkeypatch.setattr(svc.nodes, "build_llm", lambda *a, **k: _ScriptedLlm(resp))
+
+    session_service = InMemorySessionService()
+    service = svc.OrchestratorService(
+        lambda node, app_name: Runner(node=node, app_name=app_name, session_service=session_service),
+        None, planner_model="fake")
+    plan = asyncio.run(service._make_plan("sess1", "u1", "do messy things"))
+
+    # duplicate s2 and blank id dropped → 3 unique steps, all namespaced
+    assert [s.id for s in plan.steps] == [f"{plan.id}_s1", f"{plan.id}_s2", f"{plan.id}_s3"]
+    # self-dep (s3) and dangling ("ghost") pruned; the real dep on s1 survives
+    s3 = plan.steps[2]
+    assert s3.depends_on == [f"{plan.id}_s1"]
+    # and the whole thing is now a valid DAG the orchestrator won't choke on
+    scheduler.validate(plan)      # must not raise
+    scheduler.assign_waves(plan)
+
+
+def test_dep_results_context_injects_only_completed_direct_dependencies():
+    """A downstream step is handed the results of the COMPLETED steps it directly
+    depends_on — not pending ones, not the whole plan, not transitive results.
+    (Fixes: depends_on was ordering-only, so a step ran blind to upstream output.)"""
+    s1 = Step(id="a", title="Search", description="d", status=Status.COMPLETED, result="FOUND=42")
+    s2 = Step(id="b", title="Pending", description="d", status=Status.PENDING, result="not yet")
+    s3 = Step(id="c", title="Use", description="d", depends_on=["a", "b"])
+    plan = Plan(steps=[s1, s2, s3])
+    ctx = svc.OrchestratorService._dep_results_context(plan)
+
+    assert ctx(s1) is None                      # no deps → nothing injected
+    out = ctx(s3)
+    assert out and "FOUND=42" in out            # completed dep's result is injected
+    assert "Search" in out                      # labelled by the dep's title
+    assert "not yet" not in out                 # a pending dep is excluded
+
+    # direct-only: a step depending on c (not yet completed) sees nothing —
+    # a's result does not reach it transitively through c.
+    s4 = Step(id="e", depends_on=["c"])
+    plan.steps.append(s4)
+    assert svc.OrchestratorService._dep_results_context(plan)(s4) is None
+
+
+def test_plan_turn_fails_the_session_on_an_empty_planner_response():
+    """A broken/empty planner output (0 steps AND empty answer — seen live with
+    glm-5.3-go returning {steps:[], answer:"", ops:[...]} for a real task) must
+    NOT silently 'complete': retry the planner once, and if it's still empty, FAIL
+    the session with a message naming the cause."""
+    rm = MagicMock(ensure_session=AsyncMock(), add_message=AsyncMock(),
+                   set_session_status=AsyncMock())
+    service = svc.OrchestratorService(MagicMock(), rm, planner_model="m")
+
+    calls = {"n": 0}
+    async def empty_plan(*a, **k):
+        calls["n"] += 1
+        return Plan(id="p", title="", goal="", answer="", steps=[])
+    service._make_plan = empty_plan
+
+    posted = {}
+    async def capture_err(session_id, content, title="x"):
+        posted["content"] = content
+    service._add_error_message = capture_err
+
+    asyncio.run(service.plan_turn(session_id="s", user_id="u", message="search X and email Y", model="m"))
+
+    assert calls["n"] == 2, f"planner should be retried once (got {calls['n']} calls)"
+    assert (posted.get("content") or "").strip(), "must post an ERROR naming the cause"
+    rm.set_session_status.assert_awaited_with("s", "failed")   # fail, not complete
+
+
+def test_fail_session_surfaces_a_planner_error_and_fails_a_running_session():
+    """A planner LLM error (e.g. RateLimitError) raises OUTSIDE the drive, so the
+    session is left 'running' with nothing shown — fail_session must post the
+    cause as a chat error and mark the session failed."""
+    rm = MagicMock(snapshot=AsyncMock(return_value={"session": {"status": "running"}}),
+                   add_message=AsyncMock(), add_message_component=AsyncMock(),
+                   set_session_status=AsyncMock())
+    service = svc.OrchestratorService(MagicMock(), rm, planner_model="m")
+
+    asyncio.run(service.fail_session("s", RuntimeError("Weekly usage limit reached")))
+
+    rm.add_message.assert_awaited()  # the error message was posted
+    rm.add_message_component.assert_awaited()  # ...as an error component
+    rm.set_session_status.assert_awaited_with("s", "failed")
+
+
+def test_fail_session_is_idempotent_when_the_drive_already_failed():
+    """A drive-phase error already went through _fail_turn (session='failed' +
+    message posted); the top-level net must NOT post a duplicate."""
+    rm = MagicMock(snapshot=AsyncMock(return_value={"session": {"status": "failed"}}),
+                   add_message=AsyncMock(), add_message_component=AsyncMock(),
+                   set_session_status=AsyncMock())
+    service = svc.OrchestratorService(MagicMock(), rm, planner_model="m")
+
+    asyncio.run(service.fail_session("s", RuntimeError("boom")))
+
+    rm.add_message.assert_not_awaited()
+    rm.set_session_status.assert_not_awaited()
+
+
+def test_plan_turn_keeps_a_genuine_direct_reply_completed():
+    """The empty-plan guard must NOT fire on a real CASE A reply: 0 steps but a
+    non-empty answer is chit-chat — complete it, don't fail it or retry."""
+    rm = MagicMock(ensure_session=AsyncMock(), add_message=AsyncMock(),
+                   set_session_status=AsyncMock())
+    service = svc.OrchestratorService(MagicMock(), rm, planner_model="m")
+
+    calls = {"n": 0}
+    async def direct_reply(*a, **k):
+        calls["n"] += 1
+        return Plan(id="p", title="", goal="", answer="Bonjour ! Comment puis-je aider ?", steps=[])
+    service._make_plan = direct_reply
+    service._add_message = AsyncMock()
+
+    asyncio.run(service.plan_turn(session_id="s", user_id="u", message="salut", model="m"))
+
+    assert calls["n"] == 1, "a real direct reply must NOT trigger a retry"
+    rm.set_session_status.assert_awaited_with("s", "completed")
 def _planner_service(monkeypatch, responses):
     class FakeRunner:
         def __init__(self):
@@ -117,32 +274,33 @@ def _planner_service(monkeypatch, responses):
     return svc.OrchestratorService(lambda node, app_name: runner, None, planner_model="fake"), runner
 
 
-def test_make_plan_retries_duplicate_ids_with_a_complete_replacement(monkeypatch):
+def test_make_plan_drops_duplicate_ids_and_keeps_the_plan(monkeypatch):
+    # A flaky planner can emit the same id twice. Rather than retry or abort the
+    # turn, _make_plan drops the duplicate and keeps the plan (ids namespaced by
+    # plan.id downstream). One planner call, no correction round-trip.
     invalid = {"title": "t", "steps": [
         {"id": "s1", "description": "first"},
         {"id": "s1", "description": "second", "depends_on": ["s1"]},
     ]}
-    corrected = {"title": "t", "steps": [
-        {"id": "s1", "description": "first"},
-        {"id": "s2", "description": "second", "depends_on": ["s1"]},
-    ]}
-    service, runner = _planner_service(monkeypatch, [invalid, corrected])
+    service, runner = _planner_service(monkeypatch, [invalid])
 
     plan = asyncio.run(service._make_plan("sess", "user", "do work"))
 
-    assert [step.id for step in plan.steps] == ["s1", "s2"]
-    assert len(runner.messages) == 2
-    assert "Every step id must be unique" in runner.messages[1]
+    assert len(plan.steps) == 1
+    assert plan.steps[0].id.endswith("s1")
+    assert len(runner.messages) == 1
 
 
-def test_make_plan_stops_after_one_invalid_correction(monkeypatch):
-    duplicate = {"title": "t", "steps": [{"id": "s1"}, {"id": "s1"}]}
-    service, runner = _planner_service(monkeypatch, [duplicate, duplicate])
+def test_make_plan_drops_blank_ids_and_keeps_the_plan(monkeypatch):
+    # The sibling case: a blank id is dropped the same way, no retry, no raise.
+    data = {"title": "t", "steps": [{"id": "s1"}, {"id": ""}]}
+    service, runner = _planner_service(monkeypatch, [data])
 
-    with pytest.raises(ValueError, match="duplicate step ids"):
-        asyncio.run(service._make_plan("sess", "user", "do work"))
+    plan = asyncio.run(service._make_plan("sess", "user", "do work"))
 
-    assert len(runner.messages) == 2
+    assert len(plan.steps) == 1
+    assert plan.steps[0].id.endswith("s1")
+    assert len(runner.messages) == 1
 
 
 def test_step_row_shows_the_personas_display_name_before_it_runs():
@@ -243,21 +401,17 @@ def test_plan_from_snapshot_restores_is_dynamic_delegate():
     assert plan.steps[0].is_dynamic_delegate is True
 
 
-def test_resume_turn_completes_a_dynamic_await_reply_step_out_of_band():
-    """A create_task(kind='await_reply')-spawned step's first park happened
-    inside a throwaway nested run (ctx.run_node) whose node path a later
-    flat resume rebuild can never reproduce — so hitl.resume_part's
-    node-path-keyed matching can never actually reach IT; ADK just re-blocks
-    it under a brand new interrupt id and the real answer is silently
-    dropped. Live example: a persona's create_task(kind='await_reply') step
-    got its reply matched and claimed in mail_waits, yet stayed blocked
-    forever because the resume never landed on the right node. resume_turn
-    must apply the answer directly to the step instead of relying on that
-    match. It must still drive with hitl.resume_part, though (see the next
-    test) — a generic trigger was tried and reverted after live sessions
-    showed it makes the CALLER (e.g. the persona that spawned this step)
-    replay as a fresh turn instead of a continuation, redoing its entire
-    reasoning including sending a second real email."""
+def test_resume_turn_resumes_a_dynamic_await_reply_step_normally_not_out_of_band():
+    """A create_task(kind='await_reply') step now parks as a real TOP-LEVEL node
+    (create_task no longer runs it as a nested ctx.run_node), so its node path
+    and interrupt id are reproducible and it resumes through hitl.resume_part
+    exactly like a planner-emitted await. The old out-of-band shortcut — mark the
+    step completed and replay it as a stored-result node — is GONE: with a
+    top-level node it swapped the recorded park events for a stored-result node
+    and diverged ADK's replay barrier on the await's own sequence key (seen live:
+    session 188cbdbe, 'Replay divergence … c593f1e04dfa@1'). This guards against
+    re-introducing it: a dynamic await must NOT be force-completed at resume; the
+    drive (via resume_part) completes it, same as any top-level await."""
     session = MagicMock()
     session.session_service.get_session = AsyncMock(return_value=object())
     rm = MagicMock()
@@ -271,10 +425,10 @@ def test_resume_turn_completes_a_dynamic_await_reply_step_out_of_band():
              "is_persona": True, "assignee": "hamdi", "assignee_name": "Hamdi Imed"},
             {"step_id": "n1", "description": "", "kind": "await_reply",
              "status": "blocked", "wave": 1, "depends_on": "s0", "result": None,
-             "is_dynamic_delegate": True},
+             "is_dynamic_delegate": True, "interrupt_id": "mail:plan_s1@1/n1@1"},
         ],
     })
-    rm.outstanding_interrupts = AsyncMock(return_value=[("mail:task_n1@1/n_n1@1", "n1")])
+    rm.outstanding_interrupts = AsyncMock(return_value=[("mail:plan_s1@1/n1@1", "n1")])
     rm.set_step_status = AsyncMock()
 
     service = svc.OrchestratorService(lambda node, app_name: session, rm, planner_model="m")
@@ -282,20 +436,17 @@ def test_resume_turn_completes_a_dynamic_await_reply_step_out_of_band():
     service._drive = AsyncMock(return_value=[])
     service._finalize = AsyncMock()
 
-    plan = asyncio.run(service.resume_turn(
+    asyncio.run(service.resume_turn(
         session_id="s1", user_id="u1", answer="Go ahead, migrate.", model="m",
-        interrupt_id="mail:task_n1@1/n_n1@1"))
+        interrupt_id="mail:plan_s1@1/n1@1"))
 
-    assert plan.step("n1").status is Status.COMPLETED
-    assert plan.step("n1").result == "Go ahead, migrate."
-    rm.set_step_status.assert_awaited_once_with(
-        "s1", "n1", "completed", result="Go ahead, migrate.")
-
-    # Still driven with hitl.resume_part (using the stale-but-real id) — it
-    # doesn't need to match anything current since this step's own node
-    # never gets rebuilt as a real await_reply this turn (short-circuited
-    # above); what matters is that the trigger correctly resolves to a real
-    # prior invocation so ADK replays the caller instead of re-running it.
+    # NOT force-completed out-of-band — no set_step_status(..., 'completed') before
+    # the drive; the drive resolves it like any top-level await.
+    for call in rm.set_step_status.await_args_list:
+        assert not (call.args[1] == "n1" and call.args[2] == "completed"), \
+            "dynamic await must not be force-completed out-of-band"
+    # Driven with a real resume_part (function_response), keyed on the await's own
+    # (reproducible, top-level) interrupt id.
     trigger = service._drive.await_args.args[-1]
     assert trigger.parts[0].text is None
     assert trigger.parts[0].function_response is not None
@@ -1067,9 +1218,14 @@ def test_persona_create_task_await_reply_survives_a_real_turn_boundary():
         runner1 = runner_factory(wf, f"orch_{session_id}")
         asyncio.run(session_service.create_session(
             app_name=f"orch_{session_id}", user_id="u1", session_id=session_id))
-        interrupts = asyncio.run(service._drive(
+        # _drive_loop, not raw _drive: create_task(await_reply) now leaves the
+        # wait PENDING as a top-level step (never nested — nesting diverges ADK's
+        # replay barrier), so it runs on this turn's rebuild inside _drive_loop —
+        # the real production turn-1 path (_drive_until_quiescent → _drive_loop).
+        interrupts = asyncio.run(service._drive_loop(
             runner1, session_id, "u1", plan, n2s,
-            types.Content(role="user", parts=[types.Part(text="go")])))
+            types.Content(role="user", parts=[types.Part(text="go")]),
+            model="fake", connectors=None, executor_prompt=None))
         asyncio.run(service._finalize(session_id, plan, interrupts))
 
         await_step = next(s for s in plan.steps if s.kind == "await_reply")
@@ -1112,6 +1268,161 @@ def test_persona_create_task_await_reply_survives_a_real_turn_boundary():
         followup_final = plan2.step(followup_step.id)
         assert followup_final.status is Status.COMPLETED
         assert followup_final.result == "REAL FINAL ANSWER — reply seen: True"
+
+
+def test_mixed_planner_await_and_create_task_await_no_stuck_step_no_divergence():
+    """The live regression (session d3635052 / 8cf41ed8): a MIXED plan holding a
+    planner-emitted await_reply (parks in pass 1) AND a persona step that spawns
+    a create_task(await_reply). Running the spawned await needs a _drive_loop
+    rebuild; that rebuild used to re-run the already-parked planner await under a
+    SHIFTED node-path id — orphaning its mail wait and leaving it stuck RUNNING —
+    and the nested-run design diverged ADK's replay barrier on the resume.
+
+    Fix under test: the runtime await is a TOP-LEVEL step (never nested), and a
+    blocked ask/await re-parks under its STORED interrupt id (fixed_iid). Asserts
+    turn 1 parks both awaits with no stuck step and one stable id, and the resume
+    runs the follow-up with the reply WITHOUT divergence or disturbing the other
+    await."""
+    from pydantic import PrivateAttr
+    from google.adk.models import BaseLlm
+    from google.adk.models.llm_response import LlmResponse
+    from google.adk.runners import Runner
+    from google.adk.sessions import InMemorySessionService
+    from google.genai import types
+    import unittest.mock as mock
+    from src.companion_ai import nodes as nodes_mod
+
+    class _ScriptedLlm(BaseLlm):
+        _n: int = PrivateAttr(default=0)
+        def __init__(self): super().__init__(model="fake"); object.__setattr__(self, "_n", 0)
+        async def generate_content_async(self, llm_request, stream=False):
+            object.__setattr__(self, "_n", self._n + 1)
+            txt = "\n".join((p.text or "") for c in llm_request.contents
+                            for p in (c.parts or []) if getattr(p, "text", None))
+            if "Give the real final answer" in txt:
+                yield LlmResponse(content=types.Content(role="model",
+                    parts=[types.Part(text="ACTED ON REPLY")])); return
+            if self._n == 1:
+                yield LlmResponse(content=types.Content(role="model", parts=[types.Part(
+                    function_call=types.FunctionCall(name="create_task",
+                        args={"description": "Give the real final answer once X replies.",
+                              "kind": "await_reply"}, id="call_1"))])); return
+            yield LlmResponse(content=types.Content(role="model",
+                parts=[types.Part(text="Draft sent, awaiting reply.")]))
+
+    session_id = "sessMIX"
+    plan = Plan(id="p", title="t", goal="g", executor_id="exec1", executor_name="Worky executor", steps=[
+        Step(id="s1", kind="execute", is_persona=True, assignee="hamdi", assignee_name="Hamdi",
+             description="Ask Hamdi"),
+        Step(id="s2", kind="await_reply", description="Await the collaboration reply", depends_on=[])])
+
+    binds = []
+    rm = MagicMock()
+    for m in ("upsert_steps", "set_step_status", "upsert_plan", "cancel_mail_waits", "set_waiting",
+              "set_session_status", "add_message", "rebind_mail_wait", "register_mail_wait",
+              "snapshot", "outstanding_interrupts"):
+        setattr(rm, m, AsyncMock())
+    rm.mail_token_for = AsyncMock(return_value=None)
+    rm.bind_mail_wait_interrupt = AsyncMock(side_effect=lambda sid, step_id, iid: binds.append((step_id, iid)))
+    rm.outstanding_interrupts.return_value = []
+
+    ss = InMemorySessionService()
+    def runner_factory(node, app_name): return Runner(app_name=app_name, agent=node, session_service=ss)
+    scripted = _ScriptedLlm()
+    with mock.patch.object(nodes_mod, "build_llm", lambda *a, **k: scripted):
+        service = svc.OrchestratorService(runner_factory, rm, planner_model="m")
+        wf, n2s = service._build_workflow(session_id, "u1", plan, "fake", None, None)
+        runner1 = runner_factory(wf, f"orch_{session_id}")
+        asyncio.run(ss.create_session(app_name=f"orch_{session_id}", user_id="u1", session_id=session_id))
+        interrupts = asyncio.run(service._drive_loop(
+            runner1, session_id, "u1", plan, n2s,
+            types.Content(role="user", parts=[types.Part(text="go")]),
+            model="fake", connectors=None, executor_prompt=None))
+        rm.outstanding_interrupts.return_value = list(interrupts)
+        asyncio.run(service._finalize(session_id, plan, interrupts))
+
+        s2 = plan.step("s2")
+        spawned = next(s for s in plan.steps if s.kind == "await_reply" and s.is_dynamic_delegate)
+        act = next(s for s in plan.steps if "final answer" in (s.description or "").lower())
+        assert not [s.id for s in plan.steps if s.status == Status.RUNNING], "a step is stuck RUNNING"
+        assert s2.status is Status.BLOCKED and spawned.status is Status.BLOCKED
+        assert len({iid for sid, iid in binds if sid == "s2"}) == 1, "planner await id not stable"
+        # BOTH awaits must be bound — _drive_loop returns the union of interrupts
+        # across passes, so a step that parked before the rebuild isn't dropped
+        # (the d624d1df stuck-'running', unbound-wait bug).
+        bound = {sid for sid, _ in binds}
+        assert "s2" in bound and spawned.id in bound, f"an await was not bound: {bound}"
+
+        def row(s):
+            return {"step_id": s.id, "description": s.description, "kind": s.kind, "question": s.question,
+                    "status": s.status.value, "wave": s.wave, "depends_on": ",".join(s.depends_on),
+                    "result": s.result, "assignee": s.assignee, "assignee_name": s.assignee_name,
+                    "assignee_role": s.assignee_role, "is_persona": s.is_persona,
+                    "is_dynamic_delegate": s.is_dynamic_delegate, "interrupt_id": s.interrupt_id}
+        rm.snapshot.return_value = {
+            "session": {"id": session_id, "status": "blocked", "interrupt_id": None},
+            "plan": {"id": plan.id, "title": plan.title, "goal": plan.goal, "status": "blocked",
+                     "executor_id": plan.executor_id, "executor_name": plan.executor_name},
+            "steps": [row(s) for s in plan.steps]}
+        rm.outstanding_interrupts.return_value = [(s2.interrupt_id, s2.id),
+                                                  (spawned.interrupt_id, spawned.id)]
+        plan2 = asyncio.run(service.resume_turn(session_id=session_id, user_id="u1",
+                            answer="X says: APPROVED.", model="fake",
+                            interrupt_id=spawned.interrupt_id))
+        assert plan2.step(act.id).status is Status.COMPLETED, "follow-up (act) step didn't run"
+        assert plan2.step("s2").status is Status.BLOCKED, "resume disturbed the other await"
+
+
+def test_resume_targets_the_card_questionId_across_parallel_gates(monkeypatch):
+    """Two confirm gates open at once (session 33dfebfa live bug): the session's
+    single interrupt id made every approval hit whichever gate it pointed at, so
+    a second card's approval landed on the first card's gate and mis-applied its
+    edits. resume_turn must answer the gate the CARD names (its questionId), and
+    if it has to fall back to a different gate, it must DROP the edits."""
+    import unittest.mock as mock
+    from google.genai import types
+    gateA, gateB = "confirm::adk-AAAA", "confirm::adk-BBBB"
+
+    rm = MagicMock()
+    rm.snapshot = AsyncMock(return_value={
+        "session": {"id": "s", "status": "waiting", "interrupt_id": gateA},  # default = A
+        "plan": {"id": "p", "title": "t", "goal": "g", "status": "blocked",
+                 "executor_id": "e", "executor_name": "E"},
+        "steps": [
+            {"step_id": "sA", "kind": "execute", "status": "blocked", "depends_on": "",
+             "description": "email rabeb", "interrupt_id": gateA, "is_persona": False},
+            {"step_id": "sB", "kind": "execute", "status": "blocked", "depends_on": "",
+             "description": "email firas", "interrupt_id": gateB, "is_persona": True}]})
+    rm.outstanding_interrupts = AsyncMock(return_value=[(gateA, "sA"), (gateB, "sB")])
+    for m in ("set_step_status", "upsert_plan", "set_session_status", "add_message",
+              "cancel_mail_waits", "bind_mail_wait_interrupt", "set_waiting"):
+        setattr(rm, m, AsyncMock())
+
+    service = svc.OrchestratorService(MagicMock(), rm, planner_model="m")
+    monkeypatch.setattr(svc, "_ensure_session", AsyncMock())
+    monkeypatch.setattr(service, "_build_workflow", lambda *a, **k: (MagicMock(), {}))
+    captured = {}
+    async def fake_drive(runner, session_id, user_id, plan, n2s, new_message, **kw):
+        fr = new_message.parts[0].function_response
+        captured["fc_id"] = fr.id
+        captured["payload"] = (fr.response or {}).get("payload")
+        return []
+    monkeypatch.setattr(service, "_drive_until_quiescent", fake_drive)
+    monkeypatch.setattr(service, "_finalize", AsyncMock())
+
+    # Approve gate B (Firas) with its own questionId + edits. Must target B, not A.
+    answer = '{"verdict":"approve","questionId":"confirm::adk-BBBB","edits":{"subject":"x"}}'
+    asyncio.run(service.resume_turn(session_id="s", user_id="u", answer=answer, model="fake"))
+    assert captured["fc_id"] == "adk-BBBB", f"answered the wrong gate: {captured['fc_id']}"
+    assert captured["payload"] == {"subject": "x"}, "edits should ride to the targeted gate"
+
+    # Now B's id has drifted (no longer outstanding); the approval must fall back
+    # to A but DROP B's edits (never apply one send's edits to another).
+    rm.outstanding_interrupts = AsyncMock(return_value=[(gateA, "sA")])
+    captured.clear()
+    asyncio.run(service.resume_turn(session_id="s", user_id="u", answer=answer, model="fake"))
+    assert captured["fc_id"] == "adk-AAAA", "should fall back to the only outstanding gate"
+    assert captured["payload"] is None, "edits for a gone gate must be dropped, not applied to A"
 
 
 async def test_inject_steps_appends_to_live_plan_with_fresh_ids():
@@ -1428,6 +1739,8 @@ def test_a_step_result_keeps_the_answer_not_the_models_reasoning():
     ev.get_function_calls.return_value = []
     ev.get_function_responses.return_value = []
     ev.long_running_tool_ids = None
+    ev.error_message = None   # a successful event carries no error
+    ev.error_code = None
     ev.actions = MagicMock(state_delta={})
 
     asyncio.run(service._apply_event("sess1", plan, ev, {"s1": "s1"}, set()))
@@ -1568,3 +1881,113 @@ async def test_concurrent_amends_on_one_session_are_serialized():
     # The second amend planned AFTER the first applied its step, so it saw a
     # bigger plan — proof it wasn't working from the same stale snapshot.
     assert seen_steps_at_plan == [1, 2]
+
+
+def _schema_aware_planner_service(monkeypatch, *, schema_pass_fails):
+    """A planner runner that knows whether the agent was built WITH output_schema.
+
+    When schema_pass_fails, the structured pass raises (as a provider that can't
+    do structured output would 400), so _make_plan must fall back to the
+    schema-less prompt-mode pass. Both passes otherwise return the same valid plan
+    JSON — the plan was always parsed from text, so prompt mode needs no schema.
+    """
+    _PLAN = {"title": "t", "goal": "g", "answer": "ok",
+             "steps": [{"id": "s1", "kind": "execute", "title": "x",
+                        "description": "do x", "depends_on": []}]}
+
+    class SchemaAwareRunner:
+        def __init__(self):
+            self.session_service = MagicMock(
+                get_session=AsyncMock(return_value=object()),
+                create_session=AsyncMock(),
+            )
+            self.calls = []  # (had_output_schema, message_text)
+
+        def bind(self, agent):
+            self._agent = agent
+            return self
+
+        async def run_async(self, **kwargs):
+            had_schema = getattr(self._agent, "output_schema", None) is not None
+            self.calls.append((had_schema, kwargs["new_message"].parts[0].text))
+            if had_schema and schema_pass_fails:
+                raise RuntimeError("response_format not supported by this model")
+            event = MagicMock()
+            event.content.parts = [MagicMock(text=json.dumps(_PLAN))]
+            yield event
+
+    runner = SchemaAwareRunner()
+    monkeypatch.setattr(svc.nodes, "build_llm", lambda *a, **k: "fake")
+    return (svc.OrchestratorService(lambda node, app_name: runner.bind(node),
+                                    None, planner_model="fake"),
+            runner)
+
+
+def test_make_plan_falls_back_to_prompt_mode_when_structured_output_unsupported(monkeypatch):
+    # A model whose provider can't do structured output makes the schema pass
+    # raise; _make_plan must retry schema-less (prompt mode) so the planner still
+    # works on ANY model that can emit JSON — not only structured-output ones.
+    service, runner = _schema_aware_planner_service(monkeypatch, schema_pass_fails=True)
+
+    plan = asyncio.run(service._make_plan("sess", "user", "find bitcoin price"))
+
+    assert [s.id.split("_")[-1] for s in plan.steps] == ["s1"]   # plan still built
+    assert len(runner.calls) == 2                                # schema, then fallback
+    assert runner.calls[0][0] is True                            # pass 0 had output_schema
+    assert runner.calls[1][0] is False                           # fallback had none
+    assert "strict JSON" in runner.calls[1][1]                   # contract restated in msg
+
+
+def test_make_plan_uses_structured_output_and_does_not_fall_back_when_supported(monkeypatch):
+    # A capable model succeeds on the structured pass: no fallback, one call —
+    # unchanged from before the fallback was added (zero regression).
+    service, runner = _schema_aware_planner_service(monkeypatch, schema_pass_fails=False)
+
+    plan = asyncio.run(service._make_plan("sess", "user", "find bitcoin price"))
+
+    assert len(plan.steps) == 1
+    assert len(runner.calls) == 1
+    assert runner.calls[0][0] is True                            # structured pass, no retry
+
+
+def test_parse_verdict_plain_and_edit_on_card():
+    # Plain-text verdicts still work.
+    assert svc._parse_verdict("approve") == (True, None)
+    assert svc._parse_verdict("Approuver") == (True, None)
+    assert svc._parse_verdict("decline") == (False, None)
+    assert svc._parse_verdict("no, change the subject") == (False, None)
+    # Edit-on-card: JSON approval carries edits as the confirmation payload.
+    ok, edits = svc._parse_verdict(
+        '{"verdict":"approve","edits":{"subject":"URGENT","body":"new body"}}')
+    assert ok is True and edits == {"subject": "URGENT", "body": "new body"}
+    # Edits are dropped on a decline (nothing to send).
+    assert svc._parse_verdict('{"verdict":"decline","edits":{"subject":"x"}}') == (False, None)
+    # Malformed JSON degrades to a plain (non-approve) verdict, never raises.
+    assert svc._parse_verdict('{"verdict":') == (False, None)
+
+
+def test_mark_running_flips_pending_and_projects_at_model_start():
+    # _mark_running (before_model_callback) marks a PENDING step RUNNING the
+    # moment its request is sent to the model, and projects it — so the UI shows
+    # in-progress at once instead of lagging until ADK's first event.
+    step = Step(id="s1", kind="execute", description="do", status=Status.PENDING)
+    seen = []
+    async def on_start(s):
+        seen.append((s.id, s.status))
+    cb = svc.nodes._mark_running(step, on_start)
+    asyncio.run(cb(object(), object()))
+    assert step.status == Status.RUNNING
+    assert seen == [("s1", Status.RUNNING)]
+
+
+def test_mark_running_leaves_a_terminal_step_untouched():
+    # A re-entered COMPLETED step is not flipped (so _trace_execution's re-run
+    # diagnostic still fires) and is not re-projected.
+    step = Step(id="s1", kind="execute", description="do", status=Status.COMPLETED)
+    seen = []
+    async def on_start(s):
+        seen.append(s.id)
+    cb = svc.nodes._mark_running(step, on_start)
+    asyncio.run(cb(object(), object()))
+    assert step.status == Status.COMPLETED
+    assert seen == []

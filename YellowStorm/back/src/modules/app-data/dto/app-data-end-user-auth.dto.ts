@@ -12,6 +12,13 @@ export class AppDataEndUserRegisterDto {
   @IsString()
   @MaxLength(128)
   displayName?: string;
+
+  /** Opaque register-invite token from `/register?invite=`. */
+  @IsOptional()
+  @IsString()
+  @MinLength(16)
+  @MaxLength(128)
+  inviteToken?: string;
 }
 
 export class AppDataEndUserLoginDto {

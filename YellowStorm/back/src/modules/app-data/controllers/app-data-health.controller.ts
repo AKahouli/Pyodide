@@ -15,7 +15,13 @@ export class AppDataHealthController {
   @Public()
   @Get()
   @ApiOperation({ summary: 'App Data subsystem health (no business payloads)' })
-  health(): { enabled: boolean; mcp: boolean; publicApi: boolean; dataTab: boolean } {
+  health(): {
+    enabled: boolean;
+    mcp: boolean;
+    publicApi: boolean;
+    dataTab: boolean;
+    remote: boolean;
+  } {
     if (!this.config.get<boolean>('appData.enabled', false)) {
       throw new ServiceUnavailableException('App Data disabled');
     }
@@ -24,6 +30,9 @@ export class AppDataHealthController {
       mcp: this.config.get<boolean>('appData.mcpEnabled', false),
       publicApi: this.config.get<boolean>('appData.publicApiEnabled', false),
       dataTab: this.config.get<boolean>('appData.dataTabEnabled', false),
+      // Mirror of the remote controller's marker: this handler only serves
+      // when APP_DATA_USE_REMOTE is false, so the field is always false here.
+      remote: false,
     };
   }
 }

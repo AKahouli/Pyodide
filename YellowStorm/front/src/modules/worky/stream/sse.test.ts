@@ -87,6 +87,36 @@ describe('subscribeToStreamEvents', () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
+  it('unwraps a NestJS frame that nests the type/payload in data (no event: line)', async () => {
+    vi.spyOn(window, 'fetch').mockResolvedValue(
+      sseResponse('data: {"type":"stream.terminal","data":{"error":true,"source":"session-failed"}}\n\n'),
+    );
+    const onEvent = vi.fn();
+
+    subscribeToStreamEvents('stream-1', onEvent, config);
+    await vi.waitFor(() =>
+      expect(onEvent).toHaveBeenCalledWith({
+        type: 'stream.terminal',
+        data: { error: true, source: 'session-failed' },
+      }),
+    );
+  });
+
+  it('uses the explicit event: name when present and leaves the payload as-is', async () => {
+    vi.spyOn(window, 'fetch').mockResolvedValue(
+      sseResponse('event: interaction.requested\ndata: {"type":"approval","interactionId":"i1"}\n\n'),
+    );
+    const onEvent = vi.fn();
+
+    subscribeToStreamEvents('stream-1', onEvent, config);
+    await vi.waitFor(() =>
+      expect(onEvent).toHaveBeenCalledWith({
+        type: 'interaction.requested',
+        data: { type: 'approval', interactionId: 'i1' },
+      }),
+    );
+  });
+
   it('cancels a pending retry on unsubscribe', async () => {
     const fetchMock = vi
       .spyOn(window, 'fetch')

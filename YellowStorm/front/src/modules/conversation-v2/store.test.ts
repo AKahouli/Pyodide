@@ -427,7 +427,7 @@ describe('useConversationV2Store', () => {
       revision: 'app-1',
     });
     expect(useConversationV2Store.getState().deployedUrl).toBe('https://deployed.example/app');
-    expect(useConversationV2Store.getState().appViewMode).toBe('deployed');
+    expect(useConversationV2Store.getState().appViewMode).toBe('nodepod');
   });
 
   it('sendMessage does not leave deployed mode on the first user message', async () => {
@@ -480,6 +480,63 @@ describe('useConversationV2Store', () => {
     expect(useConversationV2Store.getState().rightPanelMode).toBe('app');
   });
 
+  it('sendMessage skips a duplicate in-flight send (double-submit guard)', async () => {
+    const sendSpy = vi
+      .spyOn(conversationV2Api, 'sendMessage')
+      .mockResolvedValue(undefined);
+    useConversationV2Store.setState({ sessionId: 'session-1' });
+    const store = useConversationV2Store.getState();
+    const first = store.sendMessage('duplicate');
+    await store.sendMessage('duplicate');
+    await first;
+    expect(sendSpy).toHaveBeenCalledTimes(1);
+    const userMessages = useConversationV2Store
+      .getState()
+      .events.filter((e) => e.type === 'message' && (e as { role?: string }).role === 'user');
+    expect(userMessages).toHaveLength(1);
+  });
+
+  it('sendMessage ships baseRevisionId when a historical version is selected', async () => {
+    const sendSpy = vi
+      .spyOn(conversationV2Api, 'sendMessage')
+      .mockResolvedValueOnce(undefined);
+    useConversationV2Store.setState({
+      sessionId: 'session-1',
+      finalizedVersions: [
+        { revisionId: 'rev_3', title: 'App', finalizedAt: '2026-09-03T00:00:00.000Z' },
+        { revisionId: 'rev_2', title: 'App', finalizedAt: '2026-09-02T00:00:00.000Z' },
+      ],
+      previewRevisionId: 'rev_2',
+    });
+
+    await useConversationV2Store.getState().sendMessage('continue from version 2');
+
+    expect(sendSpy).toHaveBeenCalledWith(
+      'session-1',
+      expect.objectContaining({ baseRevisionId: 'rev_2' }),
+    );
+  });
+
+  it('sendMessage omits baseRevisionId when the latest version is selected', async () => {
+    const sendSpy = vi
+      .spyOn(conversationV2Api, 'sendMessage')
+      .mockResolvedValueOnce(undefined);
+    useConversationV2Store.setState({
+      sessionId: 'session-1',
+      finalizedVersions: [
+        { revisionId: 'rev_3', title: 'App', finalizedAt: '2026-09-03T00:00:00.000Z' },
+        { revisionId: 'rev_2', title: 'App', finalizedAt: '2026-09-02T00:00:00.000Z' },
+      ],
+      previewRevisionId: 'rev_3',
+    });
+
+    await useConversationV2Store.getState().sendMessage('keep going');
+
+    const body = sendSpy.mock.calls[0]?.[1] as Record<string, unknown> | undefined;
+    expect(body).toBeDefined();
+    expect(body!['baseRevisionId']).toBeUndefined();
+  });
+
   it('deploy sends the application component title to the backend', async () => {
     const deploySpy = vi.spyOn(conversationV2Api, 'deploySession').mockResolvedValueOnce({
       deployStatus: 'deployed',
@@ -507,7 +564,7 @@ describe('useConversationV2Store', () => {
     expect(useConversationV2Store.getState().appViewMode).toBe('deployed');
   });
 
-  it('deploy sends the finalized workspace revision id', async () => {
+  it('deploy prefers previewRevisionId then latest finalized version', async () => {
     const deploySpy = vi.spyOn(conversationV2Api, 'deploySession').mockResolvedValueOnce({
       deployStatus: 'deployed',
       deployedUrl: 'https://apps.yellowsys.org/apps/2e65d5fa87a0499f/',
@@ -515,6 +572,50 @@ describe('useConversationV2Store', () => {
     });
     useConversationV2Store.setState({
       sessionId: 'session-1',
+      previewRevisionId: 'rev_7',
+      finalizedVersions: [
+        {
+          revisionId: 'rev_15',
+          title: 'Latest finalized',
+          finalizedAt: '2026-08-14T10:00:00.000Z',
+        },
+        {
+          revisionId: 'rev_7',
+          title: 'Older finalized',
+          finalizedAt: '2026-08-01T10:00:00.000Z',
+        },
+      ],
+      applicationComponent: {
+        title: 'Generated app',
+        url: 'nodepod://preview',
+        revision: 'evt-1',
+        workspaceRevisionId: 'rev_20',
+      },
+    });
+
+    await useConversationV2Store.getState().deploy();
+
+    expect(deploySpy).toHaveBeenCalledWith('session-1', {
+      title: 'Older finalized',
+      revisionId: 'rev_7',
+    });
+  });
+
+  it('deploy sends the latest finalized workspace revision id when preview is unset', async () => {
+    const deploySpy = vi.spyOn(conversationV2Api, 'deploySession').mockResolvedValueOnce({
+      deployStatus: 'deployed',
+      deployedUrl: 'https://apps.yellowsys.org/apps/2e65d5fa87a0499f/',
+      lastDeployedAt: '2026-08-14T10:00:00.000Z',
+    });
+    useConversationV2Store.setState({
+      sessionId: 'session-1',
+      finalizedVersions: [
+        {
+          revisionId: 'rev_15',
+          title: 'Generated app',
+          finalizedAt: '2026-08-14T10:00:00.000Z',
+        },
+      ],
       applicationComponent: {
         title: 'Generated app',
         url: 'nodepod://preview',

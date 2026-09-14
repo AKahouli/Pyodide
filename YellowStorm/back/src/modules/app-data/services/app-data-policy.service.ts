@@ -50,8 +50,19 @@ export class AppDataPolicyService {
     environment: AppDataEnvironment;
     policies: AppDataPolicyDocument;
     actorPrincipal?: string;
+    expectedVersion?: number;
   }): Promise<AppDataPolicyDocument> {
     const app = await this.catalog.requireAppByWorkspace(params.workspaceId);
+    if (params.expectedVersion !== undefined) {
+      const env = await this.catalog.getEnvironment(app.id, params.environment);
+      const currentVersion = env?.currentVersion ?? 0;
+      if (currentVersion !== params.expectedVersion) {
+        throw new AppDataException(
+          AppDataErrorCode.VERSION_CONFLICT,
+          `Schema version conflict: expected ${params.expectedVersion}, actual ${currentVersion}`,
+        );
+      }
+    }
     for (const [tableName, policy] of Object.entries(params.policies)) {
       assertIdentifier(tableName, 'table name');
       this.validatePolicy(policy);

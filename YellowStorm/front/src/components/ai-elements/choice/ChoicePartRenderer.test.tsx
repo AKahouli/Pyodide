@@ -166,3 +166,136 @@ it('does not repeat selected values after the user response is displayed', async
   await waitFor(() => expect(screen.getByText('choice.submitted')).toBeInTheDocument());
   expect(screen.queryByText('Profitability')).not.toBeInTheDocument();
 });
+
+it('edit-on-card: approve submits the edited fields as JSON edits', async () => {
+  const user = userEvent.setup();
+  const onAction = vi.fn().mockResolvedValue(undefined);
+  render(
+    <ChoicePartRenderer
+      componentId='c1'
+      schemaVersion={1}
+      questionId='confirm::adk-x'
+      prompt='Approuver ?'
+      presentation='quick_replies'
+      selectionMode='single'
+      submitBehavior='immediate'
+      status='ready'
+      dismissible={false}
+      editable
+      fields={[
+        { key: 'subject', label: 'Objet', value: 'Status' },
+        { key: 'body', label: 'Message', value: 'Hi', multiline: true },
+      ]}
+      options={[
+        { id: 'approve', label: 'Approuver', submitText: 'approve' },
+        { id: 'decline', label: 'Refuser', submitText: 'decline' },
+      ]}
+      onAction={onAction}
+    />,
+  );
+  // Preview by default — reveal the inputs first, then edit.
+  expect(screen.queryByDisplayValue('Status')).not.toBeInTheDocument();
+  await user.click(screen.getByRole('button', { name: /Modifier/ }));
+  const subject = screen.getByDisplayValue('Status');
+  await user.clear(subject);
+  await user.type(subject, 'URGENT');
+  await user.click(screen.getByRole('radio', { name: 'Approuver' }));
+  expect(onAction).toHaveBeenCalledWith(expect.objectContaining({
+    submitText: JSON.stringify({
+      verdict: 'approve',
+      questionId: 'confirm::adk-x',
+      edits: { subject: 'URGENT', body: 'Hi' },
+    }),
+  }));
+});
+
+it('edit-on-card: shows a read-only preview until Modifier is clicked, and Cancel reverts', async () => {
+  const user = userEvent.setup();
+  const onAction = vi.fn().mockResolvedValue(undefined);
+  render(
+    <ChoicePartRenderer
+      componentId='c3'
+      schemaVersion={1}
+      questionId='confirm::adk-z'
+      prompt='Approuver ?'
+      presentation='quick_replies'
+      selectionMode='single'
+      submitBehavior='immediate'
+      status='ready'
+      dismissible={false}
+      editable
+      fields={[{ key: 'subject', label: 'Objet', value: 'Status' }]}
+      options={[
+        { id: 'approve', label: 'Approuver', submitText: 'approve' },
+        { id: 'decline', label: 'Refuser', submitText: 'decline' },
+      ]}
+      onAction={onAction}
+    />,
+  );
+  // Preview: value shown, no input.
+  expect(screen.getByText('Status')).toBeInTheDocument();
+  expect(screen.queryByDisplayValue('Status')).not.toBeInTheDocument();
+  await user.click(screen.getByRole('button', { name: /Modifier/ }));
+  const subject = screen.getByDisplayValue('Status');
+  await user.clear(subject);
+  await user.type(subject, 'CHANGED');
+  // Cancel reverts and returns to preview.
+  await user.click(screen.getByRole('button', { name: /Annuler/ }));
+  expect(screen.queryByDisplayValue('CHANGED')).not.toBeInTheDocument();
+  expect(screen.getByText('Status')).toBeInTheDocument();
+});
+
+it('edit-on-card: decline stays a plain verdict', async () => {
+  const user = userEvent.setup();
+  const onAction = vi.fn().mockResolvedValue(undefined);
+  render(
+    <ChoicePartRenderer
+      componentId='c2'
+      schemaVersion={1}
+      questionId='confirm::adk-y'
+      prompt='Approuver ?'
+      presentation='quick_replies'
+      selectionMode='single'
+      submitBehavior='immediate'
+      status='ready'
+      dismissible={false}
+      editable
+      fields={[{ key: 'subject', label: 'Objet', value: 'Status' }]}
+      options={[
+        { id: 'approve', label: 'Approuver', submitText: 'approve' },
+        { id: 'decline', label: 'Refuser', submitText: 'decline' },
+      ]}
+      onAction={onAction}
+    />,
+  );
+  await user.click(screen.getByRole('radio', { name: 'Refuser' }));
+  expect(onAction).toHaveBeenCalledWith(
+    expect.objectContaining({ submitText: JSON.stringify({ verdict: 'decline', questionId: 'confirm::adk-y' }) }),
+  );
+});
+
+it('edit-on-card: renders a markdown body formatted in the preview', () => {
+  render(
+    <ChoicePartRenderer
+      componentId='c4'
+      schemaVersion={1}
+      questionId='confirm::adk-md'
+      prompt='Approuver ?'
+      presentation='quick_replies'
+      selectionMode='single'
+      submitBehavior='immediate'
+      status='ready'
+      dismissible={false}
+      editable
+      fields={[{ key: 'body', label: 'Message', value: 'Bonjour **Adem**', multiline: true, markdown: true }]}
+      options={[
+        { id: 'approve', label: 'Approuver', submitText: 'approve' },
+        { id: 'decline', label: 'Refuser', submitText: 'decline' },
+      ]}
+      onAction={vi.fn()}
+    />,
+  );
+  // **Adem** renders as <strong>, not literal asterisks.
+  expect(screen.getByText('Adem').tagName).toBe('STRONG');
+  expect(screen.queryByText(/\*\*Adem\*\*/)).not.toBeInTheDocument();
+});

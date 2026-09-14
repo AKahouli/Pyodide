@@ -178,6 +178,38 @@ def _skip_if_cancelled(step: Step):
     return _cb
 
 
+def _defer_if_deps_unmet(step: Step, unmet):
+    """Gate a node on its LIVE dependencies, not the frozen graph edges.
+
+    The ADK Workflow graph is built once at the start of a turn; a dependency
+    added mid-pass (create_task(kind='await_reply') / delegate_to_human_agent
+    re-parent a step onto the task they spawn) is NOT in those edges, so ADK
+    fires the dependent the moment its ORIGINAL edges clear — before the new
+    task finished. That is the phantom-run / early-report bug: a report step
+    ran while the reply it needed was still outstanding.
+
+    So re-check `depends_on` off the live plan at model-call time. If any dep
+    is still non-terminal (pending/running/blocked), this trigger is premature:
+    short-circuit with `LlmResponse(content=None)` — no model call, no tools, NO
+    email, and CRUCIALLY no recorded event of any kind. That last part is
+    load-bearing: a deferral must produce NOTHING terminal, or it enters ADK's
+    replay-barrier sequence at the deferral's (early) position — AHEAD of the
+    await the step depends on — and a later resume deadlocks the barrier waiting
+    for the step to re-emit before its own dependency (seen live: session
+    e37a716, "Replay divergence … 'n_89d37a7ba357@1'"). content=None leaves the
+    step PENDING and unrecorded; the drive-loop rebuild / mail-reply resume
+    re-runs it for real once the dep completes. Verified: content=None yields no
+    event and records none. Deliberately does NOT defer on a TERMINAL-but-failed
+    dep (would hang). Placed FIRST in the before_model chain, before
+    _mark_running, so a deferred step is never even projected 'running'."""
+    async def _cb(callback_context, llm_request):
+        if unmet(step):
+            from google.adk.models.llm_response import LlmResponse
+            return LlmResponse(content=None)
+        return None
+    return _cb
+
+
 def _inject_task_turn(task_text):
     """Deliver the step's task as a USER turn instead of baking it into the
     system prompt.
@@ -222,6 +254,20 @@ def _inject_task_turn(task_text):
         else:
             return None                              # already spliced
         llm_request.contents = contents
+        return None
+    return _cb
+
+
+def _mark_running(step: Step, on_model_start):
+    """Project the step RUNNING the moment the request goes to the model, so the
+    UI shows it in-progress at once instead of lagging on 'pending' until ADK
+    returns the first event (very visible with a slow model). PENDING-only: a
+    re-entered terminal step is left as-is so _trace_execution's re-run
+    diagnostic still fires."""
+    async def _cb(callback_context, llm_request):
+        if on_model_start is not None and step.status == Status.PENDING:
+            step.status = Status.RUNNING
+            await on_model_start(step)
         return None
     return _cb
 
@@ -414,7 +460,13 @@ def capture_artifacts_tool(tool, *, on_artifact: Callable[[dict], Awaitable[None
     capturing.__name__ = original.__name__
     capturing.__signature__ = original.__signature__
     capturing.__annotations__ = original.__annotations__
-    return SearchToolADK(capturing, {"function": tool.custom_schema})
+    # Preserve an approval gate the wrapped tool already carries (e.g. a send
+    # tool stamped by stamp_send_email_tool): re-wrapping into a fresh
+    # SearchToolADK would otherwise reset require_confirmation to False and let
+    # the send run ungated — the tool still stamps/sends inside `capturing`, so
+    # the gate would silently vanish. This wrapper runs AFTER _mail_stamping.
+    return SearchToolADK(capturing, {"function": tool.custom_schema},
+                         require_confirmation=getattr(tool, "_require_confirmation", False))
 
 
 def _recipients(kwargs) -> List[str]:
@@ -466,6 +518,20 @@ def stamp_send_email_tool(tool, *, token_provider: Callable[[], Awaitable[Option
                 kwargs["subject"] = mail_token.stamp_subject(kwargs["subject"], token)
             if kwargs.get("body"):
                 kwargs["body"] = mail_token.stamp_body(kwargs["body"], token)
+            # Edit-on-card: on the approval resume the connector re-applies the
+            # owner's confirmation payload OVER these args (connector_tools.py),
+            # and that payload is the pre-stamp DRAFT — it would overwrite the
+            # subject/body above and drop the token, so the sent mail carried no
+            # token and its reply could never route (seen live). The token is a
+            # routing invariant that must survive any edit, so stamp it into the
+            # payload too — onto whatever wording the owner approved/edited.
+            tc = kwargs.get("tool_context")
+            payload = getattr(getattr(tc, "tool_confirmation", None), "payload", None)
+            if isinstance(payload, dict):
+                if payload.get("subject") and token not in payload["subject"]:
+                    payload["subject"] = mail_token.stamp_subject(payload["subject"], token)
+                if payload.get("body") and token not in payload["body"]:
+                    payload["body"] = mail_token.stamp_body(payload["body"], token)
         else:
             # The step still sends; it just cannot be replied *to*. Better a mail
             # that lands than a step that refuses to run.
@@ -486,7 +552,11 @@ def stamp_send_email_tool(tool, *, token_provider: Callable[[], Awaitable[Option
     stamped.__name__ = original.__name__
     stamped.__signature__ = original.__signature__
     stamped.__annotations__ = original.__annotations__
-    return SearchToolADK(stamped, {"function": tool.custom_schema})
+    # Contacts someone outside the chat → gate on the owner's approval. ADK
+    # raises an adk_request_confirmation interrupt on the first call; the token
+    # stamping above only runs once approved (this func is invoked after the
+    # gate). Declined → the model gets "rejected" and re-plans.
+    return SearchToolADK(stamped, {"function": tool.custom_schema}, require_confirmation=True)
 
 
 def _teams_chat_id(result) -> Optional[str]:
@@ -532,7 +602,8 @@ def record_send_teams_tool(tool, *, token_provider: Callable[[], Awaitable[Optio
     recorded.__name__ = original.__name__
     recorded.__signature__ = original.__signature__
     recorded.__annotations__ = original.__annotations__
-    return SearchToolADK(recorded, {"function": tool.custom_schema})
+    # Same gate as send_email: contacting a Teams user needs the owner's OK.
+    return SearchToolADK(recorded, {"function": tool.custom_schema}, require_confirmation=True)
 
 
 def _stored_result_node(name: str, text: str):
@@ -559,7 +630,10 @@ def make_llm_node_factory(
     custom_instruction: Optional[str] = None,
     tools_for_step: Optional[Callable[[Step, List], List]] = None,
     instruction_for_step: Optional[Callable[[Step], Optional[str]]] = None,
+    context_for_step: Optional[Callable[[Step], Optional[str]]] = None,
+    gate_for_step: Optional[Callable[[Step], list]] = None,
     replay_completed: bool = False,
+    on_model_start: Optional[Callable[[Step], Awaitable[None]]] = None,
 ) -> NodeFactory:
     """Build a NodeFactory that creates one LlmAgent per step.
 
@@ -615,13 +689,22 @@ def make_llm_node_factory(
         # An "ask" step blocks deterministically asking the user (FunctionNode:
         # its interrupt id is stable across replays, so resume matches — unlike an
         # LLM tool call whose id is random each rerun).
+        # A step that already parked carries its bound interrupt id; re-park
+        # under that SAME id (fixed_iid), never a fresh node-path one — the path
+        # shifts as the plan grows mid-session (create_task adds steps) and a
+        # shifted id would orphan the bound mail wait, leaving the step stuck
+        # 'running' on a rebuild that runs a newly-ready sibling. None for a
+        # fresh wait, which parks under its node path as before.
         if step.kind == "ask":
-            return hitl.make_ask_user_node(name, step.question or step.description or "Please provide input.")
+            return hitl.make_ask_user_node(
+                name, step.question or step.description or "Please provide input.",
+                fixed_iid=step.interrupt_id)
         # An "await_reply" step parks the same way, but only an incoming email
         # reply can answer it — never the chat.
         if step.kind == "await_reply":
             return hitl.make_await_reply_node(
-                name, step.question or step.description or "Awaiting an email reply.")
+                name, step.question or step.description or "Awaiting an email reply.",
+                fixed_iid=step.interrupt_id)
         # A persona step already has an identity ("You are Rabeb."); a second,
         # contradicting "You are an execution agent" right after undermines it.
         identity = ("You are working on ONE step of a larger plan." if step.is_persona else
@@ -641,7 +724,15 @@ def make_llm_node_factory(
             identity=identity, do_this_line="", description="")).strip()
         # Read lazily off the live step so a converse "modify" of a still-pending
         # step's description is picked up when the node fires, no rebuild needed.
-        task_text = lambda: f"{do_this_line}\n{step.description}"
+        # context_for_step (if given) prepends the RESULTS of the completed steps
+        # this one depends_on: depends_on is ordering only, and ADK branch
+        # isolation otherwise leaves a downstream step blind to upstream output
+        # (a step asked to echo an upstream secret returned NONE). Read lazily too,
+        # so it reflects results produced earlier in THIS same drive pass.
+        def task_text():
+            body = f"{do_this_line}\n{step.description}"
+            ctx = context_for_step(step) if context_for_step else None
+            return f"{ctx}\n\n{body}" if ctx else body
         # A dynamic delegate's description is ALREADY the message to relay to
         # assignee_name (composed by the caller, typically second-person:
         # "Hi Firas — ... Do you confirm?") — not an open question this step
@@ -798,6 +889,14 @@ def make_llm_node_factory(
             model=build_llm(model_name, with_tools=bool(step_tools), temperature=temperature),
             instruction=instruction,
             tools=step_tools,
+            # See its OWN scoped history (isolation_scope still filters other
+            # steps out). Without this, single_turn defaults to include_contents
+            # ='none', so on a tool-confirmation resume the step is blind to the
+            # send it already emitted and re-decides from scratch — the send
+            # never re-fires and the model drifts. With its own history visible,
+            # ADK's native confirmation resume re-runs the send and the model
+            # continues from the result, in place.
+            include_contents="default",
             output_key=name,  # step result lands in session state under this key
             # Cancel check first (a cancelled step must do nothing at all — and
             # short-circuiting before the trace keeps "⚡ REAL MODEL CALL" honest,
@@ -805,7 +904,9 @@ def make_llm_node_factory(
             # as the user turn, then the call-budget guard on the resulting
             # contents (so its forced-answer fallback carries the task).
             before_model_callback=_compose_before_model(
-                _skip_if_cancelled(step), _trace_execution(step, name),
+                *([_defer_if_deps_unmet(step, gate_for_step)] if gate_for_step else []),
+                _skip_if_cancelled(step), _mark_running(step, on_model_start),
+                _trace_execution(step, name),
                 _inject_task_turn(task_text), stop_cb),
         )
 

@@ -21,6 +21,7 @@ import grpcSecurityConfig from './config/grpc-security.config';
 import grpcSecurityV2Config from './config/grpc-security-v2.config';
 import telegramConfig from './config/telegram.config';
 import whatsappConfig from './config/whatsapp.config';
+import whatsappMcpConfig from './config/whatsapp-mcp.config';
 import workyConfig from './config/worky.config';
 import memoryCardsConfig from './config/memory-cards.config';
 import dataRoomConfig from './config/data-room.config';
@@ -42,8 +43,8 @@ import { EmailModule } from './modules/email';
 
 // Feature Modules
 import { HealthModule } from './modules/health';
-import { UserModule, AccountApprovalGuard } from './modules/user';
 import { AuthModule, JwtAuthGuard } from './modules/auth';
+import { UserModule, AccountApprovalGuard } from './modules/user';
 import { AuthorizationModule } from './modules/authorization';
 import { SystemModule } from './modules/system';
 import { UsageModule } from './modules/usage';

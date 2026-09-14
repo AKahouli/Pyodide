@@ -226,6 +226,9 @@ export class UserService {
       throw new BadRequestException('Privacy policy must be accepted');
     }
 
+    const shouldNotifySuperAdmins =
+      !user.profileComplete && user.registrationApproval === RegistrationApproval.PENDING;
+
     const now = new Date();
     const wasProfileComplete = user.profileComplete;
 
@@ -257,7 +260,7 @@ export class UserService {
 
     // The super admin registration notice must be sent only once the applicant
     // has completed and validated their profile (not at sign-up).
-    if (!wasProfileComplete) {
+    if (shouldNotifySuperAdmins) {
       try {
         await this.registrationApprovalService.notifySuperAdminsOfRegistration({
           userId,

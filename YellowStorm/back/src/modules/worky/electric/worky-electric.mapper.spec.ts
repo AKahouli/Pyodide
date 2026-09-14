@@ -238,7 +238,7 @@ describe('worky-electric.mapper', () => {
   describe('mapSession', () => {
     it('maps only session control state and the active interrupt', () => {
       const { set, event } = mapSession(
-        { id: 'session-1', status: 'waiting', interrupt_id: 'ask:1' },
+        { id: 'session-1', user_id: 'user-1', status: 'waiting', interrupt_id: 'ask:1' },
         'stream-1',
       );
       expect(set).toEqual({

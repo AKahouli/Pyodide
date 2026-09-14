@@ -248,6 +248,22 @@ Example — "email x asking which company she works for, then report on it":
   ]}}"""
 
 
+# Appended to the planner message on the schema-less fallback pass (see
+# _make_plan). output_schema makes the PROVIDER enforce JSON; without it the
+# only thing keeping the model honest is the prompt, so restate the contract
+# plainly. Not a template — appended to the message, so single braces are fine.
+_PLANNER_JSON_REMINDER = (
+    "Respond with ONLY a single strict JSON object — no prose, no markdown "
+    "fences. Shape: "
+    '{"title": "", "goal": "", "answer": "<one short reply to the user>", '
+    '"steps": [{"id": "s1", "kind": "execute", "title": "<short label>", '
+    '"description": "<full instruction>", "depends_on": []}]}. '
+    'For chit-chat, use an empty "steps" list and put your reply in "answer". '
+    "Every step id is unique, every depends_on entry names another step, and "
+    "the graph has no cycles."
+)
+
+
 def _node_to_step_name(path: str) -> str:
     """'wf@1/step_a@1' -> 'step_a' (strip parents and @version)."""
     seg = path.split("/")[-1]
@@ -269,7 +285,8 @@ def _plan_from_snapshot(snap: dict) -> Plan:
             wave=row.get("wave") or 0, result=row.get("result"),
             assignee=row.get("assignee"), assignee_name=row.get("assignee_name"),
             assignee_role=row.get("assignee_role"), is_persona=bool(row.get("is_persona")),
-            is_dynamic_delegate=bool(row.get("is_dynamic_delegate"))))
+            is_dynamic_delegate=bool(row.get("is_dynamic_delegate")),
+            interrupt_id=row.get("interrupt_id")))
     return Plan(id=p.get("id") or "", title=p.get("title") or "",
                 goal=p.get("goal") or "", status=Status(p.get("status") or "running"),
                 steps=steps, executor_id=p.get("executor_id"),
@@ -292,6 +309,46 @@ def _extract_json(text: str) -> dict:
     if not m:
         raise ValueError(f"planner returned no JSON: {text[:200]}")
     return json.loads(m.group(0))
+
+
+_APPROVE_WORDS = ("approve", "approuver", "yes", "oui")
+
+
+def _parse_verdict(answer: str):
+    """A confirm answer → (confirmed, edits). Plain text is the verdict; an
+    edit-on-card approval is JSON {"verdict": "approve", "edits": {...}} whose
+    edits become the ToolConfirmation payload (only kept when confirmed)."""
+    a = (answer or "").strip()
+    if a.startswith("{"):
+        try:
+            d = json.loads(a)
+            confirmed = str(d.get("verdict", "")).strip().lower() in _APPROVE_WORDS
+            edits = d.get("edits") if isinstance(d.get("edits"), dict) and d.get("edits") else None
+            return confirmed, (edits if confirmed else None)
+        except (ValueError, TypeError):
+            pass
+    return a.lower() in _APPROVE_WORDS, None
+
+
+def _answer_target(answer: str) -> Optional[str]:
+    """The specific interrupt id an approval is FOR, if the card sent one.
+
+    With several confirm gates open at once the session-level interrupt id is a
+    single value, so every plain 'approve' resolved whichever gate it happened to
+    point at — a second card's approval then hit the FIRST card's gate (seen live:
+    session 33dfebfa, Firas's approval applied to Rabeb's send and Firas's own
+    gate left unanswered). The card carries its own questionId; when the approval
+    JSON echoes it we target THAT gate instead of the session default. Only a
+    confirm id is honoured — an ask/mail id or none falls back to the old
+    behaviour."""
+    a = (answer or "").strip()
+    if not a.startswith("{"):
+        return None
+    try:
+        qid = json.loads(a).get("questionId")
+    except (ValueError, TypeError):
+        return None
+    return qid if isinstance(qid, str) and qid.startswith(f"{hitl.CONFIRM}::") else None
 
 
 def requester_context(requester: Optional[dict]) -> str:
@@ -797,6 +854,23 @@ class OrchestratorService:
                     moved = await self._rm.rebind_mail_wait(
                         session_id, f"__pending__:{caller_step_id}", sub_step.id)
                     if not moved and not await self._rm.mail_token_for(session_id, sub_step.id):
+                        # Idempotent re-run: if this caller already has a bound
+                        # await_reply (a prior create_task, whose rebind consumed
+                        # the eager token), don't refuse — the wait already exists.
+                        for existing in plan.steps:
+                            if (existing is not sub_step and existing.kind == "await_reply"
+                                    and caller_step_id in existing.depends_on
+                                    and await self._rm.mail_token_for(session_id, existing.id)):
+                                plan.steps.remove(sub_step)
+                                logger.info(
+                                    "[worky] create_task await_reply idempotent — caller %s "
+                                    "already has bound wait %s (session=%s)",
+                                    caller_step_id, existing.id, session_id)
+                                return (
+                                    "A reply-wait for this step's email is ALREADY registered — "
+                                    "the email was sent and the plan is already waiting for the "
+                                    "reply. Do not send another email or register another wait; "
+                                    "end your step.")
                         # No token anywhere for this step, so no arriving reply
                         # could ever match it: the step would park on an
                         # interrupt nothing can resume, and the plan would block
@@ -898,15 +972,25 @@ class OrchestratorService:
             for other in affected:
                 await self._project_step(session_id, plan, other)
 
-            # 'ask' and 'await_reply' build a WAIT node (hitl.make_ask_user_node /
-            # make_await_reply_node), not an LlmAgent: one shot, no LLM loop, and
-            # it must run HERE so it actually parks and registers its interrupt
-            # within this turn — that interrupt is what a chat answer or an
-            # incoming mail reply later resumes. Leaving it merely PENDING would
-            # strand the wait with nothing to resume, silently breaking the whole
-            # reply path. Having no LLM loop, it is immune to the nested-run
-            # amnesia described below.
-            if kind in ("ask", "await_reply"):
+            # await_reply is NOT run nested. It used to run here via
+            # tool_context.run_node in an isolation sub-branch, but that nested
+            # branch is what diverges ADK's replay barrier on a later resume —
+            # reproduced: the same plan growth over a TOP-LEVEL await does not
+            # diverge, a nested one does. So leave it PENDING as a top-level
+            # step; _drive_loop runs it on this turn's rebuild as a real graph
+            # node (the exact replay-safe shape a planner-emitted await_reply
+            # uses), where it parks and _finalize binds its mail wait. The
+            # caller completes normally when its turn ends — no BLOCKED/RUNNING
+            # dance, which also removes the phantom-running the finally caused.
+            if kind == "await_reply":
+                return ("Await-reply step created. A separate follow-up step will "
+                        "read the reply and give the real answer once it arrives — "
+                        "end your own turn now reporting the draft as sent and "
+                        "awaiting reply, and do not guess what they will decide.")
+            # 'ask' still runs its WAIT node HERE: it is answered in-chat on the
+            # same turn's flow and is not subject to the mail-reply rebuild path.
+            # One shot, no LLM loop, so it parks and registers its interrupt now.
+            if kind == "ask":
                 blocked_reason = "waiting on a follow-up task"
                 if caller is not None:
                     caller.status = Status.BLOCKED
@@ -930,14 +1014,6 @@ class OrchestratorService:
                         caller.blocked_reason = None
                     await self._project(self._rm and self._rm.set_step_status(
                         session_id, caller_step_id, "running"))
-                if kind == "await_reply":
-                    # Deliberately not the reply's content — it isn't in yet, and
-                    # won't be before this call returns. A separate follow-up
-                    # step (already created above) reads it once it arrives.
-                    return ("Await-reply step created. A separate follow-up step will "
-                            "read the reply and give the real answer once it arrives — "
-                            "end your own turn now reporting the draft as sent and "
-                            "awaiting reply, and do not guess what they will decide.")
                 return "Question put to the user; their answer resumes this plan."
             # 'execute' builds an LlmAgent, and THAT cannot run nested: run_node
             # buffers the sub-node's events until it finishes, while ADK rebuilds
@@ -1003,6 +1079,15 @@ class OrchestratorService:
             }
         }
         return SearchToolADK(create_task, schema)
+
+    def _mark_step_running(self, session_id: str):
+        """Project a step RUNNING when its request is sent to the model (see
+        nodes._mark_running), so the UI shows it in-progress at once instead of
+        lagging on 'pending' until ADK returns the first event."""
+        async def _on_start(step: Step) -> None:
+            await self._project(self._rm and self._rm.set_step_status(
+                session_id, step.id, Status.RUNNING.value))
+        return _on_start
 
     def _build_workflow(self, session_id: str, user_id: str, plan: Plan, model: str,
                         connectors: Optional[List[dict]], executor_prompt: Optional[str],
@@ -1086,8 +1171,11 @@ class OrchestratorService:
             tools=self._tools_for(connectors, session_id, user_id),
             tools_for_step=tools_for_step,
             instruction_for_step=instruction_for_step,
+            context_for_step=self._dep_results_context(plan),
+            gate_for_step=self._unmet_deps(plan),
             custom_instruction=executor_prompt,
-            replay_completed=replay_completed)
+            replay_completed=replay_completed,
+            on_model_start=self._mark_step_running(session_id))
         factory_holder.append(factory)
 
         wf = graph.to_workflow(plan, factory, name=f"plan_{session_id}",
@@ -1111,6 +1199,93 @@ class OrchestratorService:
         await self._rm.add_message(
             uuid.uuid4().hex, session_id, role, content, active_turn_id.get())
 
+    async def _add_error_message(self, session_id: str, content: str,
+                                 title: str = "This task couldn't be completed") -> None:
+        """Surface a failure in the chat as an ERROR — an assistant message
+        carrying an `error` message-component ({title, content}), the same shape
+        the main chat module uses, so the client renders a destructive card
+        instead of a normal reply. The plain-text content is kept on the message
+        too, for consumers that don't read components (WhatsApp/voice)."""
+        if not content:
+            return
+        msg_id = uuid.uuid4().hex
+        await self._project(self._rm and self._rm.add_message(
+            msg_id, session_id, "assistant", content))
+        await self._project(self._rm and self._rm.add_message_component(
+            session_id, msg_id, uuid.uuid4().hex, "error",
+            {"title": title, "content": content}))
+
+    async def _project_approval_choice(self, session_id: str, interrupt_id: str,
+                                       preview: dict) -> None:
+        """Surface a gated send (require_confirmation) as an approve/decline card.
+
+        Reuses the `choice` component the chat module already renders (a
+        present_choices payload) rather than a bespoke widget: two options whose
+        submitText is the verdict. Selecting one sends that verdict as a normal
+        chat message; the session is `waiting` on this interrupt, so RunTask
+        routes it to resume_turn, which maps `approve` → confirmed (see there).
+        `preview` is the drafted call: for a mail, to/subject/body; else a
+        message/args blob."""
+        raw = preview.get("args") or {}
+        # Connector tools wrap the real arguments under `params` and add a
+        # `display_purpose` sibling (see smart_rag/tools/utilities/connector_tools.py).
+        # Unwrap it, or the card can't find subject/body/message and falls back to
+        # dumping the raw JSON blob at the owner.
+        args = raw["params"] if isinstance(raw.get("params"), dict) else raw
+
+        def _recipients(a: dict) -> str:
+            v = (a.get("to") or a.get("to_recipients") or a.get("recipient")
+                 or a.get("user_email") or "")
+            return ", ".join(str(x) for x in v) if isinstance(v, list) else str(v)
+
+        # Editable fields (edit-on-card): keyed by the connector schema names so a
+        # submitted edit merges straight into the send. The frontend renders these
+        # as inputs; approve returns {"verdict":"approve","edits":{key:value}}.
+        fields = []
+        if "subject" in args or "body" in args:
+            title = "Approuver l'envoi de cet e-mail ?"
+            draft = (f"À : {_recipients(args) or '?'}\n"
+                     f"Objet : {args.get('subject', '')}\n\n{args.get('body', '')}")
+            fields = [
+                {"key": "to_recipients", "label": "À", "value": _recipients(args), "type": "list"},
+                {"key": "subject", "label": "Objet", "value": args.get("subject", "")},
+                {"key": "body", "label": "Message", "value": args.get("body", ""),
+                 "multiline": True, "markdown": True},
+            ]
+        elif "message" in args:
+            title = "Approuver l'envoi de ce message ?"
+            to = _recipients(args)
+            draft = (f"À : {to}\n\n" if to else "") + str(args.get("message", ""))
+            fields = [
+                {"key": "user_email", "label": "À", "value": to},
+                {"key": "message", "label": "Message", "value": args.get("message", ""), "multiline": True},
+            ]
+        else:
+            title = "Approuver l'envoi de ce message ?"
+            draft = json.dumps(args, ensure_ascii=False)
+        data = {
+            "schemaVersion": 1, "status": "ready",
+            "questionId": interrupt_id[:100],
+            "prompt": title,
+            "description": (draft or "")[:1500],
+            "presentation": "quick_replies", "selectionMode": "single",
+            "submitBehavior": "immediate",
+            "options": [
+                {"id": "approve", "label": "Approuver", "submitText": "approve"},
+                {"id": "decline", "label": "Refuser", "submitText": "decline"},
+            ],
+            "fallbackText": title,
+        }
+        if fields:
+            # Signals the chat UI to render the draft as editable inputs and,
+            # on approve, submit {"verdict":"approve","edits":{...}}.
+            data["editable"] = True
+            data["fields"] = fields
+        msg_id = uuid.uuid4().hex
+        await self._project(self._rm and self._rm.add_message(msg_id, session_id, "assistant", title))
+        await self._project(self._rm and self._rm.add_message_component(
+            session_id, msg_id, uuid.uuid4().hex, "choice", data))
+
     @staticmethod
     def _assistant_answer(plan: Plan) -> str:
         """The chat reply for a completed plan: the results of its terminal steps
@@ -1122,6 +1297,7 @@ class OrchestratorService:
 
     async def plan_turn(self, *, session_id: str, user_id: str, message: str,
                         model: str, connectors: Optional[List[dict]] = None,
+                        planner_connectors: Optional[List[dict]] = None,
                         planner_model: Optional[str] = None, planner_prompt: Optional[str] = None,
                         executor_prompt: Optional[str] = None,
                         executor_name: Optional[str] = None,
@@ -1140,13 +1316,47 @@ class OrchestratorService:
         # (chit-chat): answer and finish the turn here, no graph is ever built.
         plan = await self._make_plan(session_id, user_id, message,
                                      planner_model=planner_model, planner_prompt=planner_prompt,
+                                     planner_connectors=planner_connectors,
                                      requester=requester)
         logger.info("[worky] 5. planner LLM → Plan session=%s title=%r steps=%d",
                     session_id, plan.title, len(plan.steps))
+        # A genuine direct reply (CASE A) has an ANSWER. Zero steps AND an empty
+        # answer is a broken/empty planner response, not chit-chat — seen live:
+        # glm-5.3-go returned {steps:[], answer:"", ops:[{op:"find_human_agents"}]}
+        # for "search solana and email Imed", so the turn silently 'completed'
+        # having done and said nothing. Retry the planner once on a fresh session
+        # (a flaky planner often succeeds on the second try); if it's STILL empty,
+        # tell the user rather than posting an empty reply.
+        if not plan.steps and not (plan.answer or "").strip():
+            logger.warning("[worky] 5. empty plan (0 steps, no answer) — retrying planner once session=%s",
+                           session_id)
+            plan = await self._make_plan(
+                session_id, user_id, message,
+                planner_model=planner_model, planner_prompt=planner_prompt,
+                planner_connectors=planner_connectors,
+                plan_session=f"{session_id}_plan_retry_{uuid.uuid4().hex[:6]}",
+                requester=requester)
+            logger.info("[worky] 5. planner retry → steps=%d answer=%s",
+                        len(plan.steps), bool((plan.answer or "").strip()))
         if not plan.steps:
-            logger.info("[worky] 5. direct reply (no plan) → session=%s completed", session_id)
-            await self._add_message(session_id, "assistant", plan.answer or "")
-            await self._project(self._rm and self._rm.set_session_status(session_id, "completed"))
+            answer = (plan.answer or "").strip()
+            if answer:
+                # A genuine direct reply (CASE A): it has an answer — complete.
+                logger.info("[worky] 5. direct reply (no plan) → session=%s completed", session_id)
+                await self._add_message(session_id, "assistant", answer)
+                await self._project(self._rm and self._rm.set_session_status(session_id, "completed"))
+            else:
+                # Still empty after the retry — the planner failed to produce a plan
+                # (0 steps, no answer). FAIL the turn with the cause instead of
+                # silently 'completing' on nothing, so the client sees a real error.
+                reason = ("Échec de la planification : le planificateur n'a produit aucun "
+                          "plan (0 étape, réponse vide), même après une nouvelle tentative "
+                          "— impossible de traiter cette demande.")
+                logger.warning("[worky] 5. empty plan after retry → session=%s FAILED (%s)",
+                               session_id, reason)
+                await self._add_error_message(session_id, reason,
+                                              title="Échec de la planification")
+                await self._project(self._rm and self._rm.set_session_status(session_id, "failed"))
             return plan
 
         # Stamp the client's executor onto every non-persona step once, here —
@@ -1209,6 +1419,7 @@ class OrchestratorService:
     async def converse_turn(self, *, session_id: str, user_id: str, message: str,
                             planner_model: Optional[str] = None,
                             planner_prompt: Optional[str] = None,
+                            planner_connectors: Optional[List[dict]] = None,
                             requester: Optional[dict] = None) -> Plan:
         """A message that arrives WHILE a plan is executing.
 
@@ -1245,6 +1456,7 @@ class OrchestratorService:
             plan = await self._make_plan(
                 session_id, user_id, amend_message,
                 planner_model=planner_model, planner_prompt=planner_prompt,
+                planner_connectors=planner_connectors,
                 plan_session=f"{session_id}_conv_{uuid.uuid4().hex[:8]}",
                 requester=requester)
             live = self._active.get(session_id)  # re-check: may have finished while planning
@@ -1433,39 +1645,65 @@ class OrchestratorService:
         snap = await self._rm.snapshot(session_id)
         if not snap:
             raise RuntimeError(f"session {session_id} unknown; nothing to resume")
-        interrupt_id = interrupt_id or snap["session"].get("interrupt_id")
+        # A caller-supplied id wins; else the approval card's own questionId (so a
+        # specific gate is answered when several are open — see _answer_target);
+        # else the session default. The old order collapsed parallel gates onto
+        # one, mis-applying one card's edits to another's send.
+        card_target = _answer_target(answer)
+        interrupt_id = interrupt_id or card_target or snap["session"].get("interrupt_id")
         if not interrupt_id:
             raise RuntimeError(f"session {session_id} is not waiting on input")
+        # Guard: edit-on-card edits are specific to the gate the card was for. If
+        # we end up answering a DIFFERENT gate than the card explicitly targeted
+        # (its id drifted / is gone), the edits must NOT ride along — applying one
+        # send's edited fields (recipient, subject, body) to another send is how a
+        # mis-routed approval emailed the wrong person. Drop them on any such
+        # mismatch; the send still goes with its own drafted args.
+        drop_edits = False
         # Resuming an id that is not parked would answer nothing yet still let
         # _finalize complete the plan; refuse instead. Sessions parked before
         # per-step ids existed have no rows, so an empty set skips the check.
         outstanding_pairs = await self._rm.outstanding_interrupts(session_id)
         outstanding = {i for i, _ in outstanding_pairs}
         if outstanding and interrupt_id not in outstanding:
-            raise RuntimeError(
-                f"interrupt {interrupt_id} is not outstanding for session {session_id}")
+            # The session-level interrupt id can go STALE relative to the
+            # per-step outstanding rows when several steps park in parallel and
+            # the turn re-drives: a confirm gets a fresh ADK-generated id on
+            # every drive, so the id recorded in `set_waiting` no longer matches
+            # the step row after a re-drive resolves a sibling. A chat answer
+            # (approve/decline/text) carries no specific target, so answering a
+            # currently-outstanding interrupt is correct — pick one of the SAME
+            # dialect as the stale id (a verdict answers a confirm; text answers
+            # an ask) rather than failing the whole turn. Only an explicitly
+            # targeted id that the caller passed AND that is gone is a real
+            # error, but even then falling back is safer than dropping the answer.
+            same_dialect = [i for i, _ in outstanding_pairs
+                            if hitl.is_confirm(i) == hitl.is_confirm(interrupt_id)]
+            fallback = (same_dialect or [i for i, _ in outstanding_pairs])[0]
+            logger.warning(
+                "[worky] resume: stored interrupt %s not outstanding (outstanding=%s) "
+                "— answering %s instead (parallel-gate id drift)",
+                interrupt_id, sorted(outstanding), fallback)
+            # If the card targeted a specific gate and we're now answering a
+            # different one, its edits belong to the gate that's gone — not this
+            # one. Drop them so we can't email the wrong recipient.
+            if card_target and fallback != card_target:
+                drop_edits = True
+            interrupt_id = fallback
 
         # STEP 8 (resume) — same step ids + depends_on ⇒ same node names + edges,
         # which is what lets the interrupt id from the earlier run still match.
-        # That stability assumption does NOT hold for a step create_task/
-        # delegate_to_human_agent spawned mid-turn: its first-ever park happened
-        # inside a throwaway nested run (ctx.run_node), whose node path this flat
-        # rebuild structurally cannot reproduce — ADK would just re-block it
-        # under a brand new interrupt id, silently dropping the answer we have
-        # right here. Apply it directly and let the SAME short-circuit that
-        # replays an already-completed dynamic step (see nodes.py factory)
-        # carry it, instead of routing through node-path matching that can
-        # never succeed for this category of step.
         plan = _plan_from_snapshot(snap)
-        target_step_id = next((s for i, s in outstanding_pairs if i == interrupt_id), None)
-        target_step = plan.step(target_step_id) if target_step_id else None
-        resumed_out_of_band = bool(
-            target_step and target_step.is_dynamic_delegate and target_step.kind == "await_reply")
-        if resumed_out_of_band:
-            target_step.status = Status.COMPLETED
-            target_step.result = answer
-            await self._project(self._rm.set_step_status(
-                session_id, target_step.id, "completed", result=answer))
+        # A create_task(await_reply) step now parks as a real TOP-LEVEL node (see
+        # create_task — it is no longer a nested ctx.run_node), so its node path
+        # and interrupt id ARE reproducible and it resumes through resume_part
+        # exactly like a planner-emitted await. The old out-of-band shortcut
+        # (mark it completed + replay it as a stored-result node) was for the
+        # nested era; it is now HARMFUL — swapping the recorded park events for a
+        # stored-result node diverges ADK's replay barrier on the await's own
+        # sequence key (seen live: session 188cbdbe, "Replay divergence …
+        # c593f1e04dfa@1"). So resume every await, dynamic or planned, the same
+        # normal way.
 
         wf, name_to_step = self._build_workflow(session_id, user_id, plan, model, connectors, executor_prompt)
         runner = self._runner_factory(wf, f"orch_{session_id}")
@@ -1495,11 +1733,32 @@ class OrchestratorService:
         # never gets rebuilt as a real await_reply node this turn at all
         # (see nodes.py's is_dynamic_delegate short-circuit), so it doesn't
         # matter that this exact id can't match anything current.
-        logger.info("[worky] 9. Runner.run_async → resuming session=%s interrupt=%s%s",
-                    session_id, interrupt_id, " (out-of-band dynamic step)" if resumed_out_of_band else "")
+        logger.info("[worky] 9. Runner.run_async → resuming session=%s interrupt=%s",
+                    session_id, interrupt_id)
+        # A confirm interrupt resumes with a tool-confirmation VERDICT, which ADK's
+        # native processor turns back into a real re-invocation of the gated send
+        # (approve) or a rejection to the model (decline) — the send's reasoning
+        # continues in place. This works through the rebuild because every step is
+        # fed None node_input (silent join) and sees its own scoped history
+        # (include_contents='default'), so the verdict stays the last user turn.
+        # ask/mail resume with the answer as before.
+        if hitl.is_confirm(interrupt_id):
+            # Edit-on-card: an approval may arrive as JSON {"verdict","edits"};
+            # the edits ride along as the ToolConfirmation payload and the
+            # connector tool merges them into the send. Plain text still works.
+            confirmed, edits = _parse_verdict(answer)
+            if drop_edits and edits:
+                logger.warning("[worky] resume: dropping edit-on-card edits — the approval "
+                               "targeted a gate that is no longer outstanding (session=%s)",
+                               session_id)
+                edits = None
+            resume = hitl.confirmation_resume_part(
+                hitl.confirm_fc_id(interrupt_id), confirmed=confirmed, payload=edits)
+        else:
+            resume = hitl.resume_part(interrupt_id, {"value": answer})
         interrupt = await self._drive_until_quiescent(
             runner, session_id, user_id, plan, name_to_step,
-            types.Content(role="user", parts=[hitl.resume_part(interrupt_id, {"value": answer})]),
+            types.Content(role="user", parts=[resume]),
             model=model, connectors=connectors, executor_prompt=executor_prompt)
 
         # STEP 10 — may block again if the plan has another ask step.
@@ -1573,28 +1832,108 @@ class OrchestratorService:
             return await self._drive_loop(runner, session_id, user_id, plan, name_to_step,
                                           new_message, model=model, connectors=connectors,
                                           executor_prompt=executor_prompt)
+        except asyncio.CancelledError:
+            # A supersede / StopSession, not a failure — StopSession's own path
+            # marks the session cancelled. Let it propagate untouched.
+            raise
+        except Exception as exc:  # noqa: BLE001 — re-raised after failing loudly
+            # A model / tool / transport error raised out of the drive. Without
+            # this the turn aborts, _finalize never runs, and the read-model is
+            # left stuck: the session stays 'running' and the in-flight step shows
+            # a phantom 'completed'/'pending' with no error (proven — an executor
+            # model 401 left the session 'running' forever). Fail loud so the
+            # client sees a terminal state and a new message re-plans instead of
+            # routing to converse on a phantom-live session.
+            await self._fail_turn(session_id, plan, exc)
+            raise
         finally:
             if self._active.get(session_id) is plan:
                 self._active.pop(session_id, None)
+
+    async def fail_session(self, session_id: str, exc: BaseException) -> None:
+        """Top-level safety net for a turn that raised OUTSIDE the drive — most
+        importantly the PLANNER LLM call (e.g. a RateLimitError), which happens
+        before any graph is built, so _drive_until_quiescent's _fail_turn never
+        runs. Without this the session is left 'running' and the UI hangs on
+        'assistant is typing' forever with nothing shown (seen live: planner
+        glm-5.3-go weekly-limit rate error). Surface the cause in the chat and
+        fail the session. Idempotent: if the drive already failed it, do nothing
+        (so a drive-phase error isn't double-posted)."""
+        if self._rm is None:
+            return
+        try:
+            snap = await self._rm.snapshot(session_id)
+            if snap and snap["session"].get("status") == "failed":
+                return  # already surfaced by _fail_turn
+            err = f"{type(exc).__name__}: {exc}"[:500]
+            await self._add_error_message(session_id, err)
+            await self._project(self._rm.set_session_status(session_id, "failed"))
+            logger.warning("[worky] turn raised outside the drive → session=%s failed (%s)",
+                           session_id, err)
+        except Exception:  # noqa: BLE001 — never mask the real failure
+            logger.exception("[worky] fail_session projection failed session=%s", session_id)
+
+    async def _fail_turn(self, session_id: str, plan: Plan, exc: BaseException) -> None:
+        """Record an aborted turn as failed in the read-model (see
+        _drive_until_quiescent). A step still RUNNING when the turn blew up is the
+        one that failed — mark it failed with the error; pending steps never ran,
+        so leave them, but the session and plan go 'failed' so nothing is left
+        phantom-'running'. Best-effort: a projection error here must never mask
+        the original exception."""
+        err = f"{type(exc).__name__}: {exc}"[:500]
+        try:
+            # Surface the failure in the chat so the user sees WHY the task
+            # stopped, not just a silently-'failed' session. Every turn error
+            # (model/tool/transport) routes through here.
+            await self._add_error_message(session_id, err)
+            for s in plan.steps:
+                if s.status is Status.RUNNING:
+                    s.status = Status.FAILED
+                    s.error = err
+                    await self._project(self._rm and self._rm.set_step_status(
+                        session_id, s.id, Status.FAILED.value, blocked_reason=err))
+            plan.status = Status.FAILED
+            await self._project(self._rm and self._rm.upsert_plan(
+                session_id, plan.id, plan.title, plan.goal, Status.FAILED.value))
+            await self._project(self._rm and self._rm.set_session_status(session_id, "failed"))
+            logger.warning("[worky] turn failed → session=%s marked failed (%s)", session_id, err)
+        except Exception:  # noqa: BLE001 — never mask the real failure
+            logger.exception("[worky] _fail_turn projection failed session=%s", session_id)
 
     async def _drive_loop(self, runner, session_id, user_id, plan, name_to_step,
                           new_message, *, model, connectors, executor_prompt):
         in_graph = {s.id for s in plan.steps}
         interrupts = await self._drive(
             runner, session_id, user_id, plan, name_to_step, new_message)
-        # A parked interrupt means the turn is legitimately over: the plan is
-        # waiting on a human, not on us.
-        while not interrupts:
-            # Only steps that did not exist when this graph was built. A step
-            # left pending for any other reason (its dependency errored, say)
-            # would not run on a rebuild either, so re-driving for it just
-            # burns a pass.
-            spawned = {s.id for s in plan.steps
-                       if s.status == Status.PENDING and s.id not in in_graph}
-            if not spawned:
-                return interrupts
-            logger.info("[worky] 9b. %d step(s) spawned mid-turn — continuing session=%s %s",
-                        len(spawned), session_id, [s[:12] for s in spawned])
+        # Accumulate every parked interrupt ACROSS passes, keyed by step. A step
+        # that parked in an earlier pass is replayed SILENTLY on a later rebuild
+        # (ADK emits no fresh request_input event for it), so that pass's list
+        # omits it. Returning only the last pass's list left _finalize unable to
+        # bind the earlier-parked step, which then stayed stuck 'running' with its
+        # mail wait unbound — seen live in session d624d1df: planner await 's3'
+        # was dropped when the rebuild ran the Firas create_task await. fixed_iid
+        # keeps each step's id stable across passes, so the key/value stay right.
+        parked: dict = {sid: iid for iid, sid in interrupts if sid}
+        # A step spawned mid-pass (create_task / delegate) is not in the graph
+        # this pass ran, so it never executed — only a rebuild runs it. This now
+        # includes create_task(kind='await_reply'), left PENDING as a top-level
+        # step (never nested — a nested run diverges replay): its wait must run
+        # on a rebuild to park and register its interrupt, or the reply path is
+        # stranded. So re-drive whenever a spawned step is READY (all deps
+        # complete) but hasn't run — even if the pass already parked OTHER
+        # interrupts (a gate, or a sibling wait). Keying on readiness rather than
+        # "no interrupts" is what lets a spawned await run alongside a parked one
+        # instead of being abandoned. A spawned step whose deps aren't met yet
+        # (e.g. the act step waiting on the await) is not "ready", so it doesn't
+        # spin the loop; it runs on a later resume once its dep completes.
+        unmet = self._unmet_deps(plan)
+        while True:
+            ready = [s.id for s in plan.steps
+                     if s.status == Status.PENDING and s.id not in in_graph and not unmet(s)]
+            if not ready:
+                break
+            logger.info("[worky] 9b. %d spawned step(s) ready mid-turn — continuing session=%s %s",
+                        len(ready), session_id, [s[:12] for s in ready])
             in_graph = {s.id for s in plan.steps}
             # replay_completed: this re-drive passes the same plain new_message, so
             # ADK re-runs the whole graph — rebuild completed steps as their stored
@@ -1606,13 +1945,23 @@ class OrchestratorService:
             await _ensure_session(runner, f"orch_{session_id}", user_id, session_id)
             interrupts = await self._drive(
                 runner, session_id, user_id, plan, name_to_step, new_message)
-            if spawned & {s.id for s in plan.steps if s.status == Status.PENDING}:
-                # The pass that was supposed to run them left them pending —
-                # running again would only repeat itself.
-                logger.warning("[worky] 9b. spawned step(s) still pending after a "
-                               "continuation pass — stopping session=%s", session_id)
-                return interrupts
-        return interrupts
+            for iid, sid in interrupts:
+                if sid:
+                    parked[sid] = iid
+            stuck = [s for s in ready
+                     if (st := plan.step(s)) and st.status == Status.PENDING and not unmet(st)]
+            if stuck:
+                # A ready step still pending after its own rebuild pass won't make
+                # progress on another — stop rather than spin.
+                logger.warning("[worky] 9b. ready spawned step(s) still pending after a "
+                               "continuation pass — stopping session=%s %s", session_id,
+                               [s[:12] for s in stuck])
+                break
+        # The union of everything parked this turn — a still-parked step (not
+        # terminal) must be bound by _finalize even if a later pass didn't re-emit
+        # its interrupt.
+        return [(iid, sid) for sid, iid in parked.items()
+                if (st := plan.step(sid)) is not None and not st.is_done()]
 
     async def _drive(self, runner, session_id, user_id, plan, name_to_step, new_message):
         """Run the workflow, project step statuses, and capture every
@@ -1641,6 +1990,16 @@ class OrchestratorService:
                 if iid not in seen:
                     seen.add(iid)
                     interrupts.append((iid, step_id))
+            # A send tool marked require_confirmation parks under a *different*
+            # dialect (adk_request_confirmation) that interrupt_ids can't see. The
+            # preview (the drafted mail/message) is only on this event, so project
+            # the approval card now, while we still have it — a resume re-emits
+            # nothing for it (like every other interrupt).
+            for iid, preview in hitl.confirmation_interrupts(ev):
+                if iid not in seen:
+                    seen.add(iid)
+                    interrupts.append((iid, step_id))
+                    await self._project_approval_choice(session_id, iid, preview)
         return interrupts
 
     async def _outstanding(self, session_id: str,
@@ -1672,7 +2031,11 @@ class OrchestratorService:
                 continue
             step = plan.step(step_id)
             step.status = Status.BLOCKED
-            step.blocked_reason = ("awaiting user input" if hitl.is_ask(interrupt_id)
+            # Remember the exact id so a later same-turn rebuild re-parks this
+            # ask/await under it rather than a shifted node-path id (see Step).
+            step.interrupt_id = interrupt_id
+            step.blocked_reason = ("awaiting your approval" if hitl.is_confirm(interrupt_id)
+                                   else "awaiting user input" if hitl.is_ask(interrupt_id)
                                    else "awaiting email reply")
             await self._project(self._rm and self._rm.set_step_status(
                 session_id, step_id, "blocked", blocked_reason=step.blocked_reason,
@@ -1682,9 +2045,10 @@ class OrchestratorService:
                 # token was minted at projection but had no interrupt to resume.
                 await self._project(self._rm and self._rm.bind_mail_wait_interrupt(
                     session_id, step_id, interrupt_id))
-            if hitl.is_ask(interrupt_id):
+            if hitl.is_ask(interrupt_id) and not hitl.is_confirm(interrupt_id):
                 # Surface the ask-the-user question in the chat. A mail wait has
                 # nothing to ask the owner — it is waiting on the outside world.
+                # A confirm already projected its approve/decline card in _drive.
                 await self._add_message(session_id, "assistant",
                                         step.question or step.description or "")
 
@@ -1713,7 +2077,15 @@ class OrchestratorService:
                 s.status = Status.COMPLETED
         plan.status = scheduler.derive_status(plan)
         logger.info("[worky] 10. derive final status session=%s → %s", session_id, plan.status.value)
+        # A step that failed via an ADK error EVENT (e.g. an LLM error) doesn't
+        # raise, so it never reaches _fail_turn — surface its error in the chat
+        # here, appended to whatever partial results did complete.
         await self._add_message(session_id, "assistant", self._assistant_answer(plan))
+        failed = [s for s in plan.steps if s.status is Status.FAILED]
+        if failed:
+            errs = "\n".join(f"• {s.title or s.id}: {s.error or 'failed'}" for s in failed)
+            await self._add_error_message(session_id, errs,
+                                          title="Some steps couldn't be completed")
         await self._project(self._rm and self._rm.upsert_plan(
             session_id, plan.id, plan.title, plan.goal, plan.status.value))
         await self._project(self._rm and self._rm.set_session_status(
@@ -1722,6 +2094,7 @@ class OrchestratorService:
     async def _make_plan(self, session_id: str, user_id: str, message: str, *,
                          planner_model: Optional[str] = None,
                          planner_prompt: Optional[str] = None,
+                         planner_connectors: Optional[List[dict]] = None,
                          plan_session: Optional[str] = None,
                          requester: Optional[dict] = None) -> Plan:
         # The planner's ADK session accumulates history across calls. The main
@@ -1731,77 +2104,191 @@ class OrchestratorService:
         # "search Bitcoin" in history and re-plan BOTH, and _inject_steps would
         # append a duplicate of the step already running.
         plan_session = plan_session or (session_id + "_plan")
-        planner = LlmAgent(
-            name="planner",
-            model=self._build_planner_model(planner_model),
-            # The DB prompt (agentstore) is the source of truth: it REPLACES the
-            # instruction rather than stacking on it. PLANNER_INSTRUCTION is only
-            # a fallback when the DB has none. Concatenating the two made the
-            # planner read the whole prompt twice -- once from the DB, once from
-            # this hardcoded copy (whose {{ }} JSON examples reached the model as
-            # invalid doubled braces). Same replace-semantics the executor uses.
-            instruction=(planner_prompt or PLANNER_INSTRUCTION),
-            tools=[human_agents.make_find_human_agents_tool()],
-            output_schema=_PlannerOutput,
-        )
-        runner = self._runner_factory(planner, f"planner_{session_id}")
-        await _ensure_session(runner, f"planner_{session_id}", user_id, plan_session)
+        # output_schema forces provider structured output (response_schema +
+        # application/json): a capable model gets the strongest shape guarantee on
+        # the first pass. But it HARD-REQUIRES provider support — a model without
+        # it 400s or ignores the schema. So try WITH the schema, then fall back to
+        # a schema-less prompt-mode pass whose JSON contract lives in the
+        # instruction (the DB prompt / PLANNER_INSTRUCTION) and is restated in the
+        # message. The plan was always parsed from text via _extract_json anyway,
+        # so prompt mode needs nothing else — it just lets the planner run on ANY
+        # model that can emit JSON, not only structured-output ones.
+        model_obj = self._build_planner_model(planner_model)
+        # The DB prompt (agentstore) is the source of truth: it REPLACES the
+        # instruction rather than stacking on it. PLANNER_INSTRUCTION is only a
+        # fallback when the DB has none. (Concatenating the two made the planner
+        # read the whole prompt twice, and its {{ }} JSON examples reached the
+        # model as invalid doubled braces.)
+        planner_instruction = (planner_prompt or PLANNER_INSTRUCTION)
+        # The planner runs on ITS OWN connectors (like the executor). find_human_agents
+        # stays the built-in until a human-agents MCP is linked to replace it.
+        planner_tools = [human_agents.make_find_human_agents_tool(),
+                         *self._tools_for(planner_connectors, session_id, user_id)]
+
+        def _planner_agent(use_schema: bool) -> LlmAgent:
+            kwargs = dict(name="planner", model=model_obj,
+                          instruction=planner_instruction, tools=planner_tools)
+            if use_schema:
+                kwargs["output_schema"] = _PlannerOutput
+            return LlmAgent(**kwargs)
+
+        async def _run_planner(agent: LlmAgent, msg: str) -> str:
+            runner = self._runner_factory(agent, f"planner_{session_id}")
+            await _ensure_session(runner, f"planner_{session_id}", user_id, plan_session)
+            text = ""
+            async for ev in runner.run_async(
+                user_id=user_id, session_id=plan_session,
+                new_message=types.Content(role="user", parts=[types.Part(text=msg)])):
+                if ev.content and ev.content.parts:
+                    for p in ev.content.parts:
+                        if getattr(p, "text", None):
+                            text = p.text
+            return text
+
         # Tell the planner who it is planning for, so it addresses the requester
         # directly and never assigns work or emails back to them. Kept as a
         # per-turn preamble on the message (not the DB instruction) so it works
         # whatever prompt the agentstore supplies.
         ctx = requester_context(requester)
         planner_message = f"{ctx}\n\n---\nUser's request:\n{message}" if ctx else message
-        first_validation_error: Optional[ValueError] = None
-        for attempt in range(2):
-            text = ""
-            async for ev in runner.run_async(
-                user_id=user_id, session_id=plan_session,
-                new_message=types.Content(role="user", parts=[types.Part(text=planner_message)])):
-                if ev.content and ev.content.parts:
-                    for p in ev.content.parts:
-                        if getattr(p, "text", None):
-                            text = p.text
-            data = _extract_json(text)
-            raw_steps = data.get("steps", [])
-            steps = [Step(id=s["id"], title=s.get("title", ""),
-                          description=s.get("description", ""),
-                          kind=s.get("kind", "execute"), question=s.get("question"),
-                          depends_on=list(s.get("depends_on", [])))
-                     for s in raw_steps]
-            plan = Plan(title=data.get("title", ""), goal=data.get("goal", ""),
-                        answer=data.get("answer") or None, steps=steps,
-                        ops=[dict(o) for o in data.get("ops", []) if o.get("step_id")])
-            if first_validation_error is not None and not plan.steps:
-                raise ValueError("planner correction returned no executable steps") \
-                    from first_validation_error
+
+        # Pass 1: structured. Pass 2: schema-less prompt mode — reached when the
+        # provider can't do structured output (the run raises) OR the structured
+        # reply wasn't parseable JSON. asyncio.CancelledError is a BaseException,
+        # so a supersede/stop still propagates through the `except Exception`.
+        data = None
+        attempts = ((True, planner_message),
+                    (False, planner_message + "\n\n" + _PLANNER_JSON_REMINDER))
+        for idx, (use_schema, msg) in enumerate(attempts):
             try:
-                scheduler.validate(plan)
-            except ValueError as exc:
-                if attempt == 1:
+                data = _extract_json(await _run_planner(_planner_agent(use_schema), msg))
+                break
+            except Exception as exc:  # provider rejected structured output, or no JSON
+                logger.warning(
+                    "[worky] planner pass %d failed (use_schema=%s) session=%s: %s",
+                    idx, use_schema, session_id, exc)
+                if idx == len(attempts) - 1:
                     raise
-                first_validation_error = exc
-                planner_message = (
-                    "Your previous plan had an invalid dependency graph. Return the complete "
-                    "replacement plan as strict JSON. Every step id must be unique, every "
-                    "depends_on id must identify a step in the replacement, and the graph "
-                    "must have no cycles. Do not return a direct reply or omit any work."
-                )
+        steps = []
+        seen_ids: set = set()
+        for s in data.get("steps", []):
+            # A flaky planner (observed live with glm-5.3-go) can emit the same
+            # step twice or a blank id. Both collapse to one row under
+            # _namespace_step_ids and trip scheduler.validate ("duplicate step
+            # ids"), which aborts the WHOLE turn so nothing is projected and the
+            # session hangs 'running'. Drop the offender and keep the plan.
+            sid = s.get("id")
+            if not sid or sid in seen_ids:
+                logger.warning("[worky] planner emitted a %s step id %r — dropping it (session=%s)",
+                               "duplicate" if sid in seen_ids else "blank", sid, session_id)
                 continue
-
-            for step, raw_step in zip(plan.steps, raw_steps):
-                if not raw_step.get("assignee"):
-                    continue
-                # Resolve identities only after the graph is safe to execute.
-                matches = await human_agents.search_human_agents(name=raw_step["assignee"])
+            seen_ids.add(sid)
+            assignee_id = assignee_name = assignee_role = None
+            if s.get("assignee"):
+                # Trust the API's resolution, not whatever the planner echoed
+                # back — same reasoning as delegate_to_human_agent: an LLM
+                # relaying fields can drift, a fresh lookup can't.
+                matches = await human_agents.search_human_agents(name=s["assignee"])
                 if matches:
-                    step.assignee_name = matches[0].get("name") or raw_step["assignee"]
-                    step.assignee = matches[0].get("id") or step.assignee_name
-                    step.assignee_role = matches[0].get("role")
-                    step.is_persona = True
-            return plan
+                    assignee_name = matches[0].get("name") or s["assignee"]
+                    assignee_id = matches[0].get("id") or assignee_name
+                    assignee_role = matches[0].get("role")
+            steps.append(Step(id=sid, title=s.get("title", ""),
+                              description=s.get("description", ""),
+                              kind=s.get("kind", "execute"), question=s.get("question"),
+                              depends_on=list(s.get("depends_on", [])),
+                              is_persona=bool(assignee_name),
+                              assignee=assignee_id, assignee_name=assignee_name,
+                              assignee_role=assignee_role))
+        # Prune deps validate() would also reject: a self-dep or a reference to a
+        # step the planner never emitted (or that we just dropped). A dangling dep
+        # is meaningless work-ordering, so drop it rather than abort the turn.
+        kept = {s.id for s in steps}
+        for s in steps:
+            s.depends_on = [d for d in s.depends_on if d in kept and d != s.id]
+        plan = Plan(title=data.get("title", ""), goal=data.get("goal", ""),
+                    answer=data.get("answer") or None, steps=steps,
+                    ops=[dict(o) for o in data.get("ops", []) if o.get("step_id")])
+        self._namespace_step_ids(plan)
+        return plan
 
-        raise RuntimeError("planner validation retry exhausted")
+    @staticmethod
+    def _namespace_step_ids(plan: Plan) -> None:
+        """Prefix every step id with this plan's id, in place (deps too).
+
+        Step ids come verbatim from the planner (see _make_plan: Step(id=s["id"])),
+        which labels them s1, s2, … on EVERY turn — it can't see prior turns. But
+        the read-model keys plan_steps by (session_id, step_id) and one session is
+        reused across turns, so a later turn's bare s1/s2 collided with an earlier,
+        already-EXECUTED turn's rows and overwrote their title/description in place
+        (upsert's ON CONFLICT rewrites content but not status/result → a finished
+        step the user watched complete silently relabelled to the new message's
+        task). Namespacing by the per-turn plan.id makes ids unique across turns;
+        depends_on is remapped the same way so intra-plan wiring is unchanged.
+        node_name() sanitises the id for ADK anyway, so the prefix is transparent
+        downstream. converse's _inject_steps re-ids to fresh uuids regardless, so
+        this only has to fix the plan_turn path — the one that reuses the session.
+        """
+        if not plan.steps:
+            return
+        idmap = {s.id: f"{plan.id}_{s.id}" for s in plan.steps}
+        for s in plan.steps:
+            s.id = idmap[s.id]
+            s.depends_on = [idmap.get(d, d) for d in s.depends_on]
+
+    @staticmethod
+    def _dep_results_context(plan: Plan):
+        """Per-step hook handing a step the RESULTS of the completed steps it
+        depends_on, so a downstream step can actually use upstream output.
+
+        `depends_on` is ordering only: each step runs as its own ADK node on its
+        own branch and normally sees nothing but its own description (proven — a
+        step asked to echo an upstream secret returned NONE). But the orchestrator
+        holds every completed step's result on the live Plan, so we read it fresh
+        at model-call time and inject just the DIRECT dependencies' results — not
+        the whole plan, so a step still never learns its siblings' tasks (that
+        leak is exactly what the isolation was built to prevent).
+        """
+        by_id = {s.id: s for s in plan.steps}
+
+        def ctx(step: Step) -> Optional[str]:
+            blocks = []
+            for dep_id in step.depends_on:
+                dep = by_id.get(dep_id)
+                if dep and dep.status is Status.COMPLETED and (dep.result or "").strip():
+                    r = dep.result.strip()
+                    # ponytail: flat cap per dependency; summarise upstream if a
+                    # step ever needs to lean on a result larger than this.
+                    if len(r) > 4000:
+                        r = r[:4000] + "\n[…tronqué]"
+                    blocks.append(f"— Étape « {dep.title or dep.id} » :\n{r}")
+            if not blocks:
+                return None
+            return ("Résultats des étapes précédentes dont dépend la tienne "
+                    "(sers-t'en, ne les refais pas) :\n\n" + "\n\n".join(blocks))
+        return ctx
+
+    @staticmethod
+    def _unmet_deps(plan: Plan):
+        """Per-step hook: the ids of this step's dependencies that are still
+        non-terminal (pending/running/blocked), read LIVE at model-call time.
+
+        The gate (nodes._defer_if_deps_unmet) uses it to decline a node ADK
+        fired before a runtime-added dependency finished — see that callback.
+        Reads the CURRENT plan (plan.step), never a build-time snapshot, so a
+        dependency a mid-pass create_task/delegate just re-parented onto this
+        step (and appended to plan.steps) is seen. A missing or terminal dep is
+        NOT unmet: a terminal-failed dep can never become ready, so deferring on
+        it would hang — let the step proceed as it did before the gate existed."""
+        def unmet(step: Step) -> list:
+            out = []
+            for dep_id in step.depends_on:
+                dep = plan.step(dep_id)
+                if dep is not None and dep.status in (
+                        Status.PENDING, Status.RUNNING, Status.BLOCKED):
+                    out.append(dep_id)
+            return out
+        return unmet
 
     def _build_planner_model(self, model_name: Optional[str] = None):
         # Always has the find_human_agents discovery tool now.
@@ -1936,6 +2423,20 @@ class OrchestratorService:
                         session_id, step_id, step.wave)
             await self._project(self._rm and self._rm.set_step_status(
                 session_id, step_id, "running"))
+        # A model/tool error ADK reports as an EVENT (not a raise) is a
+        # final_response with empty content — is_output below would then mark the
+        # step 'completed' with an empty result (seen live: an executor model 401
+        # left the step falsely 'completed'). Catch it first and mark the step
+        # FAILED with the error, so the failing step reads correctly.
+        err = getattr(ev, "error_message", None) or getattr(ev, "error_code", None)
+        if err:
+            step.status = Status.FAILED
+            step.error = str(err)[:500]
+            logger.warning("[worky] 9. step FAILED session=%s step=%s err=%s",
+                           session_id, step_id, step.error)
+            await self._project(self._rm and self._rm.set_step_status(
+                session_id, step_id, "failed", blocked_reason=step.error))
+            return
         if is_output:
             step.status = Status.COMPLETED
             # Keep the LAST text part, not the first. A reasoning model emits its

@@ -37,6 +37,9 @@ function requireConfig() {
       'App Data is not configured (missing VITE_YM_APP_DATA_URL or VITE_YM_APP_DATA_ID). Restart the dev server after provisioning.',
     );
   }
+  if (typeof window !== 'undefined' && window.location.hostname === 'localhost' && environment === 'prod') {
+    console.warn('[App Data] Preview has prod env on localhost — expected dev. Check VITE_YM_APP_DATA_ENV.');
+  }
   return { baseUrl: baseUrl.replace(/\/$/, ''), appDataId, environment };
 }
 

@@ -21,6 +21,7 @@ import type { ConversationV2ResolvedSession } from './services/conversation-v2-s
 import { RuntimeTicketService } from '@modules/app-runtime/services/runtime-ticket.service';
 import { RuntimeRevisionService } from '@modules/app-runtime/services/runtime-revision.service';
 import { RuntimeBindingService } from '@modules/app-runtime/services/runtime-binding.service';
+import { RuntimeFinalizedRevisionService } from '@modules/app-runtime/services/runtime-finalized-revision.service';
 import { CONVERSATION_V2_SESSION_PERMISSION_KEY } from './decorators/require-conversation-session-permission.decorator';
 import { ConversationV2SessionPermissions } from './constants/conversation-v2-session-permissions';
 
@@ -59,6 +60,8 @@ describe('ConversationV2Controller', () => {
     setShared: jest.fn(),
     setDeployState: jest.fn(),
     listDeployedApps: jest.fn(),
+    listDraftApps: jest.fn(),
+    resolveRevisionContextBySessionIds: jest.fn(),
     removeDeployedApp: jest.fn(),
     softDelete: jest.fn(),
   };
@@ -111,6 +114,20 @@ describe('ConversationV2Controller', () => {
     resolveObjectKeys: jest.fn(),
   };
   const mockRuntimeBindings = { findByWorkspaceId: jest.fn() };
+  const mockFinalizedRevisions = {
+    backfillFromEvents: jest.fn().mockResolvedValue(undefined),
+    listByWorkspace: jest.fn().mockResolvedValue([]),
+    resolveLatestFinalized: jest.fn().mockResolvedValue(null),
+    assertFinalized: jest.fn().mockResolvedValue(undefined),
+    summarizeByWorkspaces: jest.fn().mockResolvedValue(new Map()),
+  };
+
+  const emptyRevisionCatalog = {
+    lastDeployedRevisionId: null,
+    latestFinalizedRevisionId: null,
+    latestFinalizedAt: null,
+    finalizedVersionCount: 0,
+  };
 
   beforeEach(async () => {
     const module: TestingModule = await Test.createTestingModule({
@@ -130,6 +147,7 @@ describe('ConversationV2Controller', () => {
         { provide: RuntimeTicketService, useValue: mockRuntimeTickets },
         { provide: RuntimeRevisionService, useValue: mockRuntimeRevisions },
         { provide: RuntimeBindingService, useValue: mockRuntimeBindings },
+        { provide: RuntimeFinalizedRevisionService, useValue: mockFinalizedRevisions },
       ],
     })
       .overrideGuard(ConversationV2SessionAccessGuard)
@@ -152,6 +170,7 @@ describe('ConversationV2Controller', () => {
       ...Object.values(mockRuntimeTickets),
       ...Object.values(mockRuntimeRevisions),
       ...Object.values(mockRuntimeBindings),
+      ...Object.values(mockFinalizedRevisions),
     ].forEach((fn) => (fn as jest.Mock).mockReset?.());
     mockConfig.get.mockReturnValue(52428800);
     mockAppShares.listSharedWithUser.mockResolvedValue([]);
@@ -330,7 +349,7 @@ describe('ConversationV2Controller', () => {
     expect(mockClient.resumeSession).toHaveBeenCalledWith('u1', 'ai-1');
   });
 
-  it('GET /apps returns owned and shared deployed apps', async () => {
+  it('GET /apps returns deployed, shared, and draft apps with revision catalog fields', async () => {
     mockSessions.listDeployedApps.mockResolvedValueOnce([
       {
         sessionId: 'session-1',
@@ -340,6 +359,16 @@ describe('ConversationV2Controller', () => {
         source: 'owned',
         shareId: null,
         canOpenConversation: true,
+        ...emptyRevisionCatalog,
+      },
+    ]);
+    mockSessions.listDraftApps.mockResolvedValueOnce([
+      {
+        sessionId: 'session-3',
+        title: 'Draft app',
+        lastUpdatedAt: '2026-07-15T10:00:00.000Z',
+        deployStatus: 'idle',
+        ...emptyRevisionCatalog,
       },
     ]);
     mockAppShares.listSharedWithUser.mockResolvedValueOnce([
@@ -351,11 +380,42 @@ describe('ConversationV2Controller', () => {
         source: 'shared',
         shareId: 'share-2',
         canOpenConversation: true,
+        ...emptyRevisionCatalog,
       },
     ]);
+    mockSessions.resolveRevisionContextBySessionIds.mockResolvedValueOnce(
+      new Map([
+        [
+          'session-1',
+          { aiSessionId: 'ai-1', lastDeployedRevisionId: 'rev_7' },
+        ],
+        ['session-2', { aiSessionId: 'ai-2', lastDeployedRevisionId: 'rev_3' }],
+        ['session-3', { aiSessionId: 'ai-3', lastDeployedRevisionId: null }],
+      ]),
+    );
+    mockFinalizedRevisions.summarizeByWorkspaces.mockResolvedValueOnce(
+      new Map([
+        [
+          'ai-1',
+          {
+            latestRevisionId: 'rev_12',
+            latestFinalizedAt: '2026-09-02T10:00:00.000Z',
+            versionCount: 2,
+          },
+        ],
+        [
+          'ai-3',
+          {
+            latestRevisionId: 'rev_5',
+            latestFinalizedAt: '2026-09-01T10:00:00.000Z',
+            versionCount: 1,
+          },
+        ],
+      ]),
+    );
 
     await expect(controller.listDeployedApps({ id: 'user-1' })).resolves.toEqual({
-      items: [
+      deployed: [
         {
           sessionId: 'session-1',
           title: 'Generated app',
@@ -364,7 +424,13 @@ describe('ConversationV2Controller', () => {
           source: 'owned',
           shareId: null,
           canOpenConversation: true,
+          lastDeployedRevisionId: 'rev_7',
+          latestFinalizedRevisionId: 'rev_12',
+          latestFinalizedAt: '2026-09-02T10:00:00.000Z',
+          finalizedVersionCount: 2,
         },
+      ],
+      shared: [
         {
           sessionId: 'session-2',
           title: 'Shared app',
@@ -373,10 +439,37 @@ describe('ConversationV2Controller', () => {
           source: 'shared',
           shareId: 'share-2',
           canOpenConversation: true,
+          lastDeployedRevisionId: 'rev_3',
+          latestFinalizedRevisionId: null,
+          latestFinalizedAt: null,
+          finalizedVersionCount: 0,
+        },
+      ],
+      drafts: [
+        {
+          sessionId: 'session-3',
+          title: 'Draft app',
+          lastUpdatedAt: '2026-07-15T10:00:00.000Z',
+          deployStatus: 'idle',
+          lastDeployedRevisionId: null,
+          latestFinalizedRevisionId: 'rev_5',
+          latestFinalizedAt: '2026-09-01T10:00:00.000Z',
+          finalizedVersionCount: 1,
         },
       ],
     });
+    expect(mockSessions.resolveRevisionContextBySessionIds).toHaveBeenCalledWith([
+      'session-1',
+      'session-2',
+      'session-3',
+    ]);
+    expect(mockFinalizedRevisions.summarizeByWorkspaces).toHaveBeenCalledWith([
+      'ai-1',
+      'ai-2',
+      'ai-3',
+    ]);
     expect(mockAppShares.listSharedWithUser).toHaveBeenCalledWith('user-1');
+    expect(mockSessions.listDraftApps).toHaveBeenCalledWith('user-1');
   });
 
   it('POST /sessions/:id/share-deploy grants Marketplace access by email', async () => {
@@ -422,12 +515,10 @@ describe('ConversationV2Controller', () => {
     expect(mockAppShares.removeShareForRecipient).toHaveBeenCalledWith('user-2', 'session-1');
   });
 
-  it('POST /sessions/:id/deploy calls app-builder with aiSessionId and revisionId', async () => {
+  it('POST /sessions/:id/deploy calls app-builder with aiSessionId and latest finalized revision', async () => {
     mockSessions.setDeployState.mockResolvedValue({});
     mockDeployment.deploy.mockResolvedValueOnce({ url: 'https://apps.yellowsys.org/apps/conversation-1/' });
-    mockRuntimeBindings.findByWorkspaceId.mockResolvedValueOnce({
-      latestRevisionId: 'rev_15',
-    });
+    mockFinalizedRevisions.resolveLatestFinalized.mockResolvedValueOnce('rev_15');
     const result = await controller.deploySession(
       resolvedSession('user-1', {
         aiSessionId: 'conversation-1',
@@ -437,7 +528,11 @@ describe('ConversationV2Controller', () => {
       { title: 'Generated app' },
     );
 
-    expect(mockRuntimeBindings.findByWorkspaceId).toHaveBeenCalledWith('conversation-1');
+    expect(mockFinalizedRevisions.backfillFromEvents).toHaveBeenCalledWith(
+      'session-1',
+      'conversation-1',
+    );
+    expect(mockFinalizedRevisions.resolveLatestFinalized).toHaveBeenCalledWith('conversation-1');
     expect(mockDeployment.deploy).toHaveBeenCalledWith('conversation-1', 'rev_15');
     expect(mockSessions.setDeployState).toHaveBeenNthCalledWith(
       1,
@@ -453,6 +548,7 @@ describe('ConversationV2Controller', () => {
         deployStatus: 'deployed',
         deployedUrl: 'https://apps.yellowsys.org/apps/conversation-1/',
         deployedAppTitle: 'Generated app',
+        lastDeployedRevisionId: 'rev_15',
       }),
     );
     expect(mockAppShares.syncDeployMetadata).toHaveBeenCalledWith(
@@ -465,7 +561,7 @@ describe('ConversationV2Controller', () => {
     expect(result.deployedUrl).toBe('https://apps.yellowsys.org/apps/conversation-1/');
   });
 
-  it('POST /sessions/:id/deploy prefers an explicit revisionId from the client', async () => {
+  it('POST /sessions/:id/deploy prefers an explicit revisionId from the client when finalized', async () => {
     mockSessions.setDeployState.mockResolvedValue({});
     mockDeployment.deploy.mockResolvedValueOnce({
       url: 'https://apps.yellowsys.org/apps/conversation-1/',
@@ -477,15 +573,32 @@ describe('ConversationV2Controller', () => {
       { revisionId: 'rev_15' },
     );
 
-    expect(mockRuntimeBindings.findByWorkspaceId).not.toHaveBeenCalled();
+    expect(mockFinalizedRevisions.assertFinalized).toHaveBeenCalledWith(
+      'conversation-1',
+      'rev_15',
+    );
     expect(mockDeployment.deploy).toHaveBeenCalledWith('conversation-1', 'rev_15');
+  });
+
+  it('POST /sessions/:id/deploy rejects non-finalized explicit revisionId', async () => {
+    mockSessions.setDeployState.mockResolvedValue({});
+    mockFinalizedRevisions.assertFinalized.mockRejectedValueOnce(
+      new BadRequestException('not finalized'),
+    );
+
+    await expect(
+      controller.deploySession(
+        resolvedSession('user-1', { aiSessionId: 'conversation-1' }),
+        'session-1',
+        { revisionId: 'rev_99' },
+      ),
+    ).rejects.toBeInstanceOf(BadRequestException);
+    expect(mockDeployment.deploy).not.toHaveBeenCalled();
   });
 
   it('POST /sessions/:id/deploy rejects when no finalized revision exists', async () => {
     mockSessions.setDeployState.mockResolvedValue({});
-    mockRuntimeBindings.findByWorkspaceId.mockResolvedValueOnce({
-      latestRevisionId: 'starter_react_vite_v1',
-    });
+    mockFinalizedRevisions.resolveLatestFinalized.mockResolvedValueOnce(null);
 
     await expect(
       controller.deploySession(
@@ -498,6 +611,34 @@ describe('ConversationV2Controller', () => {
     expect(mockSessions.setDeployState).toHaveBeenLastCalledWith('user-1', 'session-1', {
       deployStatus: 'error',
     });
+  });
+
+  it('GET /sessions/:id/finalized-versions returns sorted finalized revisions', async () => {
+    mockFinalizedRevisions.listByWorkspace.mockResolvedValueOnce([
+      {
+        revisionId: 'rev_12',
+        title: 'App v3',
+        finalizedAt: '2026-09-02T10:00:00.000Z',
+      },
+      {
+        revisionId: 'rev_7',
+        title: 'App v1',
+        finalizedAt: '2026-09-01T10:00:00.000Z',
+        fileCount: 10,
+      },
+    ]);
+
+    const result = await controller.listFinalizedVersions(
+      resolvedSession('user-1', { aiSessionId: 'conversation-1' }),
+      'session-1',
+    );
+
+    expect(mockFinalizedRevisions.backfillFromEvents).toHaveBeenCalledWith(
+      'session-1',
+      'conversation-1',
+    );
+    expect(result.latestRevisionId).toBe('rev_12');
+    expect(result.items).toHaveLength(2);
   });
 
   // --- GET /share/v2/:token ---

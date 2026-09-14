@@ -220,7 +220,7 @@ export interface FeatureVisibility {
   workspace: boolean;
   playbook: boolean;
   governance: boolean;
-  appMarketplace: boolean;
+  appBuilder: boolean;
   worky: boolean;
   agents: boolean;
   semanticModel: boolean;
@@ -1656,6 +1656,7 @@ export interface ConnectorResultMapping {
 }
 
 export type ConnectorDynamicHeaderSource =
+  | 'workspace'
   | 'user_id'
   | 'user_email'
   | 'user_first_name'

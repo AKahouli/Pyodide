@@ -29,7 +29,15 @@ import {
   maybeRestartDevServerAfterAppDataTool,
   refreshHostPreview,
 } from './runtime/BrowserRuntimeHost';
+import {
+  finalizedVersionsFromEvents,
+  mergeFinalizedVersions,
+  resolveLatestFinalizedRevisionId,
+  type FinalizedAppVersion,
+} from './utils/finalized-versions';
 import { CONVERSATION_V2_DEFAULT_MODEL_CHANGED_EVENT } from '@/modules/models/store';
+
+export type { FinalizedAppVersion };
 
 export interface ApplicationComponentState {
   url: string;
@@ -82,6 +90,7 @@ interface State {
   deployStatus: DeployStatus;
   deployedUrl: string | null;
   lastDeployedAt: string | null;
+  ownerInviteToken: string | null;
   /**
    * Which surface the app panel shows: Nodepod preview vs the live deployed URL.
    * Nodepod stays mounted/warm in the background when this is `'deployed'`.
@@ -112,6 +121,11 @@ interface State {
   selectedConnectorIds: string[];
   /** Active clarification choices from the latest wait event (clickable A/B/C). */
   pendingQuestion: PendingQuestion | null;
+  /** Stable finalized workspace revisions (Version History). */
+  finalizedVersions: FinalizedAppVersion[];
+  /** Revision currently shown in Nodepod preview (preview-only; may differ from agent binding). */
+  previewRevisionId: string | null;
+  loadingFinalizedVersions: boolean;
   /**
    * Live state for conversations that are streaming in the BACKGROUND (i.e. not
    * the one currently on screen). Events arriving on the per-user pipe for a
@@ -146,6 +160,7 @@ export interface SessionSlice {
   deployStatus: DeployStatus;
   deployedUrl: string | null;
   lastDeployedAt: string | null;
+  ownerInviteToken: string | null;
   appViewMode: State['appViewMode'];
   selectedToolCallId: string | null;
   selectedConnectorRepo: State['selectedConnectorRepo'];
@@ -212,12 +227,19 @@ interface Actions {
     deployStatus: DeployStatus;
     deployedUrl: string | null;
     lastDeployedAt?: string | null;
+    ownerInviteToken?: string | null;
   }) => void;
   /** Switch between Nodepod preview and the deployed iframe (manual toggle). */
   setAppViewMode: (mode: 'nodepod' | 'deployed') => void;
   /** Publish/deploy the current session's app. Flips to 'deploying' immediately,
    *  then 'deployed' (+ url) or 'error' once the backend responds. */
-  deploy: () => Promise<void>;
+  deploy: (revisionId?: string) => Promise<void>;
+  /** Load finalized versions from the backend (with event merge). */
+  loadFinalizedVersions: (sessionId?: string) => Promise<void>;
+  /** Preview a historical finalized revision in Nodepod (does not change agent binding). */
+  previewFinalizedVersion: (revisionId: string) => void;
+  /** Return Nodepod preview to the latest finalized revision. */
+  returnToLatestPreview: () => void;
   clearTypewriter: () => void;
   /** Set the selected connector repository for the session. */
   setSelectedConnectorRepo: (repo: State['selectedConnectorRepo']) => void;
@@ -257,6 +279,7 @@ const initial: State = {
   deployStatus: 'idle',
   deployedUrl: null,
   lastDeployedAt: null,
+  ownerInviteToken: null,
   appViewMode: 'nodepod',
       typewriterSessionId: null,
       typewriterName: null,
@@ -264,6 +287,9 @@ const initial: State = {
       selectedSkillIds: [],
       selectedConnectorIds: [],
       pendingQuestion: null,
+  finalizedVersions: [],
+  previewRevisionId: null,
+  loadingFinalizedVersions: false,
   streamingStateCache: new Map<string, SessionSlice>(),
 };
 
@@ -290,11 +316,15 @@ function createSessionViewDefaults(): Pick<
   | 'deployStatus'
   | 'deployedUrl'
   | 'lastDeployedAt'
+  | 'ownerInviteToken'
   | 'appViewMode'
   | 'selectedConnectorRepo'
   | 'selectedSkillIds'
   | 'selectedConnectorIds'
   | 'pendingQuestion'
+  | 'finalizedVersions'
+  | 'previewRevisionId'
+  | 'loadingFinalizedVersions'
 > {
   return {
     events: [],
@@ -316,11 +346,15 @@ function createSessionViewDefaults(): Pick<
     deployStatus: 'idle',
     deployedUrl: null,
     lastDeployedAt: null,
+    ownerInviteToken: null,
     appViewMode: 'nodepod',
     selectedConnectorRepo: null,
     selectedSkillIds: [],
     selectedConnectorIds: [],
     pendingQuestion: null,
+    finalizedVersions: [],
+    previewRevisionId: null,
+    loadingFinalizedVersions: false,
   };
 }
 
@@ -345,6 +379,7 @@ function sliceFromState(s: State): SessionSlice {
     deployStatus: s.deployStatus,
     deployedUrl: s.deployedUrl,
     lastDeployedAt: s.lastDeployedAt,
+    ownerInviteToken: s.ownerInviteToken,
     appViewMode: s.appViewMode,
     selectedToolCallId: s.selectedToolCallId,
     selectedConnectorRepo: s.selectedConnectorRepo,
@@ -360,6 +395,13 @@ function freshViewState(): Partial<State> {
     typewriterSessionId: null,
     typewriterName: null,
   };
+}
+
+function resolveDeployRevisionId(state: State, explicitRevisionId?: string): string | undefined {
+  const trimmed = explicitRevisionId?.trim();
+  if (trimmed) return trimmed;
+  if (state.previewRevisionId?.trim()) return state.previewRevisionId.trim();
+  return resolveLatestFinalizedRevisionId(state.finalizedVersions) ?? state.applicationComponent?.workspaceRevisionId;
 }
 
 export const useConversationV2Store = create<State & Actions>()(
@@ -433,6 +475,21 @@ export const useConversationV2Store = create<State & Actions>()(
         const sessionId = get().sessionId;
         if (!sessionId) return;
 
+        // A double-fired submit can invoke this twice with the same prompt before
+        // the first echo gets acked. Skip the duplicate: creating a second echo
+        // (new event_id) would persist a second user message and render twice.
+        const lastUser = [...get().events].reverse().find(
+          (e): e is Extract<AgentEvent, { type: 'message' }> =>
+            e.type === 'message' && e.role === 'user',
+        );
+        if (
+          get().streaming &&
+          lastUser?.content === message &&
+          lastUser.sequence === undefined
+        ) {
+          return;
+        }
+
         // Follow-up turns (2nd user message and later): leave the deployed
         // iframe and show Nodepod preview so the user watches the rebuild.
         const priorUserMessages = get().events.filter(
@@ -478,6 +535,15 @@ export const useConversationV2Store = create<State & Actions>()(
         const repo = get().selectedConnectorRepo;
         const skillIds = get().selectedSkillIds;
         const connectorIds = get().selectedConnectorIds;
+        // When the user previews a historical version and sends a message, the
+        // turn must build from THAT revision — the backend branches a fresh
+        // revision from it (history is never rewritten).
+        const latestFinalized = resolveLatestFinalizedRevisionId(get().finalizedVersions);
+        const selectedRevision = get().previewRevisionId;
+        const baseRevisionId =
+          selectedRevision && latestFinalized && selectedRevision !== latestFinalized
+            ? selectedRevision
+            : undefined;
         try {
           await conversationV2Api.sendMessage(sessionId, {
             message,
@@ -494,6 +560,7 @@ export const useConversationV2Store = create<State & Actions>()(
               : {}),
             ...(skillIds.length ? { skillIds } : {}),
             ...(connectorIds.length ? { connectorIds } : {}),
+            ...(baseRevisionId ? { baseRevisionId } : {}),
           });
         } catch (err) {
           set(
@@ -635,39 +702,84 @@ export const useConversationV2Store = create<State & Actions>()(
       setSystemWorkspaceId: (id) =>
         set({ systemWorkspaceId: id }, false, 'setSystemWorkspaceId'),
       setWorkspaceIds: (ids) => set({ workspaceIds: ids }, false, 'setWorkspaceIds'),
-      setDeployState: ({ deployStatus, deployedUrl, lastDeployedAt }) =>
+      setDeployState: ({ deployStatus, deployedUrl, lastDeployedAt, ownerInviteToken }) =>
         set(
-          (s) => ({
+          {
             deployStatus,
             deployedUrl,
             ...(lastDeployedAt !== undefined ? { lastDeployedAt } : {}),
-            // Opening a session that already has a live URL → show deployed iframe.
-            // Nodepod preview keeps booting in the background for instant switch-back.
-            ...(deployStatus === 'deployed' &&
-            deployedUrl &&
-            s.appViewMode === 'nodepod' &&
-            !s.deployedUrl
-              ? { appViewMode: 'deployed' as const }
-              : {}),
-          }),
+            ...(ownerInviteToken !== undefined ? { ownerInviteToken } : {}),
+          },
           false,
           'setDeployState',
         ),
       setAppViewMode: (mode) => set({ appViewMode: mode }, false, 'setAppViewMode'),
-      deploy: async () => {
+      loadFinalizedVersions: async (sessionId) => {
+        const id = sessionId ?? get().sessionId;
+        if (!id) return;
+        set({ loadingFinalizedVersions: true }, false, 'loadFinalizedVersions/start');
+        try {
+          const { items } = await conversationV2Api.getFinalizedVersions(id);
+          const fromEvents = finalizedVersionsFromEvents(
+            get().sessionId === id ? get().events : [],
+          );
+          const merged = mergeFinalizedVersions(items, fromEvents);
+          const latest = resolveLatestFinalizedRevisionId(merged);
+          set(
+            (s) => ({
+              finalizedVersions: merged,
+              previewRevisionId:
+                s.previewRevisionId && merged.some((v) => v.revisionId === s.previewRevisionId)
+                  ? s.previewRevisionId
+                  : latest,
+              loadingFinalizedVersions: false,
+            }),
+            false,
+            'loadFinalizedVersions/done',
+          );
+        } catch {
+          set({ loadingFinalizedVersions: false }, false, 'loadFinalizedVersions/error');
+        }
+      },
+      previewFinalizedVersion: (revisionId) => {
+        const sessionId = get().sessionId;
+        if (!sessionId || !revisionId.trim()) return;
+        set(
+          {
+            previewRevisionId: revisionId.trim(),
+            appViewMode: 'nodepod',
+            rightPanelMode: 'app',
+          },
+          false,
+          'previewFinalizedVersion',
+        );
+        syncHostRevisionSources(sessionId, revisionId.trim());
+      },
+      returnToLatestPreview: () => {
+        const latest = resolveLatestFinalizedRevisionId(get().finalizedVersions);
+        if (!latest) return;
+        get().previewFinalizedVersion(latest);
+      },
+      deploy: async (revisionId) => {
         const id = get().sessionId;
         if (!id) return;
+        const state = get();
+        const deployRevisionId = resolveDeployRevisionId(state, revisionId);
         set({ deployStatus: 'deploying' }, false, 'deploy/start');
         try {
+          const title =
+            state.finalizedVersions.find((v) => v.revisionId === deployRevisionId)?.title ??
+            state.applicationComponent?.title;
           const r = await conversationV2Api.deploySession(id, {
-            title: get().applicationComponent?.title,
-            revisionId: get().applicationComponent?.workspaceRevisionId,
+            title,
+            revisionId: deployRevisionId,
           });
           set(
             {
               deployStatus: r.deployStatus,
               deployedUrl: r.deployedUrl,
               lastDeployedAt: r.lastDeployedAt,
+              ownerInviteToken: r.ownerInviteToken ?? null,
               ...(r.deployStatus === 'deployed' && r.deployedUrl
                 ? { appViewMode: 'deployed' as const }
                 : {}),
@@ -744,6 +856,9 @@ export const useConversationV2Store = create<State & Actions>()(
           get().applicationComponent,
         );
         const appBuildProgress = deriveAppBuildProgress(events, get().appBuildProgress);
+        const fromEvents = finalizedVersionsFromEvents(events);
+        const merged = mergeFinalizedVersions(get().finalizedVersions, fromEvents);
+        const latest = resolveLatestFinalizedRevisionId(merged);
         set(
           {
             events: dedupeReplayEvents(events),
@@ -753,6 +868,8 @@ export const useConversationV2Store = create<State & Actions>()(
             liveAssistantIds: new Set<string>(),
             applicationComponent,
             appBuildProgress: applicationComponent ? null : appBuildProgress,
+            finalizedVersions: merged,
+            previewRevisionId: latest,
             ...(applicationComponent || appBuildProgress
               ? { rightPanelMode: 'app' as const }
               : {}),
@@ -797,7 +914,8 @@ export const useConversationV2Store = create<State & Actions>()(
           previewSessionId: string | null;
           syncRevision: { sessionId: string; revisionId: string } | null;
           titleSync: { sessionId: string; title: string } | null;
-        } = { previewSessionId: null, syncRevision: null, titleSync: null };
+          loadFinalizedVersions: string | null;
+        } = { previewSessionId: null, syncRevision: null, titleSync: null, loadFinalizedVersions: null };
         set(
           (state) => {
             const incomingSeq = (event as { sequence?: number }).sequence;
@@ -967,6 +1085,20 @@ export const useConversationV2Store = create<State & Actions>()(
                 if (state.sessionId && event.revision_id) {
                   sideEffects.syncRevision = { sessionId: state.sessionId, revisionId: event.revision_id };
                 }
+                const finalizedAt = new Date(event.timestamp * 1000).toISOString();
+                const optimisticVersion: FinalizedAppVersion = {
+                  revisionId: event.revision_id ?? '',
+                  title: event.title?.trim() || 'App',
+                  finalizedAt,
+                  ...(typeof event.file_count === 'number' ? { fileCount: event.file_count } : {}),
+                };
+                const mergedVersions =
+                  event.revision_id != null && event.revision_id !== ''
+                    ? mergeFinalizedVersions([optimisticVersion], state.finalizedVersions)
+                    : state.finalizedVersions;
+                if (state.sessionId && event.revision_id) {
+                  sideEffects.loadFinalizedVersions = state.sessionId;
+                }
                 return withSeq({
                   events: [...state.events, event],
                   applicationComponent: {
@@ -979,6 +1111,8 @@ export const useConversationV2Store = create<State & Actions>()(
                     workspaceRevisionId:
                       event.revision_id ?? state.applicationComponent?.workspaceRevisionId,
                   },
+                  finalizedVersions: mergedVersions,
+                  previewRevisionId: event.revision_id ?? state.previewRevisionId,
                   appBuildProgress: null,
                   rightPanelMode: 'app',
                 });
@@ -1026,6 +1160,9 @@ export const useConversationV2Store = create<State & Actions>()(
         if (sideEffects.previewSessionId) refreshHostPreview(sideEffects.previewSessionId);
         if (sideEffects.syncRevision) {
           syncHostRevisionSources(sideEffects.syncRevision.sessionId, sideEffects.syncRevision.revisionId);
+        }
+        if (sideEffects.loadFinalizedVersions) {
+          void get().loadFinalizedVersions(sideEffects.loadFinalizedVersions);
         }
       },
     }),

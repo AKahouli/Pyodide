@@ -8,6 +8,7 @@ import {
   AppDataException,
 } from '../constants/app-data.errors';
 import { assertIdentifier, quoteIdent } from '../utils/app-data-sql.util';
+import { AppDataAuditService } from './app-data-audit.service';
 import { AppDataCatalogService } from './app-data-catalog.service';
 import { AppDataMigrationService } from './app-data-migration.service';
 import { AppDataPolicyService } from './app-data-policy.service';
@@ -20,6 +21,7 @@ export class AppDataRowService {
     private readonly catalog: AppDataCatalogService,
     private readonly migrations: AppDataMigrationService,
     private readonly policies: AppDataPolicyService,
+    private readonly audit: AppDataAuditService,
   ) {}
 
   private assertBodySize(body: Record<string, unknown>): void {
@@ -90,9 +92,98 @@ export class AppDataRowService {
     const client = await this.pool.connect();
     try {
       const timeoutMs = this.config.get<number>('appData.statementTimeoutMs', 30_000);
-      await client.query(`SET statement_timeout = ${timeoutMs}`);
+      await client.query('SET statement_timeout = $1', [timeoutMs]);
       const result = await client.query(sql, values);
       return result.rows[0] ?? null;
+    } finally {
+      client.release();
+    }
+  }
+
+  /**
+   * Batch-insert multiple rows into the same table in a single statement.
+   * Rows carrying an explicit `id` that already exists are skipped
+   * (ON CONFLICT DO NOTHING) — idempotent for re-seeds.
+   */
+  async batchInsert(params: {
+    appDataId: string;
+    environment: AppDataEnvironment;
+    table: string;
+    rows: Record<string, unknown>[];
+    principal: AppDataPrincipal;
+    ownerUserId: string;
+  }): Promise<{ inserted: number; skipped: number }> {
+    assertIdentifier(params.table, 'table name');
+    if (params.rows.length === 0) return { inserted: 0, skipped: 0 };
+
+    const app = await this.catalog.requireAppByAppDataId(params.appDataId);
+    const env = await this.catalog.getEnvironment(app.id, params.environment);
+    if (!env?.provisionedAt) {
+      throw new AppDataException(AppDataErrorCode.NOT_PROVISIONED, 'Environment not provisioned');
+    }
+    const policyDoc = await this.policies.getPolicies(app.workspaceId, params.environment);
+    this.policies.assertAllowed(policyDoc[params.table], 'insert', params.principal, params.table);
+
+    const manifest = await this.migrations.getCurrentManifest(app.id, params.environment);
+    const tableDef = manifest.tables[params.table];
+    if (!tableDef) {
+      throw new AppDataException(AppDataErrorCode.INVALID_MANIFEST, `Unknown table: ${params.table}`);
+    }
+
+    const expectedCols = Object.keys(tableDef.columns);
+    const schemaQ = quoteIdent(env.schemaName);
+    const tableQ = quoteIdent(params.table);
+
+    // Collect all distinct column names across all rows.
+    const allCols = new Set<string>();
+    for (const row of params.rows) {
+      for (const col of Object.keys(row)) {
+        assertIdentifier(col, 'column name');
+        if (!(col in tableDef.columns)) {
+          throw new AppDataException(
+            AppDataErrorCode.INVALID_MANIFEST,
+            `Unknown column "${col}". Expected one of: ${expectedCols.join(', ')}`,
+          );
+        }
+        allCols.add(col);
+      }
+    }
+    const colList = [...allCols];
+    if (colList.length === 0) {
+      throw new AppDataException(AppDataErrorCode.INVALID_MANIFEST, 'All rows are empty');
+    }
+    const colIdentifiers = colList.map(quoteIdent);
+
+    // Build a multi-row INSERT with ON CONFLICT DO NOTHING.
+    // Each row gets its own set of placeholders ($1, $2, ...).
+    const valueClauses: string[] = [];
+    const values: unknown[] = [];
+    let idx = 1;
+    for (const row of params.rows) {
+      const placeholders = colList.map((col) => {
+        const val = row[col];
+        if (val === undefined) {
+          values.push(null);
+        } else {
+          values.push(val);
+        }
+        return `$${idx++}`;
+      });
+      valueClauses.push(`(${placeholders.join(', ')})`);
+    }
+
+    const sql =
+      `INSERT INTO ${schemaQ}.${tableQ} (${colIdentifiers.join(', ')}) ` +
+      `VALUES ${valueClauses.join(', ')} ON CONFLICT DO NOTHING`;
+
+    const client = await this.pool.connect();
+    try {
+      const timeoutMs = this.config.get<number>('appData.statementTimeoutMs', 30_000);
+      await client.query('SET statement_timeout = $1', [timeoutMs]);
+      const result = await client.query(sql, values);
+      const inserted = result.rowCount ?? 0;
+      const skipped = params.rows.length - inserted;
+      return { inserted, skipped };
     } finally {
       client.release();
     }
@@ -199,10 +290,17 @@ export class AppDataRowService {
     }
   }
 
+  /**
+   * Sample rows from a table. This bypasses policy checks for diagnostic
+   * purposes (MCP tool: table_sample). The caller must explicitly opt in
+   * via skipPolicyCheck=true and the principal is recorded in the audit log.
+   */
   async sampleTable(params: {
     workspaceId: string;
     table: string;
     limit?: number;
+    principal?: AppDataPrincipal;
+    skipPolicyCheck?: boolean;
   }) {
     const app = await this.catalog.requireAppByWorkspace(params.workspaceId);
     const env = await this.catalog.getEnvironment(app.id, 'dev');
@@ -211,6 +309,14 @@ export class AppDataRowService {
     }
     assertIdentifier(params.table, 'table name');
     const limit = Math.min(params.limit ?? 5, 20);
+
+    await this.audit.record({
+      appId: app.id,
+      eventType: 'table_sample',
+      actorPrincipal: params.principal ?? 'anonymous',
+      metadata: { table: params.table, limit, skipPolicyCheck: params.skipPolicyCheck },
+    });
+
     const schemaQ = quoteIdent(env.schemaName);
     const tableQ = quoteIdent(params.table);
     const sql = `SELECT * FROM ${schemaQ}.${tableQ} LIMIT $1`;

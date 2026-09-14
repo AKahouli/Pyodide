@@ -7,7 +7,12 @@
   "session": {
     "loading": "Chargement de la session…",
     "notFound": "Session introuvable.",
-    "errorTitle": "Erreur de flux"
+    "errorTitle": "Erreur de flux",
+    "fromAppBuilder": {
+      "title": "Création depuis App Builder",
+      "body": "Votre demande a été envoyée à l'Agent. Continuez la conversation ici pour affiner l'application — l'aperçu en direct s'ouvre dans le panneau latéral dès qu'une version est prête. Revenez à App Builder à tout moment via la barre latérale.",
+      "dismiss": "Compris"
+    }
   },
   "composer": {
     "placeholder": "Tapez un message…",
@@ -19,6 +24,9 @@
       "search": "Rechercher des modèles…",
       "empty": "Aucun modèle trouvé."
     }
+  },
+  "agentComposer": {
+    "placeholder": "Donnez une tâche à l'agent — ex : « trouve le prix du Bitcoin »"
   },
   "questionChoices": {
     "fallbackTitle": "Choisissez une option pour continuer"
@@ -42,7 +50,7 @@
     "empty": "Sélectionnez un outil pour l'inspecter.",
     "jumpToLive": "Revenir au direct",
     "tabCode": "Code",
-    "tabPreview": "Aperçu",
+    "tabPreview": "Aperçus",
     "tabData": "Données",
     "resizeHandle": "Glisser pour redimensionner l'aperçu"
   },
@@ -54,7 +62,14 @@
     "schemaVersion": "Version du schéma",
     "noTables": "Aucune table pour le moment.",
     "envDev": "DEV",
-    "envProd": "PROD"
+    "envProd": "PROD",
+    "seed": "Seed",
+    "seedApply": "Appliquer le seed",
+    "seeding": "Seed en cours…",
+    "seedPlaceholder": "Collez un manifeste JSON, ex. { \"<table>\": [ { \"col\": \"valeur\" } ] }",
+    "seedInvalidJson": "JSON invalide — utilisez { \"<table>\": [ { \"col\": \"valeur\" } ] }.",
+    "seedDone": "Seed appliqué : {{inserted}} inséré(s), {{skipped}} ignoré(s).",
+    "seedError": "Échec du seed."
   },
   "nodepod": {
     "inBrowser": "Aperçu dans le navigateur",
@@ -154,6 +169,21 @@
       "more": "Autres actions"
     }
   },
+  "versionHistory": {
+    "title": "Versions",
+    "subtitle": "Choisir une version finalisée à prévisualiser ou déployer",
+    "open": "Versions finalisées",
+    "version": "Version {{number}}",
+    "draft": "Brouillon",
+    "building": "Version en cours de construction…",
+    "finalized": "Finalisée",
+    "latest": "Dernière",
+    "preview": "Prévisualiser cette version",
+    "deploy": "Déployer cette version",
+    "active": "Active",
+    "empty": "Aucune version finalisée",
+    "loading": "Chargement des versions…"
+  },
   "deploy": {
     "publish": "Déployer",
     "publishing": "Déploiement…",
@@ -163,15 +193,17 @@
     "open": "Ouvrir dans un nouvel onglet",
     "viewUrl": "Voir l'URL déployée",
     "menu": "Options de déploiement",
-    "switchToNodepod": "Retour à l'aperçu Nodepod",
-    "switchToDeployed": "Afficher l'application déployée",
+    "modeSwitch": "Vue Aperçu ou Déployée",
+    "modePreview": "Aperçu",
+    "modeDeploy": "Déployé",
     "embedUnavailable": "Cette application ne peut pas être intégrée ici"
   },
   "share": {
     "title": "Partager l'application et la conversation",
-    "searchPlaceholder": "Rechercher un utilisateur par email…",
+    "searchPlaceholder": "Rechercher ou saisir une adresse email…",
     "searching": "Recherche…",
-    "noResults": "Aucun utilisateur trouvé",
+    "noResults": "Saisissez une adresse email valide",
+    "addEmail": "Ajouter",
     "remove": "Retirer",
     "cancel": "Annuler",
     "send": "Envoyer"

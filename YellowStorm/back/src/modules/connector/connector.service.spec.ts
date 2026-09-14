@@ -791,6 +791,9 @@ describe('ConnectorService findByIdsForGrpc', () => {
           label: 'Search Files',
           description: 'Search SharePoint',
           parameter_schema_json: '{"type":"object","properties":{"query":{"type":"string"}}}',
+          result_kind: 'generic',
+          citation_mode: 'none',
+          result_mapping_json: '{}',
         },
       ],
     });

@@ -14,9 +14,9 @@ import { WorkyMessageComponent, WorkyMessageComponentDocument } from '../schemas
 import { WorkyPlanStepComponent, WorkyPlanStepComponentDocument } from '../schemas/worky-plan-step-component.schema';
 import { WorkyPlanStepArtifact, WorkyPlanStepArtifactDocument } from '../schemas/worky-plan-step-artifact.schema';
 import {
+  PgSessionRow,
   PgMessageRow,
   PgPlanRow,
-  PgSessionRow,
   PgPlanStepRow,
   PgMessageComponentRow,
   PgPlanStepComponentRow,
@@ -28,6 +28,7 @@ import {
   mapSession,
   mapPlanStep,
   isKnownPlanStepStatus,
+  isTerminalSessionStatus,
   mapMessageComponent,
   mapPlanStepComponent,
   mapPlanStepArtifact,
@@ -394,6 +395,54 @@ export class WorkyElectricConsumerService implements OnModuleInit, OnModuleDestr
     }
   }
 
+  async handleSessions(messages: unknown[]): Promise<void> {
+    for (const m of messages as any[]) {
+      if (this.destroyed) return;
+      if (isControlMessage(m)) {
+        if (this.debug) {
+          this.logger.debug('[worky-electric] control', { shape: 'sessions', headers: m.headers });
+        }
+        continue;
+      }
+      if (!isChangeMessage(m)) continue;
+      if (m.headers.operation === 'delete') continue;
+      await this.retryProjection('sessions', async () => {
+        const row = m.value as unknown as PgSessionRow;
+        const target = await this.streamService.findByAiSessionId(row.id);
+        if (!target) {
+          this.logger.warn('[worky-electric] unknown session', { shape: 'sessions', sid: row.id });
+          return;
+        }
+        const streamOid = this.toStreamOid(target.streamId);
+        const { set, event } = mapSession(row, target.streamId);
+        await this.planProjectionModel
+          .findOneAndUpdate(
+            { streamId: streamOid },
+            { $set: { ...set, streamId: streamOid } },
+            { upsert: true, new: true, setDefaultsOnInsert: true },
+          )
+          .exec();
+        this.events.emit(target.ownerUserId, target.streamId, event);
+        if (isTerminalSessionStatus(row.status)) {
+          this.events.emit(target.ownerUserId, target.streamId, {
+            type: 'stream.terminal',
+            emittedAt: Date.now(),
+            payload: { error: row.status.toLowerCase() === 'failed', source: `session-${row.status}` },
+          });
+        }
+        if (this.debug) {
+          this.logger.debug('[worky-electric] applied', {
+            shape: 'sessions',
+            streamId: target.streamId,
+            ownerUserId: target.ownerUserId,
+            eventType: event.type,
+            status: row.status,
+          });
+        }
+      });
+    }
+  }
+
   async handlePlans(messages: unknown[]): Promise<void> {
     for (const m of messages as any[]) {
       if (this.destroyed) return;
@@ -439,33 +488,6 @@ export class WorkyElectricConsumerService implements OnModuleInit, OnModuleDestr
             set,
           });
         }
-      });
-    }
-  }
-
-  async handleSessions(messages: unknown[]): Promise<void> {
-    for (const m of messages as any[]) {
-      if (this.destroyed) return;
-      if (isControlMessage(m)) continue;
-      if (!isChangeMessage(m)) continue;
-      if (m.headers.operation === 'delete') continue;
-      await this.retryProjection('sessions', async () => {
-        const row = m.value as unknown as PgSessionRow;
-        const target = await this.streamService.findByAiSessionId(row.id);
-        if (!target) {
-          this.logger.warn('[worky-electric] unknown session', { shape: 'sessions', sid: row.id });
-          return;
-        }
-        const streamOid = this.toStreamOid(target.streamId);
-        const { set, event } = mapSession(row, target.streamId);
-        await this.planProjectionModel
-          .findOneAndUpdate(
-            { streamId: streamOid },
-            { $set: { ...set, streamId: streamOid } },
-            { upsert: true, new: true, setDefaultsOnInsert: true },
-          )
-          .exec();
-        this.events.emit(target.ownerUserId, target.streamId, event);
       });
     }
   }
@@ -516,6 +538,20 @@ export class WorkyElectricConsumerService implements OnModuleInit, OnModuleDestr
           )
           .exec();
         this.events.emit(target.ownerUserId, target.streamId, event);
+        // An `error` component is only ever attached to a failed turn's message
+        // (service._add_error_message), so its arrival means the turn is over.
+        // Emit `stream.terminal` here too — this shape is PROVEN to sync (the
+        // error card renders), whereas the `sessions` shape may not be published
+        // in every deployment. Clears the "working" flag / releases the Stop button.
+        if ((row.type || '').toLowerCase() === 'error') {
+          this.logger.log('[worky-electric] error component → stream.terminal', {
+            sid: row.session_id, streamId: target.streamId });
+          this.events.emit(target.ownerUserId, target.streamId, {
+            type: 'stream.terminal',
+            emittedAt: Date.now(),
+            payload: { error: true, source: 'error-component' },
+          });
+        }
       } catch (err) {
         this.logger.error('Failed to process message_component row', { error: (err as Error).message });
         continue;

@@ -7,6 +7,40 @@ import { registerAs } from '@nestjs/config';
 export default registerAs('appData', () => ({
   /** Master switch — when false, no app-data routes or provisioning run. */
   enabled: process.env.APP_DATA_ENABLED === 'true',
+  /**
+   * Delegate app-data to the standalone app-data microservice over HTTP.
+   * When true, provisioning / release binding / public CRUD / owner Data tab
+   * are proxied to APP_DATA_SERVICE_URL and local tenant-schema services are
+   * not registered. Set to false to restore monolith-local behaviour.
+   */
+  remote: (() => {
+    const raw = process.env.APP_DATA_REMOTE;
+    if (raw === undefined || raw === '') return false;
+    if (raw === 'true') return true;
+    if (raw === 'false') return false;
+    console.warn(
+      `[AppDataModule] APP_DATA_REMOTE="${raw}" is not a recognised value — ` +
+        `expected "true" or "false". Falling back to local mode.`,
+    );
+    return false;
+  })(),
+  /** Base URL of the app-data microservice (internal, server-to-server). */
+  serviceUrl: process.env.APP_DATA_SERVICE_URL || '',
+  /** Static service token expected by the microservice (Authorization: Bearer). */
+  serviceToken: process.env.APP_DATA_SERVICE_TOKEN || '',
+  /** Externally reachable base URL of the microservice for generated apps. */
+  remotePublicBaseUrl: process.env.APP_DATA_REMOTE_PUBLIC_BASE_URL || '',
+  /**
+   * Public HTTPS base URL of the microservice for PROD deployed apps
+   * (e.g. https://app-data.yellowsys.org behind a reverse proxy). Required
+   * when deploying in NODE_ENV=production — an https page cannot call an
+   * http:// base (mixed content) and localhost never reaches visitors.
+   */
+  remotePublicBaseUrlProd: process.env.APP_DATA_REMOTE_PUBLIC_BASE_URL_PROD || '',
+  /** Default HTTP timeout for microservice calls (ms). */
+  remoteTimeoutMs: parseInt(process.env.APP_DATA_REMOTE_TIMEOUT_MS || '15000', 10),
+  /** HTTP timeout for release binding (copies all rows DEV→PROD) (ms). */
+  remoteBindTimeoutMs: parseInt(process.env.APP_DATA_REMOTE_BIND_TIMEOUT_MS || '120000', 10),
   /** POST /mcp/app-data JSON-RPC endpoint. */
   mcpEnabled: process.env.APP_DATA_MCP_ENABLED === 'true',
   /** Policy-driven HTTP CRUD for generated React apps. */
@@ -31,9 +65,9 @@ export default registerAs('appData', () => ({
   defaultPageSize: parseInt(process.env.APP_DATA_DEFAULT_PAGE_SIZE || '50', 10),
   /** Hard cap on page size. */
   maxPageSize: parseInt(process.env.APP_DATA_MAX_PAGE_SIZE || '200', 10),
-  /** Public API rate limit per appDataId+IP (requests per minute). */
+  /** Public API GET rate limit per appDataId+IP+table (requests per minute). */
   publicRateLimitPerMinute: parseInt(
-    process.env.APP_DATA_PUBLIC_RATE_LIMIT_PER_MINUTE || '120',
+    process.env.APP_DATA_PUBLIC_RATE_LIMIT_PER_MINUTE || '600',
     10,
   ),
   /** Statement timeout for tenant DDL/DML (ms). */

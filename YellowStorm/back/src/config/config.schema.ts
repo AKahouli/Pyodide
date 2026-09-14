@@ -258,7 +258,7 @@ export const configValidationSchema = Joi.object({
   CONVERSATION_V2_GRPC_UNARY_DEADLINE_MS: Joi.number().default(5000),
   CONVERSATION_V2_GRPC_STREAM_DEADLINE_MS: Joi.number().default(900000),
   CONVERSATION_V2_SSE_HEARTBEAT_MS: Joi.number().default(15000),
-  CONVERSATION_V2_MAX_MESSAGE_LENGTH: Joi.number().default(16384),
+  CONVERSATION_V2_MAX_MESSAGE_LENGTH: Joi.number().default(30000),
   CONVERSATION_V2_GRPC_MAX_MESSAGE_BYTES: Joi.number().default(16 * 1024 * 1024),
   CONVERSATION_V2_MAX_CONCURRENT_STREAMS: Joi.number().min(1).default(5),
   CONVERSATION_V2_MAX_SSE_CONNECTIONS: Joi.number().min(1).default(5),
@@ -277,6 +277,7 @@ export const configValidationSchema = Joi.object({
   APP_BUILDER_DEPLOY_INITIAL_STATUS_DELAY_MS: Joi.number().min(0).default(15_000),
   APP_BUILDER_DEPLOY_STATUS_POLL_INTERVAL_MS: Joi.number().min(1_000).default(15_000),
   APP_BUILDER_DEPLOYED_APPS_PATH_PREFIX: Joi.string().default('/apps'),
+  APP_SHARE_INVITE_TTL_DAYS: Joi.number().min(1).max(90).default(7),
 
   // App Builder runtime — MCP + Broker on YellowStorm (see app-runtime/README.md).
   APP_RUNTIME_MCP_ENABLED: Joi.boolean().default(true),
@@ -292,18 +293,25 @@ export const configValidationSchema = Joi.object({
 
   // Persistent App Data (PostgreSQL tenant schemas — see app-data/README.md).
   APP_DATA_ENABLED: Joi.boolean().default(false),
+  APP_DATA_REMOTE: Joi.boolean().default(false),
+  APP_DATA_SERVICE_URL: Joi.string().uri().allow('').optional(),
+  APP_DATA_SERVICE_TOKEN: Joi.string().allow('').default(''),
+  APP_DATA_REMOTE_PUBLIC_BASE_URL: Joi.string().uri().allow('').optional(),
+  APP_DATA_REMOTE_PUBLIC_BASE_URL_PROD: Joi.string().allow('').optional(),
+  APP_DATA_REMOTE_TIMEOUT_MS: Joi.number().min(1000).max(300_000).default(15_000),
+  APP_DATA_REMOTE_BIND_TIMEOUT_MS: Joi.number().min(1000).max(600_000).default(120_000),
   APP_DATA_MCP_ENABLED: Joi.boolean().default(false),
   APP_DATA_PUBLIC_API_ENABLED: Joi.boolean().default(false),
   APP_DATA_DATA_TAB_ENABLED: Joi.boolean().default(false),
-  APP_DATA_PUBLIC_BASE_URL: Joi.string().uri().optional(),
-  APP_DATA_PUBLIC_BASE_URL_PROD: Joi.string().uri().optional(),
-  APP_DATA_MCP_URL: Joi.string().uri().optional(),
+  APP_DATA_PUBLIC_BASE_URL: Joi.string().uri().allow('').optional(),
+  APP_DATA_PUBLIC_BASE_URL_PROD: Joi.string().uri().allow('').optional(),
+  APP_DATA_MCP_URL: Joi.string().uri().allow('').optional(),
   APP_DATA_MAX_TABLES: Joi.number().min(1).max(256).default(32),
   APP_DATA_MAX_COLUMNS: Joi.number().min(1).max(256).default(64),
   APP_DATA_MAX_ROW_BODY_BYTES: Joi.number().min(1024).max(1_048_576).default(65_536),
   APP_DATA_DEFAULT_PAGE_SIZE: Joi.number().min(1).max(500).default(50),
   APP_DATA_MAX_PAGE_SIZE: Joi.number().min(1).max(1000).default(200),
-  APP_DATA_PUBLIC_RATE_LIMIT_PER_MINUTE: Joi.number().min(1).max(10_000).default(120),
+  APP_DATA_PUBLIC_RATE_LIMIT_PER_MINUTE: Joi.number().min(1).max(10_000).default(600),
   APP_DATA_STATEMENT_TIMEOUT_MS: Joi.number().min(1000).max(300_000).default(30_000),
   APP_DATA_END_USER_AUTH_ENABLED: Joi.boolean().default(true),
   APP_DATA_END_USER_JWT_TTL: Joi.string().default('7d'),
@@ -391,6 +399,11 @@ export const configValidationSchema = Joi.object({
   WHATSAPP_FALLBACK_REPLY: Joi.string().max(500).default('I could not generate a response for this message.'),
   WHATSAPP_CIRCUIT_BREAKER_FAILURE_THRESHOLD: Joi.number().min(1).max(20).default(3),
   WHATSAPP_CIRCUIT_BREAKER_COOLDOWN_MS: Joi.number().min(5000).max(300000).default(60000),
+  WHATSAPP_INTERNAL_SEND_RATE_LIMIT_PER_MINUTE: Joi.number().min(1).max(600).default(30),
+  // WhatsApp MCP façade (agent-scoped outbound send over the standalone MCP server)
+  WHATSAPP_MCP_JWT_PRIVATE_KEY: Joi.string().allow('').default(''),
+  WHATSAPP_MCP_CONNECTOR_SLUG: Joi.string().default('mcp-whatsapp'),
+  WHATSAPP_MCP_TOKEN_TTL_SECONDS: Joi.number().min(30).max(3600).default(300),
 
   // Logging Persistence
   LOGGING_MONGODB_URI: Joi.string().optional(),

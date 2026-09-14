@@ -160,7 +160,7 @@
   "pendingApproval.steps.access.statusRejected": "Refusé",
   "pendingApproval.steps.access.statusDone": "Activé",
   "pendingApproval.steps.validation.statusDone": "Terminée",
-  "pendingApproval.message": "Votre demande d’accès est actuellement en cours de validation. Vous recevrez une notification dès que votre accès sera activé.",
+  "pendingApproval.message": "Votre demande d'accès est actuellement en cours de validation. Vous recevrez une notification dès que votre accès sera activé.",
   "pendingApproval.messageApproved": "Votre accès a été activé avec succès. Redirection vers votre espace…",
   "pendingApproval.messageRejected": "Votre demande d’accès a été refusée. Vous ne pourrez pas utiliser l’application pour le moment. Si vous pensez qu’il s’agit d’une erreur, contactez un Super Admin.",
   "pendingApproval.emailHint": "Pensez à vérifier vos e-mails (et vos spams).",

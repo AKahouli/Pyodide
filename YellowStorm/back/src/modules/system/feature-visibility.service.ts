@@ -11,9 +11,14 @@ const KEY = 'feature_visibility';
 const CACHE_MS = 5_000;
 
 function normalizeFeatureVisibility(value: unknown): FeatureVisibility {
-  const stored = value && typeof value === 'object'
-    ? value as Partial<Record<keyof FeatureVisibility, unknown>>
+  const raw = value && typeof value === 'object'
+    ? value as Partial<Record<string, unknown>>
     : {};
+
+  const stored = { ...raw };
+  if (typeof stored.appMarketplace === 'boolean' && typeof stored.appBuilder !== 'boolean') {
+    stored.appBuilder = stored.appMarketplace;
+  }
 
   return Object.fromEntries(
     Object.entries(DEFAULT_FEATURE_VISIBILITY).map(([key, fallback]) => [

@@ -58,14 +58,12 @@ export function UsageProvider({ children }: UsageProviderProps) {
       fetchUsageStatus();
       fetchPlans();
     } else if (!isAuthenticated || !user) {
-      // Clear state when logged out
       setStatus(null);
       setPlans([]);
       setError(null);
     }
   }, [isAuthenticated, user, fetchUsageStatus, fetchPlans]);
 
-  // Periodically refresh usage status (every 5 minutes)
   React.useEffect(() => {
     if (!isAuthenticated || isPendingAdminApproval(user)) return;
 

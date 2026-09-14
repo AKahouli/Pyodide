@@ -142,7 +142,6 @@ export function AppearancePage() {
       getAppearanceSettings().then(applySettings).catch(() => undefined);
     } finally {
       persistLock.current = false;
-      setAssigningLogo(false);
     }
   };
 
@@ -281,7 +280,7 @@ export function AppearancePage() {
           </CardContent>
         </Card>
 
-<Card>
+        <Card>
           <CardHeader>
             <div className='flex items-start gap-3'>
               <div className='flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary'>

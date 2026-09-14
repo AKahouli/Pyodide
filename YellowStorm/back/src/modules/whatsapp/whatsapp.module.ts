@@ -15,6 +15,7 @@ import { BaileysClientFactory } from './baileys/baileys-client.factory';
 import { MongoBaileysAuthStore } from './baileys/mongo-auth-state';
 import { WhatsAppIntegrationController } from './controllers/whatsapp-integration.controller';
 import { WhatsAppIntegrationEventsController } from './controllers/whatsapp-integration-events.controller';
+import { WhatsAppInternalController } from './controllers/whatsapp-internal.controller';
 import { WhatsAppGateway } from './gateways/whatsapp.gateway';
 import {
   AgentWhatsAppIntegration,
@@ -33,6 +34,7 @@ import { WhatsAppStreamService } from './services/whatsapp-stream.service';
 import { WhatsAppPairingCacheService } from './services/whatsapp-pairing-cache.service';
 import { WhatsAppIntegrationSseService } from './services/whatsapp-integration-sse.service';
 import { WhatsAppSessionManager } from './services/whatsapp-session.manager';
+import { WhatsAppInternalSendService } from './services/whatsapp-internal-send.service';
 
 @Module({
   imports: [
@@ -51,7 +53,7 @@ import { WhatsAppSessionManager } from './services/whatsapp-session.manager';
     ConversationModule,
     forwardRef(() => WorkyModule),
   ],
-  controllers: [WhatsAppIntegrationEventsController, WhatsAppIntegrationController],
+  controllers: [WhatsAppIntegrationEventsController, WhatsAppIntegrationController, WhatsAppInternalController],
   providers: [
     CryptoService,
     WhatsAppConnectivityService,
@@ -64,6 +66,7 @@ import { WhatsAppSessionManager } from './services/whatsapp-session.manager';
     WorkyWhatsAppGroupService,
     WhatsAppIntegrationSseService,
     WhatsAppSessionManager,
+    WhatsAppInternalSendService,
     WhatsAppStreamService,
     WhatsAppMessageService,
     WhatsAppPairingCacheService,

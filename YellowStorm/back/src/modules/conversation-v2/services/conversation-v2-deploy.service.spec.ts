@@ -18,8 +18,12 @@ describe('ConversationV2DeployService', () => {
   const revisions = {
     patchRevisionWithFiles: jest.fn().mockResolvedValue(undefined),
     getAuthorizedRevision: jest.fn().mockResolvedValue({
-      files: [{ path: 'src/lib/app-base.ts' }],
+      files: [
+        { path: 'src/lib/app-base.ts' },
+        { path: 'src/main.jsx' },
+      ],
     }),
+    readRevisionFileText: jest.fn().mockResolvedValue("import { AppRouter } from './AppRouter';"),
   };
   let service: ConversationV2DeployService;
 
@@ -28,6 +32,7 @@ describe('ConversationV2DeployService', () => {
     config.get.mockClear();
     revisions.patchRevisionWithFiles.mockClear();
     revisions.getAuthorizedRevision.mockClear();
+    revisions.readRevisionFileText.mockClear();
     configValues['conversationV2.appBuilderDeployBaseUrl'] = 'https://app-deployer.yellowsys.org/';
     configValues['conversationV2.appBuilderDeployToken'] = undefined;
     configValues['conversationV2.appBuilderDeployTimeoutMs'] = 600_000;

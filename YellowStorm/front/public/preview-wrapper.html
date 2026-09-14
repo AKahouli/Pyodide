@@ -19,49 +19,71 @@
       var params = new URLSearchParams(window.location.search);
       var src = params.get('src');
       if (!src) return;
+      var previewOrigin = null;
       try {
         var parsed = new URL(src, window.location.href);
         if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return;
+        previewOrigin = parsed.origin;
       } catch (e) {
         return;
       }
       document.getElementById('pv').src = src;
 
-      window.addEventListener('message', function (e) {
-        if (!e.data || e.data.type !== 'ym-app-data-fetch') return;
-        var d = e.data;
-        var s = e.source;
-        if (!s) return;
-        var url = typeof d.url === 'string' ? d.url : '';
+      // App Data relay is one hop up: preview iframe -> this wrapper -> the
+      // opening YellowStorm tab (window.opener). The host serves a request only
+      // when event.source is the registered popup WindowProxy AND event.origin
+      // is the exact host origin, and replies with that exact origin — so no
+      // '*' is ever used here and the owner ticket never leaves the host tab.
+      var appOrigin = window.location.origin;
+      var appOpener = window.opener;
+
+      window._ymPxyId = 0;
+
+      function isAppDataUrl(url) {
         try {
-          var parsedUrl = new URL(url, window.location.href);
-          if (parsedUrl.pathname.indexOf('/app-data/public/') === -1) return;
-        } catch (err) {
+          var p = new URL(url, window.location.href);
+          return p.pathname.indexOf('/app-data/public/') !== -1 || p.pathname.indexOf('/v1/apps/') === 0;
+        } catch (e) { return false; }
+      }
+
+      window.addEventListener('message', function (e) {
+        if (!e.data || typeof e.data !== 'object') return;
+        var type = e.data.type;
+        if (type === 'ym-app-data-fetch') {
+          // Accept only the preview iframe, or this wrapper's own fetch hook.
+          var fromIframe =
+            e.source === document.getElementById('pv').contentWindow && e.origin === previewOrigin;
+          var fromSelf = e.source === window && e.origin === appOrigin;
+          if (!fromIframe && !fromSelf) return;
+          var url = typeof e.data.url === 'string' ? e.data.url : '';
+          if (!isAppDataUrl(url) || !appOpener) return;
+          appOpener.postMessage(
+            {
+              type: 'ym-app-data-fetch',
+              id: e.data.id,
+              url: url,
+              method: e.data.method,
+              headers: e.data.headers,
+              body: e.data.body,
+            },
+            appOrigin,
+          );
           return;
         }
-        fetch(url, {
-          method: d.method || 'GET',
-          headers: d.headers || undefined,
-          body: d.body || undefined,
-        })
-          .then(function (r) {
-            return r.text().then(function (b) {
-              var h = {};
-              r.headers.forEach(function (v, k) { h[k] = v; });
-              s.postMessage(
-                { type: 'ym-app-data-response', id: d.id, status: r.status, headers: h, body: b },
-                e.origin && e.origin !== 'null' ? e.origin : '*',
-              );
-            });
-          })
-          .catch(function (err) {
-            s.postMessage(
-              { type: 'ym-app-data-response', id: d.id, error: err.message },
-              e.origin && e.origin !== 'null' ? e.origin : '*',
-            );
-          });
+        if (type === 'ym-app-data-response') {
+          // Only the opening YellowStorm tab replies; route to the preview
+          // iframe using its own exact origin.
+          if (e.origin !== appOrigin) return;
+          var fromOpener = !appOpener || e.source === appOpener;
+          if (!fromOpener) return;
+          var iw = document.getElementById('pv').contentWindow;
+          if (!iw) return;
+          iw.postMessage(e.data, previewOrigin);
+        }
       });
 
+      // Capture direct fetch() calls inside the preview app and route them
+      // through the same tunnel (the generated SDK posts ym-app-data-fetch).
       document.getElementById('pv').addEventListener('load', function () {
         try {
           var iw = this.contentWindow;
@@ -69,47 +91,41 @@
           var origFetch = iw.fetch.bind(iw);
           iw.fetch = function (input, init) {
             var url = typeof input === 'string' ? input : (input && input.url) || '';
-            if (url.indexOf('/app-data/public/') !== -1 && init && init.body) {
-              return new Promise(function (resolve, reject) {
-                var id = 'pxy-' + (++window._ymPxyId) + '-' + Date.now();
-                var tm = setTimeout(function () {
-                  iw.removeEventListener('message', h);
-                  reject(new Error('proxy timeout'));
-                }, 30000);
-                function h(ev) {
-                  if (!ev.data || ev.data.type !== 'ym-app-data-response' || ev.data.id !== id) return;
-                  iw.removeEventListener('message', h);
-                  clearTimeout(tm);
-                  if (ev.data.error) {
-                    reject(new Error(ev.data.error));
-                    return;
-                  }
-                  resolve(
-                    new iw.Response(ev.data.body || '', {
-                      status: ev.data.status || 200,
-                      headers: new iw.Headers(ev.data.headers || {}),
-                    }),
-                  );
-                }
-                iw.addEventListener('message', h);
-                window.postMessage(
-                  {
-                    type: 'ym-app-data-fetch',
-                    id: id,
-                    url: url,
-                    method: init.method || 'GET',
-                    headers: init.headers || undefined,
-                    body: init.body || undefined,
-                  },
-                  window.location.origin,
+            if (!isAppDataUrl(url)) return origFetch(input, init);
+            return new Promise(function (resolve, reject) {
+              var id = 'pxy-' + (++window._ymPxyId) + '-' + Date.now();
+              var tm = setTimeout(function () {
+                iw.removeEventListener('message', h);
+                reject(new Error('App Data proxy timeout (30 s). Keep the YellowStorm tab open.'));
+              }, 30000);
+              function h(ev) {
+                if (!ev.data || ev.data.type !== 'ym-app-data-response' || ev.data.id !== id) return;
+                iw.removeEventListener('message', h);
+                clearTimeout(tm);
+                if (ev.data.error) { reject(new Error(ev.data.error)); return; }
+                resolve(
+                  new iw.Response(ev.data.body || '', {
+                    status: ev.data.status || 200,
+                    headers: new iw.Headers(ev.data.headers || {}),
+                  }),
                 );
-              });
-            }
-            return origFetch(input, init);
+              }
+              iw.addEventListener('message', h);
+              window.postMessage(
+                {
+                  type: 'ym-app-data-fetch',
+                  id: id,
+                  url: url,
+                  method: (init && init.method) || 'GET',
+                  headers: (init && init.headers) || undefined,
+                  body: (init && init.body) || undefined,
+                },
+                window.location.origin,
+              );
+            });
           };
         } catch (e) {}
       });
-      window._ymPxyId = 0;
     })();
   </script>
 </body>

@@ -7,7 +7,12 @@
   "session": {
     "loading": "Loading session…",
     "notFound": "Session not found.",
-    "errorTitle": "Stream error"
+    "errorTitle": "Stream error",
+    "fromAppBuilder": {
+      "title": "Building from App Builder",
+      "body": "Your prompt was sent to the Agent. Keep chatting here to refine the app — the live preview opens in the side panel when a version is ready. Return to App Builder anytime from the sidebar.",
+      "dismiss": "Got it"
+    }
   },
   "composer": {
     "placeholder": "Type a message…",
@@ -19,6 +24,9 @@
       "search": "Search models…",
       "empty": "No models found."
     }
+  },
+  "agentComposer": {
+    "placeholder": "Give the agent a task — e.g. \"find the current Bitcoin price\""
   },
   "questionChoices": {
     "fallbackTitle": "Choose an option to continue"
@@ -54,7 +62,14 @@
     "schemaVersion": "Schema version",
     "noTables": "No tables yet.",
     "envDev": "DEV",
-    "envProd": "PROD"
+    "envProd": "PROD",
+    "seed": "Seed",
+    "seedApply": "Seed rows",
+    "seeding": "Seeding…",
+    "seedPlaceholder": "Paste a JSON manifest, e.g. { \"<table>\": [ { \"col\": \"value\" } ] }",
+    "seedInvalidJson": "Invalid JSON — use { \"<table>\": [ { \"col\": \"value\" } ] }.",
+    "seedDone": "Seeded: {{inserted}} inserted, {{skipped}} skipped.",
+    "seedError": "Seed failed."
   },
   "nodepod": {
     "inBrowser": "In-browser preview",
@@ -154,6 +169,21 @@
       "more": "More actions"
     }
   },
+  "versionHistory": {
+    "title": "Versions",
+    "subtitle": "Pick a finalized version to preview or deploy",
+    "open": "Finalized versions",
+    "version": "Version {{number}}",
+    "draft": "Draft",
+    "building": "Version being built…",
+    "finalized": "Finalized",
+    "latest": "Latest",
+    "preview": "Preview this version",
+    "deploy": "Deploy this version",
+    "active": "Active",
+    "empty": "No finalized versions yet",
+    "loading": "Loading versions…"
+  },
   "deploy": {
     "publish": "Deploy",
     "publishing": "Deploying…",
@@ -163,15 +193,17 @@
     "open": "Open in new tab",
     "viewUrl": "View deployed URL",
     "menu": "Deployment options",
-    "switchToNodepod": "Back to Nodepod preview",
-    "switchToDeployed": "Show deployed app",
+    "modeSwitch": "Preview or Deployed view",
+    "modePreview": "Preview",
+    "modeDeploy": "Deployed",
     "embedUnavailable": "This app cannot be embedded here"
   },
   "share": {
     "title": "Share app & conversation",
-    "searchPlaceholder": "Search a user by email…",
+    "searchPlaceholder": "Search or enter an email address…",
     "searching": "Searching…",
-    "noResults": "No user found",
+    "noResults": "Enter a valid email address",
+    "addEmail": "Add",
     "remove": "Remove",
     "cancel": "Cancel",
     "send": "Send"

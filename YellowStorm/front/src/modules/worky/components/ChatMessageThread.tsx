@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import { useCallback, useMemo } from 'react';
 import { Bot } from 'lucide-react';
 import { useModuleTranslation } from '@/modules/localization';
 import {
@@ -8,8 +8,10 @@ import {
 } from '@/components/ai-elements/chat-conversation';
 import { AssistantActivity, AssistantMarkdown } from '@/components/ai-elements/assistant-response';
 import { AIMessageContent } from '@/components/ai-elements/ai-message-content';
+import type { ChoiceComponentAction } from '@/components/ai-elements/choice/ChoicePartRenderer';
 import { MessageProvider } from '@/components/ai-elements/message-context';
-import { mapComponentsToContentParts } from '@/modules/conversation/utils';
+import { formatChoiceSubmissionContent, mapComponentsToContentParts } from '@/modules/conversation/utils';
+import { useSendMessage } from '../query/hooks';
 import { useWorkyMessages, useWorkyStore } from '../store';
 import { cn } from '@/lib/utils';
 import { ChatClarificationCard } from './ChatClarificationCard';
@@ -77,6 +79,25 @@ export function ChatMessageThread({
   const { t } = useModuleTranslation('worky');
   const messages = useWorkyMessages();
   const streaming = useWorkyStore((s) => s.streaming);
+  const beginTurn = useWorkyStore((s) => s.beginTurn);
+  const finishTurn = useWorkyStore((s) => s.finishTurn);
+  const send = useSendMessage(streamId ?? '');
+  // A choice card (e.g. the approve/decline gate on a send tool) submits the
+  // selected option's submitText as a normal message; the session is parked on
+  // that interrupt, so the backend routes it to resume the waiting turn.
+  const onComponentAction = useCallback(
+    async (action: ChoiceComponentAction) => {
+      if (!streamId) return;
+      const turnId = crypto.randomUUID();
+      beginTurn(turnId);
+      try {
+        await send.mutateAsync({ content: action.submitText, turnId });
+      } catch {
+        finishTurn(turnId);
+      }
+    },
+    [streamId, send, beginTurn, finishTurn],
+  );
   const pendingClarifications = useWorkyStore((s) => s.pendingClarifications) ?? [];
   const showClarifications = Boolean(streamId) && pendingClarifications.length > 0;
   const threadItems = useMemo(
@@ -133,7 +154,7 @@ export function ChatMessageThread({
                   </div>
                   {item.message.role === 'owner' ? (
                     <div className='rounded-2xl rounded-tr-sm bg-primary px-4 py-3 text-sm text-primary-foreground shadow-sm'>
-                      <p className='whitespace-pre-wrap break-words'>{item.message.content}</p>
+                      <p className='whitespace-pre-wrap break-words'>{formatChoiceSubmissionContent(item.message.content)}</p>
                     </div>
                   ) : (
                     <div className='min-w-0 max-w-full overflow-hidden text-sm leading-6 text-foreground'>
@@ -142,6 +163,7 @@ export function ChatMessageThread({
                           <AssistantActivity components={item.message.components} isStreaming={false} labels={activityLabels} />
                           <AIMessageContent
                             parts={mapComponentsToContentParts(item.message.components.filter((component) => !ACTIVITY_COMPONENT_TYPES.has(component.type)))}
+                            onComponentAction={onComponentAction}
                           />
                         </>
                       ) : (

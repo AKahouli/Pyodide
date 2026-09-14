@@ -3,7 +3,7 @@ import { IsArray, IsOptional, IsString, MaxLength, Matches, MinLength } from 'cl
 export class SendMessageQueryDto {
   @IsString()
   @MinLength(1)
-  @MaxLength(16384)
+  @MaxLength(30000)
   message!: string;
 
   @IsOptional()
@@ -75,7 +75,7 @@ export class SendMessageQueryDto {
 export class SendMessageBodyDto {
   @IsString()
   @MinLength(1)
-  @MaxLength(16384)
+  @MaxLength(30000)
   message!: string;
 
   @IsOptional()
@@ -117,4 +117,16 @@ export class SendMessageBodyDto {
   @IsArray()
   @IsString({ each: true })
   connectorIds?: string[];
+
+  /**
+   * Finalized revision (e.g. "rev_2") the turn must build from — sent when the
+   * user previews a historical version and then messages the agent. The stream
+   * service validates it is finalized, branches a fresh revision from it and
+   * pins the runtime binding so the agent works from that state. History is
+   * never rewritten.
+   */
+  @IsOptional()
+  @IsString()
+  @Matches(/^rev_[A-Za-z0-9_-]+$/, { message: 'baseRevisionId must look like rev_1' })
+  baseRevisionId?: string;
 }

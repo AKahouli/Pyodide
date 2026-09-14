@@ -96,6 +96,11 @@ export function WorkyVoiceDock({
 
   const handlePointerDown = (event: PointerEvent<HTMLElement>) => {
     if (event.button !== 0) return;
+    // Don't drag/capture when pressing a child action button: pointer capture
+    // retargets the resulting click to the capturing container, so the button's
+    // onClick never fires. (Idle mode's drag root IS the button, so allow that.)
+    const pressed = (event.target as HTMLElement).closest('button');
+    if (pressed && pressed !== event.currentTarget) return;
     dragRef.current = {
       pointerId: event.pointerId,
       startX: event.clientX,

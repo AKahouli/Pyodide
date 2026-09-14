@@ -145,6 +145,7 @@ export class UserController {
           }
         : undefined,
       status: user.status,
+      registrationApproval: user.registrationApproval,
       permissions: userWithPermissions.permissions,
       roleNames: userWithPermissions.roleNames,
     };

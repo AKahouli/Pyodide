@@ -1,3 +1,7 @@
+// Must stay the FIRST import: several modules read process.env at static
+// import time (e.g. AppDataModule's controller selection) — before
+// ConfigModule.forRoot() loads the same file later during bootstrap.
+import 'dotenv/config';
 import { NestFactory } from '@nestjs/core';
 import { ValidationPipe, VersioningType } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
@@ -253,7 +257,6 @@ async function bootstrap() {
       reason: serializeUnhandledReason(reason),
       promise: inspect(promise, { depth: 2, breakLength: 120 }),
     });
-    void shutdown('unhandledRejection');
   });
 }
 

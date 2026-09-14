@@ -35,6 +35,7 @@ describe('RateLimitGuard', () => {
     ip?: string;
     socket?: { remoteAddress?: string };
     method?: string;
+    params?: Record<string, string>;
   } = {}): ExecutionContext => {
     const request = {
       user: overrides.user,
@@ -44,6 +45,7 @@ describe('RateLimitGuard', () => {
         : '127.0.0.1',
       socket: overrides.socket ?? { remoteAddress: '127.0.0.1' },
       method: overrides.method ?? 'GET',
+      params: overrides.params,
     };
 
     return {
@@ -306,6 +308,49 @@ describe('RateLimitGuard', () => {
         'u1',
         expect.any(String),
         'POST:TestController:testHandler',
+      );
+    });
+
+    it('should include appDataId and table in the endpoint key when present', async () => {
+      await guard.canActivate(
+        createMockContext({
+          method: 'GET',
+          params: { appDataId: '0f5b749046e160fe', table: 'datasets' },
+        }),
+      );
+
+      expect(rateLimiterService.generateKey).toHaveBeenCalledWith(
+        undefined,
+        expect.any(String),
+        'GET:TestController:testHandler:0f5b749046e160fe:datasets',
+      );
+    });
+
+    it('should keep separate buckets per table', async () => {
+      await guard.canActivate(
+        createMockContext({
+          method: 'GET',
+          params: { appDataId: 'app-1', table: 'agencies' },
+        }),
+      );
+      await guard.canActivate(
+        createMockContext({
+          method: 'GET',
+          params: { appDataId: 'app-1', table: 'scenarios' },
+        }),
+      );
+
+      expect(rateLimiterService.generateKey).toHaveBeenNthCalledWith(
+        1,
+        undefined,
+        expect.any(String),
+        'GET:TestController:testHandler:app-1:agencies',
+      );
+      expect(rateLimiterService.generateKey).toHaveBeenNthCalledWith(
+        2,
+        undefined,
+        expect.any(String),
+        'GET:TestController:testHandler:app-1:scenarios',
       );
     });
   });

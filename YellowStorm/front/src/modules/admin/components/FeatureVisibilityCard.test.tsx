@@ -36,7 +36,14 @@ vi.mock('@/components/ui/collapsible', () => ({
 }));
 
 const visibility = {
-  ...DEFAULT_FEATURE_VISIBILITY,
+  conversation: true,
+  workspace: true,
+  playbook: true,
+  governance: true,
+  appBuilder: true,
+  worky: true,
+  agents: true,
+  platformCopilot: false,
 };
 
 describe('FeatureVisibilityCard', () => {

@@ -102,6 +102,19 @@ export class RuntimeRevisionService {
     };
   }
 
+  /** Read a single revision file from its content-addressed Ceph blob. */
+  async readRevisionFileText(
+    workspaceId: string,
+    revisionId: string,
+    relativePath: string,
+  ): Promise<string | null> {
+    const revision = await this.getAuthorizedRevision(workspaceId, revisionId);
+    const file = revision.files.find((entry) => entry.path === relativePath);
+    if (!file) return null;
+    const raw = await this.documents.download(file.objectKey);
+    return raw.toString('utf8');
+  }
+
   /**
    * Ensure the workspace has a Mongo row for the starter revision (idempotent).
    * Binding still points `latestRevisionId` at the shared starter id; this
@@ -405,6 +418,44 @@ export class RuntimeRevisionService {
       manifestObjectKey,
       files: manifestFiles,
     };
+  }
+
+  /**
+   * Branch a fresh revision from an existing one without mutating it: the new
+   * revision carries the same file manifest but a brand-new id minted ABOVE
+   * every persisted revision of the workspace, so existing history (and its
+   * Ceph manifests / finalized rows) is never rewritten. Used when a user
+   * messages the agent while previewing a historical version.
+   */
+  async branchRevision(
+    workspaceId: string,
+    sourceRevisionId: string,
+  ): Promise<RevisionManifest> {
+    const source = await this.getAuthorizedRevision(workspaceId, sourceRevisionId);
+
+    const rows = await this.model
+      .find({ workspaceId }, { revisionId: 1 })
+      .lean()
+      .exec();
+    let maxNumber = 0;
+    for (const row of rows) {
+      const match = /^rev_(\d+)$/.exec(row.revisionId);
+      if (match) {
+        maxNumber = Math.max(maxNumber, Number.parseInt(match[1]!, 10));
+      }
+    }
+    const newRevisionId = `rev_${maxNumber + 1}`;
+
+    this.logger.log(
+      `Branching revision workspaceId=${workspaceId} source=${sourceRevisionId} new=${newRevisionId} files=${source.files.length}`,
+    );
+
+    return this.patchRevisionWithFiles({
+      workspaceId,
+      baseRevisionId: sourceRevisionId,
+      newRevisionId,
+      additionalFiles: [],
+    });
   }
 
   async getStarterManifest(): Promise<RevisionManifest> {

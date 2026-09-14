@@ -29,11 +29,82 @@ const HIDDEN_IFRAME_SANDBOX =
 
 let appDataFetchProxyInstalled = false;
 
-function isAppDataPublicUrl(url: string): boolean {
+interface AppDataRelayPeer {
+  source: WindowProxy;
+  origin: string;
+}
+
+/**
+ * Preview iframe windows the module-level relay may serve, each paired with
+ * the preview origin it was registered for. A `ym-app-data-fetch` message is
+ * only relayed when `event.source` matches a registered peer AND `event.origin`
+ * equals that peer's origin — so an embedding page or sibling iframe can never
+ * borrow the owner data ticket.
+ */
+const appDataRelayPeers: AppDataRelayPeer[] = [];
+
+export function registerAppDataRelayFrame(source: WindowProxy, origin: string | null): void {
+  const existing = appDataRelayPeers.findIndex((p) => p.source === source);
+  if (existing === -1) appDataRelayPeers.push({ source, origin: origin ?? '' });
+  else appDataRelayPeers[existing].origin = origin ?? '';
+}
+
+export function updateAppDataRelayFrameOrigin(source: WindowProxy, origin: string | null): void {
+  registerAppDataRelayFrame(source, origin);
+}
+
+export function unregisterAppDataRelayFrame(source: WindowProxy): void {
+  const index = appDataRelayPeers.findIndex((p) => p.source === source);
+  if (index !== -1) appDataRelayPeers.splice(index, 1);
+}
+
+/** http(s) origin of a relayable sender, or null when unusable (e.g. 'null'). */
+function validateRelayOrigin(origin: unknown): string | null {
+  if (typeof origin !== 'string' || origin === 'null') return null;
+  if (!origin.startsWith('http://') && !origin.startsWith('https://')) return null;
+  return origin;
+}
+
+function isTrustedAppDataRelaySource(source: WindowProxy | null, origin: string): boolean {
+  return appDataRelayPeers.some((p) => p.source === source && p.origin === origin);
+}
+
+/**
+ * Resolves the owner's App Data data ticket for relayed preview requests,
+ * **keyed by appDataId** so two concurrently open previews can never swap
+ * tickets (the microservice binds each ticket to its appDataId — a swapped
+ * one fails with 403 "Token binding mismatch"). Registered by the active
+ * host (start()); the module-level relay stays install-once.
+ */
+type AppDataTicketFetcher = (appDataId: string, force?: boolean, env?: string) => Promise<string | null>;
+let appDataTicketFetcher: AppDataTicketFetcher | null = null;
+
+export function setAppDataTicketFetcher(fetcher: AppDataTicketFetcher | null): void {
+  appDataTicketFetcher = fetcher;
+}
+
+/** appDataId from a data-plane URL (`/v1/apps/{id}/…` or legacy gateway). */
+export function appDataIdFromUrl(url: string): string | null {
+  try {
+    const pathname = new URL(url, window.location.href).pathname;
+    const m =
+      pathname.match(/\/v1\/apps\/([^/]+)/) || pathname.match(/\/app-data\/public\/([^/]+)/);
+    return m ? decodeURIComponent(m[1]) : null;
+  } catch {
+    return null;
+  }
+}
+
+export function isAppDataPublicUrl(url: string): boolean {
   try {
     const parsed = new URL(url, window.location.href);
     if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return false;
-    return parsed.pathname.includes('/app-data/public/');
+    // Gateway shape (monolith + remote proxy controllers) and the direct
+    // app-data microservice data plane (`/v1/apps/:appDataId/:env/...`,
+    // including its `/auth` subtree).
+    return (
+      parsed.pathname.includes('/app-data/public/') || parsed.pathname.startsWith('/v1/apps/')
+    );
   } catch {
     return false;
   }
@@ -43,59 +114,99 @@ function installAppDataFetchProxyOnce(): void {
   if (appDataFetchProxyInstalled || typeof window === 'undefined') return;
   appDataFetchProxyInstalled = true;
 
-  const handleProxyRequest = (
+  const handleProxyRequest = async (
     data: Record<string, unknown>,
     reply: (response: Record<string, unknown>) => void,
   ) => {
-    const { id, url, method, headers, body } = data;
-    if (typeof url !== 'string' || !isAppDataPublicUrl(url)) return;
-
-    fetch(url, {
-      method: (method as string) || 'GET',
-      headers: (headers as HeadersInit) || undefined,
-      body: (body as BodyInit) || undefined,
-    })
-      .then(async (res) => {
-        const responseBody = await res.text();
-        const responseHeaders: Record<string, string> = {};
-        res.headers.forEach((v, k) => {
-          responseHeaders[k] = v;
-        });
-        reply({
-          type: 'ym-app-data-response',
-          id,
-          status: res.status,
-          headers: responseHeaders,
-          body: responseBody,
-        });
-      })
-      .catch((err) => {
-        reply({
-          type: 'ym-app-data-response',
-          id,
-          error: err instanceof Error ? err.message : String(err),
-        });
+    const { id, method, headers, body } = data;
+    const url = typeof data.url === 'string' ? data.url : '';
+    if (typeof id !== 'string') return;
+    // Never drop silently: the caller waits 30 s for a reply before timing
+    // out, so an unmatched URL gets an immediate explicit error.
+    if (!url || !isAppDataPublicUrl(url)) {
+      reply({
+        type: 'ym-app-data-response',
+        id,
+        error: `App Data proxy: URL not relayed (${url || 'missing'})`,
       });
+      return;
+    }
+
+    const attempt = async (ticket: string | null): Promise<Response> => {
+      const forwardHeaders: Record<string, string> = {
+        ...((headers as Record<string, string>) || {}),
+      };
+      // Attribute preview App Data calls to the YellowStorm owner — the dev
+      // preview has no login inside the generated app.
+      if (ticket) forwardHeaders['Authorization'] = `Bearer ${ticket}`;
+      return fetch(url, {
+        method: (method as string) || 'GET',
+        headers: forwardHeaders,
+        body: (body as BodyInit) || undefined,
+      });
+    };
+
+    try {
+      const appDataId = appDataIdFromUrl(url);
+      const envMatch = url.match(/\/v1\/apps\/[^/]+\/(dev|prod)\//);
+      const urlEnv = envMatch?.[1] ?? 'dev';
+      let ticket =
+        appDataId && appDataTicketFetcher ? await appDataTicketFetcher(appDataId, false, urlEnv) : null;
+      let res = await attempt(ticket);
+      if (res.status === 401 && appDataId && appDataTicketFetcher) {
+        // Ticket expired/rotated — force-refresh once and retry.
+        const fresh = await appDataTicketFetcher(appDataId, true, urlEnv);
+        if (fresh) {
+          ticket = fresh;
+          res = await attempt(fresh);
+        }
+      }
+      const responseBody = await res.text();
+      const responseHeaders: Record<string, string> = {};
+      res.headers.forEach((v, k) => {
+        responseHeaders[k] = v;
+      });
+      reply({
+        type: 'ym-app-data-response',
+        id,
+        status: res.status,
+        headers: responseHeaders,
+        body: responseBody,
+      });
+    } catch (err) {
+      reply({
+        type: 'ym-app-data-response',
+        id,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
   };
+
+  let lastUntrustedSenderWarn = 0;
 
   window.addEventListener('message', (event: MessageEvent) => {
     if (event.data?.type !== 'ym-app-data-fetch') return;
     const source = event.source as WindowProxy | null;
     if (!source) return;
-    const targetOrigin =
-      event.origin && event.origin !== 'null' ? event.origin : '*';
-    handleProxyRequest(event.data, (response) => source.postMessage(response, targetOrigin));
+    const origin = validateRelayOrigin(event.origin);
+    if (!origin || !isTrustedAppDataRelaySource(source, origin)) {
+      // Dropping untrusted senders must be quiet by default; rate-limit so a
+      // probing page cannot flood the console.
+      if (Date.now() - lastUntrustedSenderWarn > 5_000) {
+        lastUntrustedSenderWarn = Date.now();
+        console.warn(LOG, 'dropped ym-app-data-fetch from an untrusted sender', {
+          origin: event.origin,
+        });
+      }
+      return;
+    }
+    // Reply only to the verified preview frame, targeting the exact origin we
+    // just validated. The sender may navigate away while the proxy fetch runs,
+    // in which case the caller's own 30 s timeout fires — never fall back to '*'.
+    void handleProxyRequest(event.data, (response) => {
+      source.postMessage(response, origin);
+    });
   });
-
-  try {
-    const channel = new BroadcastChannel('ym-app-data-proxy');
-    channel.onmessage = (event: MessageEvent) => {
-      if (event.data?.type !== 'ym-app-data-fetch') return;
-      handleProxyRequest(event.data, (response) => channel.postMessage(response));
-    };
-  } catch {
-    // BroadcastChannel not supported — new-tab proxy unavailable
-  }
 }
 
 export type HostStateListener = (state: HostState) => void;
@@ -122,6 +233,7 @@ export class BrowserRuntimeHost {
   private sessionId: string | null = null;
   private workspaceId: string | null = null;
   private ticket: RuntimeTicketResponse | null = null;
+  private appDataTickets = new Map<string, { ticket: string; at: number; env: string }>();
   private revisionId = 'rev_0';
   private _status: RuntimeHostStatus = 'idle';
   private _error: string | null = null;
@@ -130,6 +242,8 @@ export class BrowserRuntimeHost {
   private listeners = new Set<HostStateListener>();
   private pendingIframe: HTMLIFrameElement | null = null;
   private refreshPreviewInFlight: Promise<void> | null = null;
+  /** Popup relay peers from "Open in New Tab", dropped on teardown. */
+  private externalRelayPeers: WindowProxy[] = [];
 
   private buildAppDataViteEnv(): Record<string, string> | undefined {
     const env = this.ticket?.appDataRuntimeEnv;
@@ -146,6 +260,36 @@ export class BrowserRuntimeHost {
     installAppDataFetchProxyOnce();
   }
 
+  /**
+   * Owner data ticket for the relay (`Authorization: Bearer <ticket>` on
+   * preview App Data calls), keyed by appDataId. Acquired from the backend
+   * (owner-guarded) and cached; force-refreshed once when the microservice
+   * returns 401. `expectedEnv` validates the cached ticket's environment;
+   * a mismatch discards the stale entry and re-fetches.
+   */
+  private async acquireAppDataTicket(
+    appDataId: string,
+    force = false,
+    expectedEnv: string = 'dev',
+  ): Promise<string | null> {
+    const TICKET_TTL_MS = 10 * 60_000;
+    const cached = this.appDataTickets.get(appDataId);
+    if (!force && cached && cached.env === expectedEnv && Date.now() - cached.at < TICKET_TTL_MS) {
+      return cached.ticket;
+    }
+    if (!this.sessionId) return cached?.ticket ?? null;
+    try {
+      const res = await conversationV2Api.getAppDataTicket(this.sessionId);
+      this.appDataTickets.set(res.appDataId, { ticket: res.ticket, at: Date.now(), env: expectedEnv });
+      console.log(LOG, 'app-data ticket acquired', { appDataId: res.appDataId, env: expectedEnv });
+    } catch (err) {
+      // Not provisioned yet, backend hiccup, or local mode — the relay then
+      // sends the call without Authorization, which the microservice rejects.
+      console.warn(LOG, 'app-data ticket unavailable', err instanceof Error ? err.message : err);
+    }
+    return this.appDataTickets.get(appDataId)?.ticket ?? null;
+  }
+
   /** Off-screen iframe so preview_inspect works when the user panel is closed. */
   private hiddenIframe: HTMLIFrameElement | null = null;
 
@@ -154,6 +298,64 @@ export class BrowserRuntimeHost {
   private rehydrating = false;
   /** When true, Nodepod runs without Socket.IO (flag off / ticket failure + cephPath). */
   private legacyMode = false;
+
+  // -------------------------------------------------------------------------
+  // App Data relay peer registration
+  // -------------------------------------------------------------------------
+
+  /**
+   * Compute the preview origin from the current preview URL. Returns `null`
+   * when the dev server has not started or the URL is invalid.
+   */
+  private previewRelayOrigin(): string | null {
+    const url = this.previewCtrl.previewUrl;
+    if (!url) return null;
+    try {
+      const parsed = new URL(url, window.location.href);
+      return parsed.protocol === 'http:' || parsed.protocol === 'https:' ? parsed.origin : null;
+    } catch {
+      return null;
+    }
+  }
+
+  private registerPreviewRelayPeer(iframe: HTMLIFrameElement | null): void {
+    const win = iframe?.contentWindow;
+    const origin = this.previewRelayOrigin();
+    if (win && origin) registerAppDataRelayFrame(win, origin);
+  }
+
+  private unregisterPreviewRelayPeer(iframe: HTMLIFrameElement | null): void {
+    const win = iframe?.contentWindow;
+    if (win) unregisterAppDataRelayFrame(win);
+  }
+
+  /**
+   * Called after the dev-server URL is set or changes so that previously
+   * registered peers pick up the new origin (e.g. port change on restart).
+   */
+  private syncPreviewRelayOrigins(): void {
+    const origin = this.previewRelayOrigin();
+    if (!origin) return;
+    for (const frame of [this.pendingIframe, this.hiddenIframe]) {
+      const win = frame?.contentWindow;
+      if (win) updateAppDataRelayFrameOrigin(win, origin);
+    }
+  }
+
+  /**
+   * Registers a preview-wrapper popup (opened via "Open in New Tab") as an App
+   * Data relay peer. preview-wrapper.html is served from this host's origin,
+   * so its messages arrive with `event.origin` equal to it; the peer is paired
+   * with that exact origin and only served along exact-origin replies. Tracked
+   * on the host so teardown drops the peer — a stale popup WindowProxy must
+   * never be served by a later session's host.
+   */
+  registerExternalPreviewRelayPeer(source: WindowProxy, origin: string): void {
+    const validated = validateRelayOrigin(origin);
+    if (!validated) return;
+    this.externalRelayPeers.push(source);
+    registerAppDataRelayFrame(source, validated);
+  }
 
   get state(): HostState {
     return {
@@ -201,6 +403,8 @@ export class BrowserRuntimeHost {
     this.reconnectAttempts = 0;
     this.legacyMode = false;
     this.setupAppDataFetchProxy();
+    // Owner data tickets for relayed preview App Data calls (refreshed on 401).
+    setAppDataTicketFetcher((appDataId, force, env) => this.acquireAppDataTicket(appDataId, force, env));
 
     const cephPath = existingCephPath ?? null;
     const filesTree = (existingFilesTree as FilesTreeNode | null) ?? null;
@@ -225,6 +429,16 @@ export class BrowserRuntimeHost {
       // 2. Connect socket — ticket string is handed to the client then discarded from React surface
       await this.client.connect(this.ticket.ticket);
       if (this._destroyed) return;
+
+      // 2b. Proactively acquire the owner data ticket so the relay has it
+      //     before the preview makes its first app-data call.
+      if (this.ticket.appDataRuntimeEnv) {
+        void this.acquireAppDataTicket(
+          this.ticket.appDataRuntimeEnv.appDataId,
+          false,
+          this.ticket.appDataRuntimeEnv.environment,
+        );
+      }
 
       // 3. Wire event handlers
       this.wireClientEvents();
@@ -257,6 +471,7 @@ export class BrowserRuntimeHost {
       const viteEnv = await this.refreshAppDataViteEnv();
       await this.adapter.startDevServer(this.previewCtrl, () => this._destroyed, undefined, viteEnv);
       if (this._destroyed) return;
+      this.syncPreviewRelayOrigins();
       this.flushPendingIframe();
       await this.ensureHiddenPreviewIframe();
 
@@ -324,6 +539,7 @@ export class BrowserRuntimeHost {
       this.setStatus('starting');
       await this.adapter.startDevServer(this.previewCtrl, () => this._destroyed, undefined, this.buildAppDataViteEnv());
       if (this._destroyed) return;
+      this.syncPreviewRelayOrigins();
       this.flushPendingIframe();
       await this.ensureHiddenPreviewIframe();
 
@@ -411,6 +627,7 @@ export class BrowserRuntimeHost {
     if (!viteEnv) return;
     console.log(LOG, 'restarting dev server for App Data env');
     await this.adapter.startDevServer(this.previewCtrl, () => this._destroyed, undefined, viteEnv);
+    this.syncPreviewRelayOrigins();
     await this.refreshPreview();
   }
 
@@ -518,6 +735,7 @@ export class BrowserRuntimeHost {
       const viteEnv = await this.refreshAppDataViteEnv();
       await this.adapter.startDevServer(this.previewCtrl, () => this._destroyed, undefined, viteEnv);
       if (this._destroyed) return;
+      this.syncPreviewRelayOrigins();
 
       await this.refreshPreview();
       this.setStatus('ready');
@@ -630,7 +848,11 @@ export class BrowserRuntimeHost {
    */
   attachPreviewIframe(iframe: HTMLIFrameElement): void {
     this.removeHiddenPreviewIframe();
+    if (this.pendingIframe && this.pendingIframe !== iframe) {
+      this.unregisterPreviewRelayPeer(this.pendingIframe);
+    }
     this.pendingIframe = iframe;
+    this.registerPreviewRelayPeer(iframe);
     this.flushPendingIframe();
     const url = this.previewCtrl.previewUrl;
     if (!url) return;
@@ -662,6 +884,7 @@ export class BrowserRuntimeHost {
       await this.previewCtrl.probeAndPromote(pod, url, port, () => this._destroyed);
     }
     if (this._destroyed) return;
+    this.syncPreviewRelayOrigins();
     this.flushPendingIframe();
     if (this.pendingIframe) {
       this.reloadPreviewIframe(this.pendingIframe);
@@ -690,6 +913,7 @@ export class BrowserRuntimeHost {
   }
 
   detachPreviewIframe(): void {
+    this.unregisterPreviewRelayPeer(this.pendingIframe);
     this.pendingIframe = null;
     this.previewCtrl.detachIframe(this.adapter.currentPod ?? undefined);
     void this.ensureHiddenPreviewIframe();
@@ -716,6 +940,7 @@ export class BrowserRuntimeHost {
       this.hiddenIframe.title = 'YellowMind runtime preview';
       document.body.appendChild(this.hiddenIframe);
     }
+    this.registerPreviewRelayPeer(this.hiddenIframe);
 
     if (this.hiddenIframe.src !== url) {
       await new Promise<void>((resolve) => {
@@ -737,6 +962,7 @@ export class BrowserRuntimeHost {
 
   private removeHiddenPreviewIframe(): void {
     if (!this.hiddenIframe) return;
+    this.unregisterPreviewRelayPeer(this.hiddenIframe);
     this.previewCtrl.detachIframe(this.adapter.currentPod ?? undefined);
     this.hiddenIframe.remove();
     this.hiddenIframe = null;
@@ -763,6 +989,7 @@ export class BrowserRuntimeHost {
     try {
       this.setStatus('connecting');
       this.ticket = await conversationV2Api.createRuntimeTicket(this.sessionId);
+      this.appDataTickets.clear();
       await this.client.connect(this.ticket.ticket);
       if (this._destroyed) return;
 
@@ -813,6 +1040,9 @@ export class BrowserRuntimeHost {
     this._destroyed = true;
     this.client.disconnect();
     this.removeHiddenPreviewIframe();
+    this.unregisterPreviewRelayPeer(this.pendingIframe);
+    for (const peer of this.externalRelayPeers) unregisterAppDataRelayFrame(peer);
+    this.externalRelayPeers = [];
     this.previewCtrl.detachIframe(this.adapter.currentPod ?? undefined);
     this.previewCtrl.reset();
     this.pendingIframe = null;

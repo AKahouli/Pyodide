@@ -1,5 +1,7 @@
 # Admin Module
 
+> **Documentation technique junior (Panel Admin — ensemble des fonctionnalités, code vérifié)** : [DOCUMENTATION_TECHNIQUE.md](./DOCUMENTATION_TECHNIQUE.md)
+
 The Admin module provides administrative functionality for managing users, roles, plans, system settings, and viewing analytics/audit logs.
 
 ## Table of Contents

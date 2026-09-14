@@ -9,7 +9,8 @@ export class DeployAppDto {
   title?: string;
 
   @ApiPropertyOptional({
-    description: 'Final workspace revision to deploy (e.g. rev_15). Defaults to the runtime latest revision.',
+    description:
+      'Finalized workspace revision to deploy (e.g. rev_15). Defaults to the latest finalized version.',
   })
   @IsOptional()
   @IsString()

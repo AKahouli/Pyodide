@@ -8,9 +8,30 @@ import pytest
 from src.connector_tool_name import build_connector_tool_name
 from src.smart_rag.tools.utilities.connector_tools import (
     ConnectorToolContext,
+    apply_dynamic_workspace_headers,
     create_connector_tools,
+    without_dynamic_workspace_headers,
 )
 from src.smart_rag.infrastructure.external.purpose_aware_mcp import DISPLAY_PURPOSE_KEY
+
+
+def test_dynamic_workspace_headers_override_stale_values_and_omit_empty_scope() -> None:
+    config = [{"header_name": "Workspace-Id", "source": "workspace"}]
+
+    assert apply_dynamic_workspace_headers(
+        {"workspace-id": "stale", "Authorization": "Bearer token"},
+        config,
+        ["workspace-1", "workspace-2", "workspace-1"],
+    ) == {
+        "Authorization": "Bearer token",
+        "Workspace-Id": "workspace-1,workspace-2",
+    }
+    assert apply_dynamic_workspace_headers(
+        {"Workspace-Id": "stale"}, config, []
+    ) == {}
+    assert without_dynamic_workspace_headers(
+        {"headers": {"workspace-id": "stale", "X-Other": "kept"}}, config
+    ) == {"headers": {"X-Other": "kept"}}
 
 
 def _connector_binding(
@@ -19,6 +40,7 @@ def _connector_binding(
     fixed_params=None,
     action_key="search",
     connector_slug="workspace",
+    dynamic_headers=None,
 ):
     return {
         "connector_id": "connector-1",
@@ -28,6 +50,7 @@ def _connector_binding(
         "mcp_server_url": "https://example.com/mcp",
         "auth_headers": auth_headers or {},
         "fixed_params": fixed_params or {},
+        "dynamic_headers": dynamic_headers or [],
         "actions": [
             {
                 "action_key": action_key,
@@ -50,6 +73,7 @@ def _first_connector_tool(
     action_key="search",
     connector_slug="workspace",
     user_id=None,
+    dynamic_headers=None,
 ):
     tools = create_connector_tools(
         [_connector_binding(
@@ -58,6 +82,7 @@ def _first_connector_tool(
             fixed_params,
             action_key,
             connector_slug,
+            dynamic_headers,
         )],
         ConnectorToolContext(
             workspace_id=workspace_id,
@@ -417,7 +442,6 @@ def test_connector_tool_injects_streamable_http_file_workspace_headers(
         "Authorization": "Bearer token",
         "X-User-Id": "user-1",
         "workspace_id": '["workspace-1", "workspace-2", "workspace-alpha"]',
-        "Workspace-Id": "workspace-1,workspace-2",
         "x-conversation-id": "conversation-1",
         # The run's own Ceph folder rides last, so the sandbox mounts somewhere a
         # connector can drop a file mid-run and the code interpreter can read it.
@@ -454,6 +478,9 @@ def test_logical_search_connector_sends_only_authorization_and_workspace_scope(
     )
     binding["connector_name"] = "Logical Search MCP"
     binding["connector_slug"] = "logical-search"
+    binding["dynamic_headers"] = [
+        {"header_name": "Workspace-Id", "source": "workspace"}
+    ]
     binding["mcp_server_config"] = {
         "headers": {
             "aUtHoRiZaTiOn": "Bearer gateway-token",
@@ -505,6 +532,9 @@ def test_sse_connector_tool_gets_conversation_and_execution_ids(
     binding = _connector_binding({"type": "object", "properties": {}})
     binding["mcp_transport_type"] = "sse"
     binding["auth_headers"] = {"Authorization": "Bearer token"}
+    binding["dynamic_headers"] = [
+        {"header_name": "Workspace-Id", "source": "workspace"}
+    ]
     tool = create_connector_tools(
         [binding],
         ConnectorToolContext(workspace_id="workspace-1", session_id="conversation-1"),
@@ -516,6 +546,7 @@ def test_sse_connector_tool_gets_conversation_and_execution_ids(
         "Authorization": "Bearer token",
         "x-conversation-id": "conversation-1",
         "x-execution-id": "e-123",
+        "Workspace-Id": "workspace-1",
     }
 
 
@@ -579,9 +610,7 @@ def test_code_interpreter_mounts_selected_workspace_without_selected_documents(
 
     asyncio.run(tool.func())
 
-    assert captured["auth_headers"]["Workspace-Id"] == (
-        "selected-workspace,private-workspace"
-    )
+    assert "Workspace-Id" not in captured["auth_headers"]
     assert captured["auth_headers"]["x-workspace-paths"] == (
         "user-1/selected-workspace,private-owner/private-prefix"
     )
@@ -621,9 +650,7 @@ def test_code_interpreter_keeps_selected_root_when_workspace_aliases_collide(
 
     asyncio.run(tool.func())
 
-    assert captured["auth_headers"]["Workspace-Id"] == (
-        "selected-workspace,private-workspace"
-    )
+    assert "Workspace-Id" not in captured["auth_headers"]
     assert captured["auth_headers"]["x-workspace-paths"] == "user-1/shared-prefix"
 
 

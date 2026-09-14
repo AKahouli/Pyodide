@@ -121,7 +121,7 @@ describe('RightPanel', () => {
     expect(deployButton).not.toHaveTextContent(/publish/i);
   });
 
-  it('switches to the deployed iframe after publish while keeping Nodepod warm', () => {
+  it('keeps Nodepod preview after deploy metadata loads and switches on Deployed toggle', () => {
     useConversationV2Store.setState({
       rightPanelMode: 'app',
       applicationComponent: {
@@ -144,6 +144,14 @@ describe('RightPanel', () => {
         lastDeployedAt: '2026-07-17T10:00:00.000Z',
       });
     });
+
+    expect(useConversationV2Store.getState().appViewMode).toBe('nodepod');
+    expect(
+      document.querySelector('iframe[src="https://nodepod.local/__virtual__/3000/"]'),
+    ).toBeInTheDocument();
+    expect(screen.getByRole('tablist', { name: /modeSwitch/i })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('tab', { name: /modeDeploy/i }));
 
     expect(useConversationV2Store.getState().appViewMode).toBe('deployed');
     expect(
@@ -174,7 +182,7 @@ describe('RightPanel', () => {
       document.querySelector('iframe[src="https://apps.example/app-1"]'),
     ).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole('button', { name: /switchToNodepod/i }));
+    fireEvent.click(screen.getByRole('tab', { name: /modePreview/i }));
 
     expect(useConversationV2Store.getState().appViewMode).toBe('nodepod');
     expect(
@@ -183,6 +191,45 @@ describe('RightPanel', () => {
     expect(
       document.querySelector('iframe[src="https://nodepod.local/__virtual__/3000/"]'),
     ).toBeInTheDocument();
+  });
+
+  it('can switch from Nodepod preview to the deployed view', () => {
+    useConversationV2Store.setState({
+      rightPanelMode: 'app',
+      applicationComponent: {
+        title: 'Generated app',
+        url: 'https://preview.example/app',
+        revision: 'app-1',
+      },
+      deployStatus: 'deployed',
+      deployedUrl: 'https://apps.example/app-1',
+      appViewMode: 'nodepod',
+    });
+    render(<RightPanel />);
+
+    fireEvent.click(screen.getByRole('tab', { name: /modeDeploy/i }));
+
+    expect(useConversationV2Store.getState().appViewMode).toBe('deployed');
+    expect(
+      document.querySelector('iframe[src="https://apps.example/app-1"]'),
+    ).toBeInTheDocument();
+  });
+
+  it('hides the Preview/Deployed switch until a deployed URL exists', () => {
+    useConversationV2Store.setState({
+      rightPanelMode: 'app',
+      applicationComponent: {
+        title: 'Generated app',
+        url: 'https://preview.example/app',
+        revision: 'app-1',
+      },
+      deployStatus: 'idle',
+      deployedUrl: null,
+      appViewMode: 'nodepod',
+    });
+    render(<RightPanel />);
+
+    expect(screen.queryByRole('tablist', { name: /modeSwitch/i })).not.toBeInTheDocument();
   });
 
   it('shows the jump-to-live button when streaming and viewing a past tool', () => {

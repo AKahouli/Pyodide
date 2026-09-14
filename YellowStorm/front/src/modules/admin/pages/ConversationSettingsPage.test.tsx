@@ -32,6 +32,7 @@ describe('ConversationSettingsPage', () => {
   beforeEach(() => {
     vi.mocked(getAdminConversationSettings).mockReset();
     vi.mocked(getAdminConversationSettingsAgents).mockReset();
+    vi.mocked(getAllModels).mockReset();
     vi.mocked(updateAdminConversationSettings).mockReset();
     vi.mocked(getAdminConversationSettings).mockResolvedValue({ composerSuggestions: settings });
     vi.mocked(getAdminConversationSettingsAgents).mockResolvedValue([]);

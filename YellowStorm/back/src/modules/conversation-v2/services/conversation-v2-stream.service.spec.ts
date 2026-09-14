@@ -1,4 +1,5 @@
 import { Test, TestingModule } from '@nestjs/testing';
+import { BadRequestException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Subject } from 'rxjs';
 import { ConversationV2StreamService } from './conversation-v2-stream.service';
@@ -13,10 +14,13 @@ import { WorkspaceDocumentService } from '@modules/workspace/workspace-document.
 import { SkillService } from '@modules/skill/skill.service';
 import { ConnectorService } from '@modules/connector/connector.service';
 import { ModelsService } from '@modules/models/models.service';
+import { RuntimeFinalizedRevisionService } from '@modules/app-runtime/services/runtime-finalized-revision.service';
+import { RuntimeRevisionService } from '@modules/app-runtime/services/runtime-revision.service';
+import { RuntimeBindingService } from '@modules/app-runtime/services/runtime-binding.service';
 import type { ConversationV2Event } from '../types/conversation-v2.types';
 
 const config = new Map<string, unknown>([
-  ['conversationV2.maxMessageLength', 16384],
+  ['conversationV2.maxMessageLength', 30000],
   ['conversationV2.maxConcurrentStreams', 5],
   ['conversationV2.grpcIdleTimeoutMs', 120000],
 ]);
@@ -41,6 +45,9 @@ describe('ConversationV2StreamService', () => {
     setSelectedSkills: jest.Mock;
     setSelectedConnectors: jest.Mock;
   };
+  let finalizedRevisions: { assertFinalized: jest.Mock };
+  let runtimeRevisions: { branchRevision: jest.Mock };
+  let runtimeBindings: { updateRevision: jest.Mock };
 
   const pointer = {
     aiSessionId: 'ai-1',
@@ -69,6 +76,18 @@ describe('ConversationV2StreamService', () => {
       setSelectedSkills: jest.fn().mockResolvedValue(undefined),
       setSelectedConnectors: jest.fn().mockResolvedValue(undefined),
     };
+    finalizedRevisions = { assertFinalized: jest.fn().mockResolvedValue(undefined) };
+    runtimeRevisions = {
+      branchRevision: jest.fn().mockResolvedValue({
+        revisionId: 'rev_8',
+        workspaceId: 'ai-1',
+        parentRevisionId: 'rev_2',
+        manifestHash: 'hash',
+        manifestObjectKey: 'appbuilder/manifests/ai-1/rev_8.json',
+        files: [],
+      }),
+    };
+    runtimeBindings = { updateRevision: jest.fn().mockResolvedValue(undefined) };
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -95,6 +114,9 @@ describe('ConversationV2StreamService', () => {
         { provide: SkillService, useValue: { findByIdsForGrpc: jest.fn().mockResolvedValue([]) } },
         { provide: ConnectorService, useValue: { findByIdsForGrpc: jest.fn().mockResolvedValue([]) } },
         { provide: ModelsService, useValue: modelsService },
+        { provide: RuntimeFinalizedRevisionService, useValue: finalizedRevisions },
+        { provide: RuntimeRevisionService, useValue: runtimeRevisions },
+        { provide: RuntimeBindingService, useValue: runtimeBindings },
       ],
     }).compile();
 
@@ -239,6 +261,38 @@ describe('ConversationV2StreamService', () => {
       }),
     ).rejects.toThrow('Invalid session id 72e7924c2cc04f5f');
     expect(eventStore.append).not.toHaveBeenCalled();
+  });
+
+  describe('historical-version send (baseRevisionId)', () => {
+    it('validates, branches and pins the binding, then prefixes the agent message', async () => {
+      await service.startStream('u1', 's1', {
+        message: 'continue from version 2',
+        baseRevisionId: 'rev_2',
+      });
+
+      expect(finalizedRevisions.assertFinalized).toHaveBeenCalledWith('ai-1', 'rev_2');
+      expect(runtimeRevisions.branchRevision).toHaveBeenCalledWith('ai-1', 'rev_2');
+      expect(runtimeBindings.updateRevision).toHaveBeenCalledWith('ai-1', 'rev_8');
+      const chatMessage = grpcClient.chat.mock.calls[0][2] as string;
+      expect(chatMessage).toContain('branched to revision rev_8');
+      expect(chatMessage).toContain('revision rev_2');
+      expect(chatMessage).toContain('continue from version 2');
+    });
+
+    it('rejects a revision that is not finalized before recording the user turn', async () => {
+      finalizedRevisions.assertFinalized.mockRejectedValueOnce(
+        new BadRequestException('Revision rev_99 is not a finalized version for this app'),
+      );
+
+      await expect(
+        service.startStream('u1', 's1', { message: 'hi', baseRevisionId: 'rev_99' }),
+      ).rejects.toBeInstanceOf(BadRequestException);
+
+      expect(runtimeRevisions.branchRevision).not.toHaveBeenCalled();
+      expect(runtimeBindings.updateRevision).not.toHaveBeenCalled();
+      expect(grpcClient.chat).not.toHaveBeenCalled();
+      expect(eventStore.append).not.toHaveBeenCalled();
+    });
   });
 
   describe('conversation-v2 default model resolution', () => {

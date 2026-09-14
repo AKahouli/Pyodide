@@ -24,6 +24,13 @@ export interface AppDataOwnerStatus {
   prod: { provisioned: boolean; schemaName: string | null; currentVersion: number | null };
 }
 
+export interface SeedResult {
+  total: number;
+  inserted: number;
+  skipped: number;
+  tables: { table: string; inserted: number; skipped: number }[];
+}
+
 export type {
   ListSessionsParams,
   DeployStatus,
@@ -87,6 +94,12 @@ export const conversationV2Api = {
       connectorRepoUrl?: string;
       skillIds?: string[];
       connectorIds?: string[];
+      /**
+       * Finalized revision the turn must build from (e.g. "rev_2") — sent when
+       * the user is previewing a historical version instead of the latest.
+       * The backend branches a fresh revision from it before running the agent.
+       */
+      baseRevisionId?: string;
     },
   ): Promise<void> {
     await apiClient.post(`/conversation-v2/sessions/${sessionId}/message`, body);
@@ -115,6 +128,28 @@ export const conversationV2Api = {
       `/conversation-v2/sessions/${sessionId}`,
       body,
     );
+    return res.data.data;
+  },
+  async getFinalizedVersions(sessionId: string): Promise<{
+    items: Array<{
+      revisionId: string;
+      title: string;
+      finalizedAt: string;
+      fileCount?: number;
+    }>;
+    latestRevisionId: string | null;
+  }> {
+    const res = await apiClient.get<
+      ApiResponse<{
+        items: Array<{
+          revisionId: string;
+          title: string;
+          finalizedAt: string;
+          fileCount?: number;
+        }>;
+        latestRevisionId: string | null;
+      }>
+    >(`/conversation-v2/sessions/${sessionId}/finalized-versions`);
     return res.data.data;
   },
   async deleteSession(sessionId: string): Promise<void> {
@@ -284,6 +319,15 @@ export const conversationV2Api = {
     );
     return res.data.data;
   },
+  /** Owner-scoped App Data data ticket for the dev preview relay. */
+  async getAppDataTicket(
+    sessionId: string,
+  ): Promise<{ ticket: string; appDataId: string; publicUrl: string | null }> {
+    const res = await apiClient.get<ApiResponse<{ ticket: string; appDataId: string; publicUrl: string | null }>>(
+      `/conversation-v2/sessions/${sessionId}/app-data/ticket`,
+    );
+    return res.data.data;
+  },
   async getAppDataTables(sessionId: string, environment: 'dev' | 'prod'): Promise<{ tables: string[] }> {
     const res = await apiClient.get<ApiResponse<{ tables: string[]; environment: string; currentVersion: number }>>(
       `/conversation-v2/sessions/${sessionId}/app-data/${environment}/tables`,
@@ -301,6 +345,18 @@ export const conversationV2Api = {
     >(`/conversation-v2/sessions/${sessionId}/app-data/${environment}/tables/${encodeURIComponent(table)}/rows`, {
       params: { page },
     });
+    return res.data.data;
+  },
+  /** Idempotent bulk seed into DEV tables from the owner Data tab. */
+  async seedAppData(
+    sessionId: string,
+    environment: 'dev' | 'prod',
+    tables: Record<string, Record<string, unknown>[]>,
+  ): Promise<SeedResult> {
+    const res = await apiClient.post<ApiResponse<SeedResult>>(
+      `/conversation-v2/sessions/${sessionId}/app-data/${environment}/seed`,
+      { tables },
+    );
     return res.data.data;
   },
 };

@@ -794,6 +794,47 @@ def _logical_search_server_config(server_config: Dict[str, Any]) -> Dict[str, An
     return sanitized
 
 
+def apply_dynamic_workspace_headers(
+    headers: Dict[str, str],
+    dynamic_headers: List[Dict[str, Any]],
+    workspace_ids: Optional[List[str]],
+) -> Dict[str, str]:
+    resolved = dict(headers)
+    values = _unique_strings(workspace_ids or [])
+    for config in dynamic_headers or []:
+        if config.get("source") != "workspace" or config.get("enabled") is False:
+            continue
+        header_name = str(config.get("header_name") or config.get("headerName") or "").strip()
+        if not header_name:
+            continue
+        for existing_name in list(resolved):
+            if existing_name.lower() == header_name.lower():
+                resolved.pop(existing_name)
+        if values:
+            resolved[header_name] = ",".join(values)
+    return resolved
+
+
+def without_dynamic_workspace_headers(
+    server_config: Dict[str, Any],
+    dynamic_headers: List[Dict[str, Any]],
+) -> Dict[str, Any]:
+    header_names = {
+        str(config.get("header_name") or config.get("headerName") or "").strip().lower()
+        for config in dynamic_headers or []
+        if config.get("source") == "workspace" and config.get("enabled") is not False
+    }
+    if not header_names or not isinstance(server_config.get("headers"), dict):
+        return server_config
+    sanitized = dict(server_config)
+    sanitized["headers"] = {
+        name: value
+        for name, value in server_config["headers"].items()
+        if name.lower() not in header_names
+    }
+    return sanitized
+
+
 def _apply_streamable_http_context_headers(
     auth_headers: Dict[str, str],
     context: Dict[str, List[str]],
@@ -806,7 +847,6 @@ def _apply_streamable_http_context_headers(
         headers["X-Agent-Id"] = agent_id
     file_names = context.get("file_names") or []
     workspace_ids = context.get("workspace_ids") or []
-    header_workspace_ids = context.get("header_workspace_ids") or workspace_ids
     workspace_paths = context.get("workspace_paths") or []
 
     if len(file_names) == 1:
@@ -817,9 +857,6 @@ def _apply_streamable_http_context_headers(
     if workspace_ids:
         headers["workspace_id"] = json.dumps(workspace_ids) if len(workspace_ids) > 1 else workspace_ids[0]
         headers.pop("workspace_name", None)
-
-    if header_workspace_ids:
-        headers["Workspace-Id"] = ",".join(header_workspace_ids)
 
     if session_id:
         headers["x-conversation-id"] = session_id
@@ -845,6 +882,22 @@ def _header_user_id(headers: Dict[str, str]) -> str:
         if name.lower() == "x-user-id":
             return str(value or "").strip()
     return ""
+
+
+_HTML_BODY_MARKERS = ("<p>", "<p ", "<div", "<br", "<ul", "<ol", "<h1", "<h2", "<h3", "<table")
+
+
+def _markdown_to_email_html(text: str) -> str:
+    """Executors draft e-mail bodies in Markdown (readable in the approval card);
+    the recipient needs HTML. Convert at send. No-op if it already looks like
+    HTML, or if the markdown lib is unavailable (send the body as-is)."""
+    if any(m in text.lower() for m in _HTML_BODY_MARKERS):
+        return text
+    try:
+        import markdown as _md
+        return _md.markdown(text, extensions=["extra", "nl2br", "sane_lists"])
+    except Exception:
+        return text
 
 
 def create_connector_tools(
@@ -882,6 +935,7 @@ def create_connector_tools(
         if is_logical_search:
             binding_auth_headers = _logical_search_headers(binding_auth_headers)
         binding_auth_env = binding.get("auth_env") or {}
+        binding_dynamic_headers = binding.get("dynamic_headers") or []
 
         if not connector_id.strip():
             continue
@@ -946,6 +1000,7 @@ def create_connector_tools(
                 _fixed_params: Dict[str, Any] = fixed_params,
                 _auth_headers: Dict[str, str] = dict(binding_auth_headers),
                 _auth_env: Dict[str, str] = binding_auth_env,
+                _dynamic_headers: List[Dict[str, Any]] = list(binding_dynamic_headers),
                 _parameter_schema: Dict[str, Any] = parameter_schema,
                 _tool_name: str = tool_name,
                 _connector_context: Dict[str, List[str]] = connector_context,
@@ -978,6 +1033,29 @@ def create_connector_tools(
                     params.pop(LEGACY_DISPLAY_PURPOSE_KEY, None)
                 merged_params = {**_fixed_params, **params}
                 merged_params.pop("user_id", None)
+                # Edit-on-card: the owner's approval may carry edited fields as
+                # the ToolConfirmation payload; apply them over the drafted args
+                # so the SENT message is the edited one. Only keys the action's
+                # schema declares are accepted, so the card can't inject unknowns.
+                _confirmation = getattr(tool_context, "tool_confirmation", None)
+                _edits = getattr(_confirmation, "payload", None) if _confirmation else None
+                if isinstance(_edits, dict) and _edits:
+                    allowed = (_parameter_schema.get("properties") or {}) if isinstance(
+                        _parameter_schema, dict) else {}
+                    applied = {}
+                    for k, v in _edits.items():
+                        if k not in allowed:
+                            continue
+                        t = (allowed[k] or {}).get("type")
+                        if isinstance(t, list):
+                            t = next((x for x in t if x != "null"), None)
+                        if t == "array" and isinstance(v, str):
+                            v = [s.strip() for s in re.split(r"[,;]", v) if s.strip()]
+                        applied[k] = v
+                    if applied:
+                        merged_params.update(applied)
+                        logger.info("connector_tool edit-on-card applied fields=%s tool=%s",
+                                    sorted(applied.keys()), _tool_name)
                 merged_params = _with_default_workspace_params(
                     merged_params,
                     _parameter_schema,
@@ -985,6 +1063,10 @@ def create_connector_tools(
                     context.workspace_id,
                     connector_name=_connector_name,
                 )
+                # Executors draft e-mail bodies in Markdown; convert to HTML at
+                # send so the recipient gets a formatted message.
+                if _action_key == "send_email" and isinstance(merged_params.get("body"), str) and merged_params["body"].strip():
+                    merged_params["body"] = _markdown_to_email_html(merged_params["body"])
                 # Run/turn correlation applies to every HTTP MCP transport, not
                 # just streamable_http. There is no flow execution here, so the
                 # ADK invocation id (one per agent turn) is the execution id.
@@ -1001,12 +1083,22 @@ def create_connector_tools(
                         _session_id,
                         _agent_id,
                     )
+                if _transport_type in {"streamable_http", "sse"}:
+                    effective_auth_headers = apply_dynamic_workspace_headers(
+                        effective_auth_headers,
+                        _dynamic_headers,
+                        _connector_context.get("header_workspace_ids") or [],
+                    )
                 if _is_logical_search:
                     effective_auth_headers = _logical_search_headers(effective_auth_headers)
                 effective_server_config = (
                     _logical_search_server_config(_server_config)
                     if _is_logical_search
                     else _server_config
+                )
+                effective_server_config = without_dynamic_workspace_headers(
+                    effective_server_config,
+                    _dynamic_headers,
                 )
                 response = await call_mcp_tool(
                     _transport_type,

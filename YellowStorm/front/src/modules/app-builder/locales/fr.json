@@ -1,0 +1,157 @@
+{
+  "button": {
+    "label": "App Builder",
+    "tooltip": "App Builder"
+  },
+  "page": {
+    "title": "App Builder",
+    "description": "Parcourez vos applications déployées, partagées et brouillons au même endroit.",
+    "empty": "Aucune application pour le moment. Commencez avec l'Agent ci-dessus, puis publiez quand vous êtes prêt.",
+    "error": "Impossible de charger vos applications."
+  },
+  "createWithAgent": {
+    "eyebrow": "Créer avec l'Agent",
+    "title": "Décrivez l'application à créer",
+    "description": "Rédigez un brief court — une conversation Agent s'ouvre pour construire avec vous.",
+    "placeholder": "ex. Un tableau de bord des ventes avec graphiques hebdo…",
+    "sending": "Ouverture de la conversation Agent…",
+    "error": "Impossible de démarrer la conversation Agent.",
+    "suggestions": {
+      "label": "Essayer une idée",
+      "dashboard": "Un tableau de bord des ventes avec graphiques hebdomadaires",
+      "tasks": "Un suivi de tâches avec priorités et échéances",
+      "form": "Un formulaire de contact avec confirmation par e-mail"
+    }
+  },
+  "hub": {
+    "status": {
+      "all": {
+        "label": "Tout",
+        "description": "Toutes les applications de votre catalogue — déployées, partagées et brouillons.",
+        "listHeading": "Toutes les applications",
+        "empty": "Aucune application ne correspond à vos filtres."
+      },
+      "deployed": {
+        "label": "Déployées",
+        "description": "Applications en ligne que vous avez publiées — ouvrez-les, partagez-les ou gérez-les.",
+        "listHeading": "Applications déployées",
+        "empty": "Aucune application déployée. Publiez depuis une conversation pour la voir ici."
+      },
+      "shared": {
+        "label": "Partagées",
+        "description": "Applications que vos collègues vous ont partagées, prêtes à ouvrir.",
+        "listHeading": "Partagées avec vous",
+        "empty": "Rien de partagé pour le moment. Quand quelqu'un partage une app, elle apparaît ici."
+      },
+      "draft": {
+        "label": "Brouillons",
+        "description": "Applications en cours de création, pas encore publiées.",
+        "listHeading": "Brouillons",
+        "empty": "Aucun brouillon. Continuez dans une conversation et publiez quand vous êtes prêt."
+      }
+    },
+    "filters": {
+      "searchPlaceholder": "Rechercher des applications...",
+      "statusLabel": "Statut",
+      "clear": "Effacer les filtres",
+      "noResults": "Aucune application ne correspond à vos filtres."
+    },
+    "sort": {
+      "label": "Trier",
+      "deployed": "Récemment déployées",
+      "updated": "Récemment modifiées",
+      "name": "Nom (A–Z)"
+    },
+    "view": {
+      "grid": "Grille",
+      "list": "Liste"
+    },
+    "sections": {
+      "appsCount": "{{count}} applications",
+      "singleApp": "1 application"
+    },
+    "pagination": {
+      "ariaLabel": "Pagination de la liste d'applications",
+      "previous": "Précédent",
+      "next": "Suivant",
+      "summary": "Page {{page}} sur {{total}}"
+    }
+  },
+  "card": {
+    "untitled": "Application sans titre",
+    "deployedAt": "Déployée le {{date}}",
+    "deployedRevision": "Version déployée · {{revision}}",
+    "latestRevision": "Dernière version · {{revision}} ({{date}})",
+    "latestRevisionWithCount": "Dernière version · {{revision}} ({{date}}) · {{count}} versions",
+    "updatedAt": "Modifiée le {{date}}",
+    "draftHint": "Pas encore publiée — reprenez dans la conversation pour déployer.",
+    "draftStatus": {
+      "idle": "Brouillon",
+      "deploying": "Publication…",
+      "error": "Échec de publication"
+    },
+    "continue": "Continuer la création",
+    "deployed": "Déployée",
+    "shared": "Partagée",
+    "open": "Ouvrir l'application",
+    "conversation": "Accéder à la conversation",
+    "share": "Partager l'app et la conversation",
+    "manageUsers": "Gérer les utilisateurs",
+    "delete": "Supprimer",
+    "deleteTitle": "Retirer l'application d'App Builder ?",
+    "deleteDescription": "La conversation et l'application hébergée seront conservées. Une nouvelle publication l'ajoutera de nouveau à App Builder.",
+    "deleteDraft": "Supprimer",
+    "deleteDraftTitle": "Supprimer ce brouillon ?",
+    "deleteDraftDescription": "Cela supprimera définitivement la conversation associée. Cette action est irréversible.",
+    "deleteDraftSuccess": "Brouillon supprimé.",
+    "deleteDraftError": "Impossible de supprimer le brouillon.",
+    "unshare": "Retirer",
+    "unshareTitle": "Retirer l'application partagée ?",
+    "unshareDescription": "Cela retire uniquement l'application de votre App Builder. La conversation du propriétaire reste privée.",
+    "cancel": "Annuler",
+    "deleteSuccess": "Application retirée d'App Builder.",
+    "deleteError": "Impossible de retirer l'application.",
+    "unshareSuccess": "Application partagée retirée de votre App Builder.",
+    "unshareError": "Impossible de retirer l'application partagée."
+  },
+  "endUsers": {
+    "title": "Utilisateurs et permissions",
+    "description": "Utilisateurs inscrits et permissions CRUD pour cette application déployée.",
+    "descriptionNamed": "Gérer les utilisateurs et permissions pour « {{title}} ».",
+    "hint": "Les nouveaux utilisateurs n'ont aucune permission par défaut. Accordez explicitement les droits CRUD nécessaires.",
+    "searchPlaceholder": "Rechercher par nom ou e-mail…",
+    "refresh": "Actualiser",
+    "retry": "Réessayer",
+    "userCount": "{{count}} utilisateurs",
+    "userCountOne": "1 utilisateur",
+    "noResults": "Aucun utilisateur ne correspond à votre recherche.",
+    "loading": "Chargement des utilisateurs…",
+    "emptyTitle": "Aucun utilisateur inscrit",
+    "empty": "Les personnes qui s'inscrivent sur votre application déployée apparaîtront ici.",
+    "loadError": "Impossible de charger les utilisateurs.",
+    "saveError": "Impossible de mettre à jour les permissions.",
+    "statusError": "Impossible de mettre à jour le statut du compte.",
+    "registeredAt": "Inscrit le {{date}}",
+    "statusActive": "Actif",
+    "statusDisabled": "Désactivé",
+    "userColumn": "Utilisateur",
+    "statusColumn": "Compte",
+    "grantsColumn": "Permissions",
+    "actionsColumn": "Raccourcis",
+    "enableAccount": "Réactiver le compte",
+    "disableAccount": "Désactiver le compte",
+    "grantsSummary": "{{enabled}}/{{total}} permissions",
+    "presets": {
+      "label": "Appliquer un profil",
+      "none": "Aucune permission",
+      "readOnly": "Lecture seule",
+      "full": "Accès complet"
+    },
+    "grants": {
+      "create": "Créer",
+      "read": "Lire",
+      "update": "Modifier",
+      "delete": "Supprimer"
+    }
+  }
+}

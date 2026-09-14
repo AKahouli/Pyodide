@@ -1,4 +1,15 @@
 /** Rows the manager writes, synced by Electric. Reconciled to the real contract. */
+
+/** Session lifecycle row (sessions shape). PK is `id` (the ai session id, which
+ *  joins WorkyStream.aiSessionId). The UI treats completed|failed|canceled|
+ *  stopped as terminal — the turn is over — and clears the "working" state. */
+export interface PgSessionRow {
+  id: string;
+  user_id: string;
+  status: string;
+  interrupt_id?: string | null;
+}
+
 export interface PgMessageRow {
   id: string;
   session_id: string;

@@ -1,0 +1,157 @@
+{
+  "button": {
+    "label": "App Builder",
+    "tooltip": "App Builder"
+  },
+  "page": {
+    "title": "App Builder",
+    "description": "Browse deployed apps, shared apps, and drafts in one place.",
+    "empty": "No apps yet. Start building with the Agent above, then publish when you are ready.",
+    "error": "Failed to load your apps."
+  },
+  "createWithAgent": {
+    "eyebrow": "Create with Agent",
+    "title": "Describe the app you want",
+    "description": "Write a short brief — we open an Agent conversation so you can build it together.",
+    "placeholder": "e.g. A simple sales dashboard with weekly charts…",
+    "sending": "Opening Agent conversation…",
+    "error": "Failed to start the Agent conversation.",
+    "suggestions": {
+      "label": "Try an idea",
+      "dashboard": "A simple sales dashboard with weekly charts",
+      "tasks": "A task tracker with priorities and due dates",
+      "form": "A contact form that sends an email confirmation"
+    }
+  },
+  "hub": {
+    "status": {
+      "all": {
+        "label": "All",
+        "description": "Every app in your catalog — deployed, shared, and drafts.",
+        "listHeading": "All apps",
+        "empty": "No apps match your filters."
+      },
+      "deployed": {
+        "label": "Deployed",
+        "description": "Live applications you published and can open, share, or manage.",
+        "listHeading": "Deployed apps",
+        "empty": "No deployed apps yet. Publish from a conversation to see them here."
+      },
+      "shared": {
+        "label": "Shared",
+        "description": "Applications teammates shared with you, ready to open.",
+        "listHeading": "Shared with you",
+        "empty": "Nothing shared with you yet. When someone shares an app, it appears here."
+      },
+      "draft": {
+        "label": "Draft",
+        "description": "Work-in-progress apps that are not published yet.",
+        "listHeading": "Draft apps",
+        "empty": "No drafts yet. Keep building in a conversation and publish when ready."
+      }
+    },
+    "filters": {
+      "searchPlaceholder": "Search apps...",
+      "statusLabel": "Status",
+      "clear": "Clear filters",
+      "noResults": "No apps match your filters."
+    },
+    "sort": {
+      "label": "Sort",
+      "deployed": "Recently deployed",
+      "updated": "Recently updated",
+      "name": "Name (A–Z)"
+    },
+    "view": {
+      "grid": "Grid",
+      "list": "List"
+    },
+    "sections": {
+      "appsCount": "{{count}} apps",
+      "singleApp": "1 app"
+    },
+    "pagination": {
+      "ariaLabel": "App list pagination",
+      "previous": "Previous",
+      "next": "Next",
+      "summary": "Page {{page}} of {{total}}"
+    }
+  },
+  "card": {
+    "untitled": "Untitled app",
+    "deployedAt": "Deployed {{date}}",
+    "deployedRevision": "Deployed version · {{revision}}",
+    "latestRevision": "Latest version · {{revision}} ({{date}})",
+    "latestRevisionWithCount": "Latest version · {{revision}} ({{date}}) · {{count}} versions",
+    "updatedAt": "Updated {{date}}",
+    "draftHint": "Not published yet — continue in the conversation to deploy.",
+    "draftStatus": {
+      "idle": "Draft",
+      "deploying": "Publishing…",
+      "error": "Publish failed"
+    },
+    "continue": "Continue building",
+    "deployed": "Deployed",
+    "shared": "Shared",
+    "open": "Open the application",
+    "conversation": "Go to the conversation",
+    "share": "Share app & conversation",
+    "manageUsers": "Manage app users",
+    "delete": "Delete",
+    "deleteTitle": "Remove app from App Builder?",
+    "deleteDescription": "The conversation and hosted app will be kept. Publishing again will add it back to App Builder.",
+    "deleteDraft": "Delete",
+    "deleteDraftTitle": "Delete this draft?",
+    "deleteDraftDescription": "This permanently deletes the associated conversation. This action cannot be undone.",
+    "deleteDraftSuccess": "Draft deleted.",
+    "deleteDraftError": "Failed to delete the draft.",
+    "unshare": "Remove",
+    "unshareTitle": "Remove shared app?",
+    "unshareDescription": "This only removes the app from your App Builder. The owner's conversation stays private.",
+    "cancel": "Cancel",
+    "deleteSuccess": "App removed from App Builder.",
+    "deleteError": "Failed to remove the app.",
+    "unshareSuccess": "Shared app removed from your App Builder.",
+    "unshareError": "Failed to remove the shared app."
+  },
+  "endUsers": {
+    "title": "App users & permissions",
+    "description": "Registered users and their CRUD permissions for this deployed app.",
+    "descriptionNamed": "Manage users and permissions for \"{{title}}\".",
+    "hint": "New users have no permissions by default. Explicitly grant the CRUD access they need.",
+    "searchPlaceholder": "Search by name or email…",
+    "refresh": "Refresh",
+    "retry": "Retry",
+    "userCount": "{{count}} users",
+    "userCountOne": "1 user",
+    "noResults": "No users match your search.",
+    "loading": "Loading users…",
+    "emptyTitle": "No registered users yet",
+    "empty": "People who register on your deployed app will appear here.",
+    "loadError": "Failed to load app users.",
+    "saveError": "Failed to update permissions.",
+    "statusError": "Failed to update account status.",
+    "registeredAt": "Registered {{date}}",
+    "statusActive": "Active",
+    "statusDisabled": "Disabled",
+    "userColumn": "User",
+    "statusColumn": "Account",
+    "grantsColumn": "Permissions",
+    "actionsColumn": "Shortcuts",
+    "enableAccount": "Enable account",
+    "disableAccount": "Disable account",
+    "grantsSummary": "{{enabled}}/{{total}} permissions",
+    "presets": {
+      "label": "Apply preset",
+      "none": "No permissions",
+      "readOnly": "Read only",
+      "full": "Full access"
+    },
+    "grants": {
+      "create": "Create",
+      "read": "Read",
+      "update": "Update",
+      "delete": "Delete"
+    }
+  }
+}

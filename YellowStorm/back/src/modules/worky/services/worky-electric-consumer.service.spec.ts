@@ -10,7 +10,7 @@ const makeService = () => {
     findOneAndUpdate: jest.fn(),
   };
   const planProjectionModel = {
-    findOneAndUpdate: jest.fn(),
+    findOneAndUpdate: jest.fn().mockReturnValue({ exec: () => Promise.resolve({ acknowledged: true }) }),
   };
   const cursorModel = {
     findOne: jest.fn(),
@@ -45,8 +45,8 @@ const makeService = () => {
     get: jest.fn((key: string) => {
       const values: Record<string, unknown> = {
         'worky.electricUrl': 'http://electric:3000/v1/shape',
-        'worky.electricMessagesTable': 'messages',
         'worky.electricSessionsTable': 'sessions',
+        'worky.electricMessagesTable': 'messages',
         'worky.electricPlansTable': 'plans',
         'worky.electricPlanStepsTable': 'plan_steps',
         'worky.electricMessageComponentsTable': 'message_components',
@@ -591,6 +591,16 @@ describe('WorkyElectricConsumerService.handleMessageComponents', () => {
     ]);
     expect(messageComponentModel.findOneAndUpdate).not.toHaveBeenCalled();
   });
+
+  it('also emits stream.terminal for an error component (releases the Stop button)', async () => {
+    const { service, streamService, events } = makeService();
+    streamService.findByAiSessionId.mockResolvedValue({ streamId: '507f1f77bcf86cd799439011', ownerUserId: 'u1' });
+    await service.handleMessageComponents([
+      { key: 'k', headers: { operation: 'insert' }, value: { session_id: 's1', message_id: 'msg-1', component_id: 'c-err', ordinal: 0, type: 'error', data: { title: 'x', content: 'boom' }, created_at: '2026-08-13T10:00:00.000Z' } },
+    ]);
+    expect(events.emit).toHaveBeenCalledWith('u1', '507f1f77bcf86cd799439011', expect.objectContaining({ type: 'message.component.appended' }));
+    expect(events.emit).toHaveBeenCalledWith('u1', '507f1f77bcf86cd799439011', expect.objectContaining({ type: 'stream.terminal', payload: expect.objectContaining({ error: true }) }));
+  });
 });
 
 describe('WorkyElectricConsumerService.handlePlanStepComponents', () => {
@@ -622,5 +632,50 @@ describe('WorkyElectricConsumerService.handlePlanStepArtifacts', () => {
       expect.objectContaining({ upsert: true }),
     );
     expect(events.emit).toHaveBeenCalledWith('u1', '507f1f77bcf86cd799439011', expect.objectContaining({ type: 'task.artifact.appended' }));
+  });
+});
+
+describe('WorkyElectricConsumerService.handleSessions', () => {
+  it('emits stream.terminal (error) when a session goes failed', async () => {
+    const { service, streamService, events } = makeService();
+    streamService.findByAiSessionId.mockResolvedValue({ streamId: 'stream-1', ownerUserId: 'owner-1' });
+
+    await service.handleSessions([
+      { key: '"public"."sessions"/"sess-1"', headers: { operation: 'update' }, value: { id: 'sess-1', user_id: 'u1', status: 'failed' } },
+    ]);
+
+    expect(events.emit).toHaveBeenCalledWith(
+      'owner-1',
+      'stream-1',
+      expect.objectContaining({ type: 'stream.terminal', payload: expect.objectContaining({ error: true }) }),
+    );
+  });
+
+  it('emits stream.terminal (no error) when a session completes', async () => {
+    const { service, streamService, events } = makeService();
+    streamService.findByAiSessionId.mockResolvedValue({ streamId: 'stream-1', ownerUserId: 'owner-1' });
+
+    await service.handleSessions([
+      { key: '"public"."sessions"/"sess-1"', headers: { operation: 'update' }, value: { id: 'sess-1', user_id: 'u1', status: 'completed' } },
+    ]);
+
+    expect(events.emit).toHaveBeenCalledWith(
+      'owner-1',
+      'stream-1',
+      expect.objectContaining({ type: 'stream.terminal', payload: expect.objectContaining({ error: false }) }),
+    );
+  });
+
+  it('emits stream.updated but not stream.terminal for non-terminal statuses (running/blocked)', async () => {
+    const { service, streamService, events } = makeService();
+    streamService.findByAiSessionId.mockResolvedValue({ streamId: 'stream-1', ownerUserId: 'owner-1' });
+
+    await service.handleSessions([
+      { key: '"public"."sessions"/"sess-1"', headers: { operation: 'update' }, value: { id: 'sess-1', user_id: 'u1', status: 'running' } },
+      { key: '"public"."sessions"/"sess-1"', headers: { operation: 'update' }, value: { id: 'sess-1', user_id: 'u1', status: 'blocked' } },
+    ]);
+
+    const emitCalls = events.emit.mock.calls;
+    expect(emitCalls.every((call: unknown[]) => (call[2] as Record<string, unknown>)?.type !== 'stream.terminal')).toBe(true);
   });
 });
