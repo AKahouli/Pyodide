@@ -70,6 +70,9 @@ export interface ModelsActions {
   /** Push Conversation V2 default change to all consumers (chat, composer) without refetch. */
   syncConversationV2Default: (modelId: string | null) => void;
 
+  /** Push the global default model change (star on /admin/models) to all consumers without refetch. */
+  syncDefaultModel: (modelId: string | null) => void;
+
   // Clear store
   reset: () => void;
 }

@@ -22,4 +22,5 @@ export {
   useDefaultModel,
   useConversationV2DefaultModel,
   CONVERSATION_V2_DEFAULT_MODEL_CHANGED_EVENT,
+  DEFAULT_MODEL_CHANGED_EVENT,
 } from './store';

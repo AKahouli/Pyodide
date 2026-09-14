@@ -4,7 +4,7 @@ import { useShallow } from 'zustand/react/shallow';
 import { toast } from 'sonner';
 import { parseApiError } from '@/lib/api-error';
 import { ErrorCode } from '@/lib/error-codes';
-import { useModelsStore } from '@/modules/models/store';
+import { useModelsStore, DEFAULT_MODEL_CHANGED_EVENT } from '@/modules/models/store';
 import * as api from './api';
 import { getStreamErrorMessage } from './utils';
 import { insertMessageChronologically } from './utils/message-order';
@@ -3027,3 +3027,18 @@ export const useDisplayMessages = () =>
       });
     }),
   );
+
+// When the admin default model changes (e.g. star on /admin/models), drop a
+// stale selection that matched the old default so consumers fall back to the
+// new default immediately without a refresh. Mirrors conversation-v2's handling.
+if (typeof window !== 'undefined') {
+  window.addEventListener(DEFAULT_MODEL_CHANGED_EVENT, (event) => {
+    const previousDefaultId = (event as CustomEvent<{ previousDefaultId?: string | null }>).detail
+      ?.previousDefaultId;
+    if (!previousDefaultId) return;
+    const { selectedModelId, setSelectedModelId } = useConversationStore.getState();
+    if (selectedModelId === previousDefaultId) {
+      setSelectedModelId(null);
+    }
+  });
+}
