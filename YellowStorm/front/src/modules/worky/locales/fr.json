@@ -344,6 +344,7 @@
   "executive.brief.complete": "Terminé",
   "executive.brief.active": "Actif",
   "executive.brief.waiting": "Attentes externes",
+  "executive.brief.needsInput": "À confirmer",
   "executive.needsYou.title": "Votre intervention",
   "executive.needsYou.active": "Répondre maintenant",
   "executive.needsYou.parked": "Question en attente",

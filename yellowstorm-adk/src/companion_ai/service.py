@@ -1754,6 +1754,17 @@ class OrchestratorService:
                 edits = None
             resume = hitl.confirmation_resume_part(
                 hitl.confirm_fc_id(interrupt_id), confirmed=confirmed, payload=edits)
+            # Close the answered card (and any stale re-drive duplicate) NOW —
+            # BEFORE the send/report drive, not after — so the resolved state
+            # propagates (Postgres → Electric → Mongo) while the turn runs.
+            # Closing after the drive left the card 'ready' for the whole turn,
+            # so a refresh mid-send still showed it armed until the next refresh.
+            # A still-open parallel gate keeps its latest card armed (its id is
+            # still outstanding); we exclude only the card being answered.
+            answered = card_target or interrupt_id
+            keep_open = [i for i, _ in await self._rm.outstanding_interrupts(session_id)
+                         if hitl.is_confirm(i) and i != answered]
+            await self._project(self._rm.close_confirm_choices(session_id, keep_open))
         else:
             resume = hitl.resume_part(interrupt_id, {"value": answer})
         interrupt = await self._drive_until_quiescent(

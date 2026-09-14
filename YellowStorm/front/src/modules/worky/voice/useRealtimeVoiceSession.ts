@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { VoiceSessionApi, VoiceState } from './useVoiceSession';
 import { useVoiceSettings } from './voiceSettings';
-import { createVoiceSession, voiceTranscript } from '../api';
+import { createVoiceSession, voiceTranscript, voiceThematicMemory, voiceThematicRetrieve } from '../api';
 import { openGeminiLive, type GeminiLiveConnection } from './geminiLiveClient';
 import { handleToolCall } from './toolCallRelay';
 import { attachMilestoneInjector } from './milestoneInjector';
@@ -126,6 +126,19 @@ export function useRealtimeVoiceSession(streamId: string): VoiceSessionApi {
           // Once the request is dispatched it's persisted by the dispatch flow,
           // so the hang-up transcript fallback must not also save it.
           if (call.name === 'dispatch_task') dispatchedRef.current = true;
+          // Thematic memory retrieval is backend-proxied (smart-memory needs a
+          // secret key the browser can't hold), so it does NOT go through the MCP
+          // relay — call our own endpoint and return the result to the model.
+          if (call.name === 'retrieve_thematic_memory') {
+            const query = String((call.args as { query?: unknown })?.query ?? '');
+            const response = await voiceThematicRetrieve(query, streamId)
+              .then((data) => ({ data }))
+              .catch((err) => ({ error: err instanceof Error ? err.message : String(err) }));
+            const res = { id: call.id, name: call.name, response };
+            if (import.meta.env?.DEV) console.log('[voice] toolResponse (thematic)', res);
+            connRef.current?.sendToolResponse([res]);
+            continue;
+          }
           const res = await handleToolCall(streamId, call, envelope.toolEndpoints, envelope.streamIdTools);
           if (import.meta.env?.DEV) console.log('[voice] toolResponse', res);
           connRef.current?.sendToolResponse([res]);
@@ -153,7 +166,12 @@ export function useRealtimeVoiceSession(streamId: string): VoiceSessionApi {
       onTurnComplete: () => {
         const said = memTurnRef.current.join('').trim();
         memTurnRef.current = [];
-        if (said) memRef.current?.endTurn(said);
+        if (said) {
+          memRef.current?.endTurn(said);
+          // Thematic (smart-memory) ingestion — same per-turn cadence; backend does
+          // the memory.write (the MCP key can't reach the browser). Best-effort.
+          if (envelope.thematicMemory) void voiceThematicMemory(said, streamId).catch(() => undefined);
+        }
       },
       onResumptionHandle: (h) => {
         handleRef.current = h;
