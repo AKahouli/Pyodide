@@ -31,6 +31,7 @@ import { WorkyTtsService } from './services/worky-tts.service';
 import { WorkyVoiceController } from './voice/worky-voice.controller';
 import { GeminiTokenService } from './voice/gemini-token.service';
 import { VoiceToolService } from './voice/voice-tool.service';
+import { ThematicMemoryService } from './voice/thematic-memory.service';
 import { WorkyBoardController } from './controllers/worky-board.controller';
 import { WorkyInteractionController } from './controllers/worky-interaction.controller';
 import { WorkyTaskController } from './controllers/worky-task.controller';
@@ -271,6 +272,7 @@ import { WorkyWhatsAppSystemBotStatusController } from './controllers/worky-what
     WorkyTtsService,
     GeminiTokenService,
     VoiceToolService,
+    ThematicMemoryService,
     WorkyWhatsAppIngressService,
     WorkyWhatsAppIntegrationService,
     WorkyWhatsAppSystemBotService,

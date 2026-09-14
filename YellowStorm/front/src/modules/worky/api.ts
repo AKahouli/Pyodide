@@ -366,6 +366,9 @@ export interface VoiceSessionEnvelope {
   streamIdTools?: string[];
   /** voice-memory sidecar WS (mic fork → long-term memory); empty/absent ⇒ fork off. */
   memoryWsUrl?: string;
+  /** thematic (smart-memory) ingestion on: the browser POSTs each finished turn's
+   *  transcript to the backend, which writes it via memory.write (key is server-side). */
+  thematicMemory?: boolean;
   expiresAt: string;
 }
 
@@ -474,6 +477,19 @@ export async function voiceTaskDetails(streamId: string, taskId: string): Promis
 /** Persist a voice transcript turn into the unified chat history. */
 export async function voiceTranscript(streamId: string, role: 'owner' | 'manager', text: string): Promise<void> {
   await apiClient.post(API_ENDPOINTS.worky.voiceTranscript, { streamId, role, text });
+}
+
+/** Ingest one finished voice turn into smart-memory (thematic). Backend writes it
+ *  via memory.write with the MCP key; best-effort — callers should not await hard. */
+export async function voiceThematicMemory(text: string, streamId?: string): Promise<void> {
+  await apiClient.post(API_ENDPOINTS.worky.voiceThematicMemory, { text, streamId });
+}
+
+/** Retrieve thematic (smart-memory) context for a query — backend proxies to
+ *  memory.retrieve with the MCP key. Returns the memory data (or an error field). */
+export async function voiceThematicRetrieve(query: string, streamId?: string): Promise<unknown> {
+  const res = await apiClient.post<ApiResponse<unknown>>(API_ENDPOINTS.worky.voiceThematicRetrieve, { query, streamId });
+  return unwrap(res);
 }
 
 // =================================================================

@@ -4,7 +4,8 @@ describe('WorkyVoiceController', () => {
   const tokens = { mintSessionToken: jest.fn() };
   const tools = { dispatchTask: jest.fn(), queryStatus: jest.fn() };
   const planning = { appendVoiceMessage: jest.fn() };
-  const ctrl = new WorkyVoiceController(tokens as any, tools as any, planning as any);
+  const thematicMemory = { ingestTurn: jest.fn() };
+  const ctrl = new WorkyVoiceController(tokens as any, tools as any, planning as any, thematicMemory as any);
   const user = { _id: { toString: () => 'u1' } } as any;
 
   beforeEach(() => jest.clearAllMocks());
