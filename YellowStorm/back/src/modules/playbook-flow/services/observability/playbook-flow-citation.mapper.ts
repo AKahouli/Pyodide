@@ -21,11 +21,27 @@ function normalizeBBox(value: unknown): unknown {
 }
 
 function normalizeCitationData(source: Record<string, unknown>): Record<string, unknown> {
-  const sourceType = asString(source.sourceType ?? source.type) === 'image' ? 'image' : 'text';
+  const rawSourceType = asString(source.sourceKind ?? source.sourceType ?? source.type);
+  const sourceType = rawSourceType === 'web' ? 'web' : rawSourceType === 'image' ? 'image' : 'text';
   const fileName = asString(source.fileName ?? source.file_name);
   const highlightText = asString(source.highlightText ?? source.highlight_text);
   const highlightBBox = normalizeBBox(source.highlightBBox ?? source.highlight_bbox);
   const blockBBox = normalizeBBox(source.blockBBox ?? source.block_bbox);
+
+  if (sourceType === 'web') {
+    return {
+      parentId: asString(source.parentId ?? source.parent_id),
+      sourceKind: 'web',
+      sourceType: 'web',
+      source: asString(source.source ?? source.url),
+      title: asString(source.title),
+      reference: asString(source.reference),
+      exactText: asString(source.exactText ?? source.exact_text),
+      prefix: asString(source.prefix),
+      suffix: asString(source.suffix),
+      evidenceOrigin: asString(source.evidenceOrigin ?? source.evidence_origin),
+    };
+  }
 
   if (sourceType === 'image') {
     return {
@@ -66,14 +82,15 @@ function normalizeCitationComponent(component: Record<string, unknown>): Record<
   const data = asRecord(component.data) ?? component;
   const textSource = asRecord(data.text_source ?? data.textSource);
   const imageSource = asRecord(data.image_source ?? data.imageSource);
-  const source = textSource ?? imageSource ?? data;
+  const webSource = asRecord(data.web_source ?? data.webSource);
+  const source = webSource ?? textSource ?? imageSource ?? data;
 
   return {
     ...component,
     type: 'citation',
     data: normalizeCitationData({
       ...source,
-      type: imageSource ? 'image' : source.type,
+      type: webSource ? 'web' : imageSource ? 'image' : source.type,
       parentId: data.parentId ?? data.parent_id ?? source.parentId ?? source.parent_id,
     }),
   };

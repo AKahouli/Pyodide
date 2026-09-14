@@ -7,11 +7,7 @@ import { LoggerService } from '../logger';
 import { LiteLLMModelInfoEntry } from './interfaces/model.interface';
 
 // Helper to build a LiteLLM /v1/model/info entry
-function entry(
-  name: string,
-  mode: string | undefined,
-  provider = 'openai',
-): LiteLLMModelInfoEntry {
+function entry(name: string, mode: string | undefined, provider = 'openai'): LiteLLMModelInfoEntry {
   return {
     model_name: name,
     litellm_params: { model: `${provider}/${name}` },
@@ -77,11 +73,7 @@ describe('ModelsService', () => {
 
   describe('syncModels', () => {
     it('ingests ALL model types, not just chat (no more chat-only filter)', async () => {
-      fetchModels.mockResolvedValue([
-        entry('gpt-4o', 'chat'),
-        entry('text-embedding-3', 'embedding'),
-        entry('dall-e-3', 'image_generation'),
-      ]);
+      fetchModels.mockResolvedValue([entry('gpt-4o', 'chat'), entry('text-embedding-3', 'embedding'), entry('dall-e-3', 'image_generation')]);
       findOne.mockResolvedValue(null); // all new
 
       const result = await svc.syncModels();
@@ -98,15 +90,23 @@ describe('ModelsService', () => {
       await svc.syncModels();
 
       expect(create).toHaveBeenCalledWith(
-        expect.objectContaining({ modelId: 'text-embedding-3', type: 'embedding', types: ['embedding'], inputModalities: ['text'] }),
+        expect.objectContaining({
+          modelId: 'text-embedding-3',
+          type: 'embedding',
+          types: ['embedding'],
+          inputModalities: ['text'],
+        }),
       );
     });
 
     it('does not overwrite administrator-selected input modalities on re-sync', async () => {
       fetchModels.mockResolvedValue([entry('vision-model', 'chat', 'openai')]);
       findOne.mockResolvedValue({
-        modelId: 'vision-model', chefSlug: 'azure', litellmModel: 'azure/old',
-        inputModalities: ['text', 'image'], isActive: true,
+        modelId: 'vision-model',
+        chefSlug: 'azure',
+        litellmModel: 'azure/old',
+        inputModalities: ['text', 'image'],
+        isActive: true,
       });
 
       await svc.syncModels();
@@ -146,7 +146,10 @@ describe('ModelsService', () => {
     it('restricts to active chat models by default (public usage)', async () => {
       mockFindResult([]);
       await svc.findAll();
-      expect(find).toHaveBeenCalledWith({ isActive: true, $or: [{ types: 'chat' }, { type: 'chat' }] });
+      expect(find).toHaveBeenCalledWith({
+        isActive: true,
+        $or: [{ types: 'chat' }, { type: 'chat' }],
+      });
     });
 
     it('returns every type when chatOnly=false (admin usage)', async () => {
@@ -170,25 +173,46 @@ describe('ModelsService', () => {
 
   describe('type compatibility', () => {
     it('returns a types array for legacy scalar classifications', async () => {
-      mockFindResult([{
-        modelId: 'legacy-chat', name: 'Legacy Chat', chef: 'OpenAI', chefSlug: 'openai',
-        litellmModel: 'openai/legacy-chat', providers: ['openai'], type: 'chat',
-        isActive: true, isDefault: false,
-      }]);
+      mockFindResult([
+        {
+          modelId: 'legacy-chat',
+          name: 'Legacy Chat',
+          chef: 'OpenAI',
+          chefSlug: 'openai',
+          litellmModel: 'openai/legacy-chat',
+          providers: ['openai'],
+          type: 'chat',
+          isActive: true,
+          isDefault: false,
+        },
+      ]);
 
       const result = await svc.findAll(false, false);
 
-      expect(result.models[0]).toEqual(expect.objectContaining({
-        type: 'chat', types: ['chat'], inputModalities: ['text'],
-      }));
+      expect(result.models[0]).toEqual(
+        expect.objectContaining({
+          type: 'chat',
+          types: ['chat'],
+          inputModalities: ['text'],
+        }),
+      );
     });
 
     it('returns valid persisted input modalities', async () => {
-      mockFindResult([{
-        modelId: 'vision', name: 'Vision', chef: 'OpenAI', chefSlug: 'openai',
-        litellmModel: 'openai/vision', providers: ['openai'], type: 'chat', types: ['chat'],
-        inputModalities: ['text', 'image', 'invalid'], isActive: true,
-      }]);
+      mockFindResult([
+        {
+          modelId: 'vision',
+          name: 'Vision',
+          chef: 'OpenAI',
+          chefSlug: 'openai',
+          litellmModel: 'openai/vision',
+          providers: ['openai'],
+          type: 'chat',
+          types: ['chat'],
+          inputModalities: ['text', 'image', 'invalid'],
+          isActive: true,
+        },
+      ]);
 
       const result = await svc.findAll(false, false);
 
@@ -197,42 +221,51 @@ describe('ModelsService', () => {
 
     it('keeps the legacy type synchronized with the first selected type', async () => {
       findOneAndUpdate.mockReturnValue({
-        lean: () => ({ exec: () => Promise.resolve({
-          modelId: 'multi', name: 'Multi', chef: 'OpenAI', chefSlug: 'openai',
-          litellmModel: 'openai/multi', providers: ['openai'], type: 'chat',
-          types: ['chat', 'guardrails_classifier'], isActive: true, isDefault: false,
-        }) }),
+        lean: () => ({
+          exec: () =>
+            Promise.resolve({
+              modelId: 'multi',
+              name: 'Multi',
+              chef: 'OpenAI',
+              chefSlug: 'openai',
+              litellmModel: 'openai/multi',
+              providers: ['openai'],
+              type: 'chat',
+              types: ['chat', 'guardrails_classifier'],
+              isActive: true,
+              isDefault: false,
+            }),
+        }),
       });
 
       await svc.updateModel('multi', { types: ['chat', 'guardrails_classifier'] });
 
-      expect(updateMany).toHaveBeenCalledWith(
-        { modelId: { $ne: 'multi' }, isActive: true },
-        { $pull: { types: 'guardrails_classifier' } },
-      );
-      expect(findOneAndUpdate).toHaveBeenCalledWith(
-        { modelId: 'multi' },
-        { $set: { types: ['chat', 'guardrails_classifier'], type: 'chat' } },
-        { new: true },
-      );
+      expect(updateMany).toHaveBeenCalledWith({ modelId: { $ne: 'multi' }, isActive: true }, { $pull: { types: 'guardrails_classifier' } });
+      expect(findOneAndUpdate).toHaveBeenCalledWith({ modelId: 'multi' }, { $set: { types: ['chat', 'guardrails_classifier'], type: 'chat' } }, { new: true });
     });
 
     it('clears a persisted default reasoning effort explicitly', async () => {
       findOneAndUpdate.mockReturnValue({
-        lean: () => ({ exec: () => Promise.resolve({
-          modelId: 'reasoning', name: 'Reasoning', chef: 'OpenAI', chefSlug: 'openai',
-          litellmModel: 'openai/reasoning', providers: ['openai'], type: 'chat',
-          types: ['chat'], isActive: true, isDefault: false,
-        }) }),
+        lean: () => ({
+          exec: () =>
+            Promise.resolve({
+              modelId: 'reasoning',
+              name: 'Reasoning',
+              chef: 'OpenAI',
+              chefSlug: 'openai',
+              litellmModel: 'openai/reasoning',
+              providers: ['openai'],
+              type: 'chat',
+              types: ['chat'],
+              isActive: true,
+              isDefault: false,
+            }),
+        }),
       });
 
       await svc.updateModel('reasoning', { defaultReasoningEffort: null });
 
-      expect(findOneAndUpdate).toHaveBeenCalledWith(
-        { modelId: 'reasoning' },
-        { $set: {}, $unset: { defaultReasoningEffort: 1 } },
-        { new: true },
-      );
+      expect(findOneAndUpdate).toHaveBeenCalledWith({ modelId: 'reasoning' }, { $set: {}, $unset: { defaultReasoningEffort: 1 } }, { new: true });
     });
 
     it('finds guardrails classifiers classified through types', async () => {
@@ -249,38 +282,60 @@ describe('ModelsService', () => {
 
     it('rejects an active model that lacks the required chat type', async () => {
       findOne.mockReturnValue({
-        lean: () => ({ exec: () => Promise.resolve({
-          modelId: 'embedding', name: 'Embedding', chef: 'OpenAI', chefSlug: 'openai',
-          litellmModel: 'openai/embedding', providers: ['openai'], type: 'embedding',
-          types: ['embedding'], isActive: true, isDefault: false,
-        }) }),
+        lean: () => ({
+          exec: () =>
+            Promise.resolve({
+              modelId: 'embedding',
+              name: 'Embedding',
+              chef: 'OpenAI',
+              chefSlug: 'openai',
+              litellmModel: 'openai/embedding',
+              providers: ['openai'],
+              type: 'embedding',
+              types: ['embedding'],
+              isActive: true,
+              isDefault: false,
+            }),
+        }),
       });
 
-      await expect(svc.validateModelActive('embedding', 'chat')).resolves.toEqual(
-        expect.objectContaining({ valid: false, inactive: false, unsupported: true }),
-      );
+      await expect(svc.validateModelActive('embedding', 'chat')).resolves.toEqual(expect.objectContaining({ valid: false, inactive: false, unsupported: true }));
     });
 
     it.each([
       [{ types: ['chat'] }, 'multi-type chat model'],
       [{ type: 'chat' }, 'legacy chat model'],
     ])('allows a %s as the default model', async (query, _description) => {
-      findOne.mockReturnValue({ lean: () => ({ exec: () => Promise.resolve({ modelId: 'chat' }) }) });
+      findOne.mockReturnValue({
+        lean: () => ({ exec: () => Promise.resolve({ modelId: 'chat' }) }),
+      });
       findOneAndUpdate.mockReturnValue({
-        lean: () => ({ exec: () => Promise.resolve({
-          modelId: 'chat', name: 'Chat', chef: 'OpenAI', chefSlug: 'openai',
-          litellmModel: 'openai/chat', providers: ['openai'], type: 'chat', types: ['chat'],
-          isActive: true, isDefault: true,
-        }) }),
+        lean: () => ({
+          exec: () =>
+            Promise.resolve({
+              modelId: 'chat',
+              name: 'Chat',
+              chef: 'OpenAI',
+              chefSlug: 'openai',
+              litellmModel: 'openai/chat',
+              providers: ['openai'],
+              type: 'chat',
+              types: ['chat'],
+              isActive: true,
+              isDefault: true,
+            }),
+        }),
       });
 
       await svc.setDefaultModel('chat');
 
-      expect(findOne).toHaveBeenCalledWith(expect.objectContaining({
-        modelId: 'chat',
-        isActive: true,
-        $or: [{ types: 'chat' }, { type: 'chat' }],
-      }));
+      expect(findOne).toHaveBeenCalledWith(
+        expect.objectContaining({
+          modelId: 'chat',
+          isActive: true,
+          $or: [{ types: 'chat' }, { type: 'chat' }],
+        }),
+      );
       expect(updateMany).toHaveBeenCalledWith({ isDefault: true }, { $set: { isDefault: false } });
       expect(findOneAndUpdate).toHaveBeenCalled();
     });
@@ -323,31 +378,39 @@ describe('ModelsService', () => {
     });
 
     it('allows an active chat model as the conversation-v2 default and clears the previous one', async () => {
-      findOne.mockReturnValue({ lean: () => ({ exec: () => Promise.resolve({ modelId: 'chat' }) }) });
+      findOne.mockReturnValue({
+        lean: () => ({ exec: () => Promise.resolve({ modelId: 'chat' }) }),
+      });
       findOneAndUpdate.mockReturnValue({
-        lean: () => ({ exec: () => Promise.resolve({
-          modelId: 'chat', name: 'Chat', chef: 'OpenAI', chefSlug: 'openai',
-          litellmModel: 'openai/chat', providers: ['openai'], type: 'chat', types: ['chat'],
-          isActive: true, isDefault: false, isConversationV2Default: true,
-        }) }),
+        lean: () => ({
+          exec: () =>
+            Promise.resolve({
+              modelId: 'chat',
+              name: 'Chat',
+              chef: 'OpenAI',
+              chefSlug: 'openai',
+              litellmModel: 'openai/chat',
+              providers: ['openai'],
+              type: 'chat',
+              types: ['chat'],
+              isActive: true,
+              isDefault: false,
+              isConversationV2Default: true,
+            }),
+        }),
       });
 
       const result = await svc.setConversationV2DefaultModel('chat');
 
-      expect(findOne).toHaveBeenCalledWith(expect.objectContaining({
-        modelId: 'chat',
-        isActive: true,
-        $or: [{ types: 'chat' }, { type: 'chat' }],
-      }));
-      expect(updateMany).toHaveBeenCalledWith(
-        { isConversationV2Default: true },
-        { $set: { isConversationV2Default: false } },
+      expect(findOne).toHaveBeenCalledWith(
+        expect.objectContaining({
+          modelId: 'chat',
+          isActive: true,
+          $or: [{ types: 'chat' }, { type: 'chat' }],
+        }),
       );
-      expect(findOneAndUpdate).toHaveBeenCalledWith(
-        { modelId: 'chat' },
-        { $set: { isConversationV2Default: true } },
-        { new: true },
-      );
+      expect(updateMany).toHaveBeenCalledWith({ isConversationV2Default: true }, { $set: { isConversationV2Default: false } });
+      expect(findOneAndUpdate).toHaveBeenCalledWith({ modelId: 'chat' }, { $set: { isConversationV2Default: true } }, { new: true });
       expect(result?.isConversationV2Default).toBe(true);
     });
 
@@ -362,20 +425,27 @@ describe('ModelsService', () => {
 
     it('clears the flag and surfaces it in the response', async () => {
       findOneAndUpdate.mockReturnValue({
-        lean: () => ({ exec: () => Promise.resolve({
-          modelId: 'chat', name: 'Chat', chef: 'OpenAI', chefSlug: 'openai',
-          litellmModel: 'openai/chat', providers: ['openai'], type: 'chat', types: ['chat'],
-          isActive: true, isDefault: false, isConversationV2Default: false,
-        }) }),
+        lean: () => ({
+          exec: () =>
+            Promise.resolve({
+              modelId: 'chat',
+              name: 'Chat',
+              chef: 'OpenAI',
+              chefSlug: 'openai',
+              litellmModel: 'openai/chat',
+              providers: ['openai'],
+              type: 'chat',
+              types: ['chat'],
+              isActive: true,
+              isDefault: false,
+              isConversationV2Default: false,
+            }),
+        }),
       });
 
       const result = await svc.clearConversationV2DefaultModel('chat');
 
-      expect(findOneAndUpdate).toHaveBeenCalledWith(
-        { modelId: 'chat' },
-        { $set: { isConversationV2Default: false } },
-        { new: true },
-      );
+      expect(findOneAndUpdate).toHaveBeenCalledWith({ modelId: 'chat' }, { $set: { isConversationV2Default: false } }, { new: true });
       expect(result?.isConversationV2Default).toBe(false);
     });
   });

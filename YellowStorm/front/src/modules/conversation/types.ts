@@ -50,8 +50,24 @@ export interface Conversation {
   runtimeMode?: 'standard' | 'governed';
   runtimePurpose?: 'chat' | 'platform_copilot';
   pinnedAgentId?: string | null;
-  governanceContext?: { programId: string; scopeId: string; deploymentId: string; revisionId: string; revisionNumber: number; pinnedAt: string; runtimeDefinition: { primaryAgentId: string; allowedAgentIds: string[]; workspaceIds: string[] } };
-  branchProvenance?: { sourceConversationId: string; sourceTargetMessageId: string; branchedAt: string };
+  governanceContext?: {
+    programId: string;
+    scopeId: string;
+    deploymentId: string;
+    revisionId: string;
+    revisionNumber: number;
+    pinnedAt: string;
+    runtimeDefinition: {
+      primaryAgentId: string;
+      allowedAgentIds: string[];
+      workspaceIds: string[];
+    };
+  };
+  branchProvenance?: {
+    sourceConversationId: string;
+    sourceTargetMessageId: string;
+    branchedAt: string;
+  };
 }
 
 export interface BranchConversationPayload {
@@ -113,10 +129,21 @@ export interface ReliabilityEvaluation {
   score?: number;
   label?: ReliabilityLabel;
   summary?: string;
-  claimCounts?: { total: number; supported: number; partiallySupported: number; unsupported: number; contradicted: number };
+  claimCounts?: {
+    total: number;
+    supported: number;
+    partiallySupported: number;
+    unsupported: number;
+    contradicted: number;
+  };
   claims?: ReliabilityFinding[];
   findings?: ReliabilityFinding[];
-  evaluator?: { modelId: string; modelName: string; evaluatorVersion: string; promptVersion: string };
+  evaluator?: {
+    modelId: string;
+    modelName: string;
+    evaluatorVersion: string;
+    promptVersion: string;
+  };
   requestedAt?: string;
   evaluatedAt?: string;
   durationMs?: number;
@@ -202,10 +229,7 @@ export interface StreamChunkLatencyData {
   requestId: string;
   assistantMessageId: string;
   backendFirstDeltaWrittenEpochMs: number;
-  metrics: Omit<
-    ConversationLatencyMetricsV1,
-    'schemaVersion' | 'frontendRenderMs' | 'browserRenderOnlyMs'
-  >;
+  metrics: Omit<ConversationLatencyMetricsV1, 'schemaVersion' | 'frontendRenderMs' | 'browserRenderOnlyMs'>;
   quality: ConversationLatencyQuality;
 }
 
@@ -248,7 +272,12 @@ export interface ResponseCorrectionAttempt {
   createdAt: string;
   generatedAt?: string;
   completedAt?: string;
-  correctionModel?: { modelId: string; modelName: string; correctorVersion: string; promptVersion: string };
+  correctionModel?: {
+    modelId: string;
+    modelName: string;
+    correctorVersion: string;
+    promptVersion: string;
+  };
 }
 
 export interface ResponseCorrectionWorkflow {
@@ -271,12 +300,35 @@ export interface ResponseCorrectionWorkflow {
   startedAt?: string;
   completedAt?: string;
   durationMs?: number;
-  correctionModel?: { modelId: string; modelName: string; correctorVersion: string; promptVersion: string };
+  correctionModel?: {
+    modelId: string;
+    modelName: string;
+    correctorVersion: string;
+    promptVersion: string;
+  };
   strategy?: 'existing_evidence' | 'corrective_replay';
   attempts?: ResponseCorrectionAttempt[];
   publishedAttemptId?: string;
   correctionRunId?: string;
   leaseExpiresAt?: string;
+}
+
+export interface ConversationUsageMetrics {
+  tokens: {
+    input: number;
+    output: number;
+    cachedInput: number;
+    reasoning: number;
+    total: number;
+  };
+  cost: { usd: number | null; complete: boolean; pricingVersions?: string[] };
+  carbon: {
+    gramsCo2e: number | null;
+    estimated: true;
+    complete: boolean;
+    methodologies?: string[];
+    factorVersions?: string[];
+  };
 }
 
 export interface Message {
@@ -315,6 +367,7 @@ export interface Message {
   timeToFirstChunk?: number;
   timeToFirstToken?: number;
   latencyMetrics?: ConversationLatencyMetricsV1;
+  conversationUsage?: ConversationUsageMetrics;
   parentMessageId?: string; // Reference to the message being replied to
   reliabilityEvaluation?: ReliabilityEvaluation;
   correctionWorkflow?: ResponseCorrectionWorkflow;
@@ -360,17 +413,46 @@ export type ChoicePresentation = 'quick_replies' | 'list';
 export type ChoiceSelectionMode = 'single' | 'multiple';
 export type ChoiceSubmitBehavior = 'immediate' | 'explicit';
 export type ChoiceStatus = 'ready' | 'submitted' | 'disabled';
-export interface ChoiceOption { id: string; label: string; submitText: string; value?: string; description?: string; disabled?: boolean; url?: string; }
+export interface ChoiceOption {
+  id: string;
+  label: string;
+  submitText: string;
+  value?: string;
+  description?: string;
+  disabled?: boolean;
+  url?: string;
+}
 export interface ChoiceComponentData extends Record<string, unknown> {
-  schemaVersion: 1; questionId: string; prompt: string; description?: string; presentation: ChoicePresentation;
-  selectionMode: ChoiceSelectionMode; submitBehavior: ChoiceSubmitBehavior; options: ChoiceOption[];
-  otherOption?: { enabled: boolean; label: string; placeholder?: string; maxLength: number };
+  schemaVersion: 1;
+  questionId: string;
+  prompt: string;
+  description?: string;
+  presentation: ChoicePresentation;
+  selectionMode: ChoiceSelectionMode;
+  submitBehavior: ChoiceSubmitBehavior;
+  options: ChoiceOption[];
+  otherOption?: {
+    enabled: boolean;
+    label: string;
+    placeholder?: string;
+    maxLength: number;
+  };
   labels?: { submit?: string; dismiss?: string; other?: string };
-  progress?: { current: number; total: number; label?: string }; dismissible?: boolean; fallbackText?: string; status: ChoiceStatus;
+  progress?: { current: number; total: number; label?: string };
+  dismissible?: boolean;
+  fallbackText?: string;
+  status: ChoiceStatus;
 }
 export interface ChoiceInteractionMetadata {
-  type: 'choice'; componentId: string; questionId: string; sourceMessageId?: string; selectionMode: ChoiceSelectionMode;
-  selectedOptions: Array<{ optionId: string; label: string; value?: string }>; customAnswer?: string; dismissed?: boolean; displayText?: string;
+  type: 'choice';
+  componentId: string;
+  questionId: string;
+  sourceMessageId?: string;
+  selectionMode: ChoiceSelectionMode;
+  selectedOptions: Array<{ optionId: string; label: string; value?: string }>;
+  customAnswer?: string;
+  dismissed?: boolean;
+  displayText?: string;
 }
 
 export interface ConversationSummary {
@@ -392,10 +474,27 @@ export interface ConversationSummary {
   updatedAt: string;
 }
 
-export interface SafeExecutionSummary { summary: string; status: string; actorLabel?: string }
-export interface SafePlanStep { label: string; status?: string }
-export interface SafeActionIdentity { name: string; label?: string; kind?: string; status?: string; summary?: string }
-export interface SafeResourceReference { kind: 'workspace' | 'document' | 'connector' | 'agent' | 'skill' | 'citation' | 'artifact'; id?: string; label: string }
+export interface SafeExecutionSummary {
+  summary: string;
+  status: string;
+  actorLabel?: string;
+}
+export interface SafePlanStep {
+  label: string;
+  status?: string;
+}
+export interface SafeActionIdentity {
+  name: string;
+  label?: string;
+  kind?: string;
+  status?: string;
+  summary?: string;
+}
+export interface SafeResourceReference {
+  kind: 'workspace' | 'document' | 'connector' | 'agent' | 'skill' | 'citation' | 'artifact';
+  id?: string;
+  label: string;
+}
 export interface ConversationPlaybookPreviewV1 {
   goal?: string;
   answerOutline?: string;
@@ -421,23 +520,63 @@ export interface PreparedConversationPlaybookHandoffV1 {
   suggestedPrompt: string;
   expiresAt: string;
   preview: ConversationPlaybookPreviewV1;
-  provenance: { sourceConversationId: string; targetMessageId: string; displayedAnswerVersion: string; canonicalPathFingerprint: string; contextFingerprint: string };
+  provenance: {
+    sourceConversationId: string;
+    targetMessageId: string;
+    displayedAnswerVersion: string;
+    canonicalPathFingerprint: string;
+    contextFingerprint: string;
+  };
 }
 
 export type ToolRenderKind = 'run_code' | 'search' | 'read' | 'write' | 'file' | 'web' | 'generic';
 export interface AgentActivityData extends Record<string, unknown> {
-  summary: string; detail?: string; status: 'running' | 'completed'; startedAt?: string; completedAt?: string; durationMs?: number;
-  actorId?: string; actorName?: string;
+  summary: string;
+  detail?: string;
+  status: 'running' | 'completed';
+  startedAt?: string;
+  completedAt?: string;
+  durationMs?: number;
+  actorId?: string;
+  actorName?: string;
 }
 export interface ToolActivityData extends Record<string, unknown> {
-  toolName: string; displayKey?: string; fallbackDisplayName?: string; summary: string; renderKind: ToolRenderKind;
-  status: 'running' | 'completed' | 'failed' | 'stopped'; paramsJson?: string; resultJson?: string;
-  startedAt?: string; completedAt?: string; durationMs?: number; actorId?: string; actorName?: string;
-  primaryInput?: string; primaryInputLanguage?: string;
+  toolName: string;
+  displayKey?: string;
+  fallbackDisplayName?: string;
+  summary: string;
+  renderKind: ToolRenderKind;
+  status: 'running' | 'completed' | 'failed' | 'stopped';
+  paramsJson?: string;
+  resultJson?: string;
+  startedAt?: string;
+  completedAt?: string;
+  durationMs?: number;
+  actorId?: string;
+  actorName?: string;
+  primaryInput?: string;
+  primaryInputLanguage?: string;
 }
 export interface ArtifactActivityData extends Record<string, unknown> {
-  artifactId: string; filename: string; artifactKind?: string; mimeType?: string; sizeBytes?: number;
-  producerToolId?: string; availability: 'pending' | 'ready' | 'failed';
+  artifactId: string;
+  filename: string;
+  artifactKind?: string;
+  mimeType?: string;
+  sizeBytes?: number;
+  producerToolId?: string;
+  availability: 'pending' | 'ready' | 'failed';
+}
+
+export interface RecentConversationArtifact {
+  source: 'conversation';
+  artifactId: string;
+  filename: string;
+  artifactKind?: string;
+  mimeType?: string;
+  conversationId: string;
+  conversationTitle: string;
+  messageId: string;
+  generatedAt: string;
 }
 
 export interface MessageComponent {
@@ -492,6 +631,7 @@ export interface PaginatedResponse<T> {
   hasMore?: boolean;
   nextCursor?: string | null;
   branchesByQuestion?: Record<string, Message[]>;
+  conversationUsage?: ConversationUsageMetrics;
 }
 
 export interface SendMessagePayload {
@@ -501,6 +641,7 @@ export interface SendMessagePayload {
   attachedFileIds?: string[];
   attachedFiles?: AttachedFile[];
   webSearchEnabled?: boolean;
+  webConnectorAccessEnabled?: boolean;
   deepSearchEnabled?: boolean;
   modelId?: string;
   reasoningEffort?: string;
@@ -510,7 +651,13 @@ export interface SendMessagePayload {
   /** Mentioned team IDs; the backend expands each into its agents at send time. */
   teamIds?: string[];
   parentMessageId?: string;
-  connectorRepo?: { connectorId: string; connectorName: string; repoId: string; repoName: string; repoUrl?: string };
+  connectorRepo?: {
+    connectorId: string;
+    connectorName: string;
+    repoId: string;
+    repoName: string;
+    repoUrl?: string;
+  };
   skillIds?: string[];
   interaction?: ChoiceInteractionMetadata;
   interactions?: ChoiceInteractionMetadata[];
@@ -608,10 +755,16 @@ export type StreamSSEEvent =
   | { type: 'stream_chunk'; data: StreamChunkEvent }
   | { type: 'stream_complete'; data: StreamCompleteEvent }
   | { type: 'stream_error'; data: StreamErrorEvent }
-  | { type: 'conversation_name_generated'; data: ConversationNameGeneratedEvent }
+  | {
+      type: 'conversation_name_generated';
+      data: ConversationNameGeneratedEvent;
+    }
   | { type: 'message_created'; data: MessageCreatedEvent }
   | { type: 'message_updated'; data: MessageUpdatedEvent }
-  | { type: 'mention_created'; data: { conversationId: string; messageId: string; userId: string } }
+  | {
+      type: 'mention_created';
+      data: { conversationId: string; messageId: string; userId: string };
+    }
   | { type: 'stream_resync_required'; data: StreamResyncRequiredEvent }
   | { type: 'connection_failed'; data: { reason: string } }
   | { type: 'error'; data: { code?: string; message?: string } };
@@ -624,6 +777,7 @@ export interface CreateSharePayload {
   shareType: ShareType;
   title?: string;
   recipientEmails?: string[]; // For private shares
+  shareWorkspaces?: boolean;
   expiresInDays?: number; // For public shares (1-365, default 30)
 }
 
@@ -636,6 +790,9 @@ export interface ShareResponse {
   accessToken?: string; // For public shares
   recipientEmails?: string[]; // For private shares
   forkedConversationIds?: string[];
+  notFound?: string[];
+  invalid?: string[];
+  sharedWorkspaceCount?: number;
   expiresAt?: string;
   viewCount: number;
   isRevoked: boolean;

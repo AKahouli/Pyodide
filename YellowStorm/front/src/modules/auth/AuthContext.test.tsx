@@ -1,6 +1,6 @@
 import { act, renderHook, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { AUTH_STORAGE_KEYS } from '@/lib/api';
+import { AUTH_LOST_EVENT, AUTH_STORAGE_KEYS } from '@/lib/api';
 import { AuthProvider } from './AuthContext';
 import type { User } from './types';
 import { useAuth } from './useAuth';
@@ -105,6 +105,18 @@ describe('AuthProvider', () => {
     expect(result.current.user).toBeNull();
     expect(localStorage.getItem(AUTH_STORAGE_KEYS.accessToken)).toBeNull();
     expect(localStorage.getItem(AUTH_STORAGE_KEYS.user)).toBeNull();
+  });
+
+  it('updates mounted auth state when the shared client loses the session', async () => {
+    localStorage.setItem(AUTH_STORAGE_KEYS.accessToken, 'access-token');
+    localStorage.setItem(AUTH_STORAGE_KEYS.user, JSON.stringify(baseUser));
+    const { result } = renderHook(() => useAuth(), { wrapper: AuthProvider });
+    await waitFor(() => expect(result.current.isAuthenticated).toBe(true));
+
+    act(() => window.dispatchEvent(new Event(AUTH_LOST_EVENT)));
+
+    expect(result.current.isAuthenticated).toBe(false);
+    expect(result.current.user).toBeNull();
   });
 
   it('starts polling getCurrentUser while the signed-in account is inactive', async () => {

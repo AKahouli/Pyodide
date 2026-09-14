@@ -5,7 +5,7 @@ import warnings
 
 from src.grpc_generated import companion_ai_pb2 as companion__ai__pb2
 
-GRPC_GENERATED_VERSION = '1.80.0'
+GRPC_GENERATED_VERSION = '1.81.1'
 GRPC_VERSION = grpc.__version__
 _version_not_supported = False
 
@@ -25,7 +25,7 @@ if _version_not_supported:
     )
 
 
-class CompanionAiStub(object):
+class CompanionAiStub:
     """Missing associated documentation comment in .proto file."""
 
     def __init__(self, channel):
@@ -71,7 +71,7 @@ class CompanionAiStub(object):
                 _registered_method=True)
 
 
-class CompanionAiServicer(object):
+class CompanionAiServicer:
     """Missing associated documentation comment in .proto file."""
 
     def CreateSession(self, request, context):
@@ -189,7 +189,7 @@ def add_CompanionAiServicer_to_server(servicer, server):
 
 
  # This class is part of an EXPERIMENTAL API.
-class CompanionAi(object):
+class CompanionAi:
     """Missing associated documentation comment in .proto file."""
 
     @staticmethod

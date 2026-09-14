@@ -37,7 +37,6 @@ import { RulesDialog } from './RulesDialog';
 import { WorkspaceUploadDropZone } from './WorkspaceUploadDropZone';
 import { CommunityGraphPanel } from '@/modules/playbook/components/CommunityGraphPanel';
 import { useModuleTranslation } from '@/modules/localization';
-import { dataRoomFeatures } from '@/config/dataRoomFeatures';
 
 const ITEM_MIME = 'application/x-workspace-page-item';
 

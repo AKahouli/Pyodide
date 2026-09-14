@@ -1,8 +1,13 @@
 {
   "page": {
     "title": "Applications connect\u00e9es",
-    "description": "Connectez vos applications externes pour activer l'acc\u00e8s aux fichiers, l'int\u00e9gration email, et plus.",
+    "description": "Connectez vos applications externes pour activer l'acc\u00e8s aux fichiers, l'intégration email, et plus.",
     "empty": "Aucune application disponible."
+  },
+  "tabs": {
+    "label": "Intégrations",
+    "apps": "Applications",
+    "marketplace": "Marketplace"
   },
   "card": {
     "connected": "Connect\u00e9",

@@ -1,6 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { Interval } from '@nestjs/schedule';
-import { ConfigService } from '@nestjs/config';
+import { FeatureVisibilityService } from '@modules/system/feature-visibility.service';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
 import { createHash } from 'crypto';
@@ -17,10 +17,10 @@ import { TemporalCandidateValidatorService } from './temporal-candidate-validato
 export class GovernanceTemporalIntelligenceWorkerService {
   private readonly logger = new Logger(GovernanceTemporalIntelligenceWorkerService.name);
   private running = false;
-  constructor(private readonly config: ConfigService, private readonly jobs: KnowledgeExtractionOrchestratorService, private readonly records: TemporalCandidateRepositoryService, private readonly search: LogicalSearchEvidenceService, private readonly extractor: TemporalCandidateExtractorService, private readonly validator: TemporalCandidateValidatorService, @InjectModel(GovernanceDocument.name) private readonly governanceDocuments: Model<GovernanceDocumentDocument>, @InjectModel(WorkspaceDoc.name) private readonly documents: Model<WorkspaceDocumentDoc>) {}
+  constructor(private readonly features: FeatureVisibilityService, private readonly jobs: KnowledgeExtractionOrchestratorService, private readonly records: TemporalCandidateRepositoryService, private readonly search: LogicalSearchEvidenceService, private readonly extractor: TemporalCandidateExtractorService, private readonly validator: TemporalCandidateValidatorService, @InjectModel(GovernanceDocument.name) private readonly governanceDocuments: Model<GovernanceDocumentDocument>, @InjectModel(WorkspaceDoc.name) private readonly documents: Model<WorkspaceDocumentDoc>) {}
 
   @Interval(5_000)
-  async tick(): Promise<void> { if (this.running || !this.config.get<boolean>('dataRoom.validityIntelligenceEnabled')) return; this.running = true; try { const job = await this.jobs.claimNext(['technical_metadata', 'temporal_extraction']); if (job) await this.process(job); } finally { this.running = false; } }
+  async tick(): Promise<void> { if (this.running || !this.features.isEnabled('dataRoomValidityIntelligence')) return; this.running = true; try { const job = await this.jobs.claimNext(['technical_metadata', 'temporal_extraction']); if (job) await this.process(job); } finally { this.running = false; } }
 
   private async process(job: KnowledgeExtractionJobDocument): Promise<void> {
     const token = job.leaseToken;

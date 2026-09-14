@@ -28,17 +28,7 @@ export interface LiteLLMModelInfoResponse {
 // Supported model classification types (mirrors LiteLLM model_info.mode values).
 // Kept as a single source of truth used by the schema default, the update DTO
 // validation and the admin UI.
-export const MODEL_TYPES = [
-  'chat',
-  'completion',
-  'embedding',
-  'image_generation',
-  'audio_transcription',
-  'audio_speech',
-  'moderation',
-  'guardrails_classifier',
-  'search',
-] as const;
+export const MODEL_TYPES = ['chat', 'completion', 'embedding', 'image_generation', 'audio_transcription', 'audio_speech', 'moderation', 'guardrails_classifier', 'search'] as const;
 
 export type ModelType = (typeof MODEL_TYPES)[number];
 
@@ -73,6 +63,14 @@ export interface ModelResponse {
     efforts: ReasoningEffortOption[];
     defaultEffort?: string;
   };
+}
+
+export interface ModelPricingSnapshot {
+  provider: string;
+  inputCostPerToken: number | null;
+  outputCostPerToken: number | null;
+  cachedInputCostPerToken: number | null;
+  version: string;
 }
 
 export interface ModelsListResponse {

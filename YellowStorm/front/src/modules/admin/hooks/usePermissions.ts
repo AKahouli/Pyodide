@@ -5,6 +5,9 @@
 
 import { useMemo, useCallback } from 'react';
 import { useAuth } from '@/modules/auth';
+import { FEATURE_PERMISSION_ITEMS, getMenuBranchPermissions, MENU_PERMISSION_ITEMS } from '../constants';
+import type { FeatureVisibility } from '../types';
+import type { MenuPermissionKey } from '../constants';
 
 /**
  * Check if user has a specific permission
@@ -42,6 +45,15 @@ function checkAllPermissions(userPermissions: string[], required: string[]): boo
   return required.every((perm) => checkPermission(userPermissions, perm));
 }
 
+export function checkScopedPermission(
+  userPermissions: string[],
+  namespace: 'feature' | 'menu',
+  required: string,
+): boolean {
+  const isRestricted = userPermissions.some((permission) => permission.startsWith(`${namespace}.`));
+  return !isRestricted || checkPermission(userPermissions, required);
+}
+
 export function usePermissions() {
   const { user } = useAuth();
   const permissions = useMemo(() => user?.permissions ?? [], [user?.permissions]);
@@ -67,10 +79,30 @@ export function usePermissions() {
     [permissions]
   );
 
+  const canUseFeature = useCallback(
+    (feature: keyof FeatureVisibility): boolean => {
+      const item = FEATURE_PERMISSION_ITEMS.find((candidate) => candidate.key === feature);
+      return item ? checkScopedPermission(permissions, 'feature', item.permission) : false;
+    },
+    [permissions]
+  );
+
+  const canSeeMenu = useCallback(
+    (menu: MenuPermissionKey): boolean => {
+      const item = MENU_PERMISSION_ITEMS.find((candidate) => candidate.key === menu);
+      if (!item) return false;
+      if (checkScopedPermission(permissions, 'menu', item.permission)) return true;
+      return getMenuBranchPermissions(menu).some((permission) => checkPermission(permissions, permission));
+    },
+    [permissions]
+  );
+
   return {
     permissions,
     hasPermission,
     hasAnyPermission,
     hasAllPermissions,
+    canUseFeature,
+    canSeeMenu,
   };
 }

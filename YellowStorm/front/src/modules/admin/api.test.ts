@@ -14,6 +14,7 @@ import {
   updateSensitiveTextRedaction,
   uploadEmailLogo,
 } from './api';
+import { DEFAULT_FEATURE_VISIBILITY } from './constants';
 
 const getMock = vi.hoisted(() => vi.fn());
 const postMock = vi.hoisted(() => vi.fn());
@@ -90,15 +91,9 @@ describe('admin api', () => {
 
   it('gets and updates feature visibility', async () => {
     const visibility = {
-      conversation: true,
-      workspace: true,
+      ...DEFAULT_FEATURE_VISIBILITY,
       playbook: false,
-      governance: true,
-      appMarketplace: true,
       worky: false,
-      agents: true,
-      semanticModel: true,
-      platformCopilot: false,
     };
     getMock.mockResolvedValue({ data: { data: visibility } });
     putMock.mockResolvedValue({ data: { data: visibility } });

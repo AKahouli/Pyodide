@@ -11,7 +11,7 @@ import {
 } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
-import { ConnectorActionSafety, ConnectorAuthSourceType, ConnectorAuthType, DynamicHeaderSource, McpTransportType } from '../schemas/connector.schema';
+import { ConnectorActionResultKind, ConnectorActionSafety, ConnectorAuthSourceType, ConnectorAuthType, ConnectorCitationMode, DynamicHeaderSource, McpTransportType } from '../schemas/connector.schema';
 
 export class ConnectorDynamicHeaderDto {
   @ApiProperty({ description: 'HTTP header name to inject, e.g. X-User-Id' })
@@ -75,6 +75,21 @@ export class ConnectorActionDto {
   @IsOptional()
   @IsBoolean()
   isEnabled?: boolean;
+
+  @ApiPropertyOptional({ enum: ConnectorActionResultKind, default: ConnectorActionResultKind.GENERIC })
+  @IsOptional()
+  @IsEnum(ConnectorActionResultKind)
+  resultKind?: ConnectorActionResultKind;
+
+  @ApiPropertyOptional({ enum: ConnectorCitationMode, default: ConnectorCitationMode.NONE })
+  @IsOptional()
+  @IsEnum(ConnectorCitationMode)
+  citationMode?: ConnectorCitationMode;
+
+  @ApiPropertyOptional({ description: 'Provider response field mapping', type: Object })
+  @IsOptional()
+  @IsObject()
+  resultMapping?: Record<string, unknown>;
 }
 
 export class CreateConnectorDto {

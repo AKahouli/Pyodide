@@ -5,7 +5,7 @@ import warnings
 
 from src.grpc_generated import a2a_admin_pb2 as a2a__admin__pb2
 
-GRPC_GENERATED_VERSION = '1.80.0'
+GRPC_GENERATED_VERSION = '1.81.1'
 GRPC_VERSION = grpc.__version__
 _version_not_supported = False
 
@@ -25,7 +25,7 @@ if _version_not_supported:
     )
 
 
-class A2AAdminServiceStub(object):
+class A2AAdminServiceStub:
     """Missing associated documentation comment in .proto file."""
 
     def __init__(self, channel):
@@ -56,7 +56,7 @@ class A2AAdminServiceStub(object):
                 _registered_method=True)
 
 
-class A2AAdminServiceServicer(object):
+class A2AAdminServiceServicer:
     """Missing associated documentation comment in .proto file."""
 
     def PublishAgent(self, request, context):
@@ -114,7 +114,7 @@ def add_A2AAdminServiceServicer_to_server(servicer, server):
 
 
  # This class is part of an EXPERIMENTAL API.
-class A2AAdminService(object):
+class A2AAdminService:
     """Missing associated documentation comment in .proto file."""
 
     @staticmethod

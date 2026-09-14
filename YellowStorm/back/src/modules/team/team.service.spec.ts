@@ -24,6 +24,7 @@ describe('TeamService', () => {
   beforeEach(() => {
     teamModel = {
       find: jest.fn(),
+      findById: jest.fn(),
       updateMany: jest.fn(),
     };
     logger = { setContext: jest.fn(), log: jest.fn() };
@@ -45,6 +46,49 @@ describe('TeamService', () => {
       {} as any, // toolService
       {} as any, // modelsService
     );
+  });
+
+  describe('resolveExecutionDefinition', () => {
+    const executableTeam = (ownerId: string, members: any[]) => ({
+      _id: new Types.ObjectId(), createdBy: new Types.ObjectId(ownerId), isActive: true, members,
+    });
+
+    it('authorizes a shared team and resolves its exact nested topology', async () => {
+      const ownerId = new Types.ObjectId().toString();
+      const root = new Types.ObjectId();
+      const nested = new Types.ObjectId();
+      const leaf = new Types.ObjectId();
+      teamModel.findById.mockReturnValue({ lean: () => ({ exec: () => Promise.resolve(executableTeam(ownerId, [
+        member(root), member(nested, 0, root), member(leaf, 0, nested),
+      ])) }) });
+      teamShareService.getSharePermission.mockResolvedValue('read');
+      agentService.findByIdsUnrestricted.mockResolvedValue([
+        { id: root.toString(), isActive: true, agentType: { slug: 'manager' } },
+        { id: nested.toString(), isActive: true, agentType: { slug: 'manager' } },
+        { id: leaf.toString(), isActive: true, agentType: { slug: 'worker' } },
+      ]);
+
+      const result = await service.resolveExecutionDefinition(userId, new Types.ObjectId().toString());
+      expect(result.nodes.map((node) => node.agentId)).toEqual([root, nested, leaf].map(String));
+      expect(agentService.findByIdsUnrestricted).toHaveBeenCalledTimes(1);
+    });
+
+    it('fails closed after team access is revoked', async () => {
+      teamModel.findById.mockReturnValue({ lean: () => ({ exec: () => Promise.resolve(executableTeam(new Types.ObjectId().toString(), [member(new Types.ObjectId())])) }) });
+      teamShareService.getSharePermission.mockResolvedValue(null);
+      await expect(service.resolveExecutionDefinition(userId, new Types.ObjectId().toString())).rejects.toThrow();
+      expect(agentService.findByIdsUnrestricted).not.toHaveBeenCalled();
+    });
+
+    it('rejects an inactive or missing member instead of dropping it', async () => {
+      const root = new Types.ObjectId();
+      const leaf = new Types.ObjectId();
+      teamModel.findById.mockReturnValue({ lean: () => ({ exec: () => Promise.resolve(executableTeam(userId, [member(root), member(leaf, 0, root)])) }) });
+      agentService.findByIdsUnrestricted.mockResolvedValue([
+        { id: root.toString(), isActive: true, agentType: { slug: 'manager' } },
+      ]);
+      await expect(service.resolveExecutionDefinition(userId, new Types.ObjectId().toString())).rejects.toThrow();
+    });
   });
 
   describe('resolveAgentIds', () => {

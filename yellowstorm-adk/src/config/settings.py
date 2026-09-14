@@ -106,9 +106,6 @@ class Settings(BaseSettings):
     CELERY_RESULT_BACKEND: Optional[str] = None
     CELERY_WORKER_CONCURRENCY: int = 4
     SECRET_KEY: str
-    ALGORITHM: str = "HS256"
-    ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
-    NESTJS_JWT_SECRET: Optional[str] = None
     ADK_API_KEY: str
     VECTORSTORE_API_KEY: str
     # Ollama
@@ -469,13 +466,6 @@ class Settings(BaseSettings):
     def validate_secret_key(cls, v):
         if not v or v.strip() == "":
             raise ValueError("SECRET_KEY is required and cannot be empty")
-        return v
-
-    @field_validator("ALGORITHM", mode="before")
-    @classmethod
-    def validate_algorithm(cls, v):
-        if not v or v.strip() == "":
-            raise ValueError("ALGORITHM is required and cannot be empty")
         return v
 
     def get_effective_pool_size(self) -> int:

@@ -9,6 +9,22 @@ export enum ConnectorActionSafety {
   DELETE = 'delete',
 }
 
+export enum ConnectorActionResultKind {
+  GENERIC = 'generic',
+  WEB_SEARCH = 'web_search',
+  WEB_FETCH = 'web_fetch',
+  DOCUMENT_SEARCH = 'document_search',
+  FILE_READ = 'file_read',
+  DATABASE_QUERY = 'database_query',
+}
+
+export enum ConnectorCitationMode {
+  NONE = 'none',
+  SOURCE_ONLY = 'source_only',
+  TEXT_FRAGMENT = 'text_fragment',
+  DOCUMENT_EVIDENCE = 'document_evidence',
+}
+
 export enum ConnectorAuthType {
   OAUTH2 = 'oauth2',
   API_KEY = 'api_key',
@@ -86,6 +102,15 @@ export class ConnectorAction {
 
   @Prop({ default: true })
   isEnabled!: boolean;
+
+  @Prop({ enum: ConnectorActionResultKind, default: ConnectorActionResultKind.GENERIC })
+  resultKind!: ConnectorActionResultKind;
+
+  @Prop({ enum: ConnectorCitationMode, default: ConnectorCitationMode.NONE })
+  citationMode!: ConnectorCitationMode;
+
+  @Prop({ type: MongooseSchema.Types.Mixed, default: undefined })
+  resultMapping?: Record<string, unknown>;
 }
 
 export const ConnectorActionSchema = SchemaFactory.createForClass(ConnectorAction);

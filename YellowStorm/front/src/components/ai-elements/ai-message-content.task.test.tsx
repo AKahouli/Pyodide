@@ -65,11 +65,12 @@ describe('AIMessageContent task activity', () => {
 
     await userEvent.click(screen.getByRole('button', { name: 'ai.task.diagnostics.open' }));
     expect(screen.getByRole('dialog')).toBeInTheDocument();
-    expect(screen.getByText(/original_user_request/)).toHaveTextContent('secret=[REDACTED]');
+    // Diagnostics render the stored context verbatim (no display-time redaction).
+    expect(screen.getByText(/original_user_request/)).toHaveTextContent('secret=hidden');
     expect(screen.queryByText(/corrective_replay_context/)).not.toBeInTheDocument();
   });
 
-  it('redacts common credential forms from diagnostics', async () => {
+  it('renders credential-like diagnostics verbatim without redaction', async () => {
     render(<AIMessageContent taskDisplay='activity' parts={[{
       type: 'task', title: 'smart_agent', status: 'completed', items: [
         'token=one refresh_token=two id_token=three API key=six access token=seven client secret=eight connection string=nine\nAuthorization: Basic dXNlcjpwYXNz\nCookie: session=four\nhttps://user:five@example.com',
@@ -77,8 +78,11 @@ describe('AIMessageContent task activity', () => {
     }]} />);
 
     await userEvent.click(screen.getByRole('button', { name: 'ai.task.diagnostics.open' }));
-    const context = screen.getByText(/token=\[REDACTED\]/);
-    expect(context).not.toHaveTextContent(/one|two|three|six|seven|eight|nine|dXNlcjpwYXNz|session=four|user:five/);
+    const context = screen.getByText(/token=one/);
+    expect(context).toHaveTextContent('refresh_token=two');
+    expect(context).toHaveTextContent('dXNlcjpwYXNz');
+    expect(context).toHaveTextContent('session=four');
+    expect(screen.queryByText(/\[REDACTED\]/)).not.toBeInTheDocument();
   });
 
   it('can suppress diagnostics for non-participant surfaces', () => {

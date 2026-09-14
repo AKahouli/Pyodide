@@ -19,6 +19,10 @@ vi.mock('@/modules/localization', () => ({
   } }),
 }));
 
+vi.mock('@/modules/localization/useModuleTranslation', () => ({
+  useModuleTranslation: () => ({ t: (key: string) => key }),
+}));
+
 vi.mock('@/components/ui/badge', () => ({
   Badge: ({ children }: { children: React.ReactNode }) => <span>{children}</span>,
 }));
@@ -104,6 +108,31 @@ describe('PlaybookIteratorContainerNode', () => {
     fireEvent.click(repackButton);
     expect(repackButton).toHaveTextContent('iterator.repackChildren');
     expect(repackIteratorChildren).toHaveBeenCalledWith('iterator-1');
+  });
+
+  it('renders the execution status badge when the canvas overlays a step status', () => {
+    render(
+      <NodeDataActionsContext.Provider value={{ updateNodeData: vi.fn() }}>
+        <PlaybookIteratorContainerNode
+          {...({
+            id: 'iterator-1',
+            selected: false,
+            data: {
+              id: 'iterator-1',
+              title: 'Iterator',
+              description: 'Arrange child steps',
+              iteratorConfig: { source: 'items', mode: 'item' },
+              inputPorts: [],
+              outputPorts: [],
+              childTaskIds: ['child-1'],
+              stepStatus: 'running',
+            },
+          } as any)}
+        />
+      </NodeDataActionsContext.Provider>,
+    );
+
+    expect(screen.getByText('status.running')).toBeInTheDocument();
   });
 
   it('renders visible labels and handles for multiple input ports from the latest store task', () => {

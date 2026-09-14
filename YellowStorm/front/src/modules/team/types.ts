@@ -56,7 +56,7 @@ export interface TeamMemberWithAgent extends TeamMember {
   agent?: {
     id: string;
     name: string;
-    agentType: { id: string; name: string };
+    agentType: { id: string; name: string; slug: string };
     role: string;
     description: string;
   };

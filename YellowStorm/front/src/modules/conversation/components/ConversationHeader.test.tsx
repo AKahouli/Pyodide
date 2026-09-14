@@ -82,6 +82,7 @@ describe('ConversationHeader', () => {
     expect(screen.queryByRole('button', { name: 'header.tooltips.workspaces' })).not.toBeInTheDocument();
 
     await userEvent.click(screen.getByRole('button', { name: 'header.tooltips.share' }));
+    await userEvent.click(screen.getByRole('menuitem', { name: 'header.tooltips.share' }));
     expect(screen.getByText('share-open')).toBeInTheDocument();
   });
 
@@ -99,10 +100,10 @@ describe('ConversationHeader', () => {
     expect(screen.getByText('delete-open')).toBeInTheDocument();
   });
 
-  it('exports the whole conversation to DOCX, PDF, and HTML', async () => {
+  it('exports the whole conversation to DOCX, PDF, and HTML from the merged share menu', async () => {
     render(<ConversationHeader />);
 
-    await userEvent.click(screen.getByRole('button', { name: 'header.actions.export' }));
+    await userEvent.click(screen.getByRole('button', { name: 'header.tooltips.share' }));
     await userEvent.click(screen.getByRole('menuitem', { name: /messageActions.exportDocx/ }));
 
     await waitFor(() => {
@@ -117,11 +118,11 @@ describe('ConversationHeader', () => {
       expect(showSuccessMock).toHaveBeenCalledWith('toasts.export.docxSuccess');
     });
 
-    await userEvent.click(screen.getByRole('button', { name: 'header.actions.export' }));
+    await userEvent.click(screen.getByRole('button', { name: 'header.tooltips.share' }));
     await userEvent.click(screen.getByRole('menuitem', { name: /messageActions.exportPdf/ }));
     await waitFor(() => expect(screen.getByText('conversation-pdf-export')).toBeInTheDocument());
 
-    await userEvent.click(screen.getByRole('button', { name: 'header.actions.export' }));
+    await userEvent.click(screen.getByRole('button', { name: 'header.tooltips.share' }));
     await userEvent.click(screen.getByRole('menuitem', { name: /messageActions.exportHtml/ }));
     await waitFor(() => {
       expect(downloadBlobMock).toHaveBeenCalledWith(expect.any(Blob), expect.stringMatching(/\.html$/));

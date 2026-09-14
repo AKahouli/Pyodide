@@ -161,7 +161,7 @@ async def test_child_result_queue_keeps_visible_citations_without_tool_context()
 
 
 @pytest.mark.asyncio
-async def test_child_result_queue_forwards_only_tool_activity():
+async def test_child_result_queue_forwards_tool_activity_and_usage():
     forwarded = []
 
     class ActivityQueue:
@@ -170,10 +170,12 @@ async def test_child_result_queue_forwards_only_tool_activity():
 
     queue = _ChildResultQueue(ActivityQueue())
     tool_event = {"action": "add", "component": {"id": "tool-child-call", "type": "tool_activity", "data": {"title": "search"}}}
+    usage_event = {"usage": {"input_tokens": 12, "output_tokens": 4, "model": "model-1"}}
     await queue.put(tool_event)
+    await queue.put(usage_event)
     await queue.put({"action": "add", "component": {"id": "text", "type": "text", "data": {"content": "private child text"}}})
 
-    assert forwarded == [tool_event]
+    assert forwarded == [tool_event, usage_event]
 
 
 @pytest.mark.asyncio

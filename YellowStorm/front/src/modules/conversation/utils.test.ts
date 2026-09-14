@@ -109,6 +109,24 @@ describe('conversation utils', () => {
     }
   });
 
+  it('preserves first-class web selectors when attaching citations to text', () => {
+    const parts = mapComponentsToContentParts([
+      { id: 'text-1', type: 'text', data: { content: 'Python added templates [1].' } } as never,
+      { type: 'citation', data: {
+        parentId: 'text-1', sourceKind: 'web', sourceType: 'web', source: 'https://example.com/python',
+        title: 'Python', exactText: 'Template strings are new.', prefix: 'Python 3.14', suffix: 'Details',
+        evidenceOrigin: 'page_content', reference: '1',
+      } } as never,
+    ]);
+
+    expect(parts[0]).toMatchObject({
+      type: 'text', citations: [{
+        sourceKind: 'web', sourceType: 'web', exactText: 'Template strings are new.',
+        prefix: 'Python 3.14', suffix: 'Details', evidenceOrigin: 'page_content',
+      }],
+    });
+  });
+
   it('attaches a citation to repeated reference markers outside its original parent', () => {
     const parts = mapComponentsToContentParts([
       { id: 'draft', type: 'text', data: { content: 'Draft result [2].' } } as never,

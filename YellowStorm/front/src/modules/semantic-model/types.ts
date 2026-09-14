@@ -19,7 +19,7 @@ export interface SemanticModelShareResult {
 export type SemanticModelKind = 'workspace_default' | 'designed';
 export type SemanticModelStatus = 'draft' | 'published' | 'archived';
 export type SemanticModelMaturity = 'automatic' | 'structured' | 'structured_with_records' | 'operational';
-export type EditorMode = 'structure' | 'records';
+export type EditorMode = 'structure' | 'records' | 'mappings';
 export type SaveStatus = 'saved' | 'saving' | 'offline' | 'error' | 'conflict';
 export type SemanticModelIndexStatus = 'not_indexed' | 'pending' | 'in_progress' | 'indexed' | 'failed';
 
@@ -311,4 +311,237 @@ export interface SemanticModelMappingProposal {
 export interface Paginated<T> {
   items: T[];
   pagination: { page: number; limit: number; total: number; totalPages: number };
+}
+
+// ── Structured source mappings ───────────────────────────────────────────────
+
+export type SourceAssetKind = 'excel_sheet' | 'csv' | 'document';
+
+export interface StructuredSourceAsset {
+  workspaceId: string;
+  documentId: string;
+  name: string;
+  kind: SourceAssetKind;
+  mimeType: string;
+  path: string;
+}
+
+export interface SheetSummary {
+  name: string;
+  rowCount: number;
+  fieldCount: number;
+}
+
+export interface SheetFieldProfile {
+  name: string;
+  type: 'text' | 'number' | 'boolean' | 'date';
+  sample: string;
+  populatedRatio: number;
+  uniqueRatio: number;
+}
+
+export interface SheetProfile {
+  sheets: SheetSummary[];
+  sheet?: SheetSummary;
+  fields?: SheetFieldProfile[];
+  sampleRows?: Record<string, unknown>[];
+  totalRows?: number;
+}
+
+export interface SourceFieldMapping {
+  sourceField: string | null;
+  targetAttribute: string;
+  mode: 'direct' | 'extract' | 'metadata' | 'constant' | 'ignore';
+  constantValue?: unknown;
+}
+
+export interface ConceptSourceMapping {
+  id: string;
+  conceptId: string;
+  workspaceId: string;
+  documentId: string;
+  documentName?: string;
+  documentPath?: string;
+  mimeType?: string;
+  sheetName: string;
+  assetKind: SourceAssetKind;
+  fieldMappings: SourceFieldMapping[];
+  status: string;
+  createdBy: string;
+  createdAt: string;
+  updatedAt: string;
+  identityFields: string[];
+  validatedSourceVersion?: string | null;
+  validatedAt?: string | null;
+}
+
+export type MappingHealthState = 'healthy' | 'changed' | 'unavailable' | 'broken';
+
+export interface MappingHealthItem extends ConceptSourceMapping {
+  conceptLabel: string;
+  sourceEnabled: boolean;
+  documentName: string;
+  state: MappingHealthState;
+  currentSourceVersion: string | null;
+  missingFields: string[];
+  availableFields: string[];
+  message: string | null;
+}
+
+export interface MappingHealthResponse {
+  items: MappingHealthItem[];
+  truncated: boolean;
+  summary: Record<MappingHealthState, number>;
+}
+
+export interface SemanticReadiness {
+  status: 'not_configured' | 'needs_review' | 'ready';
+  score: number;
+  completeAreas: number;
+  totalAreas: number;
+  areas: Array<{
+    key: 'structure' | 'sources' | 'identity' | 'relationships' | 'quality';
+    complete: boolean;
+    issues: Array<{ severity: 'blocking' | 'review'; message: string }>;
+  }>;
+}
+
+export interface SemanticReviewItem {
+  id: string;
+  kind: 'ambiguous_relation' | 'source_conflict' | 'broken_mapping';
+  targetId: string;
+  status: 'open' | 'resolved';
+  details: Record<string, unknown>;
+  resolution: Record<string, unknown> | null;
+  createdAt: string;
+  updatedAt: string;
+  resolvedBy: string | null;
+  resolvedAt: string | null;
+}
+
+export interface SourceMappingPreviewResponse {
+  entities: Array<{
+    entityKey: string;
+    label: string;
+    values: Record<string, unknown>;
+    provenance: {
+      rowNumber?: number;
+      fields?: Record<string, { method: 'direct_mapping' | 'semantic_extraction' | 'document_metadata' | 'fixed_value'; page?: string; quote?: string; reference?: string; confidence?: number }>;
+    };
+  }>;
+  stats: { scannedRows: number; resolvedEntities: number; duplicateKeysSkipped: number; nullIdentitySkipped: number };
+  identityEvidence: SheetFieldProfile[];
+  warnings: string[];
+}
+
+export interface SourceMappingDraft {
+  conceptId: string;
+  workspaceId: string;
+  documentId: string;
+  sheetName: string;
+  assetKind: SourceAssetKind;
+  fieldMappings: SourceFieldMapping[];
+  identityFields: string[];
+}
+
+export interface SourceMappingPreviewDraft {
+  conceptId: string;
+  workspaceId: string;
+  documentId: string;
+  sheetName?: string;
+  assetKind: SourceAssetKind;
+  fieldMappings: SourceFieldMapping[];
+  identityFields: string[];
+  limit?: number;
+}
+
+export type RelationMatchStrategy = 'exact' | 'case_insensitive' | 'normalized';
+export type RelationCardinality = 'one_to_one' | 'one_to_many' | 'many_to_one' | 'many_to_many';
+
+export interface RelationResolutionRule {
+  id: string;
+  relationId: string;
+  relationLabel: string;
+  sourceConceptId: string;
+  sourceConceptLabel: string;
+  targetConceptId: string;
+  targetConceptLabel: string;
+  sourceAttribute: string;
+  targetAttribute: string;
+  cardinality: RelationCardinality;
+  strategy: RelationMatchStrategy;
+  ambiguityPolicy: 'review' | 'unresolved';
+}
+
+export interface RelationResolutionPreview {
+  rule: RelationResolutionRule;
+  matches: Array<{
+    sourceEntityId: string;
+    targetEntityIds: string[];
+    sourceLabel: string;
+    targetLabels: string[];
+    status: 'resolved' | 'ambiguous' | 'unresolved';
+    sourceValue: unknown;
+    strategy: RelationMatchStrategy;
+    partial: boolean;
+  }>;
+  summary: { resolved: number; ambiguous: number; unresolved: number };
+  sourceIssues: SourcePreviewIssue[];
+}
+
+export interface SourceResolutionPolicy {
+  conceptId: string;
+  priorities: Array<{ mappingId: string; rank: number }>;
+  defaultStrategy: 'primary_then_fallback';
+}
+
+export interface SourcePreviewIssue {
+  mappingId: string;
+  code: 'source_unavailable';
+  message: string;
+}
+
+export interface SemanticDataPreview {
+  concepts: Array<{
+    id: string;
+    label: string;
+    entities: Array<{
+      id: string;
+      conceptId: string;
+      entityKey: string;
+      label: string;
+      values: Record<string, unknown>;
+      provenance: Record<string, {
+        mappingId: string;
+        source: {
+          kind: SourceAssetKind | 'manual';
+          workspaceId?: string;
+          documentId?: string;
+          documentName: string;
+          documentPath?: string;
+          mimeType?: string;
+          sheetName?: string;
+        };
+        rowNumber?: number;
+        field?: NonNullable<SourceMappingPreviewResponse['entities'][number]['provenance']['fields']>[string];
+      }>;
+      sources?: Array<{ mappingId: string; source: { documentName: string; sheetName?: string } }>;
+      conflicts: Array<{ attribute: string; preferred: unknown; conflicting: unknown; preferredMappingId: string; conflictingMappingId: string }>;
+    }>;
+  }>;
+  relations: Array<{
+    relationId: string;
+    relationLabel: string;
+    sourceEntityId: string;
+    targetEntityIds: string[];
+    status: 'resolved' | 'ambiguous' | 'unresolved';
+    sourceValue: unknown;
+    sourceAttribute: string;
+    targetAttribute: string;
+    targetValues: unknown[];
+    strategy: RelationMatchStrategy;
+    partial: boolean;
+  }>;
+  sourceIssues: SourcePreviewIssue[];
+  summary: { entities: number; resolvedRelations: number; unresolvedRelations: number; ambiguousRelations: number; conflicts: number };
 }

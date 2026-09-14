@@ -176,6 +176,31 @@ export interface SetMaintenanceRequest {
   estimatedEndAt?: string;
 }
 
+export type NavigationTargetKey =
+  | 'platform' | 'newChat' | 'projects' | 'history' | 'workspace' | 'semanticModels'
+  | 'playbook' | 'agents' | 'teams' | 'groups' | 'worky' | 'connectedApps'
+  | 'appMarketplace' | 'governance' | 'admin';
+
+export interface NavigationNode {
+  id: string;
+  type: 'group' | 'item';
+  parentId: string | null;
+  position: number;
+  visible: boolean;
+  labels: { en: string; fr: string };
+  targetKey?: NavigationTargetKey;
+}
+
+export interface NavigationSettings {
+  revision: number;
+  nodes: NavigationNode[];
+}
+
+export interface LoginSettings {
+  accessExpiry: string;
+  refreshExpiry: string;
+}
+
 export interface RegistrationStatus {
   enabled: boolean;
   disabledAt?: string;
@@ -200,6 +225,21 @@ export interface FeatureVisibility {
   agents: boolean;
   semanticModel: boolean;
   platformCopilot: boolean;
+  playbookDevtools: boolean;
+  playbookDeltaAutosave: boolean;
+  playbookMcpAssistant: boolean;
+  playbookMcpConnectorReconciliation: boolean;
+  governedConversations: boolean;
+  governanceScopeAudience: boolean;
+  governedScopeCarousel: boolean;
+  dataRoomDecisionFlows: boolean;
+  dataRoomGovernance: boolean;
+  dataRoomSourceVersioning: boolean;
+  dataRoomWorkspaceEvents: boolean;
+  dataRoomAutoSourceCreation: boolean;
+  dataRoomOutboxDispatch: boolean;
+  dataRoomValidityIntelligence: boolean;
+  dataRoomKnowledgeAssessment: boolean;
 }
 
 export interface CorsOriginEntry {
@@ -1602,6 +1642,17 @@ export interface ConnectorActionResponse {
   supportsBatch: boolean;
   supportsIteration: boolean;
   isEnabled: boolean;
+  resultKind?: ConnectorActionResultKind;
+  citationMode?: ConnectorCitationMode;
+  resultMapping?: ConnectorResultMapping;
+}
+
+export type ConnectorActionResultKind = 'generic' | 'web_search' | 'web_fetch' | 'document_search' | 'file_read' | 'database_query';
+export type ConnectorCitationMode = 'none' | 'source_only' | 'text_fragment' | 'document_evidence';
+
+export interface ConnectorResultMapping {
+  itemsPath?: string;
+  fields?: Partial<Record<'title' | 'url' | 'snippet' | 'content' | 'publishedAt' | 'author' | 'prefix' | 'suffix', string[]>>;
 }
 
 export type ConnectorDynamicHeaderSource =
@@ -1682,6 +1733,9 @@ export interface CreateConnectorRequest {
     supportsBatch?: boolean;
     supportsIteration?: boolean;
     isEnabled?: boolean;
+    resultKind?: ConnectorActionResultKind;
+    citationMode?: ConnectorCitationMode;
+    resultMapping?: ConnectorResultMapping;
   }>;
   referencedSkillIds?: string[];
   isActive?: boolean;

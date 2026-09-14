@@ -22,8 +22,10 @@ import { useConversationStream } from '@/modules/conversation/hooks/useConversat
 import { useConversationV2StreamConnection } from '@/modules/conversation-v2/useStream';
 import { usePlaybookStreamGlobal } from '@/modules/playbook/services/playbookStreamService';
 import { DEFAULT_FEATURE_VISIBILITY, getFeatureVisibility } from '@/modules/admin';
+import { usePermissions } from '@/modules/admin/hooks/usePermissions';
 import { PlatformCopilotMascot } from '@/modules/platform-copilot';
 import { isPendingAdminApproval } from '../utils/isPendingAdminApproval';
+import { useFeatureVisibilityStore } from '@/modules/admin/featureVisibilityStore';
 
 export function RootGuard() {
   const {
@@ -37,9 +39,11 @@ export function RootGuard() {
   const location = useLocation();
   const fetchModels = useModelsStore((state) => state.fetchModels);
   const pendingApproval = isPendingAdminApproval(user);
+  const { canUseFeature } = usePermissions();
   const [platformCopilotEnabled, setPlatformCopilotEnabled] = React.useState(
     DEFAULT_FEATURE_VISIBILITY.platformCopilot,
   );
+  const setFeatureVisibility = useFeatureVisibilityStore((state) => state.setVisibility);
 
   const wasPendingRef = React.useRef(pendingApproval);
   const [justApproved, setJustApproved] = React.useState(false);
@@ -95,13 +99,16 @@ export function RootGuard() {
     let active = true;
     void getFeatureVisibility()
       .then((visibility) => {
-        if (active) setPlatformCopilotEnabled(visibility.platformCopilot);
+        if (active) {
+          setPlatformCopilotEnabled(visibility.platformCopilot);
+          setFeatureVisibility(visibility);
+        }
       })
       .catch(() => {
         if (active) setPlatformCopilotEnabled(false);
       });
     return () => { active = false; };
-  }, [isAuthenticated, requiresEmailVerification, requiresProfileCompletion, pendingApproval, justApproved]);
+  }, [isAuthenticated, requiresEmailVerification, requiresProfileCompletion, pendingApproval, justApproved, setFeatureVisibility]);
 
   // Still loading auth state - show spinner to prevent flash of wrong content
   if (isLoading) {
@@ -153,8 +160,12 @@ export function RootGuard() {
     matchPath({ path: '/worky/:streamId', end: true }, location.pathname),
   );
 
+  // Restore the persisted sidebar state before first paint to avoid a visible flip.
+  const sidebarOpen =
+    typeof document === 'undefined' || !/(?:^|;\s*)sidebar_state=false(?:;|$)/.test(document.cookie);
+
   return (
-    <SidebarProvider>
+    <SidebarProvider defaultOpen={sidebarOpen}>
       <AppSidebar />
       <SidebarInset className='bg-transparent'>
         <header className='flex h-14 shrink-0 items-center gap-2 md:hidden'>
@@ -162,7 +173,7 @@ export function RootGuard() {
         </header>
         <div className='flex flex-1 min-h-0 flex-col items-center  overflow-hidden'>{isIndexRoute ? <NewConversationPage /> : <Outlet />}</div>
       </SidebarInset>
-      {platformCopilotEnabled && !isWorkyStreamRoute && <PlatformCopilotMascot />}
+      {platformCopilotEnabled && canUseFeature('platformCopilot') && !isWorkyStreamRoute && <PlatformCopilotMascot />}
     </SidebarProvider>
   );
 }

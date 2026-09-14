@@ -6,6 +6,7 @@ import { User } from '@modules/user/schemas/user.schema';
 import { UserStatus } from '@modules/user/schemas/user.schema';
 import { ConversationService } from '@modules/conversation/services/conversation.service';
 import { MessageService } from '@modules/conversation/services/message.service';
+import { ConversationSettingsService } from '@modules/system/conversation-settings.service';
 import { AgentService } from '@modules/agent/agent.service';
 import { LoggerService } from '@modules/logger';
 import { WorkyWhatsAppIntegrationService } from '@modules/worky/services/worky-whatsapp-integration.service';
@@ -83,6 +84,7 @@ describe('WhatsAppMessageService', () => {
     getDocumentById: jest.fn(),
     updateStatus: jest.fn(),
   };
+  const mockConversationSettings = { shouldRedactSensitiveText: jest.fn(() => true) };
 
   const sendReply = jest.fn().mockResolvedValue(undefined);
 
@@ -102,6 +104,7 @@ describe('WhatsAppMessageService', () => {
         { provide: WhatsAppStreamService, useValue: mockStreamService },
         { provide: WhatsAppIntegrationService, useValue: mockAgentIntegrationService },
         { provide: WorkyWhatsAppIntegrationService, useValue: mockWorkyIntegrationService },
+        { provide: ConversationSettingsService, useValue: mockConversationSettings },
       ],
     }).compile();
 

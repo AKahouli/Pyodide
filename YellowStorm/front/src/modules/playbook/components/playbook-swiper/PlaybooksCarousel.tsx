@@ -14,6 +14,7 @@ type PlaybooksCarouselProps = Readonly<{
 }>;
 
 const ACCENT_GRADIENTS = ['from-indigo-500/20 via-indigo-400/10 to-transparent text-indigo-600', 'from-emerald-500/20 via-emerald-400/10 to-transparent text-emerald-600', 'from-rose-500/20 via-rose-400/10 to-transparent text-rose-600', 'from-amber-500/20 via-amber-400/10 to-transparent text-amber-600'];
+const FAILED_FETCH_RETRY_MS = 60_000;
 
 export function PlaybooksCarousel({ className, onPlaybookSelect }: PlaybooksCarouselProps) {
   const playbooks = usePlaybooks();
@@ -21,15 +22,21 @@ export function PlaybooksCarousel({ className, onPlaybookSelect }: PlaybooksCaro
   const fetchPlaybooks = usePlaybookStore((s) => s.fetchPlaybooks);
   const fetchMorePlaybooks = usePlaybookStore((s) => s.fetchMorePlaybooks);
   const pagination = usePlaybookStore((s) => s.playbooksPagination);
+  const initialFetchAttempted = useRef(false);
   const hasMore = pagination ? pagination.page < pagination.totalPages : false;
   const navigate = useNavigate();
   const [emblaRef, emblaApi] = useEmblaCarousel({ align: 'start', dragFree: true, containScroll: 'trimSnaps' });
 
   useEffect(() => {
-    if (!playbooksLoading && playbooks.length === 0) {
+    if (playbooksLoading || playbooks.length > 0 || pagination) return;
+
+    const timer = window.setTimeout(() => {
+      initialFetchAttempted.current = true;
       void fetchPlaybooks({ page: 1, limit: 5, sortBy: 'updatedAt', sortOrder: 'desc' });
-    }
-  }, [fetchPlaybooks, playbooks.length, playbooksLoading]);
+    }, initialFetchAttempted.current ? FAILED_FETCH_RETRY_MS : 0);
+
+    return () => window.clearTimeout(timer);
+  }, [fetchPlaybooks, pagination, playbooks.length, playbooksLoading]);
 
   const [canScrollPrev, setCanScrollPrev] = useState(false);
   const [canScrollNext, setCanScrollNext] = useState(false);

@@ -1,6 +1,29 @@
-import { render, screen } from '@testing-library/react';
-import { describe, expect, it, vi } from 'vitest';
-import { ChatConversationEmptyState, ChatMessageBubble } from './chat-conversation';
+import { act, render, screen } from '@testing-library/react';
+import type { ReactNode } from 'react';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { ChatConversationEmptyState, ChatConversationFollow, ChatMessageBubble } from './chat-conversation';
+
+const stickToBottomMocks = vi.hoisted(() => ({
+  scrollElement: null as HTMLElement | null,
+  scrollToBottom: vi.fn(),
+  stopScroll: vi.fn(),
+}));
+
+vi.mock('use-stick-to-bottom', () => {
+  const StickToBottom = Object.assign(
+    ({ children }: { children: ReactNode }) => <div>{children}</div>,
+    { Content: ({ children }: { children: ReactNode }) => <div>{children}</div> },
+  );
+  return {
+    StickToBottom,
+    useStickToBottomContext: () => ({
+      scrollRef: { current: stickToBottomMocks.scrollElement },
+      scrollToBottom: stickToBottomMocks.scrollToBottom,
+      stopScroll: stickToBottomMocks.stopScroll,
+      isAtBottom: true,
+    }),
+  };
+});
 
 vi.mock('@/modules/localization', () => ({
   useModuleTranslation: () => ({
@@ -12,6 +35,35 @@ vi.mock('@/modules/localization', () => ({
     }[key] || key),
   }),
 }));
+
+describe('ChatConversationFollow', () => {
+  beforeEach(() => {
+    stickToBottomMocks.scrollElement = document.createElement('div');
+    stickToBottomMocks.scrollToBottom.mockReset();
+    stickToBottomMocks.stopScroll.mockReset();
+  });
+
+  it('starts following for each stream and stops after manual scrolling', () => {
+    const { rerender } = render(<ChatConversationFollow active={false} />);
+
+    rerender(<ChatConversationFollow active />);
+    expect(stickToBottomMocks.scrollToBottom).toHaveBeenCalledOnce();
+    expect(stickToBottomMocks.scrollToBottom).toHaveBeenCalledWith('instant');
+
+    act(() => stickToBottomMocks.scrollElement!.dispatchEvent(new WheelEvent('wheel')));
+    expect(stickToBottomMocks.stopScroll).toHaveBeenCalled();
+    const wheelStopCalls = stickToBottomMocks.stopScroll.mock.calls.length;
+    act(() => stickToBottomMocks.scrollElement!.dispatchEvent(new TouchEvent('touchmove')));
+    expect(stickToBottomMocks.stopScroll.mock.calls.length).toBeGreaterThan(wheelStopCalls);
+
+    rerender(<ChatConversationFollow active={false} />);
+    const stoppedCalls = stickToBottomMocks.stopScroll.mock.calls.length;
+    act(() => stickToBottomMocks.scrollElement!.dispatchEvent(new WheelEvent('wheel')));
+    expect(stickToBottomMocks.stopScroll).toHaveBeenCalledTimes(stoppedCalls);
+    rerender(<ChatConversationFollow active />);
+    expect(stickToBottomMocks.scrollToBottom).toHaveBeenCalledTimes(2);
+  });
+});
 
 describe('ChatMessageBubble layout', () => {
   it('uses the full message column for assistant responses', () => {

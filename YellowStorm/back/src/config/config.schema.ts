@@ -1,16 +1,7 @@
 import * as Joi from 'joi';
 
 export const configValidationSchema = Joi.object({
-  GOVERNED_CONVERSATIONS_ENABLED: Joi.boolean().default(false),
-  GOVERNANCE_SCOPE_AUDIENCE_ENABLED: Joi.boolean().default(false),
-  GOVERNED_SCOPE_CAROUSEL_ENABLED: Joi.boolean().default(false),
-  DATA_ROOM_GOVERNANCE_ENABLED: Joi.boolean().default(false),
-  DATA_ROOM_WORKSPACE_EVENTS_ENABLED: Joi.boolean().default(false),
   DATA_ROOM_GOVERNANCE_EVENT_CONSUMER_ENABLED: Joi.boolean().default(false),
-  DATA_ROOM_RECONCILIATION_ENABLED: Joi.boolean().default(false),
-  DATA_ROOM_OUTBOX_DISPATCH_ENABLED: Joi.boolean().default(false),
-  DATA_ROOM_VALIDITY_INTELLIGENCE_ENABLED: Joi.boolean().default(false),
-  DATA_ROOM_KNOWLEDGE_ASSESSMENT_ENABLED: Joi.boolean().default(false),
   // Application
   APP_NAME: Joi.string().default('YelloStorm'),
   NODE_ENV: Joi.string().valid('development', 'production', 'test').default('development'),
@@ -49,36 +40,30 @@ export const configValidationSchema = Joi.object({
   CONVERSATION_MAX_CLONE_MESSAGES: Joi.number().min(1).max(10000).default(2000),
   CONVERSATION_MAX_PRIVATE_SHARE_RECIPIENTS: Joi.number().min(1).max(20).default(20),
   CONVERSATION_CLONE_INSERT_BATCH_SIZE: Joi.number().min(1).max(1000).default(250),
+  CONVERSATION_CARBON_FACTORS_JSON: Joi.string().default('{}'),
+  CONVERSATION_CARBON_METHODOLOGY: Joi.string().max(100).default('tokens-factor-v1'),
+  CONVERSATION_CARBON_FACTOR_VERSION: Joi.string().max(100).default('unconfigured'),
 
   // Semantic Model PostgreSQL / Apache AGE
-  SEMANTIC_MODELS_ENABLED: Joi.boolean().default(false),
   SEMANTIC_MODELS_AUTO_PROVISION: Joi.boolean().default(false),
-  SEMANTIC_PG_HOST: Joi.string().when('SEMANTIC_MODELS_ENABLED', {
-    is: true,
-    then: Joi.required(),
-    otherwise: Joi.optional().allow(''),
-  }),
+  SEMANTIC_PG_HOST: Joi.string().optional().allow(''),
   SEMANTIC_PG_PORT: Joi.number().min(1).max(65535).default(5432),
-  SEMANTIC_PG_USER: Joi.string().when('SEMANTIC_MODELS_ENABLED', {
-    is: true,
-    then: Joi.required(),
-    otherwise: Joi.optional().allow(''),
-  }),
+  SEMANTIC_PG_USER: Joi.string().optional().allow(''),
   SEMANTIC_PG_PASSWORD: Joi.string().allow('').optional(),
-  SEMANTIC_PG_DATABASE: Joi.string().when('SEMANTIC_MODELS_ENABLED', {
-    is: true,
-    then: Joi.required(),
-    otherwise: Joi.optional().allow(''),
-  }),
+  SEMANTIC_PG_DATABASE: Joi.string().optional().allow(''),
   SEMANTIC_PG_SSL: Joi.boolean().default(false),
   SEMANTIC_PG_POOL_MAX: Joi.number().min(1).max(50).default(10),
-  SEMANTIC_AGE_GRAPH: Joi.string().pattern(/^[a-z][a-z0-9_]{0,62}$/).default('semantic_model_graph'),
+  SEMANTIC_AGE_GRAPH: Joi.string()
+    .pattern(/^[a-z][a-z0-9_]{0,62}$/)
+    .default('semantic_model_graph'),
   SEMANTIC_MODEL_NATIVE_SEARCH_URL: Joi.string().uri().default('http://localhost:8045/search_native'),
   SEMANTIC_MODEL_NATIVE_SEARCH_BATCH_URL: Joi.string().uri().default('http://localhost:8045/search_native/batch'),
   SEMANTIC_MODEL_NATIVE_SEARCH_AUTH_TOKEN: Joi.string().allow('').optional(),
   SEMANTIC_MODEL_NATIVE_SEARCH_LOG_QUERY: Joi.boolean().default(false),
   SEMANTIC_MODEL_EVIDENCE_SEARCH_TIMEOUT_MS: Joi.number().min(5000).max(1800000).default(180000),
   SEMANTIC_MODEL_EVIDENCE_SEARCH_CONCURRENCY: Joi.number().integer().min(1).max(16).default(4),
+  SEMANTIC_MODEL_DOCUMENT_EXTRACTION_AGENT_ID: Joi.string().allow('').optional(),
+  SEMANTIC_MODEL_DOCUMENT_EXTRACTION_TIMEOUT_MS: Joi.number().min(5000).max(1800000).default(180000),
   SEMANTIC_SEARCH_URL: Joi.string().uri().default('http://127.0.0.1:8100'),
   SEMANTIC_SEARCH_TOKEN: Joi.string().allow('').optional(),
   SEMANTIC_SEARCH_TIMEOUT_SECONDS: Joi.number().min(1).max(1800).default(300),
@@ -159,8 +144,6 @@ export const configValidationSchema = Joi.object({
     then: Joi.required(),
     otherwise: Joi.optional(),
   }),
-  JWT_ACCESS_EXPIRY: Joi.string().default('15m'),
-  JWT_REFRESH_EXPIRY: Joi.string().default('7d'),
   JWT_ISSUER: Joi.string().default('yellostorm'),
   JWT_AUDIENCE: Joi.string().default('yellostorm-api'),
 
@@ -379,9 +362,10 @@ export const configValidationSchema = Joi.object({
   PLAYBOOK_MAX_CONCURRENT_PER_MODEL: Joi.number().min(1).max(500).default(10),
   PLAYBOOK_DYNAMIC_REASONING_ENABLED: Joi.boolean().default(false),
   PLAYBOOK_ASYNC_DESIGN_ENABLED: Joi.boolean().default(false),
-  PLAYBOOK_MCP_ASSISTANT_ENABLED: Joi.boolean().default(false),
   PLAYBOOK_MCP_SERVER_URL: Joi.string().uri().default('http://localhost:8025/mcp'),
   PLAYBOOK_MCP_INGRESS_TOKEN: Joi.string().allow('').default(''),
+  AGENT_MCP_SERVER_URL: Joi.string().uri().default('http://localhost:8026/mcp'),
+  AGENT_MCP_INGRESS_TOKEN: Joi.string().allow('').default(''),
   PLAYBOOK_MAX_CONCURRENT_GLOBAL_DESIGN_OPERATIONS: Joi.number().min(1).max(100).default(10),
   PLAYBOOK_MAX_CONCURRENT_USER_DESIGN_OPERATIONS: Joi.number().min(1).max(50).default(3),
   // Telegram
@@ -404,9 +388,7 @@ export const configValidationSchema = Joi.object({
   WHATSAPP_CONNECTIVITY_PROBE_TIMEOUT_MS: Joi.number().min(1000).max(60000).default(10000),
   WHATSAPP_PROCESSING_TIMEOUT_MS: Joi.number().min(30000).max(600000).default(180000),
   WHATSAPP_MAX_INBOUND_PER_MINUTE: Joi.number().min(1).max(300).default(30),
-  WHATSAPP_FALLBACK_REPLY: Joi.string()
-    .max(500)
-    .default('I could not generate a response for this message.'),
+  WHATSAPP_FALLBACK_REPLY: Joi.string().max(500).default('I could not generate a response for this message.'),
   WHATSAPP_CIRCUIT_BREAKER_FAILURE_THRESHOLD: Joi.number().min(1).max(20).default(3),
   WHATSAPP_CIRCUIT_BREAKER_COOLDOWN_MS: Joi.number().min(5000).max(300000).default(60000),
 
@@ -414,7 +396,6 @@ export const configValidationSchema = Joi.object({
   LOGGING_MONGODB_URI: Joi.string().optional(),
   LOGGING_BUFFER_SIZE: Joi.number().min(10).max(10000).default(100),
   LOGGING_FLUSH_INTERVAL_MS: Joi.number().min(1000).max(60000).default(5000),
-  LOGGING_TTL_DAYS: Joi.number().min(1).max(365).default(30),
   LOGGING_PERSISTENCE_ENABLED: Joi.boolean().default(true),
   LOGGING_DEFAULT_SAVE: Joi.boolean().default(true),
   LOGGING_DEFAULT_DISPLAY: Joi.boolean().default(true),
@@ -454,9 +435,7 @@ export const configValidationSchema = Joi.object({
   WORKY_VOICE_NAME: Joi.string().default('Kore'),
   WORKY_VOICE_WS_BASE_URL: Joi.string()
     .uri({ scheme: ['wss'] })
-    .default(
-      'wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1alpha.GenerativeService.BidiGenerateContentConstrained',
-    ),
+    .default('wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1alpha.GenerativeService.BidiGenerateContentConstrained'),
   WORKY_VOICE_TOKEN_TTL_SEC: Joi.number().min(60).max(3600).default(1800),
   WORKY_VOICE_SESSION_START_TTL_SEC: Joi.number().min(30).max(600).default(60),
 

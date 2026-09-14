@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
+import { FeatureVisibilityService } from '@modules/system/feature-visibility.service';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import { ForbiddenException } from '@modules/exceptions';
@@ -9,10 +9,10 @@ import { GovernanceScope, GovernanceScopeDocument } from '../schemas/governance-
 
 @Injectable()
 export class GovernanceAudienceAuthorizationService {
-  constructor(@InjectModel(GovernanceScope.name) private readonly scopeModel: Model<GovernanceScopeDocument>, private readonly userGroupService: UserGroupService, private readonly configService: ConfigService) {}
+  constructor(@InjectModel(GovernanceScope.name) private readonly scopeModel: Model<GovernanceScopeDocument>, private readonly userGroupService: UserGroupService, private readonly features: FeatureVisibilityService) {}
 
   async isUserAuthorized(userId: string, scopeId: string): Promise<boolean> {
-    if (!this.configService.get<boolean>('governedConversations.audienceEnabled', false) || !Types.ObjectId.isValid(userId) || !Types.ObjectId.isValid(scopeId)) return false;
+    if (!this.features.isEnabled('governanceScopeAudience') || !Types.ObjectId.isValid(userId) || !Types.ObjectId.isValid(scopeId)) return false;
     const scope = await this.scopeModel.findOne({ _id: new Types.ObjectId(scopeId), status: 'active' }).select('audience').lean().exec();
     if (!scope) return false;
     const audience = scope.audience ?? { mode: 'restricted', userIds: [], groupIds: [] };

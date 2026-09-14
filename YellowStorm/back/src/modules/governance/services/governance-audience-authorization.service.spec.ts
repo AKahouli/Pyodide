@@ -5,13 +5,13 @@ describe('GovernanceAudienceAuthorizationService', () => {
   const userId = new Types.ObjectId().toString();
   const scopeId = new Types.ObjectId().toString();
   const groupId = new Types.ObjectId().toString();
-  const config = { get: jest.fn().mockReturnValue(true) };
+  const features = { isEnabled: jest.fn().mockReturnValue(true) };
   const groups = { findGroupIdsForMember: jest.fn() };
 
   function serviceWith(audience: Record<string, unknown> | null) {
     const exec = jest.fn().mockResolvedValue(audience ? { audience } : null);
     const scopeModel = { findOne: jest.fn().mockReturnValue({ select: () => ({ lean: () => ({ exec }) }) }) };
-    return new GovernanceAudienceAuthorizationService(scopeModel as never, groups as never, config as never);
+    return new GovernanceAudienceAuthorizationService(scopeModel as never, groups as never, features as never);
   }
 
   beforeEach(() => jest.clearAllMocks());

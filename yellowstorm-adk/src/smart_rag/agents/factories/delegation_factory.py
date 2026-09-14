@@ -34,11 +34,12 @@ logger = get_logger("api.routers.agentic_rag.AgentDelegationFactory")
 
 
 class _DelegatedTemporaryChildTeam:
-    def __init__(self, delegation_factory: "AgentDelegationFactory"):
+    def __init__(self, delegation_factory: "AgentDelegationFactory", current_queue: Any = None):
         self.config = delegation_factory.config
         self.agent_helper = delegation_factory._helper
         self.delegation_factory = delegation_factory
         self.citation_manager = delegation_factory.citation_manager
+        self.current_queue = current_queue
 
 
 class AgentDelegationFactory:
@@ -85,6 +86,10 @@ class AgentDelegationFactory:
         self._memory_service: Optional[MemoryService] = None
         self._image_input: Optional[List] = None
         self.citation_manager=citation_manager
+        self._hierarchy: dict[str, list[str]] = {}
+
+    def set_hierarchy(self, children_by_parent_id: dict[str, list[str]]) -> None:
+        self._hierarchy = children_by_parent_id
 
     def set_image_input(self, image_input: Optional[List] = None) -> None:
         """Set the image input for agent delegation.
@@ -148,16 +153,33 @@ class AgentDelegationFactory:
                 logger.error(f"[DELEGATION] Failed to create agent: {agent_name} - session_id: {self.config.session_id}")
                 return None
 
+            child_ids = self._hierarchy.get(str(agent_config.get("id")), [])
+            if child_ids:
+                child_configs = [self.agent_repository.get_agent_by_id(child_id) for child_id in child_ids]
+                child_configs = [child for child in child_configs if child]
+                delegation_tools = []
+                for child in child_configs:
+                    child_name = child.get("name", "")
+                    child_delegate = self.make_delegate_function(child_name, q, search_web)
+                    child_delegate.__name__ = f"delegate_to_{self._helper.sanitize_function_name(child_name)}"
+                    delegation_tools.append(child_delegate)
+                agent.tools = [*(agent.tools or []), *delegation_tools]
+                agent.instruction = self._helper._create_enhanced_manager_prompt(
+                    agent.instruction,
+                    child_configs,
+                    self.config,
+                )
+
             if should_enable_temporary_child_agent_tool(agent_config):
                 agent.instruction = (
                     f"{agent.instruction}\n\n{TEMPORARY_CHILD_AGENT_PARENT_INSTRUCTION}"
                 )
                 temporary_child_tool = make_temporary_child_agent_tool(
-                    _DelegatedTemporaryChildTeam(self),
+                    _DelegatedTemporaryChildTeam(self, q),
                     agent_config,
                     image_input=resolved_image_input,
                 )
-                agent.tools = [temporary_child_tool]
+                agent.tools = [*(agent.tools or []), temporary_child_tool]
                 logger.info(
                     "[TEMP CHILD] Delegated tool attached agent=%s session=%s",
                     agent_config.get("id") or agent_config.get("name"),

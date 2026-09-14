@@ -7,8 +7,9 @@ describe('SemanticModelDatabaseService', () => {
       release: jest.fn(),
     };
     const service = new SemanticModelDatabaseService(
-      { enabled: false } as never,
+      {} as never,
       { setContext: jest.fn() } as never,
+      { isEnabled: jest.fn().mockReturnValue(true) } as never,
     );
     (service as unknown as { pool: { connect: () => Promise<typeof client> } }).pool = {
       connect: async () => client,

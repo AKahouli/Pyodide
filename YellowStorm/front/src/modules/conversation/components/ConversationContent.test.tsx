@@ -16,6 +16,7 @@ vi.mock('../api', () => ({
 vi.mock('@/components/ai-elements/chat-conversation', () => ({
   ChatConversation: ({ children }: { children: ReactNode }) => <div>{children}</div>,
   ChatConversationContent: ({ children }: { children: ReactNode }) => <div>{children}</div>,
+  ChatConversationFollow: ({ active }: { active: boolean }) => <div data-testid='conversation-follow' data-active={active} />,
   ChatMessageBubble: ({ footerActions }: { footerActions?: ReactNode }) => <div>bubble{footerActions}</div>,
   ChatScrollButton: ({ className }: { className?: string }) => <button type='button' className={className}>scroll</button>,
   ChatConversationEmptyState: () => <div>empty-state</div>,
@@ -93,6 +94,7 @@ describe('ConversationContent', () => {
     render(<ConversationContent />);
     expect(screen.getAllByRole('status')).not.toHaveLength(0);
     expect(screen.getByTestId('conversation-assistant-bubble')).toBeInTheDocument();
+    expect(screen.getByTestId('conversation-follow')).toHaveAttribute('data-active', 'true');
     isAwaitingFirstChunk = false;
     storeState.awaitingConversationId = null;
   });
@@ -102,6 +104,7 @@ describe('ConversationContent', () => {
     storeState.awaitingConversationId = 'conv-2';
     render(<ConversationContent />);
     expect(screen.queryByText('loading-thinking')).not.toBeInTheDocument();
+    expect(screen.getByTestId('conversation-follow')).toHaveAttribute('data-active', 'false');
   });
 
   it('hides reliability when a completed AI message has no tool call', () => {

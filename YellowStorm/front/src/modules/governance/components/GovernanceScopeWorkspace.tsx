@@ -48,11 +48,11 @@ import {
 import { GovernanceAgentName } from './GovernanceAgentSelector';
 import { GovernanceDryRunConversationModal } from './GovernanceDryRunConversationModal';
 import { WorkspaceBindingList as WorkspaceBindingListPanel } from './bindings/WorkspaceBindingList';
-import { dataRoomFeatures } from '@/config/dataRoomFeatures';
 import { governanceQueryKeys } from '../query/queryKeys';
 import { ScopeAudienceTab } from './scope/ScopeAudienceTab';
 import { KnowledgeSourcesCard } from './scope/KnowledgeSourcesCard';
-import { getLatestDryRunRevisionNumber, governanceScopeTabs, isCurrentDraftDryRunPassed, type TabKey } from './scope-readiness';
+import { getGovernanceScopeTabs, getLatestDryRunRevisionNumber, isCurrentDraftDryRunPassed, type TabKey } from './scope-readiness';
+import { useFeatureVisibilityStore } from '@/modules/admin/featureVisibilityStore';
 
 export type { TabKey } from './scope-readiness';
 
@@ -152,6 +152,8 @@ export function GovernanceScopeWorkspace({ programId, scopeId, overview, members
   const [isChangingTab, setIsChangingTab] = useState(false);
   const updateScope = useUpdateGovernanceScope(programId, scopeId);
   const queryClient = useQueryClient();
+  const governedConversations = useFeatureVisibilityStore((state) => state.visibility.governedConversations);
+  const governanceScopeTabs = getGovernanceScopeTabs(governedConversations);
 
   useEffect(() => {
     if (!overview) return;
@@ -444,15 +446,11 @@ function KnowledgeTab({ programId, scopeId, scope }: Readonly<{ programId: strin
   const { t } = useModuleTranslation('governance');
   const [dialogOpen, setDialogOpen] = useState(false);
   const fetchWorkspaces = useWorkspaceStore((state) => state.fetchWorkspaces);
-  const { data: bindings = [] } = useGovernanceWorkspaceBindings(dataRoomFeatures.workspaceBindingEnabled ? programId : null);
+  const { data: bindings = [] } = useGovernanceWorkspaceBindings(programId);
   const scopeBindings = bindings.filter((binding) => isEffectiveScopeWorkspaceBinding(binding, scopeId));
   const mappedWorkspaceIds = scopeBindings.map((binding) => binding.workspaceId);
 
   useEffect(() => { void fetchWorkspaces(1); }, [fetchWorkspaces]);
-
-  if (!dataRoomFeatures.workspaceBindingEnabled) {
-    return <p className='text-sm text-muted-foreground'>{t('workspaceBinding.connectionUnavailable')}</p>;
-  }
 
   return (
     <div className='grid gap-4'>

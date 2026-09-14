@@ -1,14 +1,14 @@
 import { Injectable } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
+import { FeatureVisibilityService } from '@modules/system/feature-visibility.service';
 import type { TemporalCandidate, TemporalValidationContext, TemporalValidationIssue, TemporalValidationResult } from '../domain/temporal-candidate';
 
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}(?:T\d{2}:\d{2}(?::\d{2}(?:\.\d{3})?)?Z)?$/;
 
 @Injectable()
 export class TemporalCandidateValidatorService {
-  constructor(private readonly config: ConfigService) {}
+  constructor(private readonly features: FeatureVisibilityService) {}
   validate(candidate: TemporalCandidate, context: TemporalValidationContext): TemporalValidationResult {
-    if (!this.config.get<boolean>('dataRoom.validityIntelligenceEnabled')) return { status: 'rejected', issues: [this.blocking('validity_intelligence_disabled', 'Validity intelligence is disabled.')] };
+    if (!this.features.isEnabled('dataRoomValidityIntelligence')) return { status: 'rejected', issues: [this.blocking('validity_intelligence_disabled', 'Validity intelligence is disabled.')] };
     const issues: TemporalValidationIssue[] = [];
     const threshold = context.confidenceThreshold ?? 0.7;
     const evidence = context.evidence.filter((item) => candidate.evidenceRefs.includes(item.id));

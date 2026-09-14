@@ -1,6 +1,9 @@
 import { useCallback, useEffect, useId, useRef, useState, type ReactNode } from 'react';
-import { Bot, ChevronDown, ChevronRight, Download, Eye, FileText, Loader2 } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
+import { Bot, Check, ChevronDown, ChevronRight, Download, Eye, FileText, Loader2 } from 'lucide-react';
 import { AIMessageContent, type MarkdownHeadingInfo, type MessageContentPart } from '@/components/ai-elements/ai-message-content';
+import { useAgentStore } from '@/modules/agent/store';
+import type { Agent } from '@/modules/agent/types';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { cn } from '@/lib/utils';
 import { showError } from '@/lib/notifications';
@@ -11,7 +14,6 @@ import type { AgentActivityData, ArtifactActivityData, ChoiceInteractionMetadata
 import { mapConversationComponentsToContentParts } from '../../utils';
 import { formatActivityDuration, humanizeToolTitle, resolveToolFallbackName, resolveToolSummary, sanitizeActivityActorName, sanitizeActivityDetail, sanitizeActivityFilename, sanitizeActivitySummary, sanitizeAssistantDisplayText } from '../../utils/tool-activity';
 import type { ChoiceComponentAction } from '@/components/ai-elements/choice/ChoicePartRenderer';
-import { useConversationSettings } from '../../hooks/useConversationSettings';
 import { useConversationUiStore } from '../../uiStore';
 import { ResizableActivityPane } from './ResizableActivityPane';
 import { statusIcon, ToolRow } from './ToolActivityDetails';
@@ -114,6 +116,16 @@ function projectActivityComponents(components: MessageComponent[], redactSensiti
       .filter((value): value is string => typeof value === 'string' && countLexicalWords(value) > 0);
     return candidates.length > 0 && candidates.every(isStandaloneActivityFragment) ? [] : [normalized];
   });
+}
+
+function resolveActivityDuration(components: readonly MessageComponent[]): string | undefined {
+  const starts = components.map((component) => Date.parse(String(component.data.startedAt || ''))).filter(Number.isFinite);
+  const ends = components.map((component) => Date.parse(String(component.data.completedAt || ''))).filter(Number.isFinite);
+  if (starts.length && ends.length) {
+    return formatActivityDuration(Math.max(...ends) - Math.min(...starts));
+  }
+  const durations = components.map((component) => Number(component.data.durationMs)).filter(Number.isFinite);
+  return durations.length ? formatActivityDuration(Math.max(...durations)) : undefined;
 }
 
 function AgentActivityRow({ data, isStreaming, redactSensitiveText }: Readonly<{ data: AgentActivityData; isStreaming: boolean; redactSensitiveText: boolean }>) {
@@ -246,12 +258,49 @@ function sameContentPart(previous: MessageContentPart, next: MessageContentPart)
   return keys.every((key) => Object.is(left[key], right[key]));
 }
 
+function resolvePersistedHierarchyNames(
+  component: MessageComponent,
+  agents: readonly Agent[],
+  delegationLabel: (name: string) => string,
+): MessageComponent {
+  if (component.type !== 'toolActivity') return component;
+  const data = component.data as ToolActivityData;
+  const actor = data.actorId && data.actorName === `agent_${data.actorId}`
+    ? agents.find((agent) => agent.id === data.actorId)
+    : undefined;
+  const delegatedId = data.toolName?.startsWith('delegate_to_agent_')
+    ? data.toolName.slice('delegate_to_agent_'.length)
+    : undefined;
+  const delegated = delegatedId ? agents.find((agent) => agent.id === delegatedId) : undefined;
+  if (!actor && !delegated) return component;
+  return {
+    ...component,
+    data: {
+      ...data,
+      ...(actor ? { actorName: actor.name } : {}),
+      ...(delegated ? { fallbackDisplayName: delegationLabel(delegated.name) } : {}),
+    },
+  };
+}
+
 export function ConversationAssistantBubble(props: Readonly<NarrativeProps>) {
   const { t } = useModuleTranslation('conversation');
-  const settings = useConversationSettings();
+  const navigate = useNavigate();
+  const agents = useAgentStore((state) => state.agents);
+  const agentDirectoryInitialized = useAgentStore((state) => state.isInitialized);
   const activityPaneRef = useRef<HTMLDivElement>(null);
-  const redactSensitiveText = settings?.redactSensitiveText !== false;
+  const redactSensitiveText = false;
   const messageId = props.messageId;
+
+  // Stable on purpose: agent lookup reads the store at click time, so the
+  // memoized AIMessageContent never needs to re-render for this callback.
+  const handleOpenAgentEditor = useCallback((task: { title: string; agentId?: string }) => {
+    const agents = useAgentStore.getState().agents;
+    const byId = task.agentId ? agents.find((agent) => agent.id === task.agentId) : undefined;
+    const byName = agents.find((agent) => agent.name.trim().toLowerCase() === task.title.trim().toLowerCase());
+    const resolved = byId ?? byName;
+    navigate(resolved ? `/agents?edit=${resolved.id}` : '/agents');
+  }, [navigate]);
 
   // The activity pane stays open while the agent works, then collapses once
   // the final answer is complete — live via `justCompleted`, which mounts the
@@ -293,13 +342,34 @@ export function ConversationAssistantBubble(props: Readonly<NarrativeProps>) {
   const source = useOriginalAnswer
     ? props.components
     : [...props.components.filter((component) => ['agentActivity', 'toolActivity', 'artifact'].includes(component.type)), ...props.answerComponents!];
+  useEffect(() => {
+    if (agentDirectoryInitialized) return;
+    const unresolvedHierarchyId = source.some((component) => {
+      if (component.type !== 'toolActivity') return false;
+      const data = component.data as ToolActivityData;
+      const actorId = data.actorName === `agent_${data.actorId}` ? data.actorId : undefined;
+      const delegatedId = data.toolName?.startsWith('delegate_to_agent_')
+        ? data.toolName.slice('delegate_to_agent_'.length)
+        : undefined;
+      return [actorId, delegatedId].some((id) => id && !agents.some((agent) => agent.id === id));
+    });
+    if (!unresolvedHierarchyId) return;
+    void useAgentStore.getState().fetchAgents().catch((error) => {
+      console.error('Failed to load agent names for conversation activity', error);
+    });
+  }, [agentDirectoryInitialized, agents, source]);
   const activityNodes: ReactNode[] = [];
   const answerNodes: ReactNode[] = [];
   const activityComponents = projectActivityComponents(source.filter(
     (component): component is MessageComponent & { type: 'agentActivity' | 'toolActivity' | 'artifact' } =>
       component.type === 'agentActivity' || component.type === 'toolActivity' || component.type === 'artifact',
-  ), redactSensitiveText);
+  ).map((component) => resolvePersistedHierarchyNames(
+    component,
+    agents,
+    (name) => t('stream.activity.delegateTo', { name }),
+  )), redactSensitiveText);
   const activityCount = activityComponents.length;
+  const activityDuration = resolveActivityDuration(activityComponents);
   const reasoningTexts = [...new Set(activityComponents.flatMap((component) => {
     if (component.type !== 'agentActivity') return [];
     const detail = collapseExactTandem(component.data.detail);
@@ -332,7 +402,7 @@ export function ConversationAssistantBubble(props: Readonly<NarrativeProps>) {
     if (parts.length) {
       const outlinePartKey = answerNodes.length;
       liveOutlineKeysRef.current.add(outlinePartKey);
-      answerNodes.push(<AIMessageContent key={`answer-${outlinePartKey}`} parts={parts} isStreaming={props.isStreaming} onComponentAction={props.onComponentAction} onSubmitQuestions={props.onSubmitQuestions} choiceInteractions={props.choiceInteractions} taskDisplay='activity' redactTaskDiagnostics={redactSensitiveText} citationScope={{ conversationId: props.conversationId, messageId: props.messageId }} onOutlineHeadings={(headings) => registerOutlinePart(outlinePartKey, headings)} />);
+      answerNodes.push(<AIMessageContent key={`answer-${outlinePartKey}`} parts={parts} isStreaming={props.isStreaming} onComponentAction={props.onComponentAction} onSubmitQuestions={props.onSubmitQuestions} choiceInteractions={props.choiceInteractions} taskDisplay='activity' onTaskAgentClick={handleOpenAgentEditor} citationScope={{ conversationId: props.conversationId, messageId: props.messageId }} onOutlineHeadings={(headings) => registerOutlinePart(outlinePartKey, headings)} />);
     }
     answerBatch = [];
   };
@@ -357,7 +427,7 @@ export function ConversationAssistantBubble(props: Readonly<NarrativeProps>) {
   });
   if (!activityNodes.length && props.showWorking) activityNodes.push(<div key='working' className='flex items-center gap-2 text-sm text-muted-foreground'><Loader2 className='size-4 animate-spin text-primary' />{t('stream.activity.usingTools')}</div>);
   if (!activityNodes.length && !answerNodes.length) return null;
-  const actorName = source.reduce<string>((name, component) => {
+  const actorName = activityComponents.reduce<string>((name, component) => {
     if (component.type !== 'toolActivity') return name;
     const safeName = sanitizeActivityActorName((component.data as ToolActivityData).actorName);
     return safeName ? humanizeToolTitle(safeName) : name;
@@ -386,26 +456,48 @@ export function ConversationAssistantBubble(props: Readonly<NarrativeProps>) {
   return (
     <div data-message-role='assistant' data-testid='conversation-assistant-bubble' className={cn('w-full rounded-2xl rounded-tl-sm border border-border/70 bg-muted/45 px-4 py-4 text-sm text-foreground shadow-xs dark:bg-muted/30')}>
         {activityNodes.length > 0 ? <>
-          <div data-agent-activity data-active={props.isStreaming || undefined} className='mb-3 hidden min-w-0 w-full items-center gap-2 overflow-hidden text-sm text-muted-foreground md:flex'>
-            {agentIcon}
-            <span className='shrink-0 font-medium text-foreground'>{actorName}</span>
-            {props.isStreaming && <span className='sr-only' role='status'>{actorName}</span>}
-            <span className={cn('relative h-0.5 min-w-8 flex-1 overflow-hidden', props.isStreaming ? 'bg-running/20' : 'bg-border')} aria-hidden='true'>
-              {props.isStreaming && <span data-agent-scan className='absolute inset-y-0 left-0 w-1/3 animate-agent-scan bg-gradient-to-r from-transparent via-running to-transparent' />}
-            </span>
+          {props.isStreaming ? (
+            <div data-agent-activity data-active className='mb-3 hidden min-w-0 w-full items-center gap-2 overflow-hidden text-sm text-muted-foreground md:flex'>
+              {agentIcon}
+              <span className='shrink-0 font-medium text-foreground'>{actorName}</span>
+              <span className='sr-only' role='status'>{actorName}</span>
+              <span className='relative h-0.5 min-w-8 flex-1 overflow-hidden bg-running/20' aria-hidden='true'>
+                <span data-agent-scan className='absolute inset-y-0 left-0 w-1/3 animate-agent-scan bg-gradient-to-r from-transparent via-running to-transparent' />
+              </span>
+              <button
+                type='button'
+                data-activity-pane-toggle
+                aria-expanded={!paneCollapsed}
+                aria-label={paneCollapsed ? t('stream.activity.paneExpand') : t('stream.activity.paneCollapse')}
+                title={paneCollapsed ? t('stream.activity.paneExpand') : t('stream.activity.paneCollapse')}
+                onClick={() => setPaneCollapsed((value) => !value)}
+                className='inline-flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring'
+              >
+                <ChevronDown className={cn('size-4 transition-transform', paneCollapsed && '-rotate-90')} aria-hidden='true' />
+              </button>
+            </div>
+          ) : (
             <button
               type='button'
+              data-agent-activity
               data-activity-pane-toggle
               aria-expanded={!paneCollapsed}
               aria-label={paneCollapsed ? t('stream.activity.paneExpand') : t('stream.activity.paneCollapse')}
               title={paneCollapsed ? t('stream.activity.paneExpand') : t('stream.activity.paneCollapse')}
               onClick={() => setPaneCollapsed((value) => !value)}
-              className='inline-flex size-7 shrink-0 items-center justify-center gap-1 rounded-md text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring'
+              className='mb-3 hidden min-h-11 w-full min-w-0 items-center gap-2 rounded-md px-1 text-left text-sm text-muted-foreground transition-colors hover:bg-muted/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring md:flex'
             >
-              <span className='text-xs tabular-nums'>{activityComponents.length}</span>
-              <ChevronDown className={cn('size-4 transition-transform', paneCollapsed && '-rotate-90')} aria-hidden='true' />
+              <span className='flex size-8 shrink-0 items-center justify-center' aria-hidden='true'><Bot className='size-4' /></span>
+              <span className='shrink-0 font-medium text-foreground'>{actorName}</span>
+              <span className='h-0.5 min-w-8 flex-1 bg-border' aria-hidden='true' />
+              <Check className='size-4 shrink-0 text-green-500' aria-hidden='true' />
+              <span className='shrink-0 text-xs'>{activityDuration ? t('stream.activity.completedIn', { duration: activityDuration }) : t('stream.activity.toolStatus.completed')}</span>
+              <span aria-hidden='true'>·</span>
+              <span className='shrink-0 text-xs tabular-nums'>{t(activityCount === 1 ? 'stream.activity.stepCount_one' : 'stream.activity.stepCount_other', { count: activityCount })}</span>
+              <span className='shrink-0 text-xs font-medium text-foreground'>{t('stream.activity.viewProcess')}</span>
+              <ChevronDown className={cn('size-4 shrink-0 transition-transform', paneCollapsed && '-rotate-90')} aria-hidden='true' />
             </button>
-          </div>
+          )}
         <div data-agent-activity-mobile data-active={props.isStreaming || undefined} className='mb-3 flex min-w-0 items-center gap-2 overflow-hidden text-sm text-muted-foreground md:hidden' role={props.isStreaming ? 'status' : undefined}>
           {agentIcon}
           <span className='shrink-0 font-medium text-foreground'>{actorName}</span>

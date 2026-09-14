@@ -24,6 +24,14 @@ vi.mock('react-router-dom', async (importOriginal) => ({
   useNavigate: () => navigateMock,
 }));
 
+vi.mock('@/modules/admin/hooks/usePermissions', () => ({
+  usePermissions: () => ({
+    hasAnyPermission: () => true,
+    canUseFeature: () => true,
+    canSeeMenu: () => true,
+  }),
+}));
+
 import { AppMarketplacePage } from './AppMarketplacePage';
 import { useAppMarketplaceStore, initialState } from '../store';
 

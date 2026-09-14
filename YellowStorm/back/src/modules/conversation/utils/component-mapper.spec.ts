@@ -299,6 +299,18 @@ describe('component-mapper chart extraction', () => {
       },
     });
   });
+
+  it('maps web citation evidence from grpc components', () => {
+    expect(extractComponentData({ citation: { parent_id: 'text-1', web_source: {
+      source: 'https://example.com/article', title: 'Article', reference: '[2]',
+      exact_text: 'Revenue increased by 38%.', prefix: 'Results:', suffix: 'Outlook.',
+      evidence_origin: 'page_content',
+    } } })).toEqual({ type: 'citation', data: {
+      parentId: 'text-1', sourceKind: 'web', sourceType: 'web', source: 'https://example.com/article',
+      title: 'Article', reference: '[2]', exactText: 'Revenue increased by 38%.',
+      prefix: 'Results:', suffix: 'Outlook.', evidenceOrigin: 'page_content',
+    } });
+  });
 });
 
 describe('component-mapper choice extraction', () => {
@@ -376,5 +388,21 @@ describe('component-mapper choice extraction', () => {
 
     expect(result.data.paramsJson).toContain('/etc/yellowstorm');
     expect(result.data.resultJson).toContain('short-value');
+  });
+});
+
+describe('component-mapper task agentId stamping', () => {
+  it('stamps the chunk metadata agentId onto task component data', () => {
+    const result = extractComponentData(
+      { id: 'task-1', task: { title: 'Smart Agent', items: [{ text: 'step' }], status: 'in_progress' } },
+      'agent-123',
+    );
+    expect(result.type).toBe('task');
+    expect(result.data).toMatchObject({ title: 'Smart Agent', agentId: 'agent-123' });
+  });
+
+  it('omits agentId when no chunk agent metadata exists', () => {
+    const result = extractComponentData({ id: 'task-1', task: { title: 'Smart Agent', items: [{ text: 'step' }], status: 'completed' } });
+    expect(result.data).not.toHaveProperty('agentId');
   });
 });

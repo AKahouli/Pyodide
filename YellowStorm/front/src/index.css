@@ -44,6 +44,16 @@
   --color-worky-blocked: var(--worky-blocked);
   --color-worky-idle: var(--worky-idle);
   --color-worky-done: var(--worky-done);
+  --color-run: var(--run);
+  --color-run-soft: var(--run-soft);
+  --color-wait: var(--wait);
+  --color-wait-soft: var(--wait-soft);
+  --color-fail: var(--fail);
+  --color-fail-soft: var(--fail-soft);
+  --color-ok: var(--ok);
+  --color-ok-soft: var(--ok-soft);
+  --color-idle: var(--idle);
+  --color-idle-soft: var(--idle-soft);
   --animate-accordion-down: accordion-down 0.2s ease-out;
   --animate-accordion-up: accordion-up 0.2s ease-out;
   --animate-conv-v2-bounce: conv-v2-bounce 1.5s infinite ease-in-out;
@@ -168,6 +178,17 @@
     --worky-blocked: oklch(0.65 0.16 55);
     --worky-idle: oklch(0.55 0.02 60);
     --worky-done: oklch(0.6 0.14 235);
+    /* Playbook console semantic status colors (light variants) */
+    --run: oklch(0.5 0.13 244);
+    --run-soft: oklch(0.5 0.13 244 / 15%);
+    --wait: oklch(0.55 0.12 84);
+    --wait-soft: oklch(0.55 0.12 84 / 15%);
+    --fail: oklch(0.52 0.2 25.4);
+    --fail-soft: oklch(0.52 0.2 25.4 / 14%);
+    --ok: oklch(0.48 0.13 154);
+    --ok-soft: oklch(0.48 0.13 154 / 15%);
+    --idle: oklch(0.5 0.01 100);
+    --idle-soft: oklch(0.5 0.01 100 / 14%);
   }
 
   .dark {
@@ -212,6 +233,17 @@
     --worky-blocked: oklch(0.75 0.16 55);
     --worky-idle: oklch(0.62 0.02 60);
     --worky-done: oklch(0.72 0.14 235);
+    /* Playbook console semantic status colors (dark variants) */
+    --run: oklch(0.7 0.13 244);
+    --run-soft: oklch(0.7 0.13 244 / 16%);
+    --wait: oklch(0.81 0.14 84);
+    --wait-soft: oklch(0.81 0.14 84 / 16%);
+    --fail: oklch(0.66 0.2 25.4);
+    --fail-soft: oklch(0.66 0.2 25.4 / 15%);
+    --ok: oklch(0.73 0.14 154);
+    --ok-soft: oklch(0.73 0.14 154 / 15%);
+    --idle: oklch(0.6 0.01 100);
+    --idle-soft: oklch(0.6 0.01 100 / 15%);
   }
 
   .theme-yellowsys {

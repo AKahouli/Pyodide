@@ -46,7 +46,8 @@ YellowStorm/skills-lock.json
 .opencode
 tmp_pymongo
 # Local ADK wheel-review artifacts (never vendor upstream sources/wheels)
-tmp/adk28_review/
+tmp/
+.tmp/
 # Added by code-review-graph
 .code-review-graph/
 .understand-anything/intermediate/

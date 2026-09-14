@@ -25,6 +25,9 @@ export class PostgresShareStore implements ShareStore {
       .select({
         id: schema.conversations.id,
         title: schema.conversations.title,
+        createdBy: schema.conversations.createdBy,
+        workspaceIds: sql<string[]>`COALESCE((SELECT array_agg(cw.workspace_id ORDER BY cw.position) FROM conversation.conversation_workspaces cw WHERE cw.conversation_id = ${schema.conversations.id}), ARRAY[]::bpchar[])`,
+        memberIds: sql<string[]>`COALESCE((SELECT array_agg(gm.user_id ORDER BY gm.position) FROM conversation.conversation_group_members gm WHERE gm.conversation_id = ${schema.conversations.id}), ARRAY[]::bpchar[])`,
         runtimeMode: schema.conversations.runtimeMode,
         messageCount: schema.conversations.messageCount,
         lastMessageAt: schema.conversations.lastMessageAt,
@@ -36,6 +39,9 @@ export class PostgresShareStore implements ShareStore {
       ? {
           id: row.id.trim(),
           title: row.title,
+          createdBy: row.createdBy.trim(),
+          workspaceIds: row.workspaceIds.map((value) => value.trim()),
+          memberIds: row.memberIds.map((value) => value.trim()),
           runtimeMode: row.runtimeMode,
           messageCount: row.messageCount,
           lastMessageAt: row.lastMessageAt ?? undefined,
@@ -155,11 +161,81 @@ export class PostgresShareStore implements ShareStore {
       .where(inArray(schema.conversations.id, ids));
   }
 
+  async addConversationMembers(
+    conversationId: string,
+    userIds: string[],
+    joinedAt: Date,
+  ): Promise<string[]> {
+    if (!userIds.length) return [];
+    return this.db.transaction(async (tx) => {
+      await tx
+        .select({ id: schema.conversations.id })
+        .from(schema.conversations)
+        .where(eq(schema.conversations.id, conversationId))
+        .for('update');
+      const existing = await tx
+        .select({ userId: schema.conversationGroupMembers.userId })
+        .from(schema.conversationGroupMembers)
+        .where(
+          and(
+            eq(schema.conversationGroupMembers.conversationId, conversationId),
+            inArray(schema.conversationGroupMembers.userId, userIds),
+          ),
+        );
+      const existingIds = new Set(existing.map((member) => member.userId.trim()));
+      const additions = userIds.filter((userId) => !existingIds.has(userId));
+      if (!additions.length) return [];
+      const [position] = await tx
+        .select({
+          value: sql<number>`COALESCE(max(${schema.conversationGroupMembers.position}), -1)::int + 1`,
+        })
+        .from(schema.conversationGroupMembers)
+        .where(eq(schema.conversationGroupMembers.conversationId, conversationId));
+      await tx.insert(schema.conversationGroupMembers).values(
+        additions.map((userId, index) => ({
+          conversationId,
+          userId,
+          position: (position?.value ?? 0) + index,
+          joinedAt,
+          status: 'member' as const,
+        })),
+      );
+      await tx
+        .update(schema.conversations)
+        .set({ isGroup: true, isShared: true, updatedAt: joinedAt })
+        .where(eq(schema.conversations.id, conversationId));
+      return additions;
+    });
+  }
+
+  async removeConversationMembers(conversationId: string, userIds: string[]): Promise<void> {
+    if (!userIds.length) return;
+    await this.db.transaction(async (tx) => {
+      await tx
+        .delete(schema.conversationMemberMentions)
+        .where(
+          and(
+            eq(schema.conversationMemberMentions.conversationId, conversationId),
+            inArray(schema.conversationMemberMentions.userId, userIds),
+          ),
+        );
+      await tx
+        .delete(schema.conversationGroupMembers)
+        .where(
+          and(
+            eq(schema.conversationGroupMembers.conversationId, conversationId),
+            inArray(schema.conversationGroupMembers.userId, userIds),
+          ),
+        );
+    });
+  }
+
   async createPrivate(input: {
     originalConversationId: string;
     sharedBy: string;
     title: string;
     recipientEmails: string[];
+    recipientUserIds?: string[];
     forkedConversationIds: string[];
   }): Promise<SharedConversationRecord> {
     const [row] = await this.db
@@ -228,6 +304,7 @@ export class PostgresShareStore implements ShareStore {
       messages: row.messages as EmbeddedMessage[] | undefined,
       accessToken: row.accessToken ?? undefined,
       recipientEmails: row.recipientEmails ?? undefined,
+      recipientUserIds: row.recipientUserIds?.map((id) => id.trim()),
       forkedConversationIds: row.forkedConversationIds?.map((id) => id.trim()),
       expiresAt: row.expiresAt ?? undefined,
       viewCount: row.viewCount,

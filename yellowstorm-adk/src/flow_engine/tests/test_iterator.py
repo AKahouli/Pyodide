@@ -19,6 +19,7 @@ from src.flow_engine.builder.iterator import (
 from src.flow_engine.state import ExecutionState
 from src.flow_engine.builder.sequential import add_sequential_edges
 from src.flow_engine.builder.conditional import add_conditional_edges
+from src.flow_engine.runtime.invoker import stream_graph
 
 
 def load_fixture(name: str) -> dict:
@@ -553,6 +554,49 @@ async def test_invoke_iterator_graph_with_items():
     assert iterations[1]["status"] == "completed"
     assert iterations[0]["childResults"][0]["taskId"] == "child-step"
     assert iterations[0]["childResults"][0]["status"] == "completed"
+    assert iterations[0]["itemPreview"] == "item-1"
+
+
+class TestIteratorStreamingEvents:
+    @pytest.mark.asyncio
+    async def test_streams_lifecycle_events_per_iteration_turn(self):
+        """A streamed run emits the iterator NodeStarted plus per-turn child events."""
+        snapshot = load_fixture("iterator.json")
+
+        with patch("src.flow_engine.nodes.step.litellm.acompletion", return_value=MockAsyncStream(["result"])):
+            graph = compose(snapshot)
+            chunks = [
+                chunk
+                async for chunk in stream_graph(graph, {
+                    "execution_id": "test-iter-stream",
+                    "flow_id": "iter-flow",
+                    "inputs": {"items": ["item-1", "item-2"]},
+                    "task_outputs": {},
+                    "iterations": {},
+                    "router_decisions": {},
+                    "errors": [],
+                    "pending_approval": None,
+                    "cancelled": False,
+                })
+            ]
+
+        custom = [chunk["_data"] for chunk in chunks if chunk["_mode"] == "custom"]
+
+        iterator_started = [event for event in custom if event.get("type") == "NodeStarted" and event.get("node_id") == "iter-node"]
+        assert len(iterator_started) == 1
+
+        child_starts = [event for event in custom if event.get("type") == "IteratorChildStepStarted"]
+        assert [event["payload"]["iterationIndex"] for event in child_starts] == [0, 1]
+        assert all(event["payload"]["taskId"] == "child-step" for event in child_starts)
+        assert all(event["payload"]["status"] == "running" for event in child_starts)
+
+        child_completed = [event for event in custom if event.get("type") == "IteratorChildStepCompleted"]
+        assert [event["payload"]["iterationIndex"] for event in child_completed] == [0, 1]
+        assert all(event["payload"]["status"] == "completed" for event in child_completed)
+        assert all(event["payload"]["output"] == "result" for event in child_completed)
+
+        # Turn 0 must fully stream before turn 1 starts.
+        assert custom.index(child_starts[0]) < custom.index(child_completed[0]) < custom.index(child_starts[1])
 
 
 @pytest.mark.asyncio

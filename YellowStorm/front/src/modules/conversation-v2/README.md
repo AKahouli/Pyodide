@@ -487,7 +487,6 @@ tool views, deploy controls).
 | `features.ts` | Feature flags |
 | `session-permissions.ts` | Permission constants |
 | `selectedModelStorage.ts` | Persisted model selection |
-| `conversation-merge.ts` | Merge conversation history from cache |
 
 ### interfaces/
 
@@ -529,7 +528,6 @@ tool views, deploy controls).
 | `components/ConversationV2Header.tsx` | Title, status, pause/stop/share buttons |
 | `components/ToolCallCard.tsx` | Tool call summary card |
 | `components/StepBlock.tsx` | Plan step with badge |
-| `components/StepBadge.tsx` | Step status badge |
 | `components/ThinkingIndicator.tsx` | Thinking animation |
 | `components/TypewriterStreamdown.tsx` | Progressive text reveal |
 | `components/QuestionChoices.tsx` | Question option buttons |
@@ -589,7 +587,6 @@ tool views, deploy controls).
 22 test files covering:
 - Store state management (`store.test.ts`)
 - Session reducer (`session-reducer.test.ts`)
-- Conversation merge (`conversation-merge.test.ts`)
 - Runtime tool handlers (`RuntimeToolHandlers.test.ts`)
 - Browser runtime host (`BrowserRuntimeHost.test.ts`)
 - Browser runtime client (`BrowserRuntimeClient.test.ts`)

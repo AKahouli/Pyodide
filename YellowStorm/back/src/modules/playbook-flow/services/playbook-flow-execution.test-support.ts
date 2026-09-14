@@ -108,6 +108,8 @@ export function createExecutionServiceForTests(overrides?: {
     emitStepComplete: jest.fn(),
     emitStepStart: jest.fn(),
     emitStepUpdate: jest.fn(),
+    emitIteratorChildStepStarted: jest.fn(),
+    emitIteratorChildStepCompleted: jest.fn(),
     emitInterrupt: jest.fn(),
     emitHitlInterruptResolved: jest.fn(),
     emitHitlMemorySaved: jest.fn(),

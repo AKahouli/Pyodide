@@ -8,6 +8,7 @@ import semanticModelConfig from '@config/semantic-model.config';
 import { LoggerService } from '@modules/logger';
 import { ServiceUnavailableException } from '@modules/exceptions';
 import { ErrorCode } from '@modules/exceptions/constants/error-codes';
+import { FeatureVisibilityService } from '@modules/system/feature-visibility.service';
 
 const BOOTSTRAP_SCRIPT_CANDIDATES = [
   // Prod / dev with nest-cli assets copying scripts into dist
@@ -24,12 +25,13 @@ export class SemanticModelDatabaseService implements OnModuleInit, OnModuleDestr
     @Inject(semanticModelConfig.KEY)
     private readonly config: ConfigType<typeof semanticModelConfig>,
     private readonly logger: LoggerService,
+    private readonly featureVisibility: FeatureVisibilityService,
   ) {
     this.logger.setContext(SemanticModelDatabaseService.name);
   }
 
   async onModuleInit(): Promise<void> {
-    if (!this.config.enabled) return;
+    if (!this.config.host || !this.config.user || !this.config.database) return;
     this.pool = new Pool({
       host: this.config.host,
       port: this.config.port,
@@ -50,7 +52,7 @@ export class SemanticModelDatabaseService implements OnModuleInit, OnModuleDestr
   private async bootstrapSchema(): Promise<void> {
     const scriptPath = this.resolveBootstrapScriptPath();
     const sql = await readFile(scriptPath, 'utf8');
-    const client = await this.getPool().connect();
+    const client = await this.pool!.connect();
     try {
       await client.query(sql);
       this.logger.log(`Semantic Model schema bootstrapped from ${scriptPath}`);
@@ -76,7 +78,7 @@ export class SemanticModelDatabaseService implements OnModuleInit, OnModuleDestr
   }
 
   isEnabled(): boolean {
-    return this.config.enabled;
+    return this.featureVisibility.isEnabled('semanticModel');
   }
 
   async query<T extends QueryResultRow = QueryResultRow>(
@@ -102,7 +104,7 @@ export class SemanticModelDatabaseService implements OnModuleInit, OnModuleDestr
   }
 
   async health(): Promise<{ enabled: boolean; ready: boolean; latencyMs: number }> {
-    if (!this.config.enabled) return { enabled: false, ready: true, latencyMs: 0 };
+    if (!this.isEnabled()) return { enabled: false, ready: true, latencyMs: 0 };
     const startedAt = Date.now();
     const result = await this.query<{ schema_ready: boolean; graph_ready: boolean }>(
       `SELECT
@@ -126,6 +128,12 @@ export class SemanticModelDatabaseService implements OnModuleInit, OnModuleDestr
   }
 
   private getPool(): Pool {
+    if (!this.isEnabled()) {
+      throw new ServiceUnavailableException(
+        ErrorCode.SEMANTIC_MODEL_UNAVAILABLE,
+        'Semantic Models are disabled',
+      );
+    }
     if (!this.pool) {
       throw new ServiceUnavailableException(
         ErrorCode.SEMANTIC_MODEL_UNAVAILABLE,

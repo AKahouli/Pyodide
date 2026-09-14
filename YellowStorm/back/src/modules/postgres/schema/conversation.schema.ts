@@ -1,20 +1,5 @@
 import { sql } from 'drizzle-orm';
-import {
-  boolean,
-  type AnyPgColumn,
-  char,
-  check,
-  index,
-  integer,
-  jsonb,
-  pgSchema,
-  primaryKey,
-  text,
-  timestamp,
-  uniqueIndex,
-  uuid,
-  varchar,
-} from 'drizzle-orm/pg-core';
+import { boolean, type AnyPgColumn, char, check, doublePrecision, index, integer, jsonb, pgSchema, primaryKey, text, timestamp, uniqueIndex, uuid, varchar } from 'drizzle-orm/pg-core';
 
 export const conversationSchema = pgSchema('conversation');
 
@@ -38,9 +23,7 @@ export const conversations = conversationSchema.table(
     isArchived: boolean('is_archived').notNull().default(false),
     isShared: boolean('is_shared').notNull().default(false),
     sharedFrom: char('shared_from', { length: 24 }),
-    initializationStatus: varchar('initialization_status', { length: 30 })
-      .notNull()
-      .default('ready'),
+    initializationStatus: varchar('initialization_status', { length: 30 }).notNull().default('ready'),
     branchSeedAttemptId: text('branch_seed_attempt_id'),
     branchRequestId: text('branch_request_id'),
     branchProvenance: jsonb('branch_provenance'),
@@ -53,51 +36,25 @@ export const conversations = conversationSchema.table(
   (t) => [
     check('conversations_id_object_id', objectIdCheck(t.id)),
     check('conversations_runtime_mode', sql`${t.runtimeMode} IN ('standard', 'governed')`),
-    check(
-      'conversations_runtime_purpose',
-      sql`${t.runtimePurpose} IN ('chat', 'platform_copilot')`,
-    ),
-    check(
-      'conversations_initialization_status',
-      sql`${t.initializationStatus} IN ('ready', 'pending', 'seeding', 'cleanup_pending')`,
-    ),
+    check('conversations_runtime_purpose', sql`${t.runtimePurpose} IN ('chat', 'platform_copilot')`),
+    check('conversations_initialization_status', sql`${t.initializationStatus} IN ('ready', 'pending', 'seeding', 'cleanup_pending')`),
     check('conversations_message_count_non_negative', sql`${t.messageCount} >= 0`),
     index('idx_conv_owner_ready_last_v2')
       .on(t.createdBy, sql`${t.lastMessageAt} DESC NULLS LAST`, sql`${t.id} DESC`)
       .where(sql`${t.initializationStatus} = 'ready' AND ${t.runtimePurpose} <> 'platform_copilot'`),
-    index('idx_conversations_owner_archived_last_message').on(
-      t.createdBy,
-      t.isArchived,
-      t.lastMessageAt,
-    ),
+    index('idx_conversations_owner_archived_last_message').on(t.createdBy, t.isArchived, t.lastMessageAt),
     index('idx_conv_owner_ready_created_v2')
       .on(t.createdBy, sql`${t.createdAt} DESC`, sql`${t.id} DESC`)
       .where(sql`${t.initializationStatus} = 'ready' AND ${t.runtimePurpose} <> 'platform_copilot'`),
     index('idx_conv_owner_ready_title_v2')
       .on(t.createdBy, t.title, t.id)
       .where(sql`${t.initializationStatus} = 'ready' AND ${t.runtimePurpose} <> 'platform_copilot'`),
-    index('idx_conv_owner_project_last_v2').on(
-      t.createdBy,
-      t.projectId,
-      sql`${t.lastMessageAt} DESC NULLS LAST`,
-      sql`${t.id} DESC`,
-    ),
+    index('idx_conv_owner_project_last_v2').on(t.createdBy, t.projectId, sql`${t.lastMessageAt} DESC NULLS LAST`, sql`${t.id} DESC`),
     index('idx_conv_platform_owner_last_v2')
-      .on(
-        t.createdBy,
-        sql`${t.lastMessageAt} DESC NULLS LAST`,
-        sql`${t.createdAt} DESC`,
-        sql`${t.id} DESC`,
-      )
+      .on(t.createdBy, sql`${t.lastMessageAt} DESC NULLS LAST`, sql`${t.createdAt} DESC`, sql`${t.id} DESC`)
       .where(sql`${t.runtimePurpose} = 'platform_copilot'`),
     index('idx_conv_platform_agent_last_v2')
-      .on(
-        t.createdBy,
-        t.pinnedAgentId,
-        sql`${t.lastMessageAt} DESC NULLS LAST`,
-        sql`${t.createdAt} DESC`,
-        sql`${t.id} DESC`,
-      )
+      .on(t.createdBy, t.pinnedAgentId, sql`${t.lastMessageAt} DESC NULLS LAST`, sql`${t.createdAt} DESC`, sql`${t.id} DESC`)
       .where(sql`${t.runtimePurpose} = 'platform_copilot'`),
     index('idx_conv_initializing_updated_v2')
       .on(t.updatedAt, t.id)
@@ -127,24 +84,14 @@ function orderedIdTable(name: string, columnName: string) {
       position: integer('position').notNull(),
       value: char(columnName, { length: 24 }).notNull(),
     },
-    (t) => [
-      primaryKey({ columns: [t.conversationId, t.position] }),
-      index(`idx_${name}_${columnName}`).on(t.value),
-      check(`${name}_position_non_negative`, sql`${t.position} >= 0`),
-    ],
+    (t) => [primaryKey({ columns: [t.conversationId, t.position] }), index(`idx_${name}_${columnName}`).on(t.value), check(`${name}_position_non_negative`, sql`${t.position} >= 0`)],
   );
 }
 
 export const conversationWorkspaces = orderedIdTable('conversation_workspaces', 'workspace_id');
-export const conversationSelectedSkills = orderedIdTable(
-  'conversation_selected_skills',
-  'skill_id',
-);
+export const conversationSelectedSkills = orderedIdTable('conversation_selected_skills', 'skill_id');
 export const conversationTaggedAgents = orderedIdTable('conversation_tagged_agents', 'agent_id');
-export const conversationGroupTaggedAgents = orderedIdTable(
-  'conversation_group_tagged_agents',
-  'agent_id',
-);
+export const conversationGroupTaggedAgents = orderedIdTable('conversation_group_tagged_agents', 'agent_id');
 
 export const conversationGroupMembers = conversationSchema.table(
   'conversation_group_members',
@@ -158,12 +105,7 @@ export const conversationGroupMembers = conversationSchema.table(
     status: varchar('status', { length: 20 }).notNull(),
     job: text('job'),
   },
-  (t) => [
-    primaryKey({ columns: [t.conversationId, t.userId] }),
-    uniqueIndex('uq_conversation_group_members_position').on(t.conversationId, t.position),
-    index('idx_group_members_user_conversation').on(t.userId, t.conversationId),
-    check('conversation_group_members_status', sql`${t.status} IN ('owner', 'member')`),
-  ],
+  (t) => [primaryKey({ columns: [t.conversationId, t.userId] }), uniqueIndex('uq_conversation_group_members_position').on(t.conversationId, t.position), index('idx_group_members_user_conversation').on(t.userId, t.conversationId), check('conversation_group_members_status', sql`${t.status} IN ('owner', 'member')`)],
 );
 
 export const conversationGroupInvites = conversationSchema.table(
@@ -179,11 +121,7 @@ export const conversationGroupInvites = conversationSchema.table(
     invitedAt: timestamp('invited_at', { withTimezone: true }).notNull(),
     job: text('job'),
   },
-  (t) => [
-    primaryKey({ columns: [t.conversationId, t.position] }),
-    index('idx_group_invites_conversation_email').on(t.conversationId, t.normalizedEmail),
-    check('conversation_group_invites_status', sql`${t.status} IN ('Confirmed', 'Guest')`),
-  ],
+  (t) => [primaryKey({ columns: [t.conversationId, t.position] }), index('idx_group_invites_conversation_email').on(t.conversationId, t.normalizedEmail), check('conversation_group_invites_status', sql`${t.status} IN ('Confirmed', 'Guest')`)],
 );
 
 export const messages = conversationSchema.table(
@@ -194,10 +132,7 @@ export const messages = conversationSchema.table(
       .notNull()
       .references(() => conversations.id, { onDelete: 'cascade' }),
     senderId: char('sender_id', { length: 24 }),
-    parentMessageId: char('parent_message_id', { length: 24 }).references(
-      (): AnyPgColumn => messages.id,
-      { onDelete: 'set null' },
-    ),
+    parentMessageId: char('parent_message_id', { length: 24 }).references((): AnyPgColumn => messages.id, { onDelete: 'set null' }),
     conversationType: varchar('conversation_type', { length: 10 }).notNull(),
     content: text('content'),
     components: jsonb('components'),
@@ -207,14 +142,8 @@ export const messages = conversationSchema.table(
     modelId: varchar('model_id', { length: 100 }),
     reasoningEffort: varchar('reasoning_effort', { length: 50 }),
     webSearchEnabled: boolean('web_search_enabled').notNull().default(false),
-    questionMessageId: char('question_message_id', { length: 24 }).references(
-      (): AnyPgColumn => messages.id,
-      { onDelete: 'set null' },
-    ),
-    answerMessageId: char('answer_message_id', { length: 24 }).references(
-      (): AnyPgColumn => messages.id,
-      { onDelete: 'set null' },
-    ),
+    questionMessageId: char('question_message_id', { length: 24 }).references((): AnyPgColumn => messages.id, { onDelete: 'set null' }),
+    answerMessageId: char('answer_message_id', { length: 24 }).references((): AnyPgColumn => messages.id, { onDelete: 'set null' }),
     feedback: varchar('feedback', { length: 10 }),
     feedbackAt: timestamp('feedback_at', { withTimezone: true }),
     isEdited: boolean('is_edited').notNull().default(false),
@@ -259,25 +188,10 @@ export const messages = conversationSchema.table(
     check('messages_id_object_id', objectIdCheck(t.id)),
     check('messages_conversation_type', sql`${t.conversationType} IN ('user', 'ai')`),
     check('messages_feedback', sql`${t.feedback} IS NULL OR ${t.feedback} IN ('like', 'dislike')`),
-    check(
-      'messages_content_length',
-      sql`${t.content} IS NULL OR char_length(${t.content}) <= 50000`,
-    ),
-    check(
-      'messages_metrics_non_negative',
-      sql`COALESCE(${t.inputTokens}, 0) >= 0 AND COALESCE(${t.outputTokens}, 0) >= 0 AND COALESCE(${t.durationMs}, 0) >= 0 AND COALESCE(${t.timeToFirstChunk}, 0) >= 0 AND COALESCE(${t.timeToFirstToken}, 0) >= 0`,
-    ),
-    index('idx_messages_conv_created_v2').on(
-      t.conversationId,
-      sql`${t.createdAt} DESC`,
-      sql`${t.id} DESC`,
-    ),
-    index('idx_messages_conv_type_created_v2').on(
-      t.conversationId,
-      t.conversationType,
-      sql`${t.createdAt} DESC`,
-      sql`${t.id} DESC`,
-    ),
+    check('messages_content_length', sql`${t.content} IS NULL OR char_length(${t.content}) <= 50000`),
+    check('messages_metrics_non_negative', sql`COALESCE(${t.inputTokens}, 0) >= 0 AND COALESCE(${t.outputTokens}, 0) >= 0 AND COALESCE(${t.durationMs}, 0) >= 0 AND COALESCE(${t.timeToFirstChunk}, 0) >= 0 AND COALESCE(${t.timeToFirstToken}, 0) >= 0`),
+    index('idx_messages_conv_created_v2').on(t.conversationId, sql`${t.createdAt} DESC`, sql`${t.id} DESC`),
+    index('idx_messages_conv_type_created_v2').on(t.conversationId, t.conversationType, sql`${t.createdAt} DESC`, sql`${t.id} DESC`),
     index('idx_messages_ai_question_created_v2')
       .on(t.questionMessageId, t.createdAt, t.id)
       .where(sql`${t.conversationType} = 'ai'`),
@@ -294,6 +208,83 @@ export const messages = conversationSchema.table(
       .on(t.conversationId, t.senderId, t.conversationType, t.requestId)
       .where(sql`${t.requestId} IS NOT NULL AND ${t.senderId} IS NOT NULL`),
   ],
+);
+
+export const usageWindows = conversationSchema.table(
+  'usage_windows',
+  {
+    id: char('id', { length: 24 }).primaryKey(),
+    userId: varchar('user_id', { length: 100 }).notNull(),
+    windowStart: timestamp('window_start', { withTimezone: true }).notNull(),
+    windowEnd: timestamp('window_end', { withTimezone: true }).notNull(),
+    windowHours: integer('window_hours').notNull(),
+    inputTokens: integer('input_tokens').notNull().default(0),
+    outputTokens: integer('output_tokens').notNull().default(0),
+    totalTokens: integer('total_tokens').notNull().default(0),
+    requestCount: integer('request_count').notNull().default(0),
+    planId: varchar('plan_id', { length: 100 }),
+    planSlug: varchar('plan_slug', { length: 50 }),
+    tokenLimitAtCreation: integer('token_limit_at_creation'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [check('usage_windows_id_object_id', objectIdCheck(t.id)), check('usage_windows_window_hours_positive', sql`${t.windowHours} > 0`), check('usage_windows_counts_non_negative', sql`${t.inputTokens} >= 0 AND ${t.outputTokens} >= 0 AND ${t.totalTokens} >= 0 AND ${t.requestCount} >= 0`), check('usage_windows_valid_range', sql`${t.windowEnd} > ${t.windowStart}`), uniqueIndex('uq_usage_windows_user_window').on(t.userId, t.windowStart, t.windowEnd), index('idx_usage_windows_user_end').on(t.userId, sql`${t.windowEnd} DESC`), index('idx_usage_windows_start_plan').on(t.windowStart, t.planSlug)],
+);
+
+export const usageLogs = conversationSchema.table(
+  'usage_logs',
+  {
+    id: char('id', { length: 24 }).primaryKey(),
+    userId: varchar('user_id', { length: 100 }).notNull(),
+    usageType: varchar('usage_type', { length: 20 }).notNull().default('chat'),
+    modelName: varchar('model_name', { length: 100 }),
+    inputTokens: integer('input_tokens').notNull(),
+    outputTokens: integer('output_tokens').notNull(),
+    totalTokens: integer('total_tokens').notNull(),
+    durationMs: integer('duration_ms'),
+    conversationId: varchar('conversation_id', { length: 100 }),
+    endpoint: varchar('endpoint', { length: 200 }),
+    ipAddress: varchar('ip_address', { length: 45 }),
+    userAgent: varchar('user_agent', { length: 500 }),
+    success: boolean('success').notNull().default(true),
+    errorCode: varchar('error_code', { length: 50 }),
+    metadata: jsonb('metadata')
+      .notNull()
+      .default(sql`'{}'::jsonb`),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [check('usage_logs_id_object_id', objectIdCheck(t.id)), check('usage_logs_type', sql`${t.usageType} IN ('chat', 'completion', 'embedding', 'playbook', 'other')`), check('usage_logs_metrics_non_negative', sql`${t.inputTokens} >= 0 AND ${t.outputTokens} >= 0 AND ${t.totalTokens} >= 0 AND COALESCE(${t.durationMs}, 0) >= 0`), index('idx_usage_logs_user_created').on(t.userId, sql`${t.createdAt} DESC`), index('idx_usage_logs_type_model_created').on(t.usageType, t.modelName, sql`${t.createdAt} DESC`), index('idx_usage_logs_created').on(sql`${t.createdAt} DESC`)],
+);
+
+export const conversationUsageEvents = conversationSchema.table(
+  'conversation_usage_events',
+  {
+    id: char('id', { length: 24 }).primaryKey(),
+    eventKey: text('event_key').notNull(),
+    conversationId: char('conversation_id', { length: 24 })
+      .notNull()
+      .references(() => conversations.id, { onDelete: 'cascade' }),
+    messageId: char('message_id', { length: 24 })
+      .notNull()
+      .references(() => messages.id, { onDelete: 'cascade' }),
+    executionId: text('execution_id').notNull(),
+    agentId: varchar('agent_id', { length: 100 }),
+    provider: varchar('provider', { length: 100 }),
+    model: varchar('model', { length: 200 }).notNull(),
+    inputTokens: integer('input_tokens').notNull(),
+    outputTokens: integer('output_tokens').notNull(),
+    cachedInputTokens: integer('cached_input_tokens').notNull().default(0),
+    reasoningTokens: integer('reasoning_tokens').notNull().default(0),
+    totalTokens: integer('total_tokens').notNull(),
+    costUsd: doublePrecision('cost_usd'),
+    pricingVersion: varchar('pricing_version', { length: 100 }),
+    carbonGramsCo2e: doublePrecision('carbon_grams_co2e'),
+    carbonMethodology: varchar('carbon_methodology', { length: 100 }),
+    carbonFactorVersion: varchar('carbon_factor_version', { length: 100 }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [check('conversation_usage_events_id_object_id', objectIdCheck(t.id)), check('conversation_usage_events_counts_non_negative', sql`${t.inputTokens} >= 0 AND ${t.outputTokens} >= 0 AND ${t.cachedInputTokens} >= 0 AND ${t.reasoningTokens} >= 0 AND ${t.totalTokens} >= 0`), check('conversation_usage_events_estimates_non_negative', sql`COALESCE(${t.costUsd}, 0) >= 0 AND COALESCE(${t.carbonGramsCo2e}, 0) >= 0`), uniqueIndex('uq_conversation_usage_events_event_key').on(t.eventKey), index('idx_conversation_usage_events_conversation_created').on(t.conversationId, t.createdAt), index('idx_conversation_usage_events_model_created').on(t.model, t.createdAt)],
 );
 
 // Shared standard-run admission state (WP07): one row per admitted execution.
@@ -321,10 +312,7 @@ export const conversationExecutions = conversationSchema.table(
   },
   (t) => [
     check('conversation_executions_id_object_id', objectIdCheck(t.id)),
-    check(
-      'conversation_executions_status',
-      sql`${t.status} IN ('running', 'cancelled', 'completed', 'failed', 'interrupted')`,
-    ),
+    check('conversation_executions_status', sql`${t.status} IN ('running', 'cancelled', 'completed', 'failed', 'interrupted')`),
     uniqueIndex('uq_conversation_executions_running_conversation')
       .on(t.conversationId)
       .where(sql`${t.status} = 'running'`),
@@ -374,10 +362,7 @@ export const reports = conversationSchema.table(
   },
   (t) => [
     check('reports_id_object_id', objectIdCheck(t.id)),
-    check(
-      'reports_reason',
-      sql`${t.reason} IN ('inaccurate', 'wrong_information', 'offensive', 'out_of_context', 'hallucination', 'other')`,
-    ),
+    check('reports_reason', sql`${t.reason} IN ('inaccurate', 'wrong_information', 'offensive', 'out_of_context', 'hallucination', 'other')`),
     check('reports_source', sql`${t.source} IN ('user', 'system_correction')`),
     check('reports_status', sql`${t.status} IN ('pending', 'reviewed', 'resolved')`),
     uniqueIndex('uq_reports_user_message').on(t.userId, t.messageId),
@@ -404,6 +389,7 @@ export const sharedConversations = conversationSchema.table(
     messages: jsonb('messages'),
     accessToken: text('access_token'),
     recipientEmails: text('recipient_emails').array(),
+    recipientUserIds: varchar('recipient_user_ids', { length: 24 }).array(),
     forkedConversationIds: varchar('forked_conversation_ids', { length: 24 }).array(),
     expiresAt: timestamp('expires_at', { withTimezone: true }),
     viewCount: integer('view_count').notNull().default(0),
@@ -419,12 +405,10 @@ export const sharedConversations = conversationSchema.table(
       .on(t.accessToken)
       .where(sql`${t.accessToken} IS NOT NULL`),
     index('idx_shared_conversations_owner_created').on(t.sharedBy, t.createdAt),
-    index('idx_shared_original_created_v2').on(
-      t.originalConversationId,
-      sql`${t.createdAt} DESC`,
-      sql`${t.id} DESC`,
-    ),
-    index('idx_shared_expires_v2').on(t.expiresAt, t.id).where(sql`${t.expiresAt} IS NOT NULL`),
+    index('idx_shared_original_created_v2').on(t.originalConversationId, sql`${t.createdAt} DESC`, sql`${t.id} DESC`),
+    index('idx_shared_expires_v2')
+      .on(t.expiresAt, t.id)
+      .where(sql`${t.expiresAt} IS NOT NULL`),
   ],
 );
 
@@ -443,9 +427,7 @@ export const conversationPlaybookHandoffs = conversationSchema.table(
     clientBranchSelectionFingerprint: text('client_branch_selection_fingerprint').notNull(),
     canonicalPathFingerprint: text('canonical_path_fingerprint').notNull(),
     contextFingerprint: text('context_fingerprint').notNull(),
-    canonicalSelectedAnswerIds: varchar('canonical_selected_answer_ids', { length: 24 })
-      .array()
-      .notNull(),
+    canonicalSelectedAnswerIds: varchar('canonical_selected_answer_ids', { length: 24 }).array().notNull(),
     platformConversationId: char('platform_conversation_id', { length: 24 }).notNull(),
     context: jsonb('context').notNull(),
     candidateBindings: jsonb('candidate_bindings').notNull(),
@@ -462,23 +444,5 @@ export const conversationPlaybookHandoffs = conversationSchema.table(
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   },
-  (t) => [
-    check('conversation_playbook_handoffs_id_object_id', objectIdCheck(t.id)),
-    check('conversation_playbook_handoffs_contract', sql`${t.contractVersion} = 1`),
-    check(
-      'conversation_playbook_handoffs_status',
-      sql`${t.status} IN ('prepared', 'bound', 'consumed')`,
-    ),
-    uniqueIndex('uq_conversation_playbook_handoffs_handoff_id').on(t.handoffId),
-    uniqueIndex('uq_conversation_playbook_handoffs_owner_request').on(
-      t.ownerId,
-      t.creationRequestId,
-    ),
-    index('idx_conversation_playbook_handoffs_platform_status').on(
-      t.ownerId,
-      t.platformConversationId,
-      t.status,
-    ),
-    index('idx_handoffs_expires_v2').on(t.expiresAt, t.id),
-  ],
+  (t) => [check('conversation_playbook_handoffs_id_object_id', objectIdCheck(t.id)), check('conversation_playbook_handoffs_contract', sql`${t.contractVersion} = 1`), check('conversation_playbook_handoffs_status', sql`${t.status} IN ('prepared', 'bound', 'consumed')`), uniqueIndex('uq_conversation_playbook_handoffs_handoff_id').on(t.handoffId), uniqueIndex('uq_conversation_playbook_handoffs_owner_request').on(t.ownerId, t.creationRequestId), index('idx_conversation_playbook_handoffs_platform_status').on(t.ownerId, t.platformConversationId, t.status), index('idx_handoffs_expires_v2').on(t.expiresAt, t.id)],
 );

@@ -87,6 +87,30 @@ class TestStreamingEventProcessor:
     assert manager_id == "fallback-id"
     assert manager_name == "Fallback Manager"
 
+  def test_actor_info_uses_event_author_and_platform_identity(self, processor):
+    processor.agent_repository.get_agent_by_name.return_value = {
+      "id": "child-1", "name": "agent_child_1", "display_name": "Researcher",
+    }
+    actor_id, actor_name = processor._get_actor_info(
+      SimpleNamespace(author="agent_child_1"),
+      SimpleNamespace(id="mgr-1", name="Manager"),
+    )
+    assert (actor_id, actor_name) == ("child-1", "Researcher")
+
+  def test_actor_info_resolves_hierarchical_runtime_name_by_id(self, processor):
+    processor.agent_repository.get_agent_by_name.return_value = None
+    processor.agent_repository.get_agent_by_id.return_value = {
+      "id": "child-1", "name": "agent_child-1", "display_name": "Researcher",
+    }
+
+    actor_id, actor_name = processor._get_actor_info(
+      SimpleNamespace(author="agent_child-1"),
+      SimpleNamespace(id="mgr-1", name="Manager"),
+    )
+
+    processor.agent_repository.get_agent_by_id.assert_called_once_with("child-1")
+    assert (actor_id, actor_name) == ("child-1", "Researcher")
+
   @pytest.mark.asyncio
   async def test_process_streaming_events_streams_text_and_usage(self, processor):
     queue = AsyncMock()
@@ -126,6 +150,41 @@ class TestStreamingEventProcessor:
     ]
     assert len(usage_puts) == 2
     assert usage_puts[0]["usage"]["input_tokens"] == 10
+    assert usage_puts[0]["metadata"]["agent_id"] == "mgr-1"
+
+  @pytest.mark.asyncio
+  async def test_process_streaming_events_keeps_usage_only_events(self, processor):
+    queue = AsyncMock()
+    event = _usage_event()
+    event.content = None
+
+    async def fake_stream():
+      yield event
+
+    agent_runner = MagicMock()
+    agent_runner.run_async.return_value = fake_stream()
+
+    with patch(
+      "src.smart_rag.engines.multi_agent.streaming_processor.types.Content"
+    ), patch(
+      "src.smart_rag.engines.multi_agent.streaming_processor.types.Part"
+    ), patch(
+      "src.smart_rag.engines.multi_agent.streaming_processor.RunConfig"
+    ):
+      await processor.process_streaming_events(
+        session_id="sess-1",
+        user_prompt="Hi",
+        manager_agent=SimpleNamespace(id="mgr-1", name="Team Manager"),
+        agent_runner=agent_runner,
+        q=queue,
+      )
+
+    usage_puts = [
+      call.args[0] for call in queue.put.await_args_list
+      if isinstance(call.args[0], dict) and "usage" in call.args[0]
+    ]
+    assert len(usage_puts) == 1
+    assert usage_puts[0]["usage"]["total_tokens"] == 15
 
   @pytest.mark.asyncio
   async def test_process_streaming_events_coalesces_thought_tokens_until_tool_boundary(self, processor):

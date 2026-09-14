@@ -109,8 +109,6 @@ usage/
 │   ├── UsageSection.test.tsx
 │   ├── UsageLimitBanner.tsx  # Inline limit warning
 │   ├── UsageLimitBanner.test.tsx
-│   ├── UsageLimitModal.tsx   # Modal warning (deprecated)
-│   ├── UsageLimitModal.test.tsx
 │   ├── PlanCard.tsx
 │   ├── PlanCard.test.tsx
 │   ├── UpgradeHeader.tsx
@@ -462,24 +460,13 @@ Full-page plan comparison and upgrade interface.
 
 ---
 
-### UsageLimitModal (Deprecated)
-
-Modal popup for limit warnings. Deprecated in favor of `UsageLimitBanner`.
-
-**Features:**
-- Blocking modal dialog
-- Upgrade call-to-action
-- Can be dismissed
-
----
-
 ## Testing
 
 - Usage tests are colocated as `*.test.ts` and `*.test.tsx`.
 - Coverage includes:
   - API layer (`api.ts`)
   - context lifecycle and refresh behavior (`UsageContext.tsx`)
-  - UI behavior for `UsageSection`, `UsageLimitBanner`, `UsageLimitModal`, `PlanCard`, `UpgradeHeader`, and `UpgradePage`
+  - UI behavior for `UsageSection`, `UsageLimitBanner`, `PlanCard`, `UpgradeHeader`, and `UpgradePage`
   - module/type exports and utility formatting (`formatStorageSize`)
 
 Run usage tests from `front/`:

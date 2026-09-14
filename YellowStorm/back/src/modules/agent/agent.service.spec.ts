@@ -135,6 +135,7 @@ describe('AgentService connector skill inheritance', () => {
     };
     const connectorService = {
       findByIds: jest.fn(),
+      findIdsByCategoryName: jest.fn().mockResolvedValue([]),
     };
     const connectorAuthService = {
       resolveRuntimeAuth: jest.fn(),
@@ -322,6 +323,25 @@ describe('AgentService connector skill inheritance', () => {
     expect(JSON.parse(result[0].agent_params?.params.guardrails_json as string).classifier)
       .toEqual({ omitTemperature: true });
     expect(result[0].agent_params?.params.temperature).toBe('0');
+
+    connectorService.findIdsByCategoryName.mockResolvedValue(['connector-1']);
+    const restricted = await service.buildAgentsForStream(
+      userId,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      false,
+    );
+
+    expect(restricted[0].tools).toEqual([]);
+    expect(JSON.parse(restricted[0].agent_params?.params.connector_bindings_json as string)).toEqual([]);
+    expect(restricted[0].skills?.map((skill) => skill.id as string)).toEqual(['type-skill', 'agent-skill']);
   });
 
   it('exposes every enabled Playbook MCP action to Platform Copilot', async () => {
@@ -486,6 +506,7 @@ describe('AgentService connector skill inheritance', () => {
     expect(agentRepository.findDefaultByType).toHaveBeenCalledWith('555555555555555555555555');
     expect(result).toHaveLength(1);
     expect(result[0].name).toBe('Mono Agent Instance');
+    expect(result[0].agent_type).toBe('mono-agent');
   });
 
   it('uses the selected model for an untagged mono-agent request', async () => {
@@ -722,6 +743,7 @@ describe('AgentService connector skill inheritance', () => {
       'connector-skill',
     ]);
     expect(result).toHaveLength(1);
+    expect(result[0].agent_type).toBe('worker');
     expect(result[0].tools.map((tool) => tool.name)).toEqual([
       'workspace_run_code',
       'workspace_upload_file',

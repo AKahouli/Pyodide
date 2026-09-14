@@ -38,12 +38,14 @@ import type { SkillOption } from '@/modules/agent/types';
 import { RecentSkillsMenu } from '@/modules/skill/components/RecentSkillsMenu';
 import { ManageSkillsDialog } from '@/modules/skill/components/ManageSkillsDialog';
 import { SelectedSkillsPills } from '@/modules/skill/components/SelectedSkillsPills';
+import { useAuth } from '@/modules/auth/useAuth';
 
 interface ComposerProps {
-  onSend: (text: string, model?: string) => void;
+  onSend: (text: string, model?: string) => void | Promise<void>;
 }
 
 export function Composer({ onSend }: ComposerProps) {
+  const { user } = useAuth();
   const streaming = useConversationV2Store((s) => s.streaming);
   const events = useConversationV2Store((s) => s.events);
   const sessionId = useConversationV2Store((s) => s.sessionId);
@@ -108,7 +110,7 @@ export function Composer({ onSend }: ComposerProps) {
   const handleSubmit = (message: PromptInputMessage) => {
     const value = message.text?.trim() ?? '';
     if (!value || inputLocked) return;
-    onSend(value, activeModel?.litellmModel || undefined);
+    return onSend(value, activeModel?.litellmModel || undefined);
   };
 
   const handlePickModel = (modelId: string) => {
@@ -119,7 +121,7 @@ export function Composer({ onSend }: ComposerProps) {
   return (
     <div className='shrink-0 z-10 border-t border-border/50 bg-background/80 p-4 backdrop-blur-xs'>
       <div className='mx-auto w-full max-w-3xl'>
-        <PromptInputProvider>
+        <PromptInputProvider key={`${user?.id ?? 'anonymous'}:${sessionId ?? 'new'}`} draftKey={`${user?.id ?? 'anonymous'}:conversation-v2:${sessionId ?? 'new'}`}>
           <PromptInput onSubmit={handleSubmit}>
             <PromptInputBody>
               <PromptInputTextarea placeholder={t('composer.placeholder')} disabled={inputLocked} />

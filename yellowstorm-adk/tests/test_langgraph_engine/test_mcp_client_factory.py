@@ -238,3 +238,11 @@ def test_log_payload_redacts_image_base64_values():
 
     assert "abc123" not in logged
     assert "[redacted base64 length=6]" in logged
+
+
+def test_log_payload_truncates_serialized_payload_to_100_characters():
+    logged = _log_payload({"query": "x" * 200})
+
+    assert len(logged) == 100
+    assert logged.endswith("...")
+    assert "x" * 100 not in logged

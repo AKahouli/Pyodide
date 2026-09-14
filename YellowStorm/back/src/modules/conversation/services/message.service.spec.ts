@@ -57,6 +57,12 @@ describe('MessageService store lifecycle', () => {
       findBranchesByQuestion: jest.fn(),
       findAiComponents: jest.fn(),
       findReportMessageById: jest.fn(),
+      recordConversationUsageEvents: jest.fn().mockResolvedValue(undefined),
+      getConversationUsage: jest.fn().mockResolvedValue({
+        tokens: { input: 0, output: 0, cachedInput: 0, reasoning: 0, total: 0 },
+        cost: { usd: null, complete: false },
+        carbon: { gramsCo2e: null, estimated: true, complete: false },
+      }),
     };
     conversationService = {
       updateTaggedAgents: jest.fn().mockResolvedValue(undefined),
@@ -85,16 +91,7 @@ describe('MessageService store lifecycle', () => {
       warn: jest.fn(),
       error: jest.fn(),
     };
-    service = new MessageService(
-      messageStore as never,
-      conversationService as never,
-      streamGateway as never,
-      {} as never,
-      configService as never,
-      logger as never,
-      {} as never,
-      conversationSettings as never,
-    );
+    service = new MessageService(messageStore as never, conversationService as never, streamGateway as never, {} as never, configService as never, logger as never, {} as never, conversationSettings as never);
     jest.spyOn(service as any, 'extractAndNotifyMentions').mockResolvedValue(undefined);
   });
 
@@ -105,9 +102,7 @@ describe('MessageService store lifecycle', () => {
       content: 'hello @agent',
       agentIds: [agentId],
     });
-    expect(messageStore.createUser).toHaveBeenCalledWith(
-      expect.objectContaining({ agentIds: [agentId] }),
-    );
+    expect(messageStore.createUser).toHaveBeenCalledWith(expect.objectContaining({ agentIds: [agentId] }));
     expect(result.agentIds).toEqual([agentId]);
   });
 
@@ -127,77 +122,117 @@ describe('MessageService store lifecycle', () => {
   });
 
   it('omits tool results from mapped responses while keeping sanitized params', () => {
-    const response = (service as any).mapToResponse(record({
-      conversationType: 'ai',
-      components: [{
-        id: 'tool-1',
-        type: 'toolActivity',
-        data: {
-          toolName: 'connector',
-          status: 'completed',
-          resultJson: '{"secret":"[REDACTED]"}',
-          paramsJson: '{"query":"safe"}',
-        },
-      }],
-    }));
+    const response = (service as any).mapToResponse(
+      record({
+        conversationType: 'ai',
+        components: [
+          {
+            id: 'tool-1',
+            type: 'toolActivity',
+            data: {
+              toolName: 'connector',
+              status: 'completed',
+              resultJson: '{"secret":"[REDACTED]"}',
+              paramsJson: '{"query":"safe"}',
+            },
+          },
+        ],
+      }),
+    );
     expect(response.components[0].data.resultJson).toBeUndefined();
     expect(response.components[0].data.paramsJson).toBe('{"query":"safe"}');
   });
 
   it('returns a sanitized tool result on demand for the owning conversation', async () => {
     const messageId = new Types.ObjectId().toString();
-    messageStore.findById.mockResolvedValue(record({
-      conversationType: 'ai',
-      components: [{
-        id: 'tool-1',
-        type: 'toolActivity',
-        data: { toolName: 'connector', status: 'completed', resultJson: '{"secret":"[REDACTED]"}' },
-      }],
-    }));
+    messageStore.findById.mockResolvedValue(
+      record({
+        conversationType: 'ai',
+        components: [
+          {
+            id: 'tool-1',
+            type: 'toolActivity',
+            data: {
+              toolName: 'connector',
+              status: 'completed',
+              resultJson: '{"secret":"[REDACTED]"}',
+            },
+          },
+        ],
+      }),
+    );
 
-    await expect(service.findToolActivityResult(conversationId, messageId, 'tool-1'))
-      .resolves.toEqual({ resultJson: '{"secret":"[REDACTED]"}' });
+    await expect(service.findToolActivityResult(conversationId, messageId, 'tool-1')).resolves.toEqual({ resultJson: '{"secret":"[REDACTED]"}' });
   });
 
   it('returns a null result when the tool activity has no recorded result', async () => {
     const messageId = new Types.ObjectId().toString();
-    messageStore.findById.mockResolvedValue(record({
-      conversationType: 'ai',
-      components: [{
-        id: 'tool-1',
-        type: 'toolActivity',
-        data: { toolName: 'connector', status: 'running' },
-      }],
-    }));
+    messageStore.findById.mockResolvedValue(
+      record({
+        conversationType: 'ai',
+        components: [
+          {
+            id: 'tool-1',
+            type: 'toolActivity',
+            data: { toolName: 'connector', status: 'running' },
+          },
+        ],
+      }),
+    );
 
-    await expect(service.findToolActivityResult(conversationId, messageId, 'tool-1'))
-      .resolves.toEqual({ resultJson: null });
+    await expect(service.findToolActivityResult(conversationId, messageId, 'tool-1')).resolves.toEqual({ resultJson: null });
   });
 
   it('rejects tool result lookups for unknown components or foreign conversations', async () => {
     const messageId = new Types.ObjectId().toString();
-    messageStore.findById.mockResolvedValue(record({
-      conversationType: 'ai',
-      components: [{ id: 'tool-1', type: 'toolActivity', data: { resultJson: '{}' } }],
-    }));
+    messageStore.findById.mockResolvedValue(
+      record({
+        conversationType: 'ai',
+        components: [{ id: 'tool-1', type: 'toolActivity', data: { resultJson: '{}' } }],
+      }),
+    );
 
-    await expect(service.findToolActivityResult(conversationId, messageId, 'missing'))
-      .rejects.toThrow('Tool activity not found');
-    await expect(service.findToolActivityResult(new Types.ObjectId().toString(), messageId, 'tool-1'))
-      .rejects.toThrow('Message not found');
+    await expect(service.findToolActivityResult(conversationId, messageId, 'missing')).rejects.toThrow('Tool activity not found');
+    await expect(service.findToolActivityResult(new Types.ObjectId().toString(), messageId, 'tool-1')).rejects.toThrow('Message not found');
   });
 
-  it('strips persisted artifact paths while preserving activity detail', () => {
-    const response = (service as any).mapToResponse(record({
-      conversationType: 'ai',
-      components: [
-        { id: 'artifact-1', type: 'artifact', data: { artifactId: 'opaque-1', filename: 'report.pdf', storagePath: 'owner/run/report.pdf' } },
-        { id: 'activity-1', type: 'agentActivity', data: { summary: 'Reviewing', detail: 'detail', status: 'completed' } },
-      ],
-    }));
+  it('returns persisted components as stored without display-time sanitization', () => {
+    const response = (service as any).mapToResponse(
+      record({
+        conversationType: 'ai',
+        components: [
+          {
+            id: 'artifact-1',
+            type: 'artifact',
+            data: {
+              artifactId: 'opaque-1',
+              filename: 'report.pdf',
+              storagePath: 'owner/run/report.pdf',
+            },
+          },
+          {
+            id: 'activity-1',
+            type: 'agentActivity',
+            data: { summary: 'Reviewing', detail: 'detail', status: 'completed' },
+          },
+        ],
+      }),
+    );
     expect(response.components).toEqual([
-      { id: 'artifact-1', type: 'artifact', data: { artifactId: 'opaque-1', filename: 'report.pdf' } },
-      { id: 'activity-1', type: 'agentActivity', data: { summary: 'Reviewing', detail: 'detail', status: 'completed' } },
+      {
+        id: 'artifact-1',
+        type: 'artifact',
+        data: {
+          artifactId: 'opaque-1',
+          filename: 'report.pdf',
+          storagePath: 'owner/run/report.pdf',
+        },
+      },
+      {
+        id: 'activity-1',
+        type: 'agentActivity',
+        data: { summary: 'Reviewing', detail: 'detail', status: 'completed' },
+      },
     ]);
   });
 
@@ -205,58 +240,69 @@ describe('MessageService store lifecycle', () => {
     conversationSettings.shouldRedactSensitiveText.mockReturnValue(true);
     conversationSettings.getSettings.mockResolvedValue({ redactSensitiveText: false });
     messageStore.listPage.mockResolvedValue({
-      records: [record({
-        conversationType: 'ai',
-        components: [{
-          id: 'answer',
-          type: 'text',
-          data: { content: 'Cover pool au 30/06/2025 — 19 931,3 M€' },
-        }],
-      })],
+      records: [
+        record({
+          conversationType: 'ai',
+          components: [
+            {
+              id: 'answer',
+              type: 'text',
+              data: { content: 'Cover pool au 30/06/2025 — 19 931,3 M€' },
+            },
+          ],
+        }),
+      ],
       total: 1,
     });
 
     const result = await service.findByConversation(conversationId, {});
 
     expect(conversationSettings.getSettings).toHaveBeenCalled();
-    expect(result.messages[0].components?.[0].data.content)
-      .toBe('Cover pool au 30/06/2025 — 19 931,3 M€');
+    expect(result.messages[0].components?.[0].data.content).toBe('Cover pool au 30/06/2025 — 19 931,3 M€');
   });
 
-  it('fails closed when the current redaction setting cannot be loaded', async () => {
+  it('returns tool payloads verbatim even when the redaction setting cannot be loaded', async () => {
     conversationSettings.getSettings.mockRejectedValue(new Error('settings unavailable'));
     messageStore.listPage.mockResolvedValue({
-      records: [record({
-        conversationType: 'ai',
-        components: [{
-          id: 'tool-1',
-          type: 'toolActivity',
-          data: { paramsJson: '{"path":"owner/runs/private/result.txt"}' },
-        }],
-      })],
+      records: [
+        record({
+          conversationType: 'ai',
+          components: [
+            {
+              id: 'tool-1',
+              type: 'toolActivity',
+              data: { paramsJson: '{"path":"owner/runs/private/result.txt"}' },
+            },
+          ],
+        }),
+      ],
       total: 1,
     });
 
     const result = await service.findByConversation(conversationId, {});
 
     const paramsJson = result.messages[0].components?.[0].data.paramsJson as string;
-    expect(paramsJson).toContain('[REDACTED]');
-    expect(paramsJson).not.toContain('owner/runs/private');
+    expect(paramsJson).toContain('owner/runs/private');
+    expect(paramsJson).not.toContain('[REDACTED]');
   });
 
-  it('fails closed without hanging when the redaction setting lookup stalls', async () => {
+  it('returns raw messages without hanging when the redaction setting lookup stalls', async () => {
     jest.useFakeTimers();
     try {
       conversationSettings.getSettings.mockReturnValue(new Promise(() => undefined));
       messageStore.listPage.mockResolvedValue({
-        records: [record({
-          conversationType: 'ai',
-          components: [{
-            id: 'tool-1',
-            type: 'toolActivity',
-            data: { paramsJson: '{"path":"owner/runs/private/result.txt"}' },
-          }],
-        })],
+        records: [
+          record({
+            conversationType: 'ai',
+            components: [
+              {
+                id: 'tool-1',
+                type: 'toolActivity',
+                data: { paramsJson: '{"path":"owner/runs/private/result.txt"}' },
+              },
+            ],
+          }),
+        ],
         total: 1,
       });
 
@@ -265,8 +311,8 @@ describe('MessageService store lifecycle', () => {
       const result = await resultPromise;
 
       const paramsJson = result.messages[0].components?.[0].data.paramsJson as string;
-      expect(paramsJson).toContain('[REDACTED]');
-      expect(paramsJson).not.toContain('owner/runs/private');
+      expect(paramsJson).toContain('owner/runs/private');
+      expect(paramsJson).not.toContain('[REDACTED]');
     } finally {
       jest.useRealTimers();
     }
@@ -277,49 +323,52 @@ describe('MessageService store lifecycle', () => {
     const question = record();
     const answer = record({
       conversationType: 'ai',
-      components: [{
-        id: 'answer',
-        type: 'text',
-        data: { content: 'Cover pool au 30/06/2025 — 19 931,3 M€' },
-      }],
+      components: [
+        {
+          id: 'answer',
+          type: 'text',
+          data: { content: 'Cover pool au 30/06/2025 — 19 931,3 M€' },
+        },
+      ],
     });
     messageStore.listCursor.mockResolvedValue({
       records: [question],
       hasMore: false,
       nextCursor: undefined,
     });
-    messageStore.findBranchesByQuestions.mockResolvedValue(
-      new Map([[question.id, [answer]]]),
-    );
+    messageStore.findBranchesByQuestions.mockResolvedValue(new Map([[question.id, [answer]]]));
 
     const result = await service.findByConversation(conversationId, { mode: 'cursor' });
 
-    expect('branchesByQuestion' in result && result.branchesByQuestion[question.id][0]
-      .components?.[0].data.content).toBe('Cover pool au 30/06/2025 — 19 931,3 M€');
+    expect('branchesByQuestion' in result && result.branchesByQuestion[question.id][0].components?.[0].data.content).toBe('Cover pool au 30/06/2025 — 19 931,3 M€');
   });
 
   it('uses the current redaction setting when loading a message by id', async () => {
     conversationSettings.getSettings.mockResolvedValue({ redactSensitiveText: false });
     const answer = record({
       conversationType: 'ai',
-      components: [{
-        id: 'answer',
-        type: 'text',
-        data: { content: 'Cover pool au 30/06/2025 — 19 931,3 M€' },
-      }],
+      components: [
+        {
+          id: 'answer',
+          type: 'text',
+          data: { content: 'Cover pool au 30/06/2025 — 19 931,3 M€' },
+        },
+      ],
     });
     messageStore.findById.mockResolvedValue(answer);
 
     const result = await service.findById(answer.id);
 
-    expect(result.components?.[0].data.content)
-      .toBe('Cover pool au 30/06/2025 — 19 931,3 M€');
+    expect(result.components?.[0].data.content).toBe('Cover pool au 30/06/2025 — 19 931,3 M€');
   });
 
   it('awaits the canonical completion broadcast', async () => {
     let finishBroadcast: () => void = () => undefined;
     streamGateway.broadcastToConversation.mockImplementationOnce(
-      () => new Promise<void>((resolve) => { finishBroadcast = resolve; }),
+      () =>
+        new Promise<void>((resolve) => {
+          finishBroadcast = resolve;
+        }),
     );
     const message = record({
       conversationType: 'ai',
@@ -327,10 +376,14 @@ describe('MessageService store lifecycle', () => {
     });
     messageStore.completeAi.mockResolvedValue(message);
     let completed = false;
-    const completion = service.completeAIMessage({
-      messageId: message.id,
-      components: message.components,
-    }).then(() => { completed = true; });
+    const completion = service
+      .completeAIMessage({
+        messageId: message.id,
+        components: message.components,
+      })
+      .then(() => {
+        completed = true;
+      });
     await new Promise((resolve) => setImmediate(resolve));
     expect(completed).toBe(false);
     finishBroadcast();
@@ -352,12 +405,7 @@ describe('MessageService store lifecycle', () => {
     messageStore.claimReliability.mockResolvedValue(claimed);
     const result = await service.rerunReliabilityEvaluation(conversationId, message.id);
     expect(result.reliabilityEvaluation).toMatchObject({ status: 'pending' });
-    expect(messageStore.claimReliability).toHaveBeenCalledWith(
-      conversationId,
-      message.id,
-      true,
-      expect.any(String),
-    );
+    expect(messageStore.claimReliability).toHaveBeenCalledWith(conversationId, message.id, true, expect.any(String));
   });
 
   it('uses the automatic reliability claim mode', async () => {
@@ -372,12 +420,7 @@ describe('MessageService store lifecycle', () => {
       reliabilityEvaluation: { status: 'pending', requestedAt: new Date().toISOString() },
     });
     await service.claimReliabilityEvaluation(conversationId, message.id, false);
-    expect(messageStore.claimReliability).toHaveBeenCalledWith(
-      conversationId,
-      message.id,
-      false,
-      expect.any(String),
-    );
+    expect(messageStore.claimReliability).toHaveBeenCalledWith(conversationId, message.id, false, expect.any(String));
   });
 
   it('does not expose reliability state for a message in another conversation', async () => {
@@ -389,23 +432,14 @@ describe('MessageService store lifecycle', () => {
       reliabilityEvaluation: { status: 'pending', requestedAt: new Date().toISOString() },
     });
     messageStore.findById.mockResolvedValue(message);
-    await expect(
-      service.claimReliabilityEvaluation(conversationId, message.id, true),
-    ).rejects.toThrow('Message not found');
+    await expect(service.claimReliabilityEvaluation(conversationId, message.id, true)).rejects.toThrow('Message not found');
     expect(messageStore.claimReliability).not.toHaveBeenCalled();
   });
 
   it('delegates correction-run ownership to the atomic store operation', async () => {
     messageStore.claimCorrectionRun.mockResolvedValue(false);
-    await expect(
-      service.claimCorrectionRun('message-1', 'run-1', '2026-07-29T10:00:00.000Z'),
-    ).resolves.toBe(false);
-    expect(messageStore.claimCorrectionRun).toHaveBeenCalledWith(
-      'message-1',
-      'run-1',
-      '2026-07-29T10:00:00.000Z',
-      expect.any(String),
-    );
+    await expect(service.claimCorrectionRun('message-1', 'run-1', '2026-07-29T10:00:00.000Z')).resolves.toBe(false);
+    expect(messageStore.claimCorrectionRun).toHaveBeenCalledWith('message-1', 'run-1', '2026-07-29T10:00:00.000Z', expect.any(String));
   });
 
   it('sanitizes a correction attempt before persistence', async () => {
@@ -432,7 +466,13 @@ describe('MessageService store lifecycle', () => {
       decision: 'rejected',
       policyReasons: ['score_below_threshold'],
       createdAt: '2026-07-26T00:00:01.000Z',
-      components: [{ id: 'tool', type: 'toolActivity', data: { title: 'search', resultJson: '{"secret":"value"}' } }],
+      components: [
+        {
+          id: 'tool',
+          type: 'toolActivity',
+          data: { title: 'search', resultJson: '{"secret":"value"}' },
+        },
+      ],
     });
     expect(messageStore.upsertCorrectionAttempt).toHaveBeenCalledWith(
       'message-1',
@@ -446,10 +486,7 @@ describe('MessageService store lifecycle', () => {
   it('allows only one simulated service instance to claim a stream lease', async () => {
     messageStore.claimStream.mockResolvedValueOnce(true).mockResolvedValueOnce(false);
     const messageId = new Types.ObjectId().toString();
-    await expect(Promise.all([
-      service.claimStreamExecution(messageId, 'instance-a', 90_000),
-      service.claimStreamExecution(messageId, 'instance-b', 90_000),
-    ])).resolves.toEqual([true, false]);
+    await expect(Promise.all([service.claimStreamExecution(messageId, 'instance-a', 90_000), service.claimStreamExecution(messageId, 'instance-b', 90_000)])).resolves.toEqual([true, false]);
     expect(messageStore.claimStream).toHaveBeenCalledTimes(2);
   });
 
@@ -466,7 +503,11 @@ describe('MessageService store lifecycle', () => {
       components,
     });
     expect(messageStore.completeAi).toHaveBeenCalledWith(
-      expect.objectContaining({ messageId: message.id, streamExecutionLeaseId: 'lease-1', components }),
+      expect.objectContaining({
+        messageId: message.id,
+        streamExecutionLeaseId: 'lease-1',
+        components,
+      }),
     );
   });
 });

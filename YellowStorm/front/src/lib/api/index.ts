@@ -1,4 +1,4 @@
-export { apiClient, clearAuthData } from './client';
+export { apiClient, AUTH_LOST_EVENT, clearAuthData, refreshAccessToken, scheduleProactiveRefresh } from './client';
 export type { ApiError, ApiResponse } from './client';
 export {
   AuthTransientError,

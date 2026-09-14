@@ -190,6 +190,8 @@ vi.mock('../store', () => ({
   useSetSelectedWorkspaceIds: () => workspaceSelectionMock.set,
   useDeepSearchEnabled: () => false,
   useSetDeepSearchEnabled: () => vi.fn(),
+  useWebConnectorAccessEnabled: () => true,
+  useSetWebConnectorAccessEnabled: () => vi.fn(),
   useSelectedModelId: () => 'model-1',
   useSelectedReasoningEffort: () => 'high',
   useSetSelectedReasoningEffort: () => vi.fn(),
@@ -232,6 +234,7 @@ describe('ConversationInput', () => {
             downloadUrl: '',
           },
         ],
+        webConnectorAccessEnabled: true,
         modelId: 'model-1',
         agentIds: ['agent-1'],
         connectorRepo: {
