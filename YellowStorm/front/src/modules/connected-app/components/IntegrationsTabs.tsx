@@ -4,7 +4,7 @@ import { useModuleTranslation } from '@/modules/localization';
 import { usePermissions } from '@/modules/admin/hooks/usePermissions';
 
 const TABS = [
-  { to: '/apps', key: 'tabs.apps', menu: 'connectedApps' },
+  { to: '/connected-apps', key: 'tabs.apps', menu: 'connectedApps' },
   { to: '/app-market', key: 'tabs.marketplace', menu: 'appMarketplace' },
 ] as const;
 

@@ -67,7 +67,7 @@ export const FEATURE_PERMISSION_ITEMS: {
   { key: 'workspace', permission: 'feature.workspace', labelKey: 'system.features.items.workspace.label', descriptionKey: 'system.features.items.workspace.description' },
   { key: 'playbook', permission: 'feature.playbook', labelKey: 'system.features.items.playbook.label', descriptionKey: 'system.features.items.playbook.description' },
   { key: 'governance', permission: 'feature.governance', labelKey: 'system.features.items.governance.label', descriptionKey: 'system.features.items.governance.description' },
-  { key: 'appMarketplace', permission: 'feature.app_marketplace', labelKey: 'system.features.items.appMarketplace.label', descriptionKey: 'system.features.items.appMarketplace.description' },
+  { key: 'appBuilder', permission: 'feature.app_marketplace', labelKey: 'system.features.items.appBuilder.label', descriptionKey: 'system.features.items.appBuilder.description' },
   { key: 'worky', permission: 'feature.worky', labelKey: 'system.features.items.worky.label', descriptionKey: 'system.features.items.worky.description' },
   { key: 'agents', permission: 'feature.agents', labelKey: 'system.features.items.agents.label', descriptionKey: 'system.features.items.agents.description' },
   { key: 'semanticModel', permission: 'feature.semantic_model', labelKey: 'system.features.items.semanticModel.label', descriptionKey: 'system.features.items.semanticModel.description' },

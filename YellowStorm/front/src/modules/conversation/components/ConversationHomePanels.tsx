@@ -62,7 +62,7 @@ export function ConversationHomePanels() {
           case 'agent':
             return featureVisibility.agents && canUseFeature('agents') && canSeeMenu('agents');
           case 'appBuilder':
-            return featureVisibility.appMarketplace && canUseFeature('appMarketplace') && canSeeMenu('appMarketplace');
+            return featureVisibility.appBuilder && canUseFeature('appBuilder') && canSeeMenu('appMarketplace');
           case 'semanticModel':
             return (
               featureVisibility.semanticModel &&

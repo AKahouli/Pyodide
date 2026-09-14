@@ -11,7 +11,7 @@ const mocks = vi.hoisted(() => ({
   navigate: vi.fn(),
   deniedFeatures: new Set<string>(),
   semanticReadAllowed: true,
-  visibility: { conversation: true, workspace: true, playbook: true, governance: true, appMarketplace: true, worky: true, agents: true, semanticModel: true },
+  visibility: { conversation: true, workspace: true, playbook: true, governance: true, appBuilder: true, worky: true, agents: true, semanticModel: true },
 }));
 
 vi.mock('react-router-dom', () => ({ useNavigate: () => mocks.navigate }));
@@ -101,7 +101,7 @@ describe('ConversationHomePanels', () => {
   });
 
   it('hides starter cards the role cannot use (permission sync)', async () => {
-    mocks.deniedFeatures = new Set(['worky', 'playbook', 'appMarketplace']);
+    mocks.deniedFeatures = new Set(['worky', 'playbook', 'appBuilder']);
     mocks.fetchConversations.mockResolvedValue({ items: [] });
 
     render(<ConversationHomePanels />);
@@ -114,7 +114,7 @@ describe('ConversationHomePanels', () => {
   });
 
   it('hides the feature zone entirely when no starter is allowed', async () => {
-    mocks.deniedFeatures = new Set(['worky', 'playbook', 'agents', 'appMarketplace', 'semanticModel']);
+    mocks.deniedFeatures = new Set(['worky', 'playbook', 'agents', 'appBuilder', 'semanticModel']);
     mocks.fetchConversations.mockResolvedValue({ items: [] });
 
     render(<ConversationHomePanels />);

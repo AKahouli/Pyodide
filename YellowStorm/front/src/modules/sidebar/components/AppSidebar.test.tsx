@@ -200,7 +200,7 @@ describe('AppSidebar', () => {
     expect(screen.getByText('playbook-btn')).toBeInTheDocument();
     expect(screen.getByText('worky-btn')).toBeInTheDocument();
     // Integrations (connected apps + app marketplace) mirrors the menu tree's automate branch.
-    expect(screen.getByRole('link', { name: 'Integrations' })).toHaveAttribute('href', '/apps');
+    expect(screen.getByRole('link', { name: 'Integrations' })).toHaveAttribute('href', '/connected-apps');
 
     // Managed governance destinations
     expect(screen.getByRole('link', { name: 'Governance' })).toHaveAttribute('href', '/governance');
