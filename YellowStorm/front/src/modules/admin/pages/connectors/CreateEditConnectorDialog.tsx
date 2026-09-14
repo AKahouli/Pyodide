@@ -99,13 +99,14 @@ const RUNTIME_AUTH_STRATEGIES = [
   { value: 'env_vars', label: 'Environment variables' },
 ];
 
-const DYNAMIC_HEADER_SOURCES: Array<{ value: ConnectorDynamicHeaderSource; label: string }> = [
-  { value: 'user_id', label: 'User ID' },
-  { value: 'user_email', label: 'User email' },
-  { value: 'user_first_name', label: 'User first name' },
-  { value: 'user_last_name', label: 'User last name' },
-  { value: 'user_full_name', label: 'User full name' },
-];
+const DYNAMIC_HEADER_SOURCES = [
+  { value: 'workspace', labelKey: 'connectors.form.dynamicHeaders.sources.workspace' },
+  { value: 'user_id', labelKey: 'connectors.form.dynamicHeaders.sources.userId' },
+  { value: 'user_email', labelKey: 'connectors.form.dynamicHeaders.sources.userEmail' },
+  { value: 'user_first_name', labelKey: 'connectors.form.dynamicHeaders.sources.userFirstName' },
+  { value: 'user_last_name', labelKey: 'connectors.form.dynamicHeaders.sources.userLastName' },
+  { value: 'user_full_name', labelKey: 'connectors.form.dynamicHeaders.sources.userFullName' },
+] as const satisfies ReadonlyArray<{ value: ConnectorDynamicHeaderSource; labelKey: string }>;
 
 function createDynamicHeaderRow(
   headerName = '',
@@ -980,7 +981,7 @@ export function CreateEditConnectorDialog({
               <div>
                 <Label>Dynamic headers</Label>
                 <p className='text-sm text-muted-foreground'>
-                  Headers automatically filled at runtime from the calling user (e.g. X-User-Id → user_id).
+                  {t('connectors.form.dynamicHeaders.helper')}
                 </p>
               </div>
               <Button type='button' variant='outline' size='sm' onClick={addDynamicHeader}>
@@ -1010,7 +1011,7 @@ export function CreateEditConnectorDialog({
                     <SelectContent>
                       {DYNAMIC_HEADER_SOURCES.map((source) => (
                         <SelectItem key={source.value} value={source.value}>
-                          {source.label}
+                          {t(source.labelKey)}
                         </SelectItem>
                       ))}
                     </SelectContent>
