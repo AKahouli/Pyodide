@@ -24,8 +24,9 @@ export class NavigationSettingsService {
     const setting = await this.settings.findOne({ key: KEY }).lean().exec();
     if (this.isSettings(setting?.value)) {
       try {
-        this.validate(setting.value.nodes);
-        return setting.value;
+        const value = this.normalizePersistedSettings(setting.value);
+        this.validate(value.nodes);
+        return value;
       } catch {
         // Invalid persisted configuration must not make navigation unusable.
       }
@@ -107,6 +108,17 @@ export class NavigationSettingsService {
       || !NAVIGATION_TARGET_KEYS.includes(value.targetKey as (typeof NAVIGATION_TARGET_KEYS)[number]))) {
       throw new BadRequestException('Invalid navigation target');
     }
+  }
+
+  private normalizePersistedSettings(value: NavigationSettings): NavigationSettings {
+    return {
+      revision: value.revision,
+      nodes: value.nodes.map((node) => {
+        const normalized = { ...node } as NavigationNode & { targetKey?: NavigationNode['targetKey'] | null };
+        if (normalized.targetKey === null) delete normalized.targetKey;
+        return normalized as NavigationNode;
+      }),
+    };
   }
 
   private isSettings(value: unknown): value is NavigationSettings {

@@ -1,10 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
-import { ShieldCheck } from 'lucide-react';
-import { StarsBackground } from '@/modules/conversation/effects/stars-background';
 import Input from '@/components/ai-elements/input';
-import { Shimmer } from '@/components/ai-elements/shimmer';
 import type { PromptInputMessage } from '@/components/ai-elements/prompt-input';
 import { useUsage } from '@/modules/usage/UsageContext';
 import {
@@ -27,6 +24,10 @@ import { useFeatureVisibilityStore } from '@/modules/admin/featureVisibilityStor
 import { createGovernedConversation } from './api';
 import type { Conversation } from './types';
 import { ConversationHomePanels } from './components/ConversationHomePanels';
+import { ConversationScopeHeader } from './components/ConversationScopeHeader';
+import { HomePromptSuggestions } from './components/HomePromptSuggestions';
+import './conversation-home.css';
+import './conversation-home-motion.css';
 
 export function NewConversationPage() {
   const { accept } = useAllowedUploadExtensions();
@@ -222,46 +223,33 @@ export function NewConversationPage() {
   };
 
   return (
-    <>
-      <StarsBackground />
-      <div className='flex min-h-0 w-full flex-1 flex-col items-center overflow-y-auto px-4 py-7'>
-        <div className='relative z-10 w-full max-w-7xl space-y-7'>
-          <header className='flex flex-col justify-between gap-4 sm:flex-row sm:items-end'>
-            <div>
-              <Shimmer as='h1' className='pb-1 text-2xl font-bold' duration={5} spread={7}>
-                {t(greetingKey, { name: displayName })}
-              </Shimmer>
-              <p className='text-sm text-muted-foreground'>{t('home.subtitle')}</p>
-            </div>
-            {governedScopesEnabled && governedScopesError && <div role='alert' className='flex items-center gap-2 text-sm text-destructive'>
-              <span>{t('home.scope.loadError')}</span>
-              <button type='button' className='font-medium underline' onClick={() => void refetchGovernedScopes()}>{t('home.retry')}</button>
-            </div>}
-            {governedScopesEnabled && governedScopes.length > 0 && <label className='flex min-w-64 flex-col gap-1 text-xs font-medium text-muted-foreground'>
-              {t('home.scope.label')}
-              <select value={selectedScopeId} disabled={creationStarted} onChange={(event) => handleScopeChange(event.target.value)} className='h-10 rounded-xl border bg-background px-3 text-sm text-foreground shadow-sm outline-none focus-visible:ring-2 focus-visible:ring-ring'>
-                <option value=''>{t('home.scope.standard')}</option>
-                {governedScopes.map((scope) => <option key={scope.scopeId} value={scope.scopeId}>{scope.name}</option>)}
-              </select>
-            </label>}
+      <div className='conversation-home'>
+        <div className='conversation-home-content'>
+          <header className='conversation-home-greeting'>
+            <h1>{t(greetingKey, { name: displayName })}</h1>
+            <p>{t('home.subtitle')}</p>
           </header>
 
-          <div className='mx-auto w-full max-w-4xl space-y-3'>
-            {presentationScope && <div className='flex items-center gap-3 rounded-xl border border-primary/30 bg-primary/5 px-4 py-3 text-sm'>
-              <ShieldCheck className='size-4 shrink-0 text-primary' />
-              <div className='min-w-0 flex-1'>
-                <p className='truncate font-medium'>{t('home.scope.governedBy', { name: presentationScope.name })}</p>
-                <p className='text-xs text-muted-foreground'>{t('home.scope.description', { version: presentationScope.revisionNumber })}</p>
-              </div>
-              {!creationStarted && <button type='button' className='shrink-0 text-xs font-medium text-primary hover:underline' onClick={() => handleScopeChange('')}>{t('home.scope.switchStandard')}</button>}
-            </div>}
+          <div className='conversation-home-compose-area'>
+            <div className='conversation-home-composer' data-governed={Boolean(presentationScope)}>
+            <ConversationScopeHeader
+              enabled={governedScopesEnabled}
+              scopes={governedScopes}
+              scope={presentationScope}
+              locked={creationStarted}
+              isError={governedScopesError}
+              onChange={handleScopeChange}
+              onRetry={() => void refetchGovernedScopes()}
+            />
             <Input
               draftKey={`${user?.id ?? 'anonymous'}:conversation:new`}
               onSubmit={handleSubmit}
               status={isSending ? 'submitted' : 'ready'}
               disabled={isSending || inputDisabled || isLimitExceeded}
               submitDisabled={isUploading || isSending}
-              placeholder={limitPlaceholder}
+              requireContent
+              placeholder={limitPlaceholder ?? t('home.input.placeholder')}
+              toolLabels={{ attachments: t('home.input.attach'), knowledge: t('home.input.knowledge'), data: t('home.input.data') }}
               onFilesAdded={handleFilesAdded}
               onFileRemoved={handleFileRemoved}
               uploadingFiles={uploadFiles}
@@ -273,14 +261,17 @@ export function NewConversationPage() {
               governedMode={Boolean(presentationScope)}
               enableTeamMentions={!presentationScope}
               extraTools={presentationScope ? <ReliabilityCheckToggle /> : <><ReasoningEffortSelect /><WebSearchConnectorToggle /><ReliabilityCheckToggle /></>}
-              belowTextarea={<ComposerSuggestionChips fetchDisabled={inputDisabled || isLimitExceeded || isUploading || isSending} />}
+              belowTextarea={<>
+                <HomePromptSuggestions scopeName={presentationScope?.name} disabled={inputDisabled || isLimitExceeded || isUploading || isSending} />
+                <ComposerSuggestionChips fetchDisabled={inputDisabled || isLimitExceeded || isUploading || isSending} />
+              </>}
             />
+            </div>
             {!presentationScope && <SelectedConnectorRepo />}
           </div>
 
           <ConversationHomePanels />
         </div>
       </div>
-    </>
   );
 }

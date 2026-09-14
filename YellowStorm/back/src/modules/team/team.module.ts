@@ -2,6 +2,7 @@ import { Module, forwardRef } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
 import { TeamController } from './controllers/team.controller';
 import { TeamShareController } from './controllers/team-share.controller';
+import { TeamCrudInternalController } from './controllers/team-crud-internal.controller';
 import { AdminTeamAutoBuilderController } from './controllers/admin-team-auto-builder.controller';
 import { TeamService } from './team.service';
 import { TeamShareService } from './services/team-share.service';
@@ -16,6 +17,7 @@ import {
 import { AgentModule } from '../agent/agent.module';
 import { UserModule } from '../user/user.module';
 import { AuthorizationModule } from '../authorization/authorization.module';
+import { AuthModule } from '../auth/auth.module';
 import { ChatCompletionModule } from '../chat-completion/chat-completion.module';
 import { AgentTypeModule } from '../agent-type/agent-type.module';
 import { ToolModule } from '../tool/tool.module';
@@ -31,12 +33,13 @@ import { ModelsModule } from '../models/models.module';
     forwardRef(() => AgentModule),
     UserModule,
     AuthorizationModule,
+    AuthModule,
     ChatCompletionModule,
     AgentTypeModule,
     ToolModule,
     ModelsModule,
   ],
-  controllers: [TeamController, TeamShareController, AdminTeamAutoBuilderController],
+  controllers: [TeamController, TeamShareController, TeamCrudInternalController, AdminTeamAutoBuilderController],
   providers: [TeamService, TeamShareService, TeamAutoBuilderConfigService, TeamPermissionGuard],
   exports: [TeamService, TeamShareService],
 })

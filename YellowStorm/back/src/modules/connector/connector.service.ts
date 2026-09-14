@@ -1,5 +1,6 @@
-import { Inject, Injectable } from '@nestjs/common';
+import { Inject, Injectable, Optional } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
+import { ConfigService } from '@nestjs/config';
 import { Model, FilterQuery, Types } from 'mongoose';
 import { LoggerService } from '../logger';
 import { PaginatedResponseDto } from '../../common/dto/pagination.dto';
@@ -30,6 +31,12 @@ import {
 import { ConnectorAuthService } from './interfaces/connector-auth.interface';
 import { ConnectedAppTokenService } from '../connected-app/services/connected-app-token.service';
 import { ConnectorPlaybookBindingSyncService } from './services/connector-playbook-binding-sync.service';
+import { RESERVED_SYSTEM_OWNER_ID } from '../agent/constants/platform-copilot.constants';
+import {
+  AGENT_MCP_ACTIONS,
+  AGENT_MCP_CONNECTOR_SLUG,
+  AGENT_MCP_RUNTIME_AUTH_SECRET_KEY,
+} from './constants/agent-mcp.constants';
 
 @Injectable()
 export class ConnectorService {
@@ -47,6 +54,7 @@ export class ConnectorService {
     @Inject('ConnectorAuthService')
     private readonly connectorAuthService: ConnectorAuthService,
     private readonly playbookBindingSyncService: ConnectorPlaybookBindingSyncService,
+    @Optional() private readonly configService?: ConfigService,
   ) {
     this.logger.setContext(ConnectorService.name);
   }
@@ -89,6 +97,47 @@ export class ConnectorService {
     });
 
     return this.toResponse(connector);
+  }
+
+  /**
+   * Idempotently seed the hidden system connector for the mcp-agent MCP server
+   * (agent/team CRUD over Streamable HTTP). $setOnInsert keeps admin edits —
+   * e.g. refreshed action snapshots from an MCP import — across restarts.
+   */
+  async ensureSystemAgentMcpConnector(): Promise<IConnectorResponse> {
+    const connector = await this.connectorModel.findOneAndUpdate(
+      { slug: AGENT_MCP_CONNECTOR_SLUG },
+      {
+        $setOnInsert: {
+          slug: AGENT_MCP_CONNECTOR_SLUG,
+          name: 'Agent Management (MCP)',
+          description: 'Agent and team CRUD tools served by the mcp-agent MCP server.',
+          icon: '',
+          color: '',
+          iconColor: 'light',
+          categoryId: null,
+          authType: 'none',
+          authConfigSchema: {},
+          authSourceType: 'server_config',
+          connectedAppKey: '',
+          runtimeAuthConfig: { strategy: 'http_header_bearer', secretKey: AGENT_MCP_RUNTIME_AUTH_SECRET_KEY },
+          mcpTransportType: 'streamable_http',
+          mcpServerUrl: this.configService?.get<string>('agentMcp.mcpServerUrl', 'http://localhost:8026/mcp') ?? 'http://localhost:8026/mcp',
+          mcpServerConfig: {},
+          dynamicHeaders: this.normalizeDynamicHeaders([
+            { headerName: 'X-YellowStorm-User-Id', source: DynamicHeaderSource.USER_ID },
+          ]),
+          actions: this.normalizeConnectorActions(AGENT_MCP_ACTIONS),
+          referencedSkillIds: [],
+          isActive: true,
+          isHidden: true,
+          isSystem: true,
+          createdBy: new Types.ObjectId(RESERVED_SYSTEM_OWNER_ID),
+        },
+      },
+      { upsert: true, new: true, setDefaultsOnInsert: true },
+    ).lean().exec();
+    return this.toResponse(connector!);
   }
 
   async findAll(query: QueryConnectorDto): Promise<PaginatedResponseDto<IConnectorResponse>> {

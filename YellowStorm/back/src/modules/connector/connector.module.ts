@@ -36,6 +36,7 @@ import { CryptoService } from '@common/services/crypto.service';
 import { ConnectorAdminAuthService } from './services/connector-admin-auth.service';
 import { ConnectorPlaybookBindingSyncService } from './services/connector-playbook-binding-sync.service';
 import { ConnectorMcpRuntimeService } from './services/connector-mcp-runtime.service';
+import { AgentMcpConnectorBootstrapService } from './services/agent-mcp-connector-bootstrap.service';
 import { CatalogTransferService } from './services/catalog-transfer.service';
 import { AdminCatalogTransferController } from './admin-catalog-transfer.controller';
 import { Skill, SkillSchema } from '../skill/schemas/skill.schema';
@@ -82,6 +83,7 @@ import {
   providers: [
     CryptoService,
     ConnectorService,
+    AgentMcpConnectorBootstrapService,
     ConnectorCategoryService,
     ConnectorAdminAuthService,
     ConnectorCredentialService,

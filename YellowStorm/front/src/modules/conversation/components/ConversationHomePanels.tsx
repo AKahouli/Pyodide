@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { AppWindow, Bot, Database, FileOutput, MessageSquare, Network, Play, ScrollText } from 'lucide-react';
+import { AppWindow, ArrowRight, Bot, Database, FileOutput, MessageSquare, Network, Play, ScrollText, ShieldCheck } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { showError } from '@/lib/notifications';
 import { fetchConversations, fetchRecentConversationArtifacts, getArtifactDownloadUrl } from '../api';
 import type { ConversationSummary, RecentConversationArtifact } from '../types';
@@ -33,6 +34,7 @@ export function ConversationHomePanels() {
   const [artifacts, setArtifacts] = useState<RecentArtifact[]>([]);
   const [activityState, setActivityState] = useState<'loading' | 'ready' | 'error'>('loading');
   const [artifactState, setArtifactState] = useState<'loading' | 'ready' | 'error'>('loading');
+  const [showAllArtifacts, setShowAllArtifacts] = useState(false);
 
   useEffect(() => {
     let active = true;
@@ -118,6 +120,7 @@ export function ConversationHomePanels() {
       title: conversation.title,
       detail: t('home.activity.conversation'),
       status: conversation.runtimeMode === 'governed' ? t('home.activity.governed') : undefined,
+      governed: conversation.runtimeMode === 'governed',
       at: conversation.lastMessageAt || conversation.updatedAt,
       icon: MessageSquare,
       open: () => navigate(`/conversation/${conversation.id}`),
@@ -130,6 +133,7 @@ export function ConversationHomePanels() {
         title: playbook.name,
         detail: t(executed ? 'home.activity.playbookExecuted' : created ? 'home.activity.playbookCreated' : 'home.activity.playbookEdited'),
         status: playbook.executionStatus ? t(`home.activity.status.${playbook.executionStatus}`) : undefined,
+        governed: false,
         at: executed ? playbook.lastExecutionAt! : playbook.updatedAt,
         icon: Play,
         open: () => navigate(`/playbooks/${playbook.id}`),
@@ -149,59 +153,61 @@ export function ConversationHomePanels() {
   };
 
   return (
-    <div className='w-full space-y-7'>
+    <div className='conversation-home-panels'>
       {starters.length > 0 && (
         <section aria-labelledby='conversation-starters-heading'>
-          <div className='mb-3 flex items-end justify-between gap-4'>
-            <div>
-              <h2 id='conversation-starters-heading' className='font-semibold'>{t('home.starters.title')}</h2>
-              <p className='text-xs text-muted-foreground'>{t('home.starters.description')}</p>
-            </div>
-          </div>
-          <div className='grid gap-3 md:grid-cols-3'>
+          <h2 id='conversation-starters-heading' className='conversation-home-section-title'>{t('home.starters.title')}</h2>
+          <TooltipProvider delayDuration={250}>
+          <div className='conversation-home-shortcuts'>
             {starters.map(({ key, path, icon: Icon }) => (
-              <button key={key} type='button' onClick={() => navigate(path)} className='group flex min-h-28 items-start gap-4 rounded-2xl border bg-card/70 p-4 text-left transition-colors hover:border-primary/40 hover:bg-card'>
-                <span className='flex size-10 shrink-0 items-center justify-center rounded-xl bg-primary/10 text-primary'><Icon className='size-5' /></span>
-                <span>
-                  <span className='block text-sm font-semibold'>{t(`home.starters.${key}.title`)}</span>
-                  <span className='mt-1 block text-xs leading-5 text-muted-foreground'>{t(`home.starters.${key}.description`)}</span>
-                </span>
-              </button>
+              <Tooltip key={key}>
+                <TooltipTrigger asChild>
+                  <button type='button' onClick={() => navigate(path)} className='conversation-home-shortcut'>
+                    <Icon aria-hidden='true' className='size-5 shrink-0 text-primary' />
+                    <span>{t(`home.starters.${key}.title`)}</span>
+                    <ArrowRight aria-hidden='true' className='conversation-home-shortcut-arrow size-4 shrink-0' />
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent className='max-w-64'>{t(`home.starters.${key}.description`)}</TooltipContent>
+              </Tooltip>
             ))}
           </div>
+          </TooltipProvider>
         </section>
       )}
 
-      <div className='grid gap-5 lg:grid-cols-[minmax(0,1.7fr)_minmax(18rem,1fr)]'>
+      <div className='conversation-home-recents'>
         <section aria-labelledby='recent-activity-heading' className='min-w-0'>
-          <div className='mb-3 flex items-center justify-between'>
-            <h2 id='recent-activity-heading' className='font-semibold'>{t('home.activity.title')}</h2>
+          <div className='conversation-home-section-header'>
+            <h2 id='recent-activity-heading' className='conversation-home-section-title'>{t('home.activity.title')}</h2>
+            <button type='button' className='conversation-home-text-action' onClick={() => navigate('/chats')}>{t('home.activity.allChats')}<ArrowRight aria-hidden='true' className='size-4' /></button>
           </div>
-          <div className='overflow-hidden rounded-2xl border bg-card/60'>
-            {activityState === 'loading' ? <EmptyRow label={t('home.loading')} /> : activityState === 'error' ? <ErrorRow label={t('home.activity.loadError')} retryLabel={t('home.retry')} onRetry={loadActivity} /> : activity.length ? activity.map((item) => <button key={item.id} type='button' onClick={item.open} className='flex w-full items-center gap-3 border-b px-4 py-3 text-left last:border-b-0 hover:bg-muted/50'>
-              <item.icon className='size-4 shrink-0 text-muted-foreground' />
+          <div className='conversation-home-list' aria-busy={activityState === 'loading'}>
+            {activityState === 'loading' ? <LoadingRows label={t('home.loading')} /> : activityState === 'error' ? <ErrorRow label={t('home.activity.loadError')} retryLabel={t('home.retry')} onRetry={loadActivity} /> : activity.length ? activity.map((item) => <button key={item.id} type='button' onClick={item.open} className='conversation-home-recent-row'>
+              <item.icon aria-hidden='true' className='size-5 shrink-0 text-muted-foreground' />
               <span className='min-w-0 flex-1'>
-                <span className='block truncate text-sm font-medium'>{item.title}</span>
+                <span className='block truncate text-sm font-medium' title={item.title}>{item.title}</span>
                 <span className='block truncate text-xs text-muted-foreground'>{item.detail}</span>
               </span>
-              {item.status && <span className='hidden rounded-full bg-primary/10 px-2 py-1 text-[11px] text-primary sm:block'>{item.status}</span>}
-              <time className='shrink-0 text-xs text-muted-foreground'>{formatRelativeTimeLabel(item.at, '', language)}</time>
+              {item.status && <span className='conversation-home-status'>{item.governed && <ShieldCheck aria-hidden='true' className='size-3.5' />}{item.status}</span>}
+              <time dateTime={item.at} className='conversation-home-time'>{formatRelativeTimeLabel(item.at, '', language)}</time>
             </button>) : <EmptyRow label={t('home.activity.empty')} />}
           </div>
         </section>
 
         <section aria-labelledby='recent-artifacts-heading' className='min-w-0'>
-          <div className='mb-3 flex items-center justify-between'>
-            <h2 id='recent-artifacts-heading' className='font-semibold'>{t('home.artifacts.title')}</h2>
+          <div className='conversation-home-section-header'>
+            <h2 id='recent-artifacts-heading' className='conversation-home-section-title'>{t('home.artifacts.title')}</h2>
+            {artifactState === 'ready' && artifacts.length > 4 && <button type='button' className='conversation-home-text-action' aria-expanded={showAllArtifacts} aria-controls='home-artifact-list' onClick={() => setShowAllArtifacts((value) => !value)}>{t(showAllArtifacts ? 'home.showLess' : 'home.showMore')}<ArrowRight aria-hidden='true' className='size-4' /></button>}
           </div>
-          <div className='overflow-hidden rounded-2xl border bg-card/60'>
-            {artifactState === 'loading' ? <EmptyRow label={t('home.loading')} /> : artifactState === 'error' ? <ErrorRow label={t('home.artifacts.loadError')} retryLabel={t('home.retry')} onRetry={loadArtifacts} /> : artifacts.length ? artifacts.map((artifact) => <Button key={`${artifact.source}:${artifact.artifactId}`} variant='ghost' onClick={() => void openArtifact(artifact)} className='h-auto w-full justify-start gap-3 rounded-none border-b px-4 py-3 text-left last:border-b-0'>
-              <FileOutput className='size-4 shrink-0 text-primary' />
+          <div id='home-artifact-list' className='conversation-home-list' aria-busy={artifactState === 'loading'}>
+            {artifactState === 'loading' ? <LoadingRows label={t('home.loading')} /> : artifactState === 'error' ? <ErrorRow label={t('home.artifacts.loadError')} retryLabel={t('home.retry')} onRetry={loadArtifacts} /> : artifacts.length ? artifacts.slice(0, showAllArtifacts ? artifacts.length : 4).map((artifact) => <Button key={`${artifact.source}:${artifact.artifactId}`} variant='ghost' onClick={() => void openArtifact(artifact)} className='conversation-home-recent-row'>
+              <FileOutput aria-hidden='true' className='size-5 shrink-0 text-primary' />
               <span className='min-w-0 flex-1'>
-                <span className='block truncate text-sm font-medium'>{artifact.filename}</span>
+                <span className='block truncate text-sm font-medium' title={artifact.filename}>{artifact.filename}</span>
                 <span className='block truncate text-xs text-muted-foreground'>{artifact.source === 'conversation' ? artifact.conversationTitle : artifact.playbookName}</span>
               </span>
-              <time className='shrink-0 text-xs font-normal text-muted-foreground'>{formatRelativeTimeLabel(artifact.generatedAt, '', language)}</time>
+              <time dateTime={artifact.generatedAt} className='conversation-home-time'>{formatRelativeTimeLabel(artifact.generatedAt, '', language)}</time>
             </Button>) : <EmptyRow label={t('home.artifacts.empty')} />}
           </div>
         </section>
@@ -212,6 +218,12 @@ export function ConversationHomePanels() {
 
 function EmptyRow({ label }: Readonly<{ label: string }>) {
   return <p className='px-4 py-8 text-center text-sm text-muted-foreground'>{label}</p>;
+}
+
+function LoadingRows({ label }: Readonly<{ label: string }>) {
+  return <div role='status' aria-label={label} className='conversation-home-loading'>
+    {[0, 1, 2, 3].map((index) => <div key={index} aria-hidden='true'><span /><span /></div>)}
+  </div>;
 }
 
 function ErrorRow({ label, retryLabel, onRetry }: Readonly<{ label: string; retryLabel: string; onRetry: () => Promise<void> }>) {

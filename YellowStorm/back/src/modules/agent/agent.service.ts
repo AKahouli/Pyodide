@@ -44,6 +44,7 @@ import {
   PLATFORM_COPILOT_HANDOFF_RUNTIME_INSTRUCTION,
   PLATFORM_COPILOT_PLAYBOOK_CONNECTOR_SLUG,
 } from './constants/platform-copilot.constants';
+import { AGENT_MCP_CONNECTOR_SLUG } from '../connector/constants/agent-mcp.constants';
 import { SystemService } from '../system/system.service';
 
 /** Agent-type slug of the orchestrating manager agent. */
@@ -52,6 +53,11 @@ const MANAGER_SLUG = 'manager';
 const MONO_AGENT_SLUG = 'mono-agent';
 /** Agent-type slug for human agents exposed to third-party integrations. */
 const HUMAIN_AGENT_TYPE_SLUG = 'humain';
+/** Trusted system MCP connectors that receive runtime identity headers on their bindings. */
+const TRUSTED_SYSTEM_MCP_CONNECTOR_SLUGS = new Set([
+  PLATFORM_COPILOT_PLAYBOOK_CONNECTOR_SLUG,
+  AGENT_MCP_CONNECTOR_SLUG,
+]);
 
 export interface PlaybookPlannerAgentConfig {
   agentTypeId: string;
@@ -1033,7 +1039,7 @@ export class AgentService {
           this.buildConnectorActionKeysByConnectorId(agent.connectorActionSelections),
         );
         for (const binding of connectorBindings) {
-          if (String(binding.connector_slug || '').toLowerCase() !== 'playbook-mcp') continue;
+          if (!TRUSTED_SYSTEM_MCP_CONNECTOR_SLUGS.has(String(binding.connector_slug || '').toLowerCase())) continue;
           binding.auth_headers = {
             ...((binding.auth_headers as Record<string, string>) || {}),
             'X-YellowStorm-Agent-Id': agent.id,

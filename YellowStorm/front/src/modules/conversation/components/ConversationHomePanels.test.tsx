@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { ConversationHomePanels } from './ConversationHomePanels';
@@ -8,12 +8,13 @@ const mocks = vi.hoisted(() => ({
   fetchConversationArtifacts: vi.fn(),
   getPlaybooks: vi.fn(),
   fetchPlaybookArtifacts: vi.fn(),
+  navigate: vi.fn(),
   deniedFeatures: new Set<string>(),
   semanticReadAllowed: true,
   visibility: { conversation: true, workspace: true, playbook: true, governance: true, appMarketplace: true, worky: true, agents: true, semanticModel: true },
 }));
 
-vi.mock('react-router-dom', () => ({ useNavigate: () => vi.fn() }));
+vi.mock('react-router-dom', () => ({ useNavigate: () => mocks.navigate }));
 vi.mock('@/modules/localization', () => ({ useModuleTranslation: () => ({ t: (key: string) => key, language: 'en' }) }));
 vi.mock('@/modules/admin', () => ({
   DEFAULT_FEATURE_VISIBILITY: mocks.visibility,
@@ -138,5 +139,31 @@ describe('ConversationHomePanels', () => {
 
     await screen.findByText('home.starters.agent.title');
     expect(screen.queryByText('home.starters.semanticModel.title')).toBeNull();
+  });
+
+  it('expands and collapses the fetched latest files without loading or losing items', async () => {
+    mocks.fetchConversations.mockResolvedValue({ items: [] });
+    mocks.fetchConversationArtifacts.mockResolvedValue(Array.from({ length: 6 }, (_, index) => ({
+      source: 'conversation', artifactId: `a${index}`, filename: `report-${index}.pdf`,
+      conversationTitle: 'Reports', generatedAt: `2026-09-13T10:0${index}:00.000Z`,
+    })));
+    render(<ConversationHomePanels />);
+    const panel = within(screen.getByRole('region', { name: 'home.artifacts.title' }));
+    const expand = await panel.findByRole('button', { name: 'home.showMore' });
+    expect(panel.getAllByRole('button', { name: /report-/ })).toHaveLength(4);
+    expect(panel.queryByText('report-0.pdf')).not.toBeInTheDocument();
+    await userEvent.click(expand);
+    expect(panel.getAllByRole('button', { name: /report-/ })).toHaveLength(6);
+    expect(panel.getByRole('button', { name: 'home.showLess' })).toHaveAttribute('aria-expanded', 'true');
+    await userEvent.click(panel.getByRole('button', { name: 'home.showLess' }));
+    expect(panel.getAllByRole('button', { name: /report-/ })).toHaveLength(4);
+    expect(mocks.fetchConversationArtifacts).toHaveBeenCalledTimes(1);
+  });
+
+  it('opens the actual chat history from the activity panel', async () => {
+    mocks.fetchConversations.mockResolvedValue({ items: [] });
+    render(<ConversationHomePanels />);
+    await userEvent.click(screen.getByRole('button', { name: 'home.activity.allChats' }));
+    expect(mocks.navigate).toHaveBeenCalledWith('/chats');
   });
 });

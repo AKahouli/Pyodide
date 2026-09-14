@@ -28,6 +28,23 @@ describe('NavigationSettingsService', () => {
     await expect(service.getSettings()).resolves.toEqual(DEFAULT_NAVIGATION_SETTINGS);
   });
 
+  it('restores a saved tree when Mongo stores omitted targets as null', async () => {
+    const nodes = DEFAULT_NAVIGATION_SETTINGS.nodes.map((node) => (
+      node.type === 'group' ? { ...node, targetKey: null } : { ...node }
+    ));
+    nodes[0].position = 9;
+    findOne.mockReturnValue({ lean: () => ({ exec: jest.fn().mockResolvedValue({
+      value: { revision: 2, nodes },
+    }) }) });
+
+    await expect(service.getSettings()).resolves.toEqual({
+      revision: 2,
+      nodes: DEFAULT_NAVIGATION_SETTINGS.nodes.map((node, index) => (
+        index === 0 ? { ...node, position: 9 } : { ...node }
+      )),
+    });
+  });
+
   it('rejects an omitted parent instead of persisting an unreachable node', async () => {
     const node = { ...DEFAULT_NAVIGATION_SETTINGS.nodes[0] } as any;
     delete node.parentId;

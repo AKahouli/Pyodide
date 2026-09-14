@@ -1,0 +1,67 @@
+.conversation-home { --home-ease: cubic-bezier(0.16, 1, 0.3, 1); }
+.conversation-home-greeting { animation: home-arrive 260ms var(--home-ease) both; }
+.conversation-home-compose-area { animation: home-arrive 320ms 45ms var(--home-ease) both; }
+.conversation-home-panels { animation: home-arrive 320ms 90ms var(--home-ease) both; }
+@keyframes home-arrive {
+  from { opacity: 0.8; transform: translateY(5px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.conversation-home-composer { transition: border-color 180ms ease-out, background-color 180ms ease-out; }
+.conversation-home-composer:focus-within { border-color: var(--ring); }
+.conversation-scope-header { transition: background-color 240ms ease-out, border-color 240ms ease-out; }
+.conversation-scope-description, .conversation-scope-badge, .conversation-scope-details[open] > div {
+  animation: home-context-reveal 220ms var(--home-ease);
+}
+@keyframes home-context-reveal {
+  from { opacity: 0.4; transform: translateY(-3px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.conversation-home-composer button[type='submit'] {
+  transition: background-color 180ms ease-out, color 180ms ease-out, opacity 180ms ease-out, transform 150ms var(--home-ease);
+}
+.conversation-home-composer button[type='submit']:disabled { background: var(--muted); color: var(--muted-foreground); opacity: 0.7; }
+.conversation-home-composer button[type='submit']:not(:disabled):active { transform: scale(0.94); }
+.conversation-home-composer button[type='submit'] svg { transition: transform 180ms var(--home-ease); }
+.conversation-home-composer button[type='submit']:not(:disabled):is(:hover, :focus-visible) svg { transform: translateY(-2px); }
+
+.conversation-home-shortcut { gap: 10px; }
+.conversation-home-shortcut > svg:first-child { transition: transform 220ms var(--home-ease); }
+.conversation-home-shortcut-arrow { opacity: 0; transform: translateX(-4px); transition: opacity 160ms ease-out, transform 220ms var(--home-ease); }
+.conversation-home-shortcut:is(:hover, :focus-visible) { background: color-mix(in oklch, var(--primary) 8%, transparent); }
+.conversation-home-shortcut:is(:hover, :focus-visible) > svg:first-child { transform: translateY(-2px); }
+.conversation-home-shortcut:is(:hover, :focus-visible) .conversation-home-shortcut-arrow { opacity: 1; transform: translateX(0); }
+.conversation-home-shortcut:active > svg:first-child { transform: translateY(0); }
+.conversation-home-text-action svg { transition: transform 180ms var(--home-ease); }
+.conversation-home-text-action:is(:hover, :focus-visible) svg { transform: translateX(3px); }
+
+.conversation-home-prompts { display: flex; flex-wrap: wrap; width: 100%; gap: 8px; padding: 0 24px 14px; }
+.conversation-home-prompts button {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 36px;
+  padding: 7px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--muted-foreground);
+  font-size: 0.75rem;
+  text-align: left;
+  transition: background-color 150ms ease-out, border-color 150ms ease-out, color 150ms ease-out;
+}
+.conversation-home-prompts button > svg { flex-shrink: 0; }
+.conversation-home-prompts button > svg:last-child { opacity: 0.6; }
+.conversation-home-prompts button:is(:hover, :focus-visible) { background: color-mix(in oklch, var(--primary) 7%, transparent); border-color: var(--primary); color: var(--foreground); }
+@container (max-width: 500px) {
+  .conversation-home-prompts { padding: 0 16px 12px; gap: 6px; }
+  .conversation-home-prompts button { min-height: 44px; }
+  .conversation-home-shortcut { gap: 8px; }
+  .conversation-home-shortcut-arrow { display: none; }
+}
+@media (hover: none) {
+  .conversation-home-shortcut-arrow { opacity: 0.55; transform: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .conversation-home *, .conversation-home *::before, .conversation-home *::after { animation: none; transition: none; }
+  .conversation-home :is(button, svg) { transform: none !important; }
+}
