@@ -186,6 +186,7 @@ export interface IAgentResponse {
   description: string;
   temperature: number;
   model?: string;
+  reasoning_effort?: string;
   instruction: string;
   ignorePrePrompt: boolean;
   knowledgeBases: string[];
@@ -224,6 +225,7 @@ export interface IAgentForStream {
   description: string;
   temperature: number;
   model?: string;
+  reasoningEffort?: string;
   instruction: string;
   ignorePrePrompt: boolean;
   knowledgeBases: string[];

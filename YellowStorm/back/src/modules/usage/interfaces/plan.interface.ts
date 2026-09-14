@@ -104,7 +104,7 @@ export const DEFAULT_PLANS: CreatePlanData[] = [
     priceMonthly: 0,
     priceYearly: 0,
     isActive: true,
-    isDefault: true,
+    isDefault: false,
     displayOrder: 0,
     maxWorkspaces: 3,
     workspaceStorageBytes: 100 * 1024 * 1024, // 100MB per workspace
@@ -158,7 +158,7 @@ export const DEFAULT_PLANS: CreatePlanData[] = [
     priceMonthly: 199.99,
     priceYearly: 1999.99,
     isActive: true,
-    isDefault: false,
+    isDefault: true,
     displayOrder: 3,
     maxWorkspaces: -1, // Unlimited
     workspaceStorageBytes: 100 * 1024 * 1024 * 1024, // 100GB per workspace

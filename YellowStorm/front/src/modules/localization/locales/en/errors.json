@@ -212,5 +212,7 @@
   "ERR_4019": "Invalid invitation.",
   "ERR_4020": "This invitation has expired.",
   "ERR_4021": "This invitation has already been used.",
-  "ERR_4022": "This invitation does not match your account."
+  "ERR_4022": "This invitation does not match your account.",
+  "ERR_1130": "Authentication is temporarily unavailable. Your session was not affected; we are retrying.",
+  "ERR_1131": "Signing in is being synchronized. Please retry."
 }

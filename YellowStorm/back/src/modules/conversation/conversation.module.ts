@@ -16,6 +16,7 @@ import { ConversationService } from './services/conversation.service';
 import { MessageService } from './services/message.service';
 import { StreamService } from './services/stream.service';
 import { StreamGatewayService } from './services/stream-gateway.service';
+import { ConversationRecoveryService } from './services/conversation-recovery.service';
 import { ShareService } from './services/share.service';
 import { ReportService } from './services/report.service';
 import { ComposerSuggestionsService } from './services/composer-suggestions.service';
@@ -55,6 +56,7 @@ import { ConversationAgentRequestBuilder } from './services/conversation-agent-r
 import { CorrectiveReplayContextService } from './services/corrective-replay-context.service';
 import { CorrectiveReplayPromptBuilder } from './services/corrective-replay-prompt.builder';
 import { CorrectiveReplayRunnerService } from './services/corrective-replay-runner.service';
+import { SemanticModelModule } from '../semantic-model/semantic-model.module';
 import { ConversationArtifactService } from './services/conversation-artifact.service';
 import { UserModule } from '../user/user.module';
 import { ConversationPersistenceModule } from './persistence/conversation-persistence.module';
@@ -78,6 +80,7 @@ import { ConversationPersistenceModule } from './persistence/conversation-persis
     GovernanceRuntimeModule,
     forwardRef(() => EvaluationModule),
     UserModule,
+    SemanticModelModule,
   ],
   controllers: [
     StreamController, // Must be before ConversationController to avoid route conflict with :id param
@@ -93,6 +96,7 @@ import { ConversationPersistenceModule } from './persistence/conversation-persis
     MessageService,
     StreamService,
     StreamGatewayService,
+    ConversationRecoveryService,
     ShareService,
     ReportService,
     ComposerSuggestionsService,

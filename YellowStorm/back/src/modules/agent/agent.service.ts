@@ -43,6 +43,7 @@ import {
   PLATFORM_COPILOT_HANDOFF_RUNTIME_INSTRUCTION,
   PLATFORM_COPILOT_PLAYBOOK_CONNECTOR_SLUG,
 } from './constants/platform-copilot.constants';
+import { SystemService } from '../system/system.service';
 
 /** Agent-type slug of the orchestrating manager agent. */
 const MANAGER_SLUG = 'manager';
@@ -90,6 +91,7 @@ export class AgentService {
     private readonly agentRepository: AgentRepository,
     private readonly agentRoleEmbedding: AgentRoleEmbeddingService,
     @Optional() private readonly connectorRuntimeService?: AgentConnectorRuntimeService,
+    @Optional() private readonly systemService?: SystemService,
   ) {
     this.logger.setContext(AgentService.name);
   }
@@ -523,6 +525,7 @@ export class AgentService {
     sharedAgentIds?: string[],
     groupMembers?: any[],
     selectedConnectorId?: string,
+    semanticSchemaName?: string,
     runtimeContext?: { conversationId: string; correlationId: string; playbookHandoffAttached?: boolean },
     reasoningEffort?: string,
     compaction?: IGrpcCompaction,
@@ -704,23 +707,30 @@ export class AgentService {
     // Every lookup below depends only on the filtered roster, not on each
     // other — run them in one round so the remote-DB latency stacks once
     // instead of once per lookup.
-    const [promptMap, fetchedTools, modelResults, connectorsMap, adminGuardrailsSettings, guardrailsClassifierModel] = await Promise.all([
+    const [promptMap, fetchedTools, modelResults, connectorsMap, adminGuardrailsSettings, guardrailsClassifierModel, documentTreeSettings] = await Promise.all([
       this.agentTypeService.resolvePromptsInBatch(promptPairs),
       allToolIds.length > 0 ? this.toolService.findByIds(allToolIds) : Promise.resolve([] as IToolResponse[]),
       Promise.all(allModelIds.map((id) => this.modelsService.findById(id))),
       this.buildConnectorsMap(allConnectorIds),
       this.guardrailsSettingsService.getSettings(),
       this.modelsService.getGuardrailsClassifierModel(),
+      this.systemService?.getDocumentTreeInjectionSettings() ?? Promise.resolve({ enabled: true }),
     ]);
     const guardrailsClassifierModelId = this.modelsService.getModelIdentifier(guardrailsClassifierModel);
 
     const toolsMap = new Map<string, IToolResponse>();
     for (const t of fetchedTools) toolsMap.set(t.id, t);
 
-    const modelMap = new Map<string, { model: string; omitTemperature: boolean; inputModalities: string[]; maxInputTokens: number | null }>();
+    const modelMap = new Map<string, { model: string; omitTemperature: boolean; inputModalities: string[]; maxInputTokens: number | null; reasoningEfforts: string[] }>();
     for (const m of modelResults) {
       if (m) {
-        modelMap.set(m.id, { model: m.id, omitTemperature: m.omitTemperature, inputModalities: m.inputModalities, maxInputTokens: m.maxInputTokens });
+        modelMap.set(m.id, {
+          model: m.id,
+          omitTemperature: m.omitTemperature,
+          inputModalities: m.inputModalities,
+          maxInputTokens: m.maxInputTokens,
+          reasoningEfforts: m.supportsReasoning ? m.reasoning.efforts.map((effort) => effort.id) : [],
+        });
       }
     }
 
@@ -762,6 +772,13 @@ export class AgentService {
       const effectiveModelId = effectiveModelIdForAgent(agent);
       const resolvedModel = modelMap.get(effectiveModelId);
       const proxyModel = resolvedModel?.model || effectiveModelId;
+      const requestedReasoningEffort = reasoningEffort && pingedAgents.length === 0
+        ? reasoningEffort
+        : agent.reasoningEffort;
+      const effectiveReasoningEffort = requestedReasoningEffort
+        && resolvedModel?.reasoningEfforts.includes(requestedReasoningEffort)
+        ? requestedReasoningEffort
+        : undefined;
       const effectiveSkills = this.resolveEffectiveSkills(agent, skillsMap);
       const effectiveConnectorIds = [
         ...new Set([...(agent.connectorIds || []), ...(selectedConnectorId ? [selectedConnectorId] : [])]),
@@ -831,7 +848,7 @@ export class AgentService {
         chatbot: {
           model: proxyModel,
           input_modalities: resolvedModel?.inputModalities || ['text'],
-          ...(reasoningEffort && pingedAgents.length === 0 ? { reasoning_effort: reasoningEffort } : {}),
+          ...(effectiveReasoningEffort ? { reasoning_effort: effectiveReasoningEffort } : {}),
           ...(resolvedModel?.maxInputTokens ? { context_window_tokens: resolvedModel.maxInputTokens } : {}),
           ...(compaction ? { compaction } : {}),
         },
@@ -842,6 +859,7 @@ export class AgentService {
             connector_bindings_json: JSON.stringify(connectorBindings),
             enable_temporary_child_agents: String(agent.enable_temporary_child_agents),
             max_temporary_child_agents: String(agent.max_temporary_child_agents),
+            document_tree_injection_enabled: String(documentTreeSettings.enabled),
             guardrails_json: JSON.stringify({
               agent: normalizeAgentGuardrails(agent.guardrails),
               admin: normalizeAdminGuardrailsSettings(adminGuardrailsSettings),
@@ -850,6 +868,12 @@ export class AgentService {
             guardrails_classifier_model: guardrailsClassifierModelId,
             platform_api_url: this.configService.get<string>('PLATFORM_API_URL', 'http://localhost:3000/api'),
             platform_api_token: this.configService.get<string>('INTERNAL_SERVICE_SECRET', ''),
+            ...(semanticSchemaName ? {
+              semantic_model_schema_name: semanticSchemaName,
+              semantic_search_url: `${this.configService.get<string>('SEMANTIC_SEARCH_URL', 'http://127.0.0.1:8100').replace(/\/$/, '')}/v1/graphs/search/fused`,
+              semantic_search_token: this.configService.get<string>('SEMANTIC_SEARCH_TOKEN', ''),
+              semantic_search_timeout_seconds: String(this.configService.get<number>('SEMANTIC_SEARCH_TIMEOUT_SECONDS', 300)),
+            } : {}),
             ...(resolvedModel?.omitTemperature
               ? { omit_temperature: 'true' }
               : { temperature: String(agent.temperature) }),
@@ -948,13 +972,18 @@ export class AgentService {
         .map((a) => a.model || inheritedDefaultModelId)
         .filter(Boolean) as string[],
     )];
-    const modelMap = new Map<string, { model: string; omitTemperature: boolean; inputModalities: string[] }>();
+    const modelMap = new Map<string, { model: string; omitTemperature: boolean; inputModalities: string[]; reasoningEfforts: string[] }>();
     if (allModelIds.length > 0) {
       const modelResults = await Promise.all(
         allModelIds.map((id) => this.modelsService.findById(id)),
       );
       for (const m of modelResults) {
-        if (m) modelMap.set(m.id, { model: m.id, omitTemperature: m.omitTemperature, inputModalities: m.inputModalities });
+        if (m) modelMap.set(m.id, {
+          model: m.id,
+          omitTemperature: m.omitTemperature,
+          inputModalities: m.inputModalities,
+          reasoningEfforts: m.supportsReasoning ? m.reasoning.efforts.map((effort) => effort.id) : [],
+        });
       }
     }
 
@@ -981,8 +1010,11 @@ export class AgentService {
       for (const skill of fetchedSkills) skillsMap.set(skill.id, skill);
     }
 
-    const adminGuardrailsSettings = await this.guardrailsSettingsService.getSettings();
-    const guardrailsClassifierModel = await this.modelsService.getGuardrailsClassifierModel();
+    const [adminGuardrailsSettings, guardrailsClassifierModel, documentTreeSettings] = await Promise.all([
+      this.guardrailsSettingsService.getSettings(),
+      this.modelsService.getGuardrailsClassifierModel(),
+      this.systemService?.getDocumentTreeInjectionSettings() ?? Promise.resolve({ enabled: true }),
+    ]);
     const guardrailsClassifierModelId = this.modelsService.getModelIdentifier(guardrailsClassifierModel);
 
     const grpcAgents = await Promise.all(
@@ -1035,6 +1067,10 @@ export class AgentService {
         const effectiveModelId = agent.model || inheritedDefaultModelId;
         const resolvedModel = modelMap.get(effectiveModelId);
         const proxyModel = resolvedModel?.model || effectiveModelId;
+        const effectiveReasoningEffort = agent.reasoningEffort
+          && resolvedModel?.reasoningEfforts.includes(agent.reasoningEffort)
+          ? agent.reasoningEffort
+          : undefined;
         const effectiveSkills = this.resolveEffectiveSkills(agent, skillsMap);
 
         let prompt = '';
@@ -1065,12 +1101,14 @@ export class AgentService {
           chatbot: {
             model: proxyModel,
             input_modalities: resolvedModel?.inputModalities || ['text'],
+            ...(effectiveReasoningEffort ? { reasoning_effort: effectiveReasoningEffort } : {}),
           },
           agent_params: {
             params: {
               user_id: userId,
               enable_temporary_child_agents: String(agent.enable_temporary_child_agents),
               max_temporary_child_agents: String(agent.max_temporary_child_agents),
+              document_tree_injection_enabled: String(documentTreeSettings.enabled),
               connector_bindings_json: JSON.stringify(connectorBindings),
               guardrails_json: JSON.stringify({
                 agent: normalizeAgentGuardrails(agent.guardrails),
@@ -1424,6 +1462,7 @@ export class AgentService {
       description: dto.description ?? '',
       temperature: dto.temperature ?? 0,
       llmModel: dto.model,
+      reasoningEffort: dto.reasoning_effort || undefined,
       instruction: dto.instruction ?? '',
       ignorePrePrompt: dto.ignorePrePrompt ?? false,
       knowledgeBases: dto.knowledgeBases ?? [],
@@ -1469,6 +1508,7 @@ export class AgentService {
     if (dto.description !== undefined) patch.description = dto.description;
     if (dto.temperature !== undefined) patch.temperature = dto.temperature;
     if ('model' in dto) patch.llmModel = dto.model || '';
+    if ('reasoning_effort' in dto) patch.reasoningEffort = dto.reasoning_effort || null;
     if (dto.instruction !== undefined) patch.instruction = dto.instruction;
     if (dto.ignorePrePrompt !== undefined) patch.ignorePrePrompt = dto.ignorePrePrompt;
     if (dto.enable_temporary_child_agents !== undefined) patch.enable_temporary_child_agents = dto.enable_temporary_child_agents;
@@ -1629,6 +1669,7 @@ export class AgentService {
       description: (d.description as string) || '',
       temperature: (d.temperature as number) ?? 0,
       model: d.llmModel as string | undefined,
+      reasoning_effort: d.reasoningEffort as string | undefined,
       instruction: (d.instruction as string) || '',
       ignorePrePrompt: (d.ignorePrePrompt as boolean) || false,
       knowledgeBases: ((d.knowledgeBases as Array<{ toString(): string }>) || []).map((id) =>
@@ -1697,6 +1738,7 @@ export class AgentService {
       description: (d.description as string) || '',
       temperature: (d.temperature as number) ?? 0,
       model: d.llmModel as string | undefined,
+      reasoningEffort: d.reasoningEffort as string | undefined,
       instruction: (d.instruction as string) || '',
       ignorePrePrompt: (d.ignorePrePrompt as boolean) || false,
       knowledgeBases: ((d.knowledgeBases as Array<{ toString(): string }>) || []).map((id) =>

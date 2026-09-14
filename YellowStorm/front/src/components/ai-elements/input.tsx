@@ -14,8 +14,9 @@ import { useProviderAttachments } from '@/components/ai-elements/prompt-input';
 import { toast } from 'sonner';
 import Usage from '../ui/usage';
 import { useModels, useChefs, useModelById, useDefaultModel } from '@/modules/models';
-import { useSelectedModelId, useSetSelectedModelId, useSelectedWorkspaceIds, useSetSelectedWorkspaceIds, useResetSelectedWorkspaceIds, useSetSelectedConnectorRepo, useSelectedConnectorRepo, useSelectedSkillIds, useToggleSelectedSkill } from '@/modules/conversation/store';
+import { useSelectedModelId, useSetSelectedModelId, useSelectedWorkspaceIds, useSetSelectedWorkspaceIds, useResetSelectedWorkspaceIds, useSelectedSemanticModelId, useSetSelectedSemanticModelId, useSetSelectedConnectorRepo, useSelectedConnectorRepo, useSelectedSkillIds, useToggleSelectedSkill } from '@/modules/conversation/store';
 import { WorkspaceSelect } from '@/modules/workspace/components/WorkspaceSelect';
+import { SemanticModelSelect } from '@/modules/conversation/components/SemanticModelSelect';
 import { useCurrentConversation } from '@/modules/conversation/store';
 import { fetchTaggedAgents } from '@/modules/conversation/api';
 import { useAgents, useAgentStore } from '@/modules/agent';
@@ -102,6 +103,8 @@ const Input = memo(function Input({ onSubmit: externalSubmit, onStop, status: ex
   const selectedWorkspaceIds = useSelectedWorkspaceIds();
   const setSelectedWorkspaceIds = useSetSelectedWorkspaceIds();
   const resetSelectedWorkspaceIds = useResetSelectedWorkspaceIds();
+  const selectedSemanticModelId = useSelectedSemanticModelId();
+  const setSelectedSemanticModelId = useSetSelectedSemanticModelId();
   const selectedConnectorRepo = useSelectedConnectorRepo();
   const setSelectedConnectorRepo = useSetSelectedConnectorRepo();
   const [modelSelectorOpen, setModelSelectorOpen] = useState(false);
@@ -599,8 +602,8 @@ const Input = memo(function Input({ onSubmit: externalSubmit, onStop, status: ex
                   />}
                 </PromptInputActionMenuContent>
               </PromptInputActionMenu>
-              {showWorkspaceSelect && <WorkspaceSelect selectedIds={selectedWorkspaceIds} onChange={handleWorkspaceSelectionChange} disabled={disabled || submitDisabled} workspaceOptions={workspaceOptions} className='size-11 md:size-8' />}
-              {extraTools}
+              {showWorkspaceSelect && <WorkspaceSelect selectedIds={selectedWorkspaceIds} onChange={handleWorkspaceSelectionChange} disabled={disabled || submitDisabled || Boolean(selectedSemanticModelId)} workspaceOptions={workspaceOptions} className='size-11 md:size-8' />}
+              {showWorkspaceSelect && <SemanticModelSelect value={selectedSemanticModelId} onChange={setSelectedSemanticModelId} disabled={disabled || submitDisabled} />}
                {showModelSelector && !governedMode && models.length > 0 && <ModelSelector onOpenChange={setModelSelectorOpen} open={modelSelectorOpen}>
                  <ModelSelectorTrigger asChild>
                    <PromptInputButton type='button' disabled={disabled || submitDisabled}>
@@ -639,6 +642,7 @@ const Input = memo(function Input({ onSubmit: externalSubmit, onStop, status: ex
                   </ModelSelectorList>
                 </ModelSelectorContent>
                </ModelSelector>}
+              {extraTools}
             </PromptInputTools>
             <div className='flex flex-row w-fit gap-3 px-1'>
               <Usage />

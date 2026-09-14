@@ -18,12 +18,17 @@ import { BadRequestException } from '../exceptions';
 import { ErrorCode } from '../exceptions/constants/error-codes';
 import { APPEARANCE_COLOR_THEMES, APPEARANCE_SETTINGS_KEY } from './constants/appearance-logo.constants';
 import { AppearanceLogoService } from './services/appearance-logo.service';
+import {
+  DEFAULT_DOCUMENT_TREE_INJECTION_SETTINGS,
+  DocumentTreeInjectionSettings,
+} from './interfaces/document-tree-settings.interface';
 
 const MAINTENANCE_KEY = 'maintenance_mode';
 const REGISTRATION_KEY = 'registration_settings';
 const APPEARANCE_KEY = APPEARANCE_SETTINGS_KEY;
 const PLAYBOOK_SETTINGS_KEY = 'playbook_settings';
 const CORS_SETTINGS_KEY = 'cors_settings';
+const DOCUMENT_TREE_INJECTION_KEY = 'document_tree_injection_settings';
 export const EMAIL_LOGO_KEY = 'email_logo';
 export const EMAIL_LOGO_MAX_BYTES = 512 * 1024;
 const CACHE_TTL_MS = 5000; // 5 seconds
@@ -492,6 +497,26 @@ export class SystemService implements OnApplicationBootstrap {
     };
     this.lastAppearanceCacheUpdate = Date.now();
     return { ...this.appearanceCache, logos };
+  }
+
+  async getDocumentTreeInjectionSettings(): Promise<DocumentTreeInjectionSettings> {
+    const setting = await this.systemSettingModel.findOne({ key: DOCUMENT_TREE_INJECTION_KEY }).lean().exec();
+    const value = setting?.value as Partial<DocumentTreeInjectionSettings> | undefined;
+    return {
+      enabled: typeof value?.enabled === 'boolean'
+        ? value.enabled
+        : DEFAULT_DOCUMENT_TREE_INJECTION_SETTINGS.enabled,
+    };
+  }
+
+  async setDocumentTreeInjectionSettings(enabled: boolean): Promise<DocumentTreeInjectionSettings> {
+    const value = { enabled: Boolean(enabled) };
+    await this.systemSettingModel.findOneAndUpdate(
+      { key: DOCUMENT_TREE_INJECTION_KEY },
+      { key: DOCUMENT_TREE_INJECTION_KEY, value },
+      { upsert: true, new: true },
+    );
+    return value;
   }
 
   async getPlaybookSettings(): Promise<AdminPlaybookSettings> {

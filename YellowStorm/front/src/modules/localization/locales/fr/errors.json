@@ -205,5 +205,7 @@
   "ERR_4019": "Invitation invalide.",
   "ERR_4020": "Cette invitation a expiré.",
   "ERR_4021": "Cette invitation a déjà été utilisée.",
-  "ERR_4022": "Cette invitation ne correspond pas à votre compte."
+  "ERR_4022": "Cette invitation ne correspond pas à votre compte.",
+  "ERR_1130": "L'authentification est temporairement indisponible. Votre session n'a pas été affectée ; nouvelle tentative en cours.",
+  "ERR_1131": "La connexion est en cours de synchronisation. Veuillez réessayer."
 }

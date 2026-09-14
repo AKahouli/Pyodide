@@ -49,6 +49,12 @@ export interface AuthState {
   requiresEmailVerification: boolean;
   requiresProfileCompletion: boolean;
   registrationEnabled: boolean;
+  /**
+   * Bootstrap/validation could not complete because of a transient
+   * transport/dependency failure. Credentials are preserved and protected
+   * data must not render until validation succeeds. This is not a logout.
+   */
+  isAuthTemporarilyUnavailable: boolean;
 }
 
 // Login credentials
@@ -83,6 +89,8 @@ export interface AuthContextType extends AuthState {
   resendVerificationEmail: () => Promise<void>;
   completeProfile: (data: CompleteProfileData) => Promise<void>;
   refreshUser: () => Promise<void>;
+  /** Re-run bootstrap validation after a transient unavailability episode. */
+  retryRecovery: () => Promise<void>;
 }
 
 // Auth provider (public, no secrets)

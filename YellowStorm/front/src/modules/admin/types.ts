@@ -182,6 +182,10 @@ export interface RegistrationStatus {
   disabledBy?: string;
 }
 
+export interface DocumentTreeInjectionSettings {
+  enabled: boolean;
+}
+
 export interface SetRegistrationRequest {
   enabled: boolean;
 }

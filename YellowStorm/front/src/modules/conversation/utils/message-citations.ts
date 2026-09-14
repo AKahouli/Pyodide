@@ -1,9 +1,13 @@
 import type { CitationData } from '@/components/ai-elements/ai-message-content';
 import type { MessageComponent } from '../types';
 
-/** Unique key used to de-duplicate citations repeated across parts of one answer. */
+/**
+ * Unique key used to de-duplicate citations to one entry per source document:
+ * page and reference are ignored so repeated citations of the same document
+ * (across pages or markers) collapse into a single sources-list entry.
+ */
 function citationKey(citation: CitationData): string {
-  return [citation.source, citation.reference ?? '', citation.page ?? '', citation.fileName ?? ''].join('|');
+  return [citation.source, citation.fileName ?? ''].join('|');
 }
 
 function toCitationData(data: Record<string, unknown>): CitationData | null {

@@ -90,6 +90,7 @@ export const API_ENDPOINTS = {
     appearanceLogoFile: (id: string) => `/experimental/system/appearance/logos/${id}/file`,
     cors: '/experimental/system/cors',
     features: '/experimental/system/features',
+    documentTreeInjection: '/experimental/system/document-tree-injection',
     emailLogo: '/experimental/system/email-logo',
   },
   workspaceUploadSettings: {
@@ -381,6 +382,10 @@ export const API_ENDPOINTS = {
     mappingProposalJob: (id: string, jobId: string) => `/semantic-models/${id}/mapping/proposals/jobs/${jobId}`,
     mappingPlanApply: (id: string, jobId: string) => `/semantic-models/${id}/mapping/jobs/${jobId}/apply`,
     ageGraph: (id: string) => `/semantic-models/${id}/age-graph`,
+    ageGraphRebuild: (id: string) => `/semantic-models/${id}/age-graph/rebuild`,
+    ageGraphIndex: (id: string) => `/semantic-models/${id}/age-graph/index`,
+    ageGraphOperations: (id: string) => `/semantic-models/${id}/age-graph/operations`,
+    corpus: (id: string) => `/semantic-models/${id}/corpus`,
     builds: (id: string) => `/semantic-models/${id}/builds`,
     latestBuild: (id: string) => `/semantic-models/${id}/builds/latest`,
     build: (id: string, buildId: string) => `/semantic-models/${id}/builds/${buildId}`,
