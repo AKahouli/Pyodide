@@ -219,7 +219,7 @@ describe('PlatformCopilotMascot', () => {
     expect(screen.queryByRole('complementary', { name: 'Yellowmind' })).not.toBeInTheDocument();
 
     fireEvent.click(launcher);
-    expect(screen.getByRole('complementary', { name: 'Yellowmind' })).toBeInTheDocument();
+    expect(screen.getByRole('complementary', { name: 'Yellowmind' }).parentElement).toHaveClass('z-40');
   });
 
   it('allows keyboard users to reposition the launcher with arrow keys', () => {
@@ -522,7 +522,9 @@ describe('PlatformCopilotMascot', () => {
     expect(screen.queryByRole('separator', { name: 'Resize Yellowmind panel' })).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Close Yellowmind' }));
     fireEvent.click(screen.getByRole('button', { name: 'Open Yellowmind' }));
-    expect(screen.getByRole('dialog', { name: 'Yellowmind' })).toBeInTheDocument();
+    const drawer = screen.getByRole('dialog', { name: 'Yellowmind' });
+    expect(drawer).toHaveClass('z-40');
+    expect(drawer.previousElementSibling).toHaveClass('z-40');
   });
 
   it('preserves an edited handoff prompt across pending-state refreshes', async () => {

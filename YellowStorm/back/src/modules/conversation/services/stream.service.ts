@@ -1032,13 +1032,14 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
               groupMembers,
               request.connectorRepo?.connectorId,
               semanticSchemaName,
-              conversation.runtimePurpose === PLATFORM_COPILOT
-                ? {
-                    conversationId,
-                    correlationId: runtimeCorrelationId,
-                    playbookHandoffAttached: Boolean(request.playbookHandoffId),
-                  }
-                : undefined,
+              // runtimeContext must exist for every conversation, not just the
+              // copilot: trusted system MCP servers (playbook-mcp, agent-mcp)
+              // authorize each tool call as the acting user via these headers.
+              {
+                conversationId,
+                correlationId: runtimeCorrelationId,
+                playbookHandoffAttached: Boolean(request.playbookHandoffId),
+              },
               request.reasoningEffort,
               compaction,
               request.webConnectorAccessEnabled,

@@ -527,7 +527,7 @@ export function PlatformCopilotMascot() {
       <span className='sr-only' aria-live='polite'>{launcherMovementAnnouncement}</span>
       {open && useDrawer && (
         <Sheet open onOpenChange={(nextOpen) => { if (nextOpen) openPanel(); else closePanel(); }}>
-          <SheetContent className='pointer-events-auto z-[110] flex w-full flex-col gap-0 p-0 [&>button]:right-3 [&>button]:top-3 [&>button]:grid [&>button]:size-11 [&>button]:place-items-center [&>button_svg]:size-5 sm:max-w-md' aria-label={t('title')} closeLabel={t('close')}>
+          <SheetContent className='pointer-events-auto z-40 flex w-full flex-col gap-0 p-0 [&>button]:right-3 [&>button]:top-3 [&>button]:grid [&>button]:size-11 [&>button]:place-items-center [&>button_svg]:size-5 sm:max-w-md' overlayClassName='z-40' aria-label={t('title')} closeLabel={t('close')}>
             <SheetHeader className='sr-only'><SheetTitle>{t('title')}</SheetTitle><SheetDescription>{t('description')}</SheetDescription></SheetHeader>
             {panel}
           </SheetContent>
@@ -542,7 +542,7 @@ export function PlatformCopilotMascot() {
           handlePosition='left'
           withHandle
           resizeHandleLabel={t('resize')}
-          className='z-[90] h-svh border-l bg-background shadow-[-8px_0_24px_-20px_hsl(var(--foreground))]'
+          className='z-40 h-svh border-l bg-background shadow-[-8px_0_24px_-20px_hsl(var(--foreground))]'
         >
           <aside className='flex h-full min-w-0 flex-1 flex-col' aria-label={t('title')}>
             {panel}

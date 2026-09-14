@@ -344,7 +344,7 @@ describe('AgentService connector skill inheritance', () => {
     expect(restricted[0].skills?.map((skill) => skill.id as string)).toEqual(['type-skill', 'agent-skill']);
   });
 
-  it('exposes every enabled Playbook MCP action to Platform Copilot', async () => {
+  it('excludes legacy Playbook orchestration actions from Platform Copilot', async () => {
     const { service, connectorService, modelsService } = createService();
     const enabledActions = [
       'search_playbooks',
@@ -401,11 +401,16 @@ describe('AgentService connector skill inheritance', () => {
         { conversationId: 'conversation-1', correlationId: 'message-1', playbookHandoffAttached: true },
       );
 
+      const expectedActions = enabledActions.filter((action) => ![
+        'assess_playbook_request',
+        'continue_playbook_clarification',
+        'start_playbook_construction',
+      ].includes(action));
       expect(result[0].tools.map((tool) => tool.name)).toEqual(
-        enabledActions.map((action) => `playbook-mcp_${action}`),
+        expectedActions.map((action) => `playbook-mcp_${action}`),
       );
       const bindings = JSON.parse(result[0].agent_params?.params.connector_bindings_json as string);
-      expect(bindings[0].actions.map((action: { action_key: string }) => action.action_key)).toEqual(enabledActions);
+      expect(bindings[0].actions.map((action: { action_key: string }) => action.action_key)).toEqual(expectedActions);
       expect(result[0].tools.map((tool) => tool.name)).not.toEqual(
         expect.arrayContaining(['playbook-mcp_disabled_action']),
       );

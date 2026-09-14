@@ -58,6 +58,11 @@ const TRUSTED_SYSTEM_MCP_CONNECTOR_SLUGS = new Set([
   PLATFORM_COPILOT_PLAYBOOK_CONNECTOR_SLUG,
   AGENT_MCP_CONNECTOR_SLUG,
 ]);
+const PLATFORM_COPILOT_LEGACY_PLAYBOOK_ACTIONS = new Set([
+  'assess_playbook_request',
+  'continue_playbook_clarification',
+  'start_playbook_construction',
+]);
 
 export interface PlaybookPlannerAgentConfig {
   agentTypeId: string;
@@ -1915,7 +1920,11 @@ export class AgentService {
     for (const connectorId of connectorIds) {
       const connector = connectorsMap.get(connectorId);
       if (connector?.slug?.toLowerCase() === PLATFORM_COPILOT_PLAYBOOK_CONNECTOR_SLUG) {
-        runtimeSelections.delete(connectorId);
+        runtimeSelections.set(connectorId, new Set(
+          connector.actions
+            .filter((action) => action.isEnabled !== false && !PLATFORM_COPILOT_LEGACY_PLAYBOOK_ACTIONS.has(action.key))
+            .map((action) => action.key),
+        ));
       }
     }
     return runtimeSelections.size ? runtimeSelections : undefined;
