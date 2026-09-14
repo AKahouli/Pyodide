@@ -73,6 +73,16 @@ export class WorkyTaskController {
     return this.taskService.getResultContent(id);
   }
 
+  @Get(':id/artifacts/:artifactId/url')
+  @UseGuards(WorkyTaskStreamAccessGuard)
+  @RequirePermissions(Permissions.WORKY_STREAM_READ)
+  @ApiOperation({ summary: 'Signed view/download URLs for a generated task artifact' })
+  @ApiParam({ name: 'id', description: 'Task id' })
+  @ApiParam({ name: 'artifactId', description: 'Artifact id (externalId)' })
+  async artifactUrl(@Param('id') id: string, @Param('artifactId') artifactId: string) {
+    return this.taskService.resolveArtifactUrl(id, artifactId);
+  }
+
   @Post(':id/move')
   @HttpCode(HttpStatus.ACCEPTED)
   @UseGuards(WorkyTaskStreamAccessGuard)
