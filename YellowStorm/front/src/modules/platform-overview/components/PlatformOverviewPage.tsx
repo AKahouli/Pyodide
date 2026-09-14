@@ -160,7 +160,7 @@ const quickDestinations: QuickDestination[] = [
   { labelKey: 'quick.workspace', to: '/workspace', icon: LibraryBig },
   { labelKey: 'quick.agents', to: '/agents', icon: Bot },
   { labelKey: 'quick.playbooks', to: '/playbooks', icon: Workflow },
-  { labelKey: 'quick.marketplace', to: '/app-builder', icon: Store },
+  { labelKey: 'quick.marketplace', to: '/app-market', icon: Store },
 ];
 
 const atlasDomains: AtlasDomain[] = [
@@ -222,13 +222,13 @@ const atlasDomains: AtlasDomain[] = [
       {
         titleKey: 'atlas.connectedApps.title',
         descriptionKey: 'atlas.connectedApps.description',
-        to: '/connected-apps',
+        to: '/apps',
         icon: KeyRound,
       },
       {
         titleKey: 'atlas.marketplace.title',
         descriptionKey: 'atlas.marketplace.description',
-        to: '/app-builder',
+        to: '/app-market',
         icon: Store,
       },
     ],
@@ -477,7 +477,7 @@ export function PlatformOverviewPage() {
                   <h3 className='text-sm font-semibold'>{t('authorizations.title')}</h3>
                   <p className='mt-1 text-sm leading-6 text-muted-foreground'>{t('authorizations.description')}</p>
                   <Link
-                    to='/connected-apps'
+                    to='/apps'
                     className='mt-2 inline-flex min-h-11 items-center gap-1 text-sm font-semibold text-foreground underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring sm:min-h-0'
                   >
                     {t('authorizations.action')}

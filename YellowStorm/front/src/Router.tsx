@@ -257,7 +257,7 @@ export const router = createHashRouter([
         path: 'apps',
         element: (
           <Suspense fallback={null}>
-            <AppBuilderPage />
+            <ConnectedAppsPage />
           </Suspense>
         ),
       },
@@ -266,22 +266,6 @@ export const router = createHashRouter([
         element: (
           <Suspense fallback={null}>
             <AppBuilderPage />
-          </Suspense>
-        ),
-      },
-      {
-        path: 'app-builder',
-        element: (
-          <Suspense fallback={null}>
-            <AppBuilderPage />
-          </Suspense>
-        ),
-      },
-      {
-        path: 'connected-apps',
-        element: (
-          <Suspense fallback={null}>
-            <ConnectedAppsPage />
           </Suspense>
         ),
       },

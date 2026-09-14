@@ -9,7 +9,7 @@ export function ConnectedAppButton() {
 
   return (
     <SidebarMenuItem>
-      <SidebarMenuButton tooltip={t('button.tooltip')} onClick={() => navigate('/connected-apps')}>
+      <SidebarMenuButton tooltip={t('button.tooltip')} onClick={() => navigate('/apps')}>
         <Plug />
         <span>{t('button.label')}</span>
       </SidebarMenuButton>
