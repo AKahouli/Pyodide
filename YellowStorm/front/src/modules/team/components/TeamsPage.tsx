@@ -14,6 +14,7 @@ import {
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
 import { useModuleTranslation } from '@/modules/localization';
+import { AgentNetworkTabs } from '@/modules/agent/components/AgentNetworkTabs';
 import { useTeamStore, useTeams, useTeamsLoading, useTeamsInitialized } from '../store';
 import { CreateEditTeamDialog } from './CreateEditTeamDialog';
 import { ShareTeamDialog } from './ShareTeamDialog';
@@ -79,6 +80,10 @@ export function TeamsPage() {
         <Button onClick={openCreate}>
           <Plus className='mr-2 size-4' /> {t('page.newTeam')}
         </Button>
+      </div>
+
+      <div className='mb-6'>
+        <AgentNetworkTabs />
       </div>
 
       {showSpinner ? (

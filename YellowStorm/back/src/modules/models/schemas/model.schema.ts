@@ -56,7 +56,25 @@ export class AiModel extends Document {
   @Prop({ type: Boolean, default: null })
   supportsReasoning!: boolean | null;
 
-  @Prop({ type: [{ id: { type: String, required: true }, name: { type: String, required: true }, description: { type: String } }], default: [] })
+  @Prop({ type: Number, default: null })
+  inputCostPerToken!: number | null;
+
+  @Prop({ type: Number, default: null })
+  outputCostPerToken!: number | null;
+
+  @Prop({ type: Number, default: null })
+  cachedInputCostPerToken!: number | null;
+
+  @Prop({
+    type: [
+      {
+        id: { type: String, required: true },
+        name: { type: String, required: true },
+        description: { type: String },
+      },
+    ],
+    default: [],
+  })
   reasoningEfforts!: Array<{ id: string; name: string; description?: string }>;
 
   @Prop({ type: String, default: undefined })

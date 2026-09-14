@@ -1,5 +1,5 @@
-import { Inject, Injectable, forwardRef } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
+import { Injectable } from '@nestjs/common';
+import { FeatureVisibilityService } from '@modules/system/feature-visibility.service';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import { AuditLogService } from '@modules/authorization/services/audit-log.service';
@@ -28,7 +28,7 @@ export class GovernanceScopeAudienceService {
     private readonly accessService: GovernanceAccessService,
     private readonly userGroupService: UserGroupService,
     private readonly auditLogService: AuditLogService,
-    private readonly configService: ConfigService,
+    private readonly featureVisibility: FeatureVisibilityService,
     private readonly audienceAuthorization: GovernanceAudienceAuthorizationService,
     private readonly draftPreparation: GovernanceDraftPreparationService,
   ) {}
@@ -99,7 +99,7 @@ export class GovernanceScopeAudienceService {
   }
 
   private assertAudienceFeatureEnabled(): void {
-    if (!this.configService.get<boolean>('governedConversations.audienceEnabled', false)) {
+    if (!this.featureVisibility.isEnabled('governanceScopeAudience')) {
       throw new ServiceUnavailableException(ErrorCode.SERVICE_UNAVAILABLE, 'Scope audience is not enabled');
     }
   }

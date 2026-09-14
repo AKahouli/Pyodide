@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Patch, Delete, Param, Body, Query, UseGuards, Logger, Inject, Res, Headers } from '@nestjs/common';
+import { Controller, Get, Post, Patch, Delete, Param, Body, Query, UseGuards, Logger, Inject, Res, Headers, DefaultValuePipe, ParseIntPipe } from '@nestjs/common';
 import type { Response } from 'express';
 import { ApiTags, ApiBearerAuth, ApiOperation } from '@nestjs/swagger';
 import { ConfigType } from '@nestjs/config';
@@ -25,6 +25,7 @@ import { PlaybookAssistantService } from '../assistant/playbook-assistant.servic
 import { InitializePlaybookAssistantAttachmentDto, RunPlaybookAssistantTurnDto, StartAdvisorRemediationConstructionDto } from '../dto/playbook-assistant.dto';
 import { RateLimit } from '@modules/rate-limiter';
 import { PlaybookInputContractService } from '../services/playbook-input-contract.service';
+import { PlaybookFlowArtifactService } from '../services/playbook-flow-artifact.service';
 
 @ApiTags('Playbook Flows')
 @ApiBearerAuth()
@@ -42,6 +43,7 @@ export class PlaybookFlowController {
     private readonly playbookFlowIntentConstructionService: PlaybookFlowIntentConstructionService,
     private readonly playbookAssistantService: PlaybookAssistantService,
     private readonly playbookInputContractService: PlaybookInputContractService,
+    private readonly artifactService: PlaybookFlowArtifactService,
     @Inject(playbookFlowConfig.KEY)
     private readonly playbookFlowSettings: ConfigType<typeof playbookFlowConfig>,
   ) {}
@@ -73,6 +75,16 @@ export class PlaybookFlowController {
     @CurrentUser('_id') userId: string,
   ) {
     return this.playbookFlowService.getActiveExecutions(userId);
+  }
+
+  @Get('recent-artifacts')
+  @ApiOperation({ summary: 'List recent accessible generated artifacts' })
+  @RequirePermissions(Permissions.PLAYBOOK_READ)
+  async recentArtifacts(
+    @CurrentUser('_id') userId: string,
+    @Query('limit', new DefaultValuePipe(6), ParseIntPipe) limit: number,
+  ) {
+    return this.artifactService.listRecent(userId, Math.min(Math.max(limit, 1), 20));
   }
 
   @Get(':id')

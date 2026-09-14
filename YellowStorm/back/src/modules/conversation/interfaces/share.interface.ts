@@ -15,6 +15,7 @@ export interface CreateShareData {
   shareType: ShareType;
   title?: string;
   recipientEmails?: string[];
+  shareWorkspaces?: boolean;
   expiresInDays?: number;
 }
 
@@ -27,6 +28,9 @@ export interface ShareResponse {
   accessToken?: string;
   recipientEmails?: string[];
   forkedConversationIds?: string[];
+  notFound?: string[];
+  invalid?: string[];
+  sharedWorkspaceCount?: number;
   expiresAt?: string;
   viewCount: number;
   isRevoked: boolean;

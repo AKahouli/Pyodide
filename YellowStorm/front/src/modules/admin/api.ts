@@ -25,10 +25,12 @@ import type {
   SummaryAnalyticsResponse,
   MaintenanceStatus,
   SetMaintenanceRequest,
+  LoginSettings,
   RegistrationStatus,
   SetRegistrationRequest,
   DocumentTreeInjectionSettings,
   FeatureVisibility,
+  NavigationSettings,
   CorsSettings,
   SetCorsSettingsRequest,
   AppearanceSettings,
@@ -218,6 +220,21 @@ export async function setMaintenanceMode(
   return response.data.data;
 }
 
+export async function getLoginSettings(): Promise<LoginSettings> {
+  const response = await apiClient.get<ApiResponse<LoginSettings>>(
+    API_ENDPOINTS.system.loginSettings,
+  );
+  return response.data.data;
+}
+
+export async function setLoginSettings(data: LoginSettings): Promise<LoginSettings> {
+  const response = await apiClient.post<ApiResponse<LoginSettings>>(
+    API_ENDPOINTS.system.loginSettings,
+    data,
+  );
+  return response.data.data;
+}
+
 export async function getRegistrationStatus(): Promise<RegistrationStatus> {
   const response = await apiClient.get<ApiResponse<RegistrationStatus>>(
     API_ENDPOINTS.system.registration
@@ -261,6 +278,19 @@ export async function updateFeatureVisibility(data: FeatureVisibility): Promise<
   const response = await apiClient.put<ApiResponse<FeatureVisibility>>(
     API_ENDPOINTS.system.features,
     data,
+  );
+  return response.data.data;
+}
+
+export async function getNavigationSettings(): Promise<NavigationSettings> {
+  const response = await apiClient.get<ApiResponse<NavigationSettings>>(API_ENDPOINTS.system.navigation);
+  return response.data.data;
+}
+
+export async function updateNavigationSettings(data: NavigationSettings): Promise<NavigationSettings> {
+  const response = await apiClient.put<ApiResponse<NavigationSettings>>(
+    API_ENDPOINTS.system.navigation,
+    { nodes: data.nodes },
   );
   return response.data.data;
 }

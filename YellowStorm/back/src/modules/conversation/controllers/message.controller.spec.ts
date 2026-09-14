@@ -141,11 +141,11 @@ describe('MessageController.sendMessage sticky routing', () => {
       url: 'https://storage.example/report', fileName: 'report.pdf', mimeType: 'application/pdf',
     });
 
-    await expect(controller.getCitationUrl(conversationId, 'message-1', {
+    await expect(controller.getCitationUrl({ _id: 'user-1' }, conversationId, 'message-1', {
       source: 'deepsearch', fileName: 'report.pdf',
     })).resolves.toEqual(expect.objectContaining({ fileName: 'report.pdf' }));
     expect(conversationArtifactService.resolveCitationUrl).toHaveBeenCalledWith(
-      conversationId, 'message-1', { source: 'deepsearch', fileName: 'report.pdf' },
+      conversationId, 'message-1', { source: 'deepsearch', fileName: 'report.pdf' }, 'user-1',
     );
   });
 
@@ -361,6 +361,36 @@ describe('MessageController.sendMessage sticky routing', () => {
       undefined,
       expect.objectContaining({ schemaVersion: 1 }),
     );
+  });
+
+  it('preserves one team without expanding or reusing sticky agents', async () => {
+    conversationService.getConversationDocument.mockResolvedValue({
+      isFirstMessage: false,
+      taggedAgentIds: [new Types.ObjectId(stickyAgentId)],
+    });
+    const teamId = new Types.ObjectId().toString();
+
+    await controller.sendMessage(user, conversationId, { content: '@Team', teamIds: [teamId] } as any);
+
+    expect(teamService.resolveAgentIds).not.toHaveBeenCalled();
+    expect(conversationService.replaceTaggedAgentIds).not.toHaveBeenCalled();
+    expect(streamService.startStream).toHaveBeenCalledWith(
+      userId.toString(), conversationId, expect.any(String),
+      expect.objectContaining({ teamId, agentIds: [] }),
+      'req-1', undefined, 'Ada Lovelace', undefined, expect.any(Object),
+    );
+    expect(messageService.createUserMessage).toHaveBeenCalledWith(expect.objectContaining({
+      replayContext: expect.objectContaining({ teamId, agentIds: [] }),
+    }));
+  });
+
+  it.each([
+    { teamIds: ['team-1', 'team-2'] },
+    { teamIds: ['team-1'], agentIds: ['agent-1'] },
+  ])('rejects mixed or multiple team routing', async (routing) => {
+    conversationService.getConversationDocument.mockResolvedValue({ isFirstMessage: false, taggedAgentIds: [] });
+    await expect(controller.sendMessage(user, conversationId, { content: 'invalid', ...routing } as any)).rejects.toThrow();
+    expect(messageService.createUserMessage).not.toHaveBeenCalled();
   });
 
   it('member-only turn skips AI and does not reuse sticky on the message', async () => {

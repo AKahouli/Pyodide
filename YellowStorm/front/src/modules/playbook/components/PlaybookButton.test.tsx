@@ -22,10 +22,9 @@ vi.mock('@/components/ui/sidebar', () => ({
 }));
 
 describe('PlaybookButton', () => {
-  it('navigates to playbooks and shows beta badge', async () => {
+  it('navigates to playbooks', async () => {
     render(<PlaybookButton />);
     expect(screen.getByText('sidebar.playbooks')).toBeInTheDocument();
-    expect(screen.getByText('BETA')).toHaveClass('bg-sidebar-accent', 'text-sidebar-accent-foreground');
     await userEvent.click(screen.getByRole('button'));
     expect(navigateMock).toHaveBeenCalledWith('/playbooks');
   });

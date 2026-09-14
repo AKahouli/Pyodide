@@ -102,13 +102,23 @@ export class ConnectorAuthServiceImpl implements ConnectorAuthService {
     const strategy = (config.strategy as string) || 'http_header_bearer';
 
     if (connector.authSourceType === 'server_config') {
-      if (config.secretKey !== 'playbook_mcp_ingress') return empty;
-      const token = this.configService?.get<string>('playbook-flow.mcpIngressToken', '') ?? '';
-      if (!token) {
-        this.logger.warn('Playbook MCP ingress token is not configured');
-        return empty;
+      if (config.secretKey === 'playbook_mcp_ingress') {
+        const token = this.configService?.get<string>('playbook-flow.mcpIngressToken', '') ?? '';
+        if (!token) {
+          this.logger.warn('Playbook MCP ingress token is not configured');
+          return empty;
+        }
+        return { headers: { Authorization: `Bearer ${token}` }, env: {} };
       }
-      return { headers: { Authorization: `Bearer ${token}` }, env: {} };
+      if (config.secretKey === 'agent_mcp_ingress') {
+        const token = this.configService?.get<string>('agentMcp.mcpIngressToken', '') ?? '';
+        if (!token) {
+          this.logger.warn('Agent MCP ingress token is not configured');
+          return empty;
+        }
+        return { headers: { Authorization: `Bearer ${token}` }, env: {} };
+      }
+      return empty;
     }
 
     if (connector.authSourceType === 'connected_app') {

@@ -26,6 +26,15 @@ describe('collectMessageCitations', () => {
     expect(result.map((c) => c.source)).toEqual(['a.pdf', 'b.pdf']);
   });
 
+  it('preserves persisted web citation selectors', () => {
+    expect(collectMessageCitations([{ type: 'citation', data: {
+      sourceKind: 'web', sourceType: 'web', source: 'https://example.com/article', title: 'Article',
+      exactText: 'Revenue rose.', prefix: 'Results', suffix: 'Outlook', evidenceOrigin: 'page_content', reference: '[2]',
+    } } as never])).toEqual([expect.objectContaining({
+      sourceKind: 'web', sourceType: 'web', exactText: 'Revenue rose.', prefix: 'Results', suffix: 'Outlook', evidenceOrigin: 'page_content',
+    })]);
+  });
+
   it('de-duplicates repeated citations across parts (same source/reference/page)', () => {
     const components: MessageComponent[] = [
       { type: 'text', data: { content: 'one', citations: [citation({ source: 'a.pdf' })] } },

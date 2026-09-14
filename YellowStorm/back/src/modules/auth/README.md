@@ -774,8 +774,6 @@ JWT_ISSUER=yellostorm                     # Token issuer claim
 JWT_AUDIENCE=yellostorm-app               # Token audience claim
 
 # Token Expiry
-JWT_ACCESS_EXPIRY=15m    # Access token lifetime
-JWT_REFRESH_EXPIRY=7d    # Refresh token lifetime
 
 # Authentication
 AUTH_BCRYPT_ROUNDS=12              # Password hashing rounds

@@ -115,21 +115,42 @@ describe('AIMessageContent charts', () => {
     expect(listItem).toHaveClass('my-0', 'leading-relaxed');
   });
 
+  it('does not parse currency values as inline math', () => {
+    const { container } = render(<AIMessageContent parts={[{
+      type: 'text',
+      content: 'Bitcoin moved from **$77,934.11** to approximately **$77,964.80**.',
+    }]} />);
+
+    expect([...container.querySelectorAll('strong')].map((node) => node.textContent)).toEqual([
+      '$77,934.11',
+      '$77,964.80',
+    ]);
+    expect(container.querySelector('.katex')).not.toBeInTheDocument();
+  });
+
+  it('renders parenthesized LaTeX as inline math', () => {
+    const { container } = render(<AIMessageContent parts={[{ type: 'text', content: 'Value: \\(x^2\\).' }]} />);
+
+    expect(container.querySelector('.katex')).toBeInTheDocument();
+  });
+
   it('renders titled assistant citations as safe title-only links', () => {
-    render(<AIMessageContent parts={[{ type: 'text', content: 'Voir [Aide de la Ville, https://example.com/aide].' }]} />);
+    const { container } = render(<AIMessageContent parts={[{ type: 'text', content: 'Voir [Aide de la Ville, https://example.com/aide].' }]} />);
 
     const link = screen.getByRole('link', { name: 'Aide de la Ville' });
     expect(link).toHaveAttribute('href', 'https://example.com/aide');
     expect(link).toHaveAttribute('target', '_blank');
     expect(link).toHaveAttribute('rel', 'noopener noreferrer');
     expect(screen.queryByText('https://example.com/aide')).not.toBeInTheDocument();
+    expect(container.textContent).toBe('Voir Aide de la Ville.');
   });
 
   it('renders every titled assistant citation in one paragraph', () => {
-    render(<AIMessageContent parts={[{ type: 'text', content: '[First source, https://example.com/one] and [Second source, https://example.com/two]' }]} />);
+    const { container } = render(<AIMessageContent parts={[{ type: 'text', content: '[First source, https://example.com/one] and [Second source, https://example.com/two]' }]} />);
 
     expect(screen.getByRole('link', { name: 'First source' })).toHaveAttribute('href', 'https://example.com/one');
     expect(screen.getByRole('link', { name: 'Second source' })).toHaveAttribute('href', 'https://example.com/two');
+    expect(container.textContent).toBe('First source and Second source');
   });
 
   it('preserves assistant citation syntax in code and rejects non-HTTP(S) targets', () => {
@@ -145,6 +166,25 @@ describe('AIMessageContent charts', () => {
 
     const link = screen.getByRole('link', { name: 'Read [Example, https://example.com]' });
     expect(link).toHaveAttribute('href', 'https://destination.test');
+  });
+
+  it('renders assistant-provided HTML anchors as safe links', () => {
+    render(<AIMessageContent parts={[{
+      type: 'text',
+      content: '<a href="https://example.com/forecast" target="_blank" rel="noopener">Detailed forecast</a> [1]',
+    }]} />);
+
+    const link = screen.getByRole('link', { name: 'Detailed forecast' });
+    expect(link).toHaveAttribute('href', 'https://example.com/forecast');
+    expect(link).toHaveAttribute('target', '_blank');
+    expect(link).toHaveAttribute('rel', 'noopener noreferrer');
+  });
+
+  it('leaves unsafe HTML anchors escaped', () => {
+    render(<AIMessageContent parts={[{ type: 'text', content: '<a href="javascript:alert(1)">Unsafe</a>' }]} />);
+
+    expect(screen.queryByRole('link', { name: 'Unsafe' })).not.toBeInTheDocument();
+    expect(screen.getByText(/<a href="javascript:alert\(1\)">Unsafe<\/a>/)).toBeInTheDocument();
   });
 
   it('renders inline citation markers without bracket text', () => {

@@ -1,0 +1,518 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "YellowStorm Platform Architecture",
+    "locale": "en",
+    "output": "yellowstorm-architecture.html",
+    "quality_profile": "showcase",
+    "viewBox": [
+      1370,
+      648
+    ],
+    "repository": {
+      "url": "https://github.com/YellowsysOrg/YellowStorm-poc.git",
+      "provider": "github",
+      "revision": "95be4e4a62561a78742c7ba9beea8bdd71d3cdf9"
+    },
+    "views": [
+      {
+        "id": "chat-path",
+        "label": "Chat request path",
+        "focus": [
+          "users",
+          "spa",
+          "api",
+          "adk",
+          "litellm"
+        ],
+        "note": "Primary path: browser SPA to NestJS API, gRPC into the ADK agent runtime, LLM inference via LiteLLM."
+      },
+      {
+        "id": "agent-data",
+        "label": "Agent data layer",
+        "focus": [
+          "adk",
+          "pg",
+          "qdrant",
+          "adkstores"
+        ],
+        "note": "Stores the Python runtime touches directly: sessions, checkpoints, vectors, BM25 index, Celery broker, CSRD graph."
+      },
+      {
+        "id": "autonomous",
+        "label": "Autonomous sessions",
+        "focus": [
+          "api",
+          "conv2",
+          "nodepod"
+        ],
+        "note": "Conversation-v2 external runtime over gRPC, with the browser acting as a tool host and noVNC view."
+      }
+    ]
+  },
+  "components": [
+    {
+      "id": "users",
+      "type": "external",
+      "label": "Users",
+      "sublabel": "Browser",
+      "pos": [
+        40,
+        72
+      ],
+      "size": [
+        130,
+        62
+      ]
+    },
+    {
+      "id": "widget",
+      "type": "frontend",
+      "label": "Embeddable Widget",
+      "sublabel": "3rd-party site embed",
+      "pos": [
+        40,
+        230
+      ],
+      "size": [
+        150,
+        62
+      ]
+    },
+    {
+      "id": "channels",
+      "type": "external",
+      "label": "Messaging Channels",
+      "sublabel": "Telegram · WhatsApp",
+      "pos": [
+        40,
+        370
+      ],
+      "size": [
+        150,
+        62
+      ]
+    },
+    {
+      "id": "spa",
+      "type": "frontend",
+      "label": "YellowStorm Web App",
+      "sublabel": "React 18 · Vite · nginx",
+      "brand": "react",
+      "pos": [
+        230,
+        110
+      ],
+      "size": [
+        170,
+        90
+      ],
+      "sources": [
+        {
+          "path": "YellowStorm/front/src/Router.tsx",
+          "label": "hash-router routes"
+        },
+        {
+          "path": "YellowStorm/front/src/lib/api/config.ts",
+          "label": "API endpoints"
+        }
+      ]
+    },
+    {
+      "id": "nodepod",
+      "type": "frontend",
+      "label": "In-Browser Runtime",
+      "sublabel": "Nodepod tool host",
+      "pos": [
+        230,
+        430
+      ],
+      "size": [
+        170,
+        62
+      ],
+      "sources": [
+        {
+          "path": "YellowStorm/front/src/modules/conversation-v2/runtime/NodepodRuntimeAdapter.ts",
+          "label": "runtime adapter"
+        }
+      ]
+    },
+    {
+      "id": "api",
+      "type": "backend",
+      "label": "NestJS API",
+      "sublabel": ":3000 · /api/v1",
+      "tag": "JWT · RBAC · MCP hosts",
+      "pos": [
+        510,
+        90
+      ],
+      "size": [
+        190,
+        150
+      ],
+      "sources": [
+        {
+          "path": "YellowStorm/back/src/main.ts",
+          "label": "bootstrap"
+        },
+        {
+          "path": "YellowStorm/back/src/common/grpc/grpc-security.util.ts",
+          "label": "gRPC security"
+        }
+      ]
+    },
+    {
+      "id": "adk",
+      "type": "backend",
+      "label": "ADK Agent Runtime",
+      "sublabel": "FastAPI :8001 · gRPC :50051",
+      "tag": "Google ADK · LangGraph",
+      "pos": [
+        830,
+        90
+      ],
+      "size": [
+        200,
+        150
+      ],
+      "sources": [
+        {
+          "path": "yellowstorm-adk/main.py",
+          "label": "entrypoint"
+        },
+        {
+          "path": "yellowstorm-adk/src/grpc_server/server.py",
+          "label": "gRPC services"
+        }
+      ]
+    },
+    {
+      "id": "litellm",
+      "type": "cloud",
+      "label": "LiteLLM Gateway",
+      "sublabel": "LLM inference · embeddings",
+      "tag": "Claude · GPT · Gemini",
+      "pos": [
+        1120,
+        100
+      ],
+      "size": [
+        170,
+        64
+      ]
+    },
+    {
+      "id": "conv2",
+      "type": "external",
+      "label": "Conversation-v2 Runtime",
+      "sublabel": "autonomous sessions · VNC",
+      "tag": "grpc.yellowsys.org:7777",
+      "pos": [
+        1120,
+        350
+      ],
+      "size": [
+        170,
+        64
+      ],
+      "sources": [
+        {
+          "path": "YellowStorm/back/src/modules/conversation-v2/proto/conversation.proto",
+          "label": "v2 proto"
+        }
+      ]
+    },
+    {
+      "id": "saas",
+      "type": "external",
+      "label": "SaaS Integrations",
+      "sublabel": "MS Graph · GitHub · Linkup",
+      "pos": [
+        1120,
+        470
+      ],
+      "size": [
+        170,
+        64
+      ]
+    },
+    {
+      "id": "ceph",
+      "type": "cloud",
+      "label": "Ceph S3",
+      "sublabel": "document object store",
+      "pos": [
+        40,
+        560
+      ],
+      "size": [
+        150,
+        64
+      ]
+    },
+    {
+      "id": "mongo",
+      "type": "database",
+      "label": "MongoDB",
+      "sublabel": "~130 models",
+      "brand": "mongodb",
+      "pos": [
+        230,
+        560
+      ],
+      "size": [
+        150,
+        64
+      ]
+    },
+    {
+      "id": "pg",
+      "type": "database",
+      "label": "PostgreSQL",
+      "sublabel": "Drizzle · AGE graph",
+      "brand": "postgresql",
+      "pos": [
+        680,
+        560
+      ],
+      "size": [
+        115,
+        64
+      ]
+    },
+    {
+      "id": "qdrant",
+      "type": "database",
+      "label": "Qdrant",
+      "sublabel": "vector store",
+      "pos": [
+        815,
+        560
+      ],
+      "size": [
+        130,
+        64
+      ]
+    },
+    {
+      "id": "adkstores",
+      "type": "database",
+      "label": "Redis · Neo4j",
+      "sublabel": "index · broker · graph",
+      "brand": "redis",
+      "pos": [
+        955,
+        560
+      ],
+      "size": [
+        140,
+        64
+      ]
+    }
+  ],
+  "connections": [
+    {
+      "id": "users-spa",
+      "from": "users",
+      "to": "spa",
+      "label": "HTTPS",
+      "fromSide": "right",
+      "toSide": "left"
+    },
+    {
+      "id": "spa-api",
+      "from": "spa",
+      "to": "api",
+      "label": "REST · SSE · Socket.IO",
+      "variant": "emphasis",
+      "fromSide": "right",
+      "toSide": "left",
+      "labelAt": [
+        430,
+        92
+      ]
+    },
+    {
+      "id": "widget-api",
+      "from": "widget",
+      "to": "api",
+      "label": "widget SSE",
+      "fromSide": "right",
+      "toSide": "left",
+      "labelAt": [
+        350,
+        261
+      ]
+    },
+    {
+      "id": "channels-api",
+      "from": "channels",
+      "to": "api",
+      "label": "webhooks · pairing",
+      "fromSide": "right",
+      "toSide": "left",
+      "labelAt": [
+        330,
+        401
+      ]
+    },
+    {
+      "id": "nodepod-api",
+      "from": "nodepod",
+      "to": "api",
+      "label": "Socket.IO /app-runtime",
+      "fromSide": "right",
+      "toSide": "left",
+      "labelAt": [
+        475,
+        425
+      ]
+    },
+    {
+      "id": "api-adk",
+      "from": "api",
+      "to": "adk",
+      "label": "gRPC · TLS + key",
+      "variant": "emphasis",
+      "fromSide": "right",
+      "toSide": "left"
+    },
+    {
+      "id": "adk-litellm",
+      "from": "adk",
+      "to": "litellm",
+      "label": "LLM inference",
+      "variant": "emphasis",
+      "fromSide": "right",
+      "toSide": "left"
+    },
+    {
+      "id": "api-conv2",
+      "from": "api",
+      "to": "conv2",
+      "label": "gRPC :7777",
+      "fromSide": "top",
+      "toSide": "right",
+      "labelAt": [
+        1090,
+        84
+      ]
+    },
+    {
+      "id": "api-saas",
+      "from": "api",
+      "to": "saas",
+      "label": "mail · OAuth · voice",
+      "fromSide": "top",
+      "toSide": "right",
+      "labelAt": [
+        950,
+        20
+      ]
+    },
+    {
+      "id": "api-mongo",
+      "from": "api",
+      "to": "mongo",
+      "label": "Mongoose",
+      "fromSide": "bottom",
+      "toSide": "top",
+      "labelAt": [
+        430,
+        535
+      ]
+    },
+    {
+      "id": "api-pg",
+      "from": "api",
+      "to": "pg",
+      "label": "Drizzle",
+      "fromSide": "bottom",
+      "toSide": "top",
+      "labelAt": [
+        650,
+        450
+      ]
+    },
+    {
+      "id": "adk-pg",
+      "from": "adk",
+      "to": "pg",
+      "label": "checkpoints",
+      "fromSide": "bottom",
+      "toSide": "top",
+      "labelAt": [
+        810,
+        535
+      ]
+    },
+    {
+      "id": "adk-qdrant",
+      "from": "adk",
+      "to": "qdrant",
+      "label": "vector search",
+      "fromSide": "bottom",
+      "toSide": "top",
+      "labelAt": [
+        930,
+        440
+      ]
+    },
+    {
+      "id": "adk-adkstores",
+      "from": "adk",
+      "to": "adkstores",
+      "label": "BM25 · Celery · CSRD",
+      "fromSide": "bottom",
+      "toSide": "top",
+      "labelAt": [
+        1005,
+        480
+      ]
+    },
+    {
+      "id": "spa-ceph",
+      "from": "spa",
+      "to": "ceph",
+      "label": "presigned PUT",
+      "fromSide": "left",
+      "toSide": "left",
+      "labelAt": [
+        130,
+        168
+      ]
+    }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "Experience",
+      "items": [
+        "React 18 SPA — hash router, Zustand + React Query",
+        "SSE streams: chat, notifications, playbooks, worky",
+        "Socket.IO: /browser-session, /whatsapp, /app-runtime"
+      ]
+    },
+    {
+      "dot": "violet",
+      "title": "Agent runtime (ADK)",
+      "items": [
+        "Multi-agent chat teams on Google ADK (Python)",
+        "LangGraph playbook flows with HITL checkpoints",
+        "Worky orchestrator DAG + A2A gateway (/a2a)"
+      ]
+    },
+    {
+      "dot": "emerald",
+      "title": "Data & ops",
+      "items": [
+        "MongoDB ~130 models · PostgreSQL Drizzle + AGE",
+        "Qdrant · Redis · Neo4j · Ceph S3 presigned uploads",
+        "Hosted MCP endpoints · Mongo outbox · ~30 crons"
+      ]
+    }
+  ]
+}

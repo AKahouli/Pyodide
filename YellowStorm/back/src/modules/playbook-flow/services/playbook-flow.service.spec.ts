@@ -936,6 +936,30 @@ describe('PlaybookFlowService', () => {
     });
   });
 
+  it('sorts overlapping executions by completion activity before pagination', async () => {
+    const flowModel = {
+      countDocuments: jest.fn().mockResolvedValue(1),
+      aggregate: jest.fn().mockResolvedValue([{ _id: 'flow-old', ownerId: 'user-1', name: 'Recently executed', updatedAt: new Date('2025-01-15T00:00:00Z') }]),
+    };
+    const executionModel = {
+      collection: { name: 'flowexecutions' },
+      aggregate: jest.fn().mockResolvedValue([{ flowId: 'flow-old', status: 'completed', createdAt: new Date('2025-01-01T00:00:00Z'), endedAt: new Date('2025-02-01T00:00:00Z') }]),
+    };
+    const service = Object.create(PlaybookFlowService.prototype) as PlaybookFlowService;
+    Object.assign(service as any, { flowModel, executionModel, playbookShareService });
+
+    const result = await service.findAll('user-1', { page: 1, limit: 6, sortBy: 'activityAt', sortOrder: 'desc' });
+
+    expect(result.items[0]).toMatchObject({ id: 'flow-old', lastExecutionAt: new Date('2025-02-01T00:00:00Z') });
+    expect(flowModel.aggregate).toHaveBeenCalledWith(expect.arrayContaining([
+      { $sort: { activityAt: -1, _id: 1 } },
+      { $limit: 6 },
+    ]));
+    const pipeline = JSON.stringify(flowModel.aggregate.mock.calls[0][0]);
+    expect(pipeline).toContain('latestActivityExecution.activityAt');
+    expect(pipeline).toContain('"$sort":{"activityAt":-1,"_id":1}');
+  });
+
   it('creates a Playbook without a default workspace', async () => {
     const flowModel = Object.assign(jest.fn().mockImplementation((payload: Record<string, unknown>) => {
       const document = {

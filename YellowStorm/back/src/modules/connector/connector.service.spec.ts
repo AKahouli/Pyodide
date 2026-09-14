@@ -791,6 +791,9 @@ describe('ConnectorService findByIdsForGrpc', () => {
           label: 'Search Files',
           description: 'Search SharePoint',
           parameter_schema_json: '{"type":"object","properties":{"query":{"type":"string"}}}',
+          result_kind: 'generic',
+          citation_mode: 'none',
+          result_mapping_json: '{}',
         },
       ],
     });
@@ -918,6 +921,44 @@ describe('ConnectorService findByIdsForGrpc', () => {
       const [binding] = await service.findByIdsForGrpc([doc._id.toString()], 'user-1');
 
       expect(binding.auth_headers['x-sandbox-scope-id']).toBeUndefined();
+    });
+  });
+});
+
+describe('ConnectorService findIdsByCategoryName', () => {
+  it('returns active connector ids assigned to the named category', async () => {
+    const connectorId = new Types.ObjectId();
+    const categoryId = new Types.ObjectId();
+    const connectorExec = jest.fn().mockResolvedValue([{ _id: connectorId }]);
+    const categoryExec = jest.fn().mockResolvedValue([{ _id: categoryId }]);
+    const connectorModel = {
+      find: jest.fn().mockReturnValue({
+        select: jest.fn().mockReturnValue({ lean: jest.fn().mockReturnValue({ exec: connectorExec }) }),
+      }),
+    };
+    const categoryModel = {
+      find: jest.fn().mockReturnValue({
+        select: jest.fn().mockReturnValue({ lean: jest.fn().mockReturnValue({ exec: categoryExec }) }),
+      }),
+    };
+    const service = new ConnectorService(
+      connectorModel as any,
+      categoryModel as any,
+      { setContext: jest.fn() } as any,
+      null as any,
+      {} as any,
+      createPlaybookBindingSyncServiceMock() as any,
+    );
+
+    await expect(service.findIdsByCategoryName([connectorId.toString()], 'Web Search'))
+      .resolves.toEqual([connectorId.toString()]);
+    expect(categoryModel.find).toHaveBeenCalledWith({
+      name: { $regex: '^Web Search$', $options: 'i' },
+    });
+    expect(connectorModel.find).toHaveBeenCalledWith({
+      _id: { $in: [connectorId] },
+      categoryId: { $in: [categoryId] },
+      isActive: true,
     });
   });
 });

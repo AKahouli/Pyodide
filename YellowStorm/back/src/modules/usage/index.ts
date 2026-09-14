@@ -6,8 +6,7 @@ export { UsageService } from './usage.service';
 
 // Schemas
 export { Plan, PlanSchema, PlanDocument, PlanTier } from './schemas/plan.schema';
-export { Usage, UsageSchema, UsageDocument, UsageType } from './schemas/usage.schema';
-export { UsageLog, UsageLogSchema, UsageLogDocument } from './schemas/usage-log.schema';
+export { UsageType } from './usage-type.enum';
 
 // Guards
 export { UsageLimitGuard } from './guards/usage-limit.guard';

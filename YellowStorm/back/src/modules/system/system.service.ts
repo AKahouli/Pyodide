@@ -22,6 +22,7 @@ import {
   DEFAULT_DOCUMENT_TREE_INJECTION_SETTINGS,
   DocumentTreeInjectionSettings,
 } from './interfaces/document-tree-settings.interface';
+import { DEFAULT_LOGIN_SETTINGS, LoginSettings, parseLoginExpiry } from './interfaces/login-settings.interface';
 
 const MAINTENANCE_KEY = 'maintenance_mode';
 const REGISTRATION_KEY = 'registration_settings';
@@ -29,6 +30,7 @@ const APPEARANCE_KEY = APPEARANCE_SETTINGS_KEY;
 const PLAYBOOK_SETTINGS_KEY = 'playbook_settings';
 const CORS_SETTINGS_KEY = 'cors_settings';
 const DOCUMENT_TREE_INJECTION_KEY = 'document_tree_injection_settings';
+const LOGIN_SETTINGS_KEY = 'login_settings';
 export const EMAIL_LOGO_KEY = 'email_logo';
 export const EMAIL_LOGO_MAX_BYTES = 512 * 1024;
 const CACHE_TTL_MS = 5000; // 5 seconds
@@ -120,12 +122,14 @@ export class SystemService implements OnApplicationBootstrap {
   private appearanceCache: AppearanceThemeSettings | null = null;
   private playbookSettingsCache: AdminPlaybookSettings | null = null;
   private corsSettingsCache: CorsSettingsValue | null = null;
+  private loginSettingsCache: LoginSettings | null = null;
   private emailLogoCache: EmailLogoValue | null = null;
   private lastCacheUpdate = 0;
   private lastAppearanceCacheUpdate = 0;
   private lastRegistrationCacheUpdate = 0;
   private lastPlaybookSettingsCacheUpdate = 0;
   private lastCorsCacheUpdate = 0;
+  private lastLoginSettingsCacheUpdate = 0;
   private lastEmailLogoCachedAt = 0;
   private refreshInterval: ReturnType<typeof setInterval> | null = null;
 
@@ -149,6 +153,7 @@ export class SystemService implements OnApplicationBootstrap {
         this.refreshAppearanceCache(),
         this.refreshPlaybookSettingsCache(),
         this.refreshCorsSettingsCache(),
+        this.refreshLoginSettingsCache(),
       ]);
       this.logger.log('System service initialized', {
         maintenanceEnabled: this.maintenanceCache?.enabled ?? false,
@@ -172,6 +177,9 @@ export class SystemService implements OnApplicationBootstrap {
         this.refreshCorsSettingsCache().catch((err) => {
           this.logger.warn('Periodic CORS settings cache refresh failed', { error: err.message });
         });
+        this.refreshLoginSettingsCache().catch((err) => {
+          this.logger.warn('Periodic login settings cache refresh failed', { error: err.message });
+        });
       }, CACHE_TTL_MS);
     } catch (error) {
       this.logger.warn('Failed to initialize system service', { error: (error as Error).message });
@@ -180,6 +188,7 @@ export class SystemService implements OnApplicationBootstrap {
       this.registrationCache = { enabled: true };
       this.appearanceCache = DEFAULT_APPEARANCE;
       this.playbookSettingsCache = DEFAULT_ADMIN_PLAYBOOK_SETTINGS;
+      this.loginSettingsCache = DEFAULT_LOGIN_SETTINGS;
     }
   }
 
@@ -311,6 +320,65 @@ export class SystemService implements OnApplicationBootstrap {
     await this.refreshAppearanceCache();
     await this.refreshPlaybookSettingsCache();
     await this.refreshCorsSettingsCache();
+    await this.refreshLoginSettingsCache();
+  }
+
+  // ─── Login Settings ─────────────────────────────────────────────
+
+  async getLoginSettings(): Promise<LoginSettings> {
+    if (this.loginSettingsCache && Date.now() - this.lastLoginSettingsCacheUpdate < CACHE_TTL_MS) {
+      return this.loginSettingsCache;
+    }
+    return this.refreshLoginSettingsCache();
+  }
+
+  getLoginSettingsSync(): LoginSettings {
+    return this.loginSettingsCache ?? DEFAULT_LOGIN_SETTINGS;
+  }
+
+  async setLoginSettings(settings: LoginSettings): Promise<LoginSettings> {
+    const accessMs = parseLoginExpiry(settings.accessExpiry);
+    const refreshMs = parseLoginExpiry(settings.refreshExpiry);
+    const minute = 60_000;
+    const day = 24 * 60 * minute;
+
+    if (!accessMs || accessMs < minute || accessMs > 30 * day) {
+      throw new BadRequestException('Access token expiry must be between 1 minute and 30 days');
+    }
+    if (!refreshMs || refreshMs < 10 * minute || refreshMs > 365 * day) {
+      throw new BadRequestException('Refresh token expiry must be between 10 minutes and 365 days');
+    }
+    if (refreshMs < accessMs) {
+      throw new BadRequestException('Refresh token expiry must not be shorter than access token expiry');
+    }
+
+    const value = { accessExpiry: settings.accessExpiry, refreshExpiry: settings.refreshExpiry };
+    await this.systemSettingModel.findOneAndUpdate(
+      { key: LOGIN_SETTINGS_KEY },
+      { key: LOGIN_SETTINGS_KEY, value },
+      { upsert: true, new: true },
+    );
+    this.loginSettingsCache = value;
+    this.lastLoginSettingsCacheUpdate = Date.now();
+    return value;
+  }
+
+  private async refreshLoginSettingsCache(): Promise<LoginSettings> {
+    try {
+      const setting = await this.systemSettingModel.findOne({ key: LOGIN_SETTINGS_KEY }).lean().exec();
+      const value = setting?.value as Partial<LoginSettings> | undefined;
+      const accessMs = typeof value?.accessExpiry === 'string' ? parseLoginExpiry(value.accessExpiry) : null;
+      const refreshMs = typeof value?.refreshExpiry === 'string' ? parseLoginExpiry(value.refreshExpiry) : null;
+      this.loginSettingsCache = accessMs && refreshMs && refreshMs >= accessMs
+        ? { accessExpiry: value!.accessExpiry!, refreshExpiry: value!.refreshExpiry! }
+        : DEFAULT_LOGIN_SETTINGS;
+      this.lastLoginSettingsCacheUpdate = Date.now();
+      return this.loginSettingsCache;
+    } catch (error) {
+      this.logger.error('Failed to refresh login settings cache', { error: (error as Error).message });
+      this.loginSettingsCache = this.loginSettingsCache ?? DEFAULT_LOGIN_SETTINGS;
+      return this.loginSettingsCache;
+    }
   }
 
   // ─── CORS Settings ─────────────────────────────────────────────

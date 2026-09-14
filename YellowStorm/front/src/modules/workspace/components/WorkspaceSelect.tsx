@@ -14,10 +14,11 @@ type WorkspaceSelectProps = Readonly<{
   onChange: (workspaceIds: string[]) => void;
   disabled?: boolean;
   className?: string;
+  label?: string;
   workspaceOptions?: Array<{ id: string; name: string; documentCount: number }>;
 }>;
 
-export function WorkspaceSelect({ selectedIds, onChange, disabled, className, workspaceOptions }: WorkspaceSelectProps) {
+export function WorkspaceSelect({ selectedIds, onChange, disabled, className, workspaceOptions, label }: WorkspaceSelectProps) {
   const { t } = useModuleTranslation('workspace');
   const [open, setOpen] = useState(false);
   const workspaces = useWorkspaces();
@@ -150,8 +151,9 @@ export function WorkspaceSelect({ selectedIds, onChange, disabled, className, wo
     <Popover open={open} onOpenChange={onOpenChange}>
       <div className='relative'>
         <PopoverTrigger asChild>
-          <Button type='button' variant={hasSelection ? 'secondary' : 'ghost'} size='icon' aria-label={t('select.triggerLabel')} title={t('select.triggerLabel')} className={cn('h-8 w-8 shrink-0', hasSelection && 'text-primary', className)} disabled={disabled || isLoadingWorkspaces}>
+          <Button type='button' variant={hasSelection ? 'secondary' : 'ghost'} size='icon' aria-label={label ? `${label}: ${t('select.triggerLabel')}` : t('select.triggerLabel')} title={t('select.triggerLabel')} className={cn('h-8 w-8 shrink-0', hasSelection && 'text-primary', className)} disabled={disabled || isLoadingWorkspaces}>
             <Layers className={cn('h-4 w-4', hasSelection && 'fill-current', isLoadingWorkspaces && 'opacity-50')} />
+            {label && <span>{label}</span>}
           </Button>
         </PopoverTrigger>
         <BadgeCount count={selectedCount} />

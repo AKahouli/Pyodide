@@ -17,6 +17,7 @@ from google.adk.tools import AgentTool
 from google.adk.tools.mcp_tool import MCPToolset
 
 from src.smart_rag.infrastructure.external.mcp_helper import MCPHelper
+from src.smart_rag.infrastructure.external.purpose_aware_mcp import PurposeAwareMcpTool
 from src.smart_rag.tools.utilities.connector_tools import (
     ConnectorToolContext,
     create_connector_tools,
@@ -121,7 +122,7 @@ class AgentFactory:
 
     def create_web_preview_tool(
         self, chatbot_name: str, temperature: Optional[float] = 0.0
-    ) -> AgentTool:
+    ) -> PurposeAwareMcpTool:
         preview_agent = self.create_html_diagram_agent(
             instructions=self.web_preview_tool_config["instructions"],
             chatbot_name=chatbot_name,
@@ -130,7 +131,7 @@ class AgentFactory:
             temperature=temperature,
             num_retries=0,
         )
-        return AgentTool(preview_agent, skip_summarization=False)
+        return PurposeAwareMcpTool(AgentTool(preview_agent, skip_summarization=False))
 
     @staticmethod
     def _resolve_connector_workspace_id(

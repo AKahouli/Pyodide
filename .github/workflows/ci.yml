@@ -109,7 +109,6 @@ jobs:
         run: |
           npm test -- --ci --forceExit --bail=0 --maxWorkers=2 \
             --coverage --coverageProvider=v8 \
-            --testPathIgnorePatterns="playbook-execution.service.spec.ts" \
             || true
       - name: Upload backend coverage
         if: always()

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Loader2, LockKeyhole, Plus, Trash2, X } from 'lucide-react';
+import { AlertTriangle, Loader2, LockKeyhole, Plus, Trash2, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -7,17 +7,23 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Separator } from '@/components/ui/separator';
 import { Switch } from '@/components/ui/switch';
 import { Textarea } from '@/components/ui/textarea';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useModuleTranslation } from '@/modules/localization';
 import { useSemanticModelEditorStore } from '../../store';
 import type { KnowledgeLinkingController } from '../../hooks/use-knowledge-linking';
+import { type SourceMappingTarget, sourceMappingTargetFromResource } from '../mapping/SourceMappingDrawer';
 import type { AttributeDefinition, SemanticCorpusDocument, SemanticNodeType, SemanticRecord, SemanticRelationType } from '../../types';
 import { businessKey } from '../../utils/model-utils';
 import { KnowledgePanel } from '../knowledge/KnowledgePanel';
 import { semanticModelApi } from '../../api';
+import { useQueryClient } from '@tanstack/react-query';
+import { semanticModelQueryKeys } from '../../query/queryKeys';
+import { useSourceMappings } from '../../query/hooks';
 import { parseApiError } from '@/lib/api-error';
 import { showError, showSuccess } from '@/lib/notifications';
+import { RelationMatchingPanel } from '../mapping/RelationMatchingPanel';
 
-export function SemanticModelInspector({ modelId = '', canEdit,knowledge,knowledgeOpen,knowledgeTargetId,onKnowledgeClose }: Readonly<{ modelId?:string;canEdit:boolean;knowledge:KnowledgeLinkingController;knowledgeOpen:boolean;knowledgeTargetId:string|null;onKnowledgeClose:()=>void }>) {
+export function SemanticModelInspector({ modelId = '', canEdit,knowledge,knowledgeOpen,knowledgeTargetId,onKnowledgeClose,onMapData }: Readonly<{ modelId?:string;canEdit:boolean;knowledge:KnowledgeLinkingController;knowledgeOpen:boolean;knowledgeTargetId:string|null;onKnowledgeClose:()=>void;onMapData?:(target:SourceMappingTarget)=>void }>) {
   const { t } = useModuleTranslation('semantic-model');
   const graph = useSemanticModelEditorStore((state) => state.graph);
   const selectedId = useSemanticModelEditorStore((state) => state.selectedId);
@@ -25,16 +31,16 @@ export function SemanticModelInspector({ modelId = '', canEdit,knowledge,knowled
   const node = graph?.nodes.find((item) => item.id === selectedId);
   const relation = graph?.relations.find((item) => item.id === selectedId);
   const record = graph?.records.find((item) => item.id === selectedId);
-  if (knowledgeOpen||!selectedId||(!node&&!relation&&!record)) return <aside className={knowledgeOpen?'absolute inset-y-0 right-0 z-30 w-[min(22rem,calc(100%-1rem))] border-l bg-background/95 shadow-2xl backdrop-blur xl:static xl:w-80 xl:shadow-none':'hidden w-80 shrink-0 border-l bg-background/92 xl:block'}><KnowledgePanel canEdit={canEdit} knowledge={knowledge} targetNodeId={knowledgeTargetId} onClose={knowledgeOpen?onKnowledgeClose:undefined}/></aside>;
+  if (knowledgeOpen||!selectedId||(!node&&!relation&&!record)) return <aside className={knowledgeOpen?'absolute inset-y-0 right-0 z-30 w-[min(22rem,calc(100%-1rem))] border-l bg-background/95 shadow-2xl backdrop-blur xl:static xl:w-80 xl:shadow-none':'hidden w-80 shrink-0 border-l bg-background/92 xl:block'}><KnowledgePanel canEdit={canEdit} knowledge={knowledge} targetNodeId={knowledgeTargetId} onClose={knowledgeOpen?onKnowledgeClose:undefined} onMapData={(resource)=>onMapData?.(sourceMappingTargetFromResource(resource, knowledgeTargetId ?? undefined))}/></aside>;
   return <aside className='absolute inset-y-0 right-0 z-20 w-[min(22rem,calc(100%-1rem))] overflow-y-auto border-l bg-background/95 p-5 shadow-2xl backdrop-blur xl:static xl:w-80 xl:shadow-none'>
     <div className='mb-5 flex items-center justify-between'><div><p className='text-xs font-medium uppercase tracking-wider text-muted-foreground'>{t('inspector.title')}</p><h2 className='font-semibold'>{node?.label ?? relation?.label ?? record?.label}</h2></div><Button size='icon' variant='ghost' onClick={() => select(null)} aria-label={t('action.close')}><X className='h-4 w-4' /></Button></div>
-    {node && <NodeForm modelId={modelId} node={node} locked={Boolean(node.systemKey)} canEdit={canEdit} />}
-    {relation && <RelationForm relation={relation} canEdit={canEdit} />}
+    {node && <NodeForm modelId={modelId} node={node} locked={Boolean(node.systemKey)} canEdit={canEdit} onMapData={onMapData} />}
+    {relation && <RelationForm modelId={modelId} relation={relation} canEdit={canEdit} />}
     {record && <RecordForm record={record} canEdit={canEdit} />}
   </aside>;
 }
 
-function NodeForm({ modelId, node: item,locked,canEdit }: Readonly<{ modelId:string; node: SemanticNodeType; locked: boolean; canEdit: boolean }>) {
+function NodeForm({ modelId, node: item,locked,canEdit,onMapData }: Readonly<{ modelId:string; node: SemanticNodeType; locked: boolean; canEdit: boolean; onMapData?:(target:SourceMappingTarget)=>void }>) {
   const { t } = useModuleTranslation('semantic-model');
   const graph = useSemanticModelEditorStore((state) => state.graph);
   const commit = useSemanticModelEditorStore((state) => state.commit);
@@ -106,11 +112,55 @@ function NodeForm({ modelId, node: item,locked,canEdit }: Readonly<{ modelId:str
     <Field label={t('field.category')}><Select value={item.category} disabled={locked||!canEdit} onValueChange={(category: SemanticNodeType['category']) => update({ category })}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value='business_object'>{t('category.business_object')}</SelectItem><SelectItem value='classification'>{t('category.classification')}</SelectItem></SelectContent></Select></Field>
     <Field label={t('field.recordPolicy')}><Select value={item.recordPolicy} disabled={locked||!canEdit} onValueChange={(recordPolicy: SemanticNodeType['recordPolicy']) => update({ recordPolicy })}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{(['none','optional','expected'] as const).map((policy) => <SelectItem key={policy} value={policy}>{t(`recordPolicy.${policy}`)}</SelectItem>)}</SelectContent></Select></Field>
     {!locked&&canEdit && <AttributeEditor attributes={item.attributes} onChange={(attributes) => update({ attributes })} />}
+    {!locked&&canEdit && <SourceMappingsSection modelId={modelId} conceptId={item.id} onMapData={onMapData} />}
     {!locked&&canEdit && <><Separator /><Button variant='destructive' className='w-full' onClick={deleteNode}><Trash2 className='mr-2 h-4 w-4' />{t('inspector.deleteConcept')}</Button></>}
   </div>;
 }
 
-function RelationForm({ relation: item,canEdit }: Readonly<{ relation: SemanticRelationType; canEdit: boolean }>) {
+function SourceMappingsSection({ modelId,conceptId,onMapData }: Readonly<{ modelId:string;conceptId:string;onMapData?:(target:SourceMappingTarget)=>void }>) {
+  const { t } = useModuleTranslation('semantic-model');
+  const client = useQueryClient();
+  const mappingsQuery = useSourceMappings(modelId || undefined);
+  const mappings = (mappingsQuery.data ?? []).filter((mapping) => mapping.conceptId === conceptId);
+  const remove = async (mappingId: string) => {
+    try {
+      await semanticModelApi.deleteSourceMapping(modelId, mappingId);
+      await Promise.all([
+        client.invalidateQueries({ queryKey: semanticModelQueryKeys.sourceMappings(modelId) }),
+        client.invalidateQueries({ queryKey: semanticModelQueryKeys.model(modelId) }),
+      ]);
+    } catch (error) {
+      showError(t('mapping.deleteError'), { description: parseApiError(error).message });
+    }
+  };
+  return <div className='space-y-2'>
+    <Label>{t('mapping.sourcesTitle', { count: mappings.length })}</Label>
+    <p className='text-xs text-muted-foreground'>{t('mapping.sourcesHelp')}</p>
+    {mappingsQuery.isLoading ? <Loader2 className='h-4 w-4 animate-spin' />
+      : mappingsQuery.isError ? (
+        <div className='flex items-start gap-1.5 rounded-lg bg-destructive/10 p-2 text-xs text-destructive'>
+          <AlertTriangle className='mt-0.5 h-3.5 w-3.5 shrink-0' />
+          <span className='min-w-0 flex-1'>{parseApiError(mappingsQuery.error).message}</span>
+          <Button size='sm' variant='ghost' className='h-6 shrink-0 px-2 text-[11px]' onClick={() => void mappingsQuery.refetch()}>{t('action.retry')}</Button>
+        </div>
+      ) : mappings.length ? (
+      <div className='space-y-2'>
+        {mappings.map((mapping) => (
+          <div key={mapping.id} className='rounded-xl border p-2.5'>
+            <p className='truncate text-xs font-medium'>{mapping.documentName ?? mapping.documentId}</p>
+            <p className='truncate text-[10px] text-muted-foreground'>{mapping.sheetName}{mapping.identityFields.length ? ` · ${t('mapping.identityShort', { fields: mapping.identityFields.join(', ') })}` : ''}</p>
+            <div className='mt-1.5 flex gap-1'>
+              <Button size='sm' variant='ghost' className='h-7 px-2 text-[11px]' onClick={() => onMapData?.({ workspaceId: mapping.workspaceId, documentId: mapping.documentId, documentName: mapping.documentName ?? mapping.documentId, assetKind: mapping.assetKind, mimeType: mapping.mimeType, path: mapping.documentPath, mapping })}>{t('mapping.edit')}</Button>
+              <Button size='sm' variant='ghost' className='h-7 px-2 text-[11px] text-destructive' disabled={!modelId} onClick={() => void remove(mapping.id)}>{t('mapping.remove')}</Button>
+            </div>
+          </div>
+        ))}
+      </div>
+    ) : <p className='rounded-xl bg-muted/50 p-3 text-xs text-muted-foreground'>{t('mapping.noSources')}</p>}
+  </div>;
+}
+
+function RelationForm({ modelId,relation: item,canEdit }: Readonly<{ modelId: string; relation: SemanticRelationType; canEdit: boolean }>) {
   const { t } = useModuleTranslation('semantic-model');
   const graph = useSemanticModelEditorStore((state) => state.graph);
   const commit = useSemanticModelEditorStore((state) => state.commit);
@@ -125,7 +175,11 @@ function RelationForm({ relation: item,canEdit }: Readonly<{ relation: SemanticR
     select(null);
   };
   if (!canEdit) return <div className='space-y-4'><ReadOnlyField label={t('field.label')} value={item.label} />{item.inverseLabel&&<ReadOnlyField label={t('field.inverseLabel')} value={item.inverseLabel} />}{item.description&&<ReadOnlyField label={t('field.description')} value={item.description} />}<ReadOnlyField label={t('field.cardinality')} value={t(`cardinality.${item.cardinality}`)} /></div>;
-  return <div className='space-y-5'><Field label={t('field.label')}><Input value={item.label} disabled={!canEdit} onChange={(event) => update({label:event.target.value,key:businessKey(event.target.value)})} /></Field><Field label={t('field.inverseLabel')}><Input value={item.inverseLabel} disabled={!canEdit} onChange={(event) => update({inverseLabel:event.target.value})} /></Field><Field label={t('field.description')}><Textarea value={item.description} disabled={!canEdit} onChange={(event) => update({description:event.target.value})} /></Field><Field label={t('field.cardinality')}><Select value={item.cardinality} disabled={!canEdit} onValueChange={(cardinality: SemanticRelationType['cardinality']) => update({cardinality})}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{(['one_to_one','one_to_many','many_to_one','many_to_many'] as const).map((value) => <SelectItem key={value} value={value}>{t(`cardinality.${value}`)}</SelectItem>)}</SelectContent></Select></Field><div className='flex items-center justify-between'><Label>{t('field.traversable')}</Label><Switch checked={item.traversable} disabled={!canEdit} onCheckedChange={(traversable) => update({traversable})} /></div>{canEdit&&<><Separator /><Button variant='destructive' className='w-full' onClick={deleteRelation}><Trash2 className='mr-2 h-4 w-4' />{t('inspector.deleteRelationship')}</Button></>}</div>;
+  return <Tabs defaultValue='overview' className='space-y-4'>
+    <TabsList className='grid w-full grid-cols-2'><TabsTrigger value='overview'>{t('relationMatching.overview')}</TabsTrigger><TabsTrigger value='matching'>{t('relationMatching.matching')}</TabsTrigger></TabsList>
+    <TabsContent value='overview' className='space-y-5'><Field label={t('field.label')}><Input value={item.label} disabled={!canEdit} onChange={(event) => update({label:event.target.value,key:businessKey(event.target.value)})} /></Field><Field label={t('field.inverseLabel')}><Input value={item.inverseLabel} disabled={!canEdit} onChange={(event) => update({inverseLabel:event.target.value})} /></Field><Field label={t('field.description')}><Textarea value={item.description} disabled={!canEdit} onChange={(event) => update({description:event.target.value})} /></Field><Field label={t('field.cardinality')}><Select value={item.cardinality} disabled={!canEdit} onValueChange={(cardinality: SemanticRelationType['cardinality']) => update({cardinality})}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{(['one_to_one','one_to_many','many_to_one','many_to_many'] as const).map((value) => <SelectItem key={value} value={value}>{t(`cardinality.${value}`)}</SelectItem>)}</SelectContent></Select></Field><div className='flex items-center justify-between'><Label>{t('field.traversable')}</Label><Switch checked={item.traversable} disabled={!canEdit} onCheckedChange={(traversable) => update({traversable})} /></div>{canEdit&&<><Separator /><Button variant='destructive' className='w-full' onClick={deleteRelation}><Trash2 className='mr-2 h-4 w-4' />{t('inspector.deleteRelationship')}</Button></>}</TabsContent>
+    <TabsContent value='matching'><RelationMatchingPanel modelId={modelId} relation={item} /></TabsContent>
+  </Tabs>;
 }
 
 function RecordForm({ record: item,canEdit }: Readonly<{ record: SemanticRecord; canEdit: boolean }>) {

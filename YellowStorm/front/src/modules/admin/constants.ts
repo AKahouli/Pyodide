@@ -5,6 +5,7 @@
 import { Users, Shield, FileText, CreditCard, BarChart3, Settings, ScrollText, Flag, Cpu, Wrench, Puzzle, Bot, KeyRound, Plug, Cable, Palette, Sparkles, FolderCog, Wand2, MessageCircle, MessageSquare, Gauge } from 'lucide-react';
 import type { AdminMenuItem } from './types';
 import type { FeatureVisibility } from './types';
+import type { ModuleTranslationKey } from '@/modules/localization';
 
 export const DEFAULT_FEATURE_VISIBILITY: FeatureVisibility = Object.freeze({
   conversation: true,
@@ -16,7 +17,109 @@ export const DEFAULT_FEATURE_VISIBILITY: FeatureVisibility = Object.freeze({
   agents: true,
   semanticModel: true,
   platformCopilot: false,
+  playbookDevtools: false,
+  playbookDeltaAutosave: true,
+  playbookMcpAssistant: true,
+  playbookMcpConnectorReconciliation: true,
+  governedConversations: true,
+  governanceScopeAudience: true,
+  governedScopeCarousel: true,
+  dataRoomDecisionFlows: true,
+  dataRoomGovernance: true,
+  dataRoomSourceVersioning: true,
+  dataRoomWorkspaceEvents: true,
+  dataRoomAutoSourceCreation: true,
+  dataRoomOutboxDispatch: true,
+  dataRoomValidityIntelligence: true,
+  dataRoomKnowledgeAssessment: true,
 });
+
+export const FEATURE_SETTING_ITEMS: {
+  key: keyof FeatureVisibility;
+  group: 'playbook' | 'governance' | 'workspace';
+  labelKey: ModuleTranslationKey<'admin'>;
+  descriptionKey: ModuleTranslationKey<'admin'>;
+}[] = [
+  { key: 'playbookDevtools', group: 'playbook', labelKey: 'system.features.items.playbookDevtools.label', descriptionKey: 'system.features.items.playbookDevtools.description' },
+  { key: 'playbookDeltaAutosave', group: 'playbook', labelKey: 'system.features.items.playbookDeltaAutosave.label', descriptionKey: 'system.features.items.playbookDeltaAutosave.description' },
+  { key: 'playbookMcpAssistant', group: 'playbook', labelKey: 'system.features.items.playbookMcpAssistant.label', descriptionKey: 'system.features.items.playbookMcpAssistant.description' },
+  { key: 'playbookMcpConnectorReconciliation', group: 'playbook', labelKey: 'system.features.items.playbookMcpConnectorReconciliation.label', descriptionKey: 'system.features.items.playbookMcpConnectorReconciliation.description' },
+  { key: 'governedConversations', group: 'governance', labelKey: 'system.features.items.governedConversations.label', descriptionKey: 'system.features.items.governedConversations.description' },
+  { key: 'governanceScopeAudience', group: 'governance', labelKey: 'system.features.items.governanceScopeAudience.label', descriptionKey: 'system.features.items.governanceScopeAudience.description' },
+  { key: 'governedScopeCarousel', group: 'governance', labelKey: 'system.features.items.governedScopeCarousel.label', descriptionKey: 'system.features.items.governedScopeCarousel.description' },
+  { key: 'dataRoomDecisionFlows', group: 'workspace', labelKey: 'system.features.items.dataRoomDecisionFlows.label', descriptionKey: 'system.features.items.dataRoomDecisionFlows.description' },
+  { key: 'dataRoomGovernance', group: 'workspace', labelKey: 'system.features.items.dataRoomGovernance.label', descriptionKey: 'system.features.items.dataRoomGovernance.description' },
+  { key: 'dataRoomSourceVersioning', group: 'workspace', labelKey: 'system.features.items.dataRoomSourceVersioning.label', descriptionKey: 'system.features.items.dataRoomSourceVersioning.description' },
+  { key: 'dataRoomWorkspaceEvents', group: 'workspace', labelKey: 'system.features.items.dataRoomWorkspaceEvents.label', descriptionKey: 'system.features.items.dataRoomWorkspaceEvents.description' },
+  { key: 'dataRoomAutoSourceCreation', group: 'workspace', labelKey: 'system.features.items.dataRoomAutoSourceCreation.label', descriptionKey: 'system.features.items.dataRoomAutoSourceCreation.description' },
+  { key: 'dataRoomOutboxDispatch', group: 'workspace', labelKey: 'system.features.items.dataRoomOutboxDispatch.label', descriptionKey: 'system.features.items.dataRoomOutboxDispatch.description' },
+  { key: 'dataRoomValidityIntelligence', group: 'workspace', labelKey: 'system.features.items.dataRoomValidityIntelligence.label', descriptionKey: 'system.features.items.dataRoomValidityIntelligence.description' },
+  { key: 'dataRoomKnowledgeAssessment', group: 'workspace', labelKey: 'system.features.items.dataRoomKnowledgeAssessment.label', descriptionKey: 'system.features.items.dataRoomKnowledgeAssessment.description' },
+];
+
+export const FEATURE_PERMISSION_ITEMS: {
+  key: keyof FeatureVisibility;
+  permission: string;
+  labelKey: ModuleTranslationKey<'admin'>;
+  descriptionKey: ModuleTranslationKey<'admin'>;
+}[] = [
+  { key: 'conversation', permission: 'feature.conversation', labelKey: 'system.features.items.conversation.label', descriptionKey: 'system.features.items.conversation.description' },
+  { key: 'workspace', permission: 'feature.workspace', labelKey: 'system.features.items.workspace.label', descriptionKey: 'system.features.items.workspace.description' },
+  { key: 'playbook', permission: 'feature.playbook', labelKey: 'system.features.items.playbook.label', descriptionKey: 'system.features.items.playbook.description' },
+  { key: 'governance', permission: 'feature.governance', labelKey: 'system.features.items.governance.label', descriptionKey: 'system.features.items.governance.description' },
+  { key: 'appMarketplace', permission: 'feature.app_marketplace', labelKey: 'system.features.items.appMarketplace.label', descriptionKey: 'system.features.items.appMarketplace.description' },
+  { key: 'worky', permission: 'feature.worky', labelKey: 'system.features.items.worky.label', descriptionKey: 'system.features.items.worky.description' },
+  { key: 'agents', permission: 'feature.agents', labelKey: 'system.features.items.agents.label', descriptionKey: 'system.features.items.agents.description' },
+  { key: 'semanticModel', permission: 'feature.semantic_model', labelKey: 'system.features.items.semanticModel.label', descriptionKey: 'system.features.items.semanticModel.description' },
+  { key: 'platformCopilot', permission: 'feature.platform_copilot', labelKey: 'system.features.items.platformCopilot.label', descriptionKey: 'system.features.items.platformCopilot.description' },
+];
+
+export const MENU_PERMISSION_ITEMS = [
+  { key: 'platform', permission: 'menu.platform', labelKey: 'roles.permissions.menus.platform', depth: 0 },
+  { key: 'ask', permission: 'menu.ask', labelKey: 'roles.permissions.menus.ask', depth: 0 },
+  { key: 'newChat', permission: 'menu.new_chat', labelKey: 'roles.permissions.menus.newChat', depth: 1, parent: 'ask' },
+  { key: 'projects', permission: 'menu.projects', labelKey: 'roles.permissions.menus.projects', depth: 1, parent: 'ask' },
+  { key: 'history', permission: 'menu.history', labelKey: 'roles.permissions.menus.history', depth: 1, parent: 'ask' },
+  { key: 'knowledge', permission: 'menu.knowledge', labelKey: 'roles.permissions.menus.knowledge', depth: 0 },
+  { key: 'workspace', permission: 'menu.workspace', labelKey: 'roles.permissions.menus.workspace', depth: 1, parent: 'knowledge' },
+  { key: 'semanticModels', permission: 'menu.semantic_models', labelKey: 'roles.permissions.menus.semanticModels', depth: 1, parent: 'knowledge' },
+  { key: 'automate', permission: 'menu.automate', labelKey: 'roles.permissions.menus.automate', depth: 0 },
+  { key: 'playbook', permission: 'menu.playbook', labelKey: 'roles.permissions.menus.playbook', depth: 1, parent: 'automate' },
+  { key: 'agentNetwork', permission: 'menu.agent_network', labelKey: 'roles.permissions.menus.agentNetwork', depth: 1, parent: 'automate' },
+  { key: 'agents', permission: 'menu.agents', labelKey: 'roles.permissions.menus.agents', depth: 2, parent: 'agentNetwork' },
+  { key: 'teams', permission: 'menu.teams', labelKey: 'roles.permissions.menus.teams', depth: 2, parent: 'agentNetwork' },
+  { key: 'groups', permission: 'menu.groups', labelKey: 'roles.permissions.menus.groups', depth: 2, parent: 'agentNetwork' },
+  { key: 'worky', permission: 'menu.worky', labelKey: 'roles.permissions.menus.worky', depth: 1, parent: 'automate' },
+  { key: 'integrations', permission: 'menu.integrations', labelKey: 'roles.permissions.menus.integrations', depth: 1, parent: 'automate' },
+  { key: 'connectedApps', permission: 'menu.connected_apps', labelKey: 'roles.permissions.menus.connectedApps', depth: 2, parent: 'integrations' },
+  { key: 'appMarketplace', permission: 'menu.app_marketplace', labelKey: 'roles.permissions.menus.appMarketplace', depth: 2, parent: 'integrations' },
+  { key: 'govern', permission: 'menu.govern', labelKey: 'roles.permissions.menus.govern', depth: 0 },
+  { key: 'governance', permission: 'menu.governance', labelKey: 'roles.permissions.menus.governance', depth: 1, parent: 'govern' },
+  { key: 'admin', permission: 'menu.admin', labelKey: 'roles.permissions.menus.admin', depth: 1, parent: 'govern' },
+] as const satisfies readonly {
+  key: string;
+  permission: string;
+  labelKey: ModuleTranslationKey<'admin'>;
+  depth: number;
+  parent?: string;
+}[];
+
+export type MenuPermissionKey = (typeof MENU_PERMISSION_ITEMS)[number]['key'];
+
+export function getMenuBranchPermissions(key: string): string[] {
+  const branchKeys = new Set([key]);
+  let added = true;
+  while (added) {
+    added = false;
+    for (const item of MENU_PERMISSION_ITEMS) {
+      if ('parent' in item && branchKeys.has(item.parent) && !branchKeys.has(item.key)) {
+        branchKeys.add(item.key);
+        added = true;
+      }
+    }
+  }
+  return MENU_PERMISSION_ITEMS.filter((item) => branchKeys.has(item.key)).map((item) => item.permission);
+}
 
 // Admin menu items with their required permissions
 export const ADMIN_MENU_ITEMS: AdminMenuItem[] = [

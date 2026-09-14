@@ -18,7 +18,6 @@ import { AuthService } from './auth.service';
 import { UserService } from '../user/user.service';
 import { RegisterDto } from './dto/register.dto';
 import { LoginDto } from './dto/login.dto';
-import { VerifyEmailDto } from './dto/verify-email.dto';
 import { ForgotPasswordDto } from './dto/forgot-password.dto';
 import { ResetPasswordDto } from './dto/reset-password.dto';
 import { Public } from './decorators/public.decorator';
@@ -235,13 +234,11 @@ export class AuthController {
    * Set refresh token in HTTP-only cookie
    */
   private setRefreshTokenCookie(res: Response, refreshToken: string): void {
-    const maxAge = 7 * 24 * 60 * 60 * 1000; // 7 days in milliseconds
-
     res.cookie(this.cookieName, refreshToken, {
       httpOnly: true,
       secure: this.cookieSecure,
       sameSite: this.cookieSameSite,
-      maxAge,
+      maxAge: this.authService.getRefreshTokenExpiryMs(),
       path: '/api/v1/auth',
     });
   }

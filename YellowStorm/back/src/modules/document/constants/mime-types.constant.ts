@@ -25,28 +25,6 @@ export const DEFAULT_ALLOWED_MIME_TYPES = [
   'image/svg+xml',
 ] as const;
 
-/** MIME type to file extension mapping */
-export const MIME_TYPE_EXTENSIONS: Record<string, string> = {
-  'application/pdf': '.pdf',
-  'application/msword': '.doc',
-  'application/vnd.openxmlformats-officedocument.wordprocessingml.document': '.docx',
-  'application/vnd.ms-excel': '.xls',
-  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': '.xlsx',
-  'application/vnd.ms-powerpoint': '.ppt',
-  'application/vnd.openxmlformats-officedocument.presentationml.presentation': '.pptx',
-  'text/plain': '.txt',
-  'text/csv': '.csv',
-  'text/markdown': '.md',
-  'text/html': '.html',
-  'text/css': '.css',
-  'application/json': '.json',
-  'image/png': '.png',
-  'image/jpeg': '.jpg',
-  'image/gif': '.gif',
-  'image/webp': '.webp',
-  'image/svg+xml': '.svg',
-};
-
 /** File extension to MIME type mapping */
 export const EXTENSION_MIME_TYPES: Record<string, string> = {
   '.pdf': 'application/pdf',

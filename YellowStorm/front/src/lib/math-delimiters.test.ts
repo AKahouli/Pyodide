@@ -19,7 +19,7 @@ describe('normalizeMathDelimiters', () => {
   });
 
   it('converts inline math and trims the inner content', () => {
-    expect(normalizeMathDelimiters('le taux \\( t_i \\) projeté')).toBe('le taux $t_i$ projeté');
+    expect(normalizeMathDelimiters('le taux \\( t_i \\) projeté')).toBe('le taux $$t_i$$ projeté');
   });
 
   it('leaves empty delimiters verbatim', () => {
@@ -27,7 +27,7 @@ describe('normalizeMathDelimiters', () => {
   });
 
   it('leaves unclosed delimiters verbatim while converting later complete ones', () => {
-    expect(normalizeMathDelimiters('partiel \\[ E =\nsuite \\( x \\)')).toBe('partiel \\[ E =\nsuite $x$');
+    expect(normalizeMathDelimiters('partiel \\[ E =\nsuite \\( x \\)')).toBe('partiel \\[ E =\nsuite $$x$$');
   });
 
   it('leaves $$ and $ math already in remark-math form untouched', () => {
@@ -41,7 +41,7 @@ describe('normalizeMathDelimiters', () => {
 
   it('does not convert inside a closing-fence candidate until the fence closes', () => {
     const markdown = '~~~\n\\[ x \\]\n\\[ y \\]\n~~~\n\\( z \\)';
-    expect(normalizeMathDelimiters(markdown)).toBe('~~~\n\\[ x \\]\n\\[ y \\]\n~~~\n$z$');
+    expect(normalizeMathDelimiters(markdown)).toBe('~~~\n\\[ x \\]\n\\[ y \\]\n~~~\n$$z$$');
   });
 
   it('does not convert inside inline code spans', () => {

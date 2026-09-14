@@ -13,7 +13,7 @@ import {
 } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { createHash } from 'crypto';
-import { v4 as uuidv4 } from 'uuid';
+import { randomUUID } from 'crypto';
 import { Readable } from 'stream';
 import { LoggerService } from '../logger';
 import {
@@ -89,7 +89,7 @@ export class DocumentService {
     this.ensureAvailable();
     this.validateFile(originalName, mimeType, file instanceof Buffer ? file.length : undefined);
 
-    const id = uuidv4();
+    const id = randomUUID();
     const sanitizedName = this.sanitizeFileName(originalName);
     const storedName =
       options.generateUniqueName !== false

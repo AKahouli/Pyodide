@@ -1,6 +1,6 @@
 import { useMemo, memo, useEffect, useRef, useLayoutEffect, useCallback } from 'react';
 import { Loader2 } from 'lucide-react';
-import { ChatConversation, ChatConversationContent, ChatMessageBubble, ChatScrollButton, ChatConversationEmptyState } from '@/components/ai-elements/chat-conversation';
+import { ChatConversation, ChatConversationContent, ChatConversationFollow, ChatMessageBubble, ChatScrollButton, ChatConversationEmptyState } from '@/components/ai-elements/chat-conversation';
 import { MessageProvider } from '@/components/ai-elements/message-context';
 import { useAuth } from '@/modules/auth';
 import { useConversationStore, useDisplayMessages, useIsAwaitingFirstChunk, useAwaitingConversationId, useMessagesHasMore, useMessagesLoadingOlder, useBranchCache, useActiveBranches, useEditingMessageId } from '../store';
@@ -342,6 +342,7 @@ export function GroupConversationContent() {
   return (
     <>
       <ChatConversation className='flex-1 min-h-0'>
+        <ChatConversationFollow active={showStreamingActivity && !mentionNavigationLock} />
         <ChatConversationContent className='py-6'>
           <div ref={contentRef}>
           {/* Load trigger - hidden during initial load to prevent immediate firing */}

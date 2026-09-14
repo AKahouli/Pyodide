@@ -16,10 +16,7 @@ export default registerAs('conversation', () => ({
   maxMessageLength: Number.parseInt(process.env.CONVERSATION_MAX_MESSAGE_LENGTH || '50000', 10),
   maxFilesPerMessage: Number.parseInt(process.env.CONVERSATION_MAX_FILES_PER_MESSAGE || '5', 10),
   shareExpiryDays: Number.parseInt(process.env.CONVERSATION_SHARE_EXPIRY_DAYS || '30', 10),
-  systemWorkspaceStorageBytes: Number.parseInt(
-    process.env.CONVERSATION_SYSTEM_WORKSPACE_STORAGE_BYTES || '52428800',
-    10,
-  ),
+  systemWorkspaceStorageBytes: Number.parseInt(process.env.CONVERSATION_SYSTEM_WORKSPACE_STORAGE_BYTES || '52428800', 10),
   staleStreamCleanupMinutes: 30,
   // Standard-run recovery worker (WP06.5): settles crashed attempts whose
   // execution lease expired, per fleet, as `interrupted` — never `completed`.
@@ -33,17 +30,11 @@ export default registerAs('conversation', () => ({
   fleetMaxActiveRuns: Number.parseInt(process.env.CONVERSATION_FLEET_MAX_ACTIVE_RUNS || '50', 10),
   fleetMaxQueuedPerUser: Number.parseInt(process.env.CONVERSATION_FLEET_MAX_QUEUED_PER_USER || '5', 10),
   fleetQueueWaitMs: Number.parseInt(process.env.CONVERSATION_FLEET_QUEUE_WAIT_MS || '60000', 10),
-  orphanedConversationThresholdHours: Number.parseInt(
-    process.env.CONVERSATION_ORPHANED_THRESHOLD_HOURS || '24',
-    10,
-  ),
+  orphanedConversationThresholdHours: Number.parseInt(process.env.CONVERSATION_ORPHANED_THRESHOLD_HOURS || '24', 10),
   maxCloneMessages: Number.parseInt(process.env.CONVERSATION_MAX_CLONE_MESSAGES || '2000', 10),
-  maxPrivateShareRecipients: Number.parseInt(
-    process.env.CONVERSATION_MAX_PRIVATE_SHARE_RECIPIENTS || '20',
-    10,
-  ),
-  cloneInsertBatchSize: Number.parseInt(
-    process.env.CONVERSATION_CLONE_INSERT_BATCH_SIZE || '250',
-    10,
-  ),
+  maxPrivateShareRecipients: Number.parseInt(process.env.CONVERSATION_MAX_PRIVATE_SHARE_RECIPIENTS || '20', 10),
+  cloneInsertBatchSize: Number.parseInt(process.env.CONVERSATION_CLONE_INSERT_BATCH_SIZE || '250', 10),
+  carbonFactorsJson: process.env.CONVERSATION_CARBON_FACTORS_JSON || '{}',
+  carbonMethodology: process.env.CONVERSATION_CARBON_METHODOLOGY || 'tokens-factor-v1',
+  carbonFactorVersion: process.env.CONVERSATION_CARBON_FACTOR_VERSION || 'unconfigured',
 }));

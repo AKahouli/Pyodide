@@ -85,7 +85,17 @@ describe('ConversationService neutral persistence', () => {
       emailService as never,
       agentRepository as never,
       featureVisibility as never,
+      {
+        hasAccess: jest.fn().mockResolvedValue(false),
+        assertProjectWriteAccess: jest.fn().mockResolvedValue(undefined),
+      } as never,
     );
+  });
+
+  it('fails closed when workspace authorization is unavailable for a requester', async () => {
+    await expect(
+      service.filterAccessibleWorkspaceIds('user-1', ['workspace-1']),
+    ).resolves.toEqual([]);
   });
 
   describe('group conversion', () => {

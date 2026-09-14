@@ -32,6 +32,19 @@ describe('ConversationAgentRequestBuilder', () => {
     expect(result.payload).toEqual(expect.objectContaining({ agent_mode: 'manual' }));
   });
 
+  it('always routes an explicit team with its topology through hierarchical mode', () => {
+    const result = new ConversationAgentRequestBuilder().build({
+      userId: 'user-1', conversationId: 'shadow-1', request,
+      workspaceContexts: [], agents: [{ id: 'manager' }], attachedFiles: [], previousAttachedFiles: [], skills: [],
+      teamDefinition: { teamId: 'team-1', nodes: [{ agentId: 'manager', parentAgentId: null, order: 0 }] },
+    });
+    expect(result.rpc).toBe('RunAgentTeam');
+    expect(result.payload).toEqual(expect.objectContaining({
+      agent_mode: 'hierarchical',
+      team_definition: { team_id: 'team-1', nodes: [{ agent_id: 'manager', parent_agent_id: '', order: 0 }] },
+    }));
+  });
+
   it('labels client context as a non-authoritative page hint', () => {
     const result = new ConversationAgentRequestBuilder().build({
       userId: 'user-1', conversationId: 'conversation-1',

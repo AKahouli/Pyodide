@@ -8,6 +8,7 @@ import { AuthController } from './auth.controller';
 import { JwtStrategy } from './strategies/jwt.strategy';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
 import { InternalServiceGuard } from './guards/internal-service.guard';
+import { AgentCrudActorGuard } from './guards/agent-crud-actor.guard';
 import { Session, SessionSchema } from './schemas/session.schema';
 import { UserModule } from '../user';
 import { UsageModule } from '../usage';
@@ -40,7 +41,7 @@ import { HumainAgentModule } from '../humain-agent/humain-agent.module';
     HumainAgentModule,
   ],
   controllers: [AuthController],
-  providers: [AuthService, JwtStrategy, JwtAuthGuard, InternalServiceGuard],
-  exports: [AuthService, JwtAuthGuard, JwtStrategy, InternalServiceGuard, JwtModule],
+  providers: [AuthService, JwtStrategy, JwtAuthGuard, InternalServiceGuard, AgentCrudActorGuard],
+  exports: [AuthService, JwtAuthGuard, JwtStrategy, InternalServiceGuard, AgentCrudActorGuard, JwtModule],
 })
 export class AuthModule {}

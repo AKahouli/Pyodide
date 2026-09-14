@@ -1,5 +1,5 @@
-import type { Message } from '../types';
-import { componentsToMarkdown } from '../utils';
+import type { Message, MessageComponent } from '../types';
+import { componentsToMarkdown, isVisualConversationComponent } from '../utils';
 
 /** One conversational turn in an exported document. */
 export interface ExportBlock {
@@ -7,6 +7,8 @@ export interface ExportBlock {
   label: string;
   timestamp?: string;
   markdown: string;
+  /** Answer components; exports that render visuals (charts, HTML previews) walk these in order. */
+  components?: MessageComponent[];
 }
 
 const EXPORT_PAGE_LIMIT = 100;
@@ -98,9 +100,11 @@ export function buildExportBlocks(
   const looseAnswers: SortedTurn[] = [];
   messages.forEach((message, index) => {
     if (message.conversationType !== 'ai') return;
-    const markdown = componentsToMarkdown(message.components || []);
-    if (!markdown.trim()) return;
-    const turn: SortedTurn = { time: timeOf(message.createdAt), seq: index, block: { role: 'ai', label: labels.assistant, timestamp: stamp(message.createdAt), markdown } };
+    const components = message.components || [];
+    const markdown = componentsToMarkdown(components);
+    // Chart/HTML-preview-only answers have no markdown but must still be exported.
+    if (!markdown.trim() && !components.some(isVisualConversationComponent)) return;
+    const turn: SortedTurn = { time: timeOf(message.createdAt), seq: index, block: { role: 'ai', label: labels.assistant, timestamp: stamp(message.createdAt), markdown, components } };
     const questionId = message.questionMessageId;
     if (questionId && questionIds.has(questionId)) {
       const existing = answersByQuestion.get(questionId);

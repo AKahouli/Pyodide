@@ -90,8 +90,6 @@ describe('AuthService.refreshTokens atomic rotation (F03)', () => {
     };
     const configValues: Record<string, unknown> = {
       'auth.bcryptRounds': 12,
-      'jwt.accessExpiry': '15m',
-      'jwt.refreshExpiry': '7d',
       'auth.maxSessionsPerUser': 10,
       'auth.rotationReceiptKey': receiptKey,
       'auth.rotationReceiptKeyId': 'test-receipt-v1',
@@ -99,21 +97,22 @@ describe('AuthService.refreshTokens atomic rotation (F03)', () => {
     };
     const configService = { get: jest.fn((key: string, def?: unknown) => configValues[key] ?? def) };
     const logger = { setContext: jest.fn(), log: jest.fn(), warn: jest.fn(), error: jest.fn(), debug: jest.fn() };
+    const jwtService = { sign: jest.fn().mockReturnValue('signed.access') };
     const service = new AuthService(
       sessionModel as never,
       { findById: jest.fn().mockResolvedValue(user) } as never,
-      { sign: jest.fn().mockReturnValue('signed.access') } as never,
+      jwtService as never,
       configService as never,
       logger as never,
       {} as never, // emailService
       {} as never, // emailTemplateRenderer
       {} as never, // usageService
       { getUserPermissions: jest.fn().mockResolvedValue(['p']), getUserRoleNames: jest.fn().mockResolvedValue(['r']) } as never, // authorizationService
-      {} as never, // systemService
+      { getLoginSettingsSync: () => ({ accessExpiry: '15m', refreshExpiry: '7d' }) } as never, // systemService
       {} as never, // workspaceInitializer
       { ensureForUser: jest.fn() } as never, // humainAgentService
     );
-    return { service, sessionModel, logger };
+    return { service, sessionModel, logger, jwtService };
   };
 
   beforeEach(() => {
@@ -122,7 +121,7 @@ describe('AuthService.refreshTokens atomic rotation (F03)', () => {
 
   it('commits successor + predecessor invalidation in one transaction with a conditional update', async () => {
     const tx: TxRecorder = { savedDocs: [], conditionalFilter: null, conditionalUpdate: null, conditionalResult: { _id: successorId } };
-    const { service, sessionModel } = build(makePredecessor(), tx);
+    const { service, sessionModel, jwtService } = build(makePredecessor(), tx);
     bcrypt.compare.mockResolvedValue(true);
 
     const result = await service.refreshTokens(`${predecessorId}.old-secret`, '127.0.0.1', 'jest');
@@ -132,6 +131,7 @@ describe('AuthService.refreshTokens atomic rotation (F03)', () => {
     expect(tx.savedDocs).toHaveLength(1);
     expect(tx.conditionalFilter).toEqual({ _id: predecessorId, isValid: true });
     expect((tx.conditionalUpdate as { $set: Record<string, unknown> }).$set.isValid).toBe(false);
+    expect(jwtService.sign).toHaveBeenCalledWith(expect.anything(), { expiresIn: 900 });
   });
 
   it('seals the rotation receipt when an attempt id is supplied', async () => {

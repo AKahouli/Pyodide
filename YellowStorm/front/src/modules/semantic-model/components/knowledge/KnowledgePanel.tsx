@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState, type DragEvent } from 'react';
-import { ChevronDown, ChevronRight, FileText, Folder, GripVertical, Loader2, Search, Share2, Trash2, Warehouse, X } from 'lucide-react';
+import { ChevronDown, ChevronRight, FileText, Folder, GripVertical, Loader2, Search, Share2, Table2, Trash2, Warehouse, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { Input } from '@/components/ui/input';
 import { useModuleTranslation } from '@/modules/localization';
 import { getDocument, getDocuments, getFolderContents, getSharedWorkspaces, getWorkspaces } from '@/modules/workspace/api';
@@ -9,7 +9,23 @@ import type { Workspace, WorkspaceDocument } from '@/modules/workspace/types';
 import { KNOWLEDGE_DRAG_TYPE, type KnowledgeLinkingController, type KnowledgeResource } from '../../hooks/use-knowledge-linking';
 import { useSemanticModelEditorStore } from '../../store';
 
-export function KnowledgePanel({ canEdit,knowledge,targetNodeId,onClose }: Readonly<{ canEdit:boolean;knowledge:KnowledgeLinkingController;targetNodeId:string|null;onClose?:()=>void }>) {
+export const STRUCTURED_DOCUMENT_MIME_PREFIXES = [
+  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  'application/vnd.ms-excel',
+  'text/csv',
+];
+
+export function isStructuredDocument(mimeType:string): boolean {
+  return typeof mimeType==='string'&&STRUCTURED_DOCUMENT_MIME_PREFIXES.some((prefix)=>mimeType.startsWith(prefix));
+}
+
+const MAPPABLE_DOCUMENT_MIME_TYPES = new Set(['application/pdf','application/msword','application/vnd.openxmlformats-officedocument.wordprocessingml.document']);
+
+export function isMappableDocument(mimeType:string): boolean {
+  return isStructuredDocument(mimeType)||MAPPABLE_DOCUMENT_MIME_TYPES.has(mimeType);
+}
+
+export function KnowledgePanel({ canEdit,knowledge,targetNodeId,onClose,onMapData }: Readonly<{ canEdit:boolean;knowledge:KnowledgeLinkingController;targetNodeId:string|null;onClose?:()=>void;onMapData?:(resource:Extract<KnowledgeResource,{kind:'document'}>)=>void }>) {
   const { t } = useModuleTranslation('semantic-model');
   const graph = useSemanticModelEditorStore((state)=>state.graph);
   const [available,setAvailable] = useState<Workspace[]>([]);
@@ -114,8 +130,8 @@ export function KnowledgePanel({ canEdit,knowledge,targetNodeId,onClose }: Reado
         const name=document.folderName??document.originalName;
         return <div key={document.id}><button type='button' className='flex min-h-11 w-full items-center gap-2 rounded-lg px-2 text-left text-xs hover:bg-background' style={{paddingLeft:`${8+depth*12}px`}} onClick={()=>void toggleFolder(workspaceId,document.id)} aria-label={open?t('knowledge.collapseWorkspace',{name}):t('knowledge.expandWorkspace',{name})}>{open?<ChevronDown className='h-4 w-4 shrink-0'/>:<ChevronRight className='h-4 w-4 shrink-0'/>}<Folder className='h-4 w-4 shrink-0 text-primary'/><span className='truncate'>{name}</span></button>{open&&<div className='border-l border-border/60'>{renderDocumentPage(workspaceId,document.id,depth+1)}</div>}</div>;
       }
-      const resource:KnowledgeResource={kind:'document',workspaceId,documentId:document.id,name:document.originalName};
-      return <div key={document.id} role='group' aria-label={t('knowledge.dragDocument',{name:document.originalName})} draggable={canEdit} onDragStart={(event)=>beginDrag(event,resource)} onDragEnd={()=>knowledge.setDraggedResource(null)} className='flex min-h-11 items-center gap-2 rounded-lg px-2 hover:bg-background' style={{paddingLeft:`${8+depth*12}px`}}><FileText className='h-4 w-4 shrink-0 text-muted-foreground'/><span className='min-w-0 flex-1 truncate text-xs'>{document.originalName}</span>{canEdit&&<><GripVertical className='h-3.5 w-3.5 text-muted-foreground'/><LinkMenu resource={resource} targetNodeId={targetNodeId} knowledge={knowledge}/></>}</div>;
+       const resource:KnowledgeResource={kind:'document',workspaceId,documentId:document.id,name:document.originalName,structured:isStructuredDocument(document.mimeType),mappable:isMappableDocument(document.mimeType),mimeType:document.mimeType,path:document.path};
+      return <div key={document.id} role='group' aria-label={t('knowledge.dragDocument',{name:document.originalName})} draggable={canEdit} onDragStart={(event)=>beginDrag(event,resource)} onDragEnd={()=>knowledge.setDraggedResource(null)} className='flex min-h-11 items-center gap-2 rounded-lg px-2 hover:bg-background' style={{paddingLeft:`${8+depth*12}px`}}><FileText className='h-4 w-4 shrink-0 text-muted-foreground'/><span className='min-w-0 flex-1 truncate text-xs'>{document.originalName}</span>{canEdit&&<><GripVertical className='h-3.5 w-3.5 text-muted-foreground'/><LinkMenu resource={resource} targetNodeId={targetNodeId} knowledge={knowledge} onMapData={onMapData}/></>}</div>;
     })}{page.page<page.totalPages&&<Button variant='ghost' className='h-11 w-full text-xs' disabled={loadingDocuments.has(key)} onClick={()=>void loadDocumentPage(workspaceId,page.page+1,folderId)}>{loadingDocuments.has(key)?<Loader2 className='mr-2 h-4 w-4 animate-spin'/>:null}{t('action.loadMore')}</Button>}</div>;
   };
 
@@ -176,9 +192,10 @@ function documentPageKey(workspaceId:string,folderId?:string):string {
   return `${workspaceId}:${folderId??'root'}`;
 }
 
-function LinkMenu({resource,targetNodeId,knowledge}:Readonly<{resource:KnowledgeResource;targetNodeId:string|null;knowledge:KnowledgeLinkingController}>) {
+function LinkMenu({resource,targetNodeId,knowledge,onMapData}:Readonly<{resource:KnowledgeResource;targetNodeId:string|null;knowledge:KnowledgeLinkingController;onMapData?:(resource:Extract<KnowledgeResource,{kind:'document'}>)=>void}>) {
   const { t } = useModuleTranslation('semantic-model');
   const nodes=useSemanticModelEditorStore((state)=>state.graph?.nodes??[]);
+  if (targetNodeId&&resource.kind==='document'&&resource.mappable&&onMapData) return <DropdownMenu><DropdownMenuTrigger asChild><Button size='sm' variant='ghost' className='h-11 min-w-11 shrink-0 px-2 text-xs' disabled={knowledge.isBusy}>{t('action.add')}</Button></DropdownMenuTrigger><DropdownMenuContent align='end'><DropdownMenuItem disabled={knowledge.hasBinding(targetNodeId,resource)} onSelect={()=>void knowledge.link(targetNodeId,resource)}>{knowledge.hasBinding(targetNodeId,resource)?t('knowledge.linked'):t('knowledge.link')}</DropdownMenuItem><DropdownMenuItem onSelect={()=>onMapData(resource)}><Table2 className='h-4 w-4'/>{t('mapping.mapData')}</DropdownMenuItem></DropdownMenuContent></DropdownMenu>;
   if (targetNodeId) return <Button size='sm' variant='ghost' className='h-11 min-w-11 shrink-0 px-2 text-xs' disabled={knowledge.isBusy||knowledge.hasBinding(targetNodeId,resource)} onClick={()=>void knowledge.link(targetNodeId,resource)}>{knowledge.hasBinding(targetNodeId,resource)?t('knowledge.linked'):t('knowledge.link')}</Button>;
-  return <DropdownMenu><DropdownMenuTrigger asChild><Button size='sm' variant='ghost' className='h-11 min-w-11 shrink-0 px-2 text-xs' disabled={knowledge.isBusy}>{t('knowledge.link')}</Button></DropdownMenuTrigger><DropdownMenuContent align='end'><div className='px-2 py-1.5 text-xs font-medium text-muted-foreground'>{t('knowledge.linkToConcept')}</div>{nodes.map((node)=><DropdownMenuItem key={node.id} className='min-h-11' disabled={knowledge.hasBinding(node.id,resource)} onSelect={()=>void knowledge.link(node.id,resource)}>{node.label}{knowledge.hasBinding(node.id,resource)&&<span className='ml-auto text-[10px] text-muted-foreground'>{t('knowledge.linked')}</span>}</DropdownMenuItem>)}</DropdownMenuContent></DropdownMenu>;
+  return <DropdownMenu><DropdownMenuTrigger asChild><Button size='sm' variant='ghost' className='h-11 min-w-11 shrink-0 px-2 text-xs' disabled={knowledge.isBusy}>{t('knowledge.link')}</Button></DropdownMenuTrigger><DropdownMenuContent align='end'><div className='px-2 py-1.5 text-xs font-medium text-muted-foreground'>{t('knowledge.linkToConcept')}</div>{nodes.map((node)=><DropdownMenuItem key={node.id} className='min-h-11' disabled={knowledge.hasBinding(node.id,resource)} onSelect={()=>void knowledge.link(node.id,resource)}>{node.label}{knowledge.hasBinding(node.id,resource)&&<span className='ml-auto text-[10px] text-muted-foreground'>{t('knowledge.linked')}</span>}</DropdownMenuItem>)}{resource.kind==='document'&&resource.mappable&&onMapData&&<><DropdownMenuSeparator/><DropdownMenuItem className='min-h-11' onSelect={()=>onMapData(resource)}><Table2 className='h-4 w-4'/>{t('mapping.mapData')}</DropdownMenuItem></>}</DropdownMenuContent></DropdownMenu>;
 }

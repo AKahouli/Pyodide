@@ -76,7 +76,10 @@ describe('AuthService account access', () => {
       getUserPermissions: jest.fn().mockResolvedValue([]),
       getUserRoleNames: jest.fn().mockResolvedValue([]),
     };
-    const systemService = { isRegistrationEnabled: jest.fn().mockReturnValue(true) };
+    const systemService = {
+      isRegistrationEnabled: jest.fn().mockReturnValue(true),
+      getLoginSettingsSync: () => ({ accessExpiry: '3600m', refreshExpiry: '7d' }),
+    };
     const workspaceInitializer = {
       getOrCreatePersonalWorkspace: jest.fn().mockResolvedValue(undefined),
     };

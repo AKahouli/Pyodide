@@ -3,7 +3,7 @@
  */
 
 import * as React from 'react';
-import { AUTH_STORAGE_KEYS, bumpAuthGeneration, isTransientAuthFailure } from '@/lib/api';
+import { AUTH_LOST_EVENT, AUTH_STORAGE_KEYS, bumpAuthGeneration, clearAuthData, isTransientAuthFailure, scheduleProactiveRefresh } from '@/lib/api';
 import * as authApi from './api';
 import { notificationsService } from '@/modules/notifications';
 import type { AuthContextType, AuthState, LoginCredentials, RegisterCredentials, CompleteProfileData, User } from './types';
@@ -23,7 +23,6 @@ export const AuthContext = React.createContext<AuthContextType | null>(null);
 interface AuthProviderProps {
   children: React.ReactNode;
 }
-
 export function AuthProvider({ children }: AuthProviderProps) {
   const [state, setState] = React.useState<AuthState>(initialState);
 
@@ -77,14 +76,14 @@ export function AuthProvider({ children }: AuthProviderProps) {
 
         // Definitive denial (the shared axios client already cleared
         // credentials and redirects when refresh is definitively rejected).
-        clearLocalAuthData();
+        clearAuthData();
         setState({
           ...initialState,
           isLoading: false,
           registrationEnabled,
         });
       } catch {
-        clearLocalAuthData();
+        clearAuthData();
         setState({ ...initialState, isLoading: false, registrationEnabled });
       }
     } else {
@@ -108,12 +107,19 @@ export function AuthProvider({ children }: AuthProviderProps) {
     void validateStoredSession();
   }, [validateStoredSession]);
 
+  React.useEffect(() => {
+    const onAuthLost = () => setState({ ...initialState, isLoading: false });
+    window.addEventListener(AUTH_LOST_EVENT, onAuthLost);
+    return () => window.removeEventListener(AUTH_LOST_EVENT, onAuthLost);
+  }, []);
+
   const login = React.useCallback(async (credentials: LoginCredentials): Promise<void> => {
     const response = await authApi.login(credentials);
 
     // Store access token and user data
     localStorage.setItem(AUTH_STORAGE_KEYS.accessToken, response.accessToken);
     localStorage.setItem(AUTH_STORAGE_KEYS.user, JSON.stringify(response.user));
+    scheduleProactiveRefresh(response.accessToken);
 
     setState((prev) => ({
       ...prev,
@@ -147,7 +153,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
       // Invalidate any in-flight refresh/recovery so a late response cannot
       // log the user back in after an explicit logout.
       bumpAuthGeneration();
-      clearLocalAuthData();
+      clearAuthData();
       setState({
         ...initialState,
         isLoading: false,
@@ -277,10 +283,4 @@ export function AuthProvider({ children }: AuthProviderProps) {
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
-}
-
-// Helper function to clear local auth data
-function clearLocalAuthData() {
-  localStorage.removeItem(AUTH_STORAGE_KEYS.accessToken);
-  localStorage.removeItem(AUTH_STORAGE_KEYS.user);
 }

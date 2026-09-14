@@ -5,6 +5,7 @@ import { LoggerService } from '../logger';
 import { IAgentResponse, IAgentForStream, IGrpcAgent, IGrpcCompaction, ISharedAgentInfo } from './interfaces/agent.interface';
 import { AgentShareService } from './services/agent-share.service';
 import { AgentConnectorRuntimeService } from './services/agent-connector-runtime.service';
+import { WEB_SEARCH_CATEGORY_NAME } from '../connector/connector-category.service';
 import { CreateAgentDto } from './dto/create-agent.dto';
 import { UpdateAgentDto } from './dto/update-agent.dto';
 import { QueryAgentDto } from './dto/query-agent.dto';
@@ -43,6 +44,7 @@ import {
   PLATFORM_COPILOT_HANDOFF_RUNTIME_INSTRUCTION,
   PLATFORM_COPILOT_PLAYBOOK_CONNECTOR_SLUG,
 } from './constants/platform-copilot.constants';
+import { AGENT_MCP_CONNECTOR_SLUG } from '../connector/constants/agent-mcp.constants';
 import { SystemService } from '../system/system.service';
 
 /** Agent-type slug of the orchestrating manager agent. */
@@ -51,6 +53,11 @@ const MANAGER_SLUG = 'manager';
 const MONO_AGENT_SLUG = 'mono-agent';
 /** Agent-type slug for human agents exposed to third-party integrations. */
 const HUMAIN_AGENT_TYPE_SLUG = 'humain';
+/** Trusted system MCP connectors that receive runtime identity headers on their bindings. */
+const TRUSTED_SYSTEM_MCP_CONNECTOR_SLUGS = new Set([
+  PLATFORM_COPILOT_PLAYBOOK_CONNECTOR_SLUG,
+  AGENT_MCP_CONNECTOR_SLUG,
+]);
 
 export interface PlaybookPlannerAgentConfig {
   agentTypeId: string;
@@ -529,6 +536,7 @@ export class AgentService {
     runtimeContext?: { conversationId: string; correlationId: string; playbookHandoffAttached?: boolean },
     reasoningEffort?: string,
     compaction?: IGrpcCompaction,
+    webConnectorAccessEnabled = true,
   ): Promise<IGrpcAgent[]> {
     this.logger.log('Building agents for stream', {
       userId,
@@ -707,15 +715,19 @@ export class AgentService {
     // Every lookup below depends only on the filtered roster, not on each
     // other — run them in one round so the remote-DB latency stacks once
     // instead of once per lookup.
-    const [promptMap, fetchedTools, modelResults, connectorsMap, adminGuardrailsSettings, guardrailsClassifierModel, documentTreeSettings] = await Promise.all([
+    const [promptMap, fetchedTools, modelResults, connectorsMap, blockedConnectorIds, adminGuardrailsSettings, guardrailsClassifierModel, documentTreeSettings] = await Promise.all([
       this.agentTypeService.resolvePromptsInBatch(promptPairs),
       allToolIds.length > 0 ? this.toolService.findByIds(allToolIds) : Promise.resolve([] as IToolResponse[]),
       Promise.all(allModelIds.map((id) => this.modelsService.findById(id))),
       this.buildConnectorsMap(allConnectorIds),
+      webConnectorAccessEnabled
+        ? Promise.resolve([])
+        : this.connectorService.findIdsByCategoryName(allConnectorIds, WEB_SEARCH_CATEGORY_NAME),
       this.guardrailsSettingsService.getSettings(),
       this.modelsService.getGuardrailsClassifierModel(),
       this.systemService?.getDocumentTreeInjectionSettings() ?? Promise.resolve({ enabled: true }),
     ]);
+    for (const connectorId of blockedConnectorIds) connectorsMap.delete(connectorId);
     const guardrailsClassifierModelId = this.modelsService.getModelIdentifier(guardrailsClassifierModel);
 
     const toolsMap = new Map<string, IToolResponse>();
@@ -837,7 +849,7 @@ export class AgentService {
         name: agent.name,
         description: agent.role || `you are the ${agent.name}`,
         prompt,
-        agent_type: agent.agentTypeName.toLowerCase(),
+        agent_type: agent.agentTypeSlug,
         save_memory: false,
         tools: (await this.buildToolsWithTokens(agentTools, userId)).concat(connectorToolDefs),
         skills: effectiveSkills.map((skill) => this.toGrpcSkill(skill)),
@@ -1031,7 +1043,7 @@ export class AgentService {
           agent.id,
         );
         for (const binding of connectorBindings) {
-          if (String(binding.connector_slug || '').toLowerCase() !== 'playbook-mcp') continue;
+          if (!TRUSTED_SYSTEM_MCP_CONNECTOR_SLUGS.has(String(binding.connector_slug || '').toLowerCase())) continue;
           binding.auth_headers = {
             ...((binding.auth_headers as Record<string, string>) || {}),
             'X-YellowStorm-Agent-Id': agent.id,
@@ -1090,7 +1102,7 @@ export class AgentService {
           name: agent.name,
           description: agent.role || `you are the ${agent.name}`,
           prompt,
-          agent_type: agent.agentTypeName.toLowerCase(),
+          agent_type: agent.agentTypeSlug,
           save_memory: false,
           tools: (await this.buildToolsWithTokens(agentTools, userId)).concat(connectorToolDefs),
           skills: effectiveSkills.map((skill) => this.toGrpcSkill(skill)),
@@ -1640,11 +1652,11 @@ export class AgentService {
 
   private toResponse(
     doc: Record<string, unknown>,
-    agentTypeDoc?: { id: string; name: string },
+    agentTypeDoc?: { id: string; name: string; slug: string },
   ): IAgentResponse {
     const d = doc as Record<string, unknown>;
     const populatedAgentType = d.agentType as Record<string, unknown> | undefined;
-    let agentTypeInfo: { id: string; name: string };
+    let agentTypeInfo: { id: string; name: string; slug: string };
 
     if (agentTypeDoc) {
       agentTypeInfo = agentTypeDoc;
@@ -1652,11 +1664,13 @@ export class AgentService {
       agentTypeInfo = {
         id: (populatedAgentType._id as { toString(): string }).toString(),
         name: (populatedAgentType.name as string) || '',
+        slug: (populatedAgentType.slug as string) || '',
       };
     } else {
       agentTypeInfo = {
         id: d.agentType ? (d.agentType as { toString(): string }).toString() : '',
         name: '',
+        slug: (d.agentTypeSlug as string) || '',
       };
     }
 

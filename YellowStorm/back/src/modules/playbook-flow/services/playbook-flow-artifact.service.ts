@@ -1,6 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
-import { Model } from 'mongoose';
+import { Model, Types } from 'mongoose';
 import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
 import { DocumentService } from '@modules/document/document.service';
@@ -12,6 +12,8 @@ import { FlowTaskResult, FlowTaskResultDocument } from '../schemas/playbook-flow
 import { publicPlaybookTaskResult, trustedPlaybookArtifacts } from '../utils/playbook-artifact';
 import type { PlaybookArtifactAction } from '../dto/request-playbook-artifact-access.dto';
 import { randomBytes } from 'crypto';
+import { Flow, FlowDocument } from '../schemas/playbook-flow.schema';
+import { PlaybookShareService } from './playbook-share.service';
 
 const ARTIFACT_AUDIENCE = 'yellostorm-playbook-artifact';
 const ARTIFACT_TOKEN_TYPE = 'playbook-artifact';
@@ -36,7 +38,63 @@ export class PlaybookFlowArtifactService {
     private readonly documentService: DocumentService,
     private readonly jwtService: JwtService,
     private readonly configService: ConfigService,
+    @InjectModel(Flow.name) private readonly flowModel: Model<FlowDocument>,
+    private readonly playbookShareService: PlaybookShareService,
   ) {}
+
+  async listRecent(userId: string, limit: number): Promise<Array<{
+    source: 'playbook';
+    artifactId: string;
+    filename: string;
+    artifactKind: string;
+    mimeType?: string;
+    playbookId: string;
+    playbookName: string;
+    executionId: string;
+    generatedAt: string;
+  }>> {
+    const sharedFlowIds = await this.playbookShareService.getSharedPlaybookIdsForUser(userId);
+    const accessFilter = sharedFlowIds.length > 0
+      ? { $or: [{ ownerId: userId }, { _id: { $in: sharedFlowIds.map((id) => new Types.ObjectId(id)) } }] }
+      : { ownerId: userId };
+    const rows = await this.flowModel.aggregate<{
+      playbookId: string;
+      playbookName: string;
+      execution: { _id: unknown; ownerId: string; updatedAt?: Date };
+      taskResult: FlowTaskResult & { generatedAt?: Date };
+    }>([
+      { $match: accessFilter },
+      { $lookup: { from: this.executionModel.collection.name, let: { flowId: { $toString: '$_id' } }, pipeline: [
+        { $match: { $expr: { $eq: ['$flowId', '$$flowId'] } } },
+        { $project: { _id: 1, ownerId: 1, updatedAt: 1 } },
+      ], as: 'execution' } },
+      { $unwind: '$execution' },
+      { $lookup: { from: this.taskResultModel.collection.name, let: { executionId: { $toString: '$execution._id' } }, pipeline: [
+        { $match: { $expr: { $eq: ['$executionId', '$$executionId'] }, 'components.type': 'artifact' } },
+        { $set: { generatedAt: { $ifNull: ['$endedAt', '$updatedAt'] } } },
+      ], as: 'taskResult' } },
+      { $unwind: '$taskResult' },
+      { $sort: { 'taskResult.generatedAt': -1, 'taskResult._id': 1 } },
+      { $limit: limit },
+      { $project: { _id: 0, playbookId: { $toString: '$_id' }, playbookName: '$name', execution: 1, taskResult: 1 } },
+    ]);
+
+    return rows.flatMap(({ playbookId, playbookName, execution, taskResult }) => {
+      const executionId = String(execution._id);
+      const generatedAt = (taskResult.generatedAt ?? execution.updatedAt ?? new Date()).toISOString();
+      return trustedPlaybookArtifacts(taskResult as unknown as Record<string, unknown>, String(execution.ownerId), executionId).map((artifact) => ({
+          source: 'playbook' as const,
+          artifactId: artifact.artifactId,
+          filename: artifact.filename,
+          artifactKind: artifact.artifactKind,
+          mimeType: artifact.mimeType || undefined,
+          playbookId,
+          playbookName,
+          executionId,
+          generatedAt,
+        }));
+    }).slice(0, limit);
+  }
 
   async publishArtifact(
     executionId: string,

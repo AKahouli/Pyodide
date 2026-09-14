@@ -31,9 +31,6 @@ export default registerAs('logging', () => {
       flushIntervalMs: Number.parseInt(process.env.LOGGING_FLUSH_INTERVAL_MS || '60000', 10),
     },
 
-    // Log retention (TTL in days)
-    ttlDays: Number.parseInt(process.env.LOGGING_TTL_DAYS || '30', 10),
-
     // Enable/disable persistence
     persistenceEnabled: process.env.LOGGING_PERSISTENCE_ENABLED !== 'false',
 

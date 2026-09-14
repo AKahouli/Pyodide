@@ -3,7 +3,7 @@ import useEmblaCarousel from 'embla-carousel-react';
 import { ChevronLeft, ChevronRight, RefreshCw } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
-import { governedConversationFeatures } from '@/config/governedConversationFeatures';
+import { useFeatureVisibilityStore } from '@/modules/admin/featureVisibilityStore';
 import { parseApiError } from '@/lib/api-error';
 import { showError } from '@/lib/notifications';
 import { cn } from '@/lib/utils';
@@ -18,7 +18,8 @@ export function GovernedScopesCarousel(): JSX.Element | null {
   const { t } = useModuleTranslation('conversation');
   const { t: tCommon } = useModuleTranslation('common');
   const navigate = useNavigate();
-  const { data: scopes = [], isLoading, isError, refetch } = useAvailableGovernedScopes(governedConversationFeatures.carouselEnabled);
+  const carouselEnabled = useFeatureVisibilityStore((state) => state.visibility.governedScopeCarousel);
+  const { data: scopes = [], isLoading, isError, refetch } = useAvailableGovernedScopes(carouselEnabled);
   const [startingScopeId, setStartingScopeId] = useState<string | null>(null);
   const [canScrollPrev, setCanScrollPrev] = useState(false);
   const [canScrollNext, setCanScrollNext] = useState(false);
@@ -64,7 +65,7 @@ export function GovernedScopesCarousel(): JSX.Element | null {
     };
   }, [emblaApi, scopes.length]);
 
-  if (!governedConversationFeatures.carouselEnabled) return null;
+  if (!carouselEnabled) return null;
   if (!isLoading && !isError && scopes.length === 0) return null;
 
   const start = async (scope: AvailableGovernedScope) => {

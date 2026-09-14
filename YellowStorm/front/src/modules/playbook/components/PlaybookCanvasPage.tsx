@@ -93,7 +93,6 @@ import { PlaybookGeneratingOverlay } from './PlaybookGeneratingOverlay';
 import { PlaybookDesignerPanel } from './PlaybookDesignerPanel';
 import { PlaybookNodeAdvisorDialog } from './PlaybookNodeAdvisorDialog';
 import { PlaybookUsageIndicator } from './PlaybookUsageIndicator';
-import { PlaybookInputsBar } from './PlaybookInputsBar';
 import { PlaybookInputConfigurationDialog } from './PlaybookInputConfigurationDialog';
 import { PlaybookRunDialog } from './PlaybookRunDialog';
 import { SharePlaybookDialog } from './SharePlaybookDialog';
@@ -108,7 +107,7 @@ import {
   createIntentSuggestionNodeId,
 } from '../utils/intent-application-key';
 import { appendDesignMessage, cancelPlaybookIntentConstruction, discardPlaybookIntentConstruction, fetchPlaybookIntentConstruction, fetchPlaybookIntentTraces, getPlaybook, getPlaybookAssistantMessages, requestPlaybookNodeAdvisor, runPlaybookAssistantTurn, startAdvisorRemediationConstruction, startPlaybookIntentConstruction, streamPlaybookIntentConstruction, uploadPlaybookAssistantAttachment } from '../api';
-import { playbookFeatures } from '../features';
+import { useFeatureVisibilityStore } from '@/modules/admin/featureVisibilityStore';
 import { getDefaultIteratorInputPorts, getDefaultIteratorOutputPorts } from '../hooks/helpers/node-serializer';
 import type {
   PlaybookTask,
@@ -584,6 +583,7 @@ function PlaybookCanvasInner() {
   const [executionViewMode, setExecutionViewMode] = useState<ExecutionViewMode>('full');
   const [loadedPlaybookId, setLoadedPlaybookId] = useState<string | null>(null);
   const { t } = useModuleTranslation('playbook');
+  const playbookMcpAssistant = useFeatureVisibilityStore((state) => state.visibility.playbookMcpAssistant);
   const { setOpen: setGlobalSidebarOpen } = useSidebar();
 
   const playbook = useCurrentPlaybook();
@@ -959,9 +959,9 @@ function PlaybookCanvasInner() {
     designerHistoryRequestGenerationRef.current += 1;
     designerConversationIdRef.current = undefined;
     setDesignerAssistantMessages([]);
-    if (!id || !playbookFeatures.mcpAssistantEnabled) return;
+    if (!id || !playbookMcpAssistant) return;
     void refreshDesignerAssistantHistory(id).catch(() => showWarning(t('designer.historyLoadFailed')));
-  }, [id, refreshDesignerAssistantHistory, t]);
+  }, [id, playbookMcpAssistant, refreshDesignerAssistantHistory, t]);
 
   useEffect(() => {
     // Ensure agents are loaded so nodes can display agent names
@@ -3780,7 +3780,7 @@ function PlaybookCanvasInner() {
     setConstructionId: setScopedConstructionId,
     setConstructionDiagnostics,
     constructionAbortRef,
-    realtimeConstructionEnabled: playbookFeatures.mcpAssistantEnabled,
+    realtimeConstructionEnabled: playbookMcpAssistant,
     setPreviewConstructionReady: markAdvisorPreviewReady,
     setCanonicalConstructionReady: markCanonicalConstructionReady,
     setCanonicalConstructionPending: markCanonicalConstructionPending,
@@ -3809,7 +3809,7 @@ function PlaybookCanvasInner() {
   const handleSubmitIntentFromDesigner = useCallback(async (intentText: string, visibleUserQuery: string, images?: File[]) => {
     designerIntentRef.current = intentText;
     designerIntentImagesRef.current = images ?? [];
-    if (shouldUsePlaybookMcpAssistant(playbookFeatures.mcpAssistantEnabled) && id && playbook) {
+    if (shouldUsePlaybookMcpAssistant(playbookMcpAssistant) && id && playbook) {
       // currentPlaybook is a store singleton; applying suggestions while it still holds the
       // previously opened playbook would commit both graphs merged into this route.
       if (playbook.id !== id) return;
@@ -3878,7 +3878,7 @@ function PlaybookCanvasInner() {
     } catch (error) {
       showWarning(t('designer.intentSaveFailed'));
     }
-  }, [consumePlaybookConstruction, currentExecution, getCurrentDefinitionRevision, handleSubmitIntentText, id, isDirty, playbook, refreshDesignerAssistantHistory, refreshIntentTraces, saveNow, selectedStepId, showError, showWarning, t]);
+  }, [consumePlaybookConstruction, currentExecution, getCurrentDefinitionRevision, handleSubmitIntentText, id, isDirty, playbook, playbookMcpAssistant, refreshDesignerAssistantHistory, refreshIntentTraces, saveNow, selectedStepId, showError, showWarning, t]);
 
   const handleAnswerIntentFromDesigner = useCallback(async (answers: PlaybookClarificationAnswer[], answerText: string) => {
     if (!id || playbook?.id !== id || intentDesign?.status !== 'needs_clarification' || !intentDesign.continuationId) return;
@@ -4394,18 +4394,6 @@ function PlaybookCanvasInner() {
         />
       </div>
 
-      <PlaybookInputsBar
-        contract={inputContractQuery.data}
-        loading={inputContractQuery.isLoading}
-        canConfigure={playbook.accessLevel !== 'read'}
-        canRun={canRunWithInputs}
-        onConfigure={(input) => {
-          setConfigurationInput(input);
-          setConfigurationValue(undefined);
-        }}
-        onRun={handleRunRequest}
-      />
-
       {id && playbook?.accessLevel !== 'read' && playbook?.accessLevel !== 'write' && (
           <PlaybookTriggersSheet
             open={triggersSheetOpen}
@@ -4617,7 +4605,7 @@ function PlaybookCanvasInner() {
               <PlaybookDesignerPanel
                 playbookId={id}
                 designChatEnabled={false}
-                assistantMessages={playbookFeatures.mcpAssistantEnabled ? designerAssistantMessages : undefined}
+                assistantMessages={playbookMcpAssistant ? designerAssistantMessages : undefined}
                 assistantMessagesLoading={designerAssistantMessagesLoading}
                 intentDesign={intentDesign}
                 intentLoading={intentLoading}

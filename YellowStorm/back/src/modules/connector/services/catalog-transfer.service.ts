@@ -563,6 +563,9 @@ export class CatalogTransferService {
         supportsBatch: action.supportsBatch ?? false,
         supportsIteration: action.supportsIteration ?? false,
         isEnabled: action.isEnabled ?? true,
+        resultKind: action.resultKind ?? 'generic',
+        citationMode: action.citationMode ?? 'none',
+        ...(action.resultMapping ? { resultMapping: action.resultMapping } : {}),
       })),
       referencedSkillSlugs: (connector.referencedSkillIds ?? [])
         .map((id: Types.ObjectId) => skillSlugById.get(id.toString()))

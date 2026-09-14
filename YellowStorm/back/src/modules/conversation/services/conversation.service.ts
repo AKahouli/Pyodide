@@ -1,4 +1,4 @@
-import { Inject, Injectable, Optional } from '@nestjs/common';
+import { Inject, Injectable, Optional, forwardRef } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { InjectModel } from '@nestjs/mongoose';
@@ -28,6 +28,7 @@ import {
 import { FeatureVisibilityService } from '../../system/feature-visibility.service';
 import { WorkspaceService } from '../../workspace/workspace.service';
 import { WorkspaceDocumentService } from '../../workspace/workspace-document.service';
+import { WorkspaceShareService } from '../../workspace/workspace-share.service';
 import { EmailService } from '../../email/email.service';
 import {
   DocumentQueryParams,
@@ -39,6 +40,7 @@ import {
   type ConversationStore,
 } from '../persistence/conversation-store';
 import { newOwnedId } from '../persistence/owned-id';
+import { ProjectShareService } from '../../project/project-share.service';
 import { PG_POOL } from '../../postgres/postgres.constants';
 import type { Pool, PoolClient } from 'pg';
 
@@ -56,7 +58,10 @@ export class ConversationService {
     private readonly emailService: EmailService,
     private readonly agentRepository: AgentRepository,
     private readonly featureVisibility: FeatureVisibilityService,
+    @Inject(forwardRef(() => ProjectShareService))
+    private readonly projectShareService: ProjectShareService,
     @Optional() @Inject(PG_POOL) private readonly postgresPool?: Pool,
+    @Optional() private readonly workspaceShareService?: WorkspaceShareService,
   ) {
     this.logger.setContext('ConversationService');
   }
@@ -70,6 +75,9 @@ export class ConversationService {
         undefined,
         'creationRequestId is only supported for platform-copilot conversations',
       );
+    }
+    if (data.projectId) {
+      await this.projectShareService.assertProjectWriteAccess(userId, data.projectId);
     }
     const emails =
       data.participants?.map((participant) => participant.email) ?? data.participantEmails;
@@ -237,6 +245,12 @@ export class ConversationService {
     userId: string,
     params: ConversationQueryParams,
   ): Promise<PaginatedConversations | import('../interfaces/conversation.interface').CursorPaginatedConversations> {
+    // A project the user can access (own, shared with them, or public) lists
+    // every conversation in it, including collaborators' conversations.
+    const projectAccessible =
+      Boolean(params.projectId) &&
+      params.projectId !== 'none' &&
+      (await this.projectShareService.hasAccess(userId, params.projectId!));
     if ((params.mode ?? 'legacy') === 'cursor') {
       if (params.page !== undefined) {
         throw new BadRequestException(ErrorCode.VALIDATION_ERROR, 'page is not valid in cursor mode');
@@ -251,6 +265,7 @@ export class ConversationService {
         sortOrder: params.sortOrder ?? 'desc',
         isArchived: params.isArchived,
         projectId: params.projectId,
+        projectIdUnscoped: projectAccessible,
         searchScope: params.searchScope,
         runtimePurpose: params.runtimePurpose,
       });
@@ -280,6 +295,7 @@ export class ConversationService {
       sortOrder: params.sortOrder ?? 'desc',
       isArchived: params.isArchived,
       projectId: params.projectId,
+      projectIdUnscoped: projectAccessible,
       searchScope: params.searchScope,
       runtimePurpose: params.runtimePurpose,
     });
@@ -303,6 +319,9 @@ export class ConversationService {
     data: UpdateConversationData,
   ): Promise<ConversationResponse> {
     const current = await this.requireOwned(conversationId, userId);
+    if (data.projectId) {
+      await this.projectShareService.assertProjectWriteAccess(userId, data.projectId);
+    }
     if (
       current.runtimeMode === 'governed' &&
       [
@@ -499,10 +518,14 @@ export class ConversationService {
   async getWorkspaceDocuments(
     conversationId: string,
     params: DocumentQueryParams,
+    userId?: string,
   ): Promise<PaginatedDocuments> {
     const record = await this.conversationStore.findById(conversationId, true);
     if (!record) throw new NotFoundException(ErrorCode.CHAT_NOT_FOUND, 'Conversation not found');
-    const workspaceIds = record.workspaces.filter((id) => id !== record.systemWorkspaceId);
+    const workspaceIds = await this.filterAccessibleWorkspaceIds(
+      userId,
+      record.workspaces.filter((id) => id !== record.systemWorkspaceId),
+    );
     if (!workspaceIds.length) {
       return {
         documents: [],
@@ -510,6 +533,18 @@ export class ConversationService {
       };
     }
     return this.workspaceDocumentService.findByMultipleWorkspaces(workspaceIds, params);
+  }
+
+  async filterAccessibleWorkspaceIds(
+    userId: string | undefined,
+    workspaceIds: string[],
+  ): Promise<string[]> {
+    if (!userId) return workspaceIds;
+    if (!this.workspaceShareService) return [];
+    const access = await Promise.all(
+      workspaceIds.map((workspaceId) => this.workspaceShareService!.hasAccess(userId, workspaceId)),
+    );
+    return workspaceIds.filter((_, index) => access[index]);
   }
 
   @Cron(CronExpression.EVERY_HOUR)

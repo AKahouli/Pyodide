@@ -23,10 +23,11 @@ import { useNavigate } from 'react-router-dom';
 import { useApiAction } from '@/lib/use-api-action';
 import { branchConversation, prepareConversationPlaybookHandoff } from '../api';
 import { useModelById } from '@/modules/models';
-import { playbookFeatures } from '@/modules/playbook/features';
+import { useFeatureVisibilityStore } from '@/modules/admin/featureVisibilityStore';
 import { usePlatformCopilotPanelStore } from '@/modules/platform-copilot/platformCopilotPanelStore';
 
 import { cn } from '@/lib/utils';
+import { formatCarbon, formatCompactTokenTotal, formatUsd } from '../utils/usage-format';
 
 interface MessageActionsProps {
   message: Message;
@@ -43,28 +44,28 @@ export const MessageActions = memo(function MessageActions({ message, isLastAiMe
   const setReplyingToMessage = useConversationStore((s) => s.setReplyingToMessage);
   const currentConversation = useConversationStore((s) => s.currentConversation);
   const messages = useConversationStore((s) => s.messages);
+  const conversationUsage = useConversationStore((s) => s.conversationUsage);
   const activeBranches = useConversationStore((s) => s.activeBranches);
   const fetchConversations = useConversationStore((s) => s.fetchConversations);
   const isGroup = !!currentConversation?.groupMeta?.isGroup;
   const [reportOpen, setReportOpen] = useState(false);
   const [sourcesOpen, setSourcesOpen] = useState(false);
-  const handoffCreationRequest = useRef<{ fingerprint: string; requestId: string }>();
+  const handoffCreationRequest = useRef<{
+    fingerprint: string;
+    requestId: string;
+  }>();
   const openHandoff = usePlatformCopilotPanelStore((state) => state.openHandoff);
+  const playbookMcpAssistant = useFeatureVisibilityStore((state) => state.visibility.playbookMcpAssistant);
   const [isExportingPdf, setIsExportingPdf] = useState(false);
   const [isExportingDocx, setIsExportingDocx] = useState(false);
   const { t, language } = useModuleTranslation('conversation');
   const { t: tCommon } = useModuleTranslation('common');
   const fileViewerDisplayMode = useFileViewerDisplayMode();
   const citations = useMemo(() => collectMessageCitations(message.components), [message.components]);
-  const generationModelId = message.modelId
-    || (message.questionMessageId ? messages.find((candidate) => candidate.id === message.questionMessageId)?.modelId : undefined);
+  const generationModelId = message.modelId || (message.questionMessageId ? messages.find((candidate) => candidate.id === message.questionMessageId)?.modelId : undefined);
   const model = useModelById(generationModelId || '');
   const navigate = useNavigate();
-  const canBranch = !!currentConversation
-    && message.isComplete
-    && !message.isStreaming
-    && !isGroup
-    && currentConversation?.runtimeMode !== 'governed';
+  const canBranch = !!currentConversation && message.isComplete && !message.isStreaming && !isGroup && currentConversation?.runtimeMode !== 'governed';
   const { execute: createBranch, isLoading: isBranching } = useApiAction(branchConversation, {
     showSuccessToast: true,
     successMessage: t('toasts.branch.success'),
@@ -79,12 +80,18 @@ export const MessageActions = memo(function MessageActions({ message, isLastAiMe
       openHandoff(handoff);
     },
   });
-  const canPrepareHandoff = playbookFeatures.mcpAssistantEnabled && message.isComplete && !message.isStreaming;
+  const canPrepareHandoff = playbookMcpAssistant && message.isComplete && !message.isStreaming;
   const createdAt = new Date(message.createdAt);
   const formattedCreatedAt = Number.isNaN(createdAt.getTime())
     ? t('messageActions.dateUnavailable')
-    : new Intl.DateTimeFormat(language, { dateStyle: 'medium', timeStyle: 'medium' }).format(createdAt);
+    : new Intl.DateTimeFormat(language, {
+        dateStyle: 'medium',
+        timeStyle: 'medium',
+      }).format(createdAt);
   const modelName = model?.name || generationModelId || t('messageActions.modelUnavailable');
+  const visibleUsage = isLastAiMessage ? conversationUsage : null;
+  const formattedCost = formatUsd(visibleUsage?.cost.usd ?? null, language);
+  const formattedCarbon = formatCarbon(visibleUsage?.carbon.gramsCo2e ?? null, language);
 
   const handleLike = () => {
     if (message.feedback === 'like') return;
@@ -126,14 +133,19 @@ export const MessageActions = memo(function MessageActions({ message, isLastAiMe
 
   const exportTitle = currentConversation?.title?.trim() || t('exportPdf.untitledConversation');
 
-  const handleOpenSource = useCallback(async (citation: CitationData) => {
-    setSourcesOpen(false);
-    try {
-      await openCitationSource(citation, fileViewerDisplayMode, tCommon('ai.citations.defaultSource'), { conversationId, messageId: message.id });
-    } catch {
-      showError(tCommon('ai.errors.openFileTitle'), { description: tCommon('ai.errors.openFileDescription') });
-    }
-  }, [conversationId, fileViewerDisplayMode, message.id, tCommon]);
+  const handleOpenSource = useCallback(
+    async (citation: CitationData) => {
+      setSourcesOpen(false);
+      try {
+        await openCitationSource(citation, fileViewerDisplayMode, tCommon('ai.citations.defaultSource'), { conversationId, messageId: message.id });
+      } catch {
+        showError(tCommon('ai.errors.openFileTitle'), {
+          description: tCommon('ai.errors.openFileDescription'),
+        });
+      }
+    },
+    [conversationId, fileViewerDisplayMode, message.id, tCommon],
+  );
 
   const handleExportDocx = async () => {
     if (isExportingDocx) return;
@@ -141,9 +153,22 @@ export const MessageActions = memo(function MessageActions({ message, isLastAiMe
     try {
       const formattedCreatedAt = Number.isNaN(new Date(message.createdAt).getTime())
         ? undefined
-        : new Intl.DateTimeFormat(language, { dateStyle: 'medium', timeStyle: 'medium' }).format(new Date(message.createdAt));
+        : new Intl.DateTimeFormat(language, {
+            dateStyle: 'medium',
+            timeStyle: 'medium',
+          }).format(new Date(message.createdAt));
       const markdown = componentsToMarkdown(message.components || []);
-      const blob = await exportBlocksToDocx([{ label: t('export.assistantLabel'), timestamp: formattedCreatedAt, markdown }], exportTitle);
+      const blob = await exportBlocksToDocx(
+        [
+          {
+            label: t('export.assistantLabel'),
+            timestamp: formattedCreatedAt,
+            markdown,
+            components: message.components || [],
+          },
+        ],
+        exportTitle,
+      );
       downloadBlob(blob, buildExportFilename(exportTitle, 'docx'));
       showSuccess(t('toasts.export.docxSuccess'));
     } catch {
@@ -168,11 +193,7 @@ export const MessageActions = memo(function MessageActions({ message, isLastAiMe
   const handleBranch = () => {
     const targetIndex = messages.findIndex((item) => item.id === message.id);
     const prefixIds = new Set(messages.slice(0, targetIndex + 1).map((item) => item.id));
-    const selected = Object.fromEntries(
-      Array.from(activeBranches.entries()).filter(([questionId, answerId]) => (
-        prefixIds.has(questionId) && prefixIds.has(answerId)
-      )),
-    );
+    const selected = Object.fromEntries(Array.from(activeBranches.entries()).filter(([questionId, answerId]) => prefixIds.has(questionId) && prefixIds.has(answerId)));
     if (message.questionMessageId) selected[message.questionMessageId] = message.id;
     void createBranch(conversationId, {
       requestId: crypto.randomUUID(),
@@ -184,9 +205,7 @@ export const MessageActions = memo(function MessageActions({ message, isLastAiMe
   const handlePlaybookHandoff = async () => {
     const targetIndex = messages.findIndex((item) => item.id === message.id);
     const prefixIds = new Set(messages.slice(0, targetIndex + 1).map((item) => item.id));
-    const selected = Object.fromEntries(Array.from(activeBranches.entries()).filter(([questionId, answerId]) => (
-      prefixIds.has(questionId) && prefixIds.has(answerId)
-    )));
+    const selected = Object.fromEntries(Array.from(activeBranches.entries()).filter(([questionId, answerId]) => prefixIds.has(questionId) && prefixIds.has(answerId)));
     if (message.questionMessageId) selected[message.questionMessageId] = message.id;
     const activeBranchEntries = Object.entries(selected).sort(([left], [right]) => left.localeCompare(right));
     const fingerprintSource = JSON.stringify({
@@ -219,7 +238,7 @@ export const MessageActions = memo(function MessageActions({ message, isLastAiMe
         <TooltipProvider delayDuration={300}>
           <Tooltip>
             <TooltipTrigger asChild>
-              <Button variant='ghost' size='icon' className={`size-11 md:size-7 ${message.feedback === 'like' ? 'text-primary' : ''}`} onClick={handleLike} disabled={message.feedback === 'like'} aria-pressed={message.feedback === 'like'} aria-label={t('messageActions.likeAria')}>
+              <Button variant="ghost" size="icon" className={`size-11 md:size-7 ${message.feedback === 'like' ? 'text-primary' : ''}`} onClick={handleLike} disabled={message.feedback === 'like'} aria-pressed={message.feedback === 'like'} aria-label={t('messageActions.likeAria')}>
                 <ThumbsUp className={`h-3.5 w-3.5 ${message.feedback === 'like' ? 'fill-current' : ''}`} />
               </Button>
             </TooltipTrigger>
@@ -228,7 +247,7 @@ export const MessageActions = memo(function MessageActions({ message, isLastAiMe
 
           <Tooltip>
             <TooltipTrigger asChild>
-              <Button variant='ghost' size='icon' className={`size-11 md:size-7 ${message.feedback === 'dislike' ? 'text-primary' : ''}`} onClick={handleDislike} disabled={message.feedback === 'dislike'} aria-pressed={message.feedback === 'dislike'} aria-label={t('messageActions.dislikeAria')}>
+              <Button variant="ghost" size="icon" className={`size-11 md:size-7 ${message.feedback === 'dislike' ? 'text-primary' : ''}`} onClick={handleDislike} disabled={message.feedback === 'dislike'} aria-pressed={message.feedback === 'dislike'} aria-label={t('messageActions.dislikeAria')}>
                 <ThumbsDown className={`h-3.5 w-3.5 ${message.feedback === 'dislike' ? 'fill-current' : ''}`} />
               </Button>
             </TooltipTrigger>
@@ -237,8 +256,8 @@ export const MessageActions = memo(function MessageActions({ message, isLastAiMe
 
           <Tooltip>
             <TooltipTrigger asChild>
-              <Button variant='ghost' size='icon' className='size-11 md:size-7' onClick={handleCopy} aria-label={t('messageActions.copyAria')}>
-                <Copy className='h-3.5 w-3.5' />
+              <Button variant="ghost" size="icon" className="size-11 md:size-7" onClick={handleCopy} aria-label={t('messageActions.copyAria')}>
+                <Copy className="h-3.5 w-3.5" />
               </Button>
             </TooltipTrigger>
             <TooltipContent>{t('messageActions.copy')}</TooltipContent>
@@ -249,27 +268,19 @@ export const MessageActions = memo(function MessageActions({ message, isLastAiMe
               <TooltipTrigger asChild>
                 <Popover open={sourcesOpen} onOpenChange={setSourcesOpen}>
                   <PopoverTrigger asChild>
-                    <Button variant='ghost' size='icon' className='size-11 md:size-7' aria-label={t('messageActions.sources')}>
-                      <BookOpen className='h-3.5 w-3.5' />
+                    <Button variant="ghost" size="icon" className="size-11 md:size-7" aria-label={t('messageActions.sources')}>
+                      <BookOpen className="h-3.5 w-3.5" />
                     </Button>
                   </PopoverTrigger>
-                  <PopoverContent align='start' className='w-72 max-w-[calc(100vw-2rem)] p-1'>
-                    <p className='px-2 py-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground'>{t('messageActions.sources')}</p>
-                    <div className='max-h-72 overflow-y-auto'>
+                  <PopoverContent align="start" className="w-72 max-w-[calc(100vw-2rem)] p-1">
+                    <p className="px-2 py-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground">{t('messageActions.sources')}</p>
+                    <div className="max-h-72 overflow-y-auto">
                       {citations.map((citation, index) => {
                         const label = getCitationEntryLabel(citation, tCommon('ai.citations.defaultSource'));
                         return (
-                          <button
-                            key={`${citation.source}-${index}`}
-                            type='button'
-                            className='flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm hover:bg-accent'
-                            onClick={() => void handleOpenSource(citation)}
-                            title={label}
-                          >
-                            {isUrlCitation(citation)
-                              ? <Globe className='h-3.5 w-3.5 shrink-0 text-muted-foreground' />
-                              : <FileText className='h-3.5 w-3.5 shrink-0 text-muted-foreground' />}
-                            <span className='min-w-0 flex-1 truncate'>{label}</span>
+                          <button key={`${citation.source}-${index}`} type="button" className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm hover:bg-accent" onClick={() => void handleOpenSource(citation)} title={label}>
+                            {isUrlCitation(citation) ? <Globe className="h-3.5 w-3.5 shrink-0 text-muted-foreground" /> : <FileText className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />}
+                            <span className="min-w-0 flex-1 truncate">{label}</span>
                           </button>
                         );
                       })}
@@ -285,21 +296,21 @@ export const MessageActions = memo(function MessageActions({ message, isLastAiMe
             <TooltipTrigger asChild>
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
-                  <Button variant='ghost' size='icon' className='size-11 md:size-7' aria-label={t('messageActions.exportAria')}>
-                    <Share2 className='h-3.5 w-3.5' />
+                  <Button variant="ghost" size="icon" className="size-11 md:size-7" aria-label={t('messageActions.exportAria')}>
+                    <Share2 className="h-3.5 w-3.5" />
                   </Button>
                 </DropdownMenuTrigger>
-                <DropdownMenuContent align='start'>
+                <DropdownMenuContent align="start">
                   <DropdownMenuItem onClick={() => void handleExportDocx()} disabled={isExportingDocx}>
-                    <FileText className='h-3.5 w-3.5 mr-2' />
+                    <FileText className="h-3.5 w-3.5 mr-2" />
                     {t('messageActions.exportDocx')}
                   </DropdownMenuItem>
                   <DropdownMenuItem onClick={handleExportPdf}>
-                    <FileDown className='h-3.5 w-3.5 mr-2' />
+                    <FileDown className="h-3.5 w-3.5 mr-2" />
                     {t('messageActions.exportPdf')}
                   </DropdownMenuItem>
                   <DropdownMenuItem onClick={handleExportHtml}>
-                    <Globe className='h-3.5 w-3.5 mr-2' />
+                    <Globe className="h-3.5 w-3.5 mr-2" />
                     {t('messageActions.exportHtml')}
                   </DropdownMenuItem>
                 </DropdownMenuContent>
@@ -311,8 +322,8 @@ export const MessageActions = memo(function MessageActions({ message, isLastAiMe
           {isLastAiMessage && (
             <Tooltip>
               <TooltipTrigger asChild>
-                <Button variant='ghost' size='icon' className='size-11 md:size-7' onClick={handleRegenerate} aria-label={t('messageActions.regenerateAria')}>
-                  <RotateCcw className='h-3.5 w-3.5' />
+                <Button variant="ghost" size="icon" className="size-11 md:size-7" onClick={handleRegenerate} aria-label={t('messageActions.regenerateAria')}>
+                  <RotateCcw className="h-3.5 w-3.5" />
                 </Button>
               </TooltipTrigger>
               <TooltipContent>{t('messageActions.regenerate')}</TooltipContent>
@@ -322,50 +333,62 @@ export const MessageActions = memo(function MessageActions({ message, isLastAiMe
 
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
-            <Button variant='ghost' size='icon' className='size-11 md:size-7' aria-label={t('messageActions.moreActions')}>
-              <MoreHorizontal className='h-3.5 w-3.5' />
+            <Button variant="ghost" size="icon" className="size-11 md:size-7" aria-label={t('messageActions.moreActions')}>
+              <MoreHorizontal className="h-3.5 w-3.5" />
             </Button>
           </DropdownMenuTrigger>
-          <DropdownMenuContent align='start'>
+          <DropdownMenuContent align="start">
             {canBranch && (
               <DropdownMenuItem onClick={handleBranch} disabled={isBranching}>
-                {isBranching
-                  ? <Loader2 className='h-3.5 w-3.5 mr-2 animate-spin' />
-                  : <GitBranch className='h-3.5 w-3.5 mr-2' />}
+                {isBranching ? <Loader2 className="h-3.5 w-3.5 mr-2 animate-spin" /> : <GitBranch className="h-3.5 w-3.5 mr-2" />}
                 {isBranching ? t('messageActions.branching') : t('messageActions.branch')}
               </DropdownMenuItem>
             )}
             {canPrepareHandoff && (
-              <DropdownMenuItem onClick={() => { void handlePlaybookHandoff(); }} disabled={isPreparingHandoff}>
-                {isPreparingHandoff
-                  ? <Loader2 className='h-3.5 w-3.5 mr-2 animate-spin' />
-                  : <Workflow className='h-3.5 w-3.5 mr-2' />}
+              <DropdownMenuItem
+                onClick={() => {
+                  void handlePlaybookHandoff();
+                }}
+                disabled={isPreparingHandoff}
+              >
+                {isPreparingHandoff ? <Loader2 className="h-3.5 w-3.5 mr-2 animate-spin" /> : <Workflow className="h-3.5 w-3.5 mr-2" />}
                 {isPreparingHandoff ? t('messageActions.playbookPreparing') : t('messageActions.playbookHandoff')}
               </DropdownMenuItem>
             )}
             <DropdownMenuItem onClick={() => setReportOpen(true)}>
-              <Flag className='h-3.5 w-3.5 mr-2' />
+              <Flag className="h-3.5 w-3.5 mr-2" />
               {t('messageActions.report')}
             </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
-        {message.isComplete && !message.isStreaming && <TimingIndicator timeToFirstChunk={message.timeToFirstChunk} timeToFirstToken={message.timeToFirstToken} durationMs={message.durationMs} inputTokens={message.inputTokens} outputTokens={message.outputTokens} latencyMetrics={message.latencyMetrics} latencyInstrumentationEnabled={latencyInstrumentationEnabled} />}
-        <div className='ml-auto flex min-w-0 items-center gap-1.5 px-1 text-[11px] text-muted-foreground' aria-label={t('messageActions.generationMetadata', { date: formattedCreatedAt, model: modelName })}>
-          <time dateTime={Number.isNaN(createdAt.getTime()) ? undefined : message.createdAt} className='whitespace-nowrap'>{formattedCreatedAt}</time>
-          <span aria-hidden='true'>·</span>
-          <span className='max-w-48 truncate' title={modelName}>{modelName}</span>
+        {message.isComplete && !message.isStreaming && <TimingIndicator timeToFirstChunk={message.timeToFirstChunk} timeToFirstToken={message.timeToFirstToken} durationMs={message.durationMs} inputTokens={message.inputTokens} outputTokens={message.outputTokens} latencyMetrics={message.latencyMetrics} conversationUsage={visibleUsage ?? undefined} latencyInstrumentationEnabled={latencyInstrumentationEnabled} />}
+        {visibleUsage && (
+          <span className="ml-auto inline-flex w-full shrink-0 flex-wrap items-center justify-end gap-1.5 px-1 text-[11px] font-medium text-muted-foreground sm:w-auto sm:shrink sm:flex-nowrap" aria-label={t('usage.summaryLabel')} data-conversation-usage-summary>
+            <span className="whitespace-nowrap">{formatCompactTokenTotal(visibleUsage.tokens.total, language)}</span>
+            {formattedCost && <span className="hidden xl:inline">· {formattedCost}</span>}
+            {formattedCarbon && <span className="whitespace-nowrap">· {formattedCarbon}</span>}
+            <span className="hidden sm:inline" aria-hidden="true">·</span>
+          </span>
+        )}
+        <div
+          className="ml-auto flex min-w-0 items-center gap-1.5 px-1 text-[11px] text-muted-foreground min-[1100px]:ml-0"
+          aria-label={t('messageActions.generationMetadata', {
+            date: formattedCreatedAt,
+            model: modelName,
+          })}
+        >
+          <time dateTime={Number.isNaN(createdAt.getTime()) ? undefined : message.createdAt} className="whitespace-nowrap">
+            {formattedCreatedAt}
+          </time>
+          <span aria-hidden="true">·</span>
+          <span className="max-w-48 truncate" title={modelName}>
+            {modelName}
+          </span>
         </div>
       </div>
 
       <ReportDialog open={reportOpen} onOpenChange={setReportOpen} conversationId={conversationId} messageId={message.id} />
-      {isExportingPdf && (
-        <MessagePdfExport
-          message={message}
-          title={currentConversation?.title?.trim() || t('exportPdf.untitledConversation')}
-          subtitle={`${formattedCreatedAt} · ${modelName}`}
-          onFinish={handlePdfExportFinish}
-        />
-      )}
+      {isExportingPdf && <MessagePdfExport message={message} title={currentConversation?.title?.trim() || t('exportPdf.untitledConversation')} subtitle={`${formattedCreatedAt} · ${modelName}`} onFinish={handlePdfExportFinish} />}
     </>
   );
 });

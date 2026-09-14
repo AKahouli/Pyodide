@@ -76,7 +76,7 @@ describe('AgentService.findHumainAgentsPublic', () => {
     expect(arg.agentTypeId).toBe(humainTypeId);
     expect(result.meta.total).toBe(1);
     expect(result.data[0].name).toBe('Alice');
-    expect(result.data[0].agentType).toEqual({ id: humainTypeId, name: 'Humain' });
+    expect(result.data[0].agentType).toEqual({ id: humainTypeId, name: 'Humain', slug: 'humain' });
   });
 
   it('applies case-insensitive substring filters on role, name and description', async () => {

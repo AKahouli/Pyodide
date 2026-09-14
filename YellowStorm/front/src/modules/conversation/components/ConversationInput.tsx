@@ -1,12 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef } from 'react';
 import { toast } from 'sonner';
-import { BrainCircuit, ChevronDown, X, Reply, Search } from 'lucide-react';
+import { BrainCircuit, ChevronDown, X, Reply } from 'lucide-react';
 import Input from '@/components/ai-elements/input';
 import { Button } from '@/components/ui/button';
-import { cn } from '@/lib/utils';
 import { PromptInputButton } from '@/components/ai-elements/prompt-input';
 import type { PromptInputMessage } from '@/components/ai-elements/prompt-input';
-import { useConversationStore, useIsAwaitingFirstChunk, useInputDisabled, useReplyingToMessage, useSelectedWorkspaceIds, useSetSelectedWorkspaceIds, useSelectedSemanticModelId, useDeepSearchEnabled, useSetDeepSearchEnabled, useSelectedModelId, useSelectedReasoningEffort, useSetSelectedReasoningEffort } from '../store';
+import { useConversationStore, useIsAwaitingFirstChunk, useInputDisabled, useReplyingToMessage, useSelectedWorkspaceIds, useSetSelectedWorkspaceIds, useSelectedSemanticModelId, useDeepSearchEnabled, useSelectedModelId, useSelectedReasoningEffort, useSetSelectedReasoningEffort, useWebConnectorAccessEnabled } from '../store';
 import { UsageLimitBanner } from '@/modules/usage';
 import { useUsage } from '@/modules/usage/UsageContext';
 import { useConversationFileUpload } from '../hooks/useConversationFileUpload';
@@ -17,6 +16,7 @@ import { ComposerSuggestionChips } from './ComposerSuggestionChips';
 import { SelectedConnectorRepo } from './SelectedConnectorRepo';
 import { ContextMeter } from './ContextMeter';
 import { ReliabilityCheckToggle } from './ReasoningEffortSelect';
+import { WebSearchConnectorToggle } from './WebSearchConnectorToggle';
 import { useDefaultModel, useModels } from '@/modules/models';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuLabel, DropdownMenuRadioGroup, DropdownMenuRadioItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 
@@ -48,7 +48,7 @@ export function ConversationInput({ conversationId }: ConversationInputProps) {
   const { t } = useModuleTranslation('conversation');
   const { user } = useAuth();
   const deepSearchEnabled = useDeepSearchEnabled();
-  const setDeepSearchEnabled = useSetDeepSearchEnabled();
+  const webConnectorAccessEnabled = useWebConnectorAccessEnabled();
   const selectedModelId = useSelectedModelId();
   const selectedReasoningEffort = useSelectedReasoningEffort();
   const setSelectedReasoningEffort = useSetSelectedReasoningEffort();
@@ -176,6 +176,7 @@ export function ConversationInput({ conversationId }: ConversationInputProps) {
         attachedFileIds: completedFileIds.length ? completedFileIds : undefined,
         attachedFiles: attachedFiles.length ? attachedFiles : undefined,
         deepSearchEnabled: deepSearchEnabled || undefined,
+        webConnectorAccessEnabled: runtimeManaged ? undefined : webConnectorAccessEnabled,
         modelId: runtimeManaged ? undefined : (modelId || undefined),
         semanticModelId: runtimeManaged ? undefined : (selectedSemanticModelId || undefined),
         agentIds: !runtimeManaged && agentIds?.length ? agentIds : undefined,
@@ -194,7 +195,7 @@ export function ConversationInput({ conversationId }: ConversationInputProps) {
       clearAll();
       clearReplyingTo();
     },
-    [completedFileIds, uploadFiles, sendMessage, conversationId, clearAll, clearReplyingTo, replyingToMessage?.id, runtimeManaged, hasStickyTaggedAgents, selectedWorkspaceIds, selectedSemanticModelId, setSelectedWorkspaceIds, updateConversation, deepSearchEnabled, effectiveReasoningEffort],
+    [completedFileIds, uploadFiles, sendMessage, conversationId, clearAll, clearReplyingTo, replyingToMessage?.id, runtimeManaged, hasStickyTaggedAgents, selectedWorkspaceIds, selectedSemanticModelId, setSelectedWorkspaceIds, updateConversation, deepSearchEnabled, webConnectorAccessEnabled, effectiveReasoningEffort],
   );
 
   const senderDisplayName = useMemo(() => {
@@ -259,6 +260,7 @@ export function ConversationInput({ conversationId }: ConversationInputProps) {
       )}
 
       <Input
+        draftKey={`${user?.id ?? 'anonymous'}:conversation:${conversationId}`}
         onSubmit={handleSubmit}
         onStop={stopStream}
         status={status}
@@ -280,16 +282,6 @@ export function ConversationInput({ conversationId }: ConversationInputProps) {
         enableTeamMentions={!runtimeManaged}
         extraTools={
           <>
-            <PromptInputButton
-              type='button'
-              onClick={() => setDeepSearchEnabled(!deepSearchEnabled)}
-              className={cn(deepSearchEnabled && 'bg-primary/10 text-primary')}
-              title={t('input.deepSearch')}
-              aria-label={t('input.deepSearch')}
-              aria-pressed={deepSearchEnabled}
-            >
-              <Search className='h-4 w-4' />
-            </PromptInputButton>
             {!governedMode && !platformCopilot && !hasStickyTaggedAgents && reasoningEfforts.length > 0 && (
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
@@ -313,6 +305,7 @@ export function ConversationInput({ conversationId }: ConversationInputProps) {
                 </DropdownMenuContent>
               </DropdownMenu>
             )}
+            {!runtimeManaged && <WebSearchConnectorToggle />}
             <ReliabilityCheckToggle />
           </>
         }

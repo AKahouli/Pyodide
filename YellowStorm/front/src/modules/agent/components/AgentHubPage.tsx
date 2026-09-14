@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { CheckSquare, Loader2, Plus, Sparkles, X } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
@@ -20,6 +21,7 @@ import { AgentHubOverview } from './hub/AgentHubOverview';
 import { AgentHubFilters } from './hub/AgentHubFilters';
 import { AgentHubGrid } from './hub/AgentHubGrid';
 import { AgentHubBulkActionBar } from './hub/AgentHubBulkActionBar';
+import { AgentNetworkTabs } from './AgentNetworkTabs';
 import { CreateEditAgentDialog } from './CreateEditAgentDialog';
 import { A2APublishDialog } from './A2APublishDialog';
 import { ShareAgentDialog } from './ShareAgentDialog';
@@ -49,6 +51,19 @@ export function AgentHubPage() {
     fetchAgents();
     fetchAgentTypes();
   }, [fetchAgents, fetchAgentTypes]);
+
+  // Deep link for opening the edit dialog straight from a conversation task
+  // header (/agents?edit=<agentId>).
+  const [searchParams, setSearchParams] = useSearchParams();
+  useEffect(() => {
+    const editId = searchParams.get('edit');
+    if (!editId || !isInitialized) return;
+    const agent = useAgentStore.getState().getAgentById(editId);
+    if (agent) ops.openEdit(agent);
+    const next = new URLSearchParams(searchParams);
+    next.delete('edit');
+    setSearchParams(next, { replace: true });
+  }, [searchParams, isInitialized, ops.openEdit, setSearchParams]);
 
   const handleToggleSelectMode = useCallback(() => {
     setSelectMode((prev) => {
@@ -106,6 +121,9 @@ export function AgentHubPage() {
               {t('hub.newAgent')}
             </Button>
           </div>
+        </div>
+        <div className="mt-6">
+          <AgentNetworkTabs />
         </div>
       </header>
 

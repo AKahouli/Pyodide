@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import type { CorrectionReplayContext, MessageReplayContext } from '../interfaces/message.interface';
+import type { TeamExecutionDefinition } from '../../team/team-execution';
 
 export interface BuildAgentExecutionRequestInput {
   userId: string;
@@ -12,6 +13,7 @@ export interface BuildAgentExecutionRequestInput {
   previousAttachedFiles: unknown[];
   skills: unknown[];
   correctionReplayContext?: CorrectionReplayContext;
+  teamDefinition?: TeamExecutionDefinition;
 }
 
 export interface BuiltAgentExecutionRequest {
@@ -54,6 +56,24 @@ export class ConversationAgentRequestBuilder {
       } : {}),
     };
 
+    if (input.teamDefinition) {
+      return {
+        rpc: 'RunAgentTeam',
+        payload: {
+          ...baseRequest,
+          agents: input.agents,
+          agent_mode: 'hierarchical',
+          team_definition: {
+            team_id: input.teamDefinition.teamId,
+            nodes: input.teamDefinition.nodes.map((node) => ({
+              agent_id: node.agentId,
+              parent_agent_id: node.parentAgentId ?? '',
+              order: node.order,
+            })),
+          },
+        },
+      };
+    }
     if (input.agents.length === 1) {
       return { rpc: 'RunSingleAgent', payload: { ...baseRequest, agent: input.agents[0] } };
     }

@@ -13,7 +13,7 @@ import { translateConversation } from './translation';
 import { computeFrontendLatency, mergeLatencyMetrics, type FrontendPaintComputation } from './utils/latency-paint';
 import { streamMetrics } from './utils/stream-metrics';
 import { createLatencyPaintController, type PendingLatencyPaint } from './store-latency';
-import type { Conversation, ConversationSummary, Message, MessageComponent, StreamingComponent, SendMessagePayload, CreateReportPayload, StreamStartEvent, StreamChunkEvent, StreamCompleteEvent, StreamErrorEvent, ConversationNameGeneratedEvent, SSEConnectionStatus, MessageCreatedEvent, MessageUpdatedEvent, StreamResyncRequiredEvent, StreamChunkLatencyData, ActiveStreamSnapshot } from './types';
+import type { Conversation, ConversationSummary, ConversationUsageMetrics, Message, MessageComponent, StreamingComponent, SendMessagePayload, CreateReportPayload, StreamStartEvent, StreamChunkEvent, StreamCompleteEvent, StreamErrorEvent, ConversationNameGeneratedEvent, SSEConnectionStatus, MessageCreatedEvent, MessageUpdatedEvent, StreamResyncRequiredEvent, StreamChunkLatencyData, ActiveStreamSnapshot } from './types';
 
 export type { PendingLatencyPaint };
 
@@ -89,28 +89,37 @@ interface CachedStreamingState {
  * Used both by the buffer flush callback (current conversation) and by direct
  * cache updates (background conversations).
  */
-export function applyChunksToComponents(
-  components: StreamingComponent[],
-  chunks: BufferedStreamChunk[],
-): StreamingComponent[] {
+export function applyChunksToComponents(components: StreamingComponent[], chunks: BufferedStreamChunk[]): StreamingComponent[] {
   let result = [...components];
   for (const { action, component } of chunks) {
     if (action === 'add') {
       const existingIndex = result.findIndex((item) => item.id === component.id);
       if (component.type === 'toolActivity' && existingIndex >= 0) {
         const existing = result[existingIndex];
-        result[existingIndex] = { ...existing, data: mergeStreamingData('toolActivity', existing.data, component.data) };
+        result[existingIndex] = {
+          ...existing,
+          data: mergeStreamingData('toolActivity', existing.data, component.data),
+        };
       } else {
-        result.push({ ...component, data: initializeStreamingData(component.type, component.data) });
+        result.push({
+          ...component,
+          data: initializeStreamingData(component.type, component.data),
+        });
       }
     } else if (action === 'update') {
       const hasExisting = result.some((comp) => comp.id === component.id);
       result = result.map((comp) => {
         if (comp.id !== component.id) return comp;
-        return { ...comp, data: mergeStreamingData(comp.type, comp.data, component.data) };
+        return {
+          ...comp,
+          data: mergeStreamingData(comp.type, comp.data, component.data),
+        };
       });
       if (!hasExisting && component.type === 'toolActivity') {
-        result.push({ ...component, data: initializeStreamingData(component.type, component.data) });
+        result.push({
+          ...component,
+          data: initializeStreamingData(component.type, component.data),
+        });
       }
     } else if (action === 'delete') {
       result = result.filter((comp) => comp.id !== component.id);
@@ -317,7 +326,9 @@ function attachStreamingFlushCallback(): void {
   streamingBuffer.setFlushCallback((chunks) => {
     useConversationStore.setState((s) => {
       const components = applyChunksToComponents(s.streamingComponents, chunks);
-      const nextState: Partial<ConversationState> = { streamingComponents: components };
+      const nextState: Partial<ConversationState> = {
+        streamingComponents: components,
+      };
       if (components.length > 0 && s.isAwaitingFirstChunk) {
         nextState.isAwaitingFirstChunk = false; // hide loader once chunks are renderable
         nextState.awaitingConversationId = null;
@@ -335,12 +346,7 @@ function attachStreamingFlushCallback(): void {
  * the missing-start recovery (cold send that missed `stream_start`) and the
  * forced resync (proven replay gap).
  */
-function installActiveStreamSnapshot(
-  conversationId: string,
-  snapshot: ActiveStreamSnapshot,
-  heldChunks: BufferedStreamChunk[],
-  options: { replaceComponents: boolean },
-): void {
+function installActiveStreamSnapshot(conversationId: string, snapshot: ActiveStreamSnapshot, heldChunks: BufferedStreamChunk[], options: { replaceComponents: boolean }): void {
   const snapshotRevision = snapshot.revision ?? 0;
   const snapshotKey = `${conversationId}:${snapshot.messageId}`;
   if (currentRevisionStreamKey !== snapshotKey) currentStreamRevision = 0;
@@ -416,7 +422,9 @@ async function recoverMissingStreamStart(conversationId: string): Promise<void> 
     }
     const heldChunks = pendingRecoveryChunks;
     pendingRecoveryChunks = [];
-    installActiveStreamSnapshot(conversationId, snapshot, heldChunks, { replaceComponents: false });
+    installActiveStreamSnapshot(conversationId, snapshot, heldChunks, {
+      replaceComponents: false,
+    });
   } finally {
     missingStartRecoveryInFlight = false;
   }
@@ -455,7 +463,9 @@ async function forcedResyncActiveStream(conversationId: string): Promise<void> {
     }
     const trackedMessageId = state.streamingMessageId ?? state.pendingAssistantMessageId;
     if (trackedMessageId === snapshot.messageId) {
-      installActiveStreamSnapshot(conversationId, snapshot, heldChunks, { replaceComponents: true });
+      installActiveStreamSnapshot(conversationId, snapshot, heldChunks, {
+        replaceComponents: true,
+      });
       return;
     }
     if (!state.isStreaming && !wasTrackingRun) {
@@ -552,8 +562,7 @@ function initializeStreamingData(type: string, data: Record<string, unknown>): R
     // Fallback to chartData if it's an array
     else if (Array.isArray(data.chartData)) {
       actualData = data.chartData;
-    }
-    else {
+    } else {
       actualData = parseJsonArray(data.data) || parseJsonArray(data.chartData);
     }
 
@@ -623,14 +632,16 @@ function mergeStreamingData(type: string, existing: Record<string, unknown>, inc
         status: existingIsTerminal ? existingStatus : incomingStatus,
         paramsJson: (incoming.paramsJson as string) || (existing.paramsJson as string) || '',
         startedAt: (incoming.startedAt as string) || (existing.startedAt as string) || '',
-        ...(incoming.summary || existing.summary ? {
-          summary: (incoming.summary as string) || (existing.summary as string),
-        } : {}),
-        ...(incoming.renderKind || existing.renderKind ? { renderKind: (
-          existing.renderKind && existing.renderKind !== 'generic'
-            ? existing.renderKind
-            : incoming.renderKind || existing.renderKind || 'generic'
-        ) } : {}),
+        ...(incoming.summary || existing.summary
+          ? {
+              summary: (incoming.summary as string) || (existing.summary as string),
+            }
+          : {}),
+        ...(incoming.renderKind || existing.renderKind
+          ? {
+              renderKind: existing.renderKind && existing.renderKind !== 'generic' ? existing.renderKind : incoming.renderKind || existing.renderKind || 'generic',
+            }
+          : {}),
       };
       return merged;
     case 'chart': {
@@ -660,9 +671,15 @@ function mergeStreamingData(type: string, existing: Record<string, unknown>, inc
       }
 
       // For chart data object, merge properties with incoming taking precedence
-      const chartDataObj = typeof incoming.data === 'object' && incoming.data !== null
-        ? { ...(typeof existing.data === 'object' && existing.data !== null ? existing.data as Record<string, unknown> : {}), ...(incoming.data as Record<string, unknown>) }
-        : (typeof existing.data === 'object' && existing.data !== null ? existing.data as Record<string, unknown> : {});
+      const chartDataObj =
+        typeof incoming.data === 'object' && incoming.data !== null
+          ? {
+              ...(typeof existing.data === 'object' && existing.data !== null ? (existing.data as Record<string, unknown>) : {}),
+              ...(incoming.data as Record<string, unknown>),
+            }
+          : typeof existing.data === 'object' && existing.data !== null
+            ? (existing.data as Record<string, unknown>)
+            : {};
 
       return {
         ...existing,
@@ -710,6 +727,7 @@ interface ConversationState {
   messagesLoadingOlder: boolean;
   messagesHasMore: boolean;
   messagesCursor: string | null;
+  conversationUsage: ConversationUsageMetrics | null;
 
   // Streaming state
   streamingConversationId: string | null;
@@ -753,10 +771,19 @@ interface ConversationState {
   selectedSemanticModelId: string | null;
 
   // Selected connector repository for the current conversation
-  selectedConnectorRepo: { connectorId: string; connectorName: string; repoId: string; repoName: string; repoUrl?: string } | null;
+  selectedConnectorRepo: {
+    connectorId: string;
+    connectorName: string;
+    repoId: string;
+    repoName: string;
+    repoUrl?: string;
+  } | null;
 
   // Deep search toggle
   deepSearchEnabled: boolean;
+
+  // Access to connectors in the Web Search category
+  webConnectorAccessEnabled: boolean;
 
   // Selected skill IDs for the current conversation (applied to every message)
   selectedSkillIds: string[];
@@ -780,14 +807,28 @@ interface ConversationState {
   fetchConversations: (params?: { reset?: boolean; limit?: number; search?: string; projectId?: string | 'none'; searchScope?: 'title' | 'fulltext' }) => Promise<void>;
   fetchProjectConversations: (projectId: string, options?: { limit?: number }) => Promise<void>;
   createConversation: (data?: { title?: string; workspaces?: string[]; participantEmails?: string[]; participants?: Array<{ email: string; job?: string }>; ownerJob?: string; projectId?: string }) => Promise<Conversation>;
-  updateConversation: (id: string, data: { title?: string; isArchived?: boolean; workspaces?: string[]; participantEmails?: string[]; participants?: Array<{ email: string; job?: string }>; projectId?: string | null }) => Promise<void>;
+  updateConversation: (
+    id: string,
+    data: {
+      title?: string;
+      isArchived?: boolean;
+      workspaces?: string[];
+      participantEmails?: string[];
+      participants?: Array<{ email: string; job?: string }>;
+      projectId?: string | null;
+    },
+  ) => Promise<void>;
   moveConversationToProject: (id: string, projectId: string | null) => Promise<void>;
   detachConversationsFromProject: (projectId: string) => void;
   deleteConversation: (id: string) => Promise<void>;
   claimCurrentConversation: (
     id: string,
     conversation?: Conversation,
-    selections?: { modelId?: string; semanticModelId?: string; workspaceIds?: string[] },
+    selections?: {
+      modelId?: string;
+      semanticModelId?: string;
+      workspaceIds?: string[];
+    },
   ) => void;
   setCurrentConversation: (id: string) => Promise<void>;
 
@@ -850,10 +891,21 @@ interface ConversationState {
   setSelectedSemanticModelId: (modelId: string | null) => void;
 
   // Connector repository selection
-  setSelectedConnectorRepo: (repo: { connectorId: string; connectorName: string; repoId: string; repoName: string; repoUrl?: string } | null) => void;
+  setSelectedConnectorRepo: (
+    repo: {
+      connectorId: string;
+      connectorName: string;
+      repoId: string;
+      repoName: string;
+      repoUrl?: string;
+    } | null,
+  ) => void;
 
   // Deep search toggle
   setDeepSearchEnabled: (enabled: boolean) => void;
+
+  // Web Search connector access toggle
+  setWebConnectorAccessEnabled: (enabled: boolean) => void;
 
   // Skill selection (applied to every message in the conversation)
   setSelectedSkillIds: (skillIds: string[]) => void;
@@ -892,6 +944,7 @@ export const useConversationStore = create<ConversationState>()(
       messagesLoadingOlder: false,
       messagesHasMore: false,
       messagesCursor: null,
+      conversationUsage: null,
 
       streamingConversationId: null,
       streamingMessageId: null,
@@ -925,6 +978,7 @@ export const useConversationStore = create<ConversationState>()(
       selectedSemanticModelId: null,
       selectedConnectorRepo: null,
       deepSearchEnabled: false,
+      webConnectorAccessEnabled: true,
       selectedSkillIds: [],
 
       streamingStateCache: new Map(),
@@ -951,7 +1005,7 @@ export const useConversationStore = create<ConversationState>()(
           const state = get();
           const result = await api.fetchConversations({
             mode: 'cursor',
-            cursor: reset ? undefined : state.conversationsCursor ?? undefined,
+            cursor: reset ? undefined : (state.conversationsCursor ?? undefined),
             limit,
             search: params?.search,
             projectId: params?.projectId,
@@ -989,17 +1043,33 @@ export const useConversationStore = create<ConversationState>()(
       fetchProjectConversations: async (projectId, options) => {
         const limit = options?.limit ?? 50;
         set((s) => ({
-          projectConversationsLoading: { ...s.projectConversationsLoading, [projectId]: true },
+          projectConversationsLoading: {
+            ...s.projectConversationsLoading,
+            [projectId]: true,
+          },
         }));
         try {
-          const result = await api.fetchConversations({ page: 1, limit, projectId });
+          const result = await api.fetchConversations({
+            page: 1,
+            limit,
+            projectId,
+          });
           set((s) => ({
-            projectConversations: { ...s.projectConversations, [projectId]: result.items },
-            projectConversationsLoading: { ...s.projectConversationsLoading, [projectId]: false },
+            projectConversations: {
+              ...s.projectConversations,
+              [projectId]: result.items,
+            },
+            projectConversationsLoading: {
+              ...s.projectConversationsLoading,
+              [projectId]: false,
+            },
           }));
         } catch (err) {
           set((s) => ({
-            projectConversationsLoading: { ...s.projectConversationsLoading, [projectId]: false },
+            projectConversationsLoading: {
+              ...s.projectConversationsLoading,
+              [projectId]: false,
+            },
           }));
           toast.error(translateConversation('toasts.conversation.loadListError'));
           console.error('[ConversationStore] fetchProjectConversations error:', err);
@@ -1050,12 +1120,8 @@ export const useConversationStore = create<ConversationState>()(
         // Optimistic update — also reflect in any project list that contains it
         set((s) => ({
           conversations: s.conversations.map((c) => (c.id === id ? { ...c, ...data } : c)),
-          conversationSummaries: s.conversationSummaries.map((c) =>
-            c.id === id ? { ...c, ...data } : c,
-          ),
-          projectConversations: mapProjectLists(s.projectConversations, (c) =>
-            c.id === id ? { ...c, ...data } : c,
-          ),
+          conversationSummaries: s.conversationSummaries.map((c) => (c.id === id ? { ...c, ...data } : c)),
+          projectConversations: mapProjectLists(s.projectConversations, (c) => (c.id === id ? { ...c, ...data } : c)),
           currentConversation: s.currentConversation?.id === id ? { ...s.currentConversation, ...data } : s.currentConversation,
         }));
 
@@ -1063,17 +1129,17 @@ export const useConversationStore = create<ConversationState>()(
           const updated = await api.updateConversation(id, data);
           set((s) => ({
             conversations: s.conversations.map((c) => (c.id === id ? updated : c)),
-            conversationSummaries: s.conversationSummaries.map((c) =>
-              c.id === id ? { ...c, ...updated } : c,
-            ),
-            projectConversations: mapProjectLists(s.projectConversations, (c) =>
-              c.id === id ? updated : c,
-            ),
+            conversationSummaries: s.conversationSummaries.map((c) => (c.id === id ? { ...c, ...updated } : c)),
+            projectConversations: mapProjectLists(s.projectConversations, (c) => (c.id === id ? updated : c)),
             currentConversation: s.currentConversation?.id === id ? updated : s.currentConversation,
           }));
           void get().fetchConversations(lastConversationListParams);
         } catch (err) {
-          set({ conversations: previousConversations, conversationSummaries: previousSummaries, projectConversations: previousProjectConversations });
+          set({
+            conversations: previousConversations,
+            conversationSummaries: previousSummaries,
+            projectConversations: previousProjectConversations,
+          });
           toast.error(translateConversation('toasts.conversation.updateError'));
           throw err;
         }
@@ -1098,40 +1164,26 @@ export const useConversationStore = create<ConversationState>()(
 
         set((s) => ({
           conversations: s.conversations.map((c) => (c.id === id ? { ...c, projectId } : c)),
-          conversationSummaries: s.conversationSummaries.map((c) =>
-            c.id === id ? { ...c, projectId } : c,
-          ),
-          projectConversations: rebalanceProjectLists(
-            s.projectConversations,
-            id,
-            sourceProjectId,
-            projectId,
-            optimistic,
-          ),
-          currentConversation:
-            s.currentConversation?.id === id ? { ...s.currentConversation, projectId } : s.currentConversation,
+          conversationSummaries: s.conversationSummaries.map((c) => (c.id === id ? { ...c, projectId } : c)),
+          projectConversations: rebalanceProjectLists(s.projectConversations, id, sourceProjectId, projectId, optimistic),
+          currentConversation: s.currentConversation?.id === id ? { ...s.currentConversation, projectId } : s.currentConversation,
         }));
 
         try {
           const updated = await api.updateConversation(id, { projectId });
           set((s) => ({
             conversations: s.conversations.map((c) => (c.id === id ? updated : c)),
-            conversationSummaries: s.conversationSummaries.map((c) =>
-              c.id === id ? { ...c, ...updated } : c,
-            ),
-            projectConversations: rebalanceProjectLists(
-              s.projectConversations,
-              id,
-              sourceProjectId,
-              projectId,
-              updated,
-            ),
-            currentConversation:
-              s.currentConversation?.id === id ? updated : s.currentConversation,
+            conversationSummaries: s.conversationSummaries.map((c) => (c.id === id ? { ...c, ...updated } : c)),
+            projectConversations: rebalanceProjectLists(s.projectConversations, id, sourceProjectId, projectId, updated),
+            currentConversation: s.currentConversation?.id === id ? updated : s.currentConversation,
           }));
           void get().fetchConversations(lastConversationListParams);
         } catch (err) {
-          set({ conversations: previousConversations, conversationSummaries: previousSummaries, projectConversations: previousProjectConversations });
+          set({
+            conversations: previousConversations,
+            conversationSummaries: previousSummaries,
+            projectConversations: previousProjectConversations,
+          });
           toast.error(translateConversation('toasts.conversation.updateError'));
           throw err;
         }
@@ -1142,18 +1194,11 @@ export const useConversationStore = create<ConversationState>()(
           const { [projectId]: _removed, ...remainingLists } = s.projectConversations;
           const { [projectId]: _removedLoading, ...remainingLoading } = s.projectConversationsLoading;
           return {
-            conversations: s.conversations.map((c) =>
-              c.projectId === projectId ? { ...c, projectId: null } : c,
-            ),
-            conversationSummaries: s.conversationSummaries.map((c) =>
-              c.projectId === projectId ? { ...c, projectId: null } : c,
-            ),
+            conversations: s.conversations.map((c) => (c.projectId === projectId ? { ...c, projectId: null } : c)),
+            conversationSummaries: s.conversationSummaries.map((c) => (c.projectId === projectId ? { ...c, projectId: null } : c)),
             projectConversations: remainingLists,
             projectConversationsLoading: remainingLoading,
-            currentConversation:
-              s.currentConversation?.projectId === projectId
-                ? { ...s.currentConversation, projectId: null }
-                : s.currentConversation,
+            currentConversation: s.currentConversation?.projectId === projectId ? { ...s.currentConversation, projectId: null } : s.currentConversation,
           };
         });
       },
@@ -1250,6 +1295,7 @@ export const useConversationStore = create<ConversationState>()(
           messages: [],
           messagesHasMore: false,
           messagesCursor: null,
+          conversationUsage: null,
           branchCache: new Map(),
           activeBranches: new Map(),
         });
@@ -1305,6 +1351,7 @@ export const useConversationStore = create<ConversationState>()(
               messagesHasMore: result.hasMore ?? (result.totalPages || 1) > 1,
               messagesCursor: result.nextCursor ?? null,
               messagesLoading: false,
+              conversationUsage: result.conversationUsage ?? null,
               ...(lastUserModelId ? { selectedModelId: lastUserModelId } : {}),
               ...(lastUserModelId ? { selectedReasoningEffort: lastUserReasoningEffort } : {}),
               branchCache: newBranchCache,
@@ -1321,9 +1368,7 @@ export const useConversationStore = create<ConversationState>()(
 
             // A terminal SSE event may have been missed while this conversation
             // was in the background. Persistence wins over stale live cache.
-            const persistedMessage = cachedState.streamingMessageId
-              ? hydratedMessages.find((message) => message.id === cachedState.streamingMessageId)
-              : undefined;
+            const persistedMessage = cachedState.streamingMessageId ? hydratedMessages.find((message) => message.id === cachedState.streamingMessageId) : undefined;
             if (persistedMessage?.isComplete) {
               streamingBuffer.clear();
               set({
@@ -1333,12 +1378,10 @@ export const useConversationStore = create<ConversationState>()(
                 streamingQuestionMessageId: null,
                 streamingComponents: [],
                 isAwaitingFirstChunk: false,
-                 awaitingConversationId: null,
-                 pendingAssistantMessageId: null,
-                 pendingTerminalErrorKey: hasErrorComponent(persistedMessage)
-                   ? `${conversationId}:${persistedMessage.id}`
-                   : null,
-                 streamingStateCache: newCache,
+                awaitingConversationId: null,
+                pendingAssistantMessageId: null,
+                pendingTerminalErrorKey: hasErrorComponent(persistedMessage) ? `${conversationId}:${persistedMessage.id}` : null,
+                streamingStateCache: newCache,
               });
               return;
             }
@@ -1348,7 +1391,9 @@ export const useConversationStore = create<ConversationState>()(
             streamingBuffer.setFlushCallback((chunks) => {
               set((s) => {
                 const components = applyChunksToComponents(s.streamingComponents, chunks);
-                const nextState: Partial<ConversationState> = { streamingComponents: components };
+                const nextState: Partial<ConversationState> = {
+                  streamingComponents: components,
+                };
                 if (components.length > 0 && s.isAwaitingFirstChunk) {
                   nextState.isAwaitingFirstChunk = false;
                 }
@@ -1369,25 +1414,23 @@ export const useConversationStore = create<ConversationState>()(
           } else if (activeStream) {
             const placeholder = hydratedMessages.find((message) => message.id === activeStream.messageId);
             const current = get();
-            const alreadyLive = receivedCurrentStreamStart
-              && current.isStreaming
-              && current.streamingConversationId === conversationId
-              && current.streamingMessageId === activeStream.messageId;
+            const alreadyLive = receivedCurrentStreamStart && current.isStreaming && current.streamingConversationId === conversationId && current.streamingMessageId === activeStream.messageId;
 
             if (!placeholder?.isComplete && !alreadyLive) {
               streamingBuffer.setFlushCallback((chunks) => {
                 set((s) => ({
                   streamingComponents: applyChunksToComponents(s.streamingComponents, chunks),
                   ...(s.isAwaitingFirstChunk && chunks.length > 0
-                    ? { isAwaitingFirstChunk: false, awaitingConversationId: null }
+                    ? {
+                        isAwaitingFirstChunk: false,
+                        awaitingConversationId: null,
+                      }
                     : {}),
                 }));
               });
 
               const snapshotRevision = activeStream.revision ?? 0;
-              const newerChunks = pendingRecoveryChunks.filter((chunk) =>
-                chunk.revision === undefined || chunk.revision > snapshotRevision,
-              );
+              const newerChunks = pendingRecoveryChunks.filter((chunk) => chunk.revision === undefined || chunk.revision > snapshotRevision);
               pendingRecoveryChunks = [];
               set(() => {
                 const components = applyChunksToComponents(activeStream.components, newerChunks);
@@ -1412,11 +1455,7 @@ export const useConversationStore = create<ConversationState>()(
             }
           }
 
-          const pendingMessage = activeStream
-            ? hydratedMessages.find((message) => message.id === activeStream.messageId)
-            : [...hydratedMessages].reverse().find((message) =>
-              message.conversationType === 'ai' && message.isStreaming === true && message.isComplete !== true,
-            );
+          const pendingMessage = activeStream ? hydratedMessages.find((message) => message.id === activeStream.messageId) : [...hydratedMessages].reverse().find((message) => message.conversationType === 'ai' && message.isStreaming === true && message.isComplete !== true);
           if (pendingMessage && !pendingMessage.isComplete) {
             const state = get();
             if (state.streamingMessageId !== pendingMessage.id) {
@@ -1454,10 +1493,7 @@ export const useConversationStore = create<ConversationState>()(
             cursor: state.messagesCursor ?? undefined,
             limit: DEFAULT_MESSAGES_LIMIT,
           });
-          if (
-            requestSequence !== currentMessagesRequestSequence ||
-            get().currentConversationId !== conversationId
-          ) return;
+          if (requestSequence !== currentMessagesRequestSequence || get().currentConversationId !== conversationId) return;
 
           set((s) => {
             // Prepend older messages, dedupe by ID
@@ -1524,9 +1560,7 @@ export const useConversationStore = create<ConversationState>()(
         // Persist the conversation's skill selection (covers new conversations,
         // where toggles happened before the conversation existed).
         if (payload.skillIds?.length) {
-          api
-            .updateConversation(conversationId, { skillIds: payload.skillIds })
-            .catch((err) => console.error('[ConversationStore] persist skills on send error:', err));
+          api.updateConversation(conversationId, { skillIds: payload.skillIds }).catch((err) => console.error('[ConversationStore] persist skills on send error:', err));
         }
 
         try {
@@ -1548,15 +1582,9 @@ export const useConversationStore = create<ConversationState>()(
             // Insert (not append): SSE may already have delivered AI answers
             // created after this user message while the POST was in flight.
             const nextMessages = alreadyExists ? s.messages : insertMessageChronologically(s.messages, result.userMessage);
-            const nextTaggedAgentIds = result.userMessage.agentIds?.length
-              ? result.userMessage.agentIds
-              : undefined;
+            const nextTaggedAgentIds = result.userMessage.agentIds?.length ? result.userMessage.agentIds : undefined;
             const prevTagged = s.currentConversation?.taggedAgentIds;
-            const taggedChanged =
-              !!nextTaggedAgentIds &&
-              s.currentConversation?.id === conversationId &&
-              (prevTagged?.length !== nextTaggedAgentIds.length ||
-                nextTaggedAgentIds.some((agentId, i) => agentId !== prevTagged[i]));
+            const taggedChanged = !!nextTaggedAgentIds && s.currentConversation?.id === conversationId && (prevTagged?.length !== nextTaggedAgentIds.length || nextTaggedAgentIds.some((agentId, i) => agentId !== prevTagged[i]));
             const inFlightSendConversations = new Set(s.inFlightSendConversations);
             inFlightSendConversations.delete(conversationId);
 
@@ -1566,7 +1594,10 @@ export const useConversationStore = create<ConversationState>()(
               messagesTotal: alreadyExists ? s.messagesTotal : s.messagesTotal + 1,
               selectedModelId: payload.modelId || s.selectedModelId,
               currentConversation: taggedChanged
-                ? { ...s.currentConversation!, taggedAgentIds: nextTaggedAgentIds }
+                ? {
+                    ...s.currentConversation!,
+                    taggedAgentIds: nextTaggedAgentIds,
+                  }
                 : s.currentConversation,
               pendingAssistantMessageId: result.aiMessageId ?? s.pendingAssistantMessageId,
               inFlightSendConversations,
@@ -1587,12 +1618,8 @@ export const useConversationStore = create<ConversationState>()(
             isAwaitingFirstChunk: false,
             awaitingConversationId: null,
             optimisticMessages: s.optimisticMessages.filter((m) => m.id !== tempId),
-            earlyStreamErrors: new Map(
-              [...s.earlyStreamErrors].filter(([errorConversationId]) => errorConversationId !== conversationId),
-            ),
-            inFlightSendConversations: new Set(
-              [...s.inFlightSendConversations].filter((sendConversationId) => sendConversationId !== conversationId),
-            ),
+            earlyStreamErrors: new Map([...s.earlyStreamErrors].filter(([errorConversationId]) => errorConversationId !== conversationId)),
+            inFlightSendConversations: new Set([...s.inFlightSendConversations].filter((sendConversationId) => sendConversationId !== conversationId)),
           }));
 
           // Handle MODEL_INACTIVE error - refresh models and clear selection
@@ -1605,7 +1632,9 @@ export const useConversationStore = create<ConversationState>()(
             // Clear selected model so it falls back to default
             set({ selectedModelId: null, selectedReasoningEffort: null });
           } else {
-            toast.error(translateConversation('toasts.messages.sendError'), { description: apiError.message });
+            toast.error(translateConversation('toasts.messages.sendError'), {
+              description: apiError.message,
+            });
           }
           throw err;
         }
@@ -1634,13 +1663,21 @@ export const useConversationStore = create<ConversationState>()(
         const found = state.messages.find((m) => m.id === messageId);
         const questionMsgId = found?.questionMessageId || null;
 
-        set({ isAwaitingFirstChunk: true, awaitingConversationId: conversationId, streamingQuestionMessageId: questionMsgId });
+        set({
+          isAwaitingFirstChunk: true,
+          awaitingConversationId: conversationId,
+          streamingQuestionMessageId: questionMsgId,
+        });
         try {
           await api.regenerateMessage(conversationId, messageId);
           // Streaming will handle the new response via SSE
         } catch (err) {
           const apiError = parseApiError(err);
-          set({ isAwaitingFirstChunk: false, awaitingConversationId: null, streamingQuestionMessageId: null });
+          set({
+            isAwaitingFirstChunk: false,
+            awaitingConversationId: null,
+            streamingQuestionMessageId: null,
+          });
 
           // Handle MODEL_INACTIVE error - refresh models and clear selection
           if (apiError.code === ErrorCode.MODEL_INACTIVE) {
@@ -1765,11 +1802,13 @@ export const useConversationStore = create<ConversationState>()(
           });
           set({
             streamingStateCache: newCache,
-            ...(state.awaitingConversationId === event.conversationId ? {
-              isAwaitingFirstChunk: false,
-              awaitingConversationId: null,
-              pendingAssistantMessageId: event.messageId,
-            } : {}),
+            ...(state.awaitingConversationId === event.conversationId
+              ? {
+                  isAwaitingFirstChunk: false,
+                  awaitingConversationId: null,
+                  pendingAssistantMessageId: event.messageId,
+                }
+              : {}),
           });
           return;
         }
@@ -1785,7 +1824,9 @@ export const useConversationStore = create<ConversationState>()(
         streamingBuffer.setFlushCallback((chunks) => {
           set((s) => {
             const components = applyChunksToComponents(s.streamingComponents, chunks);
-            const nextState: Partial<ConversationState> = { streamingComponents: components };
+            const nextState: Partial<ConversationState> = {
+              streamingComponents: components,
+            };
             if (components.length > 0 && s.isAwaitingFirstChunk) {
               nextState.isAwaitingFirstChunk = false; // hide loader once chunks are renderable
               nextState.awaitingConversationId = null;
@@ -1848,7 +1889,11 @@ export const useConversationStore = create<ConversationState>()(
           if (resyncHeldChunks.length >= MAX_RESYNC_HELD_CHUNKS) {
             resyncHeldChunks = []; // the snapshot supersedes the held span
           } else {
-            resyncHeldChunks.push({ action: event.action, component: event.component, revision: event.revision });
+            resyncHeldChunks.push({
+              action: event.action,
+              component: event.component,
+              revision: event.revision,
+            });
           }
           return;
         }
@@ -1866,9 +1911,7 @@ export const useConversationStore = create<ConversationState>()(
         }
 
         if (!state.isStreaming || state.streamingConversationId !== event.conversationId) {
-          const placeholder = state.messages.find((message) =>
-            message.conversationType === 'ai' && message.isStreaming === true && message.isComplete !== true,
-          );
+          const placeholder = state.messages.find((message) => message.conversationType === 'ai' && message.isStreaming === true && message.isComplete !== true);
           set({
             isStreaming: true,
             streamingConversationId: event.conversationId,
@@ -1941,9 +1984,7 @@ export const useConversationStore = create<ConversationState>()(
         setTimeout(() => {
           if (turnGeneration !== clientMetricsGeneration) return;
           const clientMetrics = streamMetrics.snapshotAndReset();
-          api
-            .reportFrontendLatency(conversationId, messageId, clientMetrics ? { ...payload, clientMetrics } : payload)
-            .catch((err) => console.error('[ConversationStore] frontend latency report failed:', err));
+          api.reportFrontendLatency(conversationId, messageId, clientMetrics ? { ...payload, clientMetrics } : payload).catch((err) => console.error('[ConversationStore] frontend latency report failed:', err));
         }, CLIENT_METRICS_HIGHLIGHT_GRACE_MS);
       },
 
@@ -1967,21 +2008,21 @@ export const useConversationStore = create<ConversationState>()(
           if (newCache.get(event.conversationId)?.streamingMessageId === event.messageId) {
             newCache.delete(event.conversationId);
           }
-          const clearCompletedStream =
-            state.streamingMessageId === event.messageId ||
-            state.pendingAssistantMessageId === event.messageId;
+          const clearCompletedStream = state.streamingMessageId === event.messageId || state.pendingAssistantMessageId === event.messageId;
           set({
             streamingStateCache: newCache,
-            ...(clearCompletedStream ? {
-              isStreaming: false,
-              streamingConversationId: null,
-              streamingMessageId: null,
-              streamingQuestionMessageId: null,
-              streamingComponents: [],
-              isAwaitingFirstChunk: false,
-              awaitingConversationId: null,
-              pendingAssistantMessageId: null,
-            } : {}),
+            ...(clearCompletedStream
+              ? {
+                  isStreaming: false,
+                  streamingConversationId: null,
+                  streamingMessageId: null,
+                  streamingQuestionMessageId: null,
+                  streamingComponents: [],
+                  isAwaitingFirstChunk: false,
+                  awaitingConversationId: null,
+                  pendingAssistantMessageId: null,
+                }
+              : {}),
           });
 
           try {
@@ -2003,8 +2044,7 @@ export const useConversationStore = create<ConversationState>()(
           return;
         }
 
-        const completesActiveStream =
-          state.streamingMessageId === event.messageId || state.pendingAssistantMessageId === event.messageId;
+        const completesActiveStream = state.streamingMessageId === event.messageId || state.pendingAssistantMessageId === event.messageId;
         if (completesActiveStream) {
           streamingBuffer.flush();
           streamingBuffer.clear();
@@ -2042,13 +2082,12 @@ export const useConversationStore = create<ConversationState>()(
         // Recover the persisted message if its ordered SSE update was missed.
         try {
           const message = await api.fetchMessage(event.conversationId, event.messageId);
-           let resolvedMessage = message;
+          let resolvedMessage = message;
 
-           set((s) => {
-             resolvedMessage = s.messages.find((candidate) => candidate.id === event.messageId && candidate.isComplete) ?? message;
-             const result = upsertMessage(s.messages, resolvedMessage);
-             const ownsCompletedStream =
-               s.streamingMessageId === event.messageId || s.pendingAssistantMessageId === event.messageId;
+          set((s) => {
+            resolvedMessage = s.messages.find((candidate) => candidate.id === event.messageId && candidate.isComplete) ?? message;
+            const result = upsertMessage(s.messages, resolvedMessage);
+            const ownsCompletedStream = s.streamingMessageId === event.messageId || s.pendingAssistantMessageId === event.messageId;
 
             // Clean stale cache entry to prevent fetchMessages from restoring it
             const cleanedCache = new Map(s.streamingStateCache);
@@ -2060,16 +2099,18 @@ export const useConversationStore = create<ConversationState>()(
               messages: result.messages,
               messagesTotal: result.inserted ? s.messagesTotal + 1 : s.messagesTotal,
               streamingStateCache: cleanedCache,
-              ...(ownsCompletedStream ? {
-                isStreaming: false,
-                streamingConversationId: null,
-                streamingMessageId: null,
-                streamingQuestionMessageId: null,
-                streamingComponents: [],
-                isAwaitingFirstChunk: false,
-                awaitingConversationId: null,
-                pendingAssistantMessageId: null,
-              } : {}),
+              ...(ownsCompletedStream
+                ? {
+                    isStreaming: false,
+                    streamingConversationId: null,
+                    streamingMessageId: null,
+                    streamingQuestionMessageId: null,
+                    streamingComponents: [],
+                    isAwaitingFirstChunk: false,
+                    awaitingConversationId: null,
+                    pendingAssistantMessageId: null,
+                  }
+                : {}),
             };
           });
 
@@ -2084,8 +2125,7 @@ export const useConversationStore = create<ConversationState>()(
           console.error('[ConversationStore] onStreamComplete fetch error:', err);
           // Still clear streaming state and stale cache entry
           const current = get();
-          const ownsCompletedStream =
-            current.streamingMessageId === event.messageId || current.pendingAssistantMessageId === event.messageId;
+          const ownsCompletedStream = current.streamingMessageId === event.messageId || current.pendingAssistantMessageId === event.messageId;
           if (ownsCompletedStream) {
             const cleanedCache = new Map(current.streamingStateCache);
             if (cleanedCache.get(event.conversationId)?.streamingMessageId === event.messageId) {
@@ -2116,18 +2156,12 @@ export const useConversationStore = create<ConversationState>()(
           set({ pendingLatencyPaint: null });
         }
         const cachedStream = state.streamingStateCache.get(event.conversationId);
-        const ownsForegroundStream =
-          state.streamingMessageId === event.messageId || state.pendingAssistantMessageId === event.messageId;
+        const ownsForegroundStream = state.streamingMessageId === event.messageId || state.pendingAssistantMessageId === event.messageId;
         const ownsCachedStream = cachedStream?.streamingMessageId === event.messageId;
         const foregroundMessageId = state.streamingMessageId ?? state.pendingAssistantMessageId;
-        const ownsCompletedError =
-          state.pendingTerminalErrorKey === eventStreamKey &&
-          (!foregroundMessageId || foregroundMessageId === event.messageId);
+        const ownsCompletedError = state.pendingTerminalErrorKey === eventStreamKey && (!foregroundMessageId || foregroundMessageId === event.messageId);
         if (!ownsForegroundStream && !ownsCachedStream && !ownsCompletedError) {
-          if (
-            state.inFlightSendConversations.has(event.conversationId) &&
-            !foregroundMessageId
-          ) {
+          if (state.inFlightSendConversations.has(event.conversationId) && !foregroundMessageId) {
             const earlyStreamErrors = new Map(state.earlyStreamErrors);
             earlyStreamErrors.set(event.conversationId, event);
             set({ earlyStreamErrors });
@@ -2154,16 +2188,18 @@ export const useConversationStore = create<ConversationState>()(
           set({
             streamingStateCache: newCache,
             ...(state.pendingTerminalErrorKey === eventStreamKey ? { pendingTerminalErrorKey: null } : {}),
-            ...(ownsForegroundStream ? {
-              isStreaming: false,
-              streamingConversationId: null,
-              streamingMessageId: null,
-              streamingQuestionMessageId: null,
-              streamingComponents: [],
-              isAwaitingFirstChunk: false,
-              awaitingConversationId: null,
-              pendingAssistantMessageId: null,
-            } : {}),
+            ...(ownsForegroundStream
+              ? {
+                  isStreaming: false,
+                  streamingConversationId: null,
+                  streamingMessageId: null,
+                  streamingQuestionMessageId: null,
+                  streamingComponents: [],
+                  isAwaitingFirstChunk: false,
+                  awaitingConversationId: null,
+                  pendingAssistantMessageId: null,
+                }
+              : {}),
           });
           return;
         }
@@ -2181,7 +2217,10 @@ export const useConversationStore = create<ConversationState>()(
 
         if (errorInfo.isCritical) {
           set({
-            criticalError: { code: event.errorCode, message: errorInfo.description },
+            criticalError: {
+              code: event.errorCode,
+              message: errorInfo.description,
+            },
             inputDisabled: true,
             isStreaming: false,
             streamingConversationId: null,
@@ -2246,14 +2285,7 @@ export const useConversationStore = create<ConversationState>()(
           let clearedOptimistic = false;
           const optimisticMessages = s.optimisticMessages.filter((m) => {
             if (m.id === event.message.id) return false;
-            if (
-              !clearedOptimistic &&
-              m.id.startsWith('temp-') &&
-              m.conversationType === 'user' &&
-              event.message.conversationType === 'user' &&
-              m.conversationId === event.conversationId &&
-              m.content === event.message.content
-            ) {
+            if (!clearedOptimistic && m.id.startsWith('temp-') && m.conversationType === 'user' && event.message.conversationType === 'user' && m.conversationId === event.conversationId && m.content === event.message.content) {
               clearedOptimistic = true;
               return false;
             }
@@ -2279,9 +2311,7 @@ export const useConversationStore = create<ConversationState>()(
         const state = get();
         if (event.conversationId !== state.currentConversationId) return;
 
-        const completesPendingStream = event.message.isComplete === true && (
-          state.streamingMessageId === event.messageId || state.pendingAssistantMessageId === event.messageId
-        );
+        const completesPendingStream = event.message.isComplete === true && (state.streamingMessageId === event.messageId || state.pendingAssistantMessageId === event.messageId);
         const completesWithError = completesPendingStream && hasErrorComponent(event.message);
         if (completesPendingStream) {
           cancelPendingStreamReconciliation();
@@ -2290,83 +2320,96 @@ export const useConversationStore = create<ConversationState>()(
         }
 
         const existing = state.messages.find((message) => message.id === event.messageId);
-         if (existing) {
-           set((s) => {
-             const cache = new Map(s.streamingStateCache);
-             if (completesPendingStream) cache.delete(event.conversationId);
-              return {
-               messages: s.messages.map((message) => (message.id === event.messageId ? withPendingLatency({
-                 ...message,
-                 ...event.message,
-                  ...(event.message.components ? { components: event.message.components } : {}),
-                 reliabilityEvaluation: event.message.reliabilityEvaluation ?? message.reliabilityEvaluation,
-                 correctionWorkflow: event.message.correctionWorkflow ?? message.correctionWorkflow,
-              }) : message)),
-              ...(completesPendingStream ? {
-                isStreaming: false,
-                streamingConversationId: null,
-                streamingMessageId: null,
-                streamingQuestionMessageId: null,
-                streamingComponents: [],
-                isAwaitingFirstChunk: false,
-                 awaitingConversationId: null,
-                 pendingAssistantMessageId: null,
-                 pendingTerminalErrorKey: completesWithError
-                   ? `${event.conversationId}:${event.messageId}`
-                   : null,
-                 streamingStateCache: cache,
-              } : {}),
+        if (existing) {
+          set((s) => {
+            const cache = new Map(s.streamingStateCache);
+            if (completesPendingStream) cache.delete(event.conversationId);
+            return {
+              messages: s.messages.map((message) =>
+                message.id === event.messageId
+                  ? withPendingLatency({
+                      ...message,
+                      ...event.message,
+                      ...(event.message.components ? { components: event.message.components } : {}),
+                      reliabilityEvaluation: event.message.reliabilityEvaluation ?? message.reliabilityEvaluation,
+                      correctionWorkflow: event.message.correctionWorkflow ?? message.correctionWorkflow,
+                    })
+                  : message,
+              ),
+              ...(event.message.conversationUsage ? { conversationUsage: event.message.conversationUsage } : {}),
+              ...(completesPendingStream
+                ? {
+                    isStreaming: false,
+                    streamingConversationId: null,
+                    streamingMessageId: null,
+                    streamingQuestionMessageId: null,
+                    streamingComponents: [],
+                    isAwaitingFirstChunk: false,
+                    awaitingConversationId: null,
+                    pendingAssistantMessageId: null,
+                    pendingTerminalErrorKey: completesWithError ? `${event.conversationId}:${event.messageId}` : null,
+                    streamingStateCache: cache,
+                  }
+                : {}),
             };
           });
           return;
         }
 
-         if (event.message.conversationType && event.message.createdAt) {
-           set((s) => {
-              const message = withPendingLatency({
-                ...event.message,
-                ...(event.message.components ? { components: event.message.components } : {}),
-               id: event.messageId,
-               conversationId: event.conversationId,
-             } as Message);
-             const result = upsertMessage(s.messages, message);
+        if (event.message.conversationType && event.message.createdAt) {
+          set((s) => {
+            const message = withPendingLatency({
+              ...event.message,
+              ...(event.message.components ? { components: event.message.components } : {}),
+              id: event.messageId,
+              conversationId: event.conversationId,
+            } as Message);
+            const result = upsertMessage(s.messages, message);
             const cache = new Map(s.streamingStateCache);
             if (completesPendingStream) cache.delete(event.conversationId);
             return {
               messages: result.messages,
               messagesTotal: result.inserted ? s.messagesTotal + 1 : s.messagesTotal,
-              ...(completesPendingStream ? {
-                isStreaming: false,
-                streamingConversationId: null,
-                streamingMessageId: null,
-                streamingQuestionMessageId: null,
-                streamingComponents: [],
-                isAwaitingFirstChunk: false,
-                 awaitingConversationId: null,
-                 pendingAssistantMessageId: null,
-                 pendingTerminalErrorKey: completesWithError
-                   ? `${event.conversationId}:${event.messageId}`
-                   : null,
-                 streamingStateCache: cache,
-              } : {}),
+              ...(completesPendingStream
+                ? {
+                    isStreaming: false,
+                    streamingConversationId: null,
+                    streamingMessageId: null,
+                    streamingQuestionMessageId: null,
+                    streamingComponents: [],
+                    isAwaitingFirstChunk: false,
+                    awaitingConversationId: null,
+                    pendingAssistantMessageId: null,
+                    pendingTerminalErrorKey: completesWithError ? `${event.conversationId}:${event.messageId}` : null,
+                    streamingStateCache: cache,
+                  }
+                : {}),
             };
           });
           return;
         }
 
-        void api.fetchMessage(event.conversationId, event.messageId).then((message) => {
-          if (get().currentConversationId !== event.conversationId) return;
-          set((s) => {
-            // The partial SSE update may arrive before the fetch it triggers. It is newer
-            // than a response produced just before correction metadata was persisted.
-            const reconciled = { ...message, ...event.message, id: event.messageId, conversationId: event.conversationId } as Message;
-            const result = upsertMessage(s.messages, reconciled);
-            return {
-              messages: result.messages,
-              messagesTotal: result.inserted ? s.messagesTotal + 1 : s.messagesTotal,
-            };
-          });
-        }).catch((err) => console.error('[ConversationStore] message update reconciliation error:', err));
+        void api
+          .fetchMessage(event.conversationId, event.messageId)
+          .then((message) => {
+            if (get().currentConversationId !== event.conversationId) return;
+            set((s) => {
+              // The partial SSE update may arrive before the fetch it triggers. It is newer
+              // than a response produced just before correction metadata was persisted.
+              const reconciled = {
+                ...message,
+                ...event.message,
+                id: event.messageId,
+                conversationId: event.conversationId,
+              } as Message;
+              const result = upsertMessage(s.messages, reconciled);
+              return {
+                messages: result.messages,
+                messagesTotal: result.inserted ? s.messagesTotal + 1 : s.messagesTotal,
+              };
+            });
+          })
+          .catch((err) => console.error('[ConversationStore] message update reconciliation error:', err));
       },
 
       reconcilePendingStream: async () => {
@@ -2418,10 +2461,7 @@ export const useConversationStore = create<ConversationState>()(
         } catch (err) {
           console.error('[ConversationStore] pending stream reconciliation error:', err);
           const current = get();
-          if (
-            current.currentConversationId === conversationId
-            && (current.streamingMessageId ?? current.pendingAssistantMessageId) === messageId
-          ) {
+          if (current.currentConversationId === conversationId && (current.streamingMessageId ?? current.pendingAssistantMessageId) === messageId) {
             if (isTransientReconciliationError(err)) {
               schedulePendingStreamReconciliation(() => get().reconcilePendingStream());
             }
@@ -2439,7 +2479,9 @@ export const useConversationStore = create<ConversationState>()(
        * tracked run it falls back to the canonical message reload.
        */
       onStreamResyncRequired: (event) => {
-        console.warn('[ConversationStore] stream resync required', { reason: event.reason });
+        console.warn('[ConversationStore] stream resync required', {
+          reason: event.reason,
+        });
         const conversationId = get().currentConversationId;
         if (!conversationId) return;
         void forcedResyncActiveStream(conversationId);
@@ -2515,7 +2557,10 @@ export const useConversationStore = create<ConversationState>()(
               });
               updatedCurrent = {
                 ...s.currentConversation,
-                groupMeta: { ...s.currentConversation.groupMeta, members: updatedMembers },
+                groupMeta: {
+                  ...s.currentConversation.groupMeta,
+                  members: updatedMembers,
+                },
               };
             }
 
@@ -2600,7 +2645,10 @@ export const useConversationStore = create<ConversationState>()(
       // ===== Workspace Selection =====
 
       setSelectedWorkspaceIds: (workspaceIds) => {
-        set({ selectedWorkspaceIds: workspaceIds, ...(workspaceIds.length ? { selectedSemanticModelId: null } : {}) });
+        set({
+          selectedWorkspaceIds: workspaceIds,
+          ...(workspaceIds.length ? { selectedSemanticModelId: null } : {}),
+        });
       },
 
       resetSelectedWorkspaceIds: () => {
@@ -2619,6 +2667,10 @@ export const useConversationStore = create<ConversationState>()(
         set({ deepSearchEnabled: enabled });
       },
 
+      setWebConnectorAccessEnabled: (enabled) => {
+        set({ webConnectorAccessEnabled: enabled });
+      },
+
       setSelectedSkillIds: (skillIds) => {
         set({ selectedSkillIds: skillIds });
         get().persistSelectedSkills();
@@ -2626,9 +2678,7 @@ export const useConversationStore = create<ConversationState>()(
 
       toggleSelectedSkill: (skillId) => {
         set((s) => ({
-          selectedSkillIds: s.selectedSkillIds.includes(skillId)
-            ? s.selectedSkillIds.filter((id) => id !== skillId)
-            : [...s.selectedSkillIds, skillId],
+          selectedSkillIds: s.selectedSkillIds.includes(skillId) ? s.selectedSkillIds.filter((id) => id !== skillId) : [...s.selectedSkillIds, skillId],
         }));
         get().persistSelectedSkills();
       },
@@ -2645,7 +2695,9 @@ export const useConversationStore = create<ConversationState>()(
         const { currentConversationId, selectedSkillIds } = get();
         if (!currentConversationId) return;
         api
-          .updateConversation(currentConversationId, { skillIds: selectedSkillIds })
+          .updateConversation(currentConversationId, {
+            skillIds: selectedSkillIds,
+          })
           .catch((err) => console.error('[ConversationStore] persistSelectedSkills error:', err));
       },
 
@@ -2674,6 +2726,7 @@ export const useConversationStore = create<ConversationState>()(
         set({
           messages: [],
           messagesTotal: 0,
+          conversationUsage: null,
           messagesLoading: false,
           messagesLoadingOlder: false,
           messagesHasMore: false,
@@ -2715,6 +2768,7 @@ export const useConversationStore = create<ConversationState>()(
           conversationLoading: false,
           messages: [],
           messagesTotal: 0,
+          conversationUsage: null,
           messagesLoading: false,
           messagesLoadingOlder: false,
           messagesHasMore: false,
@@ -2774,10 +2828,7 @@ const EMPTY_CONVERSATIONS: Conversation[] = [];
 const EMPTY_CONVERSATION_SUMMARIES: ConversationSummary[] = [];
 const EMPTY_MESSAGES: Message[] = [];
 
-export const useConversations = () =>
-  useConversationStore((s) =>
-    s.conversationSummaries.length === 0 ? EMPTY_CONVERSATION_SUMMARIES : s.conversationSummaries,
-  );
+export const useConversations = () => useConversationStore((s) => (s.conversationSummaries.length === 0 ? EMPTY_CONVERSATION_SUMMARIES : s.conversationSummaries));
 
 export const useHistoryConversations = () =>
   useConversationStore(
@@ -2795,15 +2846,11 @@ export const useConversationsByProject = (projectId: string) =>
     }),
   );
 
-export const useProjectConversationsLoading = (projectId: string) =>
-  useConversationStore((s) => !!s.projectConversationsLoading[projectId]);
+export const useProjectConversationsLoading = (projectId: string) => useConversationStore((s) => !!s.projectConversationsLoading[projectId]);
 
 // ===== Project list helpers =====
 
-function mapProjectLists(
-  lists: Record<string, Conversation[]>,
-  fn: (c: Conversation) => Conversation,
-): Record<string, Conversation[]> {
+function mapProjectLists(lists: Record<string, Conversation[]>, fn: (c: Conversation) => Conversation): Record<string, Conversation[]> {
   const next: Record<string, Conversation[]> = {};
   for (const [pid, arr] of Object.entries(lists)) {
     next[pid] = arr.map(fn);
@@ -2811,10 +2858,7 @@ function mapProjectLists(
   return next;
 }
 
-function filterProjectLists(
-  lists: Record<string, Conversation[]>,
-  pred: (c: Conversation) => boolean,
-): Record<string, Conversation[]> {
+function filterProjectLists(lists: Record<string, Conversation[]>, pred: (c: Conversation) => boolean): Record<string, Conversation[]> {
   const next: Record<string, Conversation[]> = {};
   for (const [pid, arr] of Object.entries(lists)) {
     next[pid] = arr.filter(pred);
@@ -2822,13 +2866,7 @@ function filterProjectLists(
   return next;
 }
 
-function rebalanceProjectLists(
-  lists: Record<string, Conversation[]>,
-  conversationId: string,
-  fromProjectId: string | null,
-  toProjectId: string | null,
-  conv: Conversation | null,
-): Record<string, Conversation[]> {
+function rebalanceProjectLists(lists: Record<string, Conversation[]>, conversationId: string, fromProjectId: string | null, toProjectId: string | null, conv: Conversation | null): Record<string, Conversation[]> {
   const next: Record<string, Conversation[]> = { ...lists };
 
   // Remove from source list (if loaded)
@@ -2841,9 +2879,7 @@ function rebalanceProjectLists(
     const targetList = next[toProjectId];
     if (targetList) {
       const exists = targetList.some((c) => c.id === conversationId);
-      next[toProjectId] = exists
-        ? targetList.map((c) => (c.id === conversationId ? conv : c))
-        : [conv, ...targetList];
+      next[toProjectId] = exists ? targetList.map((c) => (c.id === conversationId ? conv : c)) : [conv, ...targetList];
     }
   }
 
@@ -2878,12 +2914,7 @@ export const useAllMessages = () =>
       const newOptimistic = s.optimisticMessages.filter((m) => {
         if (seenIds.has(m.id)) return false;
         if (m.id.startsWith('temp-') && m.conversationType === 'user') {
-          return !s.messages.some(
-            (msg) =>
-              msg.conversationType === 'user' &&
-              msg.conversationId === m.conversationId &&
-              msg.content === m.content,
-          );
+          return !s.messages.some((msg) => msg.conversationType === 'user' && msg.conversationId === m.conversationId && msg.content === m.content);
         }
         return true;
       });
@@ -2901,8 +2932,7 @@ export const useAwaitingConversationId = () => useConversationStore((s) => s.awa
 
 export const useCriticalError = () => useConversationStore((s) => s.criticalError);
 
-export const useInputDisabled = () =>
-  useConversationStore((s) => s.inputDisabled || s.conversationLoading);
+export const useInputDisabled = () => useConversationStore((s) => s.inputDisabled || s.conversationLoading);
 
 export const useMessagesHasMore = () => useConversationStore((s) => s.messagesHasMore);
 
@@ -2940,6 +2970,10 @@ export const useDeepSearchEnabled = () => useConversationStore((s) => s.deepSear
 
 export const useSetDeepSearchEnabled = () => useConversationStore((s) => s.setDeepSearchEnabled);
 
+export const useWebConnectorAccessEnabled = () => useConversationStore((s) => s.webConnectorAccessEnabled);
+
+export const useSetWebConnectorAccessEnabled = () => useConversationStore((s) => s.setWebConnectorAccessEnabled);
+
 export const useSelectedSkillIds = () => useConversationStore((s) => s.selectedSkillIds);
 
 export const useToggleSelectedSkill = () => useConversationStore((s) => s.toggleSelectedSkill);
@@ -2970,18 +3004,11 @@ export const useDisplayMessages = () =>
         const newOptimistic = s.optimisticMessages.filter((m) => {
           if (seenIds.has(m.id)) return false;
           if (m.id.startsWith('temp-') && m.conversationType === 'user') {
-            return !s.messages.some(
-              (msg) =>
-                msg.conversationType === 'user' &&
-                msg.conversationId === m.conversationId &&
-                msg.content === m.content,
-            );
+            return !s.messages.some((msg) => msg.conversationType === 'user' && msg.conversationId === m.conversationId && msg.content === m.content);
           }
           return true;
         });
-        combined = newOptimistic.length === 0
-          ? s.messages
-          : newOptimistic.reduce(insertMessageChronologically, s.messages);
+        combined = newOptimistic.length === 0 ? s.messages : newOptimistic.reduce(insertMessageChronologically, s.messages);
       }
 
       if (combined.length === 0) return EMPTY_MESSAGES;

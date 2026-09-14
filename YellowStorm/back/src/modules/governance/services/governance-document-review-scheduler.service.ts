@@ -2,7 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
-import { ConfigService } from '@nestjs/config';
+import { FeatureVisibilityService } from '@modules/system/feature-visibility.service';
 import { GovernanceDocument, GovernanceDocumentDocument } from '../schemas/governance-document.schema';
 import { GovernanceDocumentEventService } from './governance-document-event.service';
 
@@ -10,11 +10,11 @@ const BATCH_SIZE = 100;
 
 @Injectable()
 export class GovernanceDocumentReviewSchedulerService {
-  constructor(@InjectModel(GovernanceDocument.name) private readonly model: Model<GovernanceDocumentDocument>, private readonly events: GovernanceDocumentEventService, private readonly config: ConfigService) {}
+  constructor(@InjectModel(GovernanceDocument.name) private readonly model: Model<GovernanceDocumentDocument>, private readonly events: GovernanceDocumentEventService, private readonly features: FeatureVisibilityService) {}
 
   @Cron(CronExpression.EVERY_HOUR, { name: 'governance.document-review-due' })
   async scheduleDueReviews(): Promise<void> {
-    if (!this.config.get<boolean>('dataRoom.validityIntelligenceEnabled')) return;
+    if (!this.features.isEnabled('dataRoomValidityIntelligence')) return;
     await this.run(new Date());
   }
 

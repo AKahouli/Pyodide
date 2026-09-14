@@ -40,6 +40,18 @@ export interface TaskArtifact {
   metadata?: Record<string, unknown>;
 }
 
+export interface RecentPlaybookArtifact {
+  source: 'playbook';
+  artifactId: string;
+  filename: string;
+  artifactKind: string;
+  mimeType?: string;
+  playbookId: string;
+  playbookName: string;
+  executionId: string;
+  generatedAt: string;
+}
+
 export interface TaskTemplate {
   id: string;
   key: string;
@@ -1123,7 +1135,7 @@ export interface PlaybookQueryParams {
   page?: number;
   limit?: number;
   search?: string;
-  sortBy?: 'updatedAt' | 'createdAt' | 'name' | 'taskCount' | 'lastExecutionAt';
+  sortBy?: 'updatedAt' | 'createdAt' | 'name' | 'taskCount' | 'lastExecutionAt' | 'activityAt';
   sortOrder?: 'asc' | 'desc';
   minTasks?: number;
   maxTasks?: number;

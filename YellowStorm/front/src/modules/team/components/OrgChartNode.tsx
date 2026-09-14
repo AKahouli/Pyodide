@@ -7,9 +7,8 @@ import {
   ContextMenuContent,
   ContextMenuItem,
   ContextMenuTrigger,
-  ContextMenuSeparator,
 } from '@/components/ui/context-menu';
-import { Crown, Trash2, ArrowUp } from 'lucide-react';
+import { Crown, Trash2 } from 'lucide-react';
 import type { OrgChartNodeData } from '../hooks/useTeamCanvas';
 import { useModuleTranslation } from '@/modules/localization';
 
@@ -19,7 +18,7 @@ export const OrgChartNode = memo(function OrgChartNode({
 }: NodeProps) {
   const data = rawData as unknown as OrgChartNodeData;
   const { t } = useModuleTranslation('team');
-  const isRoot = !data.parentAgentId;
+  const isRoot = data.parentAgentId === null;
 
   return (
     <ContextMenu>
@@ -29,11 +28,13 @@ export const OrgChartNode = memo(function OrgChartNode({
             position={Position.Top}
             type='target'
             className='!bg-primary !w-3 !h-3 !border-2 !border-background'
+            aria-label={t('node.connectTo', { name: data.agentName })}
+            title={t('node.connectTo', { name: data.agentName })}
           />
 
           <CardHeader className='gap-0.5 rounded-t-md border-b p-3!'>
             <div className='flex items-center gap-2'>
-              {(isRoot || data.hasChildren) && (
+              {isRoot && (
                 <Crown className='h-3.5 w-3.5 text-amber-500 shrink-0' />
               )}
               <CardTitle className='text-sm font-medium truncate'>
@@ -60,27 +61,19 @@ export const OrgChartNode = memo(function OrgChartNode({
             </p>
           </CardContent>
 
-          <Handle
-            position={Position.Bottom}
-            type='source'
-            className='!bg-primary !w-3 !h-3 !border-2 !border-background'
-          />
+          {data.agentTypeSlug === 'manager' && (
+            <Handle
+              position={Position.Bottom}
+              type='source'
+              className='!bg-primary !w-3 !h-3 !border-2 !border-background'
+              aria-label={t('node.connectFrom', { name: data.agentName })}
+              title={t('node.connectFrom', { name: data.agentName })}
+            />
+          )}
         </Card>
       </ContextMenuTrigger>
 
       <ContextMenuContent>
-        <ContextMenuItem
-          onClick={() => {
-            const event = new CustomEvent('team:set-root', {
-              detail: { agentId: id },
-            });
-            window.dispatchEvent(event);
-          }}
-        >
-          <ArrowUp className='mr-2 h-4 w-4' />
-          {t('node.setAsRoot')}
-        </ContextMenuItem>
-        <ContextMenuSeparator />
         <ContextMenuItem
           className='text-destructive'
           onClick={() => {

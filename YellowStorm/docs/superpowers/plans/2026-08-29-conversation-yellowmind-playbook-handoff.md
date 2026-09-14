@@ -23,7 +23,7 @@
 - Include visible execution summaries and reusable process evidence, never raw chain-of-thought.
 - Use the existing Yellowmind clarification, draft construction, and Canvas handoff path.
 - Keep the MCP tool schema, ADK contract, protobuf files, and SSE contracts unchanged.
-- Reuse `VITE_PLAYBOOK_MCP_ASSISTANT_ENABLED` and `PLAYBOOK_MCP_ASSISTANT_ENABLED` as feature availability controls. Do not restore `VITE_PLAYBOOK_AGENT_ASSISTANT_ENABLED`.
+- Reuse `VITE_PLAYBOOK_MCP_ASSISTANT_ENABLED` and the persisted Admin Features `playbookMcpAssistant` setting as feature availability controls. Do not restore `VITE_PLAYBOOK_AGENT_ASSISTANT_ENABLED`.
 
 ---
 

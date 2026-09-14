@@ -3,6 +3,7 @@ import userEvent from '@testing-library/user-event';
 import type { ReactNode } from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { FeatureVisibilityCard } from './FeatureVisibilityCard';
+import { DEFAULT_FEATURE_VISIBILITY } from '../constants';
 
 const apiMocks = vi.hoisted(() => ({
   get: vi.fn(),
@@ -57,6 +58,9 @@ describe('FeatureVisibilityCard', () => {
 
     const playbook = await screen.findByLabelText('system.features.items.playbook.label');
     await waitFor(() => expect(playbook).toBeEnabled());
+    expect(screen.getByLabelText('system.features.items.playbookMcpConnectorReconciliation.label')).toBeEnabled();
+    expect(screen.getByLabelText('system.features.items.governanceScopeAudience.label')).toBeEnabled();
+    expect(screen.getByLabelText('system.features.items.dataRoomOutboxDispatch.label')).toBeEnabled();
     await userEvent.click(playbook);
     await waitFor(() => expect(playbook).toHaveAttribute('aria-checked', 'false'));
     await userEvent.click(screen.getByRole('button', { name: 'system.features.actions.save' }));

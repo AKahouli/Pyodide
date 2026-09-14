@@ -1,5 +1,7 @@
 """Extended AgentFactory coverage for diagram tools and connector workspace resolution."""
 
+import json
+
 from unittest.mock import MagicMock, Mock, patch
 
 import pytest
@@ -8,8 +10,10 @@ from google.adk.tools.agent_tool import AgentTool
 
 from src.smart_rag.agents.factories.base_factory import AgentFactory
 from src.smart_rag.infrastructure.factories import LLMFactory
+from src.smart_rag.infrastructure.external.purpose_aware_mcp import DISPLAY_PURPOSE_KEY
 from src.smart_rag.infrastructure.processing import PromptProcessor
 from src.smart_rag.infrastructure.processing import prepare_web_preview_after_tool
+from src.guardrails.adapters.google_adk import apply_guardrails_to_agent
 
 
 @pytest.fixture
@@ -68,6 +72,33 @@ class TestBaseFactoryExtended:
         agent_factory.llm_factory.create_no_tool_calls_llm.assert_called_once_with(
             "gpt-4o", temperature=0.0, num_retries=0
         )
+
+    def test_web_preview_requires_user_facing_activity_purpose(self, agent_factory):
+        tool = agent_factory.create_web_preview_tool("gpt-4o")
+
+        declaration = tool._get_declaration()
+        schema = declaration.parameters_json_schema
+        assert DISPLAY_PURPOSE_KEY in schema["properties"]
+        assert DISPLAY_PURPOSE_KEY in schema["required"]
+
+    def test_web_preview_preserves_child_guardrail_propagation(self, agent_factory):
+        agent = agent_factory.create_agent(
+            name="Worker",
+            prompt="Help the user",
+            chatbot_name="gpt-4o",
+            generate_web_preview=True,
+        )
+        preview_agent = agent.tools[0].agent
+
+        apply_guardrails_to_agent(agent, {
+            "agent_params": {
+                "guardrails_json": json.dumps({
+                    "agent": {"promptInjection": {"outputEnabled": True}},
+                }),
+            },
+        })
+
+        assert preview_agent._guardrails_output_enabled is True
 
     def test_html_diagram_agent_preserves_omitted_temperature(self, agent_factory):
         agent_factory.create_agent(

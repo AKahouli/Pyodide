@@ -1,7 +1,8 @@
-import { Inject, Injectable, CanActivate, ExecutionContext } from '@nestjs/common';
+import { Inject, Injectable, CanActivate, ExecutionContext, forwardRef } from '@nestjs/common';
 import { NotFoundException, ForbiddenException } from '../../exceptions';
 import { ErrorCode } from '../../exceptions/constants/error-codes';
 import { CONVERSATION_STORE, type ConversationStore } from '../persistence/conversation-store';
+import { ProjectShareService } from '../../project/project-share.service';
 import { isOwnedId } from '../persistence/owned-id';
 
 interface RequestWithConversation extends Request {
@@ -11,7 +12,11 @@ interface RequestWithConversation extends Request {
 
 @Injectable()
 export class ConversationOwnerGuard implements CanActivate {
-  constructor(@Inject(CONVERSATION_STORE) private readonly conversationStore: ConversationStore) {}
+  constructor(
+    @Inject(CONVERSATION_STORE) private readonly conversationStore: ConversationStore,
+    @Inject(forwardRef(() => ProjectShareService))
+    private readonly projectShareService: ProjectShareService,
+  ) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
     const request = context.switchToHttp().getRequest<RequestWithConversation>();
@@ -39,14 +44,24 @@ export class ConversationOwnerGuard implements CanActivate {
     // Access logic:
     // 1. Creator and Members have full access
     // 2. Invited users can only use GET  join endpoint
+    // 3. Read-only GET access for anyone with project access (owner, share, or
+    //    public) on the conversation's project — writes stay with the
+    //    conversation owner/members. In particular the project owner can read
+    //    conversations collaborators created in their own project.
     const hasFullAccess = isCreator || isMember;
     const isJoiningAction = request.method === 'POST' && request.url.endsWith('/join');
     const requestPath = request.url.split('?')[0].replace(/\/$/, '');
     const exposesActiveStream = request.method === 'GET' && requestPath.endsWith('/active-stream');
     const hasGuestAccess =
       isInvited && !exposesActiveStream && (request.method === 'GET' || isJoiningAction);
+    const hasProjectReadAccess =
+      !hasFullAccess &&
+      !hasGuestAccess &&
+      request.method === 'GET' &&
+      Boolean(conversation.projectId) &&
+      (await this.projectShareService.hasAccess(userId, conversation.projectId!));
 
-    if (!hasFullAccess && !hasGuestAccess) {
+    if (!hasFullAccess && !hasGuestAccess && !hasProjectReadAccess) {
       throw new ForbiddenException(
         ErrorCode.CHAT_FORBIDDEN,
         'You do not have access to this conversation',

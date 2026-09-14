@@ -12,7 +12,7 @@ export interface ITeamMemberWithAgentResponse extends ITeamMemberResponse {
   agent?: {
     id: string;
     name: string;
-    agentType: { id: string; name: string };
+    agentType: { id: string; name: string; slug: string };
     role: string;
     description: string;
   };

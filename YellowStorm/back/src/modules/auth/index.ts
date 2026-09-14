@@ -11,4 +11,3 @@ export * from './interfaces/auth.interface';
 export * from './interfaces/jwt-payload.interface';
 export * from './dto/register.dto';
 export * from './dto/login.dto';
-export * from './dto/verify-email.dto';

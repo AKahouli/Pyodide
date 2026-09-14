@@ -181,7 +181,7 @@ export interface IAgentResponse {
   id: string;
   name: string;
   slug: string;
-  agentType: { id: string; name: string };
+  agentType: { id: string; name: string; slug: string };
   role: string;
   description: string;
   temperature: number;

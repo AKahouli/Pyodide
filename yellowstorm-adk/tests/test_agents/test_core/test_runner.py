@@ -348,6 +348,9 @@ class TestAgentRunner:
         mock_event.content.parts[0].function_call = None
         mock_event.content.parts[0].function_response = None
         mock_event.is_final_response.return_value = False
+        mock_event.actions.state_delta = {
+            "_connector_web_sources": [{"reference": "6", "object": {"content": {"source": "https://example.com"}}}],
+        }
 
         mock_final_event = MagicMock()
         mock_final_event.content = MagicMock()
@@ -356,6 +359,7 @@ class TestAgentRunner:
         mock_final_event.content.parts[0].function_call = None
         mock_final_event.content.parts[0].function_response = None
         mock_final_event.is_final_response.return_value = True
+        mock_final_event.actions.state_delta = {}
 
         async def mock_run_async(*args, **kwargs):
             yield mock_event
@@ -363,6 +367,8 @@ class TestAgentRunner:
 
         mock_runner_instance = MagicMock()
         mock_runner_instance.run_async = mock_run_async
+        mock_session = MagicMock()
+        mock_session.state = {}
 
         mock_streaming_formatter.format_streaming_event.return_value = {"type": "chunk"}
         mock_message_transformer.simple_tag_transformer.side_effect = [
@@ -370,8 +376,8 @@ class TestAgentRunner:
             ("Final [6]", "", ["[6]"]),
         ]
 
-        with patch('src.smart_rag.agents.core.runner.Runner', return_value=mock_runner_instance), \
-             patch.object(agent_runner, '_find_source_by_reference', side_effect=source_results), \
+        with patch('src.smart_rag.agents.core.runner.make_chat_runner', return_value=mock_runner_instance), \
+             patch.object(agent_runner, '_find_source_by_reference', side_effect=source_results) as mock_find_source, \
              patch.object(agent_runner, '_send_citation_component', new_callable=AsyncMock) as mock_send_citation_component, \
              patch.object(agent_runner, '_handle_final_response', new_callable=AsyncMock, return_value="Final [6]"):
             result = await agent_runner._run_standard_agent(
@@ -386,12 +392,14 @@ class TestAgentRunner:
                 task_order="1",
                 toolkit=mock_toolkit,
                 mcp_tools_used=[],
-                agent_id="agent_123"
+                agent_id="agent_123",
+                session=mock_session,
             )
 
         assert result[0] == "Final [6]"
         assert mock_send_citation_component.await_args_list[0].args[5] == "6"
         assert mock_send_citation_component.await_count == 1
+        assert mock_find_source.call_args_list[0].args[2]["_connector_web_sources"][0]["reference"] == "6"
         mock_queue.put.assert_any_call({"type": "chunk"})
 
     @pytest.mark.asyncio
@@ -490,7 +498,7 @@ class TestAgentRunner:
         mock_runner_instance = MagicMock()
         mock_runner_instance.run_async = mock_run_async
 
-        with patch('src.smart_rag.agents.core.runner.Runner', return_value=mock_runner_instance), \
+        with patch('src.smart_rag.agents.core.runner.make_chat_runner', return_value=mock_runner_instance), \
              patch.object(agent_runner, '_handle_function_call', new_callable=AsyncMock) as mock_handle_func, \
              patch.object(agent_runner, '_handle_final_response', new_callable=AsyncMock) as mock_handle_final, \
              patch.object(agent_runner, '_handle_ui_tool_response', new_callable=AsyncMock, return_value=False), \
@@ -513,6 +521,7 @@ class TestAgentRunner:
                 agent_id="agent_123",
                 agent_config={
                     "_is_temporary_child_agent": True,
+                    "display_name": "Researcher",
                     "agent_params": {"temporary_child_summary_session_id": "summary-session"},
                 },
             )
@@ -572,7 +581,7 @@ class TestAgentRunner:
                         "summary": "Calculate the requested result",
                         "render_kind": "run_code",
                         "actor_id": "agent_123",
-                        "actor_name": "TestAgent",
+                        "actor_name": "Researcher",
                         "primary_input": "print('safe')",
                         "primary_input_language": "python",
                     },
@@ -1304,6 +1313,32 @@ class TestAgentRunner:
             },
             "type": "text",
         }
+
+    def test_find_source_by_reference_reads_web_sources_from_session_state(self):
+        runner = AgentRunner(MagicMock(), MagicMock(), MagicMock(), MagicMock())
+        toolkit = MagicMock(sources_text=[], sources_image=[])
+        content = {
+            "source": "https://example.com/article", "title": "Article",
+            "exact_text": "Revenue increased by 38%.", "evidence_origin": "page_content",
+        }
+        source = runner._find_source_by_reference("2", toolkit, {
+            "_connector_web_sources": [{"reference": "2", "object": {"content": content}}],
+        })
+        assert source == {"source_object": {"content": content}, "type": "web"}
+
+    def test_connector_web_references_do_not_collide_with_toolkit_sources(self):
+        runner = AgentRunner(MagicMock(), MagicMock(), MagicMock(), MagicMock())
+        toolkit = MagicMock(sources_text=[{"reference": "[3]", "object": {}}], sources_image=[])
+        state = {}
+
+        runner._register_connector_citation_sources_from_response(
+            {"citation_sources": [{"type": "web", "source": "https://example.com"}]},
+            state,
+            "search",
+            toolkit,
+        )
+
+        assert state["_connector_web_sources"][0]["reference"] == "4"
 
     def test_find_source_by_reference_matches_connector_alias_reference(self):
         mock_event_extractor = MagicMock()

@@ -199,7 +199,6 @@ export function ToolRow({ conversationId, messageId, component, redactSensitiveT
         {summary
           ? <span data-tool-summary className='block truncate font-medium leading-4 text-foreground'>{summary}</span>
           : <span data-tool-name className='block truncate font-medium leading-4 text-foreground'>{label}</span>}
-        {summary && <span data-tool-name className='block truncate text-[11px] leading-3 text-muted-foreground'>{label}</span>}
       </span>
       {duration && <span className='shrink-0 tabular-nums'>- {duration}</span>}
       <ChevronRight className='size-3.5 shrink-0 transition-transform group-data-[state=open]:rotate-90' aria-hidden='true' />

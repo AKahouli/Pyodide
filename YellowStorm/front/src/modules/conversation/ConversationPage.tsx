@@ -8,6 +8,7 @@ import { ConversationOutlineRail } from './components/outline/ConversationOutlin
 import { StreamErrorDialog } from './components/StreamErrorDialog';
 import { NotFound } from './components/NotFound';
 import { Skeleton } from '@/components/ui/skeleton';
+import { Loader2 } from 'lucide-react';
 import { useFileViewerStore, FileViewerSidebar } from '@/modules/file-viewer';
 import { useModuleTranslation } from '@/modules/localization';
 import { GroupConversationPage } from './GroupConversationPage';
@@ -18,6 +19,9 @@ let mountedConversationPages = 0;
 function ConversationLoadingShell({ label }: Readonly<{ label: string }>) {
   return (
     <div className='relative flex min-h-0 w-full flex-1' role='status' aria-label={label} aria-busy='true'>
+      <div className='pointer-events-none absolute inset-0 z-10 flex items-center justify-center'>
+        <Loader2 aria-hidden='true' data-loading-spinner className='h-8 w-8 animate-spin text-primary' />
+      </div>
       <div className='mx-auto flex min-w-0 max-w-6xl flex-1 flex-col'>
         <div data-loading-header className='flex h-[68px] shrink-0 items-center gap-3 border-b border-border/50 px-3 md:h-[60px] md:px-4' aria-hidden='true'>
           <Skeleton className='size-11 rounded-md motion-reduce:animate-none md:size-9' />

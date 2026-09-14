@@ -1,6 +1,6 @@
 import { Injectable, NestMiddleware } from '@nestjs/common';
 import { Request, Response, NextFunction } from 'express';
-import { v4 as uuidv4 } from 'uuid';
+import { randomUUID } from 'crypto';
 import { RequestContextService } from '../request-context.service';
 import { RequestContext } from '../interfaces/request-context.interface';
 
@@ -50,7 +50,7 @@ export class RequestIdMiddleware implements NestMiddleware {
       return Array.isArray(fromHeader) ? fromHeader[0] : fromHeader;
     }
 
-    return uuidv4();
+    return randomUUID();
   }
 
   private extractCorrelationId(req: Request): string | undefined {

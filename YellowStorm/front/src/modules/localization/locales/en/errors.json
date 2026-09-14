@@ -149,6 +149,7 @@
   "ERR_3311": "No user found for the provided email.",
   "ERR_3312": "Failed to generate team hierarchy.",
   "ERR_3313": "Team auto-builder is not configured. Please contact an administrator.",
+  "ERR_3314": "This team is not executable. Repair its hierarchy and try again.",
   "ERR_3600": "Governance program not found.",
   "ERR_3601": "A governance program with this name already exists.",
   "ERR_3602": "Governance program cannot be deleted while scopes or sources exist.",

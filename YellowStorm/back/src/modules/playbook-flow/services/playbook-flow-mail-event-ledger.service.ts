@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import { nanoid } from 'nanoid';
+import { randomUUID } from 'crypto';
 import { FlowNormalizedMailEventData, FlowMailEventLedgerEntryData } from '../interfaces/playbook-flow-mail.interface';
 
 @Injectable()
@@ -10,7 +10,7 @@ export class PlaybookFlowMailEventLedgerService {
 
   createLedgerEntry(event: FlowNormalizedMailEventData): FlowMailEventLedgerEntryData {
     return {
-      id: nanoid(),
+      id: randomUUID().replaceAll('-', ''),
       dedupeKey: this.buildDedupeKey(event),
       status: 'normalized',
       event,
