@@ -344,6 +344,7 @@
   "executive.brief.complete": "Complete",
   "executive.brief.active": "Active",
   "executive.brief.waiting": "External waits",
+  "executive.brief.needsInput": "To confirm",
   "executive.needsYou.title": "Needs you",
   "executive.needsYou.active": "Answer now",
   "executive.needsYou.parked": "Queued question",

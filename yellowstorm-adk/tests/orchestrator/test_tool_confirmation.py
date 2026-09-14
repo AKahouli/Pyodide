@@ -93,7 +93,7 @@ def _read_model() -> MagicMock:
     rm = MagicMock()
     for m in ("upsert_steps", "set_step_status", "upsert_plan", "cancel_mail_waits",
               "bind_mail_wait_interrupt", "set_waiting", "set_session_status", "add_message",
-              "add_message_component", "rebind_mail_wait", "register_mail_wait",
+              "add_message_component", "close_confirm_choices", "rebind_mail_wait", "register_mail_wait",
               "set_mail_wait_expected_from", "bind_teams_wait_target", "add_step_artifact"):
         setattr(rm, m, AsyncMock())
     rm.mail_token_for = AsyncMock(return_value=None)
