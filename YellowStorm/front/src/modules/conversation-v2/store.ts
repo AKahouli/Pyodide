@@ -475,6 +475,21 @@ export const useConversationV2Store = create<State & Actions>()(
         const sessionId = get().sessionId;
         if (!sessionId) return;
 
+        // A double-fired submit can invoke this twice with the same prompt before
+        // the first echo gets acked. Skip the duplicate: creating a second echo
+        // (new event_id) would persist a second user message and render twice.
+        const lastUser = [...get().events].reverse().find(
+          (e): e is Extract<AgentEvent, { type: 'message' }> =>
+            e.type === 'message' && e.role === 'user',
+        );
+        if (
+          get().streaming &&
+          lastUser?.content === message &&
+          lastUser.sequence === undefined
+        ) {
+          return;
+        }
+
         // Follow-up turns (2nd user message and later): leave the deployed
         // iframe and show Nodepod preview so the user watches the rebuild.
         const priorUserMessages = get().events.filter(
