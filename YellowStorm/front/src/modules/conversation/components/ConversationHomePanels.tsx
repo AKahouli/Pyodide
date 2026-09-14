@@ -2,7 +2,6 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { AppWindow, ArrowRight, Bot, Database, FileOutput, MessageSquare, Network, Play, ScrollText, ShieldCheck } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { showError } from '@/lib/notifications';
 import { fetchConversations, fetchRecentConversationArtifacts, getArtifactDownloadUrl } from '../api';
 import type { ConversationSummary, RecentConversationArtifact } from '../types';
@@ -157,22 +156,16 @@ export function ConversationHomePanels() {
       {starters.length > 0 && (
         <section aria-labelledby='conversation-starters-heading'>
           <h2 id='conversation-starters-heading' className='conversation-home-section-title'>{t('home.starters.title')}</h2>
-          <TooltipProvider delayDuration={250}>
           <div className='conversation-home-shortcuts'>
             {starters.map(({ key, path, icon: Icon }) => (
-              <Tooltip key={key}>
-                <TooltipTrigger asChild>
-                  <button type='button' onClick={() => navigate(path)} className='conversation-home-shortcut'>
-                    <Icon aria-hidden='true' className='size-5 shrink-0 text-primary' />
-                    <span>{t(`home.starters.${key}.title`)}</span>
+                  <button key={key} type='button' aria-label={t(`home.starters.${key}.title`)} aria-describedby={`home-shortcut-${key}`} data-action={key} onClick={() => navigate(path)} className='conversation-home-shortcut'>
+                    <span className='conversation-home-shortcut-symbol'><Icon aria-hidden='true' className='size-6' /></span>
+                    <span className='conversation-home-shortcut-title'>{t(`home.starters.${key}.title`)}</span>
+                    <span id={`home-shortcut-${key}`} className='conversation-home-shortcut-description'>{t(`home.starters.${key}.description`)}</span>
                     <ArrowRight aria-hidden='true' className='conversation-home-shortcut-arrow size-4 shrink-0' />
                   </button>
-                </TooltipTrigger>
-                <TooltipContent className='max-w-64'>{t(`home.starters.${key}.description`)}</TooltipContent>
-              </Tooltip>
             ))}
           </div>
-          </TooltipProvider>
         </section>
       )}
 

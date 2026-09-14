@@ -583,6 +583,25 @@ describe('AgentService connector skill inheritance', () => {
     expect(result[0].chatbot.model).toBe('native-model');
   });
 
+  it('uses the admin default model for a tagged agent with no model override', async () => {
+    const { service, modelsService } = createService();
+    const taggedAgent: IAgentForStream = {
+      id: 'tagged-agent', name: 'Tagged Agent', agentTypeName: 'Worker', agentTypeSlug: 'worker',
+      agentTypeId: 'type-worker', role: 'Role', description: '', temperature: 0, model: '',
+      instruction: '', ignorePrePrompt: false, knowledgeBases: [], toolIds: [], guardrails: defaultGuardrails,
+      connectorIds: [], connectorActionSelections: [], skillIds: [], disabledSkillIds: [], agentTypeSkillIds: [],
+      enable_temporary_child_agents: false, max_temporary_child_agents: 4, isDefault: false, isDefaultForType: false,
+    };
+    jest.spyOn(service as any, 'getAgentsForUser').mockResolvedValue([taggedAgent]);
+    modelsService.getDefaultModel.mockResolvedValue({ id: 'admin-default' } as any);
+    modelsService.findById.mockImplementation(async (id: string) => ({ id, omitTemperature: false }));
+
+    const result = await service.buildAgentsForStream(userId, 'request-model', ['tagged-agent']);
+
+    expect(modelsService.getDefaultModel).toHaveBeenCalled();
+    expect(result[0].chatbot.model).toBe('admin-default');
+  });
+
   it('uses a tagged agent reasoning effort only when its model supports the value', async () => {
     const { service, modelsService } = createService();
     const taggedAgent: IAgentForStream = {

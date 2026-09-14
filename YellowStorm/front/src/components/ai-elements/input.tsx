@@ -1,3 +1,4 @@
+import { resolveMentions } from './resolve-mentions';
 import { PromptInput, PromptInputActionAddAttachments, PromptInputActionMenu, PromptInputActionMenuContent, PromptInputActionMenuTrigger, PromptInputAttachment, PromptInputAttachments, PromptInputBody, PromptInputButton, PromptInputFooter, type PromptInputMessage, PromptInputProvider, PromptInputSpeechButton, PromptInputSubmit, PromptInputTextarea, PromptInputTools } from '@/components/ai-elements/prompt-input';
 import { MentionPopup, type MentionAgent } from '@/components/ai-elements/mention-popup';
 import { InputContextMenu } from '@/components/ai-elements/input-context-menu';
@@ -69,6 +70,8 @@ interface InputProps {
   toolLabels?: { attachments: string; knowledge: string; data: string };
   onSubmit?: (message: PromptInputMessage, modelId: string, agentIds?: string[], memberIds?: string[], workspaceIds?: string[], connectorRepo?: { connectorId: string; connectorName: string; repoId: string; repoName: string; repoUrl?: string }, teamIds?: string[]) => void | Promise<void>;
   draftKey?: string;
+  initialInput?: string;
+  initialMention?: { id: string; name: string; kind: 'agent' | 'team' };
   onStop?: () => void;
   status?: 'submitted' | 'streaming' | 'ready' | 'error';
   disabled?: boolean;
@@ -98,7 +101,7 @@ interface InputProps {
   onTextChange?: (text: string) => void;
 }
 
-const Input = memo(function Input({ toolLabels, onSubmit: externalSubmit, draftKey, onStop, status: externalStatus, disabled, submitDisabled, requireContent = false, placeholder, onFilesAdded, onFileRemoved, uploadingFiles, accept, maxFiles, members, autoMention, showWorkspaceSelect = true, preserveWorkspaceSelectionOnSubmit = false, showModelSelector = false, governedMode = false, mentionAgents, enableTeamMentions = true, workspaceOptions, onWorkspaceSelectionChange, belowTextarea, extraTools, onTextChange }: InputProps = {}) {
+const Input = memo(function Input({ toolLabels, onSubmit: externalSubmit, draftKey, initialInput, initialMention, onStop, status: externalStatus, disabled, submitDisabled, requireContent = false, placeholder, onFilesAdded, onFileRemoved, uploadingFiles, accept, maxFiles, members, autoMention, showWorkspaceSelect = true, preserveWorkspaceSelectionOnSubmit = false, showModelSelector = false, governedMode = false, mentionAgents, enableTeamMentions = true, workspaceOptions, onWorkspaceSelectionChange, belowTextarea, extraTools, onTextChange }: InputProps = {}) {
   const models = useModels();
   const chefs = useChefs();
   const defaultModel = useDefaultModel();
@@ -120,7 +123,7 @@ const Input = memo(function Input({ toolLabels, onSubmit: externalSubmit, draftK
   const [mentionFilter, setMentionFilter] = useState('');
   const [mentionStartIndex, setMentionStartIndex] = useState<number | null>(null);
   const [mentionAnchorPos, setMentionAnchorPos] = useState({ top: 0, left: 0 });
-  const [mentionMap, setMentionMap] = useState<Map<string, { id: string; type: 'agent' | 'member' | 'team' }>>(new Map());
+  const [mentionMap, setMentionMap] = useState<Map<string, { id: string; type: 'agent' | 'member' | 'team' }>>(() => new Map(initialMention ? [[initialMention.name, { id: initialMention.id, type: initialMention.kind }]] : []));
   const [showCreateAgentDialog, setShowCreateAgentDialog] = useState(false);
   const [savingAgent, setSavingAgent] = useState(false);
   const [sketchOpen, setSketchOpen] = useState(false);
@@ -474,7 +477,7 @@ const Input = memo(function Input({ toolLabels, onSubmit: externalSubmit, draftK
   }, [onWorkspaceSelectionChange, setSelectedWorkspaceIds]);
 
   const handleSubmit = useCallback(
-    (message: PromptInputMessage) => {
+    async (message: PromptInputMessage) => {
       // Block submission while an answer is being generated
       if (submitDisabled || derivedStatus === 'streaming' || derivedStatus === 'submitted') {
         return;
@@ -487,55 +490,12 @@ const Input = memo(function Input({ toolLabels, onSubmit: externalSubmit, draftK
         return;
       }
 
-      // Extract agent and member IDs from mentions still present in the text
-      // Checks both typed mentions (mentionMap) and pasted @AgentName patterns
-      const agentIdSet = new Set<string>();
-      const memberIdSet = new Set<string>();
-      const teamIdSet = new Set<string>();
-
-      if (message.text) {
-        // Typed mentions tracked via popup selection
-        for (const [name, data] of mentionMap) {
-          if (message.text.includes(`@${name}`)) {
-            if (data.type === 'agent') {
-              agentIdSet.add(data.id);
-            } else if (data.type === 'team') {
-              teamIdSet.add(data.id);
-            } else {
-              memberIdSet.add(data.id);
-            }
-          }
-        }
-        // Pasted or untracked mentions — match against known teams (checked before
-        // agents so a team name isn't mistaken for a same-named agent)
-        for (const team of memoizedTeams) {
-          if (!teamIdSet.has(team.id) && message.text.includes(`@${team.name}`)) {
-            teamIdSet.add(team.id);
-          }
-        }
-        // Pasted or untracked mentions — match against known agents
-        for (const agent of memoizedAgents) {
-          if (!agentIdSet.has(agent.id) && agent.isActive && message.text.includes(`@${agent.name}`)) {
-            agentIdSet.add(agent.id);
-          }
-        }
-        // Pasted or untracked mentions — match against group members (if any)
-        if (members) {
-          for (const member of members) {
-            if (!memberIdSet.has(member.id) && message.text.includes(`@${member.name}`)) {
-              memberIdSet.add(member.id);
-            }
-          }
-        }
-      }
-      const agentIds = [...agentIdSet];
-      const memberIds = [...memberIdSet];
-      const teamIds = [...teamIdSet];
+      const { agentIds, memberIds, teamIds } = resolveMentions(message.text ?? '', mentionMap, memoizedAgents, memoizedTeams, members);
       const allowedWorkspaceIds = workspaceOptions?.map((workspace) => workspace.id);
       const submittedWorkspaceIds = allowedWorkspaceIds ? selectedWorkspaceIds.filter((id) => allowedWorkspaceIds.includes(id)) : selectedWorkspaceIds;
 
       if (externalSubmit) {
-        const result = externalSubmit(
+        const result = await externalSubmit(
           message,
           model,
           agentIds.length > 0 ? agentIds : undefined,
@@ -568,7 +528,7 @@ const Input = memo(function Input({ toolLabels, onSubmit: externalSubmit, draftK
 
   return (
     <div>
-      <PromptInputProvider key={draftKey} draftKey={draftKey} onFilesAdded={onFilesAdded} onFileRemoved={onFileRemoved} maxFiles={maxFiles} onError={(err) => toast.error(err.message)}>
+      <PromptInputProvider key={draftKey} draftKey={draftKey} initialInput={initialInput} onFilesAdded={onFilesAdded} onFileRemoved={onFileRemoved} maxFiles={maxFiles} onError={(err) => toast.error(err.message)}>
         <PromptInput globalDrop multiple onSubmit={handleSubmit} accept={accept} maxFiles={maxFiles}>
           <PromptInputAttachments>
             {(attachment) => {

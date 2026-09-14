@@ -16,10 +16,12 @@ const str = (description: string) => ({ type: 'string', description });
 
 /**
  * Snapshot of the mcp-agent server tool inventory (mcp-agent/server.py).
- * Connector actions are persisted snapshots: after changing the server tools,
- * refresh this connector (admin MCP import) so parameter schemas stay in sync.
+ * The connector runtime injects the selected workspace id into tool calls, so
+ * every tool accepts (and ignores) a workspace_id argument.
  */
-export const AGENT_MCP_ACTIONS: ActionSeed[] = [
+const WORKSPACE_ID_PROPERTY = { type: 'string', description: 'Accepted for platform compatibility; ignored.' };
+
+const BASE_ACTIONS: ActionSeed[] = [
   {
     key: 'list_agent_types',
     label: 'List agent types',
@@ -60,7 +62,7 @@ export const AGENT_MCP_ACTIONS: ActionSeed[] = [
       type: 'object',
       properties: {
         name: str('Agent name (letters, numbers and spaces)'),
-        agent_type_id: str('Agent type id from list_agent_types'),
+        agent_type_id: str('Agent type id or slug from list_agent_types'),
         role: str('Agent role/behavior description'),
         description: str('Short agent description'),
         instruction: str('Additional instructions'),
@@ -192,3 +194,14 @@ export const AGENT_MCP_ACTIONS: ActionSeed[] = [
     safety: ConnectorActionSafety.DELETE,
   },
 ];
+
+export const AGENT_MCP_ACTIONS: ActionSeed[] = BASE_ACTIONS.map((action) => ({
+  ...action,
+  parameterSchema: {
+    ...action.parameterSchema,
+    properties: {
+      ...(action.parameterSchema.properties as Record<string, unknown>),
+      workspace_id: WORKSPACE_ID_PROPERTY,
+    },
+  },
+}));

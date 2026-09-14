@@ -101,13 +101,17 @@ export class ConnectorService {
 
   /**
    * Idempotently seed the hidden system connector for the mcp-agent MCP server
-   * (agent/team CRUD over Streamable HTTP). $setOnInsert keeps admin edits —
-   * e.g. refreshed action snapshots from an MCP import — across restarts.
+   * (agent/team CRUD over Streamable HTTP). Action snapshots are re-synced on
+   * every boot so they track the server tool inventory; connector-level admin
+   * edits are preserved via $setOnInsert.
    */
   async ensureSystemAgentMcpConnector(): Promise<IConnectorResponse> {
     const connector = await this.connectorModel.findOneAndUpdate(
       { slug: AGENT_MCP_CONNECTOR_SLUG },
       {
+        $set: {
+          actions: this.normalizeConnectorActions(AGENT_MCP_ACTIONS),
+        },
         $setOnInsert: {
           slug: AGENT_MCP_CONNECTOR_SLUG,
           name: 'Agent Management (MCP)',
@@ -127,7 +131,6 @@ export class ConnectorService {
           dynamicHeaders: this.normalizeDynamicHeaders([
             { headerName: 'X-YellowStorm-User-Id', source: DynamicHeaderSource.USER_ID },
           ]),
-          actions: this.normalizeConnectorActions(AGENT_MCP_ACTIONS),
           referencedSkillIds: [],
           isActive: true,
           isHidden: true,

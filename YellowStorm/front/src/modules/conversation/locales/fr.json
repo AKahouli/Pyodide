@@ -218,6 +218,7 @@
   "home.greeting.afternoon": "Bon après-midi, {{name}}",
   "home.greeting.evening": "Bonsoir, {{name}}",
   "home.subtitle": "Commencez un nouveau travail ou reprenez là où vous vous êtes arrêté.",
+  "home.motion.label": "Animations",
   "home.prompts.label": "Quelques idées pour commencer",
   "home.prompts.standard.understand.label": "Résumer un document",
   "home.prompts.standard.understand.draft": "Aide-moi à résumer un document. Demande-moi de le joindre, puis identifie les points clés et les prochaines étapes.",

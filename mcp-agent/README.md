@@ -13,16 +13,21 @@ any library agent that needs governed agent/team CRUD tools.
 | Teams | `list_teams`, `get_team`, `create_team`, `update_team`, `update_team_hierarchy`, `delete_team` |
 
 Every tool returns the versioned envelope `agent.mcp.v1`: `{schemaVersion, ok, data?, error?, meta}`.
+Every tool also accepts an optional `workspace_id` argument (injected by the connector runtime
+with the selected workspace) which is ignored — agent/team CRUD is not workspace-scoped.
 Backend errors are returned as failure envelopes (never raised); only argument validation
-and missing identity raise MCP tool errors.
+and a missing acting user raise MCP tool errors.
 
 ## Authentication model
 
 - **Ingress (this server ← caller)**: `Authorization: Bearer $AGENT_MCP_INGRESS_TOKEN`.
   The caller (YellowStorm backend, through ADK connector bindings) additionally stamps the
   trusted identity headers `X-YellowStorm-User-Id`, `X-YellowStorm-Agent-Id`,
-  `X-YellowStorm-Conversation-Id`, `X-Correlation-Id`. All four must be present for a
-  tool call to run; bearer-only is enough for `initialize`/`list_tools`.
+  `X-YellowStorm-Conversation-Id`, `X-Correlation-Id`. Only `X-YellowStorm-User-Id` is
+  required for a tool call (it must be a well-formed id; malformed values are rejected);
+  the other three are optional traceability aids — missing or malformed values fall back
+  to `unknown-*` placeholders instead of rejecting the call. Bearer-only is enough for
+  `initialize`/`list_tools`.
 - **Egress (this server → backend)**: every call to
   `/api/v1/internal/agent-crud/*` carries `X-Internal-Token: $YELLOWSTORM_INTERNAL_SERVICE_TOKEN`
   (same value as the backend `INTERNAL_SERVICE_SECRET`) plus the identity headers above.

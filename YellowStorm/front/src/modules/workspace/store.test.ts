@@ -1,10 +1,11 @@
-import { act, waitFor } from '@testing-library/react';
+import { act, renderHook, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { DEFAULT_PAGE_LIMIT } from './utils';
-import { setWorkspaceTranslator, useWorkspaceStore } from './store';
+import { setWorkspaceTranslator, useAllWorkspaces, useWorkspaceStore } from './store';
 import type { Workspace } from './types';
 
 const workspaceApiMock = vi.hoisted(() => ({
+  createWorkspace: vi.fn(),
   getWorkspaces: vi.fn(),
   getWorkspace: vi.fn(),
   getDocuments: vi.fn(),
@@ -108,6 +109,44 @@ describe('workspace store', () => {
     expect(useWorkspaceStore.getState().currentPage).toBe(2);
   });
 
+  it('returns all cached workspace pages regardless of the current page', () => {
+    const created = makeWorkspace('ws-created', 'Created Workspace');
+    const lastPage = makeWorkspace('ws-last', 'Last Workspace');
+    useWorkspaceStore.setState({
+      workspaces: new Map([[1, [created]], [4, [lastPage]]]),
+      currentPage: 4,
+    });
+
+    const { result } = renderHook(() => useAllWorkspaces());
+
+    expect(result.current.map((workspace) => workspace.id)).toEqual(['ws-created', 'ws-last']);
+  });
+
+  it('keeps parallel workspace page responses in the cache', async () => {
+    const firstPage = makeWorkspace('ws-1', 'First Page');
+    const secondPage = { ...makeWorkspace('ws-2', 'Second Page'), isPersonal: false };
+    let resolveFirstPage!: (value: unknown) => void;
+    let resolveSecondPage!: (value: unknown) => void;
+    workspaceApiMock.getWorkspaces
+      .mockReturnValueOnce(new Promise((resolve) => { resolveFirstPage = resolve; }))
+      .mockReturnValueOnce(new Promise((resolve) => { resolveSecondPage = resolve; }));
+
+    const firstRequest = useWorkspaceStore.getState().fetchWorkspaces(1);
+    const secondRequest = useWorkspaceStore.getState().fetchWorkspaces(2);
+    resolveSecondPage({
+      workspaces: [secondPage],
+      pagination: { page: 2, limit: DEFAULT_PAGE_LIMIT, total: 2, totalPages: 2 },
+    });
+    await secondRequest;
+    resolveFirstPage({
+      workspaces: [firstPage],
+      pagination: { page: 1, limit: DEFAULT_PAGE_LIMIT, total: 2, totalPages: 2 },
+    });
+    await firstRequest;
+
+    expect(Array.from(useWorkspaceStore.getState().workspaces.keys()).sort()).toEqual([1, 2]);
+  });
+
   it('invalidateWorkspaceCache clears the cache and search filter so refetches are unfiltered', async () => {
     const ws1 = makeWorkspace('ws-1', 'Workspace One');
     workspaceApiMock.getWorkspaces.mockResolvedValue({
@@ -136,6 +175,106 @@ describe('workspace store', () => {
       limit: DEFAULT_PAGE_LIMIT,
       search: undefined,
     });
+  });
+
+  it('keeps a newly created workspace when the refreshed list is stale', async () => {
+    const existing = makeWorkspace('ws-1', 'Existing Workspace');
+    const created = { ...makeWorkspace('ws-2', 'Created Workspace'), isPersonal: false };
+    workspaceApiMock.createWorkspace.mockResolvedValue(created);
+    workspaceApiMock.getWorkspaces.mockResolvedValue({
+      workspaces: [existing],
+      pagination: { page: 1, limit: DEFAULT_PAGE_LIMIT, total: 1, totalPages: 1 },
+    });
+
+    await act(async () => {
+      await useWorkspaceStore.getState().createWorkspace({ name: created.name });
+    });
+
+    expect(useWorkspaceStore.getState().workspaces.get(1)?.map((workspace) => workspace.id)).toEqual([
+      'ws-1',
+      'ws-2',
+    ]);
+    expect(useWorkspaceStore.getState().totalWorkspaces).toBe(2);
+  });
+
+  it('ignores an older workspace fetch that resolves after creation', async () => {
+    const oldWorkspace = makeWorkspace('ws-old', 'Old Workspace');
+    const created = { ...makeWorkspace('ws-new', 'Created Workspace'), isPersonal: false };
+    let resolveOldFetch!: (value: unknown) => void;
+    const oldFetch = new Promise((resolve) => {
+      resolveOldFetch = resolve;
+    });
+
+    workspaceApiMock.getWorkspaces
+      .mockReturnValueOnce(oldFetch)
+      .mockResolvedValueOnce({
+        workspaces: [oldWorkspace],
+        pagination: { page: 1, limit: DEFAULT_PAGE_LIMIT, total: 1, totalPages: 1 },
+      });
+    workspaceApiMock.createWorkspace.mockResolvedValue(created);
+
+    const pendingFetch = useWorkspaceStore.getState().fetchWorkspaces(1);
+    await useWorkspaceStore.getState().createWorkspace({ name: created.name });
+
+    resolveOldFetch({
+      workspaces: [oldWorkspace],
+      pagination: { page: 1, limit: DEFAULT_PAGE_LIMIT, total: 1, totalPages: 1 },
+    });
+    await pendingFetch;
+
+    expect(useWorkspaceStore.getState().workspaces.get(1)?.map((workspace) => workspace.id)).toEqual([
+      'ws-old',
+      'ws-new',
+    ]);
+  });
+
+  it('ignores an older workspace fetch error after creation starts a refresh', async () => {
+    const created = { ...makeWorkspace('ws-new', 'Created Workspace'), isPersonal: false };
+    let rejectOldFetch!: (reason: Error) => void;
+    const oldFetch = new Promise((_, reject) => {
+      rejectOldFetch = reject;
+    });
+
+    workspaceApiMock.getWorkspaces
+      .mockReturnValueOnce(oldFetch)
+      .mockResolvedValueOnce({
+        workspaces: [],
+        pagination: { page: 1, limit: DEFAULT_PAGE_LIMIT, total: 0, totalPages: 0 },
+      });
+    workspaceApiMock.createWorkspace.mockResolvedValue(created);
+
+    const pendingFetch = useWorkspaceStore.getState().fetchWorkspaces(1);
+    await useWorkspaceStore.getState().createWorkspace({ name: created.name });
+    rejectOldFetch(new Error('stale request failed'));
+    await pendingFetch;
+
+    const state = useWorkspaceStore.getState();
+    expect(state.workspaces.get(1)?.map((workspace) => workspace.id)).toEqual(['ws-new']);
+    expect(state.error).toBeNull();
+    expect(state.isLoadingWorkspaces).toBe(false);
+  });
+
+  it('keeps a created workspace within the regular page limit when personal workspace is present', async () => {
+    const personal = makeWorkspace('personal', 'Personal Workspace');
+    const existing = Array.from({ length: DEFAULT_PAGE_LIMIT - 1 }, (_, index) => ({
+      ...makeWorkspace(`ws-${index}`, `Workspace ${index}`),
+      isPersonal: false,
+    }));
+    const created = { ...makeWorkspace('ws-new', 'Created Workspace'), isPersonal: false };
+    workspaceApiMock.getPersonalWorkspace.mockResolvedValue(personal);
+    workspaceApiMock.getWorkspaces.mockResolvedValue({
+      workspaces: [personal, ...existing],
+      pagination: { page: 1, limit: DEFAULT_PAGE_LIMIT, total: DEFAULT_PAGE_LIMIT, totalPages: 1 },
+    });
+    workspaceApiMock.createWorkspace.mockResolvedValue(created);
+
+    await useWorkspaceStore.getState().createWorkspace({ name: created.name });
+
+    const page = useWorkspaceStore.getState().workspaces.get(1) ?? [];
+    expect(page).toHaveLength(DEFAULT_PAGE_LIMIT);
+    expect(page.slice(0, 2).map((workspace) => workspace.id)).toEqual(['personal', 'ws-new']);
+    expect(useWorkspaceStore.getState().totalWorkspaces).toBe(DEFAULT_PAGE_LIMIT + 1);
+    expect(useWorkspaceStore.getState().totalPages).toBe(2);
   });
 
   it('selects and switches workspace, resets document state, and closes mobile sidebar', async () => {

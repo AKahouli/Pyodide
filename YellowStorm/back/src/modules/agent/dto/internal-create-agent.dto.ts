@@ -26,8 +26,10 @@ export class InternalCreateAgentDto {
   @Matches(/^[a-zA-Z0-9 ]+$/, { message: 'Name must contain only letters, numbers, and spaces' })
   name!: string;
 
-  @ApiProperty({ description: 'Agent type ID (MongoDB ObjectId)' })
-  @IsMongoId()
+  @ApiProperty({ description: 'Agent type ID or slug' })
+  @IsString()
+  @MinLength(1)
+  @MaxLength(100)
   agentType!: string;
 
   @ApiProperty({ description: 'Agent role/prompt', maxLength: 50000 })
