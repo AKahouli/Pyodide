@@ -16,6 +16,7 @@ import { AppModule } from './app.module';
 import { LoggerService } from './modules/logger';
 import { SystemService } from './modules/system/system.service';
 import { parseTrustProxySetting } from './common/utils/client-ip';
+import { isTransientConnectionError } from './common/utils/transient-connection-error';
 import { APP_DATA_CORS_REQUEST_HEADERS } from './modules/app-data/constants/app-data.constants';
 
 function serializeUnhandledReason(reason: unknown) {
@@ -234,10 +235,24 @@ async function bootstrap() {
   process.on('SIGTERM', () => void shutdown('SIGTERM'));
   process.on('SIGINT', () => void shutdown('SIGINT'));
   process.on('uncaughtException', (error) => {
+    if (isTransientConnectionError(error)) {
+      logger.error('Transient connection error — process kept alive, connection layer will reconnect', {
+        message: error.message,
+        stack: error.stack,
+      });
+      return;
+    }
     logger.error('Uncaught Exception', { message: error.message, stack: error.stack });
     void shutdown('uncaughtException');
   });
   process.on('unhandledRejection', (reason, promise) => {
+    if (isTransientConnectionError(reason)) {
+      logger.error('Transient connection rejection — process kept alive, connection layer will reconnect', {
+        reason: serializeUnhandledReason(reason),
+        promise: inspect(promise, { depth: 2, breakLength: 120 }),
+      });
+      return;
+    }
     logger.error('Unhandled Rejection', {
       reason: serializeUnhandledReason(reason),
       promise: inspect(promise, { depth: 2, breakLength: 120 }),

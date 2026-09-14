@@ -6,9 +6,11 @@ from google.genai import types
 from src.logger.logging import get_logger
 from src.smart_rag.agents.factories.delegation_factory_helper import (
     _append_connector_repo_context,
+    _append_selected_workspace_context,
     _append_workspace_document_context,
     _get_connector_repo,
     _get_team_skills,
+    document_tree_injection_enabled,
 )
 from src.skills.runtime import inject_skill_catalog, make_activate_skill_tool
 from src.guardrails.adapters.google_adk import build_guarded_adk_agent
@@ -169,7 +171,11 @@ class ManagerAgentFactory:
         cleaned_manager_prompt, _ = self.prompt_processor.extract_chatbot_name_and_clean_prompt(manager_prompt)
         manager_instruction = cleaned_manager_prompt + self.prompt_processor.get_web_search_prompt(1) 
 
-        if self.agent_repository.has_search_agents() or self.agent_repository.has_code_interpreter():
+        manager_config = self.agent_repository.get_agent_by_name("manager_agent") or self.agent_repository.get_agent_by_name("manager") or {}
+        if (
+            (self.agent_repository.has_search_agents() or self.agent_repository.has_code_interpreter())
+            and DocumentHelpers.document_tree_injection_enabled(manager_config)
+        ):
             # Add document tree info from all agents (without IDs) for manager context
             manager_instruction += self.document_helper._get_consolidated_document_tree_info_for_manager(self.config,self.agent_repository.get_all_agents())
 
@@ -177,10 +183,19 @@ class ManagerAgentFactory:
             manager_instruction,
             _get_connector_repo(self.config),
         )
-        manager_instruction = _append_workspace_document_context(
-            manager_instruction,
-            getattr(self.config, "brain_documents", None),
-        )
+        if not document_tree_injection_enabled(manager_config):
+            manager_instruction = _append_selected_workspace_context(
+                manager_instruction,
+                getattr(self.config, "workspace_names", None)
+                or getattr(self.config, "brain_ids", None),
+                workspace_ids=getattr(self.config, "brain_ids", None),
+                brain_documents=getattr(self.config, "brain_documents", None),
+            )
+        if document_tree_injection_enabled(manager_config):
+            manager_instruction = _append_workspace_document_context(
+                manager_instruction,
+                getattr(self.config, "brain_documents", None),
+            )
 
         # Expose the conversation-level skills to the manager (catalog only; the
         # activation tool is wired in create_manager_agent).

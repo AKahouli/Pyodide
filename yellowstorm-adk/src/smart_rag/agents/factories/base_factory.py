@@ -173,11 +173,13 @@ class AgentFactory:
         max_tokens: int = 20000,
         session_id: Optional[str] = None,
         brain_documents: Optional[list] = None,
+        file_names: Optional[List[str]] = None,
         conversation_brain_id: Optional[str] = None,
         user_id: Optional[str] = None,
         agent_id: Optional[str] = None,
         connector_bindings: Optional[List[Dict[str, Any]]] = None,
         platform_api_token: Optional[str] = None,
+        document_tree_injection_enabled: bool = True,
     ) -> Agent:
         """Create an agent with optional tools including calculator, web search, document search, and in-memory extraction.
 
@@ -217,6 +219,14 @@ class AgentFactory:
         tools = []
         search_web = "standard" if search_web_tool else "off"
         prompt = inject_skill_catalog(prompt, skills)
+
+        if document_tree_injection_enabled:
+            if doc_tree:
+                _, _, tree = construct_json(copy.deepcopy(doc_tree))
+                prompt += f"\n\n< documents_tree >\n{json.dumps(tree, indent=4)}\n</ documents_tree >"
+            if brain_tree:
+                _, _, brain_tree_obj = generate_brain_tree_schema(copy.deepcopy(brain_tree))
+                prompt += f"\n\n< brain_tree >\n{json.dumps(brain_tree_obj, indent=4)}\n</ brain_tree >"
 
         activate_skill_tool = make_activate_skill_tool(skills)
         if activate_skill_tool:
@@ -286,6 +296,7 @@ class AgentFactory:
                             workspace_id=connector_workspace_id,
                             brain_ids=brain_ids,
                             brain_documents=brain_documents,
+                            file_names=file_names,
                             session_id=session_id,
                             agent_id=agent_id,
                             user_id=user_id,
@@ -580,6 +591,7 @@ class AgentFactory:
         render_chart_tool: bool = False,
         generate_web_preview: bool = False,
         skills: Optional[List[Dict]] = None,
+        document_tree_injection_enabled: bool = True,
     ) -> Tuple[Agent, SearchToolkit, str]:
         """Create a search agent with appropriate tools."""
         if logical_search_only:
@@ -604,11 +616,11 @@ class AgentFactory:
             tools.append(self.create_web_preview_tool(chatbot_name, temperature=temperature))
 
         tree_info = ""
-        if doc_tree:
+        if document_tree_injection_enabled and doc_tree:
             _, _, tree = construct_json(copy.deepcopy(doc_tree))
             tree_info += f"\n\n< documents_tree >\n{json.dumps(tree, indent=4)}\n</ documents_tree >"
 
-        if brain_tree:
+        if document_tree_injection_enabled and brain_tree:
             _, _, brain_tree_obj = generate_brain_tree_schema(copy.deepcopy(brain_tree))
             tree_info += f"\n\n< brain_tree >\n{json.dumps(brain_tree_obj, indent=4)}\n< /brain_tree >"
 

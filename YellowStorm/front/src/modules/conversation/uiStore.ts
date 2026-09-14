@@ -25,6 +25,9 @@ export interface ConversationUiState {
   setActiveOutlineAnchor: (anchorId: string | null) => void;
   outlineCollapsed: boolean;
   setOutlineCollapsed: (collapsed: boolean) => void;
+  /** Prompt-bar opt-in: show the reliability pane and auto-run evaluation when a response completes. */
+  autoReliabilityEnabled: boolean;
+  setAutoReliabilityEnabled: (enabled: boolean) => void;
 }
 
 export const initialConversationUiState = {
@@ -32,11 +35,13 @@ export const initialConversationUiState = {
   outlineScrollRequest: null,
   activeOutlineAnchorId: null,
   outlineCollapsed: false,
+  autoReliabilityEnabled: false,
 } as {
   outlineHeadingsByMessageId: Record<string, MarkdownHeadingInfo[]>;
   outlineScrollRequest: OutlineScrollRequest | null;
   activeOutlineAnchorId: string | null;
   outlineCollapsed: boolean;
+  autoReliabilityEnabled: boolean;
 };
 
 let outlineScrollNonce = 0;
@@ -78,6 +83,10 @@ export const useConversationUiStore = create<ConversationUiState>()(
       setOutlineCollapsed: (collapsed) => {
         if (get().outlineCollapsed === collapsed) return;
         set({ outlineCollapsed: collapsed }, false, 'setOutlineCollapsed');
+      },
+      setAutoReliabilityEnabled: (enabled) => {
+        if (get().autoReliabilityEnabled === enabled) return;
+        set({ autoReliabilityEnabled: enabled }, false, 'setAutoReliabilityEnabled');
       },
     }),
     { name: 'conversation-ui-store' },

@@ -1,16 +1,11 @@
-import { BrainCircuit, ChevronDown } from 'lucide-react';
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuLabel,
-  DropdownMenuRadioGroup,
-  DropdownMenuRadioItem,
-  DropdownMenuTrigger,
-} from '@/components/ui/dropdown-menu';
+import { ShieldCheck } from 'lucide-react';
 import { PromptInputButton } from '@/components/ai-elements/prompt-input';
+import { ReasoningEffortSelector } from '@/components/ai-elements/reasoning-effort-selector';
+import { cn } from '@/lib/utils';
 import { useDefaultModel, useModels } from '@/modules/models';
 import { useModuleTranslation } from '@/modules/localization';
 import { useSelectedModelId, useSelectedReasoningEffort, useSetSelectedReasoningEffort } from '../store';
+import { useConversationUiStore } from '../uiStore';
 
 interface ReasoningEffortState {
   /** Efforts offered by the active model; empty when the model has none. */
@@ -51,27 +46,31 @@ export function ReasoningEffortSelect() {
 
   if (efforts.length === 0) return null;
 
+  return <ReasoningEffortSelector
+    efforts={efforts}
+    value={effectiveEffort}
+    onValueChange={setSelectedReasoningEffort}
+    label={t('input.reasoning.label')}
+  />;
+}
+
+export function ReliabilityCheckToggle() {
+  const { t } = useModuleTranslation('conversation');
+  const enabled = useConversationUiStore((state) => state.autoReliabilityEnabled);
+  const setEnabled = useConversationUiStore((state) => state.setAutoReliabilityEnabled);
+
   return (
-    <DropdownMenu>
-      <DropdownMenuTrigger asChild>
-        <PromptInputButton type='button' aria-label={t('input.reasoning.label')}>
-          <BrainCircuit className='h-4 w-4' />
-          <span className='hidden sm:inline'>
-            {efforts.find((effort) => effort.id === effectiveEffort)?.name ?? t('input.reasoning.label')}
-          </span>
-          <ChevronDown className='h-3 w-3 opacity-60' />
-        </PromptInputButton>
-      </DropdownMenuTrigger>
-      <DropdownMenuContent align='start'>
-        <DropdownMenuLabel>{t('input.reasoning.label')}</DropdownMenuLabel>
-        <DropdownMenuRadioGroup value={effectiveEffort ?? undefined} onValueChange={setSelectedReasoningEffort}>
-          {efforts.map((effort) => (
-            <DropdownMenuRadioItem key={effort.id} value={effort.id} title={effort.description}>
-              {effort.name}
-            </DropdownMenuRadioItem>
-          ))}
-        </DropdownMenuRadioGroup>
-      </DropdownMenuContent>
-    </DropdownMenu>
+    <PromptInputButton
+      type='button'
+      variant='outline'
+      onClick={() => setEnabled(!enabled)}
+      className={cn('rounded-full px-2.5', enabled && 'border-primary bg-primary/10 text-primary')}
+      title={t('input.autoReliability')}
+      aria-label={t('input.autoReliability')}
+      aria-pressed={enabled}
+    >
+      <ShieldCheck className='size-4' aria-hidden='true' />
+      <span>{t('input.autoReliability')}</span>
+    </PromptInputButton>
   );
 }

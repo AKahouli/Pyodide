@@ -93,7 +93,43 @@ describe('ConversationArtifactService', () => {
     })).resolves.toMatchObject({ fileName: 'report.pdf' });
     expect(workspaceDocumentService.findByMultipleWorkspaces).toHaveBeenCalledWith(
       ['workspace-1'],
-      { search: 'report.pdf', page: 1, limit: 100 },
+      { search: 'report.pdf', page: 1, limit: 100, searchFilename: true },
+    );
+  });
+
+  it('matches citations that name the storage filename when the original name differs', async () => {
+    messageService.getMessageDocument.mockResolvedValue({
+      conversationId: { toString: () => 'conversation-1' },
+      components: [{
+        type: 'citation',
+        data: {
+          source: 'owner/bpce-summit/FP_PRET_EMPRUNT_TEC10_CHROME_v1.pdf',
+          fileName: 'FP_PRET_EMPRUNT_TEC10_CHROME_v1.pdf',
+        },
+      }],
+    });
+    conversationService.getConversationDocument.mockResolvedValue({
+      workspaces: [{ toString: () => 'workspace-1' }],
+    });
+    workspaceDocumentService.findByMultipleWorkspaces.mockResolvedValue({
+      documents: [{
+        originalName: 'FP PRET EMPRUNT TEC10_CHROME_v1.pdf',
+        filename: 'FP_PRET_EMPRUNT_TEC10_CHROME_v1.pdf',
+        mimeType: 'application/pdf',
+        path: 'owner/ws/FP_PRET_EMPRUNT_TEC10_CHROME_v1.pdf',
+        isFolder: false,
+      }],
+      pagination: { total: 1 },
+    });
+    documentService.generateSasUrl.mockResolvedValue('https://storage.example/doc');
+
+    await expect(service.resolveCitationUrl('conversation-1', 'message-1', {
+      source: 'owner/bpce-summit/FP_PRET_EMPRUNT_TEC10_CHROME_v1.pdf',
+      fileName: 'FP_PRET_EMPRUNT_TEC10_CHROME_v1.pdf',
+    })).resolves.toMatchObject({ fileName: 'FP PRET EMPRUNT TEC10_CHROME_v1.pdf' });
+    expect(workspaceDocumentService.findByMultipleWorkspaces).toHaveBeenCalledWith(
+      ['workspace-1'],
+      { search: 'FP_PRET_EMPRUNT_TEC10_CHROME_v1.pdf', page: 1, limit: 100, searchFilename: true },
     );
   });
 

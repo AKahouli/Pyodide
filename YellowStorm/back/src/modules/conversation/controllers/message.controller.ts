@@ -34,6 +34,7 @@ import { resolveStickyAgentRouting } from '../utils/sticky-agent-routing';
 import { ChoiceInteractionService } from '../services/choice-interaction.service';
 import { GovernedConversationRuntimeService } from '../../governance/services/governed-conversation-runtime.service';
 import { ResponseReliabilityService } from '../services/response-reliability.service';
+import { SemanticModelService } from '../../semantic-model/services/semantic-model.service';
 import { createHash } from 'node:crypto';
 import { ConflictException } from '../../exceptions';
 import { PLATFORM_COPILOT } from '../../agent/constants/platform-copilot.constants';
@@ -75,6 +76,7 @@ export class MessageController {
     private readonly choiceInteractionService: ChoiceInteractionService,
     private readonly governedRuntimeService: GovernedConversationRuntimeService,
     private readonly responseReliabilityService: ResponseReliabilityService,
+    private readonly semanticModelService: SemanticModelService,
     private readonly conversationArtifactService: ConversationArtifactService,
     private readonly playbookHandoffService: ConversationPlaybookHandoffService,
     private readonly conversationSettings: ConversationSettingsService,
@@ -165,6 +167,7 @@ export class MessageController {
         dto.teamIds,
         dto.memberIds,
         dto.modelId,
+        dto.semanticModelId,
         dto.reasoningEffort,
         dto.skillIds,
         dto.connectorRepo,
@@ -256,6 +259,10 @@ export class MessageController {
 
     const governedRuntime = unwrapSettled(governedRuntimeSettled);
     if (governedRuntime) this.governedRuntimeService.assertRuntimeRequestAllowed(governedRuntime, dto);
+    if (!governedRuntime && dto.semanticModelId) {
+      await this.semanticModelService.resolveSearchSchema(user._id.toString(), dto.semanticModelId);
+    }
+    const effectiveSemanticModelId = governedRuntime ? undefined : dto.semanticModelId;
 
     // Validate model is active for standard conversations only.
     if (!governedRuntime && !platformCopilot && dto.modelId) {
@@ -419,6 +426,7 @@ export class MessageController {
             webSearchEnabled: dto.webSearchEnabled ?? false,
             deepSearchEnabled: dto.deepSearchEnabled ?? false,
             modelId: dto.modelId,
+            semanticModelId: effectiveSemanticModelId,
             reasoningEffort: effectiveReasoningEffort,
             agentIds: effectiveAgentIds ?? [],
             skillIds: dto.skillIds ?? [],
@@ -467,6 +475,7 @@ export class MessageController {
             webSearchEnabled: dto.webSearchEnabled ?? false,
             deepSearchEnabled: dto.deepSearchEnabled ?? false,
             modelId: dto.modelId,
+            semanticModelId: effectiveSemanticModelId,
             reasoningEffort: effectiveReasoningEffort,
             agentIds: effectiveAgentIds ?? [],
             skillIds: dto.skillIds ?? [],
@@ -556,6 +565,7 @@ export class MessageController {
           webSearchEnabled: dto.webSearchEnabled,
           deepSearchEnabled: dto.deepSearchEnabled,
           modelId: dto.modelId,
+          semanticModelId: effectiveSemanticModelId,
           reasoningEffort: effectiveReasoningEffort,
           agentIds: effectiveAgentIds,
           connectorRepo: dto.connectorRepo,
@@ -686,6 +696,7 @@ export class MessageController {
       webSearchEnabled: dto.webSearchEnabled ?? false,
       deepSearchEnabled: dto.deepSearchEnabled ?? false,
       modelId: dto.modelId ?? null,
+      semanticModelId: dto.semanticModelId ?? null,
       reasoningEffort: dto.reasoningEffort ?? null,
       agentIds: dto.agentIds ?? [],
       memberIds: dto.memberIds ?? [],

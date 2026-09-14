@@ -12,6 +12,7 @@ const authContextMock: AuthContextType = {
   requiresEmailVerification: false,
   requiresProfileCompletion: false,
   registrationEnabled: true,
+  isAuthTemporarilyUnavailable: false,
   login: async () => undefined,
   register: async () => undefined,
   logout: async () => undefined,
@@ -19,6 +20,7 @@ const authContextMock: AuthContextType = {
   resendVerificationEmail: async () => undefined,
   completeProfile: async () => undefined,
   refreshUser: async () => undefined,
+  retryRecovery: async () => undefined,
 };
 
 describe('useAuth', () => {

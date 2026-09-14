@@ -239,17 +239,17 @@ export class NotificationsService {
       return;
     }
 
-    if (this.reconnectAttempts >= this.maxReconnectAttempts) {
-      this.emit({ type: "error", data: { connectionId: "max-reconnects" } });
-      return;
-    }
-
     const delay = Math.min(
       this.baseReconnectDelay * Math.pow(2, this.reconnectAttempts),
       this.maxReconnectDelay
     );
 
-    this.reconnectAttempts++;
+    // Retry indefinitely: a backend restart can outlast any finite attempt
+    // budget. The counter only shapes the backoff curve and stops growing at
+    // the cap, so a late recovery resets to fast retries via onopen.
+    if (this.reconnectAttempts < this.maxReconnectAttempts) {
+      this.reconnectAttempts++;
+    }
 
     this.emit({
       type: "reconnecting",

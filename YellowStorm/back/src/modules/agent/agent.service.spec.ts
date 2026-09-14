@@ -227,6 +227,27 @@ describe('AgentService connector skill inheritance', () => {
     expect(settings.widget.layout).toEqual({ desktopWidth: 480, desktopHeight: 720 });
   });
 
+  it('maps reasoning effort through create, update, and response contracts', () => {
+    const { service } = createService();
+    const record = makeRecord({ reasoningEffort: 'high' });
+    const createInput = (service as any).dtoToCreateInput('user-1', {
+      name: 'Agent', slug: 'agent', agentType: record.agentType, role: 'Role', reasoning_effort: 'high',
+    }, { id: record._id, isDefault: false, slug: 'agent', agentTypeSlug: 'worker' });
+    const updateInput = (service as any).dtoToUpdateInput(
+      { reasoning_effort: '' },
+      record,
+      {},
+    );
+    const response = (service as any).toResponse({
+      ...record,
+      agentType: { _id: record.agentType, name: 'Worker' },
+    });
+
+    expect(createInput.reasoningEffort).toBe('high');
+    expect(updateInput.reasoningEffort).toBeNull();
+    expect(response.reasoning_effort).toBe('high');
+  });
+
   it('injects connector skills into stream agent runtime', async () => {
     const { service, skillService, connectorService, agentTypeService, modelsService } = createService();
     const streamAgent: IAgentForStream = {
@@ -356,6 +377,7 @@ describe('AgentService connector skill inheritance', () => {
         undefined,
         undefined,
         undefined,
+        undefined,
         { conversationId: 'conversation-1', correlationId: 'message-1', playbookHandoffAttached: true },
       );
 
@@ -396,6 +418,7 @@ describe('AgentService connector skill inheritance', () => {
       userId,
       undefined,
       ['platform-agent'],
+      undefined,
       undefined,
       undefined,
       undefined,
@@ -486,6 +509,39 @@ describe('AgentService connector skill inheritance', () => {
     expect(result[0].chatbot.model).toBe('selected-model');
   });
 
+  it('prefers a supported request reasoning effort for an untagged agent', async () => {
+    const { service, modelsService } = createService();
+    const monoAgent: IAgentForStream = {
+      id: 'mono-agent', name: 'Mono Agent', agentTypeName: 'Mono Agent', agentTypeSlug: 'mono-agent',
+      agentTypeId: 'type-mono', role: 'Role', description: '', temperature: 0, model: 'native-model',
+      reasoningEffort: 'low', instruction: '', ignorePrePrompt: false, knowledgeBases: [], toolIds: [],
+      guardrails: defaultGuardrails, connectorIds: [], connectorActionSelections: [], skillIds: [],
+      disabledSkillIds: [], agentTypeSkillIds: [], enable_temporary_child_agents: false,
+      max_temporary_child_agents: 4, isDefault: true, isDefaultForType: false,
+    };
+    jest.spyOn(service as any, 'getAgentsForUser').mockResolvedValue([]);
+    jest.spyOn(service as any, 'resolveDefaultMonoAgent').mockResolvedValue(monoAgent);
+    modelsService.findById.mockResolvedValue({
+      id: 'selected-model', omitTemperature: false, inputModalities: ['text'], maxInputTokens: null,
+      supportsReasoning: true,
+      reasoning: { efforts: [{ id: 'low', name: 'Low' }, { id: 'high', name: 'High' }] },
+    });
+
+    const result = await service.buildAgentsForStream(
+      userId,
+      'selected-model',
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      'high',
+    );
+
+    expect(result[0].chatbot.reasoning_effort).toBe('high');
+  });
+
   it('preserves a tagged agent\'s native model over the selected model', async () => {
     const { service, modelsService, agentTypeService } = createService();
     const taggedAgent: IAgentForStream = {
@@ -504,6 +560,33 @@ describe('AgentService connector skill inheritance', () => {
       { agentTypeId: 'type-worker', modelId: 'native-model' },
     ]);
     expect(result[0].chatbot.model).toBe('native-model');
+  });
+
+  it('uses a tagged agent reasoning effort only when its model supports the value', async () => {
+    const { service, modelsService } = createService();
+    const taggedAgent: IAgentForStream = {
+      id: 'tagged-agent', name: 'Tagged Agent', agentTypeName: 'Worker', agentTypeSlug: 'worker',
+      agentTypeId: 'type-worker', role: 'Role', description: '', temperature: 0, model: 'native-model',
+      reasoningEffort: 'high', instruction: '', ignorePrePrompt: false, knowledgeBases: [], toolIds: [],
+      guardrails: defaultGuardrails, connectorIds: [], connectorActionSelections: [], skillIds: [],
+      disabledSkillIds: [], agentTypeSkillIds: [], enable_temporary_child_agents: false,
+      max_temporary_child_agents: 4, isDefault: false, isDefaultForType: false,
+    };
+    jest.spyOn(service as any, 'getAgentsForUser').mockResolvedValue([taggedAgent]);
+    modelsService.findById.mockResolvedValue({
+      id: 'native-model', omitTemperature: false, inputModalities: ['text'], maxInputTokens: null,
+      supportsReasoning: true, reasoning: { efforts: [{ id: 'high', name: 'High' }] },
+    });
+
+    const supported = await service.buildAgentsForStream(userId, undefined, ['tagged-agent']);
+    expect(supported[0].chatbot.reasoning_effort).toBe('high');
+
+    modelsService.findById.mockResolvedValue({
+      id: 'native-model', omitTemperature: false, inputModalities: ['text'], maxInputTokens: null,
+      supportsReasoning: true, reasoning: { efforts: [{ id: 'low', name: 'Low' }] },
+    });
+    const unsupported = await service.buildAgentsForStream(userId, undefined, ['tagged-agent']);
+    expect(unsupported[0].chatbot).not.toHaveProperty('reasoning_effort');
   });
 
   it('routes through a single agent when no agent is tagged, even if no "mono-agent" type is configured', async () => {

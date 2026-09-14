@@ -74,6 +74,9 @@ describe('PostgresMessageStore.createUserWithAiPlaceholder', () => {
       conversationType: 'ai',
       questionMessageId: generatedUserId.id,
     }));
+    const userValues = (insertBuilder.values.mock.calls[0] as unknown[])[0] as { createdAt: Date };
+    const placeholderValues = (insertBuilder.values.mock.calls[1] as unknown[])[0] as { createdAt: Date };
+    expect(placeholderValues.createdAt.getTime()).toBe(userValues.createdAt.getTime() + 1);
     expect(result.user.id).toBe('user-1');
     expect(result.placeholder.id).toBe('placeholder-1');
     expect(tx).toBeDefined();

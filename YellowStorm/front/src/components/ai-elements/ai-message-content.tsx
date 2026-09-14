@@ -8,6 +8,10 @@ import { useState, useMemo, useCallback, useEffect, useRef, memo, lazy, Suspense
 import { useFileViewerDisplayMode, useShouldAutoOpenPreview } from './message-context';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import remarkMath from 'remark-math';
+import rehypeKatex from 'rehype-katex';
+import 'katex/dist/katex.min.css';
+import { normalizeMathDelimiters } from '@/lib/math-delimiters';
 import { CodeArtifact } from './code-artifact';
 import { Queue, QueueSection, QueueSectionTrigger, QueueSectionLabel, QueueSectionContent, QueueList, QueueItem, QueueItemIndicator, QueueItemContent } from './queue';
 import { Plan, PlanHeader, PlanTitle, PlanDescription, PlanContent, PlanFooter } from './plan';
@@ -30,6 +34,7 @@ import { Separator } from '../ui/separator';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '../ui/dialog';
 import { rehypeCitationMarkers } from '@/lib/rehype-citation-markers';
 import { remarkAssistantCitationLinks } from '@/lib/remark-assistant-citation-links';
+import { isUrlCitation } from '@/modules/conversation/utils/message-citations';
 import { applyOutlineHeadingOverrides, type MarkdownHeadingInfo } from './ai-message-outline';
 import { formatLabel } from './format-label';
 
@@ -446,8 +451,9 @@ const markdownComponents: React.ComponentProps<typeof ReactMarkdown>['components
   },
 };
 
-const remarkPlugins = [remarkGfm, remarkAssistantCitationLinks];
-const rehypeCitationPlugins = [rehypeCitationMarkers];
+const remarkPlugins = [remarkGfm, remarkMath, remarkAssistantCitationLinks];
+const rehypeMathPlugins = [rehypeKatex];
+const rehypeMathCitationPlugins = [rehypeKatex, rehypeCitationMarkers];
 
 function normalizeCitationReference(reference?: string): string | undefined {
   return reference?.trim().replace(/^\[|\]$/g, '').trim() || undefined;
@@ -471,6 +477,13 @@ export async function openCitationSource(
 ): Promise<void> {
   const objectKey = (citation.sourceType === 'image' ? citation.path : citation.source) || '';
   if (!objectKey) return;
+
+  // Web citations point at a page, not a workspace document — the citations
+  // API can only 404 for them, so open the source directly.
+  if (isUrlCitation(citation)) {
+    window.open(objectKey, '_blank', 'noopener,noreferrer');
+    return;
+  }
 
   const displayName = citation.fileName ||
     (citation.sourceType === 'image' ? citation.source : '') ||
@@ -509,7 +522,8 @@ export async function openCitationSource(
 
 /**
  * Split accumulated streaming markdown at the last blank line that sits
- * OUTSIDE a fenced code block. Everything before it is stable (it can never
+ * OUTSIDE a fenced code block or a `$$` display-math block (both allow blank
+ * lines inside them). Everything before it is stable (it can never
  * change as more text streams in) and everything after it is the active tail.
  * Content below the minimum length is left unsplit — the memoization only
  * pays off once the stable prefix is large.
@@ -536,6 +550,7 @@ export function splitMarkdownAtSafeBoundary(content: string): { stable: string; 
   let inFence = false;
   let fenceChar = '';
   let fenceLength = 0;
+  let inMath = false;
   let hasReferenceDefinition = false;
   let lastBoundary = -1;
   let lineStart = 0;
@@ -561,8 +576,17 @@ export function splitMarkdownAtSafeBoundary(content: string): { stable: string; 
         }
       } else {
         if (!inFence) {
-          if (LINK_REFERENCE_DEFINITION.test(line)) hasReferenceDefinition = true;
-          else if (line.trim() === '') boundaries.push(i + 1);
+          // `$$` fences delimit remark-math flow blocks; blank lines inside a
+          // display-math block are legal LaTeX and must not become boundaries.
+          // An ODD number of `$$` on a line toggles open/closed state — this
+          // covers `$$`-only lines, `text $$` openers and `$$ text` closers
+          // (mid-paragraph spans from delimiter normalization), while even
+          // counts (single-line `$$x$$`, prose) change nothing.
+          if (trimmed.includes('$$') && (trimmed.split('$$').length - 1) % 2 === 1) inMath = !inMath;
+          if (!inMath) {
+            if (LINK_REFERENCE_DEFINITION.test(line)) hasReferenceDefinition = true;
+            else if (line.trim() === '') boundaries.push(i + 1);
+          }
         }
       }
       lineStart = i + 1;
@@ -642,7 +666,7 @@ const MarkdownSegment = memo(
       onSegmentHeadings?.(slot, collectedRef.current);
     }, [content, outlineKey, onSegmentHeadings, slot]);
     return (
-      <ReactMarkdown remarkPlugins={remarkPlugins} rehypePlugins={hasInline ? rehypeCitationPlugins : undefined} components={componentsForRender}>
+      <ReactMarkdown remarkPlugins={remarkPlugins} rehypePlugins={hasInline ? rehypeMathCitationPlugins : rehypeMathPlugins} components={componentsForRender}>
         {content}
       </ReactMarkdown>
     );
@@ -708,8 +732,9 @@ const TextPartRenderer = ({ content, showCursor, citations, citationScope, outli
 
   // Hot-tail split: the stable prefix re-parses only when a block boundary
   // completes; the tail re-parses per drain tick but stays bounded by the
-  // last (incomplete) block.
-  const { stable, tail } = useMemo(() => splitMarkdownAtSafeBoundary(content), [content]);
+  // last (incomplete) block. Math delimiters are normalized before the split
+  // so both segments see the same `$$` blocks the math-aware splitter tracks.
+  const { stable, tail } = useMemo(() => splitMarkdownAtSafeBoundary(normalizeMathDelimiters(content)), [content]);
 
   // Outline registration across the two segments: each segment reports its
   // own headings; the parent merges stable-then-tail and publishes the DOM-

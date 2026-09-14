@@ -28,6 +28,15 @@ export function GovernanceWorkspaceSelector({ selectedWorkspaceIds, onChange }: 
     return () => window.clearTimeout(timeout);
   }, [search, searchWorkspaces]);
 
+  // The store-wide search filter outlives this selector; clear it on unmount
+  // so other screens (e.g. the new-conversation workspace picker) don't
+  // inherit a filtered workspace list.
+  useEffect(() => () => {
+    if (useWorkspaceStore.getState().searchQuery) {
+      void searchWorkspaces('');
+    }
+  }, [searchWorkspaces]);
+
   const selectedWorkspaces = workspaces.filter((workspace) => selectedWorkspaceIds.includes(workspace.id));
 
   return (

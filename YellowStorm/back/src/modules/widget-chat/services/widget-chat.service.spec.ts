@@ -98,9 +98,32 @@ describe('WidgetChatService.generateCitationUrl', () => {
       search: 'report.pdf',
       limit: 20,
       page: 1,
+      searchFilename: true,
     });
     expect(documentService.exists).toHaveBeenCalledWith(OBJECT_KEY);
     expect(workspaceDocumentService.generateReadUrl).toHaveBeenCalledWith(OBJECT_KEY);
+    expect(result.downloadUrl).toBe('https://ceph.example/signed-url');
+  });
+
+  it('matches filename-only citations that name the storage filename when the original name differs', async () => {
+    const { service, documentService, workspaceDocumentService } = createCitationService();
+    const doc = { ...buildDocResponse(OBJECT_KEY), originalName: 'report original.pdf', filename: 'report.pdf' };
+    workspaceDocumentService.findByMultipleWorkspaces.mockResolvedValue({ documents: [doc] });
+
+    const result = await service.generateCitationUrl({
+      source: 'report.pdf',
+      fileName: 'report.pdf',
+      workspaceId: WS_ID,
+      agentKnowledgeBaseIds: [],
+    });
+
+    expect(workspaceDocumentService.findByMultipleWorkspaces).toHaveBeenCalledWith([WS_ID], {
+      search: 'report.pdf',
+      limit: 20,
+      page: 1,
+      searchFilename: true,
+    });
+    expect(documentService.exists).toHaveBeenCalledWith(OBJECT_KEY);
     expect(result.downloadUrl).toBe('https://ceph.example/signed-url');
   });
 

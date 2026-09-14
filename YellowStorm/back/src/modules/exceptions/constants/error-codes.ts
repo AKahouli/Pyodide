@@ -167,6 +167,15 @@ export enum ErrorCode {
   AUTH_OAUTH_PROVIDER_NOT_FOUND = 'ERR_1128',
   AUTH_OAUTH_ACCOUNT_ALREADY_LINKED = 'ERR_1129',
 
+  // Session/identity store temporarily unavailable (503): validation could not
+  // be completed — must never be presented to clients as a revoked session.
+  AUTH_DEPENDENCY_UNAVAILABLE = 'ERR_1130',
+
+  // A concurrent refresh rotation consumed the presented predecessor inside
+  // the receipt window. Retryable with the same rotation attempt id; not a
+  // credential denial and must not log the client out.
+  AUTH_ROTATION_CONFLICT = 'ERR_1131',
+
   // Models errors (2000-2099)
   MODEL_NOT_FOUND = 'ERR_2000',
   MODEL_INACTIVE = 'ERR_2003',
@@ -610,6 +619,8 @@ export const ErrorMessages: Record<ErrorCode, string> = {
   [ErrorCode.AUTH_OAUTH_PROVIDER_DISABLED]: 'This authentication provider is currently disabled.',
   [ErrorCode.AUTH_OAUTH_PROVIDER_NOT_FOUND]: 'Authentication provider not found.',
   [ErrorCode.AUTH_OAUTH_ACCOUNT_ALREADY_LINKED]: 'This provider account is already linked to another user.',
+  [ErrorCode.AUTH_DEPENDENCY_UNAVAILABLE]: 'Authentication is temporarily unavailable. Please try again shortly.',
+  [ErrorCode.AUTH_ROTATION_CONFLICT]: 'Sign-in refresh is being coordinated. Please retry.',
 
   [ErrorCode.MODEL_NOT_FOUND]: 'Model not found.',
   [ErrorCode.MODEL_INACTIVE]: 'This model is currently unavailable. Please select a different model.',

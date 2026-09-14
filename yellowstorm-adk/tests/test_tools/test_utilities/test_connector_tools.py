@@ -425,6 +425,69 @@ def test_connector_tool_injects_streamable_http_file_workspace_headers(
     }
 
 
+def test_logical_search_connector_sends_only_authorization_and_workspace_scope(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured = {}
+
+    async def fake_call_mcp_tool(*args, **kwargs):
+        captured["params"] = args[4]
+        captured["server_config"] = args[2]
+        captured["auth_headers"] = kwargs.get("auth_headers")
+        return {"text": "ok"}
+
+    monkeypatch.setattr("src.flow_engine.mcp.call_mcp_tool", fake_call_mcp_tool)
+    binding = _connector_binding(
+        {
+            "type": "object",
+            "properties": {
+                "query": {"type": "string"},
+                "workspace_id": {"type": "array", "items": {"type": "string"}},
+                "file_names": {"type": "array", "items": {"type": "string"}},
+            },
+        },
+        auth_headers={
+            "authorization": "Bearer token",
+            "X-mistral": "secret",
+            "X-User-Id": "user-1",
+        },
+    )
+    binding["connector_name"] = "Logical Search MCP"
+    binding["connector_slug"] = "logical-search"
+    binding["mcp_server_config"] = {
+        "headers": {
+            "aUtHoRiZaTiOn": "Bearer gateway-token",
+            "X-Unsafe-Static": "must-not-pass",
+            "Workspace-Id": "must-not-override-scope",
+        },
+    }
+    tool = create_connector_tools(
+        [binding],
+        ConnectorToolContext(
+            brain_ids=["workspace-alice", "workspace-bob"],
+            file_names=["alice.pdf", "bob.pdf"],
+            session_id="conversation-1",
+            agent_id="agent-1",
+        ),
+    )[-1]
+
+    asyncio.run(tool.func(query="guarantees"))
+
+    assert captured["auth_headers"] == {
+        "Authorization": "Bearer token",
+        "Workspace-Id": "workspace-alice,workspace-bob",
+    }
+    from src.flow_engine.mcp import _build_headers
+
+    assert _build_headers(
+        captured.get("server_config"), captured["auth_headers"]
+    ) == {
+        "Authorization": "Bearer gateway-token",
+        "Workspace-Id": "workspace-alice,workspace-bob",
+    }
+    assert captured["params"]["workspace_id"] == ["workspace-alice", "workspace-bob"]
+
+
 def test_sse_connector_tool_gets_conversation_and_execution_ids(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

@@ -91,6 +91,23 @@ describe('ConversationOutlineRail', () => {
     expect(screen.getByRole('button', { name: 'Revenue detail' })).toBeInTheDocument();
   });
 
+  it('filters outline entries by the search box and reports when nothing matches', async () => {
+    const user = userEvent.setup();
+    render(<ConversationOutlineRail />);
+
+    await user.type(screen.getByRole('textbox', { name: 'outline.searchPlaceholder' }), 'quarter');
+
+    expect(screen.getByRole('button', { name: 'Quarterly split' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Revenue detail' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Cost detail' })).not.toBeInTheDocument();
+
+    await user.clear(screen.getByRole('textbox', { name: 'outline.searchPlaceholder' }));
+    await user.type(screen.getByRole('textbox', { name: 'outline.searchPlaceholder' }), 'no-such-heading');
+
+    expect(screen.getByText('outline.noResults')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Quarterly split' })).not.toBeInTheDocument();
+  });
+
   it('renders an empty-state hint when there are no headings and no questions', () => {
     useConversationUiStore.setState({ ...initialConversationUiState, outlineHeadingsByMessageId: {} });
     storeMock.messages = [];

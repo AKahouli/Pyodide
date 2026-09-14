@@ -46,7 +46,14 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { cn } from '@/lib/utils';
-import { getMaintenanceStatus, setMaintenanceMode, getRegistrationStatus, setRegistrationStatus } from '../api';
+import {
+  getMaintenanceStatus,
+  setMaintenanceMode,
+  getRegistrationStatus,
+  setRegistrationStatus,
+  getDocumentTreeInjectionSettings,
+  setDocumentTreeInjectionSettings,
+} from '../api';
 import type { MaintenanceStatus, RegistrationStatus } from '../types';
 import { CorsSettingsCard } from '../components/CorsSettingsCard';
 import { FeatureVisibilityCard } from '../components/FeatureVisibilityCard';
@@ -93,6 +100,10 @@ export function SystemPage() {
   const [showRegConfirmDialog, setShowRegConfirmDialog] = useState(false);
   const [pendingRegEnabled, setPendingRegEnabled] = useState(false);
 
+  const [documentTreeEnabled, setDocumentTreeEnabled] = useState(true);
+  const [documentTreeLoading, setDocumentTreeLoading] = useState(true);
+  const [documentTreeSaving, setDocumentTreeSaving] = useState(false);
+
   const fetchRegistrationStatus = async () => {
     setRegLoading(true);
     try {
@@ -137,6 +148,34 @@ export function SystemPage() {
     }
   };
 
+  const fetchDocumentTreeSettings = async () => {
+    setDocumentTreeLoading(true);
+    try {
+      const data = await getDocumentTreeInjectionSettings();
+      setDocumentTreeEnabled(data.enabled);
+    } catch {
+      // Keep the historical fail-open default when the setting is unavailable.
+      setDocumentTreeEnabled(true);
+    } finally {
+      setDocumentTreeLoading(false);
+    }
+  };
+
+  const handleDocumentTreeToggle = async (checked: boolean) => {
+    setDocumentTreeSaving(true);
+    try {
+      const data = await setDocumentTreeInjectionSettings({ enabled: checked });
+      setDocumentTreeEnabled(data.enabled);
+      toast.success(t('system.documentTree.toasts.saved'));
+    } catch (err) {
+      toast.error(t('system.documentTree.toasts.error'), {
+        description: err instanceof Error ? err.message : tCommon('errorUnknown'),
+      });
+    } finally {
+      setDocumentTreeSaving(false);
+    }
+  };
+
   const fetchStatus = async () => {
     setError(null);
 
@@ -169,6 +208,7 @@ export function SystemPage() {
   useEffect(() => {
     fetchStatus();
     fetchRegistrationStatus();
+    fetchDocumentTreeSettings();
   }, []);
 
   // Combine date and time into ISO string
@@ -284,7 +324,7 @@ export function SystemPage() {
           <h1 className="text-2xl font-bold tracking-tight">{t('system.title')}</h1>
           <p className="text-muted-foreground">{t('system.description')}</p>
         </div>
-        <Button onClick={() => { fetchStatus(); fetchRegistrationStatus(); }} variant="outline" size="icon" aria-label={t('system.actions.refresh')}>
+        <Button onClick={() => { fetchStatus(); fetchRegistrationStatus(); fetchDocumentTreeSettings(); }} variant="outline" size="icon" aria-label={t('system.actions.refresh')}>
           <RefreshCw className="h-4 w-4" />
         </Button>
       </div>
@@ -610,6 +650,32 @@ export function SystemPage() {
               )}
             </div>
           )}
+        </CardContent>
+      </Card>
+
+      {/* Global ADK prompt context settings */}
+      <Card>
+        <CardHeader>
+          <CardTitle>{t('system.documentTree.card.title')}</CardTitle>
+          <CardDescription>{t('system.documentTree.card.description')}</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <div className="flex items-center justify-between rounded-lg border p-4">
+            <div className="space-y-0.5">
+              <Label htmlFor="document-tree-injection-toggle" className="text-base font-medium">
+                {t('system.documentTree.toggle.label')}
+              </Label>
+              <p className="text-sm text-muted-foreground">
+                {t('system.documentTree.toggle.helper')}
+              </p>
+            </div>
+            <Switch
+              id="document-tree-injection-toggle"
+              checked={documentTreeEnabled}
+              onCheckedChange={handleDocumentTreeToggle}
+              disabled={documentTreeLoading || documentTreeSaving}
+            />
+          </div>
         </CardContent>
       </Card>
 

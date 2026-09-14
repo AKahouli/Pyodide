@@ -1541,6 +1541,7 @@ export class WorkspaceDocumentService {
       limit = 20,
       status,
       search,
+      searchFilename,
       sortBy = 'createdAt',
       sortOrder = 'desc',
     } = params;
@@ -1553,7 +1554,12 @@ export class WorkspaceDocumentService {
     };
 
     if (search) {
-      query.originalName = { $regex: escapeRegex(search), $options: 'i' };
+      const namePattern = { $regex: escapeRegex(search), $options: 'i' };
+      if (searchFilename) {
+        query.$or = [{ originalName: namePattern }, { filename: namePattern }];
+      } else {
+        query.originalName = namePattern;
+      }
     }
 
     const sort: Record<string, 1 | -1> = {
@@ -2413,6 +2419,7 @@ export class WorkspaceDocumentService {
       page = 1,
       limit = 100,
       status,
+      includeAllStatuses = false,
       search,
       sortBy = 'originalName',
       sortOrder = 'asc',
@@ -2423,7 +2430,7 @@ export class WorkspaceDocumentService {
     // Build query
     const query: Record<string, unknown> = {
       workspaceId: new Types.ObjectId(workspaceId),
-      status: status || DocumentStatus.COMPLETED,
+      ...(includeAllStatuses ? {} : { status: status || DocumentStatus.COMPLETED }),
     };
 
     if (search) {

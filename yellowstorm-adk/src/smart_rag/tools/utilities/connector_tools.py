@@ -34,6 +34,7 @@ class ConnectorToolContext:
     brain_ids: Optional[List[str]] = None
     workspace_names: Optional[List[str]] = None
     brain_documents: Optional[List[Dict[str, Any]]] = None
+    file_names: Optional[List[str]] = None
     session_id: Optional[str] = None
     agent_id: Optional[str] = None
     user_id: Optional[str] = None
@@ -590,19 +591,25 @@ def _with_default_workspace_params(
             merged_params["workspace_id"] = default_workspace_id
         return merged_params
 
-    for name in _SINGULAR_LEGACY_WORKSPACE_PARAMS:
-        if name in properties and _needs_workspace_binding(merged_params.get(name)):
-            merged_params[name] = default_workspace_id
-
-    for name in _SINGULAR_WORKSPACE_NAME_PARAMS:
-        if name in properties and _needs_workspace_binding(merged_params.get(name)):
-            merged_params[name] = default_workspace_id
-
     available_workspace_ids = [
         str(value).strip()
         for value in (workspace_names or [])
         if str(value or "").strip()
     ] or [default_workspace_id]
+
+    for name in _SINGULAR_LEGACY_WORKSPACE_PARAMS:
+        if name in properties and _needs_workspace_binding(merged_params.get(name)):
+            property_schema = properties.get(name)
+            merged_params[name] = (
+                available_workspace_ids
+                if isinstance(property_schema, dict) and property_schema.get("type") == "array"
+                else default_workspace_id
+            )
+
+    for name in _SINGULAR_WORKSPACE_NAME_PARAMS:
+        if name in properties and _needs_workspace_binding(merged_params.get(name)):
+            merged_params[name] = default_workspace_id
+
     for name in _PLURAL_LEGACY_WORKSPACE_PARAMS:
         if name in properties and not merged_params.get(name):
             merged_params[name] = available_workspace_ids
@@ -665,9 +672,10 @@ def _collect_connector_context(
     workspace_names: Optional[List[str]],
     workspace_id: Optional[str],
     brain_ids: Optional[List[str]],
+    explicit_file_names: Optional[List[str]] = None,
     user_id: Optional[str] = None,
 ) -> Dict[str, List[str]]:
-    file_names: List[Any] = []
+    file_names: List[Any] = list(explicit_file_names or [])
     workspace_ids: List[Any] = []
     header_workspace_ids: List[Any] = []
     workspace_paths: List[Any] = []
@@ -732,6 +740,31 @@ def _collect_connector_context(
         "header_workspace_ids": _unique_strings(header_workspace_ids),
         "workspace_paths": _unique_workspace_paths(workspace_paths),
     }
+
+
+def _is_logical_search_connector(connector_name: str, connector_slug: str) -> bool:
+    identity = re.sub(r"[^a-z0-9]", "", f"{connector_slug} {connector_name}".lower())
+    return "logicalsearch" in identity
+
+
+def _logical_search_headers(headers: Dict[str, str]) -> Dict[str, str]:
+    canonical: Dict[str, str] = {}
+    for name, value in headers.items():
+        if name.lower() == "authorization":
+            canonical["Authorization"] = value
+        elif name.lower() == "workspace-id":
+            canonical["Workspace-Id"] = value
+    return canonical
+
+
+def _logical_search_server_config(server_config: Dict[str, Any]) -> Dict[str, Any]:
+    sanitized = dict(server_config)
+    configured_headers = server_config.get("headers")
+    sanitized["headers"] = _logical_search_headers(
+        configured_headers if isinstance(configured_headers, dict) else {}
+    )
+    sanitized["headers"].pop("Workspace-Id", None)
+    return sanitized
 
 
 def _apply_streamable_http_context_headers(
@@ -819,6 +852,7 @@ def create_connector_tools(
         effective_workspace_names,
         context.workspace_id,
         context.brain_ids,
+        context.file_names,
         context.user_id,
     )
     settings = get_settings()
@@ -828,11 +862,14 @@ def create_connector_tools(
         connector_id = str(binding.get("connector_id") or "")
         connector_name = str(binding.get("connector_name") or connector_id).strip()
         connector_slug = str(binding.get("connector_slug") or connector_name)
+        is_logical_search = _is_logical_search_connector(connector_name, connector_slug)
         transport_type = str(binding.get("mcp_transport_type") or "").strip()
         server_url = str(binding.get("mcp_server_url") or "").strip()
         server_config = binding.get("mcp_server_config") or {}
         fixed_params = binding.get("fixed_params") or {}
         binding_auth_headers = binding.get("auth_headers") or {}
+        if is_logical_search:
+            binding_auth_headers = _logical_search_headers(binding_auth_headers)
         binding_auth_env = binding.get("auth_env") or {}
 
         if not connector_id.strip():
@@ -896,6 +933,7 @@ def create_connector_tools(
                 _session_id: Optional[str] = context.session_id,
                 _agent_id: Optional[str] = context.agent_id,
                 _has_reserved_purpose: bool = has_reserved_purpose,
+                _is_logical_search: bool = is_logical_search,
                 tool_context: ToolContext = None,
                 **kwargs: Any,
             ) -> Any:
@@ -967,10 +1005,17 @@ def create_connector_tools(
                         _session_id,
                         _agent_id,
                     )
+                if _is_logical_search:
+                    effective_auth_headers = _logical_search_headers(effective_auth_headers)
+                effective_server_config = (
+                    _logical_search_server_config(_server_config)
+                    if _is_logical_search
+                    else _server_config
+                )
                 response = await call_mcp_tool(
                     _transport_type,
                     _server_url,
-                    _server_config,
+                    effective_server_config,
                     _action_key,
                     merged_params,
                     auth_headers=effective_auth_headers,

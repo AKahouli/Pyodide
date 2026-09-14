@@ -79,6 +79,9 @@ export const configValidationSchema = Joi.object({
   SEMANTIC_MODEL_NATIVE_SEARCH_LOG_QUERY: Joi.boolean().default(false),
   SEMANTIC_MODEL_EVIDENCE_SEARCH_TIMEOUT_MS: Joi.number().min(5000).max(1800000).default(180000),
   SEMANTIC_MODEL_EVIDENCE_SEARCH_CONCURRENCY: Joi.number().integer().min(1).max(16).default(4),
+  SEMANTIC_SEARCH_URL: Joi.string().uri().default('http://127.0.0.1:8100'),
+  SEMANTIC_SEARCH_TOKEN: Joi.string().allow('').optional(),
+  SEMANTIC_SEARCH_TIMEOUT_SECONDS: Joi.number().min(1).max(1800).default(300),
   SEMANTIC_MODEL_ONTOLOGY_TIMEOUT_MS: Joi.number().min(0).max(7200000).default(0),
   SEMANTIC_MODEL_MAPPING_TIMEOUT_MS: Joi.number().min(0).max(7200000).default(0),
 
@@ -167,6 +170,24 @@ export const configValidationSchema = Joi.object({
   AUTH_MAX_SESSIONS_PER_USER: Joi.number().min(1).max(50).default(10),
   AUTH_REFRESH_TOKEN_COOKIE_NAME: Joi.string().default('refresh_token'),
   AUTH_COOKIE_SAME_SITE: Joi.string().valid('strict', 'lax', 'none').default('strict'),
+  // Refresh rotation receipt (bounded lost-response recovery). Key is base64
+  // and must decode to exactly 32 bytes; distinct from JWT_SECRET. When the
+  // key is absent, receipts are disabled and replayed rotations conflict.
+  AUTH_ROTATION_RECEIPT_KEY: Joi.string()
+    .optional()
+    .custom((value, helpers) => {
+      try {
+        const decoded = Buffer.from(value, 'base64');
+        if (decoded.length !== 32) {
+          return helpers.error('any.invalid');
+        }
+      } catch {
+        return helpers.error('any.invalid');
+      }
+      return value;
+    }),
+  AUTH_ROTATION_RECEIPT_KEY_ID: Joi.string().default('receipt-v1'),
+  AUTH_ROTATION_RECEIPT_WINDOW_SECONDS: Joi.number().integer().min(30).max(600).default(120),
 
   // Third-party API key (static key for the public /agents endpoint, X-API-Key header)
   THIRD_PARTY_API_KEY: Joi.string().min(8).optional(),
@@ -227,6 +248,15 @@ export const configValidationSchema = Joi.object({
   CONVERSATION_SSE_REPLAY_ENABLED: Joi.boolean().default(true),
   CONVERSATION_SSE_REPLAY_MAX_EVENTS: Joi.number().min(10).max(2000).default(200),
   CONVERSATION_SSE_REPLAY_TTL_MS: Joi.number().min(5000).max(600000).default(120000),
+  // Standard-run recovery worker (WP06.5)
+  CONVERSATION_RECOVERY_ENABLED: Joi.boolean().default(true),
+  CONVERSATION_RECOVERY_INTERVAL_MS: Joi.number().min(5000).max(600000).default(30000),
+  CONVERSATION_RECOVERY_GRACE_MS: Joi.number().min(10000).max(600000).default(60000),
+  // Fleet-wide admission (WP07)
+  CONVERSATION_FLEET_ADMISSION_ENABLED: Joi.boolean().default(true),
+  CONVERSATION_FLEET_MAX_ACTIVE_RUNS: Joi.number().min(1).max(1000).default(50),
+  CONVERSATION_FLEET_MAX_QUEUED_PER_USER: Joi.number().min(1).max(50).default(5),
+  CONVERSATION_FLEET_QUEUE_WAIT_MS: Joi.number().min(5000).max(600000).default(60000),
   CONVERSATION_MAX_MESSAGE_LENGTH: Joi.number().min(1000).max(100000).default(50000),
   CONVERSATION_MAX_FILES_PER_MESSAGE: Joi.number().min(1).max(20).default(5),
   CONVERSATION_SHARE_EXPIRY_DAYS: Joi.number().min(1).max(365).default(30),

@@ -34,8 +34,12 @@ export class SseAuthGuard implements CanActivate {
       );
     }
 
+    // JWT verification errors (malformed/expired token) are authentication
+    // failures; session-store validation happens outside this catch so a
+    // transient dependency failure surfaces as 503, never as "invalid token".
+    let payload: JwtPayload;
     try {
-      const payload = this.jwtService.verify<JwtPayload>(token, {
+      payload = this.jwtService.verify<JwtPayload>(token, {
         secret: this.configService.get<string>('jwt.secret'),
         issuer: this.configService.get<string>('jwt.issuer'),
         audience: this.configService.get<string>('jwt.audience'),
@@ -47,23 +51,6 @@ export class SseAuthGuard implements CanActivate {
           'Invalid token type for SSE connection',
         );
       }
-
-      // Validate session is still active
-      if (payload.sessionId) {
-        const isSessionValid = await this.authService.isSessionValid(
-          payload.sessionId,
-        );
-        if (!isSessionValid) {
-          throw new UnauthorizedException(
-            ErrorCode.AUTH_SESSION_REVOKED,
-            'Session has been revoked',
-          );
-        }
-      }
-
-      // Attach user info to request for controller access
-      request.sseUser = payload;
-      return true;
     } catch (error) {
       if (error instanceof UnauthorizedException) {
         throw error;
@@ -73,5 +60,22 @@ export class SseAuthGuard implements CanActivate {
         'Invalid or expired token',
       );
     }
+
+    // Validate session is still active
+    if (payload.sessionId) {
+      const isSessionValid = await this.authService.isSessionValid(
+        payload.sessionId,
+      );
+      if (!isSessionValid) {
+        throw new UnauthorizedException(
+          ErrorCode.AUTH_SESSION_REVOKED,
+          'Session has been revoked',
+        );
+      }
+    }
+
+    // Attach user info to request for controller access
+    request.sseUser = payload;
+    return true;
   }
 }

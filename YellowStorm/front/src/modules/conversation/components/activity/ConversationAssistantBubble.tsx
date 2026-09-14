@@ -29,6 +29,9 @@ interface NarrativeProps {
   onComponentAction?: (action: ChoiceComponentAction) => Promise<void>;
   onSubmitQuestions?: (actions: ChoiceComponentAction[]) => Promise<void>;
   onRetry?: () => void;
+  /** Agent that produced this message; when set with `onOpenAgentEditor`, the header bot icon opens the agent editor. */
+  agentId?: string | null;
+  onOpenAgentEditor?: (agentId: string) => void;
 }
 
 /** Grace period between answer completion and the animated pane collapse. */
@@ -359,14 +362,32 @@ export function ConversationAssistantBubble(props: Readonly<NarrativeProps>) {
     const safeName = sanitizeActivityActorName((component.data as ToolActivityData).actorName);
     return safeName ? humanizeToolTitle(safeName) : name;
   }, '') || t('stream.activity.assistant');
+  const openAgentEditor = props.agentId && props.onOpenAgentEditor
+    ? () => props.onOpenAgentEditor!(props.agentId!)
+    : null;
+  const agentIcon = openAgentEditor ? (
+    <button
+      type='button'
+      data-agent-editor-trigger
+      onClick={openAgentEditor}
+      aria-label={t('stream.activity.openAgentEditor')}
+      title={t('stream.activity.openAgentEditor')}
+      className='relative flex size-8 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring'
+    >
+      {props.isStreaming && <Loader2 data-agent-spinner className='absolute size-7 animate-spin text-running [animation-duration:1.2s]' />}
+      <Bot className={cn('relative size-4', props.isStreaming && 'text-running')} />
+    </button>
+  ) : (
+    <span className='relative flex size-8 shrink-0 items-center justify-center' aria-hidden='true'>
+      {props.isStreaming && <Loader2 data-agent-spinner className='absolute size-7 animate-spin text-running [animation-duration:1.2s]' />}
+      <Bot className={cn('relative size-4', props.isStreaming && 'text-running')} />
+    </span>
+  );
   return (
     <div data-message-role='assistant' data-testid='conversation-assistant-bubble' className={cn('w-full rounded-2xl rounded-tl-sm border border-border/70 bg-muted/45 px-4 py-4 text-sm text-foreground shadow-xs dark:bg-muted/30')}>
         {activityNodes.length > 0 ? <>
           <div data-agent-activity data-active={props.isStreaming || undefined} className='mb-3 hidden min-w-0 w-full items-center gap-2 overflow-hidden text-sm text-muted-foreground md:flex'>
-            <span className='relative flex size-8 shrink-0 items-center justify-center' aria-hidden='true'>
-              {props.isStreaming && <Loader2 data-agent-spinner className='absolute size-7 animate-spin text-running [animation-duration:1.2s]' />}
-              <Bot className={cn('relative size-4', props.isStreaming && 'text-running')} />
-            </span>
+            {agentIcon}
             <span className='shrink-0 font-medium text-foreground'>{actorName}</span>
             {props.isStreaming && <span className='sr-only' role='status'>{actorName}</span>}
             <span className={cn('relative h-0.5 min-w-8 flex-1 overflow-hidden', props.isStreaming ? 'bg-running/20' : 'bg-border')} aria-hidden='true'>
@@ -386,10 +407,7 @@ export function ConversationAssistantBubble(props: Readonly<NarrativeProps>) {
             </button>
           </div>
         <div data-agent-activity-mobile data-active={props.isStreaming || undefined} className='mb-3 flex min-w-0 items-center gap-2 overflow-hidden text-sm text-muted-foreground md:hidden' role={props.isStreaming ? 'status' : undefined}>
-          <span className='relative flex size-8 shrink-0 items-center justify-center' aria-hidden='true'>
-            {props.isStreaming && <Loader2 data-agent-spinner className='absolute size-7 animate-spin text-running [animation-duration:1.2s]' />}
-            <Bot className={cn('relative size-4', props.isStreaming && 'text-running')} />
-          </span>
+          {agentIcon}
           <span className='shrink-0 font-medium text-foreground'>{actorName}</span>
           <span className={cn('relative h-0.5 min-w-8 flex-1 overflow-hidden', props.isStreaming ? 'bg-running/20' : 'bg-border')} aria-hidden='true'>
             {props.isStreaming && <span data-agent-scan className='absolute inset-y-0 left-0 w-1/3 animate-agent-scan bg-gradient-to-r from-transparent via-running to-transparent' />}
@@ -397,10 +415,7 @@ export function ConversationAssistantBubble(props: Readonly<NarrativeProps>) {
         </div>
         </> : (
           <div data-agent-activity data-active={props.isStreaming || undefined} className='mb-3 flex min-w-0 items-center gap-2 overflow-hidden text-sm text-muted-foreground' role={props.isStreaming ? 'status' : undefined}>
-            <span className='relative flex size-8 shrink-0 items-center justify-center' aria-hidden='true'>
-              {props.isStreaming && <Loader2 data-agent-spinner className='absolute size-7 animate-spin text-running [animation-duration:1.2s]' />}
-              <Bot className={cn('relative size-4', props.isStreaming && 'text-running')} />
-            </span>
+            {agentIcon}
             <span className='shrink-0 font-medium text-foreground'>{actorName}</span>
             <span className={cn('relative h-0.5 min-w-8 flex-1 overflow-hidden', props.isStreaming ? 'bg-running/20' : 'bg-border')} aria-hidden='true'>
               {props.isStreaming && <span data-agent-scan className='absolute inset-y-0 left-0 w-1/3 animate-agent-scan bg-gradient-to-r from-transparent via-running to-transparent' />}

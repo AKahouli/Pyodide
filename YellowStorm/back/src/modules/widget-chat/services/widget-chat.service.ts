@@ -346,10 +346,11 @@ export class WidgetChatService {
     for (const wsId of workspaceIds) {
       const { documents } = await this.workspaceDocumentService.findByMultipleWorkspaces(
         [wsId],
-        { search: displayName, limit: 20, page: 1 },
+        { search: displayName, limit: 20, page: 1, searchFilename: true },
       );
       const doc = documents.find(
-        (item) => item.originalName === displayName || item.originalName === objectKey,
+        (item) => item.originalName === displayName || item.originalName === objectKey
+          || item.filename === displayName || item.filename === objectKey,
       );
       if (!doc?.path) {
         continue;

@@ -31,6 +31,7 @@ from pydantic import TypeAdapter
 from src.routers.chatbot import chatbot_router, agentic_router
 from src.routers.similarity_search import router as similarity_search_router
 from src.routers.authentification import router as auth_router
+from src.routers.health import router as health_router
 from src.routers.playbook import playbook_router
 from src.routers.evaluation import router as evaluation_router
 from src.smart_rag.infrastructure.session.manager import (
@@ -144,48 +145,51 @@ async def lifespan(app: FastAPI):
         # Keep starting: the provider retries lazily on the first request.
         logger.error(f"Failed to warm shared ADK database session service: {e}")
 
-    # Start gRPC server as background task
-    grpc_server_task = None
+    # Start gRPC under a supervisor: a transient database/network startup
+    # failure is retried while the process stays healthy instead of leaving
+    # HTTP alive with gRPC permanently dead. Fatal configuration failures
+    # terminate the supervisor task and are logged with an actionable cause.
+    grpc_supervisor = None
     grpc_port = app_settings.GRPC_PORT
     grpc_enabled = app_settings.GRPC_ENABLED
 
     if grpc_enabled:
-        try:
-            logger.info(f"Starting gRPC server on port {grpc_port}...")
-            grpc_server_task = asyncio.create_task(
-                start_grpc_server(host="0.0.0.0", port=int(grpc_port))
-            )
+        from src.grpc_server.supervisor import (
+            GrpcSupervisor,
+            set_current_supervisor,
+        )
+        grpc_supervisor = GrpcSupervisor(
+            host="0.0.0.0", port=int(grpc_port), start_callable=start_grpc_server
+        )
+        set_current_supervisor(grpc_supervisor)
+        grpc_supervisor_task = grpc_supervisor.start()
 
-            # Add error callback to catch failures after task creationVectorstores
-            def _grpc_task_error_callback(task):
-                try:
-                    task.result()  # This will raise if the task failed
-                except asyncio.CancelledError:
-                    pass  # Task was cancelled during shutdown, this is expected
-                except Exception as e:
-                    logger.error(
-                        f"[gRPC] Background task failed: {str(e)}"
-                    )
-
-            grpc_server_task.add_done_callback(_grpc_task_error_callback)
-
-            # Wait briefly so immediate startup failures surface in logs without
-            # blocking the FastAPI app forever if gRPC initialization hangs.
-            try:
-                await asyncio.wait_for(asyncio.shield(grpc_server_task), timeout=0.5)
-            except asyncio.TimeoutError:
-                logger.info(
-                    "gRPC server startup still in progress; continuing FastAPI startup"
+        def _supervisor_done_callback(task: "asyncio.Task[None]") -> None:
+            if task.cancelled():
+                return
+            exc = task.exception()
+            if exc is not None:
+                logger.error(
+                    "[gRPC] supervisor terminated with fatal error: %s: %s",
+                    type(exc).__name__,
+                    exc,
                 )
 
-            if grpc_server_task.done():
-                grpc_server_task.result()
+        grpc_supervisor_task.add_done_callback(_supervisor_done_callback)
 
-            logger.info("✅ gRPC server task started (running in background)")
-        except Exception as e:
-            logger.error(f"Failed to start gRPC server: {str(e)}")
+        # Bounded first-readiness wait: the supervisor keeps retrying, but the
+        # readiness endpoint reports degraded until serving actually starts.
+        try:
+            await asyncio.wait_for(
+                grpc_supervisor.wait_ready(),
+                timeout=app_settings.GRPC_STARTUP_READY_TIMEOUT_SECONDS,
+            )
+            logger.info("✅ gRPC supervisor serving on port %s", grpc_port)
+        except asyncio.TimeoutError:
             logger.warning(
-                "Continuing without gRPC support. Only REST/SSE endpoints will be available."
+                "gRPC supervisor not serving within %ss; retrying in background "
+                "and reporting degraded readiness",
+                app_settings.GRPC_STARTUP_READY_TIMEOUT_SECONDS,
             )
     else:
         logger.info(
@@ -198,16 +202,13 @@ async def lifespan(app: FastAPI):
     # Application shutdown logic
     logger.info("Shutting down Smart ADK API...")
 
-    # Stop gRPC server
-    if grpc_server_task:
-        logger.info("Stopping gRPC server...")
-        grpc_server_task.cancel()
-        try:
-            await grpc_server_task
-        except asyncio.CancelledError:
-            logger.info("✅ gRPC server stopped")
-        except Exception as e:
-            logger.error(f"Error stopping gRPC server: {str(e)}")
+    # Stop the supervised gRPC server (cancels backoff/initialization promptly,
+    # drains the listener, and never recreates services after shutdown).
+    if grpc_supervisor:
+        logger.info("Stopping gRPC supervisor...")
+        await grpc_supervisor.stop()
+        from src.grpc_server.supervisor import set_current_supervisor
+        set_current_supervisor(None)
 
     # Dispose the shared ADK session service, then its engine exactly once.
     # gRPC is stopped above, so no in-flight request still holds the service.
@@ -260,6 +261,7 @@ app.include_router(response_evaluation_router)
 app.include_router(response_correction_router)
 app.include_router(semantic_model_router)
 app.include_router(a2a_serving_router)
+app.include_router(health_router)
 if __name__ == "__main__":
     uvicorn.run(
         "main:app",
