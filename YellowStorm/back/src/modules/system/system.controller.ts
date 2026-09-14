@@ -21,6 +21,11 @@ import type { FeatureVisibility } from './interfaces/feature-visibility.interfac
 import { UpdateFeatureVisibilityDto } from './dto/update-feature-visibility.dto';
 import { UpdateDocumentTreeInjectionDto } from './dto/update-document-tree-injection.dto';
 import type { DocumentTreeInjectionSettings } from './interfaces/document-tree-settings.interface';
+import type { LoginSettings } from './interfaces/login-settings.interface';
+import { SetLoginSettingsDto } from './dto/set-login-settings.dto';
+import { NavigationSettingsService } from './navigation-settings.service';
+import type { NavigationSettings } from './interfaces/navigation-settings.interface';
+import { UpdateNavigationSettingsDto } from './dto/update-navigation-settings.dto';
 
 interface MulterFile {
   originalname: string;
@@ -60,6 +65,7 @@ export class SystemController {
     private readonly systemService: SystemService,
     private readonly auditLogService: AuditLogService,
     private readonly featureVisibilityService: FeatureVisibilityService,
+    private readonly navigationSettingsService: NavigationSettingsService,
   ) {}
 
   @Get('features')
@@ -146,6 +152,64 @@ export class SystemController {
   })
   async getMaintenanceStatus(): Promise<MaintenanceStatus> {
     return this.systemService.getMaintenanceStatus();
+  }
+
+  @Get('login-settings')
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Get login token expiry settings' })
+  getLoginSettings(): Promise<LoginSettings> {
+    return this.systemService.getLoginSettings();
+  }
+
+  @Post('login-settings')
+  @UseGuards(PermissionsGuard)
+  @RequirePermissions(Permissions.SYSTEM_MAINTENANCE)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Set login token expiry settings' })
+  async setLoginSettings(
+    @Body() body: SetLoginSettingsDto,
+    @CurrentUser() user: UserDocument,
+    @Req() req: Request,
+  ): Promise<LoginSettings> {
+    const result = await this.systemService.setLoginSettings(body);
+    this.auditLogService.logSuccess({
+      actorId: user._id.toString(),
+      actorEmail: user.email,
+      action: 'system.loginSettings',
+      metadata: { ...result },
+      ipAddress: req.ip,
+      userAgent: req.headers['user-agent'],
+    });
+    return result;
+  }
+
+  @Get('navigation')
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Get main sidebar navigation settings' })
+  getNavigationSettings(): Promise<NavigationSettings> {
+    return this.navigationSettingsService.getSettings();
+  }
+
+  @Put('navigation')
+  @UseGuards(PermissionsGuard)
+  @RequirePermissions(Permissions.SYSTEM_MAINTENANCE)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Update main sidebar navigation settings' })
+  async updateNavigationSettings(
+    @Body() body: UpdateNavigationSettingsDto,
+    @CurrentUser() user: UserDocument,
+    @Req() req: Request,
+  ): Promise<NavigationSettings> {
+    const result = await this.navigationSettingsService.updateSettings(body.nodes);
+    this.auditLogService.logSuccess({
+      actorId: user._id.toString(),
+      actorEmail: user.email,
+      action: 'system.navigation',
+      metadata: { revision: result.revision, nodeCount: result.nodes.length },
+      ipAddress: req.ip,
+      userAgent: req.headers['user-agent'],
+    });
+    return result;
   }
 
   @Post('maintenance')

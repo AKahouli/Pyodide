@@ -198,6 +198,18 @@ describe('PlaybookFlowObservabilityService', () => {
     }]);
   });
 
+  it('preserves playbook web citation evidence', () => {
+    const payload = service.extractCompletedResultPayload({
+      output: 'Revenue rose [1].',
+      citation_sources: [{ type: 'web', source: 'https://example.com/article', title: 'Article', reference: '[1]', exact_text: 'Revenue rose.', evidence_origin: 'page_content' }],
+    }, { executionId: 'exec-1', taskId: 'task-1' });
+
+    expect(payload.components).toEqual([{ type: 'citation', data: expect.objectContaining({
+      sourceKind: 'web', sourceType: 'web', source: 'https://example.com/article', title: 'Article',
+      reference: '[1]', exactText: 'Revenue rose.', evidenceOrigin: 'page_content',
+    }) }]);
+  });
+
   it('falls back to raw_llm_output parsing when reasoning_trace is absent', () => {
     const payload = service.extractCompletedResultPayload({
       output: 'Summary text',

@@ -6,7 +6,6 @@ import MaintenancePage from './pages/MaintenancePage';
 import { EmailVerificationPage, ResetPasswordPage, ProfileCompletionPage } from './modules/auth';
 import { OAuthCallbackPage } from './modules/auth/components/OAuthCallbackPage';
 import { RootGuard } from './modules/auth/components/RootGuard';
-import { dataRoomFeatures } from './config/dataRoomFeatures';
 import { AdminGuard } from './modules/admin/components/AdminGuard';
 import { AdminLayout } from './modules/admin/components/AdminLayout';
 import { PermissionGuard } from './modules/admin/components/PermissionGuard';
@@ -24,6 +23,9 @@ const PlatformOverviewPage = React.lazy(() =>
 const ConversationPage = React.lazy(() =>
   import('./modules/conversation/ConversationPage').then((m) => ({ default: m.ConversationPage }))
 );
+const NewConversationPage = React.lazy(() =>
+  import('./modules/conversation/NewConversationPage').then((m) => ({ default: m.NewConversationPage }))
+);
 const ConversationV2Page = React.lazy(() =>
   import('./modules/conversation-v2/ConversationV2Page')
 );
@@ -36,13 +38,16 @@ const SharedConversationPage = React.lazy(() =>
 const SharedConversationV2Page = React.lazy(() =>
   import('./modules/conversation-v2/SharedConversationV2Page')
 );
+const AllChatsPage = React.lazy(() =>
+  import('./modules/sidebar').then((m) => ({ default: m.AllChatsPage }))
+);
 const UpgradePage = React.lazy(() =>
   import('./modules/usage/components/UpgradePage').then((m) => ({ default: m.UpgradePage }))
 );
 
 // Lazy-loaded playbook routes
-const PlaybookListPage = React.lazy(() =>
-  import("./modules/playbook/components/PlaybookListPage").then((m) => ({ default: m.PlaybookListPage }))
+const PlaybooksConsolePage = React.lazy(() =>
+  import("./modules/playbook/console/PlaybooksConsolePage").then((m) => ({ default: m.PlaybooksConsolePage }))
 );
 const PlaybookCanvasPage = React.lazy(() =>
   import("./modules/playbook/components/PlaybookCanvasPage").then((m) => ({ default: m.PlaybookCanvasPage }))
@@ -229,6 +234,10 @@ export const router = createHashRouter([
         ),
       },
       {
+        path: 'conversation',
+        element: lazyPage(<NewConversationPage />),
+      },
+      {
         path: 'conversation/:id',
         element: lazyPage(<ConversationPage />),
       },
@@ -241,6 +250,10 @@ export const router = createHashRouter([
         element: lazyPage(<ConversationV2SessionPage />),
       },
       {
+        path: 'chats',
+        element: lazyPage(<AllChatsPage />),
+      },
+      {
         path: 'apps',
         element: (
           <Suspense fallback={null}>
@@ -249,7 +262,7 @@ export const router = createHashRouter([
         ),
       },
       {
-        path: 'app-builder',
+        path: 'app-market',
         element: (
           <Suspense fallback={null}>
             <AppBuilderPage />
@@ -260,7 +273,7 @@ export const router = createHashRouter([
         path: 'playbooks',
         element: (
           <Suspense fallback={null}>
-            <PlaybookListPage />
+            <PlaybooksConsolePage />
           </Suspense>
         ),
       },

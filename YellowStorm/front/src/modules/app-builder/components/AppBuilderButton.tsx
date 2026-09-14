@@ -9,7 +9,7 @@ export function AppBuilderButton() {
 
   return (
     <SidebarMenuItem>
-      <SidebarMenuButton tooltip={t('button.tooltip')} onClick={() => navigate('/app-builder')}>
+      <SidebarMenuButton tooltip={t('button.tooltip')} onClick={() => navigate('/app-market')}>
         <AppWindow />
         <span>{t('button.label')}</span>
       </SidebarMenuButton>

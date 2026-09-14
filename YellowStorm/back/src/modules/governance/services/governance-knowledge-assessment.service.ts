@@ -1,7 +1,7 @@
 import { createHash } from 'crypto';
 import { BadRequestException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { Interval } from '@nestjs/schedule';
-import { ConfigService } from '@nestjs/config';
+import { FeatureVisibilityService } from '@modules/system/feature-visibility.service';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import { ErrorCode } from '@modules/exceptions/constants/error-codes';
@@ -58,12 +58,12 @@ export class GovernanceKnowledgeAssessmentService {
     private readonly events: GovernanceDocumentEventService,
     private readonly audit: AuditLogService,
     private readonly indexing: IndexingService,
-    private readonly config: ConfigService,
+    private readonly features: FeatureVisibilityService,
   ) { this.evaluators = [businessValidity, freshness, availability, integrity, searchQuality, governanceQuality]; }
 
   @Interval(300_000)
   async assessCurrentDocuments(): Promise<void> {
-    if (this.running || !this.config.get<boolean>('dataRoom.knowledgeAssessmentEnabled')) return;
+    if (this.running || !this.features.isEnabled('dataRoomKnowledgeAssessment')) return;
     this.running = true;
     try {
       const records = await this.governanceDocuments.find({ status: { $nin: ['rejected', 'archived'] } }).sort({ updatedAt: 1 }).limit(200).exec();
@@ -148,7 +148,7 @@ export class GovernanceKnowledgeAssessmentService {
 
   private async effectiveBindings(programId: string, scopeIds: string[], requested?: string): Promise<GovernanceWorkspaceBindingDocument[]> { const filter: Record<string, unknown> = { programId: new Types.ObjectId(programId), enabled: true }; if (!scopeIds.includes('*')) { const selected = requested ? [new Types.ObjectId(requested)] : scopeIds.map((id) => new Types.ObjectId(id)); filter.$or = [{ visibility: 'program_shared' }, { scopeIds: { $in: selected } }]; } return this.bindings.find(filter).exec(); }
   private async authorizedScopeIds(actorId: string, programId: string, requested?: string): Promise<string[]> { await this.programs.assertOwnedProgram(actorId, programId); if (requested) { await this.access.assertScopeAccess(actorId, programId, requested); return [requested]; } return this.access.getAccessibleScopeIds(actorId, programId); }
-  private assertEnabled(): void { if (!this.config.get<boolean>('dataRoom.knowledgeAssessmentEnabled')) throw new BadRequestException(ErrorCode.VALIDATION_ERROR, 'Knowledge assessment is disabled.'); }
+  private assertEnabled(): void { if (!this.features.isEnabled('dataRoomKnowledgeAssessment')) throw new BadRequestException(ErrorCode.VALIDATION_ERROR, 'Knowledge assessment is disabled.'); }
   private date(value: unknown): Date | undefined { if (!value) return undefined; const date = value instanceof Date ? value : new Date(String(value)); return Number.isNaN(date.getTime()) ? undefined : date; }
   private serialize(value: unknown): Record<string, unknown> { const input = value as Record<string, unknown>; const output: Record<string, unknown> = { ...input, id: String(input._id ?? input.id) }; delete output._id; delete output.__v; for (const key of ['programId', 'documentId', 'decidedBy', 'appliedBy', 'acknowledgedBy']) if (output[key]) output[key] = String(output[key]); if (Array.isArray(output.scopeIds)) output.scopeIds = output.scopeIds.map(String); if (Array.isArray(output.alertIds)) output.alertIds = output.alertIds.map(String); return output; }
   private stableStringify(value: unknown): string { if (value === null || typeof value !== 'object') return JSON.stringify(value); if (value instanceof Date) return JSON.stringify(value.toISOString()); if (Array.isArray(value)) return `[${value.map((item) => this.stableStringify(item)).join(',')}]`; const object = value as Record<string, unknown>; return `{${Object.keys(object).sort().map((key) => `${JSON.stringify(key)}:${this.stableStringify(object[key])}`).join(',')}}`; }

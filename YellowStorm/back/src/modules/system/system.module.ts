@@ -27,6 +27,7 @@ import { FeatureVisibilityService } from './feature-visibility.service';
 import { PlatformCopilotBootstrapService } from './services/platform-copilot-bootstrap.service';
 import { AppearanceLogoService } from './services/appearance-logo.service';
 import { AppearanceLogoController } from './controllers/appearance-logo.controller';
+import { NavigationSettingsService } from './navigation-settings.service';
 
 @Global() // Make SystemService available globally for the guard
 @Module({
@@ -70,12 +71,13 @@ import { AppearanceLogoController } from './controllers/appearance-logo.controll
     WorkspaceTransformationSettingsService,
     ConversationSettingsService,
     FeatureVisibilityService,
+    NavigationSettingsService,
     PlatformCopilotBootstrapService,
     {
       provide: APP_GUARD,
       useClass: MaintenanceGuard,
     },
   ],
-  exports: [SystemService, WorkspaceUploadSettingsService, WorkspaceEvidenceSearchSettingsService, WorkspaceTransformationSettingsService, ConversationSettingsService, FeatureVisibilityService],
+  exports: [SystemService, WorkspaceUploadSettingsService, WorkspaceEvidenceSearchSettingsService, WorkspaceTransformationSettingsService, ConversationSettingsService, FeatureVisibilityService, NavigationSettingsService],
 })
 export class SystemModule {}

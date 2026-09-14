@@ -201,7 +201,11 @@ it('edit-on-card: approve submits the edited fields as JSON edits', async () => 
   await user.type(subject, 'URGENT');
   await user.click(screen.getByRole('radio', { name: 'Approuver' }));
   expect(onAction).toHaveBeenCalledWith(expect.objectContaining({
-    submitText: JSON.stringify({ verdict: 'approve', edits: { subject: 'URGENT', body: 'Hi' } }),
+    submitText: JSON.stringify({
+      verdict: 'approve',
+      questionId: 'confirm::adk-x',
+      edits: { subject: 'URGENT', body: 'Hi' },
+    }),
   }));
 });
 
@@ -265,7 +269,9 @@ it('edit-on-card: decline stays a plain verdict', async () => {
     />,
   );
   await user.click(screen.getByRole('radio', { name: 'Refuser' }));
-  expect(onAction).toHaveBeenCalledWith(expect.objectContaining({ submitText: 'decline' }));
+  expect(onAction).toHaveBeenCalledWith(
+    expect.objectContaining({ submitText: JSON.stringify({ verdict: 'decline', questionId: 'confirm::adk-y' }) }),
+  );
 });
 
 it('edit-on-card: renders a markdown body formatted in the preview', () => {

@@ -7,6 +7,12 @@ import pg from 'pg';
 
 const { Pool } = pg;
 const directory = path.dirname(new URL(import.meta.url).pathname.replace(/^\/(.:)/, '$1'));
+const legacyMutableMigrations = new Set([
+  '001_semantic_model_tables.sql',
+  '002_semantic_age_graph.sql',
+  '003_semantic_indexes.sql',
+  '004_record_relation_uniqueness.sql',
+]);
 const pool = new Pool({
   host: process.env.SEMANTIC_PG_HOST,
   port: Number(process.env.SEMANTIC_PG_PORT || 5432),
@@ -17,7 +23,8 @@ const pool = new Pool({
 });
 
 try {
-  const files = (await readdir(directory)).filter((file) => /^\d+.*\.sql$/.test(file)).sort();
+  // 000 is a mutable aggregate used by application bootstrap; only immutable increments belong in the migration ledger.
+  const files = (await readdir(directory)).filter((file) => /^\d+.*\.sql$/.test(file) && file !== '000_deploy_all.sql').sort();
   await pool.query('CREATE SCHEMA IF NOT EXISTS semantic_model');
   await pool.query(`CREATE TABLE IF NOT EXISTS semantic_model.schema_migrations (
     version TEXT PRIMARY KEY, checksum TEXT NOT NULL, applied_at TIMESTAMPTZ NOT NULL DEFAULT now())`);
@@ -29,7 +36,9 @@ try {
     const checksum = createHash('sha256').update(template).digest('hex');
     const previous = await pool.query('SELECT checksum FROM semantic_model.schema_migrations WHERE version = $1', [file]);
     if (previous.rowCount) {
-      if (previous.rows[0].checksum !== checksum) throw new Error(`Migration checksum changed: ${file}`);
+      if (previous.rows[0].checksum !== checksum && !legacyMutableMigrations.has(file)) {
+        throw new Error(`Migration checksum changed: ${file}`);
+      }
       continue;
     }
     if (file === '002_semantic_age_graph.sql') {

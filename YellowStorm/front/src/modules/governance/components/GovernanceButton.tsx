@@ -5,7 +5,7 @@ import { SidebarMenuAction, SidebarMenuButton, SidebarMenuItem } from '@/compone
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { useModuleTranslation } from '@/modules/localization';
 
-export const GovernanceButton = memo(function GovernanceButton() {
+export const GovernanceButton = memo(function GovernanceButton({ label }: { label?: string }) {
   const navigate = useNavigate();
   const { t } = useModuleTranslation('governance');
   const { t: tCommon } = useModuleTranslation('common');
@@ -13,13 +13,13 @@ export const GovernanceButton = memo(function GovernanceButton() {
 
   return (
     <SidebarMenuItem>
-      <SidebarMenuButton tooltip={t('button.label')} onClick={goToGovernance}>
+      <SidebarMenuButton tooltip={label ?? t('button.label')} onClick={goToGovernance}>
         <ShieldCheck />
-        <span>{t('button.label')}</span>
+        <span>{label ?? t('button.label')}</span>
       </SidebarMenuButton>
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
-          <SidebarMenuAction showOnHover aria-label={tCommon('sidebar.moreActions', { name: t('button.label') })}>
+          <SidebarMenuAction showOnHover aria-label={tCommon('sidebar.moreActions', { name: label ?? t('button.label') })}>
             <MoreHorizontal />
           </SidebarMenuAction>
         </DropdownMenuTrigger>

@@ -1379,6 +1379,10 @@ class ChatbotServicer(
         Returns:
             RunAgentTeamRequest: Internal V1 Pydantic model
         """
+        has_team_definition = pb_request.HasField("team_definition")
+        if (pb_request.agent_mode == "hierarchical") != has_team_definition:
+            raise ValueError("Hierarchical mode and team definition must be provided together")
+
         # Extract workspace names and documents from multiple workspace contexts
         workspace_names = []
         workspace_ids = []
@@ -1557,8 +1561,15 @@ class ChatbotServicer(
             "You are a manager agent that coordinates tasks between specialized agents."
         )
 
+        root_agent_id = None
+        if has_team_definition:
+            roots = [node.agent_id for node in pb_request.team_definition.nodes if not node.parent_agent_id]
+            if len(roots) != 1:
+                raise ValueError("An executable team must have exactly one root")
+            root_agent_id = roots[0]
+
         for agent in pb_request.agents:
-            if agent.agent_type == "manager":
+            if (root_agent_id and agent.id == root_agent_id) or (not root_agent_id and agent.agent_type == "manager"):
                 # Found the manager agent - use its chatbot configuration and prompt
                 if agent.HasField("chatbot"):
                     manager_chatbot_name = {
@@ -1618,7 +1629,7 @@ class ChatbotServicer(
             else None
         )
 
-        return RunAgentTeamRequest(
+        converted = RunAgentTeamRequest(
             user_id=pb_request.user_context.user_id,  # V2: user_context.user_id → V1: user_id
             session_id=pb_request.conversation_id,  # V2: conversation_id → V1: session_id
             message=pb_request.query,  # V2: query → V1: message
@@ -1650,7 +1661,22 @@ class ChatbotServicer(
             skills=skills,
             deep_search_enabled=getattr(pb_request, 'deep_search_enabled', False),
             correction_replay_context=self._build_correction_replay_context(pb_request),
+            team_definition={
+                "team_id": pb_request.team_definition.team_id,
+                "nodes": [
+                    {
+                        "agent_id": node.agent_id,
+                        "parent_agent_id": node.parent_agent_id or None,
+                        "order": node.order,
+                    }
+                    for node in pb_request.team_definition.nodes
+                ],
+            } if has_team_definition else None,
         )
+        if has_team_definition:
+            from src.smart_rag.engines.multi_agent.hierarchical_agents import validate_hierarchical_request
+            validate_hierarchical_request(converted)
+        return converted
 
     def _build_correction_replay_context(self, pb_request):
         if not pb_request.HasField("correction_replay_context"):
@@ -1911,6 +1937,8 @@ class ChatbotServicer(
                     total_tokens=usage_data.get("total_tokens", 0),
                     model=usage_data.get("model", ""),
                     context_window_tokens=usage_data.get("context_window_tokens", 0),
+                    cached_input_tokens=usage_data.get("cached_input_tokens", 0),
+                    reasoning_tokens=usage_data.get("reasoning_tokens", 0),
                 ),
             )
 
@@ -2184,7 +2212,22 @@ class ChatbotServicer(
             # Build CitationComponent with TextSourceData or ImageSourceData
             parent_id = component_data.get("parent_id", "")
 
-            if "text_source" in component_data:
+            if "web_source" in component_data:
+                web_source_data = component_data.get("web_source", {})
+                component_kwargs["citation"] = chatbot_pb2.CitationComponent(
+                    parent_id=str(component_data.get("parent_id", "")),
+                    web_source=chatbot_pb2.WebSourceData(
+                        type="web",
+                        source=str(web_source_data.get("source", "")),
+                        title=str(web_source_data.get("title", "")),
+                        reference=str(web_source_data.get("reference", "")),
+                        exact_text=str(web_source_data.get("exact_text", "")),
+                        prefix=str(web_source_data.get("prefix", "")),
+                        suffix=str(web_source_data.get("suffix", "")),
+                        evidence_origin=str(web_source_data.get("evidence_origin", "")),
+                    ),
+                )
+            elif "text_source" in component_data:
                 # Build TextSourceData
                 text_source_data = component_data.get("text_source", {})
 

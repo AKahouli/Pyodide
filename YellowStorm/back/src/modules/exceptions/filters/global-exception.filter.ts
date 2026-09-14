@@ -7,7 +7,7 @@ import {
   HttpStatus,
 } from '@nestjs/common';
 import { Request, Response } from 'express';
-import { v4 as uuidv4 } from 'uuid';
+import { randomUUID } from 'crypto';
 import { ConfigService } from '@nestjs/config';
 import { LoggerService } from '../../logger/logger.service';
 import { AppException } from '../exceptions/base.exception';
@@ -46,7 +46,7 @@ export class GlobalExceptionFilter implements ExceptionFilter {
     const ctx = host.switchToHttp();
     const response = ctx.getResponse<Response>();
     const request = ctx.getRequest<Request>();
-    const requestId = request.headers['request-id']?.toString() || request.headers['x-request-id']?.toString() || uuidv4();
+    const requestId = request.headers['request-id']?.toString() || request.headers['x-request-id']?.toString() || randomUUID();
 
     const errorResponse = this.buildErrorResponse(exception, request, requestId);
 

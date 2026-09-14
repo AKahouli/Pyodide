@@ -65,6 +65,18 @@ class TestWorkflowProcessor:
         mock_mono.assert_awaited_once_with(team, request, queue)
 
     @pytest.mark.asyncio
+    async def test_execute_workflow_routes_hierarchical_mode(self):
+        team = MagicMock()
+        request = _team_request("hierarchical")
+        queue = AsyncMock()
+        with patch(
+            "src.smart_rag.engines.multi_agent.workflow_processor.handle_hierarchical_agents_workflow",
+            new_callable=AsyncMock,
+        ) as mock_hierarchical:
+            await execute_workflow(team, request, queue)
+        mock_hierarchical.assert_awaited_once_with(team, request, queue)
+
+    @pytest.mark.asyncio
     async def test_run_agent_team_logic_success(self):
         request = _team_request("manual")
         queue = AsyncMock()

@@ -57,7 +57,10 @@ const MAINTENANCE_STORAGE_KEY = 'maintenance_info';
 
 // Token refresh state to prevent multiple simultaneous refresh calls
 let isRefreshing = false;
-let isRedirecting = false;
+let proactiveRefreshTimer: number | null = null;
+
+export const AUTH_LOST_EVENT = 'yellostorm:auth-lost';
+const REFRESH_EARLY_MS = 60_000;
 
 // Refresh burst budget (per tab): a transient outage must not tight-loop the
 // refresh endpoint; once the burst is exhausted the client enters the
@@ -208,6 +211,7 @@ async function runCoordinatedRefresh(usedToken: string | null): Promise<string> 
           throw new AuthTransientError('Session changed during refresh');
         }
         localStorage.setItem(AUTH_STORAGE_KEYS.accessToken, accessToken);
+        scheduleProactiveRefresh(accessToken);
         clearRefreshAttempt();
         broadcastAuthEvent('refreshed');
         return accessToken;
@@ -224,6 +228,65 @@ async function runCoordinatedRefresh(usedToken: string | null): Promise<string> 
     }
     throw lastError;
   });
+}
+
+function scheduleProactiveRefresh(token = currentStoredToken()): void {
+  if (proactiveRefreshTimer !== null) {
+    window.clearTimeout(proactiveRefreshTimer);
+    proactiveRefreshTimer = null;
+  }
+  if (!token) return;
+
+  try {
+    const encoded = token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/');
+    const payload = JSON.parse(atob(encoded.padEnd(Math.ceil(encoded.length / 4) * 4, '='))) as { exp?: number; iat?: number };
+    if (!payload.exp) return;
+    const refreshEarlyMs = payload.iat
+      ? Math.min(REFRESH_EARLY_MS, (payload.exp - payload.iat) * 500)
+      : REFRESH_EARLY_MS;
+    proactiveRefreshTimer = window.setTimeout(
+      () => void refreshAccessToken().catch(() => undefined),
+      Math.max(0, payload.exp * 1000 - Date.now() - refreshEarlyMs),
+    );
+  } catch {
+    // A malformed token will follow the normal 401 recovery path.
+  }
+}
+
+export async function refreshAccessToken(usedToken = currentStoredToken()): Promise<string> {
+  if (isRefreshing) {
+    return addRefreshSubscriber({
+      onToken: async (token) => token,
+      onError: () => undefined,
+    }) as Promise<string>;
+  }
+
+  isRefreshing = true;
+  notifyAuthRecovering();
+  try {
+    const accessToken = await runCoordinatedRefresh(usedToken);
+    refreshAttemptsInBurst = 0;
+    isRefreshing = false;
+    notificationsService.reconnectWithNewToken();
+    conversationStreamService.reconnectWithNewToken();
+    conversationV2StreamService.reconnectWithNewToken();
+    onRefreshed(accessToken);
+    notifyAuthRecovered();
+    return accessToken;
+  } catch (error) {
+    isRefreshing = false;
+    if (isDefinitiveAuthFailure(error)) {
+      clearRefreshAttempt();
+      broadcastAuthEvent('logout');
+      onRefreshFailed(error);
+      safeRedirectToLogin();
+      throw error;
+    }
+    notifyAuthUnavailable();
+    const transientError = error instanceof AuthTransientError ? error : new AuthTransientError();
+    onRefreshFailed(transientError);
+    throw transientError;
+  }
 }
 
 // Request interceptor - Add auth token to requests
@@ -342,51 +405,20 @@ apiClient.interceptors.response.use(
       }
 
       originalRequest._retry = true;
-      isRefreshing = true;
-      notifyAuthRecovering();
 
       try {
-        const accessToken = await runCoordinatedRefresh(usedToken);
-        refreshAttemptsInBurst = 0;
-
-        // Reconnect SSE with new token
-        notificationsService.reconnectWithNewToken();
-        conversationStreamService.reconnectWithNewToken();
-        conversationV2StreamService.reconnectWithNewToken();
+        const accessToken = await refreshAccessToken(usedToken);
 
         if (originalRequest.headers) {
           originalRequest.headers.Authorization = `Bearer ${accessToken}`;
         }
 
-        onRefreshed(accessToken);
-        isRefreshing = false;
-        notifyAuthRecovered();
-
         return retryRequestAfterRefresh(originalRequest);
       } catch (refreshError) {
-        isRefreshing = false;
-
-        if (isDefinitiveAuthFailure(refreshError)) {
-          resetAuthRecovery();
-          bumpAuthGeneration();
-          clearRefreshAttempt();
-          broadcastAuthEvent('logout');
-          onRefreshFailed(refreshError);
-          safeRedirectToLogin();
-          return Promise.reject(refreshError);
-        }
-
-        // Transient refresh failure: keep credentials, surface a recoverable
-        // error, and let the recovery probe revalidate. Never log out here.
         if (!isProbeRequest) {
           refreshAttemptsInBurst += 1;
         }
-        notifyAuthUnavailable();
-        const transientError = refreshError instanceof AuthTransientError
-          ? refreshError
-          : new AuthTransientError();
-        onRefreshFailed(transientError);
-        return Promise.reject(transientError);
+        return Promise.reject(refreshError);
       }
     }
 
@@ -404,17 +436,18 @@ apiClient.interceptors.response.use(
 // Helper function to clear auth data
 function clearAuthData() {
   resetAuthRecovery();
+  if (proactiveRefreshTimer !== null) window.clearTimeout(proactiveRefreshTimer);
+  proactiveRefreshTimer = null;
   localStorage.removeItem(AUTH_STORAGE_KEYS.accessToken);
   localStorage.removeItem(AUTH_STORAGE_KEYS.user);
 }
 
 // Helper function to safely redirect to login (prevents multiple redirects)
 function safeRedirectToLogin() {
-  if (!isRedirecting) {
-    isRedirecting = true;
-    clearAuthData();
-    window.location.href = '/#/';
-  }
+  bumpAuthGeneration();
+  clearAuthData();
+  window.dispatchEvent(new Event(AUTH_LOST_EVENT));
+  window.location.hash = '/';
 }
 
 // While in the recoverable-unavailable state, the foreground recovery loop
@@ -422,21 +455,23 @@ function safeRedirectToLogin() {
 // flow above (exempt from the burst budget); a success ends the recovery
 // episode via the response handler.
 registerRecoveryProbe(async () => {
-  await apiClient.get(API_ENDPOINTS.users.me, {
-    timeout: REFRESH_HTTP_BUDGET_MS,
-    headers: { [RECOVERY_PROBE_HEADER]: '1' },
-  });
+  await refreshAccessToken();
 });
 
 // Stale tabs learn about a completed rotation and reconnect their SSE pipes
 // with the newer token instead of starting their own rotation.
 subscribeAuthBroadcast((type) => {
   if (type === 'refreshed') {
+    scheduleProactiveRefresh();
     notificationsService.reconnectWithNewToken();
     conversationStreamService.reconnectWithNewToken();
     conversationV2StreamService.reconnectWithNewToken();
+  } else {
+    safeRedirectToLogin();
   }
 });
+
+scheduleProactiveRefresh();
 
 // Helper functions for maintenance mode
 function getMaintenanceInfo(): MaintenanceInfo | null {
@@ -456,5 +491,5 @@ function clearMaintenanceInfo() {
 }
 
 // Export the client and helpers
-export { apiClient, clearAuthData, getMaintenanceInfo, clearMaintenanceInfo, MAINTENANCE_STORAGE_KEY };
+export { apiClient, clearAuthData, getMaintenanceInfo, clearMaintenanceInfo, MAINTENANCE_STORAGE_KEY, scheduleProactiveRefresh };
 export default apiClient;

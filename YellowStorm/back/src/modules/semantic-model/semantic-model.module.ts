@@ -25,10 +25,15 @@ import { SemanticModelBuildOrchestratorService } from './services/semantic-model
 import { SemanticModelValidationService } from './services/semantic-model-validation.service';
 import { SemanticModelVersionService } from './services/semantic-model-version.service';
 import { SemanticModelWorkspaceService } from './services/semantic-model-workspace.service';
+import { SemanticSourceMappingService } from './services/semantic-source-mapping.service';
 import { SemanticModelShareService } from './services/semantic-model-share.service';
 import { SemanticSearchGraphClient } from './services/semantic-search-graph-client.service';
 import { SemanticGraphIndexJobService } from './services/semantic-graph-index-job.service';
 import { SemanticGraphIndexWorkerService } from './services/semantic-graph-index-worker.service';
+import { SpreadsheetConceptResolver } from './services/spreadsheet-concept.resolver';
+import { DocumentExtractionConceptResolver } from './services/document-extraction-concept.resolver';
+import { SemanticCrossSourceService } from './services/semantic-cross-source.service';
+import { SemanticBusinessTrustService } from './services/semantic-business-trust.service';
 
 @Module({
   imports: [ConfigModule.forFeature(semanticModelConfig),AuthorizationModule,LoggerModule,UserModule,forwardRef(() => WorkspaceModule)],
@@ -47,6 +52,11 @@ import { SemanticGraphIndexWorkerService } from './services/semantic-graph-index
     SemanticModelMappingProposalService,
     SemanticModelBuildOrchestratorService,
     SemanticModelShareService,
+    SemanticSourceMappingService,
+    SpreadsheetConceptResolver,
+    DocumentExtractionConceptResolver,
+    SemanticCrossSourceService,
+    SemanticBusinessTrustService,
   ],
   exports: [SemanticModelDatabaseService,SemanticModelProvisioningService,SemanticModelService],
 })

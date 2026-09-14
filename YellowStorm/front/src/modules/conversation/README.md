@@ -118,7 +118,6 @@ conversation/
 │   ├── DeleteConversationDialog.tsx
 │   ├── RenameDialog.tsx
 │   ├── ReportDialog.tsx
-│   ├── GroupChatButton.tsx     # Floating button/trigger for group dialog
 │   ├── JoinConversationLanding.tsx # Landing page for invited users
 │   ├── LoadingIndicator.tsx    # Loading dots animation
 │   ├── ParentMessagePreview.tsx # Preview of the message being replied to
@@ -134,8 +133,7 @@ conversation/
 ├── hooks/
 │   ├── useConversationStream.ts  # SSE connection hook
 │   ├── useConversationFileUpload.ts # File upload orchestration hook
-│   ├── useTypewriter.ts          # Typewriter animation hook
-│   └── useTypingAnimation.ts     # Typing dots animation
+│   └── useTypewriter.ts          # Typewriter animation hook
 ├── effects/
 │   └── stars-background.tsx      # Background visual effect
 └── types/
@@ -532,14 +530,6 @@ Animates text character by character:
 
 ```typescript
 function useTypewriter(text: string, speed?: number): string;
-```
-
-### useTypingAnimation
-
-Creates bouncing dots animation:
-
-```typescript
-function useTypingAnimation(): string;
 ```
 
 ---
@@ -1293,14 +1283,6 @@ Animates text character by character:
 
 ```typescript
 function useTypewriter(text: string, speed?: number): string;
-```
-
-### useTypingAnimation
-
-Creates bouncing dots animation:
-
-```typescript
-function useTypingAnimation(): string;
 ```
 
 ---

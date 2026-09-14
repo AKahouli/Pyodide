@@ -1,7 +1,6 @@
 import { registerAs } from '@nestjs/config';
 
 export default registerAs('semanticModel', () => ({
-  enabled: process.env.SEMANTIC_MODELS_ENABLED === 'true',
   autoProvision: process.env.SEMANTIC_MODELS_AUTO_PROVISION === 'true',
   host: process.env.SEMANTIC_PG_HOST || '',
   port: Number.parseInt(process.env.SEMANTIC_PG_PORT || '5432', 10),
@@ -24,4 +23,6 @@ export default registerAs('semanticModel', () => ({
   evidenceSearchConcurrency: Math.max(1, Number.parseInt(process.env.SEMANTIC_MODEL_EVIDENCE_SEARCH_CONCURRENCY || '4', 10)),
   ontologyTimeoutMs: Number.parseInt(process.env.SEMANTIC_MODEL_ONTOLOGY_TIMEOUT_MS || '0', 10),
   mappingTimeoutMs: Number.parseInt(process.env.SEMANTIC_MODEL_MAPPING_TIMEOUT_MS || '0', 10),
+  documentExtractionAgentId: process.env.SEMANTIC_MODEL_DOCUMENT_EXTRACTION_AGENT_ID || '',
+  documentExtractionTimeoutMs: Number.parseInt(process.env.SEMANTIC_MODEL_DOCUMENT_EXTRACTION_TIMEOUT_MS || '180000', 10),
 }));

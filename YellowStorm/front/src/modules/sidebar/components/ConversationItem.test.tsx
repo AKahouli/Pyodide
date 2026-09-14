@@ -110,4 +110,20 @@ describe('ConversationItem', () => {
     await userEvent.click(screen.getByText('My convo'));
     expect(sidebarState.setOpenMobile).toHaveBeenCalledWith(false);
   });
+
+  it('renders the streaming spinner only when streaming', () => {
+    const { container, rerender } = render(
+      <MemoryRouter>
+        <ConversationItem id='c1' title='My convo' />
+      </MemoryRouter>,
+    );
+    expect(container.querySelector('[data-slot="conversation-streaming-spinner"]')).not.toBeInTheDocument();
+
+    rerender(
+      <MemoryRouter>
+        <ConversationItem id='c1' title='My convo' streaming />
+      </MemoryRouter>,
+    );
+    expect(container.querySelector('[data-slot="conversation-streaming-spinner"]')).toBeInTheDocument();
+  });
 });

@@ -70,6 +70,7 @@ import { handleApiError, parseApiError } from '@/lib/api-error';
 import { ErrorCode } from '@/lib/error-codes';
 import { i18nInstance } from '@/modules/localization/i18nInstance';
 import { playbookFeatures } from './features';
+import { useFeatureVisibilityStore } from '@/modules/admin/featureVisibilityStore';
 import { usePlaybookUiStore } from './uiStore';
 import { playbookQueryClient } from './query/queryClient';
 import { playbookKeys } from './query/queryKeys';
@@ -382,9 +383,14 @@ function scheduleJudgeRefresh(executionId: string, playbookId: string): void {
 const MAX_EXECUTION_CACHE = 20;
 const MAX_UNDO_HISTORY = 100;
 const enablePlaybookDevtools =
-  import.meta.env.DEV && import.meta.env.VITE_PLAYBOOK_DEVTOOLS_ENABLED === 'true';
-const enablePlaybookDeltaAutosave = import.meta.env.VITE_PLAYBOOK_DELTA_AUTOSAVE_ENABLED === 'true';
-let deltaAutosaveAvailableInSession = enablePlaybookDeltaAutosave;
+  import.meta.env.DEV && useFeatureVisibilityStore.getState().visibility.playbookDevtools;
+let deltaAutosaveAvailableInSession = useFeatureVisibilityStore.getState().visibility.playbookDeltaAutosave;
+
+useFeatureVisibilityStore.subscribe((state, previous) => {
+  if (state.visibility.playbookDeltaAutosave !== previous.visibility.playbookDeltaAutosave) {
+    deltaAutosaveAvailableInSession = state.visibility.playbookDeltaAutosave;
+  }
+});
 
 export function __setDeltaAutosaveAvailableForTests(value: boolean): void {
   deltaAutosaveAvailableInSession = value;
@@ -5696,7 +5702,7 @@ const createPlaybookStore: StateCreator<PlaybookStore> = (set, get) => ({
       // ===== Cleanup =====
 
       reset: () => {
-        deltaAutosaveAvailableInSession = enablePlaybookDeltaAutosave;
+        deltaAutosaveAvailableInSession = useFeatureVisibilityStore.getState().visibility.playbookDeltaAutosave;
         usePlaybookUiStore.getState().reset();
         set(initialState);
       },

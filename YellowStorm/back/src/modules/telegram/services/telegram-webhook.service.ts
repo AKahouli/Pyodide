@@ -6,6 +6,8 @@ import { User, UserDocument, UserStatus } from '@modules/user/schemas/user.schem
 import { ConversationService } from '@modules/conversation/services/conversation.service';
 import { MessageService } from '@modules/conversation/services/message.service';
 import { StreamService } from '@modules/conversation/services/stream.service';
+import { sanitizeSerializedToolValue } from '@modules/conversation/utils/public-component-sanitizer';
+import { ConversationSettingsService } from '@modules/system/conversation-settings.service';
 import { LoggerService } from '@modules/logger';
 import { AgentService } from '@modules/agent/agent.service';
 import { TelegramChatBinding, TelegramChatBindingDocument } from '../schemas/telegram-chat-binding.schema';
@@ -30,6 +32,7 @@ export class TelegramWebhookService {
     private readonly integrationService: TelegramIntegrationService,
     private readonly telegramApiService: TelegramApiService,
     private readonly linkCodeService: TelegramLinkCodeService,
+    private readonly conversationSettings: ConversationSettingsService,
   ) {
     this.logger.setContext(TelegramWebhookService.name);
   }
@@ -224,7 +227,12 @@ export class TelegramWebhookService {
     });
 
     const completedMessage = await this.messageService.findById(aiMessage.id);
-    const reply = this.truncateReply(this.extractReplyText(completedMessage.components));
+    // Outbound replies leave the platform for external chat history — keep the
+    // external-channel redaction that the conversation view no longer applies.
+    const reply = this.truncateReply(sanitizeSerializedToolValue(
+      this.extractReplyText(completedMessage.components),
+      { redactSensitiveText: this.conversationSettings.shouldRedactSensitiveText() !== false },
+    ));
     await this.telegramApiService.sendMessage(
       botToken,
       chatId,

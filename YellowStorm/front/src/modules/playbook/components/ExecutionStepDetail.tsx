@@ -1422,7 +1422,7 @@ export function ExecutionStepDetail({
           </TabsList>
 
           <TabsContent value="results" className="space-y-4 text-[14px] [&_*]:text-[14px] [&_*]:!text-[14px]">
-            {selectedStepExecution?.status === 'running' ? (
+            {selectedStepExecution?.status === 'running' && !(step.iteratorIterations && step.iteratorIterations.length > 0) ? (
               <div className="flex flex-col items-center justify-center py-12 text-muted-foreground">
                 <Loader2 className="h-6 w-6 animate-spin mb-3" />
                 <span className="text-sm">{t('execution.running')}</span>

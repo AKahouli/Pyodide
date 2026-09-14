@@ -60,28 +60,13 @@ import { SemanticModelModule } from '../semantic-model/semantic-model.module';
 import { ConversationArtifactService } from './services/conversation-artifact.service';
 import { UserModule } from '../user/user.module';
 import { ConversationPersistenceModule } from './persistence/conversation-persistence.module';
+import { ProjectModule } from '../project/project.module';
+import { ModelPricingService } from './services/model-pricing.service';
+import { CarbonEstimatorService } from './services/carbon-estimator.service';
+import { ConversationUsageAccountingService } from './services/conversation-usage-accounting.service';
 
 @Module({
-  imports: [
-    ConfigModule.forFeature(conversationConfig),
-    ConversationPersistenceModule,
-    JwtModule.register({}),
-    forwardRef(() => AuthModule),
-    forwardRef(() => AuthorizationModule),
-    forwardRef(() => WorkspaceModule),
-    ModelsModule,
-    LoggerModule,
-    UsageModule,
-    forwardRef(() => AgentModule),
-    TeamModule,
-    AgentTypeModule,
-    SkillModule,
-    EmailModule,
-    GovernanceRuntimeModule,
-    forwardRef(() => EvaluationModule),
-    UserModule,
-    SemanticModelModule,
-  ],
+  imports: [ConfigModule.forFeature(conversationConfig), ConversationPersistenceModule, JwtModule.register({}), forwardRef(() => AuthModule), forwardRef(() => AuthorizationModule), forwardRef(() => WorkspaceModule), ModelsModule, LoggerModule, UsageModule, forwardRef(() => AgentModule), TeamModule, AgentTypeModule, SkillModule, EmailModule, GovernanceRuntimeModule, forwardRef(() => EvaluationModule), UserModule, SemanticModelModule, ProjectModule],
   controllers: [
     StreamController, // Must be before ConversationController to avoid route conflict with :id param
     ComposerSuggestionsController,
@@ -91,41 +76,7 @@ import { ConversationPersistenceModule } from './persistence/conversation-persis
     ReportController,
     ConversationFileController,
   ],
-  providers: [
-    ConversationService,
-    MessageService,
-    StreamService,
-    StreamGatewayService,
-    ConversationRecoveryService,
-    ShareService,
-    ReportService,
-    ComposerSuggestionsService,
-    ChoiceInteractionService,
-    ConversationBranchService,
-    ConversationPlaybookContextProjectorService,
-    ConversationPlaybookHandoffService,
-    ResponseReliabilityService,
-    ResponseReliabilityEvidenceBuilder,
-    ResponseReliabilityScoringService,
-    ResponseCorrectionPolicyService,
-    ResponseCorrectionPlannerService,
-    CorrectedResponseComponentBuilder,
-    ResponseCorrectionService,
-    ConversationAgentRequestBuilder,
-    CorrectiveReplayContextService,
-    CorrectiveReplayPromptBuilder,
-    CorrectiveReplayRunnerService,
-    ConversationArtifactService,
-    ConversationOwnerGuard,
-    SseAuthGuard,
-    ComposerSuggestionsRateLimitGuard,
-  ],
-  exports: [
-    ConversationService,
-    MessageService,
-    StreamService,
-    StreamGatewayService,
-    ConversationPlaybookHandoffService,
-  ],
+  providers: [ConversationService, MessageService, StreamService, StreamGatewayService, ConversationRecoveryService, ShareService, ReportService, ComposerSuggestionsService, ChoiceInteractionService, ConversationBranchService, ConversationPlaybookContextProjectorService, ConversationPlaybookHandoffService, ResponseReliabilityService, ResponseReliabilityEvidenceBuilder, ResponseReliabilityScoringService, ResponseCorrectionPolicyService, ResponseCorrectionPlannerService, CorrectedResponseComponentBuilder, ResponseCorrectionService, ConversationAgentRequestBuilder, CorrectiveReplayContextService, CorrectiveReplayPromptBuilder, CorrectiveReplayRunnerService, ConversationArtifactService, ModelPricingService, CarbonEstimatorService, ConversationUsageAccountingService, ConversationOwnerGuard, SseAuthGuard, ComposerSuggestionsRateLimitGuard],
+  exports: [ConversationService, MessageService, StreamService, StreamGatewayService, ConversationPlaybookHandoffService],
 })
 export class ConversationModule {}

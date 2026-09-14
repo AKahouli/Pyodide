@@ -6,7 +6,7 @@ Temporal intelligence must run only after a governed source version is technical
 
 ## Decision
 
-On a ready indexing event, Governance enqueues a `technical_metadata` job for each ready, non-terminal source version when `DATA_ROOM_VALIDITY_INTELLIGENCE_ENABLED` is enabled. Job identity is the source version, job type, deterministic input hash, and engine version.
+On a ready indexing event, Governance enqueues a `technical_metadata` job for each ready, non-terminal source version when the persisted `dataRoomValidityIntelligence` feature is enabled. Job identity is the source version, job type, deterministic input hash, and engine version.
 
 ## Rejected alternatives
 

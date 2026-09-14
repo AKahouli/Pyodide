@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { SemanticGraph } from '../../types';
 import type { KnowledgeLinkingController } from '../../hooks/use-knowledge-linking';
 import { useSemanticModelEditorStore } from '../../store';
-import { KnowledgePanel } from './KnowledgePanel';
+import { isMappableDocument, KnowledgePanel } from './KnowledgePanel';
 
 const workspaceApi = vi.hoisted(() => ({getWorkspaces:vi.fn(),getDocuments:vi.fn(),getDocument:vi.fn(),getFolderContents:vi.fn(),getSharedWorkspaces:vi.fn()}));
 
@@ -72,5 +72,20 @@ describe('KnowledgePanel', () => {
     expect(await screen.findByText('Nested.pdf')).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button',{name:'action.loadMore'}));
     expect(await screen.findByText('Late.pdf')).toBeInTheDocument();
+  });
+});
+
+describe('isMappableDocument', () => {
+  it.each([
+    'application/pdf',
+    'application/msword',
+    'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    'text/csv',
+  ])('accepts supported mapping source %s', (mimeType) => {
+    expect(isMappableDocument(mimeType)).toBe(true);
+  });
+
+  it('rejects unsupported source formats', () => {
+    expect(isMappableDocument('image/png')).toBe(false);
   });
 });

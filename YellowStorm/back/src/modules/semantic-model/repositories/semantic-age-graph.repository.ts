@@ -57,8 +57,9 @@ export class SemanticAgeGraphRepository {
       await client.query(`SET search_path = ag_catalog, "$user", public`);
       await client.query(`SELECT ag_catalog.drop_graph($1, true)`, [graphName]);
     } catch (err) {
-      this.logger.warn(`AGE dropGraph failed for model ${modelId}: ${(err as Error).message}`);
-      if (strict) throw err;
+      const message = (err as Error).message;
+      this.logger.warn(`AGE dropGraph failed for model ${modelId}: ${message}`);
+      if (strict && !/graph .* does not exist/i.test(message)) throw err;
     } finally {
       client.release();
     }

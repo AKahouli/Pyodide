@@ -1,12 +1,13 @@
 import { PromptInput, PromptInputActionAddAttachments, PromptInputActionMenu, PromptInputActionMenuContent, PromptInputActionMenuTrigger, PromptInputAttachment, PromptInputAttachments, PromptInputBody, PromptInputButton, PromptInputFooter, type PromptInputMessage, PromptInputProvider, PromptInputSpeechButton, PromptInputSubmit, PromptInputTextarea, PromptInputTools } from '@/components/ai-elements/prompt-input';
 import { MentionPopup, type MentionAgent } from '@/components/ai-elements/mention-popup';
 import { InputContextMenu } from '@/components/ai-elements/input-context-menu';
+import { ContentAwareSubmit } from './content-aware-submit';
 import { CreateEditAgentDialog } from '@/modules/agent/components/CreateEditAgentDialog';
 import { ConnectorReposDialog } from '@/components/ai-elements/connector-repos-dialog';
 import { RecentConnectorsMenu, ManageConnectorsDialog, useRecentConnectors } from '@/modules/connector';
 import { RecentSkillsMenu, ManageSkillsDialog, useRecentSkills, SelectedSkillsPills } from '@/modules/skill';
 
-import { CheckIcon, Pencil } from 'lucide-react';
+import { CheckIcon, Pencil, Plus } from 'lucide-react';
 import { useRef, useState, useEffect, useCallback, useMemo, memo, type ReactNode } from 'react';
 import { DropdownMenuItem } from '@/components/ui/dropdown-menu';
 import { SketchBoardDialog } from '@/modules/conversation/components/SketchBoard';
@@ -65,11 +66,14 @@ export interface FileUploadInfo {
 }
 
 interface InputProps {
-  onSubmit?: (message: PromptInputMessage, modelId: string, agentIds?: string[], memberIds?: string[], workspaceIds?: string[], connectorRepo?: { connectorId: string; connectorName: string; repoId: string; repoName: string; repoUrl?: string }, teamIds?: string[]) => void;
+  toolLabels?: { attachments: string; knowledge: string; data: string };
+  onSubmit?: (message: PromptInputMessage, modelId: string, agentIds?: string[], memberIds?: string[], workspaceIds?: string[], connectorRepo?: { connectorId: string; connectorName: string; repoId: string; repoName: string; repoUrl?: string }, teamIds?: string[]) => void | Promise<void>;
+  draftKey?: string;
   onStop?: () => void;
   status?: 'submitted' | 'streaming' | 'ready' | 'error';
   disabled?: boolean;
   submitDisabled?: boolean;
+  requireContent?: boolean;
   placeholder?: string;
   onFilesAdded?: (files: File[], ids: string[]) => void;
   onFileRemoved?: (id: string) => void;
@@ -94,7 +98,7 @@ interface InputProps {
   onTextChange?: (text: string) => void;
 }
 
-const Input = memo(function Input({ onSubmit: externalSubmit, onStop, status: externalStatus, disabled, submitDisabled, placeholder, onFilesAdded, onFileRemoved, uploadingFiles, accept, maxFiles, members, autoMention, showWorkspaceSelect = true, preserveWorkspaceSelectionOnSubmit = false, showModelSelector = false, governedMode = false, mentionAgents, enableTeamMentions = true, workspaceOptions, onWorkspaceSelectionChange, belowTextarea, extraTools, onTextChange }: InputProps = {}) {
+const Input = memo(function Input({ toolLabels, onSubmit: externalSubmit, draftKey, onStop, status: externalStatus, disabled, submitDisabled, requireContent = false, placeholder, onFilesAdded, onFileRemoved, uploadingFiles, accept, maxFiles, members, autoMention, showWorkspaceSelect = true, preserveWorkspaceSelectionOnSubmit = false, showModelSelector = false, governedMode = false, mentionAgents, enableTeamMentions = true, workspaceOptions, onWorkspaceSelectionChange, belowTextarea, extraTools, onTextChange }: InputProps = {}) {
   const models = useModels();
   const chefs = useChefs();
   const defaultModel = useDefaultModel();
@@ -531,7 +535,7 @@ const Input = memo(function Input({ onSubmit: externalSubmit, onStop, status: ex
       const submittedWorkspaceIds = allowedWorkspaceIds ? selectedWorkspaceIds.filter((id) => allowedWorkspaceIds.includes(id)) : selectedWorkspaceIds;
 
       if (externalSubmit) {
-        externalSubmit(
+        const result = externalSubmit(
           message,
           model,
           agentIds.length > 0 ? agentIds : undefined,
@@ -544,7 +548,7 @@ const Input = memo(function Input({ onSubmit: externalSubmit, onStop, status: ex
         if (!preserveWorkspaceSelectionOnSubmit) {
           resetSelectedWorkspaceIds();
         }
-        return;
+        return result;
       }
 
       setStatus('submitted');
@@ -564,7 +568,7 @@ const Input = memo(function Input({ onSubmit: externalSubmit, onStop, status: ex
 
   return (
     <div>
-      <PromptInputProvider onFilesAdded={onFilesAdded} onFileRemoved={onFileRemoved} maxFiles={maxFiles} onError={(err) => toast.error(err.message)}>
+      <PromptInputProvider key={draftKey} draftKey={draftKey} onFilesAdded={onFilesAdded} onFileRemoved={onFileRemoved} maxFiles={maxFiles} onError={(err) => toast.error(err.message)}>
         <PromptInput globalDrop multiple onSubmit={handleSubmit} accept={accept} maxFiles={maxFiles}>
           <PromptInputAttachments>
             {(attachment) => {
@@ -578,10 +582,10 @@ const Input = memo(function Input({ onSubmit: externalSubmit, onStop, status: ex
               : <InputContextMenu onMentionAgent={handleContextMentionAgent} onCreateAgent={() => setShowCreateAgentDialog(true)}><PromptInputTextarea ref={textareaRef} disabled={disabled} placeholder={placeholder} onInput={handleTextareaInput} /></InputContextMenu>}
           </PromptInputBody>
           {belowTextarea}
-          <PromptInputFooter>
-            <PromptInputTools>
+          <PromptInputFooter className='flex-wrap'>
+            <PromptInputTools className='min-w-0 flex-wrap'>
               <PromptInputActionMenu>
-                <PromptInputActionMenuTrigger />
+                <PromptInputActionMenuTrigger size={toolLabels ? 'sm' : undefined} {...(toolLabels ? { 'aria-label': toolLabels.attachments } : {})}>{toolLabels && <><Plus className='size-4' /><span>{toolLabels.attachments}</span></>}</PromptInputActionMenuTrigger>
                 <PromptInputActionMenuContent>
                   <PromptInputActionAddAttachments />
                   <DropdownMenuItem onSelect={() => setSketchOpen(true)}>
@@ -602,8 +606,8 @@ const Input = memo(function Input({ onSubmit: externalSubmit, onStop, status: ex
                   />}
                 </PromptInputActionMenuContent>
               </PromptInputActionMenu>
-              {showWorkspaceSelect && <WorkspaceSelect selectedIds={selectedWorkspaceIds} onChange={handleWorkspaceSelectionChange} disabled={disabled || submitDisabled || Boolean(selectedSemanticModelId)} workspaceOptions={workspaceOptions} className='size-11 md:size-8' />}
-              {showWorkspaceSelect && <SemanticModelSelect value={selectedSemanticModelId} onChange={setSelectedSemanticModelId} disabled={disabled || submitDisabled} />}
+              {showWorkspaceSelect && <WorkspaceSelect selectedIds={selectedWorkspaceIds} onChange={handleWorkspaceSelectionChange} disabled={disabled || submitDisabled || Boolean(selectedSemanticModelId)} workspaceOptions={workspaceOptions} label={toolLabels?.knowledge} className={toolLabels ? 'h-11 w-auto px-3' : 'size-11 md:size-8'} />}
+              {showWorkspaceSelect && <SemanticModelSelect label={toolLabels?.data} value={selectedSemanticModelId} onChange={setSelectedSemanticModelId} disabled={disabled || submitDisabled} />}
                {showModelSelector && !governedMode && models.length > 0 && <ModelSelector onOpenChange={setModelSelectorOpen} open={modelSelectorOpen}>
                  <ModelSelectorTrigger asChild>
                    <PromptInputButton type='button' disabled={disabled || submitDisabled}>
@@ -644,10 +648,12 @@ const Input = memo(function Input({ onSubmit: externalSubmit, onStop, status: ex
                </ModelSelector>}
               {extraTools}
             </PromptInputTools>
-            <div className='flex flex-row w-fit gap-3 px-1'>
+            <div className='ml-auto flex w-fit shrink-0 flex-row gap-3 px-1'>
               <Usage />
 
-              <PromptInputSubmit status={derivedStatus} disabled={disabled || submitDisabled} onStop={onStop} />
+              {requireContent
+                ? <ContentAwareSubmit hasCompletedFiles={Boolean(uploadingFiles?.some((file) => file.status === 'completed'))} status={derivedStatus} disabled={disabled || submitDisabled} onStop={onStop} />
+                : <PromptInputSubmit status={derivedStatus} disabled={disabled || submitDisabled} onStop={onStop} />}
             </div>
           </PromptInputFooter>
         </PromptInput>

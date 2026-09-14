@@ -261,4 +261,10 @@ describe('buildExecutionRuntimeGraph', () => {
     expect(forward.inlineNodes.map(({ id, position }) => ({ id, position })))
       .toEqual(reversed.inlineNodes.map(({ id, position }) => ({ id, position })));
   });
+
+  it('declares measured dimensions on the container so React Flow does not reset its handleBounds', () => {
+    const graph = buildExecutionRuntimeGraph(makeExecution(), [parent]);
+    const container = graph.inlineNodes.find((node) => node.id === containerId);
+    expect(container?.measured).toEqual({ width: container?.width, height: container?.height });
+  });
 });

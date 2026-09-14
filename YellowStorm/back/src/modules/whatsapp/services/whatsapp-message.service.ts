@@ -5,6 +5,8 @@ import { Model, Types } from 'mongoose';
 import { User, UserDocument, UserStatus } from '@modules/user/schemas/user.schema';
 import { ConversationService } from '@modules/conversation/services/conversation.service';
 import { MessageService } from '@modules/conversation/services/message.service';
+import { sanitizeSerializedToolValue } from '@modules/conversation/utils/public-component-sanitizer';
+import { ConversationSettingsService } from '@modules/system/conversation-settings.service';
 import { AgentService } from '@modules/agent/agent.service';
 import { LoggerService } from '@modules/logger';
 import { WorkyWhatsAppIntegrationService } from '@modules/worky/services/worky-whatsapp-integration.service';
@@ -38,6 +40,7 @@ export class WhatsAppMessageService {
     private readonly streamService: WhatsAppStreamService,
     private readonly agentIntegrationService: WhatsAppIntegrationService,
     private readonly workyIntegrationService: WorkyWhatsAppIntegrationService,
+    private readonly conversationSettings: ConversationSettingsService,
   ) {
     this.logger.setContext(WhatsAppMessageService.name);
   }
@@ -269,7 +272,12 @@ export class WhatsAppMessageService {
     ]);
 
     const completedMessage = await this.messageService.findById(aiMessage.id);
-    const reply = this.truncateReply(extractWhatsAppReplyText(completedMessage.components));
+    // Outbound replies leave the platform for external chat history — keep the
+    // external-channel redaction that the conversation view no longer applies.
+    const reply = this.truncateReply(sanitizeSerializedToolValue(
+      extractWhatsAppReplyText(completedMessage.components),
+      { redactSensitiveText: this.conversationSettings.shouldRedactSensitiveText() !== false },
+    ));
     if (!reply) {
       this.logger.warn('WhatsApp reply empty after gRPC stream', {
         integrationId: integration._id.toString(),

@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
+import { FeatureVisibilityService } from '@modules/system/feature-visibility.service';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import { ConversationService } from '@modules/conversation/services/conversation.service';
@@ -23,11 +23,11 @@ export class GovernedConversationService {
     private readonly agentRepository: AgentRepository,
     private readonly audienceService: GovernanceScopeAudienceService,
     private readonly conversationService: ConversationService,
-    private readonly configService: ConfigService,
+    private readonly featureVisibility: FeatureVisibilityService,
   ) {}
 
   async create(userId: string, dto: CreateGovernedConversationDto): Promise<ConversationResponse> {
-    if (!this.configService.get<boolean>('governedConversations.enabled', false)) {
+    if (!this.featureVisibility.isEnabled('governedConversations')) {
       throw new ServiceUnavailableException(ErrorCode.SERVICE_UNAVAILABLE, 'Governed conversations are not enabled');
     }
     const scope = await this.scopeModel.findOne({ _id: new Types.ObjectId(dto.scopeId), status: 'active' }).lean().exec();

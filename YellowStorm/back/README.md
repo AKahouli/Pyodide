@@ -407,8 +407,6 @@ All configuration is validated at startup using Joi schemas. See `src/config/con
 
 | Variable             | Required | Description                   | Default          |
 | -------------------- | -------- | ----------------------------- | ---------------- |
-| `JWT_ACCESS_EXPIRY`  | No       | Access token expiry duration  | `15m`            |
-| `JWT_REFRESH_EXPIRY` | No       | Refresh token expiry duration | `7d`             |
 | `JWT_ISSUER`         | No       | JWT issuer claim              | `yellostorm`     |
 | `JWT_AUDIENCE`       | No       | JWT audience claim            | `yellostorm-api` |
 

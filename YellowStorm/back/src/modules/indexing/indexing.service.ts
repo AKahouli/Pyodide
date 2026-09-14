@@ -23,8 +23,9 @@ import {
 } from '../exceptions';
 import { ErrorCode } from '../exceptions/constants/error-codes';
 import { IntegrationEventOutboxService } from '../integration-events/services/integration-event-outbox.service';
+import { FeatureVisibilityService } from '../system/feature-visibility.service';
 import { WorkspaceIntegrationEvents } from '../integration-events/contracts';
-import { v4 as uuidv4 } from 'uuid';
+import { randomUUID } from 'crypto';
 
 @Injectable()
 export class IndexingService {
@@ -48,6 +49,7 @@ export class IndexingService {
     private readonly configService: ConfigService,
     private readonly logger: LoggerService,
     @Optional() private readonly outbox?: IntegrationEventOutboxService,
+    @Optional() private readonly featureVisibility?: FeatureVisibilityService,
   ) {
     this.logger.setContext('IndexingService');
     this.batchSize = this.configService.get<number>('indexing.batchSize', 10);
@@ -89,7 +91,7 @@ export class IndexingService {
       document.indexingError = undefined;
       document.indexingTaskName = undefined;
       document.indexingTaskId = undefined;
-      document.indexingAttemptId = uuidv4();
+      document.indexingAttemptId = randomUUID();
       document.indexingAttemptStartedAt = undefined;
       document.indexingAttemptCompletedAt = undefined;
       await document.save();
@@ -149,7 +151,7 @@ export class IndexingService {
     document.indexingTaskName = undefined;
     document.indexingTaskId = undefined;
     document.indexingStartedAt = new Date();
-    document.indexingAttemptId ??= uuidv4();
+    document.indexingAttemptId ??= randomUUID();
     document.indexingAttemptStartedAt = document.indexingStartedAt;
     document.indexingAttemptCompletedAt = undefined;
     await document.save();
@@ -255,8 +257,8 @@ export class IndexingService {
   }
 
   private async recordIndexingEvent(eventType: string, document: WorkspaceDocumentDoc): Promise<void> {
-    if (!this.outbox || !this.configService.get<boolean>('dataRoom.workspaceEventsEnabled')) return;
-    await this.outbox.record({ eventId: uuidv4(), eventType, aggregateType: 'workspace_document', aggregateId: document._id.toString(), payload: { workspaceId: document.workspaceId.toString(), documentId: document._id.toString(), createdBy: document.createdBy.toString(), documentType: document.type, originalName: document.originalName, mimeType: document.mimeType, sourceUrl: document.sourceUrl, normalizedSourceUrl: document.metadata?.normalizedSourceUrl, contentHash: document.contentHash, documentStatus: document.status, indexingStatus: document.indexingStatus, indexingTaskId: document.indexingTaskId, indexingAttemptId: document.indexingAttemptId, deepSearchRequested: document.metadata?.deepSearchRequested === 'true', metadata: document.metadata }, occurredAt: new Date() });
+    if (!this.outbox || this.featureVisibility?.isEnabled('dataRoomWorkspaceEvents') === false) return;
+    await this.outbox.record({ eventId: randomUUID(), eventType, aggregateType: 'workspace_document', aggregateId: document._id.toString(), payload: { workspaceId: document.workspaceId.toString(), documentId: document._id.toString(), createdBy: document.createdBy.toString(), documentType: document.type, originalName: document.originalName, mimeType: document.mimeType, sourceUrl: document.sourceUrl, normalizedSourceUrl: document.metadata?.normalizedSourceUrl, contentHash: document.contentHash, documentStatus: document.status, indexingStatus: document.indexingStatus, indexingTaskId: document.indexingTaskId, indexingAttemptId: document.indexingAttemptId, deepSearchRequested: document.metadata?.deepSearchRequested === 'true', metadata: document.metadata }, occurredAt: new Date() });
   }
 
   /**
@@ -302,7 +304,7 @@ export class IndexingService {
     // Reset to pending for re-indexing
     document.indexingStatus = IndexingStatus.PENDING;
     document.indexingError = undefined;
-    document.indexingAttemptId = uuidv4();
+    document.indexingAttemptId = randomUUID();
     document.indexingAttemptStartedAt = undefined;
     document.indexingAttemptCompletedAt = undefined;
     const { download_id, indexing_id, ...restMetadata } = document.metadata || {};

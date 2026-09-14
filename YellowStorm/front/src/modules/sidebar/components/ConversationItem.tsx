@@ -1,6 +1,6 @@
 import { useState, useCallback, memo } from 'react';
 import { NavLink } from 'react-router-dom';
-import { MoreHorizontal, Pencil, Share, Trash2, Users, FolderPlus, FolderInput, FolderMinus, Plus } from 'lucide-react';
+import { MoreHorizontal, Pencil, Loader2, Share, Trash2, Users, FolderPlus, FolderInput, FolderMinus, Plus } from 'lucide-react';
 import { SidebarMenuButton, SidebarMenuAction, useSidebar } from '@/components/ui/sidebar';
 import {
   DropdownMenu,
@@ -29,6 +29,8 @@ export interface ConversationItemProps {
   icon?: React.ReactNode;
   /** Active-state override. When omitted, falls back to the v1 current conversation. */
   isActive?: boolean;
+  /** Whether a response is currently streaming inside this conversation. */
+  streaming?: boolean;
   /** Whether the item can be dragged into projects. v2 items are not draggable. */
   draggable?: boolean;
   projectId?: string | null;
@@ -47,6 +49,7 @@ export const ConversationItem = memo(function ConversationItem({
   to,
   icon,
   isActive,
+  streaming,
   draggable = true,
   projectId,
   isGroup,
@@ -102,7 +105,13 @@ export const ConversationItem = memo(function ConversationItem({
         draggable={draggable}
         onDragStart={draggable ? handleDragStart : undefined}
       >
-        <SidebarMenuButton asChild tooltip={displayTitle} isActive={resolvedActive}>
+        <SidebarMenuButton
+          asChild
+          size='sm'
+          tooltip={displayTitle}
+          isActive={resolvedActive}
+          className='text-[13px] font-normal data-[active=true]:font-medium'
+        >
           <NavLink
             to={resolvedTo}
             draggable={false}
@@ -110,7 +119,6 @@ export const ConversationItem = memo(function ConversationItem({
               if (isMobile) setOpenMobile(false);
             }}
           >
-
             {isGroup && (
               <div className='relative'>
                 <Users className='h-4 w-4' />
@@ -120,6 +128,13 @@ export const ConversationItem = memo(function ConversationItem({
                   </span>
                 ) : null}
               </div>
+            )}
+            {streaming && (
+              <Loader2
+                aria-hidden='true'
+                data-slot='conversation-streaming-spinner'
+                className='h-4 w-4 shrink-0 animate-spin text-primary/60'
+              />
             )}
             <span className='truncate'>{displayTitle}</span>
             {icon}

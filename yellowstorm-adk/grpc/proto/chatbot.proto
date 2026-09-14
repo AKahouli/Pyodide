@@ -184,6 +184,17 @@ message LatencyTraceContext {
     double backend_received_epoch_ms = 4;
 }
 
+message AgentTeamNode {
+    string agent_id = 1;
+    string parent_agent_id = 2;
+    int32 order = 3;
+}
+
+message AgentTeamDefinition {
+    string team_id = 1;
+    repeated AgentTeamNode nodes = 2;
+}
+
 message RunAgentTeamRequest {
     UserContext user_context = 1;
     string conversation_id = 2;
@@ -200,6 +211,7 @@ message RunAgentTeamRequest {
     CorrectionReplayContext correction_replay_context = 16;
     bool web_search_enabled = 17;
     LatencyTraceContext latency_trace_context = 20;
+    AgentTeamDefinition team_definition = 21;
 }
 
 // Mono-agent request: a single specialized agent runs directly with its own
@@ -418,11 +430,23 @@ message ImageSourceData {
     repeated double block_bbox = 12;     // Fallback block bounding box [x, y, width, height]
 }
 
+message WebSourceData {
+    string type = 1;
+    string source = 2;
+    string title = 3;
+    string reference = 4;
+    string exact_text = 5;
+    string prefix = 6;
+    string suffix = 7;
+    string evidence_origin = 8;
+}
+
 message CitationComponent {
     string parent_id = 1;        // ID of the parent text component
     oneof source_data {
         TextSourceData text_source = 2;
         ImageSourceData image_source = 3;
+        WebSourceData web_source = 4;
     }
 }
 
@@ -509,6 +533,8 @@ message Usage {
     int32 total_tokens = 3;      // Total tokens (input + output)
     string model = 4;            // Model/chatbot name used (e.g., "gpt-4.1")
     int32 context_window_tokens = 5; // Capacity associated with this individual model request
+    int32 cached_input_tokens = 6; // Cached input included in input_tokens
+    int32 reasoning_tokens = 7; // Reasoning/thought tokens included in output_tokens
 }
 
 // ADK-local timing envelope attached to the first post-model StreamChunk.
@@ -659,6 +685,9 @@ message ToolBindingAction {
     string description = 3;
     google.protobuf.Struct parameter_schema = 4;
     string parameter_schema_json = 5;
+    string result_kind = 6;
+    string citation_mode = 7;
+    string result_mapping_json = 8;
 }
 
 message ToolBinding {

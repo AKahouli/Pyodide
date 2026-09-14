@@ -21,7 +21,8 @@ import { showError, showSuccess } from '@/lib/notifications';
 import { cn } from '@/lib/utils';
 import { useModuleTranslation } from '@/modules/localization';
 import { getFeatureVisibility, updateFeatureVisibility } from '../api';
-import { DEFAULT_FEATURE_VISIBILITY } from '../constants';
+import { DEFAULT_FEATURE_VISIBILITY, FEATURE_PERMISSION_ITEMS, FEATURE_SETTING_ITEMS } from '../constants';
+import { useFeatureVisibilityStore } from '../featureVisibilityStore';
 import { usePermissions } from '../hooks/usePermissions';
 import type { FeatureVisibility } from '../types';
 
@@ -36,6 +37,17 @@ const FEATURES = [
   { key: 'semanticModel', icon: Network, labelKey: 'system.features.items.semanticModel.label', descriptionKey: 'system.features.items.semanticModel.description' },
   { key: 'platformCopilot', icon: Sparkles, labelKey: 'system.features.items.platformCopilot.label', descriptionKey: 'system.features.items.platformCopilot.description' },
 ] as const;
+const FEATURE_ICONS = {
+  conversation: MessageSquare,
+  workspace: Layers3,
+  playbook: Workflow,
+  governance: ShieldCheck,
+  appMarketplace: Store,
+  worky: Sparkles,
+  agents: Bot,
+  semanticModel: Network,
+  platformCopilot: Sparkles,
+} as const;
 
 export function FeatureVisibilityCard() {
   const { t } = useModuleTranslation('admin');
@@ -46,19 +58,22 @@ export function FeatureVisibilityCard() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [loadFailed, setLoadFailed] = useState(false);
+  const setPersistedVisibility = useFeatureVisibilityStore((state) => state.setVisibility);
 
   const load = useCallback(async () => {
     setLoading(true);
     setLoadFailed(false);
     try {
-      setVisibility(await getFeatureVisibility());
+      const value = await getFeatureVisibility();
+      setVisibility(value);
+      setPersistedVisibility(value);
     } catch {
       setLoadFailed(true);
       showError(t('system.features.toasts.loadFailed'));
     } finally {
       setLoading(false);
     }
-  }, [t]);
+  }, [setPersistedVisibility, t]);
 
   useEffect(() => {
     void load();
@@ -67,7 +82,9 @@ export function FeatureVisibilityCard() {
   const save = async () => {
     setSaving(true);
     try {
-      setVisibility(await updateFeatureVisibility(visibility));
+      const value = await updateFeatureVisibility(visibility);
+      setVisibility(value);
+      setPersistedVisibility(value);
       showSuccess(t('system.features.toasts.saved'));
     } catch {
       showError(t('system.features.toasts.saveFailed'));
@@ -99,7 +116,7 @@ export function FeatureVisibilityCard() {
               <span className="hidden text-sm text-muted-foreground sm:inline">
                 {loading
                   ? t('system.features.status.loading')
-                  : t('system.features.status.summary', { enabled: enabledCount, total: FEATURES.length })}
+                  : t('system.features.status.summary', { enabled: enabledCount, total: FEATURE_PERMISSION_ITEMS.length + FEATURE_SETTING_ITEMS.length })}
               </span>
               <ChevronDown className={cn('h-4 w-4 transition-transform', open && 'rotate-180')} />
             </div>
@@ -116,24 +133,44 @@ export function FeatureVisibilityCard() {
               </div>
             ) : (
               <div className="divide-y rounded-lg border">
-                {FEATURES.map((feature) => {
-                  const Icon = feature.icon;
+                {FEATURE_PERMISSION_ITEMS.map((feature) => {
+                  const Icon = FEATURE_ICONS[feature.key as keyof typeof FEATURE_ICONS];
                   const id = `feature-visibility-${feature.key}`;
+                  const settings = FEATURE_SETTING_ITEMS.filter((item) => item.group === feature.key);
                   return (
-                    <div key={feature.key} className="flex items-center justify-between gap-4 p-4">
-                      <div className="flex min-w-0 items-start gap-3">
-                        <Icon className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
-                        <div>
-                          <Label htmlFor={id} className="font-medium">{t(feature.labelKey)}</Label>
-                          <p className="text-sm text-muted-foreground">{t(feature.descriptionKey)}</p>
+                    <div key={feature.key}>
+                      <div className="flex items-center justify-between gap-4 p-4">
+                        <div className="flex min-w-0 items-start gap-3">
+                          <Icon className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
+                          <div>
+                            <Label htmlFor={id} className="font-medium">{t(feature.labelKey)}</Label>
+                            <p className="text-sm text-muted-foreground">{t(feature.descriptionKey)}</p>
+                          </div>
                         </div>
+                        <Switch
+                          id={id}
+                          checked={visibility[feature.key]}
+                          onCheckedChange={(checked) => setVisibility((current) => ({ ...current, [feature.key]: checked }))}
+                          disabled={loading || saving || !canManage}
+                        />
                       </div>
-                      <Switch
-                        id={id}
-                        checked={visibility[feature.key]}
-                        onCheckedChange={(checked) => setVisibility((current) => ({ ...current, [feature.key]: checked }))}
-                        disabled={loading || saving || !canManage}
-                      />
+                      {settings.map((setting) => {
+                        const settingId = `feature-visibility-${setting.key}`;
+                        return (
+                          <div key={setting.key} className="flex items-center justify-between gap-4 border-t bg-muted/20 py-3 pl-11 pr-4">
+                            <div className="min-w-0">
+                              <Label htmlFor={settingId} className="font-medium">{t(setting.labelKey)}</Label>
+                              <p className="text-sm text-muted-foreground">{t(setting.descriptionKey)}</p>
+                            </div>
+                            <Switch
+                              id={settingId}
+                              checked={visibility[setting.key]}
+                              onCheckedChange={(checked) => setVisibility((current) => ({ ...current, [setting.key]: checked }))}
+                              disabled={loading || saving || !canManage}
+                            />
+                          </div>
+                        );
+                      })}
                     </div>
                   );
                 })}

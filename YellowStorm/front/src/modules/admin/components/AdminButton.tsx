@@ -12,7 +12,7 @@ import {
 import { useModuleTranslation } from '@/modules/localization';
 import { useAdminAccess } from '../hooks';
 
-export function AdminButton() {
+export function AdminButton({ label }: { label?: string }) {
   const { hasAdminAccess } = useAdminAccess();
   const location = useLocation();
   const { t } = useModuleTranslation('admin');
@@ -25,12 +25,12 @@ export function AdminButton() {
     <SidebarMenuItem>
       <SidebarMenuButton
         asChild
-        tooltip={t('sidebar.admin')}
+        tooltip={label ?? t('sidebar.admin')}
         isActive={location.pathname.startsWith('/admin')}
       >
         <NavLink to="/admin">
           <Shield />
-          <span>{t('sidebar.admin')}</span>
+          <span>{label ?? t('sidebar.admin')}</span>
         </NavLink>
       </SidebarMenuButton>
     </SidebarMenuItem>

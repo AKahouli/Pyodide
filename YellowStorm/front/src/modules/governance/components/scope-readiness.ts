@@ -1,9 +1,11 @@
 import type { GovernanceReadinessCheck, GovernanceScopeOverview } from '@/modules/governance';
-import { governedConversationFeatures } from '@/config/governedConversationFeatures';
+import { useFeatureVisibilityStore } from '@/modules/admin/featureVisibilityStore';
 
 export type TabKey = 'overview' | 'knowledge' | 'agents' | 'audience' | 'ownership' | 'guardrails' | 'testPublish' | 'review' | 'monitor';
 
-export const governanceScopeTabs: TabKey[] = ['overview', 'knowledge', 'agents', ...(governedConversationFeatures.conversationsEnabled ? ['audience' as const] : []), 'ownership', 'guardrails', 'testPublish', 'review', 'monitor'];
+export function getGovernanceScopeTabs(conversationsEnabled = useFeatureVisibilityStore.getState().visibility.governedConversations): TabKey[] {
+  return ['overview', 'knowledge', 'agents', ...(conversationsEnabled ? ['audience' as const] : []), 'ownership', 'guardrails', 'testPublish', 'review', 'monitor'];
+}
 
 const tabCheckKeys: Partial<Record<TabKey, string[]>> = {
   overview: ['scope_active'],
@@ -26,10 +28,11 @@ export function tabForReadinessCheck(check: Pick<GovernanceReadinessCheck, 'key'
 }
 
 export function sortReadinessChecks(checks: GovernanceReadinessCheck[]): GovernanceReadinessCheck[] {
+  const tabs = getGovernanceScopeTabs();
   return [...checks].sort((left, right) => {
-    const leftOrder = governanceScopeTabs.indexOf(tabForReadinessCheck(left));
-    const rightOrder = governanceScopeTabs.indexOf(tabForReadinessCheck(right));
-    return (leftOrder === -1 ? governanceScopeTabs.length : leftOrder) - (rightOrder === -1 ? governanceScopeTabs.length : rightOrder);
+    const leftOrder = tabs.indexOf(tabForReadinessCheck(left));
+    const rightOrder = tabs.indexOf(tabForReadinessCheck(right));
+    return (leftOrder === -1 ? tabs.length : leftOrder) - (rightOrder === -1 ? tabs.length : rightOrder);
   });
 }
 

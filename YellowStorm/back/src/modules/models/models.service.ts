@@ -4,14 +4,7 @@ import { Model } from 'mongoose';
 import { LoggerService } from '../logger';
 import { LiteLLMClient } from './litellm.client';
 import { AiModel, AiModelDocument } from './schemas/model.schema';
-import {
-  LiteLLMModelInfoEntry,
-  LiteLLMHealthStatus,
-  ModelInputModality,
-  ModelResponse,
-  ModelsListResponse,
-  ReasoningEffortOption,
-} from './interfaces/model.interface';
+import { LiteLLMModelInfoEntry, LiteLLMHealthStatus, ModelInputModality, ModelResponse, ModelsListResponse, ReasoningEffortOption, ModelPricingSnapshot } from './interfaces/model.interface';
 import { BadRequestException } from '../exceptions';
 import { ErrorCode } from '../exceptions/constants/error-codes';
 
@@ -47,7 +40,7 @@ export class ModelsService implements OnApplicationBootstrap {
     private readonly aiModelModel: Model<AiModelDocument>,
     private readonly litellmClient: LiteLLMClient,
     private readonly logger: LoggerService,
-  ) { }
+  ) {}
 
   async onApplicationBootstrap(): Promise<void> {
     if (!this.litellmClient.isConfigured()) {
@@ -66,7 +59,13 @@ export class ModelsService implements OnApplicationBootstrap {
     });
   }
 
-  async syncModels(): Promise<{ added: number; updated: number; reactivated: number; deactivated: number; total: number }> {
+  async syncModels(): Promise<{
+    added: number;
+    updated: number;
+    reactivated: number;
+    deactivated: number;
+    total: number;
+  }> {
     this.logger.log('Starting model sync from LiteLLM', {
       context: 'ModelsService',
     });
@@ -120,6 +119,9 @@ export class ModelsService implements OnApplicationBootstrap {
             maxInputTokens: this.nullableNumber(entry.model_info?.max_input_tokens),
             maxOutputTokens: this.nullableNumber(entry.model_info?.max_output_tokens),
             supportsReasoning: typeof entry.model_info?.supports_reasoning === 'boolean' ? entry.model_info.supports_reasoning : null,
+            inputCostPerToken: this.nullableNonNegativeNumber(entry.model_info?.input_cost_per_token),
+            outputCostPerToken: this.nullableNonNegativeNumber(entry.model_info?.output_cost_per_token),
+            cachedInputCostPerToken: this.nullableNonNegativeNumber(entry.model_info?.cache_read_input_token_cost),
           };
           const publishedEfforts = this.extractReasoningEfforts(entry);
           if (publishedEfforts.length > 0) updateFields.reasoningEfforts = publishedEfforts;
@@ -130,20 +132,10 @@ export class ModelsService implements OnApplicationBootstrap {
             reactivatedCount++;
           }
 
-          const hasChanges =
-            existingModel.chefSlug !== chefSlug ||
-            existingModel.litellmModel !== litellmModel ||
-            existingModel.maxInputTokens !== updateFields.maxInputTokens ||
-            existingModel.maxOutputTokens !== updateFields.maxOutputTokens ||
-            existingModel.supportsReasoning !== updateFields.supportsReasoning ||
-            (publishedEfforts.length > 0 && JSON.stringify(existingModel.reasoningEfforts ?? []) !== JSON.stringify(publishedEfforts)) ||
-            !existingModel.isActive;
+          const hasChanges = existingModel.chefSlug !== chefSlug || existingModel.litellmModel !== litellmModel || existingModel.maxInputTokens !== updateFields.maxInputTokens || existingModel.maxOutputTokens !== updateFields.maxOutputTokens || existingModel.supportsReasoning !== updateFields.supportsReasoning || existingModel.inputCostPerToken !== updateFields.inputCostPerToken || existingModel.outputCostPerToken !== updateFields.outputCostPerToken || existingModel.cachedInputCostPerToken !== updateFields.cachedInputCostPerToken || (publishedEfforts.length > 0 && JSON.stringify(existingModel.reasoningEfforts ?? []) !== JSON.stringify(publishedEfforts)) || !existingModel.isActive;
 
           if (hasChanges) {
-            await this.aiModelModel.updateOne(
-              { modelId: entry.model_name },
-              { $set: updateFields },
-            );
+            await this.aiModelModel.updateOne({ modelId: entry.model_name }, { $set: updateFields });
             if (existingModel.isActive) updatedCount++;
           }
         }
@@ -211,11 +203,7 @@ export class ModelsService implements OnApplicationBootstrap {
     if (activeOnly) query.isActive = true;
     if (chatOnly) query.$or = [{ types: 'chat' }, { type: 'chat' }];
 
-    const models = await this.aiModelModel
-      .find(query)
-      .sort({ chef: 1, name: 1 })
-      .lean()
-      .exec();
+    const models = await this.aiModelModel.find(query).sort({ chef: 1, name: 1 }).lean().exec();
 
     return {
       models: models.map((model) => this.toModelResponse(model)),
@@ -233,6 +221,23 @@ export class ModelsService implements OnApplicationBootstrap {
     return this.toModelResponse(model);
   }
 
+  async findPricing(id: string): Promise<ModelPricingSnapshot | null> {
+    const model = await this.aiModelModel
+      .findOne({
+        $or: [{ modelId: id }, { litellmModel: id }],
+      })
+      .lean()
+      .exec();
+    if (!model) return null;
+    return {
+      provider: model.chefSlug,
+      inputCostPerToken: model.inputCostPerToken ?? null,
+      outputCostPerToken: model.outputCostPerToken ?? null,
+      cachedInputCostPerToken: model.cachedInputCostPerToken ?? null,
+      version: `litellm:${model.updatedAt.toISOString()}`,
+    };
+  }
+
   /**
    * Check if a model exists and is active.
    * Returns the model if valid, null if not found, throws if inactive.
@@ -240,7 +245,12 @@ export class ModelsService implements OnApplicationBootstrap {
   async validateModelActive(
     id: string,
     requiredType?: string,
-  ): Promise<{ valid: boolean; model: ModelResponse | null; inactive: boolean; unsupported: boolean }> {
+  ): Promise<{
+    valid: boolean;
+    model: ModelResponse | null;
+    inactive: boolean;
+    unsupported: boolean;
+  }> {
     const model = await this.aiModelModel.findOne({ modelId: id }).lean().exec();
 
     if (!model) {
@@ -248,7 +258,12 @@ export class ModelsService implements OnApplicationBootstrap {
     }
 
     if (!model.isActive) {
-      return { valid: false, model: this.toModelResponse(model), inactive: true, unsupported: false };
+      return {
+        valid: false,
+        model: this.toModelResponse(model),
+        inactive: true,
+        unsupported: false,
+      };
     }
 
     const response = this.toModelResponse(model);
@@ -280,9 +295,7 @@ export class ModelsService implements OnApplicationBootstrap {
     return this.litellmClient.getHealthStatus();
   }
 
-  private transformModel(
-    entry: LiteLLMModelInfoEntry,
-  ): Partial<AiModel> {
+  private transformModel(entry: LiteLLMModelInfoEntry): Partial<AiModel> {
     const chefSlug = (entry.model_info?.litellm_provider || '').toLowerCase();
     const litellmModel = String(entry.litellm_params?.model || '').trim();
 
@@ -302,12 +315,19 @@ export class ModelsService implements OnApplicationBootstrap {
       maxInputTokens: this.nullableNumber(entry.model_info?.max_input_tokens),
       maxOutputTokens: this.nullableNumber(entry.model_info?.max_output_tokens),
       supportsReasoning: typeof entry.model_info?.supports_reasoning === 'boolean' ? entry.model_info.supports_reasoning : null,
+      inputCostPerToken: this.nullableNonNegativeNumber(entry.model_info?.input_cost_per_token),
+      outputCostPerToken: this.nullableNonNegativeNumber(entry.model_info?.output_cost_per_token),
+      cachedInputCostPerToken: this.nullableNonNegativeNumber(entry.model_info?.cache_read_input_token_cost),
       reasoningEfforts: this.extractReasoningEfforts(entry),
     };
   }
 
   private nullableNumber(value: unknown): number | null {
     return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : null;
+  }
+
+  private nullableNonNegativeNumber(value: unknown): number | null {
+    return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : null;
   }
 
   private extractReasoningEfforts(entry: LiteLLMModelInfoEntry): ReasoningEffortOption[] {
@@ -318,11 +338,13 @@ export class ModelsService implements OnApplicationBootstrap {
       if (!item || typeof item !== 'object') return [];
       const record = item as Record<string, unknown>;
       if (typeof record.id !== 'string' || !record.id.trim()) return [];
-      return [{
-        id: record.id.trim(),
-        name: typeof record.name === 'string' && record.name.trim() ? record.name.trim() : this.generateDisplayName(record.id.trim()),
-        ...(typeof record.description === 'string' && record.description.trim() ? { description: record.description.trim() } : {}),
-      }];
+      return [
+        {
+          id: record.id.trim(),
+          name: typeof record.name === 'string' && record.name.trim() ? record.name.trim() : this.generateDisplayName(record.id.trim()),
+          ...(typeof record.description === 'string' && record.description.trim() ? { description: record.description.trim() } : {}),
+        },
+      ];
     });
   }
 
@@ -370,7 +392,19 @@ export class ModelsService implements OnApplicationBootstrap {
 
   async updateModel(
     id: string,
-    data: Partial<{ name: string; chef: string; chefSlug: string; providers: string[]; type: string; types: string[]; isActive: boolean; omitTemperature: boolean; inputModalities: ModelInputModality[]; reasoningEfforts: ReasoningEffortOption[]; defaultReasoningEffort: string | null }>,
+    data: Partial<{
+      name: string;
+      chef: string;
+      chefSlug: string;
+      providers: string[];
+      type: string;
+      types: string[];
+      isActive: boolean;
+      omitTemperature: boolean;
+      inputModalities: ModelInputModality[];
+      reasoningEfforts: ReasoningEffortOption[];
+      defaultReasoningEffort: string | null;
+    }>,
   ): Promise<ModelResponse | null> {
     const update = { ...data };
     if (update.types) {
@@ -402,14 +436,8 @@ export class ModelsService implements OnApplicationBootstrap {
 
     const assignedTypes = Array.isArray(model.types) ? model.types : [];
     if (model.isActive && (assignedTypes.includes('guardrails_classifier') || model.type === 'guardrails_classifier')) {
-      await this.aiModelModel.updateMany(
-        { modelId: { $ne: id }, isActive: true },
-        { $pull: { types: 'guardrails_classifier' } },
-      );
-      await this.aiModelModel.updateMany(
-        { modelId: { $ne: id }, isActive: true, type: 'guardrails_classifier' },
-        { $set: { type: '' } },
-      );
+      await this.aiModelModel.updateMany({ modelId: { $ne: id }, isActive: true }, { $pull: { types: 'guardrails_classifier' } });
+      await this.aiModelModel.updateMany({ modelId: { $ne: id }, isActive: true, type: 'guardrails_classifier' }, { $set: { type: '' } });
     }
 
     this.logger.log('Model updated', {
@@ -423,28 +451,24 @@ export class ModelsService implements OnApplicationBootstrap {
 
   async setDefaultModel(id: string): Promise<ModelResponse | null> {
     // First, verify the model exists
-    const model = await this.aiModelModel.findOne({
-      modelId: id,
-      isActive: true,
-      $or: [{ types: 'chat' }, { type: 'chat' }],
-    }).lean().exec();
+    const model = await this.aiModelModel
+      .findOne({
+        modelId: id,
+        isActive: true,
+        $or: [{ types: 'chat' }, { type: 'chat' }],
+      })
+      .lean()
+      .exec();
     if (!model) {
       return null;
     }
 
     // Clear any existing default
-    await this.aiModelModel.updateMany(
-      { isDefault: true },
-      { $set: { isDefault: false } },
-    );
+    await this.aiModelModel.updateMany({ isDefault: true }, { $set: { isDefault: false } });
 
     // Set the new default
     const updatedModel = await this.aiModelModel
-      .findOneAndUpdate(
-        { modelId: id },
-        { $set: { isDefault: true } },
-        { new: true },
-      )
+      .findOneAndUpdate({ modelId: id }, { $set: { isDefault: true } }, { new: true })
       .lean()
       .exec();
 
@@ -458,11 +482,7 @@ export class ModelsService implements OnApplicationBootstrap {
 
   async clearDefaultModel(id: string): Promise<ModelResponse | null> {
     const model = await this.aiModelModel
-      .findOneAndUpdate(
-        { modelId: id },
-        { $set: { isDefault: false } },
-        { new: true },
-      )
+      .findOneAndUpdate({ modelId: id }, { $set: { isDefault: false } }, { new: true })
       .lean()
       .exec();
 
@@ -512,28 +532,24 @@ export class ModelsService implements OnApplicationBootstrap {
 
   async setConversationV2DefaultModel(id: string): Promise<ModelResponse | null> {
     // First, verify the model exists (active chat model)
-    const model = await this.aiModelModel.findOne({
-      modelId: id,
-      isActive: true,
-      $or: [{ types: 'chat' }, { type: 'chat' }],
-    }).lean().exec();
+    const model = await this.aiModelModel
+      .findOne({
+        modelId: id,
+        isActive: true,
+        $or: [{ types: 'chat' }, { type: 'chat' }],
+      })
+      .lean()
+      .exec();
     if (!model) {
       return null;
     }
 
     // Clear any existing conversation-v2 default
-    await this.aiModelModel.updateMany(
-      { isConversationV2Default: true },
-      { $set: { isConversationV2Default: false } },
-    );
+    await this.aiModelModel.updateMany({ isConversationV2Default: true }, { $set: { isConversationV2Default: false } });
 
     // Set the new conversation-v2 default
     const updatedModel = await this.aiModelModel
-      .findOneAndUpdate(
-        { modelId: id },
-        { $set: { isConversationV2Default: true } },
-        { new: true },
-      )
+      .findOneAndUpdate({ modelId: id }, { $set: { isConversationV2Default: true } }, { new: true })
       .lean()
       .exec();
 
@@ -547,11 +563,7 @@ export class ModelsService implements OnApplicationBootstrap {
 
   async clearConversationV2DefaultModel(id: string): Promise<ModelResponse | null> {
     const model = await this.aiModelModel
-      .findOneAndUpdate(
-        { modelId: id },
-        { $set: { isConversationV2Default: false } },
-        { new: true },
-      )
+      .findOneAndUpdate({ modelId: id }, { $set: { isConversationV2Default: false } }, { new: true })
       .lean()
       .exec();
 
@@ -589,15 +601,9 @@ export class ModelsService implements OnApplicationBootstrap {
     const doc = model as Record<string, unknown>;
 
     const legacyType = (doc.type as string) || '';
-    const types = Array.isArray(doc.types)
-      ? doc.types.filter((type): type is string => typeof type === 'string' && type.length > 0)
-      : legacyType ? [legacyType] : [];
-    const storedInputModalities = Array.isArray(doc.inputModalities)
-      ? doc.inputModalities.filter((modality): modality is ModelInputModality => modality === 'text' || modality === 'image')
-      : [];
-    const inputModalities: ModelInputModality[] = storedInputModalities.includes('text')
-      ? [...new Set(storedInputModalities)]
-      : ['text'];
+    const types = Array.isArray(doc.types) ? doc.types.filter((type): type is string => typeof type === 'string' && type.length > 0) : legacyType ? [legacyType] : [];
+    const storedInputModalities = Array.isArray(doc.inputModalities) ? doc.inputModalities.filter((modality): modality is ModelInputModality => modality === 'text' || modality === 'image') : [];
+    const inputModalities: ModelInputModality[] = storedInputModalities.includes('text') ? [...new Set(storedInputModalities)] : ['text'];
 
     return {
       id: doc.modelId as string,
@@ -622,7 +628,13 @@ export class ModelsService implements OnApplicationBootstrap {
               if (!effort || typeof effort !== 'object') return [];
               const value = effort as Record<string, unknown>;
               return typeof value.id === 'string' && typeof value.name === 'string'
-                ? [{ id: value.id, name: value.name, ...(typeof value.description === 'string' ? { description: value.description } : {}) }]
+                ? [
+                    {
+                      id: value.id,
+                      name: value.name,
+                      ...(typeof value.description === 'string' ? { description: value.description } : {}),
+                    },
+                  ]
                 : [];
             })
           : [],

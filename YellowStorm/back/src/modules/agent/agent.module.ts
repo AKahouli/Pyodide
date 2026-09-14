@@ -6,6 +6,7 @@ import { PublicAgentController } from './controllers/public-agent.controller';
 import { AdminAgentController } from './controllers/admin-agent.controller';
 import { AgentA2AController } from './controllers/agent-a2a.controller';
 import { AgentShareController } from './controllers/agent-share.controller';
+import { AgentCrudInternalController } from './controllers/agent-crud-internal.controller';
 import { AgentService } from './agent.service';
 import { AgentShareService } from './services/agent-share.service';
 import { AgentConnectorRuntimeService } from './services/agent-connector-runtime.service';
@@ -21,11 +22,13 @@ import { ModelsModule } from '../models/models.module';
 import { SkillModule } from '../skill/skill.module';
 import { ConnectorModule } from '../connector/connector.module';
 import { ConnectedAppModule } from '../connected-app/connected-app.module';
+import { AuthModule } from '../auth/auth.module';
 import { TeamModule } from '../team/team.module';
 import { UserModule } from '../user/user.module';
 import { GuardrailsModule } from '../guardrails/guardrails.module';
 import { ConversationModule } from '../conversation/conversation.module';
 import { AgentTaskExecutionService } from './services/agent-task-execution.service';
+import { AGENT_TASK_EXECUTION } from './agent-task-execution.token';
 import { UsageModule } from '../usage/usage.module';
 import { AgentRepositoryModule } from './repositories/agent-repository.module';
 
@@ -43,6 +46,7 @@ import { AgentRepositoryModule } from './repositories/agent-repository.module';
     SkillModule,
     ConnectorModule,
     ConnectedAppModule,
+    AuthModule,
     forwardRef(() => TeamModule),
     UserModule,
     GuardrailsModule,
@@ -50,8 +54,8 @@ import { AgentRepositoryModule } from './repositories/agent-repository.module';
     forwardRef(() => UsageModule),
     AgentRepositoryModule,
   ],
-  controllers: [AgentController, PublicAgentController, AdminAgentController, AgentA2AController, AgentShareController],
-  providers: [AgentService, AgentShareService, AgentConnectorRuntimeService, AgentPermissionGuard, A2AAdminGrpcClientService, A2APublishService, AgentTaskExecutionService],
+  controllers: [AgentController, PublicAgentController, AdminAgentController, AgentA2AController, AgentShareController, AgentCrudInternalController],
+  providers: [AgentService, AgentShareService, AgentConnectorRuntimeService, AgentPermissionGuard, A2AAdminGrpcClientService, A2APublishService, AgentTaskExecutionService, { provide: AGENT_TASK_EXECUTION, useExisting: AgentTaskExecutionService }],
   exports: [
     AgentService,
     AgentShareService,
@@ -60,6 +64,7 @@ import { AgentRepositoryModule } from './repositories/agent-repository.module';
     A2AAdminGrpcClientService,
     A2APublishService,
     AgentTaskExecutionService,
+    AGENT_TASK_EXECUTION,
   ],
 })
 export class AgentModule {}

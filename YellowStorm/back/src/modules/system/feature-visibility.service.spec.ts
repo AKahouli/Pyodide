@@ -28,7 +28,32 @@ describe('FeatureVisibilityService', () => {
     });
   });
 
+  it('adds runtime feature defaults to old persisted settings', async () => {
+    findOne.mockReturnValue({
+      lean: () => ({ exec: jest.fn().mockResolvedValue({ value: { governance: false } }) }),
+    });
+    const service = new FeatureVisibilityService(model as any);
+
+    await expect(service.getVisibility()).resolves.toEqual({
+      ...DEFAULT_FEATURE_VISIBILITY,
+      governance: false,
+    });
+  });
+
+  it('serves runtime checks from the persisted cache', async () => {
+    findOne.mockReturnValue({
+      lean: () => ({ exec: jest.fn().mockResolvedValue({ value: { dataRoomOutboxDispatch: false } }) }),
+    });
+    const service = new FeatureVisibilityService(model as any);
+
+    await service.getVisibility();
+
+    expect(service.isEnabled('dataRoomOutboxDispatch')).toBe(false);
+    expect(service.isEnabled('dataRoomWorkspaceEvents')).toBe(true);
+  });
+
   it('persists the complete visibility map', async () => {
+    findOne.mockReturnValue({ lean: () => ({ exec: jest.fn().mockResolvedValue(null) }) });
     const value = { ...DEFAULT_FEATURE_VISIBILITY, governance: false };
     findOneAndUpdate.mockReturnValue({
       lean: () => ({ exec: jest.fn().mockResolvedValue({ value }) }),
@@ -41,5 +66,17 @@ describe('FeatureVisibilityService', () => {
       { key: 'feature_visibility', value },
       { upsert: true, new: true, setDefaultsOnInsert: true },
     );
+  });
+
+  it('merges an older partial update without resetting runtime settings', async () => {
+    const stored = { ...DEFAULT_FEATURE_VISIBILITY, playbookMcpAssistant: false };
+    findOne.mockReturnValue({ lean: () => ({ exec: jest.fn().mockResolvedValue({ value: stored }) }) });
+    findOneAndUpdate.mockReturnValue({ lean: () => ({ exec: jest.fn().mockResolvedValue(null) }) });
+    const service = new FeatureVisibilityService(model as any);
+
+    await expect(service.updateVisibility({ governance: false })).resolves.toEqual({
+      ...stored,
+      governance: false,
+    });
   });
 });

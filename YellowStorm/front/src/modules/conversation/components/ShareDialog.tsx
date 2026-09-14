@@ -5,6 +5,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { Checkbox } from '@/components/ui/checkbox';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useModuleTranslation } from '@/modules/localization';
@@ -31,6 +32,7 @@ export function ShareDialog({ open, onOpenChange, conversationId, conversationTi
   const [title, setTitle] = useState(conversationTitle);
   const [expiresInDays, setExpiresInDays] = useState('30');
   const [emails, setEmails] = useState<string[]>(['']);
+  const [shareWorkspaces, setShareWorkspaces] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [shareResult, setShareResult] = useState<ShareResponse | null>(null);
   const [copied, setCopied] = useState(false);
@@ -41,6 +43,7 @@ export function ShareDialog({ open, onOpenChange, conversationId, conversationTi
     setTitle(conversationTitle);
     setExpiresInDays('30');
     setEmails(['']);
+    setShareWorkspaces(false);
     setShareResult(null);
     setCopied(false);
   };
@@ -82,6 +85,7 @@ export function ShareDialog({ open, onOpenChange, conversationId, conversationTi
               shareType: 'private' as const,
               title: title.trim() || undefined,
               recipientEmails: emails.filter((e) => e.trim()),
+              shareWorkspaces,
             };
 
       const result = await createShare(conversationId, payload);
@@ -142,6 +146,21 @@ export function ShareDialog({ open, onOpenChange, conversationId, conversationTi
           // Show private share result
           <div className='space-y-4'>
             <p className='text-sm text-muted-foreground'>{t('dialogs.share.privateResult', { count: shareResult.recipientEmails?.length ?? 0 })}</p>
+            {(shareResult.sharedWorkspaceCount ?? 0) > 0 && (
+              <p className='text-sm text-muted-foreground'>
+                {t('dialogs.share.workspaceResult', { count: shareResult.sharedWorkspaceCount })}
+              </p>
+            )}
+            {(shareResult.notFound?.length ?? 0) > 0 && (
+              <p className='text-sm text-destructive'>
+                {t('dialogs.share.notFound', { emails: shareResult.notFound?.join(', ') })}
+              </p>
+            )}
+            {(shareResult.invalid?.length ?? 0) > 0 && (
+              <p className='text-sm text-destructive'>
+                {t('dialogs.share.invalid', { emails: shareResult.invalid?.join(', ') })}
+              </p>
+            )}
             <DialogFooter>
               <Button onClick={() => handleOpenChange(false)}>{tCommon('actionClose')}</Button>
             </DialogFooter>
@@ -202,6 +221,16 @@ export function ShareDialog({ open, onOpenChange, conversationId, conversationTi
                     <Plus className='h-4 w-4 mr-2' />
                     {t('dialogs.share.form.addEmail')}
                   </Button>
+                </div>
+                <div className='flex items-start gap-2 rounded-md border p-3'>
+                  <Checkbox
+                    id='share-conversation-workspaces'
+                    checked={shareWorkspaces}
+                    onCheckedChange={(checked) => setShareWorkspaces(checked === true)}
+                  />
+                  <Label htmlFor='share-conversation-workspaces' className='cursor-pointer text-sm leading-5'>
+                    {t('dialogs.share.form.shareWorkspaces')}
+                  </Label>
                 </div>
               </TabsContent>
             </div>

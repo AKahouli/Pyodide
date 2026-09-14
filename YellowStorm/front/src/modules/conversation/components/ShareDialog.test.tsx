@@ -51,12 +51,14 @@ describe('ShareDialog', () => {
     expect(emailTab).toBeEnabled();
     await userEvent.click(emailTab);
     await userEvent.type(screen.getByPlaceholderText('dialogs.share.form.recipientPlaceholder'), 'person@example.com');
+    await userEvent.click(screen.getByText('dialogs.share.form.shareWorkspaces'));
     await userEvent.click(screen.getByRole('button', { name: 'dialogs.share.actions.share' }));
 
     await waitFor(() => expect(createShareMock).toHaveBeenCalledWith('conv-1', {
       shareType: 'private',
       title: 'My conversation',
       recipientEmails: ['person@example.com'],
+      shareWorkspaces: true,
     }));
   });
 });

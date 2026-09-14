@@ -13,7 +13,7 @@ import { useModuleTranslation } from '@/modules/localization';
 import { useWorkspaceStore } from '../store';
 import { useWorkspaceStoreTranslator } from '../hooks/useWorkspaceStoreTranslator';
 
-export const WorkspaceButton = memo(function WorkspaceButton() {
+export const WorkspaceButton = memo(function WorkspaceButton({ label }: { label?: string }) {
   const { t } = useModuleTranslation('workspace');
   const { t: tCommon } = useModuleTranslation('common');
   useWorkspaceStoreTranslator();
@@ -23,9 +23,9 @@ export const WorkspaceButton = memo(function WorkspaceButton() {
 
   return (
     <SidebarMenuItem>
-      <SidebarMenuButton tooltip={t('button.tooltip')} onClick={() => navigate('/workspace')}>
+      <SidebarMenuButton tooltip={label ?? t('button.tooltip')} onClick={() => navigate('/workspace')}>
         <Layers />
-        <span>{t('button.label')}</span>
+        <span>{label ?? t('button.label')}</span>
       </SidebarMenuButton>
       <DropdownMenu>
         <DropdownMenuTrigger asChild>

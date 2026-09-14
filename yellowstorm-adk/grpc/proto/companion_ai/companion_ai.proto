@@ -221,4 +221,7 @@ message ConnectorAction {
   string label                 = 2;
   string description           = 3;
   string parameter_schema_json = 4;        // JSON Schema of the action params
+  string result_kind           = 5;
+  string citation_mode         = 6;
+  string result_mapping_json   = 7;
 }

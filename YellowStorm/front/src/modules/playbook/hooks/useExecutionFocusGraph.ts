@@ -224,6 +224,10 @@ function buildInlineContainerGraph(
     width: dimensions.width,
     height: dimensions.height,
     style: { width: dimensions.width, height: dimensions.height },
+    // This node is rebuilt fresh on every graph recomputation; without `measured`
+    // React Flow resets its handleBounds each time, re-arms its ResizeObserver and
+    // re-renders the whole canvas in a self-sustaining loop.
+    measured: { width: dimensions.width, height: dimensions.height },
     draggable: false,
     connectable: false,
     deletable: false,

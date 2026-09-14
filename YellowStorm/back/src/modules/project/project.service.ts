@@ -6,6 +6,7 @@ import {
   CONVERSATION_STORE,
   type ConversationStore,
 } from '../conversation/persistence/conversation-store';
+import { ProjectShareService } from './project-share.service';
 import { CreateProjectDto } from './dto/create-project.dto';
 import { UpdateProjectDto } from './dto/update-project.dto';
 import { QueryProjectDto } from './dto/query-project.dto';
@@ -22,6 +23,7 @@ export class ProjectService {
     private readonly projectModel: Model<ProjectDocument>,
     @Inject(CONVERSATION_STORE)
     private readonly conversationStore: ConversationStore,
+    private readonly projectShareService: ProjectShareService,
     private readonly logger: LoggerService,
   ) {
     this.logger.setContext(ProjectService.name);
@@ -65,7 +67,6 @@ export class ProjectService {
     if (projects.length === 0) return [];
 
     const countMap = await this.conversationStore.countByProjects(
-      userId,
       projects.map((project) => project._id.toString()),
     );
 
@@ -77,11 +78,13 @@ export class ProjectService {
     if (!project) {
       throw new NotFoundException(ErrorCode.PROJECT_NOT_FOUND);
     }
-    if (project.createdBy.toString() !== userId) {
+    const isOwner = project.createdBy.toString() === userId;
+    if (!isOwner && !(await this.projectShareService.hasAccess(userId, projectId))) {
       throw new ForbiddenException(ErrorCode.PROJECT_FORBIDDEN);
     }
 
-    const count = await this.conversationStore.countByProject(userId, projectId);
+    // Projects are shared containers: the count includes collaborators' conversations.
+    const count = await this.conversationStore.countByProject(projectId);
 
     return this.toResponse(project, count);
   }
@@ -111,8 +114,30 @@ export class ProjectService {
 
     await project.save();
 
-    const count = await this.conversationStore.countByProject(userId, projectId);
+    const count = await this.conversationStore.countByProject(projectId);
 
+    return this.toResponse(project, count);
+  }
+
+  /**
+   * Toggle a project's public visibility. Owner-only (we re-check defensively).
+   * Shares are left untouched — while public they are dormant, and reactivate
+   * when the project goes back to private.
+   */
+  async setVisibility(projectId: string, ownerId: string, isPublic: boolean): Promise<IProjectResponse> {
+    const project = await this.projectModel.findById(projectId).exec();
+    if (!project) {
+      throw new NotFoundException(ErrorCode.PROJECT_NOT_FOUND);
+    }
+    if (project.createdBy.toString() !== ownerId) {
+      throw new ForbiddenException(ErrorCode.PROJECT_FORBIDDEN);
+    }
+
+    project.isPublic = isPublic;
+    await project.save();
+    this.logger.log('Project visibility updated', { projectId, ownerId, isPublic });
+
+    const count = await this.conversationStore.countByProject(projectId);
     return this.toResponse(project, count);
   }
 
@@ -125,8 +150,9 @@ export class ProjectService {
       throw new ForbiddenException(ErrorCode.PROJECT_FORBIDDEN);
     }
 
-    // Detach all conversations so they return to the user's history.
-    const conversationsDetached = await this.conversationStore.detachProject(userId, projectId);
+    // Detach every conversation (owner's and collaborators') and drop shares.
+    const conversationsDetached = await this.conversationStore.detachProject(projectId);
+    await this.projectShareService.removeAllByProject(projectId);
 
     await this.projectModel.deleteOne({ _id: project._id });
 
@@ -144,6 +170,8 @@ export class ProjectService {
       name: doc.name as string,
       createdBy: (doc.createdBy as { toString(): string }).toString(),
       conversationCount,
+      isPublic: Boolean(doc.isPublic),
+      shareCount: Number(doc.shareCount ?? 0),
       createdAt: doc.createdAt instanceof Date ? doc.createdAt.toISOString() : doc.createdAt,
       updatedAt: doc.updatedAt instanceof Date ? doc.updatedAt.toISOString() : doc.updatedAt,
     };

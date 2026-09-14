@@ -18,6 +18,7 @@ from src.smart_rag.engines.multi_agent.team_orchestrator import AutoAgentGenerat
 from src.smart_rag.engines.multi_agent.agentic_workflows.auto_agents import handle_no_agents_workflow
 from src.smart_rag.engines.multi_agent.agentic_workflows.manual_agents import handle_agents_provided_workflow
 from src.smart_rag.engines.multi_agent.agentic_workflows.single_agent import handle_single_agent_workflow
+from src.smart_rag.engines.multi_agent.hierarchical_agents import handle_hierarchical_agents_workflow
 from src.smart_rag.engines.multi_agent.agentic_workflows.team_configuration import initialize_dependencies, create_team, \
     create_team_config
 from src.smart_rag.tools.semantic_search_preflight import run_semantic_search_preflight
@@ -106,4 +107,8 @@ async def execute_workflow(team: AutoAgentGenerationTeam,
         await handle_agents_provided_workflow(team, user_request, q)
     elif user_request.agent_mode=="mono":
         await handle_single_agent_workflow(team, user_request, q)
+    elif user_request.agent_mode=="hierarchical":
+        await handle_hierarchical_agents_workflow(team, user_request, q)
+    else:
+        raise ValueError(f"Unsupported agent mode: {user_request.agent_mode}")
     logger.info(f"Workflow execution completed - mode: {user_request.agent_mode}, session_id: {user_request.session_id}")

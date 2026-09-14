@@ -136,6 +136,18 @@ def _log_payload(value: Any) -> str:
         return str(value)
 
 
+def _json_object(value: Any) -> Dict[str, Any]:
+    if isinstance(value, dict):
+        return value
+    if isinstance(value, str) and value.strip():
+        try:
+            parsed = json.loads(value)
+            return parsed if isinstance(parsed, dict) else {}
+        except json.JSONDecodeError:
+            return {}
+    return {}
+
+
 def _is_locate_answer_citations_tool(tool_name: str) -> bool:
     return "locate_answer_citations" in str(tool_name or "")
 
@@ -243,6 +255,9 @@ def _component_to_connector_citation_source(
     component: Dict[str, Any],
 ) -> Optional[Dict[str, Any]]:
     data = component.get("data") or {}
+    web_source = data.get("web_source")
+    if isinstance(web_source, dict):
+        return {"type": "web", **web_source}
     text_source = data.get("text_source")
     if isinstance(text_source, dict):
         return {
@@ -287,7 +302,15 @@ def _append_citation_guidance(text: str, references: List[str]) -> str:
 
 def _build_connector_citation_signature(source: Dict[str, Any]) -> str:
     source_type = str(source.get("type") or "text")
-    if source_type == "image":
+    if source_type == "web":
+        parts = [
+            source_type,
+            str(source.get("source") or ""),
+            str(source.get("exact_text") or ""),
+            str(source.get("prefix") or ""),
+            str(source.get("suffix") or ""),
+        ]
+    elif source_type == "image":
         parts = [
             source_type,
             str(source.get("path") or ""),
@@ -353,6 +376,11 @@ def _compact_citation_source(source: Dict[str, Any]) -> Dict[str, Any]:
         "highlight_text",
         "highlight_bbox",
         "block_bbox",
+        "title",
+        "exact_text",
+        "prefix",
+        "suffix",
+        "evidence_origin",
     )
     return {
         key: source[key]
@@ -365,6 +393,7 @@ def _collect_connector_response_components(
     collector: ToolResultCollector,
     response: Any,
     tool_name: str = "",
+    trusted_citations: bool = False,
 ) -> Any:
     if not isinstance(response, dict):
         return response
@@ -372,7 +401,7 @@ def _collect_connector_response_components(
     is_located_answer_citations = _is_locate_answer_citations_tool(tool_name)
     normalized_response = (
         dict(response)
-        if is_located_answer_citations
+        if is_located_answer_citations or trusted_citations
         else _strip_legacy_citation_fields(response)
     )
 
@@ -446,7 +475,24 @@ def _collect_connector_response_components(
         if not is_new_source:
             continue
 
-        if source_type == "image":
+        if source_type == "web":
+            collector.add_component(
+                "citation",
+                {
+                    "parent_id": "",
+                    "web_source": {
+                        "type": "web",
+                        "source": str(source.get("source") or ""),
+                        "title": str(source.get("title") or ""),
+                        "reference": reference,
+                        "exact_text": str(source.get("exact_text") or ""),
+                        "prefix": str(source.get("prefix") or ""),
+                        "suffix": str(source.get("suffix") or ""),
+                        "evidence_origin": str(source.get("evidence_origin") or ""),
+                    },
+                },
+            )
+        elif source_type == "image":
             component_payload = {
                 "parent_id": "",
                 "image_source": {
@@ -1776,6 +1822,9 @@ def _create_connector_mcp_tools(
                         else {}
                     ),
                     "safety": "unknown" if isinstance(a, str) else str(a.get("safety") or "unknown").lower(),
+                    "result_kind": "generic" if isinstance(a, str) else str(a.get("result_kind") or "generic"),
+                    "citation_mode": "none" if isinstance(a, str) else str(a.get("citation_mode") or "none"),
+                    "result_mapping": {} if isinstance(a, str) else _json_object(a.get("result_mapping") or a.get("result_mapping_json")),
                 }
                 for a in raw_actions
             ]
@@ -1812,6 +1861,9 @@ def _create_connector_mcp_tools(
             )
             action_parameter_schema = action.get("parameter_schema") or {}
             action_safety = str(action.get("safety") or "unknown").lower()
+            action_result_kind = str(action.get("result_kind") or "generic")
+            action_citation_mode = str(action.get("citation_mode") or "none")
+            action_result_mapping = action.get("result_mapping") or {}
             tool_name = build_connector_tool_name(connector_slug, action_key)
             args_schema = _build_args_schema_for_connector_tool(
                 tool_name,
@@ -1844,6 +1896,10 @@ def _create_connector_mcp_tools(
                 suppress_file_paths: bool = is_code_interpreter and bool(sandbox_inputs),
                 action_keys: set[str] = set(available_action_keys),
                 internal_token: str = platform_api_token,
+                result_kind: str = action_result_kind,
+                citation_mode: str = action_citation_mode,
+                result_mapping: Dict[str, Any] = action_result_mapping,
+                connector_slug_value: str = connector_slug,
             ) -> StructuredTool:
                 async def _execute_mcp(*args: Any, **kwargs: Any) -> Any:
                     raw_params = kwargs.get("params")
@@ -1932,6 +1988,18 @@ def _create_connector_mcp_tools(
                             if guard is not None and ak == "sandbox_create"
                             else await _call(ak, merged_params)
                         )
+                        if result_kind in {"web_search", "web_fetch"}:
+                            from src.web_citations import normalize_web_connector_response
+
+                            response = normalize_web_connector_response(
+                                response,
+                                result_kind,
+                                citation_mode,
+                                result_mapping,
+                                connector_id=cid,
+                                connector_slug=connector_slug_value,
+                                action_key=ak,
+                            )
                         if isinstance(response, dict) and ak == "send_file_to_user":
                             source_path = response.get("path")
                             if (
@@ -1996,6 +2064,7 @@ def _create_connector_mcp_tools(
                                 collector,
                                 response,
                                 tool_name=ak,
+                                trusted_citations=result_kind in {"web_search", "web_fetch"},
                             )
                         return response
                     except SandboxMountValidationError as e:

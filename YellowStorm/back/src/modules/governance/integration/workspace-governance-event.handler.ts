@@ -6,6 +6,7 @@ import { WorkspaceIntegrationEvents, type WorkspaceDocumentEventV1 } from '@modu
 import type { IntegrationEventEnvelope } from '@modules/integration-events/interfaces/integration-event.interface';
 import { KnowledgeExtractionOrchestratorService } from '@modules/knowledge-intelligence/services/knowledge-extraction-orchestrator.service';
 import { WorkspaceEvidenceSearchSettingsService } from '@modules/system/workspace-evidence-search-settings.service';
+import { FeatureVisibilityService } from '@modules/system/feature-visibility.service';
 import { GovernanceWorkspaceBindingService } from '../services/governance-workspace-binding.service';
 import { GovernanceDocumentService } from '../services/governance-document.service';
 
@@ -18,6 +19,7 @@ export class WorkspaceGovernanceEventHandler implements OnModuleInit {
   constructor(
     private readonly registry: IntegrationEventHandlerRegistryService,
     private readonly config: ConfigService,
+    private readonly featureVisibility: FeatureVisibilityService,
     private readonly bindings: GovernanceWorkspaceBindingService,
     private readonly documents: GovernanceDocumentService,
     private readonly intelligence: KnowledgeExtractionOrchestratorService,
@@ -41,7 +43,7 @@ export class WorkspaceGovernanceEventHandler implements OnModuleInit {
         }
         if (binding.ingestionMode === 'manual') continue;
         const governed = await this.documents.upsertFromWorkspace(programId, payload.documentId, binding.createdBy.toString(), { id: event.eventId, occurredAt: event.occurredAt });
-        if (event.eventType !== WorkspaceIntegrationEvents.IndexingReadyV1 || !this.config.get<boolean>('dataRoom.validityIntelligenceEnabled')) continue;
+        if (event.eventType !== WorkspaceIntegrationEvents.IndexingReadyV1 || !this.featureVisibility.isEnabled('dataRoomValidityIntelligence')) continue;
         const { connectorId } = await this.evidenceSettings.getSettings();
         if (!connectorId) continue;
         const inputHash = createHash('sha256').update(JSON.stringify({ programId, documentId: payload.documentId, contentHash: payload.contentHash ?? null, indexingAttemptId: payload.indexingAttemptId ?? null, connectorId })).digest('hex');

@@ -142,6 +142,7 @@
   "ERR_3311": "Aucun utilisateur trouvé pour l'adresse e-mail fournie.",
   "ERR_3312": "Échec de la génération de la hiérarchie de l'équipe.",
   "ERR_3313": "L'auto-builder d'équipe n'est pas configuré. Veuillez contacter un administrateur.",
+  "ERR_3314": "Cette équipe n'est pas exécutable. Corrigez sa hiérarchie et réessayez.",
   "ERR_3600": "Programme de gouvernance introuvable.",
   "ERR_3601": "Un programme de gouvernance portant ce nom existe déjà.",
   "ERR_3602": "Le programme de gouvernance ne peut pas être supprimé tant que des périmètres ou sources existent.",

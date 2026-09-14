@@ -16,6 +16,8 @@ const selectedReasoningEffortMock = vi.hoisted(() => ({ value: null as string | 
 const setSelectedReasoningEffortMock = vi.hoisted(() => vi.fn((value: string) => {
   selectedReasoningEffortMock.value = value;
 }));
+const createGovernedConversationMock = vi.hoisted(() => vi.fn().mockResolvedValue({ id: 'governed-1', runtimeMode: 'governed' }));
+const governedScopesMock = vi.hoisted(() => ({ value: [{ scopeId: 'scope-1', name: 'Support', revisionNumber: 3 }] }));
 const submitRoutingMock = vi.hoisted(() => ({
   agentIds: ['agent-1'] as string[] | undefined,
   memberIds: undefined as string[] | undefined,
@@ -30,6 +32,9 @@ vi.mock('@/components/ai-elements/input', () => ({
     onSubmit,
     preserveWorkspaceSelectionOnSubmit,
     extraTools,
+    showWorkspaceSelect,
+    governedMode,
+    onFilesAdded,
   }: {
     onSubmit: (
       message: { text: string },
@@ -48,9 +53,14 @@ vi.mock('@/components/ai-elements/input', () => ({
     ) => Promise<void>;
     preserveWorkspaceSelectionOnSubmit?: boolean;
     extraTools?: React.ReactNode;
+    showWorkspaceSelect?: boolean;
+    governedMode?: boolean;
+    onFilesAdded?: (files: File[], localIds: string[]) => void;
   }) => (
     <>
       <span>{preserveWorkspaceSelectionOnSubmit ? 'workspace-selection-preserved' : 'workspace-selection-reset'}</span>
+      <span>{showWorkspaceSelect ? 'workspace-selector-visible' : 'workspace-selector-hidden'}</span>
+      <span>{governedMode ? 'governed-composer' : 'standard-composer'}</span>
       {extraTools}
       <button
         type='button'
@@ -74,6 +84,7 @@ vi.mock('@/components/ai-elements/input', () => ({
       >
         submit-new-conversation
       </button>
+      <button type='button' onClick={() => onFilesAdded?.([new File(['x'], 'test.pdf')], ['local-1'])}>upload-file</button>
     </>
   ),
 }));
@@ -106,12 +117,14 @@ vi.mock('./store', () => ({
   useSelectedSemanticModelId: () => null,
   useSelectedWorkspaceIds: () => selectedWorkspaceIdsMock.value,
   useSetSelectedReasoningEffort: () => setSelectedReasoningEffortMock,
+  useWebConnectorAccessEnabled: () => true,
+  useSetWebConnectorAccessEnabled: () => vi.fn(),
 }));
 
 vi.mock('./hooks/useConversationFileUpload', () => ({
-  useConversationFileUpload: () => ({
+  useConversationFileUpload: ({ createConversation }: { createConversation: () => Promise<unknown> }) => ({
     files: [],
-    addFiles: vi.fn(),
+    addFiles: () => { void createConversation(); },
     removeFile: vi.fn(),
     completedFileIds: [],
     isUploading: false,
@@ -148,6 +161,31 @@ vi.mock('@/modules/playbook/components/playbook-swiper', () => ({
 
 vi.mock('@/modules/governance/components/consumer/GovernedScopesCarousel', () => ({
   GovernedScopesCarousel: () => <div>governed-scopes</div>,
+}));
+
+vi.mock('@/modules/workspace/hooks/useAllowedUploadExtensions', () => ({
+  useAllowedUploadExtensions: () => ({ accept: '.pdf,.docx' }),
+}));
+
+vi.mock('@/modules/governance', () => ({
+  useAvailableGovernedScopes: () => ({ data: governedScopesMock.value }),
+}));
+
+vi.mock('@/modules/admin/featureVisibilityStore', () => ({
+  useFeatureVisibilityStore: Object.assign(
+    (selector: (state: { visibility: { governedScopeCarousel: boolean } }) => unknown) => selector({ visibility: { governedScopeCarousel: true } }),
+    { getState: () => ({ visibility: { governedScopeCarousel: true } }) },
+  ),
+}));
+
+vi.mock('@/modules/auth/useAuth', () => ({
+  useAuth: () => ({ user: { id: 'user-1', email: 'amine@example.com', profile: { firstName: 'Amine' } } }),
+}));
+
+vi.mock('./api', () => ({ createGovernedConversation: createGovernedConversationMock }));
+
+vi.mock('./components/ConversationHomePanels', () => ({
+  ConversationHomePanels: () => <div>home-panels</div>,
 }));
 
 vi.mock('@/modules/models', () => ({
@@ -205,6 +243,8 @@ describe('NewConversationPage', () => {
       resetsAt: new Date(Date.now() + 3600000).toISOString(),
     };
     createConversationMock.mockResolvedValue({ id: 'conv-1' });
+    createGovernedConversationMock.mockResolvedValue({ id: 'governed-1', runtimeMode: 'governed' });
+    governedScopesMock.value = [{ scopeId: 'scope-1', name: 'Support', revisionNumber: 3 }];
     sendMessageMock.mockResolvedValue(undefined);
     selectedWorkspaceIdsMock.value = ['ws-1'];
     uploadConversationIdMock.value = null;
@@ -214,16 +254,14 @@ describe('NewConversationPage', () => {
     submitRoutingMock.teamIds = undefined;
   });
 
-  it('shows a quota alert on the chat page when the plan limit is exceeded', () => {
-    usageStatusMock.value = {
-      isLimitExceeded: true,
-      plan: { name: 'Free' },
-      resetsAt: new Date(Date.now() + 3600000).toISOString(),
-    };
-
+  it('renders only the chat experience', async () => {
     render(<NewConversationPage />);
 
-    expect(screen.getByRole('alert')).toHaveTextContent('usage-limit-banner');
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'submit-new-conversation' })).toBeInTheDocument();
+      expect(screen.queryByText('newConversation.mode.chat')).not.toBeInTheDocument();
+      expect(screen.queryByText('newConversation.mode.agent')).not.toBeInTheDocument();
+    });
   });
 
   it('forwards selected connector repo on first legacy message', async () => {
@@ -243,6 +281,7 @@ describe('NewConversationPage', () => {
       expect(createConversationMock).toHaveBeenCalledWith({ workspaces: ['ws-1'] });
       expect(sendMessageMock).toHaveBeenCalledWith('conv-1', {
         content: 'hello',
+        webConnectorAccessEnabled: true,
         modelId: 'model-1',
         agentIds: ['agent-1'],
         connectorRepo: {
@@ -262,6 +301,58 @@ describe('NewConversationPage', () => {
       expect(claimCurrentConversationMock.mock.invocationCallOrder[0]).toBeLessThan(mockNavigate.mock.invocationCallOrder[0]);
       expect(mockNavigate.mock.invocationCallOrder[0]).toBeLessThan(sendMessageMock.mock.invocationCallOrder[0]);
     });
+  });
+
+  it('creates a governed conversation and omits user-managed routing', async () => {
+    render(<NewConversationPage />);
+
+    await userEvent.selectOptions(screen.getByLabelText('home.scope.label'), 'scope-1');
+    expect(screen.getByText('governed-composer')).toBeInTheDocument();
+    expect(screen.getByText('workspace-selector-hidden')).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: 'submit-new-conversation' }));
+
+    await waitFor(() => expect(createGovernedConversationMock).toHaveBeenCalledWith('scope-1', expect.any(String)));
+    expect(createConversationMock).not.toHaveBeenCalled();
+    expect(claimCurrentConversationMock).toHaveBeenCalledWith('governed-1', { id: 'governed-1', runtimeMode: 'governed' }, undefined);
+    expect(sendMessageMock).toHaveBeenCalledWith('governed-1', expect.objectContaining({ content: 'hello' }));
+    const payload = sendMessageMock.mock.calls.at(-1)?.[1];
+    expect(payload).toMatchObject({ modelId: undefined, agentIds: undefined, teamIds: undefined, connectorRepo: undefined, skillIds: undefined });
+  });
+
+  it('locks governed mode as soon as upload creation starts', async () => {
+    createGovernedConversationMock.mockImplementation(() => new Promise(() => undefined));
+    render(<NewConversationPage />);
+
+    const scope = screen.getByLabelText('home.scope.label');
+    await userEvent.selectOptions(scope, 'scope-1');
+    await userEvent.click(screen.getByRole('button', { name: 'upload-file' }));
+
+    expect(scope).toBeDisabled();
+    expect(screen.queryByRole('button', { name: 'home.scope.switchStandard' })).not.toBeInTheDocument();
+  });
+
+  it('locks standard mode as soon as upload creation starts', async () => {
+    createConversationMock.mockImplementation(() => new Promise(() => undefined));
+    render(<NewConversationPage />);
+
+    const scope = screen.getByLabelText('home.scope.label');
+    await userEvent.click(screen.getByRole('button', { name: 'upload-file' }));
+
+    expect(scope).toBeDisabled();
+    expect(screen.getByText('standard-composer')).toBeInTheDocument();
+  });
+
+  it('keeps governed controls when a scope refresh removes the selected scope', async () => {
+    createGovernedConversationMock.mockImplementation(() => new Promise(() => undefined));
+    const { rerender } = render(<NewConversationPage />);
+
+    await userEvent.selectOptions(screen.getByLabelText('home.scope.label'), 'scope-1');
+    await userEvent.click(screen.getByRole('button', { name: 'upload-file' }));
+    governedScopesMock.value = [];
+    rerender(<NewConversationPage />);
+
+    expect(screen.getByText('governed-composer')).toBeInTheDocument();
+    expect(screen.getByText('home.scope.governedBy')).toBeInTheDocument();
   });
 
   it('clears workspaces on a conversation created before file upload completes', async () => {

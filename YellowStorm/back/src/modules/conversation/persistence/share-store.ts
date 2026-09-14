@@ -7,6 +7,9 @@ export class ConversationCloneLimitError extends Error {}
 export interface ShareSourceConversationRecord {
   id: string;
   title: string;
+  createdBy: string;
+  workspaceIds: string[];
+  memberIds: string[];
   messageCount: number;
   runtimeMode?: string;
   lastMessageAt?: Date;
@@ -21,6 +24,7 @@ export interface SharedConversationRecord {
   messages?: EmbeddedMessage[];
   accessToken?: string;
   recipientEmails?: string[];
+  recipientUserIds?: string[];
   forkedConversationIds?: string[];
   expiresAt?: Date;
   viewCount: number;
@@ -46,12 +50,15 @@ export interface ShareStore {
     sharedBy: string;
     maxMessages: number;
   }): Promise<string>;
+  addConversationMembers(conversationId: string, userIds: string[], joinedAt: Date): Promise<string[]>;
+  removeConversationMembers(conversationId: string, userIds: string[]): Promise<void>;
   deleteForkConversations(ids: string[]): Promise<void>;
   createPrivate(input: {
     originalConversationId: string;
     sharedBy: string;
     title: string;
     recipientEmails: string[];
+    recipientUserIds?: string[];
     forkedConversationIds: string[];
   }): Promise<SharedConversationRecord>;
   listForConversation(conversationId: string): Promise<SharedConversationRecord[]>;

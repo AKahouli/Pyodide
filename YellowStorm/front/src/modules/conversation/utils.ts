@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import type { ChatMessage } from '@/components/ai-elements/chat-conversation';
-import type { CitationBBox, MessageContentPart } from '@/components/ai-elements/ai-message-content';
+import type { CitationBBox, CitationData, MessageContentPart } from '@/components/ai-elements/ai-message-content';
 import type { ModuleTranslationKey } from '@/modules/localization';
 import type { ChartComponentData, ChartKind, ChartLayout, ChoiceComponentData, Message, MessageComponent } from './types';
 import { translateConversation } from './translation';
@@ -26,7 +26,7 @@ const conversationVisibleComponentTypes = new Set([
   'choice',
 ]);
 
-function getComponentType(component: MessageComponent): string {
+export function getComponentType(component: MessageComponent): string {
   return typeof component.type === 'object' && component.type !== null
     ? (component.type as { type?: string }).type || ''
     : component.type;
@@ -173,31 +173,19 @@ function asCitationBBox(value: unknown): CitationBBox | undefined {
   return bbox.every(Number.isFinite) ? bbox as CitationBBox : undefined;
 }
 
-function buildCitationData(data: Record<string, unknown>): {
-  parentId: string;
-  sourceType: 'text' | 'image';
-  source: string;
-  fileName?: string;
-  externalId: string;
-  page: string;
-  pageContent: string;
-  workspaceId: string;
-  reference?: string;
-  path?: string;
-  height?: string;
-  width?: string;
-  highlightText?: string;
-  highlightBBox?: CitationBBox;
-  blockBBox?: CitationBBox;
-} {
+function buildCitationData(data: Record<string, unknown>): CitationData {
   const textSource = data.text_source as Record<string, unknown> | undefined;
   const imageSource = data.image_source as Record<string, unknown> | undefined;
-  const sourceData = textSource || imageSource || data;
-  const sourceType = imageSource ? 'image' : ((sourceData.sourceType as 'text' | 'image') || 'text');
+  const webSource = data.web_source as Record<string, unknown> | undefined;
+  const sourceData = webSource || textSource || imageSource || data;
+  const sourceType = webSource || sourceData.sourceKind === 'web' || sourceData.sourceType === 'web'
+    ? 'web'
+    : imageSource ? 'image' : ((sourceData.sourceType as 'text' | 'image') || 'text');
 
   return {
     parentId: (data.parentId as string) || (data.parent_id as string) || '',
     sourceType,
+    ...(sourceType === 'web' ? { sourceKind: 'web' as const } : {}),
     source: (sourceData.source as string) || (sourceData.fileName as string) || (sourceData.file_name as string) || '',
     fileName: (sourceData.fileName as string) || (sourceData.file_name as string) || undefined,
     externalId: (sourceData.externalId as string) || (sourceData.external_id as string) || '',
@@ -211,6 +199,15 @@ function buildCitationData(data: Record<string, unknown>): {
     highlightText: (sourceData.highlightText as string) || (sourceData.highlight_text as string) || undefined,
     highlightBBox: asCitationBBox(sourceData.highlightBBox ?? sourceData.highlight_bbox),
     blockBBox: asCitationBBox(sourceData.blockBBox ?? sourceData.block_bbox),
+    title: (sourceData.title as string) || undefined,
+    exactText: (sourceData.exactText as string) || (sourceData.exact_text as string) || undefined,
+    prefix: (sourceData.prefix as string) || undefined,
+    suffix: (sourceData.suffix as string) || undefined,
+    evidenceOrigin: sourceData.evidenceOrigin === 'page_content' || sourceData.evidence_origin === 'page_content'
+      ? 'page_content'
+      : sourceData.evidenceOrigin === 'search_snippet' || sourceData.evidence_origin === 'search_snippet'
+        ? 'search_snippet'
+        : undefined,
   };
 }
 
@@ -294,6 +291,7 @@ function mapSingleComponent(comp: MessageComponent): MessageContentPart {
         title: (data.title as string) || '',
         items: (data.items as string[]) || [],
         status: (data.status as 'pending' | 'in_progress' | 'completed') || undefined,
+        agentId: (data.agentId as string) || undefined,
       };
     case 'error':
       return {
@@ -604,66 +602,75 @@ export function normalizeChoiceComponentData(data: unknown): ChoiceComponentData
 /**
  * Converts message components to markdown for copy-to-clipboard
  */
+export function isVisibleConversationComponent(comp: MessageComponent): boolean {
+  return Boolean(comp) && conversationVisibleComponentTypes.has(getComponentType(comp));
+}
+
+/** True for components exported as rendered visuals (images) rather than markdown. */
+export function isVisualConversationComponent(comp: MessageComponent): boolean {
+  const type = getComponentType(comp);
+  return type === 'chart' || type === 'webPreview';
+}
+
+/** Converts a single visible component to markdown (chart/webPreview have none). */
+export function componentToMarkdown(comp: MessageComponent): string {
+  const data = comp.data || {};
+  switch (comp.type) {
+    case 'text':
+      return (data.content as string) || '';
+    case 'code': {
+      const lang = (data.language as string) || '';
+      const content = (data.content as string) || '';
+      return `\`\`\`${lang}\n${content}\n\`\`\``;
+    }
+    case 'plan': {
+      const title = (data.title as string) || '';
+      const steps = (data.steps as string[]) || [];
+      return `**${title}**\n${steps.map((s) => `- ${s}`).join('\n')}`;
+    }
+    case 'checkpoint':
+      return `---\n**${(data.content as string) || ''}**`;
+    case 'error': {
+      const errTitle = (data.title as string) || translateConversation('messageActions.markdown.errorFallback');
+      const errContent = (data.content as string) || '';
+      return `> **${errTitle}**: ${errContent}`;
+    }
+    case 'sandbox': {
+      const code = (data.code as string) || '';
+      const output = (data.output as string) || '';
+      const error = (data.error as string) || '';
+      let result = `\`\`\`python\n${code}\n\`\`\``;
+      if (output) result += `\n\n${translateConversation('messageActions.markdown.outputLabel')}\n\`\`\`\n${output}\n\`\`\``;
+      if (error) result += `\n\n${translateConversation('messageActions.markdown.errorLabel')}\n\`\`\`\n${error}\n\`\`\``;
+      return result;
+    }
+    case 'webPreview': {
+      const content = (data.content as string) || '';
+      return `\`\`\`html\n${content}\n\`\`\``;
+    }
+    case 'artifact': {
+      const filename = (data.filename as string) || 'file';
+      return `📎 [${filename}]`;
+    }
+    case 'citation': {
+      const reference = (data.reference as string) || '';
+      const source = (data.source as string) || (data.fileName as string) || translateConversation('messageActions.markdown.defaultCitation');
+      const displayLabel = reference || source;
+      const page = (data.page as string) || '';
+      return page ? `[${displayLabel}, p.${page}]` : `[${displayLabel}]`;
+    }
+    default:
+      return (data.content as string) || '';
+  }
+}
+
 export function componentsToMarkdown(components: MessageComponent[]): string {
   if (!components || !Array.isArray(components)) {
     return '';
   }
-  const fallbackErrorTitle = translateConversation('messageActions.markdown.errorFallback');
-  const outputLabel = translateConversation('messageActions.markdown.outputLabel');
-  const errorLabel = translateConversation('messageActions.markdown.errorLabel');
-  const defaultCitationSource = translateConversation('messageActions.markdown.defaultCitation');
   return components
-    .filter((comp) => comp && conversationVisibleComponentTypes.has(getComponentType(comp)))
-    .map((comp) => {
-      const data = comp.data || {};
-      switch (comp.type) {
-        case 'text':
-          return (data.content as string) || '';
-        case 'code': {
-          const lang = (data.language as string) || '';
-          const content = (data.content as string) || '';
-          return `\`\`\`${lang}\n${content}\n\`\`\``;
-        }
-        case 'plan': {
-          const title = (data.title as string) || '';
-          const steps = (data.steps as string[]) || [];
-          return `**${title}**\n${steps.map((s) => `- ${s}`).join('\n')}`;
-        }
-        case 'checkpoint':
-          return `---\n**${(data.content as string) || ''}**`;
-        case 'error': {
-          const errTitle = (data.title as string) || fallbackErrorTitle;
-          const errContent = (data.content as string) || '';
-          return `> **${errTitle}**: ${errContent}`;
-        }
-        case 'sandbox': {
-          const code = (data.code as string) || '';
-          const output = (data.output as string) || '';
-          const error = (data.error as string) || '';
-          let result = `\`\`\`python\n${code}\n\`\`\``;
-          if (output) result += `\n\n${outputLabel}\n\`\`\`\n${output}\n\`\`\``;
-          if (error) result += `\n\n${errorLabel}\n\`\`\`\n${error}\n\`\`\``;
-          return result;
-        }
-        case 'webPreview': {
-          const content = (data.content as string) || '';
-          return `\`\`\`html\n${content}\n\`\`\``;
-        }
-        case 'artifact': {
-          const filename = (data.filename as string) || 'file';
-          return `📎 [${filename}]`;
-        }
-        case 'citation': {
-          const reference = (data.reference as string) || '';
-          const source = (data.source as string) || (data.fileName as string) || defaultCitationSource;
-          const displayLabel = reference || source;
-          const page = (data.page as string) || '';
-          return page ? `[${displayLabel}, p.${page}]` : `[${displayLabel}]`;
-        }
-        default:
-          return (data.content as string) || '';
-      }
-    })
+    .filter((comp) => isVisibleConversationComponent(comp))
+    .map((comp) => componentToMarkdown(comp))
     .filter(Boolean)
     .join('\n\n');
 }

@@ -1,6 +1,8 @@
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { ConversationAssistantBubble } from './ConversationAssistantBubble';
+import { useAgentStore } from '@/modules/agent/store';
+import { mockNavigate } from '@/test/setup';
 
 const mocks = vi.hoisted(() => ({
   getArtifactDownloadUrl: vi.fn(),
@@ -19,11 +21,12 @@ vi.mock('../../hooks/useConversationSettings', () => ({
 }));
 
 vi.mock('@/modules/localization', () => ({
-  useModuleTranslation: () => ({ language: 'en', t: (key: string, options?: { description?: string; tool?: string; status?: string; current?: number; total?: number }) => ({
+  useModuleTranslation: () => ({ language: 'en', t: (key: string, options?: { description?: string; tool?: string; status?: string; current?: number; total?: number; duration?: string; count?: number; name?: string }) => ({
     'stream.activity.agent': 'Activity',
     'stream.activity.agentRowAria': `${options?.description || ''}, ${options?.status || ''}. Show full reasoning`,
     'stream.activity.agentPlanning': 'Preparing your request',
     'stream.activity.assistant': 'Assistant',
+    'stream.activity.delegateTo': `Delegate to ${options?.name || ''}`,
     'stream.activity.usingTools': 'Using tools',
     'stream.activity.tool.runCode': 'Run code',
     'stream.activity.tool.search': 'Search',
@@ -48,6 +51,10 @@ vi.mock('@/modules/localization', () => ({
     'stream.activity.responseError': 'The response could not be loaded.',
     'stream.activity.paneCollapse': 'Collapse activity',
     'stream.activity.paneExpand': 'Expand activity',
+    'stream.activity.completedIn': `Completed in ${options?.duration}`,
+    'stream.activity.stepCount_one': `${options?.count} step`,
+    'stream.activity.stepCount_other': `${options?.count} steps`,
+    'stream.activity.viewProcess': 'View process',
     'stream.activity.retry': 'Retry response',
     'stream.activity.stepProgress': `${options?.current} of ${options?.total} steps`,
     'stream.activity.mobileDetailsAria': `Show all activity steps (${options?.status || ''})`,
@@ -238,7 +245,7 @@ describe('ConversationAssistantBubble', () => {
     expect(screen.getByText(/First inspect the complete 2023 report.*Then compare every 2025 ratio/s)).toHaveClass('whitespace-pre-wrap');
   });
 
-  it('redacts sensitive expanded reasoning details', () => {
+  it('renders expanded reasoning details verbatim', () => {
     render(<ConversationAssistantBubble
       conversationId='conversation-1'
       messageId='message-1'
@@ -256,10 +263,10 @@ describe('ConversationAssistantBubble', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Inspect the private report safely, Completed. Show full reasoning' }));
 
-    const details = screen.getByText('[REDACTED]');
-    expect(details).toBeInTheDocument();
-    expect(details).not.toHaveTextContent('/workspace/private');
-    expect(details).not.toHaveTextContent('Bearer-private-token');
+    // No display-time redaction: details render as stored.
+    expect(screen.getByText(/Read \/workspace\/private\/report\.pdf/)).toBeInTheDocument();
+    expect(screen.getByText(/authorization=Bearer-private-token/)).toBeInTheDocument();
+    expect(screen.queryByText('[REDACTED]')).not.toBeInTheDocument();
   });
 
   it('keeps desktop activity visible and supports keyboard resizing', () => {
@@ -485,8 +492,9 @@ describe('ConversationAssistantBubble', () => {
       components={[{ id: 'tool-1', type: 'toolActivity', data: { toolName: 'custom', fallbackDisplayName: 'Custom tool', summary: 'Check data', renderKind: 'generic', status: 'stopped', durationMs: 67_000 } }]}
     />);
 
-    expect(screen.getByText(/1m 07s/)).toBeInTheDocument();
-    expect(screen.queryByText(/Completed/)).not.toBeInTheDocument();
+    const stoppedTool = screen.getByRole('button', { name: 'Check data, Tool response: Custom tool (Stopped)' });
+    expect(stoppedTool).toHaveTextContent('1m 07s');
+    expect(stoppedTool).not.toHaveTextContent('Completed');
   });
 
   it('renders safe planning and descriptive tools instead of a generic tool row', () => {
@@ -508,7 +516,7 @@ describe('ConversationAssistantBubble', () => {
     expect(screen.queryByText(/private code/)).not.toBeInTheDocument();
   });
 
-  it('keeps the reasoning summary visible while moving the full tool name into compact details', () => {
+  it('keeps the activity description in one row and moves the tool name into details', () => {
     const { container } = render(<ConversationAssistantBubble
       conversationId='conversation-1'
       messageId='message-1'
@@ -528,11 +536,9 @@ describe('ConversationAssistantBubble', () => {
     />);
 
     const trigger = screen.getByRole('button', { name: 'Getting the page count and structure of the 2025 annual financial report., Tool response: Read document map (Completed)' });
-    const toolName = trigger.querySelector('[data-tool-name]') as HTMLElement;
     const toolSummary = trigger.querySelector('[data-tool-summary]') as HTMLElement;
-    expect(toolName).toHaveTextContent('Read document map');
     expect(toolSummary).toHaveTextContent('Getting the page count and structure');
-    expect(toolSummary.compareDocumentPosition(toolName) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(trigger.querySelector('[data-tool-name]')).not.toBeInTheDocument();
     expect(container.querySelector('[data-tool-full-name]')).not.toBeInTheDocument();
 
     fireEvent.click(trigger);
@@ -588,7 +594,49 @@ describe('ConversationAssistantBubble', () => {
     expect(screen.getByRole('button', { name: 'Read the research explanation, Tool response: Run code (Running)' })).toBeInTheDocument();
   });
 
-  it('opens a sanitized tool response modal without exposing private payload fields', async () => {
+  it('resolves persisted hierarchy runtime ids to authored agent names', () => {
+    useAgentStore.setState({ agents: [{ id: 'child-1', name: 'Smart Agent' }] as never });
+    const { container } = render(<ConversationAssistantBubble
+      conversationId='conversation-1'
+      messageId='message-1'
+      isStreaming={false}
+      components={[
+        { id: 'delegate-1', type: 'toolActivity', data: { toolName: 'delegate_to_agent_child-1', summary: '', renderKind: 'generic', status: 'completed' } },
+        { id: 'tool-1', type: 'toolActivity', data: { toolName: 'generate_web_preview', summary: '', renderKind: 'generic', status: 'completed', actorId: 'child-1', actorName: 'agent_child-1' } },
+      ]}
+    />);
+
+    expect(screen.getAllByText(/Smart Agent/)).not.toHaveLength(0);
+    expect(container.querySelector('[data-agent-activity-mobile]')).toHaveTextContent('Smart Agent');
+    expect(container.querySelector('[data-agent-activity-mobile]')).not.toHaveTextContent('Agent child-1');
+    expect(container).not.toHaveTextContent('agent_child-1');
+  });
+
+  it('loads agent names when a persisted hierarchy id is not cached', async () => {
+    const originalFetchAgents = useAgentStore.getState().fetchAgents;
+    const fetchAgents = vi.fn(async () => {
+      useAgentStore.setState({
+        agents: [{ id: 'child-1', name: 'Smart Agent' }] as never,
+        isInitialized: true,
+      });
+    });
+    useAgentStore.setState({ agents: [], fetchAgents, isInitialized: false });
+
+    render(<ConversationAssistantBubble
+      conversationId='conversation-1'
+      messageId='message-1'
+      isStreaming={false}
+      components={[
+        { id: 'delegate-1', type: 'toolActivity', data: { actorId: 'child-1', actorName: 'agent_child-1', toolName: 'delegate_to_agent_child-1', summary: '', renderKind: 'generic', status: 'completed' } },
+      ]}
+    />);
+
+    await waitFor(() => expect(screen.getAllByText(/Smart Agent/)).not.toHaveLength(0));
+    expect(fetchAgents).toHaveBeenCalledOnce();
+    useAgentStore.setState({ fetchAgents: originalFetchAgents });
+  });
+
+  it('opens the tool response modal and renders the payload verbatim', async () => {
     mocks.fetchToolResult.mockResolvedValue({ resultJson: JSON.stringify({ message: 'Execution stopped', password: 'private', path: '/tmp/private.py', recordId: '507f1f77bcf86cd799439011', code: 'print("private")' }) });
     render(<ConversationAssistantBubble
       conversationId='conversation-1'
@@ -623,11 +671,13 @@ describe('ConversationAssistantBubble', () => {
     expect(screen.getByText('Request')).toBeInTheDocument();
     expect(await screen.findByRole('dialog')).toBeInTheDocument();
     expect(await screen.findByText(/Execution stopped/)).toBeInTheDocument();
-    expect(screen.queryByText(/private\.py|507f1f77bcf86cd799439011|print\(|"private"/)).not.toBeInTheDocument();
-    expect(screen.getByText(/\[REDACTED\]/)).toBeInTheDocument();
+    // Payload renders as stored — no display-time redaction.
+    expect(screen.getByText(/\/tmp\/private\.py/)).toBeInTheDocument();
+    expect(screen.getByText(/507f1f77bcf86cd799439011/)).toBeInTheDocument();
+    expect(screen.queryByText(/\[REDACTED\]/)).not.toBeInTheDocument();
   });
 
-  it('drills into code-interpreter commands and output while redacting private values', async () => {
+  it('drills into code-interpreter commands and output verbatim', async () => {
     mocks.fetchToolResult.mockResolvedValue({ resultJson: JSON.stringify({ stdout: 'Created output.pdf', exit_code: 0, workspace_path: '/workspace/private/output.pdf' }) });
     render(<ConversationAssistantBubble
       conversationId='conversation-1'
@@ -656,7 +706,7 @@ describe('ConversationAssistantBubble', () => {
     expect(screen.getByText(/pandoc source\.md -o output\.pdf/)).toBeInTheDocument();
     expect(await screen.findByText(/Created output\.pdf/)).toBeInTheDocument();
     expect(screen.getByText(/"exit_code": 0/)).toBeInTheDocument();
-    expect(screen.queryByText(/Bearer private|\/workspace\/private/)).not.toBeInTheDocument();
+    expect(screen.getByText(/\/workspace\/private\/output\.pdf/)).toBeInTheDocument();
   });
 
   it('expands request and opens response details for a generic tool', async () => {
@@ -799,8 +849,8 @@ describe('ConversationAssistantBubble', () => {
       messageId='message-1'
       isStreaming={false}
       components={[
-        { id: 'tool-1', type: 'toolActivity', data: { toolName: 'search', summary: 'First step', status: 'completed', renderKind: 'search' } },
-        { id: 'tool-2', type: 'toolActivity', data: { toolName: 'search', summary: 'Second step', status: 'completed', renderKind: 'search' } },
+        { id: 'tool-1', type: 'toolActivity', data: { toolName: 'search', summary: 'First step', status: 'completed', renderKind: 'search', startedAt: '2026-08-27T10:00:00Z', completedAt: '2026-08-27T10:02:00Z' } },
+        { id: 'tool-2', type: 'toolActivity', data: { toolName: 'search', summary: 'Second step', status: 'completed', renderKind: 'search', startedAt: '2026-08-27T10:02:00Z', completedAt: '2026-08-27T10:04:12Z' } },
       ]}
     />);
 
@@ -808,6 +858,10 @@ describe('ConversationAssistantBubble', () => {
     expect(shell).toHaveAttribute('data-collapsed');
     const toggle = screen.getByRole('button', { name: 'Expand activity' });
     expect(toggle).toHaveAttribute('aria-expanded', 'false');
+    expect(toggle).toHaveClass('min-h-11', 'w-full');
+    expect(toggle).toHaveTextContent('Completed in 4m 12s');
+    expect(toggle).toHaveTextContent('2 steps');
+    expect(toggle).toHaveTextContent('View process');
     fireEvent.click(toggle);
 
     expect(shell).not.toHaveAttribute('data-collapsed');
@@ -996,7 +1050,7 @@ describe('ConversationAssistantBubble', () => {
     anchorClick.mockRestore();
   });
 
-  it('does not render attachment sentinels or internal workspace paths from answer text', () => {
+  it('strips attachment sentinels from answer text but renders paths verbatim', () => {
     render(<ConversationAssistantBubble
       conversationId='conversation-1'
       messageId='message-1'
@@ -1005,8 +1059,8 @@ describe('ConversationAssistantBubble', () => {
     />);
 
     expect(screen.queryByText(/YELLOWSTORM_ATTACHMENT_SENTINEL/)).not.toBeInTheDocument();
-    expect(screen.queryByText(/\/workspace/)).not.toBeInTheDocument();
-    expect(screen.getByText(/\[REDACTED\]/)).toBeInTheDocument();
+    expect(screen.getByText(/\/workspace\/sources\/id\/private\.pdf/)).toBeInTheDocument();
+    expect(screen.queryByText(/\[REDACTED\]/)).not.toBeInTheDocument();
   });
 
   it('renders internal paths when sensitive text redaction is disabled', () => {
@@ -1022,7 +1076,7 @@ describe('ConversationAssistantBubble', () => {
     expect(screen.queryByText(/\[REDACTED\]/)).not.toBeInTheDocument();
   });
 
-  it('renders unsafe activity with a safe fallback and reduces file paths to a filename', () => {
+  it('renders activity summaries verbatim and reduces artifact filenames', () => {
     render(<ConversationAssistantBubble
       conversationId='conversation-1'
       messageId='message-1'
@@ -1032,30 +1086,52 @@ describe('ConversationAssistantBubble', () => {
         { id: 'tool-1', type: 'toolActivity', data: { toolName: 'run_code', summary: 'const secret = token;', renderKind: 'run_code', status: 'completed' } },
         { id: 'tool-2', type: 'toolActivity', data: { toolName: 'read_file', summary: 'customer.csv', renderKind: 'read', status: 'completed' } },
         { id: 'tool-3', type: 'toolActivity', data: { toolName: 'custom_tool', summary: 'users/12345678/runs/run-1/private.json', renderKind: 'generic', status: 'completed' } },
-        { id: 'tool-4', type: 'toolActivity', data: { toolName: 'custom_tool', summary: 'YELLOWSTORM_ATTACHMENT_SENTINEL_42', renderKind: 'generic', status: 'completed' } },
         { id: 'tool-5', type: 'toolActivity', data: { toolName: 'custom_tool', summary: 'file=/tmp/private/customer.csv', renderKind: 'generic', status: 'completed' } },
         { id: 'tool-6', type: 'toolActivity', data: { toolName: 'custom_tool', summary: 'path=C:\\private\\customer.csv', renderKind: 'generic', status: 'completed' } },
         { id: 'tool-7', type: 'toolActivity', data: { toolName: 'custom_tool', summary: 'uri=s3://private-bucket/customer.csv', renderKind: 'generic', status: 'completed' } },
-        { id: 'tool-8', type: 'toolActivity', data: { toolName: 'custom_tool', summary: '', renderKind: 'generic', status: 'completed', actorName: 'Research_507f1f77bcf86cd799439011' } },
-        { id: 'tool-9', type: 'toolActivity', data: { toolName: 'custom_507f1f77bcf86cd799439011', summary: '', renderKind: 'generic', status: 'completed' } },
         { id: 'artifact-1', type: 'artifact', data: { artifactId: 'opaque-artifact', filename: '/tmp/private/report.csv', availability: 'ready' } },
       ]}
     />);
 
-    expect(screen.getByText(/customer.csv/)).toBeInTheDocument();
-    expect(screen.queryByText(/const secret/)).not.toBeInTheDocument();
-    expect(screen.queryByText(/\/tmp\/private/)).not.toBeInTheDocument();
-    expect(screen.queryByText(/12345678\/runs/)).not.toBeInTheDocument();
-    expect(screen.queryByText(/YELLOWSTORM_ATTACHMENT_SENTINEL/)).not.toBeInTheDocument();
-    expect(screen.queryByText(/file=\/tmp/)).not.toBeInTheDocument();
-    expect(screen.queryByText(/path=C:/)).not.toBeInTheDocument();
-    expect(screen.queryByText(/s3:\/\//)).not.toBeInTheDocument();
-    expect(screen.queryByText(/507f1f77bcf86cd799439011/)).not.toBeInTheDocument();
-    expect(screen.getAllByText('Assistant')).not.toHaveLength(0);
-    expect(screen.getByRole('button', { name: 'Preparing your request, Completed. Show full reasoning' })).toBeInTheDocument();
-    expect(document.querySelector('[data-desktop-activity]')).not.toHaveTextContent('Activity');
+    // Summaries render as stored — no collapse-to-[REDACTED], no path rewriting.
+    expect(screen.getByText(/const secret = token;/)).toBeInTheDocument();
+    expect(screen.getByText(/users\/12345678\/runs\/run-1\/private\.json/)).toBeInTheDocument();
+    expect(screen.getByText(/file=\/tmp\/private\/customer\.csv/)).toBeInTheDocument();
+    expect(screen.getByText(/uri=s3:\/\/private-bucket\/customer\.csv/)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Review_record_507f1f77bcf86cd799439011, Completed. Show full reasoning' })).toBeInTheDocument();
     expect(screen.getAllByText('report.csv')).not.toHaveLength(0);
-    expect(screen.queryByText(/\/tmp\/private\/report/)).not.toBeInTheDocument();
-    expect(document.querySelector('[id*="opaque-artifact"]')).not.toBeInTheDocument();
+    expect(screen.queryByText(/\[REDACTED\]/)).not.toBeInTheDocument();
+  });
+});
+
+describe('ConversationAssistantBubble agent editor link', () => {
+  beforeEach(() => {
+    mockNavigate.mockClear();
+  });
+
+  it('opens the agent editor for the task agent id from the header icon', () => {
+    useAgentStore.setState({ agents: [{ id: 'agent-1', name: 'Smart Agent' }] as never });
+    render(<ConversationAssistantBubble
+      conversationId='conversation-1'
+      messageId='message-1'
+      isStreaming={false}
+      components={[{ id: 'task-1', type: 'task', data: { title: 'Smart Agent', items: ['step'], status: 'completed', agentId: 'agent-1' } }]}
+    />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'ai.task.editAgent' }));
+    expect(mockNavigate).toHaveBeenCalledWith('/agents?edit=agent-1');
+  });
+
+  it('falls back to matching the task title against known agents for older messages', () => {
+    useAgentStore.setState({ agents: [{ id: 'agent-2', name: 'Smart Agent' }] as never });
+    render(<ConversationAssistantBubble
+      conversationId='conversation-1'
+      messageId='message-1'
+      isStreaming={false}
+      components={[{ id: 'task-2', type: 'task', data: { title: 'Smart Agent', items: ['step'], status: 'completed' } }]}
+    />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'ai.task.editAgent' }));
+    expect(mockNavigate).toHaveBeenCalledWith('/agents?edit=agent-2');
   });
 });

@@ -322,12 +322,43 @@ export class PlaybookFlowService implements OnModuleInit {
 
     const sortDir = sortOrder === 'asc' ? 1 : -1;
     const total = await this.flowModel.countDocuments(filter);
-    const items = await this.flowModel
-      .find(filter)
-      .sort({ [sortBy]: sortDir })
-      .skip((page - 1) * limit)
-      .limit(limit)
-      .lean();
+    const items = sortBy === 'activityAt'
+      ? await this.flowModel.aggregate([
+          { $match: filter },
+          {
+            $lookup: {
+              from: this.executionModel.collection.name,
+              let: { flowId: { $toString: '$_id' } },
+              pipeline: [
+                { $match: { $expr: { $eq: ['$flowId', '$$flowId'] } } },
+                { $set: { activityAt: { $ifNull: ['$endedAt', { $ifNull: ['$startedAt', '$createdAt'] }] } } },
+                { $sort: { activityAt: -1, _id: 1 } },
+                { $limit: 1 },
+              ],
+              as: 'latestActivityExecution',
+            },
+          },
+          {
+            $set: {
+              activityAt: {
+                $max: [
+                  '$updatedAt',
+                  { $ifNull: [{ $first: '$latestActivityExecution.activityAt' }, new Date(0)] },
+                ],
+              },
+            },
+          },
+          { $sort: { activityAt: sortDir, _id: 1 } },
+          { $skip: (page - 1) * limit },
+          { $limit: limit },
+          { $unset: ['latestActivityExecution', 'activityAt'] },
+        ])
+      : await this.flowModel
+          .find(filter)
+          .sort({ [sortBy]: sortDir })
+          .skip((page - 1) * limit)
+          .limit(limit)
+          .lean();
 
     const flowIds = items.map((item) => String((item as unknown as Record<string, unknown>)._id));
     const latestExecutions = flowIds.length === 0
@@ -340,7 +371,8 @@ export class PlaybookFlowService implements OnModuleInit {
         endedAt?: Date;
       }>([
         { $match: { flowId: { $in: flowIds } } },
-        { $sort: { createdAt: -1 } },
+        { $set: { activityAt: { $ifNull: ['$endedAt', { $ifNull: ['$startedAt', '$createdAt'] }] } } },
+        { $sort: { activityAt: -1, _id: 1 } },
         {
           $group: {
             _id: '$flowId',

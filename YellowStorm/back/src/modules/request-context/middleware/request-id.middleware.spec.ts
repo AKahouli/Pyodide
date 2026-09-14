@@ -3,10 +3,8 @@ import { RequestIdMiddleware } from './request-id.middleware';
 import { RequestContextService } from '../request-context.service';
 import { RequestContext } from '../interfaces/request-context.interface';
 
-// Mock uuid to control generated IDs
-jest.mock('uuid', () => ({
-  v4: jest.fn(() => 'generated-uuid-123'),
-}));
+// Stub crypto.randomUUID to control generated IDs
+jest.spyOn(require('crypto'), 'randomUUID').mockReturnValue('generated-uuid-123');
 
 describe('RequestIdMiddleware', () => {
   let middleware: RequestIdMiddleware;

@@ -10,6 +10,7 @@ import { IConnectorCategoryResponse } from './interfaces/connector.interface';
 
 /** Reserved built-in category. Connectors assigned to it are hidden from end users. */
 export const SYSTEM_CATEGORY_NAME = 'System';
+export const WEB_SEARCH_CATEGORY_NAME = 'Web Search';
 const SYSTEM_OWNER_ID = new Types.ObjectId('000000000000000000000000');
 
 @Injectable()
