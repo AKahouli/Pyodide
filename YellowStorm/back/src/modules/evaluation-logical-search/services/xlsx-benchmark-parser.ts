@@ -38,17 +38,27 @@ function expandPagePart(part: string): number[] {
 export function parseSources(raw: string): { files: string[]; pages: number[] } {
   const files: string[] = [];
   const pages: number[] = [];
-  for (const entry of String(raw ?? '').split(';')) {
-    const trimmed = entry.trim();
-    if (!trimmed) continue;
-    const match = /^(.*?),\s*pages?\s+(.*)$/.exec(trimmed);
-    if (!match) continue;
-    const fileName = match[1].trim().replace(/,+$/, '').trim();
-    for (const part of match[2].split(',')) {
+  const pushPages = (fileName: string, pageList: string) => {
+    for (const part of pageList.split(',')) {
       for (const page of expandPagePart(part)) {
         files.push(fileName);
         pages.push(page);
       }
+    }
+  };
+  for (const entry of String(raw ?? '').split(/[;\n]/)) {
+    const trimmed = entry.trim();
+    if (!trimmed) continue;
+    // Legacy reference format: 'File.pdf, pages 10-23'
+    const legacy = /^(.*?),\s*pages?\s+(.*)$/.exec(trimmed);
+    if (legacy) {
+      pushPages(legacy[1].trim().replace(/,+$/, '').trim(), legacy[2]);
+      continue;
+    }
+    // Guide format: 'Category — file.pdf — p. 2, 4, 7-9'
+    const dashed = /^(.*?)\s*[—–-]\s*(.+\.pdf)\s*[—–-]\s*p\.?\s*(.+)$/.exec(trimmed);
+    if (dashed) {
+      pushPages(dashed[2].trim(), dashed[3]);
     }
   }
   return { files, pages };
@@ -75,9 +85,13 @@ export function parseBenchmarkWorkbook(buffer: Buffer): ParsedBenchmark {
   } catch {
     throw new BadRequestException('Invalid Excel/CSV file: cannot be parsed.');
   }
-  const sheetName = workbook.SheetNames.find((name) => name.includes('Questions'));
+  const sheetName =
+    workbook.SheetNames.find((name) => name.includes('Questions')) ??
+    (workbook.SheetNames.length === 1 ? workbook.SheetNames[0] : undefined);
   if (!sheetName) {
-    throw new BadRequestException('No sheet named "*Questions*" found in the workbook.');
+    throw new BadRequestException(
+      'No usable sheet found. A sheet named "*Questions*" (or a single-sheet workbook) is required.',
+    );
   }
   const rows = XLSX.utils.sheet_to_json<unknown[]>(workbook.Sheets[sheetName], {
     header: 1,

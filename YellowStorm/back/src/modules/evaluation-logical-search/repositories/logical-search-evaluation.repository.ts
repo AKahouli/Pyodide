@@ -89,6 +89,15 @@ export class LogicalSearchEvaluationRepository {
     return row ?? null;
   }
 
+  async applyRunProgress(id: string) {
+    const [row] = await this.db
+      .update(logicalSearchEvaluations)
+      .set({ updatedAt: new Date() })
+      .where(eq(logicalSearchEvaluations.id, id))
+      .returning();
+    return row ?? null;
+  }
+
   async applyRunComplete(id: string, input: { summary: unknown; error?: string | null }) {
     const [row] = await this.db
       .update(logicalSearchEvaluations)

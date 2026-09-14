@@ -1,0 +1,19 @@
+{
+  "query_count": 12,
+  "completed_queries": 12,
+  "failed_queries": 0,
+  "mean_answer_correctness": 0.0755,
+  "mean_answer_token_recall": 0.0755,
+  "mean_answer_token_precision": 0.3617,
+  "mean_answer_f1": 0.1245,
+  "mean_semantic_similarity": 0.2328,
+  "mean_fact_recall": 1,
+  "mean_fact_precision": 1,
+  "mean_answer_quality": 0.3686,
+  "answer_exact_match_rate": 0,
+  "mean_file_recall": 0.1944,
+  "mean_file_precision": 0.3194,
+  "mean_page_hit": 0,
+  "retrieval_success_rate": 0,
+  "retrieval_exact_match_rate": 0
+}

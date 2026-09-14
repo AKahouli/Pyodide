@@ -65,6 +65,12 @@ export class LogicalSearchEvaluationController {
     return this.service.run(user._id.toString(), id);
   }
 
+  @Get(':id/progress')
+  @ApiOperation({ summary: 'Live progress of a running evaluation (which query, how many done)' })
+  async progress(@CurrentUser() user: UserDocument, @Param('id') id: string) {
+    return this.service.getProgress(user._id.toString(), id);
+  }
+
   @Get(':id/export')
   @ApiOperation({ summary: 'Download the logical search evaluation results as XLSX' })
   async export(

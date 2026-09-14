@@ -3,7 +3,7 @@ import { InjectModel } from '@nestjs/mongoose';
 import { ConfigService } from '@nestjs/config';
 import { Model } from 'mongoose';
 import AdmZip = require('adm-zip');
-import { mkdir, writeFile, readFile } from 'fs/promises';
+import { mkdir, writeFile, readFile, rename } from 'fs/promises';
 import { join } from 'path';
 import * as XLSX from 'xlsx';
 import {
@@ -55,17 +55,27 @@ interface BenchmarkQuery {
   page?: unknown;
 }
 
+export interface EvaluationProgress {
+  done: number;
+  total: number;
+  currentIndex: number;
+  currentQueryId: string;
+  currentQuery: string;
+  startedAt: string;
+  updatedAt: string;
+}
+
 function setDeepPath(target: Record<string, unknown>, path: string[], value: unknown): void {
   let current: Record<string, unknown> = target;
   for (let i = 0; i < path.length - 1; i++) {
     const key = path[i];
     const existing = current[key];
-    if (existing && typeof existing === 'object' && !Array.isArray(existing)) {
+    if (existing && typeof existing === 'object') {
       current = existing as Record<string, unknown>;
     } else {
-      const next: Record<string, unknown> = {};
-      current[key] = next;
-      current = next;
+      const nextIsIndex = /^\d+$/.test(path[i + 1] ?? '');
+      current[key] = nextIsIndex ? [] : {};
+      current = current[key] as Record<string, unknown>;
     }
   }
   current[path[path.length - 1]] = value;
@@ -272,18 +282,34 @@ export class LogicalSearchEvaluationService {
     const additionalQueryPaths = config.additional_query_paths ?? [];
     const answerNodeId = config.answer_node_id ?? evaluation.answerNodeId ?? undefined;
     const results: EvaluationQueryResult[] = [];
+    const runStartedAt = new Date().toISOString();
     let runError: string | null = null;
 
     try {
-      for (const benchmarkQuery of queries) {
+      for (let i = 0; i < queries.length; i++) {
+        const benchmarkQuery = queries[i];
         const queryId = benchmarkQuery.query_id;
         const queryText = benchmarkQuery.query;
-        const snapshot = JSON.parse(JSON.stringify(template.snapshot)) as Record<string, unknown>;
 
-        setDeepPath(snapshot, queryPath, queryText);
+        await this.writeProgress(runDir, {
+          done: i,
+          total: queries.length,
+          currentIndex: i,
+          currentQueryId: queryId,
+          currentQuery: queryText,
+          startedAt: runStartedAt,
+          updatedAt: new Date().toISOString(),
+        });
+        await this.repository.applyRunProgress(evaluationId);
+
+        const payload = JSON.parse(JSON.stringify(template)) as Record<string, unknown>;
+        payload.execution_id = `eval-${evaluationId}-${queryId}`;
+        payload.seeded_task_outputs = [];
+        setDeepPath(payload, queryPath, queryText);
         for (const path of additionalQueryPaths) {
-          setDeepPath(snapshot, path, queryText);
+          setDeepPath(payload, path, queryText);
         }
+        const snapshot = (payload.snapshot ?? {}) as Record<string, unknown>;
 
         const startedAt = Date.now();
         try {
@@ -326,9 +352,20 @@ export class LogicalSearchEvaluationService {
           }));
           this.logger.warn(`[${queryId}] failed: ${message}`);
         }
+
+        await writeFile(join(runDir, 'results.json'), JSON.stringify(results, null, 2), 'utf-8');
+        await writeFile(join(runDir, 'summary.json'), JSON.stringify(buildSummary(results), null, 2), 'utf-8');
       }
 
-      await writeFile(join(runDir, 'results.json'), JSON.stringify(results, null, 2), 'utf-8');
+      await this.writeProgress(runDir, {
+        done: queries.length,
+        total: queries.length,
+        currentIndex: queries.length,
+        currentQueryId: '',
+        currentQuery: '',
+        startedAt: runStartedAt,
+        updatedAt: new Date().toISOString(),
+      });
     } catch (error) {
       runError = error instanceof Error ? error.message : String(error);
     }
@@ -349,6 +386,22 @@ export class LogicalSearchEvaluationService {
       queryCount: results.length,
       summary,
     };
+  }
+
+  private async writeProgress(runDir: string, progress: EvaluationProgress): Promise<void> {
+    await writeFile(join(runDir, 'progress.json.tmp'), JSON.stringify(progress, null, 2), 'utf-8');
+    await rename(join(runDir, 'progress.json.tmp'), join(runDir, 'progress.json'));
+  }
+
+  async getProgress(ownerId: string, evaluationId: string) {
+    const evaluation = await this.getById(ownerId, evaluationId);
+    const runDir = join(process.cwd(), 'uploads', 'eval', evaluationId);
+    try {
+      const progress = await readJson<EvaluationProgress>(join(runDir, 'progress.json'));
+      return { evaluationId, status: evaluation.status, progress };
+    } catch {
+      return { evaluationId, status: evaluation.status, progress: null };
+    }
   }
 
   async exportXlsx(ownerId: string, evaluationId: string): Promise<Buffer> {

@@ -6,6 +6,19 @@ export interface EvaluationRunResult {
   status: 'prepared' | 'running' | 'completed' | 'failed';
 }
 
+export interface EvaluationProgressResult {
+  evaluationId: string;
+  status: 'prepared' | 'running' | 'completed' | 'failed';
+  progress: {
+    done: number;
+    total: number;
+    currentIndex: number;
+    currentQueryId: string;
+    currentQuery: string;
+    updatedAt: string;
+  } | null;
+}
+
 export interface EvaluationExportResult {
   blob: Blob;
   filename: string;
@@ -64,6 +77,13 @@ export const evaluationLogicalSearchApi = {
   async run(id: string): Promise<EvaluationRunResult> {
     const res = await apiClient.post<{ data: EvaluationRunResult }>(
       `${API_ENDPOINTS.logicalSearchEvaluation.base}/${id}/run`,
+    );
+    return res.data.data;
+  },
+
+  async progress(id: string): Promise<EvaluationProgressResult> {
+    const res = await apiClient.get<{ data: EvaluationProgressResult }>(
+      `${API_ENDPOINTS.logicalSearchEvaluation.base}/${id}/progress`,
     );
     return res.data.data;
   },

@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Progress } from '@/components/ui/progress';
+import { SearchSelect } from '@/components/ui/search-select';
 import { useModuleTranslation } from '@/modules/localization';
 import { useAgents, useAgentStore, useAgentsLoading } from '@/modules/agent';
 import { apiClient } from '@/lib/api/client';
@@ -54,6 +55,7 @@ export function LogicalSearchEvaluationPage(): JSX.Element {
   const [runningEvalId, setRunningEvalId] = useState<string | null>(null);
   const [runError, setRunError] = useState<string | null>(null);
   const [exportError, setExportError] = useState<string | null>(null);
+  const [evalProgress, setEvalProgress] = useState<Record<string, { done: number; total: number; currentQuery: string }>>({});
 
   // ── History ─────────────────────────────────────────────────
   const [evaluations, setEvaluations] = useState<LogicalSearchEvaluation[]>([]);
@@ -177,13 +179,37 @@ export function LogicalSearchEvaluationPage(): JSX.Element {
     }
   }, []);
 
+  const refreshProgress = useCallback(() => {
+    let cancelled = false;
+    Promise.all(
+      evaluations
+        .filter((e) => e.status === 'running')
+        .map((e) => evaluationLogicalSearchApi.progress(e.id)),
+    )
+      .then((results) => {
+        if (cancelled) return;
+        const next: Record<string, { done: number; total: number; currentQuery: string }> = {};
+        for (const r of results) {
+          if (r.progress) {
+            next[r.evaluationId] = { done: r.progress.done, total: r.progress.total, currentQuery: r.progress.currentQuery };
+          }
+        }
+        setEvalProgress(next);
+      })
+      .catch(() => { if (!cancelled) setEvalProgress({}); });
+    return () => { cancelled = true; };
+  }, [evaluations]);
+
   // Poll while a run request is in flight or any evaluation is still running.
   useEffect(() => {
     const running = runningEvalId !== null || evaluations.some((e) => e.status === 'running');
     if (!running) return;
-    const interval = window.setInterval(() => { void refreshEvaluations(); }, 2500);
+    const interval = window.setInterval(() => {
+      void refreshEvaluations();
+      void refreshProgress();
+    }, 2500);
     return () => window.clearInterval(interval);
-  }, [runningEvalId, evaluations, refreshEvaluations]);
+  }, [runningEvalId, evaluations, refreshEvaluations, refreshProgress]);
 
   // ── Derived ─────────────────────────────────────────────────
   const latestExecution = useMemo(() => executions.find((e) => e.status === 'completed'), [executions]);
@@ -256,33 +282,32 @@ export function LogicalSearchEvaluationPage(): JSX.Element {
           {/* Agent */}
           <div className='space-y-1'>
             <label className='text-sm font-medium'>{t('select.agent')}</label>
-            <select
-              className='w-full rounded-md border bg-background px-3 py-2 text-sm'
+            <SearchSelect
+              options={agents.map((a) => ({
+                value: a.id,
+                label: a.name,
+                description: a.agentType?.name ?? 'agent',
+              }))}
               value={selectedAgentId}
-              onChange={(e) => { setSelectedAgentId(e.target.value); setSelectedPlaybookId(''); setSelectedExecutionId(''); }}
-            >
-              <option value=''>{agentsLoading ? 'Loading…' : t('select.agentPlaceholder')}</option>
-              {agents.map((a) => (
-                <option key={a.id} value={a.id}>{a.name} ({a.agentType?.name ?? 'agent'})</option>
-              ))}
-            </select>
+              onValueChange={(v) => { setSelectedAgentId(v); setSelectedPlaybookId(''); setSelectedExecutionId(''); }}
+              placeholder={agentsLoading ? 'Loading…' : t('select.agentPlaceholder')}
+              searchPlaceholder={t('select.search')}
+              emptyText={t('select.noResults')}
+            />
           </div>
 
           {/* Playbook */}
           <div className='space-y-1'>
             <label className='text-sm font-medium'>{t('select.playbook')}</label>
-            <select
-              className='w-full rounded-md border bg-background px-3 py-2 text-sm'
+            <SearchSelect
+              options={playbooks.map((p) => ({ value: p.id, label: p.name }))}
               value={selectedPlaybookId}
-              onChange={(e) => { setSelectedPlaybookId(e.target.value); setSelectedExecutionId(''); }}
+              onValueChange={(v) => { setSelectedPlaybookId(v); setSelectedExecutionId(''); }}
+              placeholder={t('select.playbookPlaceholder')}
+              searchPlaceholder={t('select.search')}
+              emptyText={t('select.noResults')}
               disabled={!selectedAgentId}
-            >
-              <option value=''>{t('select.playbookPlaceholder')}</option>
-              {playbooks.map((p) => (
-                <option key={p.id} value={p.id}>{p.name}</option>
-              ))}
-              {selectedAgentId && playbooks.length === 0 && <option value='' disabled>{t('select.noResults')}</option>}
-            </select>
+            />
           </div>
 
           {/* Workspace */}
@@ -360,6 +385,11 @@ export function LogicalSearchEvaluationPage(): JSX.Element {
                     <p className='text-xs text-muted-foreground'>
                       {t('history.createdAt')}: {new Date(ev.createdAt).toLocaleDateString()} · {t('history.queries', { count: ev.queryCount })}
                     </p>
+                    {ev.status === 'running' && evalProgress[ev.id] && (
+                      <p className='mt-1 truncate text-xs text-primary'>
+                        {evalProgress[ev.id].done}/{evalProgress[ev.id].total} · {evalProgress[ev.id].currentQuery}
+                      </p>
+                    )}
                   </div>
                   <div className='flex shrink-0 items-center gap-2'>
                     <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${
@@ -378,7 +408,7 @@ export function LogicalSearchEvaluationPage(): JSX.Element {
                         {runningEvalId === ev.id ? t('actions.running') : t('actions.run')}
                       </Button>
                     )}
-                    {(ev.status === 'completed' || ev.status === 'failed') && (
+                    {(ev.status === 'completed' || ev.status === 'failed' || ev.status === 'running') && (
                       <Button
                         size='sm'
                         variant='outline'

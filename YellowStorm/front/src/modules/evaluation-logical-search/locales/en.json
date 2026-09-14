@@ -29,6 +29,7 @@
     "workspacePlaceholder": "Choose a workspace…",
     "execution": "Select an execution",
     "executionPlaceholder": "Choose an execution…",
+    "search": "Search…",
     "noResults": "No results found"
   },
   "actions": {

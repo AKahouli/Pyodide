@@ -19,6 +19,17 @@ describe('parseSources', () => {
     expect(parseSources('A.pdf sans pages;')).toEqual({ files: [], pages: [] });
     expect(parseSources('')).toEqual({ files: [], pages: [] });
   });
+
+  it('parses the guide format (Category — file.pdf — p. 2, 4, 7-9)', () => {
+    const { files, pages } = parseSources(
+      'Dynamics 365 — user_guide9.pdf — p. 2, 4, 7-9\nExcel — 02_Guide_Ec.pdf — p. 4, 8-10',
+    );
+    expect(files).toEqual([
+      'user_guide9.pdf', 'user_guide9.pdf', 'user_guide9.pdf', 'user_guide9.pdf', 'user_guide9.pdf',
+      '02_Guide_Ec.pdf', '02_Guide_Ec.pdf', '02_Guide_Ec.pdf', '02_Guide_Ec.pdf',
+    ]);
+    expect(pages).toEqual([2, 4, 7, 8, 9, 4, 8, 9, 10]);
+  });
 });
 
 describe('parseBenchmarkWorkbook', () => {
@@ -47,10 +58,11 @@ describe('parseBenchmarkWorkbook', () => {
     expect(result.queries[2].page).toEqual([9]);
   });
 
-  it('rejects workbooks without a Questions sheet', () => {
+  it('rejects multi-sheet workbooks without a Questions sheet', () => {
     const ws = XLSX.utils.aoa_to_sheet([['ID'], [1]]);
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, 'Data');
+    XLSX.utils.book_append_sheet(wb, ws, 'Other');
     const bad = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' }) as Buffer;
     expect(() => parseBenchmarkWorkbook(bad)).toThrow(/Questions/);
   });
