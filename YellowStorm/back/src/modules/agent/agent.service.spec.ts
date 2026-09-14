@@ -377,6 +377,7 @@ describe('AgentService connector skill inheritance', () => {
         undefined,
         undefined,
         undefined,
+        undefined,
         { conversationId: 'conversation-1', correlationId: 'message-1', playbookHandoffAttached: true },
       );
 
@@ -417,6 +418,7 @@ describe('AgentService connector skill inheritance', () => {
       userId,
       undefined,
       ['platform-agent'],
+      undefined,
       undefined,
       undefined,
       undefined,
@@ -528,6 +530,7 @@ describe('AgentService connector skill inheritance', () => {
     const result = await service.buildAgentsForStream(
       userId,
       'selected-model',
+      undefined,
       undefined,
       undefined,
       undefined,

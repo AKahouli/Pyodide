@@ -16,7 +16,8 @@ describe('SemanticGraphCommandService graph operations', () => {
     requireActiveRole: jest.fn(),
     audit: jest.fn(),
   };
-  const service = new SemanticGraphCommandService(database as never, repository as never, models as never, {} as never);
+  const indexJobs = { enqueue: jest.fn().mockResolvedValue(undefined) };
+  const service = new SemanticGraphCommandService(database as never, repository as never, models as never, {} as never, indexJobs as never);
 
   beforeEach(() => {
     jest.clearAllMocks();
