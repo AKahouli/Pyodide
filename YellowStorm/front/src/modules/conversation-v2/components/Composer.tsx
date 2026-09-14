@@ -132,8 +132,6 @@ export function Composer({ onSend }: ComposerProps) {
     const value = message.text?.trim() ?? '';
     if (!value || inputLocked || isLimitExceeded) return;
     onSend(value, activeModel?.litellmModel || undefined);
-    if (!value || inputLocked) return;
-    return onSend(value, activeModel?.litellmModel || undefined);
   };
 
   const handlePickModel = (modelId: string) => {
