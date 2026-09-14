@@ -1236,6 +1236,11 @@ class OrchestratorService:
         def _recipients(a: dict) -> str:
             v = (a.get("to") or a.get("to_recipients") or a.get("recipient")
                  or a.get("user_email") or "")
+            # A Teams *channel* send has no user recipient (team_id + channel_id
+            # instead of user_email), so the card used to render "À : —". Label the
+            # channel so the recipient is never blank.
+            if not v and (a.get("channel_id") or a.get("team_id")):
+                return f"Canal Teams ({a.get('channel_id') or a.get('team_id')})"
             return ", ".join(str(x) for x in v) if isinstance(v, list) else str(v)
 
         # Editable fields (edit-on-card): keyed by the connector schema names so a
@@ -2449,7 +2454,6 @@ class OrchestratorService:
                 session_id, step_id, "failed", blocked_reason=step.error))
             return
         if is_output:
-            step.status = Status.COMPLETED
             # Keep the LAST text part, not the first. A reasoning model emits its
             # thinking as an earlier part and the actual answer as a later one, so
             # parts[0] stored the deliberation as the step's result — which then
@@ -2462,6 +2466,20 @@ class OrchestratorService:
                 for part in ev.content.parts:
                     if getattr(part, "text", None):
                         text = part.text
+            # A step self-reports failure with the STEP_FAILED sentinel (e.g. it
+            # could not identify the recipient). Without this a plain final text —
+            # even one saying "I failed" — is recorded as 'completed'; only an ADK
+            # error event (above) otherwise fails a step. ponytail: free-text
+            # sentinel, fragile; a fail_task tool would be sturdier if it drifts.
+            if text.lstrip().upper().startswith("STEP_FAILED"):
+                step.status = Status.FAILED
+                step.error = text.lstrip()[len("STEP_FAILED"):].lstrip(" :–-\t").strip()[:500] or "step failed"
+                logger.warning("[worky] 9. step self-reported FAILED session=%s step=%s err=%s",
+                               session_id, step_id, step.error)
+                await self._project(self._rm and self._rm.set_step_status(
+                    session_id, step_id, "failed", blocked_reason=step.error))
+                return
+            step.status = Status.COMPLETED
             step.result = text
             logger.info("[worky] 9. step completed session=%s step=%s (%d chars)",
                         session_id, step_id, len(text))
