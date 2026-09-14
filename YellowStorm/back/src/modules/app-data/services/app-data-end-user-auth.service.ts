@@ -284,7 +284,14 @@ export class AppDataEndUserAuthService {
     const email = this.endUsers.normalizeEmail(params.email);
     const user = await this.endUsers.findByEmail(app.id, email);
     if (!user) {
+      // Timing-safe dummy hash to prevent user enumeration via timing.
       await bcrypt.compare(params.password, LOGIN_DUMMY_HASH);
+      await this.audit.record({
+        appId: app.id,
+        eventType: 'login_failed',
+        actorPrincipal: 'anonymous',
+        metadata: { email, reason: 'user_not_found' },
+      });
       throw new AppDataException(
         AppDataErrorCode.AUTH_INVALID,
         'Invalid email or password',
@@ -292,6 +299,12 @@ export class AppDataEndUserAuthService {
       );
     }
     if (user.status === 'disabled') {
+      await this.audit.record({
+        appId: app.id,
+        eventType: 'login_failed',
+        actorPrincipal: 'anonymous',
+        metadata: { email, userId: user.id, reason: 'account_disabled' },
+      });
       throw new AppDataException(
         AppDataErrorCode.USER_DISABLED,
         'User account is disabled',
@@ -302,6 +315,12 @@ export class AppDataEndUserAuthService {
     const rounds = this.config.get<number>('appData.endUserBcryptRounds', 12);
     const valid = await bcrypt.compare(params.password, user.passwordHash);
     if (!valid) {
+      await this.audit.record({
+        appId: app.id,
+        eventType: 'login_failed',
+        actorPrincipal: 'anonymous',
+        metadata: { email, userId: user.id, reason: 'invalid_password' },
+      });
       throw new AppDataException(
         AppDataErrorCode.AUTH_INVALID,
         'Invalid email or password',

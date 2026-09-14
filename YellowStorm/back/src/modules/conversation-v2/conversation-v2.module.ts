@@ -26,6 +26,7 @@ import { ChatCompletionModule } from '@modules/chat-completion';
 import { ModelsModule } from '@modules/models/models.module';
 import { SkillModule } from '@modules/skill/skill.module';
 import { ConnectorModule } from '@modules/connector/connector.module';
+import { EmailModule } from '@modules/email/email.module';
 import { UserModule } from '@modules/user/user.module';
 import { NotificationsModule } from '@modules/notifications/notifications.module';
 import { ConversationV2NameGeneratorService } from './services/conversation-v2-name-generator.service';
@@ -57,6 +58,7 @@ import {
     ModelsModule,
     SkillModule,
     ConnectorModule,
+    EmailModule,
     MongooseModule.forFeature([
       { name: ConversationV2Session.name, schema: ConversationV2SessionSchema },
       { name: ConversationV2Event.name, schema: ConversationV2EventSchema },

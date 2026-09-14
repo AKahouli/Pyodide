@@ -26,6 +26,7 @@ import { useConversationV2Store } from '../../store';
 import { useConversationV2Translation } from '../../translation';
 import type { FilesTreeNode } from '../../types';
 import { useNodepodPreview, type NodepodPreviewStatus } from '../../hooks/useNodepodPreview';
+import { getOrCreateHost } from '../../runtime/BrowserRuntimeHost';
 import { AppSourceFileTree } from './AppSourceFileTree';
 import { AppSourceFileViewer } from './AppSourceFileViewer';
 import { resolveSourceFilesTree } from '../../utils/files-tree';
@@ -103,6 +104,7 @@ export function ApplicationComponentView({
   const sessionId = useConversationV2Store((s) => s.sessionId);
   const appViewMode = useConversationV2Store((s) => s.appViewMode);
   const deployedUrl = useConversationV2Store((s) => s.deployedUrl);
+  const ownerInviteToken = useConversationV2Store((s) => s.ownerInviteToken);
   const workspaceRevisionId = useConversationV2Store(
     (s) => s.previewRevisionId ?? s.applicationComponent?.workspaceRevisionId,
   );
@@ -129,10 +131,17 @@ export function ApplicationComponentView({
     }
   }, [deployedUrl]);
 
+  const deployedSrc = useMemo(() => {
+    if (!deployedUrl) return '';
+    if (!ownerInviteToken) return deployedUrl;
+    const base = deployedUrl.replace(/\/?$/, '/');
+    return `${base}register?invite=${encodeURIComponent(ownerInviteToken)}`;
+  }, [deployedUrl, ownerInviteToken]);
+
   const handleOpenDeployed = useCallback(() => {
-    if (!deployedUrl) return;
-    window.open(deployedUrl, '_blank', 'noopener,noreferrer');
-  }, [deployedUrl]);
+    if (!deployedSrc) return;
+    window.open(deployedSrc, '_blank', 'noopener,noreferrer');
+  }, [deployedSrc]);
 
   const badgeKey = statusBadgeKey(status);
   const badgeClass = statusBadgeClass(status);
@@ -186,11 +195,16 @@ export function ApplicationComponentView({
     const base = import.meta.env.BASE_URL || '/';
     const wrapper = new URL('preview-wrapper.html', `${window.location.origin}${base}`);
     wrapper.searchParams.set('src', previewUrl);
-    const opened = window.open(wrapper.toString(), '_blank', 'noopener,noreferrer');
-    if (!opened) {
-      window.open(previewUrl, '_blank', 'noopener,noreferrer');
+    // No noopener/noreferrer: preview-wrapper.html needs window.opener to relay
+    // App Data through this tab's host. The host authenticates the popup by its
+    // exact WindowProxy + origin before serving any ticket-backed request.
+    const opened = window.open(wrapper.toString(), '_blank');
+    if (opened && sessionId) {
+      getOrCreateHost(sessionId).registerExternalPreviewRelayPeer(opened, window.location.origin);
+      return;
     }
-  }, [previewUrl]);
+    window.open(previewUrl, '_blank', 'noopener,noreferrer');
+  }, [previewUrl, sessionId]);
 
   const setPreviewOnly = () => {
     setLayoutMode('preview-only');
@@ -471,7 +485,7 @@ export function ApplicationComponentView({
                 */}
                 <iframe
                   title={title || t('nodepod.previewTitle')}
-                  src={deployedUrl}
+                  src={deployedSrc}
                   className='absolute inset-0 size-full border-0 bg-white'
                   referrerPolicy='strict-origin-when-cross-origin'
                   allow='accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share'

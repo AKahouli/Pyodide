@@ -62,7 +62,14 @@
     "schemaVersion": "Schema version",
     "noTables": "No tables yet.",
     "envDev": "DEV",
-    "envProd": "PROD"
+    "envProd": "PROD",
+    "seed": "Seed",
+    "seedApply": "Seed rows",
+    "seeding": "Seeding…",
+    "seedPlaceholder": "Paste a JSON manifest, e.g. { \"<table>\": [ { \"col\": \"value\" } ] }",
+    "seedInvalidJson": "Invalid JSON — use { \"<table>\": [ { \"col\": \"value\" } ] }.",
+    "seedDone": "Seeded: {{inserted}} inserted, {{skipped}} skipped.",
+    "seedError": "Seed failed."
   },
   "nodepod": {
     "inBrowser": "In-browser preview",

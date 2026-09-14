@@ -90,6 +90,7 @@ interface State {
   deployStatus: DeployStatus;
   deployedUrl: string | null;
   lastDeployedAt: string | null;
+  ownerInviteToken: string | null;
   /**
    * Which surface the app panel shows: Nodepod preview vs the live deployed URL.
    * Nodepod stays mounted/warm in the background when this is `'deployed'`.
@@ -159,6 +160,7 @@ export interface SessionSlice {
   deployStatus: DeployStatus;
   deployedUrl: string | null;
   lastDeployedAt: string | null;
+  ownerInviteToken: string | null;
   appViewMode: State['appViewMode'];
   selectedToolCallId: string | null;
   selectedConnectorRepo: State['selectedConnectorRepo'];
@@ -225,6 +227,7 @@ interface Actions {
     deployStatus: DeployStatus;
     deployedUrl: string | null;
     lastDeployedAt?: string | null;
+    ownerInviteToken?: string | null;
   }) => void;
   /** Switch between Nodepod preview and the deployed iframe (manual toggle). */
   setAppViewMode: (mode: 'nodepod' | 'deployed') => void;
@@ -276,6 +279,7 @@ const initial: State = {
   deployStatus: 'idle',
   deployedUrl: null,
   lastDeployedAt: null,
+  ownerInviteToken: null,
   appViewMode: 'nodepod',
       typewriterSessionId: null,
       typewriterName: null,
@@ -312,6 +316,7 @@ function createSessionViewDefaults(): Pick<
   | 'deployStatus'
   | 'deployedUrl'
   | 'lastDeployedAt'
+  | 'ownerInviteToken'
   | 'appViewMode'
   | 'selectedConnectorRepo'
   | 'selectedSkillIds'
@@ -341,6 +346,7 @@ function createSessionViewDefaults(): Pick<
     deployStatus: 'idle',
     deployedUrl: null,
     lastDeployedAt: null,
+    ownerInviteToken: null,
     appViewMode: 'nodepod',
     selectedConnectorRepo: null,
     selectedSkillIds: [],
@@ -373,6 +379,7 @@ function sliceFromState(s: State): SessionSlice {
     deployStatus: s.deployStatus,
     deployedUrl: s.deployedUrl,
     lastDeployedAt: s.lastDeployedAt,
+    ownerInviteToken: s.ownerInviteToken,
     appViewMode: s.appViewMode,
     selectedToolCallId: s.selectedToolCallId,
     selectedConnectorRepo: s.selectedConnectorRepo,
@@ -680,12 +687,13 @@ export const useConversationV2Store = create<State & Actions>()(
       setSystemWorkspaceId: (id) =>
         set({ systemWorkspaceId: id }, false, 'setSystemWorkspaceId'),
       setWorkspaceIds: (ids) => set({ workspaceIds: ids }, false, 'setWorkspaceIds'),
-      setDeployState: ({ deployStatus, deployedUrl, lastDeployedAt }) =>
+      setDeployState: ({ deployStatus, deployedUrl, lastDeployedAt, ownerInviteToken }) =>
         set(
           {
             deployStatus,
             deployedUrl,
             ...(lastDeployedAt !== undefined ? { lastDeployedAt } : {}),
+            ...(ownerInviteToken !== undefined ? { ownerInviteToken } : {}),
           },
           false,
           'setDeployState',
@@ -756,6 +764,7 @@ export const useConversationV2Store = create<State & Actions>()(
               deployStatus: r.deployStatus,
               deployedUrl: r.deployedUrl,
               lastDeployedAt: r.lastDeployedAt,
+              ownerInviteToken: r.ownerInviteToken ?? null,
               ...(r.deployStatus === 'deployed' && r.deployedUrl
                 ? { appViewMode: 'deployed' as const }
                 : {}),

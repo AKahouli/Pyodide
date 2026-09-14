@@ -24,7 +24,8 @@ import {
   type AppDataMcpToolName,
 } from '../mcp/app-data-mcp.tools';
 import type { AppDataSchemaManifest } from '../constants/app-data.types';
-import { AppDataException } from '../constants/app-data.errors';
+import { AppDataException, APP_DATA_ERROR_CODES } from '../constants/app-data.errors';
+import { normalizeSchemaManifest, validateSeedTables } from '../utils/app-data-sql.util';
 import { AppDataCatalogService } from './app-data-catalog.service';
 import { AppDataMcpAuthService } from './app-data-mcp-auth.service';
 import { AppDataPolicyService } from './app-data-policy.service';
@@ -140,6 +141,7 @@ export class AppDataMcpDispatcherService {
           reqId,
           new McpError(JsonRpcErrorCode.INVALID_PARAMS, err.message, {
             code: err.appDataCode,
+            errorCode: APP_DATA_ERROR_CODES[err.appDataCode],
             ...err.data,
           }),
         );
@@ -188,23 +190,27 @@ export class AppDataMcpDispatcherService {
       }
       case 'schema_get':
         return this.schema.getSchema(workspaceId, 'dev');
-      case 'schema_plan':
+      case 'schema_plan': {
+        const planned = normalizeSchemaManifest(args.manifest as AppDataSchemaManifest);
         return this.schema.planSchema({
           workspaceId,
           environment: 'dev',
-          manifest: args.manifest as AppDataSchemaManifest,
+          manifest: planned.manifest,
           expectedVersion: Number(args.expectedVersion),
         });
-      case 'schema_apply':
+      }
+      case 'schema_apply': {
+        const applied = normalizeSchemaManifest(args.manifest as AppDataSchemaManifest);
         return this.schema.applySchema({
           workspaceId,
           environment: 'dev',
-          manifest: args.manifest as AppDataSchemaManifest,
+          manifest: applied.manifest,
           expectedVersion: Number(args.expectedVersion),
           confirmDestructive: args.confirmDestructive === true,
           toolCallId,
           actorPrincipal: 'mcp',
         });
+      }
       case 'policy_get':
         return { policies: await this.policies.getPolicies(workspaceId, 'dev') };
       case 'policy_apply':
@@ -214,6 +220,7 @@ export class AppDataMcpDispatcherService {
             environment: 'dev',
             policies: args.policies as import('../constants/app-data.types').AppDataPolicyDocument,
             actorPrincipal: 'mcp',
+            expectedVersion: args.expectedVersion != null ? Number(args.expectedVersion) : undefined,
           }),
         };
       case 'table_sample':
@@ -281,6 +288,35 @@ export class AppDataMcpDispatcherService {
             principal,
             ownerUserId,
           }),
+        };
+      }
+      case 'seed': {
+        const app = await this.catalog.requireAppByWorkspace(workspaceId);
+        const tables = validateSeedTables(args.tables);
+        const results: { table: string; inserted: number; skipped: number }[] = [];
+        let insertedTotal = 0;
+        let skippedTotal = 0;
+        for (const { name: tableName, rows: tableRows } of tables) {
+          if (tableRows.length === 0) continue;
+          const batchResult = await this.rows.batchInsert({
+            appDataId: app.appDataId,
+            environment: 'dev',
+            table: tableName,
+            rows: tableRows,
+            principal,
+            ownerUserId,
+          });
+          results.push({ table: tableName, inserted: batchResult.inserted, skipped: batchResult.skipped });
+          insertedTotal += batchResult.inserted;
+          skippedTotal += batchResult.skipped;
+        }
+        return {
+          environment: 'dev',
+          message: `Seeded ${insertedTotal} row${insertedTotal === 1 ? '' : 's'}`,
+          total: insertedTotal + skippedTotal,
+          inserted: insertedTotal,
+          skipped: skippedTotal,
+          tables: results,
         };
       }
       default:

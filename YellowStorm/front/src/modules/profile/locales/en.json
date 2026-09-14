@@ -128,5 +128,13 @@
   "health.overall.uptime": "Uptime: {{value}}",
   "health.serviceChecks.title": "Service Checks",
   "health.serviceChecks.description": "Individual service health with response time trends",
-  "health.serviceChecks.avgResponse": "avg: {{value}}ms"
+  "health.serviceChecks.avgResponse": "avg: {{value}}ms",
+  "health.appData.title": "App Data Microservice",
+  "health.appData.description": "Persistent storage service for generated apps",
+  "health.appData.mode": "Mode",
+  "health.appData.reachable": "Reachable",
+  "health.appData.live": "Liveness",
+  "health.appData.ready": "Readiness",
+  "health.appData.database": "Database",
+  "health.appData.mcp": "MCP Endpoint"
 }

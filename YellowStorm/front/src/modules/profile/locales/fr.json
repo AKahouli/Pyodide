@@ -128,5 +128,13 @@
   "health.overall.uptime": "Disponibilité : {{value}}",
   "health.serviceChecks.title": "Services surveillés",
   "health.serviceChecks.description": "État de chaque service et tendances des temps de réponse",
-  "health.serviceChecks.avgResponse": "moy : {{value}} ms"
+  "health.serviceChecks.avgResponse": "moy : {{value}} ms",
+  "health.appData.title": "Microservice App Data",
+  "health.appData.description": "Service de stockage persistant pour les apps générées",
+  "health.appData.mode": "Mode",
+  "health.appData.reachable": "Accessible",
+  "health.appData.live": "Liveness",
+  "health.appData.ready": "Readiness",
+  "health.appData.database": "Base de données",
+  "health.appData.mcp": "Endpoint MCP"
 }

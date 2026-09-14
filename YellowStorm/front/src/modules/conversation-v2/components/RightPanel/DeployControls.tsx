@@ -79,6 +79,7 @@ export function DeployControls() {
   const { t } = useConversationV2Translation();
   const deployStatus = useConversationV2Store((s) => s.deployStatus);
   const deployedUrl = useConversationV2Store((s) => s.deployedUrl);
+  const ownerInviteToken = useConversationV2Store((s) => s.ownerInviteToken);
   const appViewMode = useConversationV2Store((s) => s.appViewMode);
   const sessionId = useConversationV2Store((s) => s.sessionId);
   const deploy = useConversationV2Store((s) => s.deploy);
@@ -112,7 +113,10 @@ export function DeployControls() {
 
   const handleOpenDeployed = () => {
     if (!deployedUrl) return;
-    window.open(deployedUrl, '_blank', 'noopener,noreferrer');
+    const url = ownerInviteToken
+      ? `${deployedUrl.replace(/\/?$/, '/')}/register?invite=${encodeURIComponent(ownerInviteToken)}`
+      : deployedUrl;
+    window.open(url, '_blank', 'noopener,noreferrer');
   };
 
   return (

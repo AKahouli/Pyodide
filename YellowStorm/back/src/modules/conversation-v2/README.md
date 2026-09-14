@@ -674,8 +674,8 @@ for that session.
 | Path | Role |
 |---|---|
 | `app-data/controllers/app-data-owner.controller.ts` | End-user + table endpoints under `/conversation-v2/sessions/:id/app-data` |
-| `app-data/controllers/app-data-public-invite.controller.ts` | Public `GET …/invites/resolve` for register-invite tokens |
-| `app-data/services/app-data-end-user-auth.service.ts` | App end-user register/login + invite consume |
+| `app-data/controllers/remote/app-data-remote-owner.controller.ts` | Remote-mode passthrough of the owner Data tab to the app-data microservice |
+| `app-data/services/app-data-end-user-auth.service.ts` | App end-user register/login + invite consume (local mode) |
 | `app-data/services/app-data-end-user.service.ts` | End-user CRUD + status |
 | `app-data/services/app-data-end-user-grants.service.ts` | Per-user CRUD grant persistence |
 | `app-data/services/app-data-catalog.service.ts` | App registration, status, environment lookup |

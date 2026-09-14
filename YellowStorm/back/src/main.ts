@@ -1,3 +1,7 @@
+// Must stay the FIRST import: several modules read process.env at static
+// import time (e.g. AppDataModule's controller selection) — before
+// ConfigModule.forRoot() loads the same file later during bootstrap.
+import 'dotenv/config';
 import { NestFactory } from '@nestjs/core';
 import { ValidationPipe, VersioningType } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
@@ -238,11 +242,6 @@ async function bootstrap() {
       reason: serializeUnhandledReason(reason),
       promise: inspect(promise, { depth: 2, breakLength: 120 }),
     });
-    // Do not shut down: Baileys regularly raises transient internal "Timed Out"
-    // rejections (prekey upload / init queries, e.g. after a reconnect or
-    // pairing). Exiting here ends the Postgres pool and aborts in-flight agent
-    // runs. Log loudly and keep serving; an unhandled rejection does not imply a
-    // corrupted process state.
   });
 }
 

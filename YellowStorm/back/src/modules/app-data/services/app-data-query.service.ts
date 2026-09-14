@@ -103,7 +103,7 @@ export class AppDataQueryService {
     const client = await this.pool.connect();
     try {
       const timeoutMs = this.config.get<number>('appData.statementTimeoutMs', 30_000);
-      await client.query(`SET statement_timeout = ${timeoutMs}`);
+      await client.query('SET statement_timeout = $1', [timeoutMs]);
       const countResult = await client.query(countSql, values.slice(0, where.length));
       const rowsResult = await client.query(sql, values);
       return {
