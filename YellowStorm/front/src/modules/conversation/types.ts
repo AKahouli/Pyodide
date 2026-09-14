@@ -442,6 +442,8 @@ export interface ChoiceComponentData extends Record<string, unknown> {
   dismissible?: boolean;
   fallbackText?: string;
   status: ChoiceStatus;
+  editable?: boolean;
+  fields?: Array<{ key: string; label: string; value?: string; multiline?: boolean; type?: 'list' | 'text'; markdown?: boolean }>;
 }
 export interface ChoiceInteractionMetadata {
   type: 'choice';
