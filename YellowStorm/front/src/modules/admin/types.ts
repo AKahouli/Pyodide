@@ -1656,6 +1656,7 @@ export interface ConnectorResultMapping {
 }
 
 export type ConnectorDynamicHeaderSource =
+  | 'workspace'
   | 'user_id'
   | 'user_email'
   | 'user_first_name'

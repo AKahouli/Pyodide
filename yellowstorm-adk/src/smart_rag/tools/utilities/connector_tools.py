@@ -794,6 +794,47 @@ def _logical_search_server_config(server_config: Dict[str, Any]) -> Dict[str, An
     return sanitized
 
 
+def apply_dynamic_workspace_headers(
+    headers: Dict[str, str],
+    dynamic_headers: List[Dict[str, Any]],
+    workspace_ids: Optional[List[str]],
+) -> Dict[str, str]:
+    resolved = dict(headers)
+    values = _unique_strings(workspace_ids or [])
+    for config in dynamic_headers or []:
+        if config.get("source") != "workspace" or config.get("enabled") is False:
+            continue
+        header_name = str(config.get("header_name") or config.get("headerName") or "").strip()
+        if not header_name:
+            continue
+        for existing_name in list(resolved):
+            if existing_name.lower() == header_name.lower():
+                resolved.pop(existing_name)
+        if values:
+            resolved[header_name] = ",".join(values)
+    return resolved
+
+
+def without_dynamic_workspace_headers(
+    server_config: Dict[str, Any],
+    dynamic_headers: List[Dict[str, Any]],
+) -> Dict[str, Any]:
+    header_names = {
+        str(config.get("header_name") or config.get("headerName") or "").strip().lower()
+        for config in dynamic_headers or []
+        if config.get("source") == "workspace" and config.get("enabled") is not False
+    }
+    if not header_names or not isinstance(server_config.get("headers"), dict):
+        return server_config
+    sanitized = dict(server_config)
+    sanitized["headers"] = {
+        name: value
+        for name, value in server_config["headers"].items()
+        if name.lower() not in header_names
+    }
+    return sanitized
+
+
 def _apply_streamable_http_context_headers(
     auth_headers: Dict[str, str],
     context: Dict[str, List[str]],
@@ -806,7 +847,6 @@ def _apply_streamable_http_context_headers(
         headers["X-Agent-Id"] = agent_id
     file_names = context.get("file_names") or []
     workspace_ids = context.get("workspace_ids") or []
-    header_workspace_ids = context.get("header_workspace_ids") or workspace_ids
     workspace_paths = context.get("workspace_paths") or []
 
     if len(file_names) == 1:
@@ -817,9 +857,6 @@ def _apply_streamable_http_context_headers(
     if workspace_ids:
         headers["workspace_id"] = json.dumps(workspace_ids) if len(workspace_ids) > 1 else workspace_ids[0]
         headers.pop("workspace_name", None)
-
-    if header_workspace_ids:
-        headers["Workspace-Id"] = ",".join(header_workspace_ids)
 
     if session_id:
         headers["x-conversation-id"] = session_id
@@ -898,6 +935,7 @@ def create_connector_tools(
         if is_logical_search:
             binding_auth_headers = _logical_search_headers(binding_auth_headers)
         binding_auth_env = binding.get("auth_env") or {}
+        binding_dynamic_headers = binding.get("dynamic_headers") or []
 
         if not connector_id.strip():
             continue
@@ -962,6 +1000,7 @@ def create_connector_tools(
                 _fixed_params: Dict[str, Any] = fixed_params,
                 _auth_headers: Dict[str, str] = dict(binding_auth_headers),
                 _auth_env: Dict[str, str] = binding_auth_env,
+                _dynamic_headers: List[Dict[str, Any]] = list(binding_dynamic_headers),
                 _parameter_schema: Dict[str, Any] = parameter_schema,
                 _tool_name: str = tool_name,
                 _connector_context: Dict[str, List[str]] = connector_context,
@@ -1044,12 +1083,22 @@ def create_connector_tools(
                         _session_id,
                         _agent_id,
                     )
+                if _transport_type in {"streamable_http", "sse"}:
+                    effective_auth_headers = apply_dynamic_workspace_headers(
+                        effective_auth_headers,
+                        _dynamic_headers,
+                        _connector_context.get("header_workspace_ids") or [],
+                    )
                 if _is_logical_search:
                     effective_auth_headers = _logical_search_headers(effective_auth_headers)
                 effective_server_config = (
                     _logical_search_server_config(_server_config)
                     if _is_logical_search
                     else _server_config
+                )
+                effective_server_config = without_dynamic_workspace_headers(
+                    effective_server_config,
+                    _dynamic_headers,
                 )
                 response = await call_mcp_tool(
                     _transport_type,

@@ -46,6 +46,10 @@ from src.smart_rag.tools.utilities.code_interpreter_payload import (
     _extract_workspace_name_hint,
     build_code_interpreter_payload_context,
 )
+from src.smart_rag.tools.utilities.connector_tools import (
+    apply_dynamic_workspace_headers,
+    without_dynamic_workspace_headers,
+)
 
 logger = get_logger(__name__)
 
@@ -1803,6 +1807,7 @@ def _create_connector_mcp_tools(
         fixed_params = binding.get("fixed_params", {})
         binding_auth_headers = binding.get("auth_headers") or {}
         binding_auth_env = binding.get("auth_env") or {}
+        binding_dynamic_headers = binding.get("dynamic_headers") or []
         # The MCP server can hide search_relevant_documents behind the X-Deep-Search
         # header; strip it so the gated action never surfaces to the agent.
         binding_auth_headers.pop("X-Deep-Search", None)
@@ -1885,6 +1890,7 @@ def _create_connector_mcp_tools(
                 tn: str = tool_name,
                 ah: Dict[str, str] = dict(binding_auth_headers),
                 ae: Dict[str, str] = binding_auth_env,
+                dynamic_headers: List[Dict[str, Any]] = list(binding_dynamic_headers),
                 _uid: Optional[str] = user_id,
                 _wi: Optional[List[str]] = workspace_ids,
                 sid: str = session_id,
@@ -1952,7 +1958,6 @@ def _create_connector_mcp_tools(
                             effective_auth_headers.pop("file_names", None)
                             if _wi:
                                 effective_auth_headers["workspace_id"] = json.dumps(_wi) if len(_wi) > 1 else _wi[0]
-                                effective_auth_headers["Workspace-Id"] = ",".join(_wi)
                                 merged_params["workspace_id"] = _wi[0] if len(_wi) == 1 else _wi
                                 merged_params.pop("workspace_name", None)
                                 effective_auth_headers.pop("workspace_name", None)
@@ -1964,12 +1969,22 @@ def _create_connector_mcp_tools(
                                 "playbook_connector_mcp_context_headers workspace_id=%s",
                                 effective_auth_headers.get("workspace_id"),
                             )
+                        if tt in ("streamable_http", "sse"):
+                            effective_auth_headers = apply_dynamic_workspace_headers(
+                                effective_auth_headers,
+                                dynamic_headers,
+                                _wi,
+                            )
+                        effective_server_config = without_dynamic_workspace_headers(
+                            sc,
+                            dynamic_headers,
+                        )
 
                         async def _call(action: str, action_params: Dict[str, Any]) -> Any:
                             return await call_mcp_tool(
                                 tt,
                                 su,
-                                sc,
+                                effective_server_config,
                                 action,
                                 action_params,
                                 auth_headers=effective_auth_headers,
@@ -2013,7 +2028,7 @@ def _create_connector_mcp_tools(
                                 encoded_file = await call_mcp_tool(
                                     tt,
                                     su,
-                                    sc,
+                                    effective_server_config,
                                     "file_download_base64",
                                     download_params,
                                     auth_headers=effective_auth_headers,

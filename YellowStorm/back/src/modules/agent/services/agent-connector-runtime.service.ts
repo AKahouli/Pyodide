@@ -222,6 +222,9 @@ export class AgentConnectorRuntimeService {
         mcp_server_config: connector.mcpServerConfig || {},
         auth_headers: {} as Record<string, string>,
         auth_env: {} as Record<string, string>,
+        dynamic_headers: (connector.dynamicHeaders || [])
+          .filter((header: any) => header.enabled !== false && header.source === 'workspace')
+          .map((header: any) => ({ header_name: header.headerName, source: header.source })),
       }))
       .filter((binding: any) => binding.actions.length > 0);
 

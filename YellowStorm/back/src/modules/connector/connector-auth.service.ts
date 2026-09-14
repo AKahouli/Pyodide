@@ -23,7 +23,9 @@ export class ConnectorAuthServiceImpl implements ConnectorAuthService {
     userId: string,
     dynamicHeaders: ConnectorDynamicHeaderConfig[],
   ): Promise<Record<string, string>> {
-    const enabled = (dynamicHeaders || []).filter((h) => h?.headerName && h?.enabled !== false);
+    const enabled = (dynamicHeaders || []).filter(
+      (h) => h?.headerName && h?.enabled !== false && h.source !== DynamicHeaderSource.WORKSPACE,
+    );
     if (enabled.length === 0 || !userId) {
       return {};
     }

@@ -1055,6 +1055,41 @@ def test_connector_mcp_tools_do_not_inject_workspace_or_external_headers(
     assert captured["auth_headers"] == {"Authorization": "Bearer token"}
 
 
+def test_connector_mcp_tools_resolve_configured_workspace_header_for_sse(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured = {}
+
+    async def fake_call_mcp_tool(*args, **kwargs):
+        captured["server_config"] = args[2]
+        captured["auth_headers"] = kwargs.get("auth_headers")
+        return {"text": "ok"}
+
+    monkeypatch.setattr("src.flow_engine.mcp.call_mcp_tool", fake_call_mcp_tool)
+    [tool] = _create_connector_mcp_tools(
+        [{
+            "connector_id": "connector-1",
+            "connector_name": "SharePoint",
+            "connector_slug": "sharepoint",
+            "mcp_transport_type": "sse",
+            "mcp_server_url": "https://example.com/mcp",
+            "mcp_server_config": {"headers": {"WORKSPACE-ID": "stale-config"}},
+            "auth_headers": {"workspace-id": "stale"},
+            "dynamic_headers": [{"header_name": "Workspace-Id", "source": "workspace"}],
+            "actions": [{"action_key": "search", "label": "Search"}],
+        }],
+        ToolResultCollector(),
+        workspace_ids=["workspace-1", "workspace-2", "workspace-1"],
+    )
+
+    asyncio.run(tool.ainvoke({"params": {"query": "revenue"}}))
+
+    assert captured["auth_headers"] == {
+        "Workspace-Id": "workspace-1,workspace-2",
+    }
+    assert captured["server_config"] == {"headers": {}}
+
+
 def test_connector_mcp_tools_strip_user_id_from_params(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
