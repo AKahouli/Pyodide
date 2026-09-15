@@ -35,8 +35,11 @@
   "actions": {
     "prepare": "Préparer l'évaluation",
     "preparing": "Préparation en cours…",
+    "prepareTarget": "Évaluation cible : {{name}}",
     "run": "Lancer l'évaluation",
     "running": "Exécution en cours…",
+    "stop": "Arrêter",
+    "stopping": "Arrêt…",
     "export": "Exporter les résultats",
     "done": "Prêt pour l'évaluation",
     "newEval": "Nouvelle évaluation"

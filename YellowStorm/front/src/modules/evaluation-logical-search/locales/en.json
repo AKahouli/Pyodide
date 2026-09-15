@@ -35,8 +35,11 @@
   "actions": {
     "prepare": "Prepare evaluation",
     "preparing": "Preparing…",
+    "prepareTarget": "Target evaluation: {{name}}",
     "run": "Run evaluation",
     "running": "Running…",
+    "stop": "Stop",
+    "stopping": "Stopping…",
     "export": "Export results",
     "done": "Ready to evaluate",
     "newEval": "New evaluation"

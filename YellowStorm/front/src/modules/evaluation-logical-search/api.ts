@@ -81,6 +81,13 @@ export const evaluationLogicalSearchApi = {
     return res.data.data;
   },
 
+  async stop(id: string): Promise<EvaluationRunResult> {
+    const res = await apiClient.post<{ data: EvaluationRunResult }>(
+      `${API_ENDPOINTS.logicalSearchEvaluation.base}/${id}/stop`,
+    );
+    return res.data.data;
+  },
+
   async progress(id: string): Promise<EvaluationProgressResult> {
     const res = await apiClient.get<{ data: EvaluationProgressResult }>(
       `${API_ENDPOINTS.logicalSearchEvaluation.base}/${id}/progress`,

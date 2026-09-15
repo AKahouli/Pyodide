@@ -5,17 +5,12 @@ import { Button } from '@/components/ui/button';
 import { Progress } from '@/components/ui/progress';
 import { SearchSelect } from '@/components/ui/search-select';
 import { useModuleTranslation } from '@/modules/localization';
-import { useAgents, useAgentStore, useAgentsLoading } from '@/modules/agent';
 import { apiClient } from '@/lib/api/client';
 import { API_ENDPOINTS } from '@/lib/api/config';
 import { evaluationLogicalSearchApi } from '../api';
 import type { LogicalSearchEvaluation, UploadResult, BenchmarkQuery } from '../types';
 
 interface PlaybookSummary {
-  id: string;
-  name: string;
-}
-interface WorkspaceSummary {
   id: string;
   name: string;
 }
@@ -30,19 +25,9 @@ export function LogicalSearchEvaluationPage(): JSX.Element {
   const navigate = useNavigate();
   const { t } = useModuleTranslation('evaluation-logical-search');
 
-  // ── Agent store ─────────────────────────────────────────────
-  const agents = useAgents();
-  const agentsLoading = useAgentsLoading();
-  const fetchAgents = useAgentStore((s) => s.fetchAgents);
-
-  useEffect(() => { void fetchAgents(); }, [fetchAgents]);
-
   // ── Selection state ─────────────────────────────────────────
-  const [selectedAgentId, setSelectedAgentId] = useState<string>('');
   const [playbooks, setPlaybooks] = useState<PlaybookSummary[]>([]);
   const [selectedPlaybookId, setSelectedPlaybookId] = useState<string>('');
-  const [workspaces, setWorkspaces] = useState<WorkspaceSummary[]>([]);
-  const [selectedWorkspaceId, setSelectedWorkspaceId] = useState<string>('');
   const [executions, setExecutions] = useState<ExecutionSummary[]>([]);
   const [selectedExecutionId, setSelectedExecutionId] = useState<string>('');
 
@@ -53,6 +38,7 @@ export function LogicalSearchEvaluationPage(): JSX.Element {
   const [preparing, setPreparing] = useState(false);
   const [prepareError, setPrepareError] = useState<string | null>(null);
   const [runningEvalId, setRunningEvalId] = useState<string | null>(null);
+  const [stoppingEvalId, setStoppingEvalId] = useState<string | null>(null);
   const [runError, setRunError] = useState<string | null>(null);
   const [exportError, setExportError] = useState<string | null>(null);
   const [evalProgress, setEvalProgress] = useState<Record<string, { done: number; total: number; currentQuery: string }>>({});
@@ -61,35 +47,12 @@ export function LogicalSearchEvaluationPage(): JSX.Element {
   const [evaluations, setEvaluations] = useState<LogicalSearchEvaluation[]>([]);
   const [selectedEvalId, setSelectedEvalId] = useState<string | null>(null);
 
-  // ── Load playbooks when agent changes ───────────────────────
+  // ── Load playbooks ──────────────────────────────────────────
   useEffect(() => {
-    if (!selectedAgentId) { setPlaybooks([]); setSelectedPlaybookId(''); return; }
     let cancelled = false;
     apiClient.get<{ data: { items: PlaybookSummary[] } }>(API_ENDPOINTS.playbooks.list)
       .then((res) => { if (!cancelled) setPlaybooks(res.data.data.items ?? []); })
       .catch(() => { if (!cancelled) setPlaybooks([]); });
-    return () => { cancelled = true; };
-  }, [selectedAgentId]);
-
-  // ── Load workspaces (personal + shared) ─────────────────────
-  useEffect(() => {
-    let cancelled = false;
-    Promise.allSettled([
-      apiClient.get<{ data: { workspaces: WorkspaceSummary[] } }>(API_ENDPOINTS.workspaces.list),
-      apiClient.get<{ data: { workspaces: WorkspaceSummary[] } }>(API_ENDPOINTS.workspaces.sharedWithMe),
-    ]).then(([ownRes, sharedRes]) => {
-      if (cancelled) return;
-      const own = ownRes.status === 'fulfilled' ? ownRes.value.data.data?.workspaces ?? [] : [];
-      const shared = sharedRes.status === 'fulfilled' ? sharedRes.value.data.data?.workspaces ?? [] : [];
-      const seen = new Set<string>();
-      const merged: WorkspaceSummary[] = [];
-      for (const w of [...own, ...shared]) {
-        if (seen.has(w.id)) continue;
-        seen.add(w.id);
-        merged.push(w);
-      }
-      setWorkspaces(merged);
-    });
     return () => { cancelled = true; };
   }, []);
 
@@ -132,14 +95,13 @@ export function LogicalSearchEvaluationPage(): JSX.Element {
   }, []);
 
   const handlePrepare = useCallback(async () => {
-    if (!selectedEvalId || !selectedExecutionId) return;
+    const targetId = selectedEvalId ?? evaluations[0]?.id;
+    if (!targetId || !selectedExecutionId) return;
     setPreparing(true);
     setPrepareError(null);
     try {
-      await evaluationLogicalSearchApi.prepare(selectedEvalId, {
+      await evaluationLogicalSearchApi.prepare(targetId, {
         executionId: selectedExecutionId,
-        agentId: selectedAgentId || undefined,
-        workspaceId: selectedWorkspaceId || undefined,
       });
       refreshEvaluations();
     } catch (err) {
@@ -147,7 +109,7 @@ export function LogicalSearchEvaluationPage(): JSX.Element {
     } finally {
       setPreparing(false);
     }
-  }, [selectedEvalId, selectedExecutionId, selectedAgentId, selectedWorkspaceId, refreshEvaluations]);
+  }, [selectedEvalId, selectedExecutionId, evaluations, refreshEvaluations]);
 
   const handleRun = useCallback(async (id: string) => {
     setRunningEvalId(id);
@@ -158,6 +120,19 @@ export function LogicalSearchEvaluationPage(): JSX.Element {
       setRunError(err instanceof Error ? err.message : 'Run failed');
     } finally {
       setRunningEvalId(null);
+      refreshEvaluations();
+    }
+  }, [refreshEvaluations]);
+
+  const handleStop = useCallback(async (id: string) => {
+    setStoppingEvalId(id);
+    setRunError(null);
+    try {
+      await evaluationLogicalSearchApi.stop(id);
+    } catch (err) {
+      setRunError(err instanceof Error ? err.message : 'Stop failed');
+    } finally {
+      setStoppingEvalId(null);
       refreshEvaluations();
     }
   }, [refreshEvaluations]);
@@ -214,6 +189,10 @@ export function LogicalSearchEvaluationPage(): JSX.Element {
   // ── Derived ─────────────────────────────────────────────────
   const latestExecution = useMemo(() => executions.find((e) => e.status === 'completed'), [executions]);
   const previewRows: BenchmarkQuery[] = useMemo(() => uploadResult?.preview ?? [], [uploadResult]);
+  const prepareEvalName = useMemo(
+    () => evaluations.find((e) => e.id === (selectedEvalId ?? evaluations[0]?.id))?.name ?? '',
+    [evaluations, selectedEvalId],
+  );
 
   return (
     <div className='h-full w-full overflow-auto'>
@@ -279,23 +258,6 @@ export function LogicalSearchEvaluationPage(): JSX.Element {
       <Card>
         <CardHeader><CardTitle>Configuration</CardTitle></CardHeader>
         <CardContent className='space-y-4'>
-          {/* Agent */}
-          <div className='space-y-1'>
-            <label className='text-sm font-medium'>{t('select.agent')}</label>
-            <SearchSelect
-              options={agents.map((a) => ({
-                value: a.id,
-                label: a.name,
-                description: a.agentType?.name ?? 'agent',
-              }))}
-              value={selectedAgentId}
-              onValueChange={(v) => { setSelectedAgentId(v); setSelectedPlaybookId(''); setSelectedExecutionId(''); }}
-              placeholder={agentsLoading ? 'Loading…' : t('select.agentPlaceholder')}
-              searchPlaceholder={t('select.search')}
-              emptyText={t('select.noResults')}
-            />
-          </div>
-
           {/* Playbook */}
           <div className='space-y-1'>
             <label className='text-sm font-medium'>{t('select.playbook')}</label>
@@ -306,23 +268,7 @@ export function LogicalSearchEvaluationPage(): JSX.Element {
               placeholder={t('select.playbookPlaceholder')}
               searchPlaceholder={t('select.search')}
               emptyText={t('select.noResults')}
-              disabled={!selectedAgentId}
             />
-          </div>
-
-          {/* Workspace */}
-          <div className='space-y-1'>
-            <label className='text-sm font-medium'>{t('select.workspace')}</label>
-            <select
-              className='w-full rounded-md border bg-background px-3 py-2 text-sm'
-              value={selectedWorkspaceId}
-              onChange={(e) => setSelectedWorkspaceId(e.target.value)}
-            >
-              <option value=''>{t('select.workspacePlaceholder')}</option>
-              {workspaces.map((w) => (
-                <option key={w.id} value={w.id}>{w.name}</option>
-              ))}
-            </select>
           </div>
         </CardContent>
       </Card>
@@ -350,14 +296,19 @@ export function LogicalSearchEvaluationPage(): JSX.Element {
               ))}
             </select>
 
-            {selectedEvalId && (
-              <Button
-                onClick={handlePrepare}
-                disabled={!selectedExecutionId || preparing}
-                className='w-full'
-              >
-                {preparing ? t('actions.preparing') : t('actions.prepare')}
-              </Button>
+            {evaluations.length > 0 && (
+              <>
+                <Button
+                  onClick={handlePrepare}
+                  disabled={!selectedExecutionId || preparing}
+                  className='w-full'
+                >
+                  {preparing ? t('actions.preparing') : t('actions.prepare')}
+                </Button>
+                <p className='text-xs text-muted-foreground'>
+                  {t('actions.prepareTarget', { name: prepareEvalName })}
+                </p>
+              </>
             )}
             {prepareError && <p className='text-sm text-destructive'>{prepareError}</p>}
           </CardContent>
@@ -399,13 +350,23 @@ export function LogicalSearchEvaluationPage(): JSX.Element {
                     }`}>
                       {t(`status.${ev.status}` as any) ?? ev.status}
                     </span>
-                    {ev.status === 'prepared' && (
+                    {(ev.status === 'prepared' || ev.status === 'running' || ev.status === 'failed') && (
                       <Button
                         size='sm'
                         onClick={(e) => { e.stopPropagation(); void handleRun(ev.id); }}
                         disabled={runningEvalId !== null}
                       >
                         {runningEvalId === ev.id ? t('actions.running') : t('actions.run')}
+                      </Button>
+                    )}
+                    {ev.status === 'running' && (
+                      <Button
+                        size='sm'
+                        variant='destructive'
+                        onClick={(e) => { e.stopPropagation(); void handleStop(ev.id); }}
+                        disabled={stoppingEvalId !== null}
+                      >
+                        {stoppingEvalId === ev.id ? t('actions.stopping') : t('actions.stop')}
                       </Button>
                     )}
                     {(ev.status === 'completed' || ev.status === 'failed' || ev.status === 'running') && (

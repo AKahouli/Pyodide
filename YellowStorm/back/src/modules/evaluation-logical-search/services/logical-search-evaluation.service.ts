@@ -1,9 +1,10 @@
-import { BadRequestException, Injectable, Logger } from '@nestjs/common';
+import { BadRequestException, Injectable, Logger, OnModuleInit } from '@nestjs/common';
+import { Interval } from '@nestjs/schedule';
 import { InjectModel } from '@nestjs/mongoose';
 import { ConfigService } from '@nestjs/config';
 import { Model } from 'mongoose';
 import AdmZip = require('adm-zip');
-import { mkdir, writeFile, readFile, rename } from 'fs/promises';
+import { mkdir, writeFile, readFile, rename, rm } from 'fs/promises';
 import { join } from 'path';
 import * as XLSX from 'xlsx';
 import {
@@ -24,6 +25,7 @@ import {
 
 const ALLOWED_EXTENSIONS = ['.xlsx', '.csv'];
 const EVAL_TIMEOUT_SECONDS = 600;
+const ORPHAN_RUN_MAX_AGE_MS = 15 * 60 * 1000;
 
 interface SnapshotLike {
   nodes?: { id?: string }[];
@@ -86,8 +88,35 @@ async function readJson<T>(filePath: string): Promise<T> {
 }
 
 @Injectable()
-export class LogicalSearchEvaluationService {
+export class LogicalSearchEvaluationService implements OnModuleInit {
   private readonly logger = new Logger(LogicalSearchEvaluationService.name);
+  // Evaluation ids with a live run in THIS process, mapped to a stop flag.
+  // A DB row still 'running' but absent here is an orphan (previous process
+  // died) and can be rescued directly.
+  private readonly activeRuns = new Map<string, boolean>();
+
+  async onModuleInit() {
+    await this.sweepOrphanedRuns();
+  }
+
+  @Interval(ORPHAN_RUN_MAX_AGE_MS)
+  async sweepOrphanedRuns() {
+    try {
+      const orphans = await this.repository.listStaleRunning(ORPHAN_RUN_MAX_AGE_MS);
+      for (const orphan of orphans) {
+        if (this.activeRuns.has(orphan.id)) continue;
+        this.logger.warn(`Auto-rescuing orphaned running evaluation ${orphan.id} (updated ${orphan.updatedAt?.toISOString()})`);
+        await this.repository.applyRunComplete(orphan.id, {
+          summary: null,
+          error: 'Interrupted or orphaned run; auto-marked failed.',
+        });
+      }
+    } catch (error) {
+      this.logger.error(
+        `Failed to sweep orphaned runs: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  }
 
   constructor(
     private readonly repository: LogicalSearchEvaluationRepository,
@@ -207,6 +236,12 @@ export class LogicalSearchEvaluationService {
 
     try {
       await mkdir(runDir, { recursive: true });
+      // A new execution captures a new snapshot → previous run outputs are stale.
+      await rm(join(runDir, 'results.json'), { force: true });
+      await rm(join(runDir, 'summary.json'), { force: true });
+      await rm(join(runDir, 'progress.json'), { force: true });
+      await rm(join(runDir, 'progress.json.tmp'), { force: true });
+      await rm(join(runDir, 'outputs'), { force: true, recursive: true });
       await writeFile(join(runDir, 'benchmark_queries.json'), JSON.stringify(benchmarkPayload), 'utf-8');
       const zip = new AdmZip();
       zip.addFile(
@@ -257,13 +292,22 @@ export class LogicalSearchEvaluationService {
 
   async run(ownerId: string, evaluationId: string) {
     const evaluation = await this.getById(ownerId, evaluationId);
+    let rescued = false;
     if (evaluation.status === 'running') {
-      throw new BadRequestException(`Evaluation is already running.`);
+      if (this.activeRuns.has(evaluationId)) {
+        throw new BadRequestException(`Evaluation is already running.`);
+      }
+      this.logger.warn(`Rescuing orphaned running evaluation ${evaluationId} (not active in this process)`);
+      await this.repository.applyRunComplete(evaluationId, {
+        summary: null,
+        error: 'Interrupted or orphaned run; resuming.',
+      });
+      rescued = true;
     }
     if (evaluation.status === 'completed') {
       throw new BadRequestException(`Evaluation is already completed; create a new evaluation to re-run.`);
     }
-    if (evaluation.status !== 'prepared') {
+    if (evaluation.status !== 'prepared' && evaluation.status !== 'failed' && !rescued) {
       throw new BadRequestException(`Evaluation is ${evaluation.status}; run prepare first.`);
     }
 
@@ -277,22 +321,36 @@ export class LogicalSearchEvaluationService {
     }
 
     await this.repository.applyRunStart(evaluationId);
+    this.activeRuns.set(evaluationId, false);
 
     const queryPath = config.query_path ?? ['input_context', 'query'];
     const additionalQueryPaths = config.additional_query_paths ?? [];
     const answerNodeId = config.answer_node_id ?? evaluation.answerNodeId ?? undefined;
-    const results: EvaluationQueryResult[] = [];
+    let results: EvaluationQueryResult[] = [];
+    try {
+      results = await readJson<EvaluationQueryResult[]>(join(runDir, 'results.json'));
+    } catch {
+      results = [];
+    }
+    if (!Array.isArray(results)) results = [];
+    const doneQueryIds = new Set(results.map((r) => r.query_id));
     const runStartedAt = new Date().toISOString();
     let runError: string | null = null;
+    let stopped = false;
 
     try {
       for (let i = 0; i < queries.length; i++) {
+        if (this.activeRuns.get(evaluationId) === true) {
+          stopped = true;
+          break;
+        }
         const benchmarkQuery = queries[i];
         const queryId = benchmarkQuery.query_id;
+        if (doneQueryIds.has(queryId)) continue;
         const queryText = benchmarkQuery.query;
 
         await this.writeProgress(runDir, {
-          done: i,
+          done: results.length,
           total: queries.length,
           currentIndex: i,
           currentQueryId: queryId,
@@ -368,6 +426,21 @@ export class LogicalSearchEvaluationService {
       });
     } catch (error) {
       runError = error instanceof Error ? error.message : String(error);
+    } finally {
+      this.activeRuns.delete(evaluationId);
+    }
+
+    if (stopped) {
+      runError = 'Stopped by user; partial results kept.';
+      await this.writeProgress(runDir, {
+        done: results.length,
+        total: queries.length,
+        currentIndex: Math.min(results.length, queries.length),
+        currentQueryId: '',
+        currentQuery: '',
+        startedAt: runStartedAt,
+        updatedAt: new Date().toISOString(),
+      });
     }
 
     const summary: EvaluationRunSummary = buildSummary(results);
@@ -386,6 +459,24 @@ export class LogicalSearchEvaluationService {
       queryCount: results.length,
       summary,
     };
+  }
+
+  async stop(ownerId: string, evaluationId: string) {
+    const evaluation = await this.getById(ownerId, evaluationId);
+    if (evaluation.status !== 'running') {
+      throw new BadRequestException(`Evaluation is ${evaluation.status}; nothing to stop.`);
+    }
+    if (!this.activeRuns.has(evaluationId)) {
+      this.logger.warn(`Stop requested on orphaned running evaluation ${evaluationId}; marking failed directly`);
+      await this.repository.applyRunComplete(evaluationId, {
+        summary: null,
+        error: 'Stopped by user.',
+      });
+      return { evaluationId, status: 'failed' };
+    }
+    this.logger.log(`Stop requested for evaluation ${evaluationId}; set at next query boundary`);
+    this.activeRuns.set(evaluationId, true);
+    return { evaluationId, status: 'running', signal: 'stopping' };
   }
 
   private async writeProgress(runDir: string, progress: EvaluationProgress): Promise<void> {

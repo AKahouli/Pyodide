@@ -1,5 +1,5 @@
 import { Inject, Injectable } from '@nestjs/common';
-import { desc, eq } from 'drizzle-orm';
+import { and, desc, eq, lt } from 'drizzle-orm';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import { DRIZZLE_DB } from '../../postgres/postgres.constants';
 import { logicalSearchEvaluations } from '../../postgres/schema';
@@ -87,6 +87,15 @@ export class LogicalSearchEvaluationRepository {
       .where(eq(logicalSearchEvaluations.id, id))
       .returning();
     return row ?? null;
+  }
+
+  async listStaleRunning(maxAgeMs: number) {
+    const cutoff = new Date(Date.now() - maxAgeMs);
+    return this.db
+      .select()
+      .from(logicalSearchEvaluations)
+      .where(and(eq(logicalSearchEvaluations.status, 'running'), lt(logicalSearchEvaluations.updatedAt, cutoff)))
+      .limit(50);
   }
 
   async applyRunProgress(id: string) {

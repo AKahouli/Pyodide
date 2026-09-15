@@ -65,6 +65,12 @@ export class LogicalSearchEvaluationController {
     return this.service.run(user._id.toString(), id);
   }
 
+  @Post(':id/stop')
+  @ApiOperation({ summary: 'Request a graceful stop of a running evaluation (at the next query boundary)' })
+  async stop(@CurrentUser() user: UserDocument, @Param('id') id: string) {
+    return this.service.stop(user._id.toString(), id);
+  }
+
   @Get(':id/progress')
   @ApiOperation({ summary: 'Live progress of a running evaluation (which query, how many done)' })
   async progress(@CurrentUser() user: UserDocument, @Param('id') id: string) {
