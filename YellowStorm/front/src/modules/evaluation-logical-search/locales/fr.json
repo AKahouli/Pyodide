@@ -57,5 +57,21 @@
     "createdAt": "Créé",
     "queries": "{{count}} questions",
     "view": "Voir"
+  },
+  "adhoc": {
+    "title": "Configuration directe",
+    "agent": "Agent",
+    "agentPlaceholder": "Sélectionner un agent…",
+    "workspace": "Workspace",
+    "workspacePlaceholder": "Sélectionner un workspace (optionnel)…",
+    "model": "Modèle LLM",
+    "modelPlaceholder": "Sélectionner un modèle (optionnel)…",
+    "files": "Fichiers (optionnel)",
+    "filesPlaceholder": "Restreindre aux fichiers…",
+    "filesLoading": "Chargement des fichiers…",
+    "filesEmpty": "Aucun fichier dans ce workspace",
+    "launch": "Lancer l'évaluation",
+    "launching": "Lancement…",
+    "target": "Évaluation cible : {{name}}"
   }
 }

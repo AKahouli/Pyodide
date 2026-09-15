@@ -18,6 +18,7 @@ export interface LinkExecutionInput {
   flowId: string | null;
   workspaceId: string | null;
   executionId: string | null;
+  modelId?: string | null;
   answerNodeId: string | null;
   status: 'prepared' | 'failed';
   error?: string | null;
@@ -70,6 +71,7 @@ export class LogicalSearchEvaluationRepository {
         flowId: input.flowId,
         workspaceId: input.workspaceId,
         executionId: input.executionId,
+        modelId: input.modelId ?? null,
         answerNodeId: input.answerNodeId,
         status: input.status,
         error: input.error ?? null,

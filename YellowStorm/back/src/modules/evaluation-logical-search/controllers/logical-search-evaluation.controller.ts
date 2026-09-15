@@ -59,6 +59,19 @@ export class LogicalSearchEvaluationController {
     return this.service.prepare(user._id.toString(), id, body);
   }
 
+  @Post(':id/prepare-adhoc')
+  @ApiOperation({ summary: 'Prepare evaluation with a direct agent/workspace/model config (no playbook)' })
+  async prepareAdhoc(
+    @CurrentUser() user: UserDocument,
+    @Param('id') id: string,
+    @Body() body: { agentId: string; workspaceId?: string; modelId?: string; fileScope?: string[] },
+  ) {
+    if (!body?.agentId) {
+      throw new BadRequestException('agentId is required.');
+    }
+    return this.service.prepareAdhoc(user._id.toString(), id, body);
+  }
+
   @Post(':id/run')
   @ApiOperation({ summary: 'Run the logical search benchmark queries against the runtime' })
   async run(@CurrentUser() user: UserDocument, @Param('id') id: string) {

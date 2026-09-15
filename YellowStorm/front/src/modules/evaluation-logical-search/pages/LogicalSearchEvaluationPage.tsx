@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Progress } from '@/components/ui/progress';
@@ -7,36 +6,44 @@ import { SearchSelect } from '@/components/ui/search-select';
 import { useModuleTranslation } from '@/modules/localization';
 import { apiClient } from '@/lib/api/client';
 import { API_ENDPOINTS } from '@/lib/api/config';
+import { useAgents, useAgentsLoading, useAgentStore } from '@/modules/agent';
+import { getModels } from '@/modules/models';
+import { listWorkspaceArtifacts } from '@/modules/workspace';
+import type { WorkspaceArtifact } from '@/modules/workspace';
 import { evaluationLogicalSearchApi } from '../api';
 import type { LogicalSearchEvaluation, UploadResult, BenchmarkQuery } from '../types';
 
-interface PlaybookSummary {
+interface WorkspaceSummary {
   id: string;
   name: string;
 }
-interface ExecutionSummary {
-  _id: string;
-  status: string;
-  flowId: string;
-  createdAt: string;
+interface ModelOption {
+  id: string;
+  label: string;
 }
 
 export function LogicalSearchEvaluationPage(): JSX.Element {
-  const navigate = useNavigate();
   const { t } = useModuleTranslation('evaluation-logical-search');
 
-  // ── Selection state ─────────────────────────────────────────
-  const [playbooks, setPlaybooks] = useState<PlaybookSummary[]>([]);
-  const [selectedPlaybookId, setSelectedPlaybookId] = useState<string>('');
-  const [executions, setExecutions] = useState<ExecutionSummary[]>([]);
-  const [selectedExecutionId, setSelectedExecutionId] = useState<string>('');
+  // ── Ad-hoc config state ─────────────────────────────────────
+  const agents = useAgents();
+  const agentsLoading = useAgentsLoading();
+  const [selectedAgentId, setSelectedAgentId] = useState<string>('');
+  const [workspaces, setWorkspaces] = useState<WorkspaceSummary[]>([]);
+  const [workspacesLoading, setWorkspacesLoading] = useState(false);
+  const [selectedWorkspaceId, setSelectedWorkspaceId] = useState<string>('');
+  const [models, setModels] = useState<ModelOption[]>([]);
+  const [selectedModelId, setSelectedModelId] = useState<string>('');
+  const [artifacts, setArtifacts] = useState<WorkspaceArtifact[]>([]);
+  const [artifactsLoading, setArtifactsLoading] = useState(false);
+  const [selectedFileIds, setSelectedFileIds] = useState<string[]>([]);
 
   // ── Upload state ────────────────────────────────────────────
   const [uploadResult, setUploadResult] = useState<UploadResult | null>(null);
   const [uploading, setUploading] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
-  const [preparing, setPreparing] = useState(false);
-  const [prepareError, setPrepareError] = useState<string | null>(null);
+  const [launching, setLaunching] = useState(false);
+  const [launchError, setLaunchError] = useState<string | null>(null);
   const [runningEvalId, setRunningEvalId] = useState<string | null>(null);
   const [stoppingEvalId, setStoppingEvalId] = useState<string | null>(null);
   const [runError, setRunError] = useState<string | null>(null);
@@ -47,28 +54,59 @@ export function LogicalSearchEvaluationPage(): JSX.Element {
   const [evaluations, setEvaluations] = useState<LogicalSearchEvaluation[]>([]);
   const [selectedEvalId, setSelectedEvalId] = useState<string | null>(null);
 
-  // ── Load playbooks ──────────────────────────────────────────
+  // ── Load agents ─────────────────────────────────────────────
+  useEffect(() => { void useAgentStore.getState().fetchAgents(); }, []);
+
+  // ── Load workspaces (personal + shared) ─────────────────────
   useEffect(() => {
     let cancelled = false;
-    apiClient.get<{ data: { items: PlaybookSummary[] } }>(API_ENDPOINTS.playbooks.list)
-      .then((res) => { if (!cancelled) setPlaybooks(res.data.data.items ?? []); })
-      .catch(() => { if (!cancelled) setPlaybooks([]); });
+    setWorkspacesLoading(true);
+    Promise.allSettled([
+      apiClient.get<{ data: { workspaces: WorkspaceSummary[] } }>(API_ENDPOINTS.workspaces.list),
+      apiClient.get<{ data: { workspaces: WorkspaceSummary[] } }>(API_ENDPOINTS.workspaces.sharedWithMe),
+    ]).then(([ownRes, sharedRes]) => {
+      if (cancelled) return;
+      const own = ownRes.status === 'fulfilled' ? ownRes.value.data.data?.workspaces ?? [] : [];
+      const shared = sharedRes.status === 'fulfilled' ? sharedRes.value.data.data?.workspaces ?? [] : [];
+      const seen = new Set<string>();
+      const merged: WorkspaceSummary[] = [];
+      for (const w of [...own, ...shared]) {
+        if (seen.has(w.id)) continue;
+        seen.add(w.id);
+        merged.push(w);
+      }
+      setWorkspaces(merged);
+      setWorkspacesLoading(false);
+    });
     return () => { cancelled = true; };
   }, []);
 
-  // ── Load executions when playbook changes ────────────────────
+  // ── Load LLM models (active only) ───────────────────────────
   useEffect(() => {
-    if (!selectedPlaybookId) { setExecutions([]); setSelectedExecutionId(''); return; }
     let cancelled = false;
-    apiClient.get<{ data: { items?: ExecutionSummary[]; executions?: ExecutionSummary[] } }>(API_ENDPOINTS.playbookFlows.executions(selectedPlaybookId))
+    getModels()
       .then((res) => {
         if (cancelled) return;
-        const { items, executions } = res.data.data ?? {};
-        setExecutions(items ?? executions ?? []);
+        setModels((res.models ?? [])
+          .filter((m) => m.isActive !== false)
+          .map((m) => ({ id: m.id, label: m.litellmModel || m.name })));
       })
-      .catch(() => { if (!cancelled) setExecutions([]); });
+      .catch(() => { if (!cancelled) setModels([]); });
     return () => { cancelled = true; };
-  }, [selectedPlaybookId]);
+  }, []);
+
+  // ── Load workspace files when workspace changes ─────────────
+  useEffect(() => {
+    let cancelled = false;
+    setSelectedFileIds([]);
+    if (!selectedWorkspaceId) { setArtifacts([]); setArtifactsLoading(false); return; }
+    setArtifactsLoading(true);
+    listWorkspaceArtifacts(selectedWorkspaceId)
+      .then((items) => { if (!cancelled) setArtifacts(Array.isArray(items) ? items : []); })
+      .catch(() => { if (!cancelled) setArtifacts([]); })
+      .finally(() => { if (!cancelled) setArtifactsLoading(false); });
+    return () => { cancelled = true; };
+  }, [selectedWorkspaceId]);
 
   // ── Load previous evaluations ────────────────────────────────
   const refreshEvaluations = useCallback(() => {
@@ -94,22 +132,29 @@ export function LogicalSearchEvaluationPage(): JSX.Element {
     }
   }, []);
 
-  const handlePrepare = useCallback(async () => {
+  const handleLaunch = useCallback(async () => {
     const targetId = selectedEvalId ?? evaluations[0]?.id;
-    if (!targetId || !selectedExecutionId) return;
-    setPreparing(true);
-    setPrepareError(null);
+    if (!targetId || !selectedAgentId) return;
+    setLaunching(true);
+    setLaunchError(null);
+    setRunningEvalId(targetId);
     try {
-      await evaluationLogicalSearchApi.prepare(targetId, {
-        executionId: selectedExecutionId,
+      await evaluationLogicalSearchApi.prepareAdhoc(targetId, {
+        agentId: selectedAgentId,
+        workspaceId: selectedWorkspaceId || undefined,
+        modelId: selectedModelId || undefined,
+        fileScope: selectedFileIds.length > 0 ? selectedFileIds : undefined,
       });
+      await evaluationLogicalSearchApi.run(targetId);
       refreshEvaluations();
     } catch (err) {
-      setPrepareError(err instanceof Error ? err.message : 'Prepare failed');
+      setRunError(err instanceof Error ? err.message : 'Launch failed');
     } finally {
-      setPreparing(false);
+      setLaunching(false);
+      setRunningEvalId(null);
+      refreshEvaluations();
     }
-  }, [selectedEvalId, selectedExecutionId, evaluations, refreshEvaluations]);
+  }, [selectedEvalId, selectedAgentId, selectedWorkspaceId, selectedModelId, selectedFileIds, evaluations, refreshEvaluations]);
 
   const handleRun = useCallback(async (id: string) => {
     setRunningEvalId(id);
@@ -187,12 +232,14 @@ export function LogicalSearchEvaluationPage(): JSX.Element {
   }, [runningEvalId, evaluations, refreshEvaluations, refreshProgress]);
 
   // ── Derived ─────────────────────────────────────────────────
-  const latestExecution = useMemo(() => executions.find((e) => e.status === 'completed'), [executions]);
   const previewRows: BenchmarkQuery[] = useMemo(() => uploadResult?.preview ?? [], [uploadResult]);
-  const prepareEvalName = useMemo(
+  const launchEvalName = useMemo(
     () => evaluations.find((e) => e.id === (selectedEvalId ?? evaluations[0]?.id))?.name ?? '',
     [evaluations, selectedEvalId],
   );
+  const toggleFileId = useCallback((id: string) => {
+    setSelectedFileIds((prev) => prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]);
+  }, []);
 
   return (
     <div className='h-full w-full overflow-auto'>
@@ -254,63 +301,90 @@ export function LogicalSearchEvaluationPage(): JSX.Element {
         </Card>
       )}
 
-      {/* ── Selection: Agent → Playbook → Workspace ─────────── */}
-      <Card>
-        <CardHeader><CardTitle>Configuration</CardTitle></CardHeader>
-        <CardContent className='space-y-4'>
-          {/* Playbook */}
-          <div className='space-y-1'>
-            <label className='text-sm font-medium'>{t('select.playbook')}</label>
-            <SearchSelect
-              options={playbooks.map((p) => ({ value: p.id, label: p.name }))}
-              value={selectedPlaybookId}
-              onValueChange={(v) => { setSelectedPlaybookId(v); setSelectedExecutionId(''); }}
-              placeholder={t('select.playbookPlaceholder')}
-              searchPlaceholder={t('select.search')}
-              emptyText={t('select.noResults')}
-            />
-          </div>
-        </CardContent>
-      </Card>
-
-      {/* ── Execution selection + prepare ────────────────────── */}
-      {selectedPlaybookId && executions.length > 0 && (
+      {/* ── Ad-hoc Configuration ─────────────────────────────── */}
+      {evaluations.length > 0 && (
         <Card>
-          <CardHeader><CardTitle>{t('select.execution')}</CardTitle></CardHeader>
+          <CardHeader><CardTitle>{t('adhoc.title')}</CardTitle></CardHeader>
           <CardContent className='space-y-4'>
-            <select
-              className='w-full rounded-md border bg-background px-3 py-2 text-sm'
-              value={selectedExecutionId}
-              onChange={(e) => setSelectedExecutionId(e.target.value)}
-            >
-              <option value=''>{t('select.executionPlaceholder')}</option>
-              {latestExecution && (
-                <option value={latestExecution._id}>
-                  {latestExecution._id.slice(-8)} — {t('status.completed')} ({new Date(latestExecution.createdAt).toLocaleDateString()})
-                </option>
-              )}
-              {executions.filter((e) => e !== latestExecution).map((ex) => (
-                <option key={ex._id} value={ex._id}>
-                  {ex._id.slice(-8)} — {t(`status.${ex.status}` as any) ?? ex.status} ({new Date(ex.createdAt).toLocaleDateString()})
-                </option>
-              ))}
-            </select>
 
-            {evaluations.length > 0 && (
-              <>
-                <Button
-                  onClick={handlePrepare}
-                  disabled={!selectedExecutionId || preparing}
-                  className='w-full'
-                >
-                  {preparing ? t('actions.preparing') : t('actions.prepare')}
-                </Button>
-                <p className='text-xs text-muted-foreground'>
-                  {t('actions.prepareTarget', { name: prepareEvalName })}
-                </p>
-              </>
+            {/* Agent (required) */}
+            <div className='space-y-1'>
+              <label className='text-sm font-medium'>
+                {t('adhoc.agent')} <span className='text-destructive'>*</span>
+              </label>
+              <SearchSelect
+                options={agents.map((a) => ({ value: a.id, label: a.name }))}
+                value={selectedAgentId}
+                onValueChange={setSelectedAgentId}
+                placeholder={agentsLoading ? 'Loading…' : t('adhoc.agentPlaceholder')}
+                searchPlaceholder={t('select.search')}
+                emptyText={t('select.noResults')}
+              />
+            </div>
+
+            {/* Workspace (optional) */}
+            <div className='space-y-1'>
+              <label className='text-sm font-medium'>{t('adhoc.workspace')}</label>
+              <SearchSelect
+                options={workspaces.map((w) => ({ value: w.id, label: w.name }))}
+                value={selectedWorkspaceId}
+                onValueChange={setSelectedWorkspaceId}
+                placeholder={workspacesLoading ? 'Loading…' : t('adhoc.workspacePlaceholder')}
+                searchPlaceholder={t('select.search')}
+                emptyText={t('select.noResults')}
+              />
+            </div>
+
+            {/* Model (optional) */}
+            <div className='space-y-1'>
+              <label className='text-sm font-medium'>{t('adhoc.model')}</label>
+              <SearchSelect
+                options={models.map((m) => ({ value: m.id, label: m.label }))}
+                value={selectedModelId}
+                onValueChange={setSelectedModelId}
+                placeholder={t('adhoc.modelPlaceholder')}
+                searchPlaceholder={t('select.search')}
+                emptyText={t('select.noResults')}
+              />
+            </div>
+
+            {/* Files (optional, multi) */}
+            {selectedWorkspaceId && (
+              <div className='space-y-1'>
+                <label className='text-sm font-medium'>{t('adhoc.files')}</label>
+                {artifactsLoading && <p className='text-xs text-muted-foreground'>{t('adhoc.filesLoading')}</p>}
+                {!artifactsLoading && artifacts.length === 0 && (
+                  <p className='text-xs text-muted-foreground'>{t('adhoc.filesEmpty')}</p>
+                )}
+                {!artifactsLoading && artifacts.length > 0 && (
+                  <div className='max-h-40 space-y-1 overflow-auto rounded-md border p-2'>
+                    {artifacts.map((af) => (
+                      <label key={af.id} className='flex items-center gap-2 text-sm cursor-pointer'>
+                        <input
+                          type='checkbox'
+                          className='rounded border-gray-300'
+                          checked={selectedFileIds.includes(af.id)}
+                          onChange={() => toggleFileId(af.id)}
+                        />
+                        <span className='truncate'>{af.name}</span>
+                      </label>
+                    ))}
+                  </div>
+                )}
+              </div>
             )}
-            {prepareError && <p className='text-sm text-destructive'>{prepareError}</p>}
+
+            {launchError && <p className='text-sm text-destructive'>{launchError}</p>}
+            <Button
+              onClick={handleLaunch}
+              disabled={!selectedAgentId || launching}
+              className='w-full'
+            >
+              {launching ? t('adhoc.launching') : t('adhoc.launch')}
+            </Button>
+            <p className='text-xs text-muted-foreground'>
+              {t('adhoc.target', { name: launchEvalName })}
+            </p>
           </CardContent>
         </Card>
       )}

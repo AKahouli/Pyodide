@@ -33,6 +33,7 @@ export const logicalSearchEvaluations = pgTable(
     flowId: char('flow_id', { length: 24 }),
     workspaceId: char('workspace_id', { length: 24 }),
     executionId: char('execution_id', { length: 24 }),
+    modelId: varchar('model_id', { length: 128 }),
     answerNodeId: varchar('answer_node_id', { length: 64 }),
     summary: jsonb('summary'),
     error: text('error'),

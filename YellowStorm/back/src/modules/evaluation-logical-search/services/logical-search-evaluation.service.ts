@@ -12,6 +12,7 @@ import {
   FlowExecutionDocument,
 } from '../../playbook-flow/schemas/playbook-flow-execution.schema';
 import { PlaybookFlowExecutionService } from '../../playbook-flow/services/playbook-flow-execution.service';
+import { AgentService } from '../../agent/agent.service';
 import { ErrorCode } from '../../exceptions/constants/error-codes';
 import { NotFoundException } from '../../exceptions/exceptions/http.exceptions';
 import { LogicalSearchEvaluationRepository } from '../repositories/logical-search-evaluation.repository';
@@ -123,6 +124,7 @@ export class LogicalSearchEvaluationService implements OnModuleInit {
     @InjectModel(FlowExecution.name) private readonly executionModel: Model<FlowExecutionDocument>,
     private readonly config: ConfigService,
     private readonly executionService: PlaybookFlowExecutionService,
+    private readonly agentService: AgentService,
   ) {}
 
   async uploadAndParse(
@@ -286,6 +288,146 @@ export class LogicalSearchEvaluationService implements OnModuleInit {
       answerNodeId,
       flowId: execution.flowId,
       files: ['benchmark_queries.json', 'dataset.zip', 'request_template.json', 'config.json'],
+      status: updated?.status ?? 'prepared',
+    };
+  }
+
+  /**
+   * Ad-hoc prepare: build a synthetic single-node snapshot from a user-selected
+   * agent (workspace/model optional) instead of a playbook execution. Produces
+   * the same evaluator inputs (request_template.json, config.json, dataset.zip)
+   * plus adhoc-config.json for traceability.
+   */
+  async prepareAdhoc(
+    ownerId: string,
+    evaluationId: string,
+    input: { agentId: string; workspaceId?: string; modelId?: string; fileScope?: string[] },
+  ) {
+    const evaluation = await this.getById(ownerId, evaluationId);
+    if (evaluation.status === 'running' || evaluation.status === 'completed') {
+      throw new BadRequestException(
+        `Evaluation is ${evaluation.status}; create a new evaluation to re-prepare.`,
+      );
+    }
+
+    const agentId = input.agentId?.trim() ?? '';
+    if (!agentId) {
+      throw new BadRequestException('agentId is required.');
+    }
+    const accessible = await this.agentService.findByIds([agentId], ownerId);
+    if (accessible.length === 0) {
+      throw new BadRequestException('Agent not found or not accessible.');
+    }
+
+    const grpcTarget = this.config.get<string>('playbook-flow.grpcUrl') ?? 'localhost:50051';
+    const runDir = join(process.cwd(), 'uploads', 'eval', evaluationId);
+    const benchmarkPayload = evaluation.queries as { queries?: unknown[] };
+    const zipPath = join(runDir, 'dataset.zip');
+
+    const syntheticNode = {
+      id: 'eval-answer',
+      kind: 'step',
+      label: 'Answer',
+      modelId: input.modelId?.trim() || undefined,
+      metadata: {
+        assignedAgentId: agentId,
+        description: '',
+      },
+    };
+    const snapshot = {
+      nodes: [syntheticNode],
+      controlEdges: [],
+      dataBindings: [],
+      settings: {
+        recursionLimit: 25,
+        maxParallelism: 5,
+      },
+      workspaces: input.workspaceId ? [input.workspaceId] : [],
+    };
+
+    const requestTemplate = {
+      execution_id: `eval-${evaluationId}-adhoc`,
+      flow_id: `eval-flow-${evaluationId}`,
+      owner_id: ownerId,
+      snapshot,
+      input_context: { query: '' },
+      settings: { recursion_limit: 25, max_parallelism: 5 },
+      seeded_task_outputs: [],
+    };
+    const evaluatorConfig = {
+      grpc_target: grpcTarget,
+      grpc_secure: false,
+      request_template_path: 'uploads/eval/' + evaluationId + '/request_template.json',
+      answer_node_id: 'eval-answer',
+      benchmark_zip_path: zipPath,
+      benchmark_queries_member: 'benchmark_queries.json',
+      output_directory: join(runDir, 'outputs'),
+      timeout_seconds: EVAL_TIMEOUT_SECONDS,
+      query_path: ['input_context', 'query'],
+      additional_query_paths: [['snapshot', 'nodes', '0', 'metadata', 'description']],
+    };
+    const adhocConfig = {
+      agentId,
+      workspaceId: input.workspaceId ?? null,
+      modelId: input.modelId ?? null,
+      fileScope: input.fileScope ?? [],
+      createdAt: new Date().toISOString(),
+    };
+
+    try {
+      await mkdir(runDir, { recursive: true });
+      await rm(join(runDir, 'results.json'), { force: true });
+      await rm(join(runDir, 'summary.json'), { force: true });
+      await rm(join(runDir, 'progress.json'), { force: true });
+      await rm(join(runDir, 'progress.json.tmp'), { force: true });
+      await rm(join(runDir, 'outputs'), { force: true, recursive: true });
+      await writeFile(join(runDir, 'benchmark_queries.json'), JSON.stringify(benchmarkPayload), 'utf-8');
+      const zip = new AdmZip();
+      zip.addFile(
+        'benchmark_queries.json',
+        Buffer.from(JSON.stringify(benchmarkPayload), 'utf-8'),
+      );
+      await zip.writeZipPromise(zipPath);
+      await writeFile(
+        join(runDir, 'request_template.json'),
+        JSON.stringify(requestTemplate, null, 2),
+        'utf-8',
+      );
+      await writeFile(join(runDir, 'config.json'), JSON.stringify(evaluatorConfig, null, 2), 'utf-8');
+      await writeFile(join(runDir, 'adhoc-config.json'), JSON.stringify(adhocConfig, null, 2), 'utf-8');
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.logger.error(`Failed to write ad-hoc evaluator inputs for ${evaluationId}: ${message}`);
+      await this.repository.applyPrepare({
+        id: evaluationId,
+        agentId,
+        flowId: null,
+        workspaceId: input.workspaceId ?? evaluation.workspaceId,
+        executionId: null,
+        modelId: input.modelId ?? null,
+        answerNodeId: 'eval-answer',
+        status: 'failed',
+        error: message,
+      });
+      throw new BadRequestException(`Failed to generate ad-hoc evaluator inputs: ${message}`);
+    }
+
+    const updated = await this.repository.applyPrepare({
+      id: evaluationId,
+      agentId,
+      flowId: null,
+      workspaceId: input.workspaceId ?? evaluation.workspaceId,
+      executionId: null,
+      modelId: input.modelId ?? null,
+      answerNodeId: 'eval-answer',
+      status: 'prepared',
+    });
+    return {
+      evaluationId,
+      runDir,
+      answerNodeId: 'eval-answer',
+      flowId: `eval-flow-${evaluationId}`,
+      files: ['benchmark_queries.json', 'dataset.zip', 'request_template.json', 'config.json', 'adhoc-config.json'],
       status: updated?.status ?? 'prepared',
     };
   }

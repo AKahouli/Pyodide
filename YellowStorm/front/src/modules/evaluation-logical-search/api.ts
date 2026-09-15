@@ -1,6 +1,6 @@
 import { apiClient } from '@/lib/api/client';
 import { API_ENDPOINTS } from '@/lib/api/config';
-import type { LogicalSearchEvaluation, UploadResult, PrepareResult } from './types';
+import type { LogicalSearchEvaluation, UploadResult, PrepareResult, AdhocConfig } from './types';
 
 export interface EvaluationRunResult {
   status: 'prepared' | 'running' | 'completed' | 'failed';
@@ -70,6 +70,14 @@ export const evaluationLogicalSearchApi = {
     const res = await apiClient.post<{ data: PrepareResult }>(
       `${API_ENDPOINTS.logicalSearchEvaluation.base}/${id}/prepare`,
       payload,
+    );
+    return res.data.data;
+  },
+
+  async prepareAdhoc(id: string, config: AdhocConfig): Promise<PrepareResult> {
+    const res = await apiClient.post<{ data: PrepareResult }>(
+      `${API_ENDPOINTS.logicalSearchEvaluation.base}/${id}/prepare-adhoc`,
+      config,
     );
     return res.data.data;
   },

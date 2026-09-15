@@ -18,11 +18,19 @@ export interface LogicalSearchEvaluation {
   flowId: string | null;
   workspaceId: string | null;
   executionId: string | null;
+  modelId: string | null;
   answerNodeId: string | null;
   summary: Record<string, unknown> | null;
   error: string | null;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface AdhocConfig {
+  agentId: string;
+  workspaceId?: string;
+  modelId?: string;
+  fileScope?: string[];
 }
 
 export interface UploadResult {

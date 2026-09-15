@@ -57,5 +57,21 @@
     "createdAt": "Created",
     "queries": "{{count}} queries",
     "view": "View"
+  },
+  "adhoc": {
+    "title": "Direct configuration",
+    "agent": "Agent",
+    "agentPlaceholder": "Select an agent…",
+    "workspace": "Workspace",
+    "workspacePlaceholder": "Select a workspace (optional)…",
+    "model": "LLM Model",
+    "modelPlaceholder": "Select a model (optional)…",
+    "files": "Files (optional)",
+    "filesPlaceholder": "Restrict to files…",
+    "filesLoading": "Loading files…",
+    "filesEmpty": "No files in this workspace",
+    "launch": "Launch evaluation",
+    "launching": "Launching…",
+    "target": "Target evaluation: {{name}}"
   }
 }
