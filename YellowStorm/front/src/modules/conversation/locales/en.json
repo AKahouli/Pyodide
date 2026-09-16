@@ -29,6 +29,7 @@
   "input.semanticModel.empty": "No semantic models available.",
   "input.semanticModel.none": "No semantic model",
   "input.reasoning.label": "Reasoning effort",
+  "input.reasoning.default": "Default",
   "input.contextMeter.label": "Context usage {{percentage}} percent for {{model}}",
   "input.contextMeter.detail": "{{used}} of {{total}} context tokens used by {{model}}",
   "input.contextMeter.compact": "{{percentage}}% context",

@@ -36,7 +36,7 @@ import {
   useInputDisabled,
   useResetSelectedWorkspaceIds,
 } from '@/modules/conversation/store';
-import { ReasoningEffortSelect, useReasoningEffortState } from '@/modules/conversation/components/ReasoningEffortSelect';
+import { useReasoningEffortState } from '@/modules/conversation/components/ReasoningEffortSelect';
 import { translateConversation } from '@/modules/conversation/translation';
 import { RenameDialog } from '@/modules/conversation/components/RenameDialog';
 import { DeleteConversationDialog } from '@/modules/conversation/components/DeleteConversationDialog';
@@ -291,7 +291,6 @@ export function ProjectPage() {
               maxFiles={5}
               showWorkspaceSelect={true}
               showModelSelector
-              extraTools={<ReasoningEffortSelect />}
             />
           </div>
 

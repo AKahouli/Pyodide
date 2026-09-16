@@ -35,9 +35,10 @@ export class NavigationSettingsService {
   }
 
   async updateSettings(nodes: NavigationNode[]): Promise<NavigationSettings> {
-    this.validate(nodes);
+    const normalizedNodes = this.normalizeNodes(nodes);
+    this.validate(normalizedNodes);
     const current = await this.getSettings();
-    const value = { revision: current.revision + 1, nodes };
+    const value = { revision: current.revision + 1, nodes: normalizedNodes };
     await this.settings.findOneAndUpdate(
       { key: KEY },
       { key: KEY, value },
@@ -99,6 +100,7 @@ export class NavigationSettingsService {
     if (value.parentId !== null && typeof value.parentId !== 'string') throw new BadRequestException('Navigation parent must be explicit');
     if (!Number.isInteger(value.position) || value.position < 0) throw new BadRequestException('Invalid navigation position');
     if (typeof value.visible !== 'boolean') throw new BadRequestException('Invalid navigation visibility');
+    if (typeof value.launcherVisible !== 'boolean') throw new BadRequestException('Invalid launcher visibility');
     if (!value.labels || typeof value.labels !== 'object'
       || typeof value.labels.en !== 'string' || value.labels.en.length > 80
       || typeof value.labels.fr !== 'string' || value.labels.fr.length > 80) {
@@ -113,12 +115,17 @@ export class NavigationSettingsService {
   private normalizePersistedSettings(value: NavigationSettings): NavigationSettings {
     return {
       revision: value.revision,
-      nodes: value.nodes.map((node) => {
+      nodes: this.normalizeNodes(value.nodes),
+    };
+  }
+
+  private normalizeNodes(nodes: NavigationNode[]): NavigationNode[] {
+    return nodes.map((node) => {
         const normalized = { ...node } as NavigationNode & { targetKey?: NavigationNode['targetKey'] | null };
         if (normalized.targetKey === null) delete normalized.targetKey;
-        return normalized as NavigationNode;
-      }),
-    };
+        if (normalized.launcherVisible === undefined) normalized.launcherVisible = true;
+        return normalized;
+      });
   }
 
   private isSettings(value: unknown): value is NavigationSettings {

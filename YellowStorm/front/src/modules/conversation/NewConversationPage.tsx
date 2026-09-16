@@ -12,7 +12,7 @@ import {
   useSelectedSemanticModelId,
   useWebConnectorAccessEnabled,
 } from './store';
-import { ReasoningEffortSelect, ReliabilityCheckToggle, useReasoningEffortState } from './components/ReasoningEffortSelect';
+import { ReliabilityCheckToggle, useReasoningEffortState } from './components/ReasoningEffortSelect';
 import { useConversationFileUpload } from './hooks/useConversationFileUpload';
 import { useAllowedUploadExtensions } from '@/modules/workspace/hooks/useAllowedUploadExtensions';
 import { useModuleTranslation } from '@/modules/localization';
@@ -279,7 +279,7 @@ export function NewConversationPage() {
               showModelSelector={!presentationScope}
               governedMode={Boolean(presentationScope)}
               enableTeamMentions={!presentationScope}
-              extraTools={presentationScope ? <ReliabilityCheckToggle /> : <><ReasoningEffortSelect /><WebSearchConnectorToggle /><ReliabilityCheckToggle /></>}
+              extraTools={presentationScope ? <ReliabilityCheckToggle /> : <><WebSearchConnectorToggle /><ReliabilityCheckToggle /></>}
               belowTextarea={<>
                 <HomePromptSuggestions scopeName={presentationScope?.name} disabled={inputDisabled || isLimitExceeded || isUploading || isSending} />
                 <ComposerSuggestionChips fetchDisabled={inputDisabled || isLimitExceeded || isUploading || isSending} />

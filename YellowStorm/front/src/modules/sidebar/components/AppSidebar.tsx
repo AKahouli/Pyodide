@@ -36,6 +36,7 @@ import { isPendingAdminApproval } from '@/modules/auth/utils/isPendingAdminAppro
 import { useModuleTranslation } from '@/modules/localization';
 import { GlobalSearch, type SearchDestination } from './GlobalSearch';
 import { ManagedNavigation, NAVIGATION_TARGET_ICONS, navigationTargetAllowed } from './ManagedNavigation';
+import { NavigationLauncher } from './NavigationLauncher';
 import { useAutoCollapse } from '../hooks/useAutoCollapse';
 import { buildHistoryRows, RECENT_CHATS_CAP } from './chatGroups';
 
@@ -92,15 +93,21 @@ export const AppSidebar = memo(function AppSidebar() {
         && navigationTargetAllowed(node.targetKey, { featureVisibility, canUseFeature, canSeeMenu, hasAnyPermission, hasAdminAccess }));
   }, [canSeeMenu, canUseFeature, featureVisibility, hasAdminAccess, hasAnyPermission, navigation]);
 
+  const allowedLauncherItems = useMemo(() => {
+    return visibleNavigationItems(navigation, 'launcher')
+      .filter((node) => node.targetKey
+        && navigationTargetAllowed(node.targetKey, { featureVisibility, canUseFeature, canSeeMenu, hasAnyPermission, hasAdminAccess }));
+  }, [canSeeMenu, canUseFeature, featureVisibility, hasAdminAccess, hasAnyPermission, navigation]);
+
   const destinations = useMemo<SearchDestination[]>(() => {
-    return allowedNavigationItems
+    return allowedLauncherItems
       .filter((node) => !['newChat', 'projects'].includes(node.targetKey!))
       .map((node) => ({
         label: navigationLabel(node.labels, language),
         to: NAVIGATION_TARGETS[node.targetKey!].path,
         icon: createElement(NAVIGATION_TARGET_ICONS[node.targetKey!], { className: 'size-4' }),
       }));
-  }, [allowedNavigationItems, language]);
+  }, [allowedLauncherItems, language]);
 
   // One click anywhere on the collapsed rail re-opens it. setOpen(true) is
   // idempotent, so inner toggles (trigger, rail strip) never double-fire.
@@ -120,6 +127,16 @@ export const AppSidebar = memo(function AppSidebar() {
           <AppBrandLogo className='h-12 shrink-0' />
         </NavLink>
         <SidebarMenu>
+          <SidebarMenuItem>
+            <NavigationLauncher
+              settings={navigation}
+              items={allowedLauncherItems}
+              language={language}
+              mobile={isMobile}
+              onNewConversation={handleNewConversation}
+              label={t('launcher.label')}
+            />
+          </SidebarMenuItem>
           <SidebarMenuItem>
             <GlobalSearch
               destinations={destinations}

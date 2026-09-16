@@ -13,4 +13,13 @@ describe('visibleNavigationItems', () => {
     expect(targets).not.toContain('workspace');
     expect(targets).not.toContain('semanticModels');
   });
+
+  it('applies launcher visibility independently from sidebar visibility', () => {
+    const settings = structuredClone(DEFAULT_NAVIGATION_SETTINGS);
+    settings.nodes.find((node) => node.id === 'knowledge')!.visible = false;
+
+    expect(visibleNavigationItems(settings, 'launcher').map((node) => node.targetKey)).toContain('workspace');
+    settings.nodes.find((node) => node.id === 'knowledge')!.launcherVisible = false;
+    expect(visibleNavigationItems(settings, 'launcher').map((node) => node.targetKey)).not.toContain('workspace');
+  });
 });

@@ -8,7 +8,7 @@ import { ConnectorReposDialog } from '@/components/ai-elements/connector-repos-d
 import { RecentConnectorsMenu, ManageConnectorsDialog, useRecentConnectors } from '@/modules/connector';
 import { RecentSkillsMenu, ManageSkillsDialog, useRecentSkills, SelectedSkillsPills } from '@/modules/skill';
 
-import { CheckIcon, Pencil, Plus } from 'lucide-react';
+import { Pencil, Plus } from 'lucide-react';
 import { useRef, useState, useEffect, useCallback, useMemo, memo, type ReactNode } from 'react';
 import { DropdownMenuItem } from '@/components/ui/dropdown-menu';
 import { SketchBoardDialog } from '@/modules/conversation/components/SketchBoard';
@@ -16,7 +16,7 @@ import { useProviderAttachments } from '@/components/ai-elements/prompt-input';
 import { toast } from 'sonner';
 import Usage from '../ui/usage';
 import { useModels, useChefs, useModelById, useDefaultModel } from '@/modules/models';
-import { useSelectedModelId, useSetSelectedModelId, useSelectedWorkspaceIds, useSetSelectedWorkspaceIds, useResetSelectedWorkspaceIds, useSelectedSemanticModelId, useSetSelectedSemanticModelId, useSetSelectedConnectorRepo, useSelectedConnectorRepo, useSelectedSkillIds, useToggleSelectedSkill } from '@/modules/conversation/store';
+import { useSelectedModelId, useSetSelectedModelId, useSelectedReasoningEffort, useSetSelectedReasoningEffort, useSelectedWorkspaceIds, useSetSelectedWorkspaceIds, useResetSelectedWorkspaceIds, useSelectedSemanticModelId, useSetSelectedSemanticModelId, useSetSelectedConnectorRepo, useSelectedConnectorRepo, useSelectedSkillIds, useToggleSelectedSkill } from '@/modules/conversation/store';
 import { WorkspaceSelect } from '@/modules/workspace/components/WorkspaceSelect';
 import { SemanticModelSelect } from '@/modules/conversation/components/SemanticModelSelect';
 import { useCurrentConversation } from '@/modules/conversation/store';
@@ -28,19 +28,7 @@ import type { UserAgentFormValues } from '@/modules/agent/components/AgentFormSc
 import { useModuleTranslation } from '@/modules/localization';
 import { getActiveConnectors, getActiveSkills, type ConnectorOption } from '@/modules/agent/api';
 import type { SkillOption } from '@/modules/agent/types';
-import {
-  ModelSelector,
-  ModelSelectorContent,
-  ModelSelectorEmpty,
-  ModelSelectorGroup,
-  ModelSelectorInput,
-  ModelSelectorItem,
-  ModelSelectorList,
-  ModelSelectorLogo,
-  ModelSelectorLogoGroup,
-  ModelSelectorName,
-  ModelSelectorTrigger,
-} from '@/components/ai-elements/model-selector';
+import { ModelReasoningSelector } from '@/components/ai-elements/model-reasoning-selector';
 
 const SUBMITTING_TIMEOUT = 200;
 const STREAMING_TIMEOUT = 2000;
@@ -88,6 +76,7 @@ interface InputProps {
   showWorkspaceSelect?: boolean;
   preserveWorkspaceSelectionOnSubmit?: boolean;
   showModelSelector?: boolean;
+  showReasoningEffort?: boolean;
   governedMode?: boolean;
   mentionAgents?: MentionAgent[];
   enableTeamMentions?: boolean;
@@ -101,12 +90,14 @@ interface InputProps {
   onTextChange?: (text: string) => void;
 }
 
-const Input = memo(function Input({ toolLabels, onSubmit: externalSubmit, draftKey, initialInput, initialMention, onStop, status: externalStatus, disabled, submitDisabled, requireContent = false, placeholder, onFilesAdded, onFileRemoved, uploadingFiles, accept, maxFiles, members, autoMention, showWorkspaceSelect = true, preserveWorkspaceSelectionOnSubmit = false, showModelSelector = false, governedMode = false, mentionAgents, enableTeamMentions = true, workspaceOptions, onWorkspaceSelectionChange, belowTextarea, extraTools, onTextChange }: InputProps = {}) {
+const Input = memo(function Input({ toolLabels, onSubmit: externalSubmit, draftKey, initialInput, initialMention, onStop, status: externalStatus, disabled, submitDisabled, requireContent = false, placeholder, onFilesAdded, onFileRemoved, uploadingFiles, accept, maxFiles, members, autoMention, showWorkspaceSelect = true, preserveWorkspaceSelectionOnSubmit = false, showModelSelector = false, showReasoningEffort = true, governedMode = false, mentionAgents, enableTeamMentions = true, workspaceOptions, onWorkspaceSelectionChange, belowTextarea, extraTools, onTextChange }: InputProps = {}) {
   const models = useModels();
   const chefs = useChefs();
   const defaultModel = useDefaultModel();
   const selectedModelId = useSelectedModelId();
   const setSelectedModelId = useSetSelectedModelId();
+  const selectedReasoningEffort = useSelectedReasoningEffort();
+  const setSelectedReasoningEffort = useSetSelectedReasoningEffort();
   const selectedWorkspaceIds = useSelectedWorkspaceIds();
   const setSelectedWorkspaceIds = useSetSelectedWorkspaceIds();
   const resetSelectedWorkspaceIds = useResetSelectedWorkspaceIds();
@@ -114,7 +105,6 @@ const Input = memo(function Input({ toolLabels, onSubmit: externalSubmit, draftK
   const setSelectedSemanticModelId = useSetSelectedSemanticModelId();
   const selectedConnectorRepo = useSelectedConnectorRepo();
   const setSelectedConnectorRepo = useSetSelectedConnectorRepo();
-  const [modelSelectorOpen, setModelSelectorOpen] = useState(false);
   const [status, setStatus] = useState<'submitted' | 'streaming' | 'ready' | 'error'>('ready');
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
@@ -129,7 +119,6 @@ const Input = memo(function Input({ toolLabels, onSubmit: externalSubmit, draftK
   const [sketchOpen, setSketchOpen] = useState(false);
   const lastAppliedMentionMsgId = useRef<string | null>(null);
   const { t } = useModuleTranslation('common');
-  const { t: tConversation } = useModuleTranslation('conversation');
 
   const currentConversation = useCurrentConversation();
   const [sharedAgents, setSharedAgents] = useState<Agent[]>([]);
@@ -568,44 +557,16 @@ const Input = memo(function Input({ toolLabels, onSubmit: externalSubmit, draftK
               </PromptInputActionMenu>
               {showWorkspaceSelect && <WorkspaceSelect selectedIds={selectedWorkspaceIds} onChange={handleWorkspaceSelectionChange} disabled={disabled || submitDisabled || Boolean(selectedSemanticModelId)} workspaceOptions={workspaceOptions} label={toolLabels?.knowledge} className={toolLabels ? 'h-11 w-auto px-3' : 'size-11 md:size-8'} />}
               {showWorkspaceSelect && <SemanticModelSelect label={toolLabels?.data} value={selectedSemanticModelId} onChange={setSelectedSemanticModelId} disabled={disabled || submitDisabled} />}
-               {showModelSelector && !governedMode && models.length > 0 && <ModelSelector onOpenChange={setModelSelectorOpen} open={modelSelectorOpen}>
-                 <ModelSelectorTrigger asChild>
-                   <PromptInputButton type='button' disabled={disabled || submitDisabled}>
-                     {selectedModelData?.chefSlug && <ModelSelectorLogo provider={selectedModelData.chefSlug} />}
-                     <ModelSelectorName>{selectedModelData?.name ?? tConversation('newConversation.modelSelector.unset')}</ModelSelectorName>
-                   </PromptInputButton>
-                 </ModelSelectorTrigger>
-                 <ModelSelectorContent>
-                   <ModelSelectorInput placeholder={tConversation('newConversation.modelSelector.search')} />
-                   <ModelSelectorList>
-                     <ModelSelectorEmpty>{tConversation('newConversation.modelSelector.empty')}</ModelSelectorEmpty>
-                     {chefs.map((chef) => (
-                       <ModelSelectorGroup heading={chef.name} key={chef.slug}>
-                        {models
-                          .filter((m) => m.chefSlug === chef.slug)
-                          .map((m) => (
-                            <ModelSelectorItem
-                              key={m.id}
-                              onSelect={() => {
-                                setSelectedModelId(m.id);
-                                setModelSelectorOpen(false);
-                              }}
-                               value={`${m.name} ${m.chef}`}>
-                              <ModelSelectorLogo provider={m.chefSlug} />
-                              <ModelSelectorName>{m.name}</ModelSelectorName>
-                              <ModelSelectorLogoGroup>
-                                {m.providers.map((provider) => (
-                                  <ModelSelectorLogo key={provider} provider={provider} />
-                                ))}
-                              </ModelSelectorLogoGroup>
-                               {model === m.id && <CheckIcon className='ml-auto size-4 text-muted-foreground' />}
-                            </ModelSelectorItem>
-                          ))}
-                      </ModelSelectorGroup>
-                    ))}
-                  </ModelSelectorList>
-                </ModelSelectorContent>
-               </ModelSelector>}
+               {showModelSelector && !governedMode && models.length > 0 && <ModelReasoningSelector
+                 models={models}
+                 chefs={chefs}
+                 model={selectedModelData}
+                 reasoningEffort={selectedReasoningEffort ?? selectedModelData?.reasoning?.defaultEffort}
+                 showReasoningEffort={showReasoningEffort}
+                 disabled={disabled || submitDisabled}
+                 onModelChange={setSelectedModelId}
+                 onReasoningEffortChange={setSelectedReasoningEffort}
+               />}
               {extraTools}
             </PromptInputTools>
             <div className='ml-auto flex w-fit shrink-0 flex-row gap-3 px-1'>

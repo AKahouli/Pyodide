@@ -46,6 +46,7 @@
   "input.semanticModel.empty": "Aucun modèle sémantique disponible.",
   "input.semanticModel.none": "Aucun modèle sémantique",
   "input.reasoning.label": "Effort de raisonnement",
+  "input.reasoning.default": "Par défaut",
   "input.contextMeter.label": "Contexte utilise a {{percentage}} pour cent pour {{model}}",
   "input.contextMeter.detail": "{{used}} jetons de contexte utilises sur {{total}} par {{model}}",
   "input.contextMeter.compact": "{{percentage}} % du contexte",

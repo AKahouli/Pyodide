@@ -40,9 +40,18 @@ describe('NavigationSettingsService', () => {
     await expect(service.getSettings()).resolves.toEqual({
       revision: 2,
       nodes: DEFAULT_NAVIGATION_SETTINGS.nodes.map((node, index) => (
-        index === 0 ? { ...node, position: 9 } : { ...node }
+        index === 0 ? { ...node, position: 9, launcherVisible: true } : { ...node, launcherVisible: true }
       )),
     });
+  });
+
+  it('enables launcher items in saved trees created before launcher visibility existed', async () => {
+    findOne.mockReturnValue({ lean: () => ({ exec: jest.fn().mockResolvedValue({
+      value: { revision: 3, nodes: DEFAULT_NAVIGATION_SETTINGS.nodes },
+    }) }) });
+
+    const settings = await service.getSettings();
+    expect(settings.nodes.every((node) => node.launcherVisible)).toBe(true);
   });
 
   it('rejects an omitted parent instead of persisting an unreachable node', async () => {
@@ -57,10 +66,11 @@ describe('NavigationSettingsService', () => {
     const nodes = DEFAULT_NAVIGATION_SETTINGS.nodes.map((node) => ({ ...node }));
     nodes[0].position = 9;
 
-    await expect(service.updateSettings(nodes)).resolves.toMatchObject({ revision: 2, nodes });
+    const normalizedNodes = nodes.map((node) => ({ ...node, launcherVisible: true }));
+    await expect(service.updateSettings(nodes)).resolves.toMatchObject({ revision: 2, nodes: normalizedNodes });
     expect(findOneAndUpdate).toHaveBeenCalledWith(
       { key: 'navigation_settings' },
-      { key: 'navigation_settings', value: { revision: 2, nodes } },
+      { key: 'navigation_settings', value: { revision: 2, nodes: normalizedNodes } },
       { upsert: true, new: true, setDefaultsOnInsert: true },
     );
   });
