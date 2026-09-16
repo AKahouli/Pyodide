@@ -64,10 +64,13 @@ export class LogicalSearchEvaluationController {
   async prepareAdhoc(
     @CurrentUser() user: UserDocument,
     @Param('id') id: string,
-    @Body() body: { agentId: string; workspaceId?: string; modelId?: string; fileScope?: string[] },
+    @Body() body: { agentId: string; workspaceId?: string; modelId?: string; fileScope?: string[]; evaluatorAgentId: string; evaluatorModelId?: string },
   ) {
     if (!body?.agentId) {
       throw new BadRequestException('agentId is required.');
+    }
+    if (!body?.evaluatorAgentId) {
+      throw new BadRequestException('evaluatorAgentId is required.');
     }
     return this.service.prepareAdhoc(user._id.toString(), id, body);
   }

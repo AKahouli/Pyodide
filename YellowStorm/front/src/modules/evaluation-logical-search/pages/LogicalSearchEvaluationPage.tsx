@@ -29,11 +29,13 @@ export function LogicalSearchEvaluationPage(): JSX.Element {
   const agents = useAgents();
   const agentsLoading = useAgentsLoading();
   const [selectedAgentId, setSelectedAgentId] = useState<string>('');
+  const [selectedEvaluatorAgentId, setSelectedEvaluatorAgentId] = useState<string>('');
   const [workspaces, setWorkspaces] = useState<WorkspaceSummary[]>([]);
   const [workspacesLoading, setWorkspacesLoading] = useState(false);
   const [selectedWorkspaceId, setSelectedWorkspaceId] = useState<string>('');
   const [models, setModels] = useState<ModelOption[]>([]);
   const [selectedModelId, setSelectedModelId] = useState<string>('');
+  const [selectedEvaluatorModelId, setSelectedEvaluatorModelId] = useState<string>('');
   const [artifacts, setArtifacts] = useState<WorkspaceArtifact[]>([]);
   const [artifactsLoading, setArtifactsLoading] = useState(false);
   const [selectedFileIds, setSelectedFileIds] = useState<string[]>([]);
@@ -134,7 +136,7 @@ export function LogicalSearchEvaluationPage(): JSX.Element {
 
   const handleLaunch = useCallback(async () => {
     const targetId = selectedEvalId ?? evaluations[0]?.id;
-    if (!targetId || !selectedAgentId) return;
+    if (!targetId || !selectedAgentId || !selectedEvaluatorAgentId) return;
     setLaunching(true);
     setLaunchError(null);
     setRunningEvalId(targetId);
@@ -144,6 +146,8 @@ export function LogicalSearchEvaluationPage(): JSX.Element {
         workspaceId: selectedWorkspaceId || undefined,
         modelId: selectedModelId || undefined,
         fileScope: selectedFileIds.length > 0 ? selectedFileIds : undefined,
+        evaluatorAgentId: selectedEvaluatorAgentId,
+        evaluatorModelId: selectedEvaluatorModelId || undefined,
       });
       await evaluationLogicalSearchApi.run(targetId);
       refreshEvaluations();
@@ -154,7 +158,7 @@ export function LogicalSearchEvaluationPage(): JSX.Element {
       setRunningEvalId(null);
       refreshEvaluations();
     }
-  }, [selectedEvalId, selectedAgentId, selectedWorkspaceId, selectedModelId, selectedFileIds, evaluations, refreshEvaluations]);
+  }, [selectedEvalId, selectedAgentId, selectedEvaluatorAgentId, selectedWorkspaceId, selectedModelId, selectedEvaluatorModelId, selectedFileIds, evaluations, refreshEvaluations]);
 
   const handleRun = useCallback(async (id: string) => {
     setRunningEvalId(id);
@@ -350,6 +354,34 @@ export function LogicalSearchEvaluationPage(): JSX.Element {
               />
             </div>
 
+            {/* Evaluator Agent (required) - LLM Judge */}
+            <div className='space-y-1'>
+              <label className='text-sm font-medium'>
+                {t('adhoc.evaluatorAgent')} <span className='text-destructive'>*</span>
+              </label>
+              <SearchSelect
+                options={agents.map((a) => ({ value: a.id, label: a.name }))}
+                value={selectedEvaluatorAgentId}
+                onValueChange={setSelectedEvaluatorAgentId}
+                placeholder={agentsLoading ? 'Loading…' : t('adhoc.evaluatorAgentPlaceholder')}
+                searchPlaceholder={t('select.search')}
+                emptyText={t('select.noResults')}
+              />
+            </div>
+
+            {/* Evaluator Model (optional) */}
+            <div className='space-y-1'>
+              <label className='text-sm font-medium'>{t('adhoc.evaluatorModel')}</label>
+              <SearchSelect
+                options={models.map((m) => ({ value: m.id, label: m.label }))}
+                value={selectedEvaluatorModelId}
+                onValueChange={setSelectedEvaluatorModelId}
+                placeholder={t('adhoc.evaluatorModelPlaceholder')}
+                searchPlaceholder={t('select.search')}
+                emptyText={t('select.noResults')}
+              />
+            </div>
+
             {/* Files (optional, multi) */}
             {selectedWorkspaceId && (
               <div className='space-y-1'>
@@ -379,7 +411,7 @@ export function LogicalSearchEvaluationPage(): JSX.Element {
             {launchError && <p className='text-sm text-destructive'>{launchError}</p>}
             <Button
               onClick={handleLaunch}
-              disabled={!selectedAgentId || !selectedWorkspaceId || launching}
+              disabled={!selectedAgentId || !selectedEvaluatorAgentId || !selectedWorkspaceId || launching}
               className='w-full'
             >
               {launching ? t('adhoc.launching') : t('adhoc.launch')}

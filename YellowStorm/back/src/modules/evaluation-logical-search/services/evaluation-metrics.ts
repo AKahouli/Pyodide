@@ -67,6 +67,16 @@ const PDF_NAME_PATTERN = /([A-Za-z0-9][A-Za-z0-9_().&'-]*\.pdf)/gi;
 
 const PAGE_KEYWORDS = new Set(['page', 'page_number', 'page_num', 'pageno', 'page_no']);
 
+export interface EvaluationProgress {
+  done: number;
+  total: number;
+  currentIndex: number;
+  currentQueryId: string;
+  currentQuery: string;
+  startedAt: string;
+  updatedAt: string;
+}
+
 // ----------------------------------------------------------------
 // Text normalization / tokenization
 // ----------------------------------------------------------------

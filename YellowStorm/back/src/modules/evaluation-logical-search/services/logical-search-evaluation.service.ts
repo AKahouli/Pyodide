@@ -22,6 +22,7 @@ import {
   buildSummary,
   EvaluationQueryResult,
   EvaluationRunSummary,
+  EvaluationProgress,
 } from './evaluation-metrics';
 
 const ALLOWED_EXTENSIONS = ['.xlsx', '.csv'];
@@ -56,16 +57,6 @@ interface BenchmarkQuery {
   answer?: string;
   required_file?: unknown;
   page?: unknown;
-}
-
-export interface EvaluationProgress {
-  done: number;
-  total: number;
-  currentIndex: number;
-  currentQueryId: string;
-  currentQuery: string;
-  startedAt: string;
-  updatedAt: string;
 }
 
 function setDeepPath(target: Record<string, unknown>, path: string[], value: unknown): void {
@@ -301,7 +292,7 @@ export class LogicalSearchEvaluationService implements OnModuleInit {
   async prepareAdhoc(
     ownerId: string,
     evaluationId: string,
-    input: { agentId: string; workspaceId?: string; modelId?: string; fileScope?: string[] },
+    input: { agentId: string; workspaceId?: string; modelId?: string; fileScope?: string[]; evaluatorAgentId: string; evaluatorModelId?: string },
   ) {
     const evaluation = await this.getById(ownerId, evaluationId);
     if (evaluation.status === 'running' || evaluation.status === 'completed') {
@@ -310,13 +301,17 @@ export class LogicalSearchEvaluationService implements OnModuleInit {
       );
     }
 
-    const agentId = input.agentId?.trim() ?? '';
-    if (!agentId) {
+    const targetAgentId = input.agentId?.trim() ?? '';
+    if (!targetAgentId) {
       throw new BadRequestException('agentId is required.');
     }
-    const accessible = await this.agentService.findByIds([agentId], ownerId);
-    if (accessible.length === 0) {
-      throw new BadRequestException('Agent not found or not accessible.');
+    const evaluatorAgentId = input.evaluatorAgentId?.trim() ?? '';
+    if (!evaluatorAgentId) {
+      throw new BadRequestException('evaluatorAgentId is required.');
+    }
+    const accessible = await this.agentService.findByIds([targetAgentId, evaluatorAgentId], ownerId);
+    if (accessible.length < 2) {
+      throw new BadRequestException('One or both agents not found or not accessible.');
     }
     const workspaceId = input.workspaceId?.trim() ?? '';
     if (!workspaceId) {
@@ -328,20 +323,53 @@ export class LogicalSearchEvaluationService implements OnModuleInit {
     const benchmarkPayload = evaluation.queries as { queries?: unknown[] };
     const zipPath = join(runDir, 'dataset.zip');
 
-    const syntheticNode = {
-      id: 'eval-answer',
+    // Node 1: Target Agent - generates answer from question
+    const targetNode = {
+      id: 'eval-target',
       kind: 'step',
-      label: 'Answer',
+      label: 'Target Answer',
       modelId: input.modelId?.trim() || undefined,
       metadata: {
-        assignedAgentId: agentId,
+        assignedAgentId: targetAgentId,
         description: '',
       },
     };
+
+    // Node 2: Evaluator Agent (LLM Judge) - receives question + expected + target answer, outputs score JSON
+    const evaluatorNode = {
+      id: 'eval-judge',
+      kind: 'step',
+      label: 'LLM Judge',
+      modelId: input.evaluatorModelId?.trim() || undefined,
+      metadata: {
+        assignedAgentId: evaluatorAgentId,
+        description: '',
+      },
+    };
+
     const snapshot = {
-      nodes: [syntheticNode],
-      controlEdges: [],
-      dataBindings: [],
+      nodes: [targetNode, evaluatorNode],
+      controlEdges: [
+        {
+          id: 'edge-target-to-judge',
+          kind: 'default',
+          source: 'eval-target',
+          target: 'eval-judge',
+          routerLabel: '',
+          priority: 0,
+          sourceOutputPortId: '',
+          targetInputPortId: '',
+        },
+      ],
+      dataBindings: [
+        {
+          id: 'binding-target-output-to-judge-input',
+          sourceNodeId: 'eval-target',
+          sourceOutputPortId: 'output',
+          targetNodeId: 'eval-judge',
+          targetInputPortId: 'target_answer',
+        },
+      ],
       settings: {
         recursionLimit: 25,
         maxParallelism: 5,
@@ -354,7 +382,7 @@ export class LogicalSearchEvaluationService implements OnModuleInit {
       flow_id: `eval-flow-${evaluationId}`,
       owner_id: ownerId,
       snapshot,
-      input_context: { query: '' },
+      input_context: { query: '', expected_answer: '' },
       settings: { recursion_limit: 25, max_parallelism: 5 },
       seeded_task_outputs: [],
     };
@@ -362,18 +390,24 @@ export class LogicalSearchEvaluationService implements OnModuleInit {
       grpc_target: grpcTarget,
       grpc_secure: false,
       request_template_path: 'uploads/eval/' + evaluationId + '/request_template.json',
-      answer_node_id: 'eval-answer',
+      answer_node_id: 'eval-judge',
+      target_node_id: 'eval-target',
       benchmark_zip_path: zipPath,
       benchmark_queries_member: 'benchmark_queries.json',
       output_directory: join(runDir, 'outputs'),
       timeout_seconds: EVAL_TIMEOUT_SECONDS,
       query_path: ['input_context', 'query'],
-      additional_query_paths: [['snapshot', 'nodes', '0', 'metadata', 'description']],
+      additional_query_paths: [
+        ['snapshot', 'nodes', '0', 'metadata', 'description'],
+        ['input_context', 'expected_answer'],
+      ],
     };
     const adhocConfig = {
-      agentId,
+      agentId: targetAgentId,
+      evaluatorAgentId,
       workspaceId,
       modelId: input.modelId ?? null,
+      evaluatorModelId: input.evaluatorModelId ?? null,
       fileScope: input.fileScope ?? [],
       createdAt: new Date().toISOString(),
     };
@@ -404,12 +438,12 @@ export class LogicalSearchEvaluationService implements OnModuleInit {
       this.logger.error(`Failed to write ad-hoc evaluator inputs for ${evaluationId}: ${message}`);
       await this.repository.applyPrepare({
         id: evaluationId,
-        agentId,
+        agentId: targetAgentId,
         flowId: null,
         workspaceId: input.workspaceId ?? evaluation.workspaceId,
         executionId: null,
         modelId: input.modelId ?? null,
-        answerNodeId: 'eval-answer',
+        answerNodeId: 'eval-judge',
         status: 'failed',
         error: message,
       });
@@ -418,18 +452,19 @@ export class LogicalSearchEvaluationService implements OnModuleInit {
 
     const updated = await this.repository.applyPrepare({
       id: evaluationId,
-      agentId,
+      agentId: targetAgentId,
       flowId: null,
       workspaceId: input.workspaceId ?? evaluation.workspaceId,
       executionId: null,
       modelId: input.modelId ?? null,
-      answerNodeId: 'eval-answer',
+      answerNodeId: 'eval-judge',
       status: 'prepared',
     });
     return {
       evaluationId,
       runDir,
-      answerNodeId: 'eval-answer',
+      answerNodeId: 'eval-judge',
+      targetNodeId: 'eval-target',
       flowId: `eval-flow-${evaluationId}`,
       files: ['benchmark_queries.json', 'dataset.zip', 'request_template.json', 'config.json', 'adhoc-config.json'],
       status: updated?.status ?? 'prepared',
@@ -523,8 +558,12 @@ export class LogicalSearchEvaluationService implements OnModuleInit {
             ownerId,
             snapshot,
             inputContext: { query: queryText },
-            answerNodeId: answerNodeId ?? undefined,
+            answerNodeId: 'eval-judge', // answer_node_id is eval-judge in new architecture
           });
+
+          const targetAnswer = runResult.targetAnswer ?? runResult.generatedAnswer;
+          const judgeScore = runResult.judgeScore;
+          const judgeReasoning = runResult.judgeReasoning;
 
           results.push(buildQueryResult({
             queryId,
@@ -532,13 +571,19 @@ export class LogicalSearchEvaluationService implements OnModuleInit {
             expectedAnswer: benchmarkQuery.answer ?? '',
             requiredFile: benchmarkQuery.required_file ?? null,
             page: benchmarkQuery.page ?? null,
-            generatedAnswer: runResult.generatedAnswer,
+            generatedAnswer: targetAnswer,
             status: runResult.status,
             durationMs: runResult.durationMs,
             error: runResult.error,
             toolCalls: runResult.toolCalls,
           }));
-          this.logger.log(`[${queryId}] ${runResult.status} in ${String(runResult.durationMs)}ms`);
+          // Add judge fields to the last result
+          if (results.length > 0) {
+            const lastResult = results[results.length - 1];
+            if (judgeScore !== undefined) (lastResult as any).judgeScore = judgeScore;
+            if (judgeReasoning !== undefined) (lastResult as any).judgeReasoning = judgeReasoning;
+          }
+          this.logger.log(`[${queryId}] ${runResult.status} in ${String(runResult.durationMs)}ms${judgeScore !== undefined ? ` | judge: ${judgeScore}` : ''}`);
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error);
           const durationMs = Date.now() - startedAt;

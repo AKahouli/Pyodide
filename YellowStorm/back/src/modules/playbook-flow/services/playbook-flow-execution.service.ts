@@ -89,7 +89,10 @@ import { hasRequiredInputValue, readOwnPath } from '../utils/playbook-managed-in
 
 export interface EvaluationQueryRunResult {
   status: 'completed' | 'failed';
-  generatedAnswer: string;
+  generatedAnswer: string;          // réponse de l'agent cible (eval-target)
+  targetAnswer: string;             // alias pour compatibilité
+  judgeScore?: number;              // score 0-1 du LLM Judge
+  judgeReasoning?: string;          // justification du LLM Judge
   toolCalls: Array<{ nodeId: string; iteration: number; trace: unknown[] }>;
   durationMs: number;
   error: string | null;
@@ -1888,14 +1891,16 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
     // Stream consumption
     const call = this.runRuntime(request);
     return new Promise<EvaluationQueryRunResult>((resolve) => {
-      let generatedAnswer = '';
+      let targetAnswer = '';
+      let judgeScore: number | undefined;
+      let judgeReasoning: string | undefined;
       const tracesByNode = new Map<string, { nodeId: string; iteration: number; trace: unknown[] }>();
       let status: 'completed' | 'failed' = 'failed';
       let error: string | null = null;
       let resolved = false;
       const timeoutMs = 600_000;
       let timer: NodeJS.Timeout;
-      const finalize = () => { if (!resolved) { resolved = true; clearTimeout(timer); resolve({ status, generatedAnswer, toolCalls: [...tracesByNode.values()], durationMs: Date.now() - startedAt, error }); } };
+      const finalize = () => { if (!resolved) { resolved = true; clearTimeout(timer); resolve({ status, generatedAnswer: targetAnswer, targetAnswer, judgeScore, judgeReasoning, toolCalls: [...tracesByNode.values()], durationMs: Date.now() - startedAt, error }); } };
       timer = setTimeout(() => {
         status = 'failed';
         error = `Evaluation query timed out after ${String(timeoutMs / 1000)}s`;
@@ -1926,8 +1931,8 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
             }
           }
 
-          // Answer extraction (mirrors python evaluator's _answer_from_payload: output → raw_llm_output → text)
-          if (answerNodeId && nodeId === answerNodeId && (eventType === 'NodeCompleted' || eventType === 'OUTPUT' || eventType === 'ExecutionCompleted')) {
+          // Capture eval-target answer (first node in chain)
+          if (nodeId === 'eval-target' && (eventType === 'NodeCompleted' || eventType === 'OUTPUT' || eventType === 'ExecutionCompleted')) {
             const nodeExecution = (payload.node_execution && typeof payload.node_execution === 'object') ? payload.node_execution as Record<string, unknown> : null;
             const outputs = nodeExecution?.outputs || payload.outputs || null;
             let candidate: unknown = null;
@@ -1943,7 +1948,37 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
               candidate = payload.output || payload.raw_llm_output || payload.text || null;
             }
             const extracted = extractEvaluationAnswer(candidate);
-            if (extracted) generatedAnswer = extracted;
+            if (extracted) targetAnswer = extracted;
+          }
+
+          // Capture eval-judge answer (second node - LLM Judge)
+          if (nodeId === 'eval-judge' && (eventType === 'NodeCompleted' || eventType === 'OUTPUT' || eventType === 'ExecutionCompleted')) {
+            const nodeExecution = (payload.node_execution && typeof payload.node_execution === 'object') ? payload.node_execution as Record<string, unknown> : null;
+            const outputs = nodeExecution?.outputs || payload.outputs || null;
+            let candidate: unknown = null;
+            if (outputs) {
+              if (typeof outputs === 'object' && outputs !== null && !Array.isArray(outputs)) {
+                const outObj = outputs as Record<string, unknown>;
+                candidate = outObj.text || outObj.answer || outObj.output || outputs;
+              } else {
+                candidate = outputs;
+              }
+            }
+            if (!candidate || typeof candidate === 'object') {
+              candidate = payload.output || payload.raw_llm_output || payload.text || null;
+            }
+            const extracted = extractEvaluationAnswer(candidate);
+            if (extracted) {
+              // Try to parse JSON { score: number, reasoning: string }
+              try {
+                const parsed = JSON.parse(extracted);
+                if (typeof parsed.score === 'number') judgeScore = parsed.score;
+                if (typeof parsed.reasoning === 'string') judgeReasoning = parsed.reasoning;
+              } catch {
+                // If not JSON, treat as reasoning text
+                judgeReasoning = extracted;
+              }
+            }
           }
 
           if (eventType === 'ExecutionCompleted') status = 'completed';
