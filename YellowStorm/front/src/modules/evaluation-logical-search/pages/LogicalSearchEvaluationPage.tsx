@@ -324,7 +324,9 @@ export function LogicalSearchEvaluationPage(): JSX.Element {
 
             {/* Workspace (optional) */}
             <div className='space-y-1'>
-              <label className='text-sm font-medium'>{t('adhoc.workspace')}</label>
+              <label className='text-sm font-medium'>
+                {t('adhoc.workspace')} <span className='text-destructive'>*</span>
+              </label>
               <SearchSelect
                 options={workspaces.map((w) => ({ value: w.id, label: w.name }))}
                 value={selectedWorkspaceId}
@@ -377,7 +379,7 @@ export function LogicalSearchEvaluationPage(): JSX.Element {
             {launchError && <p className='text-sm text-destructive'>{launchError}</p>}
             <Button
               onClick={handleLaunch}
-              disabled={!selectedAgentId || launching}
+              disabled={!selectedAgentId || !selectedWorkspaceId || launching}
               className='w-full'
             >
               {launching ? t('adhoc.launching') : t('adhoc.launch')}

@@ -63,7 +63,7 @@
     "agent": "Agent",
     "agentPlaceholder": "Select an agent…",
     "workspace": "Workspace",
-    "workspacePlaceholder": "Select a workspace (optional)…",
+    "workspacePlaceholder": "Select a workspace…",
     "model": "LLM Model",
     "modelPlaceholder": "Select a model (optional)…",
     "files": "Files (optional)",

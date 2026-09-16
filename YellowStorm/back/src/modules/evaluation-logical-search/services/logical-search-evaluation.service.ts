@@ -318,6 +318,10 @@ export class LogicalSearchEvaluationService implements OnModuleInit {
     if (accessible.length === 0) {
       throw new BadRequestException('Agent not found or not accessible.');
     }
+    const workspaceId = input.workspaceId?.trim() ?? '';
+    if (!workspaceId) {
+      throw new BadRequestException('workspaceId is required for ad-hoc evaluation.');
+    }
 
     const grpcTarget = this.config.get<string>('playbook-flow.grpcUrl') ?? 'localhost:50051';
     const runDir = join(process.cwd(), 'uploads', 'eval', evaluationId);
@@ -342,7 +346,7 @@ export class LogicalSearchEvaluationService implements OnModuleInit {
         recursionLimit: 25,
         maxParallelism: 5,
       },
-      workspaces: input.workspaceId ? [input.workspaceId] : [],
+      workspaces: [workspaceId],
     };
 
     const requestTemplate = {
@@ -368,7 +372,7 @@ export class LogicalSearchEvaluationService implements OnModuleInit {
     };
     const adhocConfig = {
       agentId,
-      workspaceId: input.workspaceId ?? null,
+      workspaceId,
       modelId: input.modelId ?? null,
       fileScope: input.fileScope ?? [],
       createdAt: new Date().toISOString(),
