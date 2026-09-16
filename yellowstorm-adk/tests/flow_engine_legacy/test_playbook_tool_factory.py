@@ -1206,11 +1206,8 @@ def test_connector_mcp_artifacts_require_publication_action_and_current_executio
             "ceph_path": "owner-1/system_execution-1/script.py",
             "path": "/tmp/script.py",
         },
-        "send_file_to_user": {
-            "ceph_path": "owner-1/system_execution-1/report.pdf",
-            "path": "/tmp/report.pdf",
-        },
-        "file_download_base64": "cGRm",
+        "send_file_to_user": "File sent successfully",
+        "file_download_base64": {"result": "cGRm", "text": "cGRm"},
     }
     captured_headers = []
 
@@ -1254,7 +1251,8 @@ def test_connector_mcp_artifacts_require_publication_action_and_current_executio
     )
 
     for tool in tools:
-        asyncio.run(tool.ainvoke({"params": {}}))
+        params = {"path": "/tmp/report.pdf"} if tool.name.endswith("send_file_to_user") else {}
+        asyncio.run(tool.ainvoke({"params": params}))
 
     components = collector.get_and_clear()
     assert [component["data"]["filename"] for component in components] == ["report.pdf"]
@@ -1291,6 +1289,42 @@ def test_connector_mcp_fails_closed_without_download_action(
 
     asyncio.run(tool.ainvoke({"params": {}}))
 
+    assert collector.get_and_clear() == []
+
+
+def test_connector_mcp_does_not_publish_after_send_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    actions = []
+
+    async def fake_call_mcp_tool(_transport, _url, _config, action, _params, **_kwargs):
+        actions.append(action)
+        return f"Connector action '{action}' failed"
+
+    monkeypatch.setattr("src.flow_engine.mcp.call_mcp_tool", fake_call_mcp_tool)
+    collector = ToolResultCollector()
+    tools = _create_connector_mcp_tools(
+        [{
+            "connector_id": "code-1",
+            "connector_name": "Code Interpreter",
+            "connector_slug": "code-interpreter",
+            "mcp_transport_type": "streamable_http",
+            "mcp_server_url": "https://example.com/mcp",
+            "actions": [
+                {"action_key": "send_file_to_user", "label": "Send"},
+                {"action_key": "file_download_base64", "label": "Download"},
+            ],
+        }],
+        collector,
+        user_id="owner-1",
+        execution_id="execution-1",
+    )
+
+    send_tool = next(tool for tool in tools if tool.name.endswith("send_file_to_user"))
+    result = asyncio.run(send_tool.ainvoke({"params": {"path": "/tmp/report.pdf"}}))
+
+    assert result == "Connector action 'send_file_to_user' failed"
+    assert actions == ["send_file_to_user"]
     assert collector.get_and_clear() == []
 
 

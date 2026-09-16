@@ -12,6 +12,7 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { ApiTags, ApiOperation } from '@nestjs/swagger';
+import { Types } from 'mongoose';
 import { Public } from '../../auth/decorators/public.decorator';
 import { InternalServiceGuard } from '../../auth/guards/internal-service.guard';
 import { AgentCrudActorGuard, actingUserIdFrom } from '../../auth/guards/agent-crud-actor.guard';
@@ -21,6 +22,8 @@ import { ModelsService } from '../../models/models.service';
 import { CreateAgentDto, UpdateAgentDto } from '../dto';
 import { InternalCreateAgentDto } from '../dto/internal-create-agent.dto';
 import { IAgentResponse } from '../interfaces/agent.interface';
+import { BadRequestException } from '@modules/exceptions';
+import { ErrorCode } from '@modules/exceptions/constants/error-codes';
 
 /**
  * Trusted service-to-service agent CRUD surface for the mcp-agent MCP server
@@ -76,7 +79,7 @@ export class AgentCrudInternalController {
     const createDto = {
       name: dto.name,
       slug: dto.name,
-      agentType: dto.agentType,
+      agentType: await this.resolveAgentTypeId(dto.agentType),
       role: dto.role,
       description: dto.description,
       temperature: dto.temperature,
@@ -86,6 +89,17 @@ export class AgentCrudInternalController {
       tools: dto.tools,
     } as CreateAgentDto;
     return this.agentService.createPersonal(actingUserIdFrom(request.headers), createDto);
+  }
+
+  /** Language models work with slugs more reliably than ObjectIds; accept both. */
+  private async resolveAgentTypeId(value: string): Promise<string> {
+    const trimmed = value.trim();
+    if (Types.ObjectId.isValid(trimmed)) return trimmed;
+    const agentType = await this.agentTypeService.findBySlug(trimmed.toLowerCase());
+    if (!agentType) {
+      throw new BadRequestException(ErrorCode.AGENT_TYPE_NOT_FOUND);
+    }
+    return agentType.id;
   }
 
   @Patch('agents/:id')

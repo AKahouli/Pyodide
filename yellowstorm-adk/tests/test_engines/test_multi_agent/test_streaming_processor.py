@@ -581,9 +581,14 @@ class TestStreamingEventProcessor:
   async def test_manager_emits_artifact_for_file_in_conversation_run(self, processor):
     queue = AsyncMock()
     queue.include_tool_results = True
+    sandbox_path = "/home/ubuntu/ai_two_sentences.pdf"
     result = {
-      "path": "/home/ubuntu/ai_two_sentences.pdf",
-      "ceph_path": "user-1/system_conversation-1/ai_two_sentences.pdf",
+      "result": json.dumps({
+        "path": sandbox_path,
+        "ceph_path": "user-1/system_conversation-1/ai_two_sentences.pdf",
+        "relative_path": "artifacts/main/ai_two_sentences.pdf",
+      }),
+      "text": "File sent",
     }
 
     def event_for(part):
@@ -596,7 +601,7 @@ class TestStreamingEventProcessor:
     async def fake_stream():
       yield event_for(SimpleNamespace(
         text=None,
-        function_call=SimpleNamespace(id="call-file", name="code_interpreter_send_file_to_user", args={"path": result["path"]}),
+        function_call=SimpleNamespace(id="call-file", name="code_interpreter_send_file_to_user", args={"path": sandbox_path}),
         function_response=None,
       ))
       yield event_for(SimpleNamespace(

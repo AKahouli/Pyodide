@@ -13,7 +13,7 @@ import type { CreatePlaybookFlowDto } from '../dto/create-playbook-flow.dto';
 
 const TERMINAL_STATUSES: PlaybookIntentConstructionStatus[] = ['completed', 'failed', 'cancelled'];
 const RETENTION_MS = 24 * 60 * 60 * 1000;
-const WORKER_LEASE_MS = 5 * 60 * 1000;
+export const PLAYBOOK_ASSISTANT_WORKER_LEASE_MS = 5 * 60 * 1000;
 const RECOVERY_INTERVAL_MS = 30 * 1000;
 const MAX_EVENT_BYTES = 1024 * 1024;
 const MAX_OPERATION_EVENT_BYTES = 8 * 1024 * 1024;
@@ -144,7 +144,17 @@ export class PlaybookAssistantOperationService implements OnModuleInit, OnModule
         createdAt: new Date().toISOString(),
       } as PlaybookIntentConstructionEvent;
       const operation = await this.operationModel.findOneAndUpdate(
-        { operationId, playbookId, ownerId, lastSequence: current.lastSequence, status: { $nin: TERMINAL_STATUSES } },
+        {
+          operationId,
+          playbookId,
+          ownerId,
+          lastSequence: current.lastSequence,
+          status: { $nin: TERMINAL_STATUSES },
+          ...(boundedEvent.type === 'cancelled' ? {} : {
+            workerId: this.workerId,
+            $expr: { $gt: ['$leaseExpiresAt', '$$NOW'] },
+          }),
+        },
         {
           $inc: { lastSequence: 1, eventBytes },
           $push: { events: persisted },
@@ -185,6 +195,26 @@ export class PlaybookAssistantOperationService implements OnModuleInit, OnModule
       disposition: operation.disposition ?? 'pending',
       committedRevision: operation.committedRevision ?? null,
     };
+  }
+
+  async renewWorkerLease(playbookId: string, ownerId: string, operationId: string): Promise<boolean> {
+    const result = await this.operationModel.updateOne(
+      {
+        operationId,
+        playbookId,
+        ownerId,
+        workerId: this.workerId,
+        status: { $in: ['queued', 'running'] },
+        $expr: { $gt: ['$leaseExpiresAt', '$$NOW'] },
+      },
+      [{
+        $set: {
+          leaseExpiresAt: { $dateAdd: { startDate: '$$NOW', unit: 'millisecond', amount: PLAYBOOK_ASSISTANT_WORKER_LEASE_MS } },
+          expiresAt: { $dateAdd: { startDate: '$$NOW', unit: 'millisecond', amount: RETENTION_MS } },
+        },
+      }],
+    ).exec();
+    return result.modifiedCount === 1;
   }
 
   async *stream(playbookId: string, ownerId: string, operationId: string, afterSequence: number): AsyncGenerator<PlaybookIntentConstructionEvent> {
@@ -467,6 +497,6 @@ export class PlaybookAssistantOperationService implements OnModuleInit, OnModule
   }
 
   private leaseExpiresAt(): Date {
-    return new Date(Date.now() + WORKER_LEASE_MS);
+    return new Date(Date.now() + PLAYBOOK_ASSISTANT_WORKER_LEASE_MS);
   }
 }

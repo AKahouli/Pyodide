@@ -42,7 +42,7 @@ const FEATURE_ICONS = {
   workspace: Layers3,
   playbook: Workflow,
   governance: ShieldCheck,
-  appMarketplace: Store,
+  appBuilder: Store,
   worky: Sparkles,
   agents: Bot,
   semanticModel: Network,

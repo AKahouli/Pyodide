@@ -12,6 +12,10 @@ def test_decode_artifact_base64_accepts_bounded_content() -> None:
     assert decode_artifact_base64(base64.b64encode(b"pdf").decode("ascii")) == b"pdf"
 
 
+def test_decode_artifact_base64_accepts_normalized_mcp_result() -> None:
+    assert decode_artifact_base64({"result": base64.b64encode(b"pdf").decode("ascii"), "text": "suppressed"}) == b"pdf"
+
+
 @pytest.mark.parametrize("payload", ["", "not-base64!"])
 def test_decode_artifact_base64_rejects_invalid_content(payload: str) -> None:
     with pytest.raises(ValueError):

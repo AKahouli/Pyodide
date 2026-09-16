@@ -8,6 +8,13 @@ from starlette.types import ASGIApp, Receive, Scope, Send
 
 _IDENTIFIER = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,199}$")
 
+# Fallbacks for optional identity fields: the acting user id is the only
+# security-relevant identity (it arrives from the bearer-authenticated trusted
+# ingress); agent/conversation/correlation are traceability aids.
+_UNKNOWN_AGENT = "unknown-agent"
+_UNKNOWN_CONVERSATION = "unknown-conversation"
+_UNKNOWN_CORRELATION = "unknown-correlation"
+
 
 @dataclass(frozen=True)
 class PlatformActorContext:
@@ -39,6 +46,12 @@ def _has_valid_bearer_auth(headers: list[tuple[bytes, bytes]], ingress_token: st
     )
 
 
+def _identity_value(headers: dict[bytes, bytes], name: bytes) -> str:
+    """Return a present, well-formed identity value or '' (treated as absent)."""
+    value = headers.get(name, b"").decode("utf-8", errors="replace").strip()
+    return value if value and _IDENTIFIER.fullmatch(value) else ""
+
+
 class TrustedIdentityMiddleware:
     def __init__(self, app: ASGIApp, ingress_token: str) -> None:
         self.app = app
@@ -54,18 +67,7 @@ class TrustedIdentityMiddleware:
             return
 
         raw_headers = scope.get("headers", [])
-        headers = {key.lower(): value for key, value in raw_headers}
-        values = {
-            "user_id": headers.get(b"x-yellowstorm-user-id", b"").decode("utf-8", errors="replace").strip(),
-            "agent_id": headers.get(b"x-yellowstorm-agent-id", b"").decode("utf-8", errors="replace").strip(),
-            "conversation_id": headers.get(b"x-yellowstorm-conversation-id", b"").decode("utf-8", errors="replace").strip(),
-            "correlation_id": headers.get(b"x-correlation-id", b"").decode("utf-8", errors="replace").strip(),
-        }
-        invalid_identity = any(
-            value and not _IDENTIFIER.fullmatch(value)
-            for value in values.values()
-        )
-        if not _has_valid_bearer_auth(raw_headers, self.ingress_token) or invalid_identity:
+        if not _has_valid_bearer_auth(raw_headers, self.ingress_token):
             await send({
                 "type": "http.response.start",
                 "status": 401,
@@ -74,19 +76,25 @@ class TrustedIdentityMiddleware:
             await send({"type": "http.response.body", "body": b'{"error":"unauthorized"}'})
             return
 
-        complete_actor = all(values[key] for key in (
-            "user_id",
-            "agent_id",
-            "conversation_id",
-            "correlation_id",
-        ))
+        headers = {key.lower(): value for key, value in raw_headers}
+        user_id = headers.get(b"x-yellowstorm-user-id", b"").decode("utf-8", errors="replace").strip()
+        if user_id and not _IDENTIFIER.fullmatch(user_id):
+            # The acting user drives authorization; a malformed value is rejected.
+            await send({
+                "type": "http.response.start",
+                "status": 401,
+                "headers": [(b"content-type", b"application/json")],
+            })
+            await send({"type": "http.response.body", "body": b'{"error":"unauthorized"}'})
+            return
+
         context = PlatformActorContext(
-            user_id=values["user_id"],
-            agent_id=values["agent_id"],
-            conversation_id=values["conversation_id"],
-            correlation_id=values["correlation_id"],
-        ) if complete_actor else None
-        user_token = acting_user_id.set(values["user_id"] or None)
+            user_id=user_id,
+            agent_id=_identity_value(headers, b"x-yellowstorm-agent-id") or _UNKNOWN_AGENT,
+            conversation_id=_identity_value(headers, b"x-yellowstorm-conversation-id") or _UNKNOWN_CONVERSATION,
+            correlation_id=_identity_value(headers, b"x-correlation-id") or _UNKNOWN_CORRELATION,
+        ) if user_id else None
+        user_token = acting_user_id.set(user_id or None)
         actor_token = actor_context.set(context)
         try:
             await self.app(scope, receive, send)

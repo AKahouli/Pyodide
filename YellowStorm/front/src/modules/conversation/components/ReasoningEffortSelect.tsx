@@ -1,10 +1,9 @@
 import { ShieldCheck } from 'lucide-react';
 import { PromptInputButton } from '@/components/ai-elements/prompt-input';
-import { ReasoningEffortSelector } from '@/components/ai-elements/reasoning-effort-selector';
 import { cn } from '@/lib/utils';
 import { useDefaultModel, useModels } from '@/modules/models';
 import { useModuleTranslation } from '@/modules/localization';
-import { useSelectedModelId, useSelectedReasoningEffort, useSetSelectedReasoningEffort } from '../store';
+import { useSelectedModelId, useSelectedReasoningEffort } from '../store';
 import { useConversationUiStore } from '../uiStore';
 
 interface ReasoningEffortState {
@@ -33,25 +32,6 @@ export function useReasoningEffortState(): ReasoningEffortState {
     : selectedModel?.reasoning?.defaultEffort;
 
   return { efforts, effectiveEffort };
-}
-
-/**
- * Reasoning-effort dropdown for composers (conversation home, project page).
- * Renders nothing when the active model exposes no reasoning efforts.
- */
-export function ReasoningEffortSelect() {
-  const { t } = useModuleTranslation('conversation');
-  const setSelectedReasoningEffort = useSetSelectedReasoningEffort();
-  const { efforts, effectiveEffort } = useReasoningEffortState();
-
-  if (efforts.length === 0) return null;
-
-  return <ReasoningEffortSelector
-    efforts={efforts}
-    value={effectiveEffort}
-    onValueChange={setSelectedReasoningEffort}
-    label={t('input.reasoning.label')}
-  />;
 }
 
 export function ReliabilityCheckToggle() {

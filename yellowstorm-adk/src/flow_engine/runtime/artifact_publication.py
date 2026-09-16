@@ -16,6 +16,8 @@ _ARTIFACT_ID_RE = re.compile(r"^[a-f0-9]{32}$")
 
 
 def decode_artifact_base64(payload: Any) -> bytes:
+    if isinstance(payload, dict):
+        payload = payload.get("result")
     if not isinstance(payload, str) or not payload:
         raise ValueError("Artifact download returned no data")
     max_encoded_length = 4 * ((MAX_ARTIFACT_BYTES + 2) // 3)

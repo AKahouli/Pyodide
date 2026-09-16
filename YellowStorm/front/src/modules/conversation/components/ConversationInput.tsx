@@ -1,11 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef } from 'react';
 import { toast } from 'sonner';
-import { BrainCircuit, ChevronDown, X, Reply } from 'lucide-react';
+import { X, Reply } from 'lucide-react';
 import Input from '@/components/ai-elements/input';
 import { Button } from '@/components/ui/button';
-import { PromptInputButton } from '@/components/ai-elements/prompt-input';
 import type { PromptInputMessage } from '@/components/ai-elements/prompt-input';
-import { useConversationStore, useIsAwaitingFirstChunk, useInputDisabled, useReplyingToMessage, useSelectedWorkspaceIds, useSetSelectedWorkspaceIds, useSelectedSemanticModelId, useDeepSearchEnabled, useSelectedModelId, useSelectedReasoningEffort, useSetSelectedReasoningEffort, useWebConnectorAccessEnabled } from '../store';
+import { useConversationStore, useIsAwaitingFirstChunk, useInputDisabled, useReplyingToMessage, useSelectedWorkspaceIds, useSetSelectedWorkspaceIds, useSelectedSemanticModelId, useDeepSearchEnabled, useSelectedModelId, useSelectedReasoningEffort, useWebConnectorAccessEnabled } from '../store';
 import { UsageLimitBanner } from '@/modules/usage';
 import { useUsage } from '@/modules/usage/UsageContext';
 import { useConversationFileUpload } from '../hooks/useConversationFileUpload';
@@ -18,7 +17,6 @@ import { ContextMeter } from './ContextMeter';
 import { ReliabilityCheckToggle } from './ReasoningEffortSelect';
 import { WebSearchConnectorToggle } from './WebSearchConnectorToggle';
 import { useDefaultModel, useModels } from '@/modules/models';
-import { DropdownMenu, DropdownMenuContent, DropdownMenuLabel, DropdownMenuRadioGroup, DropdownMenuRadioItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 
 interface ConversationInputProps {
   conversationId: string;
@@ -51,7 +49,6 @@ export function ConversationInput({ conversationId }: ConversationInputProps) {
   const webConnectorAccessEnabled = useWebConnectorAccessEnabled();
   const selectedModelId = useSelectedModelId();
   const selectedReasoningEffort = useSelectedReasoningEffort();
-  const setSelectedReasoningEffort = useSetSelectedReasoningEffort();
   const models = useModels();
   const defaultModel = useDefaultModel();
   const selectedModel = models.find((model) => model.id === selectedModelId) ?? defaultModel ?? models[0];
@@ -278,33 +275,11 @@ export function ConversationInput({ conversationId }: ConversationInputProps) {
         onWorkspaceSelectionChange={persistWorkspaceSelection}
         preserveWorkspaceSelectionOnSubmit
         showModelSelector={!runtimeManaged}
+        showReasoningEffort={!runtimeManaged && !hasStickyTaggedAgents}
         governedMode={runtimeManaged}
         enableTeamMentions={!runtimeManaged}
         extraTools={
           <>
-            {!governedMode && !platformCopilot && !hasStickyTaggedAgents && reasoningEfforts.length > 0 && (
-              <DropdownMenu>
-                <DropdownMenuTrigger asChild>
-                  <PromptInputButton type='button' aria-label={t('input.reasoning.label')}>
-                    <BrainCircuit className='h-4 w-4' />
-                    <span className='hidden sm:inline'>
-                      {reasoningEfforts.find((effort) => effort.id === effectiveReasoningEffort)?.name ?? t('input.reasoning.label')}
-                    </span>
-                    <ChevronDown className='h-3 w-3 opacity-60' />
-                  </PromptInputButton>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align='start'>
-                  <DropdownMenuLabel>{t('input.reasoning.label')}</DropdownMenuLabel>
-                  <DropdownMenuRadioGroup value={effectiveReasoningEffort ?? undefined} onValueChange={setSelectedReasoningEffort}>
-                    {reasoningEfforts.map((effort) => (
-                      <DropdownMenuRadioItem key={effort.id} value={effort.id} title={effort.description}>
-                        {effort.name}
-                      </DropdownMenuRadioItem>
-                    ))}
-                  </DropdownMenuRadioGroup>
-                </DropdownMenuContent>
-              </DropdownMenu>
-            )}
             {!runtimeManaged && <WebSearchConnectorToggle />}
             <ReliabilityCheckToggle />
           </>

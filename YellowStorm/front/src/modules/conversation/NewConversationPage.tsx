@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router-dom';
 import { toast } from 'sonner';
+import { readLibraryDraft } from './utils/library-draft';
 import Input from '@/components/ai-elements/input';
 import type { PromptInputMessage } from '@/components/ai-elements/prompt-input';
 import { useUsage } from '@/modules/usage/UsageContext';
@@ -11,7 +12,7 @@ import {
   useSelectedSemanticModelId,
   useWebConnectorAccessEnabled,
 } from './store';
-import { ReasoningEffortSelect, ReliabilityCheckToggle, useReasoningEffortState } from './components/ReasoningEffortSelect';
+import { ReliabilityCheckToggle, useReasoningEffortState } from './components/ReasoningEffortSelect';
 import { useConversationFileUpload } from './hooks/useConversationFileUpload';
 import { useAllowedUploadExtensions } from '@/modules/workspace/hooks/useAllowedUploadExtensions';
 import { useModuleTranslation } from '@/modules/localization';
@@ -26,10 +27,12 @@ import type { Conversation } from './types';
 import { ConversationHomePanels } from './components/ConversationHomePanels';
 import { ConversationScopeHeader } from './components/ConversationScopeHeader';
 import { HomePromptSuggestions } from './components/HomePromptSuggestions';
+import { useHomeMotion } from './hooks/useHomeMotion';
 import './conversation-home.css';
 import './conversation-home-motion.css';
 
 export function NewConversationPage() {
+  const homeMotion = useHomeMotion();
   const { accept } = useAllowedUploadExtensions();
   const createConversation = useConversationStore((s) => s.createConversation);
   const updateConversation = useConversationStore((s) => s.updateConversation);
@@ -40,6 +43,8 @@ export function NewConversationPage() {
   const selectedSemanticModelId = useSelectedSemanticModelId();
   const webConnectorAccessEnabled = useWebConnectorAccessEnabled();
   const navigate = useNavigate();
+  const location = useLocation();
+  const libraryDraft = readLibraryDraft(location.state);
   const [isSending, setIsSending] = useState(false);
   const [silentConvId, setSilentConvId] = useState<string | null>(null);
   const [silentConversation, setSilentConversation] = useState<Conversation | null>(null);
@@ -223,11 +228,22 @@ export function NewConversationPage() {
   };
 
   return (
-      <div className='conversation-home'>
+      <div className='conversation-home' data-motion={homeMotion.enabled ? 'on' : 'off'}>
         <div className='conversation-home-content'>
           <header className='conversation-home-greeting'>
+            <div className='conversation-home-signature' aria-hidden='true'>
+              <svg viewBox='0 0 120 80' fill='none'>
+                <circle className='home-signature-dot' cx='24' cy='40' r='8' />
+                <path className='home-signature-stroke' d='M44 58 66 22' strokeWidth='15' strokeLinecap='round' />
+                <path className='home-signature-echo' d='M76 58 98 22' strokeWidth='2' strokeLinecap='round' />
+              </svg>
+            </div>
             <h1>{t(greetingKey, { name: displayName })}</h1>
             <p>{t('home.subtitle')}</p>
+            <button type='button' className='conversation-home-motion-toggle' aria-pressed={homeMotion.enabled} onClick={homeMotion.toggle}>
+              <span aria-hidden='true' className='home-motion-indicator'><span /><span /><span /></span>
+              {t('home.motion.label')}
+            </button>
           </header>
 
           <div className='conversation-home-compose-area'>
@@ -242,7 +258,10 @@ export function NewConversationPage() {
               onRetry={() => void refetchGovernedScopes()}
             />
             <Input
-              draftKey={`${user?.id ?? 'anonymous'}:conversation:new`}
+              key={libraryDraft?.key ?? 'new'}
+              initialInput={libraryDraft ? `@${libraryDraft.name} ${libraryDraft.text}` : undefined}
+              initialMention={presentationScope ? undefined : libraryDraft}
+              draftKey={`${user?.id ?? 'anonymous'}:conversation:new${libraryDraft ? ':' + libraryDraft.key : ''}`}
               onSubmit={handleSubmit}
               status={isSending ? 'submitted' : 'ready'}
               disabled={isSending || inputDisabled || isLimitExceeded}
@@ -260,7 +279,7 @@ export function NewConversationPage() {
               showModelSelector={!presentationScope}
               governedMode={Boolean(presentationScope)}
               enableTeamMentions={!presentationScope}
-              extraTools={presentationScope ? <ReliabilityCheckToggle /> : <><ReasoningEffortSelect /><WebSearchConnectorToggle /><ReliabilityCheckToggle /></>}
+              extraTools={presentationScope ? <ReliabilityCheckToggle /> : <><WebSearchConnectorToggle /><ReliabilityCheckToggle /></>}
               belowTextarea={<>
                 <HomePromptSuggestions scopeName={presentationScope?.name} disabled={inputDisabled || isLimitExceeded || isUploading || isSending} />
                 <ComposerSuggestionChips fetchDisabled={inputDisabled || isLimitExceeded || isUploading || isSending} />

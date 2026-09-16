@@ -3,7 +3,7 @@ import { screen, waitFor } from '@testing-library/react';
 import { renderWithProviders } from '@/test/renderWithProviders';
 import { DEFAULT_NAVIGATION_SETTINGS } from '../navigation';
 import { getNavigationSettings, updateNavigationSettings } from '../api';
-import { NavigationSettingsCard, validParentGroups } from './NavigationSettingsCard';
+import { moveBefore, NavigationSettingsCard, validParentGroups } from './NavigationSettingsCard';
 
 vi.mock('../api', () => ({
   getNavigationSettings: vi.fn(),
@@ -22,6 +22,7 @@ vi.mock('@/modules/localization', async (importOriginal) => {
 
 describe('NavigationSettingsCard', () => {
   beforeEach(() => {
+    vi.clearAllMocks();
     vi.mocked(getNavigationSettings).mockResolvedValue(structuredClone(DEFAULT_NAVIGATION_SETTINGS));
     vi.mocked(updateNavigationSettings).mockImplementation(async (value) => ({ ...value, revision: value.revision + 1 }));
   });
@@ -53,5 +54,22 @@ describe('NavigationSettingsCard', () => {
     expect(ids).not.toContain('knowledge');
     expect(ids).not.toContain('deep-parent');
     expect(ids).toContain('ask');
+  });
+
+  it('moves a dragged node before its drop target', () => {
+    const nodes = moveBefore(DEFAULT_NAVIGATION_SETTINGS.nodes, 'build', 'work');
+    expect(nodes.find((node) => node.id === 'build')?.position).toBe(0);
+    expect(nodes.find((node) => node.id === 'work')?.position).toBe(1);
+  });
+
+  it('saves launcher visibility independently', async () => {
+    const { user } = renderWithProviders(<NavigationSettingsCard />);
+    await user.click(await screen.findByRole('switch', { name: 'appearance.navigation.launcher: Work' }));
+    await user.click(screen.getByRole('button', { name: 'appearance.navigation.save' }));
+
+    await waitFor(() => expect(updateNavigationSettings).toHaveBeenCalled());
+    const submitted = vi.mocked(updateNavigationSettings).mock.calls[0][0];
+    expect(submitted.nodes.find((node) => node.id === 'work')?.launcherVisible).toBe(false);
+    expect(submitted.nodes.find((node) => node.id === 'work')?.visible).toBe(true);
   });
 });

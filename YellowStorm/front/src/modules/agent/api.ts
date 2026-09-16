@@ -27,6 +27,16 @@ import type {
   UserSearchResult,
 } from './types';
 
+type AgentDataInput<T> = T & { reasoningEffort?: string };
+
+function serializeAgentData<T extends CreateAgentData | UpdateAgentData>(data: AgentDataInput<T>): T {
+  const { reasoningEffort, ...payload } = data;
+  return {
+    ...payload,
+    ...(reasoningEffort !== undefined ? { reasoning_effort: reasoningEffort } : {}),
+  } as T;
+}
+
 export async function getAllAgents(): Promise<Agent[]> {
   const response = await apiClient.get<ApiResponse<Agent[]>>(
     API_ENDPOINTS.agents.all
@@ -41,18 +51,18 @@ export async function getAgentTypes(): Promise<AgentType[]> {
   return response.data.data;
 }
 
-export async function createAgent(data: CreateAgentData): Promise<Agent> {
+export async function createAgent(data: AgentDataInput<CreateAgentData>): Promise<Agent> {
   const response = await apiClient.post<ApiResponse<Agent>>(
     API_ENDPOINTS.agents.list,
-    data
+    serializeAgentData(data)
   );
   return response.data.data;
 }
 
-export async function updateAgent(id: string, data: UpdateAgentData): Promise<Agent> {
+export async function updateAgent(id: string, data: AgentDataInput<UpdateAgentData>): Promise<Agent> {
   const response = await apiClient.patch<ApiResponse<Agent>>(
     API_ENDPOINTS.agents.byId(id),
-    data
+    serializeAgentData(data)
   );
   return response.data.data;
 }
@@ -68,10 +78,10 @@ export async function deleteAgent(id: string): Promise<void> {
  * CUSTOM_AGENT_DEFAULT_READONLY, so admins holding `agents.update` go through
  * the admin endpoint instead. Permission enforcement stays on the backend.
  */
-export async function updateDefaultAgent(id: string, data: UpdateAgentData): Promise<Agent> {
+export async function updateDefaultAgent(id: string, data: AgentDataInput<UpdateAgentData>): Promise<Agent> {
   const response = await apiClient.patch<ApiResponse<Agent>>(
     API_ENDPOINTS.adminAgents.byId(id),
-    data
+    serializeAgentData(data)
   );
   return response.data.data;
 }

@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { createConversation, fetchConversation, fetchConversations, fetchMessages, fetchToolResult, sendMessage } from '@/modules/conversation/api';
+import { createConversation, fetchActiveStream, fetchConversation, fetchConversations, fetchMessages, fetchToolResult, sendMessage } from '@/modules/conversation/api';
 import { conversationStreamService } from '@/modules/conversation/stream';
 import type { ChoiceInteractionMetadata, Conversation, Message, MessageComponent, StreamingComponent, StreamSSEEvent } from '@/modules/conversation/types';
 import type { PlatformCopilotPageContext } from './types';
@@ -92,10 +92,60 @@ export function usePlatformCopilotConversation(open: boolean, clientContext: Pla
   const [error, setError] = React.useState<unknown>();
   const retryRef = React.useRef<{ fingerprint: string; requestId: string }>();
   const newConversationRequestRef = React.useRef<string>();
+  const conversationIdRef = React.useRef<string>();
+  const hydrateGenerationRef = React.useRef(0);
+  const recoveryRef = React.useRef<{
+    conversationId: string;
+    messageId?: string;
+    terminal: boolean;
+    chunks: Array<Extract<StreamSSEEvent, { type: 'stream_chunk' }>['data']>;
+  }>();
 
   const hydrate = React.useCallback(async (id: string) => {
-    const page = await fetchMessages(id, { limit: 100 });
-    setMessages(await hydrateToolResults(id, page.items));
+    const generation = ++hydrateGenerationRef.current;
+    const previousConversationId = conversationIdRef.current;
+    conversationIdRef.current = id;
+    const recovery: NonNullable<typeof recoveryRef.current> = {
+      conversationId: id,
+      terminal: false,
+      chunks: [],
+    };
+    recoveryRef.current = recovery;
+    try {
+      const [page, activeStream] = await Promise.all([
+        fetchMessages(id, { limit: 100 }),
+        fetchActiveStream(id).catch(() => null),
+      ]);
+      let hydratedMessages = await hydrateToolResults(id, page.items);
+      if (hydrateGenerationRef.current !== generation) return;
+      if (recovery.terminal) {
+        const latest = await fetchMessages(id, { limit: 100 });
+        hydratedMessages = await hydrateToolResults(id, latest.items);
+      }
+      if (hydrateGenerationRef.current !== generation) return;
+      setMessages(hydratedMessages);
+      if (activeStream && !recovery.terminal) {
+        const components = recovery.chunks
+          .filter((chunk) => chunk.revision === undefined || chunk.revision > activeStream.revision)
+          .reduce((current, chunk) => applyStreamAction(current, chunk.action, chunk.component), activeStream.components);
+        setStreamingMessageId(activeStream.messageId);
+        setStreamingComponents(components);
+      } else if (!recovery.terminal && recovery.messageId) {
+        setStreamingMessageId(recovery.messageId);
+        setStreamingComponents(recovery.chunks.reduce(
+          (current, chunk) => applyStreamAction(current, chunk.action, chunk.component),
+          [] as StreamingComponent[],
+        ));
+      } else {
+        setStreamingMessageId(undefined);
+        setStreamingComponents([]);
+      }
+    } catch (error) {
+      if (hydrateGenerationRef.current === generation) conversationIdRef.current = previousConversationId;
+      throw error;
+    } finally {
+      if (recoveryRef.current === recovery) recoveryRef.current = undefined;
+    }
   }, []);
 
   const loadHistory = React.useCallback(async () => {
@@ -163,7 +213,13 @@ export function usePlatformCopilotConversation(open: boolean, clientContext: Pla
   }, [conversationId, hydrate, loadHistory, open, pendingHandoff]);
 
   React.useEffect(() => conversationStreamService.subscribe((event: StreamSSEEvent) => {
-    if (!conversationId || !('data' in event) || !event.data || !('conversationId' in event.data) || event.data.conversationId !== conversationId) return;
+    const activeConversationId = conversationIdRef.current;
+    if (event.type === 'stream_resync_required') {
+      if (activeConversationId) void hydrate(activeConversationId).catch((hydrateError: unknown) => setError(hydrateError));
+      return;
+    }
+    if (!activeConversationId || !('data' in event) || !event.data || !('conversationId' in event.data) || event.data.conversationId !== activeConversationId) return;
+    const recovery = recoveryRef.current?.conversationId === activeConversationId ? recoveryRef.current : undefined;
     switch (event.type) {
       case 'message_created':
         setMessages((current) => upsertMessage(current, event.data.message));
@@ -175,19 +231,30 @@ export function usePlatformCopilotConversation(open: boolean, clientContext: Pla
         });
         break;
       case 'stream_start':
+        if (recovery) {
+          recovery.messageId = event.data.messageId;
+          break;
+        }
         setStreamingMessageId(event.data.messageId);
         setStreamingComponents([]);
         break;
       case 'stream_chunk':
+        if (recovery) {
+          recovery.messageId ??= event.data.messageId;
+          recovery.chunks.push(event.data);
+          break;
+        }
         setStreamingComponents((current) => applyStreamAction(current, event.data.action, event.data.component));
         break;
       case 'stream_complete':
+        if (recovery) recovery.terminal = true;
         setStreamingComponents([]);
         setStreamingMessageId(undefined);
-        void hydrate(conversationId).catch((hydrateError: unknown) => setError(hydrateError));
+        if (!recovery) void hydrate(activeConversationId).catch((hydrateError: unknown) => setError(hydrateError));
         void loadHistory();
         break;
       case 'stream_error':
+        if (recovery) recovery.terminal = true;
         setStreamingComponents([]);
         setStreamingMessageId(undefined);
         setLoading(false);
@@ -198,7 +265,7 @@ export function usePlatformCopilotConversation(open: boolean, clientContext: Pla
           : conversation));
         break;
     }
-  }), [conversationId, hydrate, loadHistory]);
+  }), [hydrate, loadHistory]);
 
   const send = async (content: string, interaction?: ChoiceInteractionMetadata, interactions?: ChoiceInteractionMetadata[], handoff?: PendingPlaybookHandoffDraft) => {
     if (!conversationId || loading) return false;
@@ -244,8 +311,7 @@ export function usePlatformCopilotConversation(open: boolean, clientContext: Pla
       const conversation = await fetchConversation(id);
       if (conversation.runtimePurpose !== 'platform_copilot') return false;
       await hydrate(id);
-      setStreamingComponents([]);
-      setStreamingMessageId(undefined);
+      conversationIdRef.current = id;
       setConversationId(id);
       localStorage.setItem(PLATFORM_COPILOT_CONVERSATION_STORAGE_KEY, id);
       return true;
@@ -271,6 +337,7 @@ export function usePlatformCopilotConversation(open: boolean, clientContext: Pla
       setMessages([]);
       setStreamingComponents([]);
       setStreamingMessageId(undefined);
+      conversationIdRef.current = conversation.id;
       setConversationId(conversation.id);
       localStorage.setItem(PLATFORM_COPILOT_CONVERSATION_STORAGE_KEY, conversation.id);
       setHistory((current) => [conversation, ...current.filter((item) => item.id !== conversation.id)]);

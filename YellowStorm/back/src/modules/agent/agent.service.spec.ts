@@ -344,7 +344,7 @@ describe('AgentService connector skill inheritance', () => {
     expect(restricted[0].skills?.map((skill) => skill.id as string)).toEqual(['type-skill', 'agent-skill']);
   });
 
-  it('exposes every enabled Playbook MCP action to Platform Copilot', async () => {
+  it('excludes legacy Playbook orchestration actions from Platform Copilot', async () => {
     const { service, connectorService, modelsService } = createService();
     const enabledActions = [
       'search_playbooks',
@@ -401,11 +401,16 @@ describe('AgentService connector skill inheritance', () => {
         { conversationId: 'conversation-1', correlationId: 'message-1', playbookHandoffAttached: true },
       );
 
+      const expectedActions = enabledActions.filter((action) => ![
+        'assess_playbook_request',
+        'continue_playbook_clarification',
+        'start_playbook_construction',
+      ].includes(action));
       expect(result[0].tools.map((tool) => tool.name)).toEqual(
-        enabledActions.map((action) => `playbook-mcp_${action}`),
+        expectedActions.map((action) => `playbook-mcp_${action}`),
       );
       const bindings = JSON.parse(result[0].agent_params?.params.connector_bindings_json as string);
-      expect(bindings[0].actions.map((action: { action_key: string }) => action.action_key)).toEqual(enabledActions);
+      expect(bindings[0].actions.map((action: { action_key: string }) => action.action_key)).toEqual(expectedActions);
       expect(result[0].tools.map((tool) => tool.name)).not.toEqual(
         expect.arrayContaining(['playbook-mcp_disabled_action']),
       );
@@ -581,6 +586,25 @@ describe('AgentService connector skill inheritance', () => {
       { agentTypeId: 'type-worker', modelId: 'native-model' },
     ]);
     expect(result[0].chatbot.model).toBe('native-model');
+  });
+
+  it('uses the admin default model for a tagged agent with no model override', async () => {
+    const { service, modelsService } = createService();
+    const taggedAgent: IAgentForStream = {
+      id: 'tagged-agent', name: 'Tagged Agent', agentTypeName: 'Worker', agentTypeSlug: 'worker',
+      agentTypeId: 'type-worker', role: 'Role', description: '', temperature: 0, model: '',
+      instruction: '', ignorePrePrompt: false, knowledgeBases: [], toolIds: [], guardrails: defaultGuardrails,
+      connectorIds: [], connectorActionSelections: [], skillIds: [], disabledSkillIds: [], agentTypeSkillIds: [],
+      enable_temporary_child_agents: false, max_temporary_child_agents: 4, isDefault: false, isDefaultForType: false,
+    };
+    jest.spyOn(service as any, 'getAgentsForUser').mockResolvedValue([taggedAgent]);
+    modelsService.getDefaultModel.mockResolvedValue({ id: 'admin-default' } as any);
+    modelsService.findById.mockImplementation(async (id: string) => ({ id, omitTemperature: false }));
+
+    const result = await service.buildAgentsForStream(userId, 'request-model', ['tagged-agent']);
+
+    expect(modelsService.getDefaultModel).toHaveBeenCalled();
+    expect(result[0].chatbot.model).toBe('admin-default');
   });
 
   it('uses a tagged agent reasoning effort only when its model supports the value', async () => {

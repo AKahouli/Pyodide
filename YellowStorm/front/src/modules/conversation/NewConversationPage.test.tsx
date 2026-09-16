@@ -94,6 +94,7 @@ vi.mock('react-router-dom', async () => {
   return {
     ...actual,
     useNavigate: () => mockNavigate,
+    useLocation: () => ({ state: null }),
   };
 });
 
@@ -377,11 +378,8 @@ describe('NewConversationPage', () => {
     submitRoutingMock.agentIds = undefined;
     render(<NewConversationPage />);
 
-    expect(screen.getByRole('button', { name: 'input.reasoning.label' })).toBeInTheDocument();
-    const reasoning = screen.getByRole('button', { name: 'input.reasoning.label' });
     const reliability = screen.getByRole('button', { name: 'input.autoReliability' });
     expect(reliability).toHaveAttribute('aria-pressed', 'false');
-    expect(reasoning.compareDocumentPosition(reliability) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     await userEvent.click(screen.getByRole('button', { name: 'submit-new-conversation' }));
 
     await waitFor(() => expect(sendMessageMock).toHaveBeenCalledWith(
@@ -392,13 +390,8 @@ describe('NewConversationPage', () => {
 
   it('uses an explicitly selected reasoning effort for the first legacy message', async () => {
     submitRoutingMock.agentIds = undefined;
-    const { rerender } = render(<NewConversationPage />);
-
-    await userEvent.click(screen.getByRole('button', { name: 'input.reasoning.label' }));
-    await userEvent.click(screen.getByRole('menuitemradio', { name: 'High' }));
-    expect(setSelectedReasoningEffortMock).toHaveBeenCalledWith('high');
-
-    rerender(<NewConversationPage />);
+    selectedReasoningEffortMock.value = 'high';
+    render(<NewConversationPage />);
     await userEvent.click(screen.getByRole('button', { name: 'submit-new-conversation' }));
 
     await waitFor(() => expect(sendMessageMock).toHaveBeenCalledWith(

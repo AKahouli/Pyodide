@@ -1,3 +1,4 @@
+import json
 import mimetypes
 import posixpath
 import uuid
@@ -22,6 +23,15 @@ def build_tool_result_artifacts(
     """Project storage-backed MCP file results into conversation artifacts."""
     if not isinstance(result, dict):
         return []
+    if not any(result.get(key) for key in ("generated_files", "ceph_path", "object_key", "azure_path")):
+        nested_result = result.get("result")
+        if isinstance(nested_result, str):
+            try:
+                nested_result = json.loads(nested_result)
+            except json.JSONDecodeError:
+                nested_result = None
+        if isinstance(nested_result, dict):
+            result = nested_result
     generated_files = result.get("generated_files")
     entries = [item for item in generated_files if isinstance(item, dict)] if isinstance(generated_files, list) else []
     if not entries and any(result.get(key) for key in ("ceph_path", "object_key", "azure_path")):

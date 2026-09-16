@@ -24,6 +24,7 @@ vi.mock('@/components/ai-elements/input', () => ({
     preserveWorkspaceSelectionOnSubmit,
     onWorkspaceSelectionChange,
     extraTools,
+    showReasoningEffort,
   }: {
     onSubmit: (
       message: { text: string },
@@ -43,10 +44,12 @@ vi.mock('@/components/ai-elements/input', () => ({
     preserveWorkspaceSelectionOnSubmit?: boolean;
     onWorkspaceSelectionChange?: (workspaceIds: string[]) => void;
     extraTools?: React.ReactNode;
+    showReasoningEffort?: boolean;
   }) => (
     <>
       <span>{showWorkspaceSelect ? 'workspace-selector-visible' : 'workspace-selector-hidden'}</span>
       <span>{preserveWorkspaceSelectionOnSubmit ? 'workspace-selection-preserved' : 'workspace-selection-reset'}</span>
+      <span>{showReasoningEffort ? 'reasoning-effort-visible' : 'reasoning-effort-hidden'}</span>
       <button type='button' onClick={() => {
         workspaceSelectionMock.set(['ws-2']);
         onWorkspaceSelectionChange?.(['ws-2']);
@@ -317,7 +320,7 @@ describe('ConversationInput', () => {
   it('submits reasoning effort only for an untagged standard turn', async () => {
     render(<ConversationInput conversationId='conv-1' />);
 
-    expect(screen.getByRole('button', { name: 'input.reasoning.label' })).toBeInTheDocument();
+    expect(screen.getByText('reasoning-effort-visible')).toBeInTheDocument();
 
     await userEvent.click(screen.getByRole('button', { name: 'submit-with-reasoning' }));
 
@@ -336,14 +339,14 @@ describe('ConversationInput', () => {
     rerender(<ConversationInput conversationId='conv-1' />);
     await userEvent.click(screen.getByRole('button', { name: 'submit-with-reasoning' }));
     expect(sendMessageMock.mock.calls.at(-1)?.[1]).not.toHaveProperty('reasoningEffort');
-    expect(screen.queryByRole('button', { name: 'input.reasoning.label' })).not.toBeInTheDocument();
+    expect(screen.getByText('reasoning-effort-hidden')).toBeInTheDocument();
   });
 
   it('hides and omits reasoning effort when sticky tagged agents route the turn', async () => {
     currentConversationMock.value = { id: 'conv-1', workspaces: ['ws-1'], taggedAgentIds: ['agent-9'] };
     render(<ConversationInput conversationId='conv-1' />);
 
-    expect(screen.queryByRole('button', { name: 'input.reasoning.label' })).not.toBeInTheDocument();
+    expect(screen.getByText('reasoning-effort-hidden')).toBeInTheDocument();
 
     await userEvent.click(screen.getByRole('button', { name: 'submit-with-reasoning' }));
 

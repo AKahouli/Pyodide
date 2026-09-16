@@ -49,7 +49,7 @@ export function AgentCardSelectable({
   return (
     <div
       className={cn(
-        'relative rounded-xl transition',
+        'relative h-full rounded-xl transition',
         layout === 'list' && 'rounded-lg',
         selected && 'ring-2 ring-primary ring-offset-2 ring-offset-background',
         selectMode && isSelectable && 'cursor-pointer',
@@ -65,6 +65,7 @@ export function AgentCardSelectable({
           )}
         >
           <Checkbox
+            aria-label={agent.name}
             checked={selected}
             disabled={!isSelectable}
             onCheckedChange={(c) => {
@@ -75,7 +76,7 @@ export function AgentCardSelectable({
           />
         </div>
       )}
-      <div className={cn(selectMode && (layout === 'list' ? 'pl-8' : 'pl-6'))}>
+      <div className={cn('h-full', selectMode && (layout === 'list' ? 'pl-8' : 'pl-6'))}>
         <AgentCardRich
           agent={agent}
           layout={layout}

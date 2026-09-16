@@ -67,6 +67,21 @@ def test_builds_artifact_from_code_interpreter_send_file_result() -> None:
     }
 
 
+def test_builds_artifact_from_json_encoded_send_file_result() -> None:
+    artifacts = build_tool_result_artifacts({
+        "result": json.dumps({
+            "path": "/home/ubuntu/ai_two_sentences.pdf",
+            "ceph_path": "owner/system_run/ai_two_sentences.pdf",
+            "relative_path": "artifacts/main/ai_two_sentences.pdf",
+        }),
+        "text": "File sent",
+    }, "tool-send", "owner/system_run")
+
+    assert len(artifacts) == 1
+    assert artifacts[0]["file_path"] == "owner/system_run/ai_two_sentences.pdf"
+    assert artifacts[0]["filename"] == "ai_two_sentences.pdf"
+
+
 def test_rejects_tool_artifact_outside_trusted_run_prefix() -> None:
     assert build_tool_result_artifacts({
         "ceph_path": "another-user/system_run/private.pdf",

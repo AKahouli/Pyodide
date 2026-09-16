@@ -90,7 +90,7 @@ describe('ConversationAssistantBubble', () => {
     expect(screen.getAllByText('Using tools')).toHaveLength(2);
   });
 
-  it('renders activity in arrival order and keeps the answer outside the activity pane', () => {
+  it('renders tools in arrival order and keeps artifacts and the answer outside the activity pane', () => {
     render(<ConversationAssistantBubble
       conversationId='conversation-1'
       messageId='message-1'
@@ -109,8 +109,8 @@ describe('ConversationAssistantBubble', () => {
     const nodes = [
       within(desktop).getByText(/Preparing workspace analysis/),
       within(desktop).getByText(/Compare selected files/),
-      within(desktop).getByText('revenue-variance.xlsx'),
       within(desktop).getByText(/Verify the late event/),
+      screen.getByText('revenue-variance.xlsx'),
       screen.getByText(/Revenue is below forecast/),
     ];
     nodes.forEach((node) => expect(bubble).toContainElement(node));
@@ -124,7 +124,9 @@ describe('ConversationAssistantBubble', () => {
     expect(bubble.querySelector('[data-activity-pane]')).toHaveClass('overflow-y-auto');
     expect(bubble.querySelector('[data-activity-pane]')).not.toHaveClass('overscroll-contain');
     expect(within(desktop).getByRole('button', { name: /Compare selected files/ })).toHaveClass('min-h-7');
+    expect(desktop).not.toHaveTextContent('revenue-variance.xlsx');
     expect(desktop).not.toHaveClass('space-y-1');
+    expect(bubble.querySelector('[data-activity-pane]')).not.toContainElement(nodes.at(-2) as HTMLElement);
     expect(bubble.querySelector('[data-activity-pane]')).not.toContainElement(nodes.at(-1) as HTMLElement);
   });
 
@@ -1097,7 +1099,7 @@ describe('ConversationAssistantBubble', () => {
     expect(screen.getByText(/const secret = token;/)).toBeInTheDocument();
     expect(screen.getByText(/users\/12345678\/runs\/run-1\/private\.json/)).toBeInTheDocument();
     expect(screen.getByText(/file=\/tmp\/private\/customer\.csv/)).toBeInTheDocument();
-    expect(screen.getByText(/uri=s3:\/\/private-bucket\/customer\.csv/)).toBeInTheDocument();
+    expect(screen.getAllByText(/uri=s3:\/\/private-bucket\/customer\.csv/)).not.toHaveLength(0);
     expect(screen.getByRole('button', { name: 'Review_record_507f1f77bcf86cd799439011, Completed. Show full reasoning' })).toBeInTheDocument();
     expect(screen.getAllByText('report.csv')).not.toHaveLength(0);
     expect(screen.queryByText(/\[REDACTED\]/)).not.toBeInTheDocument();
