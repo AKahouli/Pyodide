@@ -47,6 +47,10 @@ export class NavigationNodeDto {
   @IsBoolean()
   visible!: boolean;
 
+  @IsOptional()
+  @IsBoolean()
+  launcherVisible?: boolean;
+
   @IsObject()
   @ValidateNested()
   @Type(() => NavigationLabelsDto)

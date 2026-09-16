@@ -105,25 +105,25 @@ async def health_ready(_request: Request) -> JSONResponse:
 
 
 @mcp.tool()
-async def list_agent_types() -> AgentMcpResultV1:
-    """List active agent types usable when creating agents."""
+async def list_agent_types(workspace_id: str | None = None) -> AgentMcpResultV1:
+    """List active agent types (id and slug) usable when creating agents."""
     return await call(backend().get(f"{BASE}/agent-types", require_acting_user_id()))
 
 
 @mcp.tool()
-async def list_models() -> AgentMcpResultV1:
+async def list_models(workspace_id: str | None = None) -> AgentMcpResultV1:
     """List available LLM models assignable to agents."""
     return await call(backend().get(f"{BASE}/models", require_acting_user_id()))
 
 
 @mcp.tool()
-async def list_agents() -> AgentMcpResultV1:
+async def list_agents(workspace_id: str | None = None) -> AgentMcpResultV1:
     """List all agents visible to the acting user (personal and default)."""
     return await call(backend().get(f"{BASE}/agents", require_acting_user_id()))
 
 
 @mcp.tool()
-async def get_agent(agent_id: str) -> AgentMcpResultV1:
+async def get_agent(agent_id: str, workspace_id: str | None = None) -> AgentMcpResultV1:
     """Get one agent by id with its full configuration."""
     return await call(backend().get(f"{BASE}/agents/{path_id(agent_id)}", require_acting_user_id()))
 
@@ -137,8 +137,9 @@ async def create_agent(
     instruction: str | None = None,
     model: str | None = None,
     temperature: float | None = None,
+    workspace_id: str | None = None,
 ) -> AgentMcpResultV1:
-    """Create a new personal agent owned by the acting user and return it with its id."""
+    """Create a new personal agent owned by the acting user and return it with its id. agent_type_id accepts the id or the slug from list_agent_types."""
     payload = compact({
         "name": name,
         "agentType": agent_type_id,
@@ -161,6 +162,7 @@ async def update_agent(
     model: str | None = None,
     temperature: float | None = None,
     is_active: bool | None = None,
+    workspace_id: str | None = None,
 ) -> AgentMcpResultV1:
     """Update an existing personal agent; only provided fields change."""
     payload = compact({
@@ -176,19 +178,19 @@ async def update_agent(
 
 
 @mcp.tool()
-async def delete_agent(agent_id: str) -> AgentMcpResultV1:
+async def delete_agent(agent_id: str, workspace_id: str | None = None) -> AgentMcpResultV1:
     """Delete one personal agent and remove it from all teams it belongs to."""
     return await call(backend().delete(f"{BASE}/agents/{path_id(agent_id)}", require_acting_user_id()))
 
 
 @mcp.tool()
-async def list_teams() -> AgentMcpResultV1:
+async def list_teams(workspace_id: str | None = None) -> AgentMcpResultV1:
     """List all active teams visible to the acting user (owned and shared)."""
     return await call(backend().get(f"{BASE}/teams", require_acting_user_id()))
 
 
 @mcp.tool()
-async def get_team(team_id: str) -> AgentMcpResultV1:
+async def get_team(team_id: str, workspace_id: str | None = None) -> AgentMcpResultV1:
     """Get one team with its member agents and hierarchy."""
     return await call(backend().get(f"{BASE}/teams/{path_id(team_id)}", require_acting_user_id()))
 
@@ -198,6 +200,7 @@ async def create_team(
     name: str,
     description: str | None = None,
     agent_ids: list[str] | None = None,
+    workspace_id: str | None = None,
 ) -> AgentMcpResultV1:
     """Create a new team owned by the acting user and return it with its id."""
     payload = compact({
@@ -215,6 +218,7 @@ async def update_team(
     description: str | None = None,
     agent_ids: list[str] | None = None,
     is_active: bool | None = None,
+    workspace_id: str | None = None,
 ) -> AgentMcpResultV1:
     """Update team metadata or reconcile its flat agent list; only provided fields change."""
     payload = compact({
@@ -227,14 +231,14 @@ async def update_team(
 
 
 @mcp.tool()
-async def update_team_hierarchy(team_id: str, members: list[dict[str, Any]] | str) -> AgentMcpResultV1:
+async def update_team_hierarchy(team_id: str, members: list[dict[str, Any]] | str, workspace_id: str | None = None) -> AgentMcpResultV1:
     """Replace the team hierarchy. Each member is {"agent_id", "parent_agent_id", "order", "position_x", "position_y"}; parent_agent_id null means root."""
     payload = {"members": coerce_members(members)}
     return await call(backend().patch(f"{BASE}/teams/{path_id(team_id)}/hierarchy", require_acting_user_id(), payload))
 
 
 @mcp.tool()
-async def delete_team(team_id: str) -> AgentMcpResultV1:
+async def delete_team(team_id: str, workspace_id: str | None = None) -> AgentMcpResultV1:
     """Delete one owned team and its shares."""
     return await call(backend().delete(f"{BASE}/teams/{path_id(team_id)}", require_acting_user_id()))
 

@@ -32,15 +32,40 @@ async def test_accepts_bearer_authentication_without_identity_context():
 
 
 @pytest.mark.asyncio
-async def test_exposes_acting_user_only_with_complete_actor_context():
+async def test_exposes_acting_user_with_user_id_only():
     messages = await invoke([
         (b"authorization", b"Bearer ingress-secret"),
         (b"x-yellowstorm-user-id", b"user-1"),
-        (b"x-yellowstorm-agent-id", b"agent-1"),
-        (b"x-yellowstorm-conversation-id", b"conversation-1"),
     ])
     assert messages[0]["status"] == 200
     assert messages[1]["body"] == b"user-1"
+
+
+@pytest.mark.asyncio
+async def test_establishes_actor_context_from_user_id_alone_with_fallbacks():
+    seen_contexts = []
+
+    async def context_app(_scope, _receive, send):
+        seen_contexts.append(actor_context.get())
+        await send({"type": "http.response.start", "status": 200, "headers": []})
+        await send({"type": "http.response.body", "body": b""})
+
+    messages = []
+    async def send(message):
+        messages.append(message)
+
+    middleware = TrustedIdentityMiddleware(context_app, "ingress-secret")
+    await middleware({"type": "http", "path": "/mcp", "headers": [
+        (b"authorization", b"Bearer ingress-secret"),
+        (b"x-yellowstorm-user-id", b"user-1"),
+    ]}, lambda: None, send)
+
+    assert messages[0]["status"] == 200
+    context = seen_contexts[0]
+    assert context.user_id == "user-1"
+    assert context.agent_id == "unknown-agent"
+    assert context.conversation_id == "unknown-conversation"
+    assert context.correlation_id == "unknown-correlation"
 
 
 @pytest.mark.asyncio
@@ -70,13 +95,12 @@ async def test_accepts_complete_actor_context():
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("missing_header", [
-    b"x-yellowstorm-user-id",
-    b"x-yellowstorm-agent-id",
-    b"x-yellowstorm-conversation-id",
-    b"x-correlation-id",
+@pytest.mark.parametrize("header,value", [
+    (b"x-yellowstorm-agent-id", b"invalid agent"),
+    (b"x-yellowstorm-conversation-id", b"invalid conversation"),
+    (b"x-correlation-id", b"invalid correlation"),
 ])
-async def test_does_not_establish_actor_context_when_any_identity_field_is_missing(missing_header):
+async def test_treats_malformed_optional_identity_as_absent(header, value):
     seen_contexts = []
 
     async def context_app(_scope, _receive, send):
@@ -84,23 +108,44 @@ async def test_does_not_establish_actor_context_when_any_identity_field_is_missi
         await send({"type": "http.response.start", "status": 200, "headers": []})
         await send({"type": "http.response.body", "body": b""})
 
-    headers = [
-        (b"authorization", b"Bearer ingress-secret"),
-        (b"x-yellowstorm-user-id", b"user-1"),
-        (b"x-yellowstorm-agent-id", b"agent-1"),
-        (b"x-yellowstorm-conversation-id", b"conversation-1"),
-        (b"x-correlation-id", b"correlation-1"),
-    ]
     messages = []
     async def send(message):
         messages.append(message)
 
     middleware = TrustedIdentityMiddleware(context_app, "ingress-secret")
-    await middleware({
-        "type": "http",
-        "path": "/mcp",
-        "headers": [(name, value) for name, value in headers if name != missing_header],
-    }, lambda: None, send)
+    await middleware({"type": "http", "path": "/mcp", "headers": [
+        (b"authorization", b"Bearer ingress-secret"),
+        (b"x-yellowstorm-user-id", b"user-1"),
+        (header, value),
+    ]}, lambda: None, send)
+
+    assert messages[0]["status"] == 200
+    context = seen_contexts[0]
+    assert context.agent_id == "unknown-agent"
+    assert context.conversation_id == "unknown-conversation"
+    assert context.correlation_id == "unknown-correlation"
+
+
+@pytest.mark.asyncio
+async def test_does_not_establish_actor_context_without_user_id():
+    seen_contexts = []
+
+    async def context_app(_scope, _receive, send):
+        seen_contexts.append(actor_context.get())
+        await send({"type": "http.response.start", "status": 200, "headers": []})
+        await send({"type": "http.response.body", "body": b""})
+
+    messages = []
+    async def send(message):
+        messages.append(message)
+
+    middleware = TrustedIdentityMiddleware(context_app, "ingress-secret")
+    await middleware({"type": "http", "path": "/mcp", "headers": [
+        (b"authorization", b"Bearer ingress-secret"),
+        (b"x-yellowstorm-agent-id", b"agent-1"),
+        (b"x-yellowstorm-conversation-id", b"conversation-1"),
+        (b"x-correlation-id", b"correlation-1"),
+    ]}, lambda: None, send)
 
     assert messages[0]["status"] == 200
     assert seen_contexts == [None]
@@ -131,7 +176,7 @@ async def test_rejects_duplicate_authorization_headers():
 
 
 @pytest.mark.asyncio
-async def test_rejects_invalid_optional_identity():
+async def test_rejects_malformed_acting_user_id():
     messages = await invoke([
         (b"authorization", b"Bearer ingress-secret"),
         (b"x-yellowstorm-user-id", b"invalid user"),

@@ -171,6 +171,26 @@ async def test_backend_error_becomes_failure_envelope(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_read_tools_accept_and_ignore_injected_workspace_id(monkeypatch):
+    class BackendStub:
+        async def get(self, path, user_id):
+            assert path == "/api/v1/internal/agent-crud/agent-types"
+            assert user_id == "user-1"
+            return []
+
+    monkeypatch.setattr(server, "backend", lambda: BackendStub())
+    token = actor_context.set(PlatformActorContext("user-1", "agent-1", "conversation-1", "correlation-1"))
+    try:
+        async with Client(mcp) as client:
+            response = await client.call_tool("list_agent_types", {"workspace_id": "9922db69c0ff4b2db9e6a7c3"})
+    finally:
+        actor_context.reset(token)
+
+    result = result_dict(response)
+    assert result["ok"] is True
+
+
+@pytest.mark.asyncio
 async def test_update_agent_sends_only_provided_fields(monkeypatch):
     class BackendStub:
         async def patch(self, path, user_id, payload):

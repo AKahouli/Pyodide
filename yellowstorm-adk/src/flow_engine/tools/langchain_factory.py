@@ -2015,8 +2015,14 @@ def _create_connector_mcp_tools(
                                 connector_slug=connector_slug_value,
                                 action_key=ak,
                             )
-                        if isinstance(response, dict) and ak == "send_file_to_user":
-                            source_path = response.get("path")
+                        send_failed = (
+                            isinstance(response, str)
+                            and response.startswith(f"Connector action '{ak}' failed")
+                        )
+                        if ak == "send_file_to_user" and not send_failed:
+                            source_path = (
+                                response.get("path") if isinstance(response, dict) else None
+                            ) or merged_params.get("path")
                             if (
                                 isinstance(source_path, str)
                                 and source_path.strip()

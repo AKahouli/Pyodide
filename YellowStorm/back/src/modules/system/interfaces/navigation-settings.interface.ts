@@ -29,6 +29,7 @@ export interface NavigationNode {
   parentId: string | null;
   position: number;
   visible: boolean;
+  launcherVisible?: boolean;
   labels: NavigationLabels;
   targetKey?: NavigationTargetKey;
 }

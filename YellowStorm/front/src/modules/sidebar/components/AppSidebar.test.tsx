@@ -215,6 +215,20 @@ describe('AppSidebar', () => {
     expect(screen.queryByText('history.showMore')).not.toBeInTheDocument();
   });
 
+  it('opens permitted destinations hidden from the sidebar in the launcher', async () => {
+    const user = userEvent.setup();
+    render(
+      <MemoryRouter>
+        <SidebarProvider>
+          <AppSidebar />
+        </SidebarProvider>
+      </MemoryRouter>,
+    );
+
+    await user.click(screen.getByRole('button', { name: 'launcher.label' }));
+    expect(await screen.findByRole('button', { name: 'Teams' })).toBeInTheDocument();
+  });
+
   it('fetches conversations on mount', () => {
     render(
       <MemoryRouter>
@@ -444,6 +458,22 @@ describe('AppSidebar', () => {
 
     await userEvent.click(screen.getByRole('button', { name: 'search.label' }));
     expect(screen.getByTestId('global-search-dialog')).toBeInTheDocument();
+  });
+
+  it('includes permitted menu destinations hidden from the sidebar in global search', async () => {
+    render(
+      <MemoryRouter>
+        <SidebarProvider>
+          <AppSidebar />
+        </SidebarProvider>
+      </MemoryRouter>,
+    );
+
+    expect(screen.queryByRole('link', { name: 'Teams' })).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: 'search.label' }));
+    expect(screen.getByRole('button', { name: 'Teams' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Groups' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'App marketplace' })).toBeInTheDocument();
   });
 
   it('hides chats from global search when History is denied', async () => {

@@ -54,11 +54,11 @@ export function AgentHubGrid({
         section.agents.length > 0 ? (
           <section key={section.key} className="space-y-4">
             <header className="flex items-baseline gap-3">
-              <h2 className="text-[11px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+              <h2 className="text-lg font-semibold tracking-tight">
                 {section.title}
               </h2>
               <span className="h-px flex-1 bg-border/80" />
-              <span className="text-[11px] tabular-nums text-muted-foreground">
+              <span className="text-sm tabular-nums text-muted-foreground">
                 {section.agents.length === 1
                   ? t('hub.sections.singleAgent')
                   : t('hub.sections.agentsCount', { count: section.agents.length })}

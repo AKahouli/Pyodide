@@ -163,12 +163,11 @@ describe('ProjectPage', () => {
     submitRoutingMock.agentIds = undefined;
   });
 
-  it('shows the model selector and reasoning effort dropdown and ships the model default effort', async () => {
+  it('shows the model selector and ships the model default effort', async () => {
     render(<ProjectPage />);
 
     expect(screen.getByText('projects.page.composerPlaceholder')).toBeInTheDocument();
     expect(screen.getByText('model-selector-visible')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'input.reasoning.label' })).toHaveTextContent('Medium');
 
     await userEvent.click(screen.getByRole('button', { name: 'submit-project-conversation' }));
 
@@ -195,13 +194,8 @@ describe('ProjectPage', () => {
   });
 
   it('uses an explicitly picked reasoning effort for the first message', async () => {
-    const { rerender } = render(<ProjectPage />);
-
-    await userEvent.click(screen.getByRole('button', { name: 'input.reasoning.label' }));
-    await userEvent.click(screen.getByRole('menuitemradio', { name: 'High' }));
-    expect(setSelectedReasoningEffortMock).toHaveBeenCalledWith('high');
-
-    rerender(<ProjectPage />);
+    selectedReasoningEffortMock.value = 'high';
+    render(<ProjectPage />);
     await userEvent.click(screen.getByRole('button', { name: 'submit-project-conversation' }));
 
     await waitFor(() => expect(sendMessageMock).toHaveBeenCalledWith(

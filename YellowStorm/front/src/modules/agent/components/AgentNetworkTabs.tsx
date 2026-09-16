@@ -6,7 +6,6 @@ import { usePermissions } from '@/modules/admin/hooks/usePermissions';
 const TABS = [
   { to: '/agents', key: 'tabs.agents', menu: 'agents' },
   { to: '/teams', key: 'tabs.teams', menu: 'teams' },
-  { to: '/groups', key: 'tabs.groups', menu: 'groups' },
 ] as const;
 
 /** Depth-2 rule: the Agent Network sub-pages render as tabs inside each other's pages. */

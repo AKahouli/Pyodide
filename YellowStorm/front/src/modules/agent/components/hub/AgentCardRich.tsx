@@ -1,383 +1,69 @@
 import { useState } from 'react';
-import { Ban, Copy, Eye, Globe, Loader2, Lock, LogOut, Pencil, Share2, Trash2 } from 'lucide-react';
-import { MdMemory } from 'react-icons/md';
-
+import { Ban, Bookmark, Bot, Copy, Eye, Globe, LogOut, MoreHorizontal, Pencil, Share2, Trash2, Database } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { cn } from '@/lib/utils';
 import type { Agent } from '../../types';
 import { useModuleTranslation } from '@/modules/localization';
 import { usePermissions } from '@/modules/admin';
 import { AgentMemoriesModal } from '../AgentMemoriesModal';
-
-type Layout = 'grid' | 'list';
+import { useLibrary } from './LibraryContext';
+import { itemKey } from './library-model';
 
 interface AgentCardRichProps {
-  agent: Agent;
-  layout?: Layout;
-  onEdit?: (agent: Agent) => void;
-  onDelete?: (agent: Agent) => void;
-  onView?: (agent: Agent) => void;
-  onDuplicate?: (agent: Agent) => void;
-  onPublishA2A?: (agent: Agent) => void;
-  onRevokeA2A?: (agent: Agent) => void;
-  onShare?: (agent: Agent) => void;
-  onUnshare?: (agent: Agent) => void;
+  agent: Agent; layout?: 'grid' | 'list';
+  onEdit?: (agent: Agent) => void; onDelete?: (agent: Agent) => void;
+  onView?: (agent: Agent) => void; onDuplicate?: (agent: Agent) => void;
+  onPublishA2A?: (agent: Agent) => void; onRevokeA2A?: (agent: Agent) => void;
+  onShare?: (agent: Agent) => void; onUnshare?: (agent: Agent) => void;
   publishingA2A?: boolean;
 }
-
-function typeColor(typeId: string): string {
-  let hash = 0;
-  for (let i = 0; i < typeId.length; i++) {
-    hash = (hash * 31 + typeId.charCodeAt(i)) | 0;
-  }
-  const idx = Math.abs(hash % 5) + 1;
-  return `var(--chart-${idx})`;
-}
-
-function formatRelative(dateStr: string | undefined, locale: string): string {
-  if (!dateStr) return '';
-  const date = new Date(dateStr);
-  if (Number.isNaN(date.getTime())) return '';
-  const diffSeconds = (date.getTime() - Date.now()) / 1000;
-  const abs = Math.abs(diffSeconds);
-  const rtf = new Intl.RelativeTimeFormat(locale, { numeric: 'auto' });
-  if (abs < 60) return rtf.format(Math.round(diffSeconds), 'second');
-  if (abs < 3600) return rtf.format(Math.round(diffSeconds / 60), 'minute');
-  if (abs < 86400) return rtf.format(Math.round(diffSeconds / 3600), 'hour');
-  if (abs < 2592000) return rtf.format(Math.round(diffSeconds / 86400), 'day');
-  if (abs < 31536000) return rtf.format(Math.round(diffSeconds / 2592000), 'month');
-  return rtf.format(Math.round(diffSeconds / 31536000), 'year');
-}
-
-function CreativityDots({ value }: { value: number }) {
-  const filled = Math.max(0, Math.min(5, Math.round(value * 5)));
-  return (
-    <span className="inline-flex items-center gap-[3px]" aria-hidden>
-      {[0, 1, 2, 3, 4].map((i) => (
-        <span
-          key={i}
-          className={cn(
-            'h-1.5 w-1.5 rounded-full',
-            i < filled ? 'bg-foreground/70' : 'bg-foreground/15',
-          )}
-        />
-      ))}
-    </span>
-  );
-}
-
-export function AgentCardRich({
-  agent,
-  layout = 'grid',
-  onEdit,
-  onDelete,
-  onView,
-  onDuplicate,
-  onPublishA2A,
-  onRevokeA2A,
-  onShare,
-  onUnshare,
-  publishingA2A = false,
-}: AgentCardRichProps) {
-  const { t, language } = useModuleTranslation('agent');
+export function AgentCardRich({ agent, layout = 'grid', onEdit, onDelete, onView, onDuplicate, onPublishA2A, onRevokeA2A, onShare, onUnshare, publishingA2A }: AgentCardRichProps) {
+  const { t } = useModuleTranslation('agent');
   const { hasPermission } = usePermissions();
+  const library = useLibrary();
   const [memoriesOpen, setMemoriesOpen] = useState(false);
-
-  const isDefault = agent.isDefault;
-  const isShared = !!agent.shareInfo;
-  // "Owned" = a personal agent that belongs to the current user.
-  const isOwned = !isDefault && !isShared;
-  // A shared agent can be edited only when granted the 'write' permission.
-  const canWriteShared = isShared && agent.shareInfo?.permission === 'write';
-
-  // Edit: own agents, admins on default agents, or write-shared recipients.
-  const canEdit = isOwned || (isDefault && hasPermission('agents.update')) || canWriteShared;
-  const canManageA2A = isOwned || (isDefault && hasPermission('agents.update'));
-  // Delete: own agents or admins on default agents — never shared recipients.
-  const canDelete = isOwned || (isDefault && hasPermission('agents.delete'));
-  const isReadOnly = (isDefault && !canEdit) || (isShared && !canWriteShared);
-
-  const color = typeColor(agent.agentType?.id ?? '');
-  const ago = formatRelative(agent.updatedAt, language || 'en');
-
-  const sharedByName = agent.shareInfo
-    ? agent.shareInfo.sharedBy.firstName || agent.shareInfo.sharedBy.email
-    : '';
-  const sharedBadge = isShared ? (
-    <span className="rounded-sm border border-border/80 px-1 py-0 text-[10px] text-muted-foreground">
-      {t('card.sharedBy', { name: sharedByName })}
-    </span>
-  ) : null;
-
-  const actions = (
-    <div
-      className={cn(
-        'flex items-center gap-0.5 opacity-60 transition group-hover:opacity-100',
-        layout === 'list' && 'shrink-0',
-      )}
-      onClick={(e) => e.stopPropagation()}
-    >
-      {agent.hasSmartMemory && (
-        <Button
-          variant="ghost"
-          size="icon"
-          className="h-7 w-7"
-          onClick={(e) => {
-            e.stopPropagation();
-            setMemoriesOpen(true);
-          }}
-          title="Mémoires"
-        >
-          <MdMemory className="h-4 w-4" />
-        </Button>
-      )}
-      {canEdit && onEdit && (
-        <Button
-          variant="ghost"
-          size="icon"
-          className="h-7 w-7"
-          onClick={(e) => {
-            e.stopPropagation();
-            onEdit(agent);
-          }}
-          title={t('createEdit.titleEdit')}
-        >
-          <Pencil className="h-3.5 w-3.5" />
-        </Button>
-      )}
-      {isReadOnly && onView && (
-        <Button
-          variant="ghost"
-          size="icon"
-          className="h-7 w-7"
-          onClick={(e) => {
-            e.stopPropagation();
-            onView(agent);
-          }}
-          title={t('card.viewSettings')}
-        >
-          <Eye className="h-3.5 w-3.5" />
-        </Button>
-      )}
-      {isOwned && onDuplicate && (
-        <Button
-          variant="ghost"
-          size="icon"
-          className="h-7 w-7"
-          onClick={(e) => {
-            e.stopPropagation();
-            onDuplicate(agent);
-          }}
-          title={t('card.duplicate')}
-        >
-          <Copy className="h-3.5 w-3.5" />
-        </Button>
-      )}
-      {isOwned && onShare && (
-        <Button
-          variant="ghost"
-          size="icon"
-          className="h-7 w-7"
-          onClick={(e) => {
-            e.stopPropagation();
-            onShare(agent);
-          }}
-          title={t('share.shareAgent')}
-        >
-          <Share2 className="h-3.5 w-3.5" />
-        </Button>
-      )}
-      {canManageA2A && onPublishA2A && (
-        <Button
-          variant="ghost"
-          size="icon"
-          className={cn('h-7 w-7', agent.a2aPublished && 'text-primary')}
-          disabled={publishingA2A}
-          onClick={(e) => {
-            e.stopPropagation();
-            onPublishA2A(agent);
-          }}
-          title={
-            agent.a2aPublished
-              ? t('a2a.rotateKey', { defaultValue: 'Rotate A2A key' })
-              : t('a2a.publish', { defaultValue: 'Publish to A2A' })
-          }
-        >
-          {publishingA2A ? (
-            <Loader2 className="h-3.5 w-3.5 animate-spin" />
-          ) : (
-            <Globe className="h-3.5 w-3.5" />
-          )}
-        </Button>
-      )}
-      {canManageA2A && agent.a2aPublished && onRevokeA2A && (
-        <Button
-          variant="ghost"
-          size="icon"
-          className="h-7 w-7"
-          disabled={publishingA2A}
-          onClick={(e) => {
-            e.stopPropagation();
-            onRevokeA2A(agent);
-          }}
-          title={t('a2a.revoke', { defaultValue: 'Revoke A2A agent' })}
-        >
-          <Ban className="h-3.5 w-3.5" />
-        </Button>
-      )}
-      {canDelete && onDelete && (
-        <Button
-          variant="ghost"
-          size="icon"
-          className="h-7 w-7 text-destructive hover:bg-destructive/10 hover:text-destructive"
-          onClick={(e) => {
-            e.stopPropagation();
-            onDelete(agent);
-          }}
-          title={t('list.deleteDialog.title')}
-        >
-          <Trash2 className="h-3.5 w-3.5" />
-        </Button>
-      )}
-      {isShared && onUnshare && (
-        <Button
-          variant="ghost"
-          size="icon"
-          className="h-7 w-7"
-          onClick={(e) => {
-            e.stopPropagation();
-            onUnshare(agent);
-          }}
-          title={t('share.leaveShared')}
-        >
-          <LogOut className="h-3.5 w-3.5" />
-        </Button>
-      )}
-    </div>
-  );
-
-  const memoriesModal = (
-    <AgentMemoriesModal
-      agent={agent}
-      open={memoriesOpen}
-      onOpenChange={setMemoriesOpen}
-      canDelete={!isReadOnly}
-    />
-  );
-
-  if (layout === 'list') {
-    return (
-      <>
-      <div className="group relative flex items-center gap-4 rounded-lg border border-border/60 bg-card px-4 py-3 transition hover:border-border hover:bg-accent/30">
-        <span
-          className="h-2.5 w-2.5 shrink-0 rounded-full"
-          style={{ backgroundColor: color }}
-          aria-hidden
-        />
-        <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-2">
-            <span className="truncate text-sm font-medium tracking-tight">{agent.name}</span>
-            <span className="shrink-0 text-[10px] uppercase tracking-wider text-muted-foreground">
-              {agent.agentType?.name ?? t('card.unknownType')}
-            </span>
-            {sharedBadge}
-            {isReadOnly && <Lock className="h-3 w-3 shrink-0 text-muted-foreground" />}
-            <span
-              className={cn(
-                'ml-auto shrink-0 h-1.5 w-1.5 rounded-full',
-                agent.isActive ? 'bg-emerald-500' : 'bg-muted-foreground/40',
-              )}
-              title={agent.isActive ? t('card.active') : t('card.inactive')}
-              aria-hidden
-            />
-          </div>
-          {agent.description && (
-            <p className="mt-0.5 truncate text-xs text-muted-foreground">{agent.description}</p>
-          )}
-          <div className="mt-1 flex items-center gap-3 text-[10px] text-muted-foreground">
-            <CreativityDots value={agent.temperature} />
-            {agent.model && (
-              <span className="rounded-sm bg-muted px-1.5 py-0.5 font-mono text-[10px]">
-                {agent.model}
-              </span>
-            )}
-            {ago && <span>{t('card.updated', { ago })}</span>}
-          </div>
-        </div>
-        {actions}
+  const owned = !agent.isDefault && !agent.shareInfo;
+  const canEdit = owned || agent.isDefault && hasPermission('agents.update') || agent.shareInfo?.permission === 'write';
+  const canDelete = owned || agent.isDefault && hasPermission('agents.delete');
+  const canA2A = owned || agent.isDefault && hasPermission('agents.update');
+  const actionable = !!(onEdit || onView);
+  const item = { kind: 'agent' as const, value: agent };
+  const saved = library?.saved.includes(itemKey(item));
+  const open = () => canEdit ? onEdit?.(agent) : onView?.(agent);
+  const list = layout === 'list';
+  return <>
+    <article onClick={actionable ? e => { if (!(e.target as HTMLElement).closest('button, [role="menuitem"]')) open(); } : undefined} className={cn('group relative flex h-full gap-4 rounded-xl border border-border bg-card p-5 transition-colors hover:border-primary/50', actionable && 'cursor-pointer', list ? 'flex-wrap items-center sm:flex-nowrap' : 'flex-col')}>
+      <div className={cn('flex items-center gap-3', !list && 'justify-between')}>
+        <span className='flex size-10 shrink-0 items-center justify-center rounded-xl bg-muted text-foreground'><Bot className='size-5' /></span>
+        {!list && <span className='mr-auto text-xs font-medium text-muted-foreground'>{t('library.agent')}</span>}
+        {!list && library && actionable && <Button variant='ghost' size='icon' className='size-9' aria-pressed={saved} aria-label={t(saved ? 'library.unsave' : 'library.save', { name: agent.name })} onClick={e => { e.stopPropagation(); library.toggleSaved(item); }}><Bookmark className={cn('size-4', saved && 'fill-primary text-primary')} /></Button>}
       </div>
-      {memoriesModal}
-      </>
-    );
-  }
-
-  return (
-    <>
-    <div className="group relative flex h-full flex-col rounded-xl border border-border/60 bg-card p-5 transition hover:border-border hover:shadow-sm">
-      <div className="flex items-start justify-between gap-3">
-        <div className="flex items-center gap-2 text-[11px]">
-          <span
-            className="h-2 w-2 rounded-full"
-            style={{ backgroundColor: color }}
-            aria-hidden
-          />
-          <span className="uppercase tracking-[0.08em] text-muted-foreground">
-            {agent.agentType?.name ?? t('card.unknownType')}
-          </span>
-          {agent.isDefaultForType && (
-            <span className="rounded-sm border border-border/80 px-1 py-0 text-[10px] text-muted-foreground">
-              {t('card.default')}
-            </span>
-          )}
-          {sharedBadge}
-        </div>
-        <div className="flex items-center gap-1.5">
-          {isReadOnly && <Lock className="h-3 w-3 text-muted-foreground" />}
-          <span
-            className={cn(
-              'h-1.5 w-1.5 rounded-full',
-              agent.isActive ? 'bg-emerald-500' : 'bg-muted-foreground/40',
-              agent.isActive && 'shadow-[0_0_0_3px_rgb(16_185_129/0.15)]',
-            )}
-            title={agent.isActive ? t('card.active') : t('card.inactive')}
-            aria-hidden
-          />
-        </div>
+      <div className={cn('min-w-0 flex-1', !list && 'min-h-24')}>
+        <button disabled={!actionable} className='text-left text-base font-semibold leading-6 tracking-tight hover:text-primary focus-visible:outline focus-visible:outline-2 focus-visible:outline-ring disabled:text-foreground' onClick={e => { e.stopPropagation(); open(); }}>{agent.name}</button>
+        <p className={cn('mt-2 text-sm leading-6 text-muted-foreground', list ? 'line-clamp-1' : 'line-clamp-2')}>{agent.description || t('library.agentFallback')}</p>
+        {agent.shareInfo && <p className='mt-2 text-xs text-muted-foreground'>{t('card.sharedBy', { name: agent.shareInfo.sharedBy.firstName || agent.shareInfo.sharedBy.email })}</p>}
       </div>
-
-      <div className="mt-4">
-        <h3 className="text-[15px] font-semibold leading-snug tracking-tight">
-          {agent.name}
-        </h3>
-        {agent.role && (
-          <p className="mt-0.5 line-clamp-1 text-xs text-muted-foreground">{agent.role}</p>
-        )}
+      <div className={cn('flex items-center justify-between gap-2', !list && 'mt-auto border-t pt-4', list && 'w-full sm:w-auto')}>
+        <span className='mr-2 flex items-center gap-1.5 text-xs text-muted-foreground'><span aria-hidden className={cn('size-1.5 rounded-full', agent.isActive ? 'bg-emerald-600' : 'bg-muted-foreground')} />{t(agent.isActive ? 'card.active' : 'card.inactive')}</span>
+        {actionable && <div className={cn('flex items-center gap-1 rounded-lg border bg-card/95 p-1 shadow-md backdrop-blur-sm', !list && 'absolute bottom-3 right-3 opacity-100 transition-opacity sm:opacity-0 sm:group-hover:opacity-100 sm:group-focus-within:opacity-100')}>
+          {library && <Button variant='ghost' size='sm' disabled={!agent.isActive} onClick={() => library.start(item)}>{t('library.start')}</Button>}
+          <DropdownMenu><DropdownMenuTrigger asChild><Button variant='ghost' size='icon' className='size-9' aria-label={t('library.actions', { name: agent.name })}><MoreHorizontal className='size-4' /></Button></DropdownMenuTrigger><DropdownMenuContent align='end'>
+            <DropdownMenuItem onSelect={open}><Eye className='mr-2 size-4' />{t('library.details')}</DropdownMenuItem>
+            {library && <DropdownMenuItem onSelect={() => library.toggleSaved(item)}><Bookmark className='mr-2 size-4' />{t(saved ? 'library.removeSaved' : 'library.addSaved')}</DropdownMenuItem>}
+            {canEdit && onEdit && <DropdownMenuItem onSelect={() => onEdit(agent)}><Pencil className='mr-2 size-4' />{t('createEdit.titleEdit')}</DropdownMenuItem>}
+            {!canEdit && onView && <DropdownMenuItem onSelect={() => onView(agent)}><Eye className='mr-2 size-4' />{t('card.viewSettings')}</DropdownMenuItem>}
+            {agent.hasSmartMemory && <DropdownMenuItem onSelect={() => setMemoriesOpen(true)}><Database className='mr-2 size-4' />{t('library.memories')}</DropdownMenuItem>}
+            {owned && onDuplicate && <DropdownMenuItem onSelect={() => onDuplicate(agent)}><Copy className='mr-2 size-4' />{t('card.duplicate')}</DropdownMenuItem>}
+            {owned && onShare && <DropdownMenuItem onSelect={() => onShare(agent)}><Share2 className='mr-2 size-4' />{t('share.shareAgent')}</DropdownMenuItem>}
+            {canA2A && onPublishA2A && <DropdownMenuItem disabled={publishingA2A} onSelect={() => onPublishA2A(agent)}><Globe className='mr-2 size-4' />{t(agent.a2aPublished ? 'a2a.rotateKey' : 'a2a.publish')}</DropdownMenuItem>}
+            {canA2A && agent.a2aPublished && onRevokeA2A && <DropdownMenuItem disabled={publishingA2A} onSelect={() => onRevokeA2A(agent)}><Ban className='mr-2 size-4' />{t('a2a.revoke')}</DropdownMenuItem>}
+            {canDelete && onDelete && <><DropdownMenuSeparator /><DropdownMenuItem className='text-destructive focus:text-destructive' onSelect={() => onDelete(agent)}><Trash2 className='mr-2 size-4' />{t('list.deleteDialog.title')}</DropdownMenuItem></>}
+            {agent.shareInfo && onUnshare && <DropdownMenuItem onSelect={() => onUnshare(agent)}><LogOut className='mr-2 size-4' />{t('share.leaveShared')}</DropdownMenuItem>}
+          </DropdownMenuContent></DropdownMenu>
+        </div>}
       </div>
-
-      {agent.description && (
-        <p className="mt-3 line-clamp-2 text-sm leading-relaxed text-muted-foreground">
-          {agent.description}
-        </p>
-      )}
-
-      <div className="mt-auto flex flex-wrap items-center gap-x-3 gap-y-1.5 pt-4 text-[11px] text-muted-foreground">
-        <span className="inline-flex items-center gap-1.5" title={t('card.creativityLabel')}>
-          <CreativityDots value={agent.temperature} />
-          <span className="tabular-nums">{agent.temperature.toFixed(1)}</span>
-        </span>
-        {agent.model && (
-          <span className="rounded-sm bg-muted px-1.5 py-0.5 font-mono text-[10px]">
-            {agent.model}
-          </span>
-        )}
-        {ago && <span>{t('card.updated', { ago })}</span>}
-      </div>
-
-      <div className="-mx-5 -mb-5 mt-4 flex items-center justify-end border-t border-border/50 bg-accent/20 px-3 py-2">
-        {actions}
-      </div>
-    </div>
-    {memoriesModal}
-    </>
-  );
+    </article>
+    <AgentMemoriesModal agent={agent} open={memoriesOpen} onOpenChange={setMemoriesOpen} canDelete={!!canEdit} />
+  </>;
 }

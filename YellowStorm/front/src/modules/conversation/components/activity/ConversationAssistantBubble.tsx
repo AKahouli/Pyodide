@@ -359,10 +359,13 @@ export function ConversationAssistantBubble(props: Readonly<NarrativeProps>) {
     });
   }, [agentDirectoryInitialized, agents, source]);
   const activityNodes: ReactNode[] = [];
+  const artifactNodes = source.flatMap((component, index) => component.type === 'artifact'
+    ? [<ArtifactRow key={component.id || index} conversationId={props.conversationId} messageId={props.messageId} data={component.data as ArtifactActivityData} enabled={!props.isStreaming} />]
+    : []);
   const answerNodes: ReactNode[] = [];
   const activityComponents = projectActivityComponents(source.filter(
-    (component): component is MessageComponent & { type: 'agentActivity' | 'toolActivity' | 'artifact' } =>
-      component.type === 'agentActivity' || component.type === 'toolActivity' || component.type === 'artifact',
+    (component): component is MessageComponent & { type: 'agentActivity' | 'toolActivity' } =>
+      component.type === 'agentActivity' || component.type === 'toolActivity',
   ).map((component) => resolvePersistedHierarchyNames(
     component,
     agents,
@@ -423,10 +426,9 @@ export function ConversationAssistantBubble(props: Readonly<NarrativeProps>) {
     if (component.type === 'toolActivity') {
       activityNodes.push(<ToolRow key={component.id || index} conversationId={props.conversationId} messageId={props.messageId} component={component} redactSensitiveText={redactSensitiveText} onRetry={props.onRetry} />);
     }
-    if (component.type === 'artifact') activityNodes.push(<ArtifactRow key={component.id || index} conversationId={props.conversationId} messageId={props.messageId} data={component.data as ArtifactActivityData} enabled={!props.isStreaming} />);
   });
   if (!activityNodes.length && props.showWorking) activityNodes.push(<div key='working' className='flex items-center gap-2 text-sm text-muted-foreground'><Loader2 className='size-4 animate-spin text-primary' />{t('stream.activity.usingTools')}</div>);
-  if (!activityNodes.length && !answerNodes.length) return null;
+  if (!activityNodes.length && !artifactNodes.length && !answerNodes.length) return null;
   const actorName = activityComponents.reduce<string>((name, component) => {
     if (component.type !== 'toolActivity') return name;
     const safeName = sanitizeActivityActorName((component.data as ToolActivityData).actorName);
@@ -531,6 +533,7 @@ export function ConversationAssistantBubble(props: Readonly<NarrativeProps>) {
           </div>
         </div>
       )}
+      {artifactNodes.length > 0 && <div data-artifacts className={cn('space-y-2', activityNodes.length > 0 && 'mt-4 border-t pt-4')}>{artifactNodes}</div>}
       {answerNodes.length > 0 && <div data-answer-content className={cn('space-y-2', activityNodes.length > 0 && 'mt-4 border-t pt-4')}>{answerNodes}</div>}
     </div>
   );

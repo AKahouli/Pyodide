@@ -108,5 +108,14 @@
   "autoBuilder.actions.generate": "Générer l'équipe",
 
   "orgChart.generatingTitle": "Génération de l'équipe...",
-  "orgChart.generatingSubtitle": "Construction de la hiérarchie de votre équipe avec l'IA"
+  "orgChart.generatingSubtitle": "Construction de la hiérarchie de votre équipe avec l'IA",
+  "wizard.purpose": "Objectif",
+  "wizard.members": "Membres",
+  "wizard.review": "Vérification",
+  "wizard.next": "Continuer",
+  "wizard.back": "Retour",
+  "wizard.membersHint": "Choisissez des spécialistes complémentaires. Vous pourrez ajuster la structure ensuite.",
+  "wizard.noPurpose": "Aucun objectif renseigné.",
+  "wizard.unavailable": "Agent indisponible",
+  "wizard.saveError": "Impossible d’enregistrer l’équipe. Vos modifications sont conservées. Veuillez réessayer."
 }

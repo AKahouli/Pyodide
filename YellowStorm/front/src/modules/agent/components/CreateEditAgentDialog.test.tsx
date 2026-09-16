@@ -56,7 +56,7 @@ vi.mock('@/modules/localization', () => ({
 
 vi.mock('@/components/ui/dialog', () => ({
   Dialog: ({ children }: { children: ReactNode }) => <div>{children}</div>,
-  DialogContent: ({ children }: { children: ReactNode }) => <div>{children}</div>,
+  DialogContent: ({ children, className }: { children: ReactNode; className?: string }) => <div data-testid="dialog-content" className={className}>{children}</div>,
   DialogHeader: ({ children }: { children: ReactNode }) => <div>{children}</div>,
   DialogTitle: ({ children }: { children: ReactNode }) => <div>{children}</div>,
   DialogDescription: ({ children }: { children: ReactNode }) => <div>{children}</div>,
@@ -111,7 +111,7 @@ vi.mock('@/components/ui/scroll-area', () => ({
 
 vi.mock('@/components/ui/tabs', () => ({
   Tabs: ({ children }: { children: ReactNode }) => <div>{children}</div>,
-  TabsList: ({ children }: { children: ReactNode }) => <div>{children}</div>,
+  TabsList: ({ children, className }: { children: ReactNode; className?: string }) => <div data-testid="tabs-list" className={className}>{children}</div>,
   TabsTrigger: ({ children }: { children: ReactNode }) => <button type="button">{children}</button>,
   TabsContent: ({ children }: { children: ReactNode }) => <div>{children}</div>,
 }));
@@ -160,6 +160,21 @@ vi.mock('@/lib/form-utils', () => ({
 }));
 
 describe('CreateEditAgentDialog', () => {
+  it('uses the wide agent editor layout', async () => {
+    render(
+      <CreateEditAgentDialog
+        open
+        onOpenChange={vi.fn()}
+        agent={null}
+        onSave={vi.fn()}
+        saving={false}
+      />,
+    );
+
+    expect(await screen.findByTestId('dialog-content')).toHaveClass('max-w-5xl');
+    expect(screen.getByTestId('tabs-list')).toHaveClass('flex-nowrap');
+  });
+
   it('renders create mode content', async () => {
     render(
       <CreateEditAgentDialog

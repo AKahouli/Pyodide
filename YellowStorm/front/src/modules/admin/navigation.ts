@@ -76,18 +76,18 @@ export function findNavigationTarget(settings: NavigationSettings, targetKey: Na
   return settings.nodes.find((node) => node.targetKey === targetKey);
 }
 
-export function isNavigationNodeVisible(settings: NavigationSettings, id: string): boolean {
+export function isNavigationNodeVisible(settings: NavigationSettings, id: string, placement: 'sidebar' | 'launcher' = 'sidebar'): boolean {
   const byId = new Map(settings.nodes.map((node) => [node.id, node]));
   let node = byId.get(id);
   while (node) {
-    if (!node.visible) return false;
+    if (placement === 'sidebar' ? !node.visible : node.launcherVisible === false) return false;
     node = node.parentId ? byId.get(node.parentId) : undefined;
   }
   return true;
 }
 
-export function visibleNavigationItems(settings: NavigationSettings) {
+export function visibleNavigationItems(settings: NavigationSettings, placement: 'sidebar' | 'launcher' = 'sidebar') {
   return flattenNavigationNodes(settings)
     .map(({ node }) => node)
-    .filter((node) => node.type === 'item' && node.targetKey && isNavigationNodeVisible(settings, node.id));
+    .filter((node) => node.type === 'item' && node.targetKey && isNavigationNodeVisible(settings, node.id, placement));
 }

@@ -108,5 +108,14 @@
   "autoBuilder.actions.generate": "Generate team",
 
   "orgChart.generatingTitle": "Generating team...",
-  "orgChart.generatingSubtitle": "Building your team hierarchy with AI"
+  "orgChart.generatingSubtitle": "Building your team hierarchy with AI",
+  "wizard.purpose": "Purpose",
+  "wizard.members": "Members",
+  "wizard.review": "Review",
+  "wizard.next": "Continue",
+  "wizard.back": "Back",
+  "wizard.membersHint": "Choose complementary specialists. You can adjust the team structure afterward.",
+  "wizard.noPurpose": "No purpose added yet.",
+  "wizard.unavailable": "Unavailable agent",
+  "wizard.saveError": "The team could not be saved. Your changes are still here. Please try again."
 }

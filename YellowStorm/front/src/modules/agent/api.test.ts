@@ -14,6 +14,7 @@ import {
   getAllAgents,
   reconnectAgentWhatsApp,
   updateAgent,
+  updateDefaultAgent,
   updateAgentWhatsAppEnabled,
   upsertAgentTelegramIntegration,
 } from './api';
@@ -50,6 +51,9 @@ vi.mock('@/lib/api/config', () => ({
         `/agents/${id}/whatsapp-integration/${sessionId}/reconnect`,
       whatsappSession: (id: string, sessionId: string) =>
         `/agents/${id}/whatsapp-integration/${sessionId}`,
+    },
+    adminAgents: {
+      byId: (id: string) => `/admin/agents/${id}`,
     },
     agentTypes: {
       active: '/agent-types/active',
@@ -92,13 +96,55 @@ describe('agent api', () => {
     expect(result).toEqual({ id: 'new' });
   });
 
+  it('serializes form reasoning effort when creating an agent', async () => {
+    postMock.mockResolvedValue({ data: { data: { id: 'new' } } });
+
+    await createAgent({
+      name: 'Agent',
+      slug: 'agent',
+      agentType: 'type',
+      role: 'role',
+      reasoningEffort: 'high',
+    });
+
+    expect(postMock).toHaveBeenCalledWith('/agents', expect.objectContaining({
+      reasoning_effort: 'high',
+    }));
+    expect(postMock.mock.calls[0][1]).not.toHaveProperty('reasoningEffort');
+  });
+
   it('updates agent via PATCH /agents/:id', async () => {
     patchMock.mockResolvedValue({ data: { data: { id: 'a1', name: 'Updated' } } });
 
-    const result = await updateAgent('a1', { name: 'Updated' });
+    const result = await updateAgent('a1', {
+      name: 'Updated',
+      reasoningEffort: 'high',
+    });
 
-    expect(patchMock).toHaveBeenCalledWith('/agents/a1', { name: 'Updated' });
+    expect(patchMock).toHaveBeenCalledWith('/agents/a1', {
+      name: 'Updated',
+      reasoning_effort: 'high',
+    });
+    expect(patchMock.mock.calls[0][1]).not.toHaveProperty('reasoningEffort');
     expect(result).toEqual({ id: 'a1', name: 'Updated' });
+  });
+
+  it('preserves serialized reasoning effort updates', async () => {
+    patchMock.mockResolvedValue({ data: { data: { id: 'a1' } } });
+
+    await updateAgent('a1', { reasoning_effort: 'low' });
+
+    expect(patchMock).toHaveBeenCalledWith('/agents/a1', { reasoning_effort: 'low' });
+    expect(patchMock.mock.calls[0][1]).not.toHaveProperty('reasoningEffort');
+  });
+
+  it('serializes empty reasoning effort when updating a default agent', async () => {
+    patchMock.mockResolvedValue({ data: { data: { id: 'a1' } } });
+
+    await updateDefaultAgent('a1', { reasoningEffort: '' });
+
+    expect(patchMock).toHaveBeenCalledWith('/admin/agents/a1', { reasoning_effort: '' });
+    expect(patchMock.mock.calls[0][1]).not.toHaveProperty('reasoningEffort');
   });
 
   it('deletes agent via DELETE /agents/:id', async () => {

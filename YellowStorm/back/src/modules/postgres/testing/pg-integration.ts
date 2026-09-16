@@ -8,21 +8,25 @@ import * as schema from '../schema';
 // Load back/.env (cwd is back/ when jest runs) so POSTGRES_* are visible.
 dotenv.config({ path: path.resolve(process.cwd(), '.env') });
 
-export function pgAvailable(): boolean {
-  return Boolean(process.env.POSTGRES_HOST);
+export function pgAvailable(env: NodeJS.ProcessEnv = process.env): boolean {
+  const testDatabase = env.POSTGRES_TEST_DB?.trim();
+  return Boolean(
+    env.POSTGRES_HOST
+      && testDatabase
+      && testDatabase !== env.POSTGRES_DB?.trim(),
+  );
 }
 
 export const describeIntegration: jest.Describe = pgAvailable() ? describe : describe.skip;
 
 export function makeTestDb(): { db: NodePgDatabase<typeof schema>; pool: Pool; close: () => Promise<void> } {
-  // Prefer a dedicated test database so integration tests can never pollute or
-  // wipe the real agent datastore (POSTGRES_DB). Falls back to POSTGRES_DB.
+  // Never fall back to the application database: these suites delete fixtures.
   const pool = new Pool({
     host: process.env.POSTGRES_HOST,
     port: Number.parseInt(process.env.POSTGRES_PORT || '5432', 10),
     user: process.env.POSTGRES_USER,
     password: process.env.POSTGRES_PASSWORD,
-    database: process.env.POSTGRES_TEST_DB || process.env.POSTGRES_DB,
+    database: pgAvailable() ? process.env.POSTGRES_TEST_DB : '__yellowstorm_test_db_required__',
     max: 3,
   });
   const db = drizzle(pool, { schema });

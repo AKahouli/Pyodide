@@ -6,7 +6,7 @@ import { Badge } from '@/components/ui/badge';
 import { BadgeCount } from '@/components/ui/badge-count';
 import { Layers } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { useWorkspaceStore, useWorkspaces, useWorkspaceLoading, useSharedWorkspaces, usePublicWorkspaces } from '../store';
+import { useWorkspaceStore, useAllWorkspaces, useWorkspaceLoading, useSharedWorkspaces, usePublicWorkspaces } from '../store';
 import { useModuleTranslation } from '@/modules/localization';
 
 type WorkspaceSelectProps = Readonly<{
@@ -21,7 +21,7 @@ type WorkspaceSelectProps = Readonly<{
 export function WorkspaceSelect({ selectedIds, onChange, disabled, className, workspaceOptions, label }: WorkspaceSelectProps) {
   const { t } = useModuleTranslation('workspace');
   const [open, setOpen] = useState(false);
-  const workspaces = useWorkspaces();
+  const workspaces = useAllWorkspaces();
   const sharedWorkspaces = useSharedWorkspaces();
   const publicWorkspaces = usePublicWorkspaces();
   const { isLoadingWorkspaces } = useWorkspaceLoading();

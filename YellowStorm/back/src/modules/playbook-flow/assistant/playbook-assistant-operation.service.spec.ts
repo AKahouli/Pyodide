@@ -365,6 +365,34 @@ describe('PlaybookAssistantOperationService', () => {
     ]));
   });
 
+  it('renews only an unexpired lease owned by the current worker', async () => {
+    const exec = jest.fn().mockResolvedValue({ modifiedCount: 1 });
+    const operationModel = { updateOne: jest.fn().mockReturnValue({ exec }) };
+    const service = new PlaybookAssistantOperationService(operationModel as any);
+
+    await expect(service.renewWorkerLease('flow-1', 'owner-1', 'operation-1')).resolves.toBe(true);
+    expect(operationModel.updateOne).toHaveBeenCalledWith(
+      expect.objectContaining({
+        operationId: 'operation-1',
+        workerId: expect.any(String),
+        status: { $in: ['queued', 'running'] },
+        $expr: { $gt: ['$leaseExpiresAt', '$$NOW'] },
+      }),
+      [expect.objectContaining({ $set: expect.objectContaining({
+        leaseExpiresAt: { $dateAdd: { startDate: '$$NOW', unit: 'millisecond', amount: 300_000 } },
+      }) })],
+    );
+  });
+
+  it('reports a lost worker lease without recreating it', async () => {
+    const operationModel = {
+      updateOne: jest.fn().mockReturnValue({ exec: jest.fn().mockResolvedValue({ modifiedCount: 0 }) }),
+    };
+    const service = new PlaybookAssistantOperationService(operationModel as any);
+
+    await expect(service.renewWorkerLease('flow-1', 'owner-1', 'operation-1')).resolves.toBe(false);
+  });
+
   it('rejects completion after cancellation has won the terminal transition', async () => {
     let status = 'running';
     let sequence = 1;

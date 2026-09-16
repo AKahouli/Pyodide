@@ -1,10 +1,12 @@
 import { useEffect, useMemo, useState } from 'react';
-import { ArrowDown, ArrowUp, ListTree, Plus, RotateCcw, Save, Trash2 } from 'lucide-react';
+import { ArrowDown, ArrowUp, ChevronDown, GripVertical, ListTree, Plus, RotateCcw, Save, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { Switch } from '@/components/ui/switch';
 import { parseApiError } from '@/lib/api-error';
+import { cn } from '@/lib/utils';
 import { showError, showSuccess } from '@/lib/notifications';
 import { useModuleTranslation } from '@/modules/localization';
 import { getNavigationSettings, updateNavigationSettings } from '../api';
@@ -64,12 +66,26 @@ export function validParentGroups(nodes: NavigationNode[], node: NavigationNode)
     && depth(candidate.id) + 1 + branchDepth(node.id) <= 3);
 }
 
+export function moveBefore(nodes: NavigationNode[], draggedId: string, targetId: string): NavigationNode[] {
+  if (draggedId === targetId) return nodes;
+  const dragged = nodes.find((node) => node.id === draggedId);
+  const target = nodes.find((node) => node.id === targetId);
+  if (!dragged || !target) return nodes;
+  if (target.parentId && !validParentGroups(nodes, dragged).some((group) => group.id === target.parentId)) return nodes;
+  return normalizePositions([
+    ...nodes.filter((node) => node.id !== draggedId),
+    { ...dragged, parentId: target.parentId, position: target.position - 0.5 },
+  ]);
+}
+
 export function NavigationSettingsCard() {
   const { t } = useModuleTranslation('admin');
   const [settings, setSettings] = useState<NavigationSettings>(DEFAULT_NAVIGATION_SETTINGS);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [dirty, setDirty] = useState(false);
+  const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [draggedId, setDraggedId] = useState<string | null>(null);
 
   useEffect(() => {
     getNavigationSettings().then(setSettings)
@@ -92,28 +108,34 @@ export function NavigationSettingsCard() {
   };
 
   const addGroup = () => {
+    const id = `group-${Date.now()}`;
     changeNodes([...settings.nodes, {
-      id: `group-${Date.now()}`,
+      id,
       type: 'group',
       parentId: null,
       position: settings.nodes.filter((node) => node.parentId === null).length,
       visible: true,
+      launcherVisible: true,
       labels: { en: 'New submenu', fr: 'Nouveau sous-menu' },
     }]);
+    setExpandedId(id);
   };
 
   const addItem = () => {
     const targetKey = availableTargets[0];
     if (!targetKey) return;
+    const id = `${targetKey.replace(/[A-Z]/g, (letter) => `-${letter.toLowerCase()}`)}-${Date.now()}`;
     changeNodes([...settings.nodes, {
-      id: `${targetKey.replace(/[A-Z]/g, (letter) => `-${letter.toLowerCase()}`)}-${Date.now()}`,
+      id,
       type: 'item',
       parentId: null,
       position: settings.nodes.filter((node) => node.parentId === null).length,
       visible: true,
+      launcherVisible: true,
       labels: { ...NAVIGATION_TARGETS[targetKey].defaultLabels },
       targetKey,
     }]);
+    setExpandedId(id);
   };
 
   const move = (node: NavigationNode, offset: -1 | 1) => {
@@ -141,54 +163,63 @@ export function NavigationSettingsCard() {
   };
 
   return (
-    <Card>
-      <CardHeader>
-        <div className='flex items-start gap-3'>
-          <div className='flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary'><ListTree className='h-5 w-5' /></div>
-          <div className='space-y-1'><CardTitle>{t('appearance.navigation.title')}</CardTitle><CardDescription>{t('appearance.navigation.description')}</CardDescription></div>
+    <Card className='overflow-hidden'>
+      <CardHeader className='border-b bg-muted/20'>
+        <div className='flex flex-wrap items-start justify-between gap-3'>
+          <div className='flex items-start gap-3'>
+            <div className='flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary'><ListTree className='h-5 w-5' /></div>
+            <div className='space-y-1'><CardTitle>{t('appearance.navigation.title')}</CardTitle><CardDescription>{t('appearance.navigation.description')}</CardDescription></div>
+          </div>
+          <Button type='button' onClick={() => void save()} disabled={!dirty || loading || saving}><Save className='mr-2 h-4 w-4' />{saving ? t('appearance.navigation.saving') : t('appearance.navigation.save')}</Button>
         </div>
       </CardHeader>
-      <CardContent className='space-y-4'>
-        <div className='flex flex-wrap gap-2'>
+      <CardContent className='space-y-3 p-0'>
+        <div className='flex flex-wrap gap-2 px-4 pt-4'>
           <Button type='button' variant='outline' onClick={addGroup} disabled={loading}><Plus className='mr-2 h-4 w-4' />{t('appearance.navigation.addSubmenu')}</Button>
           <Button type='button' variant='outline' onClick={addItem} disabled={loading || availableTargets.length === 0}><Plus className='mr-2 h-4 w-4' />{t('appearance.navigation.addItem')}</Button>
           <Button type='button' variant='ghost' onClick={() => { setSettings(structuredClone(DEFAULT_NAVIGATION_SETTINGS)); setDirty(true); }} disabled={loading}><RotateCcw className='mr-2 h-4 w-4' />{t('appearance.navigation.reset')}</Button>
         </div>
 
         {loading ? <p className='text-sm text-muted-foreground'>{t('appearance.actions.loading')}</p> : (
-          <div className='space-y-2' aria-label={t('appearance.navigation.tree')}>
+          <div className='border-y' aria-label={t('appearance.navigation.tree')}>
+            <div className='grid grid-cols-[minmax(0,1fr)_3.5rem_3.5rem_6.5rem] items-center gap-2 bg-muted/40 px-4 py-2 text-xs font-medium uppercase tracking-wide text-muted-foreground'>
+              <span>{t('appearance.navigation.item')}</span>
+              <span className='text-center'>{t('appearance.navigation.sidebar')}</span>
+              <span className='text-center'>{t('appearance.navigation.launcher')}</span>
+              <span className='sr-only'>{t('appearance.navigation.actions')}</span>
+            </div>
             {rows.map(({ node, depth }) => {
               const siblings = sortNavigationNodes(settings, node.parentId);
               const siblingIndex = siblings.findIndex((item) => item.id === node.id);
+              const expanded = expandedId === node.id;
               return (
-                <div key={node.id} className='grid gap-3 rounded-lg border p-3 lg:grid-cols-[minmax(12rem,1fr)_minmax(12rem,1fr)_11rem_auto]' style={{ marginLeft: `${Math.min(depth, 3) * 16}px` }}>
-                  <div className='grid grid-cols-2 gap-2'>
+                <div key={node.id} className={cn('border-t first:border-t-0', draggedId === node.id && 'opacity-40')} draggable onDragStart={() => setDraggedId(node.id)} onDragEnd={() => setDraggedId(null)} onDragOver={(event) => event.preventDefault()} onDrop={() => { if (draggedId) changeNodes(moveBefore(settings.nodes, draggedId, node.id)); setDraggedId(null); }}>
+                  <div className='grid min-h-12 grid-cols-[minmax(0,1fr)_3.5rem_3.5rem_6.5rem] items-center gap-2 px-4 py-1.5'>
+                    <button type='button' className='flex min-w-0 items-center gap-2 text-left' style={{ paddingLeft: `${Math.min(depth, 3) * 18}px` }} aria-expanded={expanded} onClick={() => setExpandedId(expanded ? null : node.id)}>
+                      <GripVertical className='size-4 shrink-0 cursor-grab text-muted-foreground' aria-hidden='true' />
+                      <ChevronDown className={cn('size-4 shrink-0 transition-transform', !expanded && '-rotate-90')} />
+                      <span className='truncate text-sm font-medium'>{node.labels.en}</span>
+                      <span className='rounded bg-muted px-1.5 py-0.5 text-[10px] uppercase text-muted-foreground'>{node.type === 'group' ? t('appearance.navigation.submenu') : t('appearance.navigation.item')}</span>
+                    </button>
+                    <div className='flex justify-center'><Switch aria-label={`${t('appearance.navigation.sidebar')}: ${node.labels.en}`} checked={node.visible} onCheckedChange={(visible) => updateNode(node.id, { visible })} /></div>
+                    <div className='flex justify-center'><Switch aria-label={`${t('appearance.navigation.launcher')}: ${node.labels.en}`} checked={node.launcherVisible ?? true} onCheckedChange={(launcherVisible) => updateNode(node.id, { launcherVisible })} /></div>
+                    <div className='flex justify-end gap-0.5'>
+                      <Button type='button' variant='ghost' size='icon' aria-label={t('appearance.navigation.moveUp', { name: node.labels.en })} disabled={siblingIndex === 0} onClick={() => move(node, -1)}><ArrowUp className='h-4 w-4' /></Button>
+                      <Button type='button' variant='ghost' size='icon' aria-label={t('appearance.navigation.moveDown', { name: node.labels.en })} disabled={siblingIndex === siblings.length - 1} onClick={() => move(node, 1)}><ArrowDown className='h-4 w-4' /></Button>
+                      <Button type='button' variant='ghost' size='icon' aria-label={t('appearance.navigation.remove', { name: node.labels.en })} onClick={() => changeNodes(removeBranch(settings.nodes, node.id))}><Trash2 className='h-4 w-4' /></Button>
+                    </div>
+                  </div>
+                  {expanded && <div className='grid gap-3 border-t bg-muted/20 px-4 py-3 md:grid-cols-2 xl:grid-cols-4' style={{ paddingLeft: `${Math.min(depth, 3) * 18 + 40}px` }}>
                     <div><Label htmlFor={`${node.id}-en`}>EN</Label><Input id={`${node.id}-en`} value={node.labels.en} onChange={(event) => updateNode(node.id, { labels: { ...node.labels, en: event.target.value } })} /></div>
                     <div><Label htmlFor={`${node.id}-fr`}>FR</Label><Input id={`${node.id}-fr`} value={node.labels.fr} onChange={(event) => updateNode(node.id, { labels: { ...node.labels, fr: event.target.value } })} /></div>
-                  </div>
-                  <div>
-                    <Label htmlFor={`${node.id}-parent`}>{t('appearance.navigation.parent')}</Label>
-                    <select id={`${node.id}-parent`} className='h-9 w-full rounded-md border bg-background px-3 text-sm' value={node.parentId ?? ''} onChange={(event) => updateNode(node.id, { parentId: event.target.value || null, position: settings.nodes.length })}>
-                      <option value=''>{t('appearance.navigation.root')}</option>
-                      {validParentGroups(settings.nodes, node).map((group) => <option key={group.id} value={group.id}>{group.labels.en}</option>)}
-                    </select>
-                  </div>
-                  <div>
-                    {node.type === 'item' ? <><Label htmlFor={`${node.id}-target`}>{t('appearance.navigation.target')}</Label><select id={`${node.id}-target`} className='h-9 w-full rounded-md border bg-background px-3 text-sm' value={node.targetKey} onChange={(event) => updateNode(node.id, { targetKey: event.target.value as NavigationTargetKey })}>{(Object.keys(NAVIGATION_TARGETS) as NavigationTargetKey[]).filter((key) => key === node.targetKey || !usedTargets.has(key)).map((key) => <option key={key} value={key}>{NAVIGATION_TARGETS[key].defaultLabels.en}</option>)}</select></> : <p className='pt-6 text-sm text-muted-foreground'>{t('appearance.navigation.submenu')}</p>}
-                  </div>
-                  <div className='flex items-end gap-1'>
-                    <label className='flex h-9 items-center gap-2 px-2 text-sm'><input type='checkbox' checked={node.visible} onChange={(event) => updateNode(node.id, { visible: event.target.checked })} />{t('appearance.navigation.visible')}</label>
-                    <Button type='button' variant='ghost' size='icon' aria-label={t('appearance.navigation.moveUp', { name: node.labels.en })} disabled={siblingIndex === 0} onClick={() => move(node, -1)}><ArrowUp className='h-4 w-4' /></Button>
-                    <Button type='button' variant='ghost' size='icon' aria-label={t('appearance.navigation.moveDown', { name: node.labels.en })} disabled={siblingIndex === siblings.length - 1} onClick={() => move(node, 1)}><ArrowDown className='h-4 w-4' /></Button>
-                    <Button type='button' variant='ghost' size='icon' aria-label={t('appearance.navigation.remove', { name: node.labels.en })} onClick={() => changeNodes(removeBranch(settings.nodes, node.id))}><Trash2 className='h-4 w-4' /></Button>
-                  </div>
+                    <div><Label htmlFor={`${node.id}-parent`}>{t('appearance.navigation.parent')}</Label><select id={`${node.id}-parent`} className='h-9 w-full rounded-md border bg-background px-3 text-sm' value={node.parentId ?? ''} onChange={(event) => updateNode(node.id, { parentId: event.target.value || null, position: settings.nodes.length })}><option value=''>{t('appearance.navigation.root')}</option>{validParentGroups(settings.nodes, node).map((group) => <option key={group.id} value={group.id}>{group.labels.en}</option>)}</select></div>
+                    <div>{node.type === 'item' ? <><Label htmlFor={`${node.id}-target`}>{t('appearance.navigation.target')}</Label><select id={`${node.id}-target`} className='h-9 w-full rounded-md border bg-background px-3 text-sm' value={node.targetKey} onChange={(event) => updateNode(node.id, { targetKey: event.target.value as NavigationTargetKey })}>{(Object.keys(NAVIGATION_TARGETS) as NavigationTargetKey[]).filter((key) => key === node.targetKey || !usedTargets.has(key)).map((key) => <option key={key} value={key}>{NAVIGATION_TARGETS[key].defaultLabels.en}</option>)}</select></> : <p className='pt-6 text-sm text-muted-foreground'>{t('appearance.navigation.submenu')}</p>}</div>
+                  </div>}
                 </div>
               );
             })}
           </div>
         )}
-
-        <div className='flex justify-end'><Button type='button' onClick={() => void save()} disabled={!dirty || loading || saving}><Save className='mr-2 h-4 w-4' />{saving ? t('appearance.navigation.saving') : t('appearance.navigation.save')}</Button></div>
       </CardContent>
     </Card>
   );

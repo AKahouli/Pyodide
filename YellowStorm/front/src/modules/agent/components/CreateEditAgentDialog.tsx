@@ -266,7 +266,7 @@ export function CreateEditAgentDialog({
 
   useEffect(() => {
     if (agent || slugEditedRef.current) return;
-    setValue('slug', slugifyAgentName(watchedName), { shouldValidate: true });
+    setValue('slug', slugifyAgentName(watchedName), { shouldValidate: watchedName.length > 0 });
   }, [agent, watchedName, setValue]);
 
   useEffect(() => {
@@ -298,7 +298,7 @@ export function CreateEditAgentDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-3xl h-[80vh] overflow-hidden flex flex-col">
+      <DialogContent className="h-[80vh] w-[calc(100%-2rem)] max-w-5xl overflow-hidden flex flex-col">
         <DialogHeader className="shrink-0">
           <DialogTitle>
             {agent ? t('createEdit.titleEdit') : t('createEdit.titleCreate')}
@@ -322,7 +322,7 @@ export function CreateEditAgentDialog({
             <Tabs defaultValue={initialTab} className="flex-1 min-h-0 flex flex-col">
               <TooltipProvider delayDuration={300}>
                 <div className="w-full shrink-0 overflow-x-auto">
-                  <TabsList className="inline-flex h-auto w-max max-w-none flex-nowrap justify-start gap-0.5">
+                  <TabsList className="flex h-auto w-max min-w-full flex-nowrap justify-start gap-1">
                     {AGENT_FORM_TABS.map((tab) => (
                       <Tooltip key={tab.value}>
                         <TooltipTrigger asChild>
@@ -400,6 +400,21 @@ export function CreateEditAgentDialog({
                         )}
                       </div>
 
+                      {/* Role */}
+                      <div className="space-y-2">
+                        <Label htmlFor="user-agent-role">{t('createEdit.fields.role')}</Label>
+                        <Textarea
+                          id="user-agent-role"
+                          placeholder={t('createEdit.fields.rolePlaceholder')}
+                          rows={6}
+                          {...register("role")}
+                        />
+                        {errors.role && (
+                          <p className="text-xs text-destructive">{errors.role.message}</p>
+                        )}
+                      </div>
+
+                      <details className="rounded-lg border p-3"><summary className="cursor-pointer text-sm font-medium">{t('library.manage')}</summary><div className="mt-4 space-y-4">
                       <div className="flex items-center justify-between">
                         <div className="space-y-0.5">
                           <Label>{t('createEdit.fields.temporaryChildAgents')}</Label>
@@ -432,20 +447,7 @@ export function CreateEditAgentDialog({
                         )}
                       </div>
 
-                      {/* Role */}
-                      <div className="space-y-2">
-                        <Label htmlFor="user-agent-role">{t('createEdit.fields.role')}</Label>
-                        <Textarea
-                          id="user-agent-role"
-                          placeholder={t('createEdit.fields.rolePlaceholder')}
-                          rows={6}
-                          {...register("role")}
-                        />
-                        {errors.role && (
-                          <p className="text-xs text-destructive">{errors.role.message}</p>
-                        )}
-                      </div>
-
+</div></details>
                       {/* Description */}
                       <div className="space-y-2">
                         <Label htmlFor="user-agent-description">{t('createEdit.fields.description')}</Label>

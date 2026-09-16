@@ -9,6 +9,7 @@ const node = {
   parentId: null,
   position: 0,
   visible: true,
+  launcherVisible: true,
   labels: { en: 'Workspace', fr: 'Espaces de travail' },
   targetKey: 'workspace',
 };
@@ -24,5 +25,14 @@ describe('UpdateNavigationSettingsDto', () => {
 
   it('accepts null for a root node parent', async () => {
     await expect(validate(plainToInstance(UpdateNavigationSettingsDto, { nodes: [node] }))).resolves.toEqual([]);
+  });
+
+  it('rejects a non-boolean launcher visibility', async () => {
+    const errors = await validate(plainToInstance(UpdateNavigationSettingsDto, {
+      nodes: [{ ...node, launcherVisible: 'yes' }],
+    }));
+    expect(errors[0]?.children?.[0]?.children).toEqual(expect.arrayContaining([
+      expect.objectContaining({ property: 'launcherVisible' }),
+    ]));
   });
 });

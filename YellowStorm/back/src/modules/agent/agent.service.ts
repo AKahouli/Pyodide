@@ -58,6 +58,11 @@ const TRUSTED_SYSTEM_MCP_CONNECTOR_SLUGS = new Set([
   PLATFORM_COPILOT_PLAYBOOK_CONNECTOR_SLUG,
   AGENT_MCP_CONNECTOR_SLUG,
 ]);
+const PLATFORM_COPILOT_LEGACY_PLAYBOOK_ACTIONS = new Set([
+  'assess_playbook_request',
+  'continue_playbook_clarification',
+  'start_playbook_construction',
+]);
 
 export interface PlaybookPlannerAgentConfig {
   agentTypeId: string;
@@ -678,12 +683,16 @@ export class AgentService {
       managerName: selectedManager?.name,
     });
 
-    // A chat-level model selection is the default only for untagged mono-agent
-    // requests. Explicitly routed agents retain their configured model.
+    const inheritedDefaultModelId = filteredAgents.some((agent) => !agent.model)
+      ? (await this.modelsService.getDefaultModel())?.id || ''
+      : '';
+
+    // A chat-level model selection applies directly to untagged mono-agent
+    // requests. Explicitly routed agents inherit the Admin Models default.
     const effectiveModelIdForAgent = (agent: IAgentForStream): string =>
       pingedAgents.length === 0
-        ? fallbackModelId || agent.model || ''
-        : agent.model || fallbackModelId || '';
+        ? fallbackModelId || agent.model || inheritedDefaultModelId
+        : agent.model || inheritedDefaultModelId || fallbackModelId || '';
 
     // Batch-resolve prompts: collect all (agentTypeId, modelId) pairs
     const promptPairs = filteredAgents
@@ -805,6 +814,20 @@ export class AgentService {
       );
       if (agent.agentTypeSlug === PLATFORM_COPILOT && runtimeContext) {
         for (const binding of connectorBindings) {
+          binding.auth_headers = {
+            ...((binding.auth_headers as Record<string, string> | undefined) ?? {}),
+            'X-YellowStorm-User-Id': userId,
+            'X-YellowStorm-Agent-Id': agent.id,
+            'X-YellowStorm-Conversation-Id': runtimeContext.conversationId,
+            'X-Correlation-Id': runtimeContext.correlationId,
+          };
+        }
+      } else if (runtimeContext) {
+        // Trusted system MCP connectors need the same runtime identity on every
+        // agent (not just the copilot) — their MCP servers authorize per-call
+        // as the acting user.
+        for (const binding of connectorBindings) {
+          if (!TRUSTED_SYSTEM_MCP_CONNECTOR_SLUGS.has(String(binding.connector_slug || '').toLowerCase())) continue;
           binding.auth_headers = {
             ...((binding.auth_headers as Record<string, string> | undefined) ?? {}),
             'X-YellowStorm-User-Id': userId,
@@ -1897,7 +1920,11 @@ export class AgentService {
     for (const connectorId of connectorIds) {
       const connector = connectorsMap.get(connectorId);
       if (connector?.slug?.toLowerCase() === PLATFORM_COPILOT_PLAYBOOK_CONNECTOR_SLUG) {
-        runtimeSelections.delete(connectorId);
+        runtimeSelections.set(connectorId, new Set(
+          connector.actions
+            .filter((action) => action.isEnabled !== false && !PLATFORM_COPILOT_LEGACY_PLAYBOOK_ACTIONS.has(action.key))
+            .map((action) => action.key),
+        ));
       }
     }
     return runtimeSelections.size ? runtimeSelections : undefined;
