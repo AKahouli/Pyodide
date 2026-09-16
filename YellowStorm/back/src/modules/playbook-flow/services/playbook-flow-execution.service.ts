@@ -1926,21 +1926,24 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
             }
           }
 
-          // Answer extraction (matches python evaluator's _extract_node_outputs + _extract_answer_content)
+          // Answer extraction (mirrors python evaluator's _answer_from_payload: output → raw_llm_output → text)
           if (answerNodeId && nodeId === answerNodeId && (eventType === 'NodeCompleted' || eventType === 'OUTPUT' || eventType === 'ExecutionCompleted')) {
             const nodeExecution = (payload.node_execution && typeof payload.node_execution === 'object') ? payload.node_execution as Record<string, unknown> : null;
             const outputs = nodeExecution?.outputs || payload.outputs || null;
+            let candidate: unknown = null;
             if (outputs) {
-              let candidate: unknown = null;
               if (typeof outputs === 'object' && outputs !== null && !Array.isArray(outputs)) {
                 const outObj = outputs as Record<string, unknown>;
                 candidate = outObj.text || outObj.answer || outObj.output || outputs;
               } else {
                 candidate = outputs;
               }
-              const extracted = extractEvaluationAnswer(candidate);
-              if (extracted) generatedAnswer = extracted;
             }
+            if (!candidate || typeof candidate === 'object') {
+              candidate = payload.output || payload.raw_llm_output || payload.text || null;
+            }
+            const extracted = extractEvaluationAnswer(candidate);
+            if (extracted) generatedAnswer = extracted;
           }
 
           if (eventType === 'ExecutionCompleted') status = 'completed';
