@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Progress } from '@/components/ui/progress';
@@ -44,6 +44,9 @@ export function LogicalSearchEvaluationPage(): JSX.Element {
   const [uploadResult, setUploadResult] = useState<UploadResult | null>(null);
   const [uploading, setUploading] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
+  const [isDragOver, setIsDragOver] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const dragCounter = useRef(0);
   const [launching, setLaunching] = useState(false);
   const [launchError, setLaunchError] = useState<string | null>(null);
   const [runningEvalId, setRunningEvalId] = useState<string | null>(null);
@@ -117,8 +120,7 @@ export function LogicalSearchEvaluationPage(): JSX.Element {
   useEffect(() => { refreshEvaluations(); }, [refreshEvaluations]);
 
   // ── Handlers ────────────────────────────────────────────────
-  const handleFileChange = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
+  const submitFile = useCallback(async (file: File) => {
     if (!file) return;
     setUploading(true);
     setUploadError(null);
@@ -130,8 +132,44 @@ export function LogicalSearchEvaluationPage(): JSX.Element {
       setUploadError(err instanceof Error ? err.message : 'Upload failed');
     } finally {
       setUploading(false);
-      e.target.value = '';
+      if (fileInputRef.current) fileInputRef.current.value = '';
     }
+  }, []);
+
+  const handleFileChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    void submitFile(file);
+  }, [submitFile]);
+
+  const handleDrop = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    dragCounter.current = 0;
+    setIsDragOver(false);
+    const file = e.dataTransfer.files?.[0];
+    if (file) void submitFile(file);
+  }, [submitFile]);
+
+  const handleDragEnter = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (e.dataTransfer.types.includes('Files')) {
+      dragCounter.current += 1;
+      setIsDragOver(true);
+    }
+  }, []);
+
+  const handleDragLeave = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    dragCounter.current -= 1;
+    if (dragCounter.current === 0) setIsDragOver(false);
+  }, []);
+
+  const handleDragOver = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
   }, []);
 
   const handleLaunch = useCallback(async () => {
@@ -254,11 +292,24 @@ export function LogicalSearchEvaluationPage(): JSX.Element {
       <Card>
         <CardHeader><CardTitle>{t('upload.title')}</CardTitle></CardHeader>
         <CardContent>
-          <label className='flex flex-col items-center gap-3 rounded-xl border-2 border-dashed p-8 text-center cursor-pointer hover:border-primary/50 transition-colors'>
+          <label
+            onDrop={handleDrop}
+            onDragEnter={handleDragEnter}
+            onDragLeave={handleDragLeave}
+            onDragOver={handleDragOver}
+            className={`flex flex-col items-center gap-3 rounded-xl border-2 border-dashed p-8 text-center cursor-pointer hover:border-primary/50 transition-colors ${
+              isDragOver ? 'border-primary bg-primary/5' : ''
+            }`}
+          >
             <span className='text-sm text-muted-foreground'>{t('upload.dropzone')}</span>
             <span className='text-xs text-muted-foreground'>{t('upload.accept')}</span>
-            <input type='file' accept='.xlsx,.csv' className='hidden' onChange={handleFileChange} />
-            {uploading && <Progress value={50} className='w-full' />}
+            <input ref={fileInputRef} type='file' accept='.xlsx,.csv' className='hidden' onChange={handleFileChange} />
+            {uploading && (
+              <>
+                <Progress value={50} className='w-full' />
+                <span className='text-xs text-muted-foreground'>{t('upload.uploading')}</span>
+              </>
+            )}
           </label>
           {uploadError && <p className='mt-2 text-sm text-destructive'>{uploadError}</p>}
           {uploadResult && (

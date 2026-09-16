@@ -52,6 +52,7 @@ export const evaluationLogicalSearchApi = {
   async list(): Promise<LogicalSearchEvaluation[]> {
     const res = await apiClient.get<{ data: LogicalSearchEvaluation[] }>(
       API_ENDPOINTS.logicalSearchEvaluation.base,
+      { timeout: 180000 },
     );
     return res.data.data;
   },

@@ -352,7 +352,7 @@ export class LogicalSearchEvaluationService implements OnModuleInit {
       controlEdges: [
         {
           id: 'edge-target-to-judge',
-          kind: 'default',
+          kind: 'sequential', // ADK only wires 'sequential'/'conditional' edges; 'default' is silently dropped.
           source: 'eval-target',
           target: 'eval-judge',
           routerLabel: '',
@@ -364,10 +364,12 @@ export class LogicalSearchEvaluationService implements OnModuleInit {
       dataBindings: [
         {
           id: 'binding-target-output-to-judge-input',
-          sourceNodeId: 'eval-target',
-          sourceOutputPortId: 'output',
-          targetNodeId: 'eval-judge',
-          targetInputPortId: 'target_answer',
+          sourceKind: 'node-output',
+          sourceNode: 'eval-target',
+          sourcePort: 'output',
+          targetNode: 'eval-judge',
+          targetPort: 'target_answer',
+          iteration: 'current',
         },
       ],
       settings: {
@@ -546,7 +548,12 @@ export class LogicalSearchEvaluationService implements OnModuleInit {
         payload.seeded_task_outputs = [];
         setDeepPath(payload, queryPath, queryText);
         for (const path of additionalQueryPaths) {
-          setDeepPath(payload, path, queryText);
+          // expected_answer must carry the benchmark answer, not the question.
+          if (Array.isArray(path) && path.join('.') === 'input_context.expected_answer') {
+            setDeepPath(payload, path, benchmarkQuery.answer ?? '');
+          } else {
+            setDeepPath(payload, path, queryText);
+          }
         }
         const snapshot = (payload.snapshot ?? {}) as Record<string, unknown>;
 
@@ -557,7 +564,7 @@ export class LogicalSearchEvaluationService implements OnModuleInit {
             flowId: template.flow_id,
             ownerId,
             snapshot,
-            inputContext: { query: queryText },
+            inputContext: { query: queryText, expected_answer: benchmarkQuery.answer ?? '' },
             answerNodeId: 'eval-judge', // answer_node_id is eval-judge in new architecture
           });
 
@@ -576,13 +583,9 @@ export class LogicalSearchEvaluationService implements OnModuleInit {
             durationMs: runResult.durationMs,
             error: runResult.error,
             toolCalls: runResult.toolCalls,
+            judgeScore,
+            judgeReasoning,
           }));
-          // Add judge fields to the last result
-          if (results.length > 0) {
-            const lastResult = results[results.length - 1];
-            if (judgeScore !== undefined) (lastResult as any).judgeScore = judgeScore;
-            if (judgeReasoning !== undefined) (lastResult as any).judgeReasoning = judgeReasoning;
-          }
           this.logger.log(`[${queryId}] ${runResult.status} in ${String(runResult.durationMs)}ms${judgeScore !== undefined ? ` | judge: ${judgeScore}` : ''}`);
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error);
@@ -728,7 +731,8 @@ export class LogicalSearchEvaluationService implements OnModuleInit {
       'Matched Sources', 'Retrieval Recall', 'Retrieval Precision', 'Retrieval Page Hit',
       'Retrieval Exact Match', 'Answer Recall', 'Answer Precision', 'Answer F1',
       'Semantic Similarity', 'Fact Recall', 'Fact Precision', 'Answer Quality',
-      'Answer Exact Match', 'Status', 'Duration (ms)', 'Error',
+      'Answer Exact Match', 'Judge Score', 'Judge Reasoning',
+      'Status', 'Duration (ms)', 'Error',
     ] as const;
 
     const detailsSheetData = results.map((r) => {
@@ -757,6 +761,8 @@ export class LogicalSearchEvaluationService implements OnModuleInit {
         'Fact Precision': ans.fact_precision,
         'Answer Quality': ans.answer_quality,
         'Answer Exact Match': ans.exact_match,
+        'Judge Score': r.judge_score ?? '',
+        'Judge Reasoning': r.judge_reasoning ?? '',
         'Status': r.status,
         'Duration (ms)': r.duration_ms,
         'Error': r.error ?? '',

@@ -707,6 +707,8 @@ export interface EvaluationQueryResult {
   retrieved_files: string[];
   retrieved_pages: number[];
   retrieved_sources: FilePagePair[];
+  judge_score?: number;
+  judge_reasoning?: string;
 }
 
 export function buildQueryResult(input: {
@@ -720,6 +722,8 @@ export function buildQueryResult(input: {
   durationMs: number;
   error?: string | null;
   toolCalls: { nodeId: string; iteration: number; trace: unknown[] }[];
+  judgeScore?: number;
+  judgeReasoning?: string;
 }): EvaluationQueryResult {
   const toolCalls: ToolCall[] = [];
   for (const entry of input.toolCalls) {
@@ -748,6 +752,8 @@ export function buildQueryResult(input: {
     retrieved_files: retrieval.retrieved_files,
     retrieved_pages: retrieval.retrieved_pages,
     retrieved_sources: retrieval.retrieved_sources,
+    judge_score: input.judgeScore,
+    judge_reasoning: input.judgeReasoning,
   };
 }
 

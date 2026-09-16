@@ -210,6 +210,27 @@ function extractEvaluationAnswer(value: unknown): string | null {
   return String(value).trim() || null;
 }
 
+/** Parse the LLM Judge's output: strict {score, reasoning} JSON, tolerating fences and prose. */
+function parseEvalJudgeOutput(
+  raw: string,
+): { score?: number; reasoning?: string; parsed: boolean } {
+  const text = raw.trim().replace(/^```(?:json)?/i, '').replace(/```$/, '').trim();
+  const blockMatch = text.match(/\{[\s\S]*\}/);
+  if (!blockMatch) return { parsed: false };
+  try {
+    const obj = JSON.parse(blockMatch[0]);
+    if (obj !== null && typeof obj === 'object' && !Array.isArray(obj)) {
+      const result: { score?: number; reasoning?: string; parsed: true } = { parsed: true };
+      if (typeof obj.score === 'number') result.score = obj.score;
+      if (typeof obj.reasoning === 'string') result.reasoning = obj.reasoning;
+      return result;
+    }
+  } catch {
+    // fall back to unparsed text
+  }
+  return { parsed: false };
+}
+
 function filterRuntimeHitlBlockers(blockers: unknown): Record<string, unknown>[] {
   if (!Array.isArray(blockers)) return [];
   return blockers.filter((blocker): blocker is Record<string, unknown> => (
@@ -1969,13 +1990,12 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
             }
             const extracted = extractEvaluationAnswer(candidate);
             if (extracted) {
-              // Try to parse JSON { score: number, reasoning: string }
-              try {
-                const parsed = JSON.parse(extracted);
-                if (typeof parsed.score === 'number') judgeScore = parsed.score;
-                if (typeof parsed.reasoning === 'string') judgeReasoning = parsed.reasoning;
-              } catch {
-                // If not JSON, treat as reasoning text
+              const judge = parseEvalJudgeOutput(extracted);
+              if (judge.parsed && (judge.score !== undefined || judge.reasoning !== undefined)) {
+                if (judge.score !== undefined) judgeScore = judge.score;
+                if (judge.reasoning !== undefined) judgeReasoning = judge.reasoning;
+              } else {
+                // Unparseable JSON → keep the raw text as reasoning
                 judgeReasoning = extracted;
               }
             }

@@ -1961,3 +1961,22 @@ async def test_run_step_preserves_opaque_structured_refs(monkeypatch):
     payload = result["task_outputs"][("step-1", 0)]
     assert payload["outputs"]["report"]["ref"] == {"document_id": "doc-1"}
     _assert_step_events_without_tokens(events)
+
+def test_render_prompt_variables_reflects_node_inputs_and_trigger():
+    from src.flow_engine.nodes.step import render_prompt_variables
+
+    prompt = (
+        "Question: {{input_context.query}}\n"
+        "Attendu: {{input_context.expected_answer}}\n"
+        "Cible: {{target_answer}}\n"
+        "Inconnu: {{missing.key}}"
+    )
+    context = {
+        "input_context": {"query": "q1", "expected_answer": "a1", "target_answer": "t1"},
+        "target_answer": "t1",
+    }
+    rendered = render_prompt_variables(prompt, context)
+    assert "Question: q1" in rendered
+    assert "Attendu: a1" in rendered
+    assert "Cible: t1" in rendered
+    assert "{{missing.key}}" in rendered
