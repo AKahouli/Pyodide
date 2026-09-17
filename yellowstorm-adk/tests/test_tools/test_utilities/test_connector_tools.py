@@ -41,6 +41,7 @@ def _connector_binding(
     action_key="search",
     connector_slug="workspace",
     dynamic_headers=None,
+    parameter_schema_json=None,
 ):
     return {
         "connector_id": "connector-1",
@@ -57,6 +58,7 @@ def _connector_binding(
                 "label": "Search",
                 "description": "Search workspace content",
                 "parameter_schema": parameter_schema,
+                **({"parameter_schema_json": parameter_schema_json} if parameter_schema_json is not None else {}),
             }
         ],
     }
@@ -74,6 +76,7 @@ def _first_connector_tool(
     connector_slug="workspace",
     user_id=None,
     dynamic_headers=None,
+    parameter_schema_json=None,
 ):
     tools = create_connector_tools(
         [_connector_binding(
@@ -83,6 +86,7 @@ def _first_connector_tool(
             action_key,
             connector_slug,
             dynamic_headers,
+            parameter_schema_json,
         )],
         ConnectorToolContext(
             workspace_id=workspace_id,
@@ -206,7 +210,7 @@ def test_connector_tool_name_sanitization_does_not_change_mcp_action(
     assert captured["action_key"] == "search\u001c"
 
 
-def test_connector_tool_binds_generic_params_as_workspace_id(
+def test_connector_tool_does_not_inject_workspace_id_for_strict_schema(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     captured = {}
@@ -220,13 +224,53 @@ def test_connector_tool_binds_generic_params_as_workspace_id(
         fake_call_mcp_tool,
     )
 
-    tool = _first_connector_tool({}, workspace_names=["workspace-alpha"])
+    tool = _first_connector_tool(
+        {"type": "object", "properties": {"query": {"type": "string"}}},
+        workspace_names=["workspace-alpha"],
+    )
 
     asyncio.run(tool.func(query="revenue"))
 
+    assert captured["params"] == {"query": "revenue"}
+
+
+def test_connector_tool_uses_serialized_parameter_schema_for_model_contract(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured = {}
+
+    async def fake_call_mcp_tool(*args, **kwargs):
+        captured["params"] = args[4]
+        return {"text": "ok"}
+
+    monkeypatch.setattr(
+        "src.flow_engine.mcp.call_mcp_tool",
+        fake_call_mcp_tool,
+    )
+
+    tool = _first_connector_tool(
+        {},
+        workspace_names=["workspace-alpha"],
+        parameter_schema_json=(
+            '{"type":"object","properties":{'
+            '"entity_type":{"type":"string","enum":["message"]},'
+            '"query":{"type":"string"},'
+            '"size":{"type":"integer"}},'
+            '"required":["entity_type","query"]}'
+        ),
+    )
+
+    assert "entity_type" in tool.custom_schema["parameters"]["properties"]
+    assert "query" in tool.custom_schema["parameters"]["properties"]
+    assert "size" in tool.custom_schema["parameters"]["properties"]
+    assert "top" not in tool.custom_schema["parameters"]["properties"]
+    assert "sort" not in tool.custom_schema["parameters"]["properties"]
+
+    asyncio.run(tool.func(entity_type="message", query="from:sender@example.com"))
+
     assert captured["params"] == {
-        "query": "revenue",
-        "workspace_id": "workspace-alpha",
+        "entity_type": "message",
+        "query": "from:sender@example.com",
     }
 
 

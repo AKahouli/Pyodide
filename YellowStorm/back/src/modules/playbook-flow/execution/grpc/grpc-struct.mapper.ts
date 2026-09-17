@@ -13,7 +13,10 @@ export function toGrpcValue(value: unknown): Record<string, unknown> {
     case 'string':
       return { stringValue: value, kind: 'stringValue' };
     case 'number':
-      return { numberValue: value, kind: 'numberValue' };
+      return {
+        numberValue: Number.isNaN(value) || !Number.isFinite(value) ? 0 : value,
+        kind: 'numberValue',
+      };
     case 'boolean':
       return { boolValue: value, kind: 'boolValue' };
     case 'object':
