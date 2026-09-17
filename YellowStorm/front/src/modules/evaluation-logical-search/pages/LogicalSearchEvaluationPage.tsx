@@ -7,19 +7,12 @@ import { useModuleTranslation } from '@/modules/localization';
 import { apiClient } from '@/lib/api/client';
 import { API_ENDPOINTS } from '@/lib/api/config';
 import { useAgents, useAgentsLoading, useAgentStore } from '@/modules/agent';
-import { getModels } from '@/modules/models';
-import { listWorkspaceArtifacts } from '@/modules/workspace';
-import type { WorkspaceArtifact } from '@/modules/workspace';
 import { evaluationLogicalSearchApi } from '../api';
 import type { LogicalSearchEvaluation, UploadResult, BenchmarkQuery } from '../types';
 
 interface WorkspaceSummary {
   id: string;
   name: string;
-}
-interface ModelOption {
-  id: string;
-  label: string;
 }
 
 export function LogicalSearchEvaluationPage(): JSX.Element {
@@ -33,12 +26,6 @@ export function LogicalSearchEvaluationPage(): JSX.Element {
   const [workspaces, setWorkspaces] = useState<WorkspaceSummary[]>([]);
   const [workspacesLoading, setWorkspacesLoading] = useState(false);
   const [selectedWorkspaceId, setSelectedWorkspaceId] = useState<string>('');
-  const [models, setModels] = useState<ModelOption[]>([]);
-  const [selectedModelId, setSelectedModelId] = useState<string>('');
-  const [selectedEvaluatorModelId, setSelectedEvaluatorModelId] = useState<string>('');
-  const [artifacts, setArtifacts] = useState<WorkspaceArtifact[]>([]);
-  const [artifactsLoading, setArtifactsLoading] = useState(false);
-  const [selectedFileIds, setSelectedFileIds] = useState<string[]>([]);
 
   // ── Upload state ────────────────────────────────────────────
   const [uploadResult, setUploadResult] = useState<UploadResult | null>(null);
@@ -86,40 +73,12 @@ export function LogicalSearchEvaluationPage(): JSX.Element {
     return () => { cancelled = true; };
   }, []);
 
-  // ── Load LLM models (active only) ───────────────────────────
-  useEffect(() => {
-    let cancelled = false;
-    getModels()
-      .then((res) => {
-        if (cancelled) return;
-        setModels((res.models ?? [])
-          .filter((m) => m.isActive !== false)
-          .map((m) => ({ id: m.id, label: m.litellmModel || m.name })));
-      })
-      .catch(() => { if (!cancelled) setModels([]); });
-    return () => { cancelled = true; };
-  }, []);
-
-  // ── Load workspace files when workspace changes ─────────────
-  useEffect(() => {
-    let cancelled = false;
-    setSelectedFileIds([]);
-    if (!selectedWorkspaceId) { setArtifacts([]); setArtifactsLoading(false); return; }
-    setArtifactsLoading(true);
-    listWorkspaceArtifacts(selectedWorkspaceId)
-      .then((items) => { if (!cancelled) setArtifacts(Array.isArray(items) ? items : []); })
-      .catch(() => { if (!cancelled) setArtifacts([]); })
-      .finally(() => { if (!cancelled) setArtifactsLoading(false); });
-    return () => { cancelled = true; };
-  }, [selectedWorkspaceId]);
-
   // ── Load previous evaluations ────────────────────────────────
   const refreshEvaluations = useCallback(() => {
     evaluationLogicalSearchApi.list().then(setEvaluations).catch(() => setEvaluations([]));
   }, []);
   useEffect(() => { refreshEvaluations(); }, [refreshEvaluations]);
 
-  // ── Handlers ────────────────────────────────────────────────
   const submitFile = useCallback(async (file: File) => {
     if (!file) return;
     setUploading(true);
@@ -182,10 +141,7 @@ export function LogicalSearchEvaluationPage(): JSX.Element {
       await evaluationLogicalSearchApi.prepareAdhoc(targetId, {
         agentId: selectedAgentId,
         workspaceId: selectedWorkspaceId || undefined,
-        modelId: selectedModelId || undefined,
-        fileScope: selectedFileIds.length > 0 ? selectedFileIds : undefined,
         evaluatorAgentId: selectedEvaluatorAgentId,
-        evaluatorModelId: selectedEvaluatorModelId || undefined,
       });
       await evaluationLogicalSearchApi.run(targetId);
       refreshEvaluations();
@@ -196,7 +152,7 @@ export function LogicalSearchEvaluationPage(): JSX.Element {
       setRunningEvalId(null);
       refreshEvaluations();
     }
-  }, [selectedEvalId, selectedAgentId, selectedEvaluatorAgentId, selectedWorkspaceId, selectedModelId, selectedEvaluatorModelId, selectedFileIds, evaluations, refreshEvaluations]);
+  }, [selectedEvalId, selectedAgentId, selectedEvaluatorAgentId, selectedWorkspaceId, evaluations, refreshEvaluations]);
 
   const handleRun = useCallback(async (id: string) => {
     setRunningEvalId(id);
@@ -279,9 +235,6 @@ export function LogicalSearchEvaluationPage(): JSX.Element {
     () => evaluations.find((e) => e.id === (selectedEvalId ?? evaluations[0]?.id))?.name ?? '',
     [evaluations, selectedEvalId],
   );
-  const toggleFileId = useCallback((id: string) => {
-    setSelectedFileIds((prev) => prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]);
-  }, []);
 
   return (
     <div className='h-full w-full overflow-auto'>
@@ -392,19 +345,6 @@ export function LogicalSearchEvaluationPage(): JSX.Element {
               />
             </div>
 
-            {/* Model (optional) */}
-            <div className='space-y-1'>
-              <label className='text-sm font-medium'>{t('adhoc.model')}</label>
-              <SearchSelect
-                options={models.map((m) => ({ value: m.id, label: m.label }))}
-                value={selectedModelId}
-                onValueChange={setSelectedModelId}
-                placeholder={t('adhoc.modelPlaceholder')}
-                searchPlaceholder={t('select.search')}
-                emptyText={t('select.noResults')}
-              />
-            </div>
-
             {/* Evaluator Agent (required) - LLM Judge */}
             <div className='space-y-1'>
               <label className='text-sm font-medium'>
@@ -419,45 +359,6 @@ export function LogicalSearchEvaluationPage(): JSX.Element {
                 emptyText={t('select.noResults')}
               />
             </div>
-
-            {/* Evaluator Model (optional) */}
-            <div className='space-y-1'>
-              <label className='text-sm font-medium'>{t('adhoc.evaluatorModel')}</label>
-              <SearchSelect
-                options={models.map((m) => ({ value: m.id, label: m.label }))}
-                value={selectedEvaluatorModelId}
-                onValueChange={setSelectedEvaluatorModelId}
-                placeholder={t('adhoc.evaluatorModelPlaceholder')}
-                searchPlaceholder={t('select.search')}
-                emptyText={t('select.noResults')}
-              />
-            </div>
-
-            {/* Files (optional, multi) */}
-            {selectedWorkspaceId && (
-              <div className='space-y-1'>
-                <label className='text-sm font-medium'>{t('adhoc.files')}</label>
-                {artifactsLoading && <p className='text-xs text-muted-foreground'>{t('adhoc.filesLoading')}</p>}
-                {!artifactsLoading && artifacts.length === 0 && (
-                  <p className='text-xs text-muted-foreground'>{t('adhoc.filesEmpty')}</p>
-                )}
-                {!artifactsLoading && artifacts.length > 0 && (
-                  <div className='max-h-40 space-y-1 overflow-auto rounded-md border p-2'>
-                    {artifacts.map((af) => (
-                      <label key={af.id} className='flex items-center gap-2 text-sm cursor-pointer'>
-                        <input
-                          type='checkbox'
-                          className='rounded border-gray-300'
-                          checked={selectedFileIds.includes(af.id)}
-                          onChange={() => toggleFileId(af.id)}
-                        />
-                        <span className='truncate'>{af.name}</span>
-                      </label>
-                    ))}
-                  </div>
-                )}
-              </div>
-            )}
 
             {launchError && <p className='text-sm text-destructive'>{launchError}</p>}
             <Button

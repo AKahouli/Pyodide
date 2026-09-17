@@ -58,22 +58,14 @@
     "queries": "{{count}} queries",
     "view": "View"
   },
-"adhoc": {
+  "adhoc": {
     "title": "Direct configuration",
     "agent": "Target Agent",
     "agentPlaceholder": "Select target agent…",
     "workspace": "Workspace",
     "workspacePlaceholder": "Select a workspace…",
-    "model": "LLM Model (Target)",
-    "modelPlaceholder": "Select a model (optional)…",
     "evaluatorAgent": "Evaluator Agent (LLM Judge)",
     "evaluatorAgentPlaceholder": "Select evaluator agent…",
-    "evaluatorModel": "LLM Model (Judge)",
-    "evaluatorModelPlaceholder": "Select a model (optional)…",
-    "files": "Files (optional)",
-    "filesPlaceholder": "Restrict to files…",
-    "filesLoading": "Loading files…",
-    "filesEmpty": "No files in this workspace",
     "launch": "Launch evaluation",
     "launching": "Launching…",
     "target": "Target evaluation: {{name}}"
