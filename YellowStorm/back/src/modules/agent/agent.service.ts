@@ -967,6 +967,7 @@ export class AgentService {
       nodeId?: string;
       iteration?: number;
     },
+    compaction?: IGrpcCompaction,
   ): Promise<IGrpcAgent[]> {
     if (agentIds.length === 0) return [];
 
@@ -1007,7 +1008,7 @@ export class AgentService {
         .map((a) => a.model || inheritedDefaultModelId)
         .filter(Boolean) as string[],
     )];
-    const modelMap = new Map<string, { model: string; omitTemperature: boolean; inputModalities: string[]; reasoningEfforts: string[] }>();
+    const modelMap = new Map<string, { model: string; omitTemperature: boolean; inputModalities: string[]; reasoningEfforts: string[]; maxInputTokens?: number }>();
     if (allModelIds.length > 0) {
       const modelResults = await Promise.all(
         allModelIds.map((id) => this.modelsService.findById(id)),
@@ -1018,6 +1019,7 @@ export class AgentService {
           omitTemperature: m.omitTemperature,
           inputModalities: m.inputModalities,
           reasoningEfforts: m.supportsReasoning ? m.reasoning.efforts.map((effort) => effort.id) : [],
+          maxInputTokens: m.maxInputTokens ?? undefined,
         });
       }
     }
@@ -1137,6 +1139,8 @@ export class AgentService {
             model: proxyModel,
             input_modalities: resolvedModel?.inputModalities || ['text'],
             ...(effectiveReasoningEffort ? { reasoning_effort: effectiveReasoningEffort } : {}),
+            ...(resolvedModel?.maxInputTokens ? { context_window_tokens: resolvedModel.maxInputTokens } : {}),
+            ...(compaction ? { compaction } : {}),
           },
           agent_params: {
             params: {
@@ -1182,9 +1186,9 @@ export class AgentService {
   }
 
   /** Trusted governed-runtime path: exact published roster with pinned knowledge. */
-  async buildGovernedAgentsForStream(userId: string, agentIds: string[], workspaceIds: string[], fallbackModelId?: string): Promise<IGrpcAgent[]> {
+  async buildGovernedAgentsForStream(userId: string, agentIds: string[], workspaceIds: string[], compaction?: IGrpcCompaction, fallbackModelId?: string): Promise<IGrpcAgent[]> {
     const requestedIds = [...new Set(agentIds)];
-    const agents = await this.buildGrpcAgentsForPlaybook(userId, requestedIds, fallbackModelId);
+    const agents = await this.buildGrpcAgentsForPlaybook(userId, requestedIds, fallbackModelId, undefined, undefined, compaction);
     const builtIds = new Set(agents.map((agent) => agent.id));
     if (requestedIds.some((id) => !builtIds.has(id))) {
       throw new NotFoundException(ErrorCode.AGENT_NOT_FOUND, 'One or more published assistants are unavailable');

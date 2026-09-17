@@ -1021,9 +1021,11 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
             teamDefinition.nodes.map((node) => node.agentId),
             request.modelId,
             sessionId,
+            undefined,
+            compaction,
           )
         : governanceOverride
-          ? this.agentService.buildGovernedAgentsForStream(userId, requestedGovernedAgentIds ?? [], governanceOverride.workspaceIds)
+          ? this.agentService.buildGovernedAgentsForStream(userId, requestedGovernedAgentIds ?? [], governanceOverride.workspaceIds, compaction)
           : this.agentService.buildAgentsForStream(
               userId,
               request.modelId,

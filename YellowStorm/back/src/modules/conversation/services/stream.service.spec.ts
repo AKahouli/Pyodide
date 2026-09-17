@@ -441,6 +441,93 @@ describe('StreamService guardrail metadata buffering', () => {
     expect(executeSingleAgentGrpcStream).toHaveBeenCalled();
   });
 
+  it('passes admin compaction settings to governed and team conversation agents', async () => {
+    const service = Object.create(StreamService.prototype) as StreamService;
+    const agent = { id: 'agent-1', tools: [], brain_context: [] };
+    const buildGovernedAgentsForStream = jest.fn().mockResolvedValue([agent]);
+    const buildGrpcAgentsForPlaybook = jest.fn().mockResolvedValue([agent]);
+    const resolveExecutionDefinition = jest.fn().mockResolvedValue(undefined);
+    const compaction = {
+      enabled: true,
+      compaction_interval: 10,
+      overlap_size: 2,
+      token_fraction: 0.75,
+      event_retention_size: 6,
+      summarizer_model: 'summary-model',
+    };
+    Object.assign(service as object, {
+      conversationService: {
+        getConversationDocument: jest.fn().mockResolvedValue({
+          isGroup: false,
+          systemWorkspaceId: 'system-1',
+          groupTaggedAgentIds: [],
+        }),
+      },
+      conversationSettings: {
+        getSettings: jest.fn().mockResolvedValue({
+          compaction: {
+            enabled: true,
+            compactionInterval: 10,
+            overlapSize: 2,
+            tokenFraction: 0.75,
+            eventRetentionSize: 6,
+            summarizerModel: 'summary-model',
+          },
+        }),
+      },
+      teamService: { resolveExecutionDefinition },
+      semanticModelService: { resolveSearchSchema: jest.fn() },
+      agentService: { buildGovernedAgentsForStream, buildGrpcAgentsForPlaybook },
+      buildWorkspaceContexts: jest.fn().mockResolvedValue([]),
+      buildAttachedFiles: jest.fn().mockResolvedValue([]),
+      buildPreviousAttachedFiles: jest.fn().mockResolvedValue([]),
+      skillService: { findByIdsForGrpc: jest.fn().mockResolvedValue([]) },
+      resolveAgentBrainContexts: jest.fn().mockResolvedValue(undefined),
+      attachRunCodeContexts: jest.fn().mockResolvedValue(undefined),
+      agentRequestBuilder: { build: jest.fn().mockReturnValue({ rpc: 'RunSingleAgent', payload: {} }) },
+    });
+
+    await service.buildAgentExecutionRequest('user-1', 'conversation-1', {
+      content: 'hello',
+      attachedFileIds: [],
+      agentIds: [],
+      skillIds: [],
+      governanceOverride: {
+        runtimeMode: 'governed',
+        primaryAgentId: 'agent-1',
+        allowedAgentIds: ['agent-1'],
+        workspaceIds: ['workspace-1'],
+        revisionId: 'revision-1',
+        scopeId: 'scope-1',
+      },
+    } as any);
+
+    expect(buildGovernedAgentsForStream).toHaveBeenCalledWith(
+      'user-1',
+      ['agent-1'],
+      ['workspace-1'],
+      compaction,
+    );
+
+    resolveExecutionDefinition.mockResolvedValue({ nodes: [{ agentId: 'agent-1' }] });
+    await service.buildAgentExecutionRequest('user-1', 'conversation-1', {
+      content: 'hello',
+      attachedFileIds: [],
+      agentIds: [],
+      skillIds: [],
+      teamId: 'team-1',
+    } as any);
+
+    expect(buildGrpcAgentsForPlaybook).toHaveBeenCalledWith(
+      'user-1',
+      ['agent-1'],
+      undefined,
+      'conversation-1',
+      undefined,
+      compaction,
+    );
+  });
+
   it('does not create a gRPC call when the durable lease was lost during request preparation', async () => {
     const service = Object.create(StreamService.prototype) as StreamService;
     const executeGrpcStream = jest.fn();
