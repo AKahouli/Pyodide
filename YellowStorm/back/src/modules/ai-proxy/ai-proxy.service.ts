@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
-import { AxiosError, AxiosInstance } from 'axios';
+import { AxiosError } from 'axios';
 import { ConfigService } from '@nestjs/config';
+import { Request, Response } from 'express';
 import { UserDocument } from '../user/schemas/user.schema';
 import {
   BadRequestException,
@@ -10,42 +11,46 @@ import {
 import { ErrorCode } from '../exceptions/constants/error-codes';
 import { LiteLLMConnectionService } from '../models/litellm-connection.service';
 import { ModelsService } from '../models/models.service';
+import { AI_PROXY_REQUEST_TIMEOUT_MS } from './constants/ai-proxy.constants';
 import { ChatCompletionDto } from './dto/chat-completion.dto';
-
-interface LiteLlmErrorResponse {
-  error?: {
-    message?: string;
-  };
-}
+import { LiteLlmErrorResponse } from './interfaces/ai-proxy.interface';
+import { AiProxyStreamService } from './ai-proxy-stream.service';
 
 @Injectable()
 export class AiProxyService {
   private readonly appBuilderApiKey: string;
-  private readonly timeoutMs: number;
 
   constructor(
     private readonly connectionService: LiteLLMConnectionService,
     private readonly modelsService: ModelsService,
     private readonly configService: ConfigService,
+    private readonly streamService: AiProxyStreamService,
   ) {
     this.appBuilderApiKey = this.configService.get<string>('litellm.appBuilderApiKey', '');
-    this.timeoutMs = this.configService.get<number>('litellm.timeoutMs', 10000);
   }
 
   async proxyChatCompletion(
     body: ChatCompletionDto,
     user: UserDocument,
-  ): Promise<Record<string, unknown>> {
-    if (body.stream) {
-      throw new BadRequestException(
-        'Streaming is not available on this endpoint yet',
-      );
-    }
-
+    request?: Request,
+    res?: Response,
+  ): Promise<Record<string, unknown> | void> {
     const validation = await this.modelsService.validateModelActive(body.model, 'chat');
     if (!validation.valid) {
       throw new BadRequestException(
         `Model '${body.model}' is not available`,
+      );
+    }
+
+    if (body.stream) {
+      if (!request || !res) {
+        throw new BadRequestException('Streaming response is unavailable');
+      }
+      return this.streamService.streamChatCompletion(
+        request,
+        res,
+        body,
+        user,
       );
     }
 
@@ -57,7 +62,7 @@ export class AiProxyService {
     }
 
     try {
-      const response = await httpClient.post<Record<string, unknown>>(
+      const upstreamResponse = await httpClient.post<Record<string, unknown>>(
         '/v1/chat/completions',
         { ...body, stream: false },
         {
@@ -65,11 +70,11 @@ export class AiProxyService {
             Authorization: `Bearer ${this.appBuilderApiKey}`,
             'X-Request-User': user._id.toString(),
           },
-          timeout: this.timeoutMs,
+          timeout: AI_PROXY_REQUEST_TIMEOUT_MS,
         },
       );
 
-      return response.data;
+      return upstreamResponse.data;
     } catch (error) {
       throw this.mapUpstreamError(error);
     }

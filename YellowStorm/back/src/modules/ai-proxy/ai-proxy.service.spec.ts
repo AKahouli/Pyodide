@@ -1,10 +1,13 @@
 import { AxiosInstance } from 'axios';
 import { ConfigService } from '@nestjs/config';
+import { Request, Response } from 'express';
 import { AiProxyService } from './ai-proxy.service';
+import { AI_PROXY_REQUEST_TIMEOUT_MS } from './constants/ai-proxy.constants';
 import { ChatCompletionDto, ChatMessageRole } from './dto/chat-completion.dto';
 import { LiteLLMConnectionService } from '../models/litellm-connection.service';
 import { ModelsService } from '../models/models.service';
 import { UserDocument } from '../user/schemas/user.schema';
+import { AiProxyStreamService } from './ai-proxy-stream.service';
 
 describe('AiProxyService', () => {
   const post = jest.fn();
@@ -19,12 +22,14 @@ describe('AiProxyService', () => {
     get: jest.fn((key: string, fallback?: unknown) => {
       const values: Record<string, unknown> = {
         'litellm.appBuilderApiKey': 'app-builder-key',
-        'litellm.timeoutMs': 300000,
       };
       return values[key] ?? fallback;
     }),
   } as unknown as ConfigService;
   const user = { _id: { toString: () => 'user-123' } } as unknown as UserDocument;
+  const streamService = {
+    streamChatCompletion: jest.fn(),
+  } as unknown as AiProxyStreamService;
   const body: ChatCompletionDto = {
     model: 'gpt-4o',
     messages: [{ role: ChatMessageRole.USER, content: 'Hello' }],
@@ -44,7 +49,7 @@ describe('AiProxyService', () => {
   });
 
   it('forwards non-streaming requests with the app builder key and user header', async () => {
-    const service = new AiProxyService(connectionService, modelsService, configService);
+    const service = new AiProxyService(connectionService, modelsService, configService, streamService);
 
     await expect(service.proxyChatCompletion(body, user)).resolves.toEqual({
       id: 'completion-1',
@@ -59,19 +64,40 @@ describe('AiProxyService', () => {
           Authorization: 'Bearer app-builder-key',
           'X-Request-User': 'user-123',
         },
-        timeout: 300000,
+        timeout: AI_PROXY_REQUEST_TIMEOUT_MS,
       },
     );
   });
 
-  it('rejects streaming requests during the non-streaming phase', async () => {
-    const service = new AiProxyService(connectionService, modelsService, configService);
+  it('delegates streaming requests to AiProxyStreamService', async () => {
+    const service = new AiProxyService(connectionService, modelsService, configService, streamService);
+    const request = {} as Request;
+    const response = {} as Response;
+    (streamService.streamChatCompletion as jest.Mock).mockResolvedValue(undefined);
+
+    const streamingBody = { ...body, stream: true };
+    await expect(
+      service.proxyChatCompletion(streamingBody, user, request, response),
+    ).resolves.toBeUndefined();
+
+    expect(streamService.streamChatCompletion).toHaveBeenCalledWith(
+      request,
+      response,
+      streamingBody,
+      user,
+    );
+    expect(post).not.toHaveBeenCalled();
+  });
+
+  it('rejects streaming when request or response context is missing', async () => {
+    const service = new AiProxyService(connectionService, modelsService, configService, streamService);
 
     await expect(
       service.proxyChatCompletion({ ...body, stream: true }, user),
-    ).rejects.toThrow('Streaming is not available');
+    ).rejects.toThrow('Streaming response is unavailable');
 
-    expect(modelsService.validateModelActive).not.toHaveBeenCalled();
+    expect(modelsService.validateModelActive).toHaveBeenCalledWith('gpt-4o', 'chat');
+    expect(streamService.streamChatCompletion).not.toHaveBeenCalled();
     expect(post).not.toHaveBeenCalled();
   });
 
@@ -82,7 +108,7 @@ describe('AiProxyService', () => {
       inactive: false,
       unsupported: true,
     });
-    const service = new AiProxyService(connectionService, modelsService, configService);
+    const service = new AiProxyService(connectionService, modelsService, configService, streamService);
 
     await expect(service.proxyChatCompletion(body, user)).rejects.toThrow(
       "Model 'gpt-4o' is not available",
@@ -92,10 +118,8 @@ describe('AiProxyService', () => {
   });
 
   it('fails closed when the app builder key is not configured', async () => {
-    (configService.get as jest.Mock).mockImplementation((key: string, fallback?: unknown) => (
-      key === 'litellm.timeoutMs' ? 300000 : fallback
-    ));
-    const service = new AiProxyService(connectionService, modelsService, configService);
+    (configService.get as jest.Mock).mockImplementation((_key: string, fallback?: unknown) => fallback);
+    const service = new AiProxyService(connectionService, modelsService, configService, streamService);
 
     await expect(service.proxyChatCompletion(body, user)).rejects.toThrow(
       'LiteLLM',

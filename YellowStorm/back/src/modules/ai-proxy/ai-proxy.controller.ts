@@ -5,8 +5,11 @@ import {
   HttpCode,
   HttpStatus,
   Post,
+  Req,
+  Res,
   UseFilters,
 } from '@nestjs/common';
+import { Request, Response } from 'express';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { UserDocument } from '../user/schemas/user.schema';
@@ -24,10 +27,12 @@ export class AiProxyController {
   @Post('chat/completions')
   @HttpCode(HttpStatus.OK)
   async chatCompletions(
+    @Req() request: Request,
     @Body() body: ChatCompletionDto,
     @CurrentUser() user: UserDocument,
-  ): Promise<Record<string, unknown>> {
-    return this.proxyService.proxyChatCompletion(body, user);
+    @Res({ passthrough: true }) response: Response,
+  ): Promise<Record<string, unknown> | void> {
+    return this.proxyService.proxyChatCompletion(body, user, request, response);
   }
 
   @Get('models')

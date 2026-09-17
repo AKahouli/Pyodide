@@ -6,3 +6,9 @@ export interface AiProxyErrorBody {
     code?: string;
   };
 }
+
+export interface LiteLlmErrorResponse {
+  error?: {
+    message?: string;
+  };
+}
