@@ -320,6 +320,7 @@ export const configValidationSchema = Joi.object({
   // LiteLLM
   LITELLM_API_URL: Joi.string().uri().optional(),
   LITELLM_API_KEY: Joi.string().optional(),
+  LITELLM_APP_BUILDER_API_KEY: Joi.string().optional(),
   LITELLM_TIMEOUT_MS: Joi.number().min(1000).max(60000).default(10000),
   EMBEDDING_MODEL: Joi.string().default('qwen3-embedding'),
   EMBEDDING_DIMENSION: Joi.number().default(2560),

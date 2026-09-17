@@ -1,0 +1,53 @@
+import {
+  ArgumentsHost,
+  Catch,
+  ExceptionFilter,
+  HttpException,
+  HttpStatus,
+} from '@nestjs/common';
+import { Response } from 'express';
+import { AiProxyErrorBody } from './interfaces/ai-proxy.interface';
+
+@Catch()
+export class AiProxyExceptionFilter implements ExceptionFilter {
+  catch(exception: unknown, host: ArgumentsHost): void {
+    const response = host.switchToHttp().getResponse<Response>();
+    const status = exception instanceof HttpException
+      ? exception.getStatus()
+      : HttpStatus.INTERNAL_SERVER_ERROR;
+
+    const message = this.getMessage(exception);
+    const body: AiProxyErrorBody = {
+      error: {
+        message,
+        type: this.getErrorType(status),
+      },
+    };
+
+    response.status(status).json(body);
+  }
+
+  private getMessage(exception: unknown): string {
+    if (exception instanceof HttpException) {
+      const exceptionResponse = exception.getResponse();
+      if (typeof exceptionResponse === 'string') return exceptionResponse;
+      if (typeof exceptionResponse === 'object' && exceptionResponse !== null) {
+        const message = (exceptionResponse as { message?: unknown }).message;
+        if (typeof message === 'string') return message;
+        if (Array.isArray(message)) return String(message[0] ?? 'Invalid request');
+      }
+    }
+
+    if (exception instanceof Error) return exception.message;
+    return 'AI proxy request failed';
+  }
+
+  private getErrorType(status: number): string {
+    if (status >= 400 && status < 500) {
+      return status === HttpStatus.TOO_MANY_REQUESTS
+        ? 'rate_limit_error'
+        : 'invalid_request_error';
+    }
+    return 'server_error';
+  }
+}

@@ -3,6 +3,7 @@ import { registerAs } from '@nestjs/config';
 export default registerAs('litellm', () => ({
   apiUrl: process.env.LITELLM_API_URL || '',
   apiKey: process.env.LITELLM_API_KEY || '',
+  appBuilderApiKey: process.env.LITELLM_APP_BUILDER_API_KEY || '',
   healthEndpoint: '/health/readiness',
   modelsEndpoint: '/v1/model/info',
   timeoutMs: Number.parseInt(process.env.LITELLM_TIMEOUT_MS || '10000', 10),
