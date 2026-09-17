@@ -13,8 +13,9 @@ import { LiteLLMConnectionService } from '../models/litellm-connection.service';
 import { ModelsService } from '../models/models.service';
 import { AI_PROXY_REQUEST_TIMEOUT_MS } from './constants/ai-proxy.constants';
 import { ChatCompletionDto } from './dto/chat-completion.dto';
-import { LiteLlmErrorResponse } from './interfaces/ai-proxy.interface';
+import { LiteLlmErrorResponse, LiteLlmTokenUsage } from './interfaces/ai-proxy.interface';
 import { AiProxyStreamService } from './ai-proxy-stream.service';
+import { AiProxyUsageService } from './ai-proxy-usage.service';
 
 @Injectable()
 export class AiProxyService {
@@ -25,6 +26,7 @@ export class AiProxyService {
     private readonly modelsService: ModelsService,
     private readonly configService: ConfigService,
     private readonly streamService: AiProxyStreamService,
+    private readonly usageService: AiProxyUsageService,
   ) {
     this.appBuilderApiKey = this.configService.get<string>('litellm.appBuilderApiKey', '');
   }
@@ -61,6 +63,7 @@ export class AiProxyService {
       );
     }
 
+    const startedAt = Date.now();
     try {
       const upstreamResponse = await httpClient.post<Record<string, unknown>>(
         '/v1/chat/completions',
@@ -74,8 +77,29 @@ export class AiProxyService {
         },
       );
 
-      return upstreamResponse.data;
+      const data = upstreamResponse.data;
+      await this.usageService.recordChatCompletionUsage({
+        userId: user._id.toString(),
+        model: body.model,
+        request,
+        startedAt,
+        success: true,
+        tokens: this.usageService.resolveTokens(data.usage as LiteLlmTokenUsage | undefined),
+        streaming: false,
+        litellmRequestId: typeof data.id === 'string' ? data.id : undefined,
+      });
+      return data;
     } catch (error) {
+      await this.usageService.recordChatCompletionUsage({
+        userId: user._id.toString(),
+        model: body.model,
+        request,
+        startedAt,
+        success: false,
+        tokens: { status: 'unknown' },
+        streaming: false,
+        errorMessage: error instanceof Error ? error.message : 'AI provider request failed',
+      });
       throw this.mapUpstreamError(error);
     }
   }

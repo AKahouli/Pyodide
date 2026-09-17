@@ -322,6 +322,8 @@ export const configValidationSchema = Joi.object({
   LITELLM_API_KEY: Joi.string().optional(),
   LITELLM_APP_BUILDER_API_KEY: Joi.string().optional(),
   LITELLM_TIMEOUT_MS: Joi.number().min(1000).max(60000).default(10000),
+  AI_PROXY_RATE_LIMIT_PER_USER: Joi.number().min(1).max(10_000).default(60),
+  AI_PROXY_RATE_LIMIT_WINDOW_MS: Joi.number().min(1000).max(3_600_000).default(60_000),
   EMBEDDING_MODEL: Joi.string().default('qwen3-embedding'),
   EMBEDDING_DIMENSION: Joi.number().default(2560),
   LITELLM_HEALTH_CHECK_ENABLED: Joi.boolean().default(true),

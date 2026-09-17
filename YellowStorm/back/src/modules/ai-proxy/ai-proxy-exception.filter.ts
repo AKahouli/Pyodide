@@ -6,21 +6,31 @@ import {
   HttpStatus,
 } from '@nestjs/common';
 import { Response } from 'express';
+import { AppException } from '../exceptions/exceptions/base.exception';
+import { ErrorCode } from '../exceptions/constants/error-codes';
 import { AiProxyErrorBody } from './interfaces/ai-proxy.interface';
 
 @Catch()
 export class AiProxyExceptionFilter implements ExceptionFilter {
   catch(exception: unknown, host: ArgumentsHost): void {
     const response = host.switchToHttp().getResponse<Response>();
-    const status = exception instanceof HttpException
+    let status = exception instanceof HttpException
       ? exception.getStatus()
       : HttpStatus.INTERNAL_SERVER_ERROR;
+
+    const isUsageLimit = exception instanceof AppException
+      && exception.code === ErrorCode.USAGE_LIMIT_EXCEEDED;
+
+    if (isUsageLimit) {
+      status = HttpStatus.TOO_MANY_REQUESTS;
+    }
 
     const message = this.getMessage(exception);
     const body: AiProxyErrorBody = {
       error: {
         message,
-        type: this.getErrorType(status),
+        type: this.getErrorType(status, isUsageLimit),
+        ...(isUsageLimit ? { code: 'insufficient_quota' } : {}),
       },
     };
 
@@ -42,7 +52,8 @@ export class AiProxyExceptionFilter implements ExceptionFilter {
     return 'AI proxy request failed';
   }
 
-  private getErrorType(status: number): string {
+  private getErrorType(status: number, isUsageLimit: boolean): string {
+    if (isUsageLimit) return 'insufficient_quota';
     if (status >= 400 && status < 500) {
       return status === HttpStatus.TOO_MANY_REQUESTS
         ? 'rate_limit_error'

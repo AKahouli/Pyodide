@@ -12,6 +12,7 @@ import microsoftConfig from './config/microsoft.config';
 import healthConfig from './config/health.config';
 import workspaceConfig from './config/workspace.config';
 import litellmConfig from './config/litellm.config';
+import aiProxyConfig from './config/ai-proxy.config';
 import conversationConfig from './config/conversation.config';
 import conversationV2Config from './config/conversation-v2.config';
 import appRuntimeConfig from './config/app-runtime.config';
@@ -90,7 +91,7 @@ import { AiProxyModule } from './modules/ai-proxy/ai-proxy.module';
     ConfigModule.forRoot({
       isGlobal: true,
       envFilePath: ['.env'],
-      load: [appConfig, jwtConfig, authConfig, microsoftConfig, healthConfig, workspaceConfig, litellmConfig, conversationConfig, conversationV2Config, appRuntimeConfig, appDataConfig, playbookFlowConfig, grpcSecurityConfig, grpcSecurityV2Config, telegramConfig, whatsappConfig, workyConfig, memoryCardsConfig, dataRoomConfig, semanticModelConfig, agentMcpConfig],
+      load: [appConfig, jwtConfig, authConfig, microsoftConfig, healthConfig, workspaceConfig, litellmConfig, aiProxyConfig, conversationConfig, conversationV2Config, appRuntimeConfig, appDataConfig, playbookFlowConfig, grpcSecurityConfig, grpcSecurityV2Config, telegramConfig, whatsappConfig, workyConfig, memoryCardsConfig, dataRoomConfig, semanticModelConfig, agentMcpConfig],
       validationSchema: configValidationSchema,
       validationOptions: {
         abortEarly: true,

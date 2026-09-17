@@ -12,7 +12,12 @@ import { ErrorCode } from '../exceptions/constants/error-codes';
 import { LiteLLMConnectionService } from '../models/litellm-connection.service';
 import { AI_PROXY_REQUEST_TIMEOUT_MS } from './constants/ai-proxy.constants';
 import { ChatCompletionDto } from './dto/chat-completion.dto';
-import { LiteLlmErrorResponse } from './interfaces/ai-proxy.interface';
+import {
+  AiProxyResolvedTokens,
+  LiteLlmErrorResponse,
+  LiteLlmTokenUsage,
+} from './interfaces/ai-proxy.interface';
+import { AiProxyUsageService } from './ai-proxy-usage.service';
 
 @Injectable()
 export class AiProxyStreamService {
@@ -21,6 +26,7 @@ export class AiProxyStreamService {
   constructor(
     private readonly connectionService: LiteLLMConnectionService,
     private readonly configService: ConfigService,
+    private readonly usageService: AiProxyUsageService,
   ) {
     this.appBuilderApiKey = this.configService.get<string>('litellm.appBuilderApiKey', '');
   }
@@ -43,6 +49,9 @@ export class AiProxyStreamService {
     let clientClosed = false;
     let doneMarkerSeen = false;
     let scanTail = '';
+    let tokens: AiProxyResolvedTokens = { status: 'unknown' };
+    let litellmRequestId: string | undefined;
+    const startedAt = Date.now();
 
     const closeUpstream = (): void => {
       if (upstreamStream && !upstreamStream.destroyed) {
@@ -91,10 +100,28 @@ export class AiProxyStreamService {
         if (scanTail.includes('data: [DONE]')) {
           doneMarkerSeen = true;
         }
+        const parsed = this.extractStreamMeta(text);
+        if (parsed.usage) {
+          tokens = this.usageService.resolveTokens(parsed.usage);
+        }
+        if (parsed.id) {
+          litellmRequestId = parsed.id;
+        }
       });
 
       upstreamStream.once('error', (error: Error) => {
         cleanup();
+        void this.usageService.recordChatCompletionUsage({
+          userId: user._id.toString(),
+          model: body.model,
+          request,
+          startedAt,
+          success: false,
+          tokens,
+          streaming: true,
+          litellmRequestId,
+          errorMessage: error.message,
+        });
         if (!response.destroyed && !response.writableEnded) {
           response.destroy(error);
         }
@@ -102,6 +129,16 @@ export class AiProxyStreamService {
 
       upstreamStream.once('end', () => {
         cleanup();
+        void this.usageService.recordChatCompletionUsage({
+          userId: user._id.toString(),
+          model: body.model,
+          request,
+          startedAt,
+          success: true,
+          tokens,
+          streaming: true,
+          litellmRequestId,
+        });
         if (!doneMarkerSeen && !response.destroyed && !response.writableEnded) {
           response.end();
         }
@@ -118,6 +155,30 @@ export class AiProxyStreamService {
     }
   }
 
+  private extractStreamMeta(text: string): {
+    usage?: LiteLlmTokenUsage;
+    id?: string;
+  } {
+    let usage: LiteLlmTokenUsage | undefined;
+    let id: string | undefined;
+
+    for (const line of text.split(/\r?\n/)) {
+      if (!line.startsWith('data: ') || line === 'data: [DONE]') continue;
+      try {
+        const payload = JSON.parse(line.slice(6)) as {
+          id?: string;
+          usage?: LiteLlmTokenUsage;
+        };
+        if (payload.usage) usage = payload.usage;
+        if (typeof payload.id === 'string') id = payload.id;
+      } catch {
+        // A JSON event can be split across chunks; the next chunk may contain it.
+      }
+    }
+
+    return { usage, id };
+  }
+
   private async requestStream(
     httpClient: AxiosInstance,
     body: ChatCompletionDto,
@@ -126,7 +187,12 @@ export class AiProxyStreamService {
   ) {
     return httpClient.post<Readable>(
       '/v1/chat/completions',
-      { ...body, stream: true },
+      {
+        ...body,
+        stream: true,
+        // Ask OpenAI-compatible gateways to include usage on the final SSE chunk.
+        stream_options: { include_usage: true },
+      },
       {
         headers: {
           Authorization: `Bearer ${this.appBuilderApiKey}`,

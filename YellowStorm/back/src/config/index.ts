@@ -15,6 +15,7 @@ export { default as whatsappMcpConfig } from './whatsapp-mcp.config';
 export { default as loggingConfig } from './logging.config';
 export { default as workyConfig } from './worky.config';
 export { default as litellmConfig } from './litellm.config';
+export { default as aiProxyConfig } from './ai-proxy.config';
 export { default as playbookFlowConfig } from './playbook-flow.config';
 export { default as dataRoomConfig } from './data-room.config';
 export { default as semanticModelConfig } from './semantic-model.config';

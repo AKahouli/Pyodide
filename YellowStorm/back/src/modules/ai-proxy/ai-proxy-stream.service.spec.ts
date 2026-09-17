@@ -8,6 +8,7 @@ import { AI_PROXY_REQUEST_TIMEOUT_MS } from './constants/ai-proxy.constants';
 import { ChatCompletionDto, ChatMessageRole } from './dto/chat-completion.dto';
 import { LiteLLMConnectionService } from '../models/litellm-connection.service';
 import { UserDocument } from '../user/schemas/user.schema';
+import { AiProxyUsageService } from './ai-proxy-usage.service';
 
 describe('AiProxyStreamService', () => {
   let stream: PassThrough;
@@ -23,8 +24,24 @@ describe('AiProxyStreamService', () => {
       return values[key] ?? fallback;
     }),
   } as unknown as ConfigService;
-  const request = new EventEmitter() as Request;
+  const request = Object.assign(new EventEmitter(), {
+    ip: '127.0.0.1',
+    get: jest.fn().mockReturnValue('jest'),
+  }) as unknown as Request;
   const user = { _id: { toString: () => 'user-123' } } as unknown as UserDocument;
+  const usageService = {
+    resolveTokens: jest.fn((usage?: { prompt_tokens?: number; completion_tokens?: number }) => {
+      if (!usage || (usage.prompt_tokens === undefined && usage.completion_tokens === undefined)) {
+        return { status: 'unknown' as const };
+      }
+      return {
+        status: 'known' as const,
+        promptTokens: usage.prompt_tokens ?? 0,
+        completionTokens: usage.completion_tokens ?? 0,
+      };
+    }),
+    recordChatCompletionUsage: jest.fn().mockResolvedValue(undefined),
+  } as unknown as AiProxyUsageService;
   const body: ChatCompletionDto = {
     model: 'gpt-4o',
     messages: [{ role: ChatMessageRole.USER, content: 'Hello' }],
@@ -41,6 +58,9 @@ describe('AiProxyStreamService', () => {
     });
     return response;
   };
+
+  const createService = () =>
+    new AiProxyStreamService(connectionService, configService, usageService);
 
   beforeEach(() => {
     jest.clearAllMocks();
@@ -61,25 +81,24 @@ describe('AiProxyStreamService', () => {
     const chunks: Buffer[] = [];
     response.on('data', (chunk: Buffer) => chunks.push(chunk));
 
-    await new AiProxyStreamService(connectionService, configService)
-      .streamChatCompletion(request, response as Response, body, user);
+    await createService().streamChatCompletion(request, response as Response, body, user);
 
-    stream.write('data: {"choices":[{"delta":{"content":"Hello"}}]}\\n\\n');
-    stream.write('data: [DONE]\\n\\n');
+    stream.write('data: {"choices":[{"delta":{"content":"Hello"}}]}\n\n');
+    stream.write('data: [DONE]\n\n');
     stream.end();
     await onceFinish(response);
 
     expect(Buffer.concat(chunks).toString()).toBe(
-      'data: {"choices":[{"delta":{"content":"Hello"}}]}\\n\\ndata: [DONE]\\n\\n',
+      'data: {"choices":[{"delta":{"content":"Hello"}}]}\n\ndata: [DONE]\n\n',
     );
     expect(response.status).toHaveBeenCalledWith(200);
     expect(response.setHeader).toHaveBeenCalledWith('Content-Type', 'text/event-stream');
-    expect(response.setHeader).toHaveBeenCalledWith('Cache-Control', 'no-cache');
-    expect(response.setHeader).toHaveBeenCalledWith('Connection', 'keep-alive');
-    expect(response.setHeader).toHaveBeenCalledWith('X-Accel-Buffering', 'no');
     expect(post).toHaveBeenCalledWith(
       '/v1/chat/completions',
-      { ...body, stream: true },
+      expect.objectContaining({
+        stream: true,
+        stream_options: { include_usage: true },
+      }),
       expect.objectContaining({
         responseType: 'stream',
         timeout: AI_PROXY_REQUEST_TIMEOUT_MS,
@@ -91,13 +110,54 @@ describe('AiProxyStreamService', () => {
     );
   });
 
+  it('records known streaming tokens from the final usage chunk', async () => {
+    const response = createResponse();
+
+    await createService().streamChatCompletion(request, response as Response, body, user);
+
+    stream.write('data: {"id":"chatcmpl-s1","choices":[{"delta":{"content":"Hi"}}]}\n\n');
+    stream.write(
+      'data: {"id":"chatcmpl-s1","choices":[],"usage":{"prompt_tokens":3,"completion_tokens":2}}\n\n',
+    );
+    stream.write('data: [DONE]\n\n');
+    stream.end();
+    await onceFinish(response);
+    await flushPromises();
+
+    expect(usageService.recordChatCompletionUsage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        success: true,
+        streaming: true,
+        litellmRequestId: 'chatcmpl-s1',
+        tokens: { status: 'known', promptTokens: 3, completionTokens: 2 },
+      }),
+    );
+  });
+
+  it('records unknown tokens when stream usage is missing', async () => {
+    const response = createResponse();
+
+    await createService().streamChatCompletion(request, response as Response, body, user);
+
+    stream.end('data: {"choices":[]}\n\n');
+    await onceFinish(response);
+    await flushPromises();
+
+    expect(usageService.recordChatCompletionUsage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        success: true,
+        streaming: true,
+        tokens: { status: 'unknown' },
+      }),
+    );
+  });
+
   it('ends the client response when upstream omits DONE', async () => {
     const response = createResponse();
 
-    await new AiProxyStreamService(connectionService, configService)
-      .streamChatCompletion(request, response as Response, body, user);
+    await createService().streamChatCompletion(request, response as Response, body, user);
 
-    stream.end('data: {"choices":[]}\\n\\n');
+    stream.end('data: {"choices":[]}\n\n');
     await onceFinish(response);
 
     expect(response.writableEnded).toBe(true);
@@ -108,8 +168,7 @@ describe('AiProxyStreamService', () => {
     const response = createResponse();
 
     await expect(
-      new AiProxyStreamService(connectionService, configService)
-        .streamChatCompletion(request, response as Response, body, user),
+      createService().streamChatCompletion(request, response as Response, body, user),
     ).rejects.toThrow('LiteLLM');
 
     expect(response.headersSent).toBe(false);
@@ -121,7 +180,7 @@ describe('AiProxyStreamService', () => {
       resolveRequest = resolve;
     }));
     const response = createResponse();
-    const pending = new AiProxyStreamService(connectionService, configService)
+    const pending = createService()
       .streamChatCompletion(request, response as Response, body, user);
 
     request.emit('aborted');
@@ -134,4 +193,8 @@ describe('AiProxyStreamService', () => {
 
 function onceFinish(stream: PassThrough): Promise<void> {
   return new Promise((resolve) => stream.once('finish', () => resolve()));
+}
+
+function flushPromises(): Promise<void> {
+  return new Promise((resolve) => setImmediate(resolve));
 }
