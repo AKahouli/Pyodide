@@ -215,7 +215,25 @@ async def test_grpc_conversion_preserves_topology_and_selects_the_topology_root(
         agent_mode="hierarchical",
         agents=[
             chatbot_pb2.Agent(id="leaf", name="Leaf", agent_type="worker", chatbot=chatbot_pb2.Chatbot(model="leaf-model")),
-            chatbot_pb2.Agent(id="root", name="Root", prompt="root prompt", agent_type="manager", chatbot=chatbot_pb2.Chatbot(model="root-model")),
+            chatbot_pb2.Agent(
+                id="root",
+                name="Root",
+                prompt="root prompt",
+                agent_type="manager",
+                chatbot=chatbot_pb2.Chatbot(
+                    model="root-model",
+                    input_modalities=["text", "image"],
+                    reasoning_effort="high",
+                    context_window_tokens=200_000,
+                    compaction=chatbot_pb2.Compaction(
+                        enabled=True,
+                        compaction_interval=10,
+                        overlap_size=2,
+                        token_fraction=0.75,
+                        event_retention_size=6,
+                    ),
+                ),
+            ),
         ],
         team_definition=chatbot_pb2.AgentTeamDefinition(
             team_id="team-1",
@@ -227,7 +245,20 @@ async def test_grpc_conversion_preserves_topology_and_selects_the_topology_root(
     )
 
     converted = await ChatbotServicer.__new__(ChatbotServicer)._convert_agent_team_request_v2(pb_request)
-    assert converted.chatbot_name["provider"] == "root-model"
+    assert converted.chatbot_name == {
+        "provider": "root-model",
+        "input_modalities": ["text", "image"],
+        "reasoning_effort": "high",
+        "context_window_tokens": 200_000,
+        "compaction": {
+            "enabled": True,
+            "compaction_interval": 10,
+            "overlap_size": 2,
+            "token_fraction": pytest.approx(0.75),
+            "event_retention_size": 6,
+            "summarizer_model": "",
+        },
+    }
     assert converted.manager_prompt == "root prompt"
     assert converted.team_definition.nodes[0].parent_agent_id is None
     assert converted.team_definition.nodes[1].order == 2

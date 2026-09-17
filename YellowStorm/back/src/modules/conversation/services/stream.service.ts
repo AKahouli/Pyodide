@@ -1472,7 +1472,7 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
         }
         return envelope;
       };
-      // Idle timeout - resets every time data is received
+      // Idle timeout - resets when application-visible stream data is received.
       let timeoutHandle: NodeJS.Timeout | null = null;
       terminal.cancelIdleTimeout = () => {
         if (timeoutHandle) clearTimeout(timeoutHandle);
@@ -1508,9 +1508,9 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
 
       call.on('data', (chunk: any) => {
         if (terminal.started) return;
-        // Reset idle timeout on each chunk received
-        resetIdleTimeout();
         if (chunk.action === 'heartbeat') return;
+        // Transport keepalives must not hide a stalled model call.
+        resetIdleTimeout();
         chunkCount++;
         // Capture time to first chunk
 

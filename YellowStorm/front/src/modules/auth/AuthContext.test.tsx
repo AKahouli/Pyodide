@@ -1,6 +1,6 @@
 import { act, renderHook, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { AUTH_LOST_EVENT, AUTH_STORAGE_KEYS } from '@/lib/api';
+import { AUTH_LOST_EVENT, AUTH_STORAGE_KEYS, bumpAuthGeneration } from '@/lib/api';
 import { AuthProvider } from './AuthContext';
 import type { User } from './types';
 import { useAuth } from './useAuth';
@@ -117,6 +117,41 @@ describe('AuthProvider', () => {
 
     expect(result.current.isAuthenticated).toBe(false);
     expect(result.current.user).toBeNull();
+  });
+
+  it('revalidates an authenticated session when the tab regains focus', async () => {
+    localStorage.setItem(AUTH_STORAGE_KEYS.accessToken, 'access-token');
+    localStorage.setItem(AUTH_STORAGE_KEYS.user, JSON.stringify(baseUser));
+    const { result } = renderHook(() => useAuth(), { wrapper: AuthProvider });
+    await waitFor(() => expect(result.current.isAuthenticated).toBe(true));
+    authApiMock.getCurrentUser.mockClear();
+
+    act(() => window.dispatchEvent(new Event('focus')));
+
+    await waitFor(() => expect(authApiMock.getCurrentUser).toHaveBeenCalledTimes(1));
+  });
+
+  it('does not restore auth when a stale focus revalidation finishes after auth loss', async () => {
+    localStorage.setItem(AUTH_STORAGE_KEYS.accessToken, 'access-token');
+    localStorage.setItem(AUTH_STORAGE_KEYS.user, JSON.stringify(baseUser));
+    const { result } = renderHook(() => useAuth(), { wrapper: AuthProvider });
+    await waitFor(() => expect(result.current.isAuthenticated).toBe(true));
+
+    let resolveRevalidation: (user: User) => void = () => undefined;
+    authApiMock.getCurrentUser.mockImplementationOnce(() => new Promise<User>((resolve) => {
+      resolveRevalidation = resolve;
+    }));
+    act(() => window.dispatchEvent(new Event('focus')));
+    await waitFor(() => expect(authApiMock.getCurrentUser).toHaveBeenCalledTimes(2));
+
+    act(() => {
+      bumpAuthGeneration();
+      window.dispatchEvent(new Event(AUTH_LOST_EVENT));
+    });
+    expect(result.current.isAuthenticated).toBe(false);
+
+    await act(async () => resolveRevalidation(baseUser));
+    expect(result.current.isAuthenticated).toBe(false);
   });
 
   it('starts polling getCurrentUser while the signed-in account is inactive', async () => {

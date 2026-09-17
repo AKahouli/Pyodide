@@ -877,7 +877,7 @@ describe('StreamService guardrail metadata buffering', () => {
     }
   });
 
-  it('uses heartbeat chunks only to reset the idle timeout', async () => {
+  it('does not let heartbeat chunks extend the idle timeout', async () => {
     jest.useFakeTimers();
     try {
       const call = Object.assign(new EventEmitter(), { cancel: jest.fn() });
@@ -905,17 +905,26 @@ describe('StreamService guardrail metadata buffering', () => {
       });
 
       const execution = (service as any).executeGrpcStream('user-1', 'conversation-1', 'message-1', streamKey, {}, 10, ['user-1']) as Promise<void>;
+      void execution.catch(() => undefined);
       await jest.advanceTimersByTimeAsync(9);
       call.emit('data', { action: 'heartbeat', metadata: { message_id: 'conversation-1' } });
-      await jest.advanceTimersByTimeAsync(9);
+      await jest.advanceTimersByTimeAsync(1);
 
-      expect(call.cancel).not.toHaveBeenCalled();
-      expect(broadcastToConversation).not.toHaveBeenCalled();
-      expect(completeAIMessage).not.toHaveBeenCalled();
-
-      call.emit('end');
-      await execution;
-      expect(completeAIMessage).toHaveBeenCalledWith(expect.objectContaining({ components: [] }));
+      expect(call.cancel).toHaveBeenCalledTimes(1);
+      expect(broadcastToConversation).toHaveBeenCalledTimes(1);
+      expect(broadcastToConversation).toHaveBeenCalledWith(
+        [],
+        expect.objectContaining({ type: 'stream_error' }),
+      );
+      expect(completeAIMessage).toHaveBeenCalledWith(expect.objectContaining({
+        components: expect.arrayContaining([
+          expect.objectContaining({
+            type: 'error',
+            data: expect.objectContaining({ code: ErrorCode.CHAT_STREAM_TIMEOUT }),
+          }),
+        ]),
+      }));
+      await expect(execution).rejects.toThrow('Stream idle timeout');
     } finally {
       jest.useRealTimers();
     }

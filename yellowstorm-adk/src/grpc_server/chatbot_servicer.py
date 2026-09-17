@@ -898,6 +898,29 @@ class ChatbotServicer(
             metadata=chatbot_pb2.Metadata(message_id=message_id),
         )
 
+    @staticmethod
+    def _convert_chatbot(pb_chatbot: "chatbot_pb2.Chatbot") -> Dict[str, Any]:
+        return {
+            "provider": pb_chatbot.model,
+            "input_modalities": list(pb_chatbot.input_modalities) or ["text"],
+            **({"reasoning_effort": pb_chatbot.reasoning_effort} if pb_chatbot.reasoning_effort else {}),
+            **({"context_window_tokens": pb_chatbot.context_window_tokens} if pb_chatbot.context_window_tokens > 0 else {}),
+            **(
+                {
+                    "compaction": {
+                        "enabled": pb_chatbot.compaction.enabled,
+                        "compaction_interval": pb_chatbot.compaction.compaction_interval,
+                        "overlap_size": pb_chatbot.compaction.overlap_size,
+                        "token_fraction": pb_chatbot.compaction.token_fraction,
+                        "event_retention_size": pb_chatbot.compaction.event_retention_size,
+                        "summarizer_model": pb_chatbot.compaction.summarizer_model,
+                    }
+                }
+                if pb_chatbot.HasField("compaction") and pb_chatbot.compaction.enabled
+                else {}
+            ),
+        }
+
     def _convert_agent(self, pb_agent: "chatbot_pb2.Agent") -> AgentSuggestion:
         """Convert protobuf Agent (V2) to internal V1 AgentSuggestion Pydantic model.
 
@@ -1042,26 +1065,7 @@ class ChatbotServicer(
             brain_ids=workspace_ids or workspace_names,
             brain_documents=brain_documents,
             brain_relations={"nodes": [], "relationships": []},
-            chatbot_name={
-                "provider": pb_agent.chatbot.model,
-                "input_modalities": list(pb_agent.chatbot.input_modalities) or ["text"],
-                **({"reasoning_effort": pb_agent.chatbot.reasoning_effort} if pb_agent.chatbot.reasoning_effort else {}),
-                **({"context_window_tokens": pb_agent.chatbot.context_window_tokens} if pb_agent.chatbot.context_window_tokens > 0 else {}),
-                **(
-                    {
-                        "compaction": {
-                            "enabled": pb_agent.chatbot.compaction.enabled,
-                            "compaction_interval": pb_agent.chatbot.compaction.compaction_interval,
-                            "overlap_size": pb_agent.chatbot.compaction.overlap_size,
-                            "token_fraction": pb_agent.chatbot.compaction.token_fraction,
-                            "event_retention_size": pb_agent.chatbot.compaction.event_retention_size,
-                            "summarizer_model": pb_agent.chatbot.compaction.summarizer_model,
-                        }
-                    }
-                    if pb_agent.chatbot.HasField("compaction") and pb_agent.chatbot.compaction.enabled
-                    else {}
-                ),
-            }
+            chatbot_name=self._convert_chatbot(pb_agent.chatbot)
             if pb_agent.HasField("chatbot")
             else None,
             agent_params=raw_agent_params if raw_agent_params else None,
@@ -1320,10 +1324,7 @@ class ChatbotServicer(
         # Chatbot config + base prompt come from the single agent (no manager).
         agent_chatbot_name = None
         if pb_request.agent.HasField("chatbot"):
-            agent_chatbot_name = {
-                "provider": pb_request.agent.chatbot.model,
-                "input_modalities": list(pb_request.agent.chatbot.input_modalities) or ["text"],
-            }
+            agent_chatbot_name = self._convert_chatbot(pb_request.agent.chatbot)
         if not agent_chatbot_name:
             logger.error(
                 f"No chatbot model provided for single agent in conversation {pb_request.conversation_id}"
@@ -1572,10 +1573,7 @@ class ChatbotServicer(
             if (root_agent_id and agent.id == root_agent_id) or (not root_agent_id and agent.agent_type == "manager"):
                 # Found the manager agent - use its chatbot configuration and prompt
                 if agent.HasField("chatbot"):
-                    manager_chatbot_name = {
-                        "provider": agent.chatbot.model,
-                        "input_modalities": list(agent.chatbot.input_modalities) or ["text"],
-                    }
+                    manager_chatbot_name = self._convert_chatbot(agent.chatbot)
                 if agent.prompt:
                     manager_prompt = agent.prompt
                 break

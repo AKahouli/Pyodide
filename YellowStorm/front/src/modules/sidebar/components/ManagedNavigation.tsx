@@ -1,5 +1,5 @@
-import { useEffect, useState } from 'react';
-import { NavLink, useLocation } from 'react-router-dom';
+import { useState } from 'react';
+import { NavLink, useLocation, useNavigate } from 'react-router-dom';
 import {
   Bot, Boxes, ChevronRight, History, Layers, LayoutGrid, MessageSquarePlus, Network, Plug, ShieldCheck, Sparkles, Users, Workflow,
 } from 'lucide-react';
@@ -47,6 +47,7 @@ interface ManagedNavigationProps {
   historyLoading: boolean;
   showAllChatsLink: boolean;
   collapsed: boolean;
+  navigateOnDisclosureClick: boolean;
   hideHistory?: boolean;
 }
 
@@ -98,23 +99,21 @@ function RootNode({ node, ...props }: { node: NavigationNode } & ManagedNavigati
 
 function TreeNode({ node, ...props }: { node: NavigationNode } & ManagedNavigationProps) {
   const location = useLocation();
-  const storageKey = node.id === 'knowledge' ? 'sidebar:knowledgeOpen' : `sidebar:navigation:${node.id}:open`;
-  const [open, setOpen] = useState(() => {
-    if (typeof window === 'undefined') return node.targetKey === 'history';
-    const stored = localStorage.getItem(storageKey);
-    return stored === null ? node.targetKey === 'history' : stored === 'true';
-  });
-  useEffect(() => {
-    if (node.type === 'group' || node.targetKey === 'history') localStorage.setItem(storageKey, String(open));
-  }, [node.targetKey, node.type, open, storageKey]);
+  const navigate = useNavigate();
+  const [open, setOpen] = useState(node.targetKey === 'history');
   if (!hasContent(node, props)) return null;
 
   const label = navigationLabel(node.labels, props.language);
   if (node.type === 'group') {
+    const firstTarget = visibleNavigationItems(props.settings)
+      .find((item) => item.parentId === node.id && item.targetKey && navigationTargetAllowed(item.targetKey, props))
+      ?.targetKey;
     return (
       <Collapsible open={open} onOpenChange={setOpen}>
         <SidebarMenuItem>
-          <CollapsibleTrigger asChild><SidebarMenuButton tooltip={label}><Network /><span>{label}</span><ChevronRight className={cn('ml-auto size-4 transition-transform', open && 'rotate-90')} /></SidebarMenuButton></CollapsibleTrigger>
+          <CollapsibleTrigger asChild><SidebarMenuButton tooltip={label} onClick={() => {
+            if (props.navigateOnDisclosureClick && firstTarget) navigate(NAVIGATION_TARGETS[firstTarget].path);
+          }}><Network /><span>{label}</span><ChevronRight className={cn('ml-auto size-4 transition-transform', open && 'rotate-90')} /></SidebarMenuButton></CollapsibleTrigger>
         </SidebarMenuItem>
         <CollapsibleContent><SidebarMenu className='ml-4 border-l border-sidebar-border pl-1.5'>{sortNavigationNodes(props.settings, node.id).map((child) => <TreeNode key={child.id} node={child} {...props} />)}</SidebarMenu></CollapsibleContent>
       </Collapsible>
@@ -128,7 +127,9 @@ function TreeNode({ node, ...props }: { node: NavigationNode } & ManagedNavigati
   if (node.targetKey === 'history') {
     return (
       <Collapsible open={open} onOpenChange={setOpen} className='flex min-h-0 flex-1 flex-col'>
-        <SidebarMenuItem className='shrink-0'><CollapsibleTrigger asChild><SidebarMenuButton tooltip={label}><History /><span>{label}</span><ChevronRight className={cn('ml-auto size-4 transition-transform', open && 'rotate-90')} /></SidebarMenuButton></CollapsibleTrigger></SidebarMenuItem>
+        <SidebarMenuItem className='shrink-0'><CollapsibleTrigger asChild><SidebarMenuButton tooltip={label} onClick={() => {
+          if (props.navigateOnDisclosureClick) navigate(NAVIGATION_TARGETS.history.path);
+        }}><History /><span>{label}</span><ChevronRight className={cn('ml-auto size-4 transition-transform', open && 'rotate-90')} /></SidebarMenuButton></CollapsibleTrigger></SidebarMenuItem>
         <CollapsibleContent className='min-h-0 flex-1 overflow-y-auto pl-2'><RecentChats rows={props.historyRows} loading={props.historyLoading} showAllChatsLink={props.showAllChatsLink} /></CollapsibleContent>
       </Collapsible>
     );

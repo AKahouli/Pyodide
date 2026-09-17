@@ -230,7 +230,7 @@ export const TimingIndicator = memo(function TimingIndicator({ timeToFirstChunk,
             <TooltipContent>{t('latency.openDetails')}</TooltipContent>
           </Tooltip>
         </TooltipProvider>
-        <PopoverContent side="top" align="start" className="w-80">
+        <PopoverContent side="top" align="start" className="max-h-[60vh] w-80 overflow-y-auto overscroll-contain">
           <div className="flex items-center justify-between gap-2 mb-1">
             <div className="text-xs font-medium">{t('latency.title')}</div>
             {clipboardText && <CodeBlockCopyButton code={clipboardText} className="size-6" aria-label={t('latency.copyDetails')} title={t('latency.copyDetails')} />}

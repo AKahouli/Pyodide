@@ -173,7 +173,6 @@ describe('AppSidebar', () => {
   });
 
   it('renders the target information architecture', async () => {
-    localStorage.setItem('sidebar:knowledgeOpen', 'true');
     render(
       <MemoryRouter>
         <SidebarProvider>
@@ -194,6 +193,7 @@ describe('AppSidebar', () => {
 
     // BUILD group
     expect(screen.getByText('Build')).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: 'Knowledge' }));
     expect(screen.getByText('workspace-btn')).toBeInTheDocument();
     expect(screen.getByText('semantic-model-btn')).toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'Agents & teams' })).toHaveAttribute('href', '/agents');
@@ -394,6 +394,54 @@ describe('AppSidebar', () => {
     expect(autoCollapseState.setOpen).toHaveBeenCalledWith(true);
   });
 
+  it('navigates collapsed disclosure icons on the first click', async () => {
+    autoCollapseState.state = 'collapsed';
+    render(
+      <MemoryRouter>
+        <SidebarProvider>
+          <AppSidebar />
+        </SidebarProvider>
+      </MemoryRouter>,
+    );
+
+    await userEvent.click(screen.getByRole('button', { name: 'Knowledge' }));
+    await userEvent.click(screen.getByRole('button', { name: 'History' }));
+
+    expect(navigateMock).toHaveBeenCalledWith('/workspace');
+    expect(navigateMock).toHaveBeenCalledWith('/chats');
+    expect(autoCollapseState.setOpen).toHaveBeenCalledWith(true);
+  });
+
+  it('uses the first permitted destination for a collapsed disclosure icon', async () => {
+    autoCollapseState.state = 'collapsed';
+    visibilityPermissionState.deniedFeatures.add('workspace');
+    render(
+      <MemoryRouter>
+        <SidebarProvider>
+          <AppSidebar />
+        </SidebarProvider>
+      </MemoryRouter>,
+    );
+
+    await userEvent.click(screen.getByRole('button', { name: 'Knowledge' }));
+
+    expect(navigateMock).toHaveBeenCalledWith('/semantic-models');
+  });
+
+  it('keeps disclosure icons as toggles while expanded', async () => {
+    render(
+      <MemoryRouter>
+        <SidebarProvider>
+          <AppSidebar />
+        </SidebarProvider>
+      </MemoryRouter>,
+    );
+
+    await userEvent.click(screen.getByRole('button', { name: 'Knowledge' }));
+
+    expect(navigateMock).not.toHaveBeenCalled();
+  });
+
   it('ignores rail clicks while expanded', () => {
     render(
       <MemoryRouter>
@@ -426,7 +474,8 @@ describe('AppSidebar', () => {
     expect(container.querySelector('nav')).toHaveClass('overflow-y-auto');
   });
 
-  it('keeps Knowledge and Projects independently openable (multi-open)', async () => {
+  it('starts menu folders collapsed and keeps them openable', async () => {
+    localStorage.setItem('sidebar:knowledgeOpen', 'true');
     render(
       <MemoryRouter>
         <SidebarProvider>
@@ -442,9 +491,8 @@ describe('AppSidebar', () => {
     await userEvent.click(knowledge);
     expect(knowledge).toHaveAttribute('aria-expanded', 'true');
     expect(screen.getByText('workspace-btn')).toBeInTheDocument();
-    // Projects section is still rendered alongside — no single-open coupling.
+    // Projects remain independent from managed navigation folders.
     expect(screen.getByText('projects-section')).toBeInTheDocument();
-    expect(localStorage.getItem('sidebar:knowledgeOpen')).toBe('true');
   });
 
   it('opens the global search palette from the trigger', async () => {

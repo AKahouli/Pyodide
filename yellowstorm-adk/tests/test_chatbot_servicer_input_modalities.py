@@ -50,15 +50,28 @@ async def test_convert_single_agent_keeps_task_summary_separate_from_message():
         "workspace_ids": [],
         "brain_documents": [],
     })
+    agent = _agent("text")
+    agent.chatbot.reasoning_effort = "high"
+    agent.chatbot.context_window_tokens = 200_000
+    agent.chatbot.compaction.CopyFrom(chatbot_pb2.Compaction(
+        enabled=True,
+        compaction_interval=10,
+        overlap_size=2,
+        token_fraction=0.75,
+        event_retention_size=6,
+    ))
     request = chatbot_pb2.RunSingleAgentRequest(
         user_context=chatbot_pb2.UserContext(user_id="user-1", username="User"),
         conversation_id="conversation-1",
         query='{"selectedChoices":[]}',
         task_summary="Profitability",
-        agent=_agent("text"),
+        agent=agent,
     )
 
     converted = await servicer._convert_single_agent_request(request)
 
     assert converted.message == '{"selectedChoices":[]}'
     assert converted.task_summary == "Profitability"
+    assert converted.chatbot_name == converted.agents[0].chatbot_name
+    assert converted.chatbot_name["context_window_tokens"] == 200_000
+    assert converted.chatbot_name["compaction"]["compaction_interval"] == 10

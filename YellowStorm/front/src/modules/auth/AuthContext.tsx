@@ -3,9 +3,8 @@
  */
 
 import * as React from 'react';
-import { AUTH_LOST_EVENT, AUTH_STORAGE_KEYS, bumpAuthGeneration, clearAuthData, isTransientAuthFailure, scheduleProactiveRefresh } from '@/lib/api';
+import { AUTH_LOST_EVENT, AUTH_STORAGE_KEYS, bumpAuthGeneration, clearAuthData, getAuthGeneration, isTransientAuthFailure, scheduleProactiveRefresh } from '@/lib/api';
 import * as authApi from './api';
-import { notificationsService } from '@/modules/notifications';
 import type { AuthContextType, AuthState, LoginCredentials, RegisterCredentials, CompleteProfileData, User } from './types';
 
 const initialState: AuthState = {
@@ -215,8 +214,12 @@ export function AuthProvider({ children }: AuthProviderProps) {
   }, []);
 
   const refreshUser = React.useCallback(async (): Promise<void> => {
+    const generationAtStart = getAuthGeneration();
     try {
       const user = await authApi.getCurrentUser();
+      if (getAuthGeneration() !== generationAtStart) {
+        return;
+      }
       localStorage.setItem(AUTH_STORAGE_KEYS.user, JSON.stringify(user));
 
       setState((prev) => ({
@@ -234,27 +237,34 @@ export function AuthProvider({ children }: AuthProviderProps) {
   }, []);
 
   React.useEffect(() => {
-    if (!state.isAuthenticated || state.user?.status !== 'inactive') {
+    if (!state.isAuthenticated) {
       return;
     }
 
-    const poll = () => {
+    const revalidate = () => {
       void refreshUser().catch(() => undefined);
     };
-    poll();
-    const interval = window.setInterval(poll, 15_000);
     const onVisibility = () => {
       if (!document.hidden) {
-        poll();
+        revalidate();
       }
     };
     document.addEventListener('visibilitychange', onVisibility);
-    window.addEventListener('focus', poll);
+    window.addEventListener('focus', revalidate);
+
+    const interval = state.user?.status === 'inactive'
+      ? window.setInterval(revalidate, 15_000)
+      : null;
+    if (interval !== null) {
+      revalidate();
+    }
 
     return () => {
-      window.clearInterval(interval);
+      if (interval !== null) {
+        window.clearInterval(interval);
+      }
       document.removeEventListener('visibilitychange', onVisibility);
-      window.removeEventListener('focus', poll);
+      window.removeEventListener('focus', revalidate);
     };
   }, [state.isAuthenticated, state.user?.status, refreshUser]);
 

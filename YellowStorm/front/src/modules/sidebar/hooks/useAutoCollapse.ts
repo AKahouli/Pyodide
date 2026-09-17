@@ -1,4 +1,5 @@
 import { useEffect, useRef } from 'react';
+import { useLocation } from 'react-router-dom';
 import { useSidebar } from '@/components/ui/sidebar';
 
 /** Below this width the rail auto-collapses; above it, it auto-expands. */
@@ -14,8 +15,15 @@ const COLLAPSE_BREAKPOINT = 1024;
  */
 export function useAutoCollapse() {
   const { isMobile, state, setOpen, toggleSidebar } = useSidebar();
+  const { pathname } = useLocation();
   const setOpenRef = useRef(setOpen);
   setOpenRef.current = setOpen;
+
+  useEffect(() => {
+    if (pathname === '/' || /^\/conversation(?:\/|$)/.test(pathname)) {
+      setOpenRef.current(false);
+    }
+  }, [pathname]);
 
   useEffect(() => {
     const below = () => window.innerWidth < COLLAPSE_BREAKPOINT;
