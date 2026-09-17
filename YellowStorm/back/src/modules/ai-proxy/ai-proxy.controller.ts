@@ -19,11 +19,12 @@ import { AiProxyExceptionFilter } from './ai-proxy-exception.filter';
 import { AiProxyService } from './ai-proxy.service';
 import { ChatCompletionDto } from './dto/chat-completion.dto';
 import { AiProxyRateLimitGuard } from './guards/ai-proxy-rate-limit.guard';
+import { AiProxyPayloadLimitGuard } from './guards/ai-proxy-payload-limit.guard';
 
 @ApiTags('AI Proxy')
 @ApiBearerAuth()
 @UseFilters(AiProxyExceptionFilter)
-@UseGuards(AiProxyRateLimitGuard)
+@UseGuards(AiProxyPayloadLimitGuard, AiProxyRateLimitGuard)
 @Controller({ path: '', version: '1' })
 export class AiProxyController {
   constructor(private readonly proxyService: AiProxyService) {}

@@ -112,8 +112,18 @@ describe('AiProxyStreamService', () => {
 
   it('records known streaming tokens from the final usage chunk', async () => {
     const response = createResponse();
+    const pricing = {
+      inputCostPerToken: 0.000001,
+      outputCostPerToken: 0.000002,
+    };
 
-    await createService().streamChatCompletion(request, response as Response, body, user);
+    await createService().streamChatCompletion(
+      request,
+      response as Response,
+      body,
+      user,
+      pricing,
+    );
 
     stream.write('data: {"id":"chatcmpl-s1","choices":[{"delta":{"content":"Hi"}}]}\n\n');
     stream.write(
@@ -130,6 +140,7 @@ describe('AiProxyStreamService', () => {
         streaming: true,
         litellmRequestId: 'chatcmpl-s1',
         tokens: { status: 'known', promptTokens: 3, completionTokens: 2 },
+        pricing,
       }),
     );
   });

@@ -1,3 +1,5 @@
+export const AI_PROXY_DEFAULT_MAX_BODY_BYTES = 1_048_576;
+
 /** Chat/stream timeout — longer than litellm.timeoutMs (health/embeddings, max 60s). */
 export const AI_PROXY_REQUEST_TIMEOUT_MS = 300_000;
 

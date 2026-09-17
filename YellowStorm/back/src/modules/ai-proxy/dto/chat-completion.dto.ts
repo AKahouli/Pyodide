@@ -55,11 +55,13 @@ export class ChatCompletionDto {
   @IsOptional()
   @IsInt()
   @Min(1)
+  @Max(1_000_000)
   max_tokens?: number;
 
   @IsOptional()
   @IsInt()
   @Min(1)
+  @Max(1_000_000)
   max_completion_tokens?: number;
 
   @IsOptional()

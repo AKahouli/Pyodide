@@ -13,6 +13,7 @@ import { LiteLLMConnectionService } from '../models/litellm-connection.service';
 import { AI_PROXY_REQUEST_TIMEOUT_MS } from './constants/ai-proxy.constants';
 import { ChatCompletionDto } from './dto/chat-completion.dto';
 import {
+  AiProxyModelPricing,
   AiProxyResolvedTokens,
   LiteLlmErrorResponse,
   LiteLlmTokenUsage,
@@ -36,6 +37,7 @@ export class AiProxyStreamService {
     response: Response,
     body: ChatCompletionDto,
     user: UserDocument,
+    pricing?: AiProxyModelPricing | null,
   ): Promise<void> {
     const httpClient = this.connectionService.getHttpClient();
     if (!httpClient || !this.appBuilderApiKey) {
@@ -121,6 +123,7 @@ export class AiProxyStreamService {
           streaming: true,
           litellmRequestId,
           errorMessage: error.message,
+          pricing,
         });
         if (!response.destroyed && !response.writableEnded) {
           response.destroy(error);
@@ -138,6 +141,7 @@ export class AiProxyStreamService {
           tokens,
           streaming: true,
           litellmRequestId,
+          pricing,
         });
         if (!doneMarkerSeen && !response.destroyed && !response.writableEnded) {
           response.end();

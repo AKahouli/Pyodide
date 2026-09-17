@@ -23,9 +23,19 @@ export type AiProxyResolvedTokens =
   | { status: 'known'; promptTokens: number; completionTokens: number; totalTokens?: number }
   | { status: 'unknown' };
 
+export interface AiProxyModelPricing {
+  inputCostPerToken: number | null;
+  outputCostPerToken: number | null;
+  cachedInputCostPerToken?: number | null;
+  provider?: string;
+  version?: string;
+}
+
 export interface AiProxyUsageMetadata {
   tokensStatus: 'known' | 'unknown';
   streaming: boolean;
   litellmRequestId?: string;
   error?: string;
+  pricing?: AiProxyModelPricing;
+  estimatedCost?: number | null;
 }

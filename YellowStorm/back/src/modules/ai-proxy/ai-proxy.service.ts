@@ -20,6 +20,11 @@ import { AiProxyUsageService } from './ai-proxy-usage.service';
 @Injectable()
 export class AiProxyService {
   private readonly appBuilderApiKey: string;
+  private readonly allowedModels: Set<string>;
+  private readonly maxTokensPerRequest: number;
+  private readonly maxBodyBytes: number;
+  private readonly maxMessages: number;
+  private readonly maxMessageContentChars: number;
 
   constructor(
     private readonly connectionService: LiteLLMConnectionService,
@@ -29,6 +34,22 @@ export class AiProxyService {
     private readonly usageService: AiProxyUsageService,
   ) {
     this.appBuilderApiKey = this.configService.get<string>('litellm.appBuilderApiKey', '');
+    this.allowedModels = new Set(
+      this.configService.get<string[]>('aiProxy.allowedModels', []),
+    );
+    this.maxTokensPerRequest = this.configService.get<number>(
+      'aiProxy.maxTokensPerRequest',
+      4096,
+    );
+    this.maxBodyBytes = this.configService.get<number>(
+      'aiProxy.maxBodyBytes',
+      1_048_576,
+    );
+    this.maxMessages = this.configService.get<number>('aiProxy.maxMessages', 100);
+    this.maxMessageContentChars = this.configService.get<number>(
+      'aiProxy.maxMessageContentChars',
+      100_000,
+    );
   }
 
   async proxyChatCompletion(
@@ -37,12 +58,19 @@ export class AiProxyService {
     request?: Request,
     res?: Response,
   ): Promise<Record<string, unknown> | void> {
+    this.validateRequestLimits(body);
+    this.applyDefaultMaxTokens(body);
+
     const validation = await this.modelsService.validateModelActive(body.model, 'chat');
-    if (!validation.valid) {
+    if (!validation.valid || (
+      this.allowedModels.size > 0 && !this.allowedModels.has(body.model)
+    )) {
       throw new BadRequestException(
         `Model '${body.model}' is not available`,
       );
     }
+
+    const pricing = await this.usageService.resolvePricing(body.model);
 
     if (body.stream) {
       if (!request || !res) {
@@ -53,6 +81,7 @@ export class AiProxyService {
         res,
         body,
         user,
+        pricing,
       );
     }
 
@@ -87,6 +116,7 @@ export class AiProxyService {
         tokens: this.usageService.resolveTokens(data.usage as LiteLlmTokenUsage | undefined),
         streaming: false,
         litellmRequestId: typeof data.id === 'string' ? data.id : undefined,
+        pricing,
       });
       return data;
     } catch (error) {
@@ -99,6 +129,7 @@ export class AiProxyService {
         tokens: { status: 'unknown' },
         streaming: false,
         errorMessage: error instanceof Error ? error.message : 'AI provider request failed',
+        pricing,
       });
       throw this.mapUpstreamError(error);
     }
@@ -109,15 +140,59 @@ export class AiProxyService {
     data: Array<{ id: string; object: 'model'; owned_by: string }>;
   }> {
     const { models } = await this.modelsService.findAll(true, true);
+    const visibleModels = this.allowedModels.size > 0
+      ? models.filter((model) => this.allowedModels.has(model.id))
+      : models;
 
     return {
       object: 'list',
-      data: models.map((model) => ({
+      data: visibleModels.map((model) => ({
         id: model.id,
         object: 'model',
         owned_by: model.chefSlug || 'unknown',
       })),
     };
+  }
+
+  private validateRequestLimits(body: ChatCompletionDto): void {
+    if (body.messages.length > this.maxMessages) {
+      throw new BadRequestException(
+        `Too many messages. Maximum allowed is ${this.maxMessages}.`,
+      );
+    }
+
+    const serializedBodyBytes = Buffer.byteLength(JSON.stringify(body), 'utf8');
+    if (serializedBodyBytes > this.maxBodyBytes) {
+      throw new BadRequestException(
+        `Request body is too large. Maximum allowed is ${this.maxBodyBytes} bytes.`,
+      );
+    }
+
+    for (const message of body.messages) {
+      if (message.content.length > this.maxMessageContentChars) {
+        throw new BadRequestException(
+          `Message content is too large. Maximum allowed is ${this.maxMessageContentChars} characters.`,
+        );
+      }
+    }
+
+    const requestedTokens = Math.max(
+      body.max_tokens ?? 0,
+      body.max_completion_tokens ?? 0,
+    );
+    if (requestedTokens > this.maxTokensPerRequest) {
+      throw new BadRequestException(
+        `Requested tokens exceed the maximum of ${this.maxTokensPerRequest}.`,
+      );
+    }
+  }
+
+  /** When the client omits token caps, inject the configured ceiling before forwarding. */
+  private applyDefaultMaxTokens(body: ChatCompletionDto): void {
+    const hasTokenCap = body.max_tokens != null || body.max_completion_tokens != null;
+    if (!hasTokenCap) {
+      body.max_tokens = this.maxTokensPerRequest;
+    }
   }
 
   private mapUpstreamError(error: unknown): Error {
