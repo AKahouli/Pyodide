@@ -8,6 +8,8 @@
  *   - Each agent is migrated independently: a single bad document is recorded and
  *     skipped instead of aborting the whole run.
  *
+ * Runs on the shared migrate harness (scripts/migrate/harness.ts).
+ *
  * Usage:
  *   npx ts-node back/scripts/backfill-agents-to-postgres.ts [flags]
  *
@@ -17,24 +19,23 @@
  *   --verify             After migrating, re-read each agent from Postgres and
  *                        compare it against Mongo (scalars + junction sets).
  *                        Combine with --dry-run to verify a previous run.
+ *   --resume-from=<id>   Skip Mongo docs until the agent with this _id.
+ *   --fix-orphans        No-op for agents (no PG-side fixer; orphan agentTypes are
+ *                        reported only).
  */
 import mongoose from 'mongoose';
 import * as dotenv from 'dotenv';
 import * as path from 'path';
 import { Pool } from 'pg';
 import { drizzle } from 'drizzle-orm/node-postgres';
-import { inArray } from 'drizzle-orm';
+import { count, inArray } from 'drizzle-orm';
 import * as schema from '../src/modules/postgres/schema';
 import { AgentRepository, CreateAgentInput } from '../src/modules/agent/repositories/agent.repository';
 import type { AgentRecord } from '../src/modules/agent/repositories/agent-record.mapper';
+import { runBackfill } from './migrate/harness';
+import type { OrphanEdge } from './migrate/orphans';
 
 dotenv.config({ path: path.resolve(__dirname, '..', '.env') });
-
-const mongoUri = process.env.MONGODB_URI;
-if (!mongoUri) throw new Error('MONGODB_URI is required');
-const dryRun = process.argv.includes('--dry-run');
-const verify = process.argv.includes('--verify');
-const batchSize = Number(process.argv.find((v) => v.startsWith('--batch-size='))?.split('=')[1] ?? '200');
 
 const idStr = (v: unknown): string => (v == null ? '' : String(v));
 const idArr = (v: unknown): string[] => (Array.isArray(v) ? v.map(idStr).filter(Boolean) : []);
@@ -145,7 +146,9 @@ function diffFields(input: CreateAgentInput, rec: AgentRecord): string[] {
 }
 
 async function main(): Promise<void> {
-  await mongoose.connect(mongoUri!);
+  const mongoUri = process.env.MONGODB_URI;
+  if (!mongoUri) throw new Error('MONGODB_URI is required');
+  await mongoose.connect(mongoUri);
   const mdb = mongoose.connection.db!;
   const agentsCol = mdb.collection('agents');
   const typesCol = mdb.collection('agent_types');
@@ -165,87 +168,51 @@ async function main(): Promise<void> {
   const typeSlug = new Map<string, string>();
   for await (const t of typesCol.find({})) typeSlug.set(idStr(t._id), idStr(t.slug));
 
-  let processed = 0, skipped = 0, inserted = 0, orphanTypes = 0;
-  const failures: Array<{ id: string; name: string; reason: string }> = [];
+  const agentTypeEdge: OrphanEdge = {
+    label: 'agents.agentType → agent_types (Mongo)',
+    path: 'agentType',
+    exists: async (ids) => new Set(ids.filter((id) => typeSlug.has(id))),
+  };
 
-  for await (const doc of agentsCol.find({}).batchSize(batchSize)) {
-    processed += 1;
-    const input = buildInput(doc as MongoDoc, typeSlug);
-
-    const reason = validationError(input);
-    if (reason) {
-      failures.push({ id: input.id || '(no id)', name: input.name || '(no name)', reason });
-      continue;
-    }
-    if (!input.agentTypeSlug) orphanTypes += 1;
-
-    try {
-      const existing = await db
-        .select({ id: schema.agents.id })
-        .from(schema.agents)
-        .where(inArray(schema.agents.id, [input.id]));
-      if (existing.length) { skipped += 1; continue; }
-
-      if (!dryRun) { await repo.create(input); inserted += 1; }
-    } catch (e) {
-      failures.push({ id: input.id, name: input.name, reason: e instanceof Error ? e.message : String(e) });
-    }
-  }
-
-  console.log('=== migration ===');
-  console.log(JSON.stringify({ dryRun, processed, skipped, inserted, orphanTypes, failed: failures.length }, null, 2));
-  if (failures.length) {
-    console.log('--- failures ---');
-    for (const f of failures) console.log(`  ${f.id} (${f.name}): ${f.reason}`);
-  }
-
-  if (verify) await runVerify(agentsCol, typeSlug, repo);
+  const stats = await runBackfill<CreateAgentInput>({
+    collection: agentsCol,
+    build: (doc) => buildInput(doc, typeSlug),
+    validate: validationError,
+    unitId: (unit) => unit.id,
+    exists: async (id) => {
+      const rows = await db.select({ id: schema.agents.id }).from(schema.agents).where(inArray(schema.agents.id, [id]));
+      return rows.length > 0;
+    },
+    insert: async (unit) => {
+      await repo.create(unit);
+    },
+    verify: async (units) => {
+      const recs = await repo.findByIds(units.map((u) => u.id));
+      const byId = new Map(recs.map((r) => [r._id, r]));
+      const issues = new Map<string, string>();
+      for (const unit of units) {
+        const rec = byId.get(unit.id);
+        if (!rec) {
+          issues.set(unit.id, 'missing in Postgres');
+          continue;
+        }
+        const bad = diffFields(unit, rec);
+        if (bad.length) issues.set(unit.id, `mismatch: ${bad.join(', ')}`);
+      }
+      return issues;
+    },
+    refs: [agentTypeEdge],
+    pgCount: async () => {
+      const [row] = await db.select({ n: count() }).from(schema.agents);
+      return Number(row?.n ?? 0);
+    },
+    pgIds: async () => (await db.select({ id: schema.agents.id }).from(schema.agents)).map((r) => r.id),
+  });
 
   await pool.end();
   await mongoose.disconnect();
 
-  if (failures.length) process.exitCode = 1;
-}
-
-/** Re-read every Mongo agent from Postgres and report missing rows or field mismatches. */
-async function runVerify(
-  agentsCol: mongoose.mongo.Collection,
-  typeSlug: Map<string, string>,
-  repo: AgentRepository,
-): Promise<void> {
-  let checked = 0, missing = 0, mismatched = 0;
-  const problems: Array<{ id: string; name: string; issue: string }> = [];
-
-  let batch: CreateAgentInput[] = [];
-  const flush = async (): Promise<void> => {
-    if (!batch.length) return;
-    const recs = await repo.findByIds(batch.map((b) => b.id));
-    const byId = new Map(recs.map((r) => [r._id, r]));
-    for (const input of batch) {
-      checked += 1;
-      const rec = byId.get(input.id);
-      if (!rec) { missing += 1; problems.push({ id: input.id, name: input.name, issue: 'missing in Postgres' }); continue; }
-      const bad = diffFields(input, rec);
-      if (bad.length) { mismatched += 1; problems.push({ id: input.id, name: input.name, issue: `mismatch: ${bad.join(', ')}` }); }
-    }
-    batch = [];
-  };
-
-  for await (const doc of agentsCol.find({}).batchSize(batchSize)) {
-    const input = buildInput(doc as MongoDoc, typeSlug);
-    if (!input.id) continue;
-    batch.push(input);
-    if (batch.length >= batchSize) await flush();
-  }
-  await flush();
-
-  console.log('=== verify ===');
-  console.log(JSON.stringify({ checked, missing, mismatched }, null, 2));
-  if (problems.length) {
-    console.log('--- problems ---');
-    for (const p of problems) console.log(`  ${p.id} (${p.name}): ${p.issue}`);
-    process.exitCode = 1;
-  }
+  if (stats.failures.length || stats.verifyIssues.length) process.exitCode = 1;
 }
 
 main().catch((e) => { console.error(e); process.exit(1); });

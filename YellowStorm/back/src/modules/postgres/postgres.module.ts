@@ -5,6 +5,7 @@ import { drizzle } from 'drizzle-orm/node-postgres';
 import postgresConfig, { PostgresConfig } from '../../config/postgres.config';
 import { PG_POOL, DRIZZLE_DB } from './postgres.constants';
 import { PostgresConnectionService } from './postgres-connection.service';
+import { PgTtlSweeper } from './ttl/pg-ttl-sweeper.service';
 import * as schema from './schema';
 
 @Global()
@@ -40,8 +41,9 @@ import * as schema from './schema';
       useFactory: (pool: Pool) => drizzle(pool, { schema }),
     },
     PostgresConnectionService,
+    PgTtlSweeper,
   ],
-  exports: [PostgresConnectionService, PG_POOL, DRIZZLE_DB],
+  exports: [PostgresConnectionService, PgTtlSweeper, PG_POOL, DRIZZLE_DB],
 })
 export class PostgresModule implements OnModuleDestroy {
   constructor(@Inject(PG_POOL) private readonly pool: Pool) {}

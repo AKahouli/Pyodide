@@ -8,6 +8,7 @@ import { AdminUserController } from './admin-user.controller';
 import { UsageModule } from '../usage/usage.module';
 import { AuthorizationModule } from '../authorization/authorization.module';
 import { HumainAgentModule } from '../humain-agent/humain-agent.module';
+import { MongoUserLookupAdapter } from './adapters/mongo-user-lookup.adapter';
 
 @Module({
   imports: [
@@ -19,10 +20,11 @@ import { HumainAgentModule } from '../humain-agent/humain-agent.module';
     HumainAgentModule,
   ],
   controllers: [UserController, AdminUserController],
-  providers: [UserService, RegistrationApprovalService],
+  providers: [UserService, RegistrationApprovalService, MongoUserLookupAdapter],
   exports: [
     UserService,
     RegistrationApprovalService,
+    MongoUserLookupAdapter,
     MongooseModule, // Export MongooseModule to allow other modules to use User model
   ],
 })

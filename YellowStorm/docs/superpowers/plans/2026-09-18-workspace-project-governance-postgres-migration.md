@@ -1027,16 +1027,29 @@ No other in-scope collection carries a TTL index. Children are removed via `ON D
 | `{'primarySource.documentId'}`, `{'validity.nextReviewAt'}` | promoted columns + b-tree | dotted paths are not indexable as `jsonb` b-tree without promotion |
 | `tags: [String]` indexed | `text[]` + `GIN` | array containment queries |
 
-## Appendix D — Mongo inventory (fill in at Step 0.12)
+## Appendix D — Mongo inventory (recorded 2026-09-18 via `scripts/migrate/inventory.ts`)
 
 | Collection | Docs | Orphan refs | Backfill | Notes |
 |---|---|---|---|---|
-| `projects` | | | yes | |
-| `project-shares` | | | yes | |
-| `workspace_artifacts` | | | yes | |
-| `workspaces` | | | yes | |
-| `workspace_settings` | | | yes | |
-| `workspace_documents` | | | yes | largest table in scope |
-| `workspace-shares` | | | yes | |
-| `upload_sessions` | | | **no** | ephemeral; cut over when idle |
-| `governance_*` (12) | | | yes | |
+| `projects` | 12 | — | yes | |
+| `project-shares` | 4 | 0 (projectId→projects) | yes | |
+| `workspace_artifacts` | 3 | 0 (workspaceId, primarySource.documentId) | yes | |
+| `workspaces` | 2 604 | — | yes | |
+| `workspace_settings` | 15 | — | yes | |
+| `workspace_documents` | 4 218 | **3** (parentId→missing document) | yes | largest table in scope; the 3 orphaned folders must be reported (and null-parented) by the Step D.4 folder pass |
+| `workspace-shares` | 87 | 0 (workspaceId→workspaces) | yes | |
+| `upload_sessions` | 0 | — | **no** | ephemeral; cut over when idle |
+| `governance_programs` | 3 | — | yes | |
+| `governance_scopes` | 4 | — | yes | |
+| `governance_documents` | 0 | 0 (workspaceId, documentId) | yes | |
+| `governance_document_events` | 0 | — | yes | |
+| `governance_workspace_bindings` | 1 | — | yes | |
+| `governance_reconciliation_runs` | 11 | — | yes | |
+| `governance_memberships` | 5 | — | yes | |
+| `governance_deployments` | 3 | — | yes | |
+| `governance_deployment_revisions` | 12 | — | yes | |
+| `governance_dry_runs` | 9 | — | yes | |
+| `governance_metrics` | 0 | — | yes | |
+| `governance_publication_attempts` | 5 | — | yes | |
+
+Additional Step 0.11 finding: the existing agents backfill has drifted — Mongo 813 vs PG 743 (173 Mongo agents missing in PG, 103 PG rows without a Mongo counterpart). Surfaced by the harness reconcile report; remediation is a re-run of `backfill-agents-to-postgres.ts` (without --dry-run) plus a decision on the 103 stale PG rows.
