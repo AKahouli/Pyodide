@@ -1,8 +1,5 @@
-import { Injectable } from '@nestjs/common';
+import { Inject, Injectable } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
-import { InjectModel } from '@nestjs/mongoose';
-import { Model, Types } from 'mongoose';
-import { randomUUID } from 'node:crypto';
 import pdf = require('pdf-parse');
 import { AgentTaskExecutionService } from '../../agent/services/agent-task-execution.service';
 import { DocumentService } from '../../document/document.service';
@@ -11,13 +8,18 @@ import { LoggerService } from '../../logger';
 import { DECISION_FLOW_LIMITS } from '../constants/decision-flow.constants';
 import { DEFAULT_DECISION_FLOW_GENERATION_OPTIONS, WorkspaceArtifactStatus } from '../interfaces/workspace-artifact.interface';
 import type { DecisionFlowGenerationOptions } from '../interfaces/workspace-artifact.interface';
-import { WorkspaceArtifact, WorkspaceArtifactDocument } from '../schemas/workspace-artifact.schema';
+import {
+  WORKSPACE_ARTIFACT_STORE,
+  type ArtifactLeaseClaim,
+  type WorkspaceArtifactStore,
+} from '../persistence/workspace-artifact-store';
 import { DecisionFlowOutputParserService } from './decision-flow-output-parser.service';
 import { DecisionFlowValidatorService } from './decision-flow-validator.service';
 import { ErrorCode } from '../../exceptions/constants/error-codes';
 import { AppException } from '../../exceptions/exceptions/base.exception';
 
 const MAX_DECISION_FLOW_SOURCE_CHARACTERS = 120_000;
+const LEASE_MINUTES = 5;
 
 interface PdfTextPage {
   pageIndex: number;
@@ -27,57 +29,59 @@ interface PdfTextPage {
 @Injectable()
 export class DecisionFlowGenerationWorkerService {
   private running = false;
-  constructor(@InjectModel(WorkspaceArtifact.name) private readonly artifacts: Model<WorkspaceArtifactDocument>, private readonly documents: WorkspaceDocumentService, private readonly documentStorage: DocumentService, private readonly tasks: AgentTaskExecutionService, private readonly parser: DecisionFlowOutputParserService, private readonly validator: DecisionFlowValidatorService, private readonly logger: LoggerService) { this.logger.setContext(DecisionFlowGenerationWorkerService.name); }
+  constructor(
+    @Inject(WORKSPACE_ARTIFACT_STORE) private readonly artifacts: WorkspaceArtifactStore,
+    private readonly documents: WorkspaceDocumentService,
+    private readonly documentStorage: DocumentService,
+    private readonly tasks: AgentTaskExecutionService,
+    private readonly parser: DecisionFlowOutputParserService,
+    private readonly validator: DecisionFlowValidatorService,
+    private readonly logger: LoggerService,
+  ) {
+    this.logger.setContext(DecisionFlowGenerationWorkerService.name);
+  }
 
   @Cron(CronExpression.EVERY_10_SECONDS)
   async processQueue(): Promise<void> {
     if (this.running) return;
     this.running = true;
     try {
-      await this.failExhaustedLeases();
-      const artifact = await this.claim(); if (artifact) await this.generate(artifact);
+      await this.artifacts.failExhaustedLeases(DECISION_FLOW_LIMITS.maxAttempts);
+      const claim = await this.artifacts.claim(DECISION_FLOW_LIMITS.maxAttempts, LEASE_MINUTES);
+      if (claim) await this.generate(claim);
+    } finally {
+      this.running = false;
     }
-    finally { this.running = false; }
   }
 
-  private async failExhaustedLeases(): Promise<void> {
-    const now = new Date();
-    await this.artifacts.updateMany(
-      { status: WorkspaceArtifactStatus.GENERATING, 'generation.leaseExpiresAt': { $lte: now }, 'generation.attempts': { $gte: DECISION_FLOW_LIMITS.maxAttempts } },
-      { $set: { status: WorkspaceArtifactStatus.FAILED, 'generation.completedAt': now, 'generation.error': 'Generation stopped after the maximum number of attempts' }, $unset: { 'generation.leaseToken': '', 'generation.leaseExpiresAt': '' } },
-    ).exec();
-  }
-
-  private async claim(): Promise<WorkspaceArtifactDocument | null> {
-    const now = new Date(); const leaseToken = randomUUID(); const leaseExpiresAt = new Date(now.getTime() + 5 * 60_000);
-    return this.artifacts.findOneAndUpdate({ $or: [{ status: WorkspaceArtifactStatus.QUEUED, 'generation.nextAttemptAt': { $lte: now } }, { status: WorkspaceArtifactStatus.GENERATING, 'generation.leaseExpiresAt': { $lte: now } }], 'generation.attempts': { $lt: DECISION_FLOW_LIMITS.maxAttempts } }, { $set: { status: WorkspaceArtifactStatus.GENERATING, 'generation.leaseToken': leaseToken, 'generation.leaseExpiresAt': leaseExpiresAt, 'generation.startedAt': now }, $inc: { 'generation.attempts': 1 } }, { sort: { createdAt: 1 }, new: true }).exec();
-  }
-
-  private async generate(artifact: WorkspaceArtifactDocument): Promise<void> {
-      const leaseToken = artifact.generation.leaseToken; if (!leaseToken) return;
+  private async generate(claim: ArtifactLeaseClaim): Promise<void> {
+    const artifact = claim.artifact;
+    const leaseToken = claim.leaseToken;
     try {
-      const source = await this.documents.findById(artifact.workspaceId.toString(), artifact.primarySource.documentId.toString());
+      const source = await this.documents.findById(artifact.workspaceId, artifact.primarySource.documentId);
       const pages = artifact.primarySource.selection.mode === 'pages' ? artifact.primarySource.selection.pages.join(', ') : 'ENTIRE_DOCUMENT';
       const selectedPages = artifact.primarySource.selection.mode === 'pages' ? artifact.primarySource.selection.pages : [];
       const documentContent = await this.extractDocumentContent(source.path || '', selectedPages);
       const prompt = this.buildPrompt(artifact.generationOptions ?? DEFAULT_DECISION_FLOW_GENERATION_OPTIONS, artifact.primarySource.selection.mode, pages, source.originalName, documentContent);
-      const result = await this.tasks.runSingleAgentTask({ userId: artifact.generation.requestedBy.toString(), agentId: artifact.generation.agentId.toString(), query: prompt, attachedFiles: [], correlationId: artifact.id });
+      const result = await this.tasks.runSingleAgentTask({ userId: artifact.generation.requestedBy, agentId: artifact.generation.agentId, query: prompt, attachedFiles: [], correlationId: artifact.id });
       const payload = this.validator.validate(this.parser.parse(result.text));
-      const usage = result.usage ? { 'generation.usage': result.usage } : {};
-      await this.artifacts.updateOne({ _id: artifact._id, status: WorkspaceArtifactStatus.GENERATING, 'generation.leaseToken': leaseToken }, { $set: { status: WorkspaceArtifactStatus.READY, payload, 'generation.completedAt': new Date(), ...usage }, $unset: { 'generation.leaseToken': '', 'generation.leaseExpiresAt': '', 'generation.error': '' } }).exec();
-      this.logger.log('Decision-flow generation completed', { artifactId: artifact._id.toString(), agentId: artifact.generation.agentId.toString(), outputSize: result.text.length });
+      const completed = await this.artifacts.complete(artifact.id, leaseToken, payload, result.usage ?? undefined);
+      if (completed) {
+        this.logger.log('Decision-flow generation completed', { artifactId: artifact.id, agentId: artifact.generation.agentId, outputSize: result.text.length });
+      } else {
+        this.logger.warn('Decision-flow lease lost before completion', { artifactId: artifact.id });
+      }
     } catch (error) {
       const message = error instanceof Error ? error.message.slice(0, 500) : 'Decision-flow generation failed';
       const isTransient = error instanceof AppException && [ErrorCode.CHAT_GRPC_UNAVAILABLE, ErrorCode.AI_SERVICE_TIMEOUT, ErrorCode.AI_SERVICE_ERROR, ErrorCode.SERVICE_UNAVAILABLE].includes(error.code);
       const canRetry = isTransient && artifact.generation.attempts < DECISION_FLOW_LIMITS.maxAttempts;
       const nextAttemptAt = new Date(Date.now() + 30_000 * 2 ** Math.max(0, artifact.generation.attempts - 1));
-      await this.artifacts.updateOne(
-        { _id: artifact._id, 'generation.leaseToken': leaseToken },
-        canRetry
-          ? { $set: { status: WorkspaceArtifactStatus.QUEUED, 'generation.nextAttemptAt': nextAttemptAt, 'generation.error': message }, $unset: { 'generation.leaseToken': '', 'generation.leaseExpiresAt': '', 'generation.completedAt': '' } }
-          : { $set: { status: WorkspaceArtifactStatus.FAILED, 'generation.completedAt': new Date(), 'generation.error': message }, $unset: { 'generation.leaseToken': '', 'generation.leaseExpiresAt': '' } },
-      ).exec();
-      this.logger.warn(canRetry ? 'Decision-flow generation scheduled for retry' : 'Decision-flow generation failed', { artifactId: artifact._id.toString(), attempt: artifact.generation.attempts });
+      const handled = await this.artifacts.fail(artifact.id, leaseToken, { canRetry, message, nextAttemptAt });
+      if (handled) {
+        this.logger.warn(canRetry ? 'Decision-flow generation scheduled for retry' : 'Decision-flow generation failed', { artifactId: artifact.id, attempt: artifact.generation.attempts });
+      } else {
+        this.logger.warn('Decision-flow lease lost before failure handling', { artifactId: artifact.id });
+      }
     }
   }
 

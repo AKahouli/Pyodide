@@ -1,28 +1,22 @@
-import { Injectable } from '@nestjs/common';
-import { InjectConnection } from '@nestjs/mongoose';
-import { Connection, Types } from 'mongoose';
+import { Inject, Injectable } from '@nestjs/common';
+import {
+  WORKSPACE_ARTIFACT_CLEANUP_PORT,
+  type WorkspaceArtifactCleanupPort,
+} from '../../workspace-artifact/ports/workspace-artifact-cleanup.port';
 
 @Injectable()
 export class WorkspaceArtifactCleanupService {
-  constructor(@InjectConnection() private readonly connection: Connection) {}
+  constructor(@Inject(WORKSPACE_ARTIFACT_CLEANUP_PORT) private readonly cleanup: WorkspaceArtifactCleanupPort) {}
 
   countBySource(workspaceId: string, documentId: string): Promise<number> {
-    return this.connection.collection('workspace_artifacts').countDocuments({
-      workspaceId: new Types.ObjectId(workspaceId),
-      'primarySource.documentId': new Types.ObjectId(documentId),
-    });
+    return this.cleanup.countBySource(workspaceId, documentId);
   }
 
-  async deleteBySource(workspaceId: string, documentId: string): Promise<void> {
-    await this.connection.collection('workspace_artifacts').deleteMany({
-      workspaceId: new Types.ObjectId(workspaceId),
-      'primarySource.documentId': new Types.ObjectId(documentId),
-    });
+  deleteBySource(workspaceId: string, documentId: string): Promise<void> {
+    return this.cleanup.deleteBySource(workspaceId, documentId);
   }
 
   async deleteAllByWorkspace(workspaceId: string): Promise<void> {
-    await this.connection.collection('workspace_artifacts').deleteMany({
-      workspaceId: new Types.ObjectId(workspaceId),
-    });
+    await this.cleanup.deleteAllByWorkspace(workspaceId);
   }
 }
