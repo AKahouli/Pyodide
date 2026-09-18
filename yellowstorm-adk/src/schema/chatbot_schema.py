@@ -123,6 +123,7 @@ class RunAgentTeamRequest(BaseModel):
     attached_files: Optional[List[Dict]] = None
     attached_images: Optional[List[Dict]] = None
     previous_attached_files: Optional[List[Dict]] = None
+    attachment_context: Optional[str] = None  # Bounded backend-built attachment text (untrusted-data wrapped)
     manager_prompt: str = "You are a manager agent that coordinates tasks between specialized agents."
     chatbot_name: dict
     agents: Optional[List[AgentSuggestion]] = []

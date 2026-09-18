@@ -71,6 +71,8 @@ interface InputProps {
   uploadingFiles?: FileUploadInfo[];
   accept?: string;
   maxFiles?: number;
+  /** Hides the add-attachments entry (admin attachment feature off). */
+  attachmentsDisabled?: boolean;
   members?: Array<{ id: string; name: string }>;
   autoMention?: { id: string; name: string; isMember?: boolean; _msgId?: string };
   showWorkspaceSelect?: boolean;
@@ -90,7 +92,7 @@ interface InputProps {
   onTextChange?: (text: string) => void;
 }
 
-const Input = memo(function Input({ toolLabels, onSubmit: externalSubmit, draftKey, initialInput, initialMention, onStop, status: externalStatus, disabled, submitDisabled, requireContent = false, placeholder, onFilesAdded, onFileRemoved, uploadingFiles, accept, maxFiles, members, autoMention, showWorkspaceSelect = true, preserveWorkspaceSelectionOnSubmit = false, showModelSelector = false, showReasoningEffort = true, governedMode = false, mentionAgents, enableTeamMentions = true, workspaceOptions, onWorkspaceSelectionChange, belowTextarea, extraTools, onTextChange }: InputProps = {}) {
+const Input = memo(function Input({ toolLabels, onSubmit: externalSubmit, draftKey, initialInput, initialMention, onStop, status: externalStatus, disabled, submitDisabled, requireContent = false, placeholder, onFilesAdded, onFileRemoved, uploadingFiles, accept, maxFiles, attachmentsDisabled, members, autoMention, showWorkspaceSelect = true, preserveWorkspaceSelectionOnSubmit = false, showModelSelector = false, showReasoningEffort = true, governedMode = false, mentionAgents, enableTeamMentions = true, workspaceOptions, onWorkspaceSelectionChange, belowTextarea, extraTools, onTextChange }: InputProps = {}) {
   const models = useModels();
   const chefs = useChefs();
   const defaultModel = useDefaultModel();
@@ -517,7 +519,8 @@ const Input = memo(function Input({ toolLabels, onSubmit: externalSubmit, draftK
 
   return (
     <div>
-      <PromptInputProvider key={draftKey} draftKey={draftKey} initialInput={initialInput} onFilesAdded={onFilesAdded} onFileRemoved={onFileRemoved} maxFiles={maxFiles} onError={(err) => toast.error(err.message)}>
+      {/* maxFiles 0 also blocks drag-drop when attachments are disabled */}
+      <PromptInputProvider key={draftKey} draftKey={draftKey} initialInput={initialInput} onFilesAdded={onFilesAdded} onFileRemoved={onFileRemoved} maxFiles={attachmentsDisabled ? 0 : maxFiles} onError={(err) => toast.error(err.message)}>
         <PromptInput globalDrop multiple onSubmit={handleSubmit} accept={accept} maxFiles={maxFiles}>
           <PromptInputAttachments>
             {(attachment) => {
@@ -536,7 +539,7 @@ const Input = memo(function Input({ toolLabels, onSubmit: externalSubmit, draftK
               <PromptInputActionMenu>
                 <PromptInputActionMenuTrigger size={toolLabels ? 'sm' : undefined} {...(toolLabels ? { 'aria-label': toolLabels.attachments } : {})}>{toolLabels && <><Plus className='size-4' /><span>{toolLabels.attachments}</span></>}</PromptInputActionMenuTrigger>
                 <PromptInputActionMenuContent>
-                  <PromptInputActionAddAttachments />
+                  {!attachmentsDisabled && <PromptInputActionAddAttachments />}
                   <DropdownMenuItem onSelect={() => setSketchOpen(true)}>
                     <Pencil className='mr-2 size-4' /> {t('input.drawSketch')}
                   </DropdownMenuItem>

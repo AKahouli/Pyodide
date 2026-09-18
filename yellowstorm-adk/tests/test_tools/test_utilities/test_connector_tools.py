@@ -446,7 +446,55 @@ def test_connector_tool_injects_streamable_http_file_workspace_headers(
         # The run's own Ceph folder rides last, so the sandbox mounts somewhere a
         # connector can drop a file mid-run and the code interpreter can read it.
         "x-workspace-paths": "user-1/workspace-alpha,user-1/workspace-beta,user-1/system_conversation-1",
+        # Exact document object keys, so the sandbox can mount the real files
+        # (essential for CODE_ONLY attachments excluded from search indexing).
+        "x-file-paths": "user-1/workspace-alpha/Search Explanation.docx,user-1/workspace-beta/private-notes.txt",
     }
+
+
+def test_connector_tool_percent_encodes_unsafe_file_paths(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured = {}
+
+    async def fake_call_mcp_tool(*args, **kwargs):
+        captured["auth_headers"] = kwargs.get("auth_headers")
+        return {"text": "ok"}
+
+    monkeypatch.setattr("src.flow_engine.mcp.call_mcp_tool", fake_call_mcp_tool)
+
+    tool = _first_connector_tool(
+        {},
+        workspace_id="workspace-1",
+        workspace_names=["workspace-alpha"],
+        auth_headers={"Authorization": "Bearer token", "X-User-Id": "user-1"},
+        brain_documents=[
+            {
+                "file_name": "report—final.csv",
+                "workspace_id": "workspace-1",
+                "workspace_name": "workspace-alpha",
+                "filepath": "user-1/conv-1/report—final.csv",
+            },
+            {
+                "file_name": "a,b.csv",
+                "workspace_id": "workspace-1",
+                "workspace_name": "workspace-alpha",
+                "filepath": "user-1/conv-1/a,b.csv",
+            },
+        ],
+        session_id="conversation-1",
+        connector_slug="code-interpreter",
+        user_id="user-1",
+    )
+
+    asyncio.run(tool.func(query="revenue"))
+
+    header = captured["auth_headers"]["x-file-paths"]
+    entries = header.split(",")
+    # Both keys survive the comma-delimited list and the latin-1 header encode.
+    assert len(entries) == 2
+    for entry in entries:
+        entry.encode("latin-1")
 
 
 def test_logical_search_connector_sends_only_authorization_and_workspace_scope(

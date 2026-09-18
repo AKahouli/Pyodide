@@ -148,6 +148,15 @@ export class MessageController {
       agentIds: dto.agentIds,
     });
 
+    // Hard gate: never trust a stale frontend — reject attachments when the
+    // admin feature switch is off instead of silently dropping the files.
+    if (dto.attachedFileIds?.length && !this.conversationSettings.isAttachmentIntelligenceEnabledCached()) {
+      throw new BadRequestException(
+        ErrorCode.CHAT_ATTACHMENTS_DISABLED,
+        'Conversation file attachments are disabled',
+      );
+    }
+
     const conversation = await this.conversationService.getConversationDocument(conversationId);
     const platformCopilot = conversation.runtimePurpose === PLATFORM_COPILOT;
     const teamId = dto.teamIds?.[0];

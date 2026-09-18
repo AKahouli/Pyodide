@@ -62,7 +62,7 @@ describe('ConversationSettingsService', () => {
     expect(agents.assertActiveDefaultAgent).toHaveBeenCalledWith(value.composerSuggestions.agentId);
     expect(findOneAndUpdate).toHaveBeenCalledWith(
       { key: 'conversation_settings' },
-      { key: 'conversation_settings', value: { ...value, redactSensitiveText: true, latencyInstrumentationEnabled: true, conversationName: DEFAULT_CONVERSATION_SETTINGS.conversationName, compaction: DEFAULT_CONVERSATION_SETTINGS.compaction } },
+      { key: 'conversation_settings', value: { ...value, redactSensitiveText: true, latencyInstrumentationEnabled: true, conversationName: DEFAULT_CONVERSATION_SETTINGS.conversationName, compaction: DEFAULT_CONVERSATION_SETTINGS.compaction, attachmentIntelligence: DEFAULT_CONVERSATION_SETTINGS.attachmentIntelligence } },
       { upsert: true, new: true, setDefaultsOnInsert: true },
     );
   });

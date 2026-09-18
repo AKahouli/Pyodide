@@ -85,6 +85,17 @@ export class IndexingService {
       return;
     }
 
+    // Defense-in-depth: conversation attachments marked CODE_ONLY (heavy or
+    // unprobed spreadsheets) must never reach the indexing pipeline, no
+    // matter which caller queued them.
+    if (document.metadata?.attachmentPolicy === 'CODE_ONLY') {
+      this.logger.warn('Blocked indexing of CODE_ONLY conversation attachment', {
+        documentId,
+        workspaceId,
+      });
+      return;
+    }
+
     // Reset to pending if needed
     if (document.indexingStatus !== IndexingStatus.PENDING) {
       document.indexingStatus = IndexingStatus.PENDING;
@@ -125,6 +136,16 @@ export class IndexingService {
         ErrorCode.WORKSPACE_DOCUMENT_NOT_FOUND,
         'Document not found',
       );
+    }
+
+    // Same invariant as queueDocument: CODE_ONLY conversation attachments
+    // (heavy/unprobed spreadsheets) must never reach the indexing pipeline.
+    if (document.metadata?.attachmentPolicy === 'CODE_ONLY') {
+      this.logger.warn('Blocked processing of CODE_ONLY conversation attachment', {
+        documentId,
+        workspaceId: document.workspaceId.toString(),
+      });
+      return;
     }
 
     // Resolve deep search: explicit param wins, else persisted flag from reindex.

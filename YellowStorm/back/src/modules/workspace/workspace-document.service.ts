@@ -345,6 +345,34 @@ export class WorkspaceDocumentService {
   }
 
   /**
+   * Find multiple documents by IDs, scoped to a single workspace. IDs that do
+   * not belong to the workspace are silently absent from the result.
+   */
+  async findByIdsInWorkspace(workspaceId: string, documentIds: string[]): Promise<DocumentResponse[]> {
+    if (documentIds.length === 0) return [];
+
+    const objectIds = documentIds.map((id) => new Types.ObjectId(id));
+    const documents = await this.documentModel
+      .find({ _id: { $in: objectIds }, workspaceId: new Types.ObjectId(workspaceId) })
+      .exec();
+
+    return documents.map((d) => this.mapToResponse(d));
+  }
+
+  /** Merge string flags into a document's metadata (workspace-scoped). */
+  async mergeMetadata(workspaceId: string, documentId: string, patch: Record<string, string>): Promise<void> {
+    const setObject = Object.fromEntries(
+      Object.entries(patch).map(([key, value]) => [`metadata.${key}`, value]),
+    );
+    await this.documentModel
+      .updateOne(
+        { _id: new Types.ObjectId(documentId), workspaceId: new Types.ObjectId(workspaceId) },
+        { $set: setObject },
+      )
+      .exec();
+  }
+
+  /**
    * Generate a presigned read URL for a document by its path.
    * Pass `allowExtensionless` for app-source objects like Dockerfile / LICENSE.
    */
@@ -431,6 +459,7 @@ export class WorkspaceDocumentService {
     userId: string,
     documentId: string,
     deepSearch?: boolean,
+    options?: { autoIndex?: boolean },
   ): Promise<DocumentResponse> {
     const document = await this.documentModel.findOne({
       _id: documentId,
@@ -467,14 +496,16 @@ export class WorkspaceDocumentService {
     document.metadata = {
       ...document.metadata,
       deepSearchRequested: String(Boolean(deepSearch)),
-      autoIndexRequested: 'true',
+      autoIndexRequested: String(options?.autoIndex !== false),
     };
     await document.save();
     await this.recordWorkspaceEvent(WorkspaceIntegrationEvents.DocumentRegisteredV1, document);
     await this.recordWorkspaceEvent(WorkspaceIntegrationEvents.ArtifactReadyV1, document);
 
     // Trigger indexing (non-blocking). Skip folders — they have no blob to index.
-    if (!document.isFolder) {
+    // Conversation system-workspace files opt out here: their attachments are
+    // indexed (or deliberately not) only after the attachment policy is known.
+    if (!document.isFolder && options?.autoIndex !== false) {
       this.indexingService.queueDocument(document._id.toString(), deepSearch).catch((err) => {
         this.logger.warn('Failed to queue document for indexing', {
           documentId: document._id,

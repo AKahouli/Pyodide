@@ -166,6 +166,77 @@ describe('ConversationService neutral persistence', () => {
     });
   });
 
+  describe('group joining', () => {
+    it('returns the conversation to its owner instead of failing on the missing invitation', async () => {
+      const ownerId = new Types.ObjectId().toString();
+      const existing = record({ createdBy: ownerId, isGroup: true, isShared: true });
+      conversationStore.findActiveAccessById.mockResolvedValue({
+        id: existing.id,
+        createdBy: ownerId,
+        memberIds: [],
+        invitedEmails: [],
+      });
+      conversationStore.findById.mockResolvedValue(existing);
+
+      const result = await service.joinGroup(existing.id, ownerId, 'owner@example.com');
+
+      expect(result).toMatchObject({ id: existing.id, createdBy: ownerId });
+      expect(conversationStore.joinGroup).not.toHaveBeenCalled();
+    });
+
+    it('returns the conversation to an existing member', async () => {
+      const memberId = new Types.ObjectId().toString();
+      const existing = record({ isGroup: true });
+      conversationStore.findActiveAccessById.mockResolvedValue({
+        id: existing.id,
+        createdBy: new Types.ObjectId().toString(),
+        memberIds: [memberId],
+        invitedEmails: [],
+      });
+      conversationStore.findById.mockResolvedValue(existing);
+
+      await service.joinGroup(existing.id, memberId, 'member@example.com');
+
+      expect(conversationStore.joinGroup).not.toHaveBeenCalled();
+    });
+
+    it('joins an invited guest through the store', async () => {
+      const guestId = new Types.ObjectId().toString();
+      const existing = record({ isGroup: true });
+      conversationStore.findActiveAccessById.mockResolvedValue({
+        id: existing.id,
+        createdBy: new Types.ObjectId().toString(),
+        memberIds: [],
+        invitedEmails: ['guest@example.com'],
+      });
+      conversationStore.joinGroup.mockResolvedValue(existing);
+      conversationStore.findById.mockResolvedValue(existing);
+
+      await service.joinGroup(existing.id, guestId, 'guest@example.com');
+
+      expect(conversationStore.joinGroup).toHaveBeenCalledWith(
+        existing.id,
+        guestId,
+        'guest@example.com',
+        expect.any(Date),
+      );
+    });
+
+    it('still fails when there is neither invitation nor existing access', async () => {
+      conversationStore.findActiveAccessById.mockResolvedValue({
+        id: 'conv-1',
+        createdBy: 'owner-1',
+        memberIds: [],
+        invitedEmails: [],
+      });
+      conversationStore.joinGroup.mockResolvedValue(null);
+
+      await expect(
+        service.joinGroup('conv-1', 'stranger', 'stranger@example.com'),
+      ).rejects.toMatchObject({ response: 'Conversation not found or invitation missing' });
+    });
+  });
+
   describe('platform copilot pinning', () => {
     it('resolves only the active canonical Platform Copilot Agent', async () => {
       const agentId = new Types.ObjectId().toString();

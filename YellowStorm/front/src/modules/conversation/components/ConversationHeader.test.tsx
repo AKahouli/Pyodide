@@ -13,10 +13,14 @@ vi.mock('@/components/ui/tooltip', () => ({
 }));
 
 vi.mock('./RenameDialog', () => ({ RenameDialog: ({ open }: { open: boolean }) => <div>{open ? 'rename-open' : 'rename-closed'}</div> }));
-vi.mock('./DeleteConversationDialog', () => ({ DeleteConversationDialog: ({ open }: { open: boolean }) => <div>{open ? 'delete-open' : 'delete-closed'}</div> }));
+vi.mock('./DeleteConversationDialog', () => ({ DeleteConversationDialog: ({ open, isShared }: { open: boolean; isShared?: boolean }) => <div>{open ? `delete-open${isShared ? '-shared' : ''}` : 'delete-closed'}</div> }));
 vi.mock('./ShareDialog', () => ({ ShareDialog: ({ open }: { open: boolean }) => <div>{open ? 'share-open' : 'share-closed'}</div> }));
 vi.mock('./CreateGroupConversationDialog', () => ({ CreateGroupConversationDialog: () => null }));
 vi.mock('./ConversationPdfExport', () => ({ ConversationPdfExport: () => <div>conversation-pdf-export</div> }));
+
+const currentConversation = vi.hoisted(() => ({
+  value: { id: 'conv-1', title: 'Conversation title', workspaces: [] } as Record<string, unknown>,
+}));
 
 const fetchMessagesMock = vi.hoisted(() => vi.fn());
 const exportBlocksToDocxMock = vi.hoisted(() => vi.fn().mockResolvedValue(new Blob(['docx'])));
@@ -43,11 +47,7 @@ const deleteConversationMock = vi.fn();
 const clearTypewriterMock = vi.fn();
 
 vi.mock('../store', () => ({
-  useCurrentConversation: () => ({
-    id: 'conv-1',
-    title: 'Conversation title',
-    workspaces: [],
-  }),
+  useCurrentConversation: () => currentConversation.value,
   useConversationStore: (selector: (state: Record<string, unknown>) => unknown) =>
     selector({
       updateConversation: updateConversationMock,
@@ -61,6 +61,7 @@ vi.mock('../store', () => ({
 describe('ConversationHeader', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    currentConversation.value = { id: 'conv-1', title: 'Conversation title', workspaces: [] };
     fetchMessagesMock.mockResolvedValue({
       items: [
         { id: 'u1', conversationType: 'user', content: 'Question?', createdAt: '2026-01-01T10:00:00Z' },
@@ -128,5 +129,21 @@ describe('ConversationHeader', () => {
       expect(downloadBlobMock).toHaveBeenCalledWith(expect.any(Blob), expect.stringMatching(/\.html$/));
       expect(showSuccessMock).toHaveBeenCalledWith('toasts.export.htmlSuccess');
     });
+  });
+
+  it('shows the shared badge and passes shared state to the delete dialog', async () => {
+    currentConversation.value = {
+      id: 'conv-1',
+      title: 'Conversation title',
+      workspaces: [],
+      isShared: true,
+    };
+
+    render(<ConversationHeader />);
+
+    expect(screen.getByLabelText('shared.badge')).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole('button', { name: 'header.actions.delete' }));
+    expect(screen.getByText('delete-open-shared')).toBeInTheDocument();
   });
 });

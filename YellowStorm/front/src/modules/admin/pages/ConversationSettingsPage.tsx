@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Gauge, Loader2, MessageSquare, Save, Sparkles, Tag } from 'lucide-react';
+import { Gauge, Loader2, MessageSquare, Paperclip, Save, Sparkles, Tag } from 'lucide-react';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -16,7 +16,7 @@ import {
   updateAdminConversationSettings,
 } from '../api';
 import { CompactionSettingsCard } from '../components/CompactionSettingsCard';
-import type { AdminModelResponse, CompactionSettings, ComposerSuggestionSettings, ConversationSettingsAgentOption } from '../types';
+import type { AdminModelResponse, AttachmentIntelligenceSettings, CompactionSettings, ComposerSuggestionSettings, ConversationSettingsAgentOption } from '../types';
 
 const PLATFORM_DEFAULT = 'platform-default';
 
@@ -40,6 +40,13 @@ const DEFAULTS: ComposerSuggestionSettings = {
 
 const LATENCY_DEFAULT = true;
 
+const ATTACHMENT_DEFAULTS: AttachmentIntelligenceSettings = {
+  enabled: false,
+  maxIndexedTabularRows: 5000,
+};
+
+const ATTACHMENT_ROW_LIMITS = [100, 1_000_000] as const;
+
 const LIMITS = {
   debounceMs: [250, 2000],
   minimumDraftLength: [3, 200],
@@ -52,6 +59,7 @@ export function ConversationSettingsPage() {
   const [settings, setSettings] = useState<ComposerSuggestionSettings>(DEFAULTS);
   const [latencyInstrumentationEnabled, setLatencyInstrumentationEnabled] = useState(LATENCY_DEFAULT);
   const [compaction, setCompaction] = useState<CompactionSettings>(COMPACTION_DEFAULTS);
+  const [attachmentIntelligence, setAttachmentIntelligence] = useState<AttachmentIntelligenceSettings>(ATTACHMENT_DEFAULTS);
   const [nameModelId, setNameModelId] = useState<string | null>(null);
   const [models, setModels] = useState<AdminModelResponse[]>([]);
   const [agents, setAgents] = useState<ConversationSettingsAgentOption[]>([]);
@@ -67,6 +75,7 @@ export function ConversationSettingsPage() {
         setSettings(result.composerSuggestions);
         setLatencyInstrumentationEnabled(result.latencyInstrumentationEnabled ?? LATENCY_DEFAULT);
         setCompaction(result.compaction ?? COMPACTION_DEFAULTS);
+        setAttachmentIntelligence(result.attachmentIntelligence ?? ATTACHMENT_DEFAULTS);
         setNameModelId(result.conversationName?.modelId ?? null);
         setAgents(agentOptions);
         setModels(modelList.models.filter((model) => model.isActive));
@@ -92,9 +101,12 @@ export function ConversationSettingsPage() {
     const value = settings[key as keyof typeof LIMITS];
     return Number.isInteger(value) && value >= minimum && value <= maximum;
   });
+  const attachmentRowsValid = Number.isInteger(attachmentIntelligence.maxIndexedTabularRows)
+    && attachmentIntelligence.maxIndexedTabularRows >= ATTACHMENT_ROW_LIMITS[0]
+    && attachmentIntelligence.maxIndexedTabularRows <= ATTACHMENT_ROW_LIMITS[1];
 
   const save = async (): Promise<void> => {
-    if (!isValid) {
+    if (!isValid || !attachmentRowsValid) {
       setValidationError(true);
       return;
     }
@@ -105,10 +117,12 @@ export function ConversationSettingsPage() {
         conversationName: { modelId: nameModelId },
         latencyInstrumentationEnabled,
         compaction,
+        attachmentIntelligence,
       });
       setSettings(result.composerSuggestions);
       setLatencyInstrumentationEnabled(result.latencyInstrumentationEnabled ?? LATENCY_DEFAULT);
       setCompaction(result.compaction ?? COMPACTION_DEFAULTS);
+      setAttachmentIntelligence(result.attachmentIntelligence ?? ATTACHMENT_DEFAULTS);
       setNameModelId(result.conversationName?.modelId ?? null);
       showSuccess(t('conversationSettings.toasts.saved.title'), { description: t('conversationSettings.toasts.saved.description') });
     } catch (error) {
@@ -148,6 +162,43 @@ export function ConversationSettingsPage() {
                 onCheckedChange={setLatencyInstrumentationEnabled}
               />
             </div>
+          )}
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2"><Paperclip className="h-4 w-4" />{t('conversationSettings.attachments.title')}</CardTitle>
+          <CardDescription>{t('conversationSettings.attachments.description')}</CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-6">
+          {loading ? (
+            <div className="flex items-center gap-2 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" />{t('conversationSettings.loading')}</div>
+          ) : (
+            <>
+              <div className="flex items-center justify-between gap-6 rounded-lg border p-4">
+                <div className="space-y-1">
+                  <Label htmlFor="attachment-intelligence-enabled">{t('conversationSettings.attachments.enabled.label')}</Label>
+                  <p className="text-xs text-muted-foreground">{t('conversationSettings.attachments.enabled.description')}</p>
+                </div>
+                <Switch
+                  id="attachment-intelligence-enabled"
+                  checked={attachmentIntelligence.enabled}
+                  onCheckedChange={(enabled) => { setAttachmentIntelligence((current) => ({ ...current, enabled })); setValidationError(false); }}
+                />
+              </div>
+              <NumberSetting
+                id="attachment-max-indexed-rows"
+                label={t('conversationSettings.attachments.maxRows.label')}
+                description={t('conversationSettings.attachments.maxRows.description')}
+                value={attachmentIntelligence.maxIndexedTabularRows}
+                min={ATTACHMENT_ROW_LIMITS[0]}
+                max={ATTACHMENT_ROW_LIMITS[1]}
+                disabled={false}
+                onChange={(value) => { setAttachmentIntelligence((current) => ({ ...current, maxIndexedTabularRows: Number(value) })); setValidationError(false); }}
+              />
+              {validationError && !attachmentRowsValid && <Alert variant="destructive"><AlertDescription>{t('conversationSettings.attachments.maxRows.invalid')}</AlertDescription></Alert>}
+            </>
           )}
         </CardContent>
       </Card>

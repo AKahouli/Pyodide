@@ -1150,6 +1150,9 @@ class ChatbotServicer(
                         "enable_extract_images": doc.enable_extract_images,
                         "sheet_name": doc.sheet_name if doc.sheet_name else None,
                         "in_memory": doc.in_memory,
+                        "document_id": doc.document_id,
+                        "processing_policy": doc.processing_policy,
+                        "search_index_allowed": doc.search_index_allowed,
                     }
                 )
 
@@ -1203,6 +1206,8 @@ class ChatbotServicer(
         existing_ids = {doc.get("_id") for doc in brain_documents if doc.get("_id")}
 
         for doc in attached_documents:
+            if doc.get("processing_policy") == "CODE_ONLY":
+                continue  # excluded from search trees; reachable via code tools only
             doc_name = doc.get("workspace_name")
             if doc_name and doc_name not in existing_ids:
                 brain_documents.append(
@@ -1320,6 +1325,7 @@ class ChatbotServicer(
         LLM/prompt are taken from the single agent itself instead of a manager.
         """
         ctx = await self._build_brain_and_file_context(pb_request)
+        attachment_context_text = getattr(getattr(pb_request, "attachment_context", None), "text", "") or None
 
         # Chatbot config + base prompt come from the single agent (no manager).
         agent_chatbot_name = None
@@ -1356,6 +1362,7 @@ class ChatbotServicer(
             skills=self._build_skills(pb_request),
             deep_search_enabled=getattr(pb_request, "deep_search_enabled", False),
             correction_replay_context=self._build_correction_replay_context(pb_request),
+            attachment_context=attachment_context_text,
         )
 
     async def _convert_agent_team_request_v2(
@@ -1458,6 +1465,9 @@ class ChatbotServicer(
                         "enable_extract_images": doc.enable_extract_images,
                         "sheet_name": doc.sheet_name if doc.sheet_name else None,
                         "in_memory": doc.in_memory,
+                        "document_id": doc.document_id,
+                        "processing_policy": doc.processing_policy,
+                        "search_index_allowed": doc.search_index_allowed,
                     }
                 )
 
@@ -1513,6 +1523,8 @@ class ChatbotServicer(
         existing_ids = {doc.get("_id") for doc in brain_documents if doc.get("_id")}
 
         for doc in attached_documents:
+            if doc.get("processing_policy") == "CODE_ONLY":
+                continue  # excluded from search trees; reachable via code tools only
             doc_name = doc.get("workspace_name")
             if doc_name and doc_name not in existing_ids:
                 brain_documents.append(
@@ -1627,6 +1639,7 @@ class ChatbotServicer(
             else None
         )
 
+        attachment_context_text = getattr(getattr(pb_request, "attachment_context", None), "text", "") or None
         converted = RunAgentTeamRequest(
             user_id=pb_request.user_context.user_id,  # V2: user_context.user_id → V1: user_id
             session_id=pb_request.conversation_id,  # V2: conversation_id → V1: session_id
@@ -1670,6 +1683,7 @@ class ChatbotServicer(
                     for node in pb_request.team_definition.nodes
                 ],
             } if has_team_definition else None,
+            attachment_context=attachment_context_text,
         )
         if has_team_definition:
             from src.smart_rag.engines.multi_agent.hierarchical_agents import validate_hierarchical_request
@@ -1792,6 +1806,17 @@ class ChatbotServicer(
                 "[gRPC] VECTORSTORE_API_KEY not configured - skipping document indexing"
             )
             return
+
+        # Documents prepared by the backend (processing_policy set) are indexed
+        # by the backend pipeline only — skip them to avoid double indexing.
+        prepared = [doc for doc in documents if doc.get("processing_policy")]
+        if prepared:
+            logger.info(
+                f"[gRPC] Skipping ADK indexing for {len(prepared)} backend-prepared attachment(s)"
+            )
+            documents = [doc for doc in documents if not doc.get("processing_policy")]
+            if not documents:
+                return
 
         index_url = f"{vectorstores_url.rstrip('/')}/vectorstores/indexDocumentFromAzureDatalake"
         headers = {

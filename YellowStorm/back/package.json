@@ -29,6 +29,7 @@
     "backfill:usage": "ts-node scripts/backfill-usage-to-postgres.ts",
     "test:migration:conversations": "ts-node scripts/test-conversation-postgres-migration.ts",
     "test:store:conversations": "ts-node -r tsconfig-paths/register scripts/test-conversation-postgres-store.ts",
+    "repair:conversation-owner-members": "ts-node scripts/migrations/2026-09-18-repair-conversation-owner-members.ts",
     "backfill:humain-embeddings": "ts-node scripts/backfill-humain-role-embeddings.ts",
     "release": "commit-and-tag-version",
     "release:patch": "commit-and-tag-version --release-as patch"

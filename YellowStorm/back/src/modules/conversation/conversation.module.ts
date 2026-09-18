@@ -44,6 +44,7 @@ import { SkillModule } from '../skill/skill.module';
 import { EmailModule } from '../email/email.module';
 import conversationConfig from '../../config/conversation.config';
 import { GovernanceRuntimeModule } from '../governance/governance-runtime.module';
+import { IndexingModule } from '../indexing/indexing.module';
 import { EvaluationModule } from '../evaluation/evaluation.module';
 import { ResponseReliabilityService } from './services/response-reliability.service';
 import { ResponseReliabilityEvidenceBuilder } from './services/response-reliability-evidence.builder';
@@ -53,6 +54,9 @@ import { ResponseCorrectionPlannerService } from './services/response-correction
 import { CorrectedResponseComponentBuilder } from './services/corrected-response-component.builder';
 import { ResponseCorrectionService } from './services/response-correction.service';
 import { ConversationAgentRequestBuilder } from './services/conversation-agent-request.builder';
+import { ConversationAttachmentResolverService } from './services/conversation-attachment-resolver.service';
+import { ConversationAttachmentService } from './services/conversation-attachment.service';
+import { ConversationAttachmentContextService } from './services/conversation-attachment-context.service';
 import { CorrectiveReplayContextService } from './services/corrective-replay-context.service';
 import { CorrectiveReplayPromptBuilder } from './services/corrective-replay-prompt.builder';
 import { CorrectiveReplayRunnerService } from './services/corrective-replay-runner.service';
@@ -66,7 +70,7 @@ import { CarbonEstimatorService } from './services/carbon-estimator.service';
 import { ConversationUsageAccountingService } from './services/conversation-usage-accounting.service';
 
 @Module({
-  imports: [ConfigModule.forFeature(conversationConfig), ConversationPersistenceModule, JwtModule.register({}), forwardRef(() => AuthModule), forwardRef(() => AuthorizationModule), forwardRef(() => WorkspaceModule), ModelsModule, LoggerModule, UsageModule, forwardRef(() => AgentModule), TeamModule, AgentTypeModule, SkillModule, EmailModule, GovernanceRuntimeModule, forwardRef(() => EvaluationModule), UserModule, SemanticModelModule, ProjectModule],
+  imports: [ConfigModule.forFeature(conversationConfig), ConversationPersistenceModule, JwtModule.register({}), forwardRef(() => AuthModule), forwardRef(() => AuthorizationModule), forwardRef(() => WorkspaceModule), forwardRef(() => IndexingModule), ModelsModule, LoggerModule, UsageModule, forwardRef(() => AgentModule), TeamModule, AgentTypeModule, SkillModule, EmailModule, GovernanceRuntimeModule, forwardRef(() => EvaluationModule), UserModule, SemanticModelModule, ProjectModule],
   controllers: [
     StreamController, // Must be before ConversationController to avoid route conflict with :id param
     ComposerSuggestionsController,
@@ -76,7 +80,7 @@ import { ConversationUsageAccountingService } from './services/conversation-usag
     ReportController,
     ConversationFileController,
   ],
-  providers: [ConversationService, MessageService, StreamService, StreamGatewayService, ConversationRecoveryService, ShareService, ReportService, ComposerSuggestionsService, ChoiceInteractionService, ConversationBranchService, ConversationPlaybookContextProjectorService, ConversationPlaybookHandoffService, ResponseReliabilityService, ResponseReliabilityEvidenceBuilder, ResponseReliabilityScoringService, ResponseCorrectionPolicyService, ResponseCorrectionPlannerService, CorrectedResponseComponentBuilder, ResponseCorrectionService, ConversationAgentRequestBuilder, CorrectiveReplayContextService, CorrectiveReplayPromptBuilder, CorrectiveReplayRunnerService, ConversationArtifactService, ModelPricingService, CarbonEstimatorService, ConversationUsageAccountingService, ConversationOwnerGuard, SseAuthGuard, ComposerSuggestionsRateLimitGuard],
+  providers: [ConversationService, MessageService, StreamService, StreamGatewayService, ConversationRecoveryService, ShareService, ReportService, ComposerSuggestionsService, ChoiceInteractionService, ConversationBranchService, ConversationPlaybookContextProjectorService, ConversationPlaybookHandoffService, ResponseReliabilityService, ResponseReliabilityEvidenceBuilder, ResponseReliabilityScoringService, ResponseCorrectionPolicyService, ResponseCorrectionPlannerService, CorrectedResponseComponentBuilder, ResponseCorrectionService, ConversationAgentRequestBuilder, ConversationAttachmentResolverService, ConversationAttachmentService, ConversationAttachmentContextService, CorrectiveReplayContextService, CorrectiveReplayPromptBuilder, CorrectiveReplayRunnerService, ConversationArtifactService, ModelPricingService, CarbonEstimatorService, ConversationUsageAccountingService, ConversationOwnerGuard, SseAuthGuard, ComposerSuggestionsRateLimitGuard],
   exports: [ConversationService, MessageService, StreamService, StreamGatewayService, ConversationPlaybookHandoffService],
 })
 export class ConversationModule {}

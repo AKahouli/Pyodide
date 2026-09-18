@@ -16,7 +16,10 @@ import {
   multipartFileInterceptorOptions,
 } from '@common/utils';
 import { ConversationService } from '../services/conversation.service';
+import { ConversationAttachmentService } from '../services/conversation-attachment.service';
 import { WorkspaceDocumentService } from '../../workspace/workspace-document.service';
+import { ConversationSettingsService } from '../../system/conversation-settings.service';
+import { BadRequestException, ErrorCode } from '../../exceptions';
 import {
   RequestConversationFileUploadUrlDto,
   ConfirmConversationFileUploadDto,
@@ -39,10 +42,21 @@ interface MulterFile {
 export class ConversationFileController {
   constructor(
     private readonly conversationService: ConversationService,
+    private readonly attachmentService: ConversationAttachmentService,
     private readonly workspaceDocumentService: WorkspaceDocumentService,
+    private readonly conversationSettings: ConversationSettingsService,
     private readonly logger: LoggerService,
   ) {
     this.logger.setContext('ConversationFileController');
+  }
+
+  private assertAttachmentsEnabled(): void {
+    if (!this.conversationSettings.isAttachmentIntelligenceEnabledCached()) {
+      throw new BadRequestException(
+        ErrorCode.CHAT_ATTACHMENTS_DISABLED,
+        'Conversation file attachments are disabled',
+      );
+    }
   }
 
   @Post('upload-url')
@@ -51,6 +65,7 @@ export class ConversationFileController {
     @Param('conversationId') conversationId: string,
     @Body() dto: RequestConversationFileUploadUrlDto,
   ) {
+    this.assertAttachmentsEnabled();
     const userId = user._id.toString();
 
     this.logger.log('Requesting file upload URL', {
@@ -84,6 +99,7 @@ export class ConversationFileController {
     @Param('conversationId') conversationId: string,
     @UploadedFile() file: MulterFile,
   ) {
+    this.assertAttachmentsEnabled();
     // multer decodes the multipart filename as latin1; restore the real UTF-8 name.
     file.originalname = decodeMultipartFilename(file.originalname);
     const userId = user._id.toString();
@@ -116,6 +132,7 @@ export class ConversationFileController {
     @Param('conversationId') conversationId: string,
     @Body() dto: ConfirmConversationFileUploadDto,
   ) {
+    this.assertAttachmentsEnabled();
     const userId = user._id.toString();
 
     this.logger.log('Confirming file upload', {
@@ -132,6 +149,10 @@ export class ConversationFileController {
       workspaceId,
       userId,
       dto.documentId,
+      undefined,
+      // Conversation attachments are indexed (or deliberately excluded) only
+      // after the attachment policy is known — never on upload.
+      { autoIndex: false },
     );
   }
 
@@ -154,6 +175,8 @@ export class ConversationFileController {
     );
 
     await this.workspaceDocumentService.delete(workspaceId, userId, documentId);
+    // Best-effort: the profile sidecar lives outside the document record.
+    await this.attachmentService.deleteProfileSidecar(userId, conversationId, documentId);
 
     return { message: 'File deleted' };
   }

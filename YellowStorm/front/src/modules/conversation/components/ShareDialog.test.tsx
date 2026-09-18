@@ -9,6 +9,11 @@ vi.mock('../api', () => ({
   createShare: createShareMock,
 }));
 
+vi.mock('../store', () => ({
+  useConversationStore: (selector: (state: Record<string, unknown>) => unknown) =>
+    selector({ refreshCurrentConversation: vi.fn(), fetchConversations: vi.fn() }),
+}));
+
 describe('ShareDialog', () => {
   beforeEach(() => vi.clearAllMocks());
 

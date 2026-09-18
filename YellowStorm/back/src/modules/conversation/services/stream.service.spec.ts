@@ -255,27 +255,37 @@ describe('StreamService guardrail metadata buffering', () => {
 
   it('uses the user-visible original name for current attached documents', async () => {
     const service = Object.create(StreamService.prototype) as StreamService;
+    const document = {
+      id: 'file-1',
+      filename: 'stored-name-42.txt',
+      originalName: 'deatils.txt',
+      mimeType: 'text/plain',
+      path: 'owner/conversation-1/deatils.txt',
+      workspaceId: 'workspace-1',
+      createdAt: '2026-08-23T08:50:00.000Z',
+    };
     Object.assign(service as object, {
-      workspaceDocumentService: {
-        findByIds: jest.fn().mockResolvedValue([
-          {
-            id: 'file-1',
-            filename: 'stored-name-42.txt',
-            originalName: 'deatils.txt',
-            mimeType: 'text/plain',
-            path: 'owner/conversation-1/deatils.txt',
-            workspaceId: 'workspace-1',
-            createdAt: '2026-08-23T08:50:00.000Z',
-          },
+      attachmentResolver: {
+        resolve: jest.fn().mockResolvedValue([document]),
+      },
+      conversationSettings: {
+        isAttachmentIntelligenceEnabled: jest.fn().mockResolvedValue(true),
+        getAttachmentIntelligenceSettings: jest.fn().mockResolvedValue({ enabled: true, maxIndexedTabularRows: 5000 }),
+      },
+      attachmentService: {
+        prepareAttachments: jest.fn().mockResolvedValue([
+          { documentId: 'file-1', policy: 'SEARCHABLE', searchIndexAllowed: true },
         ]),
       },
       logger: { warn: jest.fn(), error: jest.fn() },
     });
 
-    const files = await (service as any).buildAttachedFiles(['file-1']);
+    const { attachedFiles } = await (service as any).buildAttachedFiles('user-1', 'conversation-1', 'system-1', ['file-1']);
 
-    expect(files[0].document.filename).toBe('deatils.txt');
-    expect(files[0].document.filepath).toBe('owner/conversation-1/deatils.txt');
+    expect(attachedFiles[0].document.filename).toBe('deatils.txt');
+    expect(attachedFiles[0].document.filepath).toBe('owner/conversation-1/deatils.txt');
+    expect(attachedFiles[0].document.processing_policy).toBe('SEARCHABLE');
+    expect(attachedFiles[0].document.search_index_allowed).toBe(true);
   });
 
   it('injects per-agent run-code descriptors only into assigned agents', async () => {
@@ -474,12 +484,13 @@ describe('StreamService guardrail metadata buffering', () => {
             summarizerModel: 'summary-model',
           },
         }),
+        isAttachmentIntelligenceEnabled: jest.fn().mockResolvedValue(false),
       },
       teamService: { resolveExecutionDefinition },
       semanticModelService: { resolveSearchSchema: jest.fn() },
       agentService: { buildGovernedAgentsForStream, buildGrpcAgentsForPlaybook },
       buildWorkspaceContexts: jest.fn().mockResolvedValue([]),
-      buildAttachedFiles: jest.fn().mockResolvedValue([]),
+      buildAttachedFiles: jest.fn().mockResolvedValue({ attachedFiles: [], preparedDocuments: [] }),
       buildPreviousAttachedFiles: jest.fn().mockResolvedValue([]),
       skillService: { findByIdsForGrpc: jest.fn().mockResolvedValue([]) },
       resolveAgentBrainContexts: jest.fn().mockResolvedValue(undefined),

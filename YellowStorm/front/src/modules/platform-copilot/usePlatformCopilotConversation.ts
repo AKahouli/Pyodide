@@ -1,5 +1,6 @@
 import * as React from 'react';
 import { createConversation, fetchActiveStream, fetchConversation, fetchConversations, fetchMessages, fetchToolResult, sendMessage } from '@/modules/conversation/api';
+import { applyChunksToComponents, StreamingBuffer } from '@/modules/conversation/stream-buffer';
 import { conversationStreamService } from '@/modules/conversation/stream';
 import type { ChoiceInteractionMetadata, Conversation, Message, MessageComponent, StreamingComponent, StreamSSEEvent } from '@/modules/conversation/types';
 import type { PlatformCopilotPageContext } from './types';
@@ -52,33 +53,12 @@ function upsertMessage(messages: Message[], message: Message): Message[] {
   return next;
 }
 
-function mergeStreamData(component: StreamingComponent, incoming: StreamingComponent): StreamingComponent {
-  if (component.type === 'text' || component.type === 'agentActivity' || component.type === 'code') {
-    const existingContent = typeof component.data.content === 'string' ? component.data.content : '';
-    const incomingContent = typeof incoming.data.content === 'string' ? incoming.data.content : '';
-    return { ...component, ...incoming, data: { ...component.data, ...incoming.data, content: existingContent + incomingContent } };
-  }
-  if (component.type === 'toolActivity') {
-    const existingStatus = component.data.status;
-    const status = existingStatus === 'completed' || existingStatus === 'failed'
-      ? existingStatus
-      : incoming.data.status ?? existingStatus;
-    return { ...component, ...incoming, data: { ...component.data, ...incoming.data, status } };
-  }
-  return { ...component, ...incoming, data: { ...incoming.data } };
-}
-
 function applyStreamAction(
   components: StreamingComponent[],
   action: 'add' | 'update' | 'delete',
   component: StreamingComponent,
 ): StreamingComponent[] {
-  const index = components.findIndex((candidate) => candidate.id === component.id);
-  if (action === 'delete') return index < 0 ? components : components.filter((_, itemIndex) => itemIndex !== index);
-  if (index < 0) return [...components, component];
-  const next = [...components];
-  next[index] = mergeStreamData(next[index], component);
-  return next;
+  return applyChunksToComponents(components, [{ action, component }]);
 }
 
 export function usePlatformCopilotConversation(open: boolean, clientContext: PlatformCopilotPageContext, pendingHandoff?: PendingPlaybookHandoffDraft | null) {
@@ -90,6 +70,7 @@ export function usePlatformCopilotConversation(open: boolean, clientContext: Pla
   const [historyLoading, setHistoryLoading] = React.useState(false);
   const [loading, setLoading] = React.useState(false);
   const [error, setError] = React.useState<unknown>();
+  const [streamingBuffer] = React.useState(() => new StreamingBuffer());
   const retryRef = React.useRef<{ fingerprint: string; requestId: string }>();
   const newConversationRequestRef = React.useRef<string>();
   const conversationIdRef = React.useRef<string>();
@@ -102,6 +83,7 @@ export function usePlatformCopilotConversation(open: boolean, clientContext: Pla
   }>();
 
   const hydrate = React.useCallback(async (id: string) => {
+    streamingBuffer.clear();
     const generation = ++hydrateGenerationRef.current;
     const previousConversationId = conversationIdRef.current;
     conversationIdRef.current = id;
@@ -146,7 +128,18 @@ export function usePlatformCopilotConversation(open: boolean, clientContext: Pla
     } finally {
       if (recoveryRef.current === recovery) recoveryRef.current = undefined;
     }
-  }, []);
+  }, [streamingBuffer]);
+
+  React.useEffect(() => {
+    streamingBuffer.setFlushCallback((chunks) => {
+      setStreamingComponents((current) => applyChunksToComponents(current, chunks));
+    });
+    streamingBuffer.setOverflowCallback(() => {
+      const activeConversationId = conversationIdRef.current;
+      if (activeConversationId) void hydrate(activeConversationId).catch((hydrateError: unknown) => setError(hydrateError));
+    });
+    return () => streamingBuffer.clear();
+  }, [hydrate, streamingBuffer]);
 
   const loadHistory = React.useCallback(async () => {
     setHistoryLoading(true);
@@ -235,6 +228,7 @@ export function usePlatformCopilotConversation(open: boolean, clientContext: Pla
           recovery.messageId = event.data.messageId;
           break;
         }
+        streamingBuffer.clear();
         setStreamingMessageId(event.data.messageId);
         setStreamingComponents([]);
         break;
@@ -244,10 +238,11 @@ export function usePlatformCopilotConversation(open: boolean, clientContext: Pla
           recovery.chunks.push(event.data);
           break;
         }
-        setStreamingComponents((current) => applyStreamAction(current, event.data.action, event.data.component));
+        streamingBuffer.addChunk(event.data.action, event.data.component, event.data.revision);
         break;
       case 'stream_complete':
         if (recovery) recovery.terminal = true;
+        streamingBuffer.clear();
         setStreamingComponents([]);
         setStreamingMessageId(undefined);
         if (!recovery) void hydrate(activeConversationId).catch((hydrateError: unknown) => setError(hydrateError));
@@ -255,6 +250,7 @@ export function usePlatformCopilotConversation(open: boolean, clientContext: Pla
         break;
       case 'stream_error':
         if (recovery) recovery.terminal = true;
+        streamingBuffer.clear();
         setStreamingComponents([]);
         setStreamingMessageId(undefined);
         setLoading(false);
@@ -265,7 +261,7 @@ export function usePlatformCopilotConversation(open: boolean, clientContext: Pla
           : conversation));
         break;
     }
-  }), [hydrate, loadHistory]);
+  }), [hydrate, loadHistory, streamingBuffer]);
 
   const send = async (content: string, interaction?: ChoiceInteractionMetadata, interactions?: ChoiceInteractionMetadata[], handoff?: PendingPlaybookHandoffDraft) => {
     if (!conversationId || loading) return false;
@@ -334,6 +330,7 @@ export function usePlatformCopilotConversation(open: boolean, clientContext: Pla
         creationRequestId: newConversationRequestRef.current,
       });
       newConversationRequestRef.current = undefined;
+      streamingBuffer.clear();
       setMessages([]);
       setStreamingComponents([]);
       setStreamingMessageId(undefined);

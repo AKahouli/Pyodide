@@ -15,6 +15,7 @@ import {
 import { ReliabilityCheckToggle, useReasoningEffortState } from './components/ReasoningEffortSelect';
 import { useConversationFileUpload } from './hooks/useConversationFileUpload';
 import { useAllowedUploadExtensions } from '@/modules/workspace/hooks/useAllowedUploadExtensions';
+import { useConversationSettings } from './hooks/useConversationSettings';
 import { useModuleTranslation } from '@/modules/localization';
 import { SelectedConnectorRepo } from './components/SelectedConnectorRepo';
 import { ComposerSuggestionChips } from './components/ComposerSuggestionChips';
@@ -36,6 +37,8 @@ const GOVERNANCE_SCOPE_STORAGE_KEY = 'yellowmind.home.governance-scope';
 export function NewConversationPage() {
   const homeMotion = useHomeMotion();
   const { accept } = useAllowedUploadExtensions();
+  const conversationSettings = useConversationSettings();
+  const attachmentsDisabled = conversationSettings?.attachmentIntelligence?.enabled !== true;
   const createConversation = useConversationStore((s) => s.createConversation);
   const updateConversation = useConversationStore((s) => s.updateConversation);
   const claimCurrentConversation = useConversationStore((s) => s.claimCurrentConversation);
@@ -287,6 +290,7 @@ export function NewConversationPage() {
               uploadingFiles={uploadFiles}
               accept={accept}
               maxFiles={5}
+              attachmentsDisabled={attachmentsDisabled}
               showWorkspaceSelect={!presentationScope}
               preserveWorkspaceSelectionOnSubmit
               showModelSelector={!presentationScope}

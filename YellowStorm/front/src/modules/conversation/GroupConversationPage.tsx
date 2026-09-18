@@ -30,13 +30,13 @@ export function GroupConversationPage({ id, conversation }: GroupConversationPag
  
   const loadingJoin = searchParams.get('join') === 'true';
 
-  const isOwner = !!conversation.groupMeta?.members.some(
-    (m) => m.status === 'owner' && String(m.userId) === String(user?.id)
-  );
-  
-  const isMember = !!conversation.groupMeta?.members.some(
-    (m) => String(m.userId) === String(user?.id)
-  );
+  // `createdBy` is authoritative: private sharing can promote a conversation to
+  // a group without a legacy membership row for the owner.
+  const isOwner = !!user?.id && String(conversation.createdBy) === String(user.id);
+
+  const isMember =
+    isOwner ||
+    !!conversation.groupMeta?.members.some((m) => String(m.userId) === String(user?.id));
 
   useEffect(() => {
     if (id && conversation && !authLoading) {

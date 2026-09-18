@@ -94,12 +94,19 @@ export interface CompactionSettings {
   summarizerModel: string;
 }
 
+export interface AttachmentIntelligenceSettings {
+  enabled: boolean;
+  maxIndexedTabularRows: number;
+}
+
 export interface ConversationSettings {
   composerSuggestions: ComposerSuggestionSettings;
   redactSensitiveText?: boolean;
   /** Runtime source of truth for the classic Conversation latency UI. */
   latencyInstrumentationEnabled?: boolean;
   compaction?: CompactionSettings;
+  /** Composer attachment gating; absent on old backends = disabled. */
+  attachmentIntelligence?: AttachmentIntelligenceSettings;
   updatedAt?: string;
 }
 

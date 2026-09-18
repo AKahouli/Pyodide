@@ -424,6 +424,12 @@ export class ConversationService {
   }
 
   async joinGroup(conversationId: string, userId: string, email: string) {
+    const access = await this.conversationStore.findActiveAccessById(conversationId);
+    if (access && (access.createdBy === userId || access.memberIds.includes(userId))) {
+      // Owners and existing members already have access; re-entering must not
+      // fail with the invite-missing 404.
+      return this.findById(conversationId);
+    }
     const record = await this.conversationStore.joinGroup(
       conversationId,
       userId,

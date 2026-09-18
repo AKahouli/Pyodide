@@ -517,6 +517,12 @@ You have access to delegate functions for each agent. Use the appropriate delega
             agent_data = doc_helper._populate_brain_data(agent_data, user_request, team)
             agent_data, tools = AgentHelper._remove_search_if_empty(agent_data, tools)
 
+        # Mono agents are their own executor: give them the backend-built
+        # bounded attachment context (teams inject it per executor instead).
+        attachment_context = getattr(user_request, 'attachment_context', None)
+        if attachment_context:
+            agent_data['prompt'] = f"{agent_data.get('prompt', '')}\n\n{attachment_context}"
+
         agent_data['tools'] = tools
         return agent_data
 

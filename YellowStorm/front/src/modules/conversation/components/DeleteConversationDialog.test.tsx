@@ -17,4 +17,26 @@ describe('DeleteConversationDialog', () => {
       expect(onOpenChange).toHaveBeenCalledWith(false);
     });
   });
+
+  it('warns about revoked access when the conversation is shared', () => {
+    render(
+      <DeleteConversationDialog
+        open
+        onOpenChange={vi.fn()}
+        onConfirm={vi.fn().mockResolvedValue(undefined)}
+        title='Shared chat'
+        isShared
+      />,
+    );
+
+    expect(screen.getByText('dialogs.delete.sharedWarning')).toBeInTheDocument();
+  });
+
+  it('does not show the shared warning for a private conversation', () => {
+    render(
+      <DeleteConversationDialog open onOpenChange={vi.fn()} onConfirm={vi.fn().mockResolvedValue(undefined)} title='Private chat' />,
+    );
+
+    expect(screen.queryByText('dialogs.delete.sharedWarning')).not.toBeInTheDocument();
+  });
 });

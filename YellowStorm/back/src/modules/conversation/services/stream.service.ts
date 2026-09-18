@@ -33,6 +33,10 @@ import { buildGrpcChannelCredentials, createGrpcMetadata } from '../../../common
 import { randomUUID } from 'node:crypto';
 import { ResponseReliabilityService } from './response-reliability.service';
 import { ConversationAgentRequestBuilder, type BuiltAgentExecutionRequest } from './conversation-agent-request.builder';
+import { ConversationAttachmentResolverService } from './conversation-attachment-resolver.service';
+import { ConversationAttachmentService } from './conversation-attachment.service';
+import { ConversationAttachmentContextService } from './conversation-attachment-context.service';
+import type { PreparedConversationAttachment } from '../interfaces/conversation-attachment.interface';
 import { SemanticModelService } from '../../semantic-model/services/semantic-model.service';
 import { PLATFORM_COPILOT } from '../../agent/constants/platform-copilot.constants';
 import { ConversationSettingsService } from '../../system/conversation-settings.service';
@@ -145,6 +149,9 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
     private readonly skillService: SkillService,
     private readonly responseReliabilityService: ResponseReliabilityService,
     private readonly agentRequestBuilder: ConversationAgentRequestBuilder,
+    private readonly attachmentResolver: ConversationAttachmentResolverService,
+    private readonly attachmentService: ConversationAttachmentService,
+    private readonly attachmentContextService: ConversationAttachmentContextService,
     private readonly conversationSettings: ConversationSettingsService,
     private readonly semanticModelService: SemanticModelService,
     @Inject(CONVERSATION_EXECUTION_STORE)
@@ -474,10 +481,18 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
 
   /**
    * Build AttachedFile[] for the current turn's files in the proto format.
-   * Distinguishes images from documents based on MIME type.
+   * Distinguishes images from documents based on MIME type. Documents are
+   * resolved strictly inside the conversation's system workspace and prepared
+   * (policy + profile) before being sent; preparation also queues search
+   * indexing for SEARCHABLE files.
    */
-  private async buildAttachedFiles(attachedFileIds: string[]): Promise<
-    Array<{
+  private async buildAttachedFiles(
+    userId: string,
+    conversationId: string,
+    systemWorkspaceId: string | undefined,
+    attachedFileIds: string[],
+  ): Promise<{
+    attachedFiles: Array<{
       type: string;
       image?: { filepath: string };
       document?: {
@@ -495,57 +510,66 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
         enable_extract_images: boolean;
         sheet_name: string;
         in_memory: boolean;
+        document_id: string;
+        processing_policy: string;
+        search_index_allowed: boolean;
       };
-    }>
-  > {
-    if (!attachedFileIds.length) return [];
+    }>;
+    preparedDocuments: PreparedConversationAttachment[];
+  }> {
+    if (!attachedFileIds.length) return { attachedFiles: [], preparedDocuments: [] };
 
     try {
-      const documents = await this.workspaceDocumentService.findByIds(attachedFileIds);
+      const documents = await this.attachmentResolver.resolve(systemWorkspaceId ?? '', attachedFileIds);
+      const attachmentsEnabled = await this.conversationSettings.isAttachmentIntelligenceEnabled();
+      const { maxIndexedTabularRows } = await this.conversationSettings.getAttachmentIntelligenceSettings();
+      const preparedDocuments = attachmentsEnabled
+        ? await this.attachmentService.prepareAttachments(userId, conversationId, documents, maxIndexedTabularRows)
+        : [];
+      const preparedById = new Map(preparedDocuments.map((prepared) => [prepared.documentId, prepared]));
 
-      if (documents.length !== attachedFileIds.length) {
-        this.logger.warn('Some attached files not found in database', {
-          requested: attachedFileIds.length,
-          found: documents.length,
-          missingIds: attachedFileIds.filter((id) => !documents.some((d) => d.id === id)),
-        });
-      }
+      return {
+        attachedFiles: documents.map((doc) => {
+          const isImage = doc.mimeType.startsWith('image/');
 
-      return documents.map((doc) => {
-        const isImage = doc.mimeType.startsWith('image/');
-
-        if (isImage) {
+          if (isImage) {
+            return {
+              type: 'image',
+              image: { filepath: doc.path || '', createdAt: doc.createdAt },
+            };
+          }
+          const prepared = preparedById.get(doc.id);
           return {
-            type: 'image',
-            image: { filepath: doc.path || '', createdAt: doc.createdAt },
+            type: 'document',
+            document: {
+              filepath: doc.path || '',
+              filename: doc.originalName || doc.filename || '',
+              workspace_name: this.workspaceNameFromPath(doc.path, doc.workspaceId),
+              workspace_id: doc.workspaceId,
+              source: doc.path || '',
+              brain_type: 'doc',
+              lang_code: 'fr',
+              chunk_size: 4000,
+              chunk_overlap: 100,
+              enable_smart_chunk: false,
+              enable_extract_images: false,
+              sheet_name: '',
+              in_memory: false,
+              createdAt: doc.createdAt,
+              document_id: doc.id,
+              processing_policy: prepared?.policy ?? '',
+              search_index_allowed: prepared?.policy === 'SEARCHABLE',
+            },
           };
-        }
-        return {
-          type: 'document',
-          document: {
-            filepath: doc.path || '',
-            filename: doc.originalName || doc.filename || '',
-            workspace_name: this.workspaceNameFromPath(doc.path, doc.workspaceId),
-            workspace_id: doc.workspaceId,
-            source: doc.path || '',
-            brain_type: 'doc',
-            lang_code: 'fr',
-            chunk_size: 4000,
-            chunk_overlap: 100,
-            enable_smart_chunk: false,
-            enable_extract_images: false,
-            sheet_name: '',
-            in_memory: false,
-            createdAt: doc.createdAt,
-          },
-        };
-      });
+        }),
+        preparedDocuments,
+      };
     } catch (error) {
       this.logger.error('Failed to build attached files', {
         attachedFileIds,
         error: (error as Error).message,
       });
-      return [];
+      throw error;
     }
   }
 
@@ -961,9 +985,9 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
-  private async buildRunCodeAttachmentSources(attachedFileIds: string[]): Promise<RunCodeAttachmentSource[]> {
+  private async buildRunCodeAttachmentSources(systemWorkspaceId: string | undefined, attachedFileIds: string[]): Promise<RunCodeAttachmentSource[]> {
     if (attachedFileIds.length === 0) return [];
-    const documents = await this.workspaceDocumentService.findByIds(attachedFileIds);
+    const documents = await this.attachmentResolver.resolve(systemWorkspaceId ?? '', attachedFileIds);
     return documents.flatMap((document) => (document.workspaceId && document.path ? [{ workspaceId: document.workspaceId, path: document.path }] : []));
   }
 
@@ -1061,7 +1085,51 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
       }
     }
     beginBackendPreAdkStage('supplementalContextAssemblyMs');
-    const [, attachedFiles, previousAttachedFiles, skills, currentAttachmentSources] = await Promise.all([this.resolveAgentBrainContexts(agents), this.buildAttachedFiles(request.attachedFileIds), this.buildPreviousAttachedFiles(systemWorkspaceId, request.attachedFileIds), request.skillIds.length ? this.skillService.findByIdsForGrpc(request.skillIds) : Promise.resolve([]), this.buildRunCodeAttachmentSources(request.attachedFileIds)]);
+    const [, builtAttachments, previousAttachedFiles, skills, currentAttachmentSources] = await Promise.all([
+      this.resolveAgentBrainContexts(agents),
+      this.buildAttachedFiles(userId, conversationId, systemWorkspaceId, request.attachedFileIds),
+      this.buildPreviousAttachedFiles(systemWorkspaceId, request.attachedFileIds),
+      request.skillIds.length ? this.skillService.findByIdsForGrpc(request.skillIds) : Promise.resolve([]),
+      this.buildRunCodeAttachmentSources(systemWorkspaceId, request.attachedFileIds),
+    ]);
+    const attachedFiles = builtAttachments.attachedFiles;
+
+    // Bounded attachment context: current-turn files always, previous files
+    // only when the user references them. Referenced previous profiles are
+    // prepared (cached) so their bounded text can be injected; the rest stay
+    // reachable via search/code tools only.
+    let attachmentContext: string | undefined;
+    if (await this.conversationSettings.isAttachmentIntelligenceEnabled()) {
+      const previousCandidates = this.attachmentContextService.selectPreviousByReference(
+        previousAttachedFiles.map((file) => ({ documentId: file._id, filename: file.file_name || file.filename })),
+        request.content,
+      );
+      const referencedPreviousDocs = previousCandidates.length
+        ? await this.attachmentResolver.resolve(
+            systemWorkspaceId ?? '',
+            previousCandidates,
+          )
+        : [];
+      const { maxIndexedTabularRows } = await this.conversationSettings.getAttachmentIntelligenceSettings();
+      const referencedPreviousPrepared = await this.attachmentService.prepareAttachments(
+        userId,
+        conversationId,
+        referencedPreviousDocs,
+        maxIndexedTabularRows,
+      );
+      const selected = [...builtAttachments.preparedDocuments, ...referencedPreviousPrepared];
+      let contextWindowTokens: number | undefined;
+      if (request.modelId) {
+        const model = await this.modelsService.findById(request.modelId).catch(() => undefined);
+        contextWindowTokens = model?.maxInputTokens ?? undefined;
+      }
+      attachmentContext = this.attachmentContextService.buildAttachmentContext(
+        selected,
+        request.attachedFileIds,
+        contextWindowTokens,
+      );
+    }
+
     await this.attachRunCodeContexts(
       agents,
       userId,
@@ -1083,6 +1151,7 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
       skills,
       correctionReplayContext,
       teamDefinition,
+      attachmentContext,
     });
   }
 

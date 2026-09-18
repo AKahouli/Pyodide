@@ -51,7 +51,25 @@ describe('ConversationSettingsPage', () => {
       conversationName: { modelId: null },
       latencyInstrumentationEnabled: true,
       compaction: { enabled: true, compactionInterval: 10, overlapSize: 2, tokenFraction: 0.75, eventRetentionSize: 6, summarizerModel: '' },
+      attachmentIntelligence: { enabled: false, maxIndexedTabularRows: 5000 },
     }));
+  });
+
+  it('loads and toggles attachment intelligence settings', async () => {
+    vi.mocked(getAdminConversationSettings).mockResolvedValue({
+      composerSuggestions: settings,
+      attachmentIntelligence: { enabled: true, maxIndexedTabularRows: 2500 },
+    } as never);
+    const { user } = renderWithProviders(<ConversationSettingsPage />);
+
+    const rows = await screen.findByLabelText('conversationSettings.attachments.maxRows.label');
+    expect(rows).toHaveValue(2500);
+    await user.click(screen.getByRole('switch', { name: 'conversationSettings.attachments.enabled.label' }));
+    await user.click(screen.getByRole('button', { name: 'conversationSettings.actions.save' }));
+
+    await waitFor(() => expect(updateAdminConversationSettings).toHaveBeenCalledWith(
+      expect.objectContaining({ attachmentIntelligence: { enabled: false, maxIndexedTabularRows: 2500 } }),
+    ));
   });
 
   it('saves an explicit latency instrumentation toggle', async () => {
