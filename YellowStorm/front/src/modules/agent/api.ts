@@ -9,10 +9,6 @@ import type {
   AgentType,
   AgentTelegramIntegration,
   AgentTelegramIntegrationInput,
-  AgentWhatsAppConnectResponse,
-  AgentWhatsAppEnabledInput,
-  AgentWhatsAppIntegration,
-  AgentWhatsAppPairingResponse,
   CreateAgentData,
   UpdateAgentData,
   SkillOption,
@@ -247,75 +243,6 @@ export async function upsertAgentTelegramIntegration(
 
 export async function deleteAgentTelegramIntegration(agentId: string): Promise<void> {
   await apiClient.delete(API_ENDPOINTS.agents.telegramIntegration(agentId));
-}
-
-export async function getAgentWhatsAppIntegration(
-  agentId: string,
-): Promise<AgentWhatsAppIntegration | null> {
-  const response = await apiClient.get<ApiResponse<AgentWhatsAppIntegration | null>>(
-    API_ENDPOINTS.agents.whatsappIntegration(agentId),
-  );
-  return response.data.data;
-}
-
-export async function connectAgentWhatsApp(
-  agentId: string,
-): Promise<AgentWhatsAppConnectResponse> {
-  const response = await apiClient.post<ApiResponse<AgentWhatsAppConnectResponse>>(
-    API_ENDPOINTS.agents.whatsappConnect(agentId),
-  );
-  return response.data.data;
-}
-
-export async function updateAgentWhatsAppEnabled(
-  agentId: string,
-  payload: AgentWhatsAppEnabledInput,
-): Promise<AgentWhatsAppIntegration> {
-  const response = await apiClient.patch<ApiResponse<AgentWhatsAppIntegration>>(
-    API_ENDPOINTS.agents.whatsappEnabled(agentId),
-    payload,
-  );
-  return response.data.data;
-}
-
-export async function getAgentWhatsAppPairing(
-  agentId: string,
-  sessionId: string,
-): Promise<AgentWhatsAppPairingResponse> {
-  const response = await apiClient.get<ApiResponse<AgentWhatsAppPairingResponse>>(
-    API_ENDPOINTS.agents.whatsappPairing(agentId, sessionId),
-  );
-  return response.data.data;
-}
-
-export async function notifyAgentWhatsAppAutoRecover(
-  agentId: string,
-): Promise<AgentWhatsAppIntegration> {
-  const response = await apiClient.post<ApiResponse<AgentWhatsAppIntegration>>(
-    API_ENDPOINTS.agents.whatsappAutoRecover(agentId),
-  );
-  return response.data.data;
-}
-
-export async function reconnectAgentWhatsApp(
-  agentId: string,
-  sessionId: string,
-): Promise<AgentWhatsAppIntegration> {
-  const response = await apiClient.post<ApiResponse<AgentWhatsAppIntegration>>(
-    API_ENDPOINTS.agents.whatsappReconnect(agentId, sessionId),
-  );
-  return response.data.data;
-}
-
-export async function disconnectAgentWhatsAppSession(
-  agentId: string,
-  sessionId: string,
-): Promise<void> {
-  await apiClient.delete(API_ENDPOINTS.agents.whatsappSession(agentId, sessionId));
-}
-
-export async function deleteAgentWhatsAppIntegration(agentId: string): Promise<void> {
-  await apiClient.delete(API_ENDPOINTS.agents.whatsappIntegration(agentId));
 }
 
 export async function createWidgetToken(agentId: string): Promise<WidgetTokenResponse> {

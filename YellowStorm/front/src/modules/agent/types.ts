@@ -300,39 +300,6 @@ export interface AgentTelegramIntegrationInput {
   botToken?: string;
 }
 
-export type AgentWhatsAppIntegrationStatus =
-  | 'PAIRING'
-  | 'CONNECTED'
-  | 'DISCONNECTED'
-  | 'FAILED';
-
-export interface AgentWhatsAppIntegration {
-  enabled: boolean;
-  status: AgentWhatsAppIntegrationStatus;
-  sessionId?: string;
-  phoneNumber?: string;
-  displayName?: string;
-  lastActivityAt?: string;
-  errorMessage?: string;
-  updatedAt?: string;
-}
-
-export interface AgentWhatsAppEnabledInput {
-  enabled: boolean;
-}
-
-export interface AgentWhatsAppConnectResponse {
-  sessionId: string;
-  status: 'PAIRING';
-  qrCode?: string;
-  pairingCode?: string;
-}
-
-export interface AgentWhatsAppPairingResponse {
-  qrCode?: string;
-  pairingCode?: string;
-}
-
 export interface AgentType {
   id: string;
   name: string;

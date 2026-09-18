@@ -8,7 +8,6 @@ import { ConnectorService } from '../../connector/connector.service';
 import { IConnectorResponse } from '../../connector/interfaces/connector.interface';
 import { ConnectorAuthService } from '../../connector/interfaces/connector-auth.interface';
 import { filterConnectorFixedParams } from '../../connector/utils/connector-fixed-params.util';
-import { signAgentMcpToken } from '@common/runtime/agent-mcp-jwt.util';
 
 /**
  * Builds connector maps, auth bindings, tool defs, and skill payloads for
@@ -270,10 +269,6 @@ export class AgentConnectorRuntimeService {
       }
     }
 
-    // Agent-scoped JWT first: the generic search-key fallback below must not
-    // overwrite the WhatsApp MCP per-run token with a shared API key.
-    this.applyWhatsappMcpAgentTokens(bindings, userId, agentId);
-
     const mcpLogicalSearchKey = this.configService.get<string>('MCP_LOGICAL_SEARCH_API_KEY', '');
     if (mcpLogicalSearchKey) {
       for (const binding of bindings) {
@@ -289,43 +284,6 @@ export class AgentConnectorRuntimeService {
     }
 
     return bindings;
-  }
-
-  /**
-   * Injects a per-run agent-scoped Bearer JWT into the WhatsApp Send MCP
-   * connector binding. The MCP server derives agentId from this token and
-   * never from tool arguments, so one agent cannot send as another.
-   */
-  private applyWhatsappMcpAgentTokens(
-    bindings: Record<string, unknown>[],
-    userId?: string,
-    agentId?: string,
-  ): void {
-    const privateKey = this.configService.get<string>('whatsappMcp.jwtPrivateKey', '');
-    if (!privateKey || !userId || !agentId) {
-      return;
-    }
-
-    const connectorSlug = this.configService.get<string>('whatsappMcp.connectorSlug', 'mcp-whatsapp');
-    const ttlSeconds = this.configService.get<number>('whatsappMcp.tokenTtlSeconds', 300);
-    const slug = connectorSlug.toLowerCase();
-
-    for (const binding of bindings) {
-      if (String(binding.connector_slug || '').toLowerCase() !== slug) continue;
-      if (String(binding.mcp_transport_type || '') !== 'streamable_http') continue;
-      const headers = (binding.auth_headers as Record<string, string>) || {};
-      if (headers.Authorization) continue;
-      try {
-        const token = signAgentMcpToken({ privateKeyPem: privateKey, claims: { agentId, userId }, ttlSeconds });
-        binding.auth_headers = { ...headers, Authorization: `Bearer ${token}` };
-      } catch (error) {
-        this.logger.warn('Failed to sign WhatsApp MCP agent token', {
-          connector_id: binding.connector_id,
-          agentId,
-          error: (error as Error).message,
-        });
-      }
-    }
   }
 
   buildConnectorToolDefs(bindings: Record<string, unknown>[]): Record<string, unknown>[] {

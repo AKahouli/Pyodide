@@ -7,9 +7,9 @@ export class CreateGovernanceDryRunDto {
   @IsIn(['conversation', 'manual'])
   executionMode?: 'conversation' | 'manual';
 
-  @ApiPropertyOptional({ enum: ['widget', 'whatsapp', 'telegram', 'api'] })
+  @ApiPropertyOptional({ enum: ['widget', 'telegram', 'api'] })
   @IsOptional()
-  @IsIn(['widget', 'whatsapp', 'telegram', 'api'])
+  @IsIn(['widget', 'telegram', 'api'])
   simulatedChannel?: string;
 
   @ApiPropertyOptional({ description: 'Continue an existing dry-run conversation instead of starting a new one' })

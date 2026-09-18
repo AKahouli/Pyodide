@@ -2427,7 +2427,7 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
 
   /**
    * Runs a single linked agent via gRPC RunSingleAgent (agent_mode=mono on ADK side).
-   * Used by WhatsApp inbound replies — no manager orchestration, no SSE gateway.
+   * Used by single-agent channel replies — no manager orchestration, no SSE gateway.
    */
   async runSingleAgentStream(params: { userId: string; username: string; conversationId: string; messageId: string; agentId: string; query: string; requestId?: string }): Promise<{ durationMs: number; componentCount: number; chunkCount: number }> {
     if (!this.isGrpcAvailable) {

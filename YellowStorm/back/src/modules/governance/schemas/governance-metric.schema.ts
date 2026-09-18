@@ -17,7 +17,7 @@ export class GovernanceMetric extends Document {
   @Prop({ type: Types.ObjectId, ref: 'Agent', index: true })
   agentId?: Types.ObjectId;
 
-  @Prop({ type: String, enum: ['widget', 'whatsapp', 'telegram', 'api'] })
+  @Prop({ type: String, enum: ['widget', 'telegram', 'api'] })
   channel?: string;
 
   @Prop({ required: true, trim: true, maxlength: 120, index: true })
