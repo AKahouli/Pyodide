@@ -91,7 +91,8 @@ export interface EvaluationQueryRunResult {
   status: 'completed' | 'failed';
   generatedAnswer: string;          // réponse de l'agent cible (eval-target)
   targetAnswer: string;             // alias pour compatibilité
-  judgeScore?: number;              // score 0-1 du LLM Judge
+  judgeScore?: number;              // score 0-1 du LLM Judge (correctness)
+  judgeFaithfulnessScore?: number;  // score 0-1 du LLM Judge (faithfulness)
   judgeReasoning?: string;          // justification du LLM Judge
   toolCalls: Array<{ nodeId: string; iteration: number; trace: unknown[] }>;
   durationMs: number;
@@ -210,18 +211,21 @@ function extractEvaluationAnswer(value: unknown): string | null {
   return String(value).trim() || null;
 }
 
-/** Parse the LLM Judge's output: strict {score, reasoning} JSON, tolerating fences and prose. */
+/** Parse the LLM Judge's output: {reasoning, correctness_score, ...} JSON, tolerating fences and prose. */
 function parseEvalJudgeOutput(
   raw: string,
-): { score?: number; reasoning?: string; parsed: boolean } {
+): { score?: number; additionalScore?: number; reasoning?: string; parsed: boolean } {
   const text = raw.trim().replace(/^```(?:json)?/i, '').replace(/```$/, '').trim();
   const blockMatch = text.match(/\{[\s\S]*\}/);
   if (!blockMatch) return { parsed: false };
   try {
     const obj = JSON.parse(blockMatch[0]);
     if (obj !== null && typeof obj === 'object' && !Array.isArray(obj)) {
-      const result: { score?: number; reasoning?: string; parsed: true } = { parsed: true };
-      if (typeof obj.score === 'number') result.score = obj.score;
+      const result: { score?: number; additionalScore?: number; reasoning?: string; parsed: true } = { parsed: true };
+      // Legacy {score} contract, superseded by the FinanceBench {correctness_score, faithfulness_score} contract.
+      if (typeof obj.score === 'number') { result.score = obj.score; result.additionalScore = obj.score; }
+      if (typeof obj.correctness_score === 'number') result.score = obj.correctness_score;
+      if (typeof obj.faithfulness_score === 'number') result.additionalScore = obj.faithfulness_score;
       if (typeof obj.reasoning === 'string') result.reasoning = obj.reasoning;
       return result;
     }
@@ -1914,6 +1918,7 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
     return new Promise<EvaluationQueryRunResult>((resolve) => {
       let targetAnswer = '';
       let judgeScore: number | undefined;
+      let judgeFaithfulnessScore: number | undefined;
       let judgeReasoning: string | undefined;
       const tracesByNode = new Map<string, { nodeId: string; iteration: number; trace: unknown[] }>();
       let status: 'completed' | 'failed' = 'failed';
@@ -1921,7 +1926,7 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
       let resolved = false;
       const timeoutMs = 600_000;
       let timer: NodeJS.Timeout;
-      const finalize = () => { if (!resolved) { resolved = true; clearTimeout(timer); resolve({ status, generatedAnswer: targetAnswer, targetAnswer, judgeScore, judgeReasoning, toolCalls: [...tracesByNode.values()], durationMs: Date.now() - startedAt, error }); } };
+      const finalize = () => { if (!resolved) { resolved = true; clearTimeout(timer); resolve({ status, generatedAnswer: targetAnswer, targetAnswer, judgeScore, judgeFaithfulnessScore, judgeReasoning, toolCalls: [...tracesByNode.values()], durationMs: Date.now() - startedAt, error }); } };
       timer = setTimeout(() => {
         status = 'failed';
         error = `Evaluation query timed out after ${String(timeoutMs / 1000)}s`;
@@ -1993,6 +1998,7 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
               const judge = parseEvalJudgeOutput(extracted);
               if (judge.parsed && (judge.score !== undefined || judge.reasoning !== undefined)) {
                 if (judge.score !== undefined) judgeScore = judge.score;
+                if (judge.additionalScore !== undefined) judgeFaithfulnessScore = judge.additionalScore;
                 if (judge.reasoning !== undefined) judgeReasoning = judge.reasoning;
               } else {
                 // Unparseable JSON → keep the raw text as reasoning

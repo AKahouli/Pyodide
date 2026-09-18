@@ -708,6 +708,7 @@ export interface EvaluationQueryResult {
   retrieved_pages: number[];
   retrieved_sources: FilePagePair[];
   judge_score?: number;
+  judge_faithfulness_score?: number;
   judge_reasoning?: string;
 }
 
@@ -723,6 +724,7 @@ export function buildQueryResult(input: {
   error?: string | null;
   toolCalls: { nodeId: string; iteration: number; trace: unknown[] }[];
   judgeScore?: number;
+  judgeFaithfulnessScore?: number;
   judgeReasoning?: string;
 }): EvaluationQueryResult {
   const toolCalls: ToolCall[] = [];
@@ -753,6 +755,7 @@ export function buildQueryResult(input: {
     retrieved_pages: retrieval.retrieved_pages,
     retrieved_sources: retrieval.retrieved_sources,
     judge_score: input.judgeScore,
+    judge_faithfulness_score: input.judgeFaithfulnessScore,
     judge_reasoning: input.judgeReasoning,
   };
 }

@@ -371,6 +371,16 @@ export class LogicalSearchEvaluationService implements OnModuleInit {
           targetPort: 'target_answer',
           iteration: 'current',
         },
+        {
+          // Feeds the judge's {retrieved_context} via the executor's search/tool trace.
+          id: 'binding-target-trace-to-judge-context',
+          sourceKind: 'node-output',
+          sourceNode: 'eval-target',
+          sourcePort: 'tool_trace',
+          targetNode: 'eval-judge',
+          targetPort: 'retrieved_context',
+          iteration: 'current',
+        },
       ],
       settings: {
         recursionLimit: 25,
@@ -570,6 +580,7 @@ export class LogicalSearchEvaluationService implements OnModuleInit {
 
           const targetAnswer = runResult.targetAnswer ?? runResult.generatedAnswer;
           const judgeScore = runResult.judgeScore;
+          const judgeFaithfulnessScore = runResult.judgeFaithfulnessScore;
           const judgeReasoning = runResult.judgeReasoning;
 
           results.push(buildQueryResult({
@@ -584,6 +595,7 @@ export class LogicalSearchEvaluationService implements OnModuleInit {
             error: runResult.error,
             toolCalls: runResult.toolCalls,
             judgeScore,
+            judgeFaithfulnessScore,
             judgeReasoning,
           }));
           this.logger.log(`[${queryId}] ${runResult.status} in ${String(runResult.durationMs)}ms${judgeScore !== undefined ? ` | judge: ${judgeScore}` : ''}`);
@@ -731,7 +743,7 @@ export class LogicalSearchEvaluationService implements OnModuleInit {
       'Matched Sources', 'Retrieval Recall', 'Retrieval Precision', 'Retrieval Page Hit',
       'Retrieval Exact Match', 'Answer Recall', 'Answer Precision', 'Answer F1',
       'Semantic Similarity', 'Fact Recall', 'Fact Precision', 'Answer Quality',
-      'Answer Exact Match', 'Judge Score', 'Judge Reasoning',
+      'Answer Exact Match', 'Judge Score', 'Judge Faithfulness', 'Judge Reasoning',
       'Status', 'Duration (ms)', 'Error',
     ] as const;
 
@@ -762,6 +774,7 @@ export class LogicalSearchEvaluationService implements OnModuleInit {
         'Answer Quality': ans.answer_quality,
         'Answer Exact Match': ans.exact_match,
         'Judge Score': r.judge_score ?? '',
+        'Judge Faithfulness': r.judge_faithfulness_score ?? '',
         'Judge Reasoning': r.judge_reasoning ?? '',
         'Status': r.status,
         'Duration (ms)': r.duration_ms,
