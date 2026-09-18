@@ -880,6 +880,25 @@ def _json_schema_type_to_python(schema: Dict[str, Any]) -> Any:
     return Any
 
 
+def _sanitize_mcp_params_for_send(params: Dict[str, Any]) -> Dict[str, Any]:
+    """Drop null or empty payload values before invoking a strict MCP tool."""
+    if not isinstance(params, dict):
+        return {}
+
+    cleaned: Dict[str, Any] = {}
+    for key, value in params.items():
+        if value is None:
+            continue
+        if isinstance(value, str) and not value.strip():
+            continue
+        if isinstance(value, (list, tuple, set)) and not value:
+            continue
+        if isinstance(value, dict) and not value:
+            continue
+        cleaned[key] = value
+    return cleaned
+
+
 def _build_args_schema_for_connector_tool(
     tool_name: str,
     parameter_schema: Dict[str, Any],
@@ -1953,6 +1972,7 @@ def _create_connector_mcp_tools(
                         params = {}
                     merged_params = {**fp, **params}
                     merged_params.pop("user_id", None)
+                    merged_params = _sanitize_mcp_params_for_send(merged_params)
                     for filename_param in ("file_name", "file_names"):
                         if params.get(filename_param) in (None, "", []):
                             merged_params.pop(filename_param, None)

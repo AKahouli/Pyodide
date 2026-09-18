@@ -234,6 +234,48 @@ def test_connector_tool_does_not_inject_workspace_id_for_strict_schema(
     assert captured["params"] == {"query": "revenue"}
 
 
+def test_connector_tool_strips_nullish_optional_parameters_before_mcp_call(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured = {}
+
+    async def fake_call_mcp_tool(*args, **kwargs):
+        captured["params"] = args[4]
+        return {"text": "ok"}
+
+    monkeypatch.setattr("src.flow_engine.mcp.call_mcp_tool", fake_call_mcp_tool)
+
+    tool = _first_connector_tool(
+        {
+            "type": "object",
+            "properties": {
+                "query": {"type": "string"},
+                "query_type": {"type": "string", "enum": ["internal", "user"]},
+                "page_size": {"type": "integer"},
+                "data_source_url": {"type": "string"},
+                "teamspace_id": {"type": "string"},
+                "filters": {"type": "object"},
+                "sort": {"type": "string", "enum": ["relevance", "last_edited", "created"]},
+            },
+            "required": ["query"],
+        }
+    )
+
+    asyncio.run(
+        tool.func(
+            query="Emails",
+            query_type=None,
+            page_size=None,
+            data_source_url=None,
+            teamspace_id=None,
+            filters=None,
+            sort=None,
+        )
+    )
+
+    assert captured["params"] == {"query": "Emails"}
+
+
 def test_connector_tool_uses_serialized_parameter_schema_for_model_contract(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

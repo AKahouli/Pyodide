@@ -1054,6 +1054,14 @@ def create_connector_tools(
                     params.pop(LEGACY_DISPLAY_PURPOSE_KEY, None)
                 merged_params = {**_fixed_params, **params}
                 merged_params.pop("user_id", None)
+                merged_params = {
+                    key: value
+                    for key, value in merged_params.items()
+                    if value is not None
+                    and not (isinstance(value, str) and not value.strip())
+                    and not (isinstance(value, (list, tuple, set)) and not value)
+                    and not (isinstance(value, dict) and not value)
+                }
                 # Edit-on-card: the owner's approval may carry edited fields as
                 # the ToolConfirmation payload; apply them over the drafted args
                 # so the SENT message is the edited one. Only keys the action's
