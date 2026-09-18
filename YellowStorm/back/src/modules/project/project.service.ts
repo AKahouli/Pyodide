@@ -3,7 +3,7 @@ import {
   CONVERSATION_STORE,
   type ConversationStore,
 } from '../conversation/persistence/conversation-store';
-import { PROJECT_STORE, type ProjectRecord, type ProjectStore } from './persistence/project-store';
+import { PROJECT_STORE, type ProjectPatch, type ProjectRecord, type ProjectStore } from './persistence/project-store';
 import { ProjectShareService } from './project-share.service';
 import { CreateProjectDto } from './dto/create-project.dto';
 import { UpdateProjectDto } from './dto/update-project.dto';
@@ -74,6 +74,7 @@ export class ProjectService {
       throw new ForbiddenException(ErrorCode.PROJECT_FORBIDDEN);
     }
 
+    const patch: ProjectPatch = {};
     if (dto.name !== undefined) {
       const name = dto.name.trim();
       if (name !== project.name) {
@@ -81,12 +82,11 @@ export class ProjectService {
         if (duplicate) {
           throw new ConflictException(ErrorCode.PROJECT_ALREADY_EXISTS);
         }
+        patch.name = name;
       }
     }
 
-    const updated = await this.projectStore.updateById(projectId, {
-      ...(dto.name !== undefined ? { name: dto.name.trim() } : {}),
-    });
+    const updated = Object.keys(patch).length > 0 ? await this.projectStore.updateById(projectId, patch) : project;
     if (!updated) {
       throw new NotFoundException(ErrorCode.PROJECT_NOT_FOUND);
     }
@@ -110,7 +110,7 @@ export class ProjectService {
       throw new ForbiddenException(ErrorCode.PROJECT_FORBIDDEN);
     }
 
-    const updated = await this.projectStore.updateById(projectId, { isPublic });
+    const updated = project.isPublic === isPublic ? project : await this.projectStore.updateById(projectId, { isPublic });
     if (!updated) {
       throw new NotFoundException(ErrorCode.PROJECT_NOT_FOUND);
     }
