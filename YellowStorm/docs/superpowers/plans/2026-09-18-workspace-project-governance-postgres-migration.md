@@ -192,7 +192,7 @@ Index set is 1:1 with `project.schema.ts` / `project-share.schema.ts`. `permissi
 - Contract tests pass against the A.3 fixtures.
 - Live smoke: create → rename → share (read, readwrite) → unshare → delete; `shareCount` correct; duplicate `(created_by, name)` rejected; conversations still resolve their project.
 - `npm run build` + `scripts/bootcheck-module-graph.ts` green.
-- **Rollback:** revert the module-binding commit. Mongo data untouched.
+- **Rollback:** revert the module-binding commit **and** run `scripts/migrate/2026-09-project-fk.ts --drop` — reverting the code alone leaves `fk_conversations_project` in place, and conversations for projects created in PG during the window would violate it. Rollback also loses projects/shares written only to PG and leaves Mongo `shareCount` stale for share ops that happened on PG (stored counter — reconcile from Mongo shares before re-flipping).
 
 ---
 

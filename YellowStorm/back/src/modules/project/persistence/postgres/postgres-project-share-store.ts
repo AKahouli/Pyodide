@@ -87,12 +87,12 @@ export class PostgresProjectShareStore implements ProjectShareStore {
   }
 
   async updatePermission(id: string, permission: 'read' | 'readwrite'): Promise<ProjectShareRecord | null> {
-    const [row] = await this.q
+    const rows = await this.q
       .update(schema.projectShares)
       .set({ permission, updatedAt: new Date() })
       .where(eq(schema.projectShares.id, id))
       .returning();
-    return row ? projectShareRowToRecord(row) : null;
+    return rows.length > 0 ? projectShareRowToRecord(rows[0]) : null;
   }
 
   async deleteById(id: string): Promise<void> {

@@ -1,5 +1,6 @@
 import { Inject, Injectable, forwardRef } from '@nestjs/common';
-import type { NodePgDatabase } from 'drizzle-orm/node-postgres';import { DRIZZLE_DB } from '@modules/postgres/postgres.constants';
+import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
+import { DRIZZLE_DB } from '@modules/postgres/postgres.constants';
 import * as schema from '@modules/postgres/schema';
 import { isObjectId } from '@common/postgres/object-id';
 import { withTransaction } from '@common/postgres/transaction';
@@ -36,8 +37,11 @@ type ShareEventType = 'project_shared' | 'project_share_revoked' | 'project_shar
 
 interface ShareIntent {
   user: UserSummary;
+  /** Existing share id in PG, or null when the user is not yet shared. */
+  shareId: string | null;
+  /** Permission requested for this user (last entry wins within a batch). */
   permission: ProjectPermission;
-  existingShareId?: string;
+  record: ProjectShareRecord | null;
 }
 
 @Injectable()
@@ -125,8 +129,11 @@ export class ProjectShareService {
 
     const notFound: string[] = [];
     const invalid: string[] = [];
-    // Resolve users first (Mongo reads); the writes + counter commit together below.
-    const intents: ShareIntent[] = [];
+    // Resolve users first (Mongo reads), tracking per-user state so duplicate
+    // emails in one batch behave like the old sequential loop: one share row,
+    // one write with the last requested permission, one response per entry.
+    const pending = new Map<string, ShareIntent>();
+    const entries: ShareIntent[] = [];
 
     for (const entry of data.shares) {
       const email = entry.email.toLowerCase().trim();
@@ -140,38 +147,56 @@ export class ProjectShareService {
         continue;
       }
       const summary = toSummary(user._id.toString(), user.email, user.profile);
-      const existingShare = await this.shareStore.findOneByProjectAndUser(projectId, summary.id);
-      intents.push({ user: summary, permission: entry.permission, existingShareId: existingShare?.id });
+      let intent = pending.get(summary.id);
+      if (!intent) {
+        const existingShare = await this.shareStore.findOneByProjectAndUser(projectId, summary.id);
+        intent = {
+          user: summary,
+          shareId: existingShare?.id ?? null,
+          permission: entry.permission,
+          record: existingShare,
+        };
+        pending.set(summary.id, intent);
+      }
+      intent.permission = entry.permission;
+      entries.push(intent);
     }
 
-    const shared: Array<{ record: ProjectShareRecord; user: UserSummary }> = [];
-    const createdEvents: Array<{ userId: string; shareId: string; permission: ProjectPermission }> = [];
-    const updatedEvents: Array<{ userId: string; shareId: string; permission: ProjectPermission }> = [];
+    const createdEvents: { userId: string; shareId: string; permission: ProjectPermission }[] = [];
+    const updatedEvents: { userId: string; shareId: string; permission: ProjectPermission }[] = [];
 
-    if (intents.length > 0) {
+    if (pending.size > 0) {
       await withTransaction(this.db, async () => {
-        for (const intent of intents) {
-          if (intent.existingShareId) {
-            const record = await this.shareStore.updatePermission(intent.existingShareId, intent.permission);
-            if (!record) continue;
-            shared.push({ record, user: intent.user });
-            updatedEvents.push({ userId: intent.user.id, shareId: record.id, permission: intent.permission });
+        for (const intent of pending.values()) {
+          if (intent.shareId && intent.record) {
+            // Only write + notify when the requested permission differs (old guard).
+            if (intent.record.permission !== intent.permission) {
+              const record = await this.shareStore.updatePermission(intent.shareId, intent.permission);
+              if (record) {
+                intent.record = record;
+                updatedEvents.push({ userId: intent.user.id, shareId: record.id, permission: intent.permission });
+              }
+            }
           } else {
-            const record = await this.shareStore.create({
+            intent.record = await this.shareStore.create({
               projectId,
               ownerId: project.createdBy,
               sharedWithUserId: intent.user.id,
               permission: intent.permission,
               sharedBy: ownerId,
             });
-            shared.push({ record, user: intent.user });
-            createdEvents.push({ userId: intent.user.id, shareId: record.id, permission: intent.permission });
+            createdEvents.push({ userId: intent.user.id, shareId: intent.record.id, permission: intent.permission });
           }
         }
         if (createdEvents.length > 0) {
           await this.projectStore.incrementShareCount(projectId, createdEvents.length);
         }
       });
+    }
+
+    const shared: { record: ProjectShareRecord; user: UserSummary }[] = [];
+    for (const intent of entries) {
+      if (intent.record) shared.push({ record: intent.record, user: intent.user });
     }
 
     for (const event of createdEvents) {
@@ -223,7 +248,7 @@ export class ProjectShareService {
     permission: ProjectPermission,
   ): Promise<IProjectShareResponse> {
     const share = await this.shareStore.findById(shareId);
-    if (!share || share.projectId !== projectId) {
+    if (share?.projectId !== projectId) {
       throw new NotFoundException(ErrorCode.PROJECT_SHARE_NOT_FOUND, 'Share not found');
     }
 
@@ -260,7 +285,7 @@ export class ProjectShareService {
   /** Revoke a share. Caller has verified project ownership. */
   async revoke(projectId: string, shareId: string): Promise<void> {
     const share = await this.shareStore.findById(shareId);
-    if (!share || share.projectId !== projectId) {
+    if (share?.projectId !== projectId) {
       throw new NotFoundException(ErrorCode.PROJECT_SHARE_NOT_FOUND, 'Share not found');
     }
 
@@ -313,8 +338,10 @@ export class ProjectShareService {
         owner: {
           id: owner?.id ?? share.sharedBy,
           email: owner?.email ?? '',
-          firstName: owner?.firstName || undefined,
-          lastName: owner?.lastName || undefined,
+          // eslint-disable-next-line @typescript-eslint/prefer-nullish-coalescing -- '' names must stay absent in JSON; ?? would emit ""
+          firstName: owner?.firstName ? owner.firstName : undefined,
+          // eslint-disable-next-line @typescript-eslint/prefer-nullish-coalescing -- '' names must stay absent in JSON; ?? would emit ""
+          lastName: owner?.lastName ? owner.lastName : undefined,
         },
         permission: share.permission,
         shareId: share.id,
@@ -408,8 +435,10 @@ export class ProjectShareService {
       user: {
         id: user?.id ?? share.sharedWithUserId,
         email: user?.email ?? '',
-        firstName: user?.firstName || undefined,
-        lastName: user?.lastName || undefined,
+        // eslint-disable-next-line @typescript-eslint/prefer-nullish-coalescing -- '' names must stay absent in JSON; ?? would emit ""
+        firstName: user?.firstName ? user.firstName : undefined,
+        // eslint-disable-next-line @typescript-eslint/prefer-nullish-coalescing -- '' names must stay absent in JSON; ?? would emit ""
+        lastName: user?.lastName ? user.lastName : undefined,
       },
       permission: share.permission,
       sharedBy: share.sharedBy,

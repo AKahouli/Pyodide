@@ -182,6 +182,39 @@ describe('ProjectShareService', () => {
     expect(result.shared).toHaveLength(1);
   });
 
+  it('re-sharing at the current permission neither writes nor notifies', async () => {
+    const { service, shareStore, projectStore, notificationsService } = createService({
+      shareStore: {
+        findOneByProjectAndUser: jest.fn().mockResolvedValue(shareRecord()),
+      },
+    });
+
+    const result = await service.share(PROJECT_ID, OWNER_ID, shareDto);
+
+    expect(shareStore.updatePermission).not.toHaveBeenCalled();
+    expect(shareStore.create).not.toHaveBeenCalled();
+    expect(projectStore.incrementShareCount).not.toHaveBeenCalled();
+    expect(notificationsService.sendToUser).not.toHaveBeenCalled();
+    expect(result.shared).toHaveLength(1);
+    expect(result.shared[0].updatedAt).toBe(now.toISOString());
+  });
+
+  it('keeps duplicate emails in one batch to a single share row', async () => {
+    const { service, shareStore, projectStore } = createService();
+
+    const result = await service.share(PROJECT_ID, OWNER_ID, {
+      shares: [
+        { email: 'member@example.com', permission: 'read' },
+        { email: 'member@example.com', permission: 'read' },
+      ],
+    });
+
+    expect(shareStore.create).toHaveBeenCalledTimes(1);
+    expect(projectStore.incrementShareCount).toHaveBeenCalledWith(PROJECT_ID, 1);
+    expect(result.shared).toHaveLength(2);
+    expect(result.shared[0].id).toBe(result.shared[1].id);
+  });
+
   it('rejects sharing when the project is missing, foreign, or public', async () => {
     const missing = createService({ project: null });
     await expect(missing.service.share(PROJECT_ID, OWNER_ID, shareDto)).rejects.toMatchObject({

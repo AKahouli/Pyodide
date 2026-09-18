@@ -6,7 +6,7 @@ import { PostgresProjectStore } from './postgres-project-store';
 import { PostgresProjectShareStore } from './postgres-project-share-store';
 
 describeIntegration('project PG stores', () => {
-  const { db, pool, close } = makeTestDb();
+  const { db, close } = makeTestDb();
   const projectStore = new PostgresProjectStore(db as never);
   const shareStore = new PostgresProjectShareStore(db as never);
 

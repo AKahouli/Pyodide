@@ -3,7 +3,11 @@
  * project.projects as NOT VALID, report orphaned references, and VALIDATE only
  * when none remain. Idempotent.
  *
- * Usage: npx ts-node back/scripts/migrate/2026-09-project-fk.ts
+ * Part of the module-binding rollback procedure: run with --drop to remove the
+ * constraint (projects created in PG after the flip cannot exist in Mongo, so
+ * new conversations would violate the FK).
+ *
+ * Usage: npx ts-node back/scripts/migrate/2026-09-project-fk.ts [--drop]
  */
 import * as dotenv from 'dotenv';
 import * as path from 'path';
@@ -12,6 +16,7 @@ import { Pool } from 'pg';
 dotenv.config({ path: path.resolve(__dirname, '..', '..', '.env') });
 
 async function main(): Promise<void> {
+  const drop = process.argv.includes('--drop');
   const pool = new Pool({
     host: process.env.POSTGRES_HOST,
     port: Number(process.env.POSTGRES_PORT || '5432'),
@@ -20,6 +25,13 @@ async function main(): Promise<void> {
     database: process.env.POSTGRES_DB,
     max: 1,
   });
+
+  if (drop) {
+    await pool.query(`ALTER TABLE conversation.conversations DROP CONSTRAINT IF EXISTS fk_conversations_project`);
+    console.log('constraint fk_conversations_project dropped');
+    await pool.end();
+    return;
+  }
 
   const existing = await pool.query(
     `SELECT 1 FROM pg_constraint WHERE conname = 'fk_conversations_project'`,

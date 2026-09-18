@@ -61,12 +61,14 @@ export class PostgresProjectStore implements ProjectStore {
   }
 
   async updateById(id: string, patch: ProjectPatch): Promise<ProjectRecord | null> {
-    const [row] = await this.q
+    // No-op patch keeps updatedAt untouched (Mongoose save() parity).
+    if (Object.keys(patch).length === 0) return this.findById(id);
+    const rows = await this.q
       .update(schema.projects)
       .set({ ...patch, updatedAt: new Date() })
       .where(eq(schema.projects.id, id))
       .returning();
-    return row ? projectRowToRecord(row) : null;
+    return rows.length > 0 ? projectRowToRecord(rows[0]) : null;
   }
 
   async deleteById(id: string): Promise<void> {
