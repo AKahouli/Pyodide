@@ -116,7 +116,33 @@ export class LogicalSearchEvaluationService implements OnModuleInit {
     private readonly config: ConfigService,
     private readonly executionService: PlaybookFlowExecutionService,
     private readonly agentService: AgentService,
-  ) {}
+  ) {
+    const configuredBatchSize = Number(this.config.get<string>('EVAL_BATCH_SIZE', '2'));
+    this.evalBatchSize = Number.isFinite(configuredBatchSize) && configuredBatchSize > 0
+      ? Math.floor(configuredBatchSize)
+      : 2;
+  }
+
+  // Targets run in parallel batches; judge submissions share the same cap.
+  private readonly evalBatchSize: number;
+
+  private boundedConcurrency<T>(limit: number): <R>(task: () => Promise<R>) => Promise<R> {
+    let active = 0;
+    const queue: Array<() => void> = [];
+    return async <R>(task: () => Promise<R>): Promise<R> => {
+      if (active >= limit) {
+        await new Promise<void>((resolve) => queue.push(resolve));
+      }
+      active++;
+      try {
+        return await task();
+      } finally {
+        active--;
+        const next = queue.shift();
+        if (next) next();
+      }
+    };
+  }
 
   async uploadAndParse(
     ownerId: string,
@@ -532,94 +558,160 @@ export class LogicalSearchEvaluationService implements OnModuleInit {
     let stopped = false;
 
     try {
+      // Rebuild results indexed by query order, keeping any resumed entries.
+      const queryIndexById = new Map(queries.map((q, i) => [q.query_id, i]));
+      const resultsByIndex: (EvaluationQueryResult | null)[] = new Array(queries.length).fill(null);
+      for (const res of results) {
+        const idx = queryIndexById.get(res.query_id);
+        if (idx !== undefined) resultsByIndex[idx] = res;
+      }
+
+      const pending: { index: number; benchmarkQuery: BenchmarkQuery }[] = [];
       for (let i = 0; i < queries.length; i++) {
+        if (!doneQueryIds.has(queries[i].query_id)) {
+          pending.push({ index: i, benchmarkQuery: queries[i] });
+        }
+      }
+
+      // Serialized per-completed-answer persistence: queries finish in parallel,
+      // so file/DB writes are chained to stay ordered and corruption-free.
+      let fileWriteChain: Promise<void> = Promise.resolve();
+      const persist = (completed: { index: number; queryId: string; queryText: string }): void => {
+        fileWriteChain = fileWriteChain.then(async () => {
+          const snapshotResults = resultsByIndex.filter((r): r is EvaluationQueryResult => r !== null);
+          await writeFile(join(runDir, 'results.json.tmp'), JSON.stringify(snapshotResults, null, 2), 'utf-8');
+          await rename(join(runDir, 'results.json.tmp'), join(runDir, 'results.json'));
+          await writeFile(join(runDir, 'summary.json'), JSON.stringify(buildSummary(snapshotResults), null, 2), 'utf-8');
+          await this.writeProgress(runDir, {
+            done: snapshotResults.length,
+            total: queries.length,
+            currentIndex: completed.index,
+            currentQueryId: completed.queryId,
+            currentQuery: completed.queryText,
+            startedAt: runStartedAt,
+            updatedAt: new Date().toISOString(),
+          });
+          await this.repository.applyRunProgress(evaluationId);
+        }).catch((writeError) => {
+          this.logger.warn(
+            `[${completed.queryId}] failed to persist run output: ${writeError instanceof Error ? writeError.message : String(writeError)}`,
+          );
+        });
+      };
+
+      // 1) eval-target per batch in parallel; 2) eval-judge submitted the moment
+      // its target completes, with concurrency capped at the same batch size.
+      for (let offset = 0; offset < pending.length; offset += this.evalBatchSize) {
         if (this.activeRuns.get(evaluationId) === true) {
           stopped = true;
           break;
         }
-        const benchmarkQuery = queries[i];
-        const queryId = benchmarkQuery.query_id;
-        if (doneQueryIds.has(queryId)) continue;
-        const queryText = benchmarkQuery.query;
+        const batch = pending.slice(offset, offset + this.evalBatchSize);
+        const runInBackground = this.boundedConcurrency(this.evalBatchSize);
 
-        await this.writeProgress(runDir, {
-          done: results.length,
-          total: queries.length,
-          currentIndex: i,
-          currentQueryId: queryId,
-          currentQuery: queryText,
-          startedAt: runStartedAt,
-          updatedAt: new Date().toISOString(),
-        });
-        await this.repository.applyRunProgress(evaluationId);
+        await Promise.all(batch.map(async ({ index, benchmarkQuery }) => {
+          const queryId = benchmarkQuery.query_id;
+          const queryText = benchmarkQuery.query;
+          const startedAt = Date.now();
 
-        const payload = JSON.parse(JSON.stringify(template)) as Record<string, unknown>;
-        payload.execution_id = `eval-${evaluationId}-${queryId}`;
-        payload.seeded_task_outputs = [];
-        setDeepPath(payload, queryPath, queryText);
-        for (const path of additionalQueryPaths) {
-          // expected_answer must carry the benchmark answer, not the question.
-          if (Array.isArray(path) && path.join('.') === 'input_context.expected_answer') {
-            setDeepPath(payload, path, benchmarkQuery.answer ?? '');
-          } else {
-            setDeepPath(payload, path, queryText);
+          const payload = JSON.parse(JSON.stringify(template)) as Record<string, unknown>;
+          payload.execution_id = `eval-${evaluationId}-${queryId}`;
+          payload.seeded_task_outputs = [];
+          setDeepPath(payload, queryPath, queryText);
+          for (const path of additionalQueryPaths) {
+            // expected_answer must carry the benchmark answer, not the question.
+            if (Array.isArray(path) && path.join('.') === 'input_context.expected_answer') {
+              setDeepPath(payload, path, benchmarkQuery.answer ?? '');
+            } else {
+              setDeepPath(payload, path, queryText);
+            }
           }
-        }
-        const snapshot = (payload.snapshot ?? {}) as Record<string, unknown>;
+          const snapshot = (payload.snapshot ?? {}) as Record<string, unknown>;
+          const inputContext = { query: queryText, expected_answer: benchmarkQuery.answer ?? '' };
 
-        const startedAt = Date.now();
-        try {
-          const runResult = await this.executionService.runEvaluationQuery({
-            executionId: `eval-${evaluationId}-${queryId}`,
-            flowId: template.flow_id,
-            ownerId,
-            snapshot,
-            inputContext: { query: queryText, expected_answer: benchmarkQuery.answer ?? '' },
-            answerNodeId: 'eval-judge', // answer_node_id is eval-judge in new architecture
-          });
+          try {
+            const targetRun = await this.executionService.runEvaluationTarget({
+              executionId: `eval-${evaluationId}-${queryId}-target`,
+              flowId: template.flow_id,
+              ownerId,
+              snapshot,
+              inputContext,
+            });
+            if (targetRun.status !== 'completed') {
+              resultsByIndex[index] = buildQueryResult({
+                queryId,
+                query: queryText,
+                expectedAnswer: benchmarkQuery.answer ?? '',
+                requiredFile: benchmarkQuery.required_file ?? null,
+                page: benchmarkQuery.page ?? null,
+                generatedAnswer: targetRun.targetAnswer,
+                status: targetRun.status,
+                durationMs: targetRun.durationMs,
+                targetDurationMs: targetRun.durationMs,
+                error: targetRun.error,
+                toolCalls: targetRun.toolCalls,
+              });
+              this.logger.log(`[${queryId}] ${targetRun.status} (target failed; judge skipped)`);
+              persist({ index, queryId, queryText });
+              return;
+            }
 
-          const targetAnswer = runResult.targetAnswer ?? runResult.generatedAnswer;
-          const judgeScore = runResult.judgeScore;
-          const judgeFaithfulnessScore = runResult.judgeFaithfulnessScore;
-          const judgeReasoning = runResult.judgeReasoning;
+            const retrievedContext = targetRun.toolCalls.find((t) => t.nodeId === 'eval-target')?.trace ?? [];
+            const judgeRun = await runInBackground(async () => this.executionService.runEvaluationJudge({
+              executionId: `eval-${evaluationId}-${queryId}-judge`,
+              flowId: template.flow_id,
+              ownerId,
+              snapshot,
+              inputContext,
+              targetAnswer: targetRun.targetAnswer,
+              retrievedContext,
+            }));
 
-          results.push(buildQueryResult({
-            queryId,
-            query: queryText,
-            expectedAnswer: benchmarkQuery.answer ?? '',
-            requiredFile: benchmarkQuery.required_file ?? null,
-            page: benchmarkQuery.page ?? null,
-            generatedAnswer: targetAnswer,
-            status: runResult.status,
-            durationMs: runResult.durationMs,
-            error: runResult.error,
-            toolCalls: runResult.toolCalls,
-            judgeScore,
-            judgeFaithfulnessScore,
-            judgeReasoning,
-          }));
-          this.logger.log(`[${queryId}] ${runResult.status} in ${String(runResult.durationMs)}ms${judgeScore !== undefined ? ` | judge: ${judgeScore}` : ''}`);
-        } catch (error) {
-          const message = error instanceof Error ? error.message : String(error);
-          const durationMs = Date.now() - startedAt;
-          results.push(buildQueryResult({
-            queryId,
-            query: queryText,
-            expectedAnswer: benchmarkQuery.answer ?? '',
-            requiredFile: benchmarkQuery.required_file ?? null,
-            page: benchmarkQuery.page ?? null,
-            generatedAnswer: '',
-            status: 'failed',
-            durationMs,
-            error: message,
-            toolCalls: [],
-          }));
-          this.logger.warn(`[${queryId}] failed: ${message}`);
-        }
-
-        await writeFile(join(runDir, 'results.json'), JSON.stringify(results, null, 2), 'utf-8');
-        await writeFile(join(runDir, 'summary.json'), JSON.stringify(buildSummary(results), null, 2), 'utf-8');
+            const judgeStatus = judgeRun.status === 'completed' ? 'completed' : 'failed';
+            resultsByIndex[index] = buildQueryResult({
+              queryId,
+              query: queryText,
+              expectedAnswer: benchmarkQuery.answer ?? '',
+              requiredFile: benchmarkQuery.required_file ?? null,
+              page: benchmarkQuery.page ?? null,
+              generatedAnswer: targetRun.targetAnswer,
+              status: judgeStatus,
+              durationMs: targetRun.durationMs + judgeRun.durationMs,
+              targetDurationMs: targetRun.durationMs,
+              judgeDurationMs: judgeRun.durationMs,
+              error: judgeRun.error ?? targetRun.error,
+              toolCalls: targetRun.toolCalls,
+              judgeScore: judgeRun.judgeScore,
+              judgeFaithfulnessScore: judgeRun.judgeFaithfulnessScore,
+              judgeReasoning: judgeRun.judgeReasoning,
+            });
+            const totalMs = targetRun.durationMs + judgeRun.durationMs;
+            this.logger.log(`[${queryId}] ${judgeStatus} in ${String(totalMs)}ms${judgeRun.judgeScore !== undefined ? ` | judge: ${judgeRun.judgeScore}` : ''}`);
+            persist({ index, queryId, queryText });
+          } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            const durationMs = Date.now() - startedAt;
+            resultsByIndex[index] = buildQueryResult({
+              queryId,
+              query: queryText,
+              expectedAnswer: benchmarkQuery.answer ?? '',
+              requiredFile: benchmarkQuery.required_file ?? null,
+              page: benchmarkQuery.page ?? null,
+              generatedAnswer: '',
+              status: 'failed',
+              durationMs,
+              error: message,
+              toolCalls: [],
+            });
+            this.logger.warn(`[${queryId}] failed: ${message}`);
+            persist({ index, queryId, queryText });
+          }
+        }));
       }
+
+      // Ensure every queued per-answer write is flushed before finalizing.
+      await fileWriteChain;
+      results = resultsByIndex.filter((r): r is EvaluationQueryResult => r !== null);
 
       await this.writeProgress(runDir, {
         done: queries.length,
@@ -744,7 +836,7 @@ export class LogicalSearchEvaluationService implements OnModuleInit {
       'Retrieval Exact Match', 'Answer Recall', 'Answer Precision', 'Answer F1',
       'Semantic Similarity', 'Fact Recall', 'Fact Precision', 'Answer Quality',
       'Answer Exact Match', 'Judge Score', 'Judge Faithfulness', 'Judge Reasoning',
-      'Status', 'Duration (ms)', 'Error',
+      'Status', 'Duration (ms)', 'Target Duration (ms)', 'Judge Duration (ms)', 'Error',
     ] as const;
 
     const detailsSheetData = results.map((r) => {
@@ -778,6 +870,8 @@ export class LogicalSearchEvaluationService implements OnModuleInit {
         'Judge Reasoning': r.judge_reasoning ?? '',
         'Status': r.status,
         'Duration (ms)': r.duration_ms,
+        'Target Duration (ms)': r.target_duration_ms ?? '',
+        'Judge Duration (ms)': r.judge_duration_ms ?? '',
         'Error': r.error ?? '',
       };
     });

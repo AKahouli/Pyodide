@@ -702,6 +702,8 @@ export interface EvaluationQueryResult {
   generated_answer: string;
   status: string;
   duration_ms: number;
+  target_duration_ms?: number;
+  judge_duration_ms?: number;
   error?: string | null;
   metrics: Metrics;
   retrieved_files: string[];
@@ -721,6 +723,8 @@ export function buildQueryResult(input: {
   generatedAnswer: string;
   status: string;
   durationMs: number;
+  targetDurationMs?: number;
+  judgeDurationMs?: number;
   error?: string | null;
   toolCalls: { nodeId: string; iteration: number; trace: unknown[] }[];
   judgeScore?: number;
@@ -749,6 +753,8 @@ export function buildQueryResult(input: {
     generated_answer: input.generatedAnswer,
     status: input.status,
     duration_ms: input.durationMs,
+    target_duration_ms: input.targetDurationMs,
+    judge_duration_ms: input.judgeDurationMs,
     error: input.error,
     metrics: { retrieval, answer },
     retrieved_files: retrieval.retrieved_files,

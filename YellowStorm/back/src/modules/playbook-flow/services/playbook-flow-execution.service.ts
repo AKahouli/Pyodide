@@ -95,6 +95,37 @@ export interface EvaluationQueryRunResult {
   judgeFaithfulnessScore?: number;  // score 0-1 du LLM Judge (faithfulness)
   judgeReasoning?: string;          // justification du LLM Judge
   toolCalls: Array<{ nodeId: string; iteration: number; trace: unknown[] }>;
+  targetDurationMs?: number;        // durée de l'étape 1 (eval-target)
+  judgeDurationMs?: number;         // durée de l'étape 2 (eval-judge)
+  durationMs: number;               // somme des deux étapes
+  error: string | null;
+}
+
+export interface EvaluationTargetRunResult {
+  status: 'completed' | 'failed';
+  targetAnswer: string;
+  toolCalls: Array<{ nodeId: string; iteration: number; trace: unknown[] }>;
+  durationMs: number;
+  error: string | null;
+}
+
+export interface EvaluationJudgeRunResult {
+  status: 'completed' | 'failed';
+  judgeScore?: number;
+  judgeFaithfulnessScore?: number;
+  judgeReasoning?: string;
+  toolCalls: Array<{ nodeId: string; iteration: number; trace: unknown[] }>;
+  durationMs: number;
+  error: string | null;
+}
+
+interface EvaluationStreamResult {
+  status: 'completed' | 'failed';
+  targetAnswer: string;
+  judgeScore?: number;
+  judgeFaithfulnessScore?: number;
+  judgeReasoning?: string;
+  toolCalls: Array<{ nodeId: string; iteration: number; trace: unknown[] }>;
   durationMs: number;
   error: string | null;
 }
@@ -1787,14 +1818,123 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
     inputContext: Record<string, unknown>;
     answerNodeId?: string;
   }): Promise<EvaluationQueryRunResult> {
-    const { executionId, flowId, ownerId, snapshot, inputContext, answerNodeId } = input;
+    const { executionId, flowId, ownerId, snapshot, inputContext } = input;
+    const target = await this.runEvaluationTarget({ executionId, flowId, ownerId, snapshot, inputContext });
+    if (target.status !== 'completed') {
+      return {
+        status: target.status,
+        generatedAnswer: target.targetAnswer,
+        targetAnswer: target.targetAnswer,
+        toolCalls: target.toolCalls,
+        targetDurationMs: target.durationMs,
+        judgeDurationMs: 0,
+        durationMs: target.durationMs,
+        error: target.error,
+      };
+    }
+
+    // Step 2: judge consumes step-1's answer + tool trace instead of the old binding
+    const retrievedContext = target.toolCalls.find((t) => t.nodeId === 'eval-target')?.trace ?? [];
+    const judge = await this.runEvaluationJudge({
+      executionId,
+      flowId,
+      ownerId,
+      snapshot,
+      inputContext,
+      targetAnswer: target.targetAnswer,
+      retrievedContext,
+    });
+
+    return {
+      status: judge.status === 'completed' ? 'completed' : 'failed',
+      generatedAnswer: target.targetAnswer,
+      targetAnswer: target.targetAnswer,
+      judgeScore: judge.judgeScore,
+      judgeFaithfulnessScore: judge.judgeFaithfulnessScore,
+      judgeReasoning: judge.judgeReasoning,
+      toolCalls: target.toolCalls,
+      targetDurationMs: target.durationMs,
+      judgeDurationMs: judge.durationMs,
+      durationMs: target.durationMs + judge.durationMs,
+      error: judge.error ?? target.error,
+    };
+  }
+
+  async runEvaluationTarget(input: {
+    executionId: string;
+    flowId: string;
+    ownerId: string;
+    snapshot: Record<string, unknown>;
+    inputContext: Record<string, unknown>;
+    timeoutMs?: number;
+  }): Promise<EvaluationTargetRunResult> {
+    const request = await this.buildEvaluationGrpcRequest({
+      ...input,
+      nodeIds: ['eval-target'],
+    });
+    const result = await this.collectEvaluationStream(request, {
+      captureTarget: true,
+      timeoutMs: input.timeoutMs,
+    });
+    return {
+      status: result.status,
+      targetAnswer: result.targetAnswer,
+      toolCalls: result.toolCalls,
+      durationMs: result.durationMs,
+      error: result.error,
+    };
+  }
+
+  async runEvaluationJudge(input: {
+    executionId: string;
+    flowId: string;
+    ownerId: string;
+    snapshot: Record<string, unknown>;
+    inputContext: Record<string, unknown>;
+    targetAnswer: string;
+    retrievedContext: unknown[];
+    timeoutMs?: number;
+  }): Promise<EvaluationJudgeRunResult> {
+    const request = await this.buildEvaluationGrpcRequest({
+      ...input,
+      nodeIds: ['eval-judge'],
+      extraInputContext: {
+        target_answer: input.targetAnswer,
+        retrieved_context: input.retrievedContext,
+      },
+    });
+    const result = await this.collectEvaluationStream(request, {
+      captureJudge: true,
+      timeoutMs: input.timeoutMs,
+    });
+    return {
+      status: result.status,
+      judgeScore: result.judgeScore,
+      judgeFaithfulnessScore: result.judgeFaithfulnessScore,
+      judgeReasoning: result.judgeReasoning,
+      toolCalls: result.toolCalls,
+      durationMs: result.durationMs,
+      error: result.error,
+    };
+  }
+
+  private async buildEvaluationGrpcRequest(input: {
+    executionId: string;
+    flowId: string;
+    ownerId: string;
+    snapshot: Record<string, unknown>;
+    inputContext: Record<string, unknown>;
+    nodeIds: string[];
+    extraInputContext?: Record<string, unknown>;
+  }): Promise<Record<string, unknown>> {
+    const { executionId, flowId, ownerId, snapshot, inputContext, nodeIds } = input;
     const normalizedOwnerId = String(ownerId);
-    const nodes = Array.isArray(snapshot.nodes) ? (snapshot.nodes as any[]) : [];
+    const allNodes = Array.isArray(snapshot.nodes) ? (snapshot.nodes as any[]) : [];
+    const nodes = allNodes.filter((n) => nodeIds.includes(n.id));
     const recursionLimit = Number((snapshot.settings as Record<string, unknown>)?.recursionLimit) || 25;
     const maxParallelism = Number((snapshot.settings as Record<string, unknown>)?.maxParallelism) || 5;
-    const startedAt = Date.now();
 
-    // Resolve agents
+    // Resolve agents present in the selected nodes only
     const agentIds = new Set<string>();
     for (const node of nodes) {
       const assignedAgentId = node.metadata?.assignedAgentId;
@@ -1854,18 +1994,24 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
       : {};
     const runtimeInputContext = this.buildRuntimeInputContext({
       ...inputContext,
+      ...input.extraInputContext,
       __playbook_workspace_ids: workspaceIds,
       __playbook_default_workspace_id: defaultWorkspaceId,
       __playbook_workspace_paths: workspacePathsById,
       __playbook_default_workspace_path: workspacePathsById[defaultWorkspaceId] || '',
     }, []);
 
-    const dataBindingsProto = await this.buildDataBindingsProto(
-      (snapshot.dataBindings as any[] || []),
-      workspacePathsById,
+    // Keep only edges/bindings whose nodes are all part of this step
+    const selectedNodes = new Set(nodeIds);
+    const controlEdges = ((snapshot.controlEdges as any[]) || []).filter(
+      (e) => selectedNodes.has(e.source) && selectedNodes.has(e.target),
     );
+    const dataBindings = ((snapshot.dataBindings as any[]) || []).filter(
+      (b) => !b.sourceNode || (selectedNodes.has(b.sourceNode) && selectedNodes.has(b.targetNode)),
+    );
+    const dataBindingsProto = await this.buildDataBindingsProto(dataBindings, workspacePathsById);
 
-    const request = {
+    return {
       execution_id: executionId,
       flow_id: flowId,
       owner_id: normalizedOwnerId,
@@ -1901,7 +2047,7 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
           metadata: toGrpcStruct(buildGrpcNodeMetadata(n, snapshot as Record<string, unknown>)),
           dynamic_reasoning: n.dynamicReasoning ? { enabled: n.dynamicReasoning.enabled === true } : undefined,
         })),
-        control_edges: ((snapshot.controlEdges as any[]) || []).map((e) => ({
+        control_edges: controlEdges.map((e) => ({
           id: e.id, kind: e.kind, source: e.source, target: e.target,
           router_label: e.routerLabel || '', priority: e.priority || 0,
           source_output_port_id: e.sourceOutputPortId || '', target_input_port_id: e.targetInputPortId || '',
@@ -1912,10 +2058,16 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
       input_context: toGrpcStruct(runtimeInputContext),
       settings: { recursion_limit: recursionLimit, max_parallelism: maxParallelism },
     };
+  }
 
-    // Stream consumption
+  private collectEvaluationStream(
+    request: Record<string, unknown>,
+    opts: { captureTarget?: boolean; captureJudge?: boolean; timeoutMs?: number },
+  ): Promise<EvaluationStreamResult> {
+    const startedAt = Date.now();
+    const timeoutMs = opts.timeoutMs ?? 600_000;
     const call = this.runRuntime(request);
-    return new Promise<EvaluationQueryRunResult>((resolve) => {
+    return new Promise<EvaluationStreamResult>((resolve) => {
       let targetAnswer = '';
       let judgeScore: number | undefined;
       let judgeFaithfulnessScore: number | undefined;
@@ -1924,12 +2076,11 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
       let status: 'completed' | 'failed' = 'failed';
       let error: string | null = null;
       let resolved = false;
-      const timeoutMs = 600_000;
       let timer: NodeJS.Timeout;
-      const finalize = () => { if (!resolved) { resolved = true; clearTimeout(timer); resolve({ status, generatedAnswer: targetAnswer, targetAnswer, judgeScore, judgeFaithfulnessScore, judgeReasoning, toolCalls: [...tracesByNode.values()], durationMs: Date.now() - startedAt, error }); } };
+      const finalize = () => { if (!resolved) { resolved = true; clearTimeout(timer); resolve({ status, targetAnswer, judgeScore, judgeFaithfulnessScore, judgeReasoning, toolCalls: [...tracesByNode.values()], durationMs: Date.now() - startedAt, error }); } };
       timer = setTimeout(() => {
         status = 'failed';
-        error = `Evaluation query timed out after ${String(timeoutMs / 1000)}s`;
+        error = `Evaluation step timed out after ${String(timeoutMs / 1000)}s`;
         call.cancel();
         finalize();
       }, timeoutMs);
@@ -1957,8 +2108,7 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
             }
           }
 
-          // Capture eval-target answer (first node in chain)
-          if (nodeId === 'eval-target' && (eventType === 'NodeCompleted' || eventType === 'OUTPUT' || eventType === 'ExecutionCompleted')) {
+          if (opts.captureTarget && nodeId === 'eval-target' && (eventType === 'NodeCompleted' || eventType === 'OUTPUT' || eventType === 'ExecutionCompleted')) {
             const nodeExecution = (payload.node_execution && typeof payload.node_execution === 'object') ? payload.node_execution as Record<string, unknown> : null;
             const outputs = nodeExecution?.outputs || payload.outputs || null;
             let candidate: unknown = null;
@@ -1977,8 +2127,7 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
             if (extracted) targetAnswer = extracted;
           }
 
-          // Capture eval-judge answer (second node - LLM Judge)
-          if (nodeId === 'eval-judge' && (eventType === 'NodeCompleted' || eventType === 'OUTPUT' || eventType === 'ExecutionCompleted')) {
+          if (opts.captureJudge && nodeId === 'eval-judge' && (eventType === 'NodeCompleted' || eventType === 'OUTPUT' || eventType === 'ExecutionCompleted')) {
             const nodeExecution = (payload.node_execution && typeof payload.node_execution === 'object') ? payload.node_execution as Record<string, unknown> : null;
             const outputs = nodeExecution?.outputs || payload.outputs || null;
             let candidate: unknown = null;
