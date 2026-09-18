@@ -72,6 +72,11 @@ export class ConversationV2DeployService {
       VITE_APP_BASE: this.resolveDeployAppBasePath(aiSessionId),
     };
 
+    const backendUrl = this.config.get<string>('app.backendUrl', '').replace(/\/$/, '');
+    if (backendUrl) {
+      productionEnv.VITE_YM_API_BASE_URL = `${backendUrl}/api/v1`;
+    }
+
     if (this.config.get<boolean>('appData.enabled', false) && this.appDataDeployment) {
       try {
         const env = await this.appDataDeployment.prepareProduction(aiSessionId, revisionId);

@@ -12,7 +12,7 @@
 <body>
   <iframe
     id="pv"
-    sandbox="allow-forms allow-modals allow-popups allow-presentation allow-same-origin allow-scripts"
+    sandbox="allow-forms allow-modals allow-popups allow-popups-to-escape-sandbox allow-presentation allow-same-origin allow-scripts"
   ></iframe>
   <script>
     (function () {
@@ -46,20 +46,33 @@
         } catch (e) { return false; }
       }
 
+      function isAiProxyUrl(url) {
+        try {
+          // Prefer API-shaped paths; accept root-relative /api/v1/... from the OpenAI SDK.
+          var path = String(url || '');
+          try {
+            path = new URL(url, window.location.href).pathname;
+          } catch (e) { /* keep string */ }
+          path = path.replace(/\/$/, '');
+          return path.indexOf('/chat/completions') !== -1 || /\/models(\/|$)/.test(path);
+        } catch (e) { return false; }
+      }
+
       window.addEventListener('message', function (e) {
         if (!e.data || typeof e.data !== 'object') return;
         var type = e.data.type;
-        if (type === 'ym-app-data-fetch') {
+        if (type === 'ym-app-data-fetch' || type === 'ym-ai-fetch') {
           // Accept only the preview iframe, or this wrapper's own fetch hook.
           var fromIframe =
             e.source === document.getElementById('pv').contentWindow && e.origin === previewOrigin;
           var fromSelf = e.source === window && e.origin === appOrigin;
           if (!fromIframe && !fromSelf) return;
           var url = typeof e.data.url === 'string' ? e.data.url : '';
-          if (!isAppDataUrl(url) || !appOpener) return;
+          if (type === 'ym-app-data-fetch' && (!isAppDataUrl(url) || !appOpener)) return;
+          if (type === 'ym-ai-fetch' && (!isAiProxyUrl(url) || !appOpener)) return;
           appOpener.postMessage(
             {
-              type: 'ym-app-data-fetch',
+              type: type,
               id: e.data.id,
               url: url,
               method: e.data.method,
@@ -70,7 +83,7 @@
           );
           return;
         }
-        if (type === 'ym-app-data-response') {
+        if (type === 'ym-app-data-response' || type === 'ym-ai-response') {
           // Only the opening YellowStorm tab replies; route to the preview
           // iframe using its own exact origin.
           if (e.origin !== appOrigin) return;

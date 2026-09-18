@@ -2,6 +2,8 @@ import { conversationV2Api } from '../api';
 import { appRuntimeEnabled } from '../features';
 import { useConversationV2Store } from '../store';
 import type { FilesTreeNode } from '../types';
+import { API_CONFIG } from '@/lib/api/config';
+import { getModels } from '@/modules/models/api';
 import { BrowserRuntimeClient } from './BrowserRuntimeClient';
 import { RevisionHydrator, type VfsFiles } from './RevisionHydrator';
 import { NodepodRuntimeAdapter, invalidateSession } from './NodepodRuntimeAdapter';
@@ -22,12 +24,18 @@ const LOG = '[BrowserRuntimeHost]';
 const MAX_RECONNECT_ATTEMPTS = 3;
 const RECONNECT_DELAY_MS = 2_000;
 const HIDDEN_IFRAME_LOAD_MS = 4_000;
+/** Catalog lookup can lag briefly after yellowappdata_provision. */
+const APP_DATA_ENV_REFRESH_ATTEMPTS = 5;
+const APP_DATA_ENV_REFRESH_DELAY_MS = 400;
+const INSPECTOR_ATTACH_POLL_MS = 250;
+const INSPECTOR_ATTACH_ATTEMPTS = 8;
 const HIDDEN_IFRAME_STYLE =
   'position:fixed;width:640px;height:480px;opacity:0;pointer-events:none;left:-10000px;top:0;border:0';
 const HIDDEN_IFRAME_SANDBOX =
-  'allow-forms allow-modals allow-popups allow-presentation allow-same-origin allow-scripts';
+  'allow-forms allow-modals allow-popups allow-popups-to-escape-sandbox allow-presentation allow-same-origin allow-scripts';
 
 let appDataFetchProxyInstalled = false;
+let aiFetchProxyInstalled = false;
 
 interface AppDataRelayPeer {
   source: WindowProxy;
@@ -83,6 +91,13 @@ export function setAppDataTicketFetcher(fetcher: AppDataTicketFetcher | null): v
   appDataTicketFetcher = fetcher;
 }
 
+type AiPreviewTicketFetcher = (force?: boolean) => Promise<string | null>;
+let aiPreviewTicketFetcher: AiPreviewTicketFetcher | null = null;
+
+export function setAiPreviewTicketFetcher(fetcher: AiPreviewTicketFetcher | null): void {
+  aiPreviewTicketFetcher = fetcher;
+}
+
 /** appDataId from a data-plane URL (`/v1/apps/{id}/…` or legacy gateway). */
 export function appDataIdFromUrl(url: string): string | null {
   try {
@@ -107,6 +122,82 @@ export function isAppDataPublicUrl(url: string): boolean {
     );
   } catch {
     return false;
+  }
+}
+
+/** Only AI Proxy chat/models paths under the YellowStorm API base. */
+export function isAiProxyUrl(url: string): boolean {
+  try {
+    const resolved = resolveAiProxyFetchUrlUnchecked(url);
+    if (!resolved) return false;
+    const parsed = new URL(resolved);
+    const path = parsed.pathname.replace(/\/$/, '') || '/';
+    return path.endsWith('/chat/completions') || /(?:^|\/)(?:api\/)?v1\/models(\/|$)/.test(path);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Absolutize a relayed AI URL against API_CONFIG.baseURL for the parent fetch.
+ * Root-relative `/api/v1/...` must resolve against the API **origin** only — joining
+ * against a base that already ends in `/api/v1` yields `/api/v1/api/v1/...`.
+ */
+export function resolveAiProxyFetchUrl(url: string): string | null {
+  const resolved = resolveAiProxyFetchUrlUnchecked(url);
+  if (!resolved) return null;
+  try {
+    const path = new URL(resolved).pathname.replace(/\/$/, '') || '/';
+    if (!path.endsWith('/chat/completions') && !/(?:^|\/)(?:api\/)?v1\/models(\/|$)/.test(path)) {
+      return null;
+    }
+    const base = API_CONFIG.baseURL.replace(/\/$/, '');
+    if (/^https?:\/\//i.test(base) && /^https?:\/\//i.test(url.trim())) {
+      if (new URL(resolved).origin !== new URL(base).origin) return null;
+    }
+    return resolved;
+  } catch {
+    return null;
+  }
+}
+
+function collapseDuplicateApiV1(pathname: string): string {
+  return pathname.replace(/(\/api\/v1)+/g, '/api/v1');
+}
+
+function resolveAiProxyFetchUrlUnchecked(url: string): string | null {
+  try {
+    const trimmed = (url || '').trim();
+    if (!trimmed) return null;
+    const base = API_CONFIG.baseURL.replace(/\/$/, '');
+    const baseIsHttp = /^https?:\/\//i.test(base);
+    const apiOrigin = baseIsHttp ? new URL(base).origin : 'http://localhost:3000';
+    const basePath = baseIsHttp
+      ? new URL(base).pathname.replace(/\/$/, '') || '/api/v1'
+      : '/api/v1';
+
+    let parsed: URL;
+    if (/^https?:\/\//i.test(trimmed)) {
+      parsed = new URL(trimmed);
+    } else if (trimmed.startsWith('/')) {
+      // `/api/v1/chat/completions` or `/chat/completions` — origin only
+      parsed = new URL(trimmed, `${apiOrigin}/`);
+    } else if (trimmed.startsWith('api/v1/') || trimmed.startsWith('v1/')) {
+      parsed = new URL(`/${trimmed}`, `${apiOrigin}/`);
+    } else {
+      // `chat/completions` / `models` — under the API base path
+      const joined = `${basePath}/${trimmed}`.replace(/\/{2,}/g, '/');
+      parsed = new URL(joined, `${apiOrigin}/`);
+    }
+
+    parsed.pathname = collapseDuplicateApiV1(parsed.pathname);
+    if (baseIsHttp && parsed.origin !== new URL(base).origin) {
+      // Absolute foreign URL
+      if (/^https?:\/\//i.test(trimmed)) return null;
+    }
+    return parsed.href;
+  } catch {
+    return null;
   }
 }
 
@@ -209,6 +300,164 @@ function installAppDataFetchProxyOnce(): void {
   });
 }
 
+function installAiFetchProxyOnce(): void {
+  if (aiFetchProxyInstalled || typeof window === 'undefined') return;
+  aiFetchProxyInstalled = true;
+
+  /** Headers safe for Nest CORS allowlist — OpenAI SDK adds x-stainless-* that break preflight. */
+  const AI_PROXY_FORWARD_HEADERS = new Set([
+    'content-type',
+    'accept',
+    'accept-language',
+  ]);
+
+  const normalizeForwardHeaders = (
+    raw: unknown,
+  ): Record<string, string> => {
+    const out: Record<string, string> = {};
+    const put = (key: string, value: string) => {
+      const lower = key.toLowerCase();
+      if (!AI_PROXY_FORWARD_HEADERS.has(lower)) return;
+      out[key] = value;
+    };
+    if (!raw) return out;
+    if (typeof Headers !== 'undefined' && raw instanceof Headers) {
+      raw.forEach((value, key) => put(key, value));
+      return out;
+    }
+    if (Array.isArray(raw)) {
+      for (const entry of raw) {
+        if (Array.isArray(entry) && entry.length >= 2) {
+          put(String(entry[0]), String(entry[1]));
+        }
+      }
+      return out;
+    }
+    if (typeof raw === 'object') {
+      for (const [key, value] of Object.entries(raw as Record<string, unknown>)) {
+        if (typeof value === 'string') put(key, value);
+      }
+    }
+    return out;
+  };
+
+  const handleProxyRequest = async (
+    data: Record<string, unknown>,
+    reply: (response: Record<string, unknown>) => void,
+  ) => {
+    const { id, method, headers, body } = data;
+    const url = typeof data.url === 'string' ? data.url : '';
+    if (typeof id !== 'string') return;
+    const absoluteUrl = resolveAiProxyFetchUrl(url);
+    if (!absoluteUrl) {
+      reply({
+        type: 'ym-ai-response',
+        id,
+        error: `AI proxy: URL not relayed (${url || 'missing'})`,
+      });
+      return;
+    }
+
+    // Preview AI is non-streaming through postMessage (full JSON body).
+    let requestBody = body as BodyInit | undefined;
+    if (typeof requestBody === 'string' && requestBody.length > 0) {
+      try {
+        const parsed = JSON.parse(requestBody) as Record<string, unknown>;
+        if (parsed.stream === true) {
+          parsed.stream = false;
+          requestBody = JSON.stringify(parsed);
+        }
+      } catch {
+        // leave body as-is
+      }
+    } else if (requestBody != null && typeof requestBody !== 'string') {
+      // Structured-clone may yield ArrayBuffer/Uint8Array from the SDK.
+      try {
+        if (requestBody instanceof Uint8Array) {
+          requestBody = new TextDecoder().decode(requestBody);
+        } else if (requestBody instanceof ArrayBuffer) {
+          requestBody = new TextDecoder().decode(requestBody);
+        }
+      } catch {
+        // leave as-is; fetch may still accept it
+      }
+    }
+
+    const attempt = async (ticket: string | null): Promise<Response> => {
+      const forwardHeaders = normalizeForwardHeaders(headers);
+      if (ticket) forwardHeaders.Authorization = `Bearer ${ticket}`;
+      if (requestBody != null && !forwardHeaders['Content-Type'] && !forwardHeaders['content-type']) {
+        forwardHeaders['Content-Type'] = 'application/json';
+      }
+      return fetch(absoluteUrl, {
+        method: (method as string) || 'GET',
+        headers: forwardHeaders,
+        body: requestBody,
+        credentials: 'omit',
+      });
+    };
+
+    try {
+      let ticket = aiPreviewTicketFetcher ? await aiPreviewTicketFetcher(false) : null;
+      if (!ticket) {
+        console.warn(LOG, 'AI proxy fetch without preview ticket', { url: absoluteUrl });
+      }
+      let res = await attempt(ticket);
+      if (res.status === 401 && aiPreviewTicketFetcher) {
+        const fresh = await aiPreviewTicketFetcher(true);
+        if (fresh) {
+          ticket = fresh;
+          res = await attempt(fresh);
+        }
+      }
+      const responseBody = await res.text();
+      const responseHeaders: Record<string, string> = {};
+      res.headers.forEach((v, k) => {
+        responseHeaders[k] = v;
+      });
+      reply({
+        type: 'ym-ai-response',
+        id,
+        status: res.status,
+        headers: responseHeaders,
+        body: responseBody,
+      });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      console.warn(LOG, 'AI proxy fetch failed', { url: absoluteUrl, error: message });
+      reply({
+        type: 'ym-ai-response',
+        id,
+        error:
+          message === 'Failed to fetch'
+            ? `AI proxy network error (Failed to fetch) for ${absoluteUrl}. Check backend is up and CORS allows this origin; OpenAI stainless headers are stripped by the relay.`
+            : message,
+      });
+    }
+  };
+
+  let lastUntrustedSenderWarn = 0;
+
+  window.addEventListener('message', (event: MessageEvent) => {
+    if (event.data?.type !== 'ym-ai-fetch') return;
+    const source = event.source as WindowProxy | null;
+    if (!source) return;
+    const origin = validateRelayOrigin(event.origin);
+    if (!origin || !isTrustedAppDataRelaySource(source, origin)) {
+      if (Date.now() - lastUntrustedSenderWarn > 5_000) {
+        lastUntrustedSenderWarn = Date.now();
+        console.warn(LOG, 'dropped ym-ai-fetch from an untrusted sender', {
+          origin: event.origin,
+        });
+      }
+      return;
+    }
+    void handleProxyRequest(event.data, (response) => {
+      source.postMessage(response, origin);
+    });
+  });
+}
+
 export type HostStateListener = (state: HostState) => void;
 
 export interface HostState {
@@ -244,20 +493,68 @@ export class BrowserRuntimeHost {
   private refreshPreviewInFlight: Promise<void> | null = null;
   /** Popup relay peers from "Open in New Tab", dropped on teardown. */
   private externalRelayPeers: WindowProxy[] = [];
+  /** Provision completed before host reached ready — restart once ready. */
+  private pendingAppDataRestart = false;
+  /** Active chat model id from platform catalog — injected as VITE_YM_AI_DEFAULT_MODEL. */
+  private defaultAiModelId: string | null = null;
 
+  /**
+   * Vite env for NodePod Dev Preview.
+   * Always sets `VITE_YM_APP_DATA_ENV=dev` so starter `isDevPreview()` /
+   * `ProtectedRoute` bypass works even before App Data is provisioned
+   * (AI-only apps). Full App Data URL/id/proxy are added once the catalog
+   * row is visible on the runtime ticket.
+   */
   private buildAppDataViteEnv(): Record<string, string> | undefined {
     const env = this.ticket?.appDataRuntimeEnv;
-    if (!env) return undefined;
+    const apiBaseUrl = API_CONFIG.baseURL.replace(/\/$/, '');
+    const aiEnv = {
+      ...(apiBaseUrl ? { VITE_YM_API_BASE_URL: apiBaseUrl, VITE_YM_AI_PROXY: 'true' } : {}),
+      ...(this.defaultAiModelId ? { VITE_YM_AI_DEFAULT_MODEL: this.defaultAiModelId } : {}),
+    };
+    // Dev Preview marker — required for ProtectedRoute bypass without prod auth.
+    const previewBase: Record<string, string> = {
+      VITE_YM_APP_DATA_ENV: 'dev',
+      ...aiEnv,
+    };
+    if (!env) {
+      return previewBase;
+    }
     return {
+      ...previewBase,
       VITE_YM_APP_DATA_URL: env.publicUrl,
       VITE_YM_APP_DATA_ID: env.appDataId,
-      VITE_YM_APP_DATA_ENV: env.environment,
+      VITE_YM_APP_DATA_ENV: env.environment || 'dev',
       VITE_YM_APP_DATA_PROXY: 'true',
     };
   }
 
+  /** Prefer platform isDefault, else first active chat model. Best-effort. */
+  private async ensureDefaultAiModelId(): Promise<void> {
+    if (this.defaultAiModelId) return;
+    try {
+      const { models } = await getModels();
+      const pick =
+        models.find((m) => m.isDefault && m.isActive)?.id
+        ?? models.find((m) => m.isActive)?.id
+        ?? models[0]?.id
+        ?? null;
+      if (pick) {
+        this.defaultAiModelId = pick;
+        console.log(LOG, 'default AI model', { model: pick });
+      }
+    } catch (err) {
+      console.warn(
+        LOG,
+        'default AI model lookup failed',
+        err instanceof Error ? err.message : String(err),
+      );
+    }
+  }
+
   private setupAppDataFetchProxy(): void {
     installAppDataFetchProxyOnce();
+    installAiFetchProxyOnce();
   }
 
   /**
@@ -288,6 +585,35 @@ export class BrowserRuntimeHost {
       console.warn(LOG, 'app-data ticket unavailable', err instanceof Error ? err.message : err);
     }
     return this.appDataTickets.get(appDataId)?.ticket ?? null;
+  }
+
+  /** Opaque AI preview ticket — parent memory only; never injected into Vite. */
+  private aiPreviewTicketCache: { ticket: string; at: number; expiresAt: number } | null = null;
+
+  private async acquireAiPreviewTicket(force = false): Promise<string | null> {
+    const now = Date.now();
+    const cached = this.aiPreviewTicketCache;
+    if (
+      !force
+      && cached
+      && now - cached.at < 9 * 60_000
+      && cached.expiresAt > now + 30_000
+    ) {
+      return cached.ticket;
+    }
+    if (!this.sessionId) return cached?.ticket ?? null;
+    try {
+      const res = await conversationV2Api.createAiPreviewTicket(this.sessionId);
+      this.aiPreviewTicketCache = {
+        ticket: res.ticket,
+        at: now,
+        expiresAt: Date.parse(res.expiresAt) || now + 600_000,
+      };
+      console.log(LOG, 'ai-preview ticket acquired', { workspaceId: res.workspaceId });
+    } catch (err) {
+      console.warn(LOG, 'ai-preview ticket unavailable', err instanceof Error ? err.message : err);
+    }
+    return this.aiPreviewTicketCache?.ticket ?? null;
   }
 
   /** Off-screen iframe so preview_inspect works when the user panel is closed. */
@@ -383,6 +709,9 @@ export class BrowserRuntimeHost {
     this._status = status;
     this._error = error ?? null;
     this.emit();
+    if (status === 'ready') {
+      this.flushPendingAppDataRestart();
+    }
   }
 
   /**
@@ -405,6 +734,7 @@ export class BrowserRuntimeHost {
     this.setupAppDataFetchProxy();
     // Owner data tickets for relayed preview App Data calls (refreshed on 401).
     setAppDataTicketFetcher((appDataId, force, env) => this.acquireAppDataTicket(appDataId, force, env));
+    setAiPreviewTicketFetcher((force) => this.acquireAiPreviewTicket(force));
 
     const cephPath = existingCephPath ?? null;
     const filesTree = (existingFilesTree as FilesTreeNode | null) ?? null;
@@ -439,6 +769,7 @@ export class BrowserRuntimeHost {
           this.ticket.appDataRuntimeEnv.environment,
         );
       }
+      void this.acquireAiPreviewTicket(false);
 
       // 3. Wire event handlers
       this.wireClientEvents();
@@ -537,6 +868,7 @@ export class BrowserRuntimeHost {
       if (this._destroyed) return;
 
       this.setStatus('starting');
+      await this.ensureDefaultAiModelId();
       await this.adapter.startDevServer(this.previewCtrl, () => this._destroyed, undefined, this.buildAppDataViteEnv());
       if (this._destroyed) return;
       this.syncPreviewRelayOrigins();
@@ -590,45 +922,99 @@ export class BrowserRuntimeHost {
         if (this._destroyed) return;
         this.client.emitToolProgress({ toolCallId, ...progress });
       },
-      ensurePreviewAttached: () => this.ensureHiddenPreviewIframe(),
+      ensurePreviewAttached: () => this.ensureHiddenPreviewIframe({ force: true }),
       openPreviewPanel: () => {
         useConversationV2Store.getState().setRightPanelView('preview');
       },
-      resolveAppDataViteEnv: () => this.refreshAppDataViteEnv(),
+      resolveAppDataViteEnv: () =>
+        this.refreshAppDataViteEnv({ retries: APP_DATA_ENV_REFRESH_ATTEMPTS }),
     };
   }
 
-  /** Re-issue runtime ticket metadata so VITE_YM_* reflects a newly provisioned App Data store. */
-  private async refreshAppDataViteEnv(): Promise<Record<string, string> | undefined> {
+  /**
+   * Re-issue runtime ticket metadata so VITE_YM_* reflects a newly provisioned
+   * App Data store. Retries briefly — catalog rows can lag behind provision.
+   */
+  private async refreshAppDataViteEnv(options?: {
+    retries?: number;
+    requireAppData?: boolean;
+  }): Promise<Record<string, string> | undefined> {
+    const retries = Math.max(1, options?.retries ?? 1);
+    const requireAppData = options?.requireAppData === true;
+
     if (this.sessionId && appRuntimeEnabled) {
-      try {
-        const fresh = await conversationV2Api.createRuntimeTicket(this.sessionId);
-        if (fresh.appDataRuntimeEnv) {
-          this.ticket = this.ticket
-            ? { ...this.ticket, appDataRuntimeEnv: fresh.appDataRuntimeEnv }
-            : fresh;
+      for (let attempt = 1; attempt <= retries; attempt++) {
+        try {
+          const fresh = await conversationV2Api.createRuntimeTicket(this.sessionId);
+          if (fresh.appDataRuntimeEnv) {
+            this.ticket = this.ticket
+              ? { ...this.ticket, appDataRuntimeEnv: fresh.appDataRuntimeEnv }
+              : fresh;
+            break;
+          }
+          if (requireAppData && attempt < retries) {
+            await new Promise((r) => setTimeout(r, APP_DATA_ENV_REFRESH_DELAY_MS));
+            continue;
+          }
+        } catch (err) {
+          console.warn(
+            LOG,
+            'refreshAppDataViteEnv failed',
+            err instanceof Error ? err.message : String(err),
+          );
+          if (attempt < retries) {
+            await new Promise((r) => setTimeout(r, APP_DATA_ENV_REFRESH_DELAY_MS));
+          }
         }
-      } catch (err) {
-        console.warn(
-          LOG,
-          'refreshAppDataViteEnv failed',
-          err instanceof Error ? err.message : String(err),
-        );
       }
     }
+    await this.ensureDefaultAiModelId();
     return this.buildAppDataViteEnv();
   }
 
   /** Restart Vite after App Data provision so preview receives VITE_YM_* env. */
   async restartDevServerForAppData(): Promise<void> {
     if (this._destroyed || this.legacyMode) return;
-    if (this._status !== 'ready' && this._status !== 'starting') return;
-    const viteEnv = await this.refreshAppDataViteEnv();
-    if (!viteEnv) return;
-    console.log(LOG, 'restarting dev server for App Data env');
+    if (this._status !== 'ready' && this._status !== 'starting') {
+      this.pendingAppDataRestart = true;
+      console.log(LOG, 'queue App Data restart until host is ready');
+      return;
+    }
+    this.pendingAppDataRestart = false;
+    const viteEnv = await this.refreshAppDataViteEnv({
+      retries: APP_DATA_ENV_REFRESH_ATTEMPTS,
+      requireAppData: true,
+    });
+    if (!viteEnv?.VITE_YM_APP_DATA_ENV) {
+      console.warn(LOG, 'skip App Data restart: VITE_YM_APP_DATA_ENV still missing');
+      return;
+    }
+    if (!this.ticket?.appDataRuntimeEnv) {
+      console.warn(
+        LOG,
+        'App Data restart with DEV marker only — catalog appDataRuntimeEnv still missing after retries',
+      );
+    } else {
+      void this.acquireAppDataTicket(
+        this.ticket.appDataRuntimeEnv.appDataId,
+        true,
+        this.ticket.appDataRuntimeEnv.environment,
+      );
+    }
+    console.log(LOG, 'restarting dev server for App Data env', {
+      hasAppDataId: Boolean(this.ticket?.appDataRuntimeEnv?.appDataId),
+    });
     await this.adapter.startDevServer(this.previewCtrl, () => this._destroyed, undefined, viteEnv);
     this.syncPreviewRelayOrigins();
+    await this.ensureHiddenPreviewIframe({ force: true });
     await this.refreshPreview();
+  }
+
+  /** Flush a provision-triggered restart that arrived before the host was ready. */
+  private flushPendingAppDataRestart(): void {
+    if (!this.pendingAppDataRestart || this._destroyed || this.legacyMode) return;
+    if (this._status !== 'ready') return;
+    void this.restartDevServerForAppData();
   }
 
   private async handleToolInvoke(payload: ToolInvokePayload): Promise<void> {
@@ -923,12 +1309,15 @@ export class BrowserRuntimeHost {
    * Mount an off-screen iframe when the dev server is up but the user has not
    * opened the preview panel — required for `preview_inspect` / `finalize`.
    */
-  async ensureHiddenPreviewIframe(): Promise<void> {
+  async ensureHiddenPreviewIframe(options?: { force?: boolean }): Promise<void> {
+    const force = options?.force === true;
     const url = this.previewCtrl.previewUrl;
     const pod = this.adapter.currentPod;
     if (!url || !pod || this._destroyed) return;
     if (this.pendingIframe) {
       this.flushPendingIframe();
+      // Visible panel iframe takes precedence; still wait for attach when possible.
+      await this.waitForInspectorAttach();
       return;
     }
 
@@ -942,7 +1331,8 @@ export class BrowserRuntimeHost {
     }
     this.registerPreviewRelayPeer(this.hiddenIframe);
 
-    if (this.hiddenIframe.src !== url) {
+    const needsReload = force || this.hiddenIframe.src !== url;
+    if (needsReload) {
       await new Promise<void>((resolve) => {
         const iframe = this.hiddenIframe!;
         const timer = window.setTimeout(resolve, HIDDEN_IFRAME_LOAD_MS);
@@ -952,12 +1342,25 @@ export class BrowserRuntimeHost {
           resolve();
         };
         iframe.addEventListener('load', done, { once: true });
+        // Force a reload even when the URL string is unchanged (post restart).
+        if (force && iframe.src === url) {
+          iframe.src = '';
+        }
         iframe.src = url;
       });
     }
 
-    await this.previewCtrl.attachIframe(pod, this.hiddenIframe);
-    console.log(LOG, 'hidden preview iframe attached', { url });
+    await this.previewCtrl.attachIframe(pod, this.hiddenIframe, { force });
+    const attached = await this.waitForInspectorAttach();
+    console.log(LOG, 'hidden preview iframe attached', { url, attached });
+  }
+
+  private async waitForInspectorAttach(): Promise<boolean> {
+    for (let i = 0; i < INSPECTOR_ATTACH_ATTEMPTS; i++) {
+      if (this.previewCtrl.isInspectorAttached()) return true;
+      await new Promise((r) => setTimeout(r, INSPECTOR_ATTACH_POLL_MS));
+    }
+    return this.previewCtrl.isInspectorAttached();
   }
 
   private removeHiddenPreviewIframe(): void {
@@ -990,6 +1393,7 @@ export class BrowserRuntimeHost {
       this.setStatus('connecting');
       this.ticket = await conversationV2Api.createRuntimeTicket(this.sessionId);
       this.appDataTickets.clear();
+      this.aiPreviewTicketCache = null;
       await this.client.connect(this.ticket.ticket);
       if (this._destroyed) return;
 
@@ -1050,6 +1454,7 @@ export class BrowserRuntimeHost {
     if (options.clearSession) this.sessionId = null;
     this.workspaceId = null;
     this.ticket = null;
+    this.aiPreviewTicketCache = null;
     this.legacyMode = false;
     this.rehydrating = false;
     this.reconnectAttempts = 0;
@@ -1116,7 +1521,11 @@ export function maybeRestartDevServerAfterAppDataTool(
   const status = (event.status ?? '').toLowerCase();
   if (status && !APP_DATA_TOOL_SUCCESS_STATUSES.has(status)) return;
   const label = `${event.function ?? ''} ${event.name ?? ''}`.toLowerCase();
-  if (!APP_DATA_DEV_SERVER_RESTART_TOOL_MARKERS.some((marker) => label.includes(marker))) return;
+  const isProvision =
+    APP_DATA_DEV_SERVER_RESTART_TOOL_MARKERS.some((marker) => label.includes(marker)) ||
+    ((label.includes('yellowappdata') || label.includes('appdata') || label.includes('app_data')) &&
+      label.includes('provision'));
+  if (!isProvision) return;
   const host = hostRegistry.get(sessionId);
   if (!host) return;
   void host.restartDevServerForAppData();

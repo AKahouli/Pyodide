@@ -266,7 +266,7 @@ export function ApplicationComponentView({
             className='absolute inset-0 size-full border-0 bg-white'
             // allow-same-origin required for preview_action + Nodepod SW (Vague 4).
             // Ticket/mcpToken must never appear in src, props, or postMessage.
-            sandbox='allow-forms allow-modals allow-popups allow-presentation allow-same-origin allow-scripts'
+            sandbox='allow-forms allow-modals allow-popups allow-popups-to-escape-sandbox allow-presentation allow-same-origin allow-scripts'
           />
         </div>
       ) : (

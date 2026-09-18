@@ -19,6 +19,7 @@ import { ConversationV2SessionAccessGuard } from './guards/conversation-v2-sessi
 import { ConversationV2OwnerGuard } from './guards/conversation-v2-owner.guard';
 import type { ConversationV2ResolvedSession } from './services/conversation-v2-session-access.service';
 import { RuntimeTicketService } from '@modules/app-runtime/services/runtime-ticket.service';
+import { AiPreviewTicketService } from '@modules/ai-proxy/services/ai-preview-ticket.service';
 import { RuntimeRevisionService } from '@modules/app-runtime/services/runtime-revision.service';
 import { RuntimeBindingService } from '@modules/app-runtime/services/runtime-binding.service';
 import { RuntimeFinalizedRevisionService } from '@modules/app-runtime/services/runtime-finalized-revision.service';
@@ -108,6 +109,7 @@ describe('ConversationV2Controller', () => {
   const mockConfig = { get: jest.fn().mockReturnValue(52428800) };
   const mockDeployment = { deploy: jest.fn() };
   const mockRuntimeTickets = { issue: jest.fn() };
+  const mockAiPreviewTickets = { issue: jest.fn() };
   const mockRuntimeRevisions = {
     listFiles: jest.fn(),
     getAuthorizedRevision: jest.fn(),
@@ -145,6 +147,7 @@ describe('ConversationV2Controller', () => {
         { provide: ConversationV2DeployService, useValue: mockDeployment },
         { provide: ConversationV2AppShareService, useValue: mockAppShares },
         { provide: RuntimeTicketService, useValue: mockRuntimeTickets },
+        { provide: AiPreviewTicketService, useValue: mockAiPreviewTickets },
         { provide: RuntimeRevisionService, useValue: mockRuntimeRevisions },
         { provide: RuntimeBindingService, useValue: mockRuntimeBindings },
         { provide: RuntimeFinalizedRevisionService, useValue: mockFinalizedRevisions },
@@ -168,6 +171,7 @@ describe('ConversationV2Controller', () => {
       ...Object.values(mockDeployment),
       ...Object.values(mockAppShares),
       ...Object.values(mockRuntimeTickets),
+      ...Object.values(mockAiPreviewTickets),
       ...Object.values(mockRuntimeRevisions),
       ...Object.values(mockRuntimeBindings),
       ...Object.values(mockFinalizedRevisions),
@@ -727,6 +731,25 @@ describe('ConversationV2Controller', () => {
       ConversationV2Controller.prototype.issueRuntimeTicket,
     );
     expect(permission).toBe(ConversationV2SessionPermissions.SESSION_WRITE);
+  });
+
+  it('POST /sessions/:id/ai-preview-ticket returns an opaque preview ticket', async () => {
+    mockAiPreviewTickets.issue.mockResolvedValueOnce({
+      ticket: 'aiprev_test',
+      workspaceId: 'sess_1',
+      bindingId: 'arb_1',
+      expiresAt: '2026-01-01T00:10:00.000Z',
+    });
+
+    const result = await controller.issueAiPreviewTicket(
+      resolvedSession('u1', { aiSessionId: 'sess_1' }),
+    );
+
+    expect(mockAiPreviewTickets.issue).toHaveBeenCalledWith({
+      conversationSessionId: 'sess_1',
+      billableUserId: 'u1',
+    });
+    expect(result.ticket).toBe('aiprev_test');
   });
 
   it('POST /sessions/:id/runtime-ticket throws NotFoundException when the AI session is not attached yet', () => {

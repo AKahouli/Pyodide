@@ -470,7 +470,7 @@ export class ConversationV2StreamService implements OnModuleDestroy {
     throw new NotFoundException(`Invalid session id ${sessionOrWorkspaceId}`);
   }
 
-  /** Persist one event, run side effects, and push it to the user's pipe. */
+  /** Persist one event, push to the user's pipe, then run non-critical side effects. */
   private async processEvent(
     userId: string,
     sessionId: string,
@@ -484,6 +484,11 @@ export class ConversationV2StreamService implements OnModuleDestroy {
     },
   ): Promise<void> {
     const { sequence } = await this.eventStore.append(sessionId, event);
+
+    // Push immediately after durable append so SSE is not blocked by tagModel
+    // or attachment harvest (those used to run before the client saw the event).
+    this.pointerWriter.apply(sessionId, event).catch(() => undefined);
+    this.push(userId, sessionId, event, sequence);
 
     const isAssistantMessage =
       event.type === 'message' &&
@@ -499,8 +504,6 @@ export class ConversationV2StreamService implements OnModuleDestroy {
       hooks.setFirstAssistantId?.(eventId);
       await this.eventStore.tagModel(sessionId, eventId, model);
     }
-
-    this.pointerWriter.apply(sessionId, event).catch(() => undefined);
 
     // Harvest AI-emitted attachments into the session's system workspace.
     if (systemWorkspaceId && isAssistantMessage) {
@@ -518,8 +521,6 @@ export class ConversationV2StreamService implements OnModuleDestroy {
         }
       }
     }
-
-    this.push(userId, sessionId, event, sequence);
   }
 
   /** Push a persisted event to the user's SSE pipe(s), tagged with sessionId. */

@@ -116,6 +116,30 @@ describe('AiProxyService', () => {
     );
   });
 
+  it('uses max_completion_tokens (not max_tokens) for reasoning / omitTemperature models', async () => {
+    modelsService.validateModelActive.mockResolvedValue({
+      valid: true,
+      model: {
+        id: 'gpt-5.6-luna',
+        omitTemperature: true,
+        supportsReasoning: true,
+        litellmModel: 'openai/gpt-5.6-luna',
+      } as never,
+      inactive: false,
+      unsupported: false,
+    });
+
+    await createService().proxyChatCompletion(
+      { ...body, model: 'gpt-5.6-luna', temperature: 0.7, max_tokens: 2048 },
+      user,
+    );
+
+    const forwarded = post.mock.calls[0][1] as Record<string, unknown>;
+    expect(forwarded).not.toHaveProperty('temperature');
+    expect(forwarded).not.toHaveProperty('max_tokens');
+    expect(forwarded.max_completion_tokens).toBe(2048);
+  });
+
   it('records unknown tokens when LiteLLM omits usage', async () => {
     post.mockResolvedValue({ data: { id: 'chatcmpl-2' } });
 
@@ -173,6 +197,26 @@ describe('AiProxyService', () => {
     expect(modelsService.validateModelActive).toHaveBeenCalledWith('gpt-4o', 'chat');
     expect(streamService.streamChatCompletion).not.toHaveBeenCalled();
     expect(post).not.toHaveBeenCalled();
+  });
+
+  it('strips temperature when the catalog model has omitTemperature', async () => {
+    modelsService.validateModelActive.mockResolvedValue({
+      valid: true,
+      model: { id: 'gpt-5.6-luna', omitTemperature: true } as never,
+      inactive: false,
+      unsupported: false,
+    });
+
+    await createService().proxyChatCompletion(
+      { ...body, model: 'gpt-5.6-luna', temperature: 0.7 },
+      user,
+    );
+
+    const forwarded = post.mock.calls[0][1] as Record<string, unknown>;
+    expect(forwarded).not.toHaveProperty('temperature');
+    expect(forwarded).not.toHaveProperty('max_tokens');
+    expect(forwarded.max_completion_tokens).toBe(4096);
+    expect(forwarded.model).toBe('gpt-5.6-luna');
   });
 
   it('rejects inactive or unsupported models before calling LiteLLM', async () => {

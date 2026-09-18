@@ -11,6 +11,7 @@ import {
 import { ErrorCode } from '../exceptions/constants/error-codes';
 import { LiteLLMConnectionService } from '../models/litellm-connection.service';
 import { ModelsService } from '../models/models.service';
+import { ModelResponse } from '../models/interfaces/model.interface';
 import { AI_PROXY_REQUEST_TIMEOUT_MS } from './constants/ai-proxy.constants';
 import { ChatCompletionDto } from './dto/chat-completion.dto';
 import { LiteLlmErrorResponse, LiteLlmTokenUsage } from './interfaces/ai-proxy.interface';
@@ -59,7 +60,6 @@ export class AiProxyService {
     res?: Response,
   ): Promise<Record<string, unknown> | void> {
     this.validateRequestLimits(body);
-    this.applyDefaultMaxTokens(body);
 
     const validation = await this.modelsService.validateModelActive(body.model, 'chat');
     if (!validation.valid || (
@@ -69,6 +69,8 @@ export class AiProxyService {
         `Model '${body.model}' is not available`,
       );
     }
+
+    this.normalizeSamplingParams(body, validation.model);
 
     const pricing = await this.usageService.resolvePricing(body.model);
 
@@ -144,11 +146,17 @@ export class AiProxyService {
       ? models.filter((model) => this.allowedModels.has(model.id))
       : models;
 
+    // Platform default first so clients that pick data[0] get a valid model.
+    const ordered = [...visibleModels].sort((a, b) => {
+      if (a.isDefault === b.isDefault) return 0;
+      return a.isDefault ? -1 : 1;
+    });
+
     return {
       object: 'list',
-      data: visibleModels.map((model) => ({
+      data: ordered.map((model) => ({
         id: model.id,
-        object: 'model',
+        object: 'model' as const,
         owned_by: model.chefSlug || 'unknown',
       })),
     };
@@ -187,12 +195,39 @@ export class AiProxyService {
     }
   }
 
-  /** When the client omits token caps, inject the configured ceiling before forwarding. */
-  private applyDefaultMaxTokens(body: ChatCompletionDto): void {
+  /**
+   * Align sampling/token params with model capabilities before LiteLLM.
+   * Reasoning / gpt-5 family: no temperature; prefer max_completion_tokens
+   * (max_tokens alone often yields empty assistant content).
+   */
+  private normalizeSamplingParams(
+    body: ChatCompletionDto,
+    model: ModelResponse | null,
+  ): void {
+    const reasoningSafe = this.isReasoningSafeModel(body.model, model);
+
+    if (reasoningSafe && body.temperature !== undefined) {
+      delete body.temperature;
+    }
+
+    if (reasoningSafe) {
+      const cap = body.max_completion_tokens ?? body.max_tokens ?? this.maxTokensPerRequest;
+      body.max_completion_tokens = cap;
+      delete body.max_tokens;
+      return;
+    }
+
     const hasTokenCap = body.max_tokens != null || body.max_completion_tokens != null;
     if (!hasTokenCap) {
       body.max_tokens = this.maxTokensPerRequest;
     }
+  }
+
+  private isReasoningSafeModel(modelId: string, model: ModelResponse | null): boolean {
+    if (model?.omitTemperature === true) return true;
+    if (model?.supportsReasoning === true) return true;
+    const haystack = `${modelId} ${model?.litellmModel ?? ''}`.toLowerCase();
+    return /gpt-5|o1|o3|o4|reasoning/.test(haystack);
   }
 
   private mapUpstreamError(error: unknown): Error {

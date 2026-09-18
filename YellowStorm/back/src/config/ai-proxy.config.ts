@@ -26,4 +26,9 @@ export default registerAs('aiProxy', () => ({
     process.env.AI_PROXY_MAX_MESSAGE_CONTENT_CHARS || '100000',
     10,
   ),
+  /** TTL for opaque AI preview tickets (parent relay only). Default 10 min. */
+  previewTicketTtlMs: Number.parseInt(
+    process.env.AI_PROXY_PREVIEW_TICKET_TTL_MS || '600000',
+    10,
+  ),
 }));

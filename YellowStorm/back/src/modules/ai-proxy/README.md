@@ -6,11 +6,12 @@ This module is separate from `ChatCompletionModule` (admin-only, non-streaming, 
 
 ## Key Features
 
-- **OpenAI-compatible API** — `POST /api/v1/chat/completions`, `GET /api/v1/models`
-- **JWT auth** — global `JwtAuthGuard`; clients send `Authorization: Bearer <app-jwt>`
+- **OpenAI-compatible API** — `POST /api/v1/chat/completions`, `GET /api/v1/models` (raw OpenAI JSON; `@SkipResponseWrap` — not `{ success, data }`)
+- **JWT auth** — platform access JWT, App Data end-user JWT (`typ: app_end_user`), or opaque AI preview ticket (`aiprev_…`); clients send `Authorization: Bearer <token>`
 - **Credential boundary** — forwards with `LITELLM_APP_BUILDER_API_KEY` + `X-Request-User`
 - **Streaming + non-streaming** — SSE pipe (`text/event-stream`) or JSON response
 - **Model validation** — active chat models via `ModelsService`; optional allowlist
+- **Preview relay** — parent `BrowserRuntimeHost` holds AI preview ticket; iframe uses `VITE_YM_AI_PROXY` + `ym-ai-fetch` (ticket never enters the generated app)
 - **Payload limits** — body size, message count, content length, max tokens
 - **Rate limiting** — per user + endpoint + model
 - **Usage + budget** — `UsageModule` logging; `@CheckUsage()` token budget enforcement
@@ -55,7 +56,7 @@ providers:   [
 ]
 ```
 
-Registered in `app.module.ts` via `AiProxyModule`. Auth uses the global JWT guard (no `AuthModule` import required).
+Registered in `app.module.ts` via `AiProxyModule`. Routes are `@Public()` for the global guard and authenticated by `AppBuilderAiAuthGuard` (platform JWT or App Data end-user JWT billed to the app owner).
 
 ## API Endpoints
 
@@ -64,7 +65,7 @@ Base path: `/api/v1` (`API_PREFIX=api` + URI versioning).
 | Method | Route | Guards / checks | Description |
 |--------|-------|-----------------|-------------|
 | POST | `/api/v1/chat/completions` | Payload limit, rate limit, usage budget, JWT | Proxy chat completion (stream or JSON) |
-| GET | `/api/v1/models` | Payload limit (noop), rate limit, JWT | List active models (allowlist-filtered if set) |
+| GET | `/api/v1/models` | Payload limit (noop), rate limit, App Builder AI auth | List active models (allowlist-filtered if set). Owns this path (OpenAI-compatible); platform catalog is `/api/v1/model-catalog`. |
 
 ### Headers (client → YellowStorm)
 
@@ -88,7 +89,7 @@ Content-Type: application/json
 | `model` | `string` | Yes | Must be active chat model; optional allowlist |
 | `messages` | `{ role, content }[]` | Yes | Roles: system, user, assistant, tool |
 | `stream` | `boolean` | No | SSE when `true` |
-| `temperature` | `number` | No | 0–2 |
+| `temperature` | `number` | No | 0–2. Stripped when catalog `omitTemperature` is set (reasoning models). |
 | `top_p` | `number` | No | 0–1 |
 | `max_tokens` / `max_completion_tokens` | `number` | No | Capped; if both omitted, injects `AI_PROXY_MAX_TOKENS_PER_REQUEST` |
 | `stop` | `string \| string[]` | No | |

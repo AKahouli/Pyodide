@@ -29,11 +29,17 @@ interface AuthContextValue extends AuthState {
 const AuthContext = createContext<AuthContextValue | null>(null);
 
 /**
- * YellowStorm Nodepod preview runs `vite dev` with VITE_YM_APP_DATA_ENV=dev.
- * Deployed static builds must enforce auth even if a stale env var says "dev".
+ * YellowStorm Nodepod preview runs `vite dev` with platform-injected env.
+ * Bypass production end-user auth when App Data DEV env is set, or when the
+ * AI preview proxy is injected (AI-only apps before App Data provision).
+ * Deployed static builds must enforce auth (`import.meta.env.DEV` is false).
  */
 export function isDevPreview(): boolean {
-  return import.meta.env.DEV && import.meta.env.VITE_YM_APP_DATA_ENV === 'dev';
+  if (!import.meta.env.DEV) return false;
+  return (
+    import.meta.env.VITE_YM_APP_DATA_ENV === 'dev' ||
+    import.meta.env.VITE_YM_AI_PROXY === 'true'
+  );
 }
 
 const proxyEnabled = import.meta.env.VITE_YM_APP_DATA_PROXY === 'true' && typeof window !== 'undefined';

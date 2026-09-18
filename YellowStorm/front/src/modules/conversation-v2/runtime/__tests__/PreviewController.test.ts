@@ -130,6 +130,8 @@ describe('PreviewController inspection bridge', () => {
     expect(result.capabilities.interaction).toBe(false);
     expect(result.runtimeErrors).toHaveLength(1);
     expect(result.runtimeErrors[0]).toMatch(/inspector is not attached/);
+    expect(result.runtimeErrors[0]).toMatch(/ONCE/);
+    expect(result.runtimeErrors[0]).toMatch(/ProtectedRoute/);
     expect(result.visibleText).toBe('');
   });
 

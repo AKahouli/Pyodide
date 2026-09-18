@@ -211,9 +211,9 @@ export const API_ENDPOINTS = {
     templates: '/workspace-settings/templates',
   },
   models: {
-    list: '/models',
-    byId: (id: string) => `/models/${id}`,
-    byChef: (chefSlug: string) => `/models/chef/${chefSlug}`,
+    list: '/model-catalog',
+    byId: (id: string) => `/model-catalog/${id}`,
+    byChef: (chefSlug: string) => `/model-catalog/chef/${chefSlug}`,
   },
   conversations: {
     list: '/conversations',

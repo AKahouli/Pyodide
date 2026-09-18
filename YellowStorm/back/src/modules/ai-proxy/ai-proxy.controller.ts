@@ -12,7 +12,9 @@ import {
 } from '@nestjs/common';
 import { Request, Response } from 'express';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
+import { Public } from '../auth/decorators/public.decorator';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
+import { SkipResponseWrap } from '../response/decorators/skip-response-wrap.decorator';
 import { CheckUsage, UsageLimitGuard } from '../usage';
 import { UserDocument } from '../user/schemas/user.schema';
 import { AiProxyExceptionFilter } from './ai-proxy-exception.filter';
@@ -20,11 +22,14 @@ import { AiProxyService } from './ai-proxy.service';
 import { ChatCompletionDto } from './dto/chat-completion.dto';
 import { AiProxyRateLimitGuard } from './guards/ai-proxy-rate-limit.guard';
 import { AiProxyPayloadLimitGuard } from './guards/ai-proxy-payload-limit.guard';
+import { AppBuilderAiAuthGuard } from './guards/app-builder-ai-auth.guard';
 
 @ApiTags('AI Proxy')
 @ApiBearerAuth()
+@Public()
+@SkipResponseWrap()
 @UseFilters(AiProxyExceptionFilter)
-@UseGuards(AiProxyPayloadLimitGuard, AiProxyRateLimitGuard)
+@UseGuards(AppBuilderAiAuthGuard, AiProxyPayloadLimitGuard, AiProxyRateLimitGuard)
 @Controller({ path: '', version: '1' })
 export class AiProxyController {
   constructor(private readonly proxyService: AiProxyService) {}

@@ -536,6 +536,7 @@ const handlers: Record<string, Handler> = {
     }
 
     const url = ctx.previewCtrl.previewUrl;
+    const inspectorAttached = ctx.previewCtrl.isInspectorAttached();
     return {
       running: url !== null,
       url,
@@ -543,7 +544,9 @@ const handlers: Record<string, Handler> = {
       // The preview is served through a service worker, not a TCP port: probing
       // localhost from inside the pod always fails and means nothing.
       message: url
-        ? 'Dev server is running. The preview is reachable only through this URL, not via localhost.'
+        ? inspectorAttached
+          ? 'Dev server is running. Preview inspector is attached.'
+          : 'Dev server is running. Preview URL is up but inspector is not attached yet — open the preview panel or retry preview_inspect once after this restart. Do not loop restarts; do not patch ProtectedRoute/auth.'
         : 'Dev server is not running. Call dev_server with action "restart" to start it.',
     };
   },

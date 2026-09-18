@@ -57,6 +57,8 @@ import { ConversationV2DeployService } from './services/conversation-v2-deploy.s
 import { ConversationV2AppShareService } from './services/conversation-v2-app-share.service';
 import { normalizeAppSourceCephPrefix } from './utils/normalize-app-source-ceph-prefix';
 import { RuntimeTicketService } from '@modules/app-runtime/services/runtime-ticket.service';
+import { AiPreviewTicketService } from '@modules/ai-proxy/services/ai-preview-ticket.service';
+import type { AiPreviewTicketResult } from '@modules/ai-proxy/services/ai-preview-ticket.service';
 import { RuntimeRevisionService } from '@modules/app-runtime/services/runtime-revision.service';
 import { RuntimeBindingService } from '@modules/app-runtime/services/runtime-binding.service';
 import { RuntimeFinalizedRevisionService } from '@modules/app-runtime/services/runtime-finalized-revision.service';
@@ -89,6 +91,7 @@ export class ConversationV2Controller {
     private readonly deployment: ConversationV2DeployService,
     private readonly appShares: ConversationV2AppShareService,
     private readonly runtimeTickets: RuntimeTicketService,
+    private readonly aiPreviewTickets: AiPreviewTicketService,
     private readonly runtimeRevisions: RuntimeRevisionService,
     private readonly runtimeBindings: RuntimeBindingService,
     private readonly finalizedRevisions: RuntimeFinalizedRevisionService,
@@ -315,6 +318,23 @@ export class ConversationV2Controller {
     return this.runtimeTickets.issue({
       conversationSessionId: this.requireWorkspaceId(session),
       userId: session.ownerId,
+    });
+  }
+
+  /**
+   * Opaque AI preview ticket for BrowserRuntimeHost relay.
+   * Never injected into the generated app / iframe — parent holds plaintext only.
+   */
+  @Post('sessions/:id/ai-preview-ticket')
+  @HttpCode(HttpStatus.OK)
+  @UseGuards(ConversationV2SessionAccessGuard)
+  @RequireConversationSessionPermission(ConversationV2SessionPermissions.SESSION_WRITE)
+  issueAiPreviewTicket(
+    @CurrentConversationSession() session: ConversationV2ResolvedSession,
+  ): Promise<AiPreviewTicketResult> {
+    return this.aiPreviewTickets.issue({
+      conversationSessionId: this.requireWorkspaceId(session),
+      billableUserId: session.ownerId,
     });
   }
 

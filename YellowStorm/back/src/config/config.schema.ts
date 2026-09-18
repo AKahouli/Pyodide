@@ -329,6 +329,7 @@ export const configValidationSchema = Joi.object({
   AI_PROXY_MAX_BODY_BYTES: Joi.number().integer().min(1024).max(10 * 1024 * 1024).default(1_048_576),
   AI_PROXY_MAX_MESSAGES: Joi.number().integer().min(1).max(10_000).default(100),
   AI_PROXY_MAX_MESSAGE_CONTENT_CHARS: Joi.number().integer().min(1).max(10_000_000).default(100_000),
+  AI_PROXY_PREVIEW_TICKET_TTL_MS: Joi.number().integer().min(60_000).max(3_600_000).default(600_000),
   EMBEDDING_MODEL: Joi.string().default('qwen3-embedding'),
   EMBEDDING_DIMENSION: Joi.number().default(2560),
   LITELLM_HEALTH_CHECK_ENABLED: Joi.boolean().default(true),

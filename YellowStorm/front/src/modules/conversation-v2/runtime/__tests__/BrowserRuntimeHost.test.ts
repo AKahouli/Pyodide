@@ -4,6 +4,8 @@ import {
   getOrCreateHost,
   removeHost,
   isAppDataPublicUrl,
+  isAiProxyUrl,
+  resolveAiProxyFetchUrl,
   registerAppDataRelayFrame,
   unregisterAppDataRelayFrame,
 } from '../BrowserRuntimeHost';
@@ -11,6 +13,22 @@ import { ToolError } from '../ToolError';
 import { RuntimeErrorCodes } from '../runtime.types';
 
 // Mock all dependencies
+vi.mock('@/lib/api/config', () => ({
+  API_CONFIG: {
+    baseURL: 'http://localhost:3000/api/v1',
+    timeout: 30000,
+    withCredentials: true,
+  },
+  getSocketBaseUrl: () => 'http://localhost:3000',
+}));
+
+vi.mock('@/modules/models/api', () => ({
+  getModels: vi.fn().mockResolvedValue({
+    models: [{ id: 'catalog-default', isDefault: true, isActive: true }],
+    total: 1,
+  }),
+}));
+
 vi.mock('../../api', () => ({
   conversationV2Api: {
     createRuntimeTicket: vi.fn().mockResolvedValue({
@@ -113,6 +131,7 @@ vi.mock('../PreviewController', () => ({
     reset: vi.fn(),
     attachIframe: mockAttachIframe,
     detachIframe: mockDetachIframe,
+    isInspectorAttached: vi.fn().mockReturnValue(true),
     probeAndPromote: vi.fn().mockResolvedValue({ ok: true }),
     inspectPreview: vi.fn().mockResolvedValue({ url: 'http://localhost:5173', healthy: true }),
     performAction: vi.fn().mockResolvedValue({ ok: true, action: 'reload' }),
@@ -449,6 +468,10 @@ describe('BrowserRuntimeHost', () => {
       await new Promise((r) => setTimeout(r, 50));
 
       expect(conversationV2Api.getAppDataTicket).not.toHaveBeenCalled();
+      // Dev Preview marker is still injected so ProtectedRoute can bypass.
+      expect(mockStartDevServer).toHaveBeenCalled();
+      const viteEnv = mockStartDevServer.mock.calls.at(-1)?.[3] as Record<string, string> | undefined;
+      expect(viteEnv?.VITE_YM_APP_DATA_ENV).toBe('dev');
       host.destroy();
     });
 
@@ -514,6 +537,54 @@ describe('BrowserRuntimeHost', () => {
       );
       host.destroy();
     });
+  });
+});
+
+describe('isAiProxyUrl', () => {
+  it('accepts absolute chat completions under the API base', () => {
+    expect(isAiProxyUrl('http://localhost:3000/api/v1/chat/completions')).toBe(true);
+  });
+
+  it('accepts root-relative /api/v1/chat/completions from the OpenAI SDK', () => {
+    expect(isAiProxyUrl('/api/v1/chat/completions')).toBe(true);
+  });
+
+  it('accepts models list paths', () => {
+    expect(isAiProxyUrl('http://localhost:3000/api/v1/models')).toBe(true);
+    expect(isAiProxyUrl('/api/v1/models')).toBe(true);
+  });
+
+  it('rejects foreign origins and unrelated paths', () => {
+    expect(isAiProxyUrl('http://evil.example/api/v1/chat/completions')).toBe(false);
+    expect(isAiProxyUrl('http://localhost:3000/api/v1/other')).toBe(false);
+    expect(isAiProxyUrl('not a url')).toBe(false);
+  });
+});
+
+describe('resolveAiProxyFetchUrl', () => {
+  it('absolutizes root-relative /api/v1 paths against the API origin (no double prefix)', () => {
+    expect(resolveAiProxyFetchUrl('/api/v1/chat/completions')).toBe(
+      'http://localhost:3000/api/v1/chat/completions',
+    );
+  });
+
+  it('joins bare chat/completions under the API base path', () => {
+    expect(resolveAiProxyFetchUrl('chat/completions')).toBe(
+      'http://localhost:3000/api/v1/chat/completions',
+    );
+  });
+
+  it('collapses accidental /api/v1/api/v1 duplication', () => {
+    expect(resolveAiProxyFetchUrl('http://localhost:3000/api/v1/api/v1/chat/completions')).toBe(
+      'http://localhost:3000/api/v1/chat/completions',
+    );
+    expect(resolveAiProxyFetchUrl('api/v1/chat/completions')).toBe(
+      'http://localhost:3000/api/v1/chat/completions',
+    );
+  });
+
+  it('returns null for non-AI URLs', () => {
+    expect(resolveAiProxyFetchUrl('http://localhost:3000/api/v1/other')).toBeNull();
   });
 });
 
