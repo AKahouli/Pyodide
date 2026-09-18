@@ -923,6 +923,25 @@ def _build_args_schema_for_connector_tool(
     return create_model(f"{tool_name}Input", **field_defs)
 
 
+_WORKSPACE_PARAMETER_NAMES = {
+    "workspace_id",
+    "workspaceId",
+    "workspace_ids",
+    "workspaceIds",
+    "workspace_name",
+    "workspaceName",
+    "brain_id",
+    "brainId",
+    "brain_ids",
+    "brainIds",
+}
+
+
+def _schema_accepts_workspace_parameter(parameter_schema: Dict[str, Any]) -> bool:
+    properties = parameter_schema.get("properties") if isinstance(parameter_schema, dict) else None
+    return isinstance(properties, dict) and bool(_WORKSPACE_PARAMETER_NAMES.intersection(properties))
+
+
 def _collect_workspace_paths(
     workspace_context: Optional[list],
     code_interpreter_files: Optional[List[Dict[str, str]]] = None,
@@ -1826,6 +1845,7 @@ def _create_connector_mcp_tools(
                         if a.get("parameter_schema")
                         else {}
                     ),
+                    "parameter_schema_json": "" if isinstance(a, str) else str(a.get("parameter_schema_json") or ""),
                     "safety": "unknown" if isinstance(a, str) else str(a.get("safety") or "unknown").lower(),
                     "result_kind": "generic" if isinstance(a, str) else str(a.get("result_kind") or "generic"),
                     "citation_mode": "none" if isinstance(a, str) else str(a.get("citation_mode") or "none"),
@@ -1865,6 +1885,19 @@ def _create_connector_mcp_tools(
                 action.get("description") or f"Connector action '{action_key}'"
             )
             action_parameter_schema = action.get("parameter_schema") or {}
+            parameter_schema_json = str(action.get("parameter_schema_json") or "")
+            if parameter_schema_json:
+                try:
+                    parsed_parameter_schema = json.loads(parameter_schema_json)
+                    if isinstance(parsed_parameter_schema, dict):
+                        action_parameter_schema = parsed_parameter_schema
+                except (TypeError, json.JSONDecodeError):
+                    logger.warning(
+                        "Invalid connector parameter_schema_json",
+                        connector_id=connector_id,
+                        action_key=action_key,
+                    )
+            accepts_workspace_parameter = _schema_accepts_workspace_parameter(action_parameter_schema)
             action_safety = str(action.get("safety") or "unknown").lower()
             action_result_kind = str(action.get("result_kind") or "generic")
             action_citation_mode = str(action.get("citation_mode") or "none")
@@ -1906,6 +1939,7 @@ def _create_connector_mcp_tools(
                 citation_mode: str = action_citation_mode,
                 result_mapping: Dict[str, Any] = action_result_mapping,
                 connector_slug_value: str = connector_slug,
+                accepts_workspace: bool = accepts_workspace_parameter,
             ) -> StructuredTool:
                 async def _execute_mcp(*args: Any, **kwargs: Any) -> Any:
                     raw_params = kwargs.get("params")
@@ -1958,7 +1992,8 @@ def _create_connector_mcp_tools(
                             effective_auth_headers.pop("file_names", None)
                             if _wi:
                                 effective_auth_headers["workspace_id"] = json.dumps(_wi) if len(_wi) > 1 else _wi[0]
-                                merged_params["workspace_id"] = _wi[0] if len(_wi) == 1 else _wi
+                                if accepts_workspace:
+                                    merged_params["workspace_id"] = _wi[0] if len(_wi) == 1 else _wi
                                 merged_params.pop("workspace_name", None)
                                 effective_auth_headers.pop("workspace_name", None)
                             if wsp:
