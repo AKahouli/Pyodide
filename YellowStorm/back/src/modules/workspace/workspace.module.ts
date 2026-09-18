@@ -3,7 +3,6 @@ import { MongooseModule } from '@nestjs/mongoose';
 import { ConfigModule } from '@nestjs/config';
 import { Workspace, WorkspaceSchema } from './schemas/workspace.schema';
 import { WorkspaceShare, WorkspaceShareSchema } from './schemas/workspace-share.schema';
-import { WorkspaceArtifactModule } from '../workspace-artifact/workspace-artifact.module';
 import { ConversationPersistenceModule } from '../conversation/persistence/conversation-persistence.module';
 import { Flow, FlowSchema } from '../playbook-flow/schemas/playbook-flow.schema';
 import { WorkspaceDoc, WorkspaceDocumentSchema } from './schemas/workspace-document.schema';
@@ -59,7 +58,6 @@ import { SemanticModelModule } from '../semantic-model/semantic-model.module';
     LoggerModule,
     IntegrationEventsModule,
     forwardRef(() => SemanticModelModule),
-    forwardRef(() => WorkspaceArtifactModule),
     ConversationPersistenceModule,
   ],
   controllers: [

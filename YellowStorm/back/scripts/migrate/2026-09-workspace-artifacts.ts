@@ -39,6 +39,9 @@ interface ArtifactRow {
   generationStartedAt?: Date;
   generationCompletedAt?: Date;
   generationError?: string;
+  leaseToken?: string;
+  leaseExpiresAt?: Date;
+  nextAttemptAt?: Date;
   clonedFromArtifactId?: string;
   createdBy: string;
   updatedBy: string;
@@ -72,13 +75,21 @@ async function main(): Promise<void> {
         throw new BackfillError('primarySource.documentId is missing — cannot derive primary_source_document_id', String(doc._id ?? '(no id)'));
       }
       const generation = (doc.generation ?? {}) as Record<string, unknown>;
+      const status = String(doc.status ?? 'queued');
+      const leaseExpiresAt = date(generation.leaseExpiresAt);
+      // A 'generating' row without a lease could never be reclaimed by the new
+      // store (claim() requires lease_expires_at <= now()) — fail loudly instead
+      // of wedging it forever as an undeletable, un-retryable artifact.
+      if (status === 'generating' && !leaseExpiresAt) {
+        throw new BackfillError('status is generating but generation.leaseExpiresAt is missing', String(doc._id ?? '(no id)'));
+      }
       const row: ArtifactRow = {
         id: String(doc._id),
         workspaceId: String(doc.workspaceId ?? ''),
         type: String(doc.type ?? ''),
         name: String(doc.name ?? ''),
         description: doc.description == null ? undefined : String(doc.description),
-        status: String(doc.status ?? 'queued'),
+        status,
         schemaVersion: Number(doc.schemaVersion ?? 1),
         revision: Number(doc.revision ?? 0),
         primarySource: {
@@ -96,6 +107,9 @@ async function main(): Promise<void> {
         generationStartedAt: date(generation.startedAt),
         generationCompletedAt: date(generation.completedAt),
         generationError: generation.error == null ? undefined : String(generation.error),
+        leaseToken: generation.leaseToken == null ? undefined : String(generation.leaseToken),
+        leaseExpiresAt,
+        nextAttemptAt: date(generation.nextAttemptAt),
         clonedFromArtifactId: doc.clonedFromArtifactId == null ? undefined : String(doc.clonedFromArtifactId),
         createdBy: String(doc.createdBy ?? ''),
         updatedBy: String(doc.updatedBy ?? ''),

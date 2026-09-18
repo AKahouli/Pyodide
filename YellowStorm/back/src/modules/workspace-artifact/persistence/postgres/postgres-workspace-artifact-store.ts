@@ -99,6 +99,7 @@ export class PostgresWorkspaceArtifactStore implements WorkspaceArtifactStore {
         generationStartedAt: null,
         generationCompletedAt: null,
         generationError: null,
+        generationUsage: null,
         leaseToken: null,
         leaseExpiresAt: null,
         nextAttemptAt: new Date(),

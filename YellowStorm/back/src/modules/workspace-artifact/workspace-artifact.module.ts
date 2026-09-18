@@ -1,4 +1,4 @@
-import { Module, forwardRef } from '@nestjs/common';
+import { Global, Module, forwardRef } from '@nestjs/common';
 import { AgentModule } from '../agent/agent.module';
 import { SystemModule } from '../system/system.module';
 import { WorkspaceModule } from '../workspace/workspace.module';
@@ -14,6 +14,11 @@ import {
   WorkspaceArtifactCleanupAdapter,
 } from './ports/workspace-artifact-cleanup.adapter';
 
+// Global so WorkspaceModule can inject WORKSPACE_ARTIFACT_CLEANUP_PORT without
+// importing this module — a workspace→artifact import edge would create a
+// CommonJS evaluation cycle that breaks app boot (ConnectorModule sees an
+// undefined WorkspaceModule).
+@Global()
 @Module({
   imports: [
     forwardRef(() => WorkspaceModule),
