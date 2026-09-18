@@ -1,5 +1,6 @@
 import { ErrorCode } from '../exceptions/constants/error-codes';
 import { ProjectShareService } from './project-share.service';
+import type { ProjectRecord } from './persistence/project-record.mapper';
 
 const now = new Date('2026-09-11T10:00:00.000Z');
 const OWNER_ID = '61a1b2c3d4e5f6a7b8c9d0e1';
@@ -23,25 +24,27 @@ function recipientDoc() {
   };
 }
 
-function projectDoc(overrides: Record<string, unknown> = {}) {
+function projectRecord(overrides: Partial<ProjectRecord> = {}): ProjectRecord {
   return {
-    _id: { toString: () => PROJECT_ID },
+    id: PROJECT_ID,
     name: 'BPCE',
-    createdBy: { toString: () => OWNER_ID },
+    createdBy: OWNER_ID,
     isPublic: false,
     shareCount: 0,
+    createdAt: now,
+    updatedAt: now,
     ...overrides,
   };
 }
 
-function shareDoc(overrides: Record<string, unknown> = {}) {
+function shareRecord(overrides: Record<string, unknown> = {}) {
   return {
-    _id: { toString: () => SHARE_ID },
-    projectId: { toString: () => PROJECT_ID },
-    ownerId: { toString: () => OWNER_ID },
-    sharedWithUserId: { toString: () => RECIPIENT_ID },
-    permission: 'read',
-    sharedBy: { toString: () => OWNER_ID },
+    id: SHARE_ID,
+    projectId: PROJECT_ID,
+    ownerId: OWNER_ID,
+    sharedWithUserId: RECIPIENT_ID,
+    permission: 'read' as const,
+    sharedBy: OWNER_ID,
     createdAt: now,
     updatedAt: now,
     ...overrides,
@@ -49,55 +52,51 @@ function shareDoc(overrides: Record<string, unknown> = {}) {
 }
 
 function createService(overrides: {
-  project?: Record<string, unknown> | null;
-  shareModel?: Record<string, jest.Mock>;
-  projectModel?: Record<string, jest.Mock>;
+  project?: ProjectRecord | null;
+  projectStore?: Record<string, jest.Mock>;
+  shareStore?: Record<string, jest.Mock>;
+  usersByIds?: Map<string, { id: string; email: string; firstName: string; lastName: string }>;
 } = {}): {
   service: ProjectShareService;
-  projectModel: Record<string, jest.Mock>;
-  shareModel: Record<string, jest.Mock>;
+  projectStore: Record<string, jest.Mock>;
+  shareStore: Record<string, jest.Mock>;
   conversationStore: Record<string, jest.Mock>;
   userService: Record<string, jest.Mock>;
   notificationsService: Record<string, jest.Mock>;
 } {
-  const projectModel = {
-    findById: jest.fn().mockImplementation(() => {
-      const doc = overrides.project === null ? null : projectDoc(overrides.project);
-      return {
-        lean: () => ({ exec: () => Promise.resolve(doc) }),
-        exec: () => Promise.resolve(doc),
-      };
-    }),
-    exists: jest.fn().mockReturnValue({ exec: () => Promise.resolve(false) }),
-    updateOne: jest.fn().mockReturnValue({ exec: () => Promise.resolve({}) }),
-    ...overrides.projectModel,
+  const projectStore = {
+    findById: jest.fn().mockResolvedValue(overrides.project === null ? null : projectRecord(overrides.project)),
+    findByIds: jest.fn().mockResolvedValue(new Map([[PROJECT_ID, projectRecord()]])),
+    existsOwnedBy: jest.fn().mockResolvedValue(false),
+    existsPublic: jest.fn().mockResolvedValue(false),
+    incrementShareCount: jest.fn().mockResolvedValue(undefined),
+    ...overrides.projectStore,
   };
-  const shareModel = {
-    findById: jest.fn(),
-    findOne: jest.fn().mockReturnValue({
-      lean: () => ({ exec: () => Promise.resolve(null) }),
-      exec: () => Promise.resolve(null),
-    }),
+  const shareStore = {
+    findById: jest.fn().mockResolvedValue(null),
+    findOneByProjectAndUser: jest.fn().mockResolvedValue(null),
+    existsForUser: jest.fn().mockResolvedValue(false),
+    findByProject: jest.fn().mockResolvedValue({ rows: [], total: 0 }),
+    findByUser: jest.fn().mockResolvedValue({ rows: [], total: 0 }),
     create: jest.fn().mockImplementation((input: Record<string, unknown>) =>
-      Promise.resolve(shareDoc(input)),
+      Promise.resolve(shareRecord(input)),
     ),
-    updateOne: jest.fn().mockReturnValue({ exec: () => Promise.resolve({}) }),
-    deleteOne: jest.fn().mockResolvedValue({}),
-    deleteMany: jest.fn().mockReturnValue({ exec: () => Promise.resolve({ deletedCount: 0 }) }),
-    countDocuments: jest.fn().mockResolvedValue(0),
-    find: jest.fn().mockReturnValue({
-      populate: jest.fn().mockReturnThis(),
-      sort: jest.fn().mockReturnThis(),
-      skip: jest.fn().mockReturnThis(),
-      limit: jest.fn().mockReturnThis(),
-      lean: jest.fn().mockReturnThis(),
-      exec: jest.fn().mockResolvedValue([]),
-    }),
-    ...overrides.shareModel,
+    updatePermission: jest.fn().mockImplementation((id: string, permission: string) =>
+      Promise.resolve(shareRecord({ id, permission })),
+    ),
+    deleteById: jest.fn().mockResolvedValue(undefined),
+    deleteByProject: jest.fn().mockResolvedValue(0),
+    ...overrides.shareStore,
   };
   const conversationStore = {
     countByProjects: jest.fn().mockResolvedValue(new Map([[PROJECT_ID, 4]])),
     countByProject: jest.fn().mockResolvedValue(4),
+  };
+  const userLookup = {
+    byId: jest.fn().mockResolvedValue(null),
+    byIds: jest.fn().mockResolvedValue(
+      overrides.usersByIds ?? new Map([[OWNER_ID, { id: OWNER_ID, email: 'owner@example.com', firstName: 'Ada', lastName: 'Owner' }]]),
+    ),
   };
   const userService = {
     findById: jest.fn().mockResolvedValue(ownerDoc()),
@@ -106,36 +105,38 @@ function createService(overrides: {
     ),
   };
   const notificationsService = { sendToUser: jest.fn().mockResolvedValue({}) };
+  const logger = { setContext: jest.fn(), log: jest.fn(), warn: jest.fn(), error: jest.fn() };
+  // Fake pool: withTransaction runs the callback directly against the store mocks.
+  const db = { transaction: (cb: (tx: unknown) => Promise<unknown>) => cb({}) };
   const service = new ProjectShareService(
-    projectModel as never,
-    shareModel as never,
+    projectStore as never,
+    shareStore as never,
     conversationStore as never,
-    { setContext: jest.fn(), log: jest.fn(), warn: jest.fn(), error: jest.fn() } as never,
-    userService as never,
+    userLookup as never,
     notificationsService as never,
+    userService as never,
+    logger as never,
+    db as never,
   );
-  return { service, projectModel, shareModel, conversationStore, userService, notificationsService };
+  return { service, projectStore, shareStore, conversationStore, userService, notificationsService };
 }
 
 describe('ProjectShareService', () => {
   const shareDto = { shares: [{ email: 'member@example.com', permission: 'read' as const }] };
 
   it('creates a share, bumps shareCount and notifies the recipient', async () => {
-    const { service, shareModel, projectModel, notificationsService } = createService();
+    const { service, shareStore, projectStore, notificationsService } = createService();
 
     const result = await service.share(PROJECT_ID, OWNER_ID, shareDto);
 
-    expect(shareModel.create).toHaveBeenCalledWith(
+    expect(shareStore.create).toHaveBeenCalledWith(
       expect.objectContaining({
-        projectId: expect.anything(),
-        sharedWithUserId: expect.anything(),
+        projectId: PROJECT_ID,
+        sharedWithUserId: RECIPIENT_ID,
         permission: 'read',
       }),
     );
-    expect(projectModel.updateOne).toHaveBeenCalledWith(
-      { _id: PROJECT_ID },
-      { $inc: { shareCount: 1 } },
-    );
+    expect(projectStore.incrementShareCount).toHaveBeenCalledWith(PROJECT_ID, 1);
     expect(notificationsService.sendToUser).toHaveBeenCalledWith(
       RECIPIENT_ID,
       expect.objectContaining({ title: 'Project shared' }),
@@ -147,7 +148,7 @@ describe('ProjectShareService', () => {
   });
 
   it('reports unknown emails and self-shares without failing the batch', async () => {
-    const { service, shareModel } = createService();
+    const { service, shareStore } = createService();
 
     const result = await service.share(PROJECT_ID, OWNER_ID, {
       shares: [
@@ -158,23 +159,13 @@ describe('ProjectShareService', () => {
 
     expect(result.notFound).toEqual(['ghost@example.com']);
     expect(result.invalid).toEqual(['owner@example.com']);
-    expect(shareModel.create).not.toHaveBeenCalled();
+    expect(shareStore.create).not.toHaveBeenCalled();
   });
 
   it('updates the permission when a share already exists', async () => {
-    const { service, shareModel, notificationsService } = createService({
-      shareModel: {
-        findOne: jest.fn().mockImplementation(() => {
-          let called = false;
-          return {
-            lean: () => ({ exec: () => Promise.resolve(null) }),
-            exec: () => {
-              if (called) return Promise.resolve(null);
-              called = true;
-              return Promise.resolve(shareDoc());
-            },
-          };
-        }),
+    const { service, shareStore, projectStore, notificationsService } = createService({
+      shareStore: {
+        findOneByProjectAndUser: jest.fn().mockResolvedValue(shareRecord()),
       },
     });
 
@@ -182,10 +173,8 @@ describe('ProjectShareService', () => {
       shares: [{ email: 'member@example.com', permission: 'readwrite' }],
     });
 
-    expect(shareModel.updateOne).toHaveBeenCalledWith(
-      { _id: expect.anything() },
-      { $set: { permission: 'readwrite' } },
-    );
+    expect(shareStore.updatePermission).toHaveBeenCalledWith(SHARE_ID, 'readwrite');
+    expect(projectStore.incrementShareCount).not.toHaveBeenCalled();
     expect(notificationsService.sendToUser).toHaveBeenCalledWith(
       RECIPIENT_ID,
       expect.objectContaining({ title: 'Access updated' }),
@@ -204,33 +193,27 @@ describe('ProjectShareService', () => {
       foreign.service.share(PROJECT_ID, '61a1b2c3d4e5f6a7b8c9d0e9', shareDto),
     ).rejects.toMatchObject({ code: ErrorCode.PROJECT_FORBIDDEN });
 
-    const pub = createService({ project: { isPublic: true } });
+    const pub = createService({ project: projectRecord({ isPublic: true }) });
     await expect(pub.service.share(PROJECT_ID, OWNER_ID, shareDto)).rejects.toMatchObject({
       code: ErrorCode.PROJECT_SHARE_PUBLIC,
     });
   });
 
   it('updates and revokes shares with a project mismatch guard', async () => {
-    const { service, shareModel, projectModel } = createService();
-    (shareModel.findById as jest.Mock).mockReturnValue({
-      exec: () => Promise.resolve(shareDoc()),
-    });
+    const { service, shareStore, projectStore } = createService();
+    (shareStore.findById as jest.Mock).mockResolvedValue(shareRecord());
 
     const updated = await service.updatePermission(PROJECT_ID, SHARE_ID, 'readwrite');
     expect(updated.permission).toBe('readwrite');
-    expect(shareModel.updateOne).toHaveBeenCalled();
+    expect(shareStore.updatePermission).toHaveBeenCalledWith(SHARE_ID, 'readwrite');
 
     await service.revoke(PROJECT_ID, SHARE_ID);
-    expect(shareModel.deleteOne).toHaveBeenCalledWith({ _id: SHARE_ID });
-    expect(projectModel.updateOne).toHaveBeenCalledWith(
-      { _id: PROJECT_ID },
-      { $inc: { shareCount: -1 } },
-    );
+    expect(shareStore.deleteById).toHaveBeenCalledWith(SHARE_ID);
+    expect(projectStore.incrementShareCount).toHaveBeenCalledWith(PROJECT_ID, -1);
 
-    (shareModel.findById as jest.Mock).mockReturnValue({
-      exec: () =>
-        Promise.resolve(shareDoc({ projectId: { toString: () => '61a1b2c3d4e5f6a7b8c9d0f1' } })),
-    });
+    (shareStore.findById as jest.Mock).mockResolvedValue(
+      shareRecord({ projectId: '61a1b2c3d4e5f6a7b8c9d0f1' }),
+    );
     await expect(service.updatePermission(PROJECT_ID, SHARE_ID, 'read')).rejects.toMatchObject({
       code: ErrorCode.PROJECT_SHARE_NOT_FOUND,
     });
@@ -241,32 +224,8 @@ describe('ProjectShareService', () => {
 
   it('lists projects shared with a user with conversation counts', async () => {
     const { service, conversationStore } = createService({
-      shareModel: {
-        find: jest.fn().mockReturnValue({
-          populate: jest.fn().mockReturnThis(),
-          sort: jest.fn().mockReturnThis(),
-          skip: jest.fn().mockReturnThis(),
-          limit: jest.fn().mockReturnThis(),
-          lean: jest.fn().mockReturnThis(),
-          exec: jest.fn().mockResolvedValue([
-            {
-              ...shareDoc(),
-              sharedWithUserId: RECIPIENT_ID,
-              projectId: {
-                _id: { toString: () => PROJECT_ID },
-                name: 'BPCE',
-                createdAt: now,
-                updatedAt: now,
-              },
-              sharedBy: {
-                _id: { toString: () => OWNER_ID },
-                email: 'owner@example.com',
-                profile: { firstName: 'Ada', lastName: 'Owner' },
-              },
-            },
-          ]),
-        }),
-        countDocuments: jest.fn().mockResolvedValue(1),
+      shareStore: {
+        findByUser: jest.fn().mockResolvedValue({ rows: [shareRecord()], total: 1 }),
       },
     });
 
@@ -285,20 +244,14 @@ describe('ProjectShareService', () => {
   });
 
   it('computes access: owner, share, or public', async () => {
-    const { service, projectModel, shareModel } = createService();
+    const { service, projectStore, shareStore } = createService();
     let isPublic = false;
-    (projectModel.exists as jest.Mock).mockImplementation((filter: Record<string, unknown>) => ({
-      exec: () =>
-        Promise.resolve(
-          (filter as { createdBy?: { toString(): string } }).createdBy !== undefined
-            ? (filter as { createdBy?: { toString(): string } }).createdBy!.toString() === OWNER_ID
-            : isPublic,
-        ),
-    }));
+    (projectStore.existsOwnedBy as jest.Mock).mockImplementation((_projectId: string, ownerId: string) =>
+      Promise.resolve(ownerId === OWNER_ID),
+    );
+    (projectStore.existsPublic as jest.Mock).mockImplementation(() => Promise.resolve(isPublic));
     const shareExists = (value: boolean) => {
-      (shareModel as Record<string, jest.Mock>).exists = jest
-        .fn()
-        .mockReturnValue({ exec: () => Promise.resolve(value) });
+      (shareStore as Record<string, jest.Mock>).existsForUser = jest.fn().mockResolvedValue(value);
     };
 
     shareExists(false);
@@ -315,10 +268,8 @@ describe('ProjectShareService', () => {
 
   it('enforces write access on the project', async () => {
     const readwriteShare = createService({
-      shareModel: {
-        findOne: jest.fn().mockReturnValue({
-          lean: () => ({ exec: () => Promise.resolve({ permission: 'readwrite' }) }),
-        }),
+      shareStore: {
+        findOneByProjectAndUser: jest.fn().mockResolvedValue(shareRecord({ permission: 'readwrite' })),
       },
     });
     await expect(
@@ -326,10 +277,8 @@ describe('ProjectShareService', () => {
     ).resolves.toBeUndefined();
 
     const readOnlyShare = createService({
-      shareModel: {
-        findOne: jest.fn().mockReturnValue({
-          lean: () => ({ exec: () => Promise.resolve({ permission: 'read' }) }),
-        }),
+      shareStore: {
+        findOneByProjectAndUser: jest.fn().mockResolvedValue(shareRecord({ permission: 'read' })),
       },
     });
     await expect(
@@ -341,7 +290,7 @@ describe('ProjectShareService', () => {
       noShare.service.assertProjectWriteAccess(RECIPIENT_ID, PROJECT_ID),
     ).rejects.toMatchObject({ code: ErrorCode.PROJECT_FORBIDDEN });
 
-    const publicProject = createService({ project: { isPublic: true } });
+    const publicProject = createService({ project: projectRecord({ isPublic: true }) });
     await expect(
       publicProject.service.assertProjectWriteAccess(RECIPIENT_ID, PROJECT_ID),
     ).rejects.toMatchObject({ code: ErrorCode.PROJECT_SHARE_READ_ONLY });
@@ -352,10 +301,10 @@ describe('ProjectShareService', () => {
   });
 
   it('removes all shares when a project is deleted', async () => {
-    const { service, shareModel } = createService();
+    const { service, shareStore } = createService();
 
     await service.removeAllByProject(PROJECT_ID);
 
-    expect(shareModel.deleteMany).toHaveBeenCalledWith({ projectId: expect.anything() });
+    expect(shareStore.deleteByProject).toHaveBeenCalledWith(PROJECT_ID);
   });
 });

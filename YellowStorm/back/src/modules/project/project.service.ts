@@ -1,11 +1,9 @@
 import { Inject, Injectable } from '@nestjs/common';
-import { InjectModel } from '@nestjs/mongoose';
-import { Model, FilterQuery, Types } from 'mongoose';
-import { Project, ProjectDocument } from './schemas/project.schema';
 import {
   CONVERSATION_STORE,
   type ConversationStore,
 } from '../conversation/persistence/conversation-store';
+import { PROJECT_STORE, type ProjectRecord, type ProjectStore } from './persistence/project-store';
 import { ProjectShareService } from './project-share.service';
 import { CreateProjectDto } from './dto/create-project.dto';
 import { UpdateProjectDto } from './dto/update-project.dto';
@@ -14,13 +12,12 @@ import { IProjectResponse } from './interfaces/project.interface';
 import { LoggerService } from '../logger';
 import { NotFoundException, ConflictException, ForbiddenException } from '../exceptions';
 import { ErrorCode } from '../exceptions/constants/error-codes';
-import { escapeRegex } from '../../common/utils';
 
 @Injectable()
 export class ProjectService {
   constructor(
-    @InjectModel(Project.name)
-    private readonly projectModel: Model<ProjectDocument>,
+    @Inject(PROJECT_STORE)
+    private readonly projectStore: ProjectStore,
     @Inject(CONVERSATION_STORE)
     private readonly conversationStore: ConversationStore,
     private readonly projectShareService: ProjectShareService,
@@ -31,54 +28,33 @@ export class ProjectService {
 
   async create(userId: string, dto: CreateProjectDto): Promise<IProjectResponse> {
     const name = dto.name.trim();
-    const existing = await this.projectModel
-      .findOne({ name, createdBy: new Types.ObjectId(userId) })
-      .lean()
-      .exec();
+    const existing = await this.projectStore.findOne({ name, createdBy: userId });
     if (existing) {
       throw new ConflictException(ErrorCode.PROJECT_ALREADY_EXISTS);
     }
 
-    const project = await this.projectModel.create({
-      name,
-      createdBy: new Types.ObjectId(userId),
-    });
+    const project = await this.projectStore.create({ name, createdBy: userId });
 
-    this.logger.log('Project created', { projectId: project._id.toString(), userId });
+    this.logger.log('Project created', { projectId: project.id, userId });
 
     return this.toResponse(project, 0);
   }
 
   async findAllByUser(userId: string, query: QueryProjectDto): Promise<IProjectResponse[]> {
-    const filter: FilterQuery<ProjectDocument> = {
-      createdBy: new Types.ObjectId(userId),
-    };
-
-    if (query.search) {
-      filter.name = { $regex: escapeRegex(query.search), $options: 'i' };
-    }
-
-    const projects = await this.projectModel
-      .find(filter)
-      .sort({ createdAt: -1 })
-      .lean()
-      .exec();
-
+    const projects = await this.projectStore.findByOwner(userId, query.search);
     if (projects.length === 0) return [];
 
-    const countMap = await this.conversationStore.countByProjects(
-      projects.map((project) => project._id.toString()),
-    );
+    const countMap = await this.conversationStore.countByProjects(projects.map((project) => project.id));
 
-    return projects.map((p) => this.toResponse(p, countMap.get(p._id.toString()) || 0));
+    return projects.map((p) => this.toResponse(p, countMap.get(p.id) ?? 0));
   }
 
   async findById(userId: string, projectId: string): Promise<IProjectResponse> {
-    const project = await this.projectModel.findById(projectId).lean().exec();
+    const project = await this.projectStore.findById(projectId);
     if (!project) {
       throw new NotFoundException(ErrorCode.PROJECT_NOT_FOUND);
     }
-    const isOwner = project.createdBy.toString() === userId;
+    const isOwner = project.createdBy === userId;
     if (!isOwner && !(await this.projectShareService.hasAccess(userId, projectId))) {
       throw new ForbiddenException(ErrorCode.PROJECT_FORBIDDEN);
     }
@@ -90,33 +66,34 @@ export class ProjectService {
   }
 
   async update(userId: string, projectId: string, dto: UpdateProjectDto): Promise<IProjectResponse> {
-    const project = await this.projectModel.findById(projectId).exec();
+    const project = await this.projectStore.findById(projectId);
     if (!project) {
       throw new NotFoundException(ErrorCode.PROJECT_NOT_FOUND);
     }
-    if (project.createdBy.toString() !== userId) {
+    if (project.createdBy !== userId) {
       throw new ForbiddenException(ErrorCode.PROJECT_FORBIDDEN);
     }
 
     if (dto.name !== undefined) {
       const name = dto.name.trim();
       if (name !== project.name) {
-        const duplicate = await this.projectModel
-          .findOne({ name, createdBy: new Types.ObjectId(userId), _id: { $ne: project._id } })
-          .lean()
-          .exec();
+        const duplicate = await this.projectStore.findOne({ name, createdBy: userId, excludeId: projectId });
         if (duplicate) {
           throw new ConflictException(ErrorCode.PROJECT_ALREADY_EXISTS);
         }
-        project.name = name;
       }
     }
 
-    await project.save();
+    const updated = await this.projectStore.updateById(projectId, {
+      ...(dto.name !== undefined ? { name: dto.name.trim() } : {}),
+    });
+    if (!updated) {
+      throw new NotFoundException(ErrorCode.PROJECT_NOT_FOUND);
+    }
 
     const count = await this.conversationStore.countByProject(projectId);
 
-    return this.toResponse(project, count);
+    return this.toResponse(updated, count);
   }
 
   /**
@@ -125,28 +102,30 @@ export class ProjectService {
    * when the project goes back to private.
    */
   async setVisibility(projectId: string, ownerId: string, isPublic: boolean): Promise<IProjectResponse> {
-    const project = await this.projectModel.findById(projectId).exec();
+    const project = await this.projectStore.findById(projectId);
     if (!project) {
       throw new NotFoundException(ErrorCode.PROJECT_NOT_FOUND);
     }
-    if (project.createdBy.toString() !== ownerId) {
+    if (project.createdBy !== ownerId) {
       throw new ForbiddenException(ErrorCode.PROJECT_FORBIDDEN);
     }
 
-    project.isPublic = isPublic;
-    await project.save();
+    const updated = await this.projectStore.updateById(projectId, { isPublic });
+    if (!updated) {
+      throw new NotFoundException(ErrorCode.PROJECT_NOT_FOUND);
+    }
     this.logger.log('Project visibility updated', { projectId, ownerId, isPublic });
 
     const count = await this.conversationStore.countByProject(projectId);
-    return this.toResponse(project, count);
+    return this.toResponse(updated, count);
   }
 
   async delete(userId: string, projectId: string): Promise<void> {
-    const project = await this.projectModel.findById(projectId).exec();
+    const project = await this.projectStore.findById(projectId);
     if (!project) {
       throw new NotFoundException(ErrorCode.PROJECT_NOT_FOUND);
     }
-    if (project.createdBy.toString() !== userId) {
+    if (project.createdBy !== userId) {
       throw new ForbiddenException(ErrorCode.PROJECT_FORBIDDEN);
     }
 
@@ -154,7 +133,7 @@ export class ProjectService {
     const conversationsDetached = await this.conversationStore.detachProject(projectId);
     await this.projectShareService.removeAllByProject(projectId);
 
-    await this.projectModel.deleteOne({ _id: project._id });
+    await this.projectStore.deleteById(projectId);
 
     this.logger.log('Project deleted', {
       projectId,
@@ -163,17 +142,16 @@ export class ProjectService {
     });
   }
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  private toResponse(doc: any, conversationCount: number): IProjectResponse {
+  private toResponse(project: ProjectRecord, conversationCount: number): IProjectResponse {
     return {
-      id: (doc._id as { toString(): string }).toString(),
-      name: doc.name as string,
-      createdBy: (doc.createdBy as { toString(): string }).toString(),
+      id: project.id,
+      name: project.name,
+      createdBy: project.createdBy,
       conversationCount,
-      isPublic: Boolean(doc.isPublic),
-      shareCount: Number(doc.shareCount ?? 0),
-      createdAt: doc.createdAt instanceof Date ? doc.createdAt.toISOString() : doc.createdAt,
-      updatedAt: doc.updatedAt instanceof Date ? doc.updatedAt.toISOString() : doc.updatedAt,
+      isPublic: project.isPublic,
+      shareCount: project.shareCount,
+      createdAt: project.createdAt.toISOString(),
+      updatedAt: project.updatedAt.toISOString(),
     };
   }
 }
