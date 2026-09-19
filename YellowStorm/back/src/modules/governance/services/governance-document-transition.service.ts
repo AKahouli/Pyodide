@@ -1,8 +1,9 @@
-import { BadRequestException, ConflictException, Injectable } from '@nestjs/common';
+import { Inject, BadRequestException, ConflictException, Injectable } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import { ErrorCode } from '@modules/exceptions/constants/error-codes';
-import { DocumentStatus, IndexingStatus, WorkspaceDoc, WorkspaceDocumentDoc } from '@modules/workspace/schemas/workspace-document.schema';
+import { DocumentStatus, IndexingStatus } from '@modules/workspace/interfaces/document-status.enum';
+import { WORKSPACE_DOCUMENT_READ_PORT, type WorkspaceDocumentReadPort } from '@modules/workspace/ports';
 import { GovernanceDocument, GovernanceDocumentDocument, GovernanceDocumentLifecycleStatus } from '../schemas/governance-document.schema';
 import { GovernanceDocumentService } from './governance-document.service';
 import { GovernanceDocumentEventService } from './governance-document-event.service';
@@ -22,7 +23,7 @@ export interface GovernanceDocumentTransitionCommand { commandId: string; expect
 export class GovernanceDocumentTransitionService {
   constructor(
     @InjectModel(GovernanceDocument.name) private readonly model: Model<GovernanceDocumentDocument>,
-    @InjectModel(WorkspaceDoc.name) private readonly workspaceDocuments: Model<WorkspaceDocumentDoc>,
+    @Inject(WORKSPACE_DOCUMENT_READ_PORT) private readonly workspaceDocuments: WorkspaceDocumentReadPort,
     private readonly documents: GovernanceDocumentService,
     private readonly events: GovernanceDocumentEventService,
   ) {}
@@ -49,7 +50,7 @@ export class GovernanceDocumentTransitionService {
   }
 
   private async assertPublishable(record: GovernanceDocumentDocument): Promise<void> {
-    const document = await this.workspaceDocuments.findOne({ _id: record.documentId, workspaceId: record.workspaceId, isFolder: false }).lean().exec();
+    const document = await this.workspaceDocuments.findOne({ id: record.documentId.toString(), workspaceId: record.workspaceId.toString(), isFolder: false });
     if (!document || document.status !== DocumentStatus.COMPLETED || document.indexingStatus !== IndexingStatus.READY) throw new BadRequestException(ErrorCode.VALIDATION_ERROR, 'Document must be completed and indexed before publication');
     if (['expired', 'conflicting', 'suspended'].includes(record.validity.businessStatus)) throw new BadRequestException(ErrorCode.VALIDATION_ERROR, 'Document validity blocks publication');
   }

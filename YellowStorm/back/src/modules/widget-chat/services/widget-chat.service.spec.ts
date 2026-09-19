@@ -1,7 +1,7 @@
 import { ConfigService } from '@nestjs/config';
 import { WidgetChatService } from './widget-chat.service';
 import { NotFoundException, ServiceUnavailableException } from '@modules/exceptions';
-import { DocumentStatus, IndexingStatus } from '@modules/workspace/schemas/workspace-document.schema';
+import { DocumentStatus, IndexingStatus } from '@modules/workspace/interfaces/document-status.enum';
 
 const WS_ID = '507f1f77bcf86cd799439011';
 const DOC_ID = '507f1f77bcf86cd799439012';

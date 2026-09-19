@@ -50,10 +50,8 @@ import { GovernanceDocumentEventService } from './services/governance-document-e
 import { GovernancePublicationAttempt, GovernancePublicationAttemptSchema } from './schemas/governance-publication-attempt.schema';
 import { User, UserSchema } from '@modules/user/schemas/user.schema';
 import { GovernanceRuntimeModule } from './governance-runtime.module';
+import { WorkspaceModule } from '@modules/workspace/workspace.module';
 import { IntegrationEventsModule } from '@modules/integration-events/integration-events.module';
-import { WorkspaceDoc, WorkspaceDocumentSchema } from '@modules/workspace/schemas/workspace-document.schema';
-import { Workspace, WorkspaceSchema } from '@modules/workspace/schemas/workspace.schema';
-import { WorkspaceShare, WorkspaceShareSchema } from '@modules/workspace/schemas/workspace-share.schema';
 import { GovernanceWorkspaceReconciliationService } from './services/governance-workspace-reconciliation.service';
 import { DocumentValidityCalculatorService } from './services/document-validity-calculator.service';
 import { GovernanceReconciliationRun, GovernanceReconciliationRunSchema } from './schemas/governance-reconciliation-run.schema';
@@ -96,10 +94,8 @@ import { GovernanceQualityEvaluator } from './services/knowledge-evaluators/gove
       { name: GovernanceMetric.name, schema: GovernanceMetricSchema },
       { name: GovernancePublicationAttempt.name, schema: GovernancePublicationAttemptSchema },
       { name: User.name, schema: UserSchema },
-      { name: WorkspaceDoc.name, schema: WorkspaceDocumentSchema },
-      { name: Workspace.name, schema: WorkspaceSchema },
-      { name: WorkspaceShare.name, schema: WorkspaceShareSchema },
     ]),
+    WorkspaceModule,
     AuthorizationModule,
     forwardRef(() => ConversationModule),
     WidgetChatModule,

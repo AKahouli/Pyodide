@@ -1,7 +1,6 @@
 import { Types, type Model } from 'mongoose';
 import { ForbiddenException } from '@modules/exceptions';
-import type { WorkspaceDocument } from '@modules/workspace/schemas/workspace.schema';
-import type { WorkspaceShareDocument } from '@modules/workspace/schemas/workspace-share.schema';
+import type { WorkspaceReadPort, WorkspaceShareReadPort } from '@modules/workspace/ports';
 import type { GovernanceWorkspaceBindingDocument } from '../schemas/governance-workspace-binding.schema';
 import type { GovernanceScopeDocument } from '../schemas/governance-scope.schema';
 import { GovernanceWorkspaceBindingService } from './governance-workspace-binding.service';
@@ -28,8 +27,8 @@ describe('GovernanceWorkspaceBindingService', () => {
     } = {},
   ) {
     const workspace = {
-      _id: new Types.ObjectId(workspaceId),
-      createdBy: new Types.ObjectId(options.owner ? actorId : new Types.ObjectId().toString()),
+      id: workspaceId,
+      createdBy: options.owner ? actorId : new Types.ObjectId().toString(),
       isPublic: options.isPublic ?? false,
     };
     const binding = {
@@ -50,10 +49,10 @@ describe('GovernanceWorkspaceBindingService', () => {
       }),
     };
     const scopeModel = { find: jest.fn() };
-    const workspaceModel = {
-      findById: jest.fn().mockReturnValue({ exec: jest.fn().mockResolvedValue(workspace) }),
+    const workspaceReadPort = {
+      findById: jest.fn().mockResolvedValue(workspace),
     };
-    const shareModel = { exists: jest.fn().mockResolvedValue(options.shared ?? false) };
+    const shareReadPort = { permissionFor: jest.fn().mockResolvedValue(options.shared ? 'read' : null) };
     const programs = { assertOwnedProgram: jest.fn().mockResolvedValue(undefined) };
     const access = {
       assertScopeSelection: jest
@@ -75,13 +74,13 @@ describe('GovernanceWorkspaceBindingService', () => {
     const service = new GovernanceWorkspaceBindingService(
       bindingModel as unknown as Model<GovernanceWorkspaceBindingDocument>,
       scopeModel as unknown as Model<GovernanceScopeDocument>,
-      workspaceModel as unknown as Model<WorkspaceDocument>,
-      shareModel as unknown as Model<WorkspaceShareDocument>,
+      workspaceReadPort as unknown as WorkspaceReadPort,
+      shareReadPort as unknown as WorkspaceShareReadPort,
       programs as unknown as GovernanceProgramService,
       access as unknown as GovernanceAccessService,
       draftPreparation as unknown as GovernanceDraftPreparationService,
     );
-    return { service, binding, bindingModel, shareModel, draftPreparation, access };
+    return { service, binding, bindingModel, shareReadPort, draftPreparation, access };
   }
 
   const payload = () => ({
@@ -114,16 +113,13 @@ describe('GovernanceWorkspaceBindingService', () => {
   });
 
   it('rejects a private workspace the actor cannot read', async () => {
-    const { service, bindingModel, shareModel } = buildService();
+    const { service, bindingModel, shareReadPort } = buildService();
 
     await expect(service.create(actorId, programId, payload())).rejects.toBeInstanceOf(
       ForbiddenException,
     );
 
-    expect(shareModel.exists).toHaveBeenCalledWith({
-      workspaceId: new Types.ObjectId(workspaceId),
-      sharedWithUserId: new Types.ObjectId(actorId),
-    });
+    expect(shareReadPort.permissionFor).toHaveBeenCalledWith(workspaceId, actorId);
     expect(bindingModel.create).not.toHaveBeenCalled();
   });
 

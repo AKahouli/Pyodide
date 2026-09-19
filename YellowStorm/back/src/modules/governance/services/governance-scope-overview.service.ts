@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Inject, Injectable } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import { NotFoundException } from '@modules/exceptions';
@@ -13,7 +13,7 @@ import { GovernanceMetric, GovernanceMetricDocument } from '../schemas/governanc
 import { GovernanceScope, GovernanceScopeDocument } from '../schemas/governance-scope.schema';
 import { GovernanceDocument, GovernanceDocumentDocument } from '../schemas/governance-document.schema';
 import { GovernanceWorkspaceBinding, GovernanceWorkspaceBindingDocument } from '../schemas/governance-workspace-binding.schema';
-import { WorkspaceDoc, WorkspaceDocumentDoc } from '@modules/workspace/schemas/workspace-document.schema';
+import { WORKSPACE_DOCUMENT_READ_PORT, type WorkspaceDocumentReadPort } from '@modules/workspace/ports';
 import { Agent, AgentDocument } from '@modules/agent/schemas/agent.schema';
 import { AgentRepository } from '@modules/agent/repositories/agent.repository';
 import { User, UserDocument } from '@modules/user/schemas/user.schema';
@@ -53,7 +53,7 @@ export class GovernanceScopeOverviewService {
   constructor(
     @InjectModel(GovernanceScope.name) private readonly scopeModel: Model<GovernanceScopeDocument>,
     @InjectModel(GovernanceDocument.name) private readonly documentModel: Model<GovernanceDocumentDocument>,
-    @InjectModel(WorkspaceDoc.name) private readonly workspaceDocumentModel: Model<WorkspaceDocumentDoc>,
+    @Inject(WORKSPACE_DOCUMENT_READ_PORT) private readonly workspaceDocumentReadPort: WorkspaceDocumentReadPort,
     @InjectModel(GovernanceWorkspaceBinding.name) private readonly workspaceBindingModel: Model<GovernanceWorkspaceBindingDocument>,
     @InjectModel(GovernanceDeployment.name) private readonly deploymentModel: Model<GovernanceDeploymentDocument>,
     @InjectModel(GovernanceDeploymentRevision.name) private readonly revisionModel: Model<GovernanceDeploymentRevisionDocument>,
@@ -112,8 +112,8 @@ export class GovernanceScopeOverviewService {
   private async loadEffectiveDocuments(programId: string, workspaceIds: string[]): Promise<Record<string, unknown>[]> {
     if (workspaceIds.length === 0) return [];
     const governanceDocuments = await this.documentModel.find({ programId: new Types.ObjectId(programId), workspaceId: { $in: workspaceIds.map((id) => new Types.ObjectId(id)) }, status: { $ne: 'archived' } }).sort({ updatedAt: -1 }).lean().exec();
-    const artifacts = await this.workspaceDocumentModel.find({ _id: { $in: governanceDocuments.map((document) => document.documentId) }, isFolder: false }).lean().exec();
-    const byId = new Map(artifacts.map((artifact) => [artifact._id.toString(), artifact]));
+    const artifacts = await this.workspaceDocumentReadPort.find({ ids: governanceDocuments.map((document) => document.documentId.toString()), isFolder: false });
+    const byId = new Map(artifacts.map((artifact) => [artifact.id, artifact]));
     return governanceDocuments.map((governance) => {
       const document = byId.get(governance.documentId.toString());
       return { id: governance._id.toString(), programId: governance.programId.toString(), documentId: governance.documentId.toString(), workspaceId: governance.workspaceId.toString(), document: document ? { originalName: document.originalName, mimeType: document.mimeType, type: document.type, sourceUrl: document.sourceUrl, contentHash: document.contentHash, status: document.status, indexingStatus: document.indexingStatus, updatedAt: document.updatedAt } : undefined, governance: { status: governance.status, validity: governance.validity, tags: governance.tags, metadata: governance.metadata, ownerUserId: governance.ownerUserId?.toString(), ownerScopeId: governance.ownerScopeId?.toString(), updatedAt: governance.updatedAt } };

@@ -14,7 +14,7 @@ import { GovernanceScope } from '../schemas/governance-scope.schema';
 import { GovernanceWorkspaceBinding } from '../schemas/governance-workspace-binding.schema';
 import { AgentRepository } from '@modules/agent/repositories/agent.repository';
 import { User } from '@modules/user/schemas/user.schema';
-import { WorkspaceDoc } from '@modules/workspace/schemas/workspace-document.schema';
+import { WORKSPACE_DOCUMENT_READ_PORT } from '@modules/workspace/ports';
 
 const query = <T>(value: T) => ({
   sort: jest.fn().mockReturnThis(),
@@ -43,7 +43,7 @@ describe('GovernanceScopeOverviewService', () => {
         GovernanceScopeOverviewService,
         { provide: getModelToken(GovernanceScope.name), useValue: models.scopeModel },
         { provide: getModelToken(GovernanceDocument.name), useValue: models.documentModel ?? { find: jest.fn().mockReturnValue(query([])) } },
-        { provide: getModelToken(WorkspaceDoc.name), useValue: models.workspaceDocumentModel ?? { find: jest.fn().mockReturnValue(query([])) } },
+        { provide: WORKSPACE_DOCUMENT_READ_PORT, useValue: { find: jest.fn().mockResolvedValue([]) } },
         { provide: getModelToken(GovernanceWorkspaceBinding.name), useValue: models.workspaceBindingModel },
         { provide: getModelToken(GovernanceDeployment.name), useValue: models.deploymentModel },
         { provide: getModelToken(GovernanceDeploymentRevision.name), useValue: models.revisionModel },
@@ -80,7 +80,7 @@ describe('GovernanceScopeOverviewService', () => {
         GovernanceScopeOverviewService,
         { provide: getModelToken(GovernanceScope.name), useValue: scopeModel },
         { provide: getModelToken(GovernanceDocument.name), useValue: sourceModel },
-        { provide: getModelToken(WorkspaceDoc.name), useValue: { find: jest.fn().mockReturnValue(query([])) } },
+        { provide: WORKSPACE_DOCUMENT_READ_PORT, useValue: { find: jest.fn().mockResolvedValue([]) } },
         { provide: getModelToken(GovernanceWorkspaceBinding.name), useValue: workspaceBindingModel },
         { provide: getModelToken(GovernanceDeployment.name), useValue: deploymentModel },
         { provide: getModelToken(GovernanceDeploymentRevision.name), useValue: revisionModel },
@@ -141,7 +141,7 @@ describe('GovernanceScopeOverviewService', () => {
         GovernanceScopeOverviewService,
         { provide: getModelToken(GovernanceScope.name), useValue: scopeModel },
         { provide: getModelToken(GovernanceDocument.name), useValue: sourceModel },
-        { provide: getModelToken(WorkspaceDoc.name), useValue: { find: jest.fn().mockReturnValue(query([])) } },
+        { provide: WORKSPACE_DOCUMENT_READ_PORT, useValue: { find: jest.fn().mockResolvedValue([]) } },
         { provide: getModelToken(GovernanceWorkspaceBinding.name), useValue: { find: jest.fn().mockReturnValue(query([])) } },
         { provide: getModelToken(GovernanceDeployment.name), useValue: deploymentModel },
         { provide: getModelToken(GovernanceDeploymentRevision.name), useValue: revisionModel },
@@ -182,7 +182,7 @@ describe('GovernanceScopeOverviewService', () => {
         GovernanceScopeOverviewService,
         { provide: getModelToken(GovernanceScope.name), useValue: scopeModel },
         { provide: getModelToken(GovernanceDocument.name), useValue: sourceModel },
-        { provide: getModelToken(WorkspaceDoc.name), useValue: { find: jest.fn().mockReturnValue(query([])) } },
+        { provide: WORKSPACE_DOCUMENT_READ_PORT, useValue: { find: jest.fn().mockResolvedValue([]) } },
         { provide: getModelToken(GovernanceWorkspaceBinding.name), useValue: { find: jest.fn().mockReturnValue(query([{ _id: new Types.ObjectId(), programId, workspaceId, visibility: 'scope_specific', scopeIds: [scopeId], enabled: true }])) } },
         { provide: getModelToken(GovernanceDeployment.name), useValue: deploymentModel },
         { provide: getModelToken(GovernanceDeploymentRevision.name), useValue: revisionModel },
@@ -226,7 +226,7 @@ describe('GovernanceScopeOverviewService', () => {
         GovernanceScopeOverviewService,
         { provide: getModelToken(GovernanceScope.name), useValue: scopeModel },
         { provide: getModelToken(GovernanceDocument.name), useValue: sourceModel },
-        { provide: getModelToken(WorkspaceDoc.name), useValue: { find: jest.fn().mockReturnValue(query([])) } },
+        { provide: WORKSPACE_DOCUMENT_READ_PORT, useValue: { find: jest.fn().mockResolvedValue([]) } },
         { provide: getModelToken(GovernanceWorkspaceBinding.name), useValue: { find: jest.fn().mockReturnValue(query([])) } },
         { provide: getModelToken(GovernanceDeployment.name), useValue: deploymentModel },
         { provide: getModelToken(GovernanceDeploymentRevision.name), useValue: revisionModel },

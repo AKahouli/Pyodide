@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable } from '@nestjs/common';
+import { Inject, BadRequestException, Injectable } from '@nestjs/common';
 import { createHash } from 'crypto';
 import { ErrorCode } from '@modules/exceptions/constants/error-codes';
 import { KnowledgeExtractionOrchestratorService } from '@modules/knowledge-intelligence/services/knowledge-extraction-orchestrator.service';
@@ -6,7 +6,7 @@ import { TemporalCandidateRepositoryService } from '@modules/knowledge-intellige
 import { WorkspaceEvidenceSearchSettingsService } from '@modules/system/workspace-evidence-search-settings.service';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
-import { WorkspaceDoc, WorkspaceDocumentDoc } from '@modules/workspace/schemas/workspace-document.schema';
+import { WORKSPACE_DOCUMENT_READ_PORT, type WorkspaceDocumentReadPort } from '@modules/workspace/ports';
 import type { TemporalCandidate } from '../domain/temporal-candidate';
 import type { DocumentValidity } from '../domain/document-validity';
 import { GovernanceDocument, GovernanceDocumentDocument } from '../schemas/governance-document.schema';
@@ -19,7 +19,7 @@ export class GovernanceTemporalCandidateService {
   constructor(
     private readonly documentService: GovernanceDocumentService,
     @InjectModel(GovernanceDocument.name) private readonly governanceDocuments: Model<GovernanceDocumentDocument>,
-    @InjectModel(WorkspaceDoc.name) private readonly workspaceDocuments: Model<WorkspaceDocumentDoc>,
+    @Inject(WORKSPACE_DOCUMENT_READ_PORT) private readonly workspaceDocuments: WorkspaceDocumentReadPort,
     private readonly jobs: KnowledgeExtractionOrchestratorService,
     private readonly records: TemporalCandidateRepositoryService,
     private readonly validator: TemporalCandidateValidatorService,
@@ -32,7 +32,7 @@ export class GovernanceTemporalCandidateService {
 
   async run(actorId: string, programId: string, documentId: string) {
     const governance = await this.documentService.findRecord(actorId, programId, documentId);
-    const document = await this.workspaceDocuments.findOne({ _id: governance.documentId, workspaceId: governance.workspaceId, isFolder: false }).lean().exec();
+    const document = await this.workspaceDocuments.findOne({ id: governance.documentId.toString(), workspaceId: governance.workspaceId.toString(), isFolder: false });
     if (!document || document.indexingStatus !== 'ready') throw new BadRequestException(ErrorCode.VALIDATION_ERROR, 'Only an indexed document can be analyzed.');
     const { connectorId } = await this.settings.getSettings();
     if (!connectorId) throw new BadRequestException(ErrorCode.VALIDATION_ERROR, 'Select an evidence-search connector before starting analysis.');

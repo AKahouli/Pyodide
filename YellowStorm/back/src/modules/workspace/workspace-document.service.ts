@@ -1,4 +1,5 @@
 import { Injectable, Inject, Optional, forwardRef } from '@nestjs/common';
+import type { WorkspaceDocumentRecord } from './ports/workspace-records';
 import { InjectModel } from '@nestjs/mongoose';
 import { ConfigService } from '@nestjs/config';
 import { Cron, CronExpression } from '@nestjs/schedule';
@@ -999,7 +1000,10 @@ export class WorkspaceDocumentService {
         { new: true },
       );
       if (failed) {
-        await this.indexingService.sendIndexingStatusNotification(failed).catch(() => undefined);
+        await this.indexingService.sendIndexingStatusNotification({
+          ...JSON.parse(JSON.stringify(failed)),
+          id: failed._id.toString(),
+        } as WorkspaceDocumentRecord).catch(() => undefined);
       }
       this.logger.error('Link conversion failed', { documentId, workspaceId, error: message });
     }

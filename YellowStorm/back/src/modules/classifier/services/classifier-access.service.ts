@@ -1,14 +1,11 @@
-import { Injectable } from '@nestjs/common';
-import { InjectModel } from '@nestjs/mongoose';
-import { Model, Types } from 'mongoose';
+import { Inject, Injectable } from '@nestjs/common';
+import { Types } from 'mongoose';
 import {
-  Workspace,
-  WorkspaceDocument,
-} from '../../workspace/schemas/workspace.schema';
-import {
-  WorkspaceShare,
-  WorkspaceShareDocument,
-} from '../../workspace/schemas/workspace-share.schema';
+  WORKSPACE_READ_PORT,
+  WORKSPACE_SHARE_READ_PORT,
+  type WorkspaceReadPort,
+  type WorkspaceShareReadPort,
+} from '../../workspace/ports';
 import { ForbiddenException, NotFoundException } from '../../exceptions';
 import { ErrorCode } from '../../exceptions/constants/error-codes';
 
@@ -19,10 +16,8 @@ import { ErrorCode } from '../../exceptions/constants/error-codes';
 @Injectable()
 export class ClassifierAccessService {
   constructor(
-    @InjectModel(Workspace.name)
-    private readonly workspaceModel: Model<WorkspaceDocument>,
-    @InjectModel(WorkspaceShare.name)
-    private readonly shareModel: Model<WorkspaceShareDocument>,
+    @Inject(WORKSPACE_READ_PORT) private readonly workspaceReadPort: WorkspaceReadPort,
+    @Inject(WORKSPACE_SHARE_READ_PORT) private readonly shareReadPort: WorkspaceShareReadPort,
   ) {}
 
   async assertWorkspaceAccess(workspaceId: string, userId: string): Promise<void> {
@@ -30,30 +25,19 @@ export class ClassifierAccessService {
       throw new NotFoundException(ErrorCode.WORKSPACE_NOT_FOUND);
     }
 
-    const workspace = await this.workspaceModel
-      .findById(workspaceId)
-      .select({ _id: 1, createdBy: 1 })
-      .lean()
-      .exec();
+    const workspace = await this.workspaceReadPort.findById(workspaceId);
 
     if (!workspace) {
       throw new NotFoundException(ErrorCode.WORKSPACE_NOT_FOUND);
     }
 
-    if (workspace.createdBy.toString() === userId) {
+    if (workspace.createdBy === userId) {
       return;
     }
 
-    const share = await this.shareModel
-      .findOne({
-        workspaceId: new Types.ObjectId(workspaceId),
-        sharedWithUserId: new Types.ObjectId(userId),
-      })
-      .select({ _id: 1 })
-      .lean()
-      .exec();
+    const permission = await this.shareReadPort.permissionFor(workspaceId, userId);
 
-    if (!share) {
+    if (!permission) {
       throw new ForbiddenException(ErrorCode.WORKSPACE_FORBIDDEN);
     }
   }

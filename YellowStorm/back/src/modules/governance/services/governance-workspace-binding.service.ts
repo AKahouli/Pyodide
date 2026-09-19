@@ -1,9 +1,8 @@
-import { Injectable } from '@nestjs/common';
+import { Inject, Injectable } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import { BadRequestException, ConflictException, ForbiddenException, NotFoundException } from '@modules/exceptions';
-import { Workspace, WorkspaceDocument } from '@modules/workspace/schemas/workspace.schema';
-import { WorkspaceShare, WorkspaceShareDocument } from '@modules/workspace/schemas/workspace-share.schema';
+import { WORKSPACE_READ_PORT, WORKSPACE_SHARE_READ_PORT, type WorkspaceReadPort, type WorkspaceShareReadPort } from '@modules/workspace/ports';
 import { ErrorCode } from '@modules/exceptions/constants/error-codes';
 import { GovernanceProgramService } from './governance-program.service';
 import { GovernanceAccessService } from './governance-access.service';
@@ -18,8 +17,8 @@ export class GovernanceWorkspaceBindingService {
     @InjectModel(GovernanceWorkspaceBinding.name)
     private readonly bindingModel: Model<GovernanceWorkspaceBindingDocument>,
     @InjectModel(GovernanceScope.name) private readonly scopeModel: Model<GovernanceScopeDocument>,
-    @InjectModel(Workspace.name) private readonly workspaceModel: Model<WorkspaceDocument>,
-    @InjectModel(WorkspaceShare.name) private readonly shareModel: Model<WorkspaceShareDocument>,
+    @Inject(WORKSPACE_READ_PORT) private readonly workspaceReadPort: WorkspaceReadPort,
+    @Inject(WORKSPACE_SHARE_READ_PORT) private readonly shareReadPort: WorkspaceShareReadPort,
     private readonly programs: GovernanceProgramService,
     private readonly access: GovernanceAccessService,
     private readonly draftPreparation: GovernanceDraftPreparationService,
@@ -30,17 +29,12 @@ export class GovernanceWorkspaceBindingService {
     if ((dto.visibility === 'program_shared' && scopeIds.length !== 0) || (dto.visibility === 'scope_specific' && scopeIds.length !== 1) || (dto.visibility === 'multi_scope' && scopeIds.length < 2)) throw new BadRequestException(ErrorCode.VALIDATION_ERROR, 'Visibility and scope selection are inconsistent');
     if (dto.visibility === 'program_shared') await this.access.assertProgramWideAccess(actorId, programId);
     else await this.access.assertScopeSelection(actorId, programId, scopeIds);
-    const workspace = await this.workspaceModel.findById(dto.workspaceId).exec();
+    const workspace = await this.workspaceReadPort.findById(dto.workspaceId);
     if (!workspace) throw new NotFoundException(ErrorCode.WORKSPACE_NOT_FOUND, 'Workspace not found');
     const canRead =
-      workspace.createdBy.equals(actorId) ||
+      workspace.createdBy === actorId ||
       workspace.isPublic ||
-      Boolean(
-        await this.shareModel.exists({
-          workspaceId: workspace._id,
-          sharedWithUserId: new Types.ObjectId(actorId),
-        }),
-      );
+      Boolean(await this.shareReadPort.permissionFor(workspace.id, actorId));
     if (!canRead) throw new ForbiddenException(ErrorCode.WORKSPACE_FORBIDDEN, 'Read access to the workspace is required');
     const existingBinding = await this.bindingModel
       .findOne({

@@ -1,10 +1,10 @@
-import { Injectable } from '@nestjs/common';
+import { Inject, Injectable } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import { randomUUID } from 'crypto';
 import { NotFoundException } from '@modules/exceptions';
 import { ErrorCode } from '@modules/exceptions/constants/error-codes';
-import { WorkspaceDoc, WorkspaceDocumentDoc } from '@modules/workspace/schemas/workspace-document.schema';
+import { WORKSPACE_DOCUMENT_READ_PORT, type WorkspaceDocumentReadPort } from '@modules/workspace/ports';
 import { GovernanceWorkspaceBinding, GovernanceWorkspaceBindingDocument } from '../schemas/governance-workspace-binding.schema';
 import { GovernanceDocument, GovernanceDocumentDocument } from '../schemas/governance-document.schema';
 import { GovernanceReconciliationRun, GovernanceReconciliationRunDocument } from '../schemas/governance-reconciliation-run.schema';
@@ -28,7 +28,7 @@ const LEASE_MS = 5 * 60 * 1000;
 export class GovernanceWorkspaceReconciliationService {
   constructor(
     @InjectModel(GovernanceWorkspaceBinding.name) private readonly bindings: Model<GovernanceWorkspaceBindingDocument>,
-    @InjectModel(WorkspaceDoc.name) private readonly workspaceDocuments: Model<WorkspaceDocumentDoc>,
+    @Inject(WORKSPACE_DOCUMENT_READ_PORT) private readonly workspaceDocuments: WorkspaceDocumentReadPort,
     @InjectModel(GovernanceDocument.name) private readonly governanceDocuments: Model<GovernanceDocumentDocument>,
     @InjectModel(GovernanceReconciliationRun.name) private readonly runs: Model<GovernanceReconciliationRunDocument>,
     private readonly documents: GovernanceDocumentService,
@@ -110,31 +110,32 @@ export class GovernanceWorkspaceReconciliationService {
 
   private async reconcileBatch(binding: GovernanceWorkspaceBindingDocument, dryRun: boolean, cursor?: string, heartbeat?: () => Promise<void>): Promise<{ result: GovernanceDocumentReconciliationResult; nextCursor?: string }> {
     const result = this.empty(binding._id.toString());
-    const query: Record<string, unknown> = { workspaceId: binding.workspaceId, isFolder: false };
-    if (cursor) query._id = { $gt: new Types.ObjectId(cursor) };
-    const documents = await this.workspaceDocuments.find(query).sort({ _id: 1 }).limit(BATCH_SIZE).lean().exec();
+    const documents = await this.workspaceDocuments.find(
+      { workspaceId: binding.workspaceId.toString(), isFolder: false, ...(cursor ? { afterId: cursor } : {}) },
+      { sort: { field: 'id', direction: 'asc' }, limit: BATCH_SIZE },
+    );
     for (let index = 0; index < documents.length; index += 1) {
       if (heartbeat && index % 10 === 0) await heartbeat();
       const document = documents[index];
       result.scannedDocuments += 1;
-      const existing = await this.governanceDocuments.findOne({ programId: binding.programId, documentId: document._id }).exec();
+      const existing = await this.governanceDocuments.findOne({ programId: binding.programId, documentId: new Types.ObjectId(document.id) }).exec();
       if (!existing) {
         result.missingGovernanceDocuments += 1;
         if (!dryRun && binding.ingestionMode !== 'manual') {
           try {
-            await this.documents.upsertFromWorkspace(binding.programId.toString(), document._id.toString(), binding.createdBy.toString());
+            await this.documents.upsertFromWorkspace(binding.programId.toString(), document.id, binding.createdBy.toString());
             result.createdGovernanceDocuments += 1;
             result.emittedEvents += 1;
           } catch (error) {
-            result.errors.push({ documentId: document._id.toString(), message: error instanceof Error ? error.message : 'Governance document repair failed' });
+            result.errors.push({ documentId: document.id, message: error instanceof Error ? error.message : 'Governance document repair failed' });
           }
         }
-      } else if (!existing.workspaceId.equals(document.workspaceId)) {
+      } else if (!existing.workspaceId.equals(new Types.ObjectId(document.workspaceId))) {
         result.staleGovernanceDocuments += 1;
-        if (!dryRun) await this.governanceDocuments.updateOne({ _id: existing._id }, { $set: { workspaceId: document.workspaceId }, $inc: { governanceRevision: 1 } }).exec();
+        if (!dryRun) await this.governanceDocuments.updateOne({ _id: existing._id }, { $set: { workspaceId: new Types.ObjectId(document.workspaceId) }, $inc: { governanceRevision: 1 } }).exec();
       }
     }
-    return { result, nextCursor: documents.length === BATCH_SIZE ? documents[documents.length - 1]._id.toString() : undefined };
+    return { result, nextCursor: documents.length === BATCH_SIZE ? documents[documents.length - 1].id : undefined };
   }
 
   private async archiveMissing(binding: GovernanceWorkspaceBindingDocument, dryRun: boolean, result: GovernanceDocumentReconciliationResult, startCursor?: string, heartbeat?: () => Promise<void>, checkpoint?: (cursor: string) => Promise<void>): Promise<void> {
@@ -146,7 +147,7 @@ export class GovernanceWorkspaceReconciliationService {
       for (let index = 0; index < records.length; index += 1) {
         if (heartbeat && index % 10 === 0) await heartbeat();
         const record = records[index];
-        if (await this.workspaceDocuments.exists({ _id: record.documentId, workspaceId: binding.workspaceId, isFolder: false })) continue;
+        if (await this.workspaceDocuments.exists({ id: record.documentId.toString(), workspaceId: binding.workspaceId.toString(), isFolder: false })) continue;
         result.staleGovernanceDocuments += 1;
         if (!dryRun && record.status !== 'archived') {
           const archived = await this.governanceDocuments.updateOne({ _id: record._id, governanceRevision: record.governanceRevision, status: { $ne: 'archived' } }, { $set: { status: 'archived', archivedAt: new Date(), archiveReason: 'Workspace document no longer exists' }, $inc: { governanceRevision: 1 } }).exec();

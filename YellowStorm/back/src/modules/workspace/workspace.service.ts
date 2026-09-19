@@ -11,7 +11,7 @@ import {
   type ConversationStore,
 } from '../conversation/persistence/conversation-store';
 import { AgentRepository } from '../agent/repositories/agent.repository';
-import { Flow, FlowDocument } from '../playbook-flow/schemas/playbook-flow.schema';
+import { FLOW_READ_PORT, type FlowReadPort } from '../playbook-flow/ports/flow-read.port';
 import {
   CreateWorkspaceData,
   UpdateWorkspaceData,
@@ -42,8 +42,8 @@ export class WorkspaceService implements OnModuleInit {
     @Inject(CONVERSATION_STORE)
     private readonly conversationStore: ConversationStore,
     private readonly agentRepository: AgentRepository,
-    @InjectModel(Flow.name)
-    private readonly playbookModel: Model<FlowDocument>,
+    @Inject(FLOW_READ_PORT)
+    private readonly flowReadPort: FlowReadPort,
     private readonly logger: LoggerService,
   ) {
     this.logger.setContext('WorkspaceService');
@@ -557,10 +557,7 @@ export class WorkspaceService implements OnModuleInit {
     await this.agentRepository.pullKnowledgeBaseFromAll(workspaceId);
 
     // Remove workspace reference from all playbooks
-    await this.playbookModel.updateMany(
-      { workspaces: new Types.ObjectId(workspaceId) },
-      { $pull: { workspaces: new Types.ObjectId(workspaceId) } },
-    );
+    await this.flowReadPort.removeWorkspaceReference(workspaceId);
 
     this.logger.log('Workspace deleted', {
       workspaceId,

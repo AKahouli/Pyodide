@@ -11,7 +11,7 @@ describe('GovernanceDocumentTransitionService', () => {
     const record = { _id: new Types.ObjectId(), documentId: new Types.ObjectId(documentId), workspaceId: new Types.ObjectId(), status, governanceRevision: 2, validity: { businessStatus: validityStatus } };
     const updated = { ...record, status: 'published' };
     const model = { findOneAndUpdate: jest.fn(() => ({ exec: jest.fn().mockResolvedValue(updated) })) };
-    const workspaceDocuments = { findOne: jest.fn(() => ({ lean: jest.fn().mockReturnThis(), exec: jest.fn().mockResolvedValue({ status: 'completed', indexingStatus: 'ready' }) })) };
+    const workspaceDocuments = { findOne: jest.fn().mockResolvedValue({ id: 'doc-1', status: 'completed', indexingStatus: 'ready', isFolder: false }) };
     const documents = { findRecord: jest.fn().mockResolvedValue(record) };
     const events = { findByDeduplicationKey: jest.fn().mockResolvedValue(null), append: jest.fn().mockResolvedValue(undefined) };
     return { service: new GovernanceDocumentTransitionService(model as never, workspaceDocuments as never, documents as never, events as never), model, workspaceDocuments, events };

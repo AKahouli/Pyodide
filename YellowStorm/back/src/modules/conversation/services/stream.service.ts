@@ -23,7 +23,7 @@ import { WorkspaceService } from '../../workspace/workspace.service';
 import { WorkspaceShareService } from '../../workspace/workspace-share.service';
 import { RunCodeSourceScopeService } from '../../workspace/services/run-code-source-scope.service';
 import type { RunCodeAttachmentSource } from '../../workspace/interfaces/run-code-source.interface';
-import { DocumentStatus } from '../../workspace/schemas/workspace-document.schema';
+import { DocumentStatus } from '../../workspace/interfaces/document-status.enum';
 import { AgentService } from '../../agent/agent.service';
 import { IGrpcAgent, IGrpcCompaction, IGrpcWorkspaceContext } from '../../agent/interfaces/agent.interface';
 import { TeamService } from '../../team/team.service';

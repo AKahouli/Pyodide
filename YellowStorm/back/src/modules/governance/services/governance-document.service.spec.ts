@@ -9,9 +9,9 @@ describe('GovernanceDocumentService', () => {
 
   function setup(binding: Record<string, unknown> | null) {
     const workspaceId = new Types.ObjectId();
-    const workspaceDocument = { _id: new Types.ObjectId(documentId), workspaceId };
-    const governed = { _id: new Types.ObjectId(), programId: new Types.ObjectId(programId), documentId: workspaceDocument._id, workspaceId };
-    const workspaceDocuments = { findOne: jest.fn(() => ({ exec: jest.fn().mockResolvedValue(workspaceDocument) })) };
+    const workspaceDocument = { id: documentId, workspaceId: workspaceId.toString(), isFolder: false };
+    const governed = { _id: new Types.ObjectId(), programId: new Types.ObjectId(programId), documentId: new Types.ObjectId(documentId), workspaceId };
+    const workspaceDocuments = { findOne: jest.fn().mockResolvedValue(workspaceDocument) };
     const bindings = { findOne: jest.fn(() => ({ exec: jest.fn().mockResolvedValue(binding) })) };
     const model = { findOneAndUpdate: jest.fn(() => ({ exec: jest.fn().mockResolvedValue(governed) })) };
     const events = { append: jest.fn().mockResolvedValue(undefined) };

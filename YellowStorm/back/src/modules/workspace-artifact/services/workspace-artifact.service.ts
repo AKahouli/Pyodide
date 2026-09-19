@@ -3,7 +3,7 @@ import { AgentService } from '../../agent/agent.service';
 import { NotFoundException, ConflictException, BadRequestException } from '../../exceptions';
 import { ErrorCode } from '../../exceptions/constants/error-codes';
 import { WorkspaceDocumentService } from '../../workspace/workspace-document.service';
-import { DocumentStatus } from '../../workspace/schemas/workspace-document.schema';
+import { DocumentStatus } from '../../workspace/interfaces/document-status.enum';
 import { DECISION_FLOW_LIMITS, DECISION_FLOW_SCHEMA_VERSION } from '../constants/decision-flow.constants';
 import { CreateDecisionFlowDto } from '../dto/create-decision-flow.dto';
 import { UpdateDecisionFlowDto } from '../dto/update-decision-flow.dto';

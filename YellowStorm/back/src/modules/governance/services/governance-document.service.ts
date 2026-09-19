@@ -1,9 +1,12 @@
-import { BadRequestException, ConflictException, Injectable } from '@nestjs/common';
+import { Inject, BadRequestException, ConflictException, Injectable } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import { NotFoundException } from '@modules/exceptions';
 import { ErrorCode } from '@modules/exceptions/constants/error-codes';
-import { WorkspaceDoc, WorkspaceDocumentDoc } from '@modules/workspace/schemas/workspace-document.schema';
+import {
+  WORKSPACE_DOCUMENT_READ_PORT,
+  type WorkspaceDocumentReadPort,
+} from '@modules/workspace/ports';
 import { GovernanceDocument, GovernanceDocumentDocument } from '../schemas/governance-document.schema';
 import { GovernanceWorkspaceBinding, GovernanceWorkspaceBindingDocument } from '../schemas/governance-workspace-binding.schema';
 import { GovernanceProgramService } from './governance-program.service';
@@ -26,7 +29,7 @@ export interface GovernanceDocumentResponse {
 export class GovernanceDocumentService {
   constructor(
     @InjectModel(GovernanceDocument.name) private readonly model: Model<GovernanceDocumentDocument>,
-    @InjectModel(WorkspaceDoc.name) private readonly workspaceDocuments: Model<WorkspaceDocumentDoc>,
+    @Inject(WORKSPACE_DOCUMENT_READ_PORT) private readonly workspaceDocuments: WorkspaceDocumentReadPort,
     @InjectModel(GovernanceWorkspaceBinding.name) private readonly bindings: Model<GovernanceWorkspaceBindingDocument>,
     private readonly programs: GovernanceProgramService,
     private readonly access: GovernanceAccessService,
@@ -35,7 +38,7 @@ export class GovernanceDocumentService {
   ) {}
 
   async upsertFromWorkspace(programId: string, documentId: string, actorId: string, integrationEvent?: { id: string; occurredAt: Date }): Promise<GovernanceDocumentDocument> {
-    const document = await this.workspaceDocuments.findOne({ _id: new Types.ObjectId(documentId), isFolder: false }).exec();
+    const document = await this.workspaceDocuments.findOne({ id: documentId, isFolder: false });
     if (!document) throw new NotFoundException(ErrorCode.GOVERNANCE_DOCUMENT_NOT_FOUND);
     const binding = await this.bindings.findOne({ programId: new Types.ObjectId(programId), workspaceId: document.workspaceId, enabled: true }).exec();
     if (!binding) throw new BadRequestException(ErrorCode.GOVERNANCE_DOCUMENT_SCOPE_INVALID, 'No enabled workspace binding grants governance access to this document');
@@ -43,8 +46,8 @@ export class GovernanceDocumentService {
     const update = {
       $setOnInsert: {
         programId: new Types.ObjectId(programId),
-        documentId: document._id,
-        workspaceId: document.workspaceId,
+        documentId: new Types.ObjectId(document.id),
+        workspaceId: new Types.ObjectId(document.workspaceId),
         status: 'captured',
         validity,
         tags: [],
@@ -59,7 +62,7 @@ export class GovernanceDocumentService {
         ...(integrationEvent ? { lastIntegrationEventId: integrationEvent.id, lastIntegrationEventAt: integrationEvent.occurredAt } : {}),
       },
     };
-    const governanceDocument = await this.model.findOneAndUpdate({ programId: new Types.ObjectId(programId), documentId: document._id }, update, { new: true, upsert: true, setDefaultsOnInsert: true }).exec();
+    const governanceDocument = await this.model.findOneAndUpdate({ programId: new Types.ObjectId(programId), documentId: new Types.ObjectId(document.id) }, update, { new: true, upsert: true, setDefaultsOnInsert: true }).exec();
     if (!governanceDocument) throw new BadRequestException(ErrorCode.VALIDATION_ERROR, 'Governance document upsert failed');
     await this.events.append({ programId, governanceDocumentId: governanceDocument._id.toString(), documentId, eventType: 'document.governance_created', actorId, actorType: integrationEvent ? 'integration' : 'user', occurredAt: integrationEvent?.occurredAt, deduplicationKey: `created:${governanceDocument._id.toString()}` });
     return governanceDocument;
@@ -167,7 +170,7 @@ export class GovernanceDocumentService {
   }
 
   private async toResponse(record: Pick<GovernanceDocument, keyof GovernanceDocument> & { _id: Types.ObjectId }): Promise<GovernanceDocumentResponse> {
-    const document = await this.workspaceDocuments.findOne({ _id: record.documentId, workspaceId: record.workspaceId, isFolder: false }).lean().exec();
+    const document = await this.workspaceDocuments.findOne({ id: record.documentId.toString(), workspaceId: record.workspaceId.toString(), isFolder: false });
     if (!document) throw new NotFoundException(ErrorCode.GOVERNANCE_DOCUMENT_NOT_FOUND);
     const iso = (value?: Date): string | undefined => value?.toISOString();
     return {

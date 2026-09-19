@@ -1,28 +1,13 @@
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
 import { Document, HydratedDocument, Types } from 'mongoose';
+// DocumentStatus lives in interfaces/ so non-workspace modules can import it
+// without pulling the schema into their module graph (Step C.8); re-exported
+// here for all pre-existing schema-file imports.
+export { DocumentStatus, IndexingStatus, DocumentType } from '../interfaces/document-status.enum';
+import { DocumentStatus, IndexingStatus, DocumentType } from '../interfaces/document-status.enum';
 
 export type WorkspaceDocumentDoc = HydratedDocument<WorkspaceDoc>;
 
-export enum DocumentStatus {
-  PENDING = 'pending',
-  UPLOADING = 'uploading',
-  PROCESSING = 'processing',
-  COMPLETED = 'completed',
-  FAILED = 'failed',
-}
-
-export enum IndexingStatus {
-  NONE = 'none',
-  PENDING = 'pending',
-  PROCESSING = 'processing',
-  READY = 'ready',
-  FAILED = 'failed',
-}
-
-export enum DocumentType {
-  DOC = 'doc',
-  URL = 'url',
-}
 
 @Schema({
   timestamps: true,

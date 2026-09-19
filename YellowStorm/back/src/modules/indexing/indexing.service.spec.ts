@@ -1,13 +1,14 @@
 import { IndexingService } from './indexing.service';
+import type { WorkspaceDocumentRecord } from '../workspace/ports';
 
 describe('IndexingService CODE_ONLY guard', () => {
   const logger = { setContext: jest.fn(), log: jest.fn(), warn: jest.fn(), error: jest.fn(), debug: jest.fn() };
 
-  function buildService(document: Record<string, unknown> | null) {
+  function buildService(document: WorkspaceDocumentRecord | null) {
     const service = Object.create(IndexingService.prototype) as IndexingService;
     Object.assign(service as object, {
       enabled: true,
-      documentModel: { findById: jest.fn().mockResolvedValue(document) },
+      documentReadPort: { findById: jest.fn().mockResolvedValue(document) },
       logger,
     });
     return service;
@@ -15,14 +16,14 @@ describe('IndexingService CODE_ONLY guard', () => {
 
   it('processDocument refuses a CODE_ONLY conversation attachment', async () => {
     const document = {
-      _id: 'doc-1',
-      workspaceId: { toString: () => 'system-1' },
+      id: 'doc-1',
+      workspaceId: 'system-1',
       status: 'completed',
       indexingStatus: 'pending',
       metadata: { attachmentPolicy: 'CODE_ONLY' },
     };
 
-    await buildService(document).processDocument('doc-1');
+    await buildService(document as unknown as WorkspaceDocumentRecord).processDocument('doc-1');
 
     expect(logger.warn).toHaveBeenCalledWith(
       'Blocked processing of CODE_ONLY conversation attachment',
@@ -32,13 +33,12 @@ describe('IndexingService CODE_ONLY guard', () => {
 
   it('queueDocument refuses a CODE_ONLY conversation attachment', async () => {
     const document = {
-      _id: 'doc-1',
-      workspaceId: { toString: () => 'system-1' },
+      id: 'doc-1',
+      workspaceId: 'system-1',
       status: 'completed',
       indexingStatus: 'none',
-      save: jest.fn(),
       metadata: { attachmentPolicy: 'CODE_ONLY' },
-    };
+    } as unknown as WorkspaceDocumentRecord;
 
     await buildService(document).queueDocument('doc-1');
 
@@ -46,6 +46,5 @@ describe('IndexingService CODE_ONLY guard', () => {
       'Blocked indexing of CODE_ONLY conversation attachment',
       expect.objectContaining({ documentId: 'doc-1' }),
     );
-    expect(document.save).not.toHaveBeenCalled();
   });
 });

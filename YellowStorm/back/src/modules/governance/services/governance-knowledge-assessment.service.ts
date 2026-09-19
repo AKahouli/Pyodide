@@ -1,5 +1,5 @@
 import { createHash } from 'crypto';
-import { BadRequestException, Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { Inject, BadRequestException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { Interval } from '@nestjs/schedule';
 import { FeatureVisibilityService } from '@modules/system/feature-visibility.service';
 import { InjectModel } from '@nestjs/mongoose';
@@ -7,7 +7,7 @@ import { Model, Types } from 'mongoose';
 import { ErrorCode } from '@modules/exceptions/constants/error-codes';
 import { AuditLogService } from '@modules/authorization/services/audit-log.service';
 import { IndexingService } from '@modules/indexing/indexing.service';
-import { WorkspaceDoc, WorkspaceDocumentDoc } from '@modules/workspace/schemas/workspace-document.schema';
+import { WORKSPACE_DOCUMENT_READ_PORT, type WorkspaceDocumentReadPort, type WorkspaceDocumentRecord } from '@modules/workspace/ports';
 import type { KnowledgeAssessmentContext, KnowledgeAssessmentDimensions, KnowledgeEvaluator } from '@modules/knowledge-intelligence/domain/knowledge-steward';
 import { KnowledgeAssessmentRepositoryService } from '@modules/knowledge-intelligence/services/knowledge-assessment-repository.service';
 import { KnowledgeAlertRepositoryService } from '@modules/knowledge-intelligence/services/knowledge-alert-repository.service';
@@ -38,7 +38,7 @@ export class GovernanceKnowledgeAssessmentService {
 
   constructor(
     @InjectModel(GovernanceDocument.name) private readonly governanceDocuments: Model<GovernanceDocumentDocument>,
-    @InjectModel(WorkspaceDoc.name) private readonly workspaceDocuments: Model<WorkspaceDocumentDoc>,
+    @Inject(WORKSPACE_DOCUMENT_READ_PORT) private readonly workspaceDocuments: WorkspaceDocumentReadPort,
     @InjectModel(GovernanceWorkspaceBinding.name) private readonly bindings: Model<GovernanceWorkspaceBindingDocument>,
     private readonly programs: GovernanceProgramService,
     private readonly access: GovernanceAccessService,
@@ -95,10 +95,10 @@ export class GovernanceKnowledgeAssessmentService {
     const recommendation = await this.recommendations.beginApply(programId, id, scopes);
     if (!recommendation?.applicationToken || !recommendation.documentId) throw new BadRequestException(ErrorCode.VALIDATION_ERROR, 'Accept an accessible document recommendation before applying it.');
     try {
-      const document = await this.workspaceDocuments.findById(recommendation.documentId).lean().exec();
+      const document = await this.workspaceDocuments.findById(recommendation.documentId.toString());
       if (!document) throw new NotFoundException(ErrorCode.GOVERNANCE_DOCUMENT_NOT_FOUND);
-      if (recommendation.type === 'reindex') await this.indexing.reindexDocument(document.workspaceId.toString(), document._id.toString(), false, `knowledge-recommendation:${id}`);
-      else if (recommendation.type === 'schedule_review') await this.governanceDocuments.updateOne({ programId: new Types.ObjectId(programId), documentId: document._id, status: { $nin: ['rejected', 'archived'] } }, { $set: { 'validity.nextReviewAt': new Date(Date.now() + Number(recommendation.proposedAction?.reviewFrequencyDays ?? 30) * 86_400_000), 'validity.reviewFrequencyDays': Number(recommendation.proposedAction?.reviewFrequencyDays ?? 30) }, $inc: { governanceRevision: 1 } }).exec();
+      if (recommendation.type === 'reindex') await this.indexing.reindexDocument(document.workspaceId, document.id, false, `knowledge-recommendation:${id}`);
+      else if (recommendation.type === 'schedule_review') await this.governanceDocuments.updateOne({ programId: new Types.ObjectId(programId), documentId: new Types.ObjectId(document.id), status: { $nin: ['rejected', 'archived'] } }, { $set: { 'validity.nextReviewAt': new Date(Date.now() + Number(recommendation.proposedAction?.reviewFrequencyDays ?? 30) * 86_400_000), 'validity.reviewFrequencyDays': Number(recommendation.proposedAction?.reviewFrequencyDays ?? 30) }, $inc: { governanceRevision: 1 } }).exec();
       else throw new BadRequestException(ErrorCode.VALIDATION_ERROR, 'This recommendation requires a dedicated human workflow.');
       const applied = await this.recommendations.markApplied(id, actorId, recommendation.applicationToken);
       if (!applied) throw new BadRequestException(ErrorCode.VALIDATION_ERROR, 'The recommendation changed while it was being applied.');
@@ -123,7 +123,7 @@ export class GovernanceKnowledgeAssessmentService {
   }
 
   private async assess(record: GovernanceDocumentDocument, bindingInput?: GovernanceWorkspaceBindingDocument): Promise<void> {
-    const document = await this.workspaceDocuments.findOne({ _id: record.documentId, workspaceId: record.workspaceId, isFolder: false }).lean().exec();
+    const document = await this.workspaceDocuments.findOne({ id: record.documentId.toString(), workspaceId: record.workspaceId.toString(), isFolder: false });
     if (!document) return;
     const binding = bindingInput ?? await this.bindings.findOne({ programId: record.programId, workspaceId: record.workspaceId, enabled: true }).exec();
     if (!binding) return;
@@ -135,15 +135,14 @@ export class GovernanceKnowledgeAssessmentService {
     const status = overallHealthScore >= 80 ? 'healthy' : overallHealthScore >= 50 ? 'warning' : 'critical';
     const inputHash = createHash('sha256').update(this.stableStringify({ document: context.document, governance: context.governance, binding: context.binding, assessmentVersion: ASSESSMENT_VERSION })).digest('hex');
     await this.assessments.upsert({ programId: record.programId.toString(), scopeIds: context.binding.scopeIds, documentId: context.document.id, assessmentVersion: ASSESSMENT_VERSION, inputHash, assessedAt: context.now, dimensions, overallHealthScore, status, summary: `Knowledge health is ${status} with a score of ${overallHealthScore}.` });
-    const alerts = await this.alerts.synchronize(document._id.toString(), this.alertEngine.build(context, dimensions).map((item) => ({ ...item, programId: record.programId.toString() })), context.now);
-    await this.recommendations.synchronize(document._id.toString(), this.recommendationEngine.build(context, dimensions).map((item) => ({ ...item, programId: record.programId.toString(), alertIds: alerts.map((alert) => alert._id.toString()) })));
-    await this.metadataCandidates.synchronize(document._id.toString(), this.metadataEngine.build(record.programId.toString(), context));
-    await this.events.append({ programId: record.programId.toString(), governanceDocumentId: record._id.toString(), documentId: document._id.toString(), eventType: 'knowledge.assessed', deduplicationKey: `knowledge-assessed:${inputHash}`, metadata: { assessmentVersion: ASSESSMENT_VERSION, overallHealthScore, status } });
+    const alerts = await this.alerts.synchronize(document.id, this.alertEngine.build(context, dimensions).map((item) => ({ ...item, programId: record.programId.toString() })), context.now);
+    await this.recommendations.synchronize(document.id, this.recommendationEngine.build(context, dimensions).map((item) => ({ ...item, programId: record.programId.toString(), alertIds: alerts.map((alert) => alert._id.toString()) })));
+    await this.metadataCandidates.synchronize(document.id, this.metadataEngine.build(record.programId.toString(), context));
+    await this.events.append({ programId: record.programId.toString(), governanceDocumentId: record._id.toString(), documentId: document.id, eventType: 'knowledge.assessed', deduplicationKey: `knowledge-assessed:${inputHash}`, metadata: { assessmentVersion: ASSESSMENT_VERSION, overallHealthScore, status } });
   }
 
-  private context(document: WorkspaceDocumentDoc | Record<string, unknown>, governance: GovernanceDocumentDocument, binding: GovernanceWorkspaceBindingDocument): KnowledgeAssessmentContext {
-    const value = document as unknown as Record<string, unknown>;
-    return { document: { id: String(value._id), workspaceId: String(value.workspaceId), originalName: String(value.originalName ?? ''), mimeType: String(value.mimeType ?? ''), type: String(value.type ?? 'doc'), sourceUrl: typeof value.sourceUrl === 'string' ? value.sourceUrl : undefined, contentHash: typeof value.contentHash === 'string' ? value.contentHash : undefined, status: String(value.status ?? ''), indexingStatus: String(value.indexingStatus ?? ''), updatedAt: this.date(value.updatedAt) ?? new Date(0), metadata: (value.metadata as Record<string, unknown>) ?? {} }, governance: { status: governance.status, validity: governance.validity, tags: governance.tags, metadata: governance.metadata, ownerUserId: governance.ownerUserId?.toString(), ownerScopeId: governance.ownerScopeId?.toString() }, binding: { visibility: binding.visibility, scopeIds: binding.scopeIds.map(String), ingestionMode: binding.ingestionMode }, now: new Date() };
+  private context(document: WorkspaceDocumentRecord, governance: GovernanceDocumentDocument, binding: GovernanceWorkspaceBindingDocument): KnowledgeAssessmentContext {
+    return { document: { id: document.id, workspaceId: document.workspaceId, originalName: document.originalName, mimeType: document.mimeType, type: document.type, sourceUrl: document.sourceUrl, contentHash: document.contentHash, status: document.status, indexingStatus: document.indexingStatus, updatedAt: this.date(document.updatedAt) ?? new Date(0), metadata: (document.metadata as Record<string, unknown>) ?? {} }, governance: { status: governance.status, validity: governance.validity, tags: governance.tags, metadata: governance.metadata, ownerUserId: governance.ownerUserId?.toString(), ownerScopeId: governance.ownerScopeId?.toString() }, binding: { visibility: binding.visibility, scopeIds: binding.scopeIds.map(String), ingestionMode: binding.ingestionMode }, now: new Date() };
   }
 
   private async effectiveBindings(programId: string, scopeIds: string[], requested?: string): Promise<GovernanceWorkspaceBindingDocument[]> { const filter: Record<string, unknown> = { programId: new Types.ObjectId(programId), enabled: true }; if (!scopeIds.includes('*')) { const selected = requested ? [new Types.ObjectId(requested)] : scopeIds.map((id) => new Types.ObjectId(id)); filter.$or = [{ visibility: 'program_shared' }, { scopeIds: { $in: selected } }]; } return this.bindings.find(filter).exec(); }
