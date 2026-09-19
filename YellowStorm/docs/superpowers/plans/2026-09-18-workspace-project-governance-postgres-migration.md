@@ -581,17 +581,17 @@ The façade keeps every existing caller and test import valid.
 
 ### D.5 Tasks
 
-- [ ] **D.1** Drizzle schema + `0018` migration (scratch DB, then `agentstore`).
-- [ ] **D.2** Contract fixtures: workspace list/detail, document list/tree, share list, settings list, upload-session status.
-- [ ] **D.3** Split `workspace-document.service.ts` per D.3 — **pure refactor, still Mongo, suites green**. Merge before touching persistence.
-- [ ] **D.4** PG adapters for the five Step C ports.
-- [ ] **D.5** PG stores for the module's internal write paths (workspace, document, share, setting, upload session + files).
-- [ ] **D.6** Replace the 3 remaining `.populate(...)` — `workspace-share.service.ts:313,440`, `workspace.service.ts:361` — with `UserLookupPort.byIds()`.
-- [ ] **D.7** Register `workspace.upload_sessions.expires_at` in `PgTtlSweeper`.
-- [ ] **D.8** Backfill + verification scripts per D.4: per-workspace document counts, counter-drift report, orphan report.
-- [ ] **D.9** Dry-run → review → real run → reconcile.
-- [ ] **D.10** Flip bindings in `workspace.module.ts`; remove `MongooseModule.forFeature`; `git rm -r workspace/schemas/`.
-- [ ] **D.11** Cross-schema FKs (`NOT VALID`, then `VALIDATE` after orphan checks):
+- [x] **D.1** Drizzle schema + `0018` migration (scratch DB, then `agentstore`).
+- [x] **D.2** Contract fixtures: workspace list/detail, document list/tree, share list, settings list, upload-session status.
+- [x] **D.3** Split `workspace-document.service.ts` per D.3 — **pure refactor, still Mongo, suites green**. Merge before touching persistence.
+- [x] **D.4** PG adapters for the five Step C ports.
+- [x] **D.5** PG stores for the module's internal write paths (workspace, document, share, setting, upload session + files).
+- [x] **D.6** Replace the 3 remaining `.populate(...)` — `workspace-share.service.ts:313,440`, `workspace.service.ts:361` — with `UserLookupPort.byIds()`.
+- [x] **D.7** Register `workspace.upload_sessions.expires_at` in `PgTtlSweeper`.
+- [x] **D.8** Backfill + verification scripts per D.4: per-workspace document counts, counter-drift report, orphan report.
+- [x] **D.9** Dry-run → review → real run → reconcile.
+- [x] **D.10** Flip bindings in `workspace.module.ts`; remove `MongooseModule.forFeature`; `git rm -r workspace/schemas/`.
+- [x] **D.11** Cross-schema FKs (`NOT VALID`, then `VALIDATE` after orphan checks):
   ```sql
   ALTER TABLE workspace.workspace_artifacts ADD CONSTRAINT fk_artifacts_workspace
     FOREIGN KEY (workspace_id) REFERENCES workspace.workspaces(id) ON DELETE CASCADE NOT VALID;
@@ -959,19 +959,19 @@ Selection (`status NOT IN ('rejected','archived')` + `nextReviewAt <= now`) beco
 
 ### E.3 Tasks
 
-- [ ] **E.1** Drizzle schema + `0019_governance.sql` (12 tables + 4 child tables); scratch DB, then `agentstore`.
-- [ ] **E.2** Contract fixtures for the governance REST surface: program, scope, document list/detail, membership, binding, deployment, revision, dry-run, publication, metrics, scope overview.
-- [ ] **E.3** Repositories per aggregate: program/scope (+ 3 child tables), document/event, binding/reconciliation (+ binding scopes), membership, deployment/revision/dry-run/publication, metric.
-- [ ] **E.4** Port the 22 service files off `@InjectModel`, **leaf-first**: metrics → publication attempts → dry runs → deployments/revisions → documents/events → scopes/programs → memberships → bindings/reconciliation → `governance-scope-overview` (reads several) last.
-- [ ] **E.5** Rewrite the review scheduler per E.2. **Test the optimistic-skip path explicitly:** two concurrent runners, exactly one wins per document.
-- [ ] **E.6** Rewrite the reconciliation worker lease; concurrency test.
-- [ ] **E.7** Replace the 4 membership populates.
-- [ ] **E.8** **Delete** the unused `session?: ClientSession` parameter in `governance-document-event.service.ts:22` rather than porting it — no caller supplies it.
-- [ ] **E.9** Leave the `knowledge-*` engines' dependency on `knowledge-intelligence` repositories as-is; those are already behind repository interfaces and stay Mongo-backed until their own phase.
-- [ ] **E.10** `governance.module.ts` — remove all 12 governance `forFeature` entries plus `User` (the `WorkspaceDoc`/`Workspace`/`WorkspaceShare` entries were already neutralised in C.6). `git rm -r governance/schemas/`.
-- [ ] **E.11** Backfill all 12 collections (durable governance state). Order: programs → scopes (+ children) → workspace bindings (+ binding scopes) → documents → document events → memberships → deployments → revisions → dry runs → publication attempts → metrics → reconciliation runs. Orphan report against `workspace.workspace_documents`, `workspace.workspaces`, `public.agents`, and users.
-- [ ] **E.12** Dry-run → review orphans → real run → reconcile counts.
-- [ ] **E.13** Cross-schema FKs (`NOT VALID` → `VALIDATE`):
+- [x] **E.1** Drizzle schema + `0019_governance.sql` (12 tables + 4 child tables); scratch DB, then `agentstore`.
+- [x] **E.2** Contract fixtures for the governance REST surface: program, scope, document list/detail, membership, binding, deployment, revision, dry-run, publication, metrics, scope overview.
+- [x] **E.3** Repositories per aggregate: program/scope (+ 3 child tables), document/event, binding/reconciliation (+ binding scopes), membership, deployment/revision/dry-run/publication, metric.
+- [x] **E.4** Port the 22 service files off `@InjectModel`, **leaf-first**: metrics → publication attempts → dry runs → deployments/revisions → documents/events → scopes/programs → memberships → bindings/reconciliation → `governance-scope-overview` (reads several) last.
+- [x] **E.5** Rewrite the review scheduler per E.2. **Test the optimistic-skip path explicitly:** two concurrent runners, exactly one wins per document.
+- [x] **E.6** Rewrite the reconciliation worker lease; concurrency test.
+- [x] **E.7** Replace the 4 membership populates.
+- [x] **E.8** **Delete** the unused `session?: ClientSession` parameter in `governance-document-event.service.ts:22` rather than porting it — no caller supplies it.
+- [x] **E.9** Leave the `knowledge-*` engines' dependency on `knowledge-intelligence` repositories as-is; those are already behind repository interfaces and stay Mongo-backed until their own phase.
+- [x] **E.10** `governance.module.ts` — remove all 12 governance `forFeature` entries plus `User` (the `WorkspaceDoc`/`Workspace`/`WorkspaceShare` entries were already neutralised in C.6). `git rm -r governance/schemas/`.
+- [x] **E.11** Backfill all 12 collections (durable governance state). Order: programs → scopes (+ children) → workspace bindings (+ binding scopes) → documents → document events → memberships → deployments → revisions → dry runs → publication attempts → metrics → reconciliation runs. Orphan report against `workspace.workspace_documents`, `workspace.workspaces`, `public.agents`, and users.
+- [x] **E.12** Dry-run → review orphans → real run → reconcile counts.
+- [x] **E.13** Cross-schema FKs (`NOT VALID` → `VALIDATE`):
   ```sql
   ALTER TABLE governance.governance_documents ADD CONSTRAINT fk_gov_docs_document
     FOREIGN KEY (document_id) REFERENCES workspace.workspace_documents(id) ON DELETE CASCADE NOT VALID;
@@ -980,7 +980,7 @@ Selection (`status NOT IN ('rejected','archived')` + `nextReviewAt <= now`) beco
   ALTER TABLE governance.governance_workspace_bindings ADD CONSTRAINT fk_gov_bindings_workspace
     FOREIGN KEY (workspace_id) REFERENCES workspace.workspaces(id) ON DELETE CASCADE NOT VALID;
   ```
-- [ ] **E.14** Port `scripts/migrate-governance-sources-to-documents.ts` and `verify-document-governance-migration.ts` to PostgreSQL, or retire them if already applied everywhere.
+- [x] **E.14** Port `scripts/migrate-governance-sources-to-documents.ts` and `verify-document-governance-migration.ts` to PostgreSQL, or retire them if already applied everywhere.
 
 ### E.4 Verification / DoD
 
@@ -1053,3 +1053,13 @@ No other in-scope collection carries a TTL index. Children are removed via `ON D
 | `governance_publication_attempts` | 5 | — | yes | |
 
 Additional Step 0.11 finding: the existing agents backfill has drifted — Mongo 813 vs PG 743 (173 Mongo agents missing in PG, 103 PG rows without a Mongo counterpart). Surfaced by the harness reconcile report; remediation is a re-run of `backfill-agents-to-postgres.ts` (without --dry-run) plus a decision on the 103 stale PG rows.
+
+## Completion notes (2026-09-19)
+
+- All steps 0, A, B, C, D, E implemented. Final verification: `npm run build` 0 errors, module-graph bootcheck OK, 3425/3431 tests pass (3 suites failing are pre-existing and unrelated: `workspace-artifact-store.integration` env, `agent.repository` pgvector halfvec env, `stream.service.cleanup.spec` constructor arity).
+- D.10 cutover commit 474ca77e7 — workspace module persistence is PG; Mongo workspace collections dormant (no writers). Rollback = revert that commit.
+- E.2–E.10 commit aaa6faed9 — governance repositories on PG; `MongoGovernancePersistenceModule` kept unbound for one-line rollback; `governance/schemas/` Mongoose classes moved to `persistence/mongo/schemas/` (rollback stores need them; full deletion deferred to Mongo decommissioning).
+- E.13 commit 0539e1590 — the three governance cross-FKs added NOT VALID and validated with 0 orphan refs.
+- E.14: both legacy source-migration scripts RETIRED rather than ported — `governance_sources` has 1 residual doc with 0 versions (nothing migratable) and `governance_documents` is PG-backed; writing to the dormant Mongo collection would be wrong.
+- Behavior notes for future code: PG `validity.nextReviewAt` is an ISO string inside the validity jsonb (Mongo stored a BSON Date) — treat as `Date | string`. `DocumentListParams.includeAllStatuses: true` is now honored on PG (the Mongo store silently coerced to completed-only); sole caller is semantic-model corpus preparation.
+- Loose ends: agents backfill drift (Mongo 813 vs PG 743) still needs a remediation decision; 11 orphaned governance reconciliation runs in Mongo await disposal; `scripts/governed-data-room-e2e.ts` references deleted schemas (pre-existing breakage, excluded from build — retire or fix later).
