@@ -322,7 +322,7 @@ describe('WorkspaceDocumentService.mapToResponse', () => {
       createdAt: new Date(),
       updatedAt: new Date(),
     };
-    const res = (svc as any).mapToResponse(doc);
+    const res = (svc as any).support.mapToResponse(doc);
     expect(res.type).toBe('doc');
     expect(res.sourceUrl).toBeUndefined();
   });
@@ -425,7 +425,7 @@ describe('WorkspaceDocumentService url document (addLink)', () => {
   });
 
   it('derives a page-name .pdf filename from a URL', () => {
-    const d = (service as any).deriveFilenameFromUrl.bind(service);
+    const d = (service as any).support.deriveFilenameFromUrl.bind((service as any).support);
     // Last path segment only (the "page name"), not the full URL.
     expect(d('https://www.example.com/docs/guide/')).toBe('guide.pdf');
     expect(d('https://example.com/page/pagename')).toBe('pagename.pdf');
@@ -435,7 +435,7 @@ describe('WorkspaceDocumentService url document (addLink)', () => {
   });
 
   it('addLink creates a processing url document and returns it', async () => {
-    (service as any).resolveUniqueOriginalName = jest.fn().mockResolvedValue('example.com.pdf');
+    (service as any).links.support.resolveUniqueOriginalName = jest.fn().mockResolvedValue('example.com.pdf');
     const created = {
       _id: { toString: () => 'doc1' },
       originalName: 'example.com.pdf',
@@ -453,13 +453,13 @@ describe('WorkspaceDocumentService url document (addLink)', () => {
     };
     documentModel.create.mockResolvedValue(created);
     // Prevent the fire-and-forget conversion from doing real work in this test.
-    (service as any).convertAndStore = jest.fn().mockResolvedValue(undefined);
+    (service as any).links.convertAndStore = jest.fn().mockResolvedValue(undefined);
 
     const res = await service.addLink(WS_ID, USER_ID, 'https://example.com');
     expect(res.type).toBe('url');
     expect(res.status).toBe('processing');
     expect(res.sourceUrl).toBe('https://example.com');
-    expect((service as any).convertAndStore).toHaveBeenCalled();
+    expect((service as any).links.convertAndStore).toHaveBeenCalled();
   });
 
   it('addLink inserts a unique non-null path to satisfy the unique path index', async () => {
@@ -468,7 +468,7 @@ describe('WorkspaceDocumentService url document (addLink)', () => {
     // Link docs have no blob yet at creation, so addLink must assign a unique
     // placeholder path (mirroring the folder-creation pattern) that
     // convertAndStore later overwrites with the real blob path.
-    (service as any).resolveUniqueOriginalName = jest.fn().mockResolvedValue('example.com.pdf');
+    (service as any).links.support.resolveUniqueOriginalName = jest.fn().mockResolvedValue('example.com.pdf');
     documentModel.create.mockResolvedValue({
       _id: { toString: () => 'doc1' },
       originalName: 'example.com.pdf',
@@ -484,7 +484,7 @@ describe('WorkspaceDocumentService url document (addLink)', () => {
       createdAt: new Date(),
       updatedAt: new Date(),
     });
-    (service as any).convertAndStore = jest.fn().mockResolvedValue(undefined);
+    (service as any).links.convertAndStore = jest.fn().mockResolvedValue(undefined);
 
     await service.addLink(WS_ID, USER_ID, 'https://example.com');
 
@@ -496,8 +496,8 @@ describe('WorkspaceDocumentService url document (addLink)', () => {
   });
 
   it('addLinks creates one processing url doc per URL with a unique path', async () => {
-    (service as any).resolveUniqueOriginalName = jest.fn(async (_ws, name) => name);
-    (service as any).convertAndStore = jest.fn().mockResolvedValue(undefined);
+    (service as any).links.support.resolveUniqueOriginalName = jest.fn(async (_ws, name) => name);
+    (service as any).links.convertAndStore = jest.fn().mockResolvedValue(undefined);
     const created: any[] = [];
     (documentModel.create as jest.Mock).mockImplementation(async (doc: any) => {
       const d = { ...doc, _id: { toString: () => String(created.length + 1) },
@@ -520,11 +520,11 @@ describe('WorkspaceDocumentService url document (addLink)', () => {
     // item's mocked call resolves (a microtask hop beyond addLinks
     // returning), so flush pending microtasks before asserting both ran.
     await new Promise((resolve) => setTimeout(resolve, 0));
-    expect((service as any).convertAndStore).toHaveBeenCalledTimes(2);
+    expect((service as any).links.convertAndStore).toHaveBeenCalledTimes(2);
   });
 
   it('addLinks persists sourceRootUrl and its normalized form in metadata', async () => {
-    (service as any).convertAndStore = jest.fn().mockResolvedValue(undefined);
+    (service as any).links.convertAndStore = jest.fn().mockResolvedValue(undefined);
     await service.addLinks(WS_ID, USER_ID, ['https://a.com/x'], { sourceRootUrl: 'https://a.com/services' });
     const createArg = documentModel.create.mock.calls[0][0];
     expect(createArg.metadata.sourceRootUrl).toBe('https://a.com/services');
@@ -532,14 +532,14 @@ describe('WorkspaceDocumentService url document (addLink)', () => {
   });
 
   it('addLinks omits sourceRootUrl metadata when none is provided', async () => {
-    (service as any).convertAndStore = jest.fn().mockResolvedValue(undefined);
+    (service as any).links.convertAndStore = jest.fn().mockResolvedValue(undefined);
     await service.addLinks(WS_ID, USER_ID, ['https://a.com/x']);
     const createArg = documentModel.create.mock.calls[0][0];
     expect(createArg.metadata.sourceRootUrl).toBeUndefined();
   });
 
   it('addLinks stamps one generated sourceGroupId across the whole batch', async () => {
-    (service as any).convertAndStore = jest.fn().mockResolvedValue(undefined);
+    (service as any).links.convertAndStore = jest.fn().mockResolvedValue(undefined);
     await service.addLinks(WS_ID, USER_ID, ['https://a.com/x', 'https://a.com/y']);
     const first = documentModel.create.mock.calls[0][0];
     const second = documentModel.create.mock.calls[1][0];
@@ -548,14 +548,14 @@ describe('WorkspaceDocumentService url document (addLink)', () => {
   });
 
   it('addLinks reuses a provided sourceGroupId (continue mode)', async () => {
-    (service as any).convertAndStore = jest.fn().mockResolvedValue(undefined);
+    (service as any).links.convertAndStore = jest.fn().mockResolvedValue(undefined);
     await service.addLinks(WS_ID, USER_ID, ['https://a.com/x'], { sourceGroupId: 'grp-123' });
     const createArg = documentModel.create.mock.calls[0][0];
     expect(createArg.metadata.sourceGroupId).toBe('grp-123');
   });
 
   it('addLinks names the document from the provided link text when present', async () => {
-    (service as any).convertAndStore = jest.fn().mockResolvedValue(undefined);
+    (service as any).links.convertAndStore = jest.fn().mockResolvedValue(undefined);
     await service.addLinks(WS_ID, USER_ID, ['https://a.com/services'], {
       names: { 'https://a.com/services': '  Our   Services  ' },
     });
@@ -567,14 +567,14 @@ describe('WorkspaceDocumentService url document (addLink)', () => {
   });
 
   it('addLinks falls back to the url-derived name when no link text is provided', async () => {
-    (service as any).convertAndStore = jest.fn().mockResolvedValue(undefined);
+    (service as any).links.convertAndStore = jest.fn().mockResolvedValue(undefined);
     await service.addLinks(WS_ID, USER_ID, ['https://a.com/services']);
     const createArg = documentModel.create.mock.calls[0][0];
     expect(createArg.originalName).toBe('services.pdf');
   });
 
   it('addLinks roots a manual link to its own url via the roots override', async () => {
-    (service as any).convertAndStore = jest.fn().mockResolvedValue(undefined);
+    (service as any).links.convertAndStore = jest.fn().mockResolvedValue(undefined);
     await service.addLinks(WS_ID, USER_ID, ['https://a.com/x', 'https://manual.org/p'], {
       sourceRootUrl: 'https://a.com/services',
       roots: { 'https://manual.org/p': 'https://manual.org/p' },
@@ -586,7 +586,7 @@ describe('WorkspaceDocumentService url document (addLink)', () => {
   });
 
   it('crawlSite returns only pages under the seed path', async () => {
-    (service as any).websiteCrawler = {
+    (service as any).links.websiteCrawler = {
       crawl: jest.fn().mockResolvedValue({ pages: [{ url: 'https://a.com/docs/x' }, { url: 'https://a.com/pricing' }, { url: 'https://a.com/docsfoo/y' }], truncated: false }),
     };
     const res = await service.crawlSite(WS_ID, 'https://a.com/docs');
@@ -595,7 +595,7 @@ describe('WorkspaceDocumentService url document (addLink)', () => {
   });
 
   it('crawlSite (root seed) keeps all pages', async () => {
-    (service as any).websiteCrawler = {
+    (service as any).links.websiteCrawler = {
       crawl: jest.fn().mockResolvedValue({ pages: [{ url: 'https://a.com/docs/x' }, { url: 'https://a.com/pricing' }], truncated: true }),
     };
     const res = await service.crawlSite(WS_ID, 'https://a.com');
@@ -821,7 +821,7 @@ describe('WorkspaceDocumentService.ingestFromUrl SSRF / credential forwarding', 
     }).compile();
 
     service = mod.get(WorkspaceDocumentService);
-    jest.spyOn(service, 'uploadSmallFile' as any).mockResolvedValue({
+    jest.spyOn((service as any).write, 'uploadSmallFile').mockResolvedValue({
       id: 'doc1',
       originalName: 'file.bin',
     });
@@ -994,7 +994,7 @@ describe('WorkspaceDocumentService.ingestFromUrl SSRF / credential forwarding', 
       }),
     ).rejects.toBeInstanceOf(BadRequestException);
 
-    expect(service.uploadSmallFile as jest.Mock).not.toHaveBeenCalled();
+    expect((service as any).write.uploadSmallFile as jest.Mock).not.toHaveBeenCalled();
   });
 
   it('rejects when Content-Length exceeds the hard byte cap without reading the body', async () => {
@@ -1019,7 +1019,7 @@ describe('WorkspaceDocumentService.ingestFromUrl SSRF / credential forwarding', 
     ).rejects.toBeInstanceOf(BadRequestException);
 
     expect(destroy).toHaveBeenCalled();
-    expect(service.uploadSmallFile as jest.Mock).not.toHaveBeenCalled();
+    expect((service as any).write.uploadSmallFile as jest.Mock).not.toHaveBeenCalled();
   });
 });
 
@@ -1159,7 +1159,7 @@ describe('WorkspaceDocumentService.addLinks sequencing', () => {
     // Real resolveUniqueOriginalName issues a documentModel.exists(...).lean()
     // query; stub it out (mirroring the existing addLinks tests above) since
     // uniqueness resolution isn't what this test is about.
-    (service as any).resolveUniqueOriginalName = jest.fn(async (_ws: string, name: string) => name);
+    (service as any).links.support.resolveUniqueOriginalName = jest.fn(async (_ws: string, name: string) => name);
   });
 
   afterEach(() => {

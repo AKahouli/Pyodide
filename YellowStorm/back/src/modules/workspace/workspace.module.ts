@@ -29,6 +29,12 @@ import { WorkspaceShareController } from './workspace-share.controller';
 import { WorkspaceService } from './workspace.service';
 import { WorkspaceSettingService } from './workspace-setting.service';
 import { WorkspaceDocumentService } from './workspace-document.service';
+import { WorkspaceDocumentSupport } from './document/document-support';
+import { WorkspaceDocumentRead } from './document/document-read';
+import { WorkspaceDocumentWrite } from './document/document-write';
+import { WorkspaceDocumentLinks } from './document/document-links';
+import { WorkspaceDocumentUploadSessions } from './document/document-upload-sessions';
+import { WorkspaceDocumentTree } from './document/document-tree';
 import { WorkspaceInitializerService } from './workspace-initializer.service';
 import { WorkspaceShareService } from './workspace-share.service';
 import { UrlToPdfClientService } from './services/url-to-pdf-client.service';
@@ -88,6 +94,12 @@ import { PgTtlSweeper } from '@modules/postgres/ttl/pg-ttl-sweeper.service';
     WorkspaceService,
     WorkspaceSettingService,
     WorkspaceDocumentService,
+    WorkspaceDocumentSupport,
+    WorkspaceDocumentRead,
+    WorkspaceDocumentWrite,
+    WorkspaceDocumentLinks,
+    WorkspaceDocumentUploadSessions,
+    WorkspaceDocumentTree,
     WebsiteCrawlerService,
     WorkspaceInitializerService,
     WorkspaceShareService,
