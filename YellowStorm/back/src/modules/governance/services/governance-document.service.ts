@@ -4,10 +4,13 @@ import { ErrorCode } from '@modules/exceptions/constants/error-codes';
 import {
   WORKSPACE_DOCUMENT_READ_PORT,
   type WorkspaceDocumentReadPort,
+  type WorkspaceDocumentRecord,
 } from '@modules/workspace/ports';
 import {
   BINDING_STORE,
   GOVERNANCE_DOCUMENT_STORE,
+  GOVERNANCE_TRANSACTION,
+  type GovernanceTransactionRunner,
   type BindingStore,
   type GovernanceDocumentRecord,
   type GovernanceDocumentStore,
@@ -40,6 +43,7 @@ export class GovernanceDocumentService {
     private readonly access: GovernanceAccessService,
     private readonly events: GovernanceDocumentEventService,
     private readonly validityCalculator: DocumentValidityCalculatorService,
+    @Inject(GOVERNANCE_TRANSACTION) private readonly tx: GovernanceTransactionRunner,
   ) {}
 
   async upsertFromWorkspace(programId: string, documentId: string, actorId: string, integrationEvent?: { id: string; occurredAt: Date }): Promise<GovernanceDocumentRecord> {
@@ -49,24 +53,33 @@ export class GovernanceDocumentService {
     if (!binding || !binding.enabled) throw new BadRequestException(ErrorCode.GOVERNANCE_DOCUMENT_SCOPE_INVALID, 'No enabled workspace binding grants governance access to this document');
     const defaults = binding.defaults as { validityMode?: string; reviewFrequencyDays?: number; ownerUserId?: string; ownerScopeId?: string };
     const validity = { ...DEFAULT_UNKNOWN_VALIDITY, mode: defaults.validityMode ?? 'unknown', reviewFrequencyDays: defaults.reviewFrequencyDays };
-    const governanceDocument = await this.documentStore.upsertFromWorkspace({
-      programId,
-      documentId: document.id,
-      workspaceId: document.workspaceId,
-      validity,
-      ownerUserId: defaults.ownerUserId,
-      ownerScopeId: defaults.ownerScopeId,
-      integrationEvent,
+    return this.tx.run(async () => {
+      const governanceDocument = await this.documentStore.upsertFromWorkspace({
+        programId,
+        documentId: document.id,
+        workspaceId: document.workspaceId,
+        validity,
+        ownerUserId: defaults.ownerUserId,
+        ownerScopeId: defaults.ownerScopeId,
+        integrationEvent,
+      });
+      await this.events.append({ programId, governanceDocumentId: governanceDocument.id, documentId, eventType: 'document.governance_created', actorId, actorType: integrationEvent ? 'integration' : 'user', occurredAt: integrationEvent?.occurredAt, deduplicationKey: `created:${governanceDocument.id}` });
+      return governanceDocument;
     });
-    await this.events.append({ programId, governanceDocumentId: governanceDocument.id, documentId, eventType: 'document.governance_created', actorId, actorType: integrationEvent ? 'integration' : 'user', occurredAt: integrationEvent?.occurredAt, deduplicationKey: `created:${governanceDocument.id}` });
-    return governanceDocument;
   }
 
   async list(actorId: string, programId: string, includeArchived = false): Promise<GovernanceDocumentResponse[]> {
     await this.programs.assertOwnedProgram(actorId, programId);
     const workspaceIds = await this.accessibleWorkspaceIds(actorId, programId);
     const records = await this.documentStore.listForProgramWorkspaces(programId, workspaceIds, includeArchived);
-    return Promise.all(records.map((record) => this.toResponse(record)));
+    if (records.length === 0) return [];
+    // One batched artifact lookup instead of one findOne per governance record.
+    const artifacts = await this.workspaceDocuments.find({ ids: [...new Set(records.map((record) => record.documentId))], isFolder: false });
+    const byId = new Map(artifacts.map((artifact) => [artifact.id, artifact]));
+    return Promise.all(records.map((record) => {
+      const artifact = byId.get(record.documentId);
+      return this.toResponse(record, artifact && artifact.workspaceId === record.workspaceId ? artifact : null);
+    }));
   }
 
   async findByDocumentId(actorId: string, programId: string, documentId: string): Promise<GovernanceDocumentResponse> {
@@ -102,9 +115,12 @@ export class GovernanceDocumentService {
     const validity = { ...record.validity, ...patch, evidence: record.validity.evidence ?? [], manuallyOverridden: patch.manuallyOverridden ?? true } as DocumentValidity;
     this.validityCalculator.assertValid(validity);
     const before = record.validity;
-    const updated = await this.documentStore.updateGuarded(record.id, { governanceRevision: expectedGovernanceRevision }, { set: { validity: validity as unknown as Record<string, unknown> }, bumpGovernanceRevision: true });
-    if (!updated) throw this.concurrentChange();
-    await this.events.append({ programId, governanceDocumentId: updated.id, documentId, actorId, eventType: 'validity.updated', before: { validity: before }, after: { validity } });
+    const updated = await this.tx.run(async () => {
+      const result = await this.documentStore.updateGuarded(record.id, { governanceRevision: expectedGovernanceRevision }, { set: { validity: validity as unknown as Record<string, unknown> }, bumpGovernanceRevision: true });
+      if (!result) throw this.concurrentChange();
+      await this.events.append({ programId, governanceDocumentId: result.id, documentId, actorId, eventType: 'validity.updated', before: { validity: before }, after: { validity } });
+      return result;
+    });
     return this.toResponse(updated);
   }
 
@@ -112,12 +128,15 @@ export class GovernanceDocumentService {
     const record = await this.findRecord(actorId, programId, documentId);
     this.assertExpectedRevision(record, expectedGovernanceRevision);
     if (record.status === 'archived') return this.toResponse(record);
-    const updated = await this.documentStore.updateGuarded(record.id, { governanceRevision: expectedGovernanceRevision, statusNotEquals: 'archived' }, {
-      set: { status: 'archived', archivedAt: new Date(), archivedBy: actorId, archiveReason: reason ?? null },
-      bumpGovernanceRevision: true,
+    const updated = await this.tx.run(async () => {
+      const result = await this.documentStore.updateGuarded(record.id, { governanceRevision: expectedGovernanceRevision, statusNotEquals: 'archived' }, {
+        set: { status: 'archived', archivedAt: new Date(), archivedBy: actorId, archiveReason: reason ?? null },
+        bumpGovernanceRevision: true,
+      });
+      if (!result) throw this.concurrentChange();
+      await this.events.append({ programId, governanceDocumentId: result.id, documentId, actorId, eventType: 'document.archived', reason, before: { status: record.status }, after: { status: 'archived' } });
+      return result;
     });
-    if (!updated) throw this.concurrentChange();
-    await this.events.append({ programId, governanceDocumentId: updated.id, documentId, actorId, eventType: 'document.archived', reason, before: { status: record.status }, after: { status: 'archived' } });
     return this.toResponse(updated);
   }
 
@@ -125,20 +144,25 @@ export class GovernanceDocumentService {
     const record = await this.findRecord(actorId, programId, documentId);
     this.assertExpectedRevision(record, expectedGovernanceRevision);
     if (record.status !== 'archived') return this.toResponse(record);
-    const updated = await this.documentStore.updateGuarded(record.id, { governanceRevision: expectedGovernanceRevision, statusEquals: 'archived' }, {
-      set: { status: 'captured' },
-      unset: ['archivedAt', 'archivedBy', 'archiveReason'],
-      bumpGovernanceRevision: true,
+    const updated = await this.tx.run(async () => {
+      const result = await this.documentStore.updateGuarded(record.id, { governanceRevision: expectedGovernanceRevision, statusEquals: 'archived' }, {
+        set: { status: 'captured' },
+        unset: ['archivedAt', 'archivedBy', 'archiveReason'],
+        bumpGovernanceRevision: true,
+      });
+      if (!result) throw this.concurrentChange();
+      await this.events.append({ programId, governanceDocumentId: result.id, documentId, actorId, eventType: 'document.restored', before: { status: 'archived' }, after: { status: 'captured' } });
+      return result;
     });
-    if (!updated) throw this.concurrentChange();
-    await this.events.append({ programId, governanceDocumentId: updated.id, documentId, actorId, eventType: 'document.restored', before: { status: 'archived' }, after: { status: 'captured' } });
     return this.toResponse(updated);
   }
 
   async archiveFromWorkspaceDeletion(programId: string, documentId: string, actorId: string, integrationEvent: { id: string; occurredAt: Date }): Promise<void> {
-    const record = await this.documentStore.archiveFromWorkspaceDeletion(programId, documentId, actorId, integrationEvent);
-    if (!record) return;
-    await this.events.append({ programId, governanceDocumentId: record.id, documentId, actorId, actorType: 'integration', eventType: 'document.archived', occurredAt: integrationEvent.occurredAt, reason: 'Workspace document deleted', after: { status: 'archived' }, deduplicationKey: `workspace-deleted:${integrationEvent.id}` });
+    await this.tx.run(async () => {
+      const record = await this.documentStore.archiveFromWorkspaceDeletion(programId, documentId, actorId, integrationEvent);
+      if (!record) return;
+      await this.events.append({ programId, governanceDocumentId: record.id, documentId, actorId, actorType: 'integration', eventType: 'document.archived', occurredAt: integrationEvent.occurredAt, reason: 'Workspace document deleted', after: { status: 'archived' }, deduplicationKey: `workspace-deleted:${integrationEvent.id}` });
+    });
   }
 
   async deleteGovernance(actorId: string, programId: string, documentId: string, confirm: boolean, expectedGovernanceRevision: number): Promise<void> {
@@ -146,9 +170,13 @@ export class GovernanceDocumentService {
     const record = await this.findRecord(actorId, programId, documentId);
     this.assertExpectedRevision(record, expectedGovernanceRevision);
     if (record.status !== 'archived') throw new BadRequestException(ErrorCode.VALIDATION_ERROR, 'Archive document governance before deletion');
-    const deleted = await this.documentStore.deleteByIdGuarded(record.id, expectedGovernanceRevision);
-    if (!deleted) throw this.concurrentChange();
-    await this.events.append({ programId, governanceDocumentId: record.id, documentId, actorId, eventType: 'document.governance_deleted' });
+    // Event first (it references the governance row), then the guarded delete, atomically:
+    // a lost race rolls the event back.
+    await this.tx.run(async () => {
+      await this.events.append({ programId, governanceDocumentId: record.id, documentId, actorId, eventType: 'document.governance_deleted' });
+      const deleted = await this.documentStore.deleteByIdGuarded(record.id, expectedGovernanceRevision);
+      if (!deleted) throw this.concurrentChange();
+    });
   }
 
   private async accessibleWorkspaceIds(actorId: string, programId: string): Promise<string[]> {
@@ -162,8 +190,9 @@ export class GovernanceDocumentService {
     if (!allowed.includes(workspaceId)) throw new NotFoundException(ErrorCode.GOVERNANCE_DOCUMENT_NOT_FOUND);
   }
 
-  async toResponse(record: GovernanceDocumentRecord): Promise<GovernanceDocumentResponse> {
-    const document = await this.workspaceDocuments.findOne({ id: record.documentId, workspaceId: record.workspaceId, isFolder: false });
+  /** `prefetched`: artifact already loaded by a batched lookup (null = known missing). */
+  async toResponse(record: GovernanceDocumentRecord, prefetched?: WorkspaceDocumentRecord | null): Promise<GovernanceDocumentResponse> {
+    const document = prefetched !== undefined ? prefetched : await this.workspaceDocuments.findOne({ id: record.documentId, workspaceId: record.workspaceId, isFolder: false });
     if (!document) throw new NotFoundException(ErrorCode.GOVERNANCE_DOCUMENT_NOT_FOUND);
     const iso = (value?: Date): string | undefined => value?.toISOString();
     return {

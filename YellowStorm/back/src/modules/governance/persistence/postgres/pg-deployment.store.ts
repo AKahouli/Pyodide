@@ -163,8 +163,9 @@ export class PgDeploymentStore implements DeploymentStore {
     return rows.length === 1;
   }
 
-  async deleteByProgramAndScope(programId: string, scopeId: string): Promise<void> {
-    await this.q.delete(DEPLOYMENTS).where(and(eq(DEPLOYMENTS.programId, programId), eq(DEPLOYMENTS.scopeId, scopeId)));
+  async deleteByProgramAndScopeIds(programId: string, scopeIds: string[]): Promise<void> {
+    if (scopeIds.length === 0) return;
+    await this.q.delete(DEPLOYMENTS).where(and(eq(DEPLOYMENTS.programId, programId), inArray(DEPLOYMENTS.scopeId, scopeIds)));
   }
 
   async deleteByIds(deploymentIds: string[]): Promise<void> {

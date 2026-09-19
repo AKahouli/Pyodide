@@ -1,5 +1,5 @@
 import { Inject, Injectable } from '@nestjs/common';
-import { and, desc, eq } from 'drizzle-orm';
+import { and, desc, eq, sql, type SQL } from 'drizzle-orm';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import { DRIZZLE_DB } from '@modules/postgres/postgres.constants';
 import * as schema from '@modules/postgres/schema';
@@ -55,7 +55,10 @@ export class PostgresProjectShareStore implements ProjectShareStore {
       .orderBy(desc(schema.projectShares.createdAt))
       .limit(page.limit)
       .offset(page.offset);
-    const { items, total } = pageOf(selected);
+    const { items, total } = await pageOf(selected, {
+      offset: page.offset,
+      count: () => this.countWhere(eq(schema.projectShares.projectId, projectId)),
+    });
     return { rows: items.map((r) => projectShareRowToRecord(r.share)), total };
   }
 
@@ -67,7 +70,10 @@ export class PostgresProjectShareStore implements ProjectShareStore {
       .orderBy(desc(schema.projectShares.createdAt))
       .limit(page.limit)
       .offset(page.offset);
-    const { items, total } = pageOf(selected);
+    const { items, total } = await pageOf(selected, {
+      offset: page.offset,
+      count: () => this.countWhere(eq(schema.projectShares.sharedWithUserId, userId)),
+    });
     return { rows: items.map((r) => projectShareRowToRecord(r.share)), total };
   }
 
@@ -95,8 +101,12 @@ export class PostgresProjectShareStore implements ProjectShareStore {
     return rows.length > 0 ? projectShareRowToRecord(rows[0]) : null;
   }
 
-  async deleteById(id: string): Promise<void> {
-    await this.q.delete(schema.projectShares).where(eq(schema.projectShares.id, id));
+  async deleteById(id: string): Promise<boolean> {
+    const rows = await this.q
+      .delete(schema.projectShares)
+      .where(eq(schema.projectShares.id, id))
+      .returning({ id: schema.projectShares.id });
+    return rows.length > 0;
   }
 
   async deleteByProject(projectId: string): Promise<number> {
@@ -105,5 +115,13 @@ export class PostgresProjectShareStore implements ProjectShareStore {
       .where(eq(schema.projectShares.projectId, projectId))
       .returning({ id: schema.projectShares.id });
     return rows.length;
+  }
+
+  private async countWhere(where: SQL | undefined): Promise<number> {
+    const [row] = await this.q
+      .select({ count: sql<string>`count(*)` })
+      .from(schema.projectShares)
+      .where(where);
+    return Number(row?.count ?? 0);
   }
 }

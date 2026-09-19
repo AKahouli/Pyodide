@@ -74,6 +74,11 @@ export interface DocumentStore {
   findFolderDuplicate(probe: FolderDuplicateProbe): Promise<WorkspaceDocumentRecord | null>;
   /** Direct child folders of `parentId`, id-only (circular-move guard). */
   findChildFolderIds(parentId: string): Promise<string[]>;
+  /**
+   * Run `fn` in a transaction holding a per-workspace folder-tree lock
+   * (serialises cycle-check + move). Store calls inside `fn` join the tx.
+   */
+  withWorkspaceTreeLock<T>(workspaceId: string, fn: () => Promise<T>): Promise<T>;
   findDirectChildren(parentId: string, workspaceId: string): Promise<WorkspaceDocumentRecord[]>;
   findAllByWorkspaceId(workspaceId: string): Promise<WorkspaceDocumentRecord[]>;
   listByWorkspace(workspaceId: string, params: WorkspaceDocumentListParams): Promise<{ items: WorkspaceDocumentRecord[]; total: number }>;

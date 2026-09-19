@@ -119,7 +119,7 @@ export class WorkspaceArtifactService {
     const settings = await this.transformations.getSettings();
     if (!settings.decisionFlowAgentId) throw new BadRequestException(ErrorCode.WORKSPACE_ARTIFACT_GENERATION_NOT_CONFIGURED, 'Decision-flow generation is not configured');
     await this.agents.assertActiveDefaultAgent(settings.decisionFlowAgentId);
-    const reset = await this.artifacts.resetForGeneration(artifact.id, { agentId: settings.decisionFlowAgentId, requestedBy: userId });
+    const reset = await this.artifacts.resetForGeneration(artifact.id, { agentId: settings.decisionFlowAgentId, requestedBy: userId }, userId);
     if (!reset) throw new NotFoundException(ErrorCode.WORKSPACE_ARTIFACT_NOT_FOUND, 'Workspace artifact not found');
     return this.toResponse(reset);
   }

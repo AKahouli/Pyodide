@@ -1,7 +1,7 @@
 import { Inject, Injectable, CanActivate, ExecutionContext } from '@nestjs/common';
 import { Request } from 'express';
 import { PROJECT_STORE, type ProjectRecord, type ProjectStore } from '../persistence/project-store';
-import { isObjectId } from '@common/postgres/object-id';
+import { isObjectId, normalizeObjectId } from '@common/postgres/object-id';
 import { ForbiddenException, NotFoundException } from '../../exceptions';
 import { ErrorCode } from '../../exceptions/constants/error-codes';
 import { UserDocument } from '../../user/schemas/user.schema';
@@ -36,7 +36,7 @@ export class ProjectOwnerGuard implements CanActivate {
       throw new NotFoundException(ErrorCode.PROJECT_NOT_FOUND, 'Invalid project ID format');
     }
 
-    const project = await this.projectStore.findById(projectId);
+    const project = await this.projectStore.findById(normalizeObjectId(projectId));
     if (!project) {
       throw new NotFoundException(ErrorCode.PROJECT_NOT_FOUND, 'Project not found');
     }

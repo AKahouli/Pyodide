@@ -69,7 +69,12 @@ export interface WorkspaceArtifactListFilter {
   status?: string;
   sourceDocumentId?: string;
   search?: string;
+  /** Max rows returned (default 200, clamped to [1, 1000]). */
+  limit?: number;
 }
+
+export const DEFAULT_ARTIFACT_LIST_LIMIT = 200;
+export const MAX_ARTIFACT_LIST_LIMIT = 1000;
 
 /** Patch for the optimistic-revision update; always bumps revision and updatedAt. */
 export interface WorkspaceArtifactEditPatch {
@@ -96,10 +101,16 @@ export interface WorkspaceArtifactStore {
     updatedBy: string,
   ): Promise<WorkspaceArtifactRecord | null>;
   /** Reset a failed artifact for a fresh generation run. */
-  resetForGeneration(id: string, generation: { agentId: string; requestedBy: string }): Promise<WorkspaceArtifactRecord | null>;
+  resetForGeneration(
+    id: string,
+    generation: { agentId: string; requestedBy: string },
+    updatedBy: string,
+  ): Promise<WorkspaceArtifactRecord | null>;
   deleteById(id: string): Promise<void>;
   existsName(workspaceId: string, name: string, exceptId?: string): Promise<boolean>;
   countBySource(workspaceId: string, documentId: string): Promise<number>;
+  /** Batched count of artifacts whose primary source is any of the documents; 0 for []. */
+  countBySourceDocumentIds(documentIds: string[]): Promise<number>;
   deleteBySource(workspaceId: string, documentId: string): Promise<void>;
   deleteAllByWorkspace(workspaceId: string): Promise<void>;
 

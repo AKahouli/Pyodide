@@ -64,8 +64,6 @@ import { IntegrityEvaluator } from './services/knowledge-evaluators/integrity.ev
 import { SearchQualityEvaluator } from './services/knowledge-evaluators/search-quality.evaluator';
 import { GovernanceQualityEvaluator } from './services/knowledge-evaluators/governance-quality.evaluator';
 import { PgGovernancePersistenceModule } from './persistence/postgres/pg-governance-persistence.module';
-// MongoDB rollback: replace PgGovernancePersistenceModule with MongoGovernancePersistenceModule
-// from './persistence/mongo/mongo-governance-persistence.module' and revert the store seams.
 
 @Module({
   imports: [

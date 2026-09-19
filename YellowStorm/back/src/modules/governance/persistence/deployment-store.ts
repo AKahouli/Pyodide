@@ -40,7 +40,8 @@ export interface DeploymentStore {
   incrementRevisionSequenceGuarded(deploymentId: string, expectedDraftRevisionId: string | null | undefined): Promise<GovernanceDeploymentRecord | null>;
   /** Draft pointer swap guarded on revisionSequence; false when another writer sequenced first. */
   setDraftRevisionIfSequence(deploymentId: string, revisionSequence: number, revisionId: string): Promise<boolean>;
-  deleteByProgramAndScope(programId: string, scopeId: string): Promise<void>;
+  /** Set-based delete for a whole scope subtree; no-op for an empty list. */
+  deleteByProgramAndScopeIds(programId: string, scopeIds: string[]): Promise<void>;
   deleteByIds(deploymentIds: string[]): Promise<void>;
   listByProgram(programId: string): Promise<GovernanceDeploymentRecord[]>;
 }

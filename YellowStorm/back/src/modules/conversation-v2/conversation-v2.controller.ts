@@ -94,6 +94,18 @@ export class ConversationV2Controller {
     private readonly finalizedRevisions: RuntimeFinalizedRevisionService,
   ) {}
 
+  /**
+   * Fire-and-forget rollback of a half-created session: drop the draft pointer
+   * (which references the system workspace) before the workspace itself.
+   */
+  private discardDraft(draftId: Types.ObjectId, systemWorkspaceId: string): void {
+    void this.sessions
+      .deleteDraft(draftId)
+      .catch(() => undefined)
+      .then(() => this.workspaceService.deleteSystemWorkspace(systemWorkspaceId))
+      .catch(() => undefined);
+  }
+
   @Post('sessions')
   @HttpCode(HttpStatus.CREATED)
   async createSession(
@@ -139,8 +151,7 @@ export class ConversationV2Controller {
     try {
       aiSessionId = await this.grpcClient.createSession(user.id, workspaceIds);
     } catch (err) {
-      this.workspaceService.deleteSystemWorkspace(systemWorkspaceId).catch(() => undefined);
-      this.sessions.deleteDraft(draftId).catch(() => undefined);
+      this.discardDraft(draftId, systemWorkspaceId);
       throw err;
     }
 
@@ -148,8 +159,7 @@ export class ConversationV2Controller {
       await this.sessions.attachAiSession(draftId, aiSessionId, systemWorkspaceId);
     } catch (err) {
       this.grpcClient.stopSession(user.id, aiSessionId).catch(() => undefined);
-      this.workspaceService.deleteSystemWorkspace(systemWorkspaceId).catch(() => undefined);
-      this.sessions.deleteDraft(draftId).catch(() => undefined);
+      this.discardDraft(draftId, systemWorkspaceId);
       throw err;
     }
 
@@ -380,19 +390,15 @@ export class ConversationV2Controller {
   ): Promise<{ deleted: true }> {
     const pointer = session.pointer;
     const ownerId = session.ownerId;
-    // Known: there's a small race window between deleteAllByWorkspace and
-    // deleteSystemWorkspace where a concurrent stream's fire-and-forget
-    // createFromAiArtifact can insert a new document row pointing at the
-    // workspace we're about to remove. The document row then outlives the
-    // workspace (no FK constraints in Mongo). Documents are tiny and a future
-    // orphan-sweep cron would handle them; acceptable for the rework.
-    if (pointer?.systemWorkspaceId) {
-      const wsId = pointer.systemWorkspaceId.toString();
+    // Capture the system workspace id, then drop the session reference first
+    // so the workspace is never deleted while something still points at it.
+    const wsId = pointer?.systemWorkspaceId?.toString();
+    await this.sessions.softDelete(ownerId, id);
+    await this.appShares.deleteAllSharesForSession(id);
+    if (wsId) {
       await this.workspaceDocuments.deleteAllByWorkspace(wsId);
       await this.workspaceService.deleteSystemWorkspace(wsId);
     }
-    await this.sessions.softDelete(ownerId, id);
-    await this.appShares.deleteAllSharesForSession(id);
     return { deleted: true };
   }
 

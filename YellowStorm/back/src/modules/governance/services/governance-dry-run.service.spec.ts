@@ -14,7 +14,7 @@ describe('GovernanceDryRunService', () => {
   const userMessageId = '507f1f77bcf86cd799439018';
   const aiMessageId = '507f1f77bcf86cd799439019';
 
-  let dryRunStore: { insert: jest.Mock; findById: jest.Mock; update: jest.Mock; findContinuation: jest.Mock; findLatestByDeployment: jest.Mock; findPassedByDeploymentAndRevision: jest.Mock; listByDeployment: jest.Mock; deleteByProgramAndScope: jest.Mock };
+  let dryRunStore: { insert: jest.Mock; findById: jest.Mock; update: jest.Mock; findContinuation: jest.Mock; findLatestByDeployment: jest.Mock; findPassedByDeploymentAndRevision: jest.Mock; listByDeployment: jest.Mock; deleteByProgramAndScopeIds: jest.Mock };
   let lastCreatedDryRun: Record<string, unknown> | undefined;
 
   function buildService(deployment: Record<string, unknown> | null, scopeAccessError?: Error, streamError?: Error, revisionWorkspaceIds: string[] = [], revisionAgentIds: string[] = [agentId], scopeRoleError?: Error) {
@@ -32,7 +32,7 @@ describe('GovernanceDryRunService', () => {
       findLatestByDeployment: jest.fn().mockResolvedValue(null),
       findPassedByDeploymentAndRevision: jest.fn().mockResolvedValue(null),
       listByDeployment: jest.fn().mockResolvedValue([]),
-      deleteByProgramAndScope: jest.fn().mockResolvedValue(undefined),
+      deleteByProgramAndScopeIds: jest.fn().mockResolvedValue(undefined),
     };
     const programService = { assertOwnedProgram: jest.fn().mockResolvedValue(undefined) };
     const accessService = {

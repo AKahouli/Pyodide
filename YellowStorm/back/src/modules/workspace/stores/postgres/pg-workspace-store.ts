@@ -178,9 +178,9 @@ export class PgWorkspaceStore implements WorkspaceStore {
   /** Stored counters are copied from Mongo and incremented, never recomputed. */
   async incrementCounters(id: string, delta: WorkspaceCounterDelta): Promise<void> {
     const values: Record<string, unknown> = { updatedAt: new Date() };
-    if (delta.usedStorage !== undefined) values.usedStorage = sql`${WORKSPACES.usedStorage} + ${delta.usedStorage}`;
-    if (delta.documentCount !== undefined) values.documentCount = sql`${WORKSPACES.documentCount} + ${delta.documentCount}`;
-    if (delta.shareCount !== undefined) values.shareCount = sql`${WORKSPACES.shareCount} + ${delta.shareCount}`;
+    if (delta.usedStorage !== undefined) values.usedStorage = sql`GREATEST(${WORKSPACES.usedStorage} + ${delta.usedStorage}, 0)`;
+    if (delta.documentCount !== undefined) values.documentCount = sql`GREATEST(${WORKSPACES.documentCount} + ${delta.documentCount}, 0)`;
+    if (delta.shareCount !== undefined) values.shareCount = sql`GREATEST(${WORKSPACES.shareCount} + ${delta.shareCount}, 0)`;
     if (Object.keys(values).length === 1) return;
     await this.q.update(WORKSPACES).set(values).where(eq(WORKSPACES.id, id));
   }

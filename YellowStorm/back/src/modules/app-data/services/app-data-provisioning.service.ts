@@ -183,7 +183,7 @@ export class AppDataProvisioningService {
     const timeoutMs = this.config.get<number>('appData.statementTimeoutMs', 30_000);
     const client = await this.pool.connect();
     try {
-      await client.query('SET statement_timeout = $1', [timeoutMs]);
+      await client.query("SELECT set_config('statement_timeout', $1, false)", [String(Math.max(1, Math.floor(Number(timeoutMs))))]);
       await client.query(`CREATE SCHEMA IF NOT EXISTS ${quoteIdent(schemaName)}`);
     } finally {
       client.release();

@@ -13,6 +13,10 @@ export class WorkspaceArtifactCleanupAdapter implements WorkspaceArtifactCleanup
     return this.artifacts.countBySource(workspaceId, documentId);
   }
 
+  countBySourceDocumentIds(documentIds: string[]): Promise<number> {
+    return this.artifacts.countBySourceDocumentIds(documentIds);
+  }
+
   deleteBySource(workspaceId: string, documentId: string): Promise<void> {
     return this.artifacts.deleteBySource(workspaceId, documentId);
   }

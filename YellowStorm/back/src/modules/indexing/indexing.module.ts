@@ -1,5 +1,4 @@
 import { Module, forwardRef } from '@nestjs/common';
-import { MongooseModule } from '@nestjs/mongoose';
 import { ConfigModule } from '@nestjs/config';
 import { WorkspaceModule } from '../workspace/workspace.module';
 import { IndexingService } from './indexing.service';
@@ -18,8 +17,6 @@ import { IntegrationEventsModule } from '../integration-events/integration-event
   imports: [
     forwardRef(() => WorkspaceModule),
     ConfigModule.forFeature(indexingConfig),
-    MongooseModule.forFeature([
-    ]),
     forwardRef(() => AuthModule),
     forwardRef(() => NotificationsModule),
     LoggerModule,

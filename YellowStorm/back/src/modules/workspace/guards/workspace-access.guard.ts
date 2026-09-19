@@ -1,5 +1,5 @@
 import { Inject, Injectable, CanActivate, ExecutionContext } from '@nestjs/common';
-import { Types } from 'mongoose';
+import { isObjectId } from '@common/postgres';
 import { Request } from 'express';
 import { ForbiddenException, NotFoundException } from '../../exceptions';
 import { ErrorCode } from '../../exceptions/constants/error-codes';
@@ -39,13 +39,14 @@ export class WorkspaceAccessGuard implements CanActivate {
       return true;
     }
 
-    const workspaceId = request.params.id || request.params.workspaceId;
+    const rawWorkspaceId = request.params.id || request.params.workspaceId;
 
-    if (!workspaceId) {
+    if (!rawWorkspaceId) {
       throw new NotFoundException(ErrorCode.WORKSPACE_NOT_FOUND, 'Workspace ID is required');
     }
 
-    if (!Types.ObjectId.isValid(workspaceId)) {
+    const workspaceId = rawWorkspaceId.toLowerCase();
+    if (!isObjectId(workspaceId)) {
       throw new NotFoundException(ErrorCode.WORKSPACE_NOT_FOUND, 'Invalid workspace ID format');
     }
 

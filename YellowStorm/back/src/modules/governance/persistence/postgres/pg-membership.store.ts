@@ -145,7 +145,8 @@ export class PgMembershipStore implements MembershipStore {
     await this.q.delete(MEMBERSHIPS).where(eq(MEMBERSHIPS.id, membershipId));
   }
 
-  async deleteByProgramAndScope(programId: string, scopeId: string): Promise<void> {
-    await this.q.delete(MEMBERSHIPS).where(and(eq(MEMBERSHIPS.programId, programId), eq(MEMBERSHIPS.scopeId, scopeId)));
+  async deleteByProgramAndScopeIds(programId: string, scopeIds: string[]): Promise<void> {
+    if (scopeIds.length === 0) return;
+    await this.q.delete(MEMBERSHIPS).where(and(eq(MEMBERSHIPS.programId, programId), inArray(MEMBERSHIPS.scopeId, scopeIds)));
   }
 }

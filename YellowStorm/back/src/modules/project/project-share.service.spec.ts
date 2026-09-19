@@ -84,7 +84,7 @@ function createService(overrides: {
     updatePermission: jest.fn().mockImplementation((id: string, permission: string) =>
       Promise.resolve(shareRecord({ id, permission })),
     ),
-    deleteById: jest.fn().mockResolvedValue(undefined),
+    deleteById: jest.fn().mockResolvedValue(true),
     deleteByProject: jest.fn().mockResolvedValue(0),
     ...overrides.shareStore,
   };
@@ -253,6 +253,39 @@ describe('ProjectShareService', () => {
     await expect(service.revoke(PROJECT_ID, SHARE_ID)).rejects.toMatchObject({
       code: ErrorCode.PROJECT_SHARE_NOT_FOUND,
     });
+  });
+
+  it('decrements shareCount only when revoke actually deleted the row', async () => {
+    const { service, shareStore, projectStore, notificationsService } = createService();
+    (shareStore.findById as jest.Mock).mockResolvedValue(shareRecord());
+    (shareStore.deleteById as jest.Mock).mockResolvedValue(false); // lost a concurrent revoke
+
+    await expect(service.revoke(PROJECT_ID, SHARE_ID)).rejects.toMatchObject({
+      code: ErrorCode.PROJECT_SHARE_NOT_FOUND,
+    });
+    expect(projectStore.incrementShareCount).not.toHaveBeenCalled();
+    expect(notificationsService.sendToUser).not.toHaveBeenCalled();
+  });
+
+  it('normalizes uppercase ids before hitting the stores', async () => {
+    const { service, shareStore } = createService();
+    (shareStore.findById as jest.Mock).mockResolvedValue(shareRecord());
+    await service.revoke(PROJECT_ID.toUpperCase(), SHARE_ID.toUpperCase());
+    expect(shareStore.findById).toHaveBeenCalledWith(SHARE_ID);
+    expect(shareStore.deleteById).toHaveBeenCalledWith(SHARE_ID);
+  });
+
+  it('maps a concurrent duplicate share (unique violation) to 409', async () => {
+    const dup = Object.assign(new Error('Failed query'), {
+      cause: { code: '23505', constraint: 'uq_project_shares_project_user' },
+    });
+    const { service, projectStore } = createService({
+      shareStore: { create: jest.fn().mockRejectedValue(dup) },
+    });
+    await expect(service.share(PROJECT_ID, OWNER_ID, shareDto)).rejects.toMatchObject({
+      code: ErrorCode.CONFLICT,
+    });
+    expect(projectStore.incrementShareCount).not.toHaveBeenCalled();
   });
 
   it('lists projects shared with a user with conversation counts', async () => {

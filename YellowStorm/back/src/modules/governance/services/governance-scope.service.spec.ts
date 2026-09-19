@@ -11,21 +11,21 @@ describe('GovernanceScopeService delete authorization', () => {
     return { id: scopeId, programId, name: 'Scope', metadata: { classification: { stage: 'pilot' } }, agentIds: [], audience: { mode: 'restricted', userIds: [], groupIds: [] }, createdAt: new Date(), updatedAt: new Date(), ...overrides };
   }
 
-  function buildService(options: { isOwner?: boolean; accessibleScopeIds?: string[]; memberships?: Array<Record<string, unknown>>; groupIds?: string[]; children?: string[]; deployments?: Array<Record<string, unknown>> } = {}) {
+  function buildService(options: { isOwner?: boolean; accessibleScopeIds?: string[]; memberships?: Array<Record<string, unknown>>; groupIds?: string[]; hierarchy?: Array<{ id: string; parentScopeId: string | null }>; deployments?: Array<Record<string, unknown>> } = {}) {
     const scope = scopeRecord();
     const scopeStore = {
       insert: jest.fn().mockResolvedValue(scope),
       findById: jest.fn().mockResolvedValue(scope),
       findByProgramAndId: jest.fn().mockResolvedValue(scope),
       listByProgram: jest.fn().mockResolvedValue([]),
-      listChildIds: jest.fn().mockResolvedValue(options.children ?? []),
+      listHierarchy: jest.fn().mockResolvedValue(options.hierarchy ?? [{ id: scopeId, parentScopeId: null }]),
       update: jest.fn().mockImplementation(async (_id: string, patch: Record<string, unknown>) => scopeRecord({ ...scope, ...patch })),
       setMetadataReviewStatus: jest.fn(),
       countByProgram: jest.fn().mockResolvedValue(0),
-      deleteByIdAndProgram: jest.fn().mockResolvedValue(undefined),
+      deleteByIdsAndProgram: jest.fn().mockResolvedValue(undefined),
     };
-    const documentStore = { clearOwnerScope: jest.fn().mockResolvedValue(undefined), listForProgramWorkspaces: jest.fn().mockResolvedValue([]) };
-    const bindingStore = { removeScopeFromProgramBindings: jest.fn().mockResolvedValue(undefined), listEnabled: jest.fn().mockResolvedValue([]) };
+    const documentStore = { clearOwnerScopes: jest.fn().mockResolvedValue(undefined), listForProgramWorkspaces: jest.fn().mockResolvedValue([]) };
+    const bindingStore = { removeScopesFromProgramBindings: jest.fn().mockResolvedValue(undefined), listEnabled: jest.fn().mockResolvedValue([]) };
     const membershipStore = {
       findActiveForUser: jest.fn().mockImplementation(async (_programId: string, _userId: string, _groupIds: string[]) => {
         if (options.memberships) return options.memberships;
@@ -33,7 +33,7 @@ describe('GovernanceScopeService delete authorization', () => {
         return accessible.includes('*') ? [{ scopeId: null, role: 'program_admin' }] : accessible.map((id) => ({ scopeId: id, role: 'scope_editor' }));
       }),
       findActiveByUser: jest.fn().mockResolvedValue([]),
-      deleteByProgramAndScope: jest.fn().mockResolvedValue(undefined),
+      deleteByProgramAndScopeIds: jest.fn().mockResolvedValue(undefined),
     };
     const programService = {
       assertOwnedProgram: jest.fn().mockResolvedValue(undefined),
@@ -44,17 +44,18 @@ describe('GovernanceScopeService delete authorization', () => {
     const deploymentStore = {
       listByProgram: jest.fn().mockResolvedValue(options.deployments ?? []),
       suspendPublished: jest.fn().mockResolvedValue(true),
-      deleteByProgramAndScope: jest.fn().mockResolvedValue(undefined),
+      deleteByProgramAndScopeIds: jest.fn().mockResolvedValue(undefined),
     };
     const revisionStore = { deleteByDeploymentIds: jest.fn().mockResolvedValue(undefined) };
-    const dryRunStore = { deleteByProgramAndScope: jest.fn().mockResolvedValue(undefined) };
-    const metricStore = { deleteByProgramAndScope: jest.fn().mockResolvedValue(undefined) };
-    const publicationAttemptStore = { deleteByProgramAndScope: jest.fn().mockResolvedValue(undefined) };
+    const dryRunStore = { deleteByProgramAndScopeIds: jest.fn().mockResolvedValue(undefined) };
+    const metricStore = { deleteByProgramAndScopeIds: jest.fn().mockResolvedValue(undefined) };
+    const publicationAttemptStore = { deleteByProgramAndScopeIds: jest.fn().mockResolvedValue(undefined) };
     const userGroupService = { findGroupIdsForMember: jest.fn().mockResolvedValue(options.groupIds ?? []) };
     const auditLogService = { logSuccess: jest.fn() };
     const draftPreparation = { prepare: jest.fn().mockResolvedValue(undefined) };
-    const service = new GovernanceScopeService(scopeStore as never, documentStore as never, bindingStore as never, membershipStore as never, deploymentStore as never, revisionStore as never, dryRunStore as never, metricStore as never, publicationAttemptStore as never, programService as never, userGroupService as never, auditLogService as never, draftPreparation as never);
-    return { service, scopeStore, documentStore, bindingStore, membershipStore, deploymentStore, revisionStore, dryRunStore, metricStore, publicationAttemptStore, userGroupService, auditLogService, draftPreparation };
+    const tx = { run: jest.fn((fn: () => Promise<unknown>) => fn()) };
+    const service = new GovernanceScopeService(scopeStore as never, documentStore as never, bindingStore as never, membershipStore as never, deploymentStore as never, revisionStore as never, dryRunStore as never, metricStore as never, publicationAttemptStore as never, programService as never, userGroupService as never, auditLogService as never, draftPreparation as never, tx as never);
+    return { service, scopeStore, documentStore, bindingStore, membershipStore, deploymentStore, revisionStore, dryRunStore, metricStore, publicationAttemptStore, userGroupService, auditLogService, draftPreparation, tx };
   }
 
   it('allows the program owner to delete a scope', async () => {
@@ -62,7 +63,7 @@ describe('GovernanceScopeService delete authorization', () => {
 
     await service.delete(actorId, programId, scopeId);
 
-    expect(scopeStore.deleteByIdAndProgram).toHaveBeenCalledWith(scopeId, programId);
+    expect(scopeStore.deleteByIdsAndProgram).toHaveBeenCalledWith([scopeId], programId);
   });
 
   it('allows a program admin to delete any accessible scope', async () => {
@@ -70,7 +71,7 @@ describe('GovernanceScopeService delete authorization', () => {
 
     await service.delete(actorId, programId, scopeId);
 
-    expect(scopeStore.deleteByIdAndProgram).toHaveBeenCalled();
+    expect(scopeStore.deleteByIdsAndProgram).toHaveBeenCalled();
   });
 
   it('allows a scope admin to delete their scope', async () => {
@@ -78,14 +79,14 @@ describe('GovernanceScopeService delete authorization', () => {
 
     await service.delete(actorId, programId, scopeId);
 
-    expect(scopeStore.deleteByIdAndProgram).toHaveBeenCalled();
+    expect(scopeStore.deleteByIdsAndProgram).toHaveBeenCalled();
   });
 
   it('rejects lower scope roles even when they can access the scope', async () => {
     const { service, scopeStore } = buildService();
 
     await expect(service.delete(actorId, programId, scopeId)).rejects.toBeInstanceOf(ForbiddenException);
-    expect(scopeStore.deleteByIdAndProgram).not.toHaveBeenCalled();
+    expect(scopeStore.deleteByIdsAndProgram).not.toHaveBeenCalled();
   });
 
   it('removes scope-owned governance records when deleting a scope', async () => {
@@ -94,24 +95,47 @@ describe('GovernanceScopeService delete authorization', () => {
 
     await service.delete(actorId, programId, scopeId);
 
-    expect(bindingStore.removeScopeFromProgramBindings).toHaveBeenCalledWith(programId, scopeId);
-    expect(documentStore.clearOwnerScope).toHaveBeenCalledWith(programId, scopeId);
-    expect(membershipStore.deleteByProgramAndScope).toHaveBeenCalledWith(programId, scopeId);
-    expect(metricStore.deleteByProgramAndScope).toHaveBeenCalledWith(programId, scopeId);
-    expect(dryRunStore.deleteByProgramAndScope).toHaveBeenCalledWith(programId, scopeId);
-    expect(publicationAttemptStore.deleteByProgramAndScope).toHaveBeenCalledWith(programId, scopeId);
+    expect(bindingStore.removeScopesFromProgramBindings).toHaveBeenCalledWith(programId, [scopeId]);
+    expect(documentStore.clearOwnerScopes).toHaveBeenCalledWith(programId, [scopeId]);
+    expect(membershipStore.deleteByProgramAndScopeIds).toHaveBeenCalledWith(programId, [scopeId]);
+    expect(metricStore.deleteByProgramAndScopeIds).toHaveBeenCalledWith(programId, [scopeId]);
+    expect(dryRunStore.deleteByProgramAndScopeIds).toHaveBeenCalledWith(programId, [scopeId]);
+    expect(publicationAttemptStore.deleteByProgramAndScopeIds).toHaveBeenCalledWith(programId, [scopeId]);
     expect(revisionStore.deleteByDeploymentIds).toHaveBeenCalledWith([deploymentId]);
-    expect(deploymentStore.deleteByProgramAndScope).toHaveBeenCalledWith(programId, scopeId);
+    expect(deploymentStore.deleteByProgramAndScopeIds).toHaveBeenCalledWith(programId, [scopeId]);
   });
 
-  it('recursively deletes child scopes', async () => {
+  it('deletes the whole subtree set-based in one transaction, loading deployments once', async () => {
     const childId = '507f1f77bcf86cd799439088';
-    const { service, scopeStore } = buildService({ isOwner: true, children: [childId] });
-    scopeStore.listChildIds.mockResolvedValueOnce([childId]).mockResolvedValueOnce([]);
+    const grandChildId = '507f1f77bcf86cd799439077';
+    const unrelatedId = '507f1f77bcf86cd799439066';
+    const hierarchy = [
+      { id: scopeId, parentScopeId: null },
+      { id: childId, parentScopeId: scopeId },
+      { id: grandChildId, parentScopeId: childId },
+      { id: unrelatedId, parentScopeId: null },
+    ];
+    const deployments = [{ id: 'd-child', scopeId: childId }, { id: 'd-other', scopeId: unrelatedId }];
+    const { service, scopeStore, deploymentStore, revisionStore, membershipStore, tx } = buildService({ isOwner: true, hierarchy, deployments });
 
     await service.delete(actorId, programId, scopeId);
 
-    expect(scopeStore.deleteByIdAndProgram).toHaveBeenCalledTimes(2);
+    expect(tx.run).toHaveBeenCalledTimes(1);
+    expect(deploymentStore.listByProgram).toHaveBeenCalledTimes(1);
+    expect(revisionStore.deleteByDeploymentIds).toHaveBeenCalledWith(['d-child']);
+    expect(membershipStore.deleteByProgramAndScopeIds).toHaveBeenCalledWith(programId, [scopeId, childId, grandChildId]);
+    expect(scopeStore.deleteByIdsAndProgram).toHaveBeenCalledTimes(1);
+    expect(scopeStore.deleteByIdsAndProgram).toHaveBeenCalledWith([scopeId, childId, grandChildId], programId);
+  });
+
+  it('terminates on a corrupted parent cycle', async () => {
+    const childId = '507f1f77bcf86cd799439088';
+    const hierarchy = [{ id: scopeId, parentScopeId: childId }, { id: childId, parentScopeId: scopeId }];
+    const { service, scopeStore } = buildService({ isOwner: true, hierarchy });
+
+    await service.delete(actorId, programId, scopeId);
+
+    expect(scopeStore.deleteByIdsAndProgram).toHaveBeenCalledWith([scopeId, childId], programId);
   });
 
   it('suspends a published deployment when a scope is made inactive', async () => {

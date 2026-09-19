@@ -90,3 +90,101 @@ export function printReconcile(result: ReconcileResult): void {
     ),
   );
 }
+
+/**
+ * Stable serialisation for content checksums: object keys sorted, Dates as
+ * ISO strings, null/undefined properties dropped (Mongo "absent" == PG NULL).
+ */
+export function stableStringify(value: unknown): string {
+  return JSON.stringify(canonical(value));
+}
+
+function canonical(value: unknown): unknown {
+  if (value instanceof Date) return value.toISOString();
+  if (value === null || value === undefined) return null;
+  if (typeof value === 'bigint') return value.toString();
+  if (Array.isArray(value)) return value.map(canonical);
+  if (typeof value === 'object') {
+    const obj = value as Record<string, unknown>;
+    if (typeof obj.toHexString === 'function') return (obj.toHexString as () => string)();
+    const out: Record<string, unknown> = {};
+    for (const key of Object.keys(obj).sort()) {
+      if (obj[key] === null || obj[key] === undefined) continue;
+      out[key] = canonical(obj[key]);
+    }
+    return out;
+  }
+  return value;
+}
+
+/** sha256 of the canonical row. */
+export function rowHash(row: Record<string, unknown>): string {
+  return createHash('sha256').update(stableStringify(row)).digest('hex');
+}
+
+/** Restrict `row` to `keys` so PG-only columns (defaults) do not skew the hash. */
+export function projectKeys(row: Record<string, unknown>, keys: string[]): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const key of keys) out[key] = row[key];
+  return out;
+}
+
+/** Order-independent aggregate over per-row hashes. */
+export function aggregateChecksum(hashes: Map<string, string>): string {
+  const lines = [...hashes.entries()]
+    .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+    .map(([id, h]) => `${id}:${h}`);
+  return createHash('sha256').update(lines.join('\n')).digest('hex');
+}
+
+export interface RowChecksumResult {
+  mongoChecksum: string;
+  pgChecksum: string;
+  match: boolean;
+  compared: number;
+  /** Mongo rows with no PG row (also in the id diff; counted as mismatches here). */
+  missingInPg: number;
+  mismatchTotal: number;
+  /** First N ids whose content hash differs or that are missing in PG. */
+  mismatchSample: string[];
+}
+
+/**
+ * Content checksum: hash each transformed Mongo row and its PG read-back
+ * (projected onto the Mongo row's keys), then compare the aggregates.
+ */
+export function compareRowChecksums(
+  mongoRows: Map<string, Record<string, unknown>>,
+  pgRows: Map<string, Record<string, unknown>>,
+  sampleLimit = 50,
+): RowChecksumResult {
+  const mongoHashes = new Map<string, string>();
+  const pgHashes = new Map<string, string>();
+  const mismatches: string[] = [];
+  let missingInPg = 0;
+  for (const [id, mongoRow] of mongoRows) {
+    const keys = Object.keys(mongoRow);
+    const mHash = rowHash(mongoRow);
+    mongoHashes.set(id, mHash);
+    const pgRow = pgRows.get(id);
+    if (!pgRow) {
+      missingInPg += 1;
+      mismatches.push(id);
+      continue;
+    }
+    const pHash = rowHash(projectKeys(pgRow, keys));
+    pgHashes.set(id, pHash);
+    if (pHash !== mHash) mismatches.push(id);
+  }
+  const mongoChecksum = aggregateChecksum(mongoHashes);
+  const pgChecksum = aggregateChecksum(pgHashes);
+  return {
+    mongoChecksum,
+    pgChecksum,
+    match: mismatches.length === 0 && mongoChecksum === pgChecksum,
+    compared: mongoRows.size,
+    missingInPg,
+    mismatchTotal: mismatches.length,
+    mismatchSample: mismatches.slice(0, sampleLimit),
+  };
+}

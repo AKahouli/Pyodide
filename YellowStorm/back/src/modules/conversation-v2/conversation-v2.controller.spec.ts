@@ -198,6 +198,25 @@ describe('ConversationV2Controller', () => {
     expect(mockSessions.attachAiSession).toHaveBeenCalledWith(draftId, 'ai-1', 'sysws');
   });
 
+  it('POST /sessions rollback drops the draft before the system workspace', async () => {
+    const draftId = new Types.ObjectId();
+    const calls: string[] = [];
+    mockWorkspaceService.findIdsByOwner.mockResolvedValueOnce(['w1']);
+    mockSessions.createDraft.mockResolvedValueOnce({ _id: draftId });
+    mockWorkspaceService.createSystemWorkspace.mockResolvedValueOnce({ id: 'sysws' });
+    mockClient.createSession.mockRejectedValueOnce(new Error('grpc down'));
+    mockSessions.deleteDraft.mockImplementationOnce(async () => {
+      calls.push('draft');
+    });
+    mockWorkspaceService.deleteSystemWorkspace.mockImplementationOnce(async () => {
+      calls.push('workspace');
+    });
+
+    await expect(controller.createSession({ id: 'u1' } as never)).rejects.toThrow('grpc down');
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(calls).toEqual(['draft', 'workspace']);
+  });
+
   // --- GET /sessions ---
 
   it('GET /sessions returns paginated items and nextCursor null when fewer than limit', async () => {
@@ -284,10 +303,18 @@ describe('ConversationV2Controller', () => {
 
   // --- DELETE /sessions/:id ---
 
-  it('DELETE /sessions/:id removes the system workspace then soft-deletes', async () => {
-    mockWorkspaceDocuments.deleteAllByWorkspace.mockResolvedValueOnce(undefined);
-    mockWorkspaceService.deleteSystemWorkspace.mockResolvedValueOnce(undefined);
-    mockSessions.softDelete.mockResolvedValueOnce({});
+  it('DELETE /sessions/:id soft-deletes the session before removing its system workspace', async () => {
+    const calls: string[] = [];
+    mockWorkspaceDocuments.deleteAllByWorkspace.mockImplementationOnce(async () => {
+      calls.push('docs');
+    });
+    mockWorkspaceService.deleteSystemWorkspace.mockImplementationOnce(async () => {
+      calls.push('workspace');
+    });
+    mockSessions.softDelete.mockImplementationOnce(async () => {
+      calls.push('session');
+      return {};
+    });
     const result = await controller.deleteSession(
       resolvedSession('u1', { systemWorkspaceId: 'sysws' }),
       's1',
@@ -296,6 +323,7 @@ describe('ConversationV2Controller', () => {
     expect(mockWorkspaceDocuments.deleteAllByWorkspace).toHaveBeenCalledWith('sysws');
     expect(mockWorkspaceService.deleteSystemWorkspace).toHaveBeenCalledWith('sysws');
     expect(mockSessions.softDelete).toHaveBeenCalledWith('u1', 's1');
+    expect(calls).toEqual(['session', 'docs', 'workspace']);
   });
 
   // --- POST /sessions/:id/stop|pause|resume ---

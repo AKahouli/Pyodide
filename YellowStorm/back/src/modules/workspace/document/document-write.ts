@@ -1,6 +1,6 @@
 import { Inject, Injectable, forwardRef } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { Types } from 'mongoose';
+import { isObjectId, newObjectId } from '@common/postgres';
 import { IngestUrlDto } from '../dto/ingest-url.dto';
 import { DocumentStatus, DocumentType, IndexingStatus } from '../interfaces/document-status.enum';
 import { DOCUMENT_STORE, type DocumentStore } from '../stores/document-store';
@@ -18,11 +18,12 @@ import {
   NotFoundException,
   BadRequestException,
   ForbiddenException,
+  ConflictException,
 } from '../../exceptions';
 import { ErrorCode } from '../../exceptions/constants/error-codes';
 import { GuardedUrlDownloaderService } from '../services/guarded-url-downloader.service';
 import { WorkspaceIntegrationEvents } from '../../integration-events/contracts';
-import { WorkspaceDocumentSupport } from './document-support';
+import { WorkspaceDocumentSupport, isUniqueDocumentNameViolation } from './document-support';
 
 @Injectable()
 export class WorkspaceDocumentWrite {
@@ -65,22 +66,23 @@ export class WorkspaceDocumentWrite {
       );
     }
 
-    const documentId = new Types.ObjectId();
-    const effectiveName = await this.support.resolveUniqueOriginalName(workspaceId, data.filename);
-    const sanitizedName = this.support.sanitizeFilename(effectiveName);
-    const blobPath = `${pathPrefix}/${sanitizedName}`;
-
-    const document = await this.documentStore.create({
-      id: documentId.toString(),
-      filename: sanitizedName,
-      originalName: effectiveName,
-      mimeType: data.mimeType,
-      size: data.size,
-      path: blobPath,
-      workspaceId,
-      createdBy: userId,
-      status: DocumentStatus.PENDING,
-      indexingStatus: IndexingStatus.READY, // Conversation files are not indexed
+    const documentId = newObjectId();
+    let blobPath = '';
+    const document = await this.support.createWithUniqueName(workspaceId, data.filename, (effectiveName) => {
+      const sanitizedName = this.support.sanitizeFilename(effectiveName);
+      blobPath = `${pathPrefix}/${sanitizedName}`;
+      return {
+        id: documentId,
+        filename: sanitizedName,
+        originalName: effectiveName,
+        mimeType: data.mimeType,
+        size: data.size,
+        path: blobPath,
+        workspaceId,
+        createdBy: userId,
+        status: DocumentStatus.PENDING,
+        indexingStatus: IndexingStatus.READY, // Conversation files are not indexed
+      };
     });
 
     const uploadUrl = await this.documentService.generateSasUrl(blobPath, {
@@ -135,31 +137,18 @@ export class WorkspaceDocumentWrite {
       );
     }
 
-    const documentId = new Types.ObjectId();
-    const effectiveName = await this.support.resolveUniqueOriginalName(workspaceId, originalName);
-    const sanitizedName = this.support.sanitizeFilename(effectiveName);
-
-    const uploaded = await this.documentService.upload(file, effectiveName, mimeType, {
-      folder: pathPrefix,
-      generateUniqueName: false,
-      customFileName: sanitizedName,
-    });
-
-    const document = await this.documentStore.create({
-      id: documentId.toString(),
-      filename: uploaded.storedName,
+    const documentId = newObjectId();
+    const reserved = await this.support.createWithUniqueName(workspaceId, originalName, (effectiveName) => ({
+      id: documentId,
       originalName: effectiveName,
       mimeType,
       size,
-      path: uploaded.blobPath,
-      url: uploaded.url,
-      contentHash: uploaded.contentHash,
       workspaceId,
       createdBy: userId,
-      status: DocumentStatus.COMPLETED,
-      uploadedAt: new Date(),
+      status: DocumentStatus.UPLOADING,
       indexingStatus: IndexingStatus.READY, // Conversation files are not indexed
-    });
+    }));
+    const document = await this.completeDirectUpload(reserved, file, mimeType, pathPrefix);
 
     await this.workspaceService.updateStorageUsage(workspaceId, size, 1);
 
@@ -199,21 +188,22 @@ export class WorkspaceDocumentWrite {
     const { ownerUserId, storagePrefix } = await this.workspaceService.getStorageContext(
       workspaceId,
     );
-    const documentId = new Types.ObjectId();
-    const effectiveName = await this.support.resolveUniqueOriginalName(workspaceId, data.filename);
-    const blobPath = this.support.generateBlobPath(ownerUserId, storagePrefix, effectiveName);
-
-    const document = await this.documentStore.create({
-      id: documentId.toString(),
-      filename: this.support.sanitizeFilename(effectiveName),
-      originalName: effectiveName,
-      mimeType: data.mimeType,
-      size: data.size,
-      path: blobPath,
-      // url is set after upload completes
-      workspaceId,
-      createdBy: userId,
-      status: DocumentStatus.PENDING,
+    const documentId = newObjectId();
+    let blobPath = '';
+    const document = await this.support.createWithUniqueName(workspaceId, data.filename, (effectiveName) => {
+      blobPath = this.support.generateBlobPath(ownerUserId, storagePrefix, effectiveName);
+      return {
+        id: documentId,
+        filename: this.support.sanitizeFilename(effectiveName),
+        originalName: effectiveName,
+        mimeType: data.mimeType,
+        size: data.size,
+        path: blobPath,
+        // url is set after upload completes
+        workspaceId,
+        createdBy: userId,
+        status: DocumentStatus.PENDING,
+      };
     });
 
     // Generate presigned URL with write permission
@@ -366,37 +356,24 @@ export class WorkspaceDocumentWrite {
     const { ownerUserId, storagePrefix } = await this.workspaceService.getStorageContext(
       workspaceId,
     );
-    const documentId = new Types.ObjectId();
-    const effectiveName = await this.support.resolveUniqueOriginalName(workspaceId, originalName);
-    const sanitizedName = this.support.sanitizeFilename(effectiveName);
-
-    // Upload to Ceph S3
-    const uploaded = await this.documentService.upload(file, effectiveName, mimeType, {
-      folder: `${ownerUserId}/${storagePrefix}`,
-      generateUniqueName: false,
-      customFileName: sanitizedName,
-    });
-
-    // Create document record
-    const document = await this.documentStore.create({
-      id: documentId.toString(),
-      filename: uploaded.storedName,
+    const documentId = newObjectId();
+    // Reserve the name first (retried under the next free name if a concurrent
+    // upload took it), then write the blob under the reserved name.
+    const reserved = await this.support.createWithUniqueName(workspaceId, originalName, (effectiveName) => ({
+      id: documentId,
       originalName: effectiveName,
       mimeType,
       size,
-      path: uploaded.blobPath,
-      url: uploaded.url,
-      contentHash: uploaded.contentHash,
       workspaceId,
       createdBy: userId,
-      status: DocumentStatus.COMPLETED,
-      uploadedAt: new Date(),
+      status: DocumentStatus.UPLOADING,
       parentId: folderId ?? null,
       metadata: {
         deepSearchRequested: String(Boolean(deepSearch)),
         autoIndexRequested: String(autoIndex),
       },
-    });
+    }));
+    const document = await this.completeDirectUpload(reserved, file, mimeType, `${ownerUserId}/${storagePrefix}`);
     await this.support.recordWorkspaceEvent(WorkspaceIntegrationEvents.DocumentRegisteredV1, document);
     await this.support.recordWorkspaceEvent(WorkspaceIntegrationEvents.ArtifactReadyV1, document);
 
@@ -576,7 +553,8 @@ export class WorkspaceDocumentWrite {
     documentId: string,
     newName: string,
   ): Promise<DocumentResponse> {
-    if (!Types.ObjectId.isValid(documentId)) {
+    documentId = documentId.toLowerCase();
+    if (!isObjectId(documentId)) {
       throw new NotFoundException(ErrorCode.WORKSPACE_DOCUMENT_NOT_FOUND, 'Document not found');
     }
     const doc = await this.documentStore.findById(documentId);
@@ -595,7 +573,18 @@ export class WorkspaceDocumentWrite {
     const base = trimmed.toLowerCase().endsWith(ext.toLowerCase()) && ext
       ? trimmed.slice(0, trimmed.length - ext.length)
       : trimmed;
-    const renamed = await this.documentStore.renameOriginalName(documentId, `${base.slice(0, 200).trim()}${ext}`);
+    let renamed: Awaited<ReturnType<DocumentStore['renameOriginalName']>>;
+    try {
+      renamed = await this.documentStore.renameOriginalName(documentId, `${base.slice(0, 200).trim()}${ext}`);
+    } catch (error) {
+      if (isUniqueDocumentNameViolation(error)) {
+        throw new ConflictException(
+          ErrorCode.CONFLICT,
+          'A document with this name already exists in this workspace',
+        );
+      }
+      throw error;
+    }
 
     this.logger.log('Document renamed', { documentId, workspaceId, newName: renamed!.originalName });
     return this.support.mapToResponse(renamed!);
@@ -612,8 +601,10 @@ export class WorkspaceDocumentWrite {
   ): Promise<{ moved: number; failed: string[] }> {
     const moved: string[] = [];
     const failed: string[] = [];
+    const target = targetFolderId?.toLowerCase();
 
-    // Helper function to get all descendant folder IDs (to prevent circular moves)
+    // All descendant folder IDs of `folderId` (to prevent circular moves).
+    // `visited` bounds the walk even if the tree already contains a cycle.
     const getDescendantFolderIds = async (folderId: string): Promise<Set<string>> => {
       const descendants = new Set<string>();
       const queue = [folderId];
@@ -623,6 +614,7 @@ export class WorkspaceDocumentWrite {
         const children = await this.documentStore.findChildFolderIds(currentId);
 
         for (const child of children) {
+          if (descendants.has(child) || child === folderId) continue;
           descendants.add(child);
           queue.push(child);
         }
@@ -631,10 +623,11 @@ export class WorkspaceDocumentWrite {
       return descendants;
     };
 
-    // If target folder is provided, verify it exists and user has access
-    if (targetFolderId) {
-      const targetFolder = await this.documentStore.findById(targetFolderId);
-      if (!targetFolder || !targetFolder.isFolder) {
+    // If target folder is provided, verify it exists, lives in this workspace
+    // and the user has access.
+    if (target) {
+      const targetFolder = await this.documentStore.findById(target);
+      if (!targetFolder || !targetFolder.isFolder || targetFolder.workspaceId !== workspaceId) {
         throw new BadRequestException('Target folder not found');
       }
       if (userId && targetFolder.createdBy !== userId) {
@@ -645,51 +638,46 @@ export class WorkspaceDocumentWrite {
       }
     }
 
-    for (const documentId of documentIds) {
+    for (const rawId of documentIds) {
+      const documentId = rawId.toLowerCase();
       try {
-        const document = await this.documentStore.findById(documentId);
+        // Cycle check + move run atomically under a per-workspace tree lock so
+        // two concurrent moves cannot each pass the check and form a cycle.
+        const ok = await this.documentStore.withWorkspaceTreeLock(workspaceId, async () => {
+          const document = await this.documentStore.findById(documentId);
 
-        if (!document) {
-          failed.push(documentId);
-          continue;
-        }
+          // Every moved item must belong to this workspace.
+          if (!document || document.workspaceId !== workspaceId) return false;
 
-        if (document.workspaceId !== workspaceId) {
-          failed.push(documentId);
-          continue;
-        }
+          // Check permission - only creator can move
+          if (userId && document.createdBy !== userId) return false;
 
-        // Check permission - only creator can move
-        if (userId && document.createdBy !== userId) {
-          failed.push(documentId);
-          continue;
-        }
-
-        // If moving a folder, check for circular references
-        if (document.isFolder && targetFolderId) {
-          const descendants = await getDescendantFolderIds(documentId);
-          if (descendants.has(targetFolderId)) {
-            failed.push(documentId);
-            continue;
+          if (target) {
+            // Re-check the target inside the lock (it may have moved/vanished).
+            const targetFolder = await this.documentStore.findById(target);
+            if (!targetFolder || !targetFolder.isFolder || targetFolder.workspaceId !== workspaceId) {
+              return false;
+            }
+            // Cannot move a folder into itself or one of its descendants.
+            if (document.isFolder) {
+              if (documentId === target) return false;
+              const descendants = await getDescendantFolderIds(documentId);
+              if (descendants.has(target)) return false;
+            }
           }
 
-          // Cannot move folder into itself
-          if (documentId === targetFolderId) {
-            failed.push(documentId);
-            continue;
-          }
-        }
+          await this.documentStore.setParent(documentId, target ?? null);
+          return true;
+        });
 
-        // Update parent folder
-        await this.documentStore.setParent(documentId, targetFolderId ?? null);
-
-        moved.push(documentId);
+        if (ok) moved.push(rawId);
+        else failed.push(rawId);
       } catch (error) {
         this.logger.warn('Failed to move document/folder', {
-          documentId,
+          documentId: rawId,
           error: error instanceof Error ? error.message : 'Unknown error',
         });
-        failed.push(documentId);
+        failed.push(rawId);
       }
     }
 
@@ -704,5 +692,45 @@ export class WorkspaceDocumentWrite {
       moved: moved.length,
       failed,
     };
+  }
+
+  /**
+   * Second half of a direct upload: write the blob under the name reserved by an
+   * UPLOADING row, then complete the row. Blob keys are name-based
+   * (generateUniqueName: false), so uploading before the row existed let the loser
+   * of a concurrent same-name upload overwrite the winner's object. On failure the
+   * reservation is released so the name is free again.
+   */
+  private async completeDirectUpload(
+    reserved: Awaited<ReturnType<DocumentStore['create']>>,
+    file: Buffer,
+    mimeType: string,
+    folder: string,
+  ): Promise<Awaited<ReturnType<DocumentStore['create']>>> {
+    try {
+      const uploaded = await this.documentService.upload(file, reserved.originalName, mimeType, {
+        folder,
+        generateUniqueName: false,
+        customFileName: this.support.sanitizeFilename(reserved.originalName),
+      });
+      const completed = await this.documentStore.updateById(reserved.id, {
+        filename: uploaded.storedName,
+        path: uploaded.blobPath,
+        url: uploaded.url,
+        contentHash: uploaded.contentHash,
+        status: DocumentStatus.COMPLETED,
+        uploadedAt: new Date(),
+      });
+      if (!completed) throw new NotFoundException(ErrorCode.WORKSPACE_DOCUMENT_NOT_FOUND, 'Document removed during upload');
+      return completed;
+    } catch (error) {
+      await this.documentStore.deleteById(reserved.id).catch((cleanupError: unknown) => {
+        this.logger.warn('Failed to release document reservation after upload failure', {
+          documentId: reserved.id,
+          error: cleanupError instanceof Error ? cleanupError.message : String(cleanupError),
+        });
+      });
+      throw error;
+    }
   }
 }

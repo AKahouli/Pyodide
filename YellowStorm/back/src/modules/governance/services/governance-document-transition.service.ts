@@ -2,7 +2,7 @@ import { Inject, BadRequestException, ConflictException, Injectable } from '@nes
 import { ErrorCode } from '@modules/exceptions/constants/error-codes';
 import { DocumentStatus, IndexingStatus } from '@modules/workspace/interfaces/document-status.enum';
 import { WORKSPACE_DOCUMENT_READ_PORT, type WorkspaceDocumentReadPort } from '@modules/workspace/ports';
-import { GOVERNANCE_DOCUMENT_STORE, type GovernanceDocumentRecord, type GovernanceDocumentStore, type GovernanceDocumentUpdateSet } from '../persistence';
+import { GOVERNANCE_DOCUMENT_STORE, type GovernanceDocumentRecord, type GovernanceDocumentStore, type GovernanceDocumentUpdateSet, GOVERNANCE_TRANSACTION, PASSTHROUGH_TRANSACTION, type GovernanceTransactionRunner } from '../persistence';
 import type { GovernanceDocumentLifecycleStatus } from '../domain/governance-types';
 import { GovernanceDocumentService } from './governance-document.service';
 import { GovernanceDocumentEventService } from './governance-document-event.service';
@@ -25,6 +25,7 @@ export class GovernanceDocumentTransitionService {
     @Inject(WORKSPACE_DOCUMENT_READ_PORT) private readonly workspaceDocuments: WorkspaceDocumentReadPort,
     private readonly documents: GovernanceDocumentService,
     private readonly events: GovernanceDocumentEventService,
+    @Inject(GOVERNANCE_TRANSACTION) private readonly tx: GovernanceTransactionRunner = PASSTHROUGH_TRANSACTION,
   ) {}
 
   async transition(command: GovernanceDocumentTransitionCommand): Promise<GovernanceDocumentRecord> {
@@ -40,11 +41,15 @@ export class GovernanceDocumentTransitionService {
     if (command.target === 'to_review') Object.assign(set, { submittedForReviewBy: command.actorId, submittedForReviewAt: now });
     if (command.target === 'approved') Object.assign(set, { reviewedBy: command.actorId, reviewedAt: now, approvedBy: command.actorId, approvedAt: now });
     if (command.target === 'published') Object.assign(set, { publishedBy: command.actorId, publishedAt: now });
-    const updatedRecord = await this.documentStore.updateGuarded(record.id, { governanceRevision: command.expectedGovernanceRevision, statusEquals: before }, { set, bumpGovernanceRevision: true });
-    if (!updatedRecord) throw new ConflictException(ErrorCode.VALIDATION_ERROR, 'Document governance changed concurrently; reload and retry');
-    const eventType = ({ to_review: 'document.submitted_for_review', captured: 'document.returned_to_editing', approved: 'document.approved', rejected: 'document.rejected', published: 'document.published' } as const)[command.target as Exclude<GovernanceDocumentLifecycleStatus, 'archived'>];
-    if (!eventType) throw new BadRequestException(ErrorCode.VALIDATION_ERROR, 'Unsupported document governance lifecycle transition');
-    await this.events.append({ programId: command.programId, governanceDocumentId: updatedRecord.id, documentId: command.documentId, actorId: command.actorId, actorEmail: command.actorEmail, actorType: 'user', eventType, before: { status: before }, after: { status: command.target }, reason: command.comment, correlationId: command.correlationId, deduplicationKey: key });
+    // Status change and its lifecycle event commit atomically.
+    const updatedRecord = await this.tx.run(async () => {
+      const result = await this.documentStore.updateGuarded(record.id, { governanceRevision: command.expectedGovernanceRevision, statusEquals: before }, { set, bumpGovernanceRevision: true });
+      if (!result) throw new ConflictException(ErrorCode.VALIDATION_ERROR, 'Document governance changed concurrently; reload and retry');
+      const eventType = ({ to_review: 'document.submitted_for_review', captured: 'document.returned_to_editing', approved: 'document.approved', rejected: 'document.rejected', published: 'document.published' } as const)[command.target as Exclude<GovernanceDocumentLifecycleStatus, 'archived'>];
+      if (!eventType) throw new BadRequestException(ErrorCode.VALIDATION_ERROR, 'Unsupported document governance lifecycle transition');
+      await this.events.append({ programId: command.programId, governanceDocumentId: result.id, documentId: command.documentId, actorId: command.actorId, actorEmail: command.actorEmail, actorType: 'user', eventType, before: { status: before }, after: { status: command.target }, reason: command.comment, correlationId: command.correlationId, deduplicationKey: key });
+      return result;
+    });
     return updatedRecord;
   }
 

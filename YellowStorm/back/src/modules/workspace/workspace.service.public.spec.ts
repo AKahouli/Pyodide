@@ -144,3 +144,41 @@ describe('WorkspaceService.findPublic', () => {
     expect(res.pagination.total).toBe(2);
   });
 });
+
+describe('WorkspaceService.delete ordering', () => {
+  function build(withDb: boolean) {
+    const calls: string[] = [];
+    const svc = Object.create(WorkspaceService.prototype) as WorkspaceService;
+    const s = svc as any;
+    s.workspaceStore = {
+      findById: jest.fn().mockResolvedValue({ id: WS, createdBy: OWNER, isPersonal: false, name: 'w' }),
+      deleteById: jest.fn(async () => { calls.push('workspace'); }),
+    };
+    s.shareStore = { deleteManyByWorkspace: jest.fn(async () => { calls.push('shares'); }) };
+    s.conversationStore = { removeWorkspaceFromAll: jest.fn(async () => { calls.push('conversations'); return 0; }) };
+    s.agentRepository = { pullKnowledgeBaseFromAll: jest.fn(async () => { calls.push('agents'); }) };
+    s.flowReadPort = { removeWorkspaceReference: jest.fn(async () => { calls.push('flows'); }) };
+    s.logger = { setContext: () => {}, log: () => {}, warn: () => {} };
+    if (withDb) {
+      s.db = { transaction: jest.fn(async (fn: (tx: unknown) => Promise<unknown>) => {
+        calls.push('begin');
+        const r = await fn({});
+        calls.push('commit');
+        return r;
+      }) };
+    }
+    return { svc, calls };
+  }
+
+  it('removes conversation refs and shares before deleting the workspace, in a transaction', async () => {
+    const { svc, calls } = build(true);
+    await svc.delete(WS, OWNER);
+    expect(calls).toEqual(['conversations', 'begin', 'shares', 'workspace', 'commit', 'agents', 'flows']);
+  });
+
+  it('keeps the same ordering without a database handle', async () => {
+    const { svc, calls } = build(false);
+    await svc.delete(WS, OWNER);
+    expect(calls).toEqual(['conversations', 'shares', 'workspace', 'agents', 'flows']);
+  });
+});

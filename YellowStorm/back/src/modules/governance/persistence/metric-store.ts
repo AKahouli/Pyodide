@@ -7,5 +7,6 @@ export interface MetricStore {
   /** Newest periods first, capped like the REST list endpoint. */
   listForProgramScopes(programId: string, scopeIds: string[] | '*', limit: number): Promise<GovernanceMetricRecord[]>;
   listByProgramAndScope(programId: string, scopeId: string): Promise<GovernanceMetricRecord[]>;
-  deleteByProgramAndScope(programId: string, scopeId: string): Promise<void>;
+  /** Set-based delete for a whole scope subtree; no-op for an empty list. */
+  deleteByProgramAndScopeIds(programId: string, scopeIds: string[]): Promise<void>;
 }

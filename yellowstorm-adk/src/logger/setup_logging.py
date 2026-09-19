@@ -84,7 +84,12 @@ def setup_logging(json_logs: bool = False, log_level: str = "INFO", color_logs: 
     if json_logs:
         log_renderer = structlog.processors.JSONRenderer()
     else:
-        log_renderer = structlog.dev.ConsoleRenderer(colors=color_logs)
+        # The default rich traceback prints frame locals, which leaks settings
+        # secrets (API keys, DB passwords) whenever a traceback is logged.
+        log_renderer = structlog.dev.ConsoleRenderer(
+            colors=color_logs,
+            exception_formatter=structlog.dev.RichTracebackFormatter(show_locals=False),
+        )
 
     formatter = structlog.stdlib.ProcessorFormatter(
         # These run ONLY on `logging` entries that do NOT originate within

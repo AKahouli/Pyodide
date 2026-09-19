@@ -50,6 +50,11 @@ export function documentRowToRecord(row: DocRow): GovernanceDocumentRecord {
   };
 }
 
+/** Single normalisation for the promoted business-status column: '' / null / undefined all map to NULL. */
+export function normalizeBusinessStatus(value: unknown): string | null {
+  return value === undefined || value === null || value === '' ? null : String(value);
+}
+
 type DocSetPatch = Partial<Omit<DocRow, 'id' | 'createdAt' | 'validity'>> & { validity?: Record<string, unknown> };
 
 function buildPatch(update: GovernanceDocumentUpdate): DocSetPatch {
@@ -142,8 +147,7 @@ export class PgGovernanceDocumentStore implements GovernanceDocumentStore {
   }
 
   private businessStatusOf(validity: Record<string, unknown>): string | null {
-    const value = validity?.businessStatus;
-    return value ? String(value) : null;
+    return normalizeBusinessStatus(validity?.businessStatus);
   }
 
   async listForProgramWorkspaces(programId: string, workspaceIds: string[], includeArchived: boolean): Promise<GovernanceDocumentRecord[]> {
@@ -248,18 +252,18 @@ export class PgGovernanceDocumentStore implements GovernanceDocumentStore {
     return rows.map(documentRowToRecord);
   }
 
-  async markNeedsReviewIfUnchanged(id: string, previousBusinessStatus: string | undefined, previousNextReviewAt: Date | undefined | null): Promise<boolean> {
+  async markNeedsReviewIfUnchanged(id: string, previousBusinessStatus: string | null | undefined, previousNextReviewAt: Date | undefined | null): Promise<boolean> {
     // Optimistic guard: business status must still be the observed value and
     // the promoted review timestamp must be IS NOT DISTINCT FROM the observed one.
     const validityStatus = sql`jsonb_set(coalesce(${DOCS.validity}, '{}'::jsonb), '{businessStatus}', to_jsonb('needs_review'::text), true)`;
+    // IS NOT DISTINCT FROM so a NULL observed value (normalised from '' / null / missing)
+    // still matches; a plain `=` never matches NULL and would leave the row due forever.
+    const observedStatus = normalizeBusinessStatus(previousBusinessStatus);
+    const observedDue = previousNextReviewAt ?? null;
     const conditions = [
       eq(DOCS.id, id),
-      previousBusinessStatus === undefined
-        ? or(isNull(DOCS.validityBusinessStatus), eq(DOCS.validityBusinessStatus, ''))
-        : eq(DOCS.validityBusinessStatus, previousBusinessStatus),
-      previousNextReviewAt == null
-        ? isNull(DOCS.validityNextReviewAt)
-        : and(isNotNull(DOCS.validityNextReviewAt), eq(DOCS.validityNextReviewAt, previousNextReviewAt)),
+      sql`${DOCS.validityBusinessStatus} IS NOT DISTINCT FROM ${observedStatus}`,
+      sql`${DOCS.validityNextReviewAt} IS NOT DISTINCT FROM ${observedDue === null ? null : observedDue.toISOString()}::timestamptz`,
     ];
     const rows = await this.q
       .update(DOCS)
@@ -290,7 +294,8 @@ export class PgGovernanceDocumentStore implements GovernanceDocumentStore {
   }
 
   async setMetadataField(programId: string, documentId: string, key: string, value: unknown): Promise<GovernanceDocumentRecord | null> {
-    const metadata = sql`jsonb_set(coalesce(${DOCS.metadata}, '{}'::jsonb), ${sql.raw(`'{${key.replace(/'/g, '')}}'`)}, ${JSON.stringify(value)}::jsonb, true)`;
+    // Fully parameterised: key and value are bound, never spliced into the SQL text.
+    const metadata = sql`jsonb_set(coalesce(${DOCS.metadata}, '{}'::jsonb), ARRAY[${key}::text], ${JSON.stringify(value ?? null)}::jsonb, true)`;
     const rows = await this.q
       .update(DOCS)
       .set({ metadata, governanceRevision: sql`${DOCS.governanceRevision} + 1`, updatedAt: new Date() })
@@ -326,10 +331,11 @@ export class PgGovernanceDocumentStore implements GovernanceDocumentStore {
     return rows.map(documentRowToRecord);
   }
 
-  async clearOwnerScope(programId: string, scopeId: string): Promise<void> {
+  async clearOwnerScopes(programId: string, scopeIds: string[]): Promise<void> {
+    if (scopeIds.length === 0) return;
     await this.q
       .update(DOCS)
       .set({ ownerScopeId: null, governanceRevision: sql`${DOCS.governanceRevision} + 1`, updatedAt: new Date() })
-      .where(and(eq(DOCS.programId, programId), eq(DOCS.ownerScopeId, scopeId)));
+      .where(and(eq(DOCS.programId, programId), inArray(DOCS.ownerScopeId, scopeIds)));
   }
 }

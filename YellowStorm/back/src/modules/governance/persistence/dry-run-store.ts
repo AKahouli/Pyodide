@@ -31,5 +31,6 @@ export interface DryRunStore {
   findPassedByDeploymentAndRevision(deploymentId: string, revisionId: string): Promise<GovernanceDryRunRecord | null>;
   listByDeployment(deploymentId: string): Promise<GovernanceDryRunRecord[]>;
   update(dryRunId: string, patch: GovernanceDryRunPatch): Promise<GovernanceDryRunRecord | null>;
-  deleteByProgramAndScope(programId: string, scopeId: string): Promise<void>;
+  /** Set-based delete for a whole scope subtree; no-op for an empty list. */
+  deleteByProgramAndScopeIds(programId: string, scopeIds: string[]): Promise<void>;
 }

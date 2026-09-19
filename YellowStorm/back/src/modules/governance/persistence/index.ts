@@ -12,3 +12,4 @@ export * from './dry-run-store';
 export * from './publication-attempt-store';
 export * from './metric-store';
 export * from './group-lookup.port';
+export * from './transaction-runner';

@@ -13,7 +13,7 @@ import type {
   UploadSessionRecord,
 } from '../stores/upload-session-store';
 import type { WorkspaceDocumentRecord } from '../ports/workspace-records';
-import { DOCUMENT_STORE, type DocumentStore } from '../stores/document-store';
+import { DOCUMENT_STORE, type DocumentStore, type DocumentCreateInput } from '../stores/document-store';
 import {
   DocumentResponse,
 } from '../interfaces/workspace-document.interface';
@@ -30,6 +30,23 @@ import { WorkspaceUploadSettingsService } from '../../system/workspace-upload-se
 import { getUploadExtension } from '../../system/constants/workspace-upload-settings.constants';
 import { IntegrationEventOutboxService } from '../../integration-events/services/integration-event-outbox.service';
 import { FeatureVisibilityService } from '../../system/feature-visibility.service';
+
+/** Unique index on (workspace_id, original_name) for non-folder documents. */
+export const UNIQUE_DOCUMENT_NAME_CONSTRAINT = 'uq_documents_ws_name_files';
+const UNIQUE_NAME_MAX_ATTEMPTS = 5;
+
+/**
+ * True when `error` is a Postgres unique violation (23505) on the per-workspace
+ * document name index. node-postgres errors surface either directly or wrapped
+ * by drizzle in `cause`.
+ */
+export function isUniqueDocumentNameViolation(error: unknown): boolean {
+  const candidates = [error, (error as { cause?: unknown } | null)?.cause];
+  return candidates.some((candidate) => {
+    const err = candidate as { code?: unknown; constraint?: unknown } | null | undefined;
+    return err?.code === '23505' && err.constraint === UNIQUE_DOCUMENT_NAME_CONSTRAINT;
+  });
+}
 
 @Injectable()
 export class WorkspaceDocumentSupport {
@@ -109,6 +126,36 @@ export class WorkspaceDocumentSupport {
     throw new BadRequestException(
       `Too many duplicates of '${originalName}' in this workspace`,
     );
+  }
+
+  /**
+   * Insert a document under a workspace-unique originalName. The probe in
+   * resolveUniqueOriginalName() is racy under concurrent uploads, so when the
+   * insert hits the unique index we re-resolve and retry (bounded).
+   * `build` receives the effective name and returns the create input; it may be
+   * re-invoked with a different name on retry.
+   */
+  async createWithUniqueName(
+    workspaceId: string,
+    requestedName: string,
+    build: (effectiveName: string) => Promise<DocumentCreateInput> | DocumentCreateInput,
+  ): Promise<WorkspaceDocumentRecord> {
+    for (let attempt = 1; ; attempt++) {
+      const effectiveName = await this.resolveUniqueOriginalName(workspaceId, requestedName);
+      const input = await build(effectiveName);
+      try {
+        return await this.documentStore.create(input);
+      } catch (error) {
+        if (!isUniqueDocumentNameViolation(error) || attempt >= UNIQUE_NAME_MAX_ATTEMPTS) {
+          throw error;
+        }
+        this.logger.debug('Document name collided concurrently, retrying', {
+          workspaceId,
+          originalName: effectiveName,
+          attempt,
+        });
+      }
+    }
   }
 
   /**

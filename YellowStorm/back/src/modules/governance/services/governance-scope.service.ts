@@ -14,7 +14,9 @@ import {
   PUBLICATION_ATTEMPT_STORE,
   REVISION_STORE,
   SCOPE_STORE,
+  GOVERNANCE_TRANSACTION,
   type BindingStore,
+  type GovernanceTransactionRunner,
   type DeploymentStore,
   type DryRunStore,
   type GovernanceDocumentStore,
@@ -67,6 +69,7 @@ export class GovernanceScopeService {
     private readonly userGroupService: UserGroupService,
     private readonly auditLogService: AuditLogService,
     private readonly draftPreparation: GovernanceDraftPreparationService,
+    @Inject(GOVERNANCE_TRANSACTION) private readonly tx: GovernanceTransactionRunner,
   ) {}
 
   async create(ownerUserId: string, programId: string, dto: CreateGovernanceScopeDto): Promise<GovernanceScopeResponse> {
@@ -131,20 +134,41 @@ export class GovernanceScopeService {
     await this.deleteScopeTree(programId, scopeId);
   }
 
+  /** Deletes the scope and its whole subtree atomically, children before parents, set-based. */
   private async deleteScopeTree(programId: string, scopeId: string): Promise<void> {
-    const children = await this.scopeStore.listChildIds(programId, scopeId);
-    for (const child of children) await this.deleteScopeTree(programId, child);
-    const deployments = (await this.deploymentStore.listByProgram(programId)).filter((deployment) => deployment.scopeId === scopeId);
-    const deploymentIds = deployments.map((deployment) => deployment.id);
-    await this.bindingStore.removeScopeFromProgramBindings(programId, scopeId);
-    await this.documentStore.clearOwnerScope(programId, scopeId);
-    await this.membershipStore.deleteByProgramAndScope(programId, scopeId);
-    await this.metricStore.deleteByProgramAndScope(programId, scopeId);
-    await this.dryRunStore.deleteByProgramAndScope(programId, scopeId);
-    await this.publicationAttemptStore.deleteByProgramAndScope(programId, scopeId);
-    await this.revisionStore.deleteByDeploymentIds(deploymentIds);
-    await this.deploymentStore.deleteByProgramAndScope(programId, scopeId);
-    await this.scopeStore.deleteByIdAndProgram(scopeId, programId);
+    await this.tx.run(async () => {
+      const scopeIds = this.collectSubtree(scopeId, await this.scopeStore.listHierarchy(programId));
+      const scopeIdSet = new Set(scopeIds);
+      const deploymentIds = (await this.deploymentStore.listByProgram(programId)).filter((deployment) => scopeIdSet.has(deployment.scopeId)).map((deployment) => deployment.id);
+      await this.bindingStore.removeScopesFromProgramBindings(programId, scopeIds);
+      await this.documentStore.clearOwnerScopes(programId, scopeIds);
+      await this.membershipStore.deleteByProgramAndScopeIds(programId, scopeIds);
+      await this.metricStore.deleteByProgramAndScopeIds(programId, scopeIds);
+      await this.dryRunStore.deleteByProgramAndScopeIds(programId, scopeIds);
+      await this.publicationAttemptStore.deleteByProgramAndScopeIds(programId, scopeIds);
+      await this.revisionStore.deleteByDeploymentIds(deploymentIds);
+      await this.deploymentStore.deleteByProgramAndScopeIds(programId, scopeIds);
+      await this.scopeStore.deleteByIdsAndProgram(scopeIds, programId);
+    });
+  }
+
+  /** Breadth-first subtree walk (root first); the visited set guards against parent cycles. */
+  private collectSubtree(rootId: string, hierarchy: Array<{ id: string; parentScopeId: string | null }>): string[] {
+    const childrenByParent = new Map<string, string[]>();
+    for (const node of hierarchy) {
+      if (!node.parentScopeId) continue;
+      childrenByParent.set(node.parentScopeId, [...(childrenByParent.get(node.parentScopeId) ?? []), node.id]);
+    }
+    const visited = new Set<string>([rootId]);
+    const queue = [rootId];
+    for (let index = 0; index < queue.length; index += 1) {
+      for (const child of childrenByParent.get(queue[index]) ?? []) {
+        if (visited.has(child)) continue;
+        visited.add(child);
+        queue.push(child);
+      }
+    }
+    return queue;
   }
 
   private async assertCanDeleteScope(ownerUserId: string, programId: string, scopeId: string): Promise<void> {

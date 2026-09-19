@@ -35,8 +35,23 @@ describe('GovernanceDeploymentService', () => {
     const accessService = { assertScopeAccess: jest.fn().mockResolvedValue(undefined), assertScopeRole: scopeRoleError ? jest.fn().mockRejectedValue(scopeRoleError) : jest.fn().mockResolvedValue(undefined), getAccessibleScopeIds: jest.fn().mockResolvedValue(['*']) };
     const auditLogService = { logSuccess: jest.fn(), logFailure: jest.fn() };
     const draftPreparationService = { prepare: jest.fn().mockResolvedValue(undefined) };
-    const service = new GovernanceDeploymentService(deploymentStore as never, revisionStore as never, dryRunStore as never, bindingStore as never, attemptStore as never, programService as never, scopeService as never, accessService as never, auditLogService as never, draftPreparationService as never);
-    return { service, attemptStore, revisionStore, deploymentStore, auditLogService, accessService, scopeService, draftPreparationService };
+    // Simulated transaction: snapshot the in-memory revision and restore it when fn throws (rollback).
+    const tx = {
+      run: jest.fn(async (fn: () => Promise<unknown>) => {
+        const snapshot = revision ? { ...revision } : null;
+        try {
+          return await fn();
+        } catch (error) {
+          if (revision && snapshot) {
+            for (const key of Object.keys(revision)) delete revision[key];
+            Object.assign(revision, snapshot);
+          }
+          throw error;
+        }
+      }),
+    };
+    const service = new GovernanceDeploymentService(deploymentStore as never, revisionStore as never, dryRunStore as never, bindingStore as never, attemptStore as never, programService as never, scopeService as never, accessService as never, auditLogService as never, draftPreparationService as never, tx as never);
+    return { tx, service, attemptStore, revisionStore, deploymentStore, auditLogService, accessService, scopeService, draftPreparationService };
   }
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -156,6 +171,7 @@ describe('GovernanceDeploymentService', () => {
     service.deploymentStore.findById.mockResolvedValue({ ...deployment, currentPublishedRevisionId: '507f1f77bcf86cd799439099' });
 
     await expect(service.service.publish(actorId, actorEmail, deploymentId, {})).rejects.toMatchObject({ code: 'ERR_3670' });
+    expect(service.tx.run).toHaveBeenCalled();
     expect(revision.status).toBe('draft');
     expect(revision.publishedBy).toBeFalsy();
     expect(revision.publishedAt).toBeFalsy();

@@ -76,7 +76,7 @@ export interface GovernanceDocumentStore {
    * business status and next-review timestamp are still the observed values.
    * Returns false when another writer won the race (Mongo modifiedCount !== 1).
    */
-  markNeedsReviewIfUnchanged(id: string, previousBusinessStatus: string | undefined, previousNextReviewAt: Date | undefined | null): Promise<boolean>;
+  markNeedsReviewIfUnchanged(id: string, previousBusinessStatus: string | null | undefined, previousNextReviewAt: Date | undefined | null): Promise<boolean>;
   /** Knowledge recommendation apply: merges validity patch on a non-rejected/archived document. */
   patchValidityForDocument(programId: string, documentId: string, patch: { nextReviewAt: Date; reviewFrequencyDays: number }): Promise<GovernanceDocumentRecord | null>;
   /** Metadata candidate accept: sets `metadata.<key>` on a non-rejected/archived document. */
@@ -84,7 +84,7 @@ export interface GovernanceDocumentStore {
   /** Reconciliation scan: batches of documents by ascending id cursor. */
   listByIdCursor(programId: string, workspaceId: string, afterId: string | undefined, limit: number): Promise<GovernanceDocumentRecord[]>;
   /** Scope-tree cleanup: clears ownerScopeId on the scope's documents (revision bumped). */
-  clearOwnerScope(programId: string, scopeId: string): Promise<void>;
+  clearOwnerScopes(programId: string, scopeIds: string[]): Promise<void>;
   /** Knowledge assessment sweep: oldest-updated non-rejected/archived documents. */
   listNonArchived(limit: number): Promise<GovernanceDocumentRecord[]>;
 }

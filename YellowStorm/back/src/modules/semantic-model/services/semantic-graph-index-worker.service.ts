@@ -68,8 +68,12 @@ export class SemanticGraphIndexWorkerService {
          WHERE model_id=$1 AND target_version_id=$3 AND target_revision=$4`, [target.modelId,message,target.versionId,target.revision]);
       this.logger.error('Semantic graph indexing failed', { modelId: target.modelId, error: message });
     } finally {
-      await lockClient.query('SELECT pg_advisory_unlock(hashtext($1))',[target.modelId]).catch(() => undefined);
-      lockClient.release();
+      // A failed unlock leaves the session-level lock held on this client:
+      // destroy it instead of returning it to the pool.
+      const unlockErr = await lockClient.query('SELECT pg_advisory_unlock(hashtext($1))',[target.modelId])
+        .then(() => undefined, (err: unknown) => (err instanceof Error ? err : new Error(String(err))));
+      if (unlockErr) this.logger.warn('Semantic graph advisory unlock failed; discarding client', { modelId: target.modelId, error: unlockErr.message });
+      lockClient.release(unlockErr);
     }
   }
 }

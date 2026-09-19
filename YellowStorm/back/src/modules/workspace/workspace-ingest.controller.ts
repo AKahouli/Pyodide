@@ -9,7 +9,7 @@ import {
 } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse, ApiParam } from '@nestjs/swagger';
 import { Inject } from '@nestjs/common';
-import { Types } from 'mongoose';
+import { isObjectId } from '@common/postgres';
 import { InternalServiceGuard } from '../auth/guards/internal-service.guard';
 import { Public } from '../auth/decorators/public.decorator';
 import { WorkspaceDocumentService } from './workspace-document.service';
@@ -41,7 +41,8 @@ export class WorkspaceIngestController {
     @Param('workspaceId') workspaceId: string,
     @Body() dto: IngestUrlDto,
   ) {
-    if (!Types.ObjectId.isValid(workspaceId)) {
+    workspaceId = workspaceId.toLowerCase();
+    if (!isObjectId(workspaceId)) {
       throw new NotFoundException(
         ErrorCode.WORKSPACE_NOT_FOUND,
         'Invalid workspace ID format',

@@ -61,7 +61,8 @@ export class PgMetricStore implements MetricStore {
     return rows.map(metricRowToRecord);
   }
 
-  async deleteByProgramAndScope(programId: string, scopeId: string): Promise<void> {
-    await this.q.delete(METRICS).where(and(eq(METRICS.programId, programId), eq(METRICS.scopeId, scopeId)));
+  async deleteByProgramAndScopeIds(programId: string, scopeIds: string[]): Promise<void> {
+    if (scopeIds.length === 0) return;
+    await this.q.delete(METRICS).where(and(eq(METRICS.programId, programId), inArray(METRICS.scopeId, scopeIds)));
   }
 }

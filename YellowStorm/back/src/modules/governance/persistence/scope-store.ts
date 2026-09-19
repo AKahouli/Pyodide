@@ -36,10 +36,13 @@ export interface ScopeStore {
   /** All active scopes across programs (consumer catalogue). */
   listActive(): Promise<GovernanceScopeRecord[]>;
   /** Direct child scope ids of `parentScopeId` within the program. */
-  listChildIds(programId: string, parentScopeId: string): Promise<string[]>;
   update(scopeId: string, patch: GovernanceScopePatch): Promise<GovernanceScopeRecord | null>;
   /** Draft preparation stamps `metadata.review.status` via a jsonb path set. */
   setMetadataReviewStatus(scopeId: string, status: string): Promise<void>;
   countByProgram(programId: string): Promise<number>;
   deleteByIdAndProgram(scopeId: string, programId: string): Promise<void>;
+  /** Deletes the given scopes; callers pass the whole subtree so parent FKs stay satisfied. */
+  deleteByIdsAndProgram(scopeIds: string[], programId: string): Promise<void>;
+  /** Every (id, parentScopeId) pair of a program, for in-memory subtree walks. */
+  listHierarchy(programId: string): Promise<Array<{ id: string; parentScopeId: string | null }>>;
 }

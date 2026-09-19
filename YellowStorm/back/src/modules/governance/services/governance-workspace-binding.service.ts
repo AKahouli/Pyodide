@@ -2,7 +2,7 @@ import { Inject, Injectable } from '@nestjs/common';
 import { BadRequestException, ConflictException, ForbiddenException, NotFoundException } from '@modules/exceptions';
 import { WORKSPACE_READ_PORT, WORKSPACE_SHARE_READ_PORT, type WorkspaceReadPort, type WorkspaceShareReadPort } from '@modules/workspace/ports';
 import { ErrorCode } from '@modules/exceptions/constants/error-codes';
-import { BINDING_STORE, SCOPE_STORE, type BindingStore, type GovernanceBindingRecord, type ScopeStore } from '../persistence';
+import { BINDING_STORE, SCOPE_STORE, type BindingStore, type GovernanceBindingRecord, type ScopeStore, GOVERNANCE_TRANSACTION, PASSTHROUGH_TRANSACTION, type GovernanceTransactionRunner } from '../persistence';
 import { DuplicateKeyError } from '../persistence/governance-records';
 import type { CreateGovernanceWorkspaceBindingDto, UpdateGovernanceWorkspaceBindingDto } from '../dto/create-governance-workspace-binding.dto';
 import { GovernanceProgramService } from './governance-program.service';
@@ -19,6 +19,7 @@ export class GovernanceWorkspaceBindingService {
     private readonly programs: GovernanceProgramService,
     private readonly access: GovernanceAccessService,
     private readonly draftPreparation: GovernanceDraftPreparationService,
+    @Inject(GOVERNANCE_TRANSACTION) private readonly tx: GovernanceTransactionRunner = PASSTHROUGH_TRANSACTION,
   ) {}
   async create(actorId: string, programId: string, dto: CreateGovernanceWorkspaceBindingDto, actorEmail = ''): Promise<GovernanceBindingRecord> {
     await this.programs.assertOwnedProgram(actorId, programId);
@@ -119,12 +120,15 @@ export class GovernanceWorkspaceBindingService {
         nextVisibility = scopeIds.length === 1 ? 'scope_specific' : 'multi_scope';
       }
     }
-    const updated = await this.bindingStore.update(binding.id, { enabled: true });
-    if (!updated) throw new NotFoundException(ErrorCode.VALIDATION_ERROR, 'Workspace binding not found');
-    if (nextVisibility !== binding.visibility || nextScopeIds !== binding.scopeIds) {
-      await this.bindingStore.replaceScopeIds(binding.id, nextScopeIds, nextVisibility);
-    }
-    const refreshed = (await this.bindingStore.findById(binding.id)) ?? updated;
+    // Re-enable and scope replacement commit together (draft preparation stays outside).
+    const refreshed = await this.tx.run(async () => {
+      const updated = await this.bindingStore.update(binding.id, { enabled: true });
+      if (!updated) throw new NotFoundException(ErrorCode.VALIDATION_ERROR, 'Workspace binding not found');
+      if (nextVisibility !== binding.visibility || nextScopeIds !== binding.scopeIds) {
+        await this.bindingStore.replaceScopeIds(binding.id, nextScopeIds, nextVisibility);
+      }
+      return (await this.bindingStore.findById(binding.id)) ?? updated;
+    });
     const nextAffectedScopeIds = await this.resolveAffectedScopeIds(programId, refreshed.visibility, refreshed.scopeIds);
     const affectedScopeIds = [...new Set([...previousScopeIds, ...nextAffectedScopeIds])];
     await Promise.all(affectedScopeIds.map((scopeId) => this.draftPreparation.prepare(actorId, actorEmail, programId, scopeId)));

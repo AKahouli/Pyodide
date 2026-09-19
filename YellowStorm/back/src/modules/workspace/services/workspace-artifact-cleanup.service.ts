@@ -12,6 +12,12 @@ export class WorkspaceArtifactCleanupService {
     return this.cleanup.countBySource(workspaceId, documentId);
   }
 
+  /** Batched count of artifacts sourced from any of `documentIds` (0 for []). */
+  countBySourceDocumentIds(documentIds: string[]): Promise<number> {
+    if (documentIds.length === 0) return Promise.resolve(0);
+    return this.cleanup.countBySourceDocumentIds(documentIds);
+  }
+
   deleteBySource(workspaceId: string, documentId: string): Promise<void> {
     return this.cleanup.deleteBySource(workspaceId, documentId);
   }

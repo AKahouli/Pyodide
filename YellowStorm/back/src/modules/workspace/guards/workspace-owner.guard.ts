@@ -4,7 +4,7 @@ import {
   ExecutionContext,
   Inject,
 } from '@nestjs/common';
-import { Types } from 'mongoose';
+import { isObjectId } from '@common/postgres';
 import { Request } from 'express';
 import { ForbiddenException, NotFoundException } from '../../exceptions';
 import { ErrorCode } from '../../exceptions/constants/error-codes';
@@ -40,9 +40,9 @@ export class WorkspaceOwnerGuard implements CanActivate {
     }
 
     // Get workspace ID from params (support both 'id' and 'workspaceId')
-    const workspaceId = request.params.id || request.params.workspaceId;
+    const rawWorkspaceId = request.params.id || request.params.workspaceId;
 
-    if (!workspaceId) {
+    if (!rawWorkspaceId) {
       throw new NotFoundException(
         ErrorCode.WORKSPACE_NOT_FOUND,
         'Workspace ID is required',
@@ -50,7 +50,8 @@ export class WorkspaceOwnerGuard implements CanActivate {
     }
 
     // Validate ObjectId format
-    if (!Types.ObjectId.isValid(workspaceId)) {
+    const workspaceId = rawWorkspaceId.toLowerCase();
+    if (!isObjectId(workspaceId)) {
       throw new NotFoundException(
         ErrorCode.WORKSPACE_NOT_FOUND,
         'Invalid workspace ID format',

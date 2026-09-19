@@ -5,7 +5,7 @@ import { DRIZZLE_DB } from '@modules/postgres/postgres.constants';
 import * as schema from '@modules/postgres/schema';
 import { escapeLike } from '@common/postgres/like';
 import { newObjectId } from '@common/postgres/object-id';
-import { resolveQueryable } from '@common/postgres/transaction';
+import { resolveQueryable, withTransaction } from '@common/postgres/transaction';
 import { documentRowToRecord } from '../../persistence/postgres/pg-workspace-document-read.adapter';
 import { DOCUMENT_STORE, type DocumentStore, type DocumentCreateInput, type DocumentUpdatePatch, type DocumentListParams, type FolderDuplicateProbe, type WorkspaceDocumentListParams } from '../document-store';
 import type { WorkspaceDocumentRecord } from '../../ports/workspace-records';
@@ -113,6 +113,13 @@ export class PgDocumentStore implements DocumentStore {
     return rows.map((r) => r.id);
   }
 
+  async withWorkspaceTreeLock<T>(workspaceId: string, fn: () => Promise<T>): Promise<T> {
+    return withTransaction(this.db, async (tx) => {
+      await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${`workspace-tree:${workspaceId}`}))`);
+      return fn();
+    });
+  }
+
   async findDirectChildren(parentId: string, workspaceId: string): Promise<WorkspaceDocumentRecord[]> {
     const rows = await this.q
       .select()
@@ -152,6 +159,7 @@ export class PgDocumentStore implements DocumentStore {
   }
 
   async listByWorkspaces(workspaceIds: string[], params: DocumentListParams): Promise<{ items: WorkspaceDocumentRecord[]; total: number }> {
+    if (workspaceIds.length === 0) return { items: [], total: 0 };
     const { status, search, searchFilename, sortBy, sortOrder, skip, limit } = params;
     const conditions = [inArray(DOCUMENTS.workspaceId, workspaceIds)];
     if (status) conditions.push(eq(DOCUMENTS.status, status));

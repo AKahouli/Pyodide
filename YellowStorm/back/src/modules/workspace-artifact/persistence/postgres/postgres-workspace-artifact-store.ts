@@ -7,13 +7,15 @@ import * as schema from '@modules/postgres/schema';
 import { escapeLike } from '@common/postgres/like';
 import { newObjectId } from '@common/postgres/object-id';
 import { resolveQueryable } from '@common/postgres/transaction';
-import type {
-  ArtifactLeaseClaim,
-  WorkspaceArtifactCreateInput,
-  WorkspaceArtifactEditPatch,
-  WorkspaceArtifactListFilter,
-  WorkspaceArtifactStore,
-  WorkspaceArtifactUsage,
+import {
+  DEFAULT_ARTIFACT_LIST_LIMIT,
+  MAX_ARTIFACT_LIST_LIMIT,
+  type ArtifactLeaseClaim,
+  type WorkspaceArtifactCreateInput,
+  type WorkspaceArtifactEditPatch,
+  type WorkspaceArtifactListFilter,
+  type WorkspaceArtifactStore,
+  type WorkspaceArtifactUsage,
 } from '../workspace-artifact-store';
 import { artifactCreateInputToRow, artifactRowToRecord } from '../workspace-artifact-record.mapper';
 import type { WorkspaceArtifactRecord } from '../workspace-artifact-store';
@@ -48,7 +50,8 @@ export class PostgresWorkspaceArtifactStore implements WorkspaceArtifactStore {
       .select()
       .from(ARTIFACTS)
       .where(and(...conditions))
-      .orderBy(desc(ARTIFACTS.updatedAt));
+      .orderBy(desc(ARTIFACTS.updatedAt))
+      .limit(clampListLimit(filter.limit));
     return rows.map(artifactRowToRecord);
   }
 
@@ -87,6 +90,7 @@ export class PostgresWorkspaceArtifactStore implements WorkspaceArtifactStore {
   async resetForGeneration(
     id: string,
     generation: { agentId: string; requestedBy: string },
+    updatedBy: string,
   ): Promise<WorkspaceArtifactRecord | null> {
     const rows = await this.q
       .update(ARTIFACTS)
@@ -103,6 +107,7 @@ export class PostgresWorkspaceArtifactStore implements WorkspaceArtifactStore {
         leaseToken: null,
         leaseExpiresAt: null,
         nextAttemptAt: new Date(),
+        updatedBy,
         updatedAt: new Date(),
       })
       .where(eq(ARTIFACTS.id, id))
@@ -126,11 +131,20 @@ export class PostgresWorkspaceArtifactStore implements WorkspaceArtifactStore {
   }
 
   async countBySource(workspaceId: string, documentId: string): Promise<number> {
-    const rows = await this.q
-      .select({ id: ARTIFACTS.id })
+    const [row] = await this.q
+      .select({ count: sql<string>`count(*)` })
       .from(ARTIFACTS)
       .where(and(eq(ARTIFACTS.workspaceId, workspaceId), eq(ARTIFACTS.primarySourceDocumentId, documentId)));
-    return rows.length;
+    return Number(row?.count ?? 0);
+  }
+
+  async countBySourceDocumentIds(documentIds: string[]): Promise<number> {
+    if (documentIds.length === 0) return 0;
+    const [row] = await this.q
+      .select({ count: sql<string>`count(*)` })
+      .from(ARTIFACTS)
+      .where(inArray(ARTIFACTS.primarySourceDocumentId, [...new Set(documentIds)]));
+    return Number(row?.count ?? 0);
   }
 
   async deleteBySource(workspaceId: string, documentId: string): Promise<void> {
@@ -152,6 +166,7 @@ export class PostgresWorkspaceArtifactStore implements WorkspaceArtifactStore {
         generationError: 'Generation stopped after the maximum number of attempts',
         leaseToken: null,
         leaseExpiresAt: null,
+        updatedAt: new Date(),
       })
       .where(
         and(
@@ -250,4 +265,9 @@ export class PostgresWorkspaceArtifactStore implements WorkspaceArtifactStore {
     const rows = await this.q.select().from(ARTIFACTS).where(inArray(ARTIFACTS.id, [id])).limit(1);
     return rows.length > 0 ? rows[0] : null;
   }
+}
+
+export function clampListLimit(limit?: number): number {
+  if (limit === undefined || !Number.isFinite(limit)) return DEFAULT_ARTIFACT_LIST_LIMIT;
+  return Math.min(Math.max(Math.trunc(limit), 1), MAX_ARTIFACT_LIST_LIMIT);
 }

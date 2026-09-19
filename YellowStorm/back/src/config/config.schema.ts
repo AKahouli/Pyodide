@@ -21,6 +21,10 @@ export const configValidationSchema = Joi.object({
   MEMORY_PG_PASSWORD: Joi.string().optional(),
   MEMORY_PG_DB: Joi.string().optional(),
   MEMORY_PG_SSL: Joi.boolean().optional(),
+  MEMORY_PG_POOL_MAX: Joi.number().integer().min(1).max(50).default(5),
+  MEMORY_PG_STATEMENT_TIMEOUT: Joi.number().min(1000).max(300000).default(30000),
+  MEMORY_PG_IDLE_IN_TRANSACTION_TIMEOUT: Joi.number().min(1000).max(300000).default(30000),
+  MEMORY_PG_CONNECT_TIMEOUT: Joi.number().min(1000).default(10000),
   MEMORY_LIMIT_MB: Joi.number().min(64).default(512),
 
   // App-owned Postgres (agents datastore — Drizzle)
@@ -36,6 +40,11 @@ export const configValidationSchema = Joi.object({
   POSTGRES_STATEMENT_TIMEOUT: Joi.number().min(1000).max(300000).default(30000),
   POSTGRES_IDLE_IN_TRANSACTION_TIMEOUT: Joi.number().min(1000).max(300000).default(30000),
   POSTGRES_KEEPALIVE: Joi.boolean().default(true),
+  POSTGRES_KEEPALIVE_INITIAL_DELAY: Joi.number().min(0).default(10000),
+  // CA for server cert verification (all pools): PEM contents or a file path.
+  POSTGRES_SSL_CA: Joi.string().allow('').optional(),
+  // Unset => verify only when POSTGRES_SSL_CA is provided (backwards compatible).
+  POSTGRES_SSL_REJECT_UNAUTHORIZED: Joi.boolean().optional(),
   REPLICA_ID: Joi.string().max(100).optional(),
   CONVERSATION_MAX_CLONE_MESSAGES: Joi.number().min(1).max(10000).default(2000),
   CONVERSATION_MAX_PRIVATE_SHARE_RECIPIENTS: Joi.number().min(1).max(20).default(20),
@@ -53,6 +62,9 @@ export const configValidationSchema = Joi.object({
   SEMANTIC_PG_DATABASE: Joi.string().optional().allow(''),
   SEMANTIC_PG_SSL: Joi.boolean().default(false),
   SEMANTIC_PG_POOL_MAX: Joi.number().min(1).max(50).default(10),
+  SEMANTIC_PG_STATEMENT_TIMEOUT: Joi.number().min(1000).max(3600000).default(60000),
+  SEMANTIC_PG_IDLE_IN_TRANSACTION_TIMEOUT: Joi.number().min(1000).max(300000).default(30000),
+  SEMANTIC_PG_CONNECT_TIMEOUT: Joi.number().min(1000).default(10000),
   SEMANTIC_AGE_GRAPH: Joi.string()
     .pattern(/^[a-z][a-z0-9_]{0,62}$/)
     .default('semantic_model_graph'),

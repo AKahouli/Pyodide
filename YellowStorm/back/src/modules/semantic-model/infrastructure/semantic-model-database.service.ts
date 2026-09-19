@@ -9,6 +9,12 @@ import { LoggerService } from '@modules/logger';
 import { ServiceUnavailableException } from '@modules/exceptions';
 import { ErrorCode } from '@modules/exceptions/constants/error-codes';
 import { FeatureVisibilityService } from '@modules/system/feature-visibility.service';
+import {
+  attachCheckedOutClientErrorHandler,
+  auxPoolTuningFromEnv,
+  buildPgSslOptions,
+  sslSettingsFromEnv,
+} from '@modules/postgres/pg-pool-options';
 
 const BOOTSTRAP_SCRIPT_CANDIDATES = [
   // Prod / dev with nest-cli assets copying scripts into dist
@@ -38,11 +44,13 @@ export class SemanticModelDatabaseService implements OnModuleInit, OnModuleDestr
       user: this.config.user,
       password: this.config.password,
       database: this.config.database,
-      ssl: this.config.ssl ? { rejectUnauthorized: false } : undefined,
-      max: this.config.poolMax,
-      idleTimeoutMillis: 30_000,
-      connectionTimeoutMillis: 10_000,
+      ssl: buildPgSslOptions(sslSettingsFromEnv(this.config.ssl), this.logger, 'semantic'),
+      ...auxPoolTuningFromEnv('SEMANTIC_PG', ':semantic', process.env, {
+        max: this.config.poolMax,
+        statementTimeoutMs: 60_000,
+      }),
     });
+    attachCheckedOutClientErrorHandler(this.pool, this.logger, 'semantic');
     this.pool.on('error', (error) => {
       this.logger.error('Semantic Model PostgreSQL pool error', { error: error.message });
     });
@@ -90,16 +98,26 @@ export class SemanticModelDatabaseService implements OnModuleInit, OnModuleDestr
 
   async transaction<T>(work: (client: PoolClient) => Promise<T>): Promise<T> {
     const client = await this.getPool().connect();
+    let released = false;
     try {
       await client.query('BEGIN');
       const result = await work(client);
       await client.query('COMMIT');
       return result;
     } catch (error) {
-      await client.query('ROLLBACK');
+      let rollbackErr: Error | undefined;
+      try {
+        await client.query('ROLLBACK');
+      } catch (err) {
+        rollbackErr = err instanceof Error ? err : new Error(String(err));
+        this.logger.warn('Semantic Model ROLLBACK failed; discarding client', { error: rollbackErr.message });
+      }
+      // A failed ROLLBACK leaves the client in an unknown state: destroy it.
+      client.release(rollbackErr);
+      released = true;
       throw error;
     } finally {
-      client.release();
+      if (!released) client.release();
     }
   }
 

@@ -67,7 +67,7 @@ describe('Governance REST response contract fixtures', () => {
 
   it('serializes a scope with nested knowledge and string agent ids', async () => {
     const record = scopeRecord();
-    const service = new GovernanceScopeService({ findByProgramAndId: jest.fn().mockResolvedValue(record) } as never, {} as never, {} as never, {} as never, {} as never, {} as never, {} as never, {} as never, {} as never, { assertOwnedProgram: jest.fn(), assertProgramOwner: jest.fn() } as never, { findGroupIdsForMember: jest.fn().mockResolvedValue([]) } as never, {} as never, {} as never);
+    const service = new GovernanceScopeService({ findByProgramAndId: jest.fn().mockResolvedValue(record) } as never, {} as never, {} as never, {} as never, {} as never, {} as never, {} as never, {} as never, {} as never, { assertOwnedProgram: jest.fn(), assertProgramOwner: jest.fn() } as never, { findGroupIdsForMember: jest.fn().mockResolvedValue([]) } as never, {} as never, {} as never, {} as never);
     const response: GovernanceScopeResponse = await service.findById(id(), record.programId, record.id);
     expect(Object.keys(response).sort()).toEqual(['agentIds', 'createdAt', 'id', 'knowledge', 'metadata', 'name', 'parentScopeId', 'programId', 'status', 'type', 'updatedAt']);
     expect(response.id).toBe(record.id);
@@ -80,7 +80,7 @@ describe('Governance REST response contract fixtures', () => {
   it('serializes a document detail with the nested document + governance blocks', async () => {
     const record = documentRecord();
     const artifact = { id: record.documentId, workspaceId: record.workspaceId, isFolder: false, originalName: 'brief.pdf', mimeType: 'application/pdf', type: 'file', sourceUrl: undefined, contentHash: 'abc', status: 'completed', indexingStatus: 'ready', updatedAt: NOW };
-    const service = new GovernanceDocumentService({ findByProgramAndDocumentId: jest.fn().mockResolvedValue(record) } as never, { findOne: jest.fn().mockResolvedValue(artifact) } as never, { listEnabled: jest.fn().mockResolvedValue([{ workspaceId: record.workspaceId }]) } as never, { assertOwnedProgram: jest.fn() } as never, { getAccessibleScopeIds: jest.fn().mockResolvedValue(['*']) } as never, {} as never, {} as never);
+    const service = new GovernanceDocumentService({ findByProgramAndDocumentId: jest.fn().mockResolvedValue(record) } as never, { findOne: jest.fn().mockResolvedValue(artifact) } as never, { listEnabled: jest.fn().mockResolvedValue([{ workspaceId: record.workspaceId }]) } as never, { assertOwnedProgram: jest.fn() } as never, { getAccessibleScopeIds: jest.fn().mockResolvedValue(['*']) } as never, {} as never, {} as never, { run: (fn: () => Promise<unknown>) => fn() } as never);
     const response: GovernanceDocumentResponse = await service.findByDocumentId(id(), record.programId, record.documentId);
     expect(Object.keys(response).sort()).toEqual(['document', 'documentId', 'governance', 'id', 'programId', 'workspaceId']);
     expect(response.document).toEqual({ originalName: 'brief.pdf', mimeType: 'application/pdf', type: 'file', sourceUrl: undefined, contentHash: 'abc', status: 'completed', indexingStatus: 'ready', updatedAt: ISO });

@@ -129,14 +129,6 @@ export class PgScopeStore implements ScopeStore {
     return this.hydrate(rows);
   }
 
-  async listChildIds(programId: string, parentScopeId: string): Promise<string[]> {
-    const rows = await this.q
-      .select({ id: SCOPES.id })
-      .from(SCOPES)
-      .where(and(eq(SCOPES.programId, programId), eq(SCOPES.parentScopeId, parentScopeId)));
-    return rows.map((row) => row.id);
-  }
-
   async update(scopeId: string, patch: GovernanceScopePatch): Promise<GovernanceScopeRecord | null> {
     const record = await withTransaction(this.db, async (tx) => {
       const [row] = await tx
@@ -155,6 +147,7 @@ export class PgScopeStore implements ScopeStore {
               }
             : {}),
           ...(patch.metadata !== undefined ? { metadata: patch.metadata } : {}),
+          ...(patch.audience !== undefined ? { audienceMode: patch.audience.mode } : {}),
           updatedAt: new Date(),
         })
         .where(eq(SCOPES.id, scopeId))
@@ -189,6 +182,15 @@ export class PgScopeStore implements ScopeStore {
   async countByProgram(programId: string): Promise<number> {
     const rows = await this.q.select({ count: sql<number>`count(*)::int` }).from(SCOPES).where(eq(SCOPES.programId, programId));
     return rows[0]?.count ?? 0;
+  }
+
+  async listHierarchy(programId: string): Promise<Array<{ id: string; parentScopeId: string | null }>> {
+    return this.q.select({ id: SCOPES.id, parentScopeId: SCOPES.parentScopeId }).from(SCOPES).where(eq(SCOPES.programId, programId));
+  }
+
+  async deleteByIdsAndProgram(scopeIds: string[], programId: string): Promise<void> {
+    if (scopeIds.length === 0) return;
+    await this.q.delete(SCOPES).where(and(eq(SCOPES.programId, programId), inArray(SCOPES.id, scopeIds)));
   }
 
   async deleteByIdAndProgram(scopeId: string, programId: string): Promise<void> {

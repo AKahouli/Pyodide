@@ -1,6 +1,6 @@
 import { Inject, Injectable, forwardRef } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { Types } from 'mongoose';
+import { newObjectId } from '@common/postgres';
 import type { WorkspaceDocumentRecord } from '../ports/workspace-records';
 import { DocumentStatus, DocumentType, IndexingStatus } from '../interfaces/document-status.enum';
 import { DOCUMENT_STORE, type DocumentStore } from '../stores/document-store';
@@ -16,7 +16,7 @@ import { normalizeWorkspaceUrl } from '../services/url-normalization';
 import { GuardedUrlDownloaderService } from '../services/guarded-url-downloader.service';
 import { WorkspaceIntegrationEvents } from '../../integration-events/contracts';
 import { WebsiteCrawlerService } from '../services/website-crawler.service';
-import { WorkspaceDocumentSupport } from './document-support';
+import { WorkspaceDocumentSupport, isUniqueDocumentNameViolation } from './document-support';
 
 @Injectable()
 export class WorkspaceDocumentLinks {
@@ -76,7 +76,7 @@ export class WorkspaceDocumentLinks {
 
     // One group per index batch: reuse the caller's id (continue mode) or mint a
     // fresh one, so two separate sessions on the same URL form two distinct groups.
-    const groupId = options?.sourceGroupId ?? new Types.ObjectId().toString();
+    const groupId = options?.sourceGroupId ?? newObjectId();
 
     // Create all docs first (fast; each PROCESSING with a unique placeholder path).
     const created: Array<{ response: DocumentResponse; id: string; url: string; name: string; nameFromUrl: boolean }> =
@@ -92,12 +92,14 @@ export class WorkspaceDocumentLinks {
         providedName ? providedName.slice(0, 200) : this.support.deriveFilenameFromUrl(url),
       );
       const root = options?.roots?.[url] ?? options?.sourceRootUrl;
-      const effectiveName = await this.support.resolveUniqueOriginalName(workspaceId, filename);
-      const documentId = new Types.ObjectId();
+      const documentId = newObjectId();
 
-      const document = await this.documentStore.create({
-        id: documentId.toString(),
-        originalName: effectiveName,
+      let effectiveName = filename;
+      const document = await this.support.createWithUniqueName(workspaceId, filename, (resolvedName) => {
+        effectiveName = resolvedName;
+        return {
+        id: documentId,
+        originalName: resolvedName,
         mimeType: 'application/pdf',
         size: 0,
         type: DocumentType.URL,
@@ -128,6 +130,7 @@ export class WorkspaceDocumentLinks {
         createdBy: userId,
         status: DocumentStatus.PROCESSING,
         indexingStatus: IndexingStatus.NONE,
+        };
       });
 
       this.logger.debug('Link document created', { documentId: document.id, workspaceId, url });
@@ -240,7 +243,7 @@ export class WorkspaceDocumentLinks {
         customFileName: sanitizedName,
       });
 
-      const completed = await this.documentStore.updateById(documentId, {
+      const completion = {
         filename: uploaded.storedName,
         path: uploaded.blobPath,
         url: uploaded.url,
@@ -248,9 +251,19 @@ export class WorkspaceDocumentLinks {
         size,
         status: DocumentStatus.COMPLETED,
         uploadedAt: new Date(),
-        // Only when we resolved a real page title (else keep the URL-derived name).
-        ...(renamedOriginal ? { originalName: renamedOriginal } : {}),
-      });
+      };
+      let completed;
+      try {
+        completed = await this.documentStore.updateById(documentId, {
+          ...completion,
+          // Only when we resolved a real page title (else keep the URL-derived name).
+          ...(renamedOriginal ? { originalName: renamedOriginal } : {}),
+        });
+      } catch (error) {
+        // A concurrent upload took the page-title name: keep the URL-derived one.
+        if (!renamedOriginal || !isUniqueDocumentNameViolation(error)) throw error;
+        completed = await this.documentStore.updateById(documentId, completion);
+      }
 
       if (completed) {
         await this.support.recordWorkspaceEvent(WorkspaceIntegrationEvents.DocumentRegisteredV1, completed);

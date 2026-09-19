@@ -387,13 +387,12 @@ export class ConversationService {
   }
 
   async delete(conversationId: string, userId: string): Promise<void> {
-    const current = await this.requireOwned(conversationId, userId);
-    if (current.systemWorkspaceId) {
-      await this.workspaceDocumentService.deleteAllByWorkspace(current.systemWorkspaceId);
-      await this.workspaceService.deleteSystemWorkspace(current.systemWorkspaceId);
-    }
+    await this.requireOwned(conversationId, userId);
+    // Delete the conversation row first: it references the system workspace
+    // (system_workspace_id), so the workspace can only go once nothing points at it.
     const deleted = await this.conversationStore.deleteOwned(conversationId, userId);
     if (!deleted) throw new NotFoundException(ErrorCode.CHAT_NOT_FOUND, 'Conversation not found');
+    await this.cleanupSystemWorkspace(deleted.systemWorkspaceId);
     this.logger.log('Conversation deleted with cascade', { conversationId, userId });
   }
 
@@ -547,10 +546,8 @@ export class ConversationService {
   ): Promise<string[]> {
     if (!userId) return workspaceIds;
     if (!this.workspaceShareService) return [];
-    const access = await Promise.all(
-      workspaceIds.map((workspaceId) => this.workspaceShareService!.hasAccess(userId, workspaceId)),
-    );
-    return workspaceIds.filter((_, index) => access[index]);
+    if (workspaceIds.length === 0) return [];
+    return this.workspaceShareService.filterAccessible(userId, workspaceIds);
   }
 
   @Cron(CronExpression.EVERY_HOUR)
@@ -559,6 +556,7 @@ export class ConversationService {
     this.isCleaningUp = true;
     let lockClient: PoolClient | undefined;
     let lockHeld = false;
+    let releaseError: Error | undefined;
     try {
       if (this.postgresPool) {
         lockClient = await this.postgresPool.connect();
@@ -576,11 +574,8 @@ export class ConversationService {
       const cutoff = new Date(Date.now() - hours * 60 * 60 * 1000);
       for (const record of await this.conversationStore.findOrphaned(cutoff, 50)) {
         try {
-          if (record.systemWorkspaceId) {
-            await this.workspaceDocumentService.deleteAllByWorkspace(record.systemWorkspaceId);
-            await this.workspaceService.deleteSystemWorkspace(record.systemWorkspaceId);
-          }
-          await this.conversationStore.deleteOwned(record.id, record.createdBy);
+          const deleted = await this.conversationStore.deleteOwned(record.id, record.createdBy);
+          await this.cleanupSystemWorkspace(deleted?.systemWorkspaceId ?? record.systemWorkspaceId);
         } catch (error: unknown) {
           this.logger.warn('Failed to cleanup orphaned conversation', {
             conversationId: record.id,
@@ -596,12 +591,15 @@ export class ConversationService {
               'conversation:orphan-cleanup:v1',
             ]);
           } catch (error) {
+            releaseError = error instanceof Error ? error : new Error('advisory unlock failed');
             this.logger.warn('Failed to release orphan cleanup advisory lock', {
-              error: error instanceof Error ? error.message : 'Unknown error',
+              error: releaseError.message,
             });
           }
         }
-        lockClient.release();
+        // A client whose unlock failed may still hold the session-level lock:
+        // destroy it instead of returning it to the pool.
+        lockClient.release(releaseError);
       }
       this.isCleaningUp = false;
     }
@@ -613,6 +611,13 @@ export class ConversationService {
 
   async addMention(conversationId: string, userId: string, messageId: string) {
     await this.conversationStore.addMention(conversationId, userId, messageId);
+  }
+
+  /** Remove the documents (blobs, vectors) and then the system workspace itself. */
+  private async cleanupSystemWorkspace(systemWorkspaceId: string | null | undefined): Promise<void> {
+    if (!systemWorkspaceId) return;
+    await this.workspaceDocumentService.deleteAllByWorkspace(systemWorkspaceId);
+    await this.workspaceService.deleteSystemWorkspace(systemWorkspaceId);
   }
 
   private async requireOwned(id: string, userId: string): Promise<ConversationRecord> {

@@ -11,6 +11,7 @@ import {
   type GovernanceRevisionRecord,
   type RevisionStore,
   type ScopeStore,
+  GOVERNANCE_TRANSACTION, PASSTHROUGH_TRANSACTION, type GovernanceTransactionRunner
 } from '../persistence';
 
 type AudienceSnapshot = { mode: 'all_authenticated' | 'restricted'; userIds: string[]; groupIds: string[] };
@@ -27,6 +28,7 @@ export class GovernanceDraftPreparationService {
     @Inject(DEPLOYMENT_STORE) private readonly deploymentStore: DeploymentStore,
     @Inject(REVISION_STORE) private readonly revisionStore: RevisionStore,
     private readonly auditLogService: AuditLogService,
+    @Inject(GOVERNANCE_TRANSACTION) private readonly tx: GovernanceTransactionRunner = PASSTHROUGH_TRANSACTION,
   ) {}
 
   async prepare(actorId: string, actorEmail: string, programId: string, scopeId: string, options: PrepareGovernanceDraftOptions = {}): Promise<void> {
@@ -57,28 +59,33 @@ export class GovernanceDraftPreparationService {
     const sequencedDeployment = await this.deploymentStore.incrementRevisionSequenceGuarded(deployment.id, deployment.currentDraftRevisionId ?? null);
     if (!sequencedDeployment) return this.prepare(actorId, actorEmail, programId, scopeId, options);
     const revisionNumber = sequencedDeployment.revisionSequence;
-    const revision = await this.revisionStore.insert({
-      deploymentId: deployment.id,
-      revisionNumber,
-      status: 'draft',
-      agentId: allowedAgentIds[0],
-      allowedAgentIds,
-      workspaceIds,
-      agentSnapshot: {},
-      workspaceBindingSnapshot,
-      channelSnapshot: (deployment.channels as Record<string, unknown>) ?? {},
-      configurationFingerprint,
-      scopeSnapshot,
-      audienceSnapshot,
-      previousAudienceSnapshot: this.previousAudienceFor(currentDraft, options),
-      createdBy: actorId,
+    // Revision insert, draft pointer swap and scope review status commit together.
+    const revision = await this.tx.run(async () => {
+      const inserted = await this.revisionStore.insert({
+        deploymentId: deployment.id,
+        revisionNumber,
+        status: 'draft',
+        agentId: allowedAgentIds[0],
+        allowedAgentIds,
+        workspaceIds,
+        agentSnapshot: {},
+        workspaceBindingSnapshot,
+        channelSnapshot: (deployment.channels as Record<string, unknown>) ?? {},
+        configurationFingerprint,
+        scopeSnapshot,
+        audienceSnapshot,
+        previousAudienceSnapshot: this.previousAudienceFor(currentDraft, options),
+        createdBy: actorId,
+      });
+      const draftSwapped = await this.deploymentStore.setDraftRevisionIfSequence(deployment.id, revisionNumber, inserted.id);
+      if (!draftSwapped) {
+        await this.revisionStore.deleteByIdAndStatus(inserted.id, 'draft');
+        return null;
+      }
+      await this.scopeStore.setMetadataReviewStatus(scope.id, 'in_review');
+      return inserted;
     });
-    const draftSwapped = await this.deploymentStore.setDraftRevisionIfSequence(deployment.id, revisionNumber, revision.id);
-    if (!draftSwapped) {
-      await this.revisionStore.deleteByIdAndStatus(revision.id, 'draft');
-      return this.prepare(actorId, actorEmail, programId, scopeId, options);
-    }
-    await this.scopeStore.setMetadataReviewStatus(scope.id, 'in_review');
+    if (!revision) return this.prepare(actorId, actorEmail, programId, scopeId, options);
     this.auditLogService.logSuccess({
       actorId,
       actorEmail,

@@ -15,15 +15,16 @@ export interface TtlSweepSpec {
 }
 
 const DEFAULT_BATCH_SIZE = 1000;
-// ponytail: one cron tick deletes at most 100 batches/table (~100k rows); a
-// bigger backlog needs more ticks, not a longer cron. Raise if sweeps must drain faster.
+// One cron tick deletes at most 100 batches/table (~100k rows), each batch in
+// its own short transaction; a bigger backlog drains over several ticks.
 const MAX_BATCHES_PER_TABLE = 100;
 
 /**
  * App-level TTL sweeper for PostgreSQL tables that replace Mongo TTL indexes
  * (pg_cron is not installed). Each registered table is swept hourly: batches
- * of expired rows are deleted FOR UPDATE SKIP LOCKED, guarded by a per-table
- * transaction-scoped advisory lock so replicas never double-sweep.
+ * of expired rows are deleted FOR UPDATE SKIP LOCKED, each batch in its own
+ * short transaction guarded by a per-table transaction-scoped advisory lock so
+ * replicas never double-sweep and no long-running transaction is held.
  */
 @Injectable()
 export class PgTtlSweeper {
@@ -49,45 +50,56 @@ export class PgTtlSweeper {
     }
   }
 
-  /** Returns the number of deleted rows, or null when another replica held the lock. */
+  /**
+   * Returns the number of deleted rows, or null when another replica held the
+   * lock on the first batch (or the sweep failed before deleting anything).
+   * Each batch runs in its OWN short transaction (xact-scoped advisory lock +
+   * one bounded DELETE + commit) so locks are never held across batches.
+   */
   async sweepTable(spec: TtlSweepSpec): Promise<number | null> {
     const label = `${spec.schema}.${spec.table}`;
     const batchSize = spec.batchSize ?? DEFAULT_BATCH_SIZE;
+    const table = sql`${sql.identifier(spec.schema)}.${sql.identifier(spec.table)}`;
+    let deleted = 0;
+    let batches = 0;
     try {
-      return await this.db.transaction(async (tx) => {
-        // xact-scoped lock: auto-released at commit/rollback, no unlock leak.
-        const lock = await tx.execute(
-          sql`SELECT pg_try_advisory_xact_lock(hashtext(${`ttl:${label}`})) AS acquired`,
-        );
-        if (!lock.rows[0]?.acquired) return null;
-
-        let deleted = 0;
-        for (let batch = 0; batch < MAX_BATCHES_PER_TABLE; batch += 1) {
+      for (; batches < MAX_BATCHES_PER_TABLE; batches += 1) {
+        const rowCount = await this.db.transaction(async (tx) => {
+          // xact-scoped lock: auto-released at commit/rollback, no unlock leak.
+          const lock = await tx.execute(
+            sql`SELECT pg_try_advisory_xact_lock(hashtext(${`ttl:${label}`})) AS acquired`,
+          );
+          if (!lock.rows[0]?.acquired) return null;
           const result = await tx.execute(sql`
-            DELETE FROM ${sql.identifier(spec.schema)}.${sql.identifier(spec.table)}
-            WHERE id IN (
-              SELECT id
-              FROM ${sql.identifier(spec.schema)}.${sql.identifier(spec.table)}
+            DELETE FROM ${table}
+            WHERE ctid = ANY(ARRAY(
+              SELECT ctid
+              FROM ${table}
               WHERE ${sql.identifier(spec.column)} <= now()
-              ORDER BY ${sql.identifier(spec.column)}
               LIMIT ${batchSize}
               FOR UPDATE SKIP LOCKED
-            )
+            ))
           `);
-          const rowCount = result.rowCount ?? 0;
-          deleted += rowCount;
-          if (rowCount < batchSize) break;
+          return result.rowCount ?? 0;
+        });
+        if (rowCount === null) {
+          // Another replica is sweeping this table: skip it for this run.
+          if (batches === 0) return null;
+          break;
         }
-        if (deleted > 0) {
-          this.logger.log(`TTL sweep deleted ${String(deleted)} expired row(s) from ${label}`);
-        }
-        return deleted;
-      });
+        deleted += rowCount;
+        if (rowCount < batchSize) break;
+      }
+      if (deleted > 0) {
+        this.logger.log(`TTL sweep deleted ${String(deleted)} expired row(s) from ${label}`);
+      }
+      return deleted;
     } catch (error: unknown) {
       this.logger.error(`TTL sweep failed for ${label}`, {
         error: error instanceof Error ? error.message : 'Unknown error',
+        deletedBeforeFailure: deleted,
       });
-      return null;
+      return deleted > 0 ? deleted : null;
     }
   }
 }

@@ -119,7 +119,10 @@ export class PgBindingStore implements BindingStore {
     const scopeFilter =
       scopeIds === '*'
         ? undefined
-        : or(
+        : scopeIds.length === 0
+          ? // Mongo `$in: []` matched nothing: only program-shared bindings remain visible.
+            eq(BINDINGS.visibility, 'program_shared')
+          : or(
             eq(BINDINGS.visibility, 'program_shared'),
             isNotNull(
               sql`(SELECT 1 FROM ${BINDING_SCOPES} bs WHERE bs.binding_id = ${BINDINGS.id} AND bs.scope_id IN (${sql.join(
@@ -191,23 +194,26 @@ export class PgBindingStore implements BindingStore {
     return rows[0]?.count ?? 0;
   }
 
-  async removeScopeFromProgramBindings(programId: string, scopeId: string): Promise<void> {
+  async removeScopesFromProgramBindings(programId: string, scopeIds: string[]): Promise<void> {
+    if (scopeIds.length === 0) return;
     await withTransaction(this.db, async (tx) => {
-      // multi_scope bindings whose only scope is this one, and scope_specific bindings on it, are deleted.
+      // scope_specific bindings on a removed scope, and multi_scope bindings whose scopes
+      // are all being removed, are deleted (same outcome as removing the scopes one by one).
       await tx.execute(sql`
         DELETE FROM governance.governance_workspace_bindings b
          WHERE b.program_id = ${programId}
+           AND EXISTS (SELECT 1 FROM governance.governance_binding_scopes bs WHERE bs.binding_id = b.id AND bs.scope_id IN ${scopeIds})
            AND (
-             (b.visibility = 'multi_scope' AND (SELECT count(*) FROM governance.governance_binding_scopes bs WHERE bs.binding_id = b.id) = 1
-                AND EXISTS (SELECT 1 FROM governance.governance_binding_scopes bs WHERE bs.binding_id = b.id AND bs.scope_id = ${scopeId}))
-             OR (b.visibility = 'scope_specific' AND EXISTS (SELECT 1 FROM governance.governance_binding_scopes bs WHERE bs.binding_id = b.id AND bs.scope_id = ${scopeId}))
+             b.visibility = 'scope_specific'
+             OR (b.visibility = 'multi_scope'
+                 AND NOT EXISTS (SELECT 1 FROM governance.governance_binding_scopes bs WHERE bs.binding_id = b.id AND bs.scope_id NOT IN ${scopeIds}))
            )`);
-      // Remaining multi_scope bindings simply drop the scopeâ€¦
+      // Remaining multi_scope bindings simply drop the scopes…
       await tx.execute(sql`
         DELETE FROM governance.governance_binding_scopes bs
          USING governance.governance_workspace_bindings b
-         WHERE bs.binding_id = b.id AND b.program_id = ${programId} AND bs.scope_id = ${scopeId}`);
-      // â€¦and single-scope leftovers are downgraded to scope_specific.
+         WHERE bs.binding_id = b.id AND b.program_id = ${programId} AND bs.scope_id IN ${scopeIds}`);
+      // …and single-scope leftovers are downgraded to scope_specific.
       await tx.execute(sql`
         UPDATE governance.governance_workspace_bindings b
            SET visibility = 'scope_specific', updated_at = now()

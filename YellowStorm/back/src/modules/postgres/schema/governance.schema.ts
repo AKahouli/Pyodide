@@ -148,9 +148,8 @@ export const governanceDocumentEvents = governanceSchema.table(
     programId: objectId('program_id')
       .notNull()
       .references(() => governancePrograms.id, { onDelete: 'cascade' }),
-    governanceDocumentId: objectId('governance_document_id')
-      .notNull()
-      .references(() => governanceDocuments.id, { onDelete: 'cascade' }),
+    // No FK (dropped in 0020): events are audit history and must outlive the governance document.
+    governanceDocumentId: objectId('governance_document_id').notNull(),
     documentId: objectId('document_id').notNull(),
     eventType: varchar('event_type', { length: 64 }).notNull(),
     actorId: objectId('actor_id'),

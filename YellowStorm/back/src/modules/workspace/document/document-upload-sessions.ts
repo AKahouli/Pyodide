@@ -1,7 +1,7 @@
 import { Inject, Injectable, forwardRef } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Cron, CronExpression } from '@nestjs/schedule';
-import { Types } from 'mongoose';
+import { newObjectId } from '@common/postgres';
 import { DocumentStatus } from '../interfaces/document-status.enum';
 import { IndexingService } from '../../indexing/indexing.service';
 import { UploadSessionStatus } from '../interfaces/upload-session-status.enum';
@@ -92,7 +92,7 @@ export class WorkspaceDocumentUploadSessions {
       filename: string;
       mimeType: string;
       size: number;
-      documentId: Types.ObjectId;
+      documentId: string;
       uploadUrl: string;
       status: string;
       progress: number;
@@ -111,21 +111,25 @@ export class WorkspaceDocumentUploadSessions {
     // "report.pdf" + "report (1).pdf").
     for (let i = 0; i < files.length; i++) {
       const file = files[i];
-      const documentId = new Types.ObjectId();
-      const effectiveName = await this.support.resolveUniqueOriginalName(workspaceId, file.filename);
-      const blobPath = this.support.generateBlobPath(ownerUserId, storagePrefix, effectiveName);
+      const documentId = newObjectId();
+      let effectiveName = file.filename;
+      let blobPath = '';
 
       // Create pending document (url is set after upload completes)
-      await this.documentStore.create({
-        id: documentId.toString(),
-        filename: this.support.sanitizeFilename(effectiveName),
-        originalName: effectiveName,
-        mimeType: file.mimeType,
-        size: file.size,
-        path: blobPath,
-        workspaceId,
-        createdBy: userId,
-        status: DocumentStatus.PENDING,
+      await this.support.createWithUniqueName(workspaceId, file.filename, (resolvedName) => {
+        effectiveName = resolvedName;
+        blobPath = this.support.generateBlobPath(ownerUserId, storagePrefix, resolvedName);
+        return {
+          id: documentId,
+          filename: this.support.sanitizeFilename(resolvedName),
+          originalName: resolvedName,
+          mimeType: file.mimeType,
+          size: file.size,
+          path: blobPath,
+          workspaceId,
+          createdBy: userId,
+          status: DocumentStatus.PENDING,
+        };
       });
 
       // Generate presigned URL
@@ -149,7 +153,7 @@ export class WorkspaceDocumentUploadSessions {
         index: i,
         filename: effectiveName,
         uploadUrl,
-        documentId: documentId.toString(),
+        documentId,
       });
     }
 
@@ -163,7 +167,7 @@ export class WorkspaceDocumentUploadSessions {
         filename: f.filename,
         mimeType: f.mimeType,
         size: f.size,
-        documentId: f.documentId.toString(),
+        documentId: f.documentId,
         uploadUrl: f.uploadUrl,
         status: f.status,
         progress: f.progress,

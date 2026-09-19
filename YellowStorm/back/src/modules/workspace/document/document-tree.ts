@@ -1,7 +1,8 @@
 import { Inject, Injectable, forwardRef } from '@nestjs/common';
-import { Types } from 'mongoose';
+import { newObjectId } from '@common/postgres';
 import { DocumentStatus, DocumentType, IndexingStatus } from '../interfaces/document-status.enum';
 import { DOCUMENT_STORE, type DocumentStore } from '../stores/document-store';
+import type { WorkspaceDocumentRecord } from '../ports/workspace-records';
 import { UPLOAD_SESSION_STORE, type UploadSessionStore } from '../stores/upload-session-store';
 import {
   DocumentResponse,
@@ -21,6 +22,9 @@ import { IndexingService } from '../../indexing/indexing.service';
 import { WorkspaceArtifactCleanupService } from '../services/workspace-artifact-cleanup.service';
 import { WorkspaceIntegrationEvents } from '../../integration-events/contracts';
 import { WorkspaceDocumentSupport } from './document-support';
+
+/** Guard against runaway recursion on a corrupted (cyclic) folder tree. */
+const MAX_FOLDER_DEPTH = 100;
 
 @Injectable()
 export class WorkspaceDocumentTree {
@@ -68,11 +72,11 @@ export class WorkspaceDocumentTree {
     }
 
     // Create folder record
-    const folderId = new Types.ObjectId();
+    const folderId = newObjectId();
     const folderPath = `folder:${folderId}`; // Unique path for folders
 
     const folder = await this.documentStore.create({
-      id: folderId.toString(),
+      id: folderId,
       filename: '', // Folders don't have files
       originalName: sanitizedName,
       mimeType: 'folder',
@@ -186,36 +190,47 @@ export class WorkspaceDocumentTree {
       );
     }
 
-    const descendantDocumentIds = await this.collectFolderDocumentIds(
-      new Types.ObjectId(folderId),
-      workspaceId,
-    );
-    for (const documentId of descendantDocumentIds) {
-      const linkedArtifactCount = await this.workspaceArtifacts.countBySource(
-        workspaceId,
-        documentId,
-      );
-      if (linkedArtifactCount > 0) {
-        throw new ConflictException(
-          ErrorCode.WORKSPACE_DOCUMENT_HAS_DERIVED_ARTIFACTS,
-          'Delete linked decision flows before deleting this folder',
-        );
-      }
-    }
-
-    // Recursively delete all contents
-    const result = await this.deleteFolderRecursive(new Types.ObjectId(folderId), workspaceId, userId);
-
-    // Delete the folder itself
-    await this.documentStore.deleteByIdAndWorkspace(folderId, workspaceId);
+    const result = await this.deleteFolderTree(folderId, workspaceId, userId, false);
 
     this.logger.log('Folder deleted', {
       folderId,
       workspaceId,
-      deletedFolders: result.deletedFolders + 1,
+      deletedFolders: result.deletedFolders,
       deletedDocuments: result.deletedDocuments,
     });
 
+    return result;
+  }
+
+  /**
+   * Delete a folder, every descendant (children before parents) and the folder
+   * row itself. Every descendant document goes through the same cleanup as a
+   * single-document delete (blob, index, governance event, counters), so the
+   * `parent_id ON DELETE CASCADE` never has to remove rows behind our back.
+   */
+  private async deleteFolderTree(
+    folderId: string,
+    workspaceId: string,
+    userId: string,
+    cascadeArtifacts: boolean,
+  ): Promise<{ deletedFolders: number; deletedDocuments: number }> {
+    const descendantDocumentIds = await this.collectFolderDocumentIds(folderId, workspaceId);
+    const linkedArtifactCount =
+      await this.workspaceArtifacts.countBySourceDocumentIds(descendantDocumentIds);
+    if (linkedArtifactCount > 0 && !cascadeArtifacts) {
+      throw new ConflictException(
+        ErrorCode.WORKSPACE_DOCUMENT_HAS_DERIVED_ARTIFACTS,
+        'Delete linked decision flows before deleting this folder',
+      );
+    }
+    if (linkedArtifactCount > 0) {
+      for (const documentId of descendantDocumentIds) {
+        await this.workspaceArtifacts.deleteBySource(workspaceId, documentId);
+      }
+    }
+
+    const result = await this.deleteFolderRecursive(folderId, workspaceId, userId);
+    await this.documentStore.deleteByIdAndWorkspace(folderId, workspaceId);
     return {
       deletedFolders: result.deletedFolders + 1,
       deletedDocuments: result.deletedDocuments,
@@ -223,73 +238,108 @@ export class WorkspaceDocumentTree {
   }
 
   /**
-   * Recursively delete folder contents
+   * Recursively delete folder contents (children before parents).
+   * `visited`/`depth` guard against a pre-existing parent cycle.
    */
   private async deleteFolderRecursive(
-    folderId: Types.ObjectId,
+    folderId: string,
     workspaceId: string,
     userId: string,
+    visited: Set<string> = new Set(),
+    depth = 0,
   ): Promise<{ deletedFolders: number; deletedDocuments: number }> {
-    // Find all items in the folder
-    const items = await this.documentStore.findDirectChildren(folderId.toString(), workspaceId);
+    this.enterFolder(folderId, visited, depth);
+    const items = await this.documentStore.findDirectChildren(folderId, workspaceId);
 
     let deletedFolders = 0;
     let deletedDocuments = 0;
 
     for (const item of items) {
       if (item.isFolder) {
-        // Recursively delete subfolder
+        if (visited.has(item.id)) continue;
         const subResult = await this.deleteFolderRecursive(
-          new Types.ObjectId(item.id),
+          item.id,
           workspaceId,
           userId,
+          visited,
+          depth + 1,
         );
         deletedFolders += subResult.deletedFolders + 1;
         deletedDocuments += subResult.deletedDocuments;
+        await this.documentStore.deleteById(item.id);
       } else {
-        // Delete document file from storage (skip for folders)
-        try {
-          if (!item.isFolder && item.path) {
-            await this.documentService.delete(item.path);
-          }
-        } catch (error) {
-          this.logger.warn('Failed to delete blob', {
-            documentId: item.id,
-            path: item.path,
-            error: error instanceof Error ? error.message : 'Unknown error',
-          });
-        }
-
-        // Delete document index
-        if (item.indexingStatus === IndexingStatus.READY) {
-          this.indexingService.deleteDocumentIndex(item.id, workspaceId).catch((err) => {
-            this.logger.warn('Failed to delete document index', {
-              documentId: item.id,
-              error: err instanceof Error ? err.message : 'Unknown error',
-            });
-          });
-        }
-
-        await this.support.recordWorkspaceEvent(WorkspaceIntegrationEvents.DocumentDeletedV1, item);
-
+        await this.removeDocument(item, workspaceId);
         deletedDocuments++;
       }
-
-      // Delete item record
-      await this.documentStore.deleteById(item.id);
     }
 
     return { deletedFolders, deletedDocuments };
   }
 
-  private async collectFolderDocumentIds(folderId: Types.ObjectId, workspaceId: string): Promise<string[]> {
-    const items = await this.documentStore.findDirectChildren(folderId.toString(), workspaceId);
+  private async collectFolderDocumentIds(
+    folderId: string,
+    workspaceId: string,
+    visited: Set<string> = new Set(),
+    depth = 0,
+  ): Promise<string[]> {
+    this.enterFolder(folderId, visited, depth);
+    const items = await this.documentStore.findDirectChildren(folderId, workspaceId);
     const ids: string[] = [];
     for (const item of items) {
-      if (item.isFolder) ids.push(...await this.collectFolderDocumentIds(new Types.ObjectId(item.id), workspaceId));
-      else ids.push(item.id);
+      if (item.isFolder) {
+        if (visited.has(item.id)) continue;
+        ids.push(...await this.collectFolderDocumentIds(item.id, workspaceId, visited, depth + 1));
+      } else {
+        ids.push(item.id);
+      }
     }
     return ids;
+  }
+
+  private enterFolder(folderId: string, visited: Set<string>, depth: number): void {
+    if (depth > MAX_FOLDER_DEPTH) {
+      throw new BadRequestException('Folder tree is too deep');
+    }
+    visited.add(folderId);
+  }
+
+  /**
+   * Blob, vector index, governance event, row and counters for one
+   * non-folder document. Linked artifacts must already be handled.
+   */
+  private async removeDocument(document: WorkspaceDocumentRecord, workspaceId: string): Promise<void> {
+    // Delete from blob storage
+    try {
+      if (document.path) {
+        await this.documentService.delete(document.path);
+      }
+    } catch (error) {
+      this.logger.warn('Failed to delete blob', {
+        documentId: document.id,
+        path: document.path,
+        error: error instanceof Error ? error.message : 'Unknown error',
+      });
+    }
+
+    // Delete from indexing vectorstore (non-blocking), only if indexed
+    if (document.indexingStatus === IndexingStatus.READY) {
+      this.indexingService.deleteDocumentIndex(document.id, workspaceId).catch((err) => {
+        this.logger.warn('Failed to delete document index', {
+          documentId: document.id,
+          error: err instanceof Error ? err.message : 'Unknown error',
+        });
+      });
+    }
+
+    // Preserve the Governance source history before the document row disappears.
+    await this.support.recordWorkspaceEvent(WorkspaceIntegrationEvents.DocumentDeletedV1, document);
+
+    await this.documentStore.deleteById(document.id);
+
+    // Update workspace storage (negative delta)
+    if (document.status === DocumentStatus.COMPLETED) {
+      await this.workspaceService.updateStorageUsage(workspaceId, -document.size, -1);
+    }
   }
 
   /**
@@ -310,6 +360,14 @@ export class WorkspaceDocumentTree {
       );
     }
 
+    if (document.isFolder) {
+      // Never delete a folder row directly: parent_id ON DELETE CASCADE would
+      // drop descendants without blob/index/outbox/counter cleanup.
+      await this.deleteFolderTree(documentId, workspaceId, userId, cascadeArtifacts);
+      this.logger.debug('Folder deleted', { documentId, workspaceId });
+      return;
+    }
+
     const linkedArtifactCount = await this.workspaceArtifacts.countBySource(
       workspaceId,
       documentId,
@@ -324,40 +382,7 @@ export class WorkspaceDocumentTree {
       await this.workspaceArtifacts.deleteBySource(workspaceId, documentId);
     }
 
-    // Delete from blob storage (skip for folders)
-    try {
-      if (!document.isFolder && document.path) {
-        await this.documentService.delete(document.path);
-      }
-    } catch (error) {
-      this.logger.warn('Failed to delete blob', {
-        documentId,
-        path: document.path,
-        error: error instanceof Error ? error.message : 'Unknown error',
-      });
-    }
-
-    // Delete from indexing vectorstore (non-blocking)
-    // Only if document was indexed (ready status)
-    if (document.indexingStatus === IndexingStatus.READY) {
-      this.indexingService.deleteDocumentIndex(documentId, workspaceId).catch((err) => {
-        this.logger.warn('Failed to delete document index', {
-          documentId,
-          error: err instanceof Error ? err.message : 'Unknown error',
-        });
-      });
-    }
-
-    // Preserve the Governance source history before the document row disappears.
-    await this.support.recordWorkspaceEvent(WorkspaceIntegrationEvents.DocumentDeletedV1, document);
-
-    // Delete document record
-    await this.documentStore.deleteById(documentId);
-
-    // Update workspace storage (negative delta)
-    if (document.status === DocumentStatus.COMPLETED) {
-      await this.workspaceService.updateStorageUsage(workspaceId, -document.size, -1);
-    }
+    await this.removeDocument(document, workspaceId);
 
     this.logger.debug('Document deleted', {
       documentId,

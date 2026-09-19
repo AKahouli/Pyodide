@@ -5,3 +5,4 @@ export * from './like';
 export * from './pagination';
 export * from './transaction';
 export * from './upsert';
+export * from './errors';

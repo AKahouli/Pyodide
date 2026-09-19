@@ -1,5 +1,5 @@
 import { Inject, Injectable } from '@nestjs/common';
-import { and, desc, eq } from 'drizzle-orm';
+import { and, inArray, desc, eq } from 'drizzle-orm';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import { DRIZZLE_DB } from '@modules/postgres/postgres.constants';
 import * as schema from '@modules/postgres/schema';
@@ -115,7 +115,8 @@ export class PgDryRunStore implements DryRunStore {
     return rows[0] ? dryRunRowToRecord(rows[0]) : null;
   }
 
-  async deleteByProgramAndScope(programId: string, scopeId: string): Promise<void> {
-    await this.q.delete(DRY_RUNS).where(and(eq(DRY_RUNS.programId, programId), eq(DRY_RUNS.scopeId, scopeId)));
+  async deleteByProgramAndScopeIds(programId: string, scopeIds: string[]): Promise<void> {
+    if (scopeIds.length === 0) return;
+    await this.q.delete(DRY_RUNS).where(and(eq(DRY_RUNS.programId, programId), inArray(DRY_RUNS.scopeId, scopeIds)));
   }
 }

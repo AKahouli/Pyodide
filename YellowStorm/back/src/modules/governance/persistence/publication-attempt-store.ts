@@ -22,5 +22,6 @@ export interface GovernancePublicationAttemptCreateInput {
 /** Append-only audit store for governance_publication_attempts. */
 export interface PublicationAttemptStore {
   insert(input: GovernancePublicationAttemptCreateInput): Promise<GovernancePublicationAttemptRecord>;
-  deleteByProgramAndScope(programId: string, scopeId: string): Promise<void>;
+  /** Set-based delete for a whole scope subtree; no-op for an empty list. */
+  deleteByProgramAndScopeIds(programId: string, scopeIds: string[]): Promise<void>;
 }

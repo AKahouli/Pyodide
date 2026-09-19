@@ -25,7 +25,8 @@ export interface ProjectShareStore {
   findByUser(userId: string, page: PageRequest): Promise<{ rows: ProjectShareRecord[]; total: number }>;
   create(input: ProjectShareCreateInput): Promise<ProjectShareRecord>;
   updatePermission(id: string, permission: 'read' | 'readwrite'): Promise<ProjectShareRecord | null>;
-  deleteById(id: string): Promise<void>;
+  /** True when a row was actually deleted (false on a concurrent double revoke). */
+  deleteById(id: string): Promise<boolean>;
   /** Cascade on project delete. Returns the number of removed shares. */
   deleteByProject(projectId: string): Promise<number>;
 }

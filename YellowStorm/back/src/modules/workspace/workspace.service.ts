@@ -1,4 +1,8 @@
-import { Inject, Injectable, OnModuleInit } from '@nestjs/common';
+import { Inject, Injectable, OnModuleInit, Optional } from '@nestjs/common';
+import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
+import { withTransaction } from '@common/postgres';
+import { DRIZZLE_DB } from '@modules/postgres/postgres.constants';
+import type * as schema from '@modules/postgres/schema';
 import { USER_LOOKUP_PORT, type UserLookupPort } from '@common/ports/user-lookup.port';
 import {
   CONVERSATION_STORE,
@@ -40,6 +44,7 @@ export class WorkspaceService implements OnModuleInit {
     @Inject(FLOW_READ_PORT)
     private readonly flowReadPort: FlowReadPort,
     private readonly logger: LoggerService,
+    @Optional() @Inject(DRIZZLE_DB) private readonly db?: NodePgDatabase<typeof schema>,
   ) {
     this.logger.setContext('WorkspaceService');
   }
@@ -467,13 +472,20 @@ export class WorkspaceService implements OnModuleInit {
       );
     }
 
-    await this.workspaceStore.deleteById(workspaceId);
-
-    // Cascade: delete all shares for this workspace
-    await this.shareStore.deleteManyByWorkspace(workspaceId);
-
-    // Remove workspace reference from all conversations
+    // Remove every reference BEFORE the workspace row: conversations first
+    // (the conversation store runs on its own connection), then shares and
+    // the workspace itself atomically.
     await this.conversationStore.removeWorkspaceFromAll(workspaceId);
+
+    const deleteSharesAndWorkspace = async (): Promise<void> => {
+      await this.shareStore.deleteManyByWorkspace(workspaceId);
+      await this.workspaceStore.deleteById(workspaceId);
+    };
+    if (this.db) {
+      await withTransaction(this.db, deleteSharesAndWorkspace);
+    } else {
+      await deleteSharesAndWorkspace();
+    }
 
     // Remove workspace reference from all agents' knowledge bases
     await this.agentRepository.pullKnowledgeBaseFromAll(workspaceId);

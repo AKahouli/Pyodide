@@ -45,5 +45,5 @@ export interface BindingStore {
    * from remaining multi_scope bindings, downgrading single-scope leftovers to
    * scope_specific.
    */
-  removeScopeFromProgramBindings(programId: string, scopeId: string): Promise<void>;
+  removeScopesFromProgramBindings(programId: string, scopeIds: string[]): Promise<void>;
 }

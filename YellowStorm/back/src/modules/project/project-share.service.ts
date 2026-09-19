@@ -2,7 +2,8 @@ import { Inject, Injectable, forwardRef } from '@nestjs/common';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import { DRIZZLE_DB } from '@modules/postgres/postgres.constants';
 import * as schema from '@modules/postgres/schema';
-import { isObjectId } from '@common/postgres/object-id';
+import { isObjectId, normalizeObjectId } from '@common/postgres/object-id';
+import { isUniqueViolation } from '@common/postgres/errors';
 import { withTransaction } from '@common/postgres/transaction';
 import { USER_LOOKUP_PORT, type UserLookupPort, type UserSummary } from '@common/ports/user-lookup.port';
 import { PROJECT_STORE, type ProjectRecord, type ProjectStore } from './persistence/project-store';
@@ -22,7 +23,7 @@ import {
 import { ShareProjectDto } from './dto/share-project.dto';
 import { ShareQueryDto } from './dto/share-query.dto';
 import { LoggerService } from '../logger';
-import { ForbiddenException, NotFoundException } from '../exceptions';
+import { ConflictException, ForbiddenException, NotFoundException } from '../exceptions';
 import { ErrorCode } from '../exceptions/constants/error-codes';
 import {
   CONVERSATION_STORE,
@@ -73,6 +74,8 @@ export class ProjectShareService {
     if (!isObjectId(userId) || !isObjectId(projectId)) {
       return false;
     }
+    userId = normalizeObjectId(userId);
+    projectId = normalizeObjectId(projectId);
     const [owned, shared, isPublic] = await Promise.all([
       this.projectStore.existsOwnedBy(projectId, userId),
       this.shareStore.existsForUser(projectId, userId),
@@ -89,6 +92,7 @@ export class ProjectShareService {
     if (!isObjectId(projectId)) {
       throw new NotFoundException(ErrorCode.PROJECT_NOT_FOUND, 'Invalid project ID format');
     }
+    projectId = normalizeObjectId(projectId);
     const project = await this.projectStore.findById(projectId);
     if (!project) {
       throw new NotFoundException(ErrorCode.PROJECT_NOT_FOUND, 'Project not found');
@@ -110,6 +114,7 @@ export class ProjectShareService {
 
   /** Share a project with one or more users by email (owner-only, caller-checked). */
   async share(projectId: string, ownerId: string, data: ShareProjectDto): Promise<IShareProjectResult> {
+    projectId = normalizeObjectId(projectId);
     const project = await this.projectStore.findById(projectId);
     if (!project) {
       throw new NotFoundException(ErrorCode.PROJECT_NOT_FOUND, 'Project not found');
@@ -166,7 +171,7 @@ export class ProjectShareService {
     const updatedEvents: { userId: string; shareId: string; permission: ProjectPermission }[] = [];
 
     if (pending.size > 0) {
-      await withTransaction(this.db, async () => {
+      await this.withShareConflictMapping(() => withTransaction(this.db, async () => {
         for (const intent of pending.values()) {
           if (intent.shareId && intent.record) {
             // Only write + notify when the requested permission differs (old guard).
@@ -191,7 +196,7 @@ export class ProjectShareService {
         if (createdEvents.length > 0) {
           await this.projectStore.incrementShareCount(projectId, createdEvents.length);
         }
-      });
+      }));
     }
 
     const shared: { record: ProjectShareRecord; user: UserSummary }[] = [];
@@ -229,6 +234,7 @@ export class ProjectShareService {
 
   /** List all shares for a project (owner view). */
   async findByProject(projectId: string, params: ShareQueryDto): Promise<IPaginatedProjectShares> {
+    projectId = normalizeObjectId(projectId);
     const { page = 1, limit = 20 } = params;
 
     const { rows, total } = await this.shareStore.findByProject(projectId, { limit, offset: (page - 1) * limit });
@@ -247,6 +253,8 @@ export class ProjectShareService {
     shareId: string,
     permission: ProjectPermission,
   ): Promise<IProjectShareResponse> {
+    projectId = normalizeObjectId(projectId);
+    shareId = normalizeObjectId(shareId);
     const share = await this.shareStore.findById(shareId);
     if (share?.projectId !== projectId) {
       throw new NotFoundException(ErrorCode.PROJECT_SHARE_NOT_FOUND, 'Share not found');
@@ -284,6 +292,8 @@ export class ProjectShareService {
 
   /** Revoke a share. Caller has verified project ownership. */
   async revoke(projectId: string, shareId: string): Promise<void> {
+    projectId = normalizeObjectId(projectId);
+    shareId = normalizeObjectId(shareId);
     const share = await this.shareStore.findById(shareId);
     if (share?.projectId !== projectId) {
       throw new NotFoundException(ErrorCode.PROJECT_SHARE_NOT_FOUND, 'Share not found');
@@ -291,10 +301,16 @@ export class ProjectShareService {
 
     const recipientId = share.sharedWithUserId;
 
-    await withTransaction(this.db, async () => {
-      await this.shareStore.deleteById(shareId);
-      await this.projectStore.incrementShareCount(projectId, -1);
+    // Only the request that actually removed the row decrements the counter,
+    // so a concurrent double revoke cannot drive shareCount down twice.
+    const deleted = await withTransaction(this.db, async () => {
+      const removed = await this.shareStore.deleteById(shareId);
+      if (removed) await this.projectStore.incrementShareCount(projectId, -1);
+      return removed;
     });
+    if (!deleted) {
+      throw new NotFoundException(ErrorCode.PROJECT_SHARE_NOT_FOUND, 'Share not found');
+    }
 
     this.logger.log('Project share revoked', { shareId, projectId });
 
@@ -365,6 +381,22 @@ export class ProjectShareService {
       projectId,
       deletedCount,
     });
+  }
+
+  /**
+   * A concurrent share of the same user can win the (project_id,
+   * shared_with_user_id) unique index after our existence read; surface a 409
+   * instead of a 500. The whole transaction rolls back, so retrying is safe.
+   */
+  private async withShareConflictMapping<T>(fn: () => Promise<T>): Promise<T> {
+    try {
+      return await fn();
+    } catch (err) {
+      if (isUniqueViolation(err, 'uq_project_shares_project_user')) {
+        throw new ConflictException(ErrorCode.CONFLICT, 'This project was concurrently shared with the same user; please retry');
+      }
+      throw err;
+    }
   }
 
   /**

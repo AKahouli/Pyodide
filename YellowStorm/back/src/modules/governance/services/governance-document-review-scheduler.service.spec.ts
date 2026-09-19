@@ -2,6 +2,7 @@ import { Types } from 'mongoose';
 import { GovernanceDocumentReviewSchedulerService } from './governance-document-review-scheduler.service';
 
 describe('GovernanceDocumentReviewSchedulerService', () => {
+  const tx = { run: (fn: () => Promise<unknown>) => fn() };
   function document(overrides: Record<string, unknown> = {}) {
     return { id: new Types.ObjectId().toString(), programId: new Types.ObjectId().toString(), documentId: new Types.ObjectId().toString(), validity: { businessStatus: 'valid', nextReviewAt: new Date('2026-07-01T00:00:00.000Z') }, ...overrides };
   }
@@ -10,7 +11,7 @@ describe('GovernanceDocumentReviewSchedulerService', () => {
     const doc = document();
     const documentStore = { listDueForReview: jest.fn().mockResolvedValue([doc]), markNeedsReviewIfUnchanged: jest.fn().mockResolvedValue(true) };
     const events = { append: jest.fn().mockResolvedValue(undefined) };
-    const service = new GovernanceDocumentReviewSchedulerService(documentStore as never, events as never, { isEnabled: jest.fn().mockReturnValue(true) } as never);
+    const service = new GovernanceDocumentReviewSchedulerService(documentStore as never, events as never, { isEnabled: jest.fn().mockReturnValue(true) } as never, tx as never);
     await expect(service.run(new Date('2026-07-30T00:00:00.000Z'))).resolves.toBe(1);
     expect(documentStore.markNeedsReviewIfUnchanged).toHaveBeenCalledWith(doc.id, 'valid', new Date('2026-07-01T00:00:00.000Z'));
     expect(events.append).toHaveBeenCalledWith(expect.objectContaining({ documentId: doc.documentId, eventType: 'validity.review_due', deduplicationKey: 'review-due:2026-07-01T00:00:00.000Z' }));
@@ -20,7 +21,7 @@ describe('GovernanceDocumentReviewSchedulerService', () => {
     const doc = document();
     const documentStore = { listDueForReview: jest.fn().mockResolvedValue([doc]), markNeedsReviewIfUnchanged: jest.fn().mockResolvedValue(false) };
     const events = { append: jest.fn().mockResolvedValue(undefined) };
-    const service = new GovernanceDocumentReviewSchedulerService(documentStore as never, events as never, { isEnabled: jest.fn().mockReturnValue(true) } as never);
+    const service = new GovernanceDocumentReviewSchedulerService(documentStore as never, events as never, { isEnabled: jest.fn().mockReturnValue(true) } as never, tx as never);
     // Race simulation: another runner flipped the document between the
     // selection and the guarded update (rowCount 0 in PostgreSQL terms).
     await expect(service.run(new Date('2026-07-30T00:00:00.000Z'))).resolves.toBe(0);
@@ -29,8 +30,16 @@ describe('GovernanceDocumentReviewSchedulerService', () => {
 
   it('does nothing when the validity intelligence feature gate is off', async () => {
     const documentStore = { listDueForReview: jest.fn() };
-    const service = new GovernanceDocumentReviewSchedulerService(documentStore as never, { append: jest.fn() } as never, { isEnabled: jest.fn().mockReturnValue(false) } as never);
+    const service = new GovernanceDocumentReviewSchedulerService(documentStore as never, { append: jest.fn() } as never, { isEnabled: jest.fn().mockReturnValue(false) } as never, tx as never);
     await expect(service.scheduleDueReviews()).resolves.toBeUndefined();
     expect(documentStore.listDueForReview).not.toHaveBeenCalled();
+  });
+
+  it.each(['', null, undefined])('normalises an empty business status (%p) to undefined so the NULL-safe guard can progress', async (businessStatus) => {
+    const doc = document({ validity: { businessStatus, nextReviewAt: '2026-07-01T00:00:00.000Z' } });
+    const documentStore = { listDueForReview: jest.fn().mockResolvedValue([doc]), markNeedsReviewIfUnchanged: jest.fn().mockResolvedValue(true) };
+    const service = new GovernanceDocumentReviewSchedulerService(documentStore as never, { append: jest.fn() } as never, { isEnabled: jest.fn().mockReturnValue(true) } as never, tx as never);
+    await expect(service.run(new Date('2026-07-30T00:00:00.000Z'))).resolves.toBe(1);
+    expect(documentStore.markNeedsReviewIfUnchanged).toHaveBeenCalledWith(doc.id, undefined, new Date('2026-07-01T00:00:00.000Z'));
   });
 });

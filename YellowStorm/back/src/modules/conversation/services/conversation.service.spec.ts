@@ -434,4 +434,78 @@ describe('ConversationService neutral persistence', () => {
       branchedAt: branchProvenance.branchedAt,
     });
   });
+
+  describe('system workspace cleanup ordering', () => {
+    const build = (pool?: unknown) => {
+      const calls: string[] = [];
+      const workspaceService = {
+        deleteSystemWorkspace: jest.fn(async () => {
+          calls.push('deleteWorkspace');
+        }),
+      };
+      const workspaceDocumentService = {
+        deleteAllByWorkspace: jest.fn(async () => {
+          calls.push('deleteDocuments');
+        }),
+      };
+      conversationStore.deleteOwned.mockImplementation(async (id: string) => {
+        calls.push('deleteConversation');
+        return record({ id, systemWorkspaceId: 'ws-sys' });
+      });
+      const logger = { setContext: jest.fn(), log: jest.fn(), warn: jest.fn() };
+      const svc = new ConversationService(
+        conversationStore as never,
+        userModel as never,
+        logger as never,
+        { get: jest.fn((_key: string, fallback: unknown) => fallback) } as never,
+        workspaceService as never,
+        workspaceDocumentService as never,
+        emailService as never,
+        agentRepository as never,
+        featureVisibility as never,
+        {} as never,
+        pool as never,
+      );
+      return { svc, calls, workspaceService };
+    };
+
+    it('deletes the conversation row before its system workspace', async () => {
+      const { svc, calls, workspaceService } = build();
+      conversationStore.findById.mockResolvedValue(
+        record({ id: 'c1', createdBy: 'u1', systemWorkspaceId: 'ws-sys' }),
+      );
+      await svc.delete('c1', 'u1');
+      expect(calls).toEqual(['deleteConversation', 'deleteDocuments', 'deleteWorkspace']);
+      expect(workspaceService.deleteSystemWorkspace).toHaveBeenCalledWith('ws-sys');
+    });
+
+    it('orphan cleanup deletes the conversation first and destroys the client when unlock fails', async () => {
+      const client = {
+        query: jest
+          .fn()
+          .mockResolvedValueOnce({ rows: [{ acquired: true }] })
+          .mockRejectedValueOnce(new Error('unlock failed')),
+        release: jest.fn(),
+      };
+      const pool = { connect: jest.fn().mockResolvedValue(client) };
+      const { svc, calls } = build(pool);
+      conversationStore.findOrphaned.mockResolvedValue([
+        record({ id: 'c2', createdBy: 'u2', systemWorkspaceId: 'ws-sys' }),
+      ]);
+      await svc.cleanupOrphanedConversations();
+      expect(calls).toEqual(['deleteConversation', 'deleteDocuments', 'deleteWorkspace']);
+      expect(client.release).toHaveBeenCalledWith(expect.any(Error));
+    });
+
+    it('returns the lock client normally when unlock succeeds', async () => {
+      const client = {
+        query: jest.fn().mockResolvedValueOnce({ rows: [{ acquired: true }] }).mockResolvedValue({}),
+        release: jest.fn(),
+      };
+      const { svc } = build({ connect: jest.fn().mockResolvedValue(client) });
+      conversationStore.findOrphaned.mockResolvedValue([]);
+      await svc.cleanupOrphanedConversations();
+      expect(client.release).toHaveBeenCalledWith(undefined);
+    });
+  });
 });

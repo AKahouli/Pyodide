@@ -39,5 +39,6 @@ export interface MembershipStore {
   update(membershipId: string, patch: GovernanceMembershipPatch): Promise<GovernanceMembershipRecord | null>;
   deleteById(membershipId: string): Promise<void>;
   /** Scope-tree cleanup: removes every membership scoped to (program, scope). */
-  deleteByProgramAndScope(programId: string, scopeId: string): Promise<void>;
+  /** Set-based delete for a whole scope subtree; no-op for an empty list. */
+  deleteByProgramAndScopeIds(programId: string, scopeIds: string[]): Promise<void>;
 }

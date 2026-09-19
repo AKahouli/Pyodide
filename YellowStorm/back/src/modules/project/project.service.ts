@@ -12,6 +12,8 @@ import { IProjectResponse } from './interfaces/project.interface';
 import { LoggerService } from '../logger';
 import { NotFoundException, ConflictException, ForbiddenException } from '../exceptions';
 import { ErrorCode } from '../exceptions/constants/error-codes';
+import { isUniqueViolation } from '@common/postgres/errors';
+import { normalizeObjectId } from '@common/postgres/object-id';
 
 @Injectable()
 export class ProjectService {
@@ -33,7 +35,16 @@ export class ProjectService {
       throw new ConflictException(ErrorCode.PROJECT_ALREADY_EXISTS);
     }
 
-    const project = await this.projectStore.create({ name, createdBy: userId });
+    let project: ProjectRecord;
+    try {
+      project = await this.projectStore.create({ name, createdBy: userId });
+    } catch (err) {
+      // Lost a create race against the same (owner, name): same answer as the pre-check.
+      if (isUniqueViolation(err, 'uq_projects_owner_name')) {
+        throw new ConflictException(ErrorCode.PROJECT_ALREADY_EXISTS);
+      }
+      throw err;
+    }
 
     this.logger.log('Project created', { projectId: project.id, userId });
 
@@ -50,6 +61,7 @@ export class ProjectService {
   }
 
   async findById(userId: string, projectId: string): Promise<IProjectResponse> {
+    projectId = normalizeObjectId(projectId);
     const project = await this.projectStore.findById(projectId);
     if (!project) {
       throw new NotFoundException(ErrorCode.PROJECT_NOT_FOUND);
@@ -66,6 +78,7 @@ export class ProjectService {
   }
 
   async update(userId: string, projectId: string, dto: UpdateProjectDto): Promise<IProjectResponse> {
+    projectId = normalizeObjectId(projectId);
     const project = await this.projectStore.findById(projectId);
     if (!project) {
       throw new NotFoundException(ErrorCode.PROJECT_NOT_FOUND);
@@ -86,7 +99,17 @@ export class ProjectService {
       }
     }
 
-    const updated = Object.keys(patch).length > 0 ? await this.projectStore.updateById(projectId, patch) : project;
+    let updated: ProjectRecord | null = project;
+    if (Object.keys(patch).length > 0) {
+      try {
+        updated = await this.projectStore.updateById(projectId, patch);
+      } catch (err) {
+        if (isUniqueViolation(err, 'uq_projects_owner_name')) {
+          throw new ConflictException(ErrorCode.PROJECT_ALREADY_EXISTS);
+        }
+        throw err;
+      }
+    }
     if (!updated) {
       throw new NotFoundException(ErrorCode.PROJECT_NOT_FOUND);
     }
@@ -102,6 +125,7 @@ export class ProjectService {
    * when the project goes back to private.
    */
   async setVisibility(projectId: string, ownerId: string, isPublic: boolean): Promise<IProjectResponse> {
+    projectId = normalizeObjectId(projectId);
     const project = await this.projectStore.findById(projectId);
     if (!project) {
       throw new NotFoundException(ErrorCode.PROJECT_NOT_FOUND);
@@ -121,6 +145,7 @@ export class ProjectService {
   }
 
   async delete(userId: string, projectId: string): Promise<void> {
+    projectId = normalizeObjectId(projectId);
     const project = await this.projectStore.findById(projectId);
     if (!project) {
       throw new NotFoundException(ErrorCode.PROJECT_NOT_FOUND);

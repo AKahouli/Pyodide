@@ -41,6 +41,9 @@ function toRecord(session: SessionRow, files: FileRow[]): UploadSessionRecord {
 }
 
 /** PG shape: upload_sessions + upload_session_files child table (plan D.2). */
+/** Upper bound on expired sessions swept per cleanup run. */
+export const DEFAULT_EXPIRED_SESSION_LIMIT = 500;
+
 @Injectable()
 export class PgUploadSessionStore implements UploadSessionStore {
   constructor(@Inject(DRIZZLE_DB) private readonly db: NodePgDatabase<typeof schema>) {}
@@ -97,17 +100,27 @@ export class PgUploadSessionStore implements UploadSessionStore {
     return toRecord(rows[0], files);
   }
 
-  async findExpired(now: Date): Promise<UploadSessionRecord[]> {
+  async findExpired(now: Date, limit = DEFAULT_EXPIRED_SESSION_LIMIT): Promise<UploadSessionRecord[]> {
     const sessions = await this.q
       .select()
       .from(SESSIONS)
-      .where(and(lt(SESSIONS.expiresAt, now), inArray(SESSIONS.status, ['pending', 'in_progress'])));
-    const records: UploadSessionRecord[] = [];
-    for (const session of sessions) {
-      const files = await this.q.select().from(FILES).where(eq(FILES.sessionId, session.id)).orderBy(asc(FILES.fileIndex));
-      records.push(toRecord(session, files));
+      .where(and(lt(SESSIONS.expiresAt, now), inArray(SESSIONS.status, ['pending', 'in_progress'])))
+      .orderBy(asc(SESSIONS.expiresAt))
+      .limit(limit);
+    if (sessions.length === 0) return [];
+    // One files query for the whole batch instead of one per session.
+    const files = await this.q
+      .select()
+      .from(FILES)
+      .where(inArray(FILES.sessionId, sessions.map((session) => session.id)))
+      .orderBy(asc(FILES.sessionId), asc(FILES.fileIndex));
+    const filesBySession = new Map<string, (typeof files)[number][]>();
+    for (const file of files) {
+      const bucket = filesBySession.get(file.sessionId) ?? [];
+      bucket.push(file);
+      filesBySession.set(file.sessionId, bucket);
     }
-    return records;
+    return sessions.map((session) => toRecord(session, filesBySession.get(session.id) ?? []));
   }
 
   /** Single-row UPDATE on upload_session_files — the reason files are a child table. */

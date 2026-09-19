@@ -1,6 +1,6 @@
 import { Inject, Injectable, forwardRef } from '@nestjs/common';
 import type { UserSummary } from '@common/ports/user-lookup.port';
-import { Types } from 'mongoose';
+import { isObjectId } from '@common/postgres';
 import {
   WorkspaceShareResponse,
   ShareWorkspaceResult,
@@ -46,10 +46,11 @@ export class WorkspaceShareService {
    * that accept a list of workspaceIds from the client (e.g. v2 session creation)
    * and need to guard against IDs the user doesn't actually have access to.
    */
-  async assertUserHasAccess(userId: string, workspaceIds: string[]): Promise<void> {
-    if (workspaceIds.length === 0) return;
+  async assertUserHasAccess(userId: string, rawWorkspaceIds: string[]): Promise<void> {
+    if (rawWorkspaceIds.length === 0) return;
+    const workspaceIds = rawWorkspaceIds.map((id) => id.toLowerCase());
 
-    const invalid = workspaceIds.filter((id) => !Types.ObjectId.isValid(id));
+    const invalid = workspaceIds.filter((id) => !isObjectId(id));
     if (invalid.length > 0) {
       throw new NotFoundException(
         ErrorCode.WORKSPACE_NOT_FOUND,
@@ -75,7 +76,8 @@ export class WorkspaceShareService {
   }
 
   async assertUserHasWriteAccess(userId: string, workspaceId: string): Promise<void> {
-    if (!Types.ObjectId.isValid(userId) || !Types.ObjectId.isValid(workspaceId)) {
+    workspaceId = workspaceId.toLowerCase();
+    if (!isObjectId(userId) || !isObjectId(workspaceId)) {
       throw new NotFoundException(
         ErrorCode.WORKSPACE_NOT_FOUND,
         'Invalid workspace or user ID format',
@@ -114,13 +116,33 @@ export class WorkspaceShareService {
   }
 
   /**
+   * Batched hasAccess(): the subset of `workspaceIds` (input order kept) the
+   * user owns, has an active share on, or that is public. Three set queries
+   * instead of two primary-key lookups per workspace.
+   */
+  async filterAccessible(userId: string, workspaceIds: string[]): Promise<string[]> {
+    if (!isObjectId(userId)) return [];
+    const normalized = workspaceIds.map((id) => id.toLowerCase());
+    const candidates = [...new Set(normalized.filter((id) => isObjectId(id)))];
+    if (candidates.length === 0) return [];
+    const [owned, shared, publicWs] = await Promise.all([
+      this.workspaceStore.filterOwned(candidates, userId),
+      this.shareStore.filterSharedWithUser(userId, candidates),
+      this.workspaceStore.filterPublic(candidates),
+    ]);
+    const accessible = new Set<string>([...owned, ...shared, ...publicWs]);
+    return workspaceIds.filter((_, index) => accessible.has(normalized[index]));
+  }
+
+  /**
    * Return whether a user has any kind of access (owner OR active share,
    * read or readwrite, OR the workspace is public) to a single workspace.
    * Used by external services (indexing) that need a simple yes/no access
    * check. Returns false for malformed ids rather than throwing.
    */
   async hasAccess(userId: string, workspaceId: string): Promise<boolean> {
-    if (!Types.ObjectId.isValid(userId) || !Types.ObjectId.isValid(workspaceId)) {
+    workspaceId = workspaceId.toLowerCase();
+    if (!isObjectId(userId) || !isObjectId(workspaceId)) {
       return false;
     }
 

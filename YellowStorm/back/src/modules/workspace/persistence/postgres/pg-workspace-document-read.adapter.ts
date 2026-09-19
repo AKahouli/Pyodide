@@ -10,13 +10,20 @@ import type { WorkspaceDocumentRecord } from '../../ports/workspace-records';
 
 const DOCUMENTS = schema.workspaceDocuments;
 
+/** True when the filter carries an explicit empty id list and can match nothing. */
+export function documentFilterMatchesNothing(filter: DocumentFilter): boolean {
+  return (filter.ids !== undefined && filter.ids.length === 0)
+    || (filter.workspaceIds !== undefined && filter.workspaceIds.length === 0);
+}
+
 /** Shared drizzle translation of the typed DocumentFilter (Step D PG side). */
 export function documentFilterToWhere(filter: DocumentFilter) {
   const conditions = [];
   if (filter.id) conditions.push(eq(DOCUMENTS.id, filter.id));
   if (filter.workspaceId) conditions.push(eq(DOCUMENTS.workspaceId, filter.workspaceId));
-  if (filter.workspaceIds?.length) conditions.push(inArray(DOCUMENTS.workspaceId, filter.workspaceIds));
-  if (filter.ids?.length) conditions.push(inArray(DOCUMENTS.id, filter.ids));
+  // An explicit empty list means "match nothing", never "no filter".
+  if (filter.workspaceIds) conditions.push(filter.workspaceIds.length ? inArray(DOCUMENTS.workspaceId, filter.workspaceIds) : sql`false`);
+  if (filter.ids) conditions.push(filter.ids.length ? inArray(DOCUMENTS.id, filter.ids) : sql`false`);
   if (filter.status) conditions.push(eq(DOCUMENTS.status, filter.status));
   if (filter.indexingStatus) conditions.push(eq(DOCUMENTS.indexingStatus, filter.indexingStatus));
   if (filter.indexingStartedBefore) conditions.push(lt(DOCUMENTS.indexingStartedAt, filter.indexingStartedBefore));
@@ -81,11 +88,13 @@ export class PgWorkspaceDocumentReadAdapter {
   }
 
   async findOne(filter: DocumentFilter): Promise<WorkspaceDocumentRecord | null> {
+    if (documentFilterMatchesNothing(filter)) return null;
     const rows = await this.q.select().from(DOCUMENTS).where(documentFilterToWhere(filter)).limit(1);
     return rows[0] ? documentRowToRecord(rows[0]) : null;
   }
 
   async find(filter: DocumentFilter, opts: DocumentFindOptions = {}): Promise<WorkspaceDocumentRecord[]> {
+    if (documentFilterMatchesNothing(filter)) return [];
     let query = this.q.select().from(DOCUMENTS).where(documentFilterToWhere(filter)).$dynamic();
     if (opts.sort?.field === 'id') query = query.orderBy(opts.sort.direction === 'asc' ? asc(DOCUMENTS.id) : desc(DOCUMENTS.id));
     else if (opts.sort?.field === 'createdAt') query = query.orderBy(opts.sort.direction === 'asc' ? asc(DOCUMENTS.createdAt) : desc(DOCUMENTS.createdAt));
@@ -97,11 +106,13 @@ export class PgWorkspaceDocumentReadAdapter {
   }
 
   async countDocuments(filter: DocumentFilter): Promise<number> {
+    if (documentFilterMatchesNothing(filter)) return 0;
     const rows = await this.q.select({ n: sql<number>`count(*)`.mapWith(Number) }).from(DOCUMENTS).where(documentFilterToWhere(filter));
     return rows[0]?.n ?? 0;
   }
 
   async exists(filter: DocumentFilter): Promise<boolean> {
+    if (documentFilterMatchesNothing(filter)) return false;
     const rows = await this.q.select({ id: DOCUMENTS.id }).from(DOCUMENTS).where(documentFilterToWhere(filter)).limit(1);
     return rows.length > 0;
   }

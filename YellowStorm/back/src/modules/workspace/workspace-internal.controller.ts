@@ -1,7 +1,7 @@
 import { Controller, Post, Body, HttpCode, HttpStatus, UseGuards, VERSION_NEUTRAL } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse } from '@nestjs/swagger';
 import { Inject } from '@nestjs/common';
-import { Types } from 'mongoose';
+import { isObjectId } from '@common/postgres';
 import { IsArray, IsString } from 'class-validator';
 import { InternalServiceGuard } from '../auth/guards/internal-service.guard';
 import { Public } from '../auth/decorators/public.decorator';
@@ -30,7 +30,7 @@ export class WorkspaceInternalController {
   async resolveNames(
     @Body() dto: ResolveNamesDto,
   ): Promise<Record<string, string>> {
-    const ids = (dto.ids || []).filter((id) => Types.ObjectId.isValid(id));
+    const ids = (dto.ids || []).map((id) => String(id).toLowerCase()).filter((id) => isObjectId(id));
     if (!ids.length) return {};
 
     const byId = await this.workspaceStore.findByIds(ids);

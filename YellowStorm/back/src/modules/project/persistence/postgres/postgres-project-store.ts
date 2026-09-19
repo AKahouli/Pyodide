@@ -96,7 +96,7 @@ export class PostgresProjectStore implements ProjectStore {
   async incrementShareCount(id: string, delta: number): Promise<void> {
     await this.q
       .update(schema.projects)
-      .set({ shareCount: sql`${schema.projects.shareCount} + ${delta}` })
+      .set({ shareCount: sql`${schema.projects.shareCount} + ${delta}`, updatedAt: new Date() })
       .where(eq(schema.projects.id, id));
   }
 }

@@ -16,6 +16,7 @@ import {
   type GovernanceRevisionRecord,
   type PublicationAttemptStore,
   type RevisionStore,
+  GOVERNANCE_TRANSACTION, PASSTHROUGH_TRANSACTION, type GovernanceTransactionRunner
 } from '../persistence';
 import type { GovernancePublicationAttemptStatus } from '../domain/governance-types';
 import { GovernanceProgramService } from './governance-program.service';
@@ -41,6 +42,7 @@ export class GovernanceDeploymentService {
     private readonly accessService: GovernanceAccessService,
     private readonly auditLogService: AuditLogService,
     private readonly draftPreparationService: GovernanceDraftPreparationService,
+    @Inject(GOVERNANCE_TRANSACTION) private readonly tx: GovernanceTransactionRunner = PASSTHROUGH_TRANSACTION,
   ) {}
 
   async create(actorId: string, actorEmail: string, programId: string, dto: CreateGovernanceDeploymentDto): Promise<GovernanceDeploymentResponse> {
@@ -79,23 +81,27 @@ export class GovernanceDeploymentService {
   async createRevision(actorId: string, actorEmail: string, deploymentId: string, dto: CreateGovernanceRevisionDto): Promise<GovernanceRevisionResponse> {
     const deployment = await this.findOwnedDeployment(actorId, deploymentId);
     if (deployment.status === 'archived') throw new ConflictException(ErrorCode.GOVERNANCE_PUBLISH_BLOCKED);
-    const revisionNumber = (await this.revisionStore.countByDeployment(deployment.id)) + 1;
     const allowedAgentIds = this.normalizeAllowedAgentIds(dto.agentId, dto.allowedAgentIds);
     await this.assertAgentsBelongToScope(actorId, deployment.programId, deployment.scopeId, allowedAgentIds);
     await this.assertWorkspacesBelongToScope(deployment.programId, deployment.scopeId, dto.workspaceIds ?? []);
-    const revision = await this.revisionStore.insert({
-      deploymentId: deployment.id,
-      revisionNumber,
-      agentId: dto.agentId,
-      allowedAgentIds,
-      workspaceIds: dto.workspaceIds,
-      agentSnapshot: dto.agentSnapshot ?? {},
-      channelSnapshot: (deployment.channels as Record<string, unknown>) ?? {},
-      createdBy: actorId,
-    });
-    await this.deploymentStore.update(deployment.id, {
-      currentDraftRevisionId: revision.id,
-      ...(deployment.status !== 'published' ? { status: 'dry_run' as const } : {}),
+    // Revision insert and the deployment's draft pointer move together.
+    const revision = await this.tx.run(async () => {
+      const revisionNumber = (await this.revisionStore.countByDeployment(deployment.id)) + 1;
+      const inserted = await this.revisionStore.insert({
+        deploymentId: deployment.id,
+        revisionNumber,
+        agentId: dto.agentId,
+        allowedAgentIds,
+        workspaceIds: dto.workspaceIds,
+        agentSnapshot: dto.agentSnapshot ?? {},
+        channelSnapshot: (deployment.channels as Record<string, unknown>) ?? {},
+        createdBy: actorId,
+      });
+      await this.deploymentStore.update(deployment.id, {
+        currentDraftRevisionId: inserted.id,
+        ...(deployment.status !== 'published' ? { status: 'dry_run' as const } : {}),
+      });
+      return inserted;
     });
     this.auditLogService.logSuccess({ actorId, actorEmail, action: 'governance.revision.created', targetType: 'governance_revision', targetId: revision.id, metadata: { deploymentId } });
     return this.toRevisionResponse(revision);
@@ -161,17 +167,16 @@ export class GovernanceDeploymentService {
       if (!revision) throw new NotFoundException(ErrorCode.GOVERNANCE_REVISION_NOT_FOUND);
       if (revision.status === 'published' || revision.status === 'rejected') throw new ConflictException(ErrorCode.GOVERNANCE_REVISION_IMMUTABLE);
       if (!revision.agentId || !revision.allowedAgentIds?.length) throw new ConflictException(ErrorCode.GOVERNANCE_PUBLISH_BLOCKED);
-      const previousRevisionStatus = revision.status;
-      await this.revisionStore.update(revision.id, { status: 'published', publishedBy: actorId, publishedAt: new Date() });
-      let publishDeployment = await this.deploymentStore.publishGuarded(deployment.id, revisionId, revision.id);
-      if (!publishDeployment) {
+      // Revision status and the deployment's published pointer commit together; a lost
+      // publish race throws and rolls the revision status back.
+      const publishDeployment = await this.tx.run(async () => {
+        await this.revisionStore.update(revision.id, { status: 'published', publishedBy: actorId, publishedAt: new Date() });
+        const published = await this.deploymentStore.publishGuarded(deployment.id, revisionId, revision.id);
+        if (published) return published;
         const observedDeployment = await this.deploymentStore.findById(deployment.id);
-        if (observedDeployment?.currentPublishedRevisionId === revision.id) publishDeployment = observedDeployment;
-        else {
-          await this.revisionStore.update(revision.id, { status: previousRevisionStatus, publishedBy: null, publishedAt: null });
-          throw new ConflictException(ErrorCode.GOVERNANCE_PUBLISH_BLOCKED);
-        }
-      }
+        if (observedDeployment?.currentPublishedRevisionId === revision.id) return observedDeployment;
+        throw new ConflictException(ErrorCode.GOVERNANCE_PUBLISH_BLOCKED);
+      });
       await this.createPublicationAttempt(actorId, actorEmail, publishDeployment, revisionId, dto, dto.allowPartial ? 'partial' : 'success', readiness);
       this.auditLogService.logSuccess({ actorId, actorEmail, action: 'governance.deployment.published', targetType: 'governance_deployment', targetId: deploymentId, metadata: { revisionId, channels: dto.channels } });
       return this.toDeploymentResponse(publishDeployment);

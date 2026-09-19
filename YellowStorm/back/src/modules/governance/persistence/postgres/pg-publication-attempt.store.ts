@@ -1,5 +1,5 @@
 import { Inject, Injectable } from '@nestjs/common';
-import { and, eq } from 'drizzle-orm';
+import { and, inArray, eq } from 'drizzle-orm';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import { DRIZZLE_DB } from '@modules/postgres/postgres.constants';
 import * as schema from '@modules/postgres/schema';
@@ -63,7 +63,8 @@ export class PgPublicationAttemptStore implements PublicationAttemptStore {
     return publicationAttemptRowToRecord(row);
   }
 
-  async deleteByProgramAndScope(programId: string, scopeId: string): Promise<void> {
-    await this.q.delete(ATTEMPTS).where(and(eq(ATTEMPTS.programId, programId), eq(ATTEMPTS.scopeId, scopeId)));
+  async deleteByProgramAndScopeIds(programId: string, scopeIds: string[]): Promise<void> {
+    if (scopeIds.length === 0) return;
+    await this.q.delete(ATTEMPTS).where(and(eq(ATTEMPTS.programId, programId), inArray(ATTEMPTS.scopeId, scopeIds)));
   }
 }
