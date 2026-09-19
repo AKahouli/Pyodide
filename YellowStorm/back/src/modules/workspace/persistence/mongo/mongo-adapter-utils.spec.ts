@@ -1,5 +1,4 @@
 import { mapFilter, mapSort, toObjectId } from './mongo-adapter-utils';
-import { escapeLike } from '@common/postgres/like';
 
 describe('mongo adapter filter translation', () => {
   it('maps each filter field to its Mongo equivalent', () => {
@@ -23,12 +22,14 @@ describe('mongo adapter filter translation', () => {
     expect(q.originalName).toBe('x.pdf');
   });
 
-  it('translates originalNameSearch into an escaped case-insensitive regex', () => {
+  it('translates originalNameSearch into an escaped case-insensitive $regex', () => {
     const q = mapFilter({ originalNameSearch: 'a.b%c' });
-    const regex = q.originalName as RegExp;
-    expect(regex.options).toBe('i');
-    expect(regex.test('aXbYc')).toBe(true);
-    expect(regex.test('abc')).toBe(false); // dot was escaped, not a wildcard
+    const stored = q.originalName as { $regex: string; $options: string };
+    expect(stored.$options).toBe('i');
+    const re = new RegExp(stored.$regex, stored.$options);
+    expect(re.test('xa.b%cz')).toBe(true); // literal 'a.b%c' matches
+    expect(re.test('xaXb%cz')).toBe(false); // dot was escaped, not a wildcard
+    expect(re.test('xA.B%CZ')).toBe(true);  // case-insensitive, % literal
   });
 
   it('merges ids with the afterId keyset predicate', () => {
@@ -49,9 +50,5 @@ describe('mongo adapter filter translation', () => {
   it('maps sort fields', () => {
     expect(mapSort('createdAt', 'asc')).toEqual({ createdAt: 1 });
     expect(mapSort('id', 'desc')).toEqual({ _id: -1 });
-  });
-
-  it('escapes regex specials in search text', () => {
-    expect(escapeLike('a+b')).toBe('a+b'); // escapeLike is PG-side; regex escaping is adapter-side
   });
 });

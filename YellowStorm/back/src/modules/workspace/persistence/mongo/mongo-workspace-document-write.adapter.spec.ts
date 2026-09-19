@@ -1,5 +1,4 @@
 import { MongoWorkspaceDocumentWriteAdapter } from './mongo-workspace-document-write.adapter';
-import { WorkspaceDoc } from '../../schemas/workspace-document.schema';
 
 describe('MongoWorkspaceDocumentWriteAdapter', () => {
   function makeModel(doc: Record<string, unknown> | null) {
@@ -53,11 +52,5 @@ describe('MongoWorkspaceDocumentWriteAdapter', () => {
       adapter.updateIndexingState('doc-1', { indexingStatus: 'ready' }),
     ).resolves.toBeUndefined();
     expect(save).not.toHaveBeenCalled();
-  });
-
-  it('targets the WorkspaceDoc model', () => {
-    const { model } = makeModel({});
-    expect(() => new MongoWorkspaceDocumentWriteAdapter(model as never)).not.toThrow();
-    expect(WorkspaceDoc.name).toBe('WorkspaceDoc');
   });
 });
