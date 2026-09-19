@@ -1,6 +1,6 @@
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
 import { HydratedDocument, Types } from 'mongoose';
-import type { DocumentValidity } from '../domain/document-validity';
+import type { DocumentValidity } from '../../../domain/document-validity';
 
 export type GovernanceDocumentDocument = HydratedDocument<GovernanceDocument>;
 export type GovernanceDocumentLifecycleStatus = 'captured' | 'to_review' | 'approved' | 'published' | 'rejected' | 'archived';

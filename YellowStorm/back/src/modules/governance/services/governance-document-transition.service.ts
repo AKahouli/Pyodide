@@ -1,10 +1,9 @@
 import { Inject, BadRequestException, ConflictException, Injectable } from '@nestjs/common';
-import { InjectModel } from '@nestjs/mongoose';
-import { Model, Types } from 'mongoose';
 import { ErrorCode } from '@modules/exceptions/constants/error-codes';
 import { DocumentStatus, IndexingStatus } from '@modules/workspace/interfaces/document-status.enum';
 import { WORKSPACE_DOCUMENT_READ_PORT, type WorkspaceDocumentReadPort } from '@modules/workspace/ports';
-import { GovernanceDocument, GovernanceDocumentDocument, GovernanceDocumentLifecycleStatus } from '../schemas/governance-document.schema';
+import { GOVERNANCE_DOCUMENT_STORE, type GovernanceDocumentRecord, type GovernanceDocumentStore, type GovernanceDocumentUpdateSet } from '../persistence';
+import type { GovernanceDocumentLifecycleStatus } from '../domain/governance-types';
 import { GovernanceDocumentService } from './governance-document.service';
 import { GovernanceDocumentEventService } from './governance-document-event.service';
 
@@ -22,36 +21,37 @@ export interface GovernanceDocumentTransitionCommand { commandId: string; expect
 @Injectable()
 export class GovernanceDocumentTransitionService {
   constructor(
-    @InjectModel(GovernanceDocument.name) private readonly model: Model<GovernanceDocumentDocument>,
+    @Inject(GOVERNANCE_DOCUMENT_STORE) private readonly documentStore: GovernanceDocumentStore,
     @Inject(WORKSPACE_DOCUMENT_READ_PORT) private readonly workspaceDocuments: WorkspaceDocumentReadPort,
     private readonly documents: GovernanceDocumentService,
     private readonly events: GovernanceDocumentEventService,
   ) {}
 
-  async transition(command: GovernanceDocumentTransitionCommand): Promise<GovernanceDocumentDocument> {
+  async transition(command: GovernanceDocumentTransitionCommand): Promise<GovernanceDocumentRecord> {
     const record = await this.documents.findRecord(command.actorId, command.programId, command.documentId);
     const key = `transition:${command.commandId}`;
-    if (await this.events.findByDeduplicationKey(record._id.toString(), key)) return record;
+    if (await this.events.findByDeduplicationKey(record.id, key)) return record;
     if (record.governanceRevision !== command.expectedGovernanceRevision) throw new ConflictException(ErrorCode.VALIDATION_ERROR, 'Document governance changed concurrently; reload and retry');
     if (!transitions[record.status].includes(command.target)) throw new BadRequestException(ErrorCode.VALIDATION_ERROR, 'Invalid document governance lifecycle transition');
     if (command.target === 'published') await this.assertPublishable(record);
     const before = record.status;
     const now = new Date();
-    const set: Record<string, unknown> = { status: command.target, reviewComment: command.comment };
-    if (command.target === 'to_review') Object.assign(set, { submittedForReviewBy: new Types.ObjectId(command.actorId), submittedForReviewAt: now });
-    if (command.target === 'approved') Object.assign(set, { reviewedBy: new Types.ObjectId(command.actorId), reviewedAt: now, approvedBy: new Types.ObjectId(command.actorId), approvedAt: now });
-    if (command.target === 'published') Object.assign(set, { publishedBy: new Types.ObjectId(command.actorId), publishedAt: now });
-    const updated = await this.model.findOneAndUpdate({ _id: record._id, status: before, governanceRevision: command.expectedGovernanceRevision }, { $set: set, $inc: { governanceRevision: 1 } }, { new: true }).exec();
-    if (!updated) throw new ConflictException(ErrorCode.VALIDATION_ERROR, 'Document governance changed concurrently; reload and retry');
+    const set: GovernanceDocumentUpdateSet = { status: command.target, ...(command.comment !== undefined ? { reviewComment: command.comment } : {}) };
+    if (command.target === 'to_review') Object.assign(set, { submittedForReviewBy: command.actorId, submittedForReviewAt: now });
+    if (command.target === 'approved') Object.assign(set, { reviewedBy: command.actorId, reviewedAt: now, approvedBy: command.actorId, approvedAt: now });
+    if (command.target === 'published') Object.assign(set, { publishedBy: command.actorId, publishedAt: now });
+    const updatedRecord = await this.documentStore.updateGuarded(record.id, { governanceRevision: command.expectedGovernanceRevision, statusEquals: before }, { set, bumpGovernanceRevision: true });
+    if (!updatedRecord) throw new ConflictException(ErrorCode.VALIDATION_ERROR, 'Document governance changed concurrently; reload and retry');
     const eventType = ({ to_review: 'document.submitted_for_review', captured: 'document.returned_to_editing', approved: 'document.approved', rejected: 'document.rejected', published: 'document.published' } as const)[command.target as Exclude<GovernanceDocumentLifecycleStatus, 'archived'>];
     if (!eventType) throw new BadRequestException(ErrorCode.VALIDATION_ERROR, 'Unsupported document governance lifecycle transition');
-    await this.events.append({ programId: command.programId, governanceDocumentId: updated._id.toString(), documentId: command.documentId, actorId: command.actorId, actorEmail: command.actorEmail, actorType: 'user', eventType, before: { status: before }, after: { status: command.target }, reason: command.comment, correlationId: command.correlationId, deduplicationKey: key });
-    return updated;
+    await this.events.append({ programId: command.programId, governanceDocumentId: updatedRecord.id, documentId: command.documentId, actorId: command.actorId, actorEmail: command.actorEmail, actorType: 'user', eventType, before: { status: before }, after: { status: command.target }, reason: command.comment, correlationId: command.correlationId, deduplicationKey: key });
+    return updatedRecord;
   }
 
-  private async assertPublishable(record: GovernanceDocumentDocument): Promise<void> {
-    const document = await this.workspaceDocuments.findOne({ id: record.documentId.toString(), workspaceId: record.workspaceId.toString(), isFolder: false });
+  private async assertPublishable(record: GovernanceDocumentRecord): Promise<void> {
+    const document = await this.workspaceDocuments.findOne({ id: record.documentId, workspaceId: record.workspaceId, isFolder: false });
     if (!document || document.status !== DocumentStatus.COMPLETED || document.indexingStatus !== IndexingStatus.READY) throw new BadRequestException(ErrorCode.VALIDATION_ERROR, 'Document must be completed and indexed before publication');
-    if (['expired', 'conflicting', 'suspended'].includes(record.validity.businessStatus)) throw new BadRequestException(ErrorCode.VALIDATION_ERROR, 'Document validity blocks publication');
+    const businessStatus = (record.validity as { businessStatus?: string }).businessStatus;
+    if (['expired', 'conflicting', 'suspended'].includes(businessStatus ?? '')) throw new BadRequestException(ErrorCode.VALIDATION_ERROR, 'Document validity blocks publication');
   }
 }

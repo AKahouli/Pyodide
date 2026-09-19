@@ -1,14 +1,19 @@
 import { Inject, BadRequestException, ConflictException, Injectable } from '@nestjs/common';
-import { InjectModel } from '@nestjs/mongoose';
-import { Model, Types } from 'mongoose';
 import { NotFoundException } from '@modules/exceptions';
 import { ErrorCode } from '@modules/exceptions/constants/error-codes';
 import {
   WORKSPACE_DOCUMENT_READ_PORT,
   type WorkspaceDocumentReadPort,
 } from '@modules/workspace/ports';
-import { GovernanceDocument, GovernanceDocumentDocument } from '../schemas/governance-document.schema';
-import { GovernanceWorkspaceBinding, GovernanceWorkspaceBindingDocument } from '../schemas/governance-workspace-binding.schema';
+import {
+  BINDING_STORE,
+  GOVERNANCE_DOCUMENT_STORE,
+  type BindingStore,
+  type GovernanceDocumentRecord,
+  type GovernanceDocumentStore,
+  type GovernanceDocumentUpdate,
+  type GovernanceDocumentUpdateGuard,
+} from '../persistence';
 import { GovernanceProgramService } from './governance-program.service';
 import { GovernanceAccessService } from './governance-access.service';
 import { GovernanceDocumentEventService } from './governance-document-event.service';
@@ -28,59 +33,48 @@ export interface GovernanceDocumentResponse {
 @Injectable()
 export class GovernanceDocumentService {
   constructor(
-    @InjectModel(GovernanceDocument.name) private readonly model: Model<GovernanceDocumentDocument>,
+    @Inject(GOVERNANCE_DOCUMENT_STORE) private readonly documentStore: GovernanceDocumentStore,
     @Inject(WORKSPACE_DOCUMENT_READ_PORT) private readonly workspaceDocuments: WorkspaceDocumentReadPort,
-    @InjectModel(GovernanceWorkspaceBinding.name) private readonly bindings: Model<GovernanceWorkspaceBindingDocument>,
+    @Inject(BINDING_STORE) private readonly bindingStore: BindingStore,
     private readonly programs: GovernanceProgramService,
     private readonly access: GovernanceAccessService,
     private readonly events: GovernanceDocumentEventService,
     private readonly validityCalculator: DocumentValidityCalculatorService,
   ) {}
 
-  async upsertFromWorkspace(programId: string, documentId: string, actorId: string, integrationEvent?: { id: string; occurredAt: Date }): Promise<GovernanceDocumentDocument> {
+  async upsertFromWorkspace(programId: string, documentId: string, actorId: string, integrationEvent?: { id: string; occurredAt: Date }): Promise<GovernanceDocumentRecord> {
     const document = await this.workspaceDocuments.findOne({ id: documentId, isFolder: false });
     if (!document) throw new NotFoundException(ErrorCode.GOVERNANCE_DOCUMENT_NOT_FOUND);
-    const binding = await this.bindings.findOne({ programId: new Types.ObjectId(programId), workspaceId: document.workspaceId, enabled: true }).exec();
-    if (!binding) throw new BadRequestException(ErrorCode.GOVERNANCE_DOCUMENT_SCOPE_INVALID, 'No enabled workspace binding grants governance access to this document');
-    const validity = { ...DEFAULT_UNKNOWN_VALIDITY, mode: binding.defaults.validityMode ?? 'unknown', reviewFrequencyDays: binding.defaults.reviewFrequencyDays };
-    const update = {
-      $setOnInsert: {
-        programId: new Types.ObjectId(programId),
-        documentId: new Types.ObjectId(document.id),
-        workspaceId: new Types.ObjectId(document.workspaceId),
-        status: 'captured',
-        validity,
-        tags: [],
-        metadata: {},
-        ownerUserId: binding.defaults.ownerUserId ? new Types.ObjectId(binding.defaults.ownerUserId) : undefined,
-        ownerScopeId: binding.defaults.ownerScopeId ? new Types.ObjectId(binding.defaults.ownerScopeId) : undefined,
-        governanceRevision: 0,
-        temporalDecisionRevision: 0,
-      },
-      $set: {
-        workspaceId: document.workspaceId,
-        ...(integrationEvent ? { lastIntegrationEventId: integrationEvent.id, lastIntegrationEventAt: integrationEvent.occurredAt } : {}),
-      },
-    };
-    const governanceDocument = await this.model.findOneAndUpdate({ programId: new Types.ObjectId(programId), documentId: new Types.ObjectId(document.id) }, update, { new: true, upsert: true, setDefaultsOnInsert: true }).exec();
-    if (!governanceDocument) throw new BadRequestException(ErrorCode.VALIDATION_ERROR, 'Governance document upsert failed');
-    await this.events.append({ programId, governanceDocumentId: governanceDocument._id.toString(), documentId, eventType: 'document.governance_created', actorId, actorType: integrationEvent ? 'integration' : 'user', occurredAt: integrationEvent?.occurredAt, deduplicationKey: `created:${governanceDocument._id.toString()}` });
+    const binding = await this.bindingStore.findByProgramAndWorkspace(programId, document.workspaceId);
+    if (!binding || !binding.enabled) throw new BadRequestException(ErrorCode.GOVERNANCE_DOCUMENT_SCOPE_INVALID, 'No enabled workspace binding grants governance access to this document');
+    const defaults = binding.defaults as { validityMode?: string; reviewFrequencyDays?: number; ownerUserId?: string; ownerScopeId?: string };
+    const validity = { ...DEFAULT_UNKNOWN_VALIDITY, mode: defaults.validityMode ?? 'unknown', reviewFrequencyDays: defaults.reviewFrequencyDays };
+    const governanceDocument = await this.documentStore.upsertFromWorkspace({
+      programId,
+      documentId: document.id,
+      workspaceId: document.workspaceId,
+      validity,
+      ownerUserId: defaults.ownerUserId,
+      ownerScopeId: defaults.ownerScopeId,
+      integrationEvent,
+    });
+    await this.events.append({ programId, governanceDocumentId: governanceDocument.id, documentId, eventType: 'document.governance_created', actorId, actorType: integrationEvent ? 'integration' : 'user', occurredAt: integrationEvent?.occurredAt, deduplicationKey: `created:${governanceDocument.id}` });
     return governanceDocument;
   }
 
   async list(actorId: string, programId: string, includeArchived = false): Promise<GovernanceDocumentResponse[]> {
     await this.programs.assertOwnedProgram(actorId, programId);
     const workspaceIds = await this.accessibleWorkspaceIds(actorId, programId);
-    const records = await this.model.find({ programId: new Types.ObjectId(programId), workspaceId: { $in: workspaceIds }, ...(includeArchived ? {} : { status: { $ne: 'archived' } }) }).sort({ updatedAt: -1 }).lean().exec();
+    const records = await this.documentStore.listForProgramWorkspaces(programId, workspaceIds, includeArchived);
     return Promise.all(records.map((record) => this.toResponse(record)));
   }
 
   async findByDocumentId(actorId: string, programId: string, documentId: string): Promise<GovernanceDocumentResponse> {
-    return this.toResponse(await this.findAccessible(actorId, programId, documentId));
+    return this.toResponse(await this.findRecord(actorId, programId, documentId));
   }
 
-  async findRecord(actorId: string, programId: string, documentId: string): Promise<GovernanceDocumentDocument> {
-    const record = await this.model.findOne({ programId: new Types.ObjectId(programId), documentId: new Types.ObjectId(documentId) }).exec();
+  async findRecord(actorId: string, programId: string, documentId: string): Promise<GovernanceDocumentRecord> {
+    const record = await this.documentStore.findByProgramAndDocumentId(programId, documentId);
     if (!record) throw new NotFoundException(ErrorCode.GOVERNANCE_DOCUMENT_NOT_FOUND);
     await this.assertBindingAccess(actorId, programId, record.workspaceId);
     return record;
@@ -89,12 +83,15 @@ export class GovernanceDocumentService {
   async update(actorId: string, programId: string, documentId: string, dto: UpdateGovernanceDocumentDto): Promise<GovernanceDocumentResponse> {
     const record = await this.findRecord(actorId, programId, documentId);
     this.assertExpectedRevision(record, dto.expectedGovernanceRevision);
-    const set: Record<string, unknown> = {};
-    if (dto.tags !== undefined) set.tags = dto.tags;
-    if (dto.metadata !== undefined) set.metadata = dto.metadata;
-    if (dto.ownerUserId !== undefined) set.ownerUserId = new Types.ObjectId(dto.ownerUserId);
-    if (dto.ownerScopeId !== undefined) set.ownerScopeId = new Types.ObjectId(dto.ownerScopeId);
-    const updated = await this.model.findOneAndUpdate({ _id: record._id, governanceRevision: dto.expectedGovernanceRevision }, { $set: set, $inc: { governanceRevision: 1 } }, { new: true }).exec();
+    const updated = await this.documentStore.updateGuarded(record.id, { governanceRevision: dto.expectedGovernanceRevision }, {
+      set: {
+        ...(dto.tags !== undefined ? { tags: dto.tags } : {}),
+        ...(dto.metadata !== undefined ? { metadata: dto.metadata } : {}),
+        ...(dto.ownerUserId !== undefined ? { ownerUserId: dto.ownerUserId } : {}),
+        ...(dto.ownerScopeId !== undefined ? { ownerScopeId: dto.ownerScopeId } : {}),
+      },
+      bumpGovernanceRevision: true,
+    });
     if (!updated) throw this.concurrentChange();
     return this.toResponse(updated);
   }
@@ -102,12 +99,12 @@ export class GovernanceDocumentService {
   async updateValidity(actorId: string, programId: string, documentId: string, expectedGovernanceRevision: number, patch: Partial<DocumentValidity>): Promise<GovernanceDocumentResponse> {
     const record = await this.findRecord(actorId, programId, documentId);
     this.assertExpectedRevision(record, expectedGovernanceRevision);
-    const validity = { ...record.validity, ...patch, evidence: record.validity.evidence ?? [], manuallyOverridden: patch.manuallyOverridden ?? true };
+    const validity = { ...record.validity, ...patch, evidence: record.validity.evidence ?? [], manuallyOverridden: patch.manuallyOverridden ?? true } as DocumentValidity;
     this.validityCalculator.assertValid(validity);
     const before = record.validity;
-    const updated = await this.model.findOneAndUpdate({ _id: record._id, governanceRevision: expectedGovernanceRevision }, { $set: { validity }, $inc: { governanceRevision: 1 } }, { new: true }).exec();
+    const updated = await this.documentStore.updateGuarded(record.id, { governanceRevision: expectedGovernanceRevision }, { set: { validity: validity as unknown as Record<string, unknown> }, bumpGovernanceRevision: true });
     if (!updated) throw this.concurrentChange();
-    await this.events.append({ programId, governanceDocumentId: updated._id.toString(), documentId, actorId, eventType: 'validity.updated', before: { validity: before }, after: { validity } });
+    await this.events.append({ programId, governanceDocumentId: updated.id, documentId, actorId, eventType: 'validity.updated', before: { validity: before }, after: { validity } });
     return this.toResponse(updated);
   }
 
@@ -115,9 +112,12 @@ export class GovernanceDocumentService {
     const record = await this.findRecord(actorId, programId, documentId);
     this.assertExpectedRevision(record, expectedGovernanceRevision);
     if (record.status === 'archived') return this.toResponse(record);
-    const updated = await this.model.findOneAndUpdate({ _id: record._id, governanceRevision: expectedGovernanceRevision, status: { $ne: 'archived' } }, { $set: { status: 'archived', archivedAt: new Date(), archivedBy: new Types.ObjectId(actorId), archiveReason: reason }, $inc: { governanceRevision: 1 } }, { new: true }).exec();
+    const updated = await this.documentStore.updateGuarded(record.id, { governanceRevision: expectedGovernanceRevision, statusNotEquals: 'archived' }, {
+      set: { status: 'archived', archivedAt: new Date(), archivedBy: actorId, archiveReason: reason ?? null },
+      bumpGovernanceRevision: true,
+    });
     if (!updated) throw this.concurrentChange();
-    await this.events.append({ programId, governanceDocumentId: updated._id.toString(), documentId, actorId, eventType: 'document.archived', reason, before: { status: record.status }, after: { status: 'archived' } });
+    await this.events.append({ programId, governanceDocumentId: updated.id, documentId, actorId, eventType: 'document.archived', reason, before: { status: record.status }, after: { status: 'archived' } });
     return this.toResponse(updated);
   }
 
@@ -125,20 +125,20 @@ export class GovernanceDocumentService {
     const record = await this.findRecord(actorId, programId, documentId);
     this.assertExpectedRevision(record, expectedGovernanceRevision);
     if (record.status !== 'archived') return this.toResponse(record);
-    const updated = await this.model.findOneAndUpdate({ _id: record._id, governanceRevision: expectedGovernanceRevision, status: 'archived' }, { $set: { status: 'captured' }, $unset: { archivedAt: '', archivedBy: '', archiveReason: '' }, $inc: { governanceRevision: 1 } }, { new: true }).exec();
+    const updated = await this.documentStore.updateGuarded(record.id, { governanceRevision: expectedGovernanceRevision, statusEquals: 'archived' }, {
+      set: { status: 'captured' },
+      unset: ['archivedAt', 'archivedBy', 'archiveReason'],
+      bumpGovernanceRevision: true,
+    });
     if (!updated) throw this.concurrentChange();
-    await this.events.append({ programId, governanceDocumentId: updated._id.toString(), documentId, actorId, eventType: 'document.restored', before: { status: 'archived' }, after: { status: 'captured' } });
+    await this.events.append({ programId, governanceDocumentId: updated.id, documentId, actorId, eventType: 'document.restored', before: { status: 'archived' }, after: { status: 'captured' } });
     return this.toResponse(updated);
   }
 
   async archiveFromWorkspaceDeletion(programId: string, documentId: string, actorId: string, integrationEvent: { id: string; occurredAt: Date }): Promise<void> {
-    const record = await this.model.findOneAndUpdate(
-      { programId: new Types.ObjectId(programId), documentId: new Types.ObjectId(documentId), status: { $ne: 'archived' }, lastIntegrationEventId: { $ne: integrationEvent.id } },
-      { $set: { status: 'archived', archivedAt: integrationEvent.occurredAt, archivedBy: new Types.ObjectId(actorId), archiveReason: 'Workspace document deleted', lastIntegrationEventId: integrationEvent.id, lastIntegrationEventAt: integrationEvent.occurredAt }, $inc: { governanceRevision: 1 } },
-      { new: true },
-    ).exec();
+    const record = await this.documentStore.archiveFromWorkspaceDeletion(programId, documentId, actorId, integrationEvent);
     if (!record) return;
-    await this.events.append({ programId, governanceDocumentId: record._id.toString(), documentId, actorId, actorType: 'integration', eventType: 'document.archived', occurredAt: integrationEvent.occurredAt, reason: 'Workspace document deleted', after: { status: 'archived' }, deduplicationKey: `workspace-deleted:${integrationEvent.id}` });
+    await this.events.append({ programId, governanceDocumentId: record.id, documentId, actorId, actorType: 'integration', eventType: 'document.archived', occurredAt: integrationEvent.occurredAt, reason: 'Workspace document deleted', after: { status: 'archived' }, deduplicationKey: `workspace-deleted:${integrationEvent.id}` });
   }
 
   async deleteGovernance(actorId: string, programId: string, documentId: string, confirm: boolean, expectedGovernanceRevision: number): Promise<void> {
@@ -146,43 +146,36 @@ export class GovernanceDocumentService {
     const record = await this.findRecord(actorId, programId, documentId);
     this.assertExpectedRevision(record, expectedGovernanceRevision);
     if (record.status !== 'archived') throw new BadRequestException(ErrorCode.VALIDATION_ERROR, 'Archive document governance before deletion');
-    const result = await this.model.deleteOne({ _id: record._id, governanceRevision: expectedGovernanceRevision, status: 'archived' }).exec();
-    if (result.deletedCount !== 1) throw this.concurrentChange();
-    await this.events.append({ programId, governanceDocumentId: record._id.toString(), documentId, actorId, eventType: 'document.governance_deleted' });
+    const deleted = await this.documentStore.deleteByIdGuarded(record.id, expectedGovernanceRevision);
+    if (!deleted) throw this.concurrentChange();
+    await this.events.append({ programId, governanceDocumentId: record.id, documentId, actorId, eventType: 'document.governance_deleted' });
   }
 
-  private async findAccessible(actorId: string, programId: string, documentId: string): Promise<GovernanceDocumentDocument> {
-    return this.findRecord(actorId, programId, documentId);
-  }
-
-  private async accessibleWorkspaceIds(actorId: string, programId: string): Promise<Types.ObjectId[]> {
+  private async accessibleWorkspaceIds(actorId: string, programId: string): Promise<string[]> {
     const accessibleScopeIds = await this.access.getAccessibleScopeIds(actorId, programId);
-    const scopeObjectIds = accessibleScopeIds.filter((id) => id !== '*').map((id) => new Types.ObjectId(id));
-    const filter = accessibleScopeIds.includes('*')
-      ? { programId: new Types.ObjectId(programId), enabled: true }
-      : { programId: new Types.ObjectId(programId), enabled: true, $or: [{ visibility: 'program_shared' }, { scopeIds: { $in: scopeObjectIds } }] };
-    return (await this.bindings.find(filter).select({ workspaceId: 1 }).lean().exec()).map((binding) => binding.workspaceId);
+    const bindings = await this.bindingStore.listEnabled(programId, accessibleScopeIds.includes('*') ? '*' : accessibleScopeIds);
+    return bindings.map((binding) => binding.workspaceId);
   }
 
-  private async assertBindingAccess(actorId: string, programId: string, workspaceId: Types.ObjectId): Promise<void> {
+  private async assertBindingAccess(actorId: string, programId: string, workspaceId: string): Promise<void> {
     const allowed = await this.accessibleWorkspaceIds(actorId, programId);
-    if (!allowed.some((id) => id.equals(workspaceId))) throw new NotFoundException(ErrorCode.GOVERNANCE_DOCUMENT_NOT_FOUND);
+    if (!allowed.includes(workspaceId)) throw new NotFoundException(ErrorCode.GOVERNANCE_DOCUMENT_NOT_FOUND);
   }
 
-  private async toResponse(record: Pick<GovernanceDocument, keyof GovernanceDocument> & { _id: Types.ObjectId }): Promise<GovernanceDocumentResponse> {
-    const document = await this.workspaceDocuments.findOne({ id: record.documentId.toString(), workspaceId: record.workspaceId.toString(), isFolder: false });
+  async toResponse(record: GovernanceDocumentRecord): Promise<GovernanceDocumentResponse> {
+    const document = await this.workspaceDocuments.findOne({ id: record.documentId, workspaceId: record.workspaceId, isFolder: false });
     if (!document) throw new NotFoundException(ErrorCode.GOVERNANCE_DOCUMENT_NOT_FOUND);
     const iso = (value?: Date): string | undefined => value?.toISOString();
     return {
-      id: record._id.toString(),
-      programId: record.programId.toString(),
-      documentId: record.documentId.toString(),
-      workspaceId: record.workspaceId.toString(),
+      id: record.id,
+      programId: record.programId,
+      documentId: record.documentId,
+      workspaceId: record.workspaceId,
       document: { originalName: document.originalName, mimeType: document.mimeType, type: document.type, sourceUrl: document.sourceUrl, contentHash: document.contentHash, status: document.status, indexingStatus: document.indexingStatus, updatedAt: iso(document.updatedAt) ?? '' },
-      governance: { status: record.status, revision: record.governanceRevision, validity: record.validity, tags: record.tags ?? [], metadata: record.metadata ?? {}, ownerUserId: record.ownerUserId?.toString(), ownerScopeId: record.ownerScopeId?.toString(), archivedAt: iso(record.archivedAt), archiveReason: record.archiveReason, createdAt: iso(record.createdAt) ?? '', updatedAt: iso(record.updatedAt) ?? '' },
+      governance: { status: record.status, revision: record.governanceRevision, validity: record.validity as unknown as DocumentValidity, tags: record.tags ?? [], metadata: record.metadata ?? {}, ownerUserId: record.ownerUserId, ownerScopeId: record.ownerScopeId, archivedAt: iso(record.archivedAt), archiveReason: record.archiveReason, createdAt: iso(record.createdAt) ?? '', updatedAt: iso(record.updatedAt) ?? '' },
     };
   }
 
-  private assertExpectedRevision(record: GovernanceDocumentDocument, expected: number): void { if (record.governanceRevision !== expected) throw this.concurrentChange(); }
+  private assertExpectedRevision(record: GovernanceDocumentRecord, expected: number): void { if (record.governanceRevision !== expected) throw this.concurrentChange(); }
   private concurrentChange(): ConflictException { return new ConflictException(ErrorCode.VALIDATION_ERROR, 'Document governance changed concurrently; reload and retry'); }
 }

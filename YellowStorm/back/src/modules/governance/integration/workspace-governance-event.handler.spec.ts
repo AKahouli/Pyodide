@@ -3,9 +3,9 @@ import { WorkspaceIntegrationEvents } from '@modules/integration-events/contract
 import { WorkspaceGovernanceEventHandler } from './workspace-governance-event.handler';
 
 describe('WorkspaceGovernanceEventHandler', () => {
-  const programId = new Types.ObjectId();
+  const programId = new Types.ObjectId().toString();
   const documentId = new Types.ObjectId().toString();
-  const binding = { _id: new Types.ObjectId(), programId, ingestionMode: 'assisted', createdBy: new Types.ObjectId() };
+  const binding = { id: new Types.ObjectId().toString(), programId, ingestionMode: 'assisted', createdBy: new Types.ObjectId().toString() };
   const payload = { workspaceId: new Types.ObjectId().toString(), documentId, documentType: 'doc' as const, originalName: 'Policy.pdf', contentHash: 'hash-1', indexingAttemptId: 'attempt-1' };
 
   function createHandler(eventConsumerEnabled = true) {
@@ -27,20 +27,20 @@ describe('WorkspaceGovernanceEventHandler', () => {
     const { handler, documents } = createHandler();
     const occurredAt = new Date();
     await handler.handle({ eventId: 'registered-1', eventType: WorkspaceIntegrationEvents.DocumentRegisteredV1, occurredAt, payload } as never);
-    expect(documents.upsertFromWorkspace).toHaveBeenCalledWith(programId.toString(), documentId, binding.createdBy.toString(), { id: 'registered-1', occurredAt });
+    expect(documents.upsertFromWorkspace).toHaveBeenCalledWith(programId, documentId, binding.createdBy, { id: 'registered-1', occurredAt });
   });
 
   it('enqueues document-keyed intelligence after indexing is ready', async () => {
     const { handler, intelligence } = createHandler();
     await handler.handle({ eventId: 'ready-1', eventType: WorkspaceIntegrationEvents.IndexingReadyV1, occurredAt: new Date(), payload } as never);
-    expect(intelligence.enqueue).toHaveBeenCalledWith(expect.objectContaining({ programId: programId.toString(), documentId, jobType: 'technical_metadata', inputHash: expect.any(String) }));
+    expect(intelligence.enqueue).toHaveBeenCalledWith(expect.objectContaining({ programId: programId, documentId, jobType: 'technical_metadata', inputHash: expect.any(String) }));
   });
 
   it('archives governance without loading a deleted workspace document', async () => {
     const { handler, documents, intelligence } = createHandler();
     const occurredAt = new Date();
     await handler.handle({ eventId: 'deleted-1', eventType: WorkspaceIntegrationEvents.DocumentDeletedV1, occurredAt, payload } as never);
-    expect(documents.archiveFromWorkspaceDeletion).toHaveBeenCalledWith(programId.toString(), documentId, binding.createdBy.toString(), { id: 'deleted-1', occurredAt });
+    expect(documents.archiveFromWorkspaceDeletion).toHaveBeenCalledWith(programId, documentId, binding.createdBy, { id: 'deleted-1', occurredAt });
     expect(documents.upsertFromWorkspace).not.toHaveBeenCalled();
     expect(intelligence.enqueue).not.toHaveBeenCalled();
   });

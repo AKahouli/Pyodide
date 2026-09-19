@@ -12,7 +12,7 @@ import { UpdateDocumentValidityDto } from '../dto/update-document-validity.dto';
 import { DocumentLifecycleTransitionDto } from '../dto/document-lifecycle-transition.dto';
 import { ArchiveGovernanceDocumentDto } from '../dto/archive-governance-document.dto';
 import { DeleteGovernanceDocumentDto } from '../dto/delete-governance-document.dto';
-import type { GovernanceDocumentLifecycleStatus } from '../schemas/governance-document.schema';
+import type { GovernanceDocumentLifecycleStatus } from '../domain/governance-types';
 import { GovernanceTemporalCandidateService } from '../services/governance-temporal-candidate.service';
 import { DecideTemporalCandidateDto } from '../dto/decide-temporal-candidate.dto';
 
@@ -84,6 +84,6 @@ export class GovernanceDocumentController {
   @Get(':documentId/events') @RequirePermissions([Permissions.GOVERNANCE_READ, Permissions.GOVERNANCE_ALL], 'any')
   async listEvents(@CurrentUser() user: UserDocument, @Param('programId') programId: string, @Param('documentId') documentId: string) {
     const record = await this.documents.findRecord(user._id.toString(), programId, documentId);
-    return this.events.list(record._id.toString());
+    return this.events.list(record.id);
   }
 }

@@ -2,12 +2,35 @@ import { Types } from 'mongoose';
 import { GovernanceDocumentReviewSchedulerService } from './governance-document-review-scheduler.service';
 
 describe('GovernanceDocumentReviewSchedulerService', () => {
+  function document(overrides: Record<string, unknown> = {}) {
+    return { id: new Types.ObjectId().toString(), programId: new Types.ObjectId().toString(), documentId: new Types.ObjectId().toString(), validity: { businessStatus: 'valid', nextReviewAt: new Date('2026-07-01T00:00:00.000Z') }, ...overrides };
+  }
+
   it('marks due documents once and emits a deduplicated event', async () => {
-    const document = { _id: new Types.ObjectId(), programId: new Types.ObjectId(), documentId: new Types.ObjectId(), validity: { businessStatus: 'valid', nextReviewAt: new Date('2026-07-01T00:00:00.000Z') } };
-    const model = { find: jest.fn(() => ({ sort: jest.fn().mockReturnThis(), limit: jest.fn().mockReturnThis(), exec: jest.fn().mockResolvedValue([document]) })), updateOne: jest.fn(() => ({ exec: jest.fn().mockResolvedValue({ modifiedCount: 1 }) })) };
+    const doc = document();
+    const documentStore = { listDueForReview: jest.fn().mockResolvedValue([doc]), markNeedsReviewIfUnchanged: jest.fn().mockResolvedValue(true) };
     const events = { append: jest.fn().mockResolvedValue(undefined) };
-    const service = new GovernanceDocumentReviewSchedulerService(model as never, events as never, { isEnabled: jest.fn().mockReturnValue(true) } as never);
+    const service = new GovernanceDocumentReviewSchedulerService(documentStore as never, events as never, { isEnabled: jest.fn().mockReturnValue(true) } as never);
     await expect(service.run(new Date('2026-07-30T00:00:00.000Z'))).resolves.toBe(1);
-    expect(events.append).toHaveBeenCalledWith(expect.objectContaining({ documentId: document.documentId.toString(), eventType: 'validity.review_due' }));
+    expect(documentStore.markNeedsReviewIfUnchanged).toHaveBeenCalledWith(doc.id, 'valid', new Date('2026-07-01T00:00:00.000Z'));
+    expect(events.append).toHaveBeenCalledWith(expect.objectContaining({ documentId: doc.documentId, eventType: 'validity.review_due', deduplicationKey: 'review-due:2026-07-01T00:00:00.000Z' }));
+  });
+
+  it('skips a document and emits no event when the optimistic guard loses the race', async () => {
+    const doc = document();
+    const documentStore = { listDueForReview: jest.fn().mockResolvedValue([doc]), markNeedsReviewIfUnchanged: jest.fn().mockResolvedValue(false) };
+    const events = { append: jest.fn().mockResolvedValue(undefined) };
+    const service = new GovernanceDocumentReviewSchedulerService(documentStore as never, events as never, { isEnabled: jest.fn().mockReturnValue(true) } as never);
+    // Race simulation: another runner flipped the document between the
+    // selection and the guarded update (rowCount 0 in PostgreSQL terms).
+    await expect(service.run(new Date('2026-07-30T00:00:00.000Z'))).resolves.toBe(0);
+    expect(events.append).not.toHaveBeenCalled();
+  });
+
+  it('does nothing when the validity intelligence feature gate is off', async () => {
+    const documentStore = { listDueForReview: jest.fn() };
+    const service = new GovernanceDocumentReviewSchedulerService(documentStore as never, { append: jest.fn() } as never, { isEnabled: jest.fn().mockReturnValue(false) } as never);
+    await expect(service.scheduleDueReviews()).resolves.toBeUndefined();
+    expect(documentStore.listDueForReview).not.toHaveBeenCalled();
   });
 });

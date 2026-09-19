@@ -7,27 +7,24 @@ const programId = '507f1f77bcf86cd799439012';
 const scopeId = '507f1f77bcf86cd799439013';
 const deploymentId = '507f1f77bcf86cd799439014';
 const revisionId = '507f1f77bcf86cd799439015';
-
-function queryResult<T>(value: T) {
-  return { lean: jest.fn().mockReturnValue({ exec: jest.fn().mockResolvedValue(value) }) };
-}
+const primaryAgentId = '507f1f77bcf86cd799439016';
 
 describe('GovernedConversationService create', () => {
   function buildService(options: { scope?: unknown | null; deployment?: unknown; revision?: unknown } = {}) {
-    const scope = options.scope === undefined ? { _id: { toString: () => scopeId }, programId: { toString: () => programId }, name: 'Municipal credit scope', status: 'active' } : options.scope;
-    const deployment = options.deployment ?? { _id: { toString: () => deploymentId }, status: 'published', currentPublishedRevisionId: { toString: () => revisionId } };
-    const revision = options.revision ?? { _id: { toString: () => revisionId }, deploymentId: { toString: () => deploymentId }, status: 'published', revisionNumber: 3, agentId: { toString: () => '507f1f77bcf86cd799439016' }, allowedAgentIds: [], workspaceIds: [] };
-    const scopeModel = { findOne: jest.fn().mockReturnValue(queryResult(scope)) };
-    const deploymentModel = { findOne: jest.fn().mockReturnValue(queryResult(deployment)) };
-    const revisionModel = { findOne: jest.fn().mockReturnValue(queryResult(revision)) };
+    const scope = options.scope === undefined ? { id: scopeId, programId, name: 'Municipal credit scope', status: 'active' } : options.scope;
+    const deployment = options.deployment ?? { id: deploymentId, scopeId, status: 'published', currentPublishedRevisionId: revisionId };
+    const revision = options.revision ?? { id: revisionId, deploymentId, status: 'published', revisionNumber: 3, agentId: primaryAgentId, allowedAgentIds: [], workspaceIds: [] };
+    const scopeStore = { findById: jest.fn().mockResolvedValue(scope) };
+    const deploymentStore = { listPublishedByScopes: jest.fn().mockResolvedValue(deployment ? [deployment] : []) };
+    const revisionStore = { findByDeploymentAndId: jest.fn().mockResolvedValue(revision) };
     const agentRepository = { findByIds: jest.fn().mockResolvedValue([]) };
     const audienceService = { assertUserAuthorized: jest.fn().mockResolvedValue(undefined) };
     const conversationService = { createGoverned: jest.fn().mockResolvedValue({ id: 'conversation-1' }) };
     const featureVisibility = { isEnabled: jest.fn().mockReturnValue(true) };
     const service = new GovernedConversationService(
-      scopeModel as never,
-      deploymentModel as never,
-      revisionModel as never,
+      scopeStore as never,
+      deploymentStore as never,
+      revisionStore as never,
       agentRepository as never,
       audienceService as never,
       conversationService as never,
@@ -57,7 +54,7 @@ describe('GovernedConversationService create', () => {
   });
 
   it('rejects scopes without a published revision', async () => {
-    const { service, conversationService } = buildService({ deployment: { _id: { toString: () => deploymentId }, status: 'published' } });
+    const { service, conversationService } = buildService({ deployment: { id: deploymentId, scopeId, status: 'published' } });
 
     await expect(service.create(userId, dto)).rejects.toBeInstanceOf(ConflictException);
     expect(conversationService.createGoverned).not.toHaveBeenCalled();

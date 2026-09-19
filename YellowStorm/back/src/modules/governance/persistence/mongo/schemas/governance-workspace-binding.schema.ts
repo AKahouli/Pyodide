@@ -1,6 +1,6 @@
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
 import { HydratedDocument, Types } from 'mongoose';
-import type { DocumentValidityMode } from '../domain/document-validity';
+import type { DocumentValidityMode } from '../../../domain/document-validity';
 
 export type GovernanceWorkspaceBindingDocument = HydratedDocument<GovernanceWorkspaceBinding>;
 export type GovernanceWorkspaceIngestionMode = 'manual' | 'assisted' | 'automatic';

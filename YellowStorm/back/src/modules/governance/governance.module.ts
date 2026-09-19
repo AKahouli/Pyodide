@@ -1,5 +1,4 @@
 import { Module, forwardRef } from '@nestjs/common';
-import { MongooseModule } from '@nestjs/mongoose';
 import { AuthorizationModule } from '@modules/authorization';
 import { LoggerModule } from '@modules/logger';
 import { ConversationModule } from '@modules/conversation/conversation.module';
@@ -7,6 +6,7 @@ import { WidgetChatModule } from '@modules/widget-chat/widget-chat.module';
 import { WhatsAppModule } from '@modules/whatsapp';
 import { TelegramModule } from '@modules/telegram';
 import { UserGroupModule } from '@modules/user-group';
+import { UserModule } from '@modules/user/user.module';
 import { GovernanceProgramController } from './controllers/governance-program.controller';
 import { GovernanceScopeController } from './controllers/governance-scope.controller';
 import { GovernanceScopeAudienceController } from './controllers/governance-scope-audience.controller';
@@ -32,29 +32,16 @@ import { GovernanceMetricService } from './services/governance-metric.service';
 import { GovernanceChannelReadinessService } from './services/governance-channel-readiness.service';
 import { GovernanceDraftPreparationService } from './services/governance-draft-preparation.service';
 import { GovernanceScopeOverviewService } from './services/governance-scope-overview.service';
-import { GovernanceProgram, GovernanceProgramSchema } from './schemas/governance-program.schema';
-import { GovernanceScope, GovernanceScopeSchema } from './schemas/governance-scope.schema';
-import { GovernanceDocument, GovernanceDocumentSchema } from './schemas/governance-document.schema';
-import { GovernanceDocumentEvent, GovernanceDocumentEventSchema } from './schemas/governance-document-event.schema';
-import { GovernanceMembership, GovernanceMembershipSchema } from './schemas/governance-membership.schema';
-import { GovernanceDeployment, GovernanceDeploymentSchema } from './schemas/governance-deployment.schema';
-import { GovernanceDeploymentRevision, GovernanceDeploymentRevisionSchema } from './schemas/governance-deployment-revision.schema';
-import { GovernanceDryRun, GovernanceDryRunSchema } from './schemas/governance-dry-run.schema';
-import { GovernanceMetric, GovernanceMetricSchema } from './schemas/governance-metric.schema';
-import { GovernanceWorkspaceBinding, GovernanceWorkspaceBindingSchema } from './schemas/governance-workspace-binding.schema';
 import { GovernanceWorkspaceBindingController } from './controllers/governance-workspace-binding.controller';
 import { GovernanceWorkspaceBindingService } from './services/governance-workspace-binding.service';
 import { WorkspaceGovernanceEventHandler } from './integration/workspace-governance-event.handler';
 import { GovernanceDocumentTransitionService } from './services/governance-document-transition.service';
 import { GovernanceDocumentEventService } from './services/governance-document-event.service';
-import { GovernancePublicationAttempt, GovernancePublicationAttemptSchema } from './schemas/governance-publication-attempt.schema';
-import { User, UserSchema } from '@modules/user/schemas/user.schema';
 import { GovernanceRuntimeModule } from './governance-runtime.module';
 import { WorkspaceModule } from '@modules/workspace/workspace.module';
 import { IntegrationEventsModule } from '@modules/integration-events/integration-events.module';
 import { GovernanceWorkspaceReconciliationService } from './services/governance-workspace-reconciliation.service';
 import { DocumentValidityCalculatorService } from './services/document-validity-calculator.service';
-import { GovernanceReconciliationRun, GovernanceReconciliationRunSchema } from './schemas/governance-reconciliation-run.schema';
 import { TemporalCandidateValidatorService } from './services/temporal-candidate-validator.service';
 import { GovernanceDocumentReviewSchedulerService } from './services/governance-document-review-scheduler.service';
 import { KnowledgeIntelligenceModule } from '@modules/knowledge-intelligence/knowledge-intelligence.module';
@@ -76,25 +63,14 @@ import { AvailabilityEvaluator } from './services/knowledge-evaluators/availabil
 import { IntegrityEvaluator } from './services/knowledge-evaluators/integrity.evaluator';
 import { SearchQualityEvaluator } from './services/knowledge-evaluators/search-quality.evaluator';
 import { GovernanceQualityEvaluator } from './services/knowledge-evaluators/governance-quality.evaluator';
+import { PgGovernancePersistenceModule } from './persistence/postgres/pg-governance-persistence.module';
+// MongoDB rollback: replace PgGovernancePersistenceModule with MongoGovernancePersistenceModule
+// from './persistence/mongo/mongo-governance-persistence.module' and revert the store seams.
 
 @Module({
   imports: [
     GovernanceRuntimeModule,
-    MongooseModule.forFeature([
-      { name: GovernanceProgram.name, schema: GovernanceProgramSchema },
-      { name: GovernanceScope.name, schema: GovernanceScopeSchema },
-      { name: GovernanceDocument.name, schema: GovernanceDocumentSchema },
-      { name: GovernanceDocumentEvent.name, schema: GovernanceDocumentEventSchema },
-      { name: GovernanceWorkspaceBinding.name, schema: GovernanceWorkspaceBindingSchema },
-      { name: GovernanceReconciliationRun.name, schema: GovernanceReconciliationRunSchema },
-      { name: GovernanceMembership.name, schema: GovernanceMembershipSchema },
-      { name: GovernanceDeployment.name, schema: GovernanceDeploymentSchema },
-      { name: GovernanceDeploymentRevision.name, schema: GovernanceDeploymentRevisionSchema },
-      { name: GovernanceDryRun.name, schema: GovernanceDryRunSchema },
-      { name: GovernanceMetric.name, schema: GovernanceMetricSchema },
-      { name: GovernancePublicationAttempt.name, schema: GovernancePublicationAttemptSchema },
-      { name: User.name, schema: UserSchema },
-    ]),
+    PgGovernancePersistenceModule,
     WorkspaceModule,
     AuthorizationModule,
     forwardRef(() => ConversationModule),
@@ -102,6 +78,7 @@ import { GovernanceQualityEvaluator } from './services/knowledge-evaluators/gove
     WhatsAppModule,
     TelegramModule,
     UserGroupModule,
+    UserModule,
     LoggerModule,
     IntegrationEventsModule,
     KnowledgeIntelligenceModule,

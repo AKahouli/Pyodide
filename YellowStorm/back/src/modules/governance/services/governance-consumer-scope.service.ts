@@ -1,13 +1,9 @@
-import { Injectable } from '@nestjs/common';
+import { Inject, Injectable } from '@nestjs/common';
 import { FeatureVisibilityService } from '@modules/system/feature-visibility.service';
-import { InjectModel } from '@nestjs/mongoose';
-import { Model } from 'mongoose';
 import { ServiceUnavailableException } from '@modules/exceptions';
 import { ErrorCode } from '@modules/exceptions/constants/error-codes';
 import { AgentRepository } from '@modules/agent/repositories/agent.repository';
-import { GovernanceDeployment, GovernanceDeploymentDocument } from '../schemas/governance-deployment.schema';
-import { GovernanceDeploymentRevision, GovernanceDeploymentRevisionDocument } from '../schemas/governance-deployment-revision.schema';
-import { GovernanceScope, GovernanceScopeDocument } from '../schemas/governance-scope.schema';
+import { DEPLOYMENT_STORE, REVISION_STORE, SCOPE_STORE, type DeploymentStore, type RevisionStore, type ScopeStore } from '../persistence';
 import { GovernanceScopeAudienceService } from './governance-scope-audience.service';
 
 export interface AvailableGovernedScope {
@@ -29,9 +25,9 @@ export interface AvailableGovernedScope {
 @Injectable()
 export class GovernanceConsumerScopeService {
   constructor(
-    @InjectModel(GovernanceScope.name) private readonly scopeModel: Model<GovernanceScopeDocument>,
-    @InjectModel(GovernanceDeployment.name) private readonly deploymentModel: Model<GovernanceDeploymentDocument>,
-    @InjectModel(GovernanceDeploymentRevision.name) private readonly revisionModel: Model<GovernanceDeploymentRevisionDocument>,
+    @Inject(SCOPE_STORE) private readonly scopeStore: ScopeStore,
+    @Inject(DEPLOYMENT_STORE) private readonly deploymentStore: DeploymentStore,
+    @Inject(REVISION_STORE) private readonly revisionStore: RevisionStore,
     private readonly agentRepository: AgentRepository,
     private readonly audienceService: GovernanceScopeAudienceService,
     private readonly featureVisibility: FeatureVisibilityService,
@@ -41,38 +37,40 @@ export class GovernanceConsumerScopeService {
     if (!this.featureVisibility.isEnabled('governedScopeCarousel')) {
       throw new ServiceUnavailableException(ErrorCode.SERVICE_UNAVAILABLE, 'Governed scope catalogue is not enabled');
     }
-    const scopes = await this.scopeModel.find({ status: 'active' }).select('programId name type metadata audience').lean().exec();
-    const authorizedScopes = [] as typeof scopes;
-    for (const scope of scopes) {
-      if (await this.audienceService.isUserAuthorized(userId, scope._id.toString())) authorizedScopes.push(scope);
+    // Active scopes are program-independent (consumer catalogue).
+    const activeScopes = await this.scopeStore.listActive();
+    const authorizedScopes = [] as typeof activeScopes;
+    for (const scope of activeScopes) {
+      if (await this.audienceService.isUserAuthorized(userId, scope.id)) authorizedScopes.push(scope);
     }
     if (!authorizedScopes.length) return [];
-    const deployments = await this.deploymentModel.find({ scopeId: { $in: authorizedScopes.map((scope) => scope._id) }, status: 'published', currentPublishedRevisionId: { $exists: true } }).lean().exec();
-    const revisions = await this.revisionModel.find({ _id: { $in: deployments.map((deployment) => deployment.currentPublishedRevisionId) }, status: 'published' }).lean().exec();
-    const revisionById = new Map(revisions.map((revision) => [revision._id.toString(), revision]));
-    const agents = await this.agentRepository.findByIds(revisions.map((revision) => String(revision.agentId)), { activeOnly: true });
+    const deployments = await this.deploymentStore.listPublishedByScopes(authorizedScopes.map((scope) => scope.id));
+    const revisions = await this.revisionStore.listByIds(deployments.map((deployment) => deployment.currentPublishedRevisionId).filter((id): id is string => Boolean(id)));
+    const publishedRevisions = revisions.filter((revision) => revision.status === 'published');
+    const revisionById = new Map(publishedRevisions.map((revision) => [revision.id, revision]));
+    const agents = await this.agentRepository.findByIds(publishedRevisions.map((revision) => revision.agentId ?? '').filter(Boolean), { activeOnly: true });
     const agentById = new Map(agents.map((agent) => [agent._id.toString(), agent]));
-    const scopeById = new Map(authorizedScopes.map((scope) => [scope._id.toString(), scope]));
+    const scopeById = new Map(authorizedScopes.map((scope) => [scope.id, scope]));
 
     return deployments.flatMap((deployment) => {
-      const scope = scopeById.get(deployment.scopeId.toString());
-      const revision = deployment.currentPublishedRevisionId ? revisionById.get(deployment.currentPublishedRevisionId.toString()) : undefined;
-      const agent = revision ? agentById.get(revision.agentId.toString()) : undefined;
+      const scope = scopeById.get(deployment.scopeId);
+      const revision = deployment.currentPublishedRevisionId ? revisionById.get(deployment.currentPublishedRevisionId) : undefined;
+      const agent = revision ? agentById.get(revision.agentId ?? '') : undefined;
       if (!scope || !revision || !agent) return [];
       const metadata = (scope.metadata ?? {}) as { description?: string; presentation?: AvailableGovernedScope['presentation'] };
-      const allowedAgentIds = revision.allowedAgentIds?.length ? revision.allowedAgentIds : [revision.agentId];
+      const allowedAgentIds = revision.allowedAgentIds?.length ? revision.allowedAgentIds : [revision.agentId ?? ''];
       return [{
-        scopeId: scope._id.toString(),
-        programId: scope.programId.toString(),
+        scopeId: scope.id,
+        programId: scope.programId,
         name: scope.name,
         type: scope.type,
         description: metadata.description,
-        deploymentId: deployment._id.toString(),
-        publishedRevisionId: revision._id.toString(),
+        deploymentId: deployment.id,
+        publishedRevisionId: revision.id,
         revisionNumber: revision.revisionNumber,
         publishedAt: revision.publishedAt?.toISOString(),
         primaryAgent: { id: agent._id.toString(), name: agent.name, description: agent.description },
-        agentCount: allowedAgentIds.length,
+        agentCount: allowedAgentIds.filter(Boolean).length,
         workspaceCount: revision.workspaceIds.length,
         presentation: metadata.presentation ?? {},
       }];

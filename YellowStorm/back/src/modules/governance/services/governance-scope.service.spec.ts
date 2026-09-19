@@ -6,26 +6,34 @@ const actorEmail = 'owner@example.com';
 const programId = '507f1f77bcf86cd799439012';
 const scopeId = '507f1f77bcf86cd799439013';
 
-function queryResult<T>(value: T) {
-  return { select: jest.fn().mockReturnThis(), lean: jest.fn().mockReturnThis(), exec: jest.fn().mockResolvedValue(value) };
-}
-
 describe('GovernanceScopeService delete authorization', () => {
-  function buildService(options: { isOwner?: boolean; accessibleScopeIds?: string[]; deleteMembership?: unknown; groupIds?: string[]; children?: unknown[]; deployments?: unknown[] } = {}) {
-    const scope = { _id: { toString: () => scopeId }, programId: { toString: () => programId }, name: 'Scope', metadata: { classification: { stage: 'pilot' } }, knowledge: undefined as unknown as Record<string, unknown>, save: jest.fn().mockResolvedValue(undefined) };
-    const scopeModel = {
-      create: jest.fn().mockResolvedValue(scope),
-      findOne: jest.fn().mockReturnValue(queryResult(scope)),
-      countDocuments: jest.fn().mockResolvedValue(0),
-      deleteOne: jest.fn().mockResolvedValue({}),
-      find: jest.fn().mockReturnValue(queryResult(options.children ?? [])),
+  function scopeRecord(overrides: Record<string, unknown> = {}) {
+    return { id: scopeId, programId, name: 'Scope', metadata: { classification: { stage: 'pilot' } }, agentIds: [], audience: { mode: 'restricted', userIds: [], groupIds: [] }, createdAt: new Date(), updatedAt: new Date(), ...overrides };
+  }
+
+  function buildService(options: { isOwner?: boolean; accessibleScopeIds?: string[]; memberships?: Array<Record<string, unknown>>; groupIds?: string[]; children?: string[]; deployments?: Array<Record<string, unknown>> } = {}) {
+    const scope = scopeRecord();
+    const scopeStore = {
+      insert: jest.fn().mockResolvedValue(scope),
+      findById: jest.fn().mockResolvedValue(scope),
+      findByProgramAndId: jest.fn().mockResolvedValue(scope),
+      listByProgram: jest.fn().mockResolvedValue([]),
+      listChildIds: jest.fn().mockResolvedValue(options.children ?? []),
+      update: jest.fn().mockImplementation(async (_id: string, patch: Record<string, unknown>) => scopeRecord({ ...scope, ...patch })),
+      setMetadataReviewStatus: jest.fn(),
+      countByProgram: jest.fn().mockResolvedValue(0),
+      deleteByIdAndProgram: jest.fn().mockResolvedValue(undefined),
     };
-    const documentModel = { updateMany: jest.fn().mockResolvedValue({}) };
-    const bindingModel = { deleteMany: jest.fn().mockResolvedValue({}), updateMany: jest.fn().mockResolvedValue({}) };
-    const membershipModel = {
-      find: jest.fn().mockReturnValue(queryResult((options.accessibleScopeIds ?? [scopeId]).map((id) => ({ scopeId: { toString: () => id } })))),
-      findOne: jest.fn().mockReturnValue(queryResult(options.deleteMembership ?? null)),
-      deleteMany: jest.fn().mockResolvedValue({}),
+    const documentStore = { clearOwnerScope: jest.fn().mockResolvedValue(undefined), listForProgramWorkspaces: jest.fn().mockResolvedValue([]) };
+    const bindingStore = { removeScopeFromProgramBindings: jest.fn().mockResolvedValue(undefined), listEnabled: jest.fn().mockResolvedValue([]) };
+    const membershipStore = {
+      findActiveForUser: jest.fn().mockImplementation(async (_programId: string, _userId: string, _groupIds: string[]) => {
+        if (options.memberships) return options.memberships;
+        const accessible = options.accessibleScopeIds ?? [scopeId];
+        return accessible.includes('*') ? [{ scopeId: null, role: 'program_admin' }] : accessible.map((id) => ({ scopeId: id, role: 'scope_editor' }));
+      }),
+      findActiveByUser: jest.fn().mockResolvedValue([]),
+      deleteByProgramAndScope: jest.fn().mockResolvedValue(undefined),
     };
     const programService = {
       assertOwnedProgram: jest.fn().mockResolvedValue(undefined),
@@ -33,94 +41,96 @@ describe('GovernanceScopeService delete authorization', () => {
         if (!options.isOwner) throw new Error('not owner');
       }),
     };
-    const deploymentModel = { updateOne: jest.fn().mockReturnValue({ exec: jest.fn().mockResolvedValue({ modifiedCount: 1 }) }), find: jest.fn().mockReturnValue(queryResult(options.deployments ?? [])), deleteMany: jest.fn().mockResolvedValue({}) };
-    const revisionModel = { deleteMany: jest.fn().mockResolvedValue({}) };
-    const dryRunModel = { deleteMany: jest.fn().mockResolvedValue({}) };
-    const metricModel = { deleteMany: jest.fn().mockResolvedValue({}) };
-    const publicationAttemptModel = { deleteMany: jest.fn().mockResolvedValue({}) };
+    const deploymentStore = {
+      listByProgram: jest.fn().mockResolvedValue(options.deployments ?? []),
+      suspendPublished: jest.fn().mockResolvedValue(true),
+      deleteByProgramAndScope: jest.fn().mockResolvedValue(undefined),
+    };
+    const revisionStore = { deleteByDeploymentIds: jest.fn().mockResolvedValue(undefined) };
+    const dryRunStore = { deleteByProgramAndScope: jest.fn().mockResolvedValue(undefined) };
+    const metricStore = { deleteByProgramAndScope: jest.fn().mockResolvedValue(undefined) };
+    const publicationAttemptStore = { deleteByProgramAndScope: jest.fn().mockResolvedValue(undefined) };
     const userGroupService = { findGroupIdsForMember: jest.fn().mockResolvedValue(options.groupIds ?? []) };
     const auditLogService = { logSuccess: jest.fn() };
     const draftPreparation = { prepare: jest.fn().mockResolvedValue(undefined) };
-    const service = new GovernanceScopeService(scopeModel as never, documentModel as never, bindingModel as never, membershipModel as never, deploymentModel as never, revisionModel as never, dryRunModel as never, metricModel as never, publicationAttemptModel as never, programService as never, userGroupService as never, auditLogService as never, draftPreparation as never);
-    return { service, scope, scopeModel, documentModel, bindingModel, membershipModel, deploymentModel, revisionModel, dryRunModel, metricModel, publicationAttemptModel, userGroupService, auditLogService, draftPreparation };
+    const service = new GovernanceScopeService(scopeStore as never, documentStore as never, bindingStore as never, membershipStore as never, deploymentStore as never, revisionStore as never, dryRunStore as never, metricStore as never, publicationAttemptStore as never, programService as never, userGroupService as never, auditLogService as never, draftPreparation as never);
+    return { service, scopeStore, documentStore, bindingStore, membershipStore, deploymentStore, revisionStore, dryRunStore, metricStore, publicationAttemptStore, userGroupService, auditLogService, draftPreparation };
   }
 
   it('allows the program owner to delete a scope', async () => {
-    const { service, scopeModel } = buildService({ isOwner: true });
+    const { service, scopeStore } = buildService({ isOwner: true });
 
     await service.delete(actorId, programId, scopeId);
 
-    expect(scopeModel.deleteOne).toHaveBeenCalled();
+    expect(scopeStore.deleteByIdAndProgram).toHaveBeenCalledWith(scopeId, programId);
   });
 
   it('allows a program admin to delete any accessible scope', async () => {
-    const { service, scopeModel } = buildService({ accessibleScopeIds: ['*'], deleteMembership: { _id: 'membership-1' } });
+    const { service, scopeStore } = buildService({ accessibleScopeIds: ['*'] });
 
     await service.delete(actorId, programId, scopeId);
 
-    expect(scopeModel.deleteOne).toHaveBeenCalled();
+    expect(scopeStore.deleteByIdAndProgram).toHaveBeenCalled();
   });
 
   it('allows a scope admin to delete their scope', async () => {
-    const { service, scopeModel } = buildService({ deleteMembership: { _id: 'membership-1' } });
+    const { service, scopeStore } = buildService({ memberships: [{ scopeId, role: 'scope_admin', status: 'active' }] });
 
     await service.delete(actorId, programId, scopeId);
 
-    expect(scopeModel.deleteOne).toHaveBeenCalled();
+    expect(scopeStore.deleteByIdAndProgram).toHaveBeenCalled();
   });
 
   it('rejects lower scope roles even when they can access the scope', async () => {
-    const { service, scopeModel } = buildService();
+    const { service, scopeStore } = buildService();
 
     await expect(service.delete(actorId, programId, scopeId)).rejects.toBeInstanceOf(ForbiddenException);
-    expect(scopeModel.deleteOne).not.toHaveBeenCalled();
+    expect(scopeStore.deleteByIdAndProgram).not.toHaveBeenCalled();
   });
 
   it('removes scope-owned governance records when deleting a scope', async () => {
-    const deploymentId = { toString: () => '507f1f77bcf86cd799439099' };
-    const { service, documentModel, bindingModel, membershipModel, deploymentModel, revisionModel, dryRunModel, metricModel, publicationAttemptModel } = buildService({ isOwner: true, deployments: [{ _id: deploymentId }] });
+    const deploymentId = '507f1f77bcf86cd799439099';
+    const { service, documentStore, bindingStore, membershipStore, deploymentStore, revisionStore, dryRunStore, metricStore, publicationAttemptStore } = buildService({ isOwner: true, deployments: [{ id: deploymentId, scopeId }] });
 
     await service.delete(actorId, programId, scopeId);
 
-    expect(bindingModel.deleteMany).toHaveBeenCalledWith(expect.objectContaining({ visibility: 'scope_specific' }));
-    expect(bindingModel.updateMany).toHaveBeenCalledWith(expect.objectContaining({ visibility: 'multi_scope' }), expect.any(Array));
-    expect(documentModel.updateMany).toHaveBeenCalledWith(expect.objectContaining({ ownerScopeId: expect.any(Object) }), expect.objectContaining({ $unset: expect.any(Object) }));
-    expect(membershipModel.deleteMany).toHaveBeenCalled();
-    expect(metricModel.deleteMany).toHaveBeenCalled();
-    expect(dryRunModel.deleteMany).toHaveBeenCalled();
-    expect(publicationAttemptModel.deleteMany).toHaveBeenCalled();
-    expect(revisionModel.deleteMany).toHaveBeenCalledWith({ deploymentId: { $in: [deploymentId] } });
-    expect(deploymentModel.deleteMany).toHaveBeenCalledWith({ _id: { $in: [deploymentId] } });
+    expect(bindingStore.removeScopeFromProgramBindings).toHaveBeenCalledWith(programId, scopeId);
+    expect(documentStore.clearOwnerScope).toHaveBeenCalledWith(programId, scopeId);
+    expect(membershipStore.deleteByProgramAndScope).toHaveBeenCalledWith(programId, scopeId);
+    expect(metricStore.deleteByProgramAndScope).toHaveBeenCalledWith(programId, scopeId);
+    expect(dryRunStore.deleteByProgramAndScope).toHaveBeenCalledWith(programId, scopeId);
+    expect(publicationAttemptStore.deleteByProgramAndScope).toHaveBeenCalledWith(programId, scopeId);
+    expect(revisionStore.deleteByDeploymentIds).toHaveBeenCalledWith([deploymentId]);
+    expect(deploymentStore.deleteByProgramAndScope).toHaveBeenCalledWith(programId, scopeId);
   });
 
   it('recursively deletes child scopes', async () => {
-    const childId = { toString: () => '507f1f77bcf86cd799439088' };
-    const { service, scopeModel } = buildService({ isOwner: true, children: [{ _id: childId }] });
-    scopeModel.find.mockReturnValueOnce(queryResult([{ _id: childId }])).mockReturnValueOnce(queryResult([]));
+    const childId = '507f1f77bcf86cd799439088';
+    const { service, scopeStore } = buildService({ isOwner: true, children: [childId] });
+    scopeStore.listChildIds.mockResolvedValueOnce([childId]).mockResolvedValueOnce([]);
 
     await service.delete(actorId, programId, scopeId);
 
-    expect(scopeModel.deleteOne).toHaveBeenCalledTimes(2);
+    expect(scopeStore.deleteByIdAndProgram).toHaveBeenCalledTimes(2);
   });
 
   it('suspends a published deployment when a scope is made inactive', async () => {
-    const { service, deploymentModel, auditLogService } = buildService({ isOwner: true });
+    const { service, deploymentStore, auditLogService } = buildService({ isOwner: true });
 
     await service.update(actorId, actorEmail, programId, scopeId, { status: 'inactive' });
 
-    expect(deploymentModel.updateOne).toHaveBeenCalledWith(
-      expect.objectContaining({ status: 'published' }),
-      { $set: { status: 'suspended' } },
-    );
+    expect(deploymentStore.suspendPublished).toHaveBeenCalledWith(programId, scopeId);
     expect(auditLogService.logSuccess).toHaveBeenCalledWith(expect.objectContaining({ action: 'governance.deployment.suspended' }));
   });
 
   it('deep-merges metadata updates without removing sibling metadata', async () => {
-    const { service, scope } = buildService({ isOwner: true });
+    const { service, scopeStore } = buildService({ isOwner: true });
 
     await service.update(actorId, actorEmail, programId, scopeId, { metadata: { description: 'Credit risk guidance', review: { status: 'in_review' } } });
 
-    expect(scope.metadata).toEqual({ description: 'Credit risk guidance', classification: { stage: 'pilot' }, review: { status: 'in_review' } });
+    expect(scopeStore.update).toHaveBeenCalledWith(scopeId, expect.objectContaining({
+      metadata: { description: 'Credit risk guidance', classification: { stage: 'pilot' }, review: { status: 'in_review' } },
+    }));
   });
 
   it('rejects invalid scope descriptions', async () => {
@@ -130,25 +140,23 @@ describe('GovernanceScopeService delete authorization', () => {
   });
 
   it('validates and normalizes scope descriptions on creation', async () => {
-    const { service, scopeModel } = buildService({ isOwner: true });
-    scopeModel.findOne.mockReturnValueOnce(queryResult(null)).mockReturnValueOnce(queryResult(null));
+    const { service, scopeStore } = buildService({ isOwner: true });
 
     await service.create(actorId, programId, { name: 'Scope', metadata: { description: '  Credit risk guidance  ' } });
-    expect(scopeModel.create).toHaveBeenCalledWith(expect.objectContaining({ metadata: { description: 'Credit risk guidance' } }));
+    expect(scopeStore.insert).toHaveBeenCalledWith(expect.objectContaining({ metadata: { description: 'Credit risk guidance' } }));
 
     await expect(service.create(actorId, programId, { name: 'Other scope', metadata: { description: 42 } })).rejects.toBeInstanceOf(ValidationException);
   });
 
   it('normalizes knowledge settings on creation', async () => {
-    const { service, scopeModel } = buildService({ isOwner: true });
-    scopeModel.findOne.mockReturnValueOnce(queryResult(null)).mockReturnValueOnce(queryResult(null));
+    const { service, scopeStore } = buildService({ isOwner: true });
 
     await service.create(actorId, programId, {
       name: 'Scope',
       knowledge: { sourceMode: 'workspaces_only', webSourcesEnabled: true, webAllowedDomains: [' https://Docs.Example.com/guide ', 'repo.example.org'], webBlockedDomains: ['tracker.example.net'] },
     });
 
-    expect(scopeModel.create).toHaveBeenCalledWith(expect.objectContaining({
+    expect(scopeStore.insert).toHaveBeenCalledWith(expect.objectContaining({
       knowledge: {
         sourceMode: 'workspaces_only',
         webSourcesEnabled: true,
@@ -159,15 +167,14 @@ describe('GovernanceScopeService delete authorization', () => {
   });
 
   it('clears web domain lists when web sources are disabled', async () => {
-    const { service, scopeModel } = buildService({ isOwner: true });
-    scopeModel.findOne.mockReturnValueOnce(queryResult(null)).mockReturnValueOnce(queryResult(null));
+    const { service, scopeStore } = buildService({ isOwner: true });
 
     await service.create(actorId, programId, {
       name: 'Scope',
       knowledge: { sourceMode: 'llm_only', webSourcesEnabled: false, webAllowedDomains: ['docs.example.com'] },
     });
 
-    expect(scopeModel.create).toHaveBeenCalledWith(expect.objectContaining({
+    expect(scopeStore.insert).toHaveBeenCalledWith(expect.objectContaining({
       knowledge: { sourceMode: 'llm_only', webSourcesEnabled: false, webAllowedDomains: [], webBlockedDomains: [] },
     }));
   });
@@ -181,20 +188,22 @@ describe('GovernanceScopeService delete authorization', () => {
   });
 
   it('persists knowledge updates on the scope', async () => {
-    const { service, scope } = buildService({ isOwner: true });
+    const { service, scopeStore } = buildService({ isOwner: true });
 
     await service.update(actorId, actorEmail, programId, scopeId, {
       knowledge: { sourceMode: 'workspaces_only', webSourcesEnabled: true },
     });
 
-    expect(scope.knowledge).toEqual({ sourceMode: 'workspaces_only', webSourcesEnabled: true, webAllowedDomains: [], webBlockedDomains: [] });
+    expect(scopeStore.update).toHaveBeenCalledWith(scopeId, expect.objectContaining({
+      knowledge: { sourceMode: 'workspaces_only', webSourcesEnabled: true, webAllowedDomains: [], webBlockedDomains: [] },
+    }));
   });
 
   it('requires scope management permission for knowledge updates', async () => {
-    const { service, scope } = buildService();
+    const { service, scopeStore } = buildService();
 
     await expect(service.update(actorId, actorEmail, programId, scopeId, { knowledge: { sourceMode: 'workspaces_only' } })).rejects.toBeInstanceOf(ForbiddenException);
-    expect(scope.knowledge).toBeUndefined();
+    expect(scopeStore.update).not.toHaveBeenCalled();
   });
 
   it('does not prepare a draft when only the guardrail review timestamp changes', async () => {
@@ -212,33 +221,37 @@ describe('GovernanceScopeService delete authorization', () => {
   });
 
   it('rejects updating a sibling scope without scope access', async () => {
-    const { service, scopeModel } = buildService({ accessibleScopeIds: ['507f1f77bcf86cd799439099'] });
+    const { service, scopeStore } = buildService({ accessibleScopeIds: ['507f1f77bcf86cd799439099'] });
 
     await expect(service.update(actorId, actorEmail, programId, scopeId, { metadata: { review: { status: 'in_review' } } })).rejects.toBeInstanceOf(NotFoundException);
-    expect(scopeModel.findOne).toHaveBeenCalledTimes(0);
+    expect(scopeStore.update).not.toHaveBeenCalled();
   });
 
   it('rejects management fields for review-only scope users', async () => {
-    const { service, deploymentModel } = buildService();
+    const { service, deploymentStore } = buildService();
 
     await expect(service.update(actorId, actorEmail, programId, scopeId, { status: 'inactive' })).rejects.toBeInstanceOf(ForbiddenException);
-    expect(deploymentModel.updateOne).not.toHaveBeenCalled();
+    expect(deploymentStore.suspendPublished).not.toHaveBeenCalled();
   });
 
   it('allows review metadata updates for group-based scope users', async () => {
-    const { service, scope, userGroupService } = buildService({ groupIds: ['507f1f77bcf86cd799439098'] });
+    const { service, scopeStore, userGroupService } = buildService({ groupIds: ['507f1f77bcf86cd799439098'] });
 
     await service.update(actorId, actorEmail, programId, scopeId, { metadata: { review: { status: 'in_review' } } });
 
     expect(userGroupService.findGroupIdsForMember).toHaveBeenCalledWith(actorId);
-    expect(scope.metadata).toEqual({ classification: { stage: 'pilot' }, review: { status: 'in_review' } });
+    expect(scopeStore.update).toHaveBeenCalledWith(scopeId, expect.objectContaining({
+      metadata: { classification: { stage: 'pilot' }, review: { status: 'in_review' } },
+    }));
   });
 
   it('allows review-only users to update review metadata when classification exists', async () => {
-    const { service, scope } = buildService();
+    const { service, scopeStore } = buildService();
 
     await service.update(actorId, actorEmail, programId, scopeId, { metadata: { review: { checklist: [{ key: 'dry_run_accepted', checked: true }] } } });
 
-    expect(scope.metadata).toEqual({ classification: { stage: 'pilot' }, review: { checklist: [{ key: 'dry_run_accepted', checked: true }] } });
+    expect(scopeStore.update).toHaveBeenCalledWith(scopeId, expect.objectContaining({
+      metadata: { classification: { stage: 'pilot' }, review: { checklist: [{ key: 'dry_run_accepted', checked: true }] } },
+    }));
   });
 });

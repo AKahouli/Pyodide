@@ -2,8 +2,6 @@ import { createHash } from 'crypto';
 import { Inject, BadRequestException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { Interval } from '@nestjs/schedule';
 import { FeatureVisibilityService } from '@modules/system/feature-visibility.service';
-import { InjectModel } from '@nestjs/mongoose';
-import { Model, Types } from 'mongoose';
 import { ErrorCode } from '@modules/exceptions/constants/error-codes';
 import { AuditLogService } from '@modules/authorization/services/audit-log.service';
 import { IndexingService } from '@modules/indexing/indexing.service';
@@ -13,8 +11,14 @@ import { KnowledgeAssessmentRepositoryService } from '@modules/knowledge-intelli
 import { KnowledgeAlertRepositoryService } from '@modules/knowledge-intelligence/services/knowledge-alert-repository.service';
 import { KnowledgeRecommendationRepositoryService } from '@modules/knowledge-intelligence/services/knowledge-recommendation-repository.service';
 import { MetadataCandidateRepositoryService } from '@modules/knowledge-intelligence/services/metadata-candidate-repository.service';
-import { GovernanceDocument, GovernanceDocumentDocument } from '../schemas/governance-document.schema';
-import { GovernanceWorkspaceBinding, GovernanceWorkspaceBindingDocument } from '../schemas/governance-workspace-binding.schema';
+import {
+  BINDING_STORE,
+  GOVERNANCE_DOCUMENT_STORE,
+  type BindingStore,
+  type GovernanceBindingRecord,
+  type GovernanceDocumentRecord,
+  type GovernanceDocumentStore,
+} from '../persistence';
 import { GovernanceProgramService } from './governance-program.service';
 import { GovernanceAccessService } from './governance-access.service';
 import { GovernanceDocumentEventService } from './governance-document-event.service';
@@ -37,9 +41,9 @@ export class GovernanceKnowledgeAssessmentService {
   private readonly evaluators: KnowledgeEvaluator[];
 
   constructor(
-    @InjectModel(GovernanceDocument.name) private readonly governanceDocuments: Model<GovernanceDocumentDocument>,
+    @Inject(GOVERNANCE_DOCUMENT_STORE) private readonly documentStore: GovernanceDocumentStore,
     @Inject(WORKSPACE_DOCUMENT_READ_PORT) private readonly workspaceDocuments: WorkspaceDocumentReadPort,
-    @InjectModel(GovernanceWorkspaceBinding.name) private readonly bindings: Model<GovernanceWorkspaceBindingDocument>,
+    @Inject(BINDING_STORE) private readonly bindingStore: BindingStore,
     private readonly programs: GovernanceProgramService,
     private readonly access: GovernanceAccessService,
     private readonly assessments: KnowledgeAssessmentRepositoryService,
@@ -66,7 +70,7 @@ export class GovernanceKnowledgeAssessmentService {
     if (this.running || !this.features.isEnabled('dataRoomKnowledgeAssessment')) return;
     this.running = true;
     try {
-      const records = await this.governanceDocuments.find({ status: { $nin: ['rejected', 'archived'] } }).sort({ updatedAt: 1 }).limit(200).exec();
+      const records = await this.documentStore.listNonArchived(200);
       for (const record of records) await this.assess(record);
     } catch (error) {
       this.logger.error('Knowledge assessment backfill failed', { error: error instanceof Error ? error.message : 'Unknown error' });
@@ -77,10 +81,12 @@ export class GovernanceKnowledgeAssessmentService {
     this.assertEnabled();
     const scopeIds = await this.authorizedScopeIds(actorId, programId, scopeId);
     const bindings = await this.effectiveBindings(programId, scopeIds, scopeId);
-    const records = await this.governanceDocuments.find({ programId: new Types.ObjectId(programId), workspaceId: { $in: bindings.map((binding) => binding.workspaceId) }, status: { $nin: ['rejected', 'archived'] } }).limit(500).exec();
-    for (const record of records) await this.assess(record, bindings.find((binding) => binding.workspaceId.equals(record.workspaceId)));
-    this.audit.logSuccess({ actorId, actorEmail, action: 'governance.knowledge.refreshed', targetType: 'governance_program', targetId: programId, metadata: { scopeId, assessed: records.length } });
-    return { assessed: records.length };
+    const workspaceIds = bindings.map((binding) => binding.workspaceId);
+    const records = workspaceIds.length ? await this.documentStore.listForProgramWorkspaces(programId, workspaceIds, false) : [];
+    const capped = records.slice(0, 500).filter((record) => !['rejected', 'archived'].includes(record.status));
+    for (const record of capped) await this.assess(record, bindings.find((binding) => binding.workspaceId === record.workspaceId));
+    this.audit.logSuccess({ actorId, actorEmail, action: 'governance.knowledge.refreshed', targetType: 'governance_program', targetId: programId, metadata: { scopeId, assessed: capped.length } });
+    return { assessed: capped.length };
   }
 
   async healthSummary(actorId: string, programId: string, scopeId?: string) { this.assertEnabled(); const scopeIds = await this.authorizedScopeIds(actorId, programId, scopeId); const records = await this.assessments.latestByProgram(programId, scopeId ? [scopeId] : scopeIds); const byStatus = { healthy: 0, warning: 0, critical: 0 }; for (const record of records) byStatus[record.status] += 1; return { totalDocuments: records.length, averageHealthScore: records.length ? Math.round(records.reduce((sum, item) => sum + item.overallHealthScore, 0) / records.length) : 0, byStatus, assessments: records.map((record) => this.serialize(record.toObject())) }; }
@@ -98,7 +104,7 @@ export class GovernanceKnowledgeAssessmentService {
       const document = await this.workspaceDocuments.findById(recommendation.documentId.toString());
       if (!document) throw new NotFoundException(ErrorCode.GOVERNANCE_DOCUMENT_NOT_FOUND);
       if (recommendation.type === 'reindex') await this.indexing.reindexDocument(document.workspaceId, document.id, false, `knowledge-recommendation:${id}`);
-      else if (recommendation.type === 'schedule_review') await this.governanceDocuments.updateOne({ programId: new Types.ObjectId(programId), documentId: new Types.ObjectId(document.id), status: { $nin: ['rejected', 'archived'] } }, { $set: { 'validity.nextReviewAt': new Date(Date.now() + Number(recommendation.proposedAction?.reviewFrequencyDays ?? 30) * 86_400_000), 'validity.reviewFrequencyDays': Number(recommendation.proposedAction?.reviewFrequencyDays ?? 30) }, $inc: { governanceRevision: 1 } }).exec();
+      else if (recommendation.type === 'schedule_review') await this.documentStore.patchValidityForDocument(programId, document.id, { nextReviewAt: new Date(Date.now() + Number(recommendation.proposedAction?.reviewFrequencyDays ?? 30) * 86_400_000), reviewFrequencyDays: Number(recommendation.proposedAction?.reviewFrequencyDays ?? 30) });
       else throw new BadRequestException(ErrorCode.VALIDATION_ERROR, 'This recommendation requires a dedicated human workflow.');
       const applied = await this.recommendations.markApplied(id, actorId, recommendation.applicationToken);
       if (!applied) throw new BadRequestException(ErrorCode.VALIDATION_ERROR, 'The recommendation changed while it was being applied.');
@@ -113,19 +119,19 @@ export class GovernanceKnowledgeAssessmentService {
     if (!candidate) throw new NotFoundException(ErrorCode.NOT_FOUND, 'Metadata candidate not found.');
     const value = acceptedValue ?? candidate.proposedValue;
     if (action === 'accept') {
-      const updated = await this.governanceDocuments.findOneAndUpdate({ programId: new Types.ObjectId(programId), documentId: candidate.documentId, status: { $nin: ['rejected', 'archived'] } }, { $set: { [`metadata.${candidate.key}`]: value }, $inc: { governanceRevision: 1 } }, { new: true }).exec();
+      const updated = await this.documentStore.setMetadataField(programId, candidate.documentId.toString(), candidate.key, value);
       if (!updated) throw new BadRequestException(ErrorCode.VALIDATION_ERROR, 'The governed document is no longer editable.');
-      await this.events.append({ programId, governanceDocumentId: updated._id.toString(), documentId: candidate.documentId.toString(), eventType: 'metadata.candidate_decided', actorId, actorEmail, metadata: { candidateId: id, key: candidate.key, action } });
+      await this.events.append({ programId, governanceDocumentId: updated.id, documentId: candidate.documentId.toString(), eventType: 'metadata.candidate_decided', actorId, actorEmail, metadata: { candidateId: id, key: candidate.key, action } });
     }
     const result = await this.metadataCandidates.decide(programId, id, actorId, action, scopes, action === 'accept' ? value : undefined, reason);
     if (!result) throw new BadRequestException(ErrorCode.VALIDATION_ERROR, 'The metadata candidate changed while it was being decided.');
     return this.serialize(result.toObject());
   }
 
-  private async assess(record: GovernanceDocumentDocument, bindingInput?: GovernanceWorkspaceBindingDocument): Promise<void> {
-    const document = await this.workspaceDocuments.findOne({ id: record.documentId.toString(), workspaceId: record.workspaceId.toString(), isFolder: false });
+  private async assess(record: GovernanceDocumentRecord, bindingInput?: GovernanceBindingRecord): Promise<void> {
+    const document = await this.workspaceDocuments.findOne({ id: record.documentId, workspaceId: record.workspaceId, isFolder: false });
     if (!document) return;
-    const binding = bindingInput ?? await this.bindings.findOne({ programId: record.programId, workspaceId: record.workspaceId, enabled: true }).exec();
+    const binding = bindingInput ?? (await this.bindingStore.listEnabledForWorkspace(record.workspaceId)).find((candidate) => candidate.programId === record.programId && candidate.enabled);
     if (!binding) return;
     const context = this.context(document, record, binding);
     const dimensions = {} as KnowledgeAssessmentDimensions;
@@ -134,18 +140,19 @@ export class GovernanceKnowledgeAssessmentService {
     const overallHealthScore = Math.round(scores.reduce((sum, score) => sum + score, 0) / scores.length);
     const status = overallHealthScore >= 80 ? 'healthy' : overallHealthScore >= 50 ? 'warning' : 'critical';
     const inputHash = createHash('sha256').update(this.stableStringify({ document: context.document, governance: context.governance, binding: context.binding, assessmentVersion: ASSESSMENT_VERSION })).digest('hex');
-    await this.assessments.upsert({ programId: record.programId.toString(), scopeIds: context.binding.scopeIds, documentId: context.document.id, assessmentVersion: ASSESSMENT_VERSION, inputHash, assessedAt: context.now, dimensions, overallHealthScore, status, summary: `Knowledge health is ${status} with a score of ${overallHealthScore}.` });
-    const alerts = await this.alerts.synchronize(document.id, this.alertEngine.build(context, dimensions).map((item) => ({ ...item, programId: record.programId.toString() })), context.now);
-    await this.recommendations.synchronize(document.id, this.recommendationEngine.build(context, dimensions).map((item) => ({ ...item, programId: record.programId.toString(), alertIds: alerts.map((alert) => alert._id.toString()) })));
-    await this.metadataCandidates.synchronize(document.id, this.metadataEngine.build(record.programId.toString(), context));
-    await this.events.append({ programId: record.programId.toString(), governanceDocumentId: record._id.toString(), documentId: document.id, eventType: 'knowledge.assessed', deduplicationKey: `knowledge-assessed:${inputHash}`, metadata: { assessmentVersion: ASSESSMENT_VERSION, overallHealthScore, status } });
+    await this.assessments.upsert({ programId: record.programId, scopeIds: context.binding.scopeIds, documentId: context.document.id, assessmentVersion: ASSESSMENT_VERSION, inputHash, assessedAt: context.now, dimensions, overallHealthScore, status, summary: `Knowledge health is ${status} with a score of ${overallHealthScore}.` });
+    const alerts = await this.alerts.synchronize(document.id, this.alertEngine.build(context, dimensions).map((item) => ({ ...item, programId: record.programId })), context.now);
+    await this.recommendations.synchronize(document.id, this.recommendationEngine.build(context, dimensions).map((item) => ({ ...item, programId: record.programId, alertIds: alerts.map((alert) => alert._id.toString()) })));
+    await this.metadataCandidates.synchronize(document.id, this.metadataEngine.build(record.programId, context));
+    await this.events.append({ programId: record.programId, governanceDocumentId: record.id, documentId: document.id, eventType: 'knowledge.assessed', deduplicationKey: `knowledge-assessed:${inputHash}`, metadata: { assessmentVersion: ASSESSMENT_VERSION, overallHealthScore, status } });
   }
 
-  private context(document: WorkspaceDocumentRecord, governance: GovernanceDocumentDocument, binding: GovernanceWorkspaceBindingDocument): KnowledgeAssessmentContext {
-    return { document: { id: document.id, workspaceId: document.workspaceId, originalName: document.originalName, mimeType: document.mimeType, type: document.type, sourceUrl: document.sourceUrl, contentHash: document.contentHash, status: document.status, indexingStatus: document.indexingStatus, updatedAt: this.date(document.updatedAt) ?? new Date(0), metadata: (document.metadata as Record<string, unknown>) ?? {} }, governance: { status: governance.status, validity: governance.validity, tags: governance.tags, metadata: governance.metadata, ownerUserId: governance.ownerUserId?.toString(), ownerScopeId: governance.ownerScopeId?.toString() }, binding: { visibility: binding.visibility, scopeIds: binding.scopeIds.map(String), ingestionMode: binding.ingestionMode }, now: new Date() };
+  private context(document: WorkspaceDocumentRecord, governance: GovernanceDocumentRecord, binding: GovernanceBindingRecord): KnowledgeAssessmentContext {
+    const validity = governance.validity as KnowledgeAssessmentContext['governance']['validity'];
+    return { document: { id: document.id, workspaceId: document.workspaceId, originalName: document.originalName, mimeType: document.mimeType, type: document.type, sourceUrl: document.sourceUrl, contentHash: document.contentHash, status: document.status, indexingStatus: document.indexingStatus, updatedAt: this.date(document.updatedAt) ?? new Date(0), metadata: (document.metadata as Record<string, unknown>) ?? {} }, governance: { status: governance.status, validity, tags: governance.tags, metadata: governance.metadata, ownerUserId: governance.ownerUserId, ownerScopeId: governance.ownerScopeId }, binding: { visibility: binding.visibility, scopeIds: binding.scopeIds, ingestionMode: binding.ingestionMode }, now: new Date() };
   }
 
-  private async effectiveBindings(programId: string, scopeIds: string[], requested?: string): Promise<GovernanceWorkspaceBindingDocument[]> { const filter: Record<string, unknown> = { programId: new Types.ObjectId(programId), enabled: true }; if (!scopeIds.includes('*')) { const selected = requested ? [new Types.ObjectId(requested)] : scopeIds.map((id) => new Types.ObjectId(id)); filter.$or = [{ visibility: 'program_shared' }, { scopeIds: { $in: selected } }]; } return this.bindings.find(filter).exec(); }
+  private async effectiveBindings(programId: string, scopeIds: string[], requested?: string): Promise<GovernanceBindingRecord[]> { return this.bindingStore.listEnabled(programId, scopeIds.includes('*') ? '*' : requested ? [requested] : scopeIds); }
   private async authorizedScopeIds(actorId: string, programId: string, requested?: string): Promise<string[]> { await this.programs.assertOwnedProgram(actorId, programId); if (requested) { await this.access.assertScopeAccess(actorId, programId, requested); return [requested]; } return this.access.getAccessibleScopeIds(actorId, programId); }
   private assertEnabled(): void { if (!this.features.isEnabled('dataRoomKnowledgeAssessment')) throw new BadRequestException(ErrorCode.VALIDATION_ERROR, 'Knowledge assessment is disabled.'); }
   private date(value: unknown): Date | undefined { if (!value) return undefined; const date = value instanceof Date ? value : new Date(String(value)); return Number.isNaN(date.getTime()) ? undefined : date; }

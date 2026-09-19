@@ -1,18 +1,34 @@
-import { Types, type Model } from 'mongoose';
+import { Types } from 'mongoose';
 import { ForbiddenException } from '@modules/exceptions';
 import type { WorkspaceReadPort, WorkspaceShareReadPort } from '@modules/workspace/ports';
-import type { GovernanceWorkspaceBindingDocument } from '../schemas/governance-workspace-binding.schema';
-import type { GovernanceScopeDocument } from '../schemas/governance-scope.schema';
 import { GovernanceWorkspaceBindingService } from './governance-workspace-binding.service';
 import type { GovernanceProgramService } from './governance-program.service';
 import type { GovernanceAccessService } from './governance-access.service';
 import type { GovernanceDraftPreparationService } from './governance-draft-preparation.service';
+import type { BindingStore, ScopeStore } from '../persistence';
 
 describe('GovernanceWorkspaceBindingService', () => {
   const actorId = new Types.ObjectId().toString();
   const programId = new Types.ObjectId().toString();
   const scopeId = new Types.ObjectId().toString();
   const workspaceId = new Types.ObjectId().toString();
+
+  function bindingRecord(overrides: Record<string, unknown> = {}) {
+    return {
+      id: new Types.ObjectId().toString(),
+      programId,
+      workspaceId,
+      visibility: 'scope_specific',
+      scopeIds: [scopeId],
+      enabled: true,
+      ingestionMode: 'assisted',
+      defaults: {},
+      createdBy: actorId,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+      ...overrides,
+    };
+  }
 
   function buildService(
     options: {
@@ -31,27 +47,24 @@ describe('GovernanceWorkspaceBindingService', () => {
       createdBy: options.owner ? actorId : new Types.ObjectId().toString(),
       isPublic: options.isPublic ?? false,
     };
-    const binding = {
-      _id: new Types.ObjectId(),
+    const binding = bindingRecord({
       visibility: options.existingVisibility ?? 'scope_specific',
-      scopeIds:
-        options.existingVisibility === 'program_shared'
-          ? []
-          : [new Types.ObjectId(options.existingScopeId ?? scopeId)],
+      scopeIds: options.existingVisibility === 'program_shared' ? [] : [options.existingScopeId ?? scopeId],
       enabled: options.existingEnabled ?? true,
-      save: jest.fn().mockResolvedValue(undefined),
-      deleteOne: jest.fn(),
-    };
-    const bindingModel = {
-      create: jest.fn().mockResolvedValue(binding),
-      findOne: jest.fn().mockReturnValue({
-        exec: jest.fn().mockResolvedValue(options.existingScopeId ? binding : null),
+    });
+    let replaced: Record<string, unknown> | undefined;
+    const bindingStore = {
+      insert: jest.fn().mockResolvedValue(bindingRecord()),
+      findByProgramAndWorkspace: jest.fn().mockResolvedValue(options.existingScopeId ? binding : null),
+      update: jest.fn().mockResolvedValue(binding),
+      findById: jest.fn().mockImplementation(async () => replaced ?? binding),
+      replaceScopeIds: jest.fn().mockImplementation(async (_id: string, scopeIds: string[], visibility: string) => {
+        replaced = bindingRecord({ scopeIds, visibility });
+        return replaced;
       }),
     };
-    const scopeModel = { find: jest.fn() };
-    const workspaceReadPort = {
-      findById: jest.fn().mockResolvedValue(workspace),
-    };
+    const scopeStore: Partial<ScopeStore> = { listByProgram: jest.fn().mockResolvedValue([]) };
+    const workspaceReadPort = { findById: jest.fn().mockResolvedValue(workspace) };
     const shareReadPort = { permissionFor: jest.fn().mockResolvedValue(options.shared ? 'read' : null) };
     const programs = { assertOwnedProgram: jest.fn().mockResolvedValue(undefined) };
     const access = {
@@ -72,15 +85,15 @@ describe('GovernanceWorkspaceBindingService', () => {
     };
     const draftPreparation = { prepare: jest.fn().mockResolvedValue(undefined) };
     const service = new GovernanceWorkspaceBindingService(
-      bindingModel as unknown as Model<GovernanceWorkspaceBindingDocument>,
-      scopeModel as unknown as Model<GovernanceScopeDocument>,
+      bindingStore as unknown as BindingStore,
+      scopeStore as unknown as ScopeStore,
       workspaceReadPort as unknown as WorkspaceReadPort,
       shareReadPort as unknown as WorkspaceShareReadPort,
       programs as unknown as GovernanceProgramService,
       access as unknown as GovernanceAccessService,
       draftPreparation as unknown as GovernanceDraftPreparationService,
     );
-    return { service, binding, bindingModel, shareReadPort, draftPreparation, access };
+    return { service, binding, bindingStore, shareReadPort, draftPreparation, access };
   }
 
   const payload = () => ({
@@ -95,14 +108,14 @@ describe('GovernanceWorkspaceBindingService', () => {
     ['a public workspace', { isPublic: true }],
     ['a workspace shared with read access', { shared: true }],
   ])('connects %s', async (_label, options) => {
-    const { service, bindingModel, draftPreparation } = buildService(options);
+    const { service, bindingStore, draftPreparation } = buildService(options);
 
     await expect(
       service.create(actorId, programId, payload(), 'owner@example.test'),
     ).resolves.toBeDefined();
 
-    expect(bindingModel.create).toHaveBeenCalledWith(
-      expect.objectContaining({ workspaceId: new Types.ObjectId(workspaceId) }),
+    expect(bindingStore.insert).toHaveBeenCalledWith(
+      expect.objectContaining({ workspaceId }),
     );
     expect(draftPreparation.prepare).toHaveBeenCalledWith(
       actorId,
@@ -113,29 +126,33 @@ describe('GovernanceWorkspaceBindingService', () => {
   });
 
   it('rejects a private workspace the actor cannot read', async () => {
-    const { service, bindingModel, shareReadPort } = buildService();
+    const { service, bindingStore, shareReadPort } = buildService();
 
     await expect(service.create(actorId, programId, payload())).rejects.toBeInstanceOf(
       ForbiddenException,
     );
 
     expect(shareReadPort.permissionFor).toHaveBeenCalledWith(workspaceId, actorId);
-    expect(bindingModel.create).not.toHaveBeenCalled();
+    expect(bindingStore.insert).not.toHaveBeenCalled();
   });
 
   it('extends an existing workspace binding to the selected scope', async () => {
     const existingScopeId = new Types.ObjectId().toString();
-    const { service, bindingModel, draftPreparation } = buildService({
+    const { service, bindingStore, draftPreparation } = buildService({
       owner: true,
       existingScopeId,
     });
 
     const result = await service.create(actorId, programId, payload(), 'owner@example.test');
 
-    expect(bindingModel.create).not.toHaveBeenCalled();
+    expect(bindingStore.insert).not.toHaveBeenCalled();
+    expect(bindingStore.replaceScopeIds).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.arrayContaining([existingScopeId, scopeId]),
+      'multi_scope',
+    );
     expect(result.visibility).toBe('multi_scope');
-    expect(result.scopeIds.map(String)).toEqual(expect.arrayContaining([existingScopeId, scopeId]));
-    expect(result.save).toHaveBeenCalled();
+    expect(result.scopeIds).toEqual(expect.arrayContaining([existingScopeId, scopeId]));
     expect(draftPreparation.prepare).toHaveBeenCalledWith(
       actorId,
       'owner@example.test',
@@ -151,7 +168,7 @@ describe('GovernanceWorkspaceBindingService', () => {
   });
 
   it('does not extend a binding when the actor lacks access to its existing scopes', async () => {
-    const { service, binding, bindingModel } = buildService({
+    const { service, bindingStore } = buildService({
       owner: true,
       existingScopeId: new Types.ObjectId().toString(),
       fullScopeAccess: false,
@@ -161,12 +178,12 @@ describe('GovernanceWorkspaceBindingService', () => {
       'Scope access denied',
     );
 
-    expect(binding.save).not.toHaveBeenCalled();
-    expect(bindingModel.create).not.toHaveBeenCalled();
+    expect(bindingStore.update).not.toHaveBeenCalled();
+    expect(bindingStore.insert).not.toHaveBeenCalled();
   });
 
   it('does not reactivate a program-wide binding without program-wide access', async () => {
-    const { service, binding } = buildService({
+    const { service, binding, bindingStore } = buildService({
       owner: true,
       existingScopeId: new Types.ObjectId().toString(),
       existingVisibility: 'program_shared',
@@ -179,6 +196,6 @@ describe('GovernanceWorkspaceBindingService', () => {
     );
 
     expect(binding.enabled).toBe(false);
-    expect(binding.save).not.toHaveBeenCalled();
+    expect(bindingStore.update).not.toHaveBeenCalled();
   });
 });

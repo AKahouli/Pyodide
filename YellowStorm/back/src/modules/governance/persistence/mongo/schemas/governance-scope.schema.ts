@@ -1,6 +1,6 @@
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
 import { Document, HydratedDocument, Types } from 'mongoose';
-import { GovernanceScopeAudienceMode } from '../domain/governance-scope-audience';
+import { GovernanceScopeAudienceMode } from '../../../domain/governance-scope-audience';
 
 export type GovernanceScopeDocument = HydratedDocument<GovernanceScope>;
 
