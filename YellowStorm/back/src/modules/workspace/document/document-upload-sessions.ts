@@ -1,19 +1,16 @@
 import { Inject, Injectable, forwardRef } from '@nestjs/common';
-import { InjectModel } from '@nestjs/mongoose';
 import { ConfigService } from '@nestjs/config';
 import { Cron, CronExpression } from '@nestjs/schedule';
-import { Model, Types } from 'mongoose';
+import { Types } from 'mongoose';
 import {
-  WorkspaceDoc,
-  WorkspaceDocumentDoc,
   DocumentStatus,
 } from '../schemas/workspace-document.schema';
 import { IndexingService } from '../../indexing/indexing.service';
 import {
-  UploadSession,
-  UploadSessionDocument,
   UploadSessionStatus,
 } from '../schemas/upload-session.schema';
+import { DOCUMENT_STORE, type DocumentStore } from '../stores/document-store';
+import { UPLOAD_SESSION_STORE, type UploadSessionStore } from '../stores/upload-session-store';
 import {
   DocumentResponse,
 } from '../interfaces/workspace-document.interface';
@@ -43,10 +40,8 @@ export class WorkspaceDocumentUploadSessions {
   private readonly sasUrlExpiryMinutes: number;
 
   constructor(
-    @InjectModel(WorkspaceDoc.name)
-    private readonly documentModel: Model<WorkspaceDocumentDoc>,
-    @InjectModel(UploadSession.name)
-    private readonly uploadSessionModel: Model<UploadSessionDocument>,
+    @Inject(DOCUMENT_STORE) private readonly documentStore: DocumentStore,
+    @Inject(UPLOAD_SESSION_STORE) private readonly uploadSessionStore: UploadSessionStore,
     private readonly workspaceService: WorkspaceService,
     private readonly documentService: DocumentService,
     @Inject(forwardRef(() => IndexingService))
@@ -125,15 +120,15 @@ export class WorkspaceDocumentUploadSessions {
       const blobPath = this.support.generateBlobPath(ownerUserId, storagePrefix, effectiveName);
 
       // Create pending document (url is set after upload completes)
-      await this.documentModel.create({
-        _id: documentId,
+      await this.documentStore.create({
+        id: documentId.toString(),
         filename: this.support.sanitizeFilename(effectiveName),
         originalName: effectiveName,
         mimeType: file.mimeType,
         size: file.size,
         path: blobPath,
-        workspaceId: new Types.ObjectId(workspaceId),
-        createdBy: new Types.ObjectId(userId),
+        workspaceId,
+        createdBy: userId,
         status: DocumentStatus.PENDING,
       });
 
@@ -163,11 +158,20 @@ export class WorkspaceDocumentUploadSessions {
     }
 
     // Create session record
-    const session = await this.uploadSessionModel.create({
-      workspaceId: new Types.ObjectId(workspaceId),
-      userId: new Types.ObjectId(userId),
+    const session = await this.uploadSessionStore.create({
+      workspaceId,
+      userId,
       status: UploadSessionStatus.PENDING,
-      files: sessionFiles,
+      files: sessionFiles.map((f) => ({
+        index: f.index,
+        filename: f.filename,
+        mimeType: f.mimeType,
+        size: f.size,
+        documentId: f.documentId.toString(),
+        uploadUrl: f.uploadUrl,
+        status: f.status,
+        progress: f.progress,
+      })),
       totalFiles: files.length,
       totalSize,
       completedFiles: 0,
@@ -176,14 +180,14 @@ export class WorkspaceDocumentUploadSessions {
     });
 
     this.logger.debug('Bulk upload session created', {
-      sessionId: session._id,
+      sessionId: session.id,
       workspaceId,
       fileCount: files.length,
       totalSize,
     });
 
     return {
-      sessionId: session._id.toString(),
+      sessionId: session.id,
       files: responseFiles,
       expiresAt: expiresAt.toISOString(),
     };
@@ -202,11 +206,7 @@ export class WorkspaceDocumentUploadSessions {
     sessionId: string,
     data: ReportProgressData,
   ): Promise<void> {
-    const session = await this.uploadSessionModel.findOne({
-      _id: sessionId,
-      workspaceId: new Types.ObjectId(workspaceId),
-      userId: new Types.ObjectId(userId),
-    });
+    const session = await this.uploadSessionStore.findByIdWorkspaceUser(sessionId, workspaceId, userId);
 
     if (!session) {
       throw new NotFoundException(
@@ -229,18 +229,16 @@ export class WorkspaceDocumentUploadSessions {
       );
     }
 
-    file.status = data.status;
-    file.progress = data.progress;
-    if (data.error) {
-      file.error = data.error;
-    }
+    await this.uploadSessionStore.updateFileProgress(sessionId, data.fileIndex, {
+      status: data.status,
+      progress: data.progress,
+      ...(data.error ? { error: data.error } : {}),
+    });
 
     // Update session status
     if (session.status === UploadSessionStatus.PENDING) {
-      session.status = UploadSessionStatus.IN_PROGRESS;
+      await this.uploadSessionStore.setStatus(sessionId, UploadSessionStatus.IN_PROGRESS);
     }
-
-    await session.save();
 
     // Note: No SSE notification for progress - frontend already has this data.
     // SSE notifications are only sent for upload_complete and upload_failed events.
@@ -258,11 +256,7 @@ export class WorkspaceDocumentUploadSessions {
   ): Promise<BulkUploadCompleteResponse> {
     const startTime = Date.now();
 
-    const session = await this.uploadSessionModel.findOne({
-      _id: sessionId,
-      workspaceId: new Types.ObjectId(workspaceId),
-      userId: new Types.ObjectId(userId),
-    });
+    const session = await this.uploadSessionStore.findByIdWorkspaceUser(sessionId, workspaceId, userId);
 
     if (!session) {
       throw new NotFoundException(
@@ -282,7 +276,7 @@ export class WorkspaceDocumentUploadSessions {
 
     // Process each file
     for (const file of session.files) {
-      const document = await this.documentModel.findById(file.documentId);
+      const document = await this.documentStore.findById(file.documentId!);
 
       if (!document) {
         failed.count++;
@@ -312,7 +306,7 @@ export class WorkspaceDocumentUploadSessions {
               'HeadObject returned 403 during bulk complete; assuming object present after client PUT',
               {
                 sessionId,
-                documentId: document._id,
+                documentId: document.id,
                 path: document.path,
               },
             );
@@ -325,34 +319,35 @@ export class WorkspaceDocumentUploadSessions {
 
       if (exists || document.isFolder) {
         // Mark as completed
-        document.status = DocumentStatus.COMPLETED;
-        document.uploadedAt = new Date();
-        document.url = document.path;
-        document.metadata = {
-          ...document.metadata,
-          deepSearchRequested: String(Boolean(deepSearch)),
-          autoIndexRequested: String(autoIndex),
-        };
-        await document.save();
-        await this.support.recordWorkspaceEvent(WorkspaceIntegrationEvents.DocumentRegisteredV1, document);
-        await this.support.recordWorkspaceEvent(WorkspaceIntegrationEvents.ArtifactReadyV1, document);
+        const updated = await this.documentStore.markUploaded(document.id, {
+          status: DocumentStatus.COMPLETED,
+          uploadedAt: new Date(),
+          url: document.path,
+          metadata: {
+            ...document.metadata,
+            deepSearchRequested: String(Boolean(deepSearch)),
+            autoIndexRequested: String(autoIndex),
+          },
+        });
+        await this.support.recordWorkspaceEvent(WorkspaceIntegrationEvents.DocumentRegisteredV1, updated!);
+        await this.support.recordWorkspaceEvent(WorkspaceIntegrationEvents.ArtifactReadyV1, updated!);
 
         // Trigger indexing (non-blocking). Skip folders — nothing to index —
         // and skip entirely when auto-indexation is disabled by the uploader.
-        if (!document.isFolder && autoIndex) {
-          this.indexingService.queueDocument(document._id.toString(), deepSearch).catch((err) => {
+        if (!updated!.isFolder && autoIndex) {
+          this.indexingService.queueDocument(updated!.id, deepSearch).catch((err) => {
             this.logger.warn('Failed to queue document for indexing', {
-              documentId: document._id,
+              documentId: updated!.id,
               error: err instanceof Error ? err.message : 'Unknown error',
             });
           });
         }
 
         // Update workspace storage
-        await this.workspaceService.updateStorageUsage(workspaceId, document.size, 1);
+        await this.workspaceService.updateStorageUsage(workspaceId, updated!.size, 1);
 
         successful.count++;
-        successful.documents.push(this.support.mapToResponse(document));
+        successful.documents.push(this.support.mapToResponse(updated!));
       } else {
         // Clean up any partial blob that might exist (skip for folders)
         try {
@@ -362,14 +357,14 @@ export class WorkspaceDocumentUploadSessions {
         } catch (error) {
           this.logger.warn('Failed to delete orphaned blob during bulk upload completion', {
             sessionId,
-            documentId: document._id,
+            documentId: document.id,
             path: document.path,
             error: error instanceof Error ? error.message : 'Unknown error',
           });
         }
 
         // Delete the failed document record from database
-        await this.documentModel.deleteOne({ _id: document._id });
+        await this.documentStore.deleteById(document.id);
 
         failed.count++;
         failed.files.push({
@@ -381,16 +376,16 @@ export class WorkspaceDocumentUploadSessions {
     }
 
     // Update session status
-    if (failed.count === 0) {
-      session.status = UploadSessionStatus.COMPLETED;
-    } else if (successful.count === 0) {
-      session.status = UploadSessionStatus.FAILED;
-    } else {
-      session.status = UploadSessionStatus.COMPLETED; // Partial success still marked completed
-    }
-    session.completedFiles = successful.count;
-    session.failedFiles = failed.count;
-    await session.save();
+    const finalStatus = failed.count === 0
+      ? UploadSessionStatus.COMPLETED
+      : successful.count === 0
+        ? UploadSessionStatus.FAILED
+        : UploadSessionStatus.COMPLETED; // Partial success still marked completed
+    await this.uploadSessionStore.setOutcome(sessionId, {
+      status: finalStatus,
+      completedFiles: successful.count,
+      failedFiles: failed.count,
+    });
 
     const duration = Date.now() - startTime;
 
@@ -442,11 +437,7 @@ export class WorkspaceDocumentUploadSessions {
     userId: string,
     sessionId: string,
   ): Promise<UploadSessionResponse> {
-    const session = await this.uploadSessionModel.findOne({
-      _id: sessionId,
-      workspaceId: new Types.ObjectId(workspaceId),
-      userId: new Types.ObjectId(userId),
-    });
+    const session = await this.uploadSessionStore.findByIdWorkspaceUser(sessionId, workspaceId, userId);
 
     if (!session) {
       throw new NotFoundException(
@@ -476,10 +467,7 @@ export class WorkspaceDocumentUploadSessions {
 
     try {
       // Find expired sessions that are still pending or in progress
-      const expiredSessions = await this.uploadSessionModel.find({
-        expiresAt: { $lt: new Date() },
-        status: { $in: [UploadSessionStatus.PENDING, UploadSessionStatus.IN_PROGRESS] },
-      });
+      const expiredSessions = await this.uploadSessionStore.findExpired(new Date());
 
       if (expiredSessions.length === 0) {
         return;
@@ -497,7 +485,7 @@ export class WorkspaceDocumentUploadSessions {
         try {
           // Process each file in the session
           for (const file of session.files) {
-            const document = await this.documentModel.findById(file.documentId);
+            const document = await this.documentStore.findById(file.documentId!);
 
             if (!document) {
               continue;
@@ -515,26 +503,25 @@ export class WorkspaceDocumentUploadSessions {
                 }
               } catch (error) {
                 this.logger.warn('Failed to delete orphaned blob during cleanup', {
-                  sessionId: session._id,
-                  documentId: document._id,
+                  sessionId: session.id,
+                  documentId: document.id,
                   path: document.path,
                   error: error instanceof Error ? error.message : 'Unknown error',
                 });
               }
 
               // Delete the document record
-              await this.documentModel.deleteOne({ _id: document._id });
+              await this.documentStore.deleteById(document.id);
               totalDocumentsDeleted++;
             }
           }
 
           // Mark session as expired
-          session.status = UploadSessionStatus.EXPIRED;
-          await session.save();
+          await this.uploadSessionStore.markExpired(session.id);
           totalSessionsExpired++;
         } catch (error) {
           this.logger.error('Error cleaning up expired session', {
-            sessionId: session._id,
+            sessionId: session.id,
             error: error instanceof Error ? error.message : 'Unknown error',
           });
         }

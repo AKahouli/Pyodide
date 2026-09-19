@@ -1,14 +1,9 @@
 import { Injectable, Inject, Optional, forwardRef } from '@nestjs/common';
-import { InjectModel } from '@nestjs/mongoose';
 import { ConfigService } from '@nestjs/config';
-import { Model } from 'mongoose';
 import { IngestUrlDto } from './dto/ingest-url.dto';
-import { WorkspaceDoc, WorkspaceDocumentDoc } from './schemas/workspace-document.schema';
 import { IndexingService } from '../indexing/indexing.service';
-import {
-  UploadSession,
-  UploadSessionDocument,
-} from './schemas/upload-session.schema';
+import { DOCUMENT_STORE, type DocumentStore } from './stores/document-store';
+import { UPLOAD_SESSION_STORE, type UploadSessionStore } from './stores/upload-session-store';
 import {
   RequestUploadUrlData,
   UploadUrlResponse,
@@ -59,10 +54,8 @@ export class WorkspaceDocumentService {
   private readonly tree: WorkspaceDocumentTree;
 
   constructor(
-    @InjectModel(WorkspaceDoc.name)
-    private readonly documentModel: Model<WorkspaceDocumentDoc>,
-    @InjectModel(UploadSession.name)
-    private readonly uploadSessionModel: Model<UploadSessionDocument>,
+    @Inject(DOCUMENT_STORE) private readonly documentStore: DocumentStore,
+    @Inject(UPLOAD_SESSION_STORE) private readonly uploadSessionStore: UploadSessionStore,
     private readonly workspaceService: WorkspaceService,
     private readonly documentService: DocumentService,
     @Inject(forwardRef(() => NotificationsService))
@@ -82,7 +75,7 @@ export class WorkspaceDocumentService {
     this.logger.setContext('WorkspaceDocumentService');
 
     this.support = new WorkspaceDocumentSupport(
-      documentModel,
+      documentStore,
       uploadSettingsService,
       configService,
       notificationsService,
@@ -90,11 +83,11 @@ export class WorkspaceDocumentService {
       outbox,
       featureVisibility,
     );
-    this.read = new WorkspaceDocumentRead(documentModel, documentService, configService, this.support, logger);
-    this.write = new WorkspaceDocumentWrite(documentModel, workspaceService, documentService, indexingService, configService, urlDownloader, this.support, logger);
-    this.links = new WorkspaceDocumentLinks(documentModel, workspaceService, documentService, indexingService, configService, urlToPdfClient, websiteCrawler, urlDownloader, this.support, logger);
-    this.uploadSessions = new WorkspaceDocumentUploadSessions(documentModel, uploadSessionModel, workspaceService, documentService, indexingService, configService, this.support, logger);
-    this.tree = new WorkspaceDocumentTree(documentModel, uploadSessionModel, workspaceService, documentService, indexingService, workspaceArtifacts, this.support, logger);
+    this.read = new WorkspaceDocumentRead(documentStore, documentService, configService, this.support, logger);
+    this.write = new WorkspaceDocumentWrite(documentStore, workspaceService, documentService, indexingService, configService, urlDownloader, this.support, logger);
+    this.links = new WorkspaceDocumentLinks(documentStore, workspaceService, documentService, indexingService, configService, urlToPdfClient, websiteCrawler, urlDownloader, this.support, logger);
+    this.uploadSessions = new WorkspaceDocumentUploadSessions(documentStore, uploadSessionStore, workspaceService, documentService, indexingService, configService, this.support, logger);
+    this.tree = new WorkspaceDocumentTree(documentStore, uploadSessionStore, workspaceService, documentService, indexingService, workspaceArtifacts, this.support, logger);
   }
 
   requestUploadUrlWithPath(

@@ -13,11 +13,30 @@ function makeService(over: { workspaceModel?: any } = {}) {
   const workspaceModel: any = over.workspaceModel ?? {};
   // Only the deps used by setVisibility/findPublic need to be real; the rest can be stubs.
   const svc = Object.create(WorkspaceService.prototype) as WorkspaceService;
+  // The service reads through WorkspaceStore; delegate findById to the
+  // model-shaped stub so the ownership/mapping tests stay model-driven.
+  const workspaceStore: any = {
+    findById: async (id: string) => {
+      const r = workspaceModel.findById?.(id);
+      const doc = r?.exec ? await r.exec() : await r;
+      if (!doc) return null;
+      return {
+        id: doc._id?.toString?.() ?? String(doc._id),
+        name: doc.name, alias: doc.alias, storagePrefix: doc.storagePrefix,
+        description: doc.description, createdBy: doc.createdBy?.toString?.() ?? String(doc.createdBy),
+        documentCount: doc.documentCount, usedStorage: doc.usedStorage, allocatedStorage: doc.allocatedStorage,
+        isSystem: doc.isSystem ?? false, isPersonal: doc.isPersonal ?? false,
+        shareCount: doc.shareCount ?? 0, isPublic: doc.isPublic ?? false,
+        createdAt: doc.createdAt, updatedAt: doc.updatedAt,
+      };
+    },
+    updateFields: jest.fn().mockResolvedValue(undefined),
+  };
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  (svc as any).workspaceModel = workspaceModel;
+  (svc as any).workspaceStore = workspaceStore;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   (svc as any).logger = { setContext: () => {}, log: () => {}, warn: () => {} };
-  return { svc, workspaceModel };
+  return { svc, workspaceModel, workspaceStore };
 }
 
 describe('WorkspaceService.setVisibility', () => {
@@ -55,10 +74,14 @@ describe('WorkspaceService.setVisibility', () => {
       isSystem: false, isPersonal: false, shareCount: 0, isPublic: false,
       createdAt: new Date(), updatedAt: new Date(), save,
     };
-    const { svc } = makeService({ workspaceModel: { findById: () => ({ exec: () => Promise.resolve(doc) }) } });
+    const { svc, workspaceStore } = makeService({ workspaceModel: { findById: () => ({ exec: () => Promise.resolve(doc) }) } });
+    workspaceStore.updateFields.mockImplementation(async (_id: string, patch: any) => {
+      Object.assign(doc, patch);
+    });
     const res = await svc.setVisibility(WS, OWNER, true);
     expect(doc.isPublic).toBe(true);
-    expect(save).toHaveBeenCalled();
+    expect(workspaceStore.updateFields).toHaveBeenCalledWith(WS, { isPublic: true });
+    expect(save).not.toHaveBeenCalled();
     expect(res.isPublic).toBe(true);
   });
 });

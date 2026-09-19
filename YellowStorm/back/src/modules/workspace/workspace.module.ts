@@ -19,6 +19,18 @@ import { MongoWorkspaceDocumentReadAdapter } from './persistence/mongo/mongo-wor
 import { MongoWorkspaceDocumentWriteAdapter } from './persistence/mongo/mongo-workspace-document-write.adapter';
 import { MongoWorkspaceShareReadAdapter } from './persistence/mongo/mongo-workspace-share-read.adapter';
 import { MongoWorkspaceSettingReadAdapter } from './persistence/mongo/mongo-workspace-setting-read.adapter';
+import { MongoWorkspaceStore } from './stores/mongo/mongo-workspace-store';
+import { MongoDocumentStore } from './stores/mongo/mongo-document-store';
+import { MongoShareStore } from './stores/mongo/mongo-share-store';
+import { MongoSettingStore } from './stores/mongo/mongo-setting-store';
+import { MongoUploadSessionStore } from './stores/mongo/mongo-upload-session-store';
+import {
+  WORKSPACE_STORE,
+  DOCUMENT_STORE,
+  SHARE_STORE,
+  SETTING_STORE,
+  UPLOAD_SESSION_STORE,
+} from './stores';
 import { WorkspaceController } from './workspace.controller';
 import { WorkspaceSettingController } from './workspace-setting.controller';
 import { WorkspaceDocumentController } from './workspace-document.controller';
@@ -121,6 +133,17 @@ import { PgTtlSweeper } from '@modules/postgres/ttl/pg-ttl-sweeper.service';
     { provide: WORKSPACE_SHARE_READ_PORT, useExisting: MongoWorkspaceShareReadAdapter },
     MongoWorkspaceSettingReadAdapter,
     { provide: WORKSPACE_SETTING_READ_PORT, useExisting: MongoWorkspaceSettingReadAdapter },
+    // Internal write-path stores (plan D.5). Still Mongo — the PG bindings flip in D.10.
+    MongoWorkspaceStore,
+    { provide: WORKSPACE_STORE, useExisting: MongoWorkspaceStore },
+    MongoDocumentStore,
+    { provide: DOCUMENT_STORE, useExisting: MongoDocumentStore },
+    MongoShareStore,
+    { provide: SHARE_STORE, useExisting: MongoShareStore },
+    MongoSettingStore,
+    { provide: SETTING_STORE, useExisting: MongoSettingStore },
+    MongoUploadSessionStore,
+    { provide: UPLOAD_SESSION_STORE, useExisting: MongoUploadSessionStore },
     // Replaces the Mongo TTL index on upload_sessions (plan D.7); swept hourly by PgTtlSweeper.
     {
       provide: 'UPLOAD_SESSION_TTL_REGISTRATION',

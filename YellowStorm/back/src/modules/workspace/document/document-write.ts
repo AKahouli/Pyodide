@@ -1,14 +1,12 @@
 import { Inject, Injectable, forwardRef } from '@nestjs/common';
-import { InjectModel } from '@nestjs/mongoose';
 import { ConfigService } from '@nestjs/config';
-import { Model, Types } from 'mongoose';
+import { Types } from 'mongoose';
 import { IngestUrlDto } from '../dto/ingest-url.dto';
 import {
-  WorkspaceDoc,
-  WorkspaceDocumentDoc,
   DocumentStatus,
   IndexingStatus,
 } from '../schemas/workspace-document.schema';
+import { DOCUMENT_STORE, type DocumentStore } from '../stores/document-store';
 import { redactUrlForLog, redactUrlsInMessage } from '../../../common/utils';
 import { IndexingService } from '../../indexing/indexing.service';
 import {
@@ -35,8 +33,7 @@ export class WorkspaceDocumentWrite {
   private readonly sasUrlExpiryMinutes: number;
 
   constructor(
-    @InjectModel(WorkspaceDoc.name)
-    private readonly documentModel: Model<WorkspaceDocumentDoc>,
+    @Inject(DOCUMENT_STORE) private readonly documentStore: DocumentStore,
     private readonly workspaceService: WorkspaceService,
     private readonly documentService: DocumentService,
     @Inject(forwardRef(() => IndexingService))
@@ -76,15 +73,15 @@ export class WorkspaceDocumentWrite {
     const sanitizedName = this.support.sanitizeFilename(effectiveName);
     const blobPath = `${pathPrefix}/${sanitizedName}`;
 
-    const document = await this.documentModel.create({
-      _id: documentId,
+    const document = await this.documentStore.create({
+      id: documentId.toString(),
       filename: sanitizedName,
       originalName: effectiveName,
       mimeType: data.mimeType,
       size: data.size,
       path: blobPath,
-      workspaceId: new Types.ObjectId(workspaceId),
-      createdBy: new Types.ObjectId(userId),
+      workspaceId,
+      createdBy: userId,
       status: DocumentStatus.PENDING,
       indexingStatus: IndexingStatus.READY, // Conversation files are not indexed
     });
@@ -97,14 +94,14 @@ export class WorkspaceDocumentWrite {
     const expiresAt = new Date(Date.now() + this.sasUrlExpiryMinutes * 60 * 1000);
 
     this.logger.debug('Upload URL generated (custom path)', {
-      documentId: document._id,
+      documentId: document.id,
       workspaceId,
       pathPrefix,
       filename: data.filename,
     });
 
     return {
-      documentId: document._id.toString(),
+      documentId: document.id,
       uploadUrl,
       expiresAt: expiresAt.toISOString(),
     };
@@ -151,8 +148,8 @@ export class WorkspaceDocumentWrite {
       customFileName: sanitizedName,
     });
 
-    const document = await this.documentModel.create({
-      _id: documentId,
+    const document = await this.documentStore.create({
+      id: documentId.toString(),
       filename: uploaded.storedName,
       originalName: effectiveName,
       mimeType,
@@ -160,8 +157,8 @@ export class WorkspaceDocumentWrite {
       path: uploaded.blobPath,
       url: uploaded.url,
       contentHash: uploaded.contentHash,
-      workspaceId: new Types.ObjectId(workspaceId),
-      createdBy: new Types.ObjectId(userId),
+      workspaceId,
+      createdBy: userId,
       status: DocumentStatus.COMPLETED,
       uploadedAt: new Date(),
       indexingStatus: IndexingStatus.READY, // Conversation files are not indexed
@@ -170,7 +167,7 @@ export class WorkspaceDocumentWrite {
     await this.workspaceService.updateStorageUsage(workspaceId, size, 1);
 
     this.logger.debug('Small file uploaded (custom path)', {
-      documentId: document._id,
+      documentId: document.id,
       workspaceId,
       pathPrefix,
       size,
@@ -209,16 +206,16 @@ export class WorkspaceDocumentWrite {
     const effectiveName = await this.support.resolveUniqueOriginalName(workspaceId, data.filename);
     const blobPath = this.support.generateBlobPath(ownerUserId, storagePrefix, effectiveName);
 
-    const document = await this.documentModel.create({
-      _id: documentId,
+    const document = await this.documentStore.create({
+      id: documentId.toString(),
       filename: this.support.sanitizeFilename(effectiveName),
       originalName: effectiveName,
       mimeType: data.mimeType,
       size: data.size,
       path: blobPath,
       // url is set after upload completes
-      workspaceId: new Types.ObjectId(workspaceId),
-      createdBy: new Types.ObjectId(userId),
+      workspaceId,
+      createdBy: userId,
       status: DocumentStatus.PENDING,
     });
 
@@ -231,13 +228,13 @@ export class WorkspaceDocumentWrite {
     const expiresAt = new Date(Date.now() + this.sasUrlExpiryMinutes * 60 * 1000);
 
     this.logger.debug('Upload URL generated', {
-      documentId: document._id,
+      documentId: document.id,
       workspaceId,
       filename: data.filename,
     });
 
     return {
-      documentId: document._id.toString(),
+      documentId: document.id,
       uploadUrl,
       expiresAt: expiresAt.toISOString(),
     };
@@ -253,10 +250,7 @@ export class WorkspaceDocumentWrite {
     deepSearch?: boolean,
     options?: { autoIndex?: boolean },
   ): Promise<DocumentResponse> {
-    const document = await this.documentModel.findOne({
-      _id: documentId,
-      workspaceId: new Types.ObjectId(workspaceId),
-    });
+    const document = await this.documentStore.findByIdAndWorkspace(documentId, workspaceId);
 
     if (!document) {
       throw new NotFoundException(
@@ -282,47 +276,48 @@ export class WorkspaceDocumentWrite {
     }
 
     // Update document status
-    document.status = DocumentStatus.COMPLETED;
-    document.uploadedAt = new Date();
-    document.url = document.path; // Canonical object key (no presigned signature)
-    document.metadata = {
-      ...document.metadata,
-      deepSearchRequested: String(Boolean(deepSearch)),
-      autoIndexRequested: String(options?.autoIndex !== false),
-    };
-    await document.save();
-    await this.support.recordWorkspaceEvent(WorkspaceIntegrationEvents.DocumentRegisteredV1, document);
-    await this.support.recordWorkspaceEvent(WorkspaceIntegrationEvents.ArtifactReadyV1, document);
+    const updated = await this.documentStore.markUploaded(document.id, {
+      status: DocumentStatus.COMPLETED,
+      uploadedAt: new Date(),
+      url: document.path, // Canonical object key (no presigned signature)
+      metadata: {
+        ...document.metadata,
+        deepSearchRequested: String(Boolean(deepSearch)),
+        autoIndexRequested: String(options?.autoIndex !== false),
+      },
+    });
+    await this.support.recordWorkspaceEvent(WorkspaceIntegrationEvents.DocumentRegisteredV1, updated!);
+    await this.support.recordWorkspaceEvent(WorkspaceIntegrationEvents.ArtifactReadyV1, updated!);
 
     // Trigger indexing (non-blocking). Skip folders — they have no blob to index.
     // Conversation system-workspace files opt out here: their attachments are
     // indexed (or deliberately not) only after the attachment policy is known.
-    if (!document.isFolder && options?.autoIndex !== false) {
-      this.indexingService.queueDocument(document._id.toString(), deepSearch).catch((err) => {
+    if (!updated!.isFolder && options?.autoIndex !== false) {
+      this.indexingService.queueDocument(updated!.id, deepSearch).catch((err) => {
         this.logger.warn('Failed to queue document for indexing', {
-          documentId: document._id,
+          documentId: updated!.id,
           error: err instanceof Error ? err.message : 'Unknown error',
         });
       });
     }
 
     // Update workspace storage usage
-    await this.workspaceService.updateStorageUsage(workspaceId, document.size, 1);
+    await this.workspaceService.updateStorageUsage(workspaceId, updated!.size, 1);
 
     // Send notification
     await this.support.sendUploadNotification(userId, {
       eventType: 'upload_complete',
       sessionId: '',
-      filename: document.originalName,
-      document: this.support.mapToResponse(document),
+      filename: updated!.originalName,
+      document: this.support.mapToResponse(updated!),
     });
 
     this.logger.debug('Upload confirmed', {
-      documentId: document._id,
+      documentId: updated!.id,
       workspaceId,
     });
 
-    return this.support.mapToResponse(document);
+    return this.support.mapToResponse(updated!);
   }
 
   /**
@@ -363,12 +358,8 @@ export class WorkspaceDocumentWrite {
     // Validate folderId if provided
     let parentFolder = null;
     if (folderId) {
-      parentFolder = await this.documentModel.findOne({
-        _id: new Types.ObjectId(folderId),
-        workspaceId: new Types.ObjectId(workspaceId),
-        isFolder: true,
-      });
-      if (!parentFolder) {
+      parentFolder = await this.documentStore.findByIdAndWorkspace(folderId, workspaceId);
+      if (!parentFolder || !parentFolder.isFolder) {
         throw new BadRequestException('Folder not found');
       }
     }
@@ -390,8 +381,8 @@ export class WorkspaceDocumentWrite {
     });
 
     // Create document record
-    const document = await this.documentModel.create({
-      _id: documentId,
+    const document = await this.documentStore.create({
+      id: documentId.toString(),
       filename: uploaded.storedName,
       originalName: effectiveName,
       mimeType,
@@ -399,11 +390,11 @@ export class WorkspaceDocumentWrite {
       path: uploaded.blobPath,
       url: uploaded.url,
       contentHash: uploaded.contentHash,
-      workspaceId: new Types.ObjectId(workspaceId),
-      createdBy: new Types.ObjectId(userId),
+      workspaceId,
+      createdBy: userId,
       status: DocumentStatus.COMPLETED,
       uploadedAt: new Date(),
-      parentId: folderId ? new Types.ObjectId(folderId) : undefined,
+      parentId: folderId ?? null,
       metadata: {
         deepSearchRequested: String(Boolean(deepSearch)),
         autoIndexRequested: String(autoIndex),
@@ -414,9 +405,9 @@ export class WorkspaceDocumentWrite {
 
     // Trigger indexing (non-blocking), unless auto-indexation is disabled.
     if (autoIndex) {
-      this.indexingService.queueDocument(document._id.toString(), deepSearch).catch((err) => {
+      this.indexingService.queueDocument(document.id, deepSearch).catch((err) => {
         this.logger.warn('Failed to queue document for indexing', {
-          documentId: document._id,
+          documentId: document.id,
           error: err instanceof Error ? err.message : 'Unknown error',
         });
       });
@@ -426,7 +417,7 @@ export class WorkspaceDocumentWrite {
     await this.workspaceService.updateStorageUsage(workspaceId, size, 1);
 
     this.logger.debug('Small file uploaded', {
-      documentId: document._id,
+      documentId: document.id,
       workspaceId,
       size,
       folderId,
@@ -514,9 +505,7 @@ export class WorkspaceDocumentWrite {
     );
 
     if (dto.sourceMeta) {
-      await this.documentModel.findByIdAndUpdate(doc.id, {
-        $set: { metadata: dto.sourceMeta },
-      });
+      await this.documentStore.updateById(doc.id, { metadata: dto.sourceMeta });
     }
 
     this.logger.debug('File ingested from URL', {
@@ -560,9 +549,9 @@ export class WorkspaceDocumentWrite {
       return;
     }
 
-    await this.documentModel.create({
-      workspaceId: new Types.ObjectId(systemWorkspaceId),
-      createdBy: new Types.ObjectId(createdByStr),
+    await this.documentStore.create({
+      workspaceId: systemWorkspaceId,
+      createdBy: createdByStr,
       filename: fileInfo.name,
       originalName: fileInfo.name,
       mimeType: fileInfo.content_type || 'application/octet-stream',
@@ -593,8 +582,8 @@ export class WorkspaceDocumentWrite {
     if (!Types.ObjectId.isValid(documentId)) {
       throw new NotFoundException(ErrorCode.WORKSPACE_DOCUMENT_NOT_FOUND, 'Document not found');
     }
-    const doc = await this.documentModel.findById(documentId);
-    if (!doc || doc.workspaceId.toString() !== workspaceId || doc.isFolder) {
+    const doc = await this.documentStore.findById(documentId);
+    if (!doc || doc.workspaceId !== workspaceId || doc.isFolder) {
       throw new NotFoundException(ErrorCode.WORKSPACE_DOCUMENT_NOT_FOUND, 'Document not found');
     }
 
@@ -609,11 +598,10 @@ export class WorkspaceDocumentWrite {
     const base = trimmed.toLowerCase().endsWith(ext.toLowerCase()) && ext
       ? trimmed.slice(0, trimmed.length - ext.length)
       : trimmed;
-    doc.originalName = `${base.slice(0, 200).trim()}${ext}`;
-    await doc.save();
+    const renamed = await this.documentStore.renameOriginalName(documentId, `${base.slice(0, 200).trim()}${ext}`);
 
-    this.logger.log('Document renamed', { documentId, workspaceId, newName: doc.originalName });
-    return this.support.mapToResponse(doc);
+    this.logger.log('Document renamed', { documentId, workspaceId, newName: renamed!.originalName });
+    return this.support.mapToResponse(renamed!);
   }
 
   /**
@@ -635,14 +623,11 @@ export class WorkspaceDocumentWrite {
 
       while (queue.length > 0) {
         const currentId = queue.shift()!;
-        const children = await this.documentModel.find({
-          parentId: new Types.ObjectId(currentId),
-          isFolder: true,
-        }).select('_id').exec();
+        const children = await this.documentStore.findChildFolderIds(currentId);
 
         for (const child of children) {
-          descendants.add(child._id.toString());
-          queue.push(child._id.toString());
+          descendants.add(child);
+          queue.push(child);
         }
       }
 
@@ -651,11 +636,11 @@ export class WorkspaceDocumentWrite {
 
     // If target folder is provided, verify it exists and user has access
     if (targetFolderId) {
-      const targetFolder = await this.documentModel.findById(targetFolderId);
+      const targetFolder = await this.documentStore.findById(targetFolderId);
       if (!targetFolder || !targetFolder.isFolder) {
         throw new BadRequestException('Target folder not found');
       }
-      if (userId && targetFolder.createdBy.toString() !== userId) {
+      if (userId && targetFolder.createdBy !== userId) {
         throw new ForbiddenException(
           ErrorCode.WORKSPACE_FORBIDDEN,
           'You do not have permission to move items into this folder',
@@ -665,20 +650,20 @@ export class WorkspaceDocumentWrite {
 
     for (const documentId of documentIds) {
       try {
-        const document = await this.documentModel.findById(documentId);
+        const document = await this.documentStore.findById(documentId);
 
         if (!document) {
           failed.push(documentId);
           continue;
         }
 
-        if (document.workspaceId.toString() !== workspaceId) {
+        if (document.workspaceId !== workspaceId) {
           failed.push(documentId);
           continue;
         }
 
         // Check permission - only creator can move
-        if (userId && document.createdBy.toString() !== userId) {
+        if (userId && document.createdBy !== userId) {
           failed.push(documentId);
           continue;
         }
@@ -699,10 +684,7 @@ export class WorkspaceDocumentWrite {
         }
 
         // Update parent folder
-        document.parentId = targetFolderId
-          ? new Types.ObjectId(targetFolderId)
-          : undefined;
-        await document.save();
+        await this.documentStore.setParent(documentId, targetFolderId ?? null);
 
         moved.push(documentId);
       } catch (error) {

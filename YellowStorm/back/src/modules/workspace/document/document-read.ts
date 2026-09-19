@@ -1,14 +1,9 @@
-import { Injectable } from '@nestjs/common';
-import { InjectModel } from '@nestjs/mongoose';
+import { Inject, Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { Model, Types } from 'mongoose';
 import {
-  WorkspaceDoc,
-  WorkspaceDocumentDoc,
   DocumentStatus,
-  DocumentType,
 } from '../schemas/workspace-document.schema';
-import { escapeRegex } from '../../../common/utils';
+import { DOCUMENT_STORE, type DocumentStore } from '../stores/document-store';
 import { normalizeWorkspaceUrl } from '../services/url-normalization';
 import {
   DocumentQueryParams,
@@ -30,8 +25,7 @@ export class WorkspaceDocumentRead {
   private readonly sasUrlExpiryMinutes: number;
 
   constructor(
-    @InjectModel(WorkspaceDoc.name)
-    private readonly documentModel: Model<WorkspaceDocumentDoc>,
+    @Inject(DOCUMENT_STORE) private readonly documentStore: DocumentStore,
     private readonly documentService: DocumentService,
     private readonly configService: ConfigService,
     private readonly support: WorkspaceDocumentSupport,
@@ -48,8 +42,7 @@ export class WorkspaceDocumentRead {
   async findByIds(documentIds: string[]): Promise<DocumentResponse[]> {
     if (documentIds.length === 0) return [];
 
-    const objectIds = documentIds.map((id) => new Types.ObjectId(id));
-    const documents = await this.documentModel.find({ _id: { $in: objectIds } }).exec();
+    const documents = await this.documentStore.findByIds(documentIds);
 
     return documents.map((d) => this.support.mapToResponse(d));
   }
@@ -61,25 +54,14 @@ export class WorkspaceDocumentRead {
   async findByIdsInWorkspace(workspaceId: string, documentIds: string[]): Promise<DocumentResponse[]> {
     if (documentIds.length === 0) return [];
 
-    const objectIds = documentIds.map((id) => new Types.ObjectId(id));
-    const documents = await this.documentModel
-      .find({ _id: { $in: objectIds }, workspaceId: new Types.ObjectId(workspaceId) })
-      .exec();
+    const documents = await this.documentStore.findByIdsInWorkspace(workspaceId, documentIds);
 
     return documents.map((d) => this.support.mapToResponse(d));
   }
 
   /** Merge string flags into a document's metadata (workspace-scoped). */
   async mergeMetadata(workspaceId: string, documentId: string, patch: Record<string, string>): Promise<void> {
-    const setObject = Object.fromEntries(
-      Object.entries(patch).map(([key, value]) => [`metadata.${key}`, value]),
-    );
-    await this.documentModel
-      .updateOne(
-        { _id: new Types.ObjectId(documentId), workspaceId: new Types.ObjectId(workspaceId) },
-        { $set: setObject },
-      )
-      .exec();
+    await this.documentStore.mergeMetadata(workspaceId, documentId, patch);
   }
 
   /**
@@ -116,40 +98,16 @@ export class WorkspaceDocumentRead {
 
     const skip = (page - 1) * limit;
 
-    // Build query — default to completed so pending/failed uploads are hidden
-    const query: Record<string, unknown> = {
-      workspaceId: new Types.ObjectId(workspaceId),
-      status: status || DocumentStatus.COMPLETED,
-    };
-
-    // Filter by parent folder ID
-    if (parentId === null || parentId === undefined) {
-      // Root level: show items with no parent
-      query.parentId = { $in: [null, undefined] };
-    } else if (parentId) {
-      // Specific folder: show items in that folder
-      query.parentId = new Types.ObjectId(parentId);
-    }
-
-    if (search) {
-      query.$or = [
-        { originalName: { $regex: escapeRegex(search), $options: 'i' } },
-        { folderName: { $regex: escapeRegex(search), $options: 'i' } },
-      ];
-    }
-
-    // Build sort - folders first
-    const sort: Record<string, 1 | -1> = {
-      isFolder: -1,
-      [sortBy]: sortOrder === 'asc' ? 1 : -1,
-    };
-
-    // Execute queries
     // Count includes both folders and documents for accurate pagination
-    const [documents, total] = await Promise.all([
-      this.documentModel.find(query).sort(sort).skip(skip).limit(limit).exec(),
-      this.documentModel.countDocuments(query),
-    ]);
+    const { items: documents, total } = await this.documentStore.listByWorkspace(workspaceId, {
+      status: status || DocumentStatus.COMPLETED,
+      search,
+      parentId: parentId ?? null,
+      sortBy,
+      sortOrder,
+      skip,
+      limit,
+    });
 
     return {
       documents: documents.map((d) => this.support.mapToResponse(d)),
@@ -181,28 +139,15 @@ export class WorkspaceDocumentRead {
 
     const skip = (page - 1) * limit;
 
-    const query: Record<string, unknown> = {
-      workspaceId: { $in: workspaceIds.map((id) => new Types.ObjectId(id)) },
+    const { items: documents, total } = await this.documentStore.listByWorkspaces(workspaceIds, {
       status: status || DocumentStatus.COMPLETED,
-    };
-
-    if (search) {
-      const namePattern = { $regex: escapeRegex(search), $options: 'i' };
-      if (searchFilename) {
-        query.$or = [{ originalName: namePattern }, { filename: namePattern }];
-      } else {
-        query.originalName = namePattern;
-      }
-    }
-
-    const sort: Record<string, 1 | -1> = {
-      [sortBy]: sortOrder === 'asc' ? 1 : -1,
-    };
-
-    const [documents, total] = await Promise.all([
-      this.documentModel.find(query).sort(sort).skip(skip).limit(limit).exec(),
-      this.documentModel.countDocuments(query),
-    ]);
+      search,
+      searchFilename,
+      sortBy,
+      sortOrder,
+      skip,
+      limit,
+    });
 
     return {
       documents: documents.map((d) => this.support.mapToResponse(d)),
@@ -222,10 +167,7 @@ export class WorkspaceDocumentRead {
     workspaceId: string,
     documentId: string,
   ): Promise<DocumentResponse> {
-    const document = await this.documentModel.findOne({
-      _id: documentId,
-      workspaceId: new Types.ObjectId(workspaceId),
-    });
+    const document = await this.documentStore.findByIdAndWorkspace(documentId, workspaceId);
 
     if (!document) {
       throw new NotFoundException(
@@ -244,10 +186,7 @@ export class WorkspaceDocumentRead {
     workspaceId: string,
     documentId: string,
   ): Promise<DownloadUrlResponse> {
-    const document = await this.documentModel.findOne({
-      _id: documentId,
-      workspaceId: new Types.ObjectId(workspaceId),
-    });
+    const document = await this.documentStore.findByIdAndWorkspace(documentId, workspaceId);
 
     if (!document) {
       throw new NotFoundException(
@@ -302,27 +241,14 @@ export class WorkspaceDocumentRead {
 
     const skip = (page - 1) * limit;
 
-    // Build query
-    const query: Record<string, unknown> = {
-      workspaceId: new Types.ObjectId(workspaceId),
-      ...(includeAllStatuses ? {} : { status: status || DocumentStatus.COMPLETED }),
-    };
-
-    if (search) {
-      query.originalName = { $regex: escapeRegex(search), $options: 'i' };
-    }
-
-    // Build sort
-    const sort: Record<string, 1 | -1> = {
-      isFolder: -1, // Folders first
-      [sortBy]: sortOrder === 'asc' ? 1 : -1,
-    };
-
-    // Execute queries
-    const [items, total] = await Promise.all([
-      this.documentModel.find(query).sort(sort).skip(skip).limit(limit).exec(),
-      this.documentModel.countDocuments(query),
-    ]);
+    const { items, total } = await this.documentStore.listByWorkspace(workspaceId, {
+      status: includeAllStatuses ? undefined : (status || DocumentStatus.COMPLETED),
+      search,
+      sortBy,
+      sortOrder,
+      skip,
+      limit,
+    });
 
     return {
       documents: items.map((d) => this.support.mapToResponse(d)),
@@ -339,16 +265,7 @@ export class WorkspaceDocumentRead {
    * Get all folders in a workspace (no pagination, for sidebar tree view)
    */
   async getAllFolders(workspaceId: string): Promise<DocumentResponse[]> {
-    const query: Record<string, unknown> = {
-      workspaceId: new Types.ObjectId(workspaceId),
-      isFolder: true,
-      status: DocumentStatus.COMPLETED,
-    };
-
-    const folders = await this.documentModel
-      .find(query)
-      .sort({ originalName: 1 })
-      .exec();
+    const folders = await this.documentStore.listFolders(workspaceId);
 
     return folders.map((d) => this.support.mapToResponse(d));
   }
@@ -371,32 +288,14 @@ export class WorkspaceDocumentRead {
 
     const skip = (page - 1) * limit;
 
-    // Build query for folder contents
-    const query: Record<string, unknown> = {
-      workspaceId: new Types.ObjectId(workspaceId),
-      parentId: new Types.ObjectId(folderId),
-      status: DocumentStatus.COMPLETED,
-    };
-
-    if (search) {
-      query.$or = [
-        { originalName: { $regex: escapeRegex(search), $options: 'i' } },
-        { folderName: { $regex: escapeRegex(search), $options: 'i' } },
-      ];
-    }
-
-    // Build sort - folders first
-    const sort: Record<string, 1 | -1> = {
-      isFolder: -1,
-      [sortBy]: sortOrder === 'asc' ? 1 : -1,
-    };
-
-    // Execute queries
     // Count includes both folders and documents for accurate pagination
-    const [items, total] = await Promise.all([
-      this.documentModel.find(query).sort(sort).skip(skip).limit(limit).exec(),
-      this.documentModel.countDocuments(query),
-    ]);
+    const { items, total } = await this.documentStore.listFolderContents(workspaceId, folderId, {
+      search,
+      sortBy,
+      sortOrder,
+      skip,
+      limit,
+    });
 
     return {
       documents: items.map((d) => this.support.mapToResponse(d)),
@@ -411,11 +310,7 @@ export class WorkspaceDocumentRead {
 
   async checkUrls(workspaceId: string, urls: string[]): Promise<{ results: Array<Record<string, unknown>> }> {
     const normalized = urls.map((url) => ({ url, normalizedUrl: normalizeWorkspaceUrl(url) }));
-    const documents = await this.documentModel.find({
-      workspaceId: new Types.ObjectId(workspaceId),
-      type: DocumentType.URL,
-      sourceUrl: { $exists: true },
-    }).select('_id sourceUrl status indexingStatus').lean().exec();
+    const documents = await this.documentStore.findUrlSources(workspaceId);
     const byNormalized = new Map(documents.map((doc) => [normalizeWorkspaceUrl(doc.sourceUrl ?? ''), doc]));
     return {
       results: normalized.map(({ url, normalizedUrl }) => {
@@ -424,7 +319,7 @@ export class WorkspaceDocumentRead {
           url,
           normalizedUrl,
           exists: Boolean(document),
-          documentId: document?._id?.toString(),
+          documentId: document?.id,
           status: document?.status,
           indexingStatus: document?.indexingStatus,
         };

@@ -1,9 +1,6 @@
 import { Inject, Injectable, forwardRef } from '@nestjs/common';
 import type { UserSummary } from '@common/ports/user-lookup.port';
-import { InjectModel } from '@nestjs/mongoose';
-import { Model, Types } from 'mongoose';
-import { Workspace, WorkspaceDocument } from './schemas/workspace.schema';
-import { WorkspaceShare, WorkspaceShareDocument } from './schemas/workspace-share.schema';
+import { Types } from 'mongoose';
 import {
   WorkspaceShareResponse,
   ShareWorkspaceResult,
@@ -23,16 +20,17 @@ import { USER_LOOKUP_PORT, type UserLookupPort } from '@common/ports/user-lookup
 import { NotificationsService } from '../notifications/notifications.service';
 import { NotificationType } from '../notifications/schemas/notification.schema';
 import { UserDocument } from '../user/schemas/user.schema';
+import type { WorkspaceRecord, WorkspaceShareRecord } from './ports/workspace-records';
+import { WORKSPACE_STORE, type WorkspaceStore } from './stores/workspace-store';
+import { SHARE_STORE, type ShareStore } from './stores/share-store';
 
 type ShareEventType = 'workspace_shared' | 'workspace_share_revoked' | 'workspace_share_updated';
 
 @Injectable()
 export class WorkspaceShareService {
   constructor(
-    @InjectModel(Workspace.name)
-    private readonly workspaceModel: Model<WorkspaceDocument>,
-    @InjectModel(WorkspaceShare.name)
-    private readonly shareModel: Model<WorkspaceShareDocument>,
+    @Inject(WORKSPACE_STORE) private readonly workspaceStore: WorkspaceStore,
+    @Inject(SHARE_STORE) private readonly shareStore: ShareStore,
     @Inject(USER_LOOKUP_PORT) private readonly userLookup: UserLookupPort,
     private readonly logger: LoggerService,
     private readonly userService: UserService,
@@ -59,32 +57,13 @@ export class WorkspaceShareService {
       );
     }
 
-    const objectIds = workspaceIds.map((id) => new Types.ObjectId(id));
-    const userObjectId = new Types.ObjectId(userId);
-
     const [owned, shared, publicWs] = await Promise.all([
-      this.workspaceModel
-        .find({ _id: { $in: objectIds }, createdBy: userObjectId })
-        .select('_id')
-        .lean()
-        .exec(),
-      this.shareModel
-        .find({ workspaceId: { $in: objectIds }, sharedWithUserId: userObjectId })
-        .select('workspaceId')
-        .lean()
-        .exec(),
-      this.workspaceModel
-        .find({ _id: { $in: objectIds }, isPublic: true })
-        .select('_id')
-        .lean()
-        .exec(),
+      this.workspaceStore.filterOwned(workspaceIds, userId),
+      this.shareStore.filterSharedWithUser(userId, workspaceIds),
+      this.workspaceStore.filterPublic(workspaceIds),
     ]);
 
-    const accessibleIds = new Set<string>([
-      ...owned.map((w) => w._id.toString()),
-      ...shared.map((s) => s.workspaceId.toString()),
-      ...publicWs.map((w) => w._id.toString()),
-    ]);
+    const accessibleIds = new Set<string>([...owned, ...shared, ...publicWs]);
 
     const missing = workspaceIds.filter((id) => !accessibleIds.has(id));
     if (missing.length > 0) {
@@ -103,12 +82,12 @@ export class WorkspaceShareService {
       );
     }
 
-    const workspace = await this.workspaceModel.findById(workspaceId).exec();
+    const workspace = await this.workspaceStore.findById(workspaceId);
     if (!workspace) {
       throw new NotFoundException(ErrorCode.WORKSPACE_NOT_FOUND, 'Workspace not found');
     }
 
-    if (workspace.createdBy.toString() === userId) return;
+    if (workspace.createdBy === userId) return;
 
     if (workspace.isPublic) {
       throw new ForbiddenException(
@@ -117,13 +96,7 @@ export class WorkspaceShareService {
       );
     }
 
-    const share = await this.shareModel
-      .findOne({
-        workspaceId: new Types.ObjectId(workspaceId),
-        sharedWithUserId: new Types.ObjectId(userId),
-      })
-      .lean()
-      .exec();
+    const share = await this.shareStore.findOneByWorkspaceAndUser(workspaceId, userId);
 
     if (!share) {
       throw new ForbiddenException(
@@ -151,22 +124,11 @@ export class WorkspaceShareService {
       return false;
     }
 
-    const workspaceObjectId = new Types.ObjectId(workspaceId);
-    const userObjectId = new Types.ObjectId(userId);
+    const workspace = await this.workspaceStore.findById(workspaceId);
+    const owned = Boolean(workspace && workspace.createdBy === userId);
+    const shared = workspace ? Boolean(await this.shareStore.findOneByWorkspaceAndUser(workspaceId, userId)) : false;
 
-    const [owned, shared, isPublic] = await Promise.all([
-      this.workspaceModel
-        .exists({ _id: workspaceObjectId, createdBy: userObjectId })
-        .exec(),
-      this.shareModel
-        .exists({ workspaceId: workspaceObjectId, sharedWithUserId: userObjectId })
-        .exec(),
-      this.workspaceModel
-        .exists({ _id: workspaceObjectId, isPublic: true })
-        .exec(),
-    ]);
-
-    return Boolean(owned || shared || isPublic);
+    return Boolean(owned || shared || workspace?.isPublic);
   }
 
   /**
@@ -177,12 +139,12 @@ export class WorkspaceShareService {
     ownerId: string,
     data: ShareWorkspaceDto,
   ): Promise<ShareWorkspaceResult> {
-    const workspace = await this.workspaceModel.findById(workspaceId).exec();
+    const workspace = await this.workspaceStore.findById(workspaceId);
     if (!workspace) {
       throw new NotFoundException(ErrorCode.WORKSPACE_NOT_FOUND, 'Workspace not found');
     }
 
-    if (workspace.createdBy.toString() !== ownerId) {
+    if (workspace.createdBy !== ownerId) {
       throw new ForbiddenException(
         ErrorCode.WORKSPACE_FORBIDDEN,
         'You do not have access to this workspace',
@@ -229,23 +191,16 @@ export class WorkspaceShareService {
         continue;
       }
 
-      const existingShare = await this.shareModel
-        .findOne({
-          workspaceId: new Types.ObjectId(workspaceId),
-          sharedWithUserId: user._id,
-        })
-        .exec();
+      const existingShare = await this.shareStore.findOneByWorkspaceAndUser(workspaceId, user._id.toString());
 
       if (existingShare) {
         const permissionChanged = existingShare.permission !== entry.permission;
         if (permissionChanged) {
-          await this.shareModel
-            .updateOne({ _id: existingShare._id }, { $set: { permission: entry.permission } })
-            .exec();
+          await this.shareStore.updatePermission(existingShare.id, entry.permission);
           existingShare.permission = entry.permission;
           updatedEvents.push({
             userId: user._id.toString(),
-            shareId: existingShare._id.toString(),
+            shareId: existingShare.id,
             permission: entry.permission,
           });
         }
@@ -253,27 +208,24 @@ export class WorkspaceShareService {
         continue;
       }
 
-      const share = await this.shareModel.create({
-        workspaceId: new Types.ObjectId(workspaceId),
+      const share = await this.shareStore.create({
+        workspaceId,
         ownerId: workspace.createdBy,
-        sharedWithUserId: user._id,
+        sharedWithUserId: user._id.toString(),
         permission: entry.permission,
-        sharedBy: new Types.ObjectId(ownerId),
+        sharedBy: ownerId,
       });
 
       shared.push(this.mapToResponse(share, user));
       createdEvents.push({
         userId: user._id.toString(),
-        shareId: share._id.toString(),
+        shareId: share.id,
         permission: entry.permission,
       });
     }
 
     if (createdEvents.length > 0) {
-      await this.workspaceModel.updateOne(
-        { _id: workspaceId },
-        { $inc: { shareCount: createdEvents.length } },
-      );
+      await this.workspaceStore.incrementCounters(workspaceId, { shareCount: createdEvents.length });
     }
 
     for (const event of createdEvents) {
@@ -310,22 +262,12 @@ export class WorkspaceShareService {
     const { page = 1, limit = 20 } = params;
     const skip = (page - 1) * limit;
 
-    const [shares, total] = await Promise.all([
-      this.shareModel
-        .find({ workspaceId: new Types.ObjectId(workspaceId) })
-        .sort({ createdAt: -1 })
-        .skip(skip)
-        .limit(limit)
-        .exec(),
-      this.shareModel.countDocuments({
-        workspaceId: new Types.ObjectId(workspaceId),
-      }),
-    ]);
+    const { items: shares, total } = await this.shareStore.findForWorkspace(workspaceId, skip, limit);
 
-    const users = await this.userLookup.byIds(shares.map((share) => share.sharedWithUserId.toString()));
+    const users = await this.userLookup.byIds(shares.map((share) => share.sharedWithUserId));
 
     return {
-      shares: shares.map((share) => this.mapToResponse(share, undefined, users.get(share.sharedWithUserId.toString()))),
+      shares: shares.map((share) => this.mapToResponse(share, undefined, users.get(share.sharedWithUserId))),
       pagination: {
         page,
         limit,
@@ -345,17 +287,15 @@ export class WorkspaceShareService {
     shareId: string,
     permission: WorkspacePermission,
   ): Promise<WorkspaceShareResponse> {
-    const share = await this.shareModel.findById(shareId).exec();
+    const share = await this.shareStore.findById(shareId);
 
-    if (!share || share.workspaceId.toString() !== workspaceId) {
+    if (!share || share.workspaceId !== workspaceId) {
       throw new NotFoundException(ErrorCode.WORKSPACE_SHARE_NOT_FOUND, 'Share not found');
     }
 
     const changed = share.permission !== permission;
     if (changed) {
-      await this.shareModel
-        .updateOne({ _id: shareId }, { $set: { permission } })
-        .exec();
+      await this.shareStore.updatePermission(shareId, permission);
       share.permission = permission;
     }
 
@@ -364,16 +304,16 @@ export class WorkspaceShareService {
     if (changed) {
       try {
         const [workspace, owner] = await Promise.all([
-          this.workspaceModel.findById(share.workspaceId).exec(),
-          this.userService.findById(share.ownerId.toString()),
+          this.workspaceStore.findById(share.workspaceId),
+          this.userService.findById(share.ownerId),
         ]);
         if (workspace && owner) {
           await this.pushShareNotification(
             'workspace_share_updated',
-            share.sharedWithUserId.toString(),
+            share.sharedWithUserId,
             workspace,
             owner,
-            { shareId: share._id.toString(), permission },
+            { shareId: share.id, permission },
           );
         }
       } catch (err) {
@@ -391,23 +331,23 @@ export class WorkspaceShareService {
    * Revoke a share. Same workspaceId mismatch guard as updatePermission.
    */
   async revoke(workspaceId: string, shareId: string): Promise<void> {
-    const share = await this.shareModel.findById(shareId).exec();
+    const share = await this.shareStore.findById(shareId);
 
-    if (!share || share.workspaceId.toString() !== workspaceId) {
+    if (!share || share.workspaceId !== workspaceId) {
       throw new NotFoundException(ErrorCode.WORKSPACE_SHARE_NOT_FOUND, 'Share not found');
     }
 
-    const recipientId = share.sharedWithUserId.toString();
+    const recipientId = share.sharedWithUserId;
 
-    await this.shareModel.deleteOne({ _id: shareId });
-    await this.workspaceModel.updateOne({ _id: workspaceId }, { $inc: { shareCount: -1 } });
+    await this.shareStore.deleteById(shareId);
+    await this.workspaceStore.incrementCounters(workspaceId, { shareCount: -1 });
 
     this.logger.log('Share revoked', { shareId, workspaceId });
 
     try {
       const [workspace, owner] = await Promise.all([
-        this.workspaceModel.findById(share.workspaceId).exec(),
-        this.userService.findById(share.ownerId.toString()),
+        this.workspaceStore.findById(share.workspaceId),
+        this.userService.findById(share.ownerId),
       ]);
       if (workspace && owner) {
         await this.pushShareNotification(
@@ -436,46 +376,31 @@ export class WorkspaceShareService {
     const { page = 1, limit = 20 } = params;
     const skip = (page - 1) * limit;
 
-    const query = { sharedWithUserId: new Types.ObjectId(userId) };
+    const { items: shares, total } = await this.shareStore.findSharedWithUser(userId, skip, limit);
 
-    const [shares, total] = await Promise.all([
-      this.shareModel
-        .find(query)
-        .populate({
-          path: 'workspaceId',
-          select:
-            'name alias storagePrefix description documentCount usedStorage allocatedStorage createdAt updatedAt',
-        })
-        .sort({ createdAt: -1 })
-        .skip(skip)
-        .limit(limit)
-        .lean()
-        .exec(),
-      this.shareModel.countDocuments(query),
-    ]);
-
-    const owners = await this.userLookup.byIds(shares.map((share) => (share as { sharedBy: { toString(): string } }).sharedBy.toString()));
-    const owner = (share: { sharedBy: { toString(): string } }) => owners.get(share.sharedBy.toString());
+    // Join the shared workspaces through the store (replaces the Mongo
+    // `populate('workspaceId')` — plan D.6) and resolve share owners.
+    const workspacesById = await this.workspaceStore.findByIds(shares.map((share) => share.workspaceId));
+    const owners = await this.userLookup.byIds(shares.map((share) => share.sharedBy));
 
     const workspaces: SharedWorkspaceResponse[] = shares.map((share) => {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const ws = (share as any).workspaceId;
-      const ownerUser = owner(share);
+      const ws = workspacesById.get(share.workspaceId)!;
+      const ownerUser = owners.get(share.sharedBy);
 
       return {
-        id: ws._id.toString(),
+        id: ws.id,
         name: ws.name,
         alias: ws.alias,
         storagePrefix: ws.storagePrefix,
         description: ws.description,
         owner: {
-          id: ownerUser?.id ?? share.sharedBy.toString(),
+          id: ownerUser?.id ?? share.sharedBy,
           email: ownerUser?.email ?? '',
           firstName: ownerUser?.firstName || undefined,
           lastName: ownerUser?.lastName || undefined,
         },
         permission: share.permission,
-        shareId: share._id.toString(),
+        shareId: share.id,
         documentCount: ws.documentCount,
         usedStorage: ws.usedStorage,
         allocatedStorage: ws.allocatedStorage,
@@ -500,13 +425,11 @@ export class WorkspaceShareService {
    * Remove all shares for a workspace (cascade on workspace delete)
    */
   async removeAllByWorkspace(workspaceId: string): Promise<void> {
-    const result = await this.shareModel
-      .deleteMany({ workspaceId: new Types.ObjectId(workspaceId) })
-      .exec();
+    const deletedCount = await this.shareStore.deleteManyByWorkspace(workspaceId);
 
     this.logger.log('All shares removed for workspace', {
       workspaceId,
-      deletedCount: result.deletedCount,
+      deletedCount,
     });
   }
 
@@ -517,7 +440,7 @@ export class WorkspaceShareService {
   private async pushShareNotification(
     eventType: ShareEventType,
     recipientId: string,
-    workspace: WorkspaceDocument,
+    workspace: WorkspaceRecord,
     owner: UserDocument,
     extra: { shareId: string; permission?: WorkspacePermission },
   ): Promise<void> {
@@ -547,7 +470,7 @@ export class WorkspaceShareService {
         message,
         data: {
           eventType,
-          workspaceId: workspace._id.toString(),
+          workspaceId: workspace.id,
           workspaceName: workspace.name,
           shareId: extra.shareId,
           permission: extra.permission,
@@ -564,19 +487,19 @@ export class WorkspaceShareService {
       this.logger.warn('Failed to send share notification', {
         eventType,
         recipientId,
-        workspaceId: workspace._id.toString(),
+        workspaceId: workspace.id,
         error: err instanceof Error ? err.message : 'Unknown error',
       });
     }
   }
 
   /**
-   * Map share document to response. When `sharedWithUserId` is populated it's a user
-   * document; otherwise it's an ObjectId. Callers that just created/updated a share
-   * (no populate) can pass `userOverride` so the response still carries email/name.
+   * Map share record to response. Callers that just created/updated a share
+   * (no user lookup) can pass `userOverride` so the response still carries
+   * email/name.
    */
   private mapToResponse(
-    share: WorkspaceShareDocument,
+    share: WorkspaceShareRecord,
     userOverride?: UserDocument,
     resolvedUser?: UserSummary,
   ): WorkspaceShareResponse {
@@ -588,18 +511,18 @@ export class WorkspaceShareService {
           lastName: userOverride.profile?.lastName,
         }
       : {
-          id: resolvedUser?.id ?? share.sharedWithUserId.toString(),
+          id: resolvedUser?.id ?? share.sharedWithUserId,
           email: resolvedUser?.email ?? '',
           firstName: resolvedUser?.firstName || undefined,
           lastName: resolvedUser?.lastName || undefined,
         };
 
     return {
-      id: share._id.toString(),
-      workspaceId: share.workspaceId.toString(),
+      id: share.id,
+      workspaceId: share.workspaceId,
       user: userInfo,
       permission: share.permission,
-      sharedBy: share.sharedBy.toString(),
+      sharedBy: share.sharedBy,
       createdAt: share.createdAt.toISOString(),
       updatedAt: share.updatedAt.toISOString(),
     };

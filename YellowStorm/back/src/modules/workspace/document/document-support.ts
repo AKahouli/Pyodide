@@ -1,19 +1,19 @@
 import { Inject, Injectable, Optional, forwardRef } from '@nestjs/common';
-import { InjectModel } from '@nestjs/mongoose';
 import { ConfigService } from '@nestjs/config';
-import { Model, Types } from 'mongoose';
 import { randomUUID } from 'crypto';
 import {
-  WorkspaceDoc,
-  WorkspaceDocumentDoc,
   DocumentType,
+  DocumentStatus,
   IndexingStatus,
 } from '../schemas/workspace-document.schema';
+import { UploadSessionStatus } from '../schemas/upload-session.schema';
 import { collapseCharSet, stripLeadingTrailingWhitespaceOrDot } from '../../../common/utils';
 import { normalizeWorkspaceUrl } from '../services/url-normalization';
-import {
-  UploadSessionDocument,
-} from '../schemas/upload-session.schema';
+import type {
+  UploadSessionRecord,
+} from '../stores/upload-session-store';
+import type { WorkspaceDocumentRecord } from '../ports/workspace-records';
+import { DOCUMENT_STORE, type DocumentStore } from '../stores/document-store';
 import {
   DocumentResponse,
 } from '../interfaces/workspace-document.interface';
@@ -36,8 +36,7 @@ export class WorkspaceDocumentSupport {
   private readonly maxFileSizeMb: number;
 
   constructor(
-    @InjectModel(WorkspaceDoc.name)
-    private readonly documentModel: Model<WorkspaceDocumentDoc>,
+    @Inject(DOCUMENT_STORE) private readonly documentStore: DocumentStore,
     private readonly uploadSettingsService: WorkspaceUploadSettingsService,
     private readonly configService: ConfigService,
     @Inject(forwardRef(() => NotificationsService))
@@ -91,10 +90,7 @@ export class WorkspaceDocumentSupport {
     workspaceId: string,
     originalName: string,
   ): Promise<string> {
-    const workspaceObjectId = new Types.ObjectId(workspaceId);
-    const exists = await this.documentModel
-      .exists({ workspaceId: workspaceObjectId, originalName, isFolder: false })
-      .lean();
+    const exists = await this.documentStore.originalNameExists(workspaceId, originalName);
     if (!exists) return originalName;
 
     const dotIndex = originalName.lastIndexOf('.');
@@ -106,9 +102,7 @@ export class WorkspaceDocumentSupport {
     // pathological cases — 9999 collisions in one workspace is already broken.
     for (let n = 1; n <= 9999; n++) {
       const candidate = `${base}_(${n})${ext}`;
-      const taken = await this.documentModel
-        .exists({ workspaceId: workspaceObjectId, originalName: candidate, isFolder: false })
-        .lean();
+      const taken = await this.documentStore.originalNameExists(workspaceId, candidate);
       if (!taken) return candidate;
     }
 
@@ -159,9 +153,9 @@ export class WorkspaceDocumentSupport {
   /**
    * Map document to response
    */
-  mapToResponse(document: WorkspaceDocumentDoc): DocumentResponse {
+  mapToResponse(document: WorkspaceDocumentRecord): DocumentResponse {
     return {
-      id: document._id.toString(),
+      id: document.id,
       filename: document.filename,
       originalName: document.originalName,
       mimeType: document.mimeType,
@@ -169,21 +163,21 @@ export class WorkspaceDocumentSupport {
       path: document.path,
       url: document.url,
       contentHash: document.contentHash,
-      workspaceId: document.workspaceId.toString(),
-      createdBy: document.createdBy.toString(),
-      status: document.status,
+      workspaceId: document.workspaceId,
+      createdBy: document.createdBy,
+      status: document.status as DocumentStatus,
       uploadedAt: document.uploadedAt?.toISOString(),
       errorMessage: document.errorMessage,
       metadata: document.metadata,
-      indexingStatus: document.indexingStatus || IndexingStatus.PENDING,
+      indexingStatus: (document.indexingStatus || IndexingStatus.PENDING) as IndexingStatus,
       indexingError: document.indexingError,
       indexingTaskName: document.indexingTaskName,
       indexingTaskId: document.indexingTaskId,
       lastIndexedAt: document.lastIndexedAt?.toISOString(),
       detected_language: document.detected_language,
       chunk_size: document.chunk_size,
-      parentId: document.parentId?.toString(),
-      isFolder: document.isFolder || false,
+      parentId: document.parentId,
+      isFolder: document.isFolder,
       folderName: document.folderName,
       type: (document.type as DocumentType) || DocumentType.DOC,
       sourceUrl: document.sourceUrl,
@@ -195,18 +189,18 @@ export class WorkspaceDocumentSupport {
   /**
    * Map upload session to response
    */
-  mapSessionToResponse(session: UploadSessionDocument): UploadSessionResponse {
+  mapSessionToResponse(session: UploadSessionRecord): UploadSessionResponse {
     return {
-      id: session._id.toString(),
-      workspaceId: session.workspaceId.toString(),
-      userId: session.userId.toString(),
-      status: session.status,
+      id: session.id,
+      workspaceId: session.workspaceId,
+      userId: session.userId,
+      status: session.status as UploadSessionStatus,
       files: session.files.map((f) => ({
         index: f.index,
         filename: f.filename,
         mimeType: f.mimeType,
         size: f.size,
-        documentId: f.documentId?.toString(),
+        documentId: f.documentId,
         status: f.status,
         progress: f.progress,
         error: f.error,
@@ -278,9 +272,9 @@ export class WorkspaceDocumentSupport {
     }
   }
 
-  async recordWorkspaceEvent(eventType: string, document: WorkspaceDocumentDoc): Promise<void> {
+  async recordWorkspaceEvent(eventType: string, document: WorkspaceDocumentRecord): Promise<void> {
     if (!this.outbox || this.featureVisibility?.isEnabled('dataRoomWorkspaceEvents') === false) return;
-    await this.outbox.record({ eventId: randomUUID(), eventType, aggregateType: 'workspace_document', aggregateId: document._id.toString(), payload: { workspaceId: document.workspaceId.toString(), documentId: document._id.toString(), createdBy: document.createdBy.toString(), documentType: document.type, originalName: document.originalName, mimeType: document.mimeType, sourceUrl: document.sourceUrl, normalizedSourceUrl: document.sourceUrl ? normalizeWorkspaceUrl(document.sourceUrl) : undefined, contentHash: document.contentHash, documentStatus: document.status, indexingStatus: document.indexingStatus, indexingTaskId: document.indexingTaskId, deepSearchRequested: document.metadata?.deepSearchRequested === 'true', metadata: document.metadata }, occurredAt: new Date() });
+    await this.outbox.record({ eventId: randomUUID(), eventType, aggregateType: 'workspace_document', aggregateId: document.id, payload: { workspaceId: document.workspaceId, documentId: document.id, createdBy: document.createdBy, documentType: document.type, originalName: document.originalName, mimeType: document.mimeType, sourceUrl: document.sourceUrl, normalizedSourceUrl: document.sourceUrl ? normalizeWorkspaceUrl(document.sourceUrl) : undefined, contentHash: document.contentHash, documentStatus: document.status, indexingStatus: document.indexingStatus, indexingTaskId: document.indexingTaskId, deepSearchRequested: document.metadata?.deepSearchRequested === 'true', metadata: document.metadata }, occurredAt: new Date() });
   }
 
   /**

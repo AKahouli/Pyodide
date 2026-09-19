@@ -1,11 +1,13 @@
 import { Test } from '@nestjs/testing';
-import { getModelToken } from '@nestjs/mongoose';
 import { ConfigService } from '@nestjs/config';
 import { lookup } from 'dns/promises';
 import axios from 'axios';
 import { Readable } from 'stream';
 import { Types } from 'mongoose';
 import { WorkspaceDocumentService } from './workspace-document.service';
+import { MongoDocumentStore } from './stores/mongo/mongo-document-store';
+import { MongoUploadSessionStore } from './stores/mongo/mongo-upload-session-store';
+import { DOCUMENT_STORE, UPLOAD_SESSION_STORE } from './stores';
 import { BadRequestException } from '../exceptions';
 import * as urlSafetyModule from './services/url-safety';
 
@@ -36,14 +38,19 @@ describe('WorkspaceDocumentService.createFromAiArtifact', () => {
   let updateStorageUsage: jest.Mock;
 
   beforeEach(async () => {
-    create = jest.fn().mockResolvedValue({});
+    create = jest.fn().mockImplementation(async (doc: any) => ({
+      _id: new Types.ObjectId(),
+      createdAt: new Date(),
+      updatedAt: new Date(),
+      ...doc,
+    }));
     updateStorageUsage = jest.fn().mockResolvedValue(undefined);
 
     const mod = await Test.createTestingModule({
       providers: [
         WorkspaceDocumentService,
-        { provide: getModelToken(WorkspaceDoc.name), useValue: { create } },
-        { provide: getModelToken(UploadSession.name), useValue: {} },
+        { provide: DOCUMENT_STORE, useValue: new MongoDocumentStore({ create }  as never) },
+        { provide: UPLOAD_SESSION_STORE, useValue: new MongoUploadSessionStore({}  as never) },
         {
           provide: WorkspaceService,
           useValue: {
@@ -145,7 +152,11 @@ describe('WorkspaceDocumentService upload validation', () => {
   let getAllowedExtensions: jest.Mock;
 
   beforeEach(async () => {
-    create = jest.fn().mockResolvedValue({ _id: 'doc1' });
+    create = jest.fn().mockResolvedValue({
+      _id: 'doc1',
+      workspaceId: new Types.ObjectId(WS_ID),
+      createdBy: new Types.ObjectId(USER_ID),
+    });
     getAllowedExtensions = jest.fn().mockResolvedValue(['.pdf', '.png']);
 
     const exists = jest.fn().mockReturnValue({ lean: () => Promise.resolve(null) });
@@ -153,8 +164,8 @@ describe('WorkspaceDocumentService upload validation', () => {
     const mod = await Test.createTestingModule({
       providers: [
         WorkspaceDocumentService,
-        { provide: getModelToken(WorkspaceDoc.name), useValue: { create, exists } },
-        { provide: getModelToken(UploadSession.name), useValue: {} },
+        { provide: DOCUMENT_STORE, useValue: new MongoDocumentStore({ create, exists }  as never) },
+        { provide: UPLOAD_SESSION_STORE, useValue: new MongoUploadSessionStore({}  as never) },
         {
           provide: WorkspaceService,
           useValue: {
@@ -252,8 +263,8 @@ describe('WorkspaceDocumentService.mapToResponse', () => {
     const mod = await Test.createTestingModule({
       providers: [
         WorkspaceDocumentService,
-        { provide: getModelToken(WorkspaceDoc.name), useValue: {} },
-        { provide: getModelToken(UploadSession.name), useValue: {} },
+        { provide: DOCUMENT_STORE, useValue: new MongoDocumentStore({}  as never) },
+        { provide: UPLOAD_SESSION_STORE, useValue: new MongoUploadSessionStore({}  as never) },
         {
           provide: WorkspaceService,
           useValue: {
@@ -352,7 +363,18 @@ describe('WorkspaceDocumentService url document (addLink)', () => {
         updatedAt: new Date(),
         ...doc,
       })),
-      findByIdAndUpdate: jest.fn().mockResolvedValue({}),
+      findByIdAndUpdate: jest.fn().mockImplementation(async (id: unknown, patch: { $set?: Record<string, unknown> }) => ({
+        _id: id,
+        workspaceId: new Types.ObjectId(WS_ID),
+        createdBy: new Types.ObjectId(USER_ID),
+        originalName: 'seed.pdf',
+        mimeType: 'application/pdf',
+        size: 0,
+        status: 'processing',
+        createdAt: new Date(),
+        updatedAt: new Date(),
+        ...(patch?.$set ?? {}),
+      })),
       exists: jest.fn().mockReturnValue({ lean: () => Promise.resolve(null) }),
     };
     workspaceService = {
@@ -370,8 +392,8 @@ describe('WorkspaceDocumentService url document (addLink)', () => {
     const mod = await Test.createTestingModule({
       providers: [
         WorkspaceDocumentService,
-        { provide: getModelToken(WorkspaceDoc.name), useValue: documentModel },
-        { provide: getModelToken(UploadSession.name), useValue: {} },
+        { provide: DOCUMENT_STORE, useValue: new MongoDocumentStore(documentModel  as never) },
+        { provide: UPLOAD_SESSION_STORE, useValue: new MongoUploadSessionStore({}  as never) },
         { provide: WorkspaceService, useValue: workspaceService },
         { provide: DocumentService, useValue: documentService },
         { provide: NotificationsService, useValue: {} },
@@ -615,8 +637,8 @@ describe('WorkspaceDocumentService SSRF guard (assertUrlIsSafe / checkUrlReachab
     const mod = await Test.createTestingModule({
       providers: [
         WorkspaceDocumentService,
-        { provide: getModelToken(WorkspaceDoc.name), useValue: {} },
-        { provide: getModelToken(UploadSession.name), useValue: {} },
+        { provide: DOCUMENT_STORE, useValue: new MongoDocumentStore({}  as never) },
+        { provide: UPLOAD_SESSION_STORE, useValue: new MongoUploadSessionStore({}  as never) },
         { provide: WorkspaceService, useValue: {} },
         { provide: DocumentService, useValue: {} },
         { provide: NotificationsService, useValue: {} },
@@ -782,8 +804,8 @@ describe('WorkspaceDocumentService.ingestFromUrl SSRF / credential forwarding', 
     const mod = await Test.createTestingModule({
       providers: [
         WorkspaceDocumentService,
-        { provide: getModelToken(WorkspaceDoc.name), useValue: {} },
-        { provide: getModelToken(UploadSession.name), useValue: {} },
+        { provide: DOCUMENT_STORE, useValue: new MongoDocumentStore({}  as never) },
+        { provide: UPLOAD_SESSION_STORE, useValue: new MongoUploadSessionStore({}  as never) },
         { provide: WorkspaceService, useValue: {} },
         { provide: DocumentService, useValue: {} },
         { provide: NotificationsService, useValue: {} },
@@ -1079,9 +1101,20 @@ describe('WorkspaceDocumentService.addLinks sequencing', () => {
       // from "started concurrently but happened to call convert() in input
       // order" — the latter is exactly what the old bounded-concurrency
       // fan-out produces with fast, same-speed mocks.
-      findByIdAndUpdate: jest.fn(async (documentId: string) => {
+      findByIdAndUpdate: jest.fn(async (documentId: string, patch: { $set?: Record<string, unknown> }) => {
         events.push(`update:${documentId}`);
-        return {};
+        return {
+          _id: documentId,
+          workspaceId: new Types.ObjectId(WS_ID),
+          createdBy: new Types.ObjectId(USER_ID),
+          originalName: 'seed.pdf',
+          mimeType: 'application/pdf',
+          size: 0,
+          status: 'processing',
+          createdAt: new Date(),
+          updatedAt: new Date(),
+          ...(patch?.$set ?? {}),
+        };
       }),
     };
     workspaceService = {
@@ -1106,8 +1139,8 @@ describe('WorkspaceDocumentService.addLinks sequencing', () => {
     const mod = await Test.createTestingModule({
       providers: [
         WorkspaceDocumentService,
-        { provide: getModelToken(WorkspaceDoc.name), useValue: documentModel },
-        { provide: getModelToken(UploadSession.name), useValue: {} },
+        { provide: DOCUMENT_STORE, useValue: new MongoDocumentStore(documentModel  as never) },
+        { provide: UPLOAD_SESSION_STORE, useValue: new MongoUploadSessionStore({}  as never) },
         { provide: WorkspaceService, useValue: workspaceService },
         { provide: DocumentService, useValue: documentService },
         { provide: NotificationsService, useValue: {} },
@@ -1325,8 +1358,8 @@ describe('WorkspaceDocumentService.completeBulkUpload', () => {
     const mod = await Test.createTestingModule({
       providers: [
         WorkspaceDocumentService,
-        { provide: getModelToken(WorkspaceDoc.name), useValue: documentModel },
-        { provide: getModelToken(UploadSession.name), useValue: uploadSessionModel },
+        { provide: DOCUMENT_STORE, useValue: new MongoDocumentStore(documentModel  as never) },
+        { provide: UPLOAD_SESSION_STORE, useValue: new MongoUploadSessionStore(uploadSessionModel  as never) },
         { provide: WorkspaceService, useValue: workspaceService },
         { provide: DocumentService, useValue: documentService },
         { provide: NotificationsService, useValue: notificationsService },
@@ -1361,6 +1394,7 @@ describe('WorkspaceDocumentService.completeBulkUpload', () => {
 
     expect(result.status).toBe('success');
     expect(result.successful.count).toBe(1);
+    expect(doc.status).toBe(DocumentStatus.COMPLETED);
     expect(doc.metadata.autoIndexRequested).toBe('true');
     expect(indexingService.queueDocument).toHaveBeenCalledWith(DOC_ID, false);
   });
@@ -1429,8 +1463,8 @@ describe('WorkspaceDocumentService.findByMultipleWorkspaces search scope', () =>
       countDocuments: jest.fn().mockResolvedValue(0),
     };
     const service = new WorkspaceDocumentService(
-      documentModel as never,
-      {} as never,
+      new MongoDocumentStore(documentModel as never),
+      new MongoUploadSessionStore({} as never),
       {} as never,
       {} as never,
       {} as never,
@@ -1439,6 +1473,8 @@ describe('WorkspaceDocumentService.findByMultipleWorkspaces search scope', () =>
       {} as never,
       {} as never,
       { setContext: jest.fn() } as never,
+      {} as never,
+      {} as never,
       {} as never,
       {} as never,
       {} as never,

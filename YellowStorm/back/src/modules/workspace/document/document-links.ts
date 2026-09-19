@@ -1,15 +1,13 @@
 import { Inject, Injectable, forwardRef } from '@nestjs/common';
-import { InjectModel } from '@nestjs/mongoose';
 import { ConfigService } from '@nestjs/config';
-import { Model, Types } from 'mongoose';
+import { Types } from 'mongoose';
 import type { WorkspaceDocumentRecord } from '../ports/workspace-records';
 import {
-  WorkspaceDoc,
-  WorkspaceDocumentDoc,
   DocumentStatus,
   DocumentType,
   IndexingStatus,
 } from '../schemas/workspace-document.schema';
+import { DOCUMENT_STORE, type DocumentStore } from '../stores/document-store';
 import { IndexingService } from '../../indexing/indexing.service';
 import { DocumentResponse } from '../interfaces/workspace-document.interface';
 import { WorkspaceService } from '../workspace.service';
@@ -27,8 +25,7 @@ import { WorkspaceDocumentSupport } from './document-support';
 @Injectable()
 export class WorkspaceDocumentLinks {
   constructor(
-    @InjectModel(WorkspaceDoc.name)
-    private readonly documentModel: Model<WorkspaceDocumentDoc>,
+    @Inject(DOCUMENT_STORE) private readonly documentStore: DocumentStore,
     private readonly workspaceService: WorkspaceService,
     private readonly documentService: DocumentService,
     @Inject(forwardRef(() => IndexingService))
@@ -102,8 +99,8 @@ export class WorkspaceDocumentLinks {
       const effectiveName = await this.support.resolveUniqueOriginalName(workspaceId, filename);
       const documentId = new Types.ObjectId();
 
-      const document = await this.documentModel.create({
-        _id: documentId,
+      const document = await this.documentStore.create({
+        id: documentId.toString(),
         originalName: effectiveName,
         mimeType: 'application/pdf',
         size: 0,
@@ -131,17 +128,17 @@ export class WorkspaceDocumentLinks {
         // link fails with an accurate "file not found" rather than a misleading
         // "cannot download folders" error.
         path: `link-pending:${documentId}.pdf`,
-        workspaceId: new Types.ObjectId(workspaceId),
-        createdBy: new Types.ObjectId(userId),
+        workspaceId,
+        createdBy: userId,
         status: DocumentStatus.PROCESSING,
         indexingStatus: IndexingStatus.NONE,
       });
 
-      this.logger.debug('Link document created', { documentId: document._id, workspaceId, url });
+      this.logger.debug('Link document created', { documentId: document.id, workspaceId, url });
       await this.support.recordWorkspaceEvent(WorkspaceIntegrationEvents.WebPageRegisteredV1, document);
       created.push({
         response: this.support.mapToResponse(document),
-        id: document._id.toString(),
+        id: document.id,
         url,
         name: effectiveName,
         nameFromUrl,
@@ -247,19 +244,17 @@ export class WorkspaceDocumentLinks {
         customFileName: sanitizedName,
       });
 
-      const completed = await this.documentModel.findByIdAndUpdate(documentId, {
-        $set: {
-          filename: uploaded.storedName,
-          path: uploaded.blobPath,
-          url: uploaded.url,
-          contentHash: uploaded.contentHash,
-          size,
-          status: DocumentStatus.COMPLETED,
-          uploadedAt: new Date(),
-          // Only when we resolved a real page title (else keep the URL-derived name).
-          ...(renamedOriginal ? { originalName: renamedOriginal } : {}),
-        },
-      }, { new: true });
+      const completed = await this.documentStore.updateById(documentId, {
+        filename: uploaded.storedName,
+        path: uploaded.blobPath,
+        url: uploaded.url,
+        contentHash: uploaded.contentHash,
+        size,
+        status: DocumentStatus.COMPLETED,
+        uploadedAt: new Date(),
+        // Only when we resolved a real page title (else keep the URL-derived name).
+        ...(renamedOriginal ? { originalName: renamedOriginal } : {}),
+      });
 
       if (completed) {
         await this.support.recordWorkspaceEvent(WorkspaceIntegrationEvents.DocumentRegisteredV1, completed);
@@ -274,22 +269,19 @@ export class WorkspaceDocumentLinks {
       this.logger.debug('Link converted and stored', { documentId, workspaceId, size });
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Link conversion failed';
-      const failed = await this.documentModel.findByIdAndUpdate(
+      const failed = await this.documentStore.updateById(
         documentId,
         {
-          $set: {
-            status: DocumentStatus.FAILED,
-            indexingStatus: IndexingStatus.FAILED,
-            errorMessage: message,
-            indexingError: message,
-          },
+          status: DocumentStatus.FAILED,
+          indexingStatus: IndexingStatus.FAILED,
+          errorMessage: message,
+          indexingError: message,
         },
-        { new: true },
       );
       if (failed) {
         await this.indexingService.sendIndexingStatusNotification({
           ...JSON.parse(JSON.stringify(failed)),
-          id: failed._id.toString(),
+          id: failed.id,
         } as WorkspaceDocumentRecord).catch(() => undefined);
       }
       this.logger.error('Link conversion failed', { documentId, workspaceId, error: message });

@@ -1,16 +1,11 @@
 import { Inject, Injectable, forwardRef } from '@nestjs/common';
-import { InjectModel } from '@nestjs/mongoose';
-import { Model, Types } from 'mongoose';
+import { Types } from 'mongoose';
 import {
-  WorkspaceDoc,
-  WorkspaceDocumentDoc,
   DocumentStatus,
   IndexingStatus,
 } from '../schemas/workspace-document.schema';
-import {
-  UploadSession,
-  UploadSessionDocument,
-} from '../schemas/upload-session.schema';
+import { DOCUMENT_STORE, type DocumentStore } from '../stores/document-store';
+import { UPLOAD_SESSION_STORE, type UploadSessionStore } from '../stores/upload-session-store';
 import {
   DocumentResponse,
   BulkDeleteResult,
@@ -33,10 +28,8 @@ import { WorkspaceDocumentSupport } from './document-support';
 @Injectable()
 export class WorkspaceDocumentTree {
   constructor(
-    @InjectModel(WorkspaceDoc.name)
-    private readonly documentModel: Model<WorkspaceDocumentDoc>,
-    @InjectModel(UploadSession.name)
-    private readonly uploadSessionModel: Model<UploadSessionDocument>,
+    @Inject(DOCUMENT_STORE) private readonly documentStore: DocumentStore,
+    @Inject(UPLOAD_SESSION_STORE) private readonly uploadSessionStore: UploadSessionStore,
     private readonly workspaceService: WorkspaceService,
     private readonly documentService: DocumentService,
     @Inject(forwardRef(() => IndexingService))
@@ -64,20 +57,12 @@ export class WorkspaceDocumentTree {
     }
 
     // Check for duplicate folder name in same parent
-    const query: Record<string, unknown> = {
-      workspaceId: new Types.ObjectId(workspaceId),
-      createdBy: new Types.ObjectId(userId),
-      isFolder: true,
+    const existing = await this.documentStore.findFolderDuplicate({
+      workspaceId,
+      createdBy: userId,
       folderName: sanitizedName,
-    };
-
-    if (parentId) {
-      query.parentId = new Types.ObjectId(parentId);
-    } else {
-      query.parentId = null;
-    }
-
-    const existing = await this.documentModel.findOne(query);
+      parentId: parentId ?? null,
+    });
     if (existing) {
       throw new ConflictException(
         ErrorCode.CONFLICT,
@@ -89,23 +74,23 @@ export class WorkspaceDocumentTree {
     const folderId = new Types.ObjectId();
     const folderPath = `folder:${folderId}`; // Unique path for folders
 
-    const folder = await this.documentModel.create({
-      _id: folderId,
+    const folder = await this.documentStore.create({
+      id: folderId.toString(),
       filename: '', // Folders don't have files
       originalName: sanitizedName,
       mimeType: 'folder',
       size: 0,
       path: folderPath, // Unique path for folders to avoid duplicate key error
-      workspaceId: new Types.ObjectId(workspaceId),
-      createdBy: new Types.ObjectId(userId),
+      workspaceId,
+      createdBy: userId,
       status: DocumentStatus.COMPLETED,
       isFolder: true,
       folderName: sanitizedName,
-      parentId: parentId ? new Types.ObjectId(parentId) : null,
+      parentId: parentId ?? null,
     });
 
     this.logger.log('Folder created', {
-      folderId: folder._id,
+      folderId: folder.id,
       workspaceId,
       name: sanitizedName,
       parentId,
@@ -122,7 +107,7 @@ export class WorkspaceDocumentTree {
     newName: string,
     userId: string,
   ): Promise<DocumentResponse> {
-    const folder = await this.documentModel.findById(folderId);
+    const folder = await this.documentStore.findById(folderId);
 
     if (!folder) {
       throw new NotFoundException(
@@ -136,7 +121,7 @@ export class WorkspaceDocumentTree {
     }
 
     // Check permission - only creator can rename
-    if (folder.createdBy.toString() !== userId) {
+    if (folder.createdBy !== userId) {
       throw new ForbiddenException(
         ErrorCode.WORKSPACE_FORBIDDEN,
         'You do not have permission to rename this folder',
@@ -150,16 +135,13 @@ export class WorkspaceDocumentTree {
     }
 
     // Check for duplicate folder name in same parent
-    const query: Record<string, unknown> = {
+    const existing = await this.documentStore.findFolderDuplicate({
       workspaceId: folder.workspaceId,
       createdBy: folder.createdBy,
-      isFolder: true,
       folderName: sanitizedName,
-      parentId: folder.parentId,
-      _id: { $ne: folderId },
-    };
-
-    const existing = await this.documentModel.findOne(query);
+      parentId: folder.parentId ?? null,
+      excludeId: folderId,
+    });
     if (existing) {
       throw new ConflictException(
         ErrorCode.CONFLICT,
@@ -167,18 +149,16 @@ export class WorkspaceDocumentTree {
       );
     }
 
-    folder.folderName = sanitizedName;
-    folder.originalName = sanitizedName;
-    await folder.save();
+    const renamed = await this.documentStore.renameFolder(folderId, sanitizedName);
 
     this.logger.log('Folder renamed', {
-      folderId: folder._id,
+      folderId,
       userId,
-      oldName: folder.originalName,
+      oldName: renamed!.originalName,
       newName: sanitizedName,
     });
 
-    return this.support.mapToResponse(folder);
+    return this.support.mapToResponse(renamed!);
   }
 
   /**
@@ -189,10 +169,7 @@ export class WorkspaceDocumentTree {
     userId: string,
     folderId: string,
   ): Promise<{ deletedFolders: number; deletedDocuments: number }> {
-    const folder = await this.documentModel.findOne({
-      _id: folderId,
-      workspaceId: new Types.ObjectId(workspaceId),
-    });
+    const folder = await this.documentStore.findByIdAndWorkspace(folderId, workspaceId);
 
     if (!folder) {
       throw new NotFoundException(
@@ -205,7 +182,7 @@ export class WorkspaceDocumentTree {
       throw new BadRequestException('Document is not a folder');
     }
 
-    if (folder.createdBy.toString() !== userId) {
+    if (folder.createdBy !== userId) {
       throw new ForbiddenException(
         ErrorCode.WORKSPACE_FORBIDDEN,
         'You do not have access to this folder',
@@ -233,10 +210,7 @@ export class WorkspaceDocumentTree {
     const result = await this.deleteFolderRecursive(new Types.ObjectId(folderId), workspaceId, userId);
 
     // Delete the folder itself
-    await this.documentModel.deleteOne({
-      _id: folderId,
-      workspaceId: new Types.ObjectId(workspaceId),
-    });
+    await this.documentStore.deleteByIdAndWorkspace(folderId, workspaceId);
 
     this.logger.log('Folder deleted', {
       folderId,
@@ -260,10 +234,7 @@ export class WorkspaceDocumentTree {
     userId: string,
   ): Promise<{ deletedFolders: number; deletedDocuments: number }> {
     // Find all items in the folder
-    const items = await this.documentModel.find({
-      parentId: folderId,
-      workspaceId: new Types.ObjectId(workspaceId),
-    });
+    const items = await this.documentStore.findDirectChildren(folderId.toString(), workspaceId);
 
     let deletedFolders = 0;
     let deletedDocuments = 0;
@@ -272,7 +243,7 @@ export class WorkspaceDocumentTree {
       if (item.isFolder) {
         // Recursively delete subfolder
         const subResult = await this.deleteFolderRecursive(
-          item._id,
+          new Types.ObjectId(item.id),
           workspaceId,
           userId,
         );
@@ -286,7 +257,7 @@ export class WorkspaceDocumentTree {
           }
         } catch (error) {
           this.logger.warn('Failed to delete blob', {
-            documentId: item._id,
+            documentId: item.id,
             path: item.path,
             error: error instanceof Error ? error.message : 'Unknown error',
           });
@@ -294,9 +265,9 @@ export class WorkspaceDocumentTree {
 
         // Delete document index
         if (item.indexingStatus === IndexingStatus.READY) {
-          this.indexingService.deleteDocumentIndex(item._id.toString(), workspaceId).catch((err) => {
+          this.indexingService.deleteDocumentIndex(item.id, workspaceId).catch((err) => {
             this.logger.warn('Failed to delete document index', {
-              documentId: item._id,
+              documentId: item.id,
               error: err instanceof Error ? err.message : 'Unknown error',
             });
           });
@@ -308,18 +279,18 @@ export class WorkspaceDocumentTree {
       }
 
       // Delete item record
-      await this.documentModel.deleteOne({ _id: item._id });
+      await this.documentStore.deleteById(item.id);
     }
 
     return { deletedFolders, deletedDocuments };
   }
 
   private async collectFolderDocumentIds(folderId: Types.ObjectId, workspaceId: string): Promise<string[]> {
-    const items = await this.documentModel.find({ parentId: folderId, workspaceId: new Types.ObjectId(workspaceId) });
+    const items = await this.documentStore.findDirectChildren(folderId.toString(), workspaceId);
     const ids: string[] = [];
     for (const item of items) {
-      if (item.isFolder) ids.push(...await this.collectFolderDocumentIds(item._id, workspaceId));
-      else ids.push(item._id.toString());
+      if (item.isFolder) ids.push(...await this.collectFolderDocumentIds(new Types.ObjectId(item.id), workspaceId));
+      else ids.push(item.id);
     }
     return ids;
   }
@@ -333,10 +304,7 @@ export class WorkspaceDocumentTree {
     documentId: string,
     cascadeArtifacts = false,
   ): Promise<void> {
-    const document = await this.documentModel.findOne({
-      _id: documentId,
-      workspaceId: new Types.ObjectId(workspaceId),
-    });
+    const document = await this.documentStore.findByIdAndWorkspace(documentId, workspaceId);
 
     if (!document) {
       throw new NotFoundException(
@@ -387,7 +355,7 @@ export class WorkspaceDocumentTree {
     await this.support.recordWorkspaceEvent(WorkspaceIntegrationEvents.DocumentDeletedV1, document);
 
     // Delete document record
-    await this.documentModel.deleteOne({ _id: documentId });
+    await this.documentStore.deleteById(documentId);
 
     // Update workspace storage (negative delta)
     if (document.status === DocumentStatus.COMPLETED) {
@@ -431,9 +399,7 @@ export class WorkspaceDocumentTree {
    * Delete all documents in a workspace
    */
   async deleteAllByWorkspace(workspaceId: string): Promise<void> {
-    const documents = await this.documentModel.find({
-      workspaceId: new Types.ObjectId(workspaceId),
-    });
+    const documents = await this.documentStore.findAllByWorkspaceId(workspaceId);
 
     await this.workspaceArtifacts.deleteAllByWorkspace(workspaceId);
 
@@ -444,10 +410,10 @@ export class WorkspaceDocumentTree {
     if (indexedDocuments.length > 0) {
       const indexDeletions = indexedDocuments.map((doc) =>
         this.indexingService
-          .deleteDocumentIndex(doc._id.toString(), workspaceId)
+          .deleteDocumentIndex(doc.id, workspaceId)
           .catch((err) => {
             this.logger.warn('Failed to delete document index during workspace cleanup', {
-              documentId: doc._id,
+              documentId: doc.id,
               error: err instanceof Error ? err.message : 'Unknown error',
             });
           }),
@@ -479,14 +445,10 @@ export class WorkspaceDocumentTree {
     }
 
     // Delete all document records
-    await this.documentModel.deleteMany({
-      workspaceId: new Types.ObjectId(workspaceId),
-    });
+    await this.documentStore.deleteManyByWorkspace(workspaceId);
 
     // Also delete upload sessions
-    await this.uploadSessionModel.deleteMany({
-      workspaceId: new Types.ObjectId(workspaceId),
-    });
+    await this.uploadSessionStore.deleteManyByWorkspace(workspaceId);
 
     // Update workspace storage usage
     if (completedDocuments.length > 0) {
