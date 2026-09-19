@@ -18,7 +18,10 @@ export class MongoWorkspaceReadAdapter implements WorkspaceReadPort {
     const map = new Map<string, WorkspaceRecord>();
     if (ids.length === 0) return map;
     const docs = await this.workspaceModel.find({ _id: { $in: ids } }).lean().exec();
-    for (const doc of docs) map.set(workspaceToRecord(doc).id, workspaceToRecord(doc));
+    for (const doc of docs) {
+      const record = workspaceToRecord(doc);
+      map.set(record.id, record);
+    }
     return map;
   }
 

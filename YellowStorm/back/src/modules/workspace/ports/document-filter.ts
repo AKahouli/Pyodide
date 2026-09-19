@@ -17,6 +17,12 @@ export interface DocumentFilter {
   /** Stale-processing scan: indexingStartedAt < cutoff. */
   indexingStartedBefore?: Date;
   parentId?: string;
+  /**
+   * NOTE: `false` here means "not a folder". The Mongo adapter maps it to
+   * `{isFolder: false}` (NOT `$ne: true`) — every doc carries the schema
+   * default, so the predicates are equivalent on real data; the Step D PG
+   * column is boolean NOT NULL DEFAULT false and stays equivalent.
+   */
   isFolder?: boolean;
   type?: string;
   /** Exact originalName match. */
