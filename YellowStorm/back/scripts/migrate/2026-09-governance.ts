@@ -4,10 +4,12 @@
  * scopes) → documents → document events → memberships → deployments → revisions →
  * dry runs → publication attempts → metrics → reconciliation runs.
  *
- * Idempotent via ON CONFLICT (id) DO NOTHING. Rows whose intra-governance parents are
- * missing are skipped and reported (the DDL FKs would reject them). Cross-schema
- * references (workspaces, workspace_documents, agents, users) are reported as orphan
- * counts only — their FKs arrive with the service migration (E.13).
+ * Idempotent via ON CONFLICT DO NOTHING; re-run until the inserted counts
+ * stabilize (forward references inside a collection settle on the second run).
+ * Rows whose intra-governance parents are missing fail the insert and are
+ * counted as skippedOrphan. Cross-schema references (workspaces,
+ * workspace_documents, agents, users) are checked at the end and reported as
+ * orphan counts only — their FKs arrive with the service migration (E.13).
  *
  * Usage: npx ts-node back/scripts/migrate/2026-09-governance.ts [--dry-run]
  */
@@ -73,8 +75,6 @@ async function main(): Promise<void> {
     label: string,
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     build: (doc: any) => Row[],
-    existingParents: Record<string, Set<string>> = {},
-    parentChecks: Array<{ rowKey: string; parents: string[] }> = [],
   ): Promise<void> => {
     console.log(`=== ${label} ===`);
     const col = mdb.collection(label);
@@ -82,20 +82,6 @@ async function main(): Promise<void> {
     let inserted = 0;
     let skippedOrphan = 0;
     for await (const doc of col.find({})) {
-      // Parent checks: skip docs whose intra-governance parents did not migrate.
-      let orphan = false;
-      for (const check of parentChecks) {
-        const value = check.rowKey.split('.').reduce<unknown>((acc, part) => (acc == null || typeof acc !== 'object' ? undefined : (acc as Record<string, unknown>)[part]), doc as unknown);
-        if (value != null) {
-          const id = String(value);
-          const set = existingParents[check.parents[0]];
-          if (set && !set.has(id)) orphan = true;
-        }
-      }
-      if (orphan) {
-        skippedOrphan += 1;
-        continue;
-      }
       const rows = build(doc);
       if (dryRun) {
         inserted += 1;
@@ -391,6 +377,70 @@ async function main(): Promise<void> {
       updated_at: d(doc.updatedAt),
     },
   ]);
+
+  // ---- cross-schema orphan report (plan E.11) ----
+  // agents, workspaces and workspace_documents live in PG; users remain in Mongo.
+  const pgOrphans: Record<string, number> = {};
+  const pgOrphan = async (label: string, sqlText: string): Promise<void> => {
+    const { rows } = await pool.query(sqlText);
+    pgOrphans[label] = rows[0].n;
+  };
+  if (!dryRun) {
+    await pgOrphan('scope_agents → public.agents',
+      `SELECT count(*)::int AS n FROM governance.governance_scope_agents sa
+       WHERE NOT EXISTS (SELECT 1 FROM public.agents a WHERE a.id = sa.agent_id)`);
+    await pgOrphan('revisions.agent_id → public.agents',
+      `SELECT count(*)::int AS n FROM governance.governance_deployment_revisions r
+       WHERE r.agent_id IS NOT NULL
+         AND NOT EXISTS (SELECT 1 FROM public.agents a WHERE a.id = r.agent_id)`);
+    await pgOrphan('bindings.workspace_id → workspace.workspaces',
+      `SELECT count(*)::int AS n FROM governance.governance_workspace_bindings b
+       WHERE NOT EXISTS (SELECT 1 FROM workspace.workspaces w WHERE w.id = b.workspace_id)`);
+    await pgOrphan('documents.workspace_id → workspace.workspaces',
+      `SELECT count(*)::int AS n FROM governance.governance_documents d
+       WHERE NOT EXISTS (SELECT 1 FROM workspace.workspaces w WHERE w.id = d.workspace_id)`);
+    await pgOrphan('documents.document_id → workspace.workspace_documents',
+      `SELECT count(*)::int AS n FROM governance.governance_documents d
+       WHERE NOT EXISTS (SELECT 1 FROM workspace.workspace_documents wd WHERE wd.id = d.document_id)`);
+    await pgOrphan('revisions.workspace_ids → workspace.workspaces',
+      `SELECT count(*)::int AS n FROM (
+         SELECT DISTINCT x AS wid FROM governance.governance_deployment_revisions r, unnest(r.workspace_ids) AS x
+       ) u WHERE NOT EXISTS (SELECT 1 FROM workspace.workspaces w WHERE w.id = u.wid)`);
+    console.log('=== cross-schema orphan counts (no FK yet; E.13 adds them) ===');
+    console.log(JSON.stringify(pgOrphans, null, 2));
+  }
+
+  // user references remain Mongo-side: check distinct user refs against the Mongo users collection
+  console.log('=== user orphan check (Mongo users) ===');
+  const usersCol = mdb.collection('users');
+  const checkUserIds: string[] = [];
+  for await (const p2 of mdb.collection('governance_programs').find({}, { projection: { ownerUserId: 1 } })) {
+    if (p2.ownerUserId != null) checkUserIds.push(String(p2.ownerUserId));
+  }
+  for await (const sc of mdb.collection('governance_scopes').find({}, { projection: { 'audience.userIds': 1 } })) {
+    for (const uid of (sc.audience?.userIds ?? []) as unknown[]) {
+      if (uid != null) checkUserIds.push(String(uid));
+    }
+  }
+  for await (const m of mdb.collection('governance_memberships').find({}, { projection: { userId: 1, invitedBy: 1 } })) {
+    if (m.userId != null) checkUserIds.push(String(m.userId));
+    if (m.invitedBy != null) checkUserIds.push(String(m.invitedBy));
+  }
+  for await (const dr of mdb.collection('governance_dry_runs').find({}, { projection: { testerId: 1 } })) {
+    if (dr.testerId != null) checkUserIds.push(String(dr.testerId));
+  }
+  for await (const pa of mdb.collection('governance_publication_attempts').find({}, { projection: { triggeredByUserId: 1 } })) {
+    if (pa.triggeredByUserId != null) checkUserIds.push(String(pa.triggeredByUserId));
+  }
+  for await (const rv of mdb.collection('governance_deployment_revisions').find({}, { projection: { createdBy: 1, approvedBy: 1, publishedBy: 1 } })) {
+    for (const k of ['createdBy', 'approvedBy', 'publishedBy']) {
+      if (rv[k] != null) checkUserIds.push(String(rv[k]));
+    }
+  }
+  const distinctUserIds = [...new Set(checkUserIds)].filter(Boolean);
+  const mongoUserIds = new Set((await usersCol.find({}, { projection: { _id: 1 } }).toArray()).map((u) => String(u._id)));
+  const userOrphans = distinctUserIds.filter((id) => !mongoUserIds.has(id));
+  console.log(JSON.stringify({ userRefsChecked: distinctUserIds.length, userOrphans: userOrphans.length, sample: userOrphans.slice(0, 10) }, null, 2));
 
   // ---- summary ----
   console.log('=== governance backfill summary ===');
