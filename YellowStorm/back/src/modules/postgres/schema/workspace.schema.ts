@@ -1,4 +1,5 @@
-import { sql, type AnyPgColumn } from 'drizzle-orm';
+import { sql } from 'drizzle-orm';
+import { type AnyPgColumn } from 'drizzle-orm/pg-core';
 import { bigint, boolean, check, index, integer, jsonb, primaryKey, smallint, text, timestamp, uniqueIndex, varchar } from 'drizzle-orm/pg-core';
 // Relative (not @common/*): pulled in by ts-node migration scripts without path aliases.
 import { objectId, timestamps } from '../../../common/postgres/columns';
