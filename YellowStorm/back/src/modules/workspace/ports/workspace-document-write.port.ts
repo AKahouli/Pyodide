@@ -3,7 +3,10 @@ import type { DocumentFilter } from './document-filter';
 export const WORKSPACE_DOCUMENT_WRITE_PORT = Symbol('WORKSPACE_DOCUMENT_WRITE_PORT');
 
 /**
- * Field patch for the indexing pipeline's document mutations. Semantics match
+ * Field patch for the indexing pipeline's document mutations. NOTE: never pass
+ * undefined for `status` or `indexingStatus` — both columns are NOT NULL in PG
+ * (present-undefined would violate the constraint rather than reset to default).
+ * Semantics match
  * Mongoose instance assignment: keys PRESENT with an undefined value clear the
  * field; keys ABSENT are left untouched; `metadata` (when present) replaces
  * the whole object. The store persists via save() (Mongo adapter) so validators

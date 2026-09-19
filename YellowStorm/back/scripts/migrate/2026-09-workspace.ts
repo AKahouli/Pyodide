@@ -97,7 +97,19 @@ async function main(): Promise<void> {
   const counterDrift: string[] = [];
   const workspaceStats = await runBackfill({
     collection: mdb.collection('workspaces'),
-    build: (doc: MongoDoc) => ({
+    build: (doc: MongoDoc) => {
+      // Detect negative counters on the RAW Mongo values (before clamping) so
+      // the drift report is a real audit trail of clamped ids.
+      const raw = {
+        documentCount: num(doc.documentCount),
+        usedStorage: num(doc.usedStorage),
+        allocatedStorage: num(doc.allocatedStorage),
+        shareCount: num(doc.shareCount),
+      };
+      if (raw.documentCount < 0 || raw.usedStorage < 0 || raw.shareCount < 0 || raw.allocatedStorage < 0) {
+        counterDrift.push(String(doc._id ?? '(no id)'));
+      }
+      return {
       id: String(doc._id),
       name: String(doc.name ?? ''),
       alias: String(doc.alias ?? ''),
@@ -106,28 +118,26 @@ async function main(): Promise<void> {
       createdBy: String(doc.createdBy ?? ''),
       settingsId: doc.settings == null ? undefined : String(doc.settings),
       // Clamped counters: Mongo drift can drive stored counters negative, which
-      // the DDL CHECKs reject. Clamped ids are listed in the drift report below;
+      // the DDL CHECKs reject. Clamped ids are reported in the drift report;
       // values are otherwise copied as-is, never recomputed.
-      documentCount: Math.max(0, num(doc.documentCount)),
-      usedStorage: Math.max(0, num(doc.usedStorage)),
-      allocatedStorage: Math.max(0, num(doc.allocatedStorage)),
+      documentCount: Math.max(0, raw.documentCount),
+      usedStorage: Math.max(0, raw.usedStorage),
+      allocatedStorage: Math.max(0, raw.allocatedStorage),
       isSystem: bool(doc.isSystem),
       isPersonal: bool(doc.isPersonal),
-      shareCount: Math.max(0, num(doc.shareCount)),
+      shareCount: Math.max(0, raw.shareCount),
       isPublic: bool(doc.isPublic),
       conversationId: str(doc.conversationId),
       createdAt: date(doc.createdAt)!,
       updatedAt: date(doc.updatedAt)!,
-    }),
+      };
+    },
     validate: (u) => {
       if (!u.id) return 'missing _id';
       if (!u.name) return 'missing name';
       if (!u.alias) return 'missing alias';
       if (!u.storagePrefix) return 'missing storagePrefix (Ceph keys depend on it)';
       if (!u.createdBy) return 'missing createdBy';
-      if (u.documentCount < 0 || u.usedStorage < 0 || u.shareCount < 0 || u.allocatedStorage < 0) {
-        counterDrift.push(u.id);
-      }
       return null;
     },
     unitId: (u) => u.id,
@@ -224,7 +234,7 @@ async function main(): Promise<void> {
   for await (const doc of documentsCol.find({ parentId: { $ne: null } }, { projection: { _id: 1, parentId: 1 } })) {
     const id = String(doc._id);
     const parentId = String(doc.parentId);
-    const parentExists = existsIn(schema.workspaceDocuments, parentId);
+    const parentExists = await existsIn(schema.workspaceDocuments, parentId);
     if (!parentExists) {
       orphanParents.push(`${id} (parent ${parentId})`);
       continue;
