@@ -49,6 +49,7 @@ import workspaceConfig from '../../config/workspace.config';
 import { IntegrationEventsModule } from '../integration-events/integration-events.module';
 import { SemanticModelModule } from '../semantic-model/semantic-model.module';
 import { FlowReadPortModule } from '../playbook-flow/ports/flow-read-port.module';
+import { PgTtlSweeper } from '@modules/postgres/ttl/pg-ttl-sweeper.service';
 
 @Module({
   imports: [
@@ -108,6 +109,15 @@ import { FlowReadPortModule } from '../playbook-flow/ports/flow-read-port.module
     { provide: WORKSPACE_SHARE_READ_PORT, useExisting: MongoWorkspaceShareReadAdapter },
     MongoWorkspaceSettingReadAdapter,
     { provide: WORKSPACE_SETTING_READ_PORT, useExisting: MongoWorkspaceSettingReadAdapter },
+    // Replaces the Mongo TTL index on upload_sessions (plan D.7); swept hourly by PgTtlSweeper.
+    {
+      provide: 'UPLOAD_SESSION_TTL_REGISTRATION',
+      useFactory: (sweeper: PgTtlSweeper): boolean => {
+        sweeper.register({ schema: 'workspace', table: 'upload_sessions', column: 'expires_at' });
+        return true;
+      },
+      inject: [PgTtlSweeper],
+    },
   ],
   exports: [
     MongooseModule,

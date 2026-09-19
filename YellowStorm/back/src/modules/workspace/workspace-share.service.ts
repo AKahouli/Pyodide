@@ -1,4 +1,5 @@
 import { Inject, Injectable, forwardRef } from '@nestjs/common';
+import type { UserSummary } from '@common/ports/user-lookup.port';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import { Workspace, WorkspaceDocument } from './schemas/workspace.schema';
@@ -18,6 +19,7 @@ import { LoggerService } from '../logger';
 import { ForbiddenException, NotFoundException } from '../exceptions';
 import { ErrorCode } from '../exceptions/constants/error-codes';
 import { UserService } from '../user';
+import { USER_LOOKUP_PORT, type UserLookupPort } from '@common/ports/user-lookup.port';
 import { NotificationsService } from '../notifications/notifications.service';
 import { NotificationType } from '../notifications/schemas/notification.schema';
 import { UserDocument } from '../user/schemas/user.schema';
@@ -31,6 +33,7 @@ export class WorkspaceShareService {
     private readonly workspaceModel: Model<WorkspaceDocument>,
     @InjectModel(WorkspaceShare.name)
     private readonly shareModel: Model<WorkspaceShareDocument>,
+    @Inject(USER_LOOKUP_PORT) private readonly userLookup: UserLookupPort,
     private readonly logger: LoggerService,
     private readonly userService: UserService,
     @Inject(forwardRef(() => NotificationsService))
@@ -310,7 +313,6 @@ export class WorkspaceShareService {
     const [shares, total] = await Promise.all([
       this.shareModel
         .find({ workspaceId: new Types.ObjectId(workspaceId) })
-        .populate('sharedWithUserId', 'email profile.firstName profile.lastName')
         .sort({ createdAt: -1 })
         .skip(skip)
         .limit(limit)
@@ -320,8 +322,10 @@ export class WorkspaceShareService {
       }),
     ]);
 
+    const users = await this.userLookup.byIds(shares.map((share) => share.sharedWithUserId.toString()));
+
     return {
-      shares: shares.map((share) => this.mapToResponse(share)),
+      shares: shares.map((share) => this.mapToResponse(share, undefined, users.get(share.sharedWithUserId.toString()))),
       pagination: {
         page,
         limit,
@@ -437,17 +441,11 @@ export class WorkspaceShareService {
     const [shares, total] = await Promise.all([
       this.shareModel
         .find(query)
-        .populate([
-          {
-            path: 'workspaceId',
-            select:
-              'name alias storagePrefix description documentCount usedStorage allocatedStorage createdAt updatedAt',
-          },
-          {
-            path: 'sharedBy',
-            select: 'email profile.firstName profile.lastName',
-          },
-        ])
+        .populate({
+          path: 'workspaceId',
+          select:
+            'name alias storagePrefix description documentCount usedStorage allocatedStorage createdAt updatedAt',
+        })
         .sort({ createdAt: -1 })
         .skip(skip)
         .limit(limit)
@@ -456,11 +454,13 @@ export class WorkspaceShareService {
       this.shareModel.countDocuments(query),
     ]);
 
+    const owners = await this.userLookup.byIds(shares.map((share) => (share as { sharedBy: { toString(): string } }).sharedBy.toString()));
+    const owner = (share: { sharedBy: { toString(): string } }) => owners.get(share.sharedBy.toString());
+
     const workspaces: SharedWorkspaceResponse[] = shares.map((share) => {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const ws = (share as any).workspaceId;
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const owner = (share as any).sharedBy;
+      const ownerUser = owner(share);
 
       return {
         id: ws._id.toString(),
@@ -469,10 +469,10 @@ export class WorkspaceShareService {
         storagePrefix: ws.storagePrefix,
         description: ws.description,
         owner: {
-          id: owner._id.toString(),
-          email: owner.email,
-          firstName: owner.profile?.firstName,
-          lastName: owner.profile?.lastName,
+          id: ownerUser?.id ?? share.sharedBy.toString(),
+          email: ownerUser?.email ?? '',
+          firstName: ownerUser?.firstName || undefined,
+          lastName: ownerUser?.lastName || undefined,
         },
         permission: share.permission,
         shareId: share._id.toString(),
@@ -578,17 +578,8 @@ export class WorkspaceShareService {
   private mapToResponse(
     share: WorkspaceShareDocument,
     userOverride?: UserDocument,
+    resolvedUser?: UserSummary,
   ): WorkspaceShareResponse {
-    const ref = share.sharedWithUserId as unknown;
-    const populated =
-      typeof ref === 'object' && ref !== null && 'email' in (ref as Record<string, unknown>)
-        ? (ref as {
-            _id: Types.ObjectId;
-            email: string;
-            profile?: { firstName?: string; lastName?: string };
-          })
-        : null;
-
     const userInfo = userOverride
       ? {
           id: userOverride._id.toString(),
@@ -597,10 +588,10 @@ export class WorkspaceShareService {
           lastName: userOverride.profile?.lastName,
         }
       : {
-          id: populated ? populated._id.toString() : share.sharedWithUserId.toString(),
-          email: populated?.email ?? '',
-          firstName: populated?.profile?.firstName,
-          lastName: populated?.profile?.lastName,
+          id: resolvedUser?.id ?? share.sharedWithUserId.toString(),
+          email: resolvedUser?.email ?? '',
+          firstName: resolvedUser?.firstName || undefined,
+          lastName: resolvedUser?.lastName || undefined,
         };
 
     return {

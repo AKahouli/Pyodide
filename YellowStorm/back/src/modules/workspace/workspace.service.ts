@@ -31,10 +31,12 @@ import {
 import { ErrorCode } from '../exceptions/constants/error-codes';
 import { escapeRegex } from '../../common/utils';
 import type { RunCodeWorkspaceMetadata } from './interfaces/run-code-source.interface';
+import { USER_LOOKUP_PORT, type UserLookupPort } from '@common/ports/user-lookup.port';
 
 @Injectable()
 export class WorkspaceService implements OnModuleInit {
   constructor(
+    @Inject(USER_LOOKUP_PORT) private readonly userLookup: UserLookupPort,
     @InjectModel(Workspace.name)
     private readonly workspaceModel: Model<WorkspaceDocument>,
     @InjectModel(WorkspaceShare.name)
@@ -358,7 +360,6 @@ export class WorkspaceService implements OnModuleInit {
     const [workspaces, total] = await Promise.all([
       this.workspaceModel
         .find(query)
-        .populate('createdBy', 'email profile.firstName profile.lastName')
         .sort({ updatedAt: -1 })
         .skip(skip)
         .limit(limit)
@@ -367,13 +368,13 @@ export class WorkspaceService implements OnModuleInit {
       this.workspaceModel.countDocuments(query).exec(),
     ]);
 
+    const owners = await this.userLookup.byIds(workspaces.map((ws) => ws.createdBy.toString()));
+
     const mapped: PublicWorkspaceResponse[] = workspaces
       .map((ws): PublicWorkspaceResponse | null => {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const owner = (ws as any).createdBy;
-        // The owner user may have been deleted, leaving createdBy unresolved by
-        // populate (null). A public workspace with no existing owner shouldn't
-        // be listed — drop it rather than crash the listing endpoint.
+        // The owner user may have been deleted; a public workspace with no
+        // existing owner shouldn't be listed — drop it rather than crash.
+        const owner = owners.get(ws.createdBy.toString());
         if (!owner) {
           return null;
         }
@@ -384,10 +385,10 @@ export class WorkspaceService implements OnModuleInit {
           storagePrefix: ws.storagePrefix,
           description: ws.description,
           owner: {
-            id: owner._id.toString(),
+            id: owner.id,
             email: owner.email,
-            firstName: owner.profile?.firstName,
-            lastName: owner.profile?.lastName,
+            firstName: owner.firstName || undefined,
+            lastName: owner.lastName || undefined,
           },
           documentCount: ws.documentCount,
           usedStorage: ws.usedStorage,
