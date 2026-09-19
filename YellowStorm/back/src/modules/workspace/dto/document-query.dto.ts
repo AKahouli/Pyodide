@@ -1,7 +1,7 @@
 import { IsOptional, IsString, IsInt, Min, Max, IsIn, IsEnum } from 'class-validator';
 import { Type } from 'class-transformer';
 import { ApiPropertyOptional } from '@nestjs/swagger';
-import { DocumentStatus } from '../schemas/workspace-document.schema';
+import { DocumentStatus } from '../interfaces/document-status.enum';
 
 export class DocumentQueryDto {
   @ApiPropertyOptional({ minimum: 1, default: 1 })

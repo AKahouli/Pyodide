@@ -1,8 +1,6 @@
 import { Inject, Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import {
-  DocumentStatus,
-} from '../schemas/workspace-document.schema';
+import { DocumentStatus, DocumentType, IndexingStatus } from '../interfaces/document-status.enum';
 import { DOCUMENT_STORE, type DocumentStore } from '../stores/document-store';
 import { normalizeWorkspaceUrl } from '../services/url-normalization';
 import {

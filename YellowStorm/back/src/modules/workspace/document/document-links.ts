@@ -2,11 +2,7 @@ import { Inject, Injectable, forwardRef } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Types } from 'mongoose';
 import type { WorkspaceDocumentRecord } from '../ports/workspace-records';
-import {
-  DocumentStatus,
-  DocumentType,
-  IndexingStatus,
-} from '../schemas/workspace-document.schema';
+import { DocumentStatus, DocumentType, IndexingStatus } from '../interfaces/document-status.enum';
 import { DOCUMENT_STORE, type DocumentStore } from '../stores/document-store';
 import { IndexingService } from '../../indexing/indexing.service';
 import { DocumentResponse } from '../interfaces/workspace-document.interface';

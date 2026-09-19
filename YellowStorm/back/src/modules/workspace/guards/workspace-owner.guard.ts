@@ -3,32 +3,31 @@ import {
   CanActivate,
   ExecutionContext,
   Inject,
-  forwardRef,
 } from '@nestjs/common';
-import { InjectModel } from '@nestjs/mongoose';
-import { Model, Types } from 'mongoose';
+import { Types } from 'mongoose';
 import { Request } from 'express';
-import { Workspace, WorkspaceDocument } from '../schemas/workspace.schema';
 import { ForbiddenException, NotFoundException } from '../../exceptions';
 import { ErrorCode } from '../../exceptions/constants/error-codes';
 import { UserDocument } from '../../user/schemas/user.schema';
+import type { WorkspaceRecord } from '../ports/workspace-records';
+import { WORKSPACE_STORE, type WorkspaceStore } from '../stores/workspace-store';
 
 interface RequestWithWorkspace extends Request {
   user?: UserDocument;
-  workspace?: WorkspaceDocument;
+  workspace?: WorkspaceRecord;
 }
 
 /**
  * Guard that verifies the authenticated user owns the workspace being accessed.
- * Attaches the workspace document to request for use in controllers.
+ * Attaches the workspace record to request for use in controllers.
  *
  * Expects workspaceId to be in params as either 'id' or 'workspaceId'
  */
 @Injectable()
 export class WorkspaceOwnerGuard implements CanActivate {
   constructor(
-    @InjectModel(Workspace.name)
-    private readonly workspaceModel: Model<WorkspaceDocument>,
+    @Inject(WORKSPACE_STORE)
+    private readonly workspaceStore: WorkspaceStore,
   ) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
@@ -59,7 +58,7 @@ export class WorkspaceOwnerGuard implements CanActivate {
     }
 
     // Find workspace
-    const workspace = await this.workspaceModel.findById(workspaceId).exec();
+    const workspace = await this.workspaceStore.findById(workspaceId);
 
     if (!workspace) {
       throw new NotFoundException(
@@ -69,7 +68,7 @@ export class WorkspaceOwnerGuard implements CanActivate {
     }
 
     // Check ownership
-    if (workspace.createdBy.toString() !== user._id.toString()) {
+    if (workspace.createdBy !== user._id.toString()) {
       throw new ForbiddenException(
         ErrorCode.WORKSPACE_FORBIDDEN,
         'You do not have access to this workspace',

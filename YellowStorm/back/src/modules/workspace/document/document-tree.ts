@@ -1,9 +1,6 @@
 import { Inject, Injectable, forwardRef } from '@nestjs/common';
 import { Types } from 'mongoose';
-import {
-  DocumentStatus,
-  IndexingStatus,
-} from '../schemas/workspace-document.schema';
+import { DocumentStatus, DocumentType, IndexingStatus } from '../interfaces/document-status.enum';
 import { DOCUMENT_STORE, type DocumentStore } from '../stores/document-store';
 import { UPLOAD_SESSION_STORE, type UploadSessionStore } from '../stores/upload-session-store';
 import {

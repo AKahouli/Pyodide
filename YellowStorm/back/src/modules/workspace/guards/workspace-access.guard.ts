@@ -1,16 +1,16 @@
-import { Injectable, CanActivate, ExecutionContext } from '@nestjs/common';
-import { InjectModel } from '@nestjs/mongoose';
-import { Model, Types } from 'mongoose';
+import { Inject, Injectable, CanActivate, ExecutionContext } from '@nestjs/common';
+import { Types } from 'mongoose';
 import { Request } from 'express';
-import { Workspace, WorkspaceDocument } from '../schemas/workspace.schema';
-import { WorkspaceShare, WorkspaceShareDocument } from '../schemas/workspace-share.schema';
 import { ForbiddenException, NotFoundException } from '../../exceptions';
 import { ErrorCode } from '../../exceptions/constants/error-codes';
 import { UserDocument } from '../../user/schemas/user.schema';
+import type { WorkspaceRecord } from '../ports/workspace-records';
+import { WORKSPACE_STORE, type WorkspaceStore } from '../stores/workspace-store';
+import { SHARE_STORE, type ShareStore } from '../stores/share-store';
 
 interface RequestWithWorkspace extends Request {
   user?: UserDocument;
-  workspace?: WorkspaceDocument;
+  workspace?: WorkspaceRecord;
   workspaceRole?: 'owner' | 'read' | 'readwrite';
 }
 
@@ -18,8 +18,8 @@ interface RequestWithWorkspace extends Request {
  * Guard that verifies authenticated user has access to workspace.
  * Access is granted if user is the owner OR has been granted share access.
  *
- * Attaches workspace document and user role to request:
- * - request.workspace: WorkspaceDocument
+ * Attaches workspace record and user role to request:
+ * - request.workspace: WorkspaceRecord
  * - request.workspaceRole: 'owner' | 'read' | 'readwrite'
  *
  * Expects workspaceId to be in params as either 'id' or 'workspaceId'
@@ -27,10 +27,8 @@ interface RequestWithWorkspace extends Request {
 @Injectable()
 export class WorkspaceAccessGuard implements CanActivate {
   constructor(
-    @InjectModel(Workspace.name)
-    private readonly workspaceModel: Model<WorkspaceDocument>,
-    @InjectModel(WorkspaceShare.name)
-    private readonly shareModel: Model<WorkspaceShareDocument>,
+    @Inject(WORKSPACE_STORE) private readonly workspaceStore: WorkspaceStore,
+    @Inject(SHARE_STORE) private readonly shareStore: ShareStore,
   ) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
@@ -51,7 +49,7 @@ export class WorkspaceAccessGuard implements CanActivate {
       throw new NotFoundException(ErrorCode.WORKSPACE_NOT_FOUND, 'Invalid workspace ID format');
     }
 
-    const workspace = await this.workspaceModel.findById(workspaceId).exec();
+    const workspace = await this.workspaceStore.findById(workspaceId);
 
     if (!workspace) {
       throw new NotFoundException(ErrorCode.WORKSPACE_NOT_FOUND, 'Workspace not found');
@@ -59,7 +57,7 @@ export class WorkspaceAccessGuard implements CanActivate {
 
     const userId = user._id.toString();
 
-    if (workspace.createdBy.toString() === userId) {
+    if (workspace.createdBy === userId) {
       request.workspace = workspace;
       request.workspaceRole = 'owner';
       return true;
@@ -74,10 +72,7 @@ export class WorkspaceAccessGuard implements CanActivate {
       return true;
     }
 
-    const share = await this.shareModel
-      .findOne({ workspaceId: new Types.ObjectId(workspaceId), sharedWithUserId: user._id })
-      .lean()
-      .exec();
+    const share = await this.shareStore.findOneByWorkspaceAndUser(workspaceId, userId);
 
     if (!share) {
       throw new ForbiddenException(

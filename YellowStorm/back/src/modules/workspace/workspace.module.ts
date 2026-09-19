@@ -1,12 +1,6 @@
 import { Module, forwardRef } from '@nestjs/common';
-import { MongooseModule } from '@nestjs/mongoose';
 import { ConfigModule } from '@nestjs/config';
-import { Workspace, WorkspaceSchema } from './schemas/workspace.schema';
-import { WorkspaceShare, WorkspaceShareSchema } from './schemas/workspace-share.schema';
 import { ConversationPersistenceModule } from '../conversation/persistence/conversation-persistence.module';
-import { WorkspaceDoc, WorkspaceDocumentSchema } from './schemas/workspace-document.schema';
-import { WorkspaceSetting, WorkspaceSettingSchema } from './schemas/workspace-setting.schema';
-import { UploadSession, UploadSessionSchema } from './schemas/upload-session.schema';
 import {
   WORKSPACE_DOCUMENT_READ_PORT,
   WORKSPACE_DOCUMENT_WRITE_PORT,
@@ -14,16 +8,16 @@ import {
   WORKSPACE_SETTING_READ_PORT,
   WORKSPACE_SHARE_READ_PORT,
 } from './ports';
-import { MongoWorkspaceReadAdapter } from './persistence/mongo/mongo-workspace-read.adapter';
-import { MongoWorkspaceDocumentReadAdapter } from './persistence/mongo/mongo-workspace-document-read.adapter';
-import { MongoWorkspaceDocumentWriteAdapter } from './persistence/mongo/mongo-workspace-document-write.adapter';
-import { MongoWorkspaceShareReadAdapter } from './persistence/mongo/mongo-workspace-share-read.adapter';
-import { MongoWorkspaceSettingReadAdapter } from './persistence/mongo/mongo-workspace-setting-read.adapter';
-import { MongoWorkspaceStore } from './stores/mongo/mongo-workspace-store';
-import { MongoDocumentStore } from './stores/mongo/mongo-document-store';
-import { MongoShareStore } from './stores/mongo/mongo-share-store';
-import { MongoSettingStore } from './stores/mongo/mongo-setting-store';
-import { MongoUploadSessionStore } from './stores/mongo/mongo-upload-session-store';
+import { PgWorkspaceReadAdapter } from './persistence/postgres/pg-workspace-read.adapter';
+import { PgWorkspaceDocumentReadAdapter } from './persistence/postgres/pg-workspace-document-read.adapter';
+import { PgWorkspaceDocumentWriteAdapter } from './persistence/postgres/pg-workspace-document-write.adapter';
+import { PgWorkspaceShareReadAdapter } from './persistence/postgres/pg-workspace-share-read.adapter';
+import { PgWorkspaceSettingReadAdapter } from './persistence/postgres/pg-workspace-setting-read.adapter';
+import { PgWorkspaceStore } from './stores/postgres/pg-workspace-store';
+import { PgDocumentStore } from './stores/postgres/pg-document-store';
+import { PgShareStore } from './stores/postgres/pg-share-store';
+import { PgSettingStore } from './stores/postgres/pg-setting-store';
+import { PgUploadSessionStore } from './stores/postgres/pg-upload-session-store';
 import {
   WORKSPACE_STORE,
   DOCUMENT_STORE,
@@ -68,17 +62,12 @@ import { IntegrationEventsModule } from '../integration-events/integration-event
 import { SemanticModelModule } from '../semantic-model/semantic-model.module';
 import { FlowReadPortModule } from '../playbook-flow/ports/flow-read-port.module';
 import { PgTtlSweeper } from '@modules/postgres/ttl/pg-ttl-sweeper.service';
+import { PostgresModule } from '@modules/postgres/postgres.module';
 
 @Module({
   imports: [
     ConfigModule.forFeature(workspaceConfig),
-    MongooseModule.forFeature([
-      { name: Workspace.name, schema: WorkspaceSchema },
-      { name: WorkspaceShare.name, schema: WorkspaceShareSchema },
-      { name: WorkspaceDoc.name, schema: WorkspaceDocumentSchema },
-      { name: WorkspaceSetting.name, schema: WorkspaceSettingSchema },
-      { name: UploadSession.name, schema: UploadSessionSchema },
-    ]),
+    PostgresModule,
     forwardRef(() => AuthModule),
     forwardRef(() => UsageModule),
     forwardRef(() => NotificationsModule),
@@ -123,27 +112,27 @@ import { PgTtlSweeper } from '@modules/postgres/ttl/pg-ttl-sweeper.service';
     WorkspaceArtifactCleanupService,
     GuardedUrlDownloaderService,
     RunCodeSourceScopeService,
-    MongoWorkspaceReadAdapter,
-    { provide: WORKSPACE_READ_PORT, useExisting: MongoWorkspaceReadAdapter },
-    MongoWorkspaceDocumentReadAdapter,
-    { provide: WORKSPACE_DOCUMENT_READ_PORT, useExisting: MongoWorkspaceDocumentReadAdapter },
-    MongoWorkspaceDocumentWriteAdapter,
-    { provide: WORKSPACE_DOCUMENT_WRITE_PORT, useExisting: MongoWorkspaceDocumentWriteAdapter },
-    MongoWorkspaceShareReadAdapter,
-    { provide: WORKSPACE_SHARE_READ_PORT, useExisting: MongoWorkspaceShareReadAdapter },
-    MongoWorkspaceSettingReadAdapter,
-    { provide: WORKSPACE_SETTING_READ_PORT, useExisting: MongoWorkspaceSettingReadAdapter },
-    // Internal write-path stores (plan D.5). Still Mongo — the PG bindings flip in D.10.
-    MongoWorkspaceStore,
-    { provide: WORKSPACE_STORE, useExisting: MongoWorkspaceStore },
-    MongoDocumentStore,
-    { provide: DOCUMENT_STORE, useExisting: MongoDocumentStore },
-    MongoShareStore,
-    { provide: SHARE_STORE, useExisting: MongoShareStore },
-    MongoSettingStore,
-    { provide: SETTING_STORE, useExisting: MongoSettingStore },
-    MongoUploadSessionStore,
-    { provide: UPLOAD_SESSION_STORE, useExisting: MongoUploadSessionStore },
+    // D.10 cutover: PostgreSQL is now the system of record for the workspace domain.
+    PgWorkspaceReadAdapter,
+    { provide: WORKSPACE_READ_PORT, useExisting: PgWorkspaceReadAdapter },
+    PgWorkspaceDocumentReadAdapter,
+    { provide: WORKSPACE_DOCUMENT_READ_PORT, useExisting: PgWorkspaceDocumentReadAdapter },
+    PgWorkspaceDocumentWriteAdapter,
+    { provide: WORKSPACE_DOCUMENT_WRITE_PORT, useExisting: PgWorkspaceDocumentWriteAdapter },
+    PgWorkspaceShareReadAdapter,
+    { provide: WORKSPACE_SHARE_READ_PORT, useExisting: PgWorkspaceShareReadAdapter },
+    PgWorkspaceSettingReadAdapter,
+    { provide: WORKSPACE_SETTING_READ_PORT, useExisting: PgWorkspaceSettingReadAdapter },
+    PgWorkspaceStore,
+    { provide: WORKSPACE_STORE, useExisting: PgWorkspaceStore },
+    PgDocumentStore,
+    { provide: DOCUMENT_STORE, useExisting: PgDocumentStore },
+    PgShareStore,
+    { provide: SHARE_STORE, useExisting: PgShareStore },
+    PgSettingStore,
+    { provide: SETTING_STORE, useExisting: PgSettingStore },
+    PgUploadSessionStore,
+    { provide: UPLOAD_SESSION_STORE, useExisting: PgUploadSessionStore },
     // Replaces the Mongo TTL index on upload_sessions (plan D.7); swept hourly by PgTtlSweeper.
     {
       provide: 'UPLOAD_SESSION_TTL_REGISTRATION',
@@ -155,7 +144,6 @@ import { PgTtlSweeper } from '@modules/postgres/ttl/pg-ttl-sweeper.service';
     },
   ],
   exports: [
-    MongooseModule,
     WorkspaceService,
     WorkspaceSettingService,
     WorkspaceDocumentService,
@@ -169,6 +157,11 @@ import { PgTtlSweeper } from '@modules/postgres/ttl/pg-ttl-sweeper.service';
     WORKSPACE_DOCUMENT_WRITE_PORT,
     WORKSPACE_SHARE_READ_PORT,
     WORKSPACE_SETTING_READ_PORT,
+    // Store tokens are exported so modules that instantiate the workspace
+    // guards directly (e.g. IndexingModule provides WorkspaceOwnerGuard) can
+    // resolve the guards' dependencies.
+    WORKSPACE_STORE,
+    SHARE_STORE,
   ],
 })
 export class WorkspaceModule {}

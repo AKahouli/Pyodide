@@ -1,11 +1,8 @@
-import { Injectable } from '@nestjs/common';
-import { InjectModel } from '@nestjs/mongoose';
-import { Model, Types } from 'mongoose';
-import { Workspace, WorkspaceDocument } from './schemas/workspace.schema';
+import { Inject, Injectable } from '@nestjs/common';
 import { WorkspaceResponse } from './interfaces/workspace.interface';
 import { LoggerService } from '../logger';
-import { ForbiddenException } from '../exceptions';
-import { ErrorCode } from '../exceptions/constants/error-codes';
+import type { WorkspaceRecord } from './ports/workspace-records';
+import { WORKSPACE_STORE, type WorkspaceStore } from './stores/workspace-store';
 
 const PERSONAL_WORKSPACE_NAME = 'Mon workspace personnel';
 const PERSONAL_WORKSPACE_ALIAS = 'mon-workspace-personnel';
@@ -14,8 +11,7 @@ const PERSONAL_WORKSPACE_DESCRIPTION = 'Votre espace personnel pour organiser vo
 @Injectable()
 export class WorkspaceInitializerService {
   constructor(
-    @InjectModel(Workspace.name)
-    private readonly workspaceModel: Model<WorkspaceDocument>,
+    @Inject(WORKSPACE_STORE) private readonly workspaceStore: WorkspaceStore,
     private readonly logger: LoggerService,
   ) {
     this.logger.setContext('WorkspaceInitializerService');
@@ -30,10 +26,7 @@ export class WorkspaceInitializerService {
     allocatedStorage: number,
   ): Promise<WorkspaceResponse> {
     // First, try to find existing personal workspace
-    const existing = await this.workspaceModel.findOne({
-      createdBy: new Types.ObjectId(userId),
-      isPersonal: true,
-    });
+    const existing = await this.workspaceStore.findByOwnerPersonal(userId);
 
     if (existing) {
       return this.mapToResponse(existing);
@@ -41,21 +34,19 @@ export class WorkspaceInitializerService {
 
     // Create new personal workspace
     const personalAlias = this.generatePersonalAlias(userId);
-    const workspace = await this.workspaceModel.create({
+    const workspace = await this.workspaceStore.create({
       name: PERSONAL_WORKSPACE_NAME,
       alias: personalAlias,
       storagePrefix: personalAlias,
       description: PERSONAL_WORKSPACE_DESCRIPTION,
-      createdBy: new Types.ObjectId(userId),
-      documentCount: 0,
-      usedStorage: 0,
+      createdBy: userId,
       allocatedStorage,
       isSystem: false,
       isPersonal: true,
     });
 
     this.logger.log('Personal workspace created', {
-      workspaceId: workspace._id,
+      workspaceId: workspace.id,
       userId,
     });
 
@@ -90,29 +81,29 @@ export class WorkspaceInitializerService {
   /**
    * Check if a workspace is a personal workspace
    */
-  isPersonalWorkspace(workspace: WorkspaceDocument): boolean {
+  isPersonalWorkspace(workspace: WorkspaceRecord): boolean {
     return workspace.isPersonal === true;
   }
 
   /**
-   * Map workspace document to response
+   * Map workspace record to response
    */
-  private mapToResponse(workspace: WorkspaceDocument): WorkspaceResponse {
+  private mapToResponse(workspace: WorkspaceRecord): WorkspaceResponse {
     return {
-      id: workspace._id.toString(),
+      id: workspace.id,
       name: workspace.name,
       alias: workspace.alias,
       storagePrefix: workspace.storagePrefix,
       description: workspace.description,
-      createdBy: workspace.createdBy.toString(),
-      settings: workspace.settings?.toString(),
+      createdBy: workspace.createdBy,
+      settings: workspace.settingsId,
       documentCount: workspace.documentCount,
       usedStorage: workspace.usedStorage,
       allocatedStorage: workspace.allocatedStorage,
-      isSystem: workspace.isSystem || false,
-      isPersonal: workspace.isPersonal || false,
-      shareCount: workspace.shareCount || 0,
-      isPublic: workspace.isPublic || false,
+      isSystem: workspace.isSystem,
+      isPersonal: workspace.isPersonal,
+      shareCount: workspace.shareCount,
+      isPublic: workspace.isPublic,
       createdAt: workspace.createdAt.toISOString(),
       updatedAt: workspace.updatedAt.toISOString(),
     };

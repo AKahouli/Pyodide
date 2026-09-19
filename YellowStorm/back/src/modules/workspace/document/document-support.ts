@@ -5,8 +5,8 @@ import {
   DocumentType,
   DocumentStatus,
   IndexingStatus,
-} from '../schemas/workspace-document.schema';
-import { UploadSessionStatus } from '../schemas/upload-session.schema';
+} from '../interfaces/document-status.enum';
+import { UploadSessionStatus } from '../interfaces/upload-session-status.enum';
 import { collapseCharSet, stripLeadingTrailingWhitespaceOrDot } from '../../../common/utils';
 import { normalizeWorkspaceUrl } from '../services/url-normalization';
 import type {

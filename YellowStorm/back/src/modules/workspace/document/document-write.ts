@@ -2,10 +2,7 @@ import { Inject, Injectable, forwardRef } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Types } from 'mongoose';
 import { IngestUrlDto } from '../dto/ingest-url.dto';
-import {
-  DocumentStatus,
-  IndexingStatus,
-} from '../schemas/workspace-document.schema';
+import { DocumentStatus, DocumentType, IndexingStatus } from '../interfaces/document-status.enum';
 import { DOCUMENT_STORE, type DocumentStore } from '../stores/document-store';
 import { redactUrlForLog, redactUrlsInMessage } from '../../../common/utils';
 import { IndexingService } from '../../indexing/indexing.service';

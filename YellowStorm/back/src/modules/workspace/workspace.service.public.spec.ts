@@ -32,8 +32,10 @@ function makeService(over: { workspaceModel?: any } = {}) {
     },
     updateFields: jest.fn().mockResolvedValue(undefined),
   };
+  workspaceStore.listPublic = jest.fn().mockResolvedValue({ items: [], total: 0 });
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   (svc as any).workspaceStore = workspaceStore;
+  (svc as any).userLookup = { byIds: jest.fn().mockResolvedValue(new Map()) };
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   (svc as any).logger = { setContext: () => {}, log: () => {}, warn: () => {} };
   return { svc, workspaceModel, workspaceStore };
@@ -89,54 +91,50 @@ describe('WorkspaceService.setVisibility', () => {
 describe('WorkspaceService.findPublic', () => {
   it('queries public non-system workspaces excluding the requester and maps owner info', async () => {
     const ownerId = new Types.ObjectId();
-    const ownerDoc = { _id: ownerId, email: 'o@x.io', profile: { firstName: 'O', lastName: 'W' } };
-    const wsDoc = {
-      _id: new Types.ObjectId(WS), name: 'Pub', alias: 'pub', storagePrefix: 'pub', description: 'd',
-      createdBy: ownerDoc, documentCount: 2, usedStorage: 5, allocatedStorage: 100,
+    const ownerUser = { id: ownerId.toString(), email: 'o@x.io', firstName: 'O', lastName: 'W' };
+    const wsRecord = {
+      id: WS, name: 'Pub', alias: 'pub', storagePrefix: 'pub', description: 'd',
+      createdBy: ownerId.toString(), documentCount: 2, usedStorage: 5, allocatedStorage: 100,
+      isSystem: false, isPersonal: false, shareCount: 0, isPublic: true,
       createdAt: new Date(), updatedAt: new Date(),
     };
-    const find = jest.fn().mockReturnValue({
-      populate: () => ({ sort: () => ({ skip: () => ({ limit: () => ({ lean: () => ({ exec: () => Promise.resolve([wsDoc]) }) }) }) }) }),
-    });
-    const countDocuments = jest.fn().mockReturnValue({ exec: () => Promise.resolve(1) });
-    const { svc, workspaceModel } = makeService({ workspaceModel: { find, countDocuments } });
+    const { svc, workspaceStore } = makeService();
+    workspaceStore.listPublic = jest.fn().mockResolvedValue({ items: [wsRecord], total: 1 });
+    (svc as any).userLookup = {
+      byIds: jest.fn().mockResolvedValue(new Map([[ownerId.toString(), ownerUser]])),
+    };
 
     const res = await svc.findPublic(OWNER, { page: 1, limit: 20 });
 
-    // Query must exclude requester's own + system + only public
-    const filterArg = find.mock.calls[0][0];
-    expect(filterArg.isPublic).toBe(true);
-    expect(filterArg.isSystem).toEqual({ $ne: true });
-    expect(filterArg.createdBy).toEqual({ $ne: expect.anything() });
+    // The store scopes the query: public + non-system + excluding the requester.
+    expect(workspaceStore.listPublic).toHaveBeenCalledWith(OWNER, { search: undefined, skip: 0, limit: 20 });
     expect(res.workspaces).toHaveLength(1);
     expect(res.workspaces[0].owner.email).toBe('o@x.io');
     expect(res.workspaces[0]).not.toHaveProperty('permission');
     expect(res.pagination.total).toBe(1);
-    void workspaceModel;
   });
 
-  it('omits a public workspace whose owner user was deleted (populate yields null) without throwing', async () => {
+  it('omits a public workspace whose owner user was deleted (lookup misses) without throwing', async () => {
     const ownerId = new Types.ObjectId();
-    const ownerDoc = { _id: ownerId, email: 'o@x.io', profile: { firstName: 'O', lastName: 'W' } };
+    const deletedOwnerId = new Types.ObjectId();
+    const ownerUser = { id: ownerId.toString(), email: 'o@x.io', firstName: 'O', lastName: 'W' };
     const wsWithOwner = {
-      _id: new Types.ObjectId(), name: 'Pub', alias: 'pub', storagePrefix: 'pub', description: 'd',
-      createdBy: ownerDoc, documentCount: 2, usedStorage: 5, allocatedStorage: 100,
+      id: new Types.ObjectId().toString(), name: 'Pub', alias: 'pub', storagePrefix: 'pub', description: 'd',
+      createdBy: ownerId.toString(), documentCount: 2, usedStorage: 5, allocatedStorage: 100,
+      isSystem: false, isPersonal: false, shareCount: 0, isPublic: true,
       createdAt: new Date(), updatedAt: new Date(),
     };
     const wsWithDeletedOwner = {
-      _id: new Types.ObjectId(WS), name: 'Orphan', alias: 'orphan', storagePrefix: 'orphan', description: 'd',
-      createdBy: null, documentCount: 0, usedStorage: 0, allocatedStorage: 100,
+      id: WS, name: 'Orphan', alias: 'orphan', storagePrefix: 'orphan', description: 'd',
+      createdBy: deletedOwnerId.toString(), documentCount: 0, usedStorage: 0, allocatedStorage: 100,
+      isSystem: false, isPersonal: false, shareCount: 0, isPublic: true,
       createdAt: new Date(), updatedAt: new Date(),
     };
-    const find = jest.fn().mockReturnValue({
-      populate: () => ({
-        sort: () => ({
-          skip: () => ({ limit: () => ({ lean: () => ({ exec: () => Promise.resolve([wsWithOwner, wsWithDeletedOwner]) }) }) }),
-        }),
-      }),
-    });
-    const countDocuments = jest.fn().mockReturnValue({ exec: () => Promise.resolve(2) });
-    const { svc } = makeService({ workspaceModel: { find, countDocuments } });
+    const { svc, workspaceStore } = makeService();
+    workspaceStore.listPublic = jest.fn().mockResolvedValue({ items: [wsWithOwner, wsWithDeletedOwner], total: 2 });
+    (svc as any).userLookup = {
+      byIds: jest.fn().mockResolvedValue(new Map([[ownerId.toString(), ownerUser]])),
+    };
 
     const res = await svc.findPublic(OWNER, { page: 1, limit: 20 });
 

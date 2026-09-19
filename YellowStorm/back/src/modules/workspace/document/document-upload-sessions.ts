@@ -2,13 +2,9 @@ import { Inject, Injectable, forwardRef } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { Types } from 'mongoose';
-import {
-  DocumentStatus,
-} from '../schemas/workspace-document.schema';
+import { DocumentStatus } from '../interfaces/document-status.enum';
 import { IndexingService } from '../../indexing/indexing.service';
-import {
-  UploadSessionStatus,
-} from '../schemas/upload-session.schema';
+import { UploadSessionStatus } from '../interfaces/upload-session-status.enum';
 import { DOCUMENT_STORE, type DocumentStore } from '../stores/document-store';
 import { UPLOAD_SESSION_STORE, type UploadSessionStore } from '../stores/upload-session-store';
 import {
