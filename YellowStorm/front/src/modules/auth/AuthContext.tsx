@@ -3,7 +3,20 @@
  */
 
 import * as React from 'react';
-import { AUTH_LOST_EVENT, AUTH_STORAGE_KEYS, bumpAuthGeneration, clearAuthData, getAuthGeneration, isTransientAuthFailure, scheduleProactiveRefresh } from '@/lib/api';
+import { AUTH_LOST_EVENT, AUTH_STORAGE_KEYS, bumpAuthGeneration, clearAuthData,
+getAuthGeneration, isTransientAuthFailure, scheduleProactiveRefresh } from '@/lib/api';
+import { clearDataGrants } from '@/modules/semantic-model/data-plane/data-access-token';
+
+/**
+ * Single credential-clearing seam for this provider: local auth data plus
+ * every data-plane grant, so no path can remove credentials while leaving a
+ * previous session's grants reusable. (Refresh-failure logout in the shared
+ * client additionally dispatches AUTH_LOST_EVENT, which clears grants too.)
+ */
+function clearCredentials(): void {
+  clearAuthData();
+  clearDataGrants();
+}
 import * as authApi from './api';
 import type { AuthContextType, AuthState, LoginCredentials, RegisterCredentials, CompleteProfileData, User } from './types';
 
@@ -75,14 +88,14 @@ export function AuthProvider({ children }: AuthProviderProps) {
 
         // Definitive denial (the shared axios client already cleared
         // credentials and redirects when refresh is definitively rejected).
-        clearAuthData();
+        clearCredentials();
         setState({
           ...initialState,
           isLoading: false,
           registrationEnabled,
         });
       } catch {
-        clearAuthData();
+        clearCredentials();
         setState({ ...initialState, isLoading: false, registrationEnabled });
       }
     } else {
@@ -119,6 +132,9 @@ export function AuthProvider({ children }: AuthProviderProps) {
     localStorage.setItem(AUTH_STORAGE_KEYS.accessToken, response.accessToken);
     localStorage.setItem(AUTH_STORAGE_KEYS.user, JSON.stringify(response.user));
     scheduleProactiveRefresh(response.accessToken);
+    // A new principal must never reuse the previous session's data-plane grants.
+    // Grants only here: the fresh credentials above must survive.
+    clearDataGrants();
 
     setState((prev) => ({
       ...prev,
@@ -152,7 +168,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
       // Invalidate any in-flight refresh/recovery so a late response cannot
       // log the user back in after an explicit logout.
       bumpAuthGeneration();
-      clearAuthData();
+      clearCredentials();
       setState({
         ...initialState,
         isLoading: false,

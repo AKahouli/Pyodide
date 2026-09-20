@@ -1,0 +1,66 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://yellowmind.dev/schemas/semantic-model-runtime/v1/discovery-profile.schema.json",
+  "title": "DiscoveryProfile",
+  "type": "object",
+  "description": "Immutable, bounded discovery profile for one asset version + parser/options fingerprint. Missing values stay missing; discovery must complete without an LLM.",
+  "required": ["profileId", "profileRevision", "assetRef", "parserFingerprint", "status", "metadata", "structure", "samples", "warnings", "coverage"],
+  "additionalProperties": false,
+  "properties": {
+    "profileId": { "type": "string" },
+    "profileRevision": { "type": "integer", "minimum": 1 },
+    "assetRef": { "$ref": "asset-ref.schema.json" },
+    "parserFingerprint": { "type": "string", "description": "Hash of parser version + requested profile options." },
+    "status": {
+      "type": "string",
+      "enum": ["ready", "partial", "unsupported", "protected", "corrupt", "indexing_required"],
+      "description": "indexing_required: population needs the existing logical index which is not ready. unsupported/protected/corrupt are terminal and actionable; they are never retried automatically."
+    },
+    "metadata": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "originalName": { "type": "string" },
+        "mimeType": { "type": "string" },
+        "sizeBytes": { "type": ["integer", "null"] },
+        "contentHash": { "type": ["string", "null"] },
+        "uploadedAt": { "type": ["string", "null"], "format": "date-time" },
+        "indexingStatus": { "type": ["string", "null"], "description": "Workspace indexing bookkeeping: pending|processing|completed|failed|not_indexed." }
+      }
+    },
+    "structure": {
+      "type": "object",
+      "description": "Format structure only — sheets/tables/ranges for tabular sources, outline/section counts for documents.",
+      "additionalProperties": true
+    },
+    "samples": {
+      "type": "array",
+      "description": "Bounded prefix rows/blocks. Sample scope is explicitly bounded and never counts as full-dataset coverage.",
+      "items": { "type": "object", "additionalProperties": true }
+    },
+    "warnings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["code", "message"],
+        "properties": {
+          "code": { "type": "string" },
+          "message": { "type": "string" }
+        }
+      }
+    },
+    "semanticFindings": {
+      "type": "array",
+      "description": "Optional; may be empty in R1. Generated descriptions guide discovery and never prove a business fact by themselves.",
+      "items": { "type": "object", "additionalProperties": true }
+    },
+    "coverage": {
+      "type": "object",
+      "required": ["sampled", "completeProfileDone"],
+      "properties": {
+        "sampled": { "type": "boolean" },
+        "completeProfileDone": { "type": "boolean", "description": "True only after full eligible-scope enumeration; exact counts require it." }
+      }
+    }
+  }
+}

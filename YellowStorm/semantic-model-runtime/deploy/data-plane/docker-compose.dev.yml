@@ -1,0 +1,79 @@
+# Semantic data-plane development stack (R1: REST Broadcast only).
+# Images pinned by digest in compatibility-manifest.json; no `latest`.
+# Secrets come from per-service env files (gitignored) beside this file.
+# Never commit them; see *.example.env templates.
+#
+#   docker compose -f YellowStorm/semantic-model-runtime/deploy/data-plane/docker-compose.dev.yml --env-file YellowStorm/semantic-model-runtime/deploy/data-plane/realtime.env up -d
+name: semantic-data-plane
+
+services:
+  # Supabase-flavored Postgres ONLY for the Realtime control plane (roles +
+  # realtime schema the server's tenant migrations expect). Never agentstore.
+  realtime-db:
+    image: supabase/postgres:17.6.1.173@sha256:7768d0d1d377250b718a9ad07f4661d008ebe6c96ecbbc4c08f3c5e53553e8fd
+    environment:
+      POSTGRES_PASSWORD: ${REALTIME_DB_PASSWORD}
+      POSTGRES_DB: realtime
+    volumes:
+      - realtime-db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d realtime"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  realtime:
+    image: supabase/realtime:v2.134.1@sha256:7590b52b7c239848057cc08ba1a7f3faf49365dae45df7c5b78e2d621585254a
+    env_file:
+      - realtime.env
+    depends_on:
+      realtime-db:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:4000:4000"
+    environment:
+      APP_NAME: realtime
+      PORT: 4000
+      DATABASE_URL: postgres://supabase_admin:${REALTIME_DB_PASSWORD}@realtime-db:5432/realtime
+      DB_HOST: realtime-db
+      DB_PORT: 5432
+      DB_NAME: realtime
+      DB_USER: supabase_admin
+      DB_PASSWORD: ${REALTIME_DB_PASSWORD}
+      DB_ENC_KEY: ${REALTIME_DB_ENC_KEY}
+      API_JWT_SECRET: ${REALTIME_API_JWT_SECRET}
+      METRICS_JWT_SECRET: ${REALTIME_API_JWT_SECRET}
+      SECRET_KEY_BASE: ${REALTIME_SECRET_KEY_BASE}
+      REGION: dev
+      MASTER_REGION: dev
+      SECURE_CHANNELS: "true"
+      SLOT_NAME_SUFFIX: semantic_dev
+      MAX_HEADER_LENGTH: 8192
+      TENANT_MAX_CONCURRENT_USERS: 200
+      TENANT_MAX_EVENTS_PER_SECOND: 50
+      BROADCAST_POOL_SIZE: 5
+      PRESENCE_POOL_SIZE: 2
+      LOG_LEVEL: warning
+
+  postgrest:
+    image: postgrest/postgrest:v16.2@sha256:85258123312dc496ad4c2ed832154a65e9746f84df0d6d09b44229ff9230c08e
+    depends_on:
+      realtime-db:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:3000:3000"
+    env_file:
+      - postgrest.env
+    environment:
+      PGRST_DB_SCHEMAS: semantic_api
+      PGRST_DB_ANON_ROLE: semantic_api_anon
+      PGRST_DB_POOL: 5
+      PGRST_DB_POOL_ACQUISITION_TIMEOUT: 5
+      PGRST_DB_STATEMENT_TIMEOUT: 2s
+      PGRST_DB_MAX_ROWS: 200
+      PGRST_SERVER_HOST: "*4"
+      PGRST_SERVER_PORT: 3000
+      PGRST_LOG_LEVEL: error
+
+volumes:
+  realtime-db-data:

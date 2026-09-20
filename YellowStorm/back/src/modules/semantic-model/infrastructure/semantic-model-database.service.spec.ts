@@ -1,4 +1,4 @@
-import { SemanticModelDatabaseService } from './semantic-model-database.service';
+import { SemanticModelDatabaseService, isSameConnection, splitAgeBootstrap } from './semantic-model-database.service';
 
 describe('SemanticModelDatabaseService', () => {
   it('runs relational transactions without loading AGE', async () => {
@@ -43,6 +43,30 @@ describe('SemanticModelDatabaseService', () => {
     expect(client.query.mock.calls.map(([q]) => q)).toEqual(['BEGIN', 'ROLLBACK']);
     expect(client.release).toHaveBeenCalledTimes(1);
     expect(client.release).toHaveBeenCalledWith(undefined);
+  });
+
+  it('splits bootstrap SQL so agentstore-style databases never see LOAD age', () => {
+    const sql = `-- 001\nCREATE TABLE t (id INT);\n-- 002 — AGE\nLOAD 'age';\nSELECT ag_catalog.create_graph('g');\n-- 003 —\nCREATE INDEX i ON t (id);`;
+    const { definitions, ageSection } = splitAgeBootstrap(sql);
+    expect(definitions).toContain('CREATE TABLE t');
+    expect(definitions).toContain('CREATE INDEX i');
+    expect(definitions).not.toContain("LOAD 'age'");
+    expect(ageSection).toContain("LOAD 'age'");
+    expect(ageSection).toContain('create_graph');
+  });
+
+  it('fails closed when the AGE section markers move', () => {
+    expect(() => splitAgeBootstrap('CREATE TABLE t (id INT);')).toThrow('AGE section markers');
+  });
+
+  it('shares the pool only when the full connection tuple matches', () => {
+    const base = { host: 'h', port: 5432, user: 'u', password: 'p', database: 'd' };
+    expect(isSameConnection(base, { ...base })).toBe(true);
+    expect(isSameConnection(base, { ...base, port: 5433 })).toBe(false);
+    expect(isSameConnection(base, { ...base, password: 'other' })).toBe(false);
+    expect(isSameConnection(base, { ...base, host: 'age-host' })).toBe(false);
+    expect(isSameConnection(base, { ...base, database: 'graphs' })).toBe(false);
+    expect(isSameConnection(base, { ...base, user: 'age-user' })).toBe(false);
   });
 
   it('rethrows the ORIGINAL error and destroys the client when ROLLBACK fails', async () => {

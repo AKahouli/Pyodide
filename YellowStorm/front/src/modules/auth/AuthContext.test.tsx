@@ -27,6 +27,9 @@ vi.mock('@/modules/notifications', () => ({
   notificationsService: notificationsServiceMock,
 }));
 
+const dataGrantsMock = vi.hoisted(() => ({ clearDataGrants: vi.fn() }));
+vi.mock('@/modules/semantic-model/data-plane/data-access-token', () => dataGrantsMock);
+
 const baseUser: User = {
   id: 'user-1',
   email: 'user@example.com',
@@ -105,6 +108,40 @@ describe('AuthProvider', () => {
     expect(result.current.user).toBeNull();
     expect(localStorage.getItem(AUTH_STORAGE_KEYS.accessToken)).toBeNull();
     expect(localStorage.getItem(AUTH_STORAGE_KEYS.user)).toBeNull();
+  });
+
+  it('clears data-plane grants on explicit logout and on login', async () => {
+    const { result } = renderHook(() => useAuth(), {
+      wrapper: AuthProvider,
+    });
+
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
+
+    await act(async () => {
+      await result.current.login({ email: 'user@example.com', password: testPassword });
+    });
+    expect(dataGrantsMock.clearDataGrants).toHaveBeenCalled();
+
+    dataGrantsMock.clearDataGrants.mockClear();
+    await act(async () => {
+      await result.current.logout();
+    });
+    expect(dataGrantsMock.clearDataGrants).toHaveBeenCalledTimes(1);
+  });
+
+  it('clears data-plane grants on definitive bootstrap denial', async () => {
+    localStorage.setItem(AUTH_STORAGE_KEYS.accessToken, 'stale-token');
+    localStorage.setItem(AUTH_STORAGE_KEYS.user, JSON.stringify(baseUser));
+    authApiMock.getCurrentUser.mockRejectedValue({ statusCode: 401, code: 'ERR_1001' });
+
+    const { result } = renderHook(() => useAuth(), {
+      wrapper: AuthProvider,
+    });
+
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
+    expect(result.current.isAuthenticated).toBe(false);
+    expect(localStorage.getItem(AUTH_STORAGE_KEYS.accessToken)).toBeNull();
+    expect(dataGrantsMock.clearDataGrants).toHaveBeenCalled();
   });
 
   it('updates mounted auth state when the shared client loses the session', async () => {

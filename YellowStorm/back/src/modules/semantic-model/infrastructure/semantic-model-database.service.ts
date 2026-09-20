@@ -23,9 +23,50 @@ const BOOTSTRAP_SCRIPT_CANDIDATES = [
   path.join('..', '..', '..', '..', '..', 'scripts', 'semantic-model', '000_deploy_all.sql'),
 ];
 
+/**
+ * Split the bundled bootstrap SQL into relational definitions and the Apache
+ * AGE section (002). Definitions run on the definitions pool, AGE setup on
+ * the graph pool, so agentstore-style deployments (no AGE) never see LOAD 'age'.
+ * Fails closed when the section markers move.
+ */
+export interface AgeConnectionTuple {
+  host: string;
+  port: number;
+  user: string;
+  password: string;
+  database: string;
+}
+
+/** True only when every effective connection field matches: any difference selects a separate AGE pool. */
+export function isSameConnection(a: AgeConnectionTuple, b: AgeConnectionTuple): boolean {
+  return (
+    a.host === b.host
+    && a.port === b.port
+    && a.user === b.user
+    && a.password === b.password
+    && a.database === b.database
+  );
+}
+
+export function splitAgeBootstrap(sql: string): { definitions: string; ageSection: string } {
+  const startMarker = '-- 002 —';
+  const endMarker = '-- 003 —';
+  const start = sql.indexOf(startMarker);
+  const end = sql.indexOf(endMarker);
+  if (start < 0 || end < 0 || end <= start) {
+    throw new Error('Semantic Model bootstrap SQL is missing the AGE section markers');
+  }
+  const ageSection = sql.slice(start, end);
+  if (!ageSection.includes("LOAD 'age'") || !ageSection.includes('create_graph')) {
+    throw new Error('Semantic Model bootstrap SQL AGE section content is unexpected');
+  }
+  return { definitions: sql.slice(0, start) + sql.slice(end), ageSection };
+}
+
 @Injectable()
 export class SemanticModelDatabaseService implements OnModuleInit, OnModuleDestroy {
   private pool: Pool | null = null;
+  private agePool: Pool | null = null;
 
   constructor(
     @Inject(semanticModelConfig.KEY)
@@ -38,34 +79,84 @@ export class SemanticModelDatabaseService implements OnModuleInit, OnModuleDestr
 
   async onModuleInit(): Promise<void> {
     if (!this.config.host || !this.config.user || !this.config.database) return;
-    this.pool = new Pool({
+    this.pool = this.buildPool(
+      {
+        host: this.config.host,
+        port: this.config.port,
+        user: this.config.user,
+        password: this.config.password,
+        database: this.config.database,
+      },
+      'semantic',
+    );
+    // AGE graph pool defaults to the definitions database (legacy single-DB);
+    // setting SEMANTIC_AGEGRAPH_* splits graph I/O onto its own instance.
+    const ageConnection = {
+      host: this.config.ageHost || this.config.host,
+      port: this.config.agePort,
+      user: this.config.ageUser || this.config.user,
+      password: this.config.agePassword || this.config.password,
+      database: this.config.ageDatabase || this.config.database,
+    };
+    // Any effective connection difference selects a separate pool; otherwise
+    // graph I/O would silently run against the non-AGE definitions database.
+    const pgConnection: AgeConnectionTuple = {
       host: this.config.host,
       port: this.config.port,
       user: this.config.user,
       password: this.config.password,
       database: this.config.database,
-      ssl: buildPgSslOptions(sslSettingsFromEnv(this.config.ssl), this.logger, 'semantic'),
-      ...auxPoolTuningFromEnv('SEMANTIC_PG', ':semantic', process.env, {
+    };
+    if (isSameConnection(pgConnection, ageConnection)) {
+      this.agePool = this.pool;
+    } else {
+      this.agePool = this.buildPool(ageConnection, 'semantic-age');
+    }
+    await this.bootstrapSchema();
+  }
+
+  private buildPool(
+    connection: { host: string; port: number; user: string; password: string; database: string },
+    label: string,
+  ): Pool {
+    const pool = new Pool({
+      ...connection,
+      ssl: buildPgSslOptions(sslSettingsFromEnv(this.config.ssl), this.logger, label),
+      ...auxPoolTuningFromEnv('SEMANTIC_PG', `:${label}`, process.env, {
         max: this.config.poolMax,
         statementTimeoutMs: 60_000,
       }),
     });
-    attachCheckedOutClientErrorHandler(this.pool, this.logger, 'semantic');
-    this.pool.on('error', (error) => {
+    attachCheckedOutClientErrorHandler(pool, this.logger, label);
+    pool.on('error', (error) => {
       this.logger.error('Semantic Model PostgreSQL pool error', { error: error.message });
     });
-    await this.bootstrapSchema();
+    return pool;
   }
 
   private async bootstrapSchema(): Promise<void> {
     const scriptPath = this.resolveBootstrapScriptPath();
     const sql = await readFile(scriptPath, 'utf8');
+    const { definitions, ageSection } = splitAgeBootstrap(sql);
     const client = await this.pool!.connect();
     try {
-      await client.query(sql);
+      await client.query(definitions);
       this.logger.log(`Semantic Model schema bootstrapped from ${scriptPath}`);
     } finally {
       client.release();
+    }
+    // Library loading is a deployment setting (session_preload_libraries on the
+    // graph database); an app role may not LOAD. The remaining statements fail
+    // loudly if AGE is genuinely unavailable.
+    const ageSetup = ageSection
+      .split('\n')
+      .filter((line) => !line.trim().toUpperCase().startsWith('LOAD '))
+      .join('\n');
+    const ageClient = await this.agePool!.connect();
+    try {
+      await ageClient.query(ageSetup);
+    } finally {
+      ageClient.release();
     }
   }
 
@@ -82,7 +173,9 @@ export class SemanticModelDatabaseService implements OnModuleInit, OnModuleDestr
 
   async onModuleDestroy(): Promise<void> {
     await this.pool?.end();
+    if (this.agePool && this.agePool !== this.pool) await this.agePool.end();
     this.pool = null;
+    this.agePool = null;
   }
 
   isEnabled(): boolean {
@@ -124,21 +217,32 @@ export class SemanticModelDatabaseService implements OnModuleInit, OnModuleDestr
   async health(): Promise<{ enabled: boolean; ready: boolean; latencyMs: number }> {
     if (!this.isEnabled()) return { enabled: false, ready: true, latencyMs: 0 };
     const startedAt = Date.now();
-    const result = await this.query<{ schema_ready: boolean; graph_ready: boolean }>(
-      `SELECT
-        EXISTS (SELECT 1 FROM information_schema.schemata WHERE schema_name = 'semantic_model') AS schema_ready,
-        EXISTS (SELECT 1 FROM ag_catalog.ag_graph WHERE name = $1) AS graph_ready`,
-      [this.config.ageGraph],
+    const schema = await this.query<{ schema_ready: boolean }>(
+      `SELECT EXISTS (SELECT 1 FROM information_schema.schemata WHERE schema_name = 'semantic_model') AS schema_ready`,
     );
-    return {
-      enabled: true,
-      ready: Boolean(result.rows[0]?.schema_ready && result.rows[0]?.graph_ready),
-      latencyMs: Date.now() - startedAt,
-    };
+    const ageClient = await this.getAgePool().connect();
+    try {
+      const graph = await ageClient.query<{ graph_ready: boolean }>(
+        `SELECT EXISTS (SELECT 1 FROM ag_catalog.ag_graph WHERE name = $1) AS graph_ready`,
+        [this.config.ageGraph],
+      );
+      return {
+        enabled: true,
+        ready: Boolean(schema.rows[0]?.schema_ready && graph.rows[0]?.graph_ready),
+        latencyMs: Date.now() - startedAt,
+      };
+    } finally {
+      ageClient.release();
+    }
   }
 
   async acquireClient(): Promise<PoolClient> {
     return this.getPool().connect();
+  }
+
+  /** Dedicated AGE graph connection. Falls back to the definitions pool on legacy single-DB deployments. */
+  async acquireAgeClient(): Promise<PoolClient> {
+    return this.getAgePool().connect();
   }
 
   graphName(): string {
@@ -159,6 +263,23 @@ export class SemanticModelDatabaseService implements OnModuleInit, OnModuleDestr
       );
     }
     return this.pool;
+  }
+
+  private getAgePool(): Pool {
+    if (!this.isEnabled()) {
+      throw new ServiceUnavailableException(
+        ErrorCode.SEMANTIC_MODEL_UNAVAILABLE,
+        'Semantic Models are disabled',
+      );
+    }
+    const pool = this.agePool ?? this.pool;
+    if (!pool) {
+      throw new ServiceUnavailableException(
+        ErrorCode.SEMANTIC_MODEL_UNAVAILABLE,
+        'Semantic Model graph storage is not configured',
+      );
+    }
+    return pool;
   }
 
 }

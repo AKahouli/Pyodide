@@ -1,0 +1,28 @@
+{
+  "fixtureId": "xlsx-source",
+  "scenario": "XLSX asset uploaded through the small-file direct path (backend buffered, MD5 recorded)",
+  "source": {
+    "workspaceId": "6512f0a1c9e77a001234aaa1",
+    "assetId": "6512f0a1c9e77a001234bbb2",
+    "originalName": "customer-registry.xlsx",
+    "mimeType": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    "sizeBytes": 184320,
+    "contentHash": "9f2a1c0e5b6d7a8b9c0d1e2f3a4b5c6d",
+    "uploadedAt": "2026-09-10T08:30:00.000Z",
+    "indexingStatus": null
+  },
+  "expectedResolution": {
+    "assetRef": {
+      "workspaceId": "6512f0a1c9e77a001234aaa1",
+      "assetId": "6512f0a1c9e77a001234bbb2",
+      "assetVersionId": "md5:9f2a1c0e5b6d7a8b9c0d1e2f3a4b5c6d",
+      "sourceVersionVerification": "partial"
+    },
+    "discovery": {
+      "status": "ready",
+      "structure": { "kind": "xlsx", "sheets": [{ "name": "Customers", "visible": true }] },
+      "coverage": { "sampled": true, "completeProfileDone": false }
+    },
+    "population": "prepare_dataset required before mapping-level execution; preview rows never cap population"
+  }
+}
