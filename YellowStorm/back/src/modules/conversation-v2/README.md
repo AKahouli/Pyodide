@@ -55,6 +55,7 @@ The App Builder runtime lives in the sibling module
 | Deploy | HTTP App Builder (`POST …/sessions/:id/deploy`), independent of Nodepod |
 | **App sharing** | **Email-based share with notification, App Marketplace with owned + shared apps** |
 | **RBAC** | **Owner / viewer roles with granular permissions (session.read, events.read, files.read, workspace_documents.read, session.write, session.delete, stream.write, deploy.write, share.write)** |
+| **App Builder AI** | Session flag `hasAiFeatures` (set after successful AI usage, not merely on ticket issue); preview ticket `aiprev_…`; deploy rejects loopback `BACKEND_URL` when AI apps need a public Nest URL |
 
 ## Architecture
 
@@ -654,8 +655,9 @@ for that session.
 | `services/conversation-v2-event-store.service.ts` | Event append with sequence, listSince, tagModel |
 | `services/conversation-v2-pointer-writer.service.ts` | Update session status/title from events |
 | `services/conversation-v2-share.service.ts` | Token generation, hash, timing-safe verify |
-| `services/conversation-v2-deploy.service.ts` | Deploy via app-deployer, polling, timeout |
+| `services/conversation-v2-deploy.service.ts` | Deploy via app-deployer, polling, timeout; rejects loopback BACKEND_URL for AI apps |
 | `services/conversation-v2-app-share.service.ts` | Email share, notification, conversation access |
+| `services/conversation-v2-app-ai-features.service.ts` | Marks session `hasAiFeatures` after successful AI usage |
 | `services/conversation-v2-name-generator.service.ts` | Auto-title from first message |
 | `proto/conversation.proto` | gRPC contract (sync with APImanus) |
 | `types/conversation-v2.types.ts` | Event / payload TypeScript types |

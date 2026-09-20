@@ -5,7 +5,8 @@
  * Console filter: `[ym-diag]`
  * Browser console: `window.__YM_DIAG__.dump()` / `.snapshot()` / `.clear()`
  *
- * Enabled when `import.meta.env.DEV` or `VITE_YM_DEBUG=true`.
+ * Enabled when `VITE_YM_DEBUG=true` (explicit). Silent by default in Preview Dev
+ * so end users never see diagnostic noise; agents still use preview_inspect.
  */
 export type YmDiagLevel = 'debug' | 'info' | 'warn' | 'error';
 
@@ -26,9 +27,7 @@ const SECRET_VALUE = /^(Bearer\s+\S+|aiprev_\S+|sk-[A-Za-z0-9_-]{8,}|eyJ[A-Za-z0
 
 function isEnabled(): boolean {
   try {
-    return Boolean(
-      import.meta.env.DEV || import.meta.env.VITE_YM_DEBUG === 'true',
-    );
+    return import.meta.env.VITE_YM_DEBUG === 'true';
   } catch {
     return false;
   }

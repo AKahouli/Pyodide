@@ -85,6 +85,7 @@ export enum ErrorCode {
   USAGE_LIMIT_EXCEEDED = 'ERR_1700',
   USAGE_RATE_LIMITED = 'ERR_1701',
   USAGE_REQUEST_TOO_LARGE = 'ERR_1702',
+  APP_BUILDER_AI_DISABLED = 'ERR_1703',
   PLAN_NOT_FOUND = 'ERR_1710',
   PLAN_ALREADY_EXISTS = 'ERR_1711',
   PLAN_INACTIVE = 'ERR_1712',
@@ -560,6 +561,7 @@ export const ErrorMessages: Record<ErrorCode, string> = {
   [ErrorCode.APPEARANCE_LOGO_LIMIT_REACHED]: 'Maximum number of custom logos reached.',
 
   [ErrorCode.USAGE_LIMIT_EXCEEDED]: 'Usage limit exceeded. Please upgrade your plan or wait for the limit to reset.',
+  [ErrorCode.APP_BUILDER_AI_DISABLED]: 'App Builder AI access is currently disabled by an administrator.',
   [ErrorCode.USAGE_RATE_LIMITED]: 'Rate limit exceeded. Please slow down your requests.',
   [ErrorCode.USAGE_REQUEST_TOO_LARGE]: 'Request exceeds maximum allowed tokens for your plan.',
   [ErrorCode.PLAN_NOT_FOUND]: 'Plan not found.',

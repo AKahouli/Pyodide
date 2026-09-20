@@ -294,6 +294,25 @@ export class AuthorizationService implements OnApplicationBootstrap {
           seededCount++;
         } else {
           existingCount++;
+          // System roles: add any newly declared permissions without removing custom ones.
+          if (
+            existing.isSystem
+            && roleData.permissions.length > 0
+            && !existing.permissions.includes('*')
+          ) {
+            const missing = roleData.permissions.filter(
+              (p) => !existing.permissions.includes(p),
+            );
+            if (missing.length > 0) {
+              await this.roleModel.updateOne(
+                { _id: existing._id },
+                { $addToSet: { permissions: { $each: missing } } },
+              );
+              this.logger.log(
+                `System role ${roleData.name}: added permissions ${missing.join(', ')}`,
+              );
+            }
+          }
         }
       } catch (error) {
         this.logger.error(`Failed to seed role: ${roleData.name}`, {

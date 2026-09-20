@@ -38,6 +38,11 @@ export const Permissions = {
   ANALYTICS_READ: 'analytics.read',
   ANALYTICS_ALL: 'analytics.*',
 
+  // App Builder AI Control
+  APP_BUILDER_AI_READ: 'app_builder_ai.read',
+  APP_BUILDER_AI_MANAGE: 'app_builder_ai.manage',
+  APP_BUILDER_AI_ALL: 'app_builder_ai.*',
+
   // Conversation Admin
   CONVERSATIONS_ADMIN_DELETE: 'conversations.admin_delete',
   CONVERSATIONS_SETTINGS_MANAGE: 'conversations.settings.manage',
@@ -234,6 +239,11 @@ const ALL_PERMISSIONS = new Set<string>([
   // Analytics
   'analytics.read',
   'analytics.*',
+
+  // App Builder AI Control
+  'app_builder_ai.read',
+  'app_builder_ai.manage',
+  'app_builder_ai.*',
 
   // Conversation Admin
   'conversations.admin_delete',

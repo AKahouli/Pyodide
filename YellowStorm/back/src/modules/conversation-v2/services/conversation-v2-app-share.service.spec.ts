@@ -132,6 +132,8 @@ describe('ConversationV2AppShareService', () => {
       email.send.mock.invocationCallOrder[0],
     );
     expect(email.send.mock.calls[0][0].html).toContain('/register?invite=');
+    expect(email.send.mock.calls[0][0].html).toContain('https://apps.example/a/register?invite=');
+    expect(email.send.mock.calls[0][0].html).not.toContain('//register');
     expect(email.send.mock.calls[0][0].html).not.toContain('Open the app');
     expect(email.send.mock.calls[0][0].html).not.toContain('App Builder');
     expect(email.send.mock.calls[0][0].text).not.toContain('Conversation:');
@@ -236,6 +238,7 @@ describe('ConversationV2AppShareService', () => {
         source: 'shared',
         shareId: shareId.toString(),
         canOpenConversation: true,
+        hasAiFeatures: false,
         lastDeployedRevisionId: null,
         latestFinalizedRevisionId: null,
         latestFinalizedAt: null,

@@ -124,6 +124,13 @@ export class User extends Document {
   @Prop()
   planStartedAt?: Date;
 
+  /** App Builder AI offer (independent from platform Plan). */
+  @Prop({ type: Types.ObjectId, ref: 'AppBuilderAiOffer', index: true })
+  appBuilderAiOfferId?: Types.ObjectId;
+
+  @Prop()
+  appBuilderAiOfferStartedAt?: Date;
+
   // RBAC
   @Prop({ type: [Types.ObjectId], ref: 'Role', default: [] })
   roles!: Types.ObjectId[];

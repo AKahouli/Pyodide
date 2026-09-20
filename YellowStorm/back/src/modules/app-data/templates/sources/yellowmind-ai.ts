@@ -7,10 +7,13 @@
  */
 import OpenAI from 'openai';
 import { getAuthToken, isDevPreview } from '@/lib/yellowmind-auth';
+import { ymDiag } from '@/lib/ym-diag';
 
 const proxyEnabled = import.meta.env.VITE_YM_AI_PROXY === 'true' && typeof window !== 'undefined';
 const inIframe = proxyEnabled && window.parent !== window;
 const inNewTab = proxyEnabled && window.parent === window;
+
+ymDiag.debug('ai', 'client module loaded', { proxyEnabled, inIframe, inNewTab });
 
 let proxyIdCounter = 0;
 let broadcastChannel: BroadcastChannel | null = null;
@@ -22,9 +25,16 @@ function getBroadcastChannel(): BroadcastChannel {
   return broadcastChannel;
 }
 
-function sanitizeProxyHeaders(raw: HeadersInit | undefined): Record<string, string> | undefined {
+function sanitizeAiClientHeaders(
+  raw: HeadersInit | undefined,
+  options?: { includeAuthorization?: boolean },
+): Record<string, string> | undefined {
   if (!raw) return undefined;
+  // Nest CORS uses a fixed allowlist — OpenAI SDK adds x-stainless-* that break preflight.
   const allow = new Set(['content-type', 'accept', 'accept-language']);
+  if (options?.includeAuthorization) {
+    allow.add('authorization');
+  }
   const out: Record<string, string> = {};
   const put = (key: string, value: string) => {
     if (allow.has(key.toLowerCase())) out[key] = value;
@@ -41,6 +51,11 @@ function sanitizeProxyHeaders(raw: HeadersInit | undefined): Record<string, stri
   return Object.keys(out).length > 0 ? out : undefined;
 }
 
+/** Preview relay: drop Authorization (parent injects the AI preview ticket). */
+function sanitizeProxyHeaders(raw: HeadersInit | undefined): Record<string, string> | undefined {
+  return sanitizeAiClientHeaders(raw);
+}
+
 /** OpenAI-compatible base URL for YellowStorm AI Proxy (…/api/v1). */
 export function resolveAiApiBaseUrl(): string {
   const configured = (import.meta.env.VITE_YM_API_BASE_URL as string | undefined)?.trim();
@@ -48,7 +63,7 @@ export function resolveAiApiBaseUrl(): string {
     return configured.replace(/\/$/, '');
   }
   throw new Error(
-    'AI API is not configured (missing VITE_YM_API_BASE_URL). Redeploy or restart preview after backend env is set.',
+    'AI is not ready yet. Refresh the preview after setup completes, or open the deployed app and sign in.',
   );
 }
 
@@ -77,8 +92,16 @@ function normalizeAiFetchUrl(url: string, baseURL: string): string {
 function proxyFetch(url: string, init?: RequestInit): Promise<Response> {
   return new Promise((resolve, reject) => {
     const id = `ym-ai-${++proxyIdCounter}-${Date.now()}`;
+    const started = performance.now();
+    ymDiag.info('ai', 'proxy fetch start', {
+      id,
+      url,
+      method: init?.method || 'GET',
+      transport: inIframe ? 'postMessage' : 'BroadcastChannel',
+    });
     const timeout = setTimeout(() => {
       cleanup();
+      ymDiag.error('ai', 'proxy timeout', { id, url, ms: Math.round(performance.now() - started) });
       reject(
         new Error(
           inNewTab
@@ -93,6 +116,7 @@ function proxyFetch(url: string, init?: RequestInit): Promise<Response> {
       id,
       url,
       method: init?.method || 'GET',
+      // Strip OpenAI SDK stainless headers — parent CORS allowlist rejects them.
       headers: sanitizeProxyHeaders(init?.headers),
       body: init?.body || undefined,
     };
@@ -101,13 +125,24 @@ function proxyFetch(url: string, init?: RequestInit): Promise<Response> {
       if (data?.type !== 'ym-ai-response' || data.id !== id) return;
       cleanup();
       if (data.error) {
+        ymDiag.error('ai', 'proxy error response', {
+          id,
+          error: data.error,
+          ms: Math.round(performance.now() - started),
+        });
         reject(new Error(data.error as string));
         return;
       }
+      ymDiag.info('ai', 'proxy fetch ok', {
+        id,
+        status: data.status,
+        ms: Math.round(performance.now() - started),
+      });
       const headers = new Headers((data.headers as Record<string, string>) || {});
       if (!headers.has('content-type')) {
         headers.set('content-type', 'application/json');
       }
+      // Unwrap YellowStorm `{ success, data }` if present — OpenAI SDK expects raw completion JSON.
       let bodyText = (data.body as string) ?? '';
       try {
         const parsed = JSON.parse(bodyText) as Record<string, unknown>;
@@ -163,6 +198,7 @@ export function createAIClient(accessToken?: string): OpenAI {
   const baseURL = resolveAiApiBaseUrl();
 
   if (proxyEnabled) {
+    ymDiag.info('ai', 'createAIClient (preview relay)', { baseURL });
     return new OpenAI({
       baseURL,
       // Placeholder only — parent relay replaces Authorization with the AI preview ticket.
@@ -174,18 +210,26 @@ export function createAIClient(accessToken?: string): OpenAI {
 
   const token = accessToken ?? getAuthToken();
   if (!token) {
+    ymDiag.warn('ai', 'createAIClient missing token', { isDevPreview: isDevPreview() });
     if (isDevPreview()) {
       throw new Error(
-        'AI is unavailable in auth-bypassed dev preview without VITE_YM_AI_PROXY. Restart preview after backend wiring, or use a deployed build with login.',
+        'AI is not available in this preview yet. Refresh after setup completes, or use the deployed app and sign in.',
       );
     }
     throw new Error('Not authenticated — log in before using AI.');
   }
 
+  ymDiag.info('ai', 'createAIClient (end-user JWT)', { baseURL, hasToken: true });
   return new OpenAI({
     baseURL,
     apiKey: token,
     dangerouslyAllowBrowser: true,
+    // Strip x-stainless-* so Nest CORS preflight succeeds (same as preview relay).
+    fetch: (url, init) =>
+      fetch(normalizeAiFetchUrl(String(url), baseURL), {
+        ...init,
+        headers: sanitizeAiClientHeaders(init?.headers, { includeAuthorization: true }),
+      }),
   });
 }
 
@@ -214,10 +258,11 @@ export async function resolveDefaultAiModel(accessToken?: string): Promise<strin
   const first = listed.data?.[0]?.id?.trim();
   if (!first) {
     throw new Error(
-      'No active chat models are available via the AI proxy. Ask an admin to activate a model in the catalog.',
+      'No AI models are available right now. Please try again later or contact support.',
     );
   }
   cachedDefaultModelId = first;
+  ymDiag.info('ai', 'resolved default model from catalog', { model: first });
   return first;
 }
 
@@ -247,7 +292,8 @@ function buildChatCompletionParams(
 
 /**
  * Extract visible assistant text from a chat completion.
- * Reasoning models may return empty `message.content` while still 200.
+ * Reasoning models may return empty `message.content` while still 200 —
+ * prefer content, then common alternate fields.
  */
 export function getAssistantText(
   completion: OpenAI.Chat.ChatCompletion | null | undefined,
@@ -294,14 +340,44 @@ export async function chatCompletion(
   },
 ) {
   const model = options?.model?.trim() || (await resolveDefaultAiModel(options?.accessToken));
+  ymDiag.info('ai', 'chatCompletion', {
+    model,
+    messageCount: messages.length,
+    stream: false,
+    hasTemperature: options?.temperature !== undefined,
+  });
   const client = createAIClient(options?.accessToken);
-  return client.chat.completions.create(
-    buildChatCompletionParams(model, messages, {
-      temperature: options?.temperature,
-      max_tokens: options?.max_tokens,
-      stream: false,
-    }),
-  );
+  try {
+    const result = await client.chat.completions.create(
+      buildChatCompletionParams(model, messages, {
+        temperature: options?.temperature,
+        max_tokens: options?.max_tokens,
+        stream: false,
+      }),
+    );
+    const text = getAssistantText(result);
+    ymDiag.debug('ai', 'chatCompletion ok', {
+      model,
+      id: result.id,
+      choices: result.choices?.length,
+      finishReason: result.choices?.[0]?.finish_reason,
+      textChars: text.length,
+    });
+    if (!text) {
+      ymDiag.warn('ai', 'chatCompletion empty assistant text', {
+        model,
+        finishReason: result.choices?.[0]?.finish_reason,
+        usage: result.usage,
+      });
+    }
+    return result;
+  } catch (err) {
+    ymDiag.error('ai', 'chatCompletion failed', {
+      model,
+      message: err instanceof Error ? err.message : String(err),
+    });
+    throw err;
+  }
 }
 
 /**
@@ -320,11 +396,10 @@ export async function streamChatCompletion(
 ) {
   const model = options?.model?.trim() || (await resolveDefaultAiModel(options?.accessToken));
   const client = createAIClient(options?.accessToken);
-  return client.chat.completions.create(
-    buildChatCompletionParams(model, messages, {
-      temperature: options?.temperature,
-      max_tokens: options?.max_tokens,
-      stream: !proxyEnabled,
-    }),
-  );
+  const params = buildChatCompletionParams(model, messages, {
+    temperature: options?.temperature,
+    max_tokens: options?.max_tokens,
+    stream: !proxyEnabled,
+  });
+  return client.chat.completions.create(params);
 }

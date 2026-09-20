@@ -28,6 +28,7 @@ import type {
   AppRevisionCatalogFields,
   DeployedAppSummary,
   DraftAppSummary,
+  SessionRevisionContext,
 } from './services/conversation-v2-session.service';
 import { ConversationV2ShareService } from './services/conversation-v2-share.service';
 import { ConversationV2OwnerGuard } from './guards/conversation-v2-owner.guard';
@@ -55,6 +56,7 @@ import { VmUnavailableException } from './exceptions/vm-unavailable.exception';
 import { ConversationV2EventStoreService, PersistedEventRow } from './services/conversation-v2-event-store.service';
 import { ConversationV2DeployService } from './services/conversation-v2-deploy.service';
 import { ConversationV2AppShareService } from './services/conversation-v2-app-share.service';
+import { ConversationV2AppAiFeaturesService } from './services/conversation-v2-app-ai-features.service';
 import { normalizeAppSourceCephPrefix } from './utils/normalize-app-source-ceph-prefix';
 import { RuntimeTicketService } from '@modules/app-runtime/services/runtime-ticket.service';
 import { AiPreviewTicketService } from '@modules/ai-proxy/services/ai-preview-ticket.service';
@@ -95,6 +97,7 @@ export class ConversationV2Controller {
     private readonly runtimeRevisions: RuntimeRevisionService,
     private readonly runtimeBindings: RuntimeBindingService,
     private readonly finalizedRevisions: RuntimeFinalizedRevisionService,
+    private readonly appAiFeatures: ConversationV2AppAiFeaturesService,
   ) {}
 
   @Post('sessions')
@@ -189,21 +192,39 @@ export class ConversationV2Controller {
     ]);
     const ownedIds = new Set(deployed.map((app) => app.sessionId));
     const filteredShared = shared.filter((app) => !ownedIds.has(app.sessionId));
-    const revisionBySession = await this.buildRevisionCatalogBySessionId([
-      ...deployed,
-      ...filteredShared,
-      ...drafts,
-    ]);
+    const catalogApps = [...deployed, ...filteredShared, ...drafts];
+    const { revisionBySession, contexts } =
+      await this.buildRevisionCatalogBySessionId(catalogApps);
+    const aiBySession = await this.appAiFeatures.resolveForCatalog(
+      catalogApps.map((app) => {
+        const context = contexts.get(app.sessionId);
+        const revision = revisionBySession.get(app.sessionId);
+        const revisionId =
+          revision?.lastDeployedRevisionId
+          ?? revision?.latestFinalizedRevisionId
+          ?? null;
+        return {
+          sessionId: app.sessionId,
+          workspaceId: context?.aiSessionId ?? null,
+          revisionId,
+          hasAiFeatures: context?.hasAiFeatures === true || app.hasAiFeatures === true,
+          aiFeaturesCheckedRevisionId: context?.aiFeaturesCheckedRevisionId ?? null,
+        };
+      }),
+    );
+
+    const withCatalog = <T extends { sessionId: string; hasAiFeatures: boolean }>(
+      app: T,
+      includeDeployedRevision: boolean,
+    ): T & AppRevisionCatalogFields => ({
+      ...this.applyRevisionCatalog(app, revisionBySession.get(app.sessionId), includeDeployedRevision),
+      hasAiFeatures: aiBySession.get(app.sessionId) === true,
+    });
+
     return {
-      deployed: deployed.map((app) =>
-        this.applyRevisionCatalog(app, revisionBySession.get(app.sessionId), true),
-      ),
-      shared: filteredShared.map((app) =>
-        this.applyRevisionCatalog(app, revisionBySession.get(app.sessionId), true),
-      ),
-      drafts: drafts.map((app) =>
-        this.applyRevisionCatalog(app, revisionBySession.get(app.sessionId), false),
-      ),
+      deployed: deployed.map((app) => withCatalog(app, true)),
+      shared: filteredShared.map((app) => withCatalog(app, true)),
+      drafts: drafts.map((app) => withCatalog(app, false)),
     };
   }
 
@@ -553,6 +574,16 @@ export class ConversationV2Controller {
       lastDeployedAt,
     });
 
+    try {
+      await this.appAiFeatures.detectAndPersist(id, pointer.aiSessionId, revisionId);
+    } catch (err) {
+      this.logger.warn(
+        `AI features detect after deploy failed for session ${id}: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+    }
+
     let ownerInviteToken: string | null = null;
     try {
       ownerInviteToken = await this.appShares.createOwnerInvite({
@@ -837,7 +868,10 @@ export class ConversationV2Controller {
 
   private async buildRevisionCatalogBySessionId(
     apps: Array<{ sessionId: string }>,
-  ): Promise<Map<string, AppRevisionCatalogFields>> {
+  ): Promise<{
+    revisionBySession: Map<string, AppRevisionCatalogFields>;
+    contexts: Map<string, SessionRevisionContext>;
+  }> {
     const sessionIds = apps.map((app) => app.sessionId);
     const contexts = await this.sessions.resolveRevisionContextBySessionIds(sessionIds);
     const workspaceIds = [
@@ -862,7 +896,7 @@ export class ConversationV2Controller {
         finalizedVersionCount: finalized?.versionCount ?? 0,
       });
     }
-    return revisionBySession;
+    return { revisionBySession, contexts };
   }
 
   private applyRevisionCatalog<T extends { sessionId: string }>(
