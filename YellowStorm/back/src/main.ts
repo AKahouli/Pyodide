@@ -17,7 +17,6 @@ import { LoggerService } from './modules/logger';
 import { SystemService } from './modules/system/system.service';
 import { parseTrustProxySetting } from './common/utils/client-ip';
 import { isTransientConnectionError } from './common/utils/transient-connection-error';
-import { APP_DATA_CORS_REQUEST_HEADERS } from './modules/app-data/constants/app-data.constants';
 
 function serializeUnhandledReason(reason: unknown) {
   if (reason instanceof Error) {
@@ -105,21 +104,9 @@ async function bootstrap() {
     },
     credentials: true,
     methods: ['GET', 'HEAD', 'PUT', 'PATCH', 'POST', 'DELETE', 'OPTIONS'],
-    allowedHeaders: [
-      'Content-Type',
-      'Authorization',
-      'Accept',
-      'Origin',
-      'X-Requested-With',
-      'X-Correlation-ID',
-      'X-Request-ID',
-      'Idempotency-Key',
-      'Cache-Control',
-      'Connection',
-      'Last-Event-ID',
-      ...APP_DATA_CORS_REQUEST_HEADERS,
-      'Range',
-    ],
+    // Omit a fixed allowlist so `cors` reflects Access-Control-Request-Headers.
+    // Origin is already whitelisted above; a fixed stainless header list broke
+    // when the OpenAI browser SDK added new x-stainless-* names.
     exposedHeaders: ['Set-Cookie', 'Accept-Ranges', 'Content-Disposition', 'Content-Length', 'Content-Range'],
     preflightContinue: false,
     optionsSuccessStatus: 204,

@@ -118,6 +118,7 @@ const REMOTE_PROVIDERS = [
         AppDataProvisioningService,
         AppDataMcpDispatcherService,
         AppDataEndUserAuthService,
+        AppDataEndUserGrantsService,
       ],
 })
 export class AppDataModule {}

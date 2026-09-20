@@ -84,6 +84,7 @@ import { IntegrationEventsModule } from './modules/integration-events/integratio
 import { WorkspaceArtifactModule } from './modules/workspace-artifact/workspace-artifact.module';
 import { SemanticModelModule } from './modules/semantic-model/semantic-model.module';
 import { AiProxyModule } from './modules/ai-proxy/ai-proxy.module';
+import { AppBuilderAiModule } from './modules/app-builder-ai/app-builder-ai.module';
 
 @Module({
   imports: [
@@ -156,6 +157,7 @@ import { AiProxyModule } from './modules/ai-proxy/ai-proxy.module';
     GovernanceModule,
     SemanticModelModule,
     AiProxyModule,
+    AppBuilderAiModule,
   ],
   providers: [
     // Global JWT Auth Guard - all routes require authentication by default
