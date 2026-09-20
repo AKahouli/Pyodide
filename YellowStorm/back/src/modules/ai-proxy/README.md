@@ -206,6 +206,8 @@ npm test -- --testPathPattern=ai-proxy --no-coverage
 ## Related
 
 - Architecture overview: `YellowStorm/back/AI-PROXY-ARCHITECTURE.md`
+- Quotas / kill switch / offers: [`../app-builder-ai/README.md`](../app-builder-ai/README.md)
 - Internal admin completions: `modules/chat-completion/`
 - LiteLLM connectivity: `modules/models/litellm-connection.service.ts`
 - Usage / plans: `modules/usage/`
+- End-user `use_ai` ACL (remote): microservice `app-data/docs/END_USER_AI_GRANT.md`

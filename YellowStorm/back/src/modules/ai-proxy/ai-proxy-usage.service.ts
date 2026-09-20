@@ -1,8 +1,15 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Optional } from '@nestjs/common';
+import { InjectModel } from '@nestjs/mongoose';
 import { Request } from 'express';
+import { Model } from 'mongoose';
 import { LoggerService } from '../logger';
 import { ModelsService } from '../models/models.service';
 import { UsageService, UsageType } from '../usage';
+import { AppBuilderAiUsageService } from '../app-builder-ai/services/app-builder-ai-usage.service';
+import {
+  ConversationV2Session,
+  ConversationV2SessionDocument,
+} from '../conversation-v2/schemas/conversation-v2-session.schema';
 import { AI_PROXY_CHAT_ENDPOINT } from './constants/ai-proxy.constants';
 import {
   AiProxyModelPricing,
@@ -23,12 +30,25 @@ export interface RecordAiProxyUsageParams {
   pricing?: AiProxyModelPricing | null;
 }
 
+type AiProxyAuthedRequest = Request & {
+  aiProxyAuth?: {
+    mode?: 'platform' | 'app_end_user' | 'ai_preview';
+    appDataId?: string;
+    endUserId?: string;
+    workspaceId?: string;
+  };
+};
+
 @Injectable()
 export class AiProxyUsageService {
   constructor(
     private readonly usageService: UsageService,
     private readonly modelsService: ModelsService,
     private readonly logger: LoggerService,
+    @Optional() private readonly appBuilderAiUsage?: AppBuilderAiUsageService,
+    @Optional()
+    @InjectModel(ConversationV2Session.name)
+    private readonly sessions?: Model<ConversationV2SessionDocument>,
   ) {}
 
   resolveTokens(usage?: LiteLlmTokenUsage | null): AiProxyResolvedTokens {
@@ -92,10 +112,15 @@ export class AiProxyUsageService {
       ? await this.resolvePricing(params.model)
       : params.pricing;
     const estimatedCost = this.estimateCost(tokens, pricing);
+    const auth = (params.request as AiProxyAuthedRequest | undefined)?.aiProxyAuth;
+    const isAppBuilder =
+      auth?.mode === 'ai_preview' || auth?.mode === 'app_end_user';
 
+    const attribution = await this.resolveAttribution(auth);
     const metadata: Record<string, unknown> = {
       tokensStatus: tokensUnknown ? 'unknown' : 'known',
       streaming: params.streaming,
+      model: params.model,
       ...(params.litellmRequestId ? { litellmRequestId: params.litellmRequestId } : {}),
       ...(params.errorMessage ? { error: params.errorMessage } : {}),
       ...(pricing
@@ -110,13 +135,45 @@ export class AiProxyUsageService {
             estimatedCost,
           }
         : {}),
+      ...attribution,
     };
 
+    const inputTokens = tokens.status === 'known' ? tokens.promptTokens : 0;
+    const outputTokens = tokens.status === 'known' ? tokens.completionTokens : 0;
+    const errorCode = params.errorMessage
+      ? (params.streaming ? 'AI_PROXY_STREAM_ERROR' : 'AI_PROXY_ERROR')
+      : undefined;
+
     try {
+      if (isAppBuilder && this.appBuilderAiUsage) {
+        await this.appBuilderAiUsage.recordUsage({
+          userId: params.userId,
+          inputTokens,
+          outputTokens,
+          modelName: params.model,
+          durationMs: Date.now() - params.startedAt,
+          ipAddress: params.request?.ip,
+          userAgent: params.request?.get?.('user-agent') ?? undefined,
+          success: params.success,
+          errorCode,
+          metadata: {
+            authMode: auth?.mode,
+            ...attribution,
+            tokensStatus: metadata.tokensStatus,
+            streaming: params.streaming,
+            ...(pricing ? { pricing: metadata.pricing, estimatedCost } : {}),
+          },
+        });
+        if (params.success) {
+          await this.markSessionHasAiFeatures(attribution);
+        }
+        return;
+      }
+
       await this.usageService.recordUsage({
         userId: params.userId,
-        inputTokens: tokens.status === 'known' ? tokens.promptTokens : 0,
-        outputTokens: tokens.status === 'known' ? tokens.completionTokens : 0,
+        inputTokens,
+        outputTokens,
         usageType: UsageType.CHAT,
         modelName: params.model,
         endpoint: AI_PROXY_CHAT_ENDPOINT,
@@ -124,17 +181,66 @@ export class AiProxyUsageService {
         ipAddress: params.request?.ip,
         userAgent: params.request?.get?.('user-agent') ?? undefined,
         success: params.success,
-        errorCode: params.errorMessage
-          ? (params.streaming ? 'AI_PROXY_STREAM_ERROR' : 'AI_PROXY_ERROR')
-          : undefined,
+        errorCode,
         metadata,
       });
     } catch (error) {
-      this.logger.warn('Failed to record AI proxy usage', {
+      this.logger.error('Failed to record AI proxy usage', {
         userId: params.userId,
         model: params.model,
+        authMode: auth?.mode,
+        appBuilder: isAppBuilder,
         error: error instanceof Error ? error.message : 'Unknown error',
       });
     }
+  }
+
+  /** Runtime proof: successful App Builder proxy call ⇒ sticky hasAiFeatures. */
+  private async markSessionHasAiFeatures(
+    attribution: Record<string, unknown>,
+  ): Promise<void> {
+    const sessionId = attribution.sessionId;
+    if (typeof sessionId !== 'string' || !sessionId || !this.sessions) return;
+    try {
+      await this.sessions.updateOne(
+        { _id: sessionId, deletedAt: null },
+        { $set: { hasAiFeatures: true } },
+      );
+    } catch (error) {
+      this.logger.warn('Failed to mark session hasAiFeatures after AI proxy usage', {
+        sessionId,
+        error: error instanceof Error ? error.message : 'Unknown error',
+      });
+    }
+  }
+
+  private async resolveAttribution(
+    auth: AiProxyAuthedRequest['aiProxyAuth'] | undefined,
+  ): Promise<Record<string, unknown>> {
+    if (!auth) return {};
+    const result: Record<string, unknown> = {};
+    if (auth.appDataId) result.appDataId = auth.appDataId;
+    if (auth.endUserId) result.endUserId = auth.endUserId;
+    if (auth.workspaceId) result.workspaceId = auth.workspaceId;
+
+    if (auth.workspaceId && this.sessions) {
+      const session = await this.sessions
+        .findOne({
+          aiSessionId: auth.workspaceId,
+          deletedAt: null,
+        })
+        .select('_id title deployedAppTitle')
+        .lean()
+        .exec();
+      if (session) {
+        result.sessionId = session._id.toString();
+        result.appTitle =
+          (session as { deployedAppTitle?: string }).deployedAppTitle
+          || (session as { title?: string }).title
+          || '';
+      }
+    }
+
+    return result;
   }
 }

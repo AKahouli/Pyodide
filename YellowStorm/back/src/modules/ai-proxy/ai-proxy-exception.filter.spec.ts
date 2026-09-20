@@ -48,4 +48,20 @@ describe('AiProxyExceptionFilter', () => {
       },
     });
   });
+
+  it('maps App Builder AI kill switch to access_denied with 403', () => {
+    new AiProxyExceptionFilter().catch(
+      new ForbiddenException(ErrorCode.APP_BUILDER_AI_DISABLED, 'AI disabled'),
+      createHost(),
+    );
+
+    expect(status).toHaveBeenCalledWith(HttpStatus.FORBIDDEN);
+    expect(json).toHaveBeenCalledWith({
+      error: {
+        message: 'AI disabled',
+        type: 'access_denied',
+        code: 'access_denied',
+      },
+    });
+  });
 });

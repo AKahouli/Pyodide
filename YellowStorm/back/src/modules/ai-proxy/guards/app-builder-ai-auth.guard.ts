@@ -2,12 +2,13 @@ import {
   CanActivate,
   ExecutionContext,
   Injectable,
+  Logger,
   Optional,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
 import { Request } from 'express';
-import { UnauthorizedException } from '../../exceptions';
+import { ForbiddenException, UnauthorizedException } from '../../exceptions';
 import { ErrorCode } from '../../exceptions/constants/error-codes';
 import { JwtPayload } from '../../auth/interfaces/jwt-payload.interface';
 import { AuthService } from '../../auth/auth.service';
@@ -16,6 +17,9 @@ import { UserDocument } from '../../user/schemas/user.schema';
 import { AppDataClientService } from '../../app-data/services/app-data-client.service';
 import { AppDataCatalogService } from '../../app-data/services/app-data-catalog.service';
 import { AppDataEndUserAuthService } from '../../app-data/services/app-data-end-user-auth.service';
+import { AppDataEndUserGrantsService } from '../../app-data/services/app-data-end-user-grants.service';
+import { AppDataGrantDeniedException } from '../../app-data/constants/app-data.errors';
+import { RuntimeBindingService } from '../../app-runtime/services/runtime-binding.service';
 import {
   AI_PREVIEW_TICKET_PREFIX,
   AiPreviewTicketService,
@@ -45,6 +49,8 @@ type AiProxyAuthedRequest = Request & {
  */
 @Injectable()
 export class AppBuilderAiAuthGuard implements CanActivate {
+  private readonly logger = new Logger(AppBuilderAiAuthGuard.name);
+
   constructor(
     private readonly jwtService: JwtService,
     private readonly configService: ConfigService,
@@ -53,7 +59,9 @@ export class AppBuilderAiAuthGuard implements CanActivate {
     @Optional() private readonly appDataClient?: AppDataClientService,
     @Optional() private readonly appDataCatalog?: AppDataCatalogService,
     @Optional() private readonly endUserAuth?: AppDataEndUserAuthService,
+    @Optional() private readonly endUserGrants?: AppDataEndUserGrantsService,
     @Optional() private readonly aiPreviewTickets?: AiPreviewTicketService,
+    @Optional() private readonly runtimeBindings?: RuntimeBindingService,
   ) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
@@ -171,6 +179,7 @@ export class AppBuilderAiAuthGuard implements CanActivate {
     }
 
     await this.assertEndUserToken(token, hints.appDataId);
+    await this.assertEndUserCanUseAi(hints.appDataId, hints.sub);
     const ownerUserId = await this.resolveOwnerUserId(hints.appDataId);
     if (!ownerUserId) {
       throw new UnauthorizedException(
@@ -211,22 +220,96 @@ export class AppBuilderAiAuthGuard implements CanActivate {
     );
   }
 
+  private async assertEndUserCanUseAi(appDataId: string, endUserId: string): Promise<void> {
+    if (this.appDataClient?.isEnabled()) {
+      const endUser = await this.appDataClient.getEndUser(appDataId, endUserId);
+      if (!endUser || endUser.status === 'disabled') {
+        throw new ForbiddenException(
+          ErrorCode.APP_DATA_USER_DISABLED,
+          'User account is disabled',
+        );
+      }
+      if (endUser.grants?.useAi !== true) {
+        throw new ForbiddenException(
+          ErrorCode.APP_DATA_GRANT_DENIED,
+          'AI usage is not permitted for this user',
+        );
+      }
+      return;
+    }
+
+    if (this.appDataCatalog && this.endUserGrants) {
+      const app = await this.appDataCatalog.requireAppByAppDataId(appDataId);
+      try {
+        await this.endUserGrants.assertUseAi(app.id, endUserId);
+      } catch (err) {
+        if (err instanceof AppDataGrantDeniedException) {
+          throw new ForbiddenException(
+            ErrorCode.APP_DATA_GRANT_DENIED,
+            'AI usage is not permitted for this user',
+          );
+        }
+        throw err;
+      }
+      return;
+    }
+
+    throw new UnauthorizedException(
+      ErrorCode.UNAUTHORIZED,
+      'App end-user AI grant checks are not available in this deployment mode',
+    );
+  }
+
   private async resolveOwnerUserId(appDataId: string): Promise<string | null> {
     if (this.appDataClient?.isEnabled()) {
       try {
         const status = await this.appDataClient.getStatus(appDataId);
-        const owner = status.app?.ownerUserId;
-        return typeof owner === 'string' ? owner : null;
-      } catch {
-        return null;
+        const fromRemote = this.pickOwnerUserId(status.app as Record<string, unknown> | undefined);
+        if (fromRemote) return fromRemote;
+
+        const workspaceId = this.pickWorkspaceId(status.app as Record<string, unknown> | undefined);
+        if (workspaceId && this.runtimeBindings) {
+          const binding = await this.runtimeBindings.findByWorkspaceId(workspaceId);
+          if (binding?.userId) {
+            this.logger.warn(
+              `App Data ${appDataId} has no ownerUserId; billing via runtime binding user ${binding.userId}`,
+            );
+            return binding.userId;
+          }
+        }
+      } catch (err) {
+        this.logger.warn(
+          `Failed to resolve App Data owner for ${appDataId}: ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        );
       }
     }
 
     if (this.appDataCatalog) {
       const app = await this.appDataCatalog.findByAppDataId(appDataId);
-      return app?.ownerUserId ?? null;
+      if (app?.ownerUserId) return app.ownerUserId;
     }
 
+    return null;
+  }
+
+  /** Microservice may return camelCase or snake_case. */
+  private pickOwnerUserId(app: Record<string, unknown> | undefined): string | null {
+    if (!app) return null;
+    for (const key of ['ownerUserId', 'owner_user_id'] as const) {
+      const value = app[key];
+      if (typeof value === 'string' && value.trim()) return value.trim();
+    }
+    return null;
+  }
+
+  private pickWorkspaceId(app: Record<string, unknown> | undefined): string | null {
+    if (!app) return null;
+    for (const key of ['workspaceId', 'workspace_id'] as const) {
+      const value = app[key];
+      if (typeof value === 'string' && value.trim()) return value.trim();
+    }
     return null;
   }
 }

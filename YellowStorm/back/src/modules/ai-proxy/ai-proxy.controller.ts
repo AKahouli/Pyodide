@@ -23,19 +23,26 @@ import { ChatCompletionDto } from './dto/chat-completion.dto';
 import { AiProxyRateLimitGuard } from './guards/ai-proxy-rate-limit.guard';
 import { AiProxyPayloadLimitGuard } from './guards/ai-proxy-payload-limit.guard';
 import { AppBuilderAiAuthGuard } from './guards/app-builder-ai-auth.guard';
+import { AppBuilderAiKillSwitchGuard } from '../app-builder-ai/guards/app-builder-ai-kill-switch.guard';
+import { AppBuilderAiUsageLimitGuard } from '../app-builder-ai/guards/app-builder-ai-usage-limit.guard';
 
 @ApiTags('AI Proxy')
 @ApiBearerAuth()
 @Public()
 @SkipResponseWrap()
 @UseFilters(AiProxyExceptionFilter)
-@UseGuards(AppBuilderAiAuthGuard, AiProxyPayloadLimitGuard, AiProxyRateLimitGuard)
+@UseGuards(
+  AppBuilderAiAuthGuard,
+  AppBuilderAiKillSwitchGuard,
+  AiProxyPayloadLimitGuard,
+  AiProxyRateLimitGuard,
+)
 @Controller({ path: '', version: '1' })
 export class AiProxyController {
   constructor(private readonly proxyService: AiProxyService) {}
 
   @Post('chat/completions')
-  @UseGuards(UsageLimitGuard)
+  @UseGuards(UsageLimitGuard, AppBuilderAiUsageLimitGuard)
   @CheckUsage()
   @HttpCode(HttpStatus.OK)
   async chatCompletions(

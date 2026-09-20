@@ -20,17 +20,27 @@ export class AiProxyExceptionFilter implements ExceptionFilter {
 
     const isUsageLimit = exception instanceof AppException
       && exception.code === ErrorCode.USAGE_LIMIT_EXCEEDED;
+    const isAccessDenied = exception instanceof AppException
+      && (
+        exception.code === ErrorCode.APP_BUILDER_AI_DISABLED
+        || exception.code === ErrorCode.APP_DATA_GRANT_DENIED
+        || exception.code === ErrorCode.APP_DATA_USER_DISABLED
+      );
 
     if (isUsageLimit) {
       status = HttpStatus.TOO_MANY_REQUESTS;
+    }
+    if (isAccessDenied) {
+      status = HttpStatus.FORBIDDEN;
     }
 
     const message = this.getMessage(exception);
     const body: AiProxyErrorBody = {
       error: {
         message,
-        type: this.getErrorType(status, isUsageLimit),
+        type: this.getErrorType(status, isUsageLimit, isAccessDenied),
         ...(isUsageLimit ? { code: 'insufficient_quota' } : {}),
+        ...(isAccessDenied ? { code: 'access_denied' } : {}),
       },
     };
 
@@ -52,8 +62,13 @@ export class AiProxyExceptionFilter implements ExceptionFilter {
     return 'AI proxy request failed';
   }
 
-  private getErrorType(status: number, isUsageLimit: boolean): string {
+  private getErrorType(
+    status: number,
+    isUsageLimit: boolean,
+    isAccessDenied: boolean,
+  ): string {
     if (isUsageLimit) return 'insufficient_quota';
+    if (isAccessDenied) return 'access_denied';
     if (status >= 400 && status < 500) {
       return status === HttpStatus.TOO_MANY_REQUESTS
         ? 'rate_limit_error'
