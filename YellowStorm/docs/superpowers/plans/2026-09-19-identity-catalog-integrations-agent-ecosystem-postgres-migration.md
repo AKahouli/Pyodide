@@ -163,9 +163,9 @@ The rollback window is until the first PG write that matters; after that, rollin
 
 ### Tasks
 
-- [ ] **0.1** Clean tree on a fresh branch from `nexus-agent`. Full unit suite green (baseline: 442 suites / 3 473 tests).
-- [ ] **0.2 Contract fixtures.** For every controller in the 20 modules, record one representative response per route, plus the error shapes for 404/409, against the current Mongo build. Mask the volatile fields (`createdAt`, tokens). Add a jest helper `expectContract(name, body)` that deep-compares keys and value types. These fixtures are the acceptance gate for every mapper below.
-- [ ] **0.3 Inventory.** Extend `scripts/migrate/inventory.ts` with the 43 collections and these orphan edges:
+- [x] **0.1** Clean tree on a fresh branch from `nexus-agent`. Full unit suite green (baseline: 442 suites / 3 473 tests).
+- [~] **0.2 Contract fixtures.** *(Partially done 2026-09-20.)* Infrastructure committed: `test/contracts/expect-contract.ts` (`expectContract` deep-compares keys/value types; `UPDATE_FIXTURES=1 npm run test:contracts` re-records), npm script `test:contracts`, `test/jest-contracts.json`. Recorded: identity serializer fixtures (user, session, role, audit-log, user-group, auth-provider) and live HTTP envelopes (success, auth-providers, 401, 404) against the Mongo build on :3001. REMAINING: route-per-route recording for the 20 modules — blocked on a recorder account (no admin/seed credentials in back/.env; shared dev DB) — provide credentials or a dump before 1B starts; serializer fixtures for the remaining modules are recorded offline the same way right before each step.
+- [x] **0.3 Inventory.** Extend `scripts/migrate/inventory.ts` with the 43 collections and these orphan edges:
 
   | Source | Target |
   |---|---|
@@ -200,10 +200,10 @@ The rollback window is until the first PG write that matters; after that, rollin
   - `skills` with `slug` missing
 
   Record the counts in the appendix. **They set the batch sizes and decide the three "if duplicates exist" branches below.**
-- [ ] **0.4 Sweeper retention mode.** Add an optional `olderThan?: string` (a PG interval literal) to `TtlSweepSpec`. When it is set, the predicate becomes `column < now() - $interval::interval` instead of `column <= now()`.
+- [x] **0.4 Sweeper retention mode.** Add an optional `olderThan?: string` (a PG interval literal) to `TtlSweepSpec`. When it is set, the predicate becomes `column < now() - $interval::interval` instead of `column <= now()`.
   - This is needed for `audit_logs` (730 days on `created_at`). A generated `expires_at` column is not possible because `timestamptz + interval` is not immutable.
   - Unit-test both predicates.
-- [ ] **0.5 `AuthUser` type.** Create `common/auth/auth-user.ts`:
+- [x] **0.5 `AuthUser` type.** Create `common/auth/auth-user.ts`:
   - `AuthUser` = the plain object `JwtStrategy.validate` will return: `_id: string`, `id: string`, `email`, `profile`, `appearance`, `status`, `registrationApproval`, `planId`, `planSlug`, `roles: string[]`, `permissions: string[]`, `roleNames: string[]`, `permissionsVersion`, `emailVerified`, `profileComplete`, `createdAt`.
   - `_id` stays as a **string**. `String(x)`, `x.toString()` and `new Types.ObjectId(x)` all keep working in the remaining Mongo modules.
   - Codemod the 109 `UserDocument` type imports to `AuthUser`. This is type-only, with no runtime change, and it lands **before** 1A so that 1A's diff stays reviewable.
