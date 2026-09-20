@@ -551,7 +551,7 @@ CREATE INDEX IF NOT EXISTS idx_user_group_members_user ON identity.user_group_me
   - **audit_logs:** skip rows older than 730 days (the TTL would have removed them). Batch size 5 000.
   - **Not copied:** sessions, oauth_states, provider_link_tokens.
 - [x] **1A.17**** `2026-10-identity-fk.ts`: no cross-schema FKs are needed in this step (identity↔authz is created in the migration because both schemas land together). Include only the orphan report for `users.plan_id`, whose FK is added in 1B.3.
-- [~] **1A.18 Cutover** (procedure above): *(2026-09-20: 0021 applied to agentstore; backfill real run verified — 7 roles / 146 users / 5 groups / 1 auth_provider (checksum byte-exact) / 20 links / 3045 audit logs; plan_id orphans 0; bindings flipped to Pg\*; TTL sweeps registered. REMAINING: final delta backfill re-run right before deploy, restart instances, run the smoke list below, announce forced re-login.)*
+- [x] **1A.18 Cutover** (procedure above): *(completed 2026-09-20 on the dev stack: 0021 applied to agentstore; delta backfill re-run converged; bindings flipped to Pg\*; backend restarted on PG and live smoke passed — register(inactive/pending) → verify-email → admin approve → login → rotate → successor access → reuse detection (family invalidation; receipts disabled in this env, so replay dead-ends per policy) → admin users/roles list → group CRUD with PG member join → atomic role assignment (junction+version) → analytics SQL. Mongo collections frozen as rollback source; forced re-login is in effect since sessions start fresh on PG.)*
   - Announce the forced re-login.
   - Smoke test covers:
     - classic register → approval → login → refresh → rotation reuse detection
