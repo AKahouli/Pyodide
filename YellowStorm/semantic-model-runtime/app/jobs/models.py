@@ -28,6 +28,20 @@ class JobCommand(BaseModel):
     payload: dict[str, Any] = Field(default_factory=dict)
 
 
+class DiscoveryCommand(JobCommand):
+    """Datasource discovery command.
+
+    The canonical home workspace is required: the worker authorizes
+    cross-workspace reads against it and never infers it from the payload, so
+    admission rejects a missing value instead of admitting a job the worker
+    must fail.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    workspace_id: str = Field(alias="workspaceId", min_length=1, max_length=200)
+
+
 @dataclass(frozen=True)
 class Admission:
     job_id: str

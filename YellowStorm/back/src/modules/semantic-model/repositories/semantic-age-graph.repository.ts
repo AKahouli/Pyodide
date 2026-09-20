@@ -231,7 +231,7 @@ async function setupAgeSession(client: { query: (sql: string, params?: unknown[]
   try {
     await client.query(`LOAD 'age'`);
   } catch (err) {
-    if (!(err instanceof Error) || !/permission denied/i.test(err.message)) throw err;
+    if (!(err instanceof Error) || !/permission denied|access to library/i.test(err.message)) throw err;
   }
   await client.query(`SET search_path = ag_catalog, "$user", public`);
 }

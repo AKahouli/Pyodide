@@ -56,9 +56,10 @@ No operator action is required after a worker or broker death.
   dispatch may stay unclaimed before it counts as lost, so normal
   publish -> claim latency never triggers a spurious republish.
 
-Datasource discovery requires the canonical top-level `workspaceId`; it is
-never inferred from the payload, and cross-workspace access is authorized at
-execution time (fail-closed until the NestJS authorization client is wired).
+Datasource discovery requires the canonical top-level `workspaceId` at
+admission (`DiscoveryCommand`); it is never inferred from the payload, and
+cross-workspace access is authorized at execution time (fail-closed until the
+NestJS authorization client is wired).
 
 Recovery uses `FOR UPDATE SKIP LOCKED`, so multiple API replicas and dispatcher
 instances never recover the same task twice. Migration `002` adds the partial

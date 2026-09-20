@@ -41,8 +41,9 @@ def test_private_routes_require_service_key():
 def test_no_durable_store_means_503_never_202():
     # §5.1: 202 only after a job is durably recorded. No store yet -> 503.
     body = {"actorUserId": "user-1", "payload": {}}
+    discovery = {**body, "workspaceId": "6512f0a1c9e77a001234aaa1"}
     headers = {**AUTH, "Idempotency-Key": "idem-1"}
-    r = client.post("/v1/semantic-model-datasource/discoveries", headers=headers, json=body)
+    r = client.post("/v1/semantic-model-datasource/discoveries", headers=headers, json=discovery)
     assert r.status_code == 503
     r = client.post("/v1/semantic-model-population/runs", headers=headers, json=body)
     assert r.status_code == 503

@@ -6,7 +6,7 @@ import os
 
 from fastapi import APIRouter, Header, HTTPException, Request, status
 
-from app.jobs.models import IdempotencyConflict, JobCommand
+from app.jobs.models import DiscoveryCommand, IdempotencyConflict
 from app.workers.celery_app import DATASOURCE_QUEUES
 
 router = APIRouter(prefix="/v1/semantic-model-datasource", tags=["datasource"])
@@ -14,7 +14,7 @@ router = APIRouter(prefix="/v1/semantic-model-datasource", tags=["datasource"])
 
 @router.post("/discoveries", status_code=status.HTTP_202_ACCEPTED)
 async def request_discovery(
-    command: JobCommand,
+    command: DiscoveryCommand,
     request: Request,
     idempotency_key: str = Header(alias="Idempotency-Key", min_length=1, max_length=200),
 ) -> dict[str, object]:

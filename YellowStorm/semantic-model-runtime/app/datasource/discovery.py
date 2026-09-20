@@ -290,7 +290,38 @@ def plan_ingestion(profile: dict[str, Any]) -> dict[str, str]:
     return {"decision": "request_clarification", "reason": "profile does not support an ingestion decision yet"}
 
 
-def preview_source(source: dict[str, Any], options: dict[str, Any] | None = None) -> dict[str, Any]:
-    """Bounded preview: profile + ingestion plan (samples land with file reads)."""
+def preview_source(source: dict[str, Any], options: dict[str, Any] | None = None,
+                   data: bytes | None = None) -> dict[str, Any]:
+    """Bounded preview: profile + ingestion plan.
+
+    Without bytes this is the metadata-only profile (no samples). With bytes
+    for a tabular source it runs the bounded deterministic parser (P3.7-P3.10)
+    and fills structure/samples/coverage; field profiles and the content
+    fingerprint travel alongside the schema-bound profile.
+    """
     profile = discover(source, options)
-    return {"profile": profile, "ingestionPlan": plan_ingestion(profile)}
+    # Terminal states carry no samples by contract: a protected, corrupt,
+    # unindexed or unsupported source is never parsed, and bytes passed for
+    # one are refused loudly instead of silently overriding its status.
+    if data is None or profile["status"] not in ("ready", "partial"):
+        return {"profile": profile, "ingestionPlan": plan_ingestion(profile)}
+    from .parsers import parse_csv_preview, parse_xlsx_preview
+
+    mime = source.get("mimeType") if isinstance(source.get("mimeType"), str) else ""
+    if mime == "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet":
+        parsed = parse_xlsx_preview(data, options)
+    elif mime == "text/csv":
+        parsed = parse_csv_preview(data, options)
+    else:
+        raise ValueError("unsupported_format_for_bytes")
+    profile = {**profile,
+               "structure": parsed["structure"],
+               "samples": parsed["samples"],
+               "warnings": [w for w in profile["warnings"] if w["code"] == "unverified_version"]
+                           + parsed["warnings"],
+               "coverage": parsed["coverage"],
+               "status": "ready" if parsed["coverage"]["completeProfileDone"] else "partial"}
+    return {"profile": profile, "ingestionPlan": plan_ingestion(profile),
+            "fieldProfiles": parsed["fieldProfiles"],
+            "contentFingerprint": parsed["contentFingerprint"],
+            "scannedRows": parsed["scannedRows"]}

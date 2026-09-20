@@ -12,3 +12,5 @@ pytest-asyncio==1.2.0
 # Test-only: contract tests validate generated profiles against contracts/v1.
 jsonschema>=4.18,<5
 referencing>=0.30,<1
+# Worker-only (P3.7): imported lazily inside parser bodies, never by the API.
+openpyxl==3.1.5
