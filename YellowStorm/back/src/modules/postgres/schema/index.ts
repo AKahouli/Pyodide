@@ -5,3 +5,5 @@ export * from './project.schema';
 export * from './workspace-artifact.schema';
 export * from './workspace.schema';
 export * from './governance.schema';
+export * from './identity.schema';
+export * from './authz.schema';

@@ -148,6 +148,13 @@
       "when": 1789871000000,
       "tag": "0020_fk_actions_and_missing_indexes",
       "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "7",
+      "when": 1789871100000,
+      "tag": "0021_identity",
+      "breakpoints": true
     }
   ]
 }
