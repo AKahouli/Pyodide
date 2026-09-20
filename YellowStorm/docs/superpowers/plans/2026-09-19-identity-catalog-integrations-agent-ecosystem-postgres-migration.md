@@ -142,12 +142,11 @@ flowchart LR
 **P3 and P4 are independent.** They share no collections, and P4's only link to connectors is through `agents`, which is already on PG. With two engineers, lane 1 = 1A → 1B.1–1B.2 → P4 and lane 2 = 1B.3–1B.4 → P3 (1B.3 can start once 1A lands). Calendar ≈ 6–7 weeks.
 
 **Cutover procedure (identical for every cutover-marked sub-step):**
-1. Enable maintenance mode, or stop both backend instances (`YelloStorm:4e7dba498a3e`, `YelloStorm:local`). There must be **no writers** while the backfill runs.
-2. Apply the migration (if it has not been applied already; migrations are additive and safe to run ahead of time).
-3. Run the backfill: `--dry-run` → review the reject/orphan report → real run → `--checksum`.
-4. Run the FK script.
-5. Deploy the new build and start the instances.
-6. Run the smoke scenario for the domain (`qa-artifacts/`).
+1. Apply the migration (if it has not been applied already; migrations are additive and safe to run ahead of time).
+2. Run the backfill: `--dry-run` → review the reject/orphan report → real run → `--checksum`.
+3. Run the FK script.
+4. Deploy the new build and start the instances.
+5. Run the smoke scenario for the domain (`qa-artifacts/`).
 
 The rollback window is until the first PG write that matters; after that, rolling back loses PG-only writes.
 
@@ -164,7 +163,7 @@ The rollback window is until the first PG write that matters; after that, rollin
 
 ### Tasks
 
-- [ ] **0.1** Clean tree on a fresh branch from `agara-worky-006`. Full unit suite green (baseline: 442 suites / 3 473 tests).
+- [ ] **0.1** Clean tree on a fresh branch from `nexus-agent`. Full unit suite green (baseline: 442 suites / 3 473 tests).
 - [ ] **0.2 Contract fixtures.** For every controller in the 20 modules, record one representative response per route, plus the error shapes for 404/409, against the current Mongo build. Mask the volatile fields (`createdAt`, tokens). Add a jest helper `expectContract(name, body)` that deep-compares keys and value types. These fixtures are the acceptance gate for every mapper below.
 - [ ] **0.3 Inventory.** Extend `scripts/migrate/inventory.ts` with the 43 collections and these orphan edges:
 

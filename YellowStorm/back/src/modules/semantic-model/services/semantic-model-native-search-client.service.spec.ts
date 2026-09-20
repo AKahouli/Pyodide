@@ -37,7 +37,8 @@ function config(
     documentExtractionAgentId: '',
     documentExtractionTimeoutMs: 180000,
     ...overrides,
-  };
+    // Partial spread widens every key to `T | undefined`; the base literal above supplies them all.
+  } as ConfigType<typeof semanticModelConfig>;
 }
 
 describe('SemanticModelNativeSearchClient', () => {
