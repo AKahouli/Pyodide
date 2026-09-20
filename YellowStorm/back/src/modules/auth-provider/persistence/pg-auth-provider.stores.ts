@@ -265,4 +265,20 @@ export class PgUserProviderLinkStore implements UserProviderLinkStore {
       .where(and(eq(schema.identityUserProviderLinks.userId, userId), ne(schema.identityUserProviderLinks.providerKey, providerKey)));
     return rows[0]?.n ?? 0;
   }
+
+  async countByProviderKey(providerKey: string): Promise<number> {
+    const rows = await this.q
+      .select({ n: sql<number>`count(*)::int` })
+      .from(schema.identityUserProviderLinks)
+      .where(eq(schema.identityUserProviderLinks.providerKey, providerKey));
+    return rows[0]?.n ?? 0;
+  }
+
+  async deleteAllByProviderKey(providerKey: string): Promise<number> {
+    const rows = await this.q
+      .delete(schema.identityUserProviderLinks)
+      .where(eq(schema.identityUserProviderLinks.providerKey, providerKey))
+      .returning();
+    return rows.length;
+  }
 }

@@ -40,7 +40,7 @@ export interface OAuthStateRecord {
   state: string;
   providerKey: string;
   codeVerifier: string | null;
-  returnUrl: string | null;
+  returnUrl?: string | null;
   expiresAt: Date;
   createdAt: Date;
   updatedAt: Date;
@@ -98,4 +98,6 @@ export interface UserProviderLinkStore {
   create(init: Omit<UserProviderLinkRecord, 'id' | 'createdAt' | 'updatedAt'>): Promise<UserProviderLinkRecord>;
   deleteByUserAndProvider(userId: string, providerKey: string): Promise<boolean>;
   countByUserExcluding(userId: string, providerKey: string): Promise<number>;
+  countByProviderKey(providerKey: string): Promise<number>;
+  deleteAllByProviderKey(providerKey: string): Promise<number>;
 }

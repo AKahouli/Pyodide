@@ -185,6 +185,15 @@ export class MongoUserProviderLinkStore implements UserProviderLinkStore {
       .countDocuments({ userId: new Types.ObjectId(userId), providerKey: { $ne: providerKey } })
       .exec();
   }
+
+  async countByProviderKey(providerKey: string): Promise<number> {
+    return this.model.countDocuments({ providerKey }).exec();
+  }
+
+  async deleteAllByProviderKey(providerKey: string): Promise<number> {
+    const result = await this.model.deleteMany({ providerKey }).exec();
+    return result.deletedCount;
+  }
 }
 
 function toLinkRecord(doc: AnyDoc): UserProviderLinkRecord {
