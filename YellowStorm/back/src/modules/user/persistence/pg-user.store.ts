@@ -3,7 +3,7 @@ import { and, asc, desc, eq, ilike, inArray, isNull, ne, or, sql } from 'drizzle
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import { DRIZZLE_DB } from '@modules/postgres/postgres.constants';
 import { isObjectId, newObjectId, normalizeObjectId } from '@common/postgres';
-import { resolveQueryable } from '@common/postgres/transaction';
+import { resolveQueryable, withTransaction } from '@common/postgres/transaction';
 import * as schema from '@modules/postgres/schema';
 import { escapeLike } from '@common/postgres/like';
 import {
@@ -391,6 +391,37 @@ export class PgUserStore implements UserStore {
       .update(schema.identityUsers)
       .set({ permissionsVersion: sql`${schema.identityUsers.permissionsVersion} + 1`, updatedAt: new Date() })
       .where(inArray(schema.identityUsers.id, valid));
+  }
+
+  async addRoleAndBump(userId: string, roleId: string): Promise<void> {
+    if (!isObjectId(userId) || !isObjectId(roleId)) return;
+    await withTransaction(this.db, async (tx) => {
+      await tx
+        .insert(schema.identityUserRoles)
+        .values({
+          userId: normalizeObjectId(userId),
+          roleId: normalizeObjectId(roleId),
+          position: sql`(SELECT COALESCE(MAX(position), -1) + 1 FROM identity.user_roles WHERE user_id = ${normalizeObjectId(userId)})`,
+        })
+        .onConflictDoNothing();
+      await tx
+        .update(schema.identityUsers)
+        .set({ permissionsVersion: sql`${schema.identityUsers.permissionsVersion} + 1`, updatedAt: new Date() })
+        .where(eq(schema.identityUsers.id, normalizeObjectId(userId)));
+    });
+  }
+
+  async removeRoleAndBump(userId: string, roleId: string): Promise<void> {
+    if (!isObjectId(userId) || !isObjectId(roleId)) return;
+    await withTransaction(this.db, async (tx) => {
+      await tx
+        .delete(schema.identityUserRoles)
+        .where(and(eq(schema.identityUserRoles.userId, normalizeObjectId(userId)), eq(schema.identityUserRoles.roleId, normalizeObjectId(roleId))));
+      await tx
+        .update(schema.identityUsers)
+        .set({ permissionsVersion: sql`${schema.identityUsers.permissionsVersion} + 1`, updatedAt: new Date() })
+        .where(eq(schema.identityUsers.id, normalizeObjectId(userId)));
+    });
   }
 }
 

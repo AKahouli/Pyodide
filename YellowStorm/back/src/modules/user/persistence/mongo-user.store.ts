@@ -224,6 +224,26 @@ export class MongoUserStore implements UserStore {
       .updateMany({ _id: { $in: valid } }, { $inc: { permissionsVersion: 1 } })
       .exec();
   }
+
+  async addRoleAndBump(userId: string, roleId: string): Promise<void> {
+    if (!Types.ObjectId.isValid(userId) || !Types.ObjectId.isValid(roleId)) return;
+    await this.userModel
+      .findByIdAndUpdate(
+        new Types.ObjectId(normalizeObjectId(userId)),
+        { $addToSet: { roles: new Types.ObjectId(roleId) }, $inc: { permissionsVersion: 1 } },
+      )
+      .exec();
+  }
+
+  async removeRoleAndBump(userId: string, roleId: string): Promise<void> {
+    if (!Types.ObjectId.isValid(userId) || !Types.ObjectId.isValid(roleId)) return;
+    await this.userModel
+      .findByIdAndUpdate(
+        new Types.ObjectId(normalizeObjectId(userId)),
+        { $pull: { roles: new Types.ObjectId(roleId) }, $inc: { permissionsVersion: 1 } },
+      )
+      .exec();
+  }
 }
 
 const USER_PATCH_TO_PATH: Record<string, string> = {

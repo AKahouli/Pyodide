@@ -150,4 +150,11 @@ export interface UserStore {
   removeRole(userId: string, roleId: string): Promise<void>;
   removeRoleFromAll(roleId: string): Promise<void>;
   bumpPermissionsVersion(userIds: string[]): Promise<void>;
+  /**
+   * Atomic role assignment (plan 1A.2): attaches/detaches the role and bumps
+   * permissions_version in the same write (Mongo single update / PG
+   * transaction), preserving today's single-statement atomicity.
+   */
+  addRoleAndBump(userId: string, roleId: string): Promise<void>;
+  removeRoleAndBump(userId: string, roleId: string): Promise<void>;
 }

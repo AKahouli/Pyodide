@@ -57,6 +57,13 @@ export class PgRoleStore implements RoleStore {
     return rows.length ? toRoleRecord(rows[0]) : null;
   }
 
+  async findByIds(ids: string[]): Promise<Map<string, RoleRecord>> {
+    const valid = ids.filter(isObjectId);
+    if (valid.length === 0) return new Map();
+    const rows: RoleRow[] = await this.q.select().from(schema.authzRoles).where(inArray(schema.authzRoles.id, valid));
+    return new Map(rows.map((r) => [r.id, toRoleRecord(r)]));
+  }
+
   async findByName(name: string): Promise<RoleRecord | null> {
     const rows: RoleRow[] = await this.q.select().from(schema.authzRoles).where(eq(schema.authzRoles.name, name.toLowerCase())).limit(1);
     return rows.length ? toRoleRecord(rows[0]) : null;
@@ -173,6 +180,7 @@ export class PgAuditLogStore implements AuditLogStore {
     if (query.actorEmail) conditions.push(ilike(schema.authzAuditLogs.actorEmail, `%${escapeLike(query.actorEmail)}%`));
     if (query.action) conditions.push(eq(schema.authzAuditLogs.action, query.action));
     if (query.feature) conditions.push(ilike(schema.authzAuditLogs.action, `${escapeLike(query.feature)}.%`));
+    if (query.targetId && isObjectId(query.targetId)) conditions.push(eq(schema.authzAuditLogs.targetId, query.targetId));
     if (query.targetType) conditions.push(eq(schema.authzAuditLogs.targetType, query.targetType));
     if (query.status) conditions.push(eq(schema.authzAuditLogs.status, query.status));
     if (query.startDate) conditions.push(gte(schema.authzAuditLogs.createdAt, query.startDate));

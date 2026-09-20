@@ -47,6 +47,15 @@ export class MongoRoleStore implements RoleStore {
     return doc ? toRoleRecord(doc as unknown as AnyDoc) : null;
   }
 
+  async findByIds(ids: string[]): Promise<Map<string, RoleRecord>> {
+    const valid = ids.filter((id) => Types.ObjectId.isValid(id));
+    if (valid.length === 0) return new Map();
+    const docs = await this.roleModel
+      .find({ _id: { $in: valid.map((id) => new Types.ObjectId(id)) } })
+      .exec();
+    return new Map(docs.map((d) => [String(d._id), toRoleRecord(d as unknown as AnyDoc)]));
+  }
+
   async findByName(name: string): Promise<RoleRecord | null> {
     const doc = await this.roleModel.findOne({ name: name.toLowerCase() }).exec();
     return doc ? toRoleRecord(doc as unknown as AnyDoc) : null;
@@ -150,6 +159,7 @@ export class MongoAuditLogStore implements AuditLogStore {
     if (query.actorEmail) filter.actorEmail = { $regex: escapeRegex(query.actorEmail), $options: 'i' };
     if (query.action) filter.action = query.action;
     if (query.feature) filter.action = { $regex: `^${escapeRegex(query.feature)}\\.`, $options: 'i' };
+    if (query.targetId && Types.ObjectId.isValid(query.targetId)) filter.targetId = new Types.ObjectId(query.targetId);
     if (query.targetType) filter.targetType = query.targetType;
     if (query.status) filter.status = query.status;
     if (query.startDate || query.endDate) {

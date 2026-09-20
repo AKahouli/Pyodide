@@ -20,6 +20,7 @@ export interface RoleStore {
   findAll(): Promise<RoleRecord[]>;
   findAllActive(): Promise<RoleRecord[]>;
   findById(id: string): Promise<RoleRecord | null>;
+  findByIds(ids: string[]): Promise<Map<string, RoleRecord>>;
   findByName(name: string): Promise<RoleRecord | null>;
   create(init: { name: string; description: string; permissions: string[]; isSystem?: boolean; priority?: number; isActive?: boolean }): Promise<RoleRecord>;
   update(id: string, patch: RolePatch): Promise<RoleRecord | null>;

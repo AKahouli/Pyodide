@@ -20,6 +20,7 @@ export interface AuditLogQuery {
   action?: string;
   /** Action namespace prefix ("users" matches "users.suspend"). */
   feature?: string;
+  targetId?: string;
   targetType?: string;
   status?: 'success' | 'failure';
   startDate?: Date;

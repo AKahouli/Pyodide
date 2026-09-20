@@ -96,6 +96,8 @@ function fakeStore(seed: UserRecord[] = []): UserStore {
     removeRole: jest.fn(async () => undefined),
     removeRoleFromAll: jest.fn(async () => undefined),
     bumpPermissionsVersion: jest.fn(async () => undefined),
+    addRoleAndBump: jest.fn(async () => undefined),
+    removeRoleAndBump: jest.fn(async () => undefined),
   };
 }
 
