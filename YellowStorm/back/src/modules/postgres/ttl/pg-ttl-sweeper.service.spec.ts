@@ -94,4 +94,24 @@ describe('PgTtlSweeper', () => {
     expect(deleted).toBeNull();
     expect(errors).toHaveLength(1);
   });
+
+  it('sweeps by retention (olderThan) using now() - interval', async () => {
+    const db = new FakeDb();
+    db.deleteRowCounts = [0];
+    const { sweeper } = makeSweeper(db);
+    await sweeper.sweepTable({ schema: 's', table: 't', column: 'created_at', olderThan: '730 days' });
+    const sqlText = db.deleteSql.join(' ');
+    expect(sqlText).toContain('::interval');
+    expect(sqlText).toContain('730 days');
+    expect(sqlText).not.toContain('<=');
+  });
+
+  it('keeps the expiry predicate (<= now()) when olderThan is absent', async () => {
+    const db = new FakeDb();
+    db.deleteRowCounts = [0];
+    const { sweeper } = makeSweeper(db);
+    await sweeper.sweepTable({ schema: 's', table: 't', column: 'expires_at' });
+    expect(db.deleteSql.join(' ')).toContain('<=');
+    expect(db.deleteSql.join(' ')).not.toContain('::interval');
+  });
 });
