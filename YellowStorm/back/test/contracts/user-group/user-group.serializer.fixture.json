@@ -1,0 +1,12 @@
+{
+  "name": "platform-team",
+  "description": "Platform engineers",
+  "members": [
+    "64b000000000000000000001",
+    "64b000000000000000000004"
+  ],
+  "createdBy": "64b000000000000000000001",
+  "createdAt": "<volatile>",
+  "updatedAt": "<volatile>",
+  "id": "64b000000000000000000030"
+}
