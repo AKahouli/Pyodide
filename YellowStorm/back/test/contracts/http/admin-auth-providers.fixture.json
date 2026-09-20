@@ -1,0 +1,55 @@
+{
+  "success": true,
+  "data": [
+    {
+      "type": "classic",
+      "id": "classic",
+      "providerKey": "classic",
+      "displayName": "Email & Password",
+      "clientId": "",
+      "clientSecret": "",
+      "authorizationUrl": "",
+      "tokenUrl": "",
+      "userinfoUrl": "",
+      "scopes": [],
+      "iconKey": "email",
+      "sortOrder": 999,
+      "pkceEnabled": false,
+      "enabled": true,
+      "linkedUserCount": 0,
+      "registrationEnabled": true,
+      "createdAt": "<volatile>",
+      "updatedAt": "<volatile>"
+    },
+    {
+      "type": "oauth",
+      "id": "69c25ef900b6d73c1e17d45b",
+      "providerKey": "microsoft",
+      "displayName": "Microsoft",
+      "clientId": "****",
+      "clientSecret": "****",
+      "tenantId": "****",
+      "authorizationUrl": "https://login.microsoftonline.com/fb9fb5e1-b2c1-4a2c-9918-e2252dd607ed/oauth2/v2.0/authorize",
+      "tokenUrl": "https://login.microsoftonline.com/fb9fb5e1-b2c1-4a2c-9918-e2252dd607ed/oauth2/v2.0/token",
+      "userinfoUrl": "https://graph.microsoft.com/oidc/userinfo",
+      "scopes": [
+        "openid",
+        "email",
+        "profile"
+      ],
+      "iconKey": "microsoft",
+      "sortOrder": 0,
+      "pkceEnabled": true,
+      "enabled": true,
+      "linkedUserCount": 21,
+      "createdAt": "<volatile>",
+      "updatedAt": "<volatile>"
+    }
+  ],
+  "meta": {
+    "timestamp": "<volatile>",
+    "requestId": "<volatile>",
+    "path": "/api/v1/admin/auth-providers",
+    "duration": 41
+  }
+}

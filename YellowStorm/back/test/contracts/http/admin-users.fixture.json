@@ -1,0 +1,150 @@
+{
+  "success": true,
+  "data": {
+    "users": [
+      {
+        "id": "6ab01464b68fc5a92f1122a6",
+        "email": "pg-migration-recorder@yellowstorm.dev",
+        "emailVerified": true,
+        "profileComplete": true,
+        "appearance": {
+          "colorTheme": "default"
+        },
+        "profile": {
+          "firstName": "PG",
+          "lastName": "Recorder",
+          "company": ""
+        },
+        "status": "active",
+        "registrationApproval": "approved",
+        "roles": [
+          {
+            "id": "69837251ca96b932e59d0198",
+            "name": "super_admin"
+          }
+        ],
+        "createdAt": "<volatile>",
+        "updatedAt": "<volatile>",
+        "lastLoginAt": "<volatile>"
+      },
+      {
+        "id": "6aac62c191c784b78a053b73",
+        "email": "qa-paste-20260917@example.com",
+        "emailVerified": true,
+        "profileComplete": true,
+        "appearance": {
+          "colorTheme": "default"
+        },
+        "profile": {
+          "firstName": "Qa",
+          "lastName": "Paste",
+          "company": "QA"
+        },
+        "status": "active",
+        "registrationApproval": "approved",
+        "plan": {
+          "id": "69837251ca96b932e59d01a5",
+          "slug": "unlimited",
+          "startedAt": "2026-09-17T21:59:29.992Z"
+        },
+        "roles": [
+          {
+            "id": "69837251ca96b932e59d0189",
+            "name": "user"
+          }
+        ],
+        "createdAt": "<volatile>",
+        "updatedAt": "<volatile>",
+        "lastLoginAt": "<volatile>"
+      },
+      {
+        "id": "6aa94466ecc66234a45c47e8",
+        "email": "achebbah@yellowsys.fr",
+        "emailVerified": true,
+        "profileComplete": true,
+        "appearance": {
+          "colorTheme": "default"
+        },
+        "profile": {
+          "firstName": "Ahmed",
+          "lastName": "Chabbah",
+          "company": "Yellowsys"
+        },
+        "status": "active",
+        "plan": {
+          "id": "69837251ca96b932e59d01a5",
+          "slug": "unlimited",
+          "startedAt": "2026-09-15T13:13:10.908Z"
+        },
+        "roles": [
+          {
+            "id": "69837251ca96b932e59d0189",
+            "name": "user"
+          }
+        ],
+        "createdAt": "<volatile>",
+        "updatedAt": "<volatile>",
+        "lastLoginAt": "<volatile>"
+      },
+      {
+        "id": "6aa7f619c7901ff84fab2afd",
+        "email": "mouanes@yellowsys.fr",
+        "emailVerified": true,
+        "profileComplete": true,
+        "appearance": {
+          "colorTheme": "default"
+        },
+        "profile": {
+          "firstName": "Meriam",
+          "lastName": "OUANES",
+          "company": "yellowsys"
+        },
+        "status": "active",
+        "plan": {
+          "id": "69837251ca96b932e59d01a5",
+          "slug": "unlimited",
+          "startedAt": "2026-09-14T13:26:49.094Z"
+        },
+        "roles": [
+          {
+            "id": "69837251ca96b932e59d0189",
+            "name": "user"
+          }
+        ],
+        "createdAt": "<volatile>",
+        "updatedAt": "<volatile>",
+        "lastLoginAt": "<volatile>"
+      },
+      {
+        "id": "6aa6ef854b47a840026c25ab",
+        "email": "qa-newuser-1789325189@yellowsys.fr",
+        "emailVerified": false,
+        "profileComplete": false,
+        "appearance": {
+          "colorTheme": "orange"
+        },
+        "profile": {},
+        "status": "inactive",
+        "registrationApproval": "pending",
+        "plan": {
+          "id": "69837251ca96b932e59d01a5",
+          "slug": "unlimited",
+          "startedAt": "2026-09-13T18:46:29.792Z"
+        },
+        "roles": [],
+        "createdAt": "<volatile>",
+        "updatedAt": "<volatile>"
+      }
+    ],
+    "total": 146,
+    "page": 1,
+    "limit": 5,
+    "totalPages": 30
+  },
+  "meta": {
+    "timestamp": "<volatile>",
+    "requestId": "<volatile>",
+    "path": "/api/v1/admin/users?page=1&limit=5",
+    "duration": 49
+  }
+}
