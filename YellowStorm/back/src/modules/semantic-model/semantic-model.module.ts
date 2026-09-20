@@ -7,6 +7,7 @@ import { UserModule } from '@modules/user';
 import { WorkspaceModule } from '@modules/workspace';
 import { SemanticModelController } from './controllers/semantic-model.controller';
 import { WorkspaceSemanticModelController } from './controllers/workspace-semantic-model.controller';
+import { SemanticDataTokenController } from './controllers/semantic-data-token.controller';
 import { SemanticModelDatabaseService } from './infrastructure/semantic-model-database.service';
 import { SemanticAgeGraphRepository } from './repositories/semantic-age-graph.repository';
 import { SemanticGraphRepository } from './repositories/semantic-graph.repository';
@@ -34,10 +35,12 @@ import { SpreadsheetConceptResolver } from './services/spreadsheet-concept.resol
 import { DocumentExtractionConceptResolver } from './services/document-extraction-concept.resolver';
 import { SemanticCrossSourceService } from './services/semantic-cross-source.service';
 import { SemanticBusinessTrustService } from './services/semantic-business-trust.service';
+import { ModelSpecificationService } from './services/model-specification.service';
+import { SemanticDataTokenService } from './services/semantic-data-token.service';
 
 @Module({
   imports: [ConfigModule.forFeature(semanticModelConfig),AuthorizationModule,LoggerModule,UserModule,forwardRef(() => WorkspaceModule)],
-  controllers: [SemanticModelController,WorkspaceSemanticModelController],
+  controllers: [SemanticModelController,WorkspaceSemanticModelController,SemanticDataTokenController],
   providers: [
     SemanticModelDatabaseService,SemanticModelRepository,SemanticGraphRepository,SemanticModelOntologyRepository,SemanticAgeGraphRepository,SemanticModelService,
     SemanticGraphCommandService,SemanticModelValidationService,SemanticModelWorkspaceService,
@@ -57,6 +60,8 @@ import { SemanticBusinessTrustService } from './services/semantic-business-trust
     DocumentExtractionConceptResolver,
     SemanticCrossSourceService,
     SemanticBusinessTrustService,
+    ModelSpecificationService,
+    SemanticDataTokenService,
   ],
   exports: [SemanticModelDatabaseService,SemanticModelProvisioningService,SemanticModelService],
 })

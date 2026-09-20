@@ -7,6 +7,41 @@ on:
     branches: [main]
 
 jobs:
+  # Semantic-model R1 guard (Phase 0 / P0.9):
+  # 1) R1 must never modify the Yellowstorm-vectorstore repository.
+  # 2) No added line may reference the retired semantic-search services
+  #    (SEMANTIC_MODEL_NATIVE_SEARCH_URL / SEMANTIC_SEARCH_URL env contracts).
+  semantic-r1-guard:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Guard vectorstore and retired semantic-search URLs
+        env:
+          BASE_REF: ${{ github.base_ref || 'main' }}
+        run: |
+          set -euo pipefail
+          git fetch origin "$BASE_REF" --quiet || true
+          BASE="$(git merge-base "origin/$BASE_REF" HEAD 2>/dev/null || echo "origin/$BASE_REF")"
+
+          CHANGED="$(git diff --name-only "$BASE" HEAD || true)"
+          # Path-anchored: yellowstorm-adk's own vectorstores router must not trip this.
+          if echo "$CHANGED" | grep -E -i '^[./]*Yellowstorm-vectorstore(/|$)'; then
+            echo "::error::R1 changes must not modify Yellowstorm-vectorstore (read-only integration)."
+            exit 1
+          fi
+
+          # Scan code only; the guard job itself and docs quote the env var names.
+          ADDED="$(git diff -U0 "$BASE" HEAD -- . ':(exclude).github' ':(exclude)docs' \
+            | grep -E '^\+[^+]' | grep -E 'SEMANTIC_MODEL_NATIVE_SEARCH_URL|SEMANTIC_SEARCH_URL' || true)"
+          if [ -n "$ADDED" ]; then
+            echo "::error::Added lines reference the retired semantic-search services:"
+            echo "$ADDED"
+            exit 1
+          fi
+          echo "semantic-r1-guard: OK"
+
   code-runtime-tests:
     runs-on: ubuntu-latest
     defaults:

@@ -419,6 +419,7 @@ export const API_ENDPOINTS = {
     readiness: (id: string) => `/semantic-models/${id}/readiness`,
     reviewItems: (id: string) => `/semantic-models/${id}/review-items`,
     resolveReviewItem: (id: string, reviewItemId: string) => `/semantic-models/${id}/review-items/${reviewItemId}/resolve`,
+    dataToken: (id: string) => `/semantic-models/${id}/data-token`,
   },
   adminCatalogTransfer: {
     exportConnectors: '/admin/catalog-transfer/connectors/export',

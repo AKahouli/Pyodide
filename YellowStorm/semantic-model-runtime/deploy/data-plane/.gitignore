@@ -1,0 +1,3 @@
+# Data-plane secrets are never committed. Only *.example.env templates are tracked.
+*.env
+!*.example.env

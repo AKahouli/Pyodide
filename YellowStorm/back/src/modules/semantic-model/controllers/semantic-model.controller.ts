@@ -122,10 +122,11 @@ export class SemanticModelController {
     return this.graph.apply(user._id.toString(),modelId,dto);
   }
 
+  // P1.6: validation is read-only. Graph rebuilds are explicit via
+  // POST :modelId/age-graph/rebuild (Prepare/Refresh), never a Ctrl+S side effect.
   @Post(':modelId/graph/validate')
   @RequirePermissions([Permissions.SEMANTIC_MODELS_UPDATE,Permissions.SEMANTIC_MODELS_ALL],'any')
   async validate(@CurrentUser() user: UserDocument,@Param('modelId') modelId: string) {
-    await this.mappingProposals.rebuildAgeGraph(user._id.toString(), modelId);
     return this.graph.validate(user._id.toString(),modelId);
   }
 

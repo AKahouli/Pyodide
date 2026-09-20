@@ -33,10 +33,9 @@ export class SemanticAgeGraphRepository {
 
   async ensureGraph(modelId: string, strict = false): Promise<void> {
     const graphName = this.graphNameForModel(modelId);
-    const client = await this.database.acquireClient();
+    const client = await this.database.acquireAgeClient();
     try {
-      await client.query(`LOAD 'age'`);
-      await client.query(`SET search_path = ag_catalog, "$user", public`);
+      await setupAgeSession(client);
       await client.query(
         `SELECT ag_catalog.create_graph($1) WHERE NOT EXISTS (SELECT 1 FROM ag_catalog.ag_graph WHERE name = $1)`,
         [graphName],
@@ -51,10 +50,9 @@ export class SemanticAgeGraphRepository {
 
   async dropGraph(modelId: string, strict = false): Promise<void> {
     const graphName = this.graphNameForModel(modelId);
-    const client = await this.database.acquireClient();
+    const client = await this.database.acquireAgeClient();
     try {
-      await client.query(`LOAD 'age'`);
-      await client.query(`SET search_path = ag_catalog, "$user", public`);
+      await setupAgeSession(client);
       await client.query(`SELECT ag_catalog.drop_graph($1, true)`, [graphName]);
     } catch (err) {
       const message = (err as Error).message;
@@ -76,14 +74,13 @@ export class SemanticAgeGraphRepository {
     let failedVertexCount = 0;
     let failedEdgeCount = 0;
 
-    // AGE requires LOAD 'age' and search_path on the connection.
+    // AGE requires its library and search_path on the connection.
     // Use a dedicated client so a single Cypher failure does not abort subsequent statements.
     // ag_catalog.cypher() requires the Cypher to be a SQL string constant (not a $N parameter) —
     // AGE parses the query at plan time, before parameters are bound.
-    const client = await this.database.acquireClient();
+    const client = await this.database.acquireAgeClient();
     try {
-      await client.query(`LOAD 'age'`);
-      await client.query(`SET search_path = ag_catalog, "$user", public`);
+      await setupAgeSession(client);
 
       // Ensure vertex labels exist before MERGE
       const uniqueVertexLabels = new Set(
@@ -164,10 +161,9 @@ export class SemanticAgeGraphRepository {
     const nodes: AgeGraphNode[] = [];
     const edges: AgeGraphEdge[] = [];
 
-    const client = await this.database.acquireClient();
+    const client = await this.database.acquireAgeClient();
     try {
-      await client.query(`LOAD 'age'`);
-      await client.query(`SET search_path = ag_catalog, "$user", public`);
+      await setupAgeSession(client);
 
       const graphExists = await client.query<{ exists: boolean }>(
         `SELECT EXISTS (SELECT 1 FROM ag_catalog.ag_graph WHERE name = $1) AS exists`,
@@ -227,6 +223,18 @@ export class SemanticAgeGraphRepository {
 }
 
 // ── helpers ──────────────────────────────────────────────────────────────────
+
+// Library loading is owned by deployment (session_preload_libraries); app
+// roles may not LOAD. A denied LOAD is ignored because the statements that
+// follow fail loudly when AGE is genuinely unavailable.
+async function setupAgeSession(client: { query: (sql: string, params?: unknown[]) => Promise<unknown> }): Promise<void> {
+  try {
+    await client.query(`LOAD 'age'`);
+  } catch (err) {
+    if (!(err instanceof Error) || !/permission denied/i.test(err.message)) throw err;
+  }
+  await client.query(`SET search_path = ag_catalog, "$user", public`);
+}
 
 // AGE requires the Cypher query to be a string constant at SQL parse time — NOT a $N parameter.
 // Build the complete SQL with the Cypher inlined using a dollar-quote tag that cannot appear in our data.

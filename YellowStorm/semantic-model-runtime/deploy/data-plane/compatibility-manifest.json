@@ -1,0 +1,70 @@
+{
+  "generated": "2026-09-20",
+  "decisions": "REST Broadcast only (R1). No wal2json, logical decoding, publications, replication slots, database triggers, or postgres_changes on any Yellowmind database.",
+  "databases": {
+    "agentstore": {
+      "role": "authoritative relational store: semantic_model definitions, semantic_jobs, runtime schemas, semantic_api curated reads",
+      "version": "PostgreSQL 17.6",
+      "age": "not installed and not required here",
+      "extensions": ["pgcrypto (installed by bootstrap)"]
+    },
+    "semantic_graph": {
+      "role": "AGE projections only, via SEMANTIC_AGEGRAPH_DATABASE_URL",
+      "version": "PostgreSQL 16.14",
+      "age": "1.6.0 (installed)"
+    },
+    "realtime_control": {
+      "role": "Supabase Realtime internal state only (tenants, extensions, realtime schema). Never business data.",
+      "image": "supabase/postgres:17.6.1.173",
+      "digest": "sha256:7768d0d1d377250b718a9ad07f4661d008ebe6c96ecbbc4c08f3c5e53553e8fd",
+      "note": "Supabase-flavored image required: tenant migrations expect supabase_admin/authenticated roles and the realtime schema."
+    }
+  },
+  "components": {
+    "postgrest": {
+      "image": "postgrest/postgrest:v16.2",
+      "digest": "sha256:85258123312dc496ad4c2ed832154a65e9746f84df0d6d09b44229ff9230c08e",
+      "license": "MIT",
+      "exposed_schemas": ["semantic_api"],
+      "anon_role": "semantic_api_anon (no data grants)",
+      "data_role": "semantic_api_user (SELECT on curated view + underlying models, RLS-bound)",
+      "pool": 5,
+      "max_rows": 200,
+      "statement_timeout": "2s"
+    },
+    "realtime": {
+      "image": "supabase/realtime:v2.134.1",
+      "digest": "sha256:7590b52b7c239848057cc08ba1a7f3faf49365dae45df7c5b78e2d621585254a",
+      "license": "Apache-2.0",
+      "required_env": ["APP_NAME", "DB_HOST/DB_NAME/DB_USER/DB_PASSWORD (control DB)", "DB_ENC_KEY (16 raw chars, AES-128-ECB)", "API_JWT_SECRET", "SECRET_KEY_BASE"],
+      "tenant": "yellowmind-semantic (broadcast-only; extension record points at the control DB, never agentstore)",
+      "channel_authorization": "private channels + RLS policy on realtime.messages scoped to topic LIKE 'semantic-model:%'; per-model scoping enforced at token issuance until claim-based policy lands with the NestJS bridge"
+    }
+  },
+  "env_layout": "per-service files beside the compose file (postgrest.env, realtime.env; both gitignored, templates committed as *.example.env). PostgREST receives only PGRST_* values; --env-file realtime.env supplies compose interpolation. Never share one file across services.",
+  "scripts": {
+    "bootstrap_dataplane.py": "one-shot roles/schemas/definitions/graph (env-driven, secret-free source)",
+    "sql/001_curated_api.sql": "semantic_api, definer helper, RLS, security-invoker view (applied as semantic_app)",
+    "provision_tenant.py": "idempotent tenant + namespace policy (control DB only)",
+    "verify_dataplane.py": "anon denial, RLS read, private broadcast round-trip"
+  },
+  "run": {
+    "bootstrap": "BOOT_SU_AGENTSTORE=<transient-superuser-url> BOOT_SU_AGEGRAPH=<transient-superuser-url> SEM_APP_PW=<generated> SEM_AUTH_PW=<generated> SEM_AGE_PW=<generated> DEFINITIONS_SQL=YellowStorm/back/scripts/semantic-model/000_deploy_all.sql RUNTIME_MIGRATION=YellowStorm/semantic-model-runtime/migrations/001_durable_jobs.sql CURATED_SQL=YellowStorm/semantic-model-runtime/deploy/data-plane/sql/001_curated_api.sql conda run -n meta python YellowStorm/semantic-model-runtime/deploy/data-plane/scripts/bootstrap_dataplane.py",
+    "up": "docker compose -f YellowStorm/semantic-model-runtime/deploy/data-plane/docker-compose.dev.yml --env-file YellowStorm/semantic-model-runtime/deploy/data-plane/realtime.env up -d",
+    "provision": "conda run -n meta python YellowStorm/semantic-model-runtime/deploy/data-plane/scripts/provision_tenant.py",
+    "verify": "conda run -n meta python YellowStorm/semantic-model-runtime/deploy/data-plane/scripts/verify_dataplane.py"
+  },
+  "verified": [
+    "postgrest anon denied on curated reads",
+    "postgrest JWT read 200 with RLS evaluation",
+    "tenant provisioned via management API (wrapped tenant object, control-DB extension record, never agentstore)",
+    "websocket join on private topic with role+exp JWT",
+    "REST broadcast 202 with private:true, subscriber received data-revision-changed",
+    "no CDC/publication/trigger created on agentstore or graph DB"
+  ],
+  "known_limitations": [
+    "verify script regenerates the tenant jwt_secret per run (dev only); production must pin REALTIME_TENANT_JWT_SECRET in secret storage",
+    "control-DB password mismatch after secret rotation requires volume recreate or ALTER ROLE (documented runbook step)",
+    "PostgREST connects with sslmode=prefer; agentstore offers plain here, require TLS before shared use"
+  ]
+}

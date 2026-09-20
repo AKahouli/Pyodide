@@ -55,6 +55,14 @@ export const configValidationSchema = Joi.object({
 
   // Semantic Model PostgreSQL / Apache AGE
   SEMANTIC_MODELS_AUTO_PROVISION: Joi.boolean().default(false),
+  SEMANTIC_MODEL_RUNTIME_ENABLED: Joi.boolean().default(false),
+  // Runtime writes require the runtime feature; a mismatch must fail at boot, not silently no-op.
+  SEMANTIC_MODEL_RUNTIME_WRITES_ENABLED: Joi.boolean().default(false).when('SEMANTIC_MODEL_RUNTIME_ENABLED', {
+    is: false,
+    then: Joi.valid(false),
+  }),
+  SEMANTIC_MODEL_CONTEXT_SEARCH_ENABLED: Joi.boolean().default(false),
+  SEMANTIC_MODEL_LLM_FALLBACK_ENABLED: Joi.boolean().default(false),
   SEMANTIC_PG_HOST: Joi.string().optional().allow(''),
   SEMANTIC_PG_PORT: Joi.number().min(1).max(65535).default(5432),
   SEMANTIC_PG_USER: Joi.string().optional().allow(''),
@@ -65,6 +73,16 @@ export const configValidationSchema = Joi.object({
   SEMANTIC_PG_STATEMENT_TIMEOUT: Joi.number().min(1000).max(3600000).default(60000),
   SEMANTIC_PG_IDLE_IN_TRANSACTION_TIMEOUT: Joi.number().min(1000).max(300000).default(30000),
   SEMANTIC_PG_CONNECT_TIMEOUT: Joi.number().min(1000).default(10000),
+  SEMANTIC_AGEGRAPH_HOST: Joi.string().optional().allow(''),
+  SEMANTIC_AGEGRAPH_PORT: Joi.number().min(1).max(65535).optional(),
+  SEMANTIC_AGEGRAPH_USER: Joi.string().optional().allow(''),
+  SEMANTIC_AGEGRAPH_PASSWORD: Joi.string().allow('').optional(),
+  SEMANTIC_AGEGRAPH_DATABASE: Joi.string().optional().allow(''),
+  SEMANTIC_DATA_JWT_SECRET: Joi.string().allow('').optional(),
+  SEMANTIC_REALTIME_JWT_SECRET: Joi.string().allow('').optional(),
+  SEMANTIC_DATA_TOKEN_TTL_SECONDS: Joi.number().min(10).max(600).default(60),
+  SEMANTIC_DATA_REST_URL: Joi.string().optional().allow(''),
+  SEMANTIC_DATA_REALTIME_URL: Joi.string().optional().allow(''),
   SEMANTIC_AGE_GRAPH: Joi.string()
     .pattern(/^[a-z][a-z0-9_]{0,62}$/)
     .default('semantic_model_graph'),

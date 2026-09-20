@@ -16,7 +16,10 @@ class Settings(BaseSettings):
 
     TEMP_FOLDER: str = "./tmp"
     HOST: str = "localhost"
-    PORT: int = 8001
+    PORT: int = Field(
+        default=8001,
+        validation_alias=AliasChoices("PORT", "ADK_PORT"),
+    )
     SSL_KEYFILE: Optional[str] = None
     SSL_CERTFILE: Optional[str] = None
     LOG_CONFIG_PATH: str = "./src/logger/uvicorn_disable_logging.json"
@@ -173,7 +176,10 @@ class Settings(BaseSettings):
 
     # gRPC Configuration
     GRPC_ENABLED: bool = True
-    GRPC_PORT: int = 50051
+    GRPC_PORT: int = Field(
+        default=50051,
+        validation_alias=AliasChoices("GRPC_PORT", "ADK_GRPC_PORT"),
+    )
     # Bounded wait for FIRST serving readiness at startup. The supervisor
     # keeps retrying transient failures regardless of this window.
     GRPC_STARTUP_READY_TIMEOUT_SECONDS: int = 10

@@ -1,0 +1,11 @@
+# semantic-model-runtime (Phase 2A). Pins match the conda `meta` env / yellowstorm-adk.
+# No new dependencies: stdlib + already-installed packages only.
+fastapi==0.141.1
+uvicorn==0.52.4
+pydantic>=2,<3
+pydantic-settings>=2,<3
+celery==5.3.6
+asyncpg==0.30.0
+httpx==0.28.1
+pytest==8.4.2
+pytest-asyncio==1.2.0
