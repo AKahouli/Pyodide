@@ -6,6 +6,7 @@ import { isObjectId, newObjectId } from '@common/postgres';
 import { resolveQueryable, withTransaction, type PgQueryable } from '@common/postgres/transaction';
 import { isUniqueViolation } from '@common/postgres/errors';
 import * as schema from '@modules/postgres/schema';
+import type { UserRecord as UserRecordShape } from '@modules/user/persistence/user.store';
 import {
   NewSession,
   RotationBookkeeping,
@@ -49,7 +50,7 @@ export class PgSessionStore implements SessionStore {
 
   private static insertValues(init: NewSession): typeof schema.identitySessions.$inferInsert {
     return {
-      id: newObjectId(),
+      id: init.id ?? newObjectId(),
       userId: init.userId,
       refreshTokenHash: init.refreshTokenHash,
       deviceInfo: init.deviceInfo,
@@ -175,6 +176,7 @@ export class PgSessionStore implements SessionStore {
       const set: Partial<typeof schema.identitySessions.$inferInsert> = {
         isValid: false,
         rotatedAt: params.bookkeeping.rotatedAt,
+        rotatedToSessionId: params.bookkeeping.rotatedToSessionId,
         updatedAt: new Date(),
       };
       if (params.bookkeeping.rotationAttemptId) set.rotationAttemptId = params.bookkeeping.rotationAttemptId;
@@ -202,5 +204,31 @@ export class PgSessionStore implements SessionStore {
         throw error;
       }
     });
+  }
+
+  /** Plan 1A.13: one joined PK query instead of isSessionValid + findById. */
+  async findValidByIdWithUser(id: string): Promise<{ session: SessionRecord; user: UserRecordShape; valid: boolean } | null> {
+    if (!isObjectId(id)) return null;
+    const rows = await this.q
+      .select({ session: schema.identitySessions, user: schema.identityUsers })
+      .from(schema.identitySessions)
+      .innerJoin(schema.identityUsers, eq(schema.identityUsers.id, schema.identitySessions.userId))
+      .where(eq(schema.identitySessions.id, id))
+      .limit(1);
+    if (rows.length === 0) return null;
+    const session = PgSessionStore.toRecord(rows[0].session);
+    const valid = session.isValid && session.expiresAt > new Date();
+    const user = PgSessionStore.toUserRecordRow(rows[0].user);
+    return { session, user, valid };
+  }
+
+  private static toUserRecordRow(row: typeof schema.identityUsers.$inferSelect): UserRecordShape {
+    return {
+      ...row,
+      roleIds: [],
+      status: row.status as UserRecordShape['status'],
+      registrationApproval: row.registrationApproval as UserRecordShape['registrationApproval'],
+      colorTheme: row.colorTheme as UserRecordShape['colorTheme'],
+    };
   }
 }

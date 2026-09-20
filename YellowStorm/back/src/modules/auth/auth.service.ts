@@ -1,13 +1,13 @@
 import { Injectable, Inject, forwardRef } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
-import { InjectModel } from '@nestjs/mongoose';
-import { Model, Types } from 'mongoose';
+import { Types } from 'mongoose';
 import * as bcrypt from 'bcrypt';
 import * as crypto from 'crypto';
 import { UAParser } from 'ua-parser-js';
-import { Session, SessionDocument } from './schemas/session.schema';
 import { UserService } from '../user/user.service';
+import { newObjectId } from '@common/postgres';
+import { SESSION_STORE, RotationConflictError as StoreRotationConflict, type NewSession, type RotationBookkeeping, type SessionRecord, type SessionStore } from './persistence/session.store';
 
 import { asAuthUser, type AuthUser } from '@common/auth/auth-user';
 import {
@@ -36,11 +36,7 @@ import {
   isTransientSessionStoreError,
 } from './utils/session-store-errors';
 import { RotationReceiptCrypto } from './utils/rotation-receipt.crypto';
-import {
-  RotationConflictError,
-  isDuplicateKeyError,
-  isUnsupportedTransactionError,
-} from './utils/rotation-errors';
+
 
 @Injectable()
 export class AuthService {
@@ -59,11 +55,8 @@ export class AuthService {
   private readonly passwordResetExpiryHours: number;
   private readonly receiptCrypto: RotationReceiptCrypto;
   private readonly receiptWindowSeconds: number;
-  /** Set once the store proves it cannot run multi-document transactions. */
-  private transactionsUnsupported = false;
-
   constructor(
-    @InjectModel(Session.name) private readonly sessionModel: Model<SessionDocument>,
+    @Inject(SESSION_STORE) private readonly sessionStore: SessionStore,
     private readonly userService: UserService,
     private readonly jwtService: JwtService,
     private readonly configService: ConfigService,
@@ -300,19 +293,18 @@ export class AuthService {
     const refreshTokenHash = await bcrypt.hash(refreshToken, this.bcryptRounds);
 
     // Enforce max sessions limit
-    await this.enforceSessionLimit(user._id);
+    await this.enforceSessionLimit(String(user._id));
 
     // Create session
-    const session = new this.sessionModel({
+    const session = await this.sessionStore.create({
       userId: user._id,
       refreshTokenHash,
-      deviceInfo,
+      deviceInfo: deviceInfo as unknown as Record<string, unknown>,
       ipAddress,
       expiresAt,
       tokenFamily,
       lastActivityAt: new Date(),
     });
-    await session.save();
 
     // Use pre-fetched permissions or fetch fresh ones
     if (!permissions || !roleNames) {
@@ -328,7 +320,7 @@ export class AuthService {
       sub: user._id.toString(),
       email: user.email,
       type: 'access' as const,
-      sessionId: session._id.toString(),
+      sessionId: session.id,
       permissions,
       roleNames,
       permissionsVersion: user.permissionsVersion || 1,
@@ -341,7 +333,7 @@ export class AuthService {
 
     return {
       accessToken,
-      refreshToken: `${session._id.toString()}.${refreshToken}`,
+      refreshToken: `${session.id}.${refreshToken}`,
       expiresIn: Math.floor(accessExpiryMs / 1000),
     };
   }
@@ -375,7 +367,7 @@ export class AuthService {
     }
 
     // Find session
-    const session = await this.sessionModel.findById(sessionId);
+    const session = await this.sessionStore.findById(sessionId);
     if (!session) {
       throw new UnauthorizedException(ErrorCode.AUTH_REFRESH_TOKEN_INVALID, 'Session not found');
     }
@@ -449,7 +441,7 @@ export class AuthService {
 
     // Check if token is expired
     if (session.expiresAt < new Date()) {
-      await this.sessionModel.deleteOne({ _id: session._id });
+      await this.sessionStore.deleteById(session.id);
       throw new UnauthorizedException(
         ErrorCode.AUTH_REFRESH_TOKEN_EXPIRED,
         'Refresh token has expired',
@@ -468,9 +460,9 @@ export class AuthService {
     }
 
     // Get user
-    const user = await this.userService.findById(session.userId.toString());
+    const user = await this.userService.findById(session.userId);
     if (!user) {
-      await this.sessionModel.deleteOne({ _id: session._id });
+      await this.sessionStore.deleteById(session.id);
       throw new UnauthorizedException(ErrorCode.USER_NOT_FOUND, 'User not found');
     }
 
@@ -483,7 +475,6 @@ export class AuthService {
     // Atomic rotation (expensive hashing happened outside the transaction).
     const { successor, secret } = await this.performAtomicRotation(
       session,
-      user._id.toString(),
       ipAddress,
       userAgent,
       rotationAttemptId,
@@ -491,40 +482,30 @@ export class AuthService {
 
     // Get user permissions and role names for JWT
     // Always fetch fresh permissions on token refresh to propagate role changes
-    const accessToken = await this.mintAccessTokenForUser(asAuthUser(user), successor._id.toString());
+    const accessToken = await this.mintAccessTokenForUser(asAuthUser(user), successor.id);
 
     this.logger.debug('Tokens refreshed', { userId: user._id });
 
     return {
       accessToken,
-      refreshToken: `${successor._id.toString()}.${secret}`,
+      refreshToken: `${successor.id}.${secret}`,
       expiresIn: this.getAccessTokenExpiryMs() / 1000,
     };
   }
 
   /**
    * Commit successor creation + predecessor invalidation so a double rotation
-   * is impossible.
-   *
-   * Primary path: one MongoDB transaction — the conditional update
-   * (`isValid: true`) aborts the whole rotation for whoever loses a race.
-   *
-   * Fallback path (standalone MongoDB without transaction support, an explicit
-   * deployment decision): ordered single-document writes that keep the same
-   * guarantees except crash-atomicity — the unique sparse index on
-   * `rotatedFromSessionId` still makes two successors impossible, and the
-   * predecessor is invalidated BEFORE the successor is created. The residual
-   * risk is a crash between the two writes, which dead-ends the old refresh
-   * token (the user signs in again); it cannot duplicate sessions or weaken
-   * reuse detection.
+   * is impossible: the store claims the still-valid predecessor and inserts
+   * the successor in ONE transaction (plan 1A.3). The former MongoDB
+   * transaction wrapper and its standalone fallback are gone — both stores
+   * satisfy the same atomicity contract.
    */
   private async performAtomicRotation(
-    session: SessionDocument,
-    userId: string,
+    session: SessionRecord,
     ipAddress: string,
     userAgent: string,
     rotationAttemptId?: string,
-  ): Promise<{ successor: SessionDocument; secret: string }> {
+  ): Promise<{ successor: SessionRecord; secret: string }> {
     const secret = crypto.randomBytes(32).toString('hex');
     const deviceInfo = this.parseUserAgent(userAgent);
     const refreshExpiryMs = this.getRefreshTokenExpiryMs();
@@ -532,53 +513,33 @@ export class AuthService {
     const expiresAt = new Date(now.getTime() + refreshExpiryMs);
     const refreshTokenHash = await bcrypt.hash(secret, this.bcryptRounds);
 
-    if (this.transactionsUnsupported) {
-      return this.performStandaloneRotation(
-        session, userId, ipAddress, userAgent, rotationAttemptId,
-        { secret, deviceInfo, expiresAt, refreshTokenHash, now },
-      );
-    }
+    // Successor id is app-generated (plan global constraint) so the receipt can
+    // seal it before the store's claim links it onto the predecessor.
+    const successorId = newObjectId();
+    const newSession: NewSession = {
+      id: successorId,
+      userId: session.userId,
+      refreshTokenHash,
+      deviceInfo: deviceInfo as unknown as Record<string, unknown>,
+      ipAddress,
+      expiresAt,
+      tokenFamily: session.tokenFamily, // Keep same family for rotation tracking
+      lastActivityAt: now,
+      rotatedFromSessionId: session.id,
+    };
+    const bookkeeping = this.buildRotationBookkeeping(session, successorId, secret, now, rotationAttemptId);
 
-    const mongoSession = await this.sessionModel.db.startSession();
-    let successor: SessionDocument | null = null;
-
+    let successor: SessionRecord;
     try {
-      await mongoSession.withTransaction(async () => {
-        const newSession = new this.sessionModel({
-          userId: session.userId,
-          refreshTokenHash,
-          deviceInfo,
-          ipAddress,
-          expiresAt,
-          tokenFamily: session.tokenFamily, // Keep same family for rotation tracking
-          lastActivityAt: now,
-          rotatedFromSessionId: session._id,
-        });
-        await newSession.save({ session: mongoSession });
-        successor = newSession as unknown as SessionDocument;
-
-        const predecessorUpdate = this.buildPredecessorRotationUpdate(
-          session,
-          (newSession._id as unknown as Types.ObjectId).toString(),
-          secret,
-          now,
-          rotationAttemptId,
-        );
-
-        const updated = await this.sessionModel.findOneAndUpdate(
-          { _id: session._id, isValid: true },
-          { $set: predecessorUpdate },
-          { session: mongoSession, new: true },
-        );
-        if (!updated) {
-          // The predecessor was consumed concurrently; abort everything.
-          throw new RotationConflictError();
-        }
+      successor = await this.sessionStore.rotateAtomic({
+        predecessorId: session.id,
+        newSession,
+        bookkeeping,
       });
     } catch (error) {
-      if (error instanceof RotationConflictError) {
+      if (error instanceof StoreRotationConflict) {
         this.logger.warn('Concurrent refresh rotation aborted', {
-          userId: new Types.ObjectId(userId),
+          userId: session.userId,
           tokenFamily: session.tokenFamily,
         });
         throw new ConflictException(
@@ -586,151 +547,41 @@ export class AuthService {
           'Refresh rotation already committed for this session; retry with the original attempt id',
         );
       }
-      if (isUnsupportedTransactionError(error)) {
-        // Deployment decision: standalone MongoDB runs the ordered
-        // single-document fallback instead of failing every refresh.
-        this.transactionsUnsupported = true;
-        this.logger.warn(
-          'Session store does not support transactions; using ordered single-document rotation fallback',
-          { errorClass: (error as Error).name },
-        );
-        return this.performStandaloneRotation(
-          session, userId, ipAddress, userAgent, rotationAttemptId,
-          { secret, deviceInfo, expiresAt, refreshTokenHash, now },
-        );
-      }
       throw error;
-    } finally {
-      await mongoSession.endSession();
-    }
-
-    if (!successor) {
-      throw new InternalServerException(undefined, 'Rotation transaction committed without successor');
     }
     return { successor, secret };
   }
 
-  /**
-   * Ordered single-document rotation for transaction-less stores. The unique
-   * sparse index on rotatedFromSessionId enforces one-successor-per-
-   * predecessor; the conditional predecessor invalidation serializes racers.
-   */
-  private async performStandaloneRotation(
-    session: SessionDocument,
-    userId: string,
-    ipAddress: string,
-    userAgent: string,
-    rotationAttemptId: string | undefined,
-    material: {
-      secret: string;
-      deviceInfo: DeviceInfoData;
-      expiresAt: Date;
-      refreshTokenHash: string;
-      now: Date;
-    },
-  ): Promise<{ successor: SessionDocument; secret: string }> {
-    // 1. Atomically claim the predecessor. Losers of a race stop here.
-    const claimed = await this.sessionModel.findOneAndUpdate(
-      { _id: session._id, isValid: true },
-      {
-        $set: {
-          isValid: false,
-          rotatedAt: material.now,
-          ...(rotationAttemptId ? { rotationAttemptId } : {}),
-        },
-      },
-      { new: true },
-    );
-    if (!claimed) {
-      this.logger.warn('Concurrent refresh rotation aborted (standalone)', {
-        userId: new Types.ObjectId(userId),
-        tokenFamily: session.tokenFamily,
-      });
-      throw new ConflictException(
-        ErrorCode.AUTH_ROTATION_CONFLICT,
-        'Refresh rotation already committed for this session; retry with the original attempt id',
-      );
-    }
-
-    // 2. Insert the successor. The unique sparse index on
-    // rotatedFromSessionId makes a second successor impossible.
-    let successor: SessionDocument;
-    try {
-      const newSession = new this.sessionModel({
-        userId: session.userId,
-        refreshTokenHash: material.refreshTokenHash,
-        deviceInfo: material.deviceInfo,
-        ipAddress,
-        expiresAt: material.expiresAt,
-        tokenFamily: session.tokenFamily,
-        lastActivityAt: material.now,
-        rotatedFromSessionId: session._id,
-      }) as unknown as SessionDocument;
-      await newSession.save();
-      successor = newSession;
-    } catch (error) {
-      if (isDuplicateKeyError(error)) {
-        this.logger.error('Rotation successor insert hit a duplicate link; treating as conflict', {
-          userId: new Types.ObjectId(userId),
-          tokenFamily: session.tokenFamily,
-        });
-        throw new ConflictException(
-          ErrorCode.AUTH_ROTATION_CONFLICT,
-          'Refresh rotation already committed for this session; retry with the original attempt id',
-        );
-      }
-      throw error;
-    }
-
-    // 3. Attach the successor link + bounded receipt (idempotent bookkeeping;
-    // a crash before this write dead-ends the old token, never duplicates it).
-    await this.sessionModel.updateOne(
-      { _id: session._id },
-      {
-        $set: this.buildPredecessorRotationUpdate(
-          session,
-          (successor._id as unknown as Types.ObjectId).toString(),
-          material.secret,
-          material.now,
-          rotationAttemptId,
-        ),
-      },
-    );
-
-    return { successor, secret: material.secret };
-  }
-
-  /** Predecessor bookkeeping written after the successor exists. */
-  private buildPredecessorRotationUpdate(
-    session: SessionDocument,
+  /** Predecessor bookkeeping written by the store inside the rotation transaction. */
+  private buildRotationBookkeeping(
+    session: SessionRecord,
     successorSessionId: string,
     successorSecret: string,
     now: Date,
     rotationAttemptId: string | undefined,
-  ): Record<string, unknown> {
-    const update: Record<string, unknown> = {
-      isValid: false,
-      rotatedToSessionId: new Types.ObjectId(successorSessionId),
+  ): RotationBookkeeping {
+    const bookkeeping: RotationBookkeeping = {
       rotatedAt: now,
+      rotatedToSessionId: successorSessionId,
     };
     if (rotationAttemptId) {
-      update.rotationAttemptId = rotationAttemptId;
+      bookkeeping.rotationAttemptId = rotationAttemptId;
     }
     if (this.receiptCrypto.isAvailable() && rotationAttemptId) {
       const receiptExpiresAtMs = now.getTime() + this.receiptWindowSeconds * 1000;
-      Object.assign(update, {
-        rotationReceiptExpiresAt: new Date(receiptExpiresAtMs),
-        rotationReceiptKeyId: this.receiptCrypto.getKeyId(),
-        rotationReceiptCiphertext: this.receiptCrypto.seal(successorSecret, {
-          predecessorSessionId: session._id.toString(),
+      bookkeeping.receipt = {
+        expiresAt: new Date(receiptExpiresAtMs),
+        keyId: this.receiptCrypto.getKeyId(),
+        ciphertext: this.receiptCrypto.seal(successorSecret, {
+          predecessorSessionId: session.id,
           successorSessionId,
           tokenFamily: session.tokenFamily,
           rotationAttemptId,
           receiptExpiresAt: receiptExpiresAtMs,
         }),
-      });
+      };
     }
-    return update;
+    return bookkeeping;
   }
 
   /**
@@ -739,7 +590,7 @@ export class AuthService {
    * revoked successor and never extends the receipt or session expiry.
    */
   private async tryRecoverRotationFromReceipt(
-    session: SessionDocument,
+    session: SessionRecord,
     presentedToken: string,
     rotationAttemptId: string,
   ): Promise<TokenPair | null> {
@@ -757,7 +608,7 @@ export class AuthService {
       return null; // fall through to the reuse-detection policy
     }
 
-    const successor = await this.sessionModel.findById(session.rotatedToSessionId);
+    const successor = await this.sessionStore.findById(session.rotatedToSessionId);
     if (!successor || !successor.isValid || successor.expiresAt.getTime() <= Date.now()) {
       return null;
     }
@@ -766,8 +617,8 @@ export class AuthService {
       return null;
     }
     const secret = this.receiptCrypto.open(session.rotationReceiptCiphertext, {
-      predecessorSessionId: session._id.toString(),
-      successorSessionId: successor._id.toString(),
+      predecessorSessionId: session.id,
+      successorSessionId: successor.id,
       tokenFamily: session.tokenFamily,
       rotationAttemptId,
       receiptExpiresAt: session.rotationReceiptExpiresAt.getTime(),
@@ -786,11 +637,11 @@ export class AuthService {
       throw new ForbiddenException(accessDenial.code, accessDenial.message);
     }
 
-    const accessToken = await this.mintAccessTokenForUser(asAuthUser(user), successor._id.toString());
+    const accessToken = await this.mintAccessTokenForUser(asAuthUser(user), successor.id);
     this.logger.debug('Refresh rotation recovered from receipt', { userId: user._id });
     return {
       accessToken,
-      refreshToken: `${successor._id.toString()}.${secret}`,
+      refreshToken: `${successor.id}.${secret}`,
       expiresIn: this.getAccessTokenExpiryMs() / 1000,
     };
   }
@@ -832,7 +683,7 @@ export class AuthService {
 
     const [sessionId] = refreshToken.split('.');
     if (sessionId) {
-      await this.sessionModel.updateOne({ _id: sessionId }, { $set: { isValid: false } });
+      await this.sessionStore.invalidateById(sessionId);
       this.logger.debug('User logged out', { sessionId });
     }
   }
@@ -841,42 +692,36 @@ export class AuthService {
    * Get user's active sessions
    */
   async getUserSessions(userId: string, currentSessionId?: string): Promise<SessionInfo[]> {
-    const sessions = await this.sessionModel
-      .find({
-        userId: new Types.ObjectId(userId),
-        isValid: true,
-        expiresAt: { $gt: new Date() },
-      })
-      .sort({ lastActivityAt: -1 });
+    const sessions = await this.sessionStore.findActiveByUserId(userId);
 
-    return sessions.map((session) => ({
-      id: session._id.toString(),
-      deviceInfo: {
-        userAgent: session.deviceInfo.userAgent,
-        browser: session.deviceInfo.browser,
-        browserVersion: session.deviceInfo.browserVersion,
-        os: session.deviceInfo.os,
-        osVersion: session.deviceInfo.osVersion,
-        device: session.deviceInfo.device,
-        deviceType: session.deviceInfo.deviceType,
-      },
-      ipAddress: session.ipAddress,
-      createdAt: session.createdAt,
-      lastActivityAt: session.lastActivityAt,
-      isCurrent: session._id.toString() === currentSessionId,
-    }));
+    return sessions.map((session) => {
+      const device = session.deviceInfo as Record<string, string>;
+      return {
+        id: session.id,
+        deviceInfo: {
+          userAgent: device.userAgent,
+          browser: device.browser,
+          browserVersion: device.browserVersion,
+          os: device.os,
+          osVersion: device.osVersion,
+          device: device.device,
+          deviceType: device.deviceType,
+        },
+        ipAddress: session.ipAddress,
+        createdAt: session.createdAt,
+        lastActivityAt: session.lastActivityAt ?? undefined,
+        isCurrent: session.id === currentSessionId,
+      };
+    });
   }
 
   /**
    * Invalidate a specific session
    */
   async invalidateSession(userId: string, sessionId: string): Promise<void> {
-    const result = await this.sessionModel.updateOne(
-      { _id: sessionId, userId: new Types.ObjectId(userId) },
-      { $set: { isValid: false } },
-    );
+    const matched = await this.sessionStore.invalidateByIdAndUser(userId, sessionId);
 
-    if (result.matchedCount === 0) {
+    if (!matched) {
       throw new NotFoundException(ErrorCode.AUTH_SESSION_NOT_FOUND, 'Session not found');
     }
 
@@ -887,10 +732,7 @@ export class AuthService {
    * Invalidate all sessions for a user
    */
   async invalidateAllUserSessions(userId: string): Promise<void> {
-    await this.sessionModel.updateMany(
-      { userId: new Types.ObjectId(userId) },
-      { $set: { isValid: false } },
-    );
+    await this.sessionStore.invalidateAllForUser(userId);
 
     this.logger.log('All sessions invalidated', { userId });
   }
@@ -917,35 +759,29 @@ export class AuthService {
    * Invalidate all sessions in a token family (for reuse detection)
    */
   private async invalidateTokenFamily(tokenFamily: string): Promise<void> {
-    await this.sessionModel.updateMany({ tokenFamily }, { $set: { isValid: false } });
+    await this.sessionStore.invalidateByFamily(tokenFamily);
   }
 
   /**
    * Enforce maximum sessions per user limit
    */
-  private async enforceSessionLimit(userId: string | Types.ObjectId): Promise<void> {
-    const sessionCount = await this.sessionModel.countDocuments({
-      userId,
-      isValid: true,
-      expiresAt: { $gt: new Date() },
-    });
+  private async enforceSessionLimit(userId: string): Promise<void> {
+    const sessionCount = await this.sessionStore.countActiveForUser(userId);
 
     if (sessionCount >= this.maxSessionsPerUser) {
-      // Remove oldest sessions
-      const oldestSessions = await this.sessionModel
-        .find({ userId, isValid: true })
-        .sort({ lastActivityAt: 1 })
-        .limit(sessionCount - this.maxSessionsPerUser + 1);
-
-      const sessionIds = oldestSessions.map((s) => s._id);
-      await this.sessionModel.updateMany(
-        { _id: { $in: sessionIds } },
-        { $set: { isValid: false } },
+      // Invalidate oldest sessions
+      const oldestSessions = await this.sessionStore.findOldestActive(
+        userId,
+        sessionCount - this.maxSessionsPerUser + 1,
       );
+
+      for (const stale of oldestSessions) {
+        await this.sessionStore.invalidateById(stale.id);
+      }
 
       this.logger.debug('Oldest sessions invalidated due to limit', {
         userId,
-        count: sessionIds.length,
+        count: oldestSessions.length,
       });
     }
   }
@@ -979,9 +815,9 @@ export class AuthService {
    * treating it as an authentication denial.
    */
   async isSessionValid(sessionId: string): Promise<boolean> {
-    let session: SessionDocument | null;
+    let session: SessionRecord | null;
     try {
-      session = await this.sessionModel.findById(sessionId);
+      session = await this.sessionStore.findById(sessionId);
     } catch (error) {
       const errorClass = classifySessionStoreError(error);
       if (isTransientSessionStoreError(error)) {
@@ -1093,14 +929,9 @@ export class AuthService {
   /**
    * Check if login is from a new location (IP address)
    */
-  private async checkNewLoginLocation(userId: string | Types.ObjectId, ipAddress: string): Promise<boolean> {
+  private async checkNewLoginLocation(userId: string, ipAddress: string): Promise<boolean> {
     // Check if this IP has been used before for this user
-    const existingSession = await this.sessionModel.findOne({
-      userId,
-      ipAddress,
-    });
-
-    return !existingSession;
+    return !(await this.sessionStore.existsForUserAndIp(userId, ipAddress));
   }
 
   /**

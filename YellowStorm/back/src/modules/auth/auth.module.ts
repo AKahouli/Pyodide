@@ -10,6 +10,7 @@ import { JwtAuthGuard } from './guards/jwt-auth.guard';
 import { InternalServiceGuard } from './guards/internal-service.guard';
 import { AgentCrudActorGuard } from './guards/agent-crud-actor.guard';
 import { Session, SessionSchema } from './schemas/session.schema';
+import { User, UserSchema } from '../user/schemas/user.schema';
 import { SESSION_STORE } from './persistence/session.store';
 import { MongoSessionStore } from './persistence/mongo-session.store';
 import { PgSessionStore } from './persistence/pg-session.store';
@@ -36,6 +37,7 @@ import { HumainAgentModule } from '../humain-agent/humain-agent.module';
     }),
     MongooseModule.forFeature([
       { name: Session.name, schema: SessionSchema },
+      { name: User.name, schema: UserSchema }, // MongoSessionStore joined lookup (until 1A cutover)
     ]),
     forwardRef(() => UserModule),
     forwardRef(() => UsageModule),

@@ -2,6 +2,8 @@ import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import { newObjectId } from '@common/postgres';
 import { Session, SessionDocument } from '../schemas/session.schema';
+import { User, UserDocument } from '../../user/schemas/user.schema';
+import { toRecord as toUserRecord } from '../../user/persistence/mongo-user.store';
 import {
   NewSession,
   RotationBookkeeping,
@@ -15,11 +17,14 @@ type AnyDoc = Record<string, unknown>;
 
 /** Mongo `sessions` implementation of SessionStore (behavior-preserving). */
 export class MongoSessionStore implements SessionStore {
-  constructor(@InjectModel(Session.name) private readonly sessionModel: Model<SessionDocument>) {}
+  constructor(
+    @InjectModel(Session.name) private readonly sessionModel: Model<SessionDocument>,
+    @InjectModel(User.name) private readonly userModel: Model<UserDocument>,
+  ) {}
 
   async create(init: NewSession): Promise<SessionRecord> {
     const created = await this.sessionModel.create({
-      _id: new Types.ObjectId(newObjectId()),
+      _id: new Types.ObjectId(init.id ?? newObjectId()),
       userId: new Types.ObjectId(init.userId),
       refreshTokenHash: init.refreshTokenHash,
       deviceInfo: init.deviceInfo,
@@ -120,12 +125,22 @@ export class MongoSessionStore implements SessionStore {
     if (!successor) throw new RotationConflictError();
     return successor;
   }
+
+  async findValidByIdWithUser(id: string): Promise<{ session: SessionRecord; user: ReturnType<typeof toUserRecord>; valid: boolean } | null> {
+    const session = await this.findById(id);
+    if (!session) return null;
+    const valid = session.isValid && session.expiresAt > new Date();
+    const doc = await this.userModel.findById(session.userId).exec();
+    if (!doc) return null;
+    return { session, user: toUserRecord(doc), valid };
+  }
 }
 
 function claimUpdate(bookkeeping: RotationBookkeeping): Record<string, unknown> {
   const set: Record<string, unknown> = {
     isValid: false,
     rotatedAt: bookkeeping.rotatedAt,
+    rotatedToSessionId: new Types.ObjectId(bookkeeping.rotatedToSessionId),
   };
   if (bookkeeping.rotationAttemptId) set.rotationAttemptId = bookkeeping.rotationAttemptId;
   if (bookkeeping.receipt) {

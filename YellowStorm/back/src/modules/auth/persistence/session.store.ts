@@ -1,3 +1,5 @@
+import type { UserRecord } from '@modules/user/persistence/user.store';
+
 /** Flat row shape of identity.sessions (step 1A). */
 export interface SessionRecord {
   id: string;
@@ -21,6 +23,8 @@ export interface SessionRecord {
 }
 
 export interface NewSession {
+  /** App-generated char(24) id; stores generate one when omitted. */
+  id?: string;
   userId: string;
   refreshTokenHash: string;
   deviceInfo: Record<string, unknown>;
@@ -34,6 +38,8 @@ export interface NewSession {
 /** Predecessor bookkeeping written by a committed rotation. */
 export interface RotationBookkeeping {
   rotatedAt: Date;
+  /** The pre-generated successor id, written onto the claimed predecessor. */
+  rotatedToSessionId: string;
   rotationAttemptId?: string;
   receipt?: {
     expiresAt: Date;
@@ -78,4 +84,11 @@ export interface SessionStore {
     newSession: NewSession;
     bookkeeping: RotationBookkeeping;
   }): Promise<SessionRecord>;
+  /**
+   * The per-request JWT check (plan 1A.13): session validity and the user
+   * row in ONE lookup (single joined query in PG; two PK reads in Mongo).
+   * Null when the session does not exist. `valid` mirrors is_valid ∧
+   * not-expired, and false sessions return with the user for uniform 401s.
+   */
+  findValidByIdWithUser(id: string): Promise<{ session: SessionRecord; user: UserRecord; valid: boolean } | null>;
 }
