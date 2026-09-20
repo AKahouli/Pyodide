@@ -10,6 +10,9 @@ import { AuthorizationModule } from '../authorization/authorization.module';
 import { HumainAgentModule } from '../humain-agent/humain-agent.module';
 import { MongoUserLookupAdapter } from './adapters/mongo-user-lookup.adapter';
 import { USER_LOOKUP_PORT } from '@common/ports/user-lookup.port';
+import { USER_STORE } from './persistence/user.store';
+import { MongoUserStore } from './persistence/mongo-user.store';
+import { PgUserStore } from './persistence/pg-user.store';
 
 @Module({
   imports: [
@@ -26,12 +29,16 @@ import { USER_LOOKUP_PORT } from '@common/ports/user-lookup.port';
     RegistrationApprovalService,
     MongoUserLookupAdapter,
     { provide: USER_LOOKUP_PORT, useExisting: MongoUserLookupAdapter },
+    // Mongo-backed until the 1A cutover; swap useClass to PgUserStore then.
+    { provide: USER_STORE, useClass: MongoUserStore },
+    PgUserStore,
   ],
   exports: [
     UserService,
     RegistrationApprovalService,
     MongoUserLookupAdapter,
     USER_LOOKUP_PORT,
+    USER_STORE,
     MongooseModule, // Export MongooseModule to allow other modules to use User model
   ],
 })

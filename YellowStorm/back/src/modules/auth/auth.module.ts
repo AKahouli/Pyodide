@@ -10,6 +10,9 @@ import { JwtAuthGuard } from './guards/jwt-auth.guard';
 import { InternalServiceGuard } from './guards/internal-service.guard';
 import { AgentCrudActorGuard } from './guards/agent-crud-actor.guard';
 import { Session, SessionSchema } from './schemas/session.schema';
+import { SESSION_STORE } from './persistence/session.store';
+import { MongoSessionStore } from './persistence/mongo-session.store';
+import { PgSessionStore } from './persistence/pg-session.store';
 import { UserModule } from '../user';
 import { UsageModule } from '../usage';
 import { AuthorizationModule } from '../authorization/authorization.module';
@@ -41,7 +44,16 @@ import { HumainAgentModule } from '../humain-agent/humain-agent.module';
     HumainAgentModule,
   ],
   controllers: [AuthController],
-  providers: [AuthService, JwtStrategy, JwtAuthGuard, InternalServiceGuard, AgentCrudActorGuard],
-  exports: [AuthService, JwtAuthGuard, JwtStrategy, InternalServiceGuard, AgentCrudActorGuard, JwtModule],
+  providers: [
+    AuthService,
+    JwtStrategy,
+    JwtAuthGuard,
+    InternalServiceGuard,
+    AgentCrudActorGuard,
+    // Mongo-backed until the 1A cutover; swap useClass to PgSessionStore then.
+    { provide: SESSION_STORE, useClass: MongoSessionStore },
+    PgSessionStore,
+  ],
+  exports: [AuthService, JwtAuthGuard, JwtStrategy, InternalServiceGuard, AgentCrudActorGuard, JwtModule, SESSION_STORE],
 })
 export class AuthModule {}

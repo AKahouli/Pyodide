@@ -17,6 +17,24 @@ import { UserModule } from '@modules/user';
 import { UsageModule } from '@modules/usage';
 import { AuthorizationModule } from '@modules/authorization/authorization.module';
 import { WorkspaceModule } from '@modules/workspace/workspace.module';
+import {
+  AUTH_PROVIDER_STORE,
+  OAUTH_STATE_STORE,
+  PROVIDER_LINK_TOKEN_STORE,
+  USER_PROVIDER_LINK_STORE,
+} from './persistence/auth-provider.stores';
+import {
+  MongoAuthProviderStore,
+  MongoOAuthStateStore,
+  MongoProviderLinkTokenStore,
+  MongoUserProviderLinkStore,
+} from './persistence/mongo-auth-provider.stores';
+import {
+  PgAuthProviderStore,
+  PgOAuthStateStore,
+  PgProviderLinkTokenStore,
+  PgUserProviderLinkStore,
+} from './persistence/pg-auth-provider.stores';
 
 @Module({
   imports: [
@@ -40,6 +58,15 @@ import { WorkspaceModule } from '@modules/workspace/workspace.module';
     OAuthFlowService,
     ProviderLinkService,
     AuthProviderHealthService,
+    // Mongo-backed until the 1A cutover; swap useClass to the Pg* stores then.
+    { provide: AUTH_PROVIDER_STORE, useClass: MongoAuthProviderStore },
+    { provide: OAUTH_STATE_STORE, useClass: MongoOAuthStateStore },
+    { provide: PROVIDER_LINK_TOKEN_STORE, useClass: MongoProviderLinkTokenStore },
+    { provide: USER_PROVIDER_LINK_STORE, useClass: MongoUserProviderLinkStore },
+    PgAuthProviderStore,
+    PgOAuthStateStore,
+    PgProviderLinkTokenStore,
+    PgUserProviderLinkStore,
   ],
   exports: [AuthProviderService, ProviderLinkService, AuthProviderHealthService],
 })
