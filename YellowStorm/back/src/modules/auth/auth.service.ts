@@ -265,7 +265,7 @@ export class AuthService {
               }
             : undefined,
           status: user.status,
-          registrationApproval: user.registrationApproval,
+          registrationApproval: user.registrationApproval ?? undefined,
           permissions,
           roleNames,
         },
@@ -1093,7 +1093,7 @@ export class AuthService {
   /**
    * Check if login is from a new location (IP address)
    */
-  private async checkNewLoginLocation(userId: Types.ObjectId, ipAddress: string): Promise<boolean> {
+  private async checkNewLoginLocation(userId: string | Types.ObjectId, ipAddress: string): Promise<boolean> {
     // Check if this IP has been used before for this user
     const existingSession = await this.sessionModel.findOne({
       userId,

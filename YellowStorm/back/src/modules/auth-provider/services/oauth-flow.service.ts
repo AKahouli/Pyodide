@@ -391,7 +391,7 @@ export class OAuthFlowService {
   /**
    * Create a short-lived temp token for frontend exchange.
    */
-  private async createTempLoginToken(userId: Types.ObjectId): Promise<string> {
+  private async createTempLoginToken(userId: string | Types.ObjectId): Promise<string> {
     const token = crypto.randomBytes(32).toString('hex');
 
     await this.providerLinkTokenModel.create({

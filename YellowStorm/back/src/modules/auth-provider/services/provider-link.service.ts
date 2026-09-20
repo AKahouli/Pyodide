@@ -47,7 +47,7 @@ export class ProviderLinkService {
    * Create a new provider link.
    */
   async createLink(
-    userId: Types.ObjectId,
+    userId: string | Types.ObjectId,
     providerKey: string,
     providerUserId: string,
     providerEmail: string,

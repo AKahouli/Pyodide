@@ -407,7 +407,7 @@ export class ConversationV2AppShareService {
 
     const recipient = await this.users.findByEmail(email);
     const share = recipient
-      ? await this.upsertKnownRecipientShare(params, recipient._id, email, inviteFields)
+      ? await this.upsertKnownRecipientShare(params, String(recipient._id), email, inviteFields)
       : await this.upsertPendingEmailShare(params, email, inviteFields);
 
     await this.sendInviteEmail({
@@ -433,7 +433,7 @@ export class ConversationV2AppShareService {
       deployedUrl: string;
       lastDeployedAt: Date | null;
     },
-    recipientId: Types.ObjectId,
+    recipientId: string | Types.ObjectId,
     email: string,
     inviteFields: {
       inviteTokenHash: string;
