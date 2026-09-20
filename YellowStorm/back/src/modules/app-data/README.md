@@ -267,6 +267,23 @@ Split des bases :
 `AppDataRemoteOwnerController` : lit le mapping session→workspace localement,
 proxifie vers l'internal API du microservice avec le service token.
 
+### 5.6 Grant AI end-user (`useAi` / ACL `use_ai`)
+
+Les apps générées qui appellent l’AI Proxy nécessitent un grant explicite pour
+chaque end-user (deny-by-default).
+
+| Mode | Source de vérité | Stockage |
+|------|------------------|----------|
+| **Remote** (`APP_DATA_REMOTE=true`) | Microservice App Data | ACL `resource='*'`, `action='use_ai'` |
+| Local | Nest Postgres | Colonne booléenne via migration `0017` **uniquement** |
+
+Le BFF Nest (`AppDataEndUserGrantsService` / remote owner) envoie
+`grants.useAi` sur `PUT …/wildcard-grants`. Omettre `useAi` **préserve** le grant AI existant.
+
+⚠️ Ne jamais appliquer `0017` sur la DB control-plane du microservice.
+Voir `drizzle/MIGRATIONS-APP-BUILDER-AI.md` et
+`app-data/docs/END_USER_AI_GRANT.md` (repo sibling).
+
 ---
 
 ## 6. Endpoints microservice (`http://localhost:8443/v1/...`)

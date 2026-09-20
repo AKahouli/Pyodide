@@ -141,6 +141,9 @@ const LogsPage = React.lazy(() =>
 const PlansPage = React.lazy(() =>
   import('./modules/admin/pages/PlansPage').then((m) => ({ default: m.PlansPage }))
 );
+const AppBuilderAiPage = React.lazy(() =>
+  import('./modules/admin/pages/AppBuilderAiPage').then((m) => ({ default: m.AppBuilderAiPage }))
+);
 const AnalyticsPage = React.lazy(() =>
   import('./modules/admin/pages/AnalyticsPage').then((m) => ({ default: m.AnalyticsPage }))
 );
@@ -440,6 +443,14 @@ export const router = createHashRouter([
           { path: "audit", element: lazyPage(<AuditLogsPage />) },
           { path: "logs", element: lazyPage(<LogsPage />) },
           { path: "plans", element: lazyPage(<PlansPage />) },
+          {
+            path: 'app-builder-ai',
+            element: lazyPage(
+              <PermissionGuard permissions={['app_builder_ai.read', 'app_builder_ai.manage', 'app_builder_ai.*', '*']}>
+                <AppBuilderAiPage />
+              </PermissionGuard>
+            ),
+          },
           { path: "reports", element: lazyPage(<ReportsPage />) },
           { path: "models", element: lazyPage(<ModelsPage />) },
           { path: "guardrails", element: lazyPage(<GuardrailsPage />) },
@@ -541,6 +552,14 @@ export const router = createHashRouter([
             element: lazyPage(
               <PermissionGuard permissions={['plans.read_all', 'plans.*', '*']}>
                 <PlansPage />
+              </PermissionGuard>
+            ),
+          },
+          {
+            path: 'app-builder-ai',
+            element: lazyPage(
+              <PermissionGuard permissions={['app_builder_ai.read', 'app_builder_ai.manage', 'app_builder_ai.*', '*']}>
+                <AppBuilderAiPage />
               </PermissionGuard>
             ),
           },

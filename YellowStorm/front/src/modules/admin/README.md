@@ -37,6 +37,7 @@ The admin module is a permission-gated section of the application that allows au
 - **Connectors**: Manage MCP server integrations with OAuth 2.0 authentication
 - **Tools**: Manage tool definitions and attributes
 - **Skills**: Manage skill definitions and imports
+- **App Builder AI**: Global kill switch, offers (RPM / token windows), assign offers to users (`AppBuilderAiPage`, permissions `app_builder_ai.*`)
 
 Access is controlled by the RBAC (Role-Based Access Control) system defined in the backend.
 
@@ -196,6 +197,8 @@ front/src/modules/admin/
     ├── LogsPage.tsx      # System logs viewer
     ├── SystemPage.tsx    # System settings
     ├── AppearancePage.tsx # Global color palette + logo library
+    ├── AppBuilderAiPage.tsx # App Builder AI kill switch, offers, user assignment
+    ├── AppBuilderAiPage.test.tsx
     │
     ├── tools/
     │   ├── index.ts

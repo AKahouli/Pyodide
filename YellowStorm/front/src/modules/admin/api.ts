@@ -1482,3 +1482,128 @@ export async function reconnectAdminWorkyWhatsAppSystemBot(
 export async function disconnectAdminWorkyWhatsAppSystemBot(sessionId: string): Promise<void> {
   await apiClient.delete(API_ENDPOINTS.adminWorkyWhatsAppSystemBot.session(sessionId));
 }
+
+// --- App Builder AI Control ---
+
+export interface AppBuilderAiOverview {
+  enabled: boolean;
+  periodHours: number;
+  totalTokens: number;
+  requestCount: number;
+  errorCount: number;
+  aiAppsCount: number;
+  usersWithOffer: number;
+  topModels: Array<{ model: string; totalTokens: number; requestCount: number }>;
+}
+
+export interface AppBuilderAiOffer {
+  id: string;
+  name: string;
+  slug: string;
+  description?: string;
+  tokenLimit: number;
+  windowHours: number;
+  requestsPerMinute: number;
+  maxTokensPerRequest: number;
+  priority: number;
+  isActive: boolean;
+  isDefault: boolean;
+  displayOrder: number;
+}
+
+export interface AppBuilderAiUserRow {
+  userId: string;
+  email: string;
+  displayName: string | null;
+  aiAppsCount: number;
+  offer: { id: string; name: string; slug: string; tokenLimit: number } | null;
+  usage: {
+    currentUsage: number;
+    limit: number;
+    resetsAt: string;
+    percentUsed: number;
+  } | null;
+}
+
+export async function getAppBuilderAiOverview(): Promise<AppBuilderAiOverview> {
+  const response = await apiClient.get<ApiResponse<AppBuilderAiOverview>>(
+    API_ENDPOINTS.adminAppBuilderAi.overview,
+  );
+  return response.data.data;
+}
+
+export async function setAppBuilderAiEnabled(enabled: boolean): Promise<{ enabled: boolean }> {
+  const response = await apiClient.put<ApiResponse<{ enabled: boolean }>>(
+    API_ENDPOINTS.adminAppBuilderAi.enabled,
+    { enabled },
+  );
+  return response.data.data;
+}
+
+export async function listAppBuilderAiOffers(): Promise<{ items: AppBuilderAiOffer[] }> {
+  const response = await apiClient.get<ApiResponse<{ items: AppBuilderAiOffer[] }>>(
+    API_ENDPOINTS.adminAppBuilderAi.offers,
+  );
+  return response.data.data;
+}
+
+export async function createAppBuilderAiOffer(
+  body: Partial<AppBuilderAiOffer> & { name: string; slug: string; tokenLimit: number; windowHours: number },
+): Promise<{ id: string }> {
+  const response = await apiClient.post<ApiResponse<{ id: string }>>(
+    API_ENDPOINTS.adminAppBuilderAi.offers,
+    body,
+  );
+  return response.data.data;
+}
+
+export async function updateAppBuilderAiOffer(
+  id: string,
+  body: Partial<AppBuilderAiOffer>,
+): Promise<{ id: string }> {
+  const response = await apiClient.put<ApiResponse<{ id: string }>>(
+    API_ENDPOINTS.adminAppBuilderAi.offerById(id),
+    body,
+  );
+  return response.data.data;
+}
+
+export async function deleteAppBuilderAiOffer(id: string): Promise<void> {
+  await apiClient.delete(API_ENDPOINTS.adminAppBuilderAi.offerById(id));
+}
+
+export async function listAppBuilderAiUsers(params?: {
+  q?: string;
+  offerId?: string;
+  page?: number;
+  limit?: number;
+}): Promise<{
+  items: AppBuilderAiUserRow[];
+  pagination: { page: number; limit: number; total: number; totalPages: number };
+}> {
+  const response = await apiClient.get<
+    ApiResponse<{
+      items: AppBuilderAiUserRow[];
+      pagination: { page: number; limit: number; total: number; totalPages: number };
+    }>
+  >(API_ENDPOINTS.adminAppBuilderAi.users, { params });
+  return response.data.data;
+}
+
+export async function getAppBuilderAiUserDetail(userId: string): Promise<Record<string, unknown>> {
+  const response = await apiClient.get<ApiResponse<Record<string, unknown>>>(
+    API_ENDPOINTS.adminAppBuilderAi.userById(userId),
+  );
+  return response.data.data;
+}
+
+export async function assignAppBuilderAiOffer(
+  userId: string,
+  offerId: string,
+): Promise<Record<string, unknown>> {
+  const response = await apiClient.post<ApiResponse<Record<string, unknown>>>(
+    API_ENDPOINTS.adminAppBuilderAi.assignOffer(userId),
+    { offerId },
+  );
+  return response.data.data;
+}

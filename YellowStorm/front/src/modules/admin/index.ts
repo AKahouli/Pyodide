@@ -14,6 +14,7 @@ export {
   AuditLogsPage,
   LogsPage,
   PlansPage,
+  AppBuilderAiPage,
   AnalyticsPage,
   SystemPage,
   AppearancePage,
