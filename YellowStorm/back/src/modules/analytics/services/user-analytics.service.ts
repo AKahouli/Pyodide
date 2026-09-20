@@ -78,15 +78,18 @@ export class UserAnalyticsService {
     if (dateTo) conditions.push(sql`${schema.identityUsers.createdAt} <= ${dateTo}`);
     const where = sql.join(conditions, sql` AND `);
 
+    // The format comes from a fixed whitelist (getDateFormat), safe to inline —
+    // PG rejects bind parameters as the to_char format inside GROUP BY.
+    const fmt = sql.raw(`'${format}'`);
     const rows = await this.q
       .select({
-        date: sql<string>`to_char(${schema.identityUsers.createdAt}, ${format})`,
+        date: sql<string>`to_char(${schema.identityUsers.createdAt}, ${fmt})`,
         count: sql<number>`count(*)::int`,
       })
       .from(schema.identityUsers)
       .where(where)
-      .groupBy(sql`to_char(${schema.identityUsers.createdAt}, ${format})`)
-      .orderBy(sql`to_char(${schema.identityUsers.createdAt}, ${format})`);
+      .groupBy(sql`to_char(${schema.identityUsers.createdAt}, ${fmt})`)
+      .orderBy(sql`to_char(${schema.identityUsers.createdAt}, ${fmt})`);
     return rows;
   }
 
