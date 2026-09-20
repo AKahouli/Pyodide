@@ -6,6 +6,7 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from '@/components/ui/tooltip';
+import { cn } from '@/lib/utils';
 import { useModuleTranslation } from '@/modules/localization';
 
 interface AppAiBadgeProps {
@@ -22,13 +23,13 @@ export function AppAiBadge({ className }: AppAiBadgeProps) {
         <TooltipTrigger asChild>
           <Badge
             variant='outline'
-            className={
-              className ??
-              'shrink-0 gap-0.5 border-violet-500/35 bg-violet-500/10 px-1.5 py-0 text-[10px] font-medium text-violet-800 dark:text-violet-200'
-            }
+            className={cn(
+              'h-5 shrink-0 gap-0.5 border-primary/25 bg-primary/10 px-2 text-[10px] font-medium text-primary',
+              className,
+            )}
             aria-label={t('card.aiFeatures')}
           >
-            <Sparkles className='h-2.5 w-2.5' aria-hidden />
+            <Sparkles className='size-2.5' aria-hidden />
             {t('card.ai')}
           </Badge>
         </TooltipTrigger>

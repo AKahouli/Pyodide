@@ -1,4 +1,6 @@
 import React, { useCallback, useMemo, useState } from 'react';
+import { Button } from '@/components/ui/button';
+import { Badge } from '@/components/ui/badge';
 import {
   AlertCircleIcon,
   ColumnsIcon,
@@ -9,9 +11,9 @@ import {
   RefreshCwIcon,
   ExternalLinkIcon,
   SparklesIcon,
+  PlaySquareIcon,
+  LightbulbIcon,
 } from 'lucide-react';
-import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
 import {
   Tooltip,
   TooltipContent,
@@ -38,6 +40,12 @@ import { AppSourceFileTree } from './AppSourceFileTree';
 import { AppSourceFileViewer } from './AppSourceFileViewer';
 import { resolveSourceFilesTree } from '../../utils/files-tree';
 
+const PRIMARY_BADGE_CLASS = 'bg-primary/15 text-primary';
+const RUNNING_BADGE_CLASS = 'bg-blue-500/15 text-blue-500';
+const SUCCESS_BADGE_CLASS = 'bg-green-500/15 text-green-500';
+const ERROR_BADGE_CLASS = 'bg-red-500/15 text-red-500';
+const IDLE_BADGE_CLASS = 'bg-zinc-500/15 text-zinc-500';
+
 // Vague 5 contract: this view NEVER boots Nodepod.
 // BrowserRuntimeHost is started once in ConversationV2SessionPage; useNodepodPreview
 // only subscribes. Props (filesTree, …) are display-only and must not trigger a second boot.
@@ -57,15 +65,15 @@ interface ApplicationComponentViewProps {
 function statusBadgeClass(status: NodepodPreviewStatus): string | null {
   switch (status) {
     case 'ready':
-      return 'bg-ok-soft text-ok';
+      return SUCCESS_BADGE_CLASS;
     case 'loading':
     case 'installing':
     case 'starting':
-      return 'bg-run-soft text-run';
+      return RUNNING_BADGE_CLASS;
     case 'error':
-      return 'bg-fail-soft text-fail';
+      return ERROR_BADGE_CLASS;
     case 'idle':
-      return 'bg-idle-soft text-idle';
+      return IDLE_BADGE_CLASS;
     default:
       return null;
   }
@@ -116,11 +124,11 @@ function ToolbarIconButton({
         <Button
           type='button'
           variant='ghost'
-          size='icon-sm'
+          size='icon-lg'
           onClick={onClick}
           disabled={disabled}
           aria-label={label}
-          className='size-8 shrink-0 text-muted-foreground hover:text-foreground'
+          className='size-9 shrink-0 text-muted-foreground hover:text-foreground'
         >
           {icon}
         </Button>
@@ -142,7 +150,7 @@ function SegmentedControl({
   return (
     <div
       className={cn(
-        'inline-flex items-center gap-0.5 rounded-md border border-border/70 bg-muted/50 p-0.5',
+        'inline-flex items-center gap-1 rounded-lg border border-border/70 bg-muted/50 p-1',
         className,
       )}
     >
@@ -153,7 +161,7 @@ function SegmentedControl({
 
 function segmentClass(active: boolean, disabled?: boolean) {
   return cn(
-    'inline-flex h-7 items-center gap-1.5 rounded-md px-2.5 text-xs font-medium transition-colors',
+    'inline-flex h-8 items-center gap-2 rounded-md px-3 text-sm font-medium transition-colors',
     disabled && 'pointer-events-none opacity-40',
     active
       ? 'bg-background text-foreground shadow-sm'
@@ -315,50 +323,44 @@ export function ApplicationComponentView({
       />
     ) : (
       <div className='flex size-full flex-col items-center justify-center gap-4 bg-gradient-to-b from-muted/30 to-background px-6 text-center'>
-        <div
-          className={cn(
-            'flex size-14 items-center justify-center rounded-2xl border shadow-sm',
-            status === 'error'
-              ? 'border-fail/25 bg-fail-soft'
-              : 'border-border/60 bg-card',
-          )}
-        >
-          {busy && <Loader2Icon className='size-6 animate-spin text-primary' />}
-          {!busy && status === 'error' && (
-            <AlertCircleIcon className='size-6 text-fail' />
-          )}
-          {!busy && status === 'idle' && (
-            <SparklesIcon className='size-6 text-muted-foreground/70' />
-          )}
-        </div>
-        <div className='max-w-sm space-y-1.5'>
-          <p className='text-sm font-semibold tracking-tight'>
-            {statusLabel || t('nodepod.previewTitle')}
-          </p>
-          {status === 'error' && safeError && (
-            <p className='text-xs leading-relaxed text-fail'>{safeError}</p>
-          )}
-          {statusHint && (
-            <p className='text-xs leading-relaxed text-muted-foreground'>{statusHint}</p>
-          )}
-        </div>
-        {(status === 'error' || status === 'idle') && (
-          <Button
-            type='button'
-            variant='outline'
-            size='sm'
-            onClick={retry}
-            className='h-8 gap-1.5'
-          >
-            <RefreshCwIcon className='size-3.5' />
-            {t('nodepod.retry')}
-          </Button>
+      <div className='flex size-20 items-center justify-center rounded-2xl border shadow-lg'>
+        {busy && <Loader2Icon className='size-8 animate-spin text-primary' />}
+        {!busy && status === 'error' && (
+          <AlertCircleIcon className='size-8 text-fail' />
         )}
+        {!busy && status === 'idle' && (
+          <LightbulbIcon className='size-8 text-muted-foreground/70' />
+        )}
+      </div>
+      <div className='max-w-sm space-y-2'>
+        <p className='text-lg font-bold tracking-tight text-foreground'>
+          {statusLabel || t('nodepod.previewTitle')}
+        </p>
+        {status === 'error' && safeError && (
+          <p className='text-sm leading-relaxed text-fail'>{safeError}</p>
+        )}
+        {statusHint && (
+          <p className='text-sm leading-relaxed text-muted-foreground'>{statusHint}</p>
+        )}
+      </div>
+      {(status === 'error' || status === 'idle') && (
+        <Button
+          type='button'
+          variant='outline'
+          size='lg'
+          onClick={retry}
+          className='h-10 gap-2 px-6 text-sm font-medium
+            transition-transform duration-200 hover:scale-[1.01] active:scale-[0.99]'
+        >
+          <PlaySquareIcon className='size-4' />
+          {t('nodepod.retry')}
+        </Button>
+      )}
       </div>
     );
 
   const mainContent = (
-    <div className='flex h-full min-h-0 min-w-0 flex-col overflow-hidden'>
+    <div className='flex h-full min-h-0 flex-col overflow-hidden bg-background/50'>
       <div className='relative min-h-0 flex-1 overflow-hidden'>
         {layoutMode === 'split' && contentPane === 'source' ? (
           <AppSourceFileViewer path={selectedPath ?? ''} content={selectedContent} />
@@ -384,7 +386,7 @@ export function ApplicationComponentView({
           aria-hidden={showDeployedApp || undefined}
         >
           <div
-            className='flex h-10 shrink-0 items-center gap-2 border-b border-border/70 bg-card/70 px-2.5'
+            className='flex h-12 shrink-0 items-center gap-2 border-b border-border/70 bg-card/70 px-4'
             role='toolbar'
             aria-label={t('nodepod.toolbarLabel')}
           >
@@ -392,44 +394,44 @@ export function ApplicationComponentView({
               <Badge
                 variant='secondary'
                 className={cn(
-                  'h-6 shrink-0 gap-1.5 border-0 px-2 text-[11px] font-medium',
+                  'h-7 shrink-0 gap-1.5 rounded-full border-0 px-3 text-xs font-medium',
                   badge.className,
                 )}
               >
-                {busy && <Loader2Icon className='size-3 animate-spin' />}
+                {busy && <Loader2Icon className='size-3.5 animate-spin' />}
                 {status === 'ready' && (
-                  <span className='size-1.5 rounded-full bg-ok' aria-hidden />
+                  <span className='size-2 rounded-full bg-ok' aria-hidden />
                 )}
                 {badge.label}
               </Badge>
             )}
 
             {title ? (
-              <p className='min-w-0 truncate text-xs font-medium text-foreground/90'>
+              <h2 className='min-w-0 truncate text-sm font-semibold text-foreground'>
                 {title}
-              </p>
+              </h2>
             ) : buildPhaseLabel ? (
-              <p className='hidden min-w-0 truncate text-[11px] text-muted-foreground lg:block'>
+              <p className='hidden min-w-0 truncate text-xs text-muted-foreground lg:block'>
                 {buildPhaseLabel}
               </p>
             ) : null}
 
             {fileCount != null && fileCount > 0 && (
-              <span className='hidden shrink-0 text-[11px] tabular-nums text-muted-foreground md:inline'>
+              <span className='hidden shrink-0 text-xs tabular-nums text-muted-foreground md:inline'>
                 {t('nodepod.fileCount', { count: fileCount })}
               </span>
             )}
 
-            <div className='ml-auto flex shrink-0 items-center gap-1'>
+            <div className='ml-auto flex shrink-0 items-center gap-2'>
               {layoutMode === 'split' && (
-                <SegmentedControl className='mr-0.5'>
+                <SegmentedControl className='mr-1'>
                   <button
                     type='button'
                     onClick={() => setContentPane('preview')}
                     className={segmentClass(contentPane === 'preview')}
                     aria-pressed={contentPane === 'preview'}
                   >
-                    <EyeIcon className='size-3.5' />
+                    <EyeIcon className='size-4' />
                     <span className='hidden sm:inline'>{t('nodepod.tabPreview')}</span>
                   </button>
                   <button
@@ -439,7 +441,7 @@ export function ApplicationComponentView({
                     disabled={!selectedPath}
                     aria-pressed={contentPane === 'source'}
                   >
-                    <FileCodeIcon className='size-3.5' />
+                    <FileCodeIcon className='size-4' />
                     <span className='hidden sm:inline'>{t('nodepod.tabSource')}</span>
                   </button>
                 </SegmentedControl>
@@ -455,7 +457,7 @@ export function ApplicationComponentView({
                       aria-pressed={layoutMode === 'preview-only'}
                       aria-label={t('nodepod.layoutPreviewOnlyHint')}
                     >
-                      <Maximize2Icon className='size-3.5' />
+                      <Maximize2Icon className='size-4' />
                       <span className='hidden md:inline'>{t('nodepod.layoutPreviewOnly')}</span>
                     </button>
                   </TooltipTrigger>
@@ -472,7 +474,7 @@ export function ApplicationComponentView({
                       aria-pressed={layoutMode === 'split'}
                       aria-label={t('nodepod.layoutSplitHint')}
                     >
-                      <ColumnsIcon className='size-3.5' />
+                      <ColumnsIcon className='size-4' />
                       <span className='hidden md:inline'>{t('nodepod.layoutSplit')}</span>
                     </button>
                   </TooltipTrigger>
@@ -484,7 +486,7 @@ export function ApplicationComponentView({
 
               {status === 'ready' && previewUrl && (
                 <ToolbarIconButton
-                  icon={<ExternalLinkIcon className='size-3.5' />}
+                  icon={<ExternalLinkIcon className='size-4' />}
                   onClick={handleOpenExternal}
                   label={t('nodepod.openInNewTab')}
                 />
@@ -492,7 +494,7 @@ export function ApplicationComponentView({
 
               {(status === 'error' || status === 'idle' || status === 'ready') && (
                 <ToolbarIconButton
-                  icon={<RefreshCwIcon className='size-3.5' />}
+                  icon={<RefreshCwIcon className='size-4' />}
                   onClick={retry}
                   label={t('nodepod.retry')}
                 />

@@ -58,8 +58,8 @@ export function AppBuilderGrid({
 
   const layoutClass =
     view === 'grid'
-      ? 'grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3'
-      : 'flex flex-col gap-2';
+      ? 'grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3'
+      : 'flex flex-col gap-2.5';
 
   const countLabel =
     items.length === 1
@@ -67,7 +67,7 @@ export function AppBuilderGrid({
       : t('hub.sections.appsCount', { count: items.length });
 
   return (
-    <section className='space-y-3' aria-labelledby='app-builder-list-heading'>
+    <section className='space-y-4' aria-labelledby='app-builder-list-heading'>
       <header className='flex items-baseline gap-3'>
         <h2
           id='app-builder-list-heading'
@@ -75,7 +75,7 @@ export function AppBuilderGrid({
         >
           {t(APP_BUILDER_TAB_LIST_HEADING_KEYS[tab])}
         </h2>
-        <span className='h-px flex-1 bg-border/80' />
+        <span className='h-px flex-1 bg-border/70' aria-hidden />
         <span className='text-[11px] tabular-nums text-muted-foreground'>{countLabel}</span>
       </header>
 
