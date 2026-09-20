@@ -1,8 +1,4 @@
-import { Injectable } from '@nestjs/common';
-import { InjectModel } from '@nestjs/mongoose';
-import { Model } from 'mongoose';
-import { AuthProvider, AuthProviderDocument } from '../schemas/auth-provider.schema';
-import { UserProviderLink, UserProviderLinkDocument } from '../schemas/user-provider-link.schema';
+import { Inject, Injectable } from '@nestjs/common';
 import { CryptoService } from '@common/services/crypto.service';
 import { LoggerService } from '@modules/logger';
 import { SystemService } from '@modules/system/system.service';
@@ -20,14 +16,19 @@ import {
   AuthProviderAdminResponse,
   DecryptedProviderConfig,
 } from '../interfaces/auth-provider.interface';
+import {
+  AUTH_PROVIDER_STORE,
+  USER_PROVIDER_LINK_STORE,
+  type AuthProviderRecord,
+  type AuthProviderStore,
+  type UserProviderLinkStore,
+} from '../persistence/auth-provider.stores';
 
 @Injectable()
 export class AuthProviderService {
   constructor(
-    @InjectModel(AuthProvider.name)
-    private readonly authProviderModel: Model<AuthProviderDocument>,
-    @InjectModel(UserProviderLink.name)
-    private readonly userProviderLinkModel: Model<UserProviderLinkDocument>,
+    @Inject(AUTH_PROVIDER_STORE) private readonly providerStore: AuthProviderStore,
+    @Inject(USER_PROVIDER_LINK_STORE) private readonly linkStore: UserProviderLinkStore,
     private readonly cryptoService: CryptoService,
     private readonly logger: LoggerService,
     private readonly systemService: SystemService,
@@ -40,17 +41,11 @@ export class AuthProviderService {
    * Prepends classic email/password as a virtual provider.
    */
   async findAll(): Promise<AuthProviderAdminResponse[]> {
-    const providers = await this.authProviderModel
-      .find()
-      .sort({ sortOrder: 1, displayName: 1 })
-      .lean()
-      .exec();
+    const providers = await this.providerStore.findAll();
 
     const responses = await Promise.all(
       providers.map(async (p) => {
-        const linkedUserCount = await this.userProviderLinkModel.countDocuments({
-          providerKey: p.providerKey,
-        });
+        const linkedUserCount = await this.linkStore.countByProviderKey(p.providerKey);
         return this.toAdminResponse(p, linkedUserCount);
       }),
     );
@@ -65,11 +60,7 @@ export class AuthProviderService {
    * Includes classic email/password as a virtual provider (sortOrder: 999 → renders last).
    */
   async findEnabled(): Promise<AuthProviderPublicResponse[]> {
-    const providers = await this.authProviderModel
-      .find({ enabled: true })
-      .sort({ sortOrder: 1, displayName: 1 })
-      .lean()
-      .exec();
+    const providers = await this.providerStore.findAllEnabled();
 
     const oauthProviders: AuthProviderPublicResponse[] = providers.map((p) => ({
       type: 'oauth' as const,
@@ -100,10 +91,7 @@ export class AuthProviderService {
    * Find provider by key — decrypts secrets (internal use only).
    */
   async findByKey(providerKey: string): Promise<DecryptedProviderConfig> {
-    const provider = await this.authProviderModel
-      .findOne({ providerKey: providerKey.toLowerCase() })
-      .lean()
-      .exec();
+    const provider = await this.providerStore.findByKey(providerKey.toLowerCase());
 
     if (!provider) {
       throw new NotFoundException(
@@ -138,13 +126,11 @@ export class AuthProviderService {
    * Find provider by ID (admin view, masked).
    */
   async findById(id: string): Promise<AuthProviderAdminResponse> {
-    const provider = await this.authProviderModel.findById(id).lean().exec();
+    const provider = await this.providerStore.findById(id);
     if (!provider) {
       throw new NotFoundException(ErrorCode.AUTH_PROVIDER_NOT_FOUND, 'Provider not found');
     }
-    const linkedUserCount = await this.userProviderLinkModel.countDocuments({
-      providerKey: provider.providerKey,
-    });
+    const linkedUserCount = await this.linkStore.countByProviderKey(provider.providerKey);
     return this.toAdminResponse(provider, linkedUserCount);
   }
 
@@ -153,54 +139,46 @@ export class AuthProviderService {
    */
   async create(dto: CreateAuthProviderDto): Promise<AuthProviderAdminResponse> {
     // Check uniqueness
-    const existing = await this.authProviderModel.findOne({
-      providerKey: dto.providerKey.toLowerCase(),
-    });
-    if (existing) {
+    if (await this.providerStore.existsByKey(dto.providerKey.toLowerCase())) {
       throw new ConflictException(
         ErrorCode.AUTH_PROVIDER_ALREADY_EXISTS,
         `Provider '${dto.providerKey}' already exists`,
       );
     }
 
-    const provider = new this.authProviderModel({
+    const provider = await this.providerStore.create({
       providerKey: dto.providerKey.toLowerCase(),
       displayName: dto.displayName,
       clientId: this.cryptoService.encrypt(dto.clientId),
       clientSecret: this.cryptoService.encrypt(dto.clientSecret),
-      tenantId: dto.tenantId ? this.cryptoService.encrypt(dto.tenantId) : undefined,
+      tenantId: dto.tenantId ? this.cryptoService.encrypt(dto.tenantId) : null,
       authorizationUrl: dto.authorizationUrl,
       tokenUrl: dto.tokenUrl,
       userinfoUrl: dto.userinfoUrl,
       scopes: dto.scopes ?? ['openid', 'email', 'profile'],
-      iconKey: dto.iconKey,
+      iconKey: dto.iconKey ?? null,
       sortOrder: dto.sortOrder ?? 0,
       pkceEnabled: dto.pkceEnabled ?? true,
       enabled: dto.enabled ?? true,
     });
 
-    await provider.save();
-
     this.logger.log('Auth provider created', { providerKey: provider.providerKey });
 
-    return this.toAdminResponse(provider.toObject());
+    return this.toAdminResponse(provider);
   }
 
   /**
    * Update a provider (admin). Preserves secrets if masked values sent.
    */
   async update(id: string, dto: UpdateAuthProviderDto): Promise<AuthProviderAdminResponse> {
-    const provider = await this.authProviderModel.findById(id);
+    const provider = await this.providerStore.findById(id);
     if (!provider) {
       throw new NotFoundException(ErrorCode.AUTH_PROVIDER_NOT_FOUND, 'Provider not found');
     }
 
     // Check uniqueness if providerKey is changing
     if (dto.providerKey && dto.providerKey.toLowerCase() !== provider.providerKey) {
-      const existing = await this.authProviderModel.findOne({
-        providerKey: dto.providerKey.toLowerCase(),
-      });
-      if (existing) {
+      if (await this.providerStore.existsByKey(dto.providerKey.toLowerCase())) {
         throw new ConflictException(
           ErrorCode.AUTH_PROVIDER_ALREADY_EXISTS,
           `Provider '${dto.providerKey}' already exists`,
@@ -230,16 +208,16 @@ export class AuthProviderService {
       if (dto.tenantId && dto.tenantId !== '****') {
         provider.tenantId = this.cryptoService.encrypt(dto.tenantId);
       } else if (dto.tenantId === '') {
-        provider.tenantId = undefined;
+        provider.tenantId = null;
       }
       // If '****', keep existing value
     }
 
-    await provider.save();
+    const updated = await this.providerStore.update(id, provider);
 
     this.logger.log('Auth provider updated', { providerKey: provider.providerKey });
 
-    return this.toAdminResponse(provider.toObject());
+    return this.toAdminResponse(updated ?? provider);
   }
 
   /**
@@ -248,7 +226,7 @@ export class AuthProviderService {
    * lets users login again without re-linking.
    */
   async delete(id: string, deleteLinks = false): Promise<{ unlinkedUsers: number }> {
-    const provider = await this.authProviderModel.findById(id);
+    const provider = await this.providerStore.findById(id);
     if (!provider) {
       throw new NotFoundException(ErrorCode.AUTH_PROVIDER_NOT_FOUND, 'Provider not found');
     }
@@ -256,13 +234,10 @@ export class AuthProviderService {
     let unlinkedUsers = 0;
 
     if (deleteLinks) {
-      const result = await this.userProviderLinkModel.deleteMany({
-        providerKey: provider.providerKey,
-      });
-      unlinkedUsers = result.deletedCount;
+      unlinkedUsers = await this.linkStore.deleteAllByProviderKey(provider.providerKey);
     }
 
-    await this.authProviderModel.deleteOne({ _id: id });
+    await this.providerStore.deleteById(id);
 
     this.logger.log('Auth provider deleted', {
       providerKey: provider.providerKey,
@@ -277,7 +252,7 @@ export class AuthProviderService {
    * Get the number of users linked to a provider.
    */
   async getLinkedUserCount(providerKey: string): Promise<number> {
-    return this.userProviderLinkModel.countDocuments({ providerKey });
+    return this.linkStore.countByProviderKey(providerKey);
   }
 
   /**
@@ -344,13 +319,12 @@ export class AuthProviderService {
   }
 
   private toAdminResponse(
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    p: any,
+    p: AuthProviderRecord,
     linkedUserCount = 0,
   ): AuthProviderAdminResponse {
     return {
       type: 'oauth',
-      id: (p._id || p.id).toString(),
+      id: p.id,
       providerKey: p.providerKey,
       displayName: p.displayName,
       clientId: '****',
@@ -360,7 +334,7 @@ export class AuthProviderService {
       tokenUrl: p.tokenUrl,
       userinfoUrl: p.userinfoUrl,
       scopes: p.scopes,
-      iconKey: p.iconKey,
+      iconKey: p.iconKey ?? undefined,
       sortOrder: p.sortOrder,
       pkceEnabled: p.pkceEnabled,
       enabled: p.enabled,

@@ -1,7 +1,7 @@
 import { Injectable } from '@nestjs/common';
-import { InjectModel } from '@nestjs/mongoose';
+import { Inject } from '@nestjs/common';
 import { Model } from 'mongoose';
-import { AuthProvider, AuthProviderDocument } from '../schemas/auth-provider.schema';
+import { AUTH_PROVIDER_STORE, type AuthProviderStore } from '../persistence/auth-provider.stores';
 import { CryptoService } from '@common/services/crypto.service';
 import { LoggerService } from '@modules/logger';
 
@@ -25,8 +25,8 @@ export interface ProviderHealthStatus {
 @Injectable()
 export class AuthProviderHealthService {
   constructor(
-    @InjectModel(AuthProvider.name)
-    private readonly authProviderModel: Model<AuthProviderDocument>,
+    @Inject(AUTH_PROVIDER_STORE)
+    private readonly providerStore: AuthProviderStore,
     private readonly cryptoService: CryptoService,
     private readonly logger: LoggerService,
   ) {
@@ -44,7 +44,7 @@ export class AuthProviderHealthService {
     const startTime = Date.now();
 
     try {
-      const providers = await this.authProviderModel.find().lean().exec();
+      const providers = await this.providerStore.findAll();
 
       // No providers configured — feature is simply not in use, that's healthy
       if (providers.length === 0) {
