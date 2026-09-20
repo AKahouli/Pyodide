@@ -558,3 +558,7 @@ db.roles.updateOne(
 | `ERR_2102` | `ROLE_SYSTEM_PROTECTED` | Cannot modify system role |
 | `ERR_2103` | `PERMISSION_DENIED` | User lacks required permission |
 | `ERR_2104` | `INVALID_PERMISSION` | Permission string not recognized |
+
+## Role cache (plan 1A.15)
+
+The in-process role cache (permissions + names per role id) refreshes on a 5-minute TTL and on local invalidation. Cross-instance invalidation remains TTL-bound: a role change on instance A is visible on instance B within the TTL at most. This is unchanged from the MongoDB implementation.

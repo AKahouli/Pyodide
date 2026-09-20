@@ -451,7 +451,7 @@ CREATE INDEX IF NOT EXISTS idx_user_group_members_user ON identity.user_group_me
 
 **Stores and persistence (refactor first: Mongo implementations behind ports, no behavior change)**
 
-- [ ] **1A.1** Introduce the store ports listed below, each with Mongo and PG implementations (same pattern as workspace D.5/D.6):
+- [x] **1A.1**** Introduce the store ports listed below, each with Mongo and PG implementations (same pattern as workspace D.5/D.6):
 
   | Port | Methods |
   |---|---|
@@ -467,26 +467,26 @@ CREATE INDEX IF NOT EXISTS idx_user_group_members_user ON identity.user_group_me
 
   - Services stop using `Model<…>` directly.
   - **`user.save()` (13 sites) becomes `userStore.update(id, patch)`**, with an explicit patch per call site. Do not port a generic "save whole doc".
-- [ ] **1A.2 Role mutations become atomic.**
+- [x] **1A.2** Role mutations become atomic.**
   - `authorization.service.ts:134/180/189` (`$pull`/`$addToSet roles` + `$inc permissionsVersion`) become one `withTransaction`: an `INSERT … ON CONFLICT DO NOTHING` or `DELETE` on `user_roles`, then `UPDATE users SET permissions_version = permissions_version + 1, updated_at = now()`.
   - Role delete runs `DELETE roles` (the junction cascades) plus `UPDATE users SET permissions_version = permissions_version + 1 WHERE id IN (SELECT user_id … captured before delete)`, all in one transaction.
-- [ ] **1A.3 Refresh rotation** (`auth.service.ts:542-618`):
+- [x] **1A.3** Refresh rotation** (`auth.service.ts:542-618`):
   - `performAtomicRotation` becomes `withTransaction` with a conditional claim: `UPDATE identity.sessions SET is_valid=false, rotated_to_session_id=$new, rotation_attempt_id=$a, rotated_at=now(), rotation_receipt_* = … WHERE id=$old AND is_valid RETURNING *`, followed by `INSERT` of the successor.
   - A unique violation on `uq_sessions_rotated_from` means a concurrent rotation won; take the existing receipt path.
   - **Delete** `performStandaloneRotation` and `isUnsupportedTransactionError` (`auth/utils/rotation-errors.ts`).
   - Keep `auth.service.rotation.spec.ts` green by retargeting its mocks to the `SessionStore`.
-- [ ] **1A.4 Session bulk invalidations:**
+- [x] **1A.4** Session bulk invalidations:**
   - Family reuse, logout-all and max-sessions (`auth.service.ts:890/920/941`) become single `UPDATE … SET is_valid=false`.
   - The max-sessions cap uses `… WHERE id IN (SELECT id FROM identity.sessions WHERE user_id=$1 AND is_valid ORDER BY created_at DESC OFFSET $max FOR UPDATE SKIP LOCKED)`.
-- [ ] **1A.5 OAuth one-shot consumption.** `findOneAndDelete` at `oauth-flow.service.ts:118/173/216` becomes `DELETE … WHERE state=$1 RETURNING *` (and likewise for tokens). Also add `AND expires_at > now()`, which makes the Mongo TTL granularity (≤ 60 s) strict. The behavior change is safe.
-- [ ] **1A.6 Sweeper registrations:**
+- [x] **1A.5** OAuth one-shot consumption.** `findOneAndDelete` at `oauth-flow.service.ts:118/173/216` becomes `DELETE … WHERE state=$1 RETURNING *` (and likewise for tokens). Also add `AND expires_at > now()`, which makes the Mongo TTL granularity (≤ 60 s) strict. The behavior change is safe.
+- [x] **1A.6** Sweeper registrations:**
   - `identity.sessions.expires_at`, `identity.oauth_states.expires_at`, `identity.provider_link_tokens.expires_at`.
   - `authz.audit_logs.created_at` with `olderThan: '730 days'` (Step 0.4).
-- [ ] **1A.7 Search:**
+- [x] **1A.7** Search:**
   - `user.service.ts:506` and `admin-user.controller.ts:80` → `ILIKE '%'||escapeLike(q)||'%'` on `email`, `first_name`, `last_name`, preserving the `status='active'` filter in `searchUsers`.
   - `audit-log.service.ts:71/78` → `actor_email ILIKE`, and `action ILIKE 'feature.%'`.
   - `distinct(action)` → `SELECT DISTINCT action`.
-- [ ] **1A.8 Mapper** `user-record.mapper.ts`:
+- [x] **1A.8** Mapper** `user-record.mapper.ts`:
   - Rebuilds `profile`, `appearance` and `consents` as nested objects.
   - Rebuilds `fullName` exactly as the virtual does (`user.schema.ts:164`).
   - `roles` are ids ordered by `position`.
@@ -496,8 +496,8 @@ CREATE INDEX IF NOT EXISTS idx_user_group_members_user ON identity.user_group_me
 
 **Replace every Mongo `User` access outside the module (all in the cutover PR)**
 
-- [ ] **1A.9** Extend `UserLookupPort` with `byEmails(emails): Map<email, UserSummary>`. Add `PgUserLookupAdapter`, bound under `USER_LOOKUP_PORT` in `user.module.ts`.
-- [ ] **1A.10** Rewrite the outside injectors:
+- [x] **1A.9**** Extend `UserLookupPort` with `byEmails(emails): Map<email, UserSummary>`. Add `PgUserLookupAdapter`, bound under `USER_LOOKUP_PORT` in `user.module.ts`.
+- [x] **1A.10**** Rewrite the outside injectors:
 
   | File | Change |
   |---|---|
@@ -511,7 +511,7 @@ CREATE INDEX IF NOT EXISTS idx_user_group_members_user ON identity.user_group_me
 
   - Then remove `User` from the `forFeature` lists of `analytics`, `telegram`, `whatsapp`, `system`, and from the `UserModule` export.
   - Update `whatsapp-message.service.spec.ts:98`.
-- [ ] **1A.11** Replace the populates:
+- [x] **1A.11**** Replace the populates:
 
   | File | Populates | Replacement |
   |---|---|---|
@@ -523,24 +523,24 @@ CREATE INDEX IF NOT EXISTS idx_user_group_members_user ON identity.user_group_me
   | `playbook-share.service.ts` | ×3 | same as `agent-share.service.ts` |
 
   **Guard:** add a jest test (`test/guards/no-user-populate.spec.ts`) that greps `src/**/*.ts` and fails on `populate('sharedWith'|'sharedBy'|'members'|'roles'`, or on any `@InjectModel(User.name)`.
-- [ ] **1A.12 Groups.**
+- [x] **1A.12** Groups.**
   - `GROUP_LOOKUP_PORT` → `PgGroupLookupAdapter` (join on members).
   - Remove the `UserGroup` `forFeature` from `pg-governance-persistence.module.ts:36`.
   - `UserGroupService.findGroupIdsForMember` / `findOwnedGroupsByIds` stay the public API (governance calls them), and become PG-backed.
   - `$addToSet`/`$pull members` become `INSERT … ON CONFLICT DO NOTHING` / `DELETE`.
   - `position` = `coalesce(max(position), -1) + 1` in the same statement.
-- [ ] **1A.13 JWT strategy.**
+- [x] **1A.13** JWT strategy.**
   - `jwt.strategy.ts` returns `toAuthUser(row)` merged with the claims (`permissions`, `roleNames`, `permissionsVersion`).
   - The per-request `isSessionValid` + `findById` become two PK lookups. Collapse them into one query: `SELECT u.*, s.is_valid FROM identity.sessions s JOIN identity.users u ON u.id = s.user_id WHERE s.id = $1`.
   - Transient PG errors still map to 503 (`transient-connection-error.ts` patterns).
-- [ ] **1A.14 Seeds.**
+- [x] **1A.14** Seeds.**
   - `seedDefaultRoles()` becomes `INSERT … ON CONFLICT (name) DO NOTHING`.
   - `create_admin.js` → `scripts/create-admin.ts`. It reads email, password and role from argv/env, hashes with bcrypt(12), and upserts the user plus the `super_admin` role link. **No hard-coded hash or ids.**
-- [ ] **1A.15 Role cache.** Keep the 5-minute in-process cache as it is. Note in `authorization/README.md` that cross-instance invalidation is still TTL-bound, which is unchanged from today.
+- [x] **1A.15** Role cache.** Keep the 5-minute in-process cache as it is. Note in `authorization/README.md` that cross-instance invalidation is still TTL-bound, which is unchanged from today.
 
 **Backfill and cutover**
 
-- [ ] **1A.16** Write `scripts/migrate/2026-10-identity.ts` on `runBackfill`, one unit per collection, ordered: roles → users (+`user_roles`) → user_groups (+members) → auth_providers → user_provider_links → audit_logs.
+- [x] **1A.16**** Write `scripts/migrate/2026-10-identity.ts` on `runBackfill`, one unit per collection, ordered: roles → users (+`user_roles`) → user_groups (+members) → auth_providers → user_provider_links → audit_logs.
   - **Users:**
     - `email.trim().toLowerCase()`. A duplicate after lowercasing is a **reject** (reported, not merged); resolve it manually before `--strict`.
     - Copy `passwordHash`, `emailVerificationToken`, `passwordResetToken` byte-for-byte.
@@ -550,8 +550,8 @@ CREATE INDEX IF NOT EXISTS idx_user_group_members_user ON identity.user_group_me
   - **auth_providers:** copy `clientId`/`clientSecret`/`tenantId` ciphertext unchanged; `--checksum` covers them.
   - **audit_logs:** skip rows older than 730 days (the TTL would have removed them). Batch size 5 000.
   - **Not copied:** sessions, oauth_states, provider_link_tokens.
-- [ ] **1A.17** `2026-10-identity-fk.ts`: no cross-schema FKs are needed in this step (identity↔authz is created in the migration because both schemas land together). Include only the orphan report for `users.plan_id`, whose FK is added in 1B.3.
-- [ ] **1A.18 Cutover** (procedure above):
+- [x] **1A.17**** `2026-10-identity-fk.ts`: no cross-schema FKs are needed in this step (identity↔authz is created in the migration because both schemas land together). Include only the orphan report for `users.plan_id`, whose FK is added in 1B.3.
+- [~] **1A.18 Cutover** (procedure above): *(2026-09-20: 0021 applied to agentstore; backfill real run verified — 7 roles / 146 users / 5 groups / 1 auth_provider (checksum byte-exact) / 20 links / 3045 audit logs; plan_id orphans 0; bindings flipped to Pg\*; TTL sweeps registered. REMAINING: final delta backfill re-run right before deploy, restart instances, run the smoke list below, announce forced re-login.)*
   - Announce the forced re-login.
   - Smoke test covers:
     - classic register → approval → login → refresh → rotation reuse detection

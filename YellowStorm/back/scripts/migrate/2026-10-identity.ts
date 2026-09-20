@@ -333,8 +333,9 @@ async function main(): Promise<void> {
         );
       },
       checksumRows: async (ids) => {
-        const r = await pool.query('SELECT id, client_id, client_secret, tenant_id FROM identity.auth_providers WHERE id = ANY($1)', [ids]);
-        return new Map(r.rows.map((row) => [row.id, { clientId: row.client_id, clientSecret: row.client_secret, tenantId: row.tenant_id }]));
+        // Full row read-back: the unit's keys are the snake_case columns.
+        const r = await pool.query('SELECT * FROM identity.auth_providers WHERE id = ANY($1)', [ids]);
+        return new Map(r.rows.map((row) => [row.id, row]));
       },
       pgCount: async () => (await pool.query('SELECT count(*)::int AS n FROM identity.auth_providers')).rows[0].n,
       pgIds: async () => (await pool.query('SELECT id FROM identity.auth_providers')).rows.map((r) => r.id),
