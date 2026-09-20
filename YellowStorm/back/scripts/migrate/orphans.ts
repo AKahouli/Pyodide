@@ -25,17 +25,21 @@ export interface OrphanReportItem {
 
 /**
  * Resolve a dot-path to the string id(s) stored there. Array values yield one
- * entry per element; scalars yield one.
- *
- * ponytail: handles object dot-paths and flat arrays of ids; arrays of
- * subdocuments with nested paths (e.g. 'files.0.docId') are out of scope until
- * a backfill needs them.
+ * entry per element; scalars yield one. An array met mid-path (e.g.
+ * 'members.agentId') fans out over its elements for the remaining path.
  */
 export function getPath(doc: MongoDoc, dotPath: string): string[] {
+  const parts = dotPath.split('.');
   let current: unknown = doc;
-  for (const part of dotPath.split('.')) {
+  for (let i = 0; i < parts.length; i += 1) {
     if (current == null || typeof current !== 'object') return [];
-    current = (current as Record<string, unknown>)[part];
+    if (Array.isArray(current)) {
+      const rest = parts.slice(i).join('.');
+      return current
+        .flatMap((el) => (el == null || typeof el !== 'object' ? [] : getPath(el as MongoDoc, rest)))
+        .filter((v) => v && v !== 'undefined' && v !== '[object Object]');
+    }
+    current = (current as Record<string, unknown>)[parts[i]];
   }
   if (current == null) return [];
   const values = Array.isArray(current) ? current : [current];
