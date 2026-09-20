@@ -3,7 +3,7 @@ import { ApiBearerAuth, ApiOperation, ApiParam, ApiTags } from '@nestjs/swagger'
 import { finalize, of, Subject } from 'rxjs';
 import type { Observable } from 'rxjs';
 import { CurrentUser } from '@modules/auth/decorators/current-user.decorator';
-import { UserDocument } from '@modules/user/schemas/user.schema';
+import type { AuthUser } from '@common/auth/auth-user';
 import { WhatsAppConnectionService } from '../services/whatsapp-connection.service';
 import { WhatsAppIntegrationSseService } from '../services/whatsapp-integration-sse.service';
 import { WhatsAppIntegrationService } from '../services/whatsapp-integration.service';
@@ -30,7 +30,7 @@ export class WhatsAppIntegrationEventsController {
   @ApiOperation({ summary: 'SSE — live WhatsApp integration status for an agent' })
   @ApiParam({ name: 'agentId', description: 'Agent ID' })
   stream(
-    @CurrentUser() user: UserDocument,
+    @CurrentUser() user: AuthUser,
     @Param('agentId') agentId: string,
   ): Observable<MessageEvent> {
     this.connectionService.assertEnabled();

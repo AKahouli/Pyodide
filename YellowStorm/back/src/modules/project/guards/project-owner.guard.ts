@@ -4,10 +4,10 @@ import { PROJECT_STORE, type ProjectRecord, type ProjectStore } from '../persist
 import { isObjectId, normalizeObjectId } from '@common/postgres/object-id';
 import { ForbiddenException, NotFoundException } from '../../exceptions';
 import { ErrorCode } from '../../exceptions/constants/error-codes';
-import { UserDocument } from '../../user/schemas/user.schema';
+import type { AuthUser } from '@common/auth/auth-user';
 
 interface RequestWithProject extends Request {
-  user?: UserDocument;
+  user?: AuthUser;
   project?: ProjectRecord;
 }
 

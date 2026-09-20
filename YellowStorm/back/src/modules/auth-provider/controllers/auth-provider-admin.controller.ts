@@ -15,7 +15,7 @@ import { RequirePermissions } from '@modules/authorization/decorators/require-pe
 import { Permissions } from '@modules/authorization/constants/permissions';
 import { AuditLogService } from '@modules/authorization/services/audit-log.service';
 import { CurrentUser } from '@modules/auth/decorators/current-user.decorator';
-import { UserDocument } from '@modules/user/schemas/user.schema';
+import type { AuthUser } from '@common/auth/auth-user';
 import { AuthProviderService } from '../services/auth-provider.service';
 import { CreateAuthProviderDto } from '../dto/create-auth-provider.dto';
 import { UpdateAuthProviderDto } from '../dto/update-auth-provider.dto';
@@ -58,7 +58,7 @@ export class AuthProviderAdminController {
   @ApiResponse({ status: 200, description: 'Classic auth updated' })
   async updateClassicAuth(
     @Body() dto: UpdateClassicAuthDto,
-    @CurrentUser() user: UserDocument,
+    @CurrentUser() user: AuthUser,
     @Req() req: Request,
   ) {
     const result = await this.authProviderService.updateClassicAuth(
@@ -96,7 +96,7 @@ export class AuthProviderAdminController {
   @ApiResponse({ status: 409, description: 'Provider key already exists' })
   async create(
     @Body() dto: CreateAuthProviderDto,
-    @CurrentUser() user: UserDocument,
+    @CurrentUser() user: AuthUser,
     @Req() req: Request,
   ) {
     const result = await this.authProviderService.create(dto);
@@ -123,7 +123,7 @@ export class AuthProviderAdminController {
   async update(
     @Param('id') id: string,
     @Body() dto: UpdateAuthProviderDto,
-    @CurrentUser() user: UserDocument,
+    @CurrentUser() user: AuthUser,
     @Req() req: Request,
   ) {
     const result = await this.authProviderService.update(id, dto);
@@ -151,7 +151,7 @@ export class AuthProviderAdminController {
   async delete(
     @Param('id') id: string,
     @Query('deleteLinks') deleteLinks: string,
-    @CurrentUser() user: UserDocument,
+    @CurrentUser() user: AuthUser,
     @Req() req: Request,
   ) {
     // Get provider info before deletion for audit log

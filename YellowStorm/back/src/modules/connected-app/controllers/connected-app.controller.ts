@@ -1,7 +1,7 @@
 import { Controller, Get, Delete, Param } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth, ApiParam } from '@nestjs/swagger';
 import { CurrentUser } from '@modules/auth/decorators/current-user.decorator';
-import { UserDocument } from '@modules/user/schemas/user.schema';
+import type { AuthUser } from '@common/auth/auth-user';
 import { RateLimit } from '@modules/rate-limiter';
 import { ConnectedAppOAuthService } from '../services/connected-app-oauth.service';
 import { ConnectedAppTokenService } from '../services/connected-app-token.service';
@@ -20,21 +20,21 @@ export class ConnectedAppController {
   @Get()
   @ApiOperation({ summary: 'List available apps with user connection status' })
   @ApiResponse({ status: 200, description: 'Apps with connection status' })
-  async getAvailableApps(@CurrentUser() user: UserDocument) {
+  async getAvailableApps(@CurrentUser() user: AuthUser) {
     return this.userService.getAvailableApps(user._id.toString());
   }
 
   @Get('connections')
   @ApiOperation({ summary: 'List user active connections (metadata only)' })
   @ApiResponse({ status: 200, description: 'Active connections' })
-  async getUserConnections(@CurrentUser() user: UserDocument) {
+  async getUserConnections(@CurrentUser() user: AuthUser) {
     return this.userService.getUserConnections(user._id.toString());
   }
 
   @Get('mailbox-capability')
   @ApiOperation({ summary: 'Get Microsoft 365 mailbox capability status for the current user' })
   @ApiResponse({ status: 200, description: 'Mailbox capability status' })
-  async getMailboxCapability(@CurrentUser() user: UserDocument) {
+  async getMailboxCapability(@CurrentUser() user: AuthUser) {
     return this.tokenService.getMailboxCapability(user._id.toString());
   }
 
@@ -45,7 +45,7 @@ export class ConnectedAppController {
   @ApiResponse({ status: 200, description: 'Authorization URL' })
   async authorize(
     @Param('appKey') appKey: string,
-    @CurrentUser() user: UserDocument,
+    @CurrentUser() user: AuthUser,
   ) {
     const authorizationUrl = await this.oauthService.buildAuthorizationUrl(
       user._id.toString(),
@@ -61,7 +61,7 @@ export class ConnectedAppController {
   @ApiResponse({ status: 404, description: 'Not connected' })
   async disconnect(
     @Param('appKey') appKey: string,
-    @CurrentUser() user: UserDocument,
+    @CurrentUser() user: AuthUser,
   ) {
     await this.tokenService.disconnect(user._id.toString(), appKey);
     return { message: 'Disconnected successfully' };

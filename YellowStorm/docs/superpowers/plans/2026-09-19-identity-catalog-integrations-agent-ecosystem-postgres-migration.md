@@ -1591,16 +1591,48 @@ CREATE INDEX IF NOT EXISTS idx_widget_messages_session_created ON channels.widge
 
 ## Appendix — Mongo inventory (fill in during Step 0.3)
 
+Recorded 2026-09-20 against `poc` (read-only run of `scripts/migrate/inventory.ts`).
+
 | Collection | Docs | Orphans / duplicates | Notes |
 |---|---|---|---|
-| users | | dup lower(email): | |
-| roles | | | |
-| user_groups | | dup (name,createdBy): / dangling members: | |
-| audit_logs | | older than 730 d: | |
-| models | | isDefault>1: / v2Default>1: | |
-| plans | | isDefault>1: | |
-| skills | | missing slug: | |
-| connectors | | dup actions.key: / dangling referencedSkillIds: | |
-| teams | | dup members.agentId: / dangling agents: | |
-| whatsapp_auth_sessions | | owner_kind unresolved: | |
-| … | | | |
+| users | 145 | dup lower(email): 0 | |
+| sessions | 301 | 6 sessions.userId → missing users | fresh at cutover; orphans irrelevant |
+| roles | 7 | | |
+| user_provider_links | 21 | 1 dangling userId (`6a82f48fff32bc6311c9c799`) | backfill drops + reports |
+| user_groups | 5 | dup (name,createdBy): 0 / dangling members: 0 | |
+| audit_logs | 3 045 | older than 730 d: 0 | full copy |
+| auth_providers | 1 | | |
+| notifications | 4 848 | | skip already-expired at backfill |
+| health_history | 7 371 | | fresh at cutover |
+| system_settings | 15 | | |
+| appearance_logos | 4 | | |
+| models | 108 | isDefault>1: 0 / v2Default>1: 0 | |
+| guardrails_settings | 0 | | singleton seeded by code |
+| plans | 4 | isDefault>1: 0 | |
+| tools | 11 | dangling categoryId: 0 | |
+| tool_categories | 3 | | |
+| skills | 10 | missing slug: 0 / dangling categoryId: 0 | |
+| skill_categories | 4 | | |
+| agent_types | 12 | dangling skills[]: 0 | |
+| agent_type_prompts | 0 | | |
+| connected_app_definitions | 8 | | |
+| user_app_connections | 31 | | |
+| connected_app_oauth_states | 0 | | fresh at cutover |
+| connectors | 28 | dup actions.key: 0 / dangling referencedSkillIds: 2 (`6a451f04…`, `6a8ee76d…`) | backfill drops + reports |
+| connector_categories | 5 | | |
+| connector_credentials | 1 | 1 dangling connectorId (`69dbf890…`) | ⚑ missing cascade; drop + report |
+| admin_connector_auth_tokens | 16 | | |
+| admin_connector_oauth_states | 68 | | fresh at cutover |
+| shared_agents | 63 | 2 agentId → missing PG agents (`69d4e270…`, `69d4e3dc…`) | drop + report |
+| teams | 42 | dup members.agentId: 0 / 4 members.agentId → missing PG agents | drop + report |
+| shared_teams | 3 | dangling teamId: 0 | |
+| team_auto_builder_config | 1 | | |
+| agent_telegram_integrations | 6 | dangling agentId: 0 | |
+| telegram_chat_bindings | 6 | 6 conversationId → missing PG conversations | FK SET NULL handles |
+| telegram_link_codes | 0 | | fresh at cutover |
+| agent_whatsapp_integrations | 11 | dangling agentId: 0 | |
+| whatsapp_auth_sessions | 17 | owner_kind unresolved: measured at backfill | stop instances first |
+| whatsapp_chat_bindings | 44 | dangling integrationId: 0 (polymorphic union) / dangling conversationId: 0 | |
+| widget_tokens | 262 | dangling agentId: 0 | |
+| widget_sessions | 149 | | fresh at cutover |
+| widget_messages | 947 | | fresh at cutover |

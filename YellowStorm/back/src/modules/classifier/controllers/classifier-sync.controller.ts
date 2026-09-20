@@ -8,7 +8,7 @@ import { Response } from 'express';
 import { ApiBearerAuth, ApiOperation, ApiParam, ApiTags } from '@nestjs/swagger';
 import { ClassifierSyncService } from '../services/classifier-sync.service';
 import { CurrentUser } from '../../auth/decorators/current-user.decorator';
-import { UserDocument } from '../../user/schemas/user.schema';
+import type { AuthUser } from '@common/auth/auth-user';
 
 @ApiTags('Classifier · Sync')
 @ApiBearerAuth()
@@ -20,7 +20,7 @@ export class ClassifierSyncController {
   @ApiOperation({ summary: 'Export the workspace as a ZIP archive matching its folder hierarchy' })
   @ApiParam({ name: 'workspaceId', description: 'Workspace ID' })
   async exportZip(
-    @CurrentUser() user: UserDocument,
+    @CurrentUser() user: AuthUser,
     @Param('workspaceId') workspaceId: string,
     @Res() res: Response,
   ): Promise<void> {

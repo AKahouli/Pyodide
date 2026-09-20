@@ -1,7 +1,7 @@
 import { Controller, Get, Post, Patch, Delete, Body, Param, UseGuards } from '@nestjs/common';
 import { ApiTags, ApiBearerAuth } from '@nestjs/swagger';
 import { CurrentUser } from '@modules/auth/decorators/current-user.decorator';
-import { UserDocument } from '@modules/user/schemas/user.schema';
+import type { AuthUser } from '@common/auth/auth-user';
 import { AgentPermissionGuard } from '@modules/agent/guards/agent-permission.guard';
 import { RequireAgentPermission } from '@modules/agent/decorators/require-agent-permission.decorator';
 import { WidgetChatService } from '../services/widget-chat.service';
@@ -21,7 +21,7 @@ export class AgentWidgetTokenController {
   async createToken(
     @Param('agentId') agentId: string,
     @Body() dto: CreateWidgetTokenDto,
-    @CurrentUser() user: UserDocument,
+    @CurrentUser() user: AuthUser,
   ) {
     return this.widgetChatService.createToken(agentId, user._id.toString(), {
       label: dto.label,
@@ -33,7 +33,7 @@ export class AgentWidgetTokenController {
   @Get()
   @UseGuards(AgentPermissionGuard)
   @RequireAgentPermission('read')
-  async listTokens(@Param('agentId') agentId: string, @CurrentUser() user: UserDocument) {
+  async listTokens(@Param('agentId') agentId: string, @CurrentUser() user: AuthUser) {
     return this.widgetChatService.listTokens(agentId);
   }
 
@@ -44,7 +44,7 @@ export class AgentWidgetTokenController {
     @Param('agentId') agentId: string,
     @Param('tokenId') tokenId: string,
     @Body() dto: UpdateWidgetTokenDto,
-    @CurrentUser() user: UserDocument,
+    @CurrentUser() user: AuthUser,
   ) {
     return this.widgetChatService.updateToken(agentId, tokenId, dto);
   }
@@ -55,7 +55,7 @@ export class AgentWidgetTokenController {
   async revokeToken(
     @Param('agentId') agentId: string,
     @Param('tokenId') tokenId: string,
-    @CurrentUser() user: UserDocument,
+    @CurrentUser() user: AuthUser,
   ) {
     return this.widgetChatService.revokeToken(agentId, tokenId);
   }

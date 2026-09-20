@@ -1,7 +1,9 @@
 import { Injectable } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types, PipelineStage } from 'mongoose';
-import { User, UserDocument } from '@modules/user/schemas/user.schema';
+import { User } from '@modules/user/schemas/user.schema';
+import type { AuthUser } from '@common/auth/auth-user';
+import type { UserDocument } from '@modules/user/schemas/user.schema';
 import { LoggerService } from '@modules/logger';
 import { GroupByPeriod } from '../dto';
 import { UserAnalyticsResponse, TimeSeriesDataPoint } from '../interfaces';

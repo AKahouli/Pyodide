@@ -17,7 +17,7 @@ import { WorkyTraceService, IWorkyTraceResponse } from '../services/worky-trace.
 import { WorkyStreamAccessGuard } from '../guards/worky-stream-access.guard';
 import { RequirePermissions } from '../../authorization/decorators/require-permissions.decorator';
 import { CurrentUser } from '../../auth/decorators/current-user.decorator';
-import { UserDocument } from '../../user/schemas/user.schema';
+import type { AuthUser } from '@common/auth/auth-user';
 import { Permissions } from '../../authorization/constants/permissions';
 
 class ListTracesQueryDto {
@@ -50,7 +50,7 @@ export class WorkyTraceController {
   @ApiOperation({ summary: 'List traces for a Worky stream (rawPayloadUri redacted unless admin)' })
   @ApiParam({ name: 'id', description: 'Stream id' })
   async listStreamTraces(
-    @CurrentUser() user: UserDocument,
+    @CurrentUser() user: AuthUser,
     @Param('id') id: string,
     @Query() query: ListTracesQueryDto,
   ): Promise<IWorkyTraceResponse[]> {
@@ -65,7 +65,7 @@ export class WorkyTraceController {
   @ApiParam({ name: 'id', description: 'Stream id' })
   @ApiParam({ name: 'taskId', description: 'Task id' })
   async listTaskTraces(
-    @CurrentUser() user: UserDocument,
+    @CurrentUser() user: AuthUser,
     @Param('id') id: string,
     @Param('taskId') taskId: string,
   ): Promise<IWorkyTraceResponse[]> {
@@ -73,7 +73,7 @@ export class WorkyTraceController {
     return this.traces.listForTask(id, taskId, { redactRawPayload: !includeRaw });
   }
 
-  private async userHasAdminTrace(user: UserDocument): Promise<boolean> {
+  private async userHasAdminTrace(user: AuthUser): Promise<boolean> {
     // Keep the redaction check isolated. The auth module exposes
     // `userHasPermission`; for the MVP we just check role names
     // (`super_admin` / `worky_admin`) on the loaded user. Future

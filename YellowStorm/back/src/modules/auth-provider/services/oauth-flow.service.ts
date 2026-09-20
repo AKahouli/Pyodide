@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { ConfigService } from '@nestjs/config';
 import { Model, Types } from 'mongoose';
+import { asAuthUser } from '@common/auth/auth-user';
 import * as crypto from 'crypto';
 import { OAuthState, OAuthStateDocument } from '../schemas/oauth-state.schema';
 import { ProviderLinkToken, ProviderLinkTokenDocument } from '../schemas/provider-link-token.schema';
@@ -197,7 +198,7 @@ export class OAuthFlowService {
       this.authorizationService.getUserRoleNames(userRoles),
     ]);
 
-    const tokens = await this.authService.generateTokens(user, ipAddress, userAgent, permissions, roleNames);
+    const tokens = await this.authService.generateTokens(asAuthUser(user), ipAddress, userAgent, permissions, roleNames);
 
     await this.userService.updateLastLogin(user._id.toString());
 

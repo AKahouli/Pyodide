@@ -29,7 +29,7 @@ import { CheckUsage } from '../../usage/decorators/check-usage.decorator';
 import { UsageLimitGuard } from '../../usage/guards/usage-limit.guard';
 import { RequestContextService } from '../../request-context';
 import { LoggerService } from '../../logger';
-import { UserDocument } from '../../user/schemas/user.schema';
+import type { AuthUser } from '@common/auth/auth-user';
 import { resolveStickyAgentRouting } from '../utils/sticky-agent-routing';
 import { ChoiceInteractionService } from '../services/choice-interaction.service';
 import { GovernedConversationRuntimeService } from '../../governance/services/governed-conversation-runtime.service';
@@ -112,7 +112,7 @@ export class MessageController {
    * Human-readable display name for logs/observability: "First Last" when a
    * profile name is set, otherwise falls back to the user's email.
    */
-  private resolveDisplayName(user: UserDocument): string {
+  private resolveDisplayName(user: AuthUser): string {
     const fullName = `${user.profile?.firstName ?? ''} ${user.profile?.lastName ?? ''}`.trim();
     return fullName || user.email;
   }
@@ -121,7 +121,7 @@ export class MessageController {
   @UseGuards(UsageLimitGuard)
   @CheckUsage()
   async sendMessage(
-    @CurrentUser() user: UserDocument,
+    @CurrentUser() user: AuthUser,
     @Param('conversationId') conversationId: string,
     @Body() dto: SendMessageDto,
   ) {
@@ -607,7 +607,7 @@ export class MessageController {
   }
 
   private async resumePlatformCopilotTurn(
-    user: UserDocument,
+    user: AuthUser,
     conversationId: string,
     pinnedAgentId: string,
     dto: SendMessageDto,
@@ -792,7 +792,7 @@ export class MessageController {
 
   @Post(':messageId/stop')
   async stopStream(
-    @CurrentUser() user: UserDocument,
+    @CurrentUser() user: AuthUser,
     @Param('conversationId') conversationId: string,
     @Param('messageId') messageId: string,
   ) {
@@ -814,7 +814,7 @@ export class MessageController {
   @Post(':messageId/reliability-evaluation/rerun')
   @HttpCode(HttpStatus.ACCEPTED)
   async rerunReliabilityEvaluation(
-    @CurrentUser() user: UserDocument,
+    @CurrentUser() user: AuthUser,
     @Param('conversationId') conversationId: string,
     @Param('messageId') messageId: string,
   ) {
@@ -830,7 +830,7 @@ export class MessageController {
   @UseGuards(UsageLimitGuard)
   @CheckUsage()
   async regenerate(
-    @CurrentUser() user: UserDocument,
+    @CurrentUser() user: AuthUser,
     @Param('conversationId') conversationId: string,
     @Param('messageId') messageId: string,
   ) {

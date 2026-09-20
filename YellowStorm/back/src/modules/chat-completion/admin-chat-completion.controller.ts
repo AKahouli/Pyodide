@@ -14,7 +14,7 @@ import { AuditLogService } from '../authorization/services/audit-log.service';
 import { RequirePermissions } from '../authorization/decorators/require-permissions.decorator';
 import { PermissionsGuard } from '../authorization/guards/permissions.guard';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
-import { UserDocument } from '../user/schemas/user.schema';
+import type { AuthUser } from '@common/auth/auth-user';
 import { Permissions } from '../authorization/constants/permissions';
 import { ChatRequestDto } from './dto/chat-request.dto';
 import { CompletionResult } from './interfaces/chat-completion.interface';
@@ -36,7 +36,7 @@ export class AdminChatCompletionController {
   @ApiResponse({ status: 200, description: 'Completion result' })
   async chat(
     @Body() dto: ChatRequestDto,
-    @CurrentUser() actor: UserDocument,
+    @CurrentUser() actor: AuthUser,
     @Req() req: Request,
   ): Promise<CompletionResult> {
     const result = await this.chatCompletionService.complete({

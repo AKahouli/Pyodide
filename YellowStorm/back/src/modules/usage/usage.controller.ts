@@ -22,7 +22,7 @@ import {
 import { Request } from 'express';
 import { UsageService } from './usage.service';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
-import { UserDocument } from '../user/schemas/user.schema';
+import type { AuthUser } from '@common/auth/auth-user';
 import { CreatePlanDto } from './dto/create-plan.dto';
 import { UpdatePlanDto } from './dto/update-plan.dto';
 import { UsageHistoryQueryDto } from './dto/usage-history-query.dto';
@@ -45,7 +45,7 @@ export class UsageController {
   @Get('status')
   @ApiOperation({ summary: 'Get current usage status' })
   @ApiResponse({ status: 200, description: 'Usage status retrieved' })
-  async getUsageStatus(@CurrentUser() user: UserDocument): Promise<UsageStatus> {
+  async getUsageStatus(@CurrentUser() user: AuthUser): Promise<UsageStatus> {
     const plan = await this.usageService.ensureUserHasPlan(
       user._id.toString(),
       user.planId,
@@ -56,7 +56,7 @@ export class UsageController {
   @Get('plan')
   @ApiOperation({ summary: 'Get current user plan' })
   @ApiResponse({ status: 200, description: 'Plan retrieved' })
-  async getCurrentPlan(@CurrentUser() user: UserDocument): Promise<PlanResponse> {
+  async getCurrentPlan(@CurrentUser() user: AuthUser): Promise<PlanResponse> {
     const plan = await this.usageService.ensureUserHasPlan(
       user._id.toString(),
       user.planId,
@@ -88,7 +88,7 @@ export class UsageController {
   @ApiOperation({ summary: 'Get usage history' })
   @ApiResponse({ status: 200, description: 'Usage history retrieved' })
   async getUsageHistory(
-    @CurrentUser() user: UserDocument,
+    @CurrentUser() user: AuthUser,
     @Query() query: UsageHistoryQueryDto,
   ): Promise<UsageHistoryResponse> {
     return this.usageService.getUsageHistory(user._id.toString(), {
@@ -156,7 +156,7 @@ export class UsageController {
   @ApiResponse({ status: 409, description: 'Plan slug already exists' })
   async createPlan(
     @Body() dto: CreatePlanDto,
-    @CurrentUser() actor: UserDocument,
+    @CurrentUser() actor: AuthUser,
     @Req() req: Request,
   ): Promise<PlanResponse> {
     const plan = await this.usageService.createPlan(dto);
@@ -205,7 +205,7 @@ export class UsageController {
   async updatePlan(
     @Param('id') id: string,
     @Body() dto: UpdatePlanDto,
-    @CurrentUser() actor: UserDocument,
+    @CurrentUser() actor: AuthUser,
     @Req() req: Request,
   ): Promise<PlanResponse> {
     const plan = await this.usageService.updatePlan(id, dto);
@@ -255,7 +255,7 @@ export class UsageController {
   @ApiResponse({ status: 409, description: 'Cannot delete default plan' })
   async deletePlan(
     @Param('id') id: string,
-    @CurrentUser() actor: UserDocument,
+    @CurrentUser() actor: AuthUser,
     @Req() req: Request,
   ): Promise<void> {
     // Get plan info before deletion for audit log

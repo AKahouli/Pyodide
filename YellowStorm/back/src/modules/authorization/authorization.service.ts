@@ -215,7 +215,7 @@ export class AuthorizationService implements OnApplicationBootstrap {
    * Gets all permissions for a user by expanding their roles.
    * Uses cached role→permissions mapping for performance.
    */
-  async getUserPermissions(roleIds: Types.ObjectId[]): Promise<string[]> {
+  async getUserPermissions(roleIds: (string | Types.ObjectId)[]): Promise<string[]> {
     if (this.isCacheStale()) {
       await this.refreshCache();
     }
@@ -234,7 +234,7 @@ export class AuthorizationService implements OnApplicationBootstrap {
    * Gets role names for a user's roles.
    * Uses cached role→name mapping for performance.
    */
-  async getUserRoleNames(roleIds: Types.ObjectId[]): Promise<string[]> {
+  async getUserRoleNames(roleIds: (string | Types.ObjectId)[]): Promise<string[]> {
     if (this.isCacheStale()) {
       await this.refreshCache();
     }

@@ -422,7 +422,7 @@ export class UsageService implements OnApplicationBootstrap {
   /**
    * Ensure user has a plan, assign default if not
    */
-  async ensureUserHasPlan(userId: string, currentPlanId?: Types.ObjectId): Promise<PlanDocument> {
+  async ensureUserHasPlan(userId: string, currentPlanId?: string | Types.ObjectId): Promise<PlanDocument> {
     if (currentPlanId) {
       try {
         return await this.getPlanById(currentPlanId.toString());

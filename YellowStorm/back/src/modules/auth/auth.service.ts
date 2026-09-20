@@ -9,7 +9,7 @@ import { UAParser } from 'ua-parser-js';
 import { Session, SessionDocument } from './schemas/session.schema';
 import { UserService } from '../user/user.service';
 
-import { UserDocument } from '../user/schemas/user.schema';
+import { asAuthUser, type AuthUser } from '@common/auth/auth-user';
 import {
   assertAccountAccessible,
   getAccountAccessDenial,
@@ -205,7 +205,7 @@ export class AuthService {
     ]);
 
     // Generate tokens (pass pre-fetched permissions to avoid duplicate DB calls)
-    const tokens = await this.generateTokens(user, ipAddress, userAgent, permissions, roleNames);
+    const tokens = await this.generateTokens(asAuthUser(user), ipAddress, userAgent, permissions, roleNames);
 
     // Update last login
     await this.userService.updateLastLogin(user._id.toString());
@@ -280,7 +280,7 @@ export class AuthService {
    * the caller already has them (e.g. login response includes them).
    */
   async generateTokens(
-    user: UserDocument,
+    user: AuthUser,
     ipAddress: string,
     userAgent: string,
     permissions?: string[],
@@ -491,7 +491,7 @@ export class AuthService {
 
     // Get user permissions and role names for JWT
     // Always fetch fresh permissions on token refresh to propagate role changes
-    const accessToken = await this.mintAccessTokenForUser(user, successor._id.toString());
+    const accessToken = await this.mintAccessTokenForUser(asAuthUser(user), successor._id.toString());
 
     this.logger.debug('Tokens refreshed', { userId: user._id });
 
@@ -786,7 +786,7 @@ export class AuthService {
       throw new ForbiddenException(accessDenial.code, accessDenial.message);
     }
 
-    const accessToken = await this.mintAccessTokenForUser(user, successor._id.toString());
+    const accessToken = await this.mintAccessTokenForUser(asAuthUser(user), successor._id.toString());
     this.logger.debug('Refresh rotation recovered from receipt', { userId: user._id });
     return {
       accessToken,
@@ -797,7 +797,7 @@ export class AuthService {
 
   /** Mint an access JWT with fresh permissions for the given session. */
   private async mintAccessTokenForUser(
-    user: UserDocument,
+    user: AuthUser,
     sessionId: string,
   ): Promise<string> {
     const userRoles = user.roles || [];
@@ -923,7 +923,7 @@ export class AuthService {
   /**
    * Enforce maximum sessions per user limit
    */
-  private async enforceSessionLimit(userId: Types.ObjectId): Promise<void> {
+  private async enforceSessionLimit(userId: string | Types.ObjectId): Promise<void> {
     const sessionCount = await this.sessionModel.countDocuments({
       userId,
       isValid: true,

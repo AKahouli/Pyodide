@@ -32,7 +32,7 @@ import {
 import { UserService } from '../user/user.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { NotificationType } from '../notifications/schemas/notification.schema';
-import type { UserDocument } from '../user/schemas/user.schema';
+import { asAuthUser, type AuthUser } from '@common/auth/auth-user';
 
 type ShareEventType = 'project_shared' | 'project_share_revoked' | 'project_share_updated';
 
@@ -205,13 +205,13 @@ export class ProjectShareService {
     }
 
     for (const event of createdEvents) {
-      await this.pushShareNotification('project_shared', event.userId, project, owner, {
+      await this.pushShareNotification('project_shared', event.userId, project, asAuthUser(owner), {
         shareId: event.shareId,
         permission: event.permission,
       });
     }
     for (const event of updatedEvents) {
-      await this.pushShareNotification('project_share_updated', event.userId, project, owner, {
+      await this.pushShareNotification('project_share_updated', event.userId, project, asAuthUser(owner), {
         shareId: event.shareId,
         permission: event.permission,
       });
@@ -274,7 +274,7 @@ export class ProjectShareService {
           this.userService.findById(share.ownerId),
         ]);
         if (project && owner) {
-          await this.pushShareNotification('project_share_updated', share.sharedWithUserId, project, owner, {
+          await this.pushShareNotification('project_share_updated', share.sharedWithUserId, project, asAuthUser(owner), {
             shareId: share.id,
             permission,
           });
@@ -320,7 +320,7 @@ export class ProjectShareService {
         this.userService.findById(share.ownerId),
       ]);
       if (project && owner) {
-        await this.pushShareNotification('project_share_revoked', recipientId, project, owner, {
+        await this.pushShareNotification('project_share_revoked', recipientId, project, asAuthUser(owner), {
           shareId,
         });
       }
@@ -407,7 +407,7 @@ export class ProjectShareService {
     eventType: ShareEventType,
     recipientId: string,
     project: ProjectRecord,
-    owner: UserDocument,
+    owner: AuthUser,
     extra: { shareId: string; permission?: ProjectPermission },
   ): Promise<void> {
     try {

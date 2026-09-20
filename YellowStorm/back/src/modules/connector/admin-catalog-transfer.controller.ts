@@ -19,7 +19,7 @@ import { PermissionsGuard } from '../authorization/guards/permissions.guard';
 import { AuditLogService } from '../authorization/services/audit-log.service';
 import { ErrorCode } from '../exceptions/constants/error-codes';
 import { RateLimit } from '../rate-limiter';
-import { UserDocument } from '../user/schemas/user.schema';
+import type { AuthUser } from '@common/auth/auth-user';
 import { ExportCatalogDto, ImportCatalogDto } from './dto/catalog-transfer.dto';
 import { CatalogTransferService } from './services/catalog-transfer.service';
 
@@ -44,7 +44,7 @@ export class AdminCatalogTransferController {
   @ApiOperation({ summary: 'Export selected or all connectors with linked skills' })
   async exportConnectors(
     @Body() dto: ExportCatalogDto,
-    @CurrentUser() user: UserDocument,
+    @CurrentUser() user: AuthUser,
     @Req() req: Request,
     @Res() res: Response,
   ): Promise<void> {
@@ -64,7 +64,7 @@ export class AdminCatalogTransferController {
   @ApiOperation({ summary: 'Export selected or all skills with complete catalog properties' })
   async exportSkills(
     @Body() dto: ExportCatalogDto,
-    @CurrentUser() user: UserDocument,
+    @CurrentUser() user: AuthUser,
     @Req() req: Request,
     @Res() res: Response,
   ): Promise<void> {
@@ -84,7 +84,7 @@ export class AdminCatalogTransferController {
   async importCatalog(
     @UploadedFile() file: MulterFile,
     @Body() dto: ImportCatalogDto,
-    @CurrentUser() user: UserDocument,
+    @CurrentUser() user: AuthUser,
     @Req() req: Request,
   ) {
     const archive = this.transferService.parseArchive(file?.buffer ?? Buffer.alloc(0), dto.passphrase);
@@ -103,7 +103,7 @@ export class AdminCatalogTransferController {
     return result;
   }
 
-  private assertSecurityPermission(user: UserDocument, required: boolean): void {
+  private assertSecurityPermission(user: AuthUser, required: boolean): void {
     if (!required) return;
     const permissions = ((user as unknown as { permissions?: string[] }).permissions ?? []);
     if (!hasPermission(permissions, Permissions.CONNECTORS_TRANSFER_SECURITY)) {
@@ -112,7 +112,7 @@ export class AdminCatalogTransferController {
   }
 
   private assertImportPermissions(
-    user: UserDocument,
+    user: AuthUser,
     archive: {
       connectors: unknown[];
       skills: unknown[];
@@ -144,7 +144,7 @@ export class AdminCatalogTransferController {
   }
 
   private audit(
-    user: UserDocument,
+    user: AuthUser,
     req: Request,
     action: string,
     metadata: Record<string, unknown>,

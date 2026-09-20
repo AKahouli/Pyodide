@@ -26,7 +26,7 @@ import { RoleResponse } from '../interfaces/role.interface';
 import { RequirePermissions } from '../decorators/require-permissions.decorator';
 import { PermissionsGuard } from '../guards/permissions.guard';
 import { CurrentUser } from '../../auth/decorators/current-user.decorator';
-import { UserDocument } from '../../user/schemas/user.schema';
+import type { AuthUser } from '@common/auth/auth-user';
 import { Permissions } from '../constants/permissions';
 
 @ApiTags('Roles (Admin)')
@@ -74,7 +74,7 @@ export class RolesController {
   @ApiResponse({ status: 409, description: 'Role name already exists' })
   async create(
     @Body() dto: CreateRoleDto,
-    @CurrentUser() user: UserDocument,
+    @CurrentUser() user: AuthUser,
     @Req() req: Request,
   ): Promise<RoleResponse> {
     const role = await this.authorizationService.createRole(dto);
@@ -105,7 +105,7 @@ export class RolesController {
   async update(
     @Param('id') id: string,
     @Body() dto: UpdateRoleDto,
-    @CurrentUser() user: UserDocument,
+    @CurrentUser() user: AuthUser,
     @Req() req: Request,
   ): Promise<RoleResponse> {
     const role = await this.authorizationService.updateRole(id, dto);
@@ -134,7 +134,7 @@ export class RolesController {
   @ApiResponse({ status: 404, description: 'Role not found' })
   async delete(
     @Param('id') id: string,
-    @CurrentUser() user: UserDocument,
+    @CurrentUser() user: AuthUser,
     @Req() req: Request,
   ): Promise<void> {
     // Get role name before deletion for audit log
@@ -164,7 +164,7 @@ export class RolesController {
   @ApiResponse({ status: 404, description: 'Role not found' })
   async assignRole(
     @Body() dto: AssignRoleToUserDto,
-    @CurrentUser() user: UserDocument,
+    @CurrentUser() user: AuthUser,
     @Req() req: Request,
   ): Promise<{ message: string }> {
     await this.authorizationService.assignRoleToUser(dto.userId, dto.roleId);
@@ -190,7 +190,7 @@ export class RolesController {
   @ApiResponse({ status: 200, description: 'Role removed' })
   async unassignRole(
     @Body() dto: AssignRoleToUserDto,
-    @CurrentUser() user: UserDocument,
+    @CurrentUser() user: AuthUser,
     @Req() req: Request,
   ): Promise<{ message: string }> {
     await this.authorizationService.removeRoleFromUser(dto.userId, dto.roleId);

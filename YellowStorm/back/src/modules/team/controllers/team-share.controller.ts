@@ -13,7 +13,7 @@ import {
 import { ApiTags, ApiOperation, ApiBearerAuth, ApiParam } from '@nestjs/swagger';
 import { TeamShareService } from '../services/team-share.service';
 import { CurrentUser } from '../../auth/decorators/current-user.decorator';
-import { UserDocument } from '../../user/schemas/user.schema';
+import type { AuthUser } from '@common/auth/auth-user';
 import { ShareTeamDto, UpdateTeamSharePermissionDto } from '../dto';
 import { ITeamShareEntry } from '../interfaces/team.interface';
 import { TeamPermissionGuard } from '../guards/team-permission.guard';
@@ -32,7 +32,7 @@ export class TeamShareController {
   @ApiOperation({ summary: 'Share a team with users by email' })
   @ApiParam({ name: 'id', description: 'Team ID' })
   async shareTeam(
-    @CurrentUser() user: UserDocument,
+    @CurrentUser() user: AuthUser,
     @Param('id') teamId: string,
     @Body() dto: ShareTeamDto,
   ): Promise<ITeamShareEntry[]> {
@@ -81,7 +81,7 @@ export class TeamShareController {
   @ApiOperation({ summary: 'Remove a shared team from your list' })
   @ApiParam({ name: 'id', description: 'Team ID' })
   async unshareFromSelf(
-    @CurrentUser() user: UserDocument,
+    @CurrentUser() user: AuthUser,
     @Param('id') teamId: string,
   ): Promise<void> {
     return this.teamShareService.unshareFromSelf(user._id.toString(), teamId);

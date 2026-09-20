@@ -3,7 +3,9 @@ import { ConfigService } from '@nestjs/config';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
-import { User, UserDocument } from '../../user/schemas/user.schema';
+import { User } from '../../user/schemas/user.schema';
+import type { AuthUser } from '@common/auth/auth-user';
+import type { UserDocument } from '@modules/user/schemas/user.schema';
 import {
   CreateConversationData,
   UpdateConversationData,
@@ -664,7 +666,7 @@ export class ConversationService {
 
   private async mapToResponse(
     record: ConversationRecord,
-    users?: Map<string, Pick<UserDocument, 'email' | 'profile'>>,
+    users?: Map<string, Pick<AuthUser, 'email' | 'profile'>>,
   ): Promise<ConversationResponse> {
     const resolvedUsers =
       users ??
@@ -734,7 +736,7 @@ export class ConversationService {
 
   private async usersById(
     ids: string[],
-  ): Promise<Map<string, Pick<UserDocument, 'email' | 'profile'>>> {
+  ): Promise<Map<string, Pick<AuthUser, 'email' | 'profile'>>> {
     const unique = [...new Set(ids)];
     if (!unique.length) return new Map();
     const users = await this.userModel

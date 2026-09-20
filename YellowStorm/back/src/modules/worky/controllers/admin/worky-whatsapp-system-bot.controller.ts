@@ -17,7 +17,7 @@ import {
   ApiTags,
 } from '@nestjs/swagger';
 import { CurrentUser } from '@modules/auth/decorators/current-user.decorator';
-import { UserDocument } from '@modules/user/schemas/user.schema';
+import type { AuthUser } from '@common/auth/auth-user';
 import { WorkyWhatsAppSystemBotConnectionService } from '@modules/whatsapp/services/worky-whatsapp-system-bot-connection.service';
 import { WhatsAppConnectResponseDto } from '@modules/whatsapp/dto/whatsapp-connect-response.dto';
 import { WhatsAppIntegrationResponseDto } from '@modules/whatsapp/dto/whatsapp-integration-response.dto';
@@ -59,7 +59,7 @@ export class WorkyWhatsAppSystemBotAdminController {
   @ApiOperation({ summary: 'Start pairing the Worky WhatsApp system bot' })
   @ApiResponse({ status: 200, type: WhatsAppConnectResponseDto })
   async connect(
-    @CurrentUser() user: UserDocument,
+    @CurrentUser() user: AuthUser,
   ): Promise<WhatsAppConnectResponseDto> {
     return this.connectionService.connect(user._id.toString());
   }

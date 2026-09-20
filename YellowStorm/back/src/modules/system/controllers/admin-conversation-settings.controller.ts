@@ -3,7 +3,7 @@ import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import type { Request } from 'express';
 import { CurrentUser } from '../../auth/decorators/current-user.decorator';
 import { AuditLogService, Permissions, PermissionsGuard, RequirePermissions } from '../../authorization';
-import type { UserDocument } from '../../user/schemas/user.schema';
+import type { AuthUser } from '@common/auth/auth-user';
 import { ConversationSettingsService } from '../conversation-settings.service';
 import { UpdateConversationSettingsDto, UpdateSensitiveTextRedactionDto } from '../dto/update-conversation-settings.dto';
 import type { ConversationSettings, ConversationSettingsAgentOption } from '../interfaces/conversation-settings.interface';
@@ -37,7 +37,7 @@ export class AdminConversationSettingsController {
   @ApiOperation({ summary: 'Update global conversation settings' })
   async updateSettings(
     @Body() body: UpdateConversationSettingsDto,
-    @CurrentUser() user: UserDocument,
+    @CurrentUser() user: AuthUser,
     @Req() req: Request,
   ): Promise<ConversationSettings> {
     const auditBase = {
@@ -72,7 +72,7 @@ export class AdminConversationSettingsController {
   @ApiOperation({ summary: 'Update sensitive text redaction for authenticated conversations' })
   async updateSensitiveTextRedaction(
     @Body() body: UpdateSensitiveTextRedactionDto,
-    @CurrentUser() user: UserDocument,
+    @CurrentUser() user: AuthUser,
     @Req() req: Request,
   ): Promise<ConversationSettings> {
     const auditBase = {
