@@ -32,7 +32,7 @@ import { PgUserStore } from './persistence/pg-user.store';
     PgUserLookupAdapter,
     { provide: USER_LOOKUP_PORT, useExisting: MongoUserLookupAdapter },
     // Mongo-backed until the 1A cutover; swap useClass to PgUserStore then.
-    { provide: USER_STORE, useClass: MongoUserStore },
+    { provide: USER_STORE, useClass: PgUserStore },
     PgUserStore,
   ],
   exports: [

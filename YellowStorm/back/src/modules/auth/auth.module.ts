@@ -54,7 +54,7 @@ import { HumainAgentModule } from '../humain-agent/humain-agent.module';
     InternalServiceGuard,
     AgentCrudActorGuard,
     // Mongo-backed until the 1A cutover; swap useClass to PgSessionStore then.
-    { provide: SESSION_STORE, useClass: MongoSessionStore },
+    { provide: SESSION_STORE, useClass: PgSessionStore },
     PgSessionStore,
     IdentityTtlRegistrationService,
   ],

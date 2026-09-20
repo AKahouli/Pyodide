@@ -19,7 +19,7 @@ import { PgUserGroupStore } from './persistence/pg-user-group.store';
   providers: [
     UserGroupService,
     // Mongo-backed until the 1A cutover; swap useClass to PgUserGroupStore then.
-    { provide: USER_GROUP_STORE, useClass: MongoUserGroupStore },
+    { provide: USER_GROUP_STORE, useClass: PgUserGroupStore },
     PgUserGroupStore,
   ],
   exports: [UserGroupService, USER_GROUP_STORE],

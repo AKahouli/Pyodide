@@ -30,7 +30,7 @@ function build(overrides: { workspaceStore?: any; shareStore?: any } = {}) {
   const svc = new WorkspaceShareService(
     workspaceStore,
     shareStore,
-    { byId: jest.fn().mockResolvedValue(null), byIds: jest.fn().mockResolvedValue(new Map()) },
+    { byId: jest.fn().mockResolvedValue(null), byIds: jest.fn().mockResolvedValue(new Map()), byEmails: jest.fn().mockResolvedValue(new Map()) },
     { setContext: jest.fn(), log: jest.fn(), warn: jest.fn() } as unknown as LoggerService,
     {} as unknown as UserService,
     {} as unknown as NotificationsService,
