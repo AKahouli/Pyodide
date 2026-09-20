@@ -3,6 +3,8 @@ export interface UserSummary {
   email: string;
   firstName: string;
   lastName: string;
+  /** Present when the adapter reads the full row (channels check it). */
+  status?: string;
 }
 
 export const USER_LOOKUP_PORT = Symbol('USER_LOOKUP_PORT');
@@ -16,4 +18,6 @@ export const USER_LOOKUP_PORT = Symbol('USER_LOOKUP_PORT');
 export interface UserLookupPort {
   byId(id: string): Promise<UserSummary | null>;
   byIds(ids: string[]): Promise<Map<string, UserSummary>>;
+  /** Keyed by lowercased email (plan 1A.9). */
+  byEmails(emails: string[]): Promise<Map<string, UserSummary>>;
 }

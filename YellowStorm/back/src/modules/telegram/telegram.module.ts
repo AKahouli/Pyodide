@@ -7,8 +7,8 @@ import { AgentModule } from '@modules/agent/agent.module';
 import { ConversationModule } from '@modules/conversation/conversation.module';
 import { SystemModule } from '@modules/system/system.module';
 import { LoggerModule } from '@modules/logger';
+import { UserModule } from '@modules/user/user.module';
 import { SharedAgent, SharedAgentSchema } from '@modules/agent/schemas/shared-agent.schema';
-import { User, UserSchema } from '@modules/user/schemas/user.schema';
 import {
   AgentTelegramIntegration,
   AgentTelegramIntegrationSchema,
@@ -24,12 +24,12 @@ import { TelegramWebhookService } from './services/telegram-webhook.service';
 
 @Module({
   imports: [
+    UserModule,
     ConfigModule.forFeature(telegramConfig),
     MongooseModule.forFeature([
       { name: AgentTelegramIntegration.name, schema: AgentTelegramIntegrationSchema },
       { name: TelegramChatBinding.name, schema: TelegramChatBindingSchema },
       { name: TelegramLinkCode.name, schema: TelegramLinkCodeSchema },
-      { name: User.name, schema: UserSchema },
       { name: SharedAgent.name, schema: SharedAgentSchema },
     ]),
     LoggerModule,

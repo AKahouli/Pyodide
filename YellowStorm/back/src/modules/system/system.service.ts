@@ -1,7 +1,8 @@
-import { Injectable, OnApplicationBootstrap } from '@nestjs/common';
+import { Inject, Injectable, OnApplicationBootstrap } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
 import { SystemSetting, SystemSettingDocument, MaintenanceValue, RegistrationValue, AppearanceValue, CorsSettingsValue, EmailLogoValue } from './schemas/system-setting.schema';
+import { USER_STORE, type UserStore } from '../user/persistence/user.store';
 import { MaintenanceStatus } from './interfaces/maintenance.interface';
 import { RegistrationStatus } from './interfaces/registration.interface';
 import { AppearanceSettings, AppearanceThemeSettings } from './interfaces/appearance.interface';
@@ -138,8 +139,7 @@ export class SystemService implements OnApplicationBootstrap {
   constructor(
     @InjectModel(SystemSetting.name)
     private readonly systemSettingModel: Model<SystemSettingDocument>,
-    @InjectModel(User.name)
-    private readonly userModel: Model<UserDocument>,
+    @Inject(USER_STORE) private readonly userStore: UserStore,
     private readonly logger: LoggerService,
     private readonly appearanceLogoService: AppearanceLogoService,
   ) {
@@ -623,14 +623,9 @@ export class SystemService implements OnApplicationBootstrap {
     return value;
   }
 
-  async applyAppearanceToAllUsers(colorTheme: AppearanceSettings['defaultColorTheme']): Promise<number> {
-    const result = await this.userModel.updateMany({}, { $set: { 'appearance.colorTheme': colorTheme } });
-    this.logger.log('Applied appearance theme to all users', {
-      colorTheme,
-      matchedCount: result.matchedCount,
-      modifiedCount: result.modifiedCount,
-    });
-    return result.modifiedCount;
+  async applyAppearanceToAllUsers(colorTheme: AppearanceSettings['defaultColorTheme']): Promise<void> {
+    await this.userStore.setColorThemeForAll(colorTheme);
+    this.logger.log('Applied appearance theme to all users', { colorTheme });
   }
 
   // ─── Registration ───────────────────────────────────────────────

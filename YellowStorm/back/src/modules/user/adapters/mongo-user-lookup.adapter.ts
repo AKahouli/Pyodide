@@ -8,6 +8,7 @@ interface UserLookupRow {
   _id: unknown;
   email?: string;
   profile?: { firstName?: string; lastName?: string };
+  status?: string;
 }
 
 @Injectable()
@@ -25,7 +26,7 @@ export class MongoUserLookupAdapter implements UserLookupPort {
     // Mongoose casts 24-hex strings to the _id type declared on the schema.
     const rows = (await this.userModel
       .find({ _id: { $in: wanted } })
-      .select('email profile.firstName profile.lastName')
+      .select('email profile.firstName profile.lastName status')
       .lean()) as unknown as UserLookupRow[];
     for (const row of rows) {
       const id = String(row._id);
@@ -34,6 +35,28 @@ export class MongoUserLookupAdapter implements UserLookupPort {
         email: row.email ?? '',
         firstName: row.profile?.firstName ?? '',
         lastName: row.profile?.lastName ?? '',
+        status: row.status,
+      });
+    }
+    return map;
+  }
+
+  async byEmails(emails: string[]): Promise<Map<string, UserSummary>> {
+    const wanted = [...new Set(emails.filter(Boolean).map((e) => e.toLowerCase()))];
+    const map = new Map<string, UserSummary>();
+    if (wanted.length === 0) return map;
+    const rows = (await this.userModel
+      .find({ email: { $in: wanted } })
+      .select('email profile.firstName profile.lastName status')
+      .lean()) as unknown as UserLookupRow[];
+    for (const row of rows) {
+      const email = (row.email ?? '').toLowerCase();
+      map.set(email, {
+        id: String(row._id),
+        email: row.email ?? '',
+        firstName: row.profile?.firstName ?? '',
+        lastName: row.profile?.lastName ?? '',
+        status: row.status,
       });
     }
     return map;

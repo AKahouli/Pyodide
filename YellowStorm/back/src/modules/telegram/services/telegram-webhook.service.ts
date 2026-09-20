@@ -1,10 +1,9 @@
-import { Injectable } from '@nestjs/common';
+import { Inject, Injectable } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { ConfigService } from '@nestjs/config';
+import { USER_LOOKUP_PORT, type UserLookupPort } from '@common/ports/user-lookup.port';
 import { Model, Types } from 'mongoose';
-import { User, UserStatus } from '@modules/user/schemas/user.schema';
 import type { AuthUser } from '@common/auth/auth-user';
-import type { UserDocument } from '@modules/user/schemas/user.schema';
 import { ConversationService } from '@modules/conversation/services/conversation.service';
 import { MessageService } from '@modules/conversation/services/message.service';
 import { StreamService } from '@modules/conversation/services/stream.service';
@@ -23,8 +22,8 @@ export class TelegramWebhookService {
   constructor(
     @InjectModel(TelegramChatBinding.name)
     private readonly bindingModel: Model<TelegramChatBindingDocument>,
-    @InjectModel(User.name)
-    private readonly userModel: Model<UserDocument>,
+    @Inject(USER_LOOKUP_PORT)
+    private readonly userLookup: UserLookupPort,
     private readonly configService: ConfigService,
     private readonly logger: LoggerService,
     private readonly agentService: AgentService,
@@ -111,12 +110,8 @@ export class TelegramWebhookService {
       return;
     }
 
-    const user = await this.userModel
-      .findById(binding.userId)
-      .select('status email')
-      .lean()
-      .exec();
-    if (!user || user.status !== UserStatus.ACTIVE) {
+    const user = await this.userLookup.byId(String(binding.userId));
+    if (!user || user.status !== 'active') {
       await this.telegramApiService.sendMessage(
         botToken,
         chatId,

@@ -1,9 +1,9 @@
-import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
+import { Inject, Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import { LoggerService } from '../../logger';
 import { SharedAgent, SharedAgentDocument } from '../schemas/shared-agent.schema';
-import { UserService } from '../../user/user.service';
+import { USER_LOOKUP_PORT, type UserLookupPort } from '@common/ports/user-lookup.port';
 import {
   IAgentShareEntry,
   ISharedAgentInfo,
@@ -13,7 +13,7 @@ import { ShareAgentDto, UpdateAgentSharePermissionDto } from '../dto';
 import { ErrorCode } from '../../exceptions/constants/error-codes';
 
 interface PopulatedUser {
-  _id: Types.ObjectId;
+  _id: string;
   email: string;
   profile?: { firstName?: string; lastName?: string };
 }
@@ -23,10 +23,21 @@ export class AgentShareService {
   constructor(
     @InjectModel(SharedAgent.name)
     private readonly sharedAgentModel: Model<SharedAgentDocument>,
-    private readonly userService: UserService,
+    @Inject(USER_LOOKUP_PORT) private readonly userLookup: UserLookupPort,
     private readonly logger: LoggerService,
   ) {
     this.logger.setContext(AgentShareService.name);
+  }
+
+  /** Batch-resolve user display info, replacing sharedWith/sharedBy Mongoose hydration (plan 1A.11). */
+  private async resolveUsers(ids: string[]): Promise<Map<string, PopulatedUser>> {
+    const summaries = await this.userLookup.byIds(ids);
+    return new Map(
+      [...summaries.values()].map((s) => [
+        s.id,
+        { _id: s.id, email: s.email, profile: { firstName: s.firstName, lastName: s.lastName } },
+      ]),
+    );
   }
 
   /** Share an agent with one or more users by email. Guard verifies the owner. */
@@ -39,12 +50,14 @@ export class AgentShareService {
       new Set(dto.emails.map((e) => e.toLowerCase().trim()).filter(Boolean)),
     );
 
-    const resolved = await Promise.all(
-      normalizedEmails.map(async (email) => ({
-        email,
-        user: await this.userService.findByEmail(email),
-      })),
-    );
+    const byEmail = await this.userLookup.byEmails(normalizedEmails);
+    const resolved = normalizedEmails.map((email) => {
+      const summary = byEmail.get(email);
+      const user: PopulatedUser | undefined = summary
+        ? { _id: summary.id, email: summary.email, profile: { firstName: summary.firstName, lastName: summary.lastName } }
+        : undefined;
+      return { email, user };
+    });
 
     const notFound = resolved.filter((r) => !r.user).map((r) => r.email);
     const selfShare = resolved.find((r) => r.user && r.user._id.toString() === ownerId);
@@ -101,13 +114,14 @@ export class AgentShareService {
   async getAgentShares(agentId: string): Promise<IAgentShareEntry[]> {
     const shares = await this.sharedAgentModel
       .find({ agentId: new Types.ObjectId(agentId) })
-      .populate('sharedWith', 'email profile')
       .sort({ createdAt: -1 })
       .lean()
       .exec();
 
+    const users = await this.resolveUsers(shares.map((share) => String(share.sharedWith)));
+
     return shares.map((share) => {
-      const user = share.sharedWith as unknown as PopulatedUser;
+      const user = users.get(String(share.sharedWith))!;
       return {
         shareId: share._id.toString(),
         permission: share.permission as AgentPermissionLevel,
@@ -138,14 +152,14 @@ export class AgentShareService {
         { $set: { permission: dto.permission } },
         { new: true },
       )
-      .populate('sharedWith', 'email profile')
       .exec();
 
     if (!share) {
       throw new NotFoundException(ErrorCode.CUSTOM_AGENT_SHARE_NOT_FOUND);
     }
 
-    const user = share.sharedWith as unknown as PopulatedUser;
+    const users = await this.resolveUsers([String(share.sharedWith)]);
+    const user = users.get(String(share.sharedWith))!;
 
     this.logger.log('Agent share permission updated', {
       shareId,
@@ -222,13 +236,14 @@ export class AgentShareService {
   async getShareInfoMapForUser(userId: string): Promise<Map<string, ISharedAgentInfo>> {
     const shares = await this.sharedAgentModel
       .find({ sharedWith: new Types.ObjectId(userId) })
-      .populate('sharedBy', 'email profile')
       .lean()
       .exec();
 
+    const users = await this.resolveUsers(shares.map((share) => String(share.sharedBy)));
+
     const shareMap = new Map<string, ISharedAgentInfo>();
     for (const share of shares) {
-      const sharedByUser = share.sharedBy as unknown as PopulatedUser;
+      const sharedByUser = users.get(String(share.sharedBy))!;
       shareMap.set(share.agentId.toString(), {
         shareId: share._id.toString(),
         permission: share.permission as AgentPermissionLevel,
@@ -264,13 +279,13 @@ export class AgentShareService {
         agentId: new Types.ObjectId(agentId),
         sharedWith: new Types.ObjectId(userId),
       })
-      .populate('sharedBy', 'email profile')
       .lean()
       .exec();
 
     if (!share) return null;
 
-    const sharedByUser = share.sharedBy as unknown as PopulatedUser;
+    const users = await this.resolveUsers([String(share.sharedBy)]);
+    const sharedByUser = users.get(String(share.sharedBy))!;
 
     return {
       shareId: share._id.toString(),
