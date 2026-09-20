@@ -53,6 +53,8 @@
     "filters": {
       "searchPlaceholder": "Rechercher des applications...",
       "statusLabel": "Statut",
+      "aiOnly": "IA",
+      "aiOnlyHint": "Afficher uniquement les applications avec des fonctionnalités d'IA",
       "clear": "Effacer les filtres",
       "noResults": "Aucune application ne correspond à vos filtres."
     },
@@ -93,6 +95,9 @@
     "continue": "Continuer la création",
     "deployed": "Déployée",
     "shared": "Partagée",
+    "ai": "IA",
+    "aiFeatures": "Fonctionnalités d'IA",
+    "aiFeaturesHint": "Cette application intègre des capacités d'IA",
     "open": "Ouvrir l'application",
     "conversation": "Accéder à la conversation",
     "share": "Partager l'app et la conversation",
@@ -116,9 +121,9 @@
   },
   "endUsers": {
     "title": "Utilisateurs et permissions",
-    "description": "Utilisateurs inscrits et permissions CRUD pour cette application déployée.",
+    "description": "Utilisateurs inscrits et permissions pour cette application déployée.",
     "descriptionNamed": "Gérer les utilisateurs et permissions pour « {{title}} ».",
-    "hint": "Les nouveaux utilisateurs n'ont aucune permission par défaut. Accordez explicitement les droits CRUD nécessaires.",
+    "hint": "Les nouveaux utilisateurs n'ont aucune permission par défaut. Accordez explicitement les droits nécessaires.",
     "searchPlaceholder": "Rechercher par nom ou e-mail…",
     "refresh": "Actualiser",
     "retry": "Réessayer",
@@ -145,13 +150,15 @@
       "label": "Appliquer un profil",
       "none": "Aucune permission",
       "readOnly": "Lecture seule",
-      "full": "Accès complet"
+      "full": "Accès complet",
+      "hint": "Les profils CRUD ne modifient pas l'IA — activez-la séparément."
     },
     "grants": {
       "create": "Créer",
       "read": "Lire",
       "update": "Modifier",
-      "delete": "Supprimer"
+      "delete": "Supprimer",
+      "useAi": "Utilisation de l'IA"
     }
   }
 }

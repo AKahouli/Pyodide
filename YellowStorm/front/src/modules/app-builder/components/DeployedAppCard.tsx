@@ -17,6 +17,7 @@ import type { DeployedApp } from '../types';
 import { DeleteDeployedAppButton } from './DeleteDeployedAppButton';
 import { AppEndUsersDialog } from './AppEndUsersDialog';
 import { AppRevisionMeta } from './AppRevisionMeta';
+import { AppAiBadge } from './AppAiBadge';
 
 interface DeployedAppCardProps {
   app: DeployedApp;
@@ -131,7 +132,10 @@ export const DeployedAppCard = memo(function DeployedAppCard({
           <h3 className='min-w-0 flex-1 truncate text-sm font-medium leading-snug tracking-tight' title={title}>
             {title}
           </h3>
-          {statusBadge}
+          <div className='flex shrink-0 items-center gap-1'>
+            {app.hasAiFeatures ? <AppAiBadge /> : null}
+            {statusBadge}
+          </div>
         </div>
         <p className='mt-0.5 truncate text-xs text-muted-foreground' title={app.deployedUrl}>
           {app.deployedUrl}
@@ -152,6 +156,7 @@ export const DeployedAppCard = memo(function DeployedAppCard({
         <AppEndUsersDialog
           sessionId={app.sessionId}
           appTitle={title}
+          hasAiFeatures={app.hasAiFeatures === true}
           open={usersOpen}
           onOpenChange={setUsersOpen}
         />

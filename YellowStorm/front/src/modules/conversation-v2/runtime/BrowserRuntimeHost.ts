@@ -495,7 +495,7 @@ export class BrowserRuntimeHost {
   private externalRelayPeers: WindowProxy[] = [];
   /** Provision completed before host reached ready — restart once ready. */
   private pendingAppDataRestart = false;
-  /** Active chat model id from platform catalog — injected as VITE_YM_AI_DEFAULT_MODEL. */
+  /** Catalog model id injected as VITE_YM_AI_DEFAULT_MODEL (conversation-v2 selection preferred). */
   private defaultAiModelId: string | null = null;
 
   /**
@@ -529,20 +529,38 @@ export class BrowserRuntimeHost {
     };
   }
 
-  /** Prefer platform isDefault, else first active chat model. Best-effort. */
+  /**
+   * Resolve catalog model id for AI Proxy preview clients.
+   * Prefer conversation-v2 composer selection → isConversationV2Default →
+   * platform isDefault → first active. Always re-resolve (selection can change
+   * between Vite starts). Injects catalog `id` (not litellmModel).
+   */
   private async ensureDefaultAiModelId(): Promise<void> {
-    if (this.defaultAiModelId) return;
     try {
       const { models } = await getModels();
+      const selectedId = useConversationV2Store.getState().selectedModelId;
+      const selected =
+        selectedId != null
+          ? models.find((m) => m.id === selectedId && m.isActive !== false)
+          : undefined;
       const pick =
-        models.find((m) => m.isDefault && m.isActive)?.id
-        ?? models.find((m) => m.isActive)?.id
+        selected?.id
+        ?? models.find((m) => m.isConversationV2Default && m.isActive !== false)?.id
+        ?? models.find((m) => m.isDefault && m.isActive !== false)?.id
+        ?? models.find((m) => m.isActive !== false)?.id
         ?? models[0]?.id
         ?? null;
-      if (pick) {
-        this.defaultAiModelId = pick;
-        console.log(LOG, 'default AI model', { model: pick });
+      if (pick && pick !== this.defaultAiModelId) {
+        console.log(LOG, 'default AI model', {
+          model: pick,
+          source: selected?.id
+            ? 'conversation-v2-selection'
+            : models.find((m) => m.id === pick)?.isConversationV2Default
+              ? 'conversation-v2-default'
+              : 'platform-default',
+        });
       }
+      this.defaultAiModelId = pick;
     } catch (err) {
       console.warn(
         LOG,

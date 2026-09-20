@@ -1,5 +1,6 @@
 import React, { useCallback, useMemo, useState } from 'react';
 import {
+  AlertCircleIcon,
   ColumnsIcon,
   EyeIcon,
   FileCodeIcon,
@@ -7,6 +8,7 @@ import {
   Maximize2Icon,
   RefreshCwIcon,
   ExternalLinkIcon,
+  SparklesIcon,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -24,6 +26,11 @@ import {
 import { cn } from '@/lib/utils';
 import { useConversationV2Store } from '../../store';
 import { useConversationV2Translation } from '../../translation';
+import { buildAppRegisterInviteUrl } from '../../utils/app-register-invite-url';
+import { toUserFacingPreviewError } from '../../utils/preview-user-message';
+import {
+  buildPhaseTranslationKey,
+} from '../../utils/app-build-phase';
 import type { FilesTreeNode } from '../../types';
 import { useNodepodPreview, type NodepodPreviewStatus } from '../../hooks/useNodepodPreview';
 import { getOrCreateHost } from '../../runtime/BrowserRuntimeHost';
@@ -50,17 +57,15 @@ interface ApplicationComponentViewProps {
 function statusBadgeClass(status: NodepodPreviewStatus): string | null {
   switch (status) {
     case 'ready':
-      return 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-400';
+      return 'bg-ok-soft text-ok';
     case 'loading':
-      return 'bg-sky-500/15 text-sky-700 dark:text-sky-400';
     case 'installing':
-      return 'bg-violet-500/15 text-violet-700 dark:text-violet-400';
     case 'starting':
-      return 'bg-amber-500/15 text-amber-700 dark:text-amber-400';
+      return 'bg-run-soft text-run';
     case 'error':
-      return 'bg-destructive/15 text-destructive';
+      return 'bg-fail-soft text-fail';
     case 'idle':
-      return 'bg-muted text-muted-foreground';
+      return 'bg-idle-soft text-idle';
     default:
       return null;
   }
@@ -92,6 +97,68 @@ function statusBadgeKey(
     default:
       return null;
   }
+}
+
+function ToolbarIconButton({
+  icon,
+  onClick,
+  disabled,
+  label,
+}: {
+  icon: React.ReactNode;
+  onClick: () => void;
+  disabled?: boolean;
+  label: string;
+}) {
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <Button
+          type='button'
+          variant='ghost'
+          size='icon-sm'
+          onClick={onClick}
+          disabled={disabled}
+          aria-label={label}
+          className='size-8 shrink-0 text-muted-foreground hover:text-foreground'
+        >
+          {icon}
+        </Button>
+      </TooltipTrigger>
+      <TooltipContent side='bottom' className='text-xs'>
+        {label}
+      </TooltipContent>
+    </Tooltip>
+  );
+}
+
+function SegmentedControl({
+  children,
+  className,
+}: {
+  children: React.ReactNode;
+  className?: string;
+}) {
+  return (
+    <div
+      className={cn(
+        'inline-flex items-center gap-0.5 rounded-md border border-border/70 bg-muted/50 p-0.5',
+        className,
+      )}
+    >
+      {children}
+    </div>
+  );
+}
+
+function segmentClass(active: boolean, disabled?: boolean) {
+  return cn(
+    'inline-flex h-7 items-center gap-1.5 rounded-md px-2.5 text-xs font-medium transition-colors',
+    disabled && 'pointer-events-none opacity-40',
+    active
+      ? 'bg-background text-foreground shadow-sm'
+      : 'text-muted-foreground hover:text-foreground',
+  );
 }
 
 export function ApplicationComponentView({
@@ -134,8 +201,7 @@ export function ApplicationComponentView({
   const deployedSrc = useMemo(() => {
     if (!deployedUrl) return '';
     if (!ownerInviteToken) return deployedUrl;
-    const base = deployedUrl.replace(/\/?$/, '/');
-    return `${base}register?invite=${encodeURIComponent(ownerInviteToken)}`;
+    return buildAppRegisterInviteUrl(deployedUrl, ownerInviteToken);
   }, [deployedUrl, ownerInviteToken]);
 
   const handleOpenDeployed = useCallback(() => {
@@ -182,6 +248,25 @@ export function ApplicationComponentView({
               ? t('nodepod.waitingSources')
               : null;
 
+  const statusHint = busy
+    ? t('nodepod.bootHint')
+    : status === 'idle'
+      ? t('nodepod.waitingHint')
+      : null;
+
+  const safeError = useMemo(
+    () => toUserFacingPreviewError(error, t('nodepod.errorDetail')),
+    [error, t],
+  );
+
+  const buildPhaseLabel = useMemo(() => {
+    if (!buildProgress || buildProgress.phase === 'ready') return null;
+    if (buildProgress.phase === 'failed') return t('nodepod.statusError');
+    const key = buildPhaseTranslationKey(buildProgress.phase);
+    const translated = t(key);
+    return translated === key ? null : translated;
+  }, [buildProgress, t]);
+
   const handleSelectFile = (path: string) => {
     setSelectedPath(path);
     setContentPane('source');
@@ -216,93 +301,61 @@ export function ApplicationComponentView({
     setContentPane('preview');
   };
 
-  const tabClass = (active: boolean, disabled?: boolean) =>
-    cn(
-      'inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium transition-colors',
-      disabled && 'pointer-events-none opacity-40',
-      active
-        ? 'bg-background text-foreground shadow-sm'
-        : 'text-muted-foreground hover:text-foreground',
-    );
-
-  const iconBtn = (
-    icon: React.ReactNode,
-    onClick: () => void,
-    disabled: boolean,
-    label: string,
-  ) => (
-    <Tooltip>
-      <TooltipTrigger asChild>
-        <button
-          type='button'
-          onClick={onClick}
-          disabled={disabled}
+  const previewPane =
+    status === 'ready' && previewUrl ? (
+      <iframe
+        key={`${workspaceRevisionId ?? 'preview'}-${previewUrl}`}
+        ref={previewIframeRef}
+        title={title || t('nodepod.previewTitle')}
+        src={previewUrl}
+        className='absolute inset-0 size-full border-0 bg-background'
+        // allow-same-origin required for preview_action + Nodepod SW (Vague 4).
+        // Ticket/mcpToken must never appear in src, props, or postMessage.
+        sandbox='allow-forms allow-modals allow-popups allow-popups-to-escape-sandbox allow-presentation allow-same-origin allow-scripts'
+      />
+    ) : (
+      <div className='flex size-full flex-col items-center justify-center gap-4 bg-gradient-to-b from-muted/30 to-background px-6 text-center'>
+        <div
           className={cn(
-            'inline-flex size-7 shrink-0 items-center justify-center rounded-md transition-colors',
-            disabled
-              ? 'text-muted-foreground/40'
-              : 'text-muted-foreground hover:bg-muted hover:text-foreground',
+            'flex size-14 items-center justify-center rounded-2xl border shadow-sm',
+            status === 'error'
+              ? 'border-fail/25 bg-fail-soft'
+              : 'border-border/60 bg-card',
           )}
-          aria-label={label}
         >
-          {icon}
-        </button>
-      </TooltipTrigger>
-      <TooltipContent side='bottom' className='text-xs'>
-        {label}
-      </TooltipContent>
-    </Tooltip>
-  );
-
-  const previewPane = (
-    <>
-      {status === 'ready' && previewUrl ? (
-        <div className='relative h-full min-h-0 overflow-hidden bg-muted/20'>
-          <iframe
-            key={`${workspaceRevisionId ?? 'preview'}-${previewUrl}`}
-            ref={previewIframeRef}
-            title={title || t('nodepod.previewTitle')}
-            src={previewUrl}
-            className='absolute inset-0 size-full border-0 bg-white'
-            // allow-same-origin required for preview_action + Nodepod SW (Vague 4).
-            // Ticket/mcpToken must never appear in src, props, or postMessage.
-            sandbox='allow-forms allow-modals allow-popups allow-popups-to-escape-sandbox allow-presentation allow-same-origin allow-scripts'
-          />
-        </div>
-      ) : (
-        <div className='flex h-full min-h-0 flex-col items-center justify-center gap-3 overflow-hidden bg-muted/15 px-4 text-center'>
-          {busy && (
-            <div className='relative'>
-              <div className='absolute inset-0 animate-ping rounded-full bg-primary/20' />
-              <div className='relative flex size-10 items-center justify-center rounded-full bg-primary/10'>
-                <Loader2Icon className='size-4 animate-spin text-primary' />
-              </div>
-            </div>
-          )}
+          {busy && <Loader2Icon className='size-6 animate-spin text-primary' />}
           {!busy && status === 'error' && (
-            <div className='flex size-10 items-center justify-center rounded-full bg-destructive/10'>
-              <RefreshCwIcon className='size-4 text-destructive' />
-            </div>
+            <AlertCircleIcon className='size-6 text-fail' />
           )}
-          <div className='space-y-1'>
-            <p className='text-sm font-medium'>{statusLabel}</p>
-            {error && (
-              <p className='max-w-xs text-xs text-destructive leading-relaxed'>{error}</p>
-            )}
-            {busy && (
-              <p className='max-w-xs text-xs text-muted-foreground'>{t('nodepod.bootHint')}</p>
-            )}
-          </div>
-          {(status === 'error' || status === 'idle') && (
-            <Button type='button' variant='outline' size='sm' onClick={retry}>
-              <RefreshCwIcon className='mr-1.5 size-3.5' />
-              {t('nodepod.retry')}
-            </Button>
+          {!busy && status === 'idle' && (
+            <SparklesIcon className='size-6 text-muted-foreground/70' />
           )}
         </div>
-      )}
-    </>
-  );
+        <div className='max-w-sm space-y-1.5'>
+          <p className='text-sm font-semibold tracking-tight'>
+            {statusLabel || t('nodepod.previewTitle')}
+          </p>
+          {status === 'error' && safeError && (
+            <p className='text-xs leading-relaxed text-fail'>{safeError}</p>
+          )}
+          {statusHint && (
+            <p className='text-xs leading-relaxed text-muted-foreground'>{statusHint}</p>
+          )}
+        </div>
+        {(status === 'error' || status === 'idle') && (
+          <Button
+            type='button'
+            variant='outline'
+            size='sm'
+            onClick={retry}
+            className='h-8 gap-1.5'
+          >
+            <RefreshCwIcon className='size-3.5' />
+            {t('nodepod.retry')}
+          </Button>
+        )}
+      </div>
+    );
 
   const mainContent = (
     <div className='flex h-full min-h-0 min-w-0 flex-col overflow-hidden'>
@@ -317,7 +370,7 @@ export function ApplicationComponentView({
   );
 
   return (
-    <TooltipProvider delayDuration={300}>
+    <TooltipProvider delayDuration={250}>
       <div className='relative flex h-full min-h-0 flex-col overflow-hidden'>
         {/*
           Keep Nodepod chrome + preview iframe mounted while Deployed is shown
@@ -331,38 +384,49 @@ export function ApplicationComponentView({
           aria-hidden={showDeployedApp || undefined}
         >
           <div
-            className='flex h-10 shrink-0 items-center gap-1.5 border-b bg-card/60 px-2'
+            className='flex h-10 shrink-0 items-center gap-2 border-b border-border/70 bg-card/70 px-2.5'
             role='toolbar'
+            aria-label={t('nodepod.toolbarLabel')}
           >
             {badge && (
               <Badge
                 variant='secondary'
-                className={cn('shrink-0 gap-1 border-0 text-[10px] font-normal', badge.className)}
+                className={cn(
+                  'h-6 shrink-0 gap-1.5 border-0 px-2 text-[11px] font-medium',
+                  badge.className,
+                )}
               >
                 {busy && <Loader2Icon className='size-3 animate-spin' />}
+                {status === 'ready' && (
+                  <span className='size-1.5 rounded-full bg-ok' aria-hidden />
+                )}
                 {badge.label}
               </Badge>
             )}
 
-            {buildProgress && buildProgress.phase !== 'ready' && (
-              <span className='hidden max-w-[12rem] truncate text-[10px] text-muted-foreground lg:inline'>
-                {buildProgress.message}
-              </span>
-            )}
+            {title ? (
+              <p className='min-w-0 truncate text-xs font-medium text-foreground/90'>
+                {title}
+              </p>
+            ) : buildPhaseLabel ? (
+              <p className='hidden min-w-0 truncate text-[11px] text-muted-foreground lg:block'>
+                {buildPhaseLabel}
+              </p>
+            ) : null}
 
-            {fileCount != null && (
-              <span className='hidden shrink-0 text-[10px] text-muted-foreground sm:inline'>
+            {fileCount != null && fileCount > 0 && (
+              <span className='hidden shrink-0 text-[11px] tabular-nums text-muted-foreground md:inline'>
                 {t('nodepod.fileCount', { count: fileCount })}
               </span>
             )}
 
-            <div className='ml-auto flex shrink-0 items-center gap-0.5'>
+            <div className='ml-auto flex shrink-0 items-center gap-1'>
               {layoutMode === 'split' && (
-                <div className='mr-1 inline-flex items-center rounded-md border bg-muted/30 p-0.5'>
+                <SegmentedControl className='mr-0.5'>
                   <button
                     type='button'
                     onClick={() => setContentPane('preview')}
-                    className={tabClass(contentPane === 'preview')}
+                    className={segmentClass(contentPane === 'preview')}
                     aria-pressed={contentPane === 'preview'}
                   >
                     <EyeIcon className='size-3.5' />
@@ -371,23 +435,23 @@ export function ApplicationComponentView({
                   <button
                     type='button'
                     onClick={() => setContentPane('source')}
-                    className={tabClass(contentPane === 'source', !selectedPath)}
+                    className={segmentClass(contentPane === 'source', !selectedPath)}
                     disabled={!selectedPath}
                     aria-pressed={contentPane === 'source'}
                   >
                     <FileCodeIcon className='size-3.5' />
                     <span className='hidden sm:inline'>{t('nodepod.tabSource')}</span>
                   </button>
-                </div>
+                </SegmentedControl>
               )}
 
-              <div className='inline-flex items-center rounded-md border bg-muted/30 p-0.5'>
+              <SegmentedControl>
                 <Tooltip>
                   <TooltipTrigger asChild>
                     <button
                       type='button'
                       onClick={setPreviewOnly}
-                      className={tabClass(layoutMode === 'preview-only')}
+                      className={segmentClass(layoutMode === 'preview-only')}
                       aria-pressed={layoutMode === 'preview-only'}
                       aria-label={t('nodepod.layoutPreviewOnlyHint')}
                     >
@@ -404,7 +468,7 @@ export function ApplicationComponentView({
                     <button
                       type='button'
                       onClick={setSplitLayout}
-                      className={tabClass(layoutMode === 'split')}
+                      className={segmentClass(layoutMode === 'split')}
                       aria-pressed={layoutMode === 'split'}
                       aria-label={t('nodepod.layoutSplitHint')}
                     >
@@ -416,28 +480,27 @@ export function ApplicationComponentView({
                     {t('nodepod.layoutSplitHint')}
                   </TooltipContent>
                 </Tooltip>
-              </div>
+              </SegmentedControl>
 
-              {status === 'ready' &&
-                previewUrl &&
-                iconBtn(
-                  <ExternalLinkIcon className='size-3.5' />,
-                  handleOpenExternal,
-                  false,
-                  t('nodepod.openInNewTab'),
-                )}
+              {status === 'ready' && previewUrl && (
+                <ToolbarIconButton
+                  icon={<ExternalLinkIcon className='size-3.5' />}
+                  onClick={handleOpenExternal}
+                  label={t('nodepod.openInNewTab')}
+                />
+              )}
 
-              {(status === 'error' || status === 'idle' || status === 'ready') &&
-                iconBtn(
-                  <RefreshCwIcon className='size-3.5' />,
-                  retry,
-                  false,
-                  t('nodepod.retry'),
-                )}
+              {(status === 'error' || status === 'idle' || status === 'ready') && (
+                <ToolbarIconButton
+                  icon={<RefreshCwIcon className='size-3.5' />}
+                  onClick={retry}
+                  label={t('nodepod.retry')}
+                />
+              )}
             </div>
           </div>
 
-          <div className='min-h-0 flex-1 overflow-hidden'>
+          <div className='min-h-0 flex-1 overflow-hidden bg-background'>
             {layoutMode === 'split' ? (
               <ResizablePanelGroup
                 id='nodepod-app-split'
@@ -448,9 +511,9 @@ export function ApplicationComponentView({
                 <ResizablePanel
                   id='source-tree'
                   defaultSize='30%'
-                  minSize='25%'
-                  maxSize='60%'
-                  className='flex min-h-0 min-w-0 flex-col overflow-hidden'
+                  minSize='22%'
+                  maxSize='48%'
+                  className='flex min-h-0 min-w-0 flex-col overflow-hidden border-r border-border/60'
                 >
                   <AppSourceFileTree
                     tree={sourceTree}
@@ -459,7 +522,7 @@ export function ApplicationComponentView({
                     className='h-full min-h-0'
                   />
                 </ResizablePanel>
-                <ResizableHandle withHandle className='w-px shrink-0' />
+                <ResizableHandle withHandle className='w-px shrink-0 bg-border/60' />
                 <ResizablePanel
                   id='preview-pane'
                   defaultSize='56%'
@@ -477,43 +540,55 @@ export function ApplicationComponentView({
 
         {showDeployedApp && (
           <div className='absolute inset-0 z-10 flex h-full min-h-0 flex-col overflow-hidden bg-background'>
-            {canEmbedDeployed ? (
-              <div className='relative min-h-0 flex-1 overflow-hidden bg-muted/20'>
-                {/*
-                  No sandbox: published apps need full browser capabilities.
-                  credentialless: parent uses COEP credentialless for Nodepod.
-                */}
+            <div className='relative min-h-0 flex-1 overflow-hidden'>
+              {canEmbedDeployed ? (
+                /* No sandbox: published apps need full browser capabilities.
+                   credentialless: parent uses COEP credentialless for Nodepod. */
                 <iframe
                   title={title || t('nodepod.previewTitle')}
                   src={deployedSrc}
-                  className='absolute inset-0 size-full border-0 bg-white'
+                  className='absolute inset-0 size-full border-0 bg-background'
                   referrerPolicy='strict-origin-when-cross-origin'
                   allow='accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share'
                   {...({ credentialless: '' } as React.IframeHTMLAttributes<HTMLIFrameElement>)}
                 />
-              </div>
-            ) : (
-              <div className='flex min-h-0 flex-1 flex-col items-center justify-center gap-3 bg-muted/15 px-6 text-center'>
-                <ExternalLinkIcon className='size-8 text-muted-foreground/50' />
-                <div className='space-y-1'>
-                  <p className='text-sm font-medium'>{t('deploy.embedUnavailable')}</p>
+              ) : (
+                <div className='flex size-full flex-col items-center justify-center gap-4 bg-gradient-to-b from-muted/30 to-background px-6 text-center'>
+                  <div className='flex size-14 items-center justify-center rounded-2xl border border-border/60 bg-card shadow-sm'>
+                    <ExternalLinkIcon className='size-6 text-muted-foreground/70' />
+                  </div>
+                  <div className='max-w-sm space-y-1.5'>
+                    <p className='text-sm font-semibold tracking-tight'>
+                      {t('deploy.embedUnavailable')}
+                    </p>
+                    <p className='text-xs leading-relaxed text-muted-foreground'>
+                      {t('deploy.embedUnavailableHint')}
+                    </p>
+                  </div>
+                  <Button
+                    type='button'
+                    variant='outline'
+                    size='sm'
+                    onClick={handleOpenDeployed}
+                    className='h-8 gap-1.5'
+                  >
+                    <ExternalLinkIcon className='size-3.5' />
+                    {t('deploy.open')}
+                  </Button>
                 </div>
-                <Button type='button' size='sm' onClick={handleOpenDeployed} className='gap-1.5'>
-                  <ExternalLinkIcon className='size-3.5' />
-                  {t('deploy.open')}
-                </Button>
-              </div>
-            )}
-            <div className='flex h-9 shrink-0 items-center gap-2 border-t bg-card/60 px-2'>
-              <a
-                href={deployedUrl}
-                target='_blank'
-                rel='noreferrer'
-                className='min-w-0 flex-1 truncate text-[11px] text-muted-foreground hover:text-foreground hover:underline'
-                title={deployedUrl}
+              )}
+            </div>
+            <div className='flex h-10 shrink-0 items-center gap-2 border-t border-border/70 bg-card/80 px-3'>
+              <Badge
+                variant='secondary'
+                className='h-6 shrink-0 gap-1.5 border-0 bg-ok-soft px-2 text-[11px] font-medium text-ok'
               >
-                {deployedUrl}
-              </a>
+                <span className='size-1.5 rounded-full bg-ok' aria-hidden />
+                {t('deploy.liveBadge')}
+              </Badge>
+              <p className='min-w-0 flex-1 truncate text-xs text-muted-foreground'>
+                {title || t('deploy.publishedApp')}
+              </p>
               <Button
                 type='button'
                 variant='outline'
@@ -531,4 +606,3 @@ export function ApplicationComponentView({
     </TooltipProvider>
   );
 }
-

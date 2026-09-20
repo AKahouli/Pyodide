@@ -1,4 +1,4 @@
-import { LayoutGrid, List, Search, X } from 'lucide-react';
+import { LayoutGrid, List, Search, Sparkles, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import {
@@ -26,6 +26,8 @@ interface AppBuilderFiltersProps {
   onSortChange: (value: AppSortKey) => void;
   view: AppViewMode;
   onViewChange: (value: AppViewMode) => void;
+  aiOnly: boolean;
+  onAiOnlyChange: (value: boolean) => void;
   hasActiveFilters: boolean;
   onClearAll: () => void;
 }
@@ -40,6 +42,8 @@ export function AppBuilderFilters({
   onSortChange,
   view,
   onViewChange,
+  aiOnly,
+  onAiOnlyChange,
   hasActiveFilters,
   onClearAll,
 }: AppBuilderFiltersProps) {
@@ -84,6 +88,23 @@ export function AppBuilderFilters({
           ))}
         </SelectContent>
       </Select>
+
+      <button
+        type='button'
+        onClick={() => onAiOnlyChange(!aiOnly)}
+        aria-pressed={aiOnly}
+        aria-label={t('hub.filters.aiOnly')}
+        title={t('hub.filters.aiOnlyHint')}
+        className={cn(
+          'inline-flex h-9 items-center gap-1.5 rounded-md border px-2.5 text-xs font-medium transition',
+          aiOnly
+            ? 'border-violet-500/40 bg-violet-500/15 text-violet-800 dark:text-violet-200'
+            : 'border-transparent bg-transparent text-muted-foreground hover:bg-accent/50 hover:text-foreground',
+        )}
+      >
+        <Sparkles className='h-3.5 w-3.5' aria-hidden />
+        {t('hub.filters.aiOnly')}
+      </button>
 
       <Select value={sort} onValueChange={(v) => onSortChange(v as AppSortKey)}>
         <SelectTrigger className='h-9 w-[260px] gap-1.5 border-transparent bg-transparent shadow-none hover:bg-accent/50 [&>span]:line-clamp-1'>

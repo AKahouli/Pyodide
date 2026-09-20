@@ -53,6 +53,8 @@
     "filters": {
       "searchPlaceholder": "Search apps...",
       "statusLabel": "Status",
+      "aiOnly": "AI",
+      "aiOnlyHint": "Show only apps with AI features",
       "clear": "Clear filters",
       "noResults": "No apps match your filters."
     },
@@ -93,6 +95,9 @@
     "continue": "Continue building",
     "deployed": "Deployed",
     "shared": "Shared",
+    "ai": "AI",
+    "aiFeatures": "AI features",
+    "aiFeaturesHint": "This app integrates AI capabilities",
     "open": "Open the application",
     "conversation": "Go to the conversation",
     "share": "Share app & conversation",
@@ -116,9 +121,9 @@
   },
   "endUsers": {
     "title": "App users & permissions",
-    "description": "Registered users and their CRUD permissions for this deployed app.",
+    "description": "Registered users and their permissions for this deployed app.",
     "descriptionNamed": "Manage users and permissions for \"{{title}}\".",
-    "hint": "New users have no permissions by default. Explicitly grant the CRUD access they need.",
+    "hint": "New users have no permissions by default. Explicitly grant the access they need.",
     "searchPlaceholder": "Search by name or email…",
     "refresh": "Refresh",
     "retry": "Retry",
@@ -145,13 +150,15 @@
       "label": "Apply preset",
       "none": "No permissions",
       "readOnly": "Read only",
-      "full": "Full access"
+      "full": "Full access",
+      "hint": "CRUD presets do not change AI usage — toggle AI separately."
     },
     "grants": {
       "create": "Create",
       "read": "Read",
       "update": "Update",
-      "delete": "Delete"
+      "delete": "Delete",
+      "useAi": "AI usage"
     }
   }
 }

@@ -15,6 +15,7 @@ import type { AppViewMode } from '../hooks/useAppBuilderFilters';
 import type { DraftApp } from '../types';
 import { DeleteDraftAppButton } from './DeleteDraftAppButton';
 import { AppRevisionMeta } from './AppRevisionMeta';
+import { AppAiBadge } from './AppAiBadge';
 
 interface DraftAppCardProps {
   app: DraftApp;
@@ -106,7 +107,10 @@ export const DraftAppCard = memo(function DraftAppCard({
           <h3 className='min-w-0 flex-1 truncate text-sm font-medium leading-snug tracking-tight' title={title}>
             {title}
           </h3>
-          {statusBadge}
+          <div className='flex shrink-0 items-center gap-1'>
+            {app.hasAiFeatures ? <AppAiBadge /> : null}
+            {statusBadge}
+          </div>
         </div>
         <p className='mt-0.5 line-clamp-2 text-xs text-muted-foreground'>{t('card.draftHint')}</p>
         <p className='mt-0.5 text-[11px] text-muted-foreground'>

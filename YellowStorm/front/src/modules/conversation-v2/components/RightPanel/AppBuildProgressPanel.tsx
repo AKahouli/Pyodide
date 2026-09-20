@@ -32,9 +32,9 @@ export function AppBuildProgressPanel({ progress, title }: AppBuildProgressPanel
           variant='secondary'
           className={cn(
             'gap-1 border-0 text-[10px] font-normal',
-            failed && 'bg-destructive/15 text-destructive',
-            ready && 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-400',
-            !failed && !ready && 'bg-sky-500/15 text-sky-700 dark:text-sky-400',
+            failed && 'bg-destructive/10 text-destructive',
+            ready && 'bg-primary/10 text-primary',
+            !failed && !ready && 'bg-secondary text-secondary-foreground',
           )}
         >
           {!failed && !ready && <Loader2Icon className='size-3 animate-spin' />}
@@ -47,21 +47,25 @@ export function AppBuildProgressPanel({ progress, title }: AppBuildProgressPanel
         )}
       </div>
 
-      <div className='flex flex-1 flex-col items-center justify-center gap-6 overflow-auto px-6 py-8'>
+      <div className='flex flex-1 flex-col items-center justify-center gap-6 overflow-auto bg-gradient-to-b from-muted/30 to-background px-6 py-8'>
         <div className='relative'>
           {!failed && !ready && (
-            <div className='absolute inset-0 animate-ping rounded-full bg-primary/20' />
+            <div className='absolute inset-0 animate-ping rounded-full bg-primary/15' />
           )}
           <div
             className={cn(
-              'relative flex size-12 items-center justify-center rounded-full',
-              failed ? 'bg-destructive/10' : ready ? 'bg-emerald-500/10' : 'bg-primary/10',
+              'relative flex size-14 items-center justify-center rounded-2xl border shadow-sm',
+              failed
+                ? 'border-destructive/20 bg-destructive/10'
+                : ready
+                  ? 'border-primary/20 bg-primary/10'
+                  : 'border-border/60 bg-card',
             )}
           >
             {failed ? (
               <AlertCircleIcon className='size-5 text-destructive' />
             ) : ready ? (
-              <CheckCircle2Icon className='size-5 text-emerald-600 dark:text-emerald-400' />
+              <CheckCircle2Icon className='size-5 text-primary' />
             ) : (
               <Loader2Icon className='size-5 animate-spin text-primary' />
             )}
@@ -69,8 +73,8 @@ export function AppBuildProgressPanel({ progress, title }: AppBuildProgressPanel
         </div>
 
         <div className='max-w-sm space-y-2 text-center'>
-          <p className='text-sm font-medium'>{title || t('nodepod.previewTitle')}</p>
-          <p className='text-xs text-muted-foreground leading-relaxed'>{progress.message}</p>
+          <p className='text-sm font-semibold tracking-tight'>{title || t('nodepod.previewTitle')}</p>
+          <p className='text-xs leading-relaxed text-muted-foreground'>{phaseLabel}</p>
         </div>
 
         <ol className='w-full max-w-md space-y-2'>
@@ -94,7 +98,7 @@ export function AppBuildProgressPanel({ progress, title }: AppBuildProgressPanel
                 <span
                   className={cn(
                     'inline-flex size-4 shrink-0 items-center justify-center rounded-full border text-[9px]',
-                    done && 'border-emerald-500/40 bg-emerald-500/15 text-emerald-700 dark:text-emerald-400',
+                    done && 'border-primary/30 bg-primary/10 text-primary',
                     active && !done && 'border-primary/40 bg-primary/10',
                   )}
                 >

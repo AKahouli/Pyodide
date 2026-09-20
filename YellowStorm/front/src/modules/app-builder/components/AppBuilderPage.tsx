@@ -84,6 +84,8 @@ export function AppBuilderPage() {
                 onSortChange={filters.setSort}
                 view={filters.filters.view}
                 onViewChange={filters.setView}
+                aiOnly={filters.filters.aiOnly}
+                onAiOnlyChange={filters.setAiOnly}
                 hasActiveFilters={filters.hasActiveFilters}
                 onClearAll={filters.clearAll}
               />
