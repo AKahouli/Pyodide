@@ -13,6 +13,7 @@ from app.jobs.models import (
     OutboxItem,
     StaleLease,
 )
+from app.jobs.recovery import backoff_seconds
 
 
 def _json(value: Any) -> str:
@@ -185,7 +186,7 @@ class PostgresJobRepository:
                       LIMIT 1
                     )
                     RETURNING id, job_id::text, task_name, payload, lease_epoch,
-                              lease_owner, lease_expires_at
+                              lease_owner, lease_expires_at, attempt_count
                     """,
                     queue_name,
                     lease_owner,
@@ -219,6 +220,7 @@ class PostgresJobRepository:
                     row["lease_epoch"],
                     row["lease_owner"],
                     row["lease_expires_at"],
+                    row["attempt_count"],
                 )
 
     async def renew_lease(
@@ -332,6 +334,194 @@ class PostgresJobRepository:
                     job_state,
                 )
                 return {"jobId": row["job_id"], "state": job_state}
+
+    async def requeue_task(
+        self,
+        *,
+        task_id: int,
+        lease_owner: str,
+        lease_epoch: int,
+        error_code: str,
+        retry_seconds: int,
+    ) -> bool:
+        """Release a live lease so the next delivery can reclaim immediately.
+
+        Fenced on the current owner/epoch so a stale worker cannot release a
+        task another worker now owns. The outbox row is deliberately left
+        published, and its ``published_at`` is set to the moment the scheduled
+        retry is expected to arrive (``now() + retry_seconds``). The recovery
+        grace clock therefore starts after the Celery retry, so recovery can
+        never republish ahead of an already-scheduled delivery, and a task that
+        ran longer than the grace window is not mistaken for never claimed.
+        """
+        async with self.pool.acquire() as connection:
+            async with connection.transaction():
+                row = await connection.fetchrow(
+                    """
+                    UPDATE semantic_jobs.tasks
+                    SET state = 'queued', lease_owner = NULL, lease_expires_at = NULL,
+                        error_code = $4, updated_at = now()
+                    WHERE id = $1 AND state = 'running'
+                      AND lease_owner = $2 AND lease_epoch = $3
+                      AND lease_expires_at > now()
+                    RETURNING id
+                    """,
+                    task_id,
+                    lease_owner,
+                    lease_epoch,
+                    error_code[:100],
+                )
+                if row is None:
+                    return False
+                await connection.execute(
+                    """
+                    UPDATE semantic_jobs.outbox
+                    SET published_at = now() + make_interval(secs => $3),
+                        claim_owner = NULL, claim_expires_at = NULL,
+                        last_error_code = $2
+                    WHERE task_id = $1 AND event_type = 'task.dispatch'
+                      AND published_at IS NOT NULL
+                    """,
+                    task_id,
+                    error_code[:100],
+                    retry_seconds,
+                )
+                return True
+
+    async def recover_stalled_tasks(
+        self,
+        *,
+        max_attempts: int,
+        retry_seconds: int,
+        grace_seconds: int,
+        batch: int = 50,
+    ) -> dict[str, int]:
+        """Backstop for delivery lost without a worker finishing (P2.6).
+
+        Two classes under ``FOR UPDATE SKIP LOCKED`` so concurrent API
+        replicas and dispatcher instances never recover the same task twice:
+
+        - **Expired running lease** — a worker claimed the task and then died.
+          Bounded by the task attempt count, which only real claims increment,
+          so queue latency can never exhaust a task no worker attempted. Past
+          the cap the task and job are fenced to ``failed``.
+        - **Published but never claimed** — the worker failed before the claim
+          or the broker dropped the delivery. Only considered stalled after
+          ``grace_seconds``; it is republished with capped backoff and is
+          **never** marked failed, so a healthy-but-backlogged queue cannot
+          terminate a job.
+        """
+        async with self.pool.acquire() as connection:
+            async with connection.transaction():
+                expired = await connection.fetch(
+                    """
+                    SELECT id, attempt_count
+                    FROM semantic_jobs.tasks
+                    WHERE state = 'running' AND lease_expires_at < now()
+                    ORDER BY lease_expires_at, id
+                    FOR UPDATE SKIP LOCKED
+                    LIMIT $1
+                    """,
+                    batch,
+                )
+                stalled = await connection.fetch(
+                    """
+                    SELECT t.id, o.attempt_count AS dispatch_count
+                    FROM semantic_jobs.tasks t
+                    JOIN semantic_jobs.outbox o
+                      ON o.task_id = t.id AND o.event_type = 'task.dispatch'
+                    WHERE t.state = 'queued'
+                      AND o.published_at IS NOT NULL
+                      AND o.published_at < now() - make_interval(secs => $1)
+                      AND (o.claim_expires_at IS NULL OR o.claim_expires_at < now())
+                    ORDER BY o.published_at, t.id
+                    FOR UPDATE OF t, o SKIP LOCKED
+                    LIMIT $2
+                    """,
+                    grace_seconds,
+                    batch,
+                )
+
+                give_up = [row["id"] for row in expired if row["attempt_count"] > max_attempts]
+                requeue_running = [row["id"] for row in expired
+                                   if row["attempt_count"] <= max_attempts]
+
+                exhausted = 0
+                if give_up:
+                    rows = await connection.fetch(
+                        """
+                        UPDATE semantic_jobs.tasks
+                        SET state = 'failed', error_code = 'attempts_exhausted',
+                            completed_at = now(), lease_owner = NULL,
+                            lease_expires_at = NULL, updated_at = now()
+                        WHERE id = ANY($1::bigint[]) AND state = 'running'
+                        RETURNING id, job_id::text
+                        """,
+                        give_up,
+                    )
+                    exhausted = len(rows)
+                    for row in rows:
+                        await connection.execute(
+                            """
+                            UPDATE semantic_jobs.jobs
+                            SET state = 'failed', error_code = 'attempts_exhausted',
+                                completed_at = now(), updated_at = now()
+                            WHERE id = $1::uuid
+                              AND state IN ('queued', 'waiting_dependencies', 'running',
+                                            'cancel_requested')
+                            """,
+                            row["job_id"],
+                        )
+                        await connection.execute(
+                            """
+                            INSERT INTO semantic_jobs.events (job_id, task_id, event_type, payload)
+                            VALUES ($1::uuid, $2, 'job.failed',
+                                    jsonb_build_object('reason', 'attempts_exhausted'))
+                            """,
+                            row["job_id"],
+                            row["id"],
+                        )
+
+                if requeue_running:
+                    await connection.execute(
+                        """
+                        UPDATE semantic_jobs.tasks
+                        SET state = 'queued', lease_owner = NULL, lease_expires_at = NULL,
+                            updated_at = now()
+                        WHERE id = ANY($1::bigint[]) AND state = 'running'
+                        """,
+                        requeue_running,
+                    )
+                # A dead worker also loses its broker requeue, so these are
+                # republished promptly rather than waiting for a delivery.
+                if requeue_running:
+                    await connection.execute(
+                        """
+                        UPDATE semantic_jobs.outbox
+                        SET published_at = NULL, claim_owner = NULL, claim_expires_at = NULL,
+                            next_attempt_at = now(), last_error_code = 'lease_expired'
+                        WHERE event_type = 'task.dispatch' AND task_id = ANY($1::bigint[])
+                        """,
+                        requeue_running,
+                    )
+
+                # Lost deliveries: republish with capped backoff, never fail.
+                republished = 0
+                for row in stalled:
+                    await connection.execute(
+                        """
+                        UPDATE semantic_jobs.outbox
+                        SET published_at = NULL, claim_owner = NULL, claim_expires_at = NULL,
+                            next_attempt_at = now() + make_interval(secs => $2),
+                            last_error_code = 'delivery_not_claimed'
+                        WHERE task_id = $1 AND event_type = 'task.dispatch'
+                        """,
+                        row["id"],
+                        backoff_seconds(retry_seconds, row["dispatch_count"]),
+                    )
+                    republished += 1
+
+                return {"exhausted": exhausted, "requeued": len(requeue_running) + republished}
 
     async def claim_outbox(
         self, *, claim_owner: str, claim_seconds: int

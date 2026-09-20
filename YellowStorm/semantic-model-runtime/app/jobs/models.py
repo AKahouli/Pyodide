@@ -44,6 +44,7 @@ class Lease:
     lease_epoch: int
     lease_owner: str
     lease_expires_at: datetime
+    attempt_count: int = 1
 
 
 @dataclass(frozen=True)

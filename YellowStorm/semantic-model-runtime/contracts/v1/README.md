@@ -24,6 +24,25 @@ See `tests/contracts/fixtures/README.md`. The five Phase 0 scenarios cover one
 XLSX, one CSV, one indexed document, one failed/unindexed document, and a
 cross-Workspace selection.
 
+## Implementation scope note (Phase 3, current)
+
+The Phase 3 datasource slice currently implemented is **metadata-only**: it
+resolves `assetRef` and emits versioned profiles from verified Workspace
+metadata. It performs no source read, so `samples` is empty and
+`coverage.sampled` is `false` in generated profiles.
+
+The fixtures describe full Phase 3 discovery, where bounded samples exist and
+`coverage.sampled` is `true`. Fixture expectations for samples are therefore
+**not yet met**; they are the acceptance target for the bounded-sampling slice
+(plan P3.7-P3.10, P3.12), which additionally needs the asset-fetch path, parser
+dependencies and the sandboxed subprocess wrapper (P2.8). Generated profiles
+are validated against `discovery-profile.schema.json` in
+`tests/test_datasource_discovery.py`.
+
+Cross-Workspace discovery requires an authoritative execution-time
+authorization verifier (`SourceAuthorizationVerifier`). No NestJS client is
+wired yet, so it fails closed and the payload's own grant claims are ignored.
+
 ## Current backend reality these contracts absorb (Phase 0 findings)
 
 - `workspace.workspace_documents` has **no version history**; `contentHash` is

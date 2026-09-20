@@ -21,6 +21,11 @@ def make_celery() -> Celery:
     app = Celery("semantic-model-runtime", broker=broker)
     app.conf.update(
         task_acks_late=True,
+        # acks_late alone still acks failures by default; without this a failed
+        # task is acknowledged and the durable row stays non-terminal forever.
+        # Reject instead so the broker redelivers; DB attempt caps in the task
+        # bound redelivery so a persistent failure cannot loop forever.
+        task_acks_on_failure_or_timeout=False,
         worker_prefetch_multiplier=1,
         task_reject_on_worker_lost=True,
     )

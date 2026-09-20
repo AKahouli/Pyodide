@@ -17,6 +17,7 @@ class OutboxRepo:
         )
         self.published = False
         self.released: tuple | None = None
+        self.recovered: list[dict] = []
 
     async def claim_outbox(self, *, claim_owner: str, claim_seconds: int):
         if self.published or self.released:
@@ -30,6 +31,12 @@ class OutboxRepo:
     async def release_outbox(self, outbox_id: int, claim_owner: str, error_code: str, retry_seconds: int) -> bool:
         self.released = (outbox_id, error_code, retry_seconds)
         return True
+
+    async def recover_stalled_tasks(self, *, max_attempts: int, retry_seconds: int,
+                                    grace_seconds: int, batch: int):
+        self.recovered.append({"max_attempts": max_attempts, "retry_seconds": retry_seconds,
+                               "grace_seconds": grace_seconds, "batch": batch})
+        return {"exhausted": 0, "requeued": 1}
 
 
 @pytest.mark.asyncio
@@ -78,3 +85,32 @@ async def test_dispatcher_survives_repository_failure():
         await asyncio.sleep(0.002)
     await dispatcher.stop()
     assert repo.claims >= 2
+
+
+@pytest.mark.asyncio
+async def test_recovery_republishes_expired_leases_each_iteration(monkeypatch: pytest.MonkeyPatch):
+    repo = OutboxRepo()
+    monkeypatch.setattr("app.jobs.dispatcher.celery_app.send_task", lambda *a, **kw: None)
+    dispatcher = OutboxDispatcher(repo, interval_seconds=0.001, max_attempts=4,
+                                  retry_seconds=15, grace_seconds=90)
+    assert await dispatcher.recover_once() == {"exhausted": 0, "requeued": 1}
+    assert repo.recovered == [{"max_attempts": 4, "retry_seconds": 15,
+                               "grace_seconds": 90, "batch": 50}]
+    await dispatcher.start()
+    for _ in range(20):
+        if len(repo.recovered) >= 2:
+            break
+        await asyncio.sleep(0.002)
+    await dispatcher.stop()
+    # Recovery runs even when the outbox had nothing new to dispatch.
+    assert len(repo.recovered) >= 2
+
+
+@pytest.mark.asyncio
+async def test_recovery_is_optional_for_repositories_without_it(monkeypatch: pytest.MonkeyPatch):
+    class NoRecoveryRepo(OutboxRepo):
+        recover_stalled_tasks = None
+
+    repo = NoRecoveryRepo()
+    monkeypatch.setattr("app.jobs.dispatcher.celery_app.send_task", lambda *a, **kw: None)
+    assert await OutboxDispatcher(repo).recover_once() == {"exhausted": 0, "requeued": 0}
