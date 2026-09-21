@@ -106,14 +106,22 @@ export class ModelsService implements OnApplicationBootstrap {
       for (const entry of litellmEntries) {
         try {
           await withTransaction(this.pgDb, async () => {
-            const existingModel = await this.modelStore.findByModelId(entry.model_name);
+            let existingModel = await this.modelStore.findByModelId(entry.model_name);
 
             if (!existingModel) {
-              // New model - insert with all fields
+              // New model - insert with all fields. ON CONFLICT DO NOTHING keeps two
+              // instances syncing at boot from aborting each other with a unique violation.
               const transformedData = this.transformModel(entry);
-              await this.modelStore.insert({ ...transformedData, isActive: true });
-              addedCount++;
-            } else {
+              const inserted = await this.modelStore.insertIfAbsent({ ...transformedData, isActive: true });
+              if (inserted) {
+                addedCount++;
+                return;
+              }
+              // A concurrent sync inserted it between our read and write: treat as existing.
+              existingModel = await this.modelStore.findByModelId(entry.model_name);
+            }
+
+            if (existingModel) {
               // Model exists — always update chefSlug, litellmModel, providers (these come from the source of truth)
               const chefSlug = (entry.model_info?.litellm_provider || '').toLowerCase();
               const litellmModel = String(entry.litellm_params?.model || '').trim();

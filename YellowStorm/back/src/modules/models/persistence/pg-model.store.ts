@@ -94,8 +94,13 @@ export class PgModelStore implements ModelStore {
     return rows.map(toRow);
   }
 
-  async insert(row: NewModelRow): Promise<void> {
-    await this.q.insert(schema.catalogAiModels).values({ id: newObjectId(), ...row });
+  async insertIfAbsent(row: NewModelRow): Promise<boolean> {
+    const inserted = await this.q
+      .insert(schema.catalogAiModels)
+      .values({ id: newObjectId(), ...row })
+      .onConflictDoNothing({ target: schema.catalogAiModels.modelId })
+      .returning({ id: schema.catalogAiModels.id });
+    return inserted.length > 0;
   }
 
   async updateByModelId(modelId: string, patch: ModelPatch): Promise<ModelRow | null> {
