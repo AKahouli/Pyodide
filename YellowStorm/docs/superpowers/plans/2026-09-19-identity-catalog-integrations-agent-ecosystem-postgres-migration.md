@@ -848,19 +848,19 @@ If Step 0.3 finds more than one default model or plan, the backfill keeps the on
 
 ### 1B.1 — Notifications  *(cutover; unblocks the already-migrated workspace/project/indexing)*
 
-- [ ] **1B.1.1** Move `NotificationType`, `NotificationStatus` and `NotificationPriority` into `notifications/notification.types.ts`, re-exported from the schema file until the flip. Repoint the 5 external importers:
+- [x] **1B.1.1**** Move `NotificationType`, `NotificationStatus` and `NotificationPriority` into `notifications/notification.types.ts`, re-exported from the schema file until the flip. Repoint the 5 external importers:
   - `project-share.service.ts:34`
   - `workspace-share.service.ts:21`
   - `document-support.ts:25`
   - `indexing.service.ts:20`
   - `conversation-v2-app-share.service.ts:10`
-- [ ] **1B.1.2** Build `NotificationStore` + PG adapter.
+- [x] **1B.1.2**** Build `NotificationStore` + PG adapter.
   - `$inc retryCount` → `retry_count = retry_count + 1`.
   - The `$or` owner/broadcast `updateMany` (`notifications.service.ts:236-279`) → single `UPDATE … WHERE (user_id=$1 OR destination='broadcast') AND …`.
   - Default `expires_at` = now + `NOTIFICATION_TTL_DAYS`.
-- [ ] **1B.1.3** The gateway serializes the mapper output instead of `notification.toJSON()` (`notifications.gateway.ts:167,209`). Verify it against the SSE fixture.
-- [ ] **1B.1.4** Register the sweeper on `ops.notifications.expires_at`.
-- [ ] **1B.1.5** Backfill (skip already-expired rows), cut over, then smoke: share a project → notification appears live over SSE → mark read → unread count.
+- [x] **1B.1.3**** The gateway serializes the mapper output instead of `notification.toJSON()` (`notifications.gateway.ts:167,209`). Verify it against the SSE fixture.
+- [x] **1B.1.4**** Register the sweeper on `ops.notifications.expires_at`.
+- [x] **1B.1.5**** Backfill (skip already-expired rows), cut over, then smoke: share a project → notification appears live over SSE → mark read → unread count.
 
 ### 1B.2 — Settings, appearance, guardrails, health  *(cutover)*
 
