@@ -20,8 +20,6 @@ import playbookFlowConfig from './config/playbook-flow.config';
 import grpcSecurityConfig from './config/grpc-security.config';
 import grpcSecurityV2Config from './config/grpc-security-v2.config';
 import telegramConfig from './config/telegram.config';
-import whatsappConfig from './config/whatsapp.config';
-import whatsappMcpConfig from './config/whatsapp-mcp.config';
 import workyConfig from './config/worky.config';
 import memoryCardsConfig from './config/memory-cards.config';
 import dataRoomConfig from './config/data-room.config';
@@ -74,7 +72,6 @@ import { ProjectModule } from './modules/project';
 import { ClassifierModule } from './modules/classifier';
 import { TelegramModule } from './modules/telegram';
 import { WidgetChatModule } from './modules/widget-chat/widget-chat.module';
-import { WhatsAppModule } from './modules/whatsapp';
 import { WorkyModule } from './modules/worky';
 import { GuardrailsModule } from './modules/guardrails/guardrails.module';
 import { MemoryCardsModule } from './modules/memory-cards/memory-cards.module';
@@ -89,7 +86,7 @@ import { SemanticModelModule } from './modules/semantic-model/semantic-model.mod
     ConfigModule.forRoot({
       isGlobal: true,
       envFilePath: ['.env'],
-      load: [appConfig, jwtConfig, authConfig, microsoftConfig, healthConfig, workspaceConfig, litellmConfig, conversationConfig, conversationV2Config, appRuntimeConfig, appDataConfig, playbookFlowConfig, grpcSecurityConfig, grpcSecurityV2Config, telegramConfig, whatsappConfig, workyConfig, memoryCardsConfig, dataRoomConfig, semanticModelConfig, agentMcpConfig],
+      load: [appConfig, jwtConfig, authConfig, microsoftConfig, healthConfig, workspaceConfig, litellmConfig, conversationConfig, conversationV2Config, appRuntimeConfig, appDataConfig, playbookFlowConfig, grpcSecurityConfig, grpcSecurityV2Config, telegramConfig, workyConfig, memoryCardsConfig, dataRoomConfig, semanticModelConfig, agentMcpConfig],
       validationSchema: configValidationSchema,
       validationOptions: {
         abortEarly: true,
@@ -142,7 +139,6 @@ import { SemanticModelModule } from './modules/semantic-model/semantic-model.mod
     ConnectedAppModule,
     ConnectorModule,
     TelegramModule,
-    WhatsAppModule,
     ProjectModule,
     ClassifierModule,
     HealthModule,

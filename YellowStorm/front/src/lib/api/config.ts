@@ -22,7 +22,7 @@ function isHttpUrl(value: string): boolean {
   return /^https?:\/\//i.test(value);
 }
 
-/** Origin for Socket.IO (app-runtime, browser-session, whatsapp). */
+/** Origin for Socket.IO (app-runtime, browser-session). */
 export function getSocketBaseUrl(): string {
   if (process.env.NODE_ENV === 'development') {
     const devOverride = import.meta.env.VITE_SOCKET_BASE_URL?.trim();
@@ -131,14 +131,6 @@ export const API_ENDPOINTS = {
   },
   adminEvaluationSettings: {
     base: '/admin/evaluation-settings',
-  },
-  adminWorkyWhatsAppSystemBot: {
-    base: '/admin/worky/whatsapp-system-bot',
-    expectedPhone: '/admin/worky/whatsapp-system-bot/expected-phone',
-    connect: '/admin/worky/whatsapp-system-bot/connect',
-    pairing: (sessionId: string) => `/admin/worky/whatsapp-system-bot/${sessionId}/pairing`,
-    reconnect: (sessionId: string) => `/admin/worky/whatsapp-system-bot/${sessionId}/reconnect`,
-    session: (sessionId: string) => `/admin/worky/whatsapp-system-bot/${sessionId}`,
   },
   adminTeamAutoBuilder: {
     config: '/admin/teams/auto-builder-config',
@@ -472,17 +464,6 @@ export const API_ENDPOINTS = {
     humainResolve: '/agents/humain/resolve',
     byId: (id: string) => `/agents/${id}`,
     telegramIntegration: (id: string) => `/agents/${id}/telegram-integration`,
-    whatsappIntegration: (id: string) => `/agents/${id}/whatsapp-integration`,
-    whatsappEvents: (id: string) => `/agents/${id}/whatsapp-integration/events`,
-    whatsappAutoRecover: (id: string) => `/agents/${id}/whatsapp-integration/auto-recover`,
-    whatsappEnabled: (id: string) => `/agents/${id}/whatsapp-integration/enabled`,
-    whatsappConnect: (id: string) => `/agents/${id}/whatsapp-integration/connect`,
-    whatsappPairing: (id: string, sessionId: string) =>
-      `/agents/${id}/whatsapp-integration/${sessionId}/pairing`,
-    whatsappReconnect: (id: string, sessionId: string) =>
-      `/agents/${id}/whatsapp-integration/${sessionId}/reconnect`,
-    whatsappSession: (id: string, sessionId: string) =>
-      `/agents/${id}/whatsapp-integration/${sessionId}`,
     a2aPublish: (id: string) => `/agents/${id}/a2a/publish`,
     a2aRotateKey: (id: string) => `/agents/${id}/a2a/rotate-key`,
     a2aRevoke: (id: string) => `/agents/${id}/a2a/revoke`,
@@ -773,14 +754,5 @@ export const API_ENDPOINTS = {
     voiceThematicMemory: '/worky/voice/thematic-memory',
     voiceThematicRetrieve: '/worky/voice/thematic-memory/retrieve',
     voicePrompt: (streamId: string) => `/worky/voice/prompt/${streamId}`,
-    whatsappIntegration: (id: string) => `/worky/streams/${id}/whatsapp-integration`,
-    whatsappConnect: (id: string) => `/worky/streams/${id}/whatsapp-integration/connect`,
-    whatsappPairing: (id: string, sessionId: string) =>
-      `/worky/streams/${id}/whatsapp-integration/${sessionId}/pairing`,
-    whatsappReconnect: (id: string, sessionId: string) =>
-      `/worky/streams/${id}/whatsapp-integration/${sessionId}/reconnect`,
-    whatsappSession: (id: string, sessionId: string) =>
-      `/worky/streams/${id}/whatsapp-integration/${sessionId}`,
-    whatsappSystemBotStatus: '/worky/whatsapp-system-bot/status',
   },
 } as const;

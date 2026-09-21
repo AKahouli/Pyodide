@@ -1205,7 +1205,7 @@ class OrchestratorService:
         carrying an `error` message-component ({title, content}), the same shape
         the main chat module uses, so the client renders a destructive card
         instead of a normal reply. The plain-text content is kept on the message
-        too, for consumers that don't read components (WhatsApp/voice)."""
+        too, for consumers that don't read components (voice)."""
         if not content:
             return
         msg_id = uuid.uuid4().hex

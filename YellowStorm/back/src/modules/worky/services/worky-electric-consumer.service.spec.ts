@@ -31,9 +31,6 @@ const makeService = () => {
   const events = {
     emit: jest.fn(),
   };
-  const whatsappDelivery = {
-    attempt: jest.fn().mockResolvedValue(undefined),
-  };
   const logger = {
     setContext: jest.fn(),
     log: jest.fn(),
@@ -71,7 +68,6 @@ const makeService = () => {
     messageComponentModel as any,
     planStepComponentModel as any,
     planStepArtifactModel as any,
-    whatsappDelivery as any,
   );
 
   return {
@@ -85,7 +81,6 @@ const makeService = () => {
     planStepArtifactModel,
     streamService,
     events,
-    whatsappDelivery,
     logger,
   };
 };
@@ -184,7 +179,7 @@ describe('WorkyElectricConsumerService.handleSessions', () => {
 
 describe('WorkyElectricConsumerService.handleMessages', () => {
   it('upserts a message by (streamId, externalId) and emits to the owner', async () => {
-    const { service, messageModel, streamService, events, whatsappDelivery } = makeService();
+    const { service, messageModel, streamService, events } = makeService();
     streamService.findByAiSessionId.mockResolvedValue({ streamId: 'stream-1', ownerUserId: 'owner-1' });
     messageModel.findOneAndUpdate.mockReturnValue({ exec: () => Promise.resolve({ _id: 'obj-1' }) } as any);
 
@@ -207,9 +202,6 @@ describe('WorkyElectricConsumerService.handleMessages', () => {
       { streamId: 'stream-1', externalId: 'pg-msg-1' },
       expect.objectContaining({
         $set: expect.objectContaining({ role: 'manager', content: 'hello' }),
-        $setOnInsert: expect.objectContaining({
-          whatsappDelivery: expect.objectContaining({ status: 'pending', attempts: 0 }),
-        }),
       }),
       expect.objectContaining({ upsert: true, new: true }),
     );
@@ -218,34 +210,6 @@ describe('WorkyElectricConsumerService.handleMessages', () => {
       'stream-1',
       expect.objectContaining({ type: 'message.appended' }),
     );
-    expect(whatsappDelivery.attempt).toHaveBeenCalledWith('obj-1');
-  });
-
-  it('does not block projection when immediate WhatsApp delivery hangs', async () => {
-    const { service, messageModel, streamService, events, whatsappDelivery } = makeService();
-    streamService.findByAiSessionId.mockResolvedValue({ streamId: 'stream-1', ownerUserId: 'owner-1' });
-    messageModel.findOneAndUpdate
-      .mockReturnValueOnce({ exec: () => Promise.resolve({ _id: 'message-1' }) } as any)
-      .mockReturnValueOnce({ exec: () => Promise.resolve({ _id: 'message-2' }) } as any);
-    whatsappDelivery.attempt.mockReturnValue(new Promise(() => undefined));
-    const makeMessage = (id: string) => ({
-      key: `"public"."messages"/"${id}"`,
-      headers: { operation: 'insert' },
-      value: {
-        id,
-        session_id: 'sess-xyz',
-        role: 'assistant',
-        content: 'hello',
-        created_at: '2026-07-03T00:00:00Z',
-      },
-    });
-
-    await expect(
-      service.handleMessages([makeMessage('pg-msg-1'), makeMessage('pg-msg-2')]),
-    ).resolves.toBeUndefined();
-
-    expect(events.emit).toHaveBeenCalledTimes(2);
-    expect(whatsappDelivery.attempt).toHaveBeenCalledTimes(2);
   });
 
   it('adopts the locally-persisted owner message instead of inserting a duplicate', async () => {
@@ -300,7 +264,7 @@ describe('WorkyElectricConsumerService.handleMessages', () => {
           id: 'pg-msg-9',
           session_id: 'sess-xyz',
           role: 'user',
-          content: 'from whatsapp',
+          content: 'from another channel',
           created_at: '2026-07-03T00:00:00Z',
         },
       },
