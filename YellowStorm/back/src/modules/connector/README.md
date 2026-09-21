@@ -8,7 +8,7 @@ The Connector module enables integration with external Model Context Protocol (M
 - [Architecture](#architecture)
 - [OAuth 2.0 Authentication](#oauth-20-authentication)
 - [Module Structure](#module-structure)
-- [Database Collections](#database-collections)
+- [Database Tables](#database-tables)
 - [API Endpoints](#api-endpoints)
 - [Environment Variables](#environment-variables)
 - [GitHub OAuth Setup](#github-oauth-setup)
@@ -160,9 +160,13 @@ back/src/modules/connector/
 
 ---
 
-## Database Collections
+## Database Tables
 
-### `admin_connector_auth_tokens`
+Connector persistence is PostgreSQL (Drizzle, schema `integrations`; `postgres/schema/integrations.schema.ts`). `ConnectorModule` binds the store ports to Pg adapters: `CONNECTOR_STORE` -> `PgConnectorStore`, `CONNECTOR_CATEGORY_STORE` -> `PgConnectorCategoryStore`, `CONNECTOR_CREDENTIAL_STORE` -> `PgConnectorCredentialStore`, `CONNECTOR_ADMIN_AUTH_STORE` -> `PgConnectorAdminAuthStore`, `CONNECTOR_ADMIN_OAUTH_STATE_STORE` -> `PgConnectorAdminOauthStateStore`, plus the connected-app stores (`CONNECTED_APP_DEFINITION_STORE`, `USER_APP_CONNECTION_STORE`) and the skill stores. Related tables: `integrations.connector_categories` (unique on name + creator), `integrations.connector_skills` (junction, `ON DELETE CASCADE` on the connector) and `integrations.connector_credentials` (`ON DELETE CASCADE` on the connector). Ids are 24-char hex strings; `user_id` / `created_by` columns carry no FK because a system sentinel can be stored. The TypeScript shapes below are the logical models; `actions`, `runtimeAuthConfig` and `mcpServerConfig` are `jsonb` columns and `referencedSkillIds` is the `connector_skills` junction.
+
+Unique indexes: `admin_connector_auth_tokens (user_id, app_key)`, `admin_connector_oauth_states (state)`, `connectors (slug, created_by)` and a partial `connectors (slug) WHERE is_system`.
+
+### `integrations.admin_connector_auth_tokens`
 
 Stores encrypted OAuth tokens for admin connector connections.
 
@@ -184,7 +188,7 @@ Stores encrypted OAuth tokens for admin connector connections.
 }
 ```
 
-### `admin_connector_oauth_states`
+### `integrations.admin_connector_oauth_states`
 
 Temporary storage for OAuth state validation (TTL: 10 minutes).
 
@@ -198,7 +202,7 @@ Temporary storage for OAuth state validation (TTL: 10 minutes).
 }
 ```
 
-### `connectors`
+### `integrations.connectors`
 
 Main connector configuration storage.
 
@@ -314,7 +318,7 @@ GITHUB_CALLBACK_URL=http://server/api/v1/admin/connectors/oauth/github/callback
 
 ### Step 3: Ensure Connected App Definition
 
-The GitHub connected app must be defined in the `connected_app_definitions` collection:
+The GitHub connected app must be defined in the `integrations.connected_app_definitions` table:
 
 ```json
 {
@@ -453,10 +457,10 @@ Authorization endpoints are rate-limited to prevent abuse:
 
 ### TTL-Based Cleanup
 
-OAuth state documents automatically expire after 10 minutes:
+OAuth state rows expire after 10 minutes and are swept by `PgTtlSweeper` (`integrations.admin_connector_oauth_states.expires_at`, registered in `PgTtlRegistrationService`):
 
 ```typescript
-AdminConnectorOAuthStateSchema.index({ expiresAt: 1 }, { expireAfterSeconds: 0 });
+this.sweeper.register({ schema: 'integrations', table: 'admin_connector_oauth_states', column: 'expires_at' });
 ```
 
 ### Permission Checks
@@ -476,12 +480,6 @@ async authorizeConnectorAppKey(...)
 - [Authorization Module](../authorization/README.md) - Permission system
 - [Crypto Service](../../common/services/crypto.service.ts) - Token encryption
 
-## Catalog import transaction boundary (plan 1B.4.5)
+## Catalog import transaction boundary
 
-With the skills cutover, `CatalogTransferService.importArchive` runs as **two
-ordered transactions**: a PostgreSQL transaction for skill categories and
-skills first, then the Mongo session for connector categories, connectors and
-security records. Both halves are idempotent upserts — skills keyed by
-`(slug, createdBy)`, categories by name, connectors by `(slug, createdBy)` —
-so re-running a failed import converges. P3 collapses this back into a single
-PostgreSQL transaction.
+`CatalogTransferService.importArchive` (`services/catalog-transfer.service.ts`) runs the whole catalog import in **one PostgreSQL transaction** (a single `withTransaction` block): skill categories, skills, connector categories, connectors and security records commit or roll back together. All upserts are idempotent (skills and connectors keyed by `(slug, createdBy)`, categories by name, connections by `(userId, appKey)`, credentials by `(connectorId, userId, displayName)`), so re-running a failed import converges.

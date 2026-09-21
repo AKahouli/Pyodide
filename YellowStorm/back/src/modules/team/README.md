@@ -9,12 +9,12 @@ User-owned **teams** of agents, organised as an editable org-chart hierarchy. A 
 
 ## Key Features
 
-- **Hierarchy** — `members[]` subdocuments hold `agentId`, `parentAgentId` (null = root), `order`, and `positionX/Y`. Validated for duplicates, self-references, dangling parents, and cycles.
+- **Hierarchy** — `members[]` (rows of `teams.team_members`, keyed by `(team_id, agent_id)`, `position` keeps array order) hold `agentId`, `parentAgentId` (null = root), `order`, and `positionX/Y`. Validated for duplicates, self-references, dangling parents, and cycles.
 - **Mention expansion** — `resolveAgentIds(teamIds, userId)` returns the team's agents in BFS (root-first) order; consumed by the conversation send path.
 - **Sharing & permissions** — `SharedTeam` records grant `read`/`write`; a `TeamPermissionGuard` + `@RequireTeamPermission` protect owner-only share-management endpoints, while read/write access is enforced in the service for view/edit.
 - **AI auto-builder** — `generateTeam` calls `ChatCompletionService` (LiteLLM, **not** the gRPC AI service), parses the JSON plan, creates the proposed agents (reusing an existing agent when the name already exists), validates the hierarchy, and persists the team. Configured via an admin singleton (`TeamAutoBuilderConfig`).
 - **Agent details on demand** — for the org-chart, members are enriched with agent name/type/role/description via `AgentService` (owner) or `findByIdsUnrestricted` (shared viewers).
-- **Legacy read shim** — teams created before the hierarchy migration (flat `agentIds`) are read transparently as flat root members and auto-heal to `members` on their next save. No DB migration required.
+- **Legacy flat teams** — the pre-hierarchy `agentIds` shape no longer exists in Postgres: `teams.team_members` is the only member store. The Mongo→Postgres backfill found no legacy flat team (all 42 source teams used `members`), so nothing was lost; `readMembers` keeps a harmless fallback for such a record shape.
 
 ## Module Structure
 
@@ -32,10 +32,9 @@ team/
     team-auto-builder-config.service.ts    # get/upsert singleton config
   guards/team-permission.guard.ts          # owner | write | read access
   decorators/require-team-permission.decorator.ts
-  schemas/
-    team.schema.ts                         # Team + TeamMember subdoc
-    shared-team.schema.ts
-    team-auto-builder-config.schema.ts
+  persistence/
+    team.store.ts                          # TEAM_STORE, TEAM_SHARE_STORE, TEAM_AUTO_BUILDER_STORE ports
+    pg-team.store.ts                       # PgTeamStore (teams.teams + teams.team_members), PgTeamShareStore (teams.shared_teams), PgTeamAutoBuilderStore (teams.auto_builder_config)
   dto/                                      # create / update / query / hierarchy / share / generate / upsert-config
   interfaces/
     team.interface.ts
@@ -68,6 +67,7 @@ team/
 
 ## Notes
 
+- **Persistence** — Postgres `teams` schema (`postgres/schema/teams.schema.ts`): `teams` (unique on name + creator), `team_members` (`team_id` and `agent_id` FKs with `ON DELETE CASCADE`, `parent_agent_id` FK `ON DELETE SET NULL`), `shared_teams` (`ON DELETE CASCADE` on the team, unique on team + recipient, permission `read`/`write`) and the singleton `auto_builder_config`. Deleting a team therefore removes its members and shares by FK cascade.
 - **Module wiring** — `TeamModule` and `AgentModule` depend on each other via `forwardRef` (agent→team for delete cleanup, team→agent for org-chart population and validation).
 - **Admin permissions** — the new `team_auto_builder.read/update` permissions must be granted to the admin role for the config page to be usable.
 - **LLM cost** — `generateTeam` creates real agents; validate against a dev account.
