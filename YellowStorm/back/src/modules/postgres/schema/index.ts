@@ -10,3 +10,6 @@ export * from './authz.schema';
 export * from './ops.schema';
 export * from './catalog.schema';
 export * from './integrations.schema';
+export * from './agent-shares.schema';
+export * from './teams.schema';
+export * from './channels.schema';

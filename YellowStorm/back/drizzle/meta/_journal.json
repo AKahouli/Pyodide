@@ -169,6 +169,13 @@
       "when": 1789871300000,
       "tag": "0023_integrations",
       "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "7",
+      "when": 1789871400000,
+      "tag": "0024_agent_ecosystem",
+      "breakpoints": true
     }
   ]
 }
