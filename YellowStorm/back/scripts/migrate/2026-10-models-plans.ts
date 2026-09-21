@@ -20,6 +20,9 @@ const n = (v: unknown): number | null => (typeof v === 'number' && Number.isFini
 const dateOf = (v: unknown): Date => (v ? new Date(String(v)) : new Date());
 const arr = (v: unknown): string[] => (Array.isArray(v) ? v.map(String) : []);
 
+/** Extra defaults demoted at backfill time (remediation 2.3). */
+const demotedDefaults: string[] = [];
+
 async function main(): Promise<void> {
   if (!process.env.MONGODB_URI) throw new Error('MONGODB_URI is required');
   await mongoose.connect(process.env.MONGODB_URI);
@@ -35,6 +38,11 @@ async function main(): Promise<void> {
   });
 
   // ── ai_models ───────────────────────────────────────────────────────
+  // Current PG defaults (2.3): extra Mongo defaults are demoted + reported.
+  const pgDefaultModelId: string | null =
+    (await pool.query('SELECT model_id FROM catalog.ai_models WHERE is_default LIMIT 1')).rows[0]?.model_id ?? null;
+  const pgDefaultPlanSlug: string | null =
+    (await pool.query('SELECT slug FROM catalog.plans WHERE is_default LIMIT 1')).rows[0]?.slug ?? null;
   await runBackfill({
     collection: mdb.collection('models'),
     build: (doc: MongoDoc): Row => ({
@@ -63,6 +71,15 @@ async function main(): Promise<void> {
       created_at: dateOf(doc.createdAt),
       updated_at: dateOf(doc.updatedAt),
     }),
+    validate: (unit) => {
+      // Partial unique index allows one default: keep the PG default, demote
+      // and report extra Mongo defaults instead of failing the batch (2.3).
+      if (unit.is_default === true && pgDefaultModelId && pgDefaultModelId !== String(unit.model_id)) {
+        unit.is_default = false;
+        demotedDefaults.push('model:' + String(unit.model_id) + ' (PG default stays ' + pgDefaultModelId + ')');
+      }
+      return null;
+    },
     unitId: (unit) => String(unit.model_id),
     exists: async (modelId) => {
       const r = await pool.query('SELECT 1 FROM catalog.ai_models WHERE model_id = $1', [String(modelId)]);
@@ -131,6 +148,15 @@ async function main(): Promise<void> {
       created_at: dateOf(doc.createdAt),
       updated_at: dateOf(doc.updatedAt),
     }),
+    validate: (unit) => {
+      // getDefaultPlan selects slug 'unlimited', then is_default: an inserted
+      // default is demoted when PG already has one (kept: unlimited > first).
+      if (unit.is_default === true && pgDefaultPlanSlug && pgDefaultPlanSlug !== String(unit.slug)) {
+        unit.is_default = false;
+        demotedDefaults.push('plan:' + String(unit.slug) + ' (PG default stays ' + pgDefaultPlanSlug + ')');
+      }
+      return null;
+    },
     unitId: (unit) => String(unit.slug),
     exists: async (slug) => {
       const r = await pool.query('SELECT 1 FROM catalog.plans WHERE slug = $1', [String(slug)]);
@@ -182,6 +208,8 @@ async function main(): Promise<void> {
      UNION ALL SELECT 'v2_default', count(*)::int FROM catalog.ai_models WHERE is_conversation_v2_default
      UNION ALL SELECT 'plan_default', count(*)::int FROM catalog.plans WHERE is_default`,
   );
+  console.log('=== demoted extra defaults (2.3) ===');
+  console.log(JSON.stringify(demotedDefaults, null, 2));
   console.log('=== single-default counts (must each be 0 or 1) ===');
   console.log(JSON.stringify(defaults.rows, null, 2));
 

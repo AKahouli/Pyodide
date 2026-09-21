@@ -2,12 +2,18 @@
  * Step 3 FK pass — integrations schema cross-references.
  *   user_app_connections.app_key → connected_app_definitions(app_key)
  *   connector_skills.skill_id → catalog.skills(id)
+ *   agent_connectors.connector_id → connectors(id) ON DELETE CASCADE (remediation 2.6)
+ *   agent_connector_actions.connector_id → connectors(id) ON DELETE CASCADE (remediation 2.6)
  * Both created NOT VALID then validated; orphan reports run first.
+ * Junction orphan cleanup is OPT-IN with --delete-orphans: rows are exported
+ * to scripts/migrate/out/<table>-<timestamp>.json before deletion (remediation
+ * 2.6/2.7 — never delete without an export).
  *
- * Usage: npx ts-node back/scripts/migrate/2026-10-integrations-fk.ts [--dry-run]
+ * Usage: npx ts-node back/scripts/migrate/2026-10-integrations-fk.ts [--dry-run] [--delete-orphans]
  */
 import * as dotenv from 'dotenv';
 import * as path from 'path';
+import * as fs from 'fs';
 import { Pool } from 'pg';
 
 dotenv.config({ path: path.resolve(__dirname, '..', '..', '.env') });
@@ -19,6 +25,8 @@ interface FkSpec {
   orphanSql: string;
   /** Dead junction rows are deleted instead of aborting (matches 1B.4 practice). */
   cleanupSql?: string;
+  /** Directory/file stem for --delete-orphans exports (requires cleanupSql). */
+  exportStem?: string;
 }
 
 const FKS: FkSpec[] = [
@@ -46,6 +54,34 @@ const FKS: FkSpec[] = [
     cleanupSql: `DELETE FROM integrations.connector_skills cs
                  WHERE NOT EXISTS (SELECT 1 FROM catalog.skills s WHERE s.id = cs.skill_id)`,
   },
+  {
+    name: 'fk_agent_connectors_connector',
+    table: 'public.agent_connectors',
+    ddl: `ADD CONSTRAINT fk_agent_connectors_connector
+          FOREIGN KEY (connector_id) REFERENCES integrations.connectors(id)
+          ON DELETE CASCADE
+          NOT VALID`,
+    orphanSql: `SELECT ac.agent_id, ac.connector_id FROM public.agent_connectors ac
+                LEFT JOIN integrations.connectors c ON c.id = ac.connector_id
+                WHERE c.id IS NULL`,
+    cleanupSql: `DELETE FROM public.agent_connectors ac
+                 WHERE NOT EXISTS (SELECT 1 FROM integrations.connectors c WHERE c.id = ac.connector_id)`,
+    exportStem: 'agent_connectors',
+  },
+  {
+    name: 'fk_agent_connector_actions_connector',
+    table: 'public.agent_connector_actions',
+    ddl: `ADD CONSTRAINT fk_agent_connector_actions_connector
+          FOREIGN KEY (connector_id) REFERENCES integrations.connectors(id)
+          ON DELETE CASCADE
+          NOT VALID`,
+    orphanSql: `SELECT aca.agent_id, aca.connector_id FROM public.agent_connector_actions aca
+                LEFT JOIN integrations.connectors c ON c.id = aca.connector_id
+                WHERE c.id IS NULL`,
+    cleanupSql: `DELETE FROM public.agent_connector_actions aca
+                 WHERE NOT EXISTS (SELECT 1 FROM integrations.connectors c WHERE c.id = aca.connector_id)`,
+    exportStem: 'agent_connector_actions',
+  },
 ];
 
 async function main(): Promise<void> {
@@ -58,6 +94,7 @@ async function main(): Promise<void> {
   });
 
   const dryRun = process.argv.includes('--dry-run');
+  const deleteOrphans = process.argv.includes('--delete-orphans');
 
   for (const fk of FKS) {
     console.log(`=== ${fk.name} ===`);
@@ -66,6 +103,18 @@ async function main(): Promise<void> {
     if (dryRun) continue;
 
     if ((orphans.rowCount ?? 0) > 0 && fk.cleanupSql) {
+      if (fk.exportStem) {
+        // Opt-in with export: no deletion without --delete-orphans (2.6).
+        if (!deleteOrphans) {
+          console.error(`Orphans present for ${fk.name} — rerun with --delete-orphans to export + delete (opt-in).`);
+          continue;
+        }
+        const outDir = path.resolve(__dirname, 'out');
+        fs.mkdirSync(outDir, { recursive: true });
+        const file = path.join(outDir, `${fk.exportStem}-${new Date().toISOString().replace(/[:.]/g, '-')}.json`);
+        fs.writeFileSync(file, JSON.stringify(orphans.rows, null, 2));
+        console.log(`exported ${orphans.rowCount} orphan rows → ${file}`);
+      }
       const removed = await pool.query(fk.cleanupSql);
       console.log(`cleaned dead junction rows: ${removed.rowCount}`);
     } else if ((orphans.rowCount ?? 0) > 0) {

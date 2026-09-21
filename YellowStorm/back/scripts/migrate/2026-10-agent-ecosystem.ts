@@ -39,7 +39,7 @@ async function main(): Promise<void> {
   // Mongo stores some *_id fields as ObjectIds and some as strings, so $in
   // filters silently mismatch; scan unfiltered and validate membership instead
   // so orphans show up as reported failures.
-  const pgAgentIds = new Set((await pool.query('SELECT id FROM public.agents')).rows.map((r) => r.id));
+  let pgAgentIds = new Set((await pool.query('SELECT id FROM public.agents')).rows.map((r) => r.id));
 
   // ── channels.telegram_integrations ──────────────────────────────────
   // Mongo collection is agent_telegram_integrations (the empty
@@ -172,6 +172,221 @@ async function main(): Promise<void> {
     pgCount: async () => (await pool.query('SELECT count(*)::int AS n FROM channels.widget_tokens')).rows[0].n,
     pgIds: async () => (await pool.query('SELECT id FROM channels.widget_tokens')).rows.map((r) => r.id),
   });
+
+  // ── remediation 2.5: shares / teams / auto-builder ──────────────────
+  // Four units never backfilled by the original cutover (R-03). Every unit
+  // scans UNFILTERED and validates membership in code (Mongo mixes ObjectId
+  // and string ids). Membership sets are re-read live so re-runs see what
+  // earlier units in the same pass inserted.
+  const pgUserIds = new Set((await pool.query('SELECT id FROM identity.users')).rows.map((r) => r.id));
+  pgAgentIds = new Set((await pool.query('SELECT id FROM public.agents')).rows.map((r) => r.id));
+
+  // ── public.shared_agents ────────────────────────────────────────────
+  await runBackfill({
+    collection: mdb.collection('shared_agents'),
+    build: (doc: MongoDoc): Row => ({
+      id: String(doc._id),
+      agent_id: String(doc.agentId),
+      shared_by: String(doc.sharedBy),
+      shared_with: String(doc.sharedWith),
+      permission: String(doc.permission ?? 'read'),
+      created_at: dateOf(doc.createdAt) ?? new Date(),
+      updated_at: dateOf(doc.updatedAt) ?? new Date(),
+    }),
+    validate: (unit) => {
+      if (!pgAgentIds.has(String(unit.agent_id))) return `dangling agent_id ${unit.agent_id} (agent gone from PG; FK would reject)`;
+      if (!pgUserIds.has(String(unit.shared_by))) return `dangling shared_by ${unit.shared_by} (user gone from PG; FK would reject)`;
+      if (!pgUserIds.has(String(unit.shared_with))) return `dangling shared_with ${unit.shared_with} (user gone from PG; FK would reject)`;
+      if (!['read', 'write'].includes(String(unit.permission))) return `invalid permission ${unit.permission}`;
+      return null;
+    },
+    unitId: (unit) => String(unit.id),
+    exists: async (id) => (await pool.query('SELECT 1 FROM public.shared_agents WHERE id = $1', [String(id)])).rowCount! > 0,
+    insert: async (unit) => {
+      await pool.query(
+        `INSERT INTO public.shared_agents (id, agent_id, shared_by, shared_with, permission, created_at, updated_at)
+         VALUES ($1,$2,$3,$4,$5,$6,$7) ON CONFLICT (id) DO NOTHING`,
+        [unit.id, unit.agent_id, unit.shared_by, unit.shared_with, unit.permission, unit.created_at, unit.updated_at],
+      );
+    },
+    checksumRows: async (ids) => {
+      const r = await pool.query('SELECT * FROM public.shared_agents WHERE id = ANY($1)', [ids]);
+      return new Map(r.rows.map((row) => [row.id, row]));
+    },
+    pgCount: async () => (await pool.query('SELECT count(*)::int AS n FROM public.shared_agents')).rows[0].n,
+    pgIds: async () => (await pool.query('SELECT id FROM public.shared_agents')).rows.map((r) => r.id),
+  });
+
+  // ── teams.teams (+ teams.team_members) ──────────────────────────────
+  const droppedMembers: string[] = [];
+  const demotedParents: string[] = [];
+  await runBackfill({
+    collection: mdb.collection('teams'),
+    build: (doc: MongoDoc): Row => {
+      // Members de-duplicated by agentId (first wins); dangling agents dropped
+      // and reported; position = array index; order clamped >= 0.
+      const seen = new Set<string>();
+      const members: Array<Row> = [];
+      for (const m of (Array.isArray(doc.members) ? doc.members : [])) {
+        const agentId = String(m?.agentId ?? '');
+        if (!agentId || seen.has(agentId)) continue;
+        seen.add(agentId);
+        if (!pgAgentIds.has(agentId)) {
+          droppedMembers.push(`${String(doc._id)}:${agentId}`);
+          continue;
+        }
+        const parentAgentId = m?.parentAgentId ? String(m.parentAgentId) : null;
+        if (parentAgentId && !pgAgentIds.has(parentAgentId)) {
+          demotedParents.push(`${String(doc._id)}:${parentAgentId}`);
+        }
+        members.push({
+          agent_id: agentId,
+          parent_agent_id: parentAgentId && pgAgentIds.has(parentAgentId) ? parentAgentId : null,
+          order: typeof m?.order === 'number' && m.order >= 0 ? m.order : 0,
+          position_x: typeof m?.positionX === 'number' ? m.positionX : 0,
+          position_y: typeof m?.positionY === 'number' ? m.positionY : 0,
+        });
+      }
+      return {
+        id: String(doc._id),
+        name: String(doc.name ?? '').trim(),
+        description: String(doc.description ?? ''),
+        is_active: doc.isActive !== false,
+        created_by: String(doc.createdBy),
+        created_at: dateOf(doc.createdAt) ?? new Date(),
+        updated_at: dateOf(doc.updatedAt) ?? new Date(),
+        members,
+      };
+    },
+    validate: (unit) => {
+      if (String(unit.name).length < 2) return `invalid name '${unit.name}'`;
+      if (!pgUserIds.has(String(unit.created_by))) return `dangling created_by ${unit.created_by} (user gone from PG; FK would reject)`;
+      return null;
+    },
+    unitId: (unit) => String(unit.id),
+    exists: async (id) => (await pool.query('SELECT 1 FROM teams.teams WHERE id = $1', [String(id)])).rowCount! > 0,
+    insert: async (unit) => {
+      const client = await pool.connect();
+      try {
+        await client.query('BEGIN');
+        await client.query(
+          `INSERT INTO teams.teams (id, name, description, is_active, created_by, created_at, updated_at)
+           VALUES ($1,$2,$3,$4,$5,$6,$7) ON CONFLICT (id) DO NOTHING`,
+          [unit.id, unit.name, unit.description, unit.is_active, unit.created_by, unit.created_at, unit.updated_at],
+        );
+        const members = unit.members as Array<Record<string, unknown>>;
+        for (let position = 0; position < members.length; position += 1) {
+          const m = members[position];
+          await client.query(
+            `INSERT INTO teams.team_members (team_id, agent_id, parent_agent_id, "order", position_x, position_y, position)
+             VALUES ($1,$2,$3,$4,$5,$6,$7) ON CONFLICT (team_id, agent_id) DO NOTHING`,
+            [unit.id, m.agent_id, m.parent_agent_id, m.order, m.position_x, m.position_y, position],
+          );
+        }
+        await client.query('COMMIT');
+      } catch (e) {
+        await client.query('ROLLBACK');
+        throw e;
+      } finally {
+        client.release();
+      }
+    },
+    verify: async (units) => {
+      const map = new Map<string, string>();
+      for (const unit of units) {
+        const r = await pool.query('SELECT name FROM teams.teams WHERE id = $1', [String(unit.id)]);
+        if (r.rowCount === 0) map.set(String(unit.id), 'missing in PG');
+        else if (r.rows[0].name !== unit.name) map.set(String(unit.id), 'name mismatch');
+      }
+      return map;
+    },
+    pgCount: async () => (await pool.query('SELECT count(*)::int AS n FROM teams.teams')).rows[0].n,
+    pgIds: async () => (await pool.query('SELECT id FROM teams.teams')).rows.map((r) => r.id),
+    checksumRows: async (ids) => {
+      const r = await pool.query('SELECT * FROM teams.teams WHERE id = ANY($1)', [ids]);
+      // members is unit-internal (junction rows), excluded from the hash.
+      return new Map(r.rows.map((row) => [row.id, { ...row, members: undefined }]));
+    },
+  });
+
+  // ── teams.shared_teams ──────────────────────────────────────────────
+  const pgTeamIds = new Set((await pool.query('SELECT id FROM teams.teams')).rows.map((r) => r.id));
+  await runBackfill({
+    collection: mdb.collection('shared_teams'),
+    build: (doc: MongoDoc): Row => ({
+      id: String(doc._id),
+      team_id: String(doc.teamId),
+      shared_by: String(doc.sharedBy),
+      shared_with: String(doc.sharedWith),
+      permission: String(doc.permission ?? 'read'),
+      created_at: dateOf(doc.createdAt) ?? new Date(),
+      updated_at: dateOf(doc.updatedAt) ?? new Date(),
+    }),
+    validate: (unit) => {
+      // Teams must exist first: this unit runs after the teams unit.
+      if (!pgTeamIds.has(String(unit.team_id))) return `dangling team_id ${unit.team_id} (team rejected or gone from PG; FK would reject)`;
+      if (!pgUserIds.has(String(unit.shared_by))) return `dangling shared_by ${unit.shared_by} (user gone from PG; FK would reject)`;
+      if (!pgUserIds.has(String(unit.shared_with))) return `dangling shared_with ${unit.shared_with} (user gone from PG; FK would reject)`;
+      if (!['read', 'write'].includes(String(unit.permission))) return `invalid permission ${unit.permission}`;
+      return null;
+    },
+    unitId: (unit) => String(unit.id),
+    exists: async (id) => (await pool.query('SELECT 1 FROM teams.shared_teams WHERE id = $1', [String(id)])).rowCount! > 0,
+    insert: async (unit) => {
+      await pool.query(
+        `INSERT INTO teams.shared_teams (id, team_id, shared_by, shared_with, permission, created_at, updated_at)
+         VALUES ($1,$2,$3,$4,$5,$6,$7) ON CONFLICT (id) DO NOTHING`,
+        [unit.id, unit.team_id, unit.shared_by, unit.shared_with, unit.permission, unit.created_at, unit.updated_at],
+      );
+    },
+    checksumRows: async (ids) => {
+      const r = await pool.query('SELECT * FROM teams.shared_teams WHERE id = ANY($1)', [ids]);
+      return new Map(r.rows.map((row) => [row.id, row]));
+    },
+    pgCount: async () => (await pool.query('SELECT count(*)::int AS n FROM teams.shared_teams')).rows[0].n,
+    pgIds: async () => (await pool.query('SELECT id FROM teams.shared_teams')).rows.map((r) => r.id),
+  });
+
+  // ── teams.auto_builder_config (singleton; newest wins) ──────────────
+  {
+    const docs = await mdb.collection('team_auto_builder_config').find({}).sort({ updatedAt: -1 }).toArray();
+    if (docs.length > 1) {
+      console.log(`[auto_builder_config] ${docs.length} docs found; taking the newest by updatedAt`);
+    }
+    const newest = docs[0];
+    if (newest) {
+      await runBackfill({
+        collection: mdb.collection('team_auto_builder_config'),
+        filter: { _id: newest._id },
+        build: (doc: MongoDoc): Row => ({
+          id: String(doc._id),
+          singleton: true,
+          model_id: String(doc.modelId),
+          system_prompt: String(doc.systemPrompt),
+          temperature: typeof doc.temperature === 'number' ? doc.temperature : 0.7,
+          is_enabled: doc.isEnabled === true,
+          created_at: dateOf(doc.createdAt) ?? new Date(),
+          updated_at: dateOf(doc.updatedAt) ?? new Date(),
+        }),
+        unitId: () => 'singleton',
+        exists: async () => (await pool.query('SELECT 1 FROM teams.auto_builder_config LIMIT 1')).rowCount! > 0,
+        insert: async (unit) => {
+          await pool.query(
+            `INSERT INTO teams.auto_builder_config (id, singleton, model_id, system_prompt, temperature, is_enabled, created_at, updated_at)
+             VALUES ($1,true,$2,$3,$4,$5,$6,$7) ON CONFLICT (singleton) DO NOTHING`,
+            [unit.id, unit.model_id, unit.system_prompt, unit.temperature, unit.is_enabled, unit.created_at, unit.updated_at],
+          );
+        },
+        pgCount: async () => (await pool.query('SELECT count(*)::int AS n FROM teams.auto_builder_config')).rows[0].n,
+      });
+    }
+  }
+
+  console.log('=== reports (2.5) ===');
+  console.log(JSON.stringify({
+    droppedMembers,
+    demotedParents,
+  }, null, 2));
 
   await pool.end();
   await mongoose.disconnect();

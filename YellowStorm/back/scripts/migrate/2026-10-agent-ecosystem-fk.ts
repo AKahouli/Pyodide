@@ -74,6 +74,57 @@ const FKS: FkSpec[] = [
                 LEFT JOIN identity.users u ON u.id = wt.created_by
                 WHERE u.id IS NULL`,
   },
+  // ── remediation 2.6: shares / teams → identity.users (NO ACTION) ────
+  {
+    name: 'fk_shared_agents_shared_with',
+    table: 'public.shared_agents',
+    ddl: `ADD CONSTRAINT fk_shared_agents_shared_with
+          FOREIGN KEY (shared_with) REFERENCES identity.users(id)
+          NOT VALID`,
+    orphanSql: `SELECT sa.id, sa.shared_with FROM public.shared_agents sa
+                LEFT JOIN identity.users u ON u.id = sa.shared_with
+                WHERE u.id IS NULL`,
+  },
+  {
+    name: 'fk_shared_agents_shared_by',
+    table: 'public.shared_agents',
+    ddl: `ADD CONSTRAINT fk_shared_agents_shared_by
+          FOREIGN KEY (shared_by) REFERENCES identity.users(id)
+          NOT VALID`,
+    orphanSql: `SELECT sa.id, sa.shared_by FROM public.shared_agents sa
+                LEFT JOIN identity.users u ON u.id = sa.shared_by
+                WHERE u.id IS NULL`,
+  },
+  {
+    name: 'fk_shared_teams_shared_with',
+    table: 'teams.shared_teams',
+    ddl: `ADD CONSTRAINT fk_shared_teams_shared_with
+          FOREIGN KEY (shared_with) REFERENCES identity.users(id)
+          NOT VALID`,
+    orphanSql: `SELECT st.id, st.shared_with FROM teams.shared_teams st
+                LEFT JOIN identity.users u ON u.id = st.shared_with
+                WHERE u.id IS NULL`,
+  },
+  {
+    name: 'fk_shared_teams_shared_by',
+    table: 'teams.shared_teams',
+    ddl: `ADD CONSTRAINT fk_shared_teams_shared_by
+          FOREIGN KEY (shared_by) REFERENCES identity.users(id)
+          NOT VALID`,
+    orphanSql: `SELECT st.id, st.shared_by FROM teams.shared_teams st
+                LEFT JOIN identity.users u ON u.id = st.shared_by
+                WHERE u.id IS NULL`,
+  },
+  {
+    name: 'fk_teams_created_by',
+    table: 'teams.teams',
+    ddl: `ADD CONSTRAINT fk_teams_created_by
+          FOREIGN KEY (created_by) REFERENCES identity.users(id)
+          NOT VALID`,
+    orphanSql: `SELECT t.id, t.created_by FROM teams.teams t
+                LEFT JOIN identity.users u ON u.id = t.created_by
+                WHERE u.id IS NULL`,
+  },
 ];
 
 async function main(): Promise<void> {
