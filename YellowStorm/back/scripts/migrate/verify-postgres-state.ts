@@ -12,12 +12,15 @@
  *  5. every PgTtlSweeper-registered (schema, table, column) has an index
  *     leading on that column;
  *  6. never-analyzed tables (warning only);
- *  7. --mongo: run reconcile-ids with the committed allowlist.
+ *  7. --mongo: run reconcile-ids with the committed allowlist;
+ *  8. every fk-specs.ts constraint exists, is validated and matches its
+ *     definition (a drifted or missing FK fails).
  *
  * Usage: npm run db:verify [-- -- --mongo]
  */
 import * as path from 'path';
 import { Client } from 'pg';
+import { FK_SPECS, FK_SPECS_IN_0020, normalizeFkDefinition } from './fk-specs';
 
 require('dotenv').config({ path: path.resolve(__dirname, '..', '..', '.env') });
 
@@ -128,6 +131,22 @@ async function main(): Promise<void> {
     if (r.rowCount === 0) failures.push(`check5: TTL sweep ${sweep.schema}.${sweep.table}.${sweep.column} has no index leading on the column`);
   }
   if (!failures.some((f) => f.startsWith('check5'))) console.log('check5 ok: all TTL sweeps have leading indexes');
+
+  // 8. every fk-specs constraint exists, is validated and has the expected definition
+  let fkChecked = 0;
+  for (const spec of [...FK_SPECS, ...FK_SPECS_IN_0020]) {
+    const live = await client.query<{ def: string; valid: boolean }>(
+      `SELECT pg_get_constraintdef(c.oid) AS def, c.convalidated AS valid
+         FROM pg_constraint c WHERE c.conname = $1 AND c.conrelid = $2::regclass`,
+      [spec.name, spec.table],
+    );
+    if (live.rowCount === 0) failures.push(`check8: FK ${spec.name} missing on ${spec.table}`);
+    else if (!live.rows[0].valid) failures.push(`check8: FK ${spec.name} exists but is NOT VALID`);
+    else if (normalizeFkDefinition(live.rows[0].def) !== normalizeFkDefinition(spec.definition)) {
+      failures.push(`check8: FK ${spec.name} definition drifted: live ${JSON.stringify(normalizeFkDefinition(live.rows[0].def))} vs expected ${JSON.stringify(normalizeFkDefinition(spec.definition))}`);
+    } else fkChecked++;
+  }
+  if (!failures.some((f) => f.startsWith('check8'))) console.log(`check8 ok: ${fkChecked} FK specs exist, validated, definitions match`);
 
   // 6. never-analyzed tables (warning only)
   const stale = await client.query(

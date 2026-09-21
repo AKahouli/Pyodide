@@ -5,27 +5,25 @@
  * governance records are history and must outlive the workspace document (the outbox
  * handler archives them). The earlier fk_gov_docs_document / fk_gov_docs_workspace
  * cascade-deleted that history and are retired (see drizzle/0020).
- * Idempotent; replaces a drifted definition. Rollback: run with --drop.
+ * Definitions live in fk-specs.ts. Idempotent; rollback: --drop.
  *
- * Usage: npx ts-node back/scripts/migrate/2026-09-governance-fk.ts [--drop]
+ * Usage: npx ts-node back/scripts/migrate/2026-09-governance-fk.ts [--dry-run] [--drop]
  */
 import { runFkSpecs } from './fk-helper';
+import { fkSpecs } from './fk-specs';
 
-runFkSpecs(
-  [
-    {
-      name: 'fk_gov_bindings_workspace',
-      table: 'governance.governance_workspace_bindings',
-      definition: 'FOREIGN KEY (workspace_id) REFERENCES workspace.workspaces(id) ON DELETE CASCADE',
-      orphanCheck: `SELECT count(*)::int AS n FROM governance.governance_workspace_bindings b
-                     WHERE NOT EXISTS (SELECT 1 FROM workspace.workspaces w WHERE w.id = b.workspace_id)`,
-    },
-  ],
-  [
-    { name: 'fk_gov_docs_document', table: 'governance.governance_documents', reason: 'governance history must survive document delete' },
-    { name: 'fk_gov_docs_workspace', table: 'governance.governance_documents', reason: 'governance history must survive workspace delete' },
-  ],
-).catch((e) => {
+runFkSpecs(fkSpecs('fk_gov_bindings_workspace'), [
+  {
+    name: 'fk_gov_docs_document',
+    table: 'governance.governance_documents',
+    reason: 'governance history must survive document delete',
+  },
+  {
+    name: 'fk_gov_docs_workspace',
+    table: 'governance.governance_documents',
+    reason: 'governance history must survive workspace delete',
+  },
+]).catch((e) => {
   console.error(e);
   process.exit(1);
 });

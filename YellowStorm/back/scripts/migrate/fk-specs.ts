@@ -3,12 +3,26 @@
  *
  * Consumed by:
  *  - scripts/migrate/generate-0025.ts  → renders drizzle/0025_cross_schema_fks.sql
- *  - the thin scripts/migrate/*-fk.ts  → add-or-verify runners
- *  - src drift test (fk-specs.spec.ts) → 0025 stays in sync with this list
+ *  - every scripts/migrate/*-fk.ts     → thin add-or-verify runners (fk-helper.ts)
+ *  - src drift test (fk-specs.spec.ts) → 0025 / 0020 stay in sync with this file
  *
- * The three FKs already carried by drizzle/0020 (fk_conv_ws_workspace,
- * fk_conversations_system_workspace, fk_conversations_project) are NOT listed.
+ * The three FKs carried by drizzle/0020 (fk_conv_ws_workspace,
+ * fk_conversations_system_workspace, fk_conversations_project) live in
+ * FK_SPECS_IN_0020: they are verified by the scripts but NOT rendered into 0025.
  */
+
+/**
+ * Opt-in orphan cleanup (`--delete-orphans`): the dangling rows are exported to
+ * scripts/migrate/out/<exportStem>-<timestamp>.json BEFORE they are deleted.
+ * Never delete without an export.
+ */
+export interface FkCleanup {
+  exportStem: string;
+  /** SELECT of the dangling rows (exported as JSON). */
+  selectSql: string;
+  /** DELETE of exactly those rows. */
+  deleteSql: string;
+}
 
 export interface FkSpec {
   name: string;
@@ -18,6 +32,8 @@ export interface FkSpec {
   definition: string;
   /** SQL returning exactly one row with `n` = orphan count. */
   orphanCheck: string;
+  /** Present on junction tables whose dangling rows are safe to remove. */
+  cleanup?: FkCleanup;
 }
 
 export const FK_SPECS: FkSpec[] = [
@@ -92,6 +108,13 @@ export const FK_SPECS: FkSpec[] = [
     orphanCheck: `SELECT count(*)::int AS n FROM integrations.connector_skills cs
                   LEFT JOIN catalog.skills s ON s.id = cs.skill_id
                   WHERE s.id IS NULL`,
+    cleanup: {
+      exportStem: 'connector_skills',
+      selectSql: `SELECT cs.* FROM integrations.connector_skills cs
+                  WHERE NOT EXISTS (SELECT 1 FROM catalog.skills r WHERE r.id = cs.skill_id)`,
+      deleteSql: `DELETE FROM integrations.connector_skills cs
+                  WHERE NOT EXISTS (SELECT 1 FROM catalog.skills r WHERE r.id = cs.skill_id)`,
+    },
   },
   {
     name: 'fk_telegram_chat_bindings_conversation',
@@ -180,6 +203,13 @@ export const FK_SPECS: FkSpec[] = [
     orphanCheck: `SELECT count(*)::int AS n FROM public.agent_connectors ac
                   LEFT JOIN integrations.connectors c ON c.id = ac.connector_id
                   WHERE c.id IS NULL`,
+    cleanup: {
+      exportStem: 'agent_connectors',
+      selectSql: `SELECT ac.* FROM public.agent_connectors ac
+                  WHERE NOT EXISTS (SELECT 1 FROM integrations.connectors r WHERE r.id = ac.connector_id)`,
+      deleteSql: `DELETE FROM public.agent_connectors ac
+                  WHERE NOT EXISTS (SELECT 1 FROM integrations.connectors r WHERE r.id = ac.connector_id)`,
+    },
   },
   {
     name: 'fk_agent_connector_actions_connector',
@@ -188,5 +218,62 @@ export const FK_SPECS: FkSpec[] = [
     orphanCheck: `SELECT count(*)::int AS n FROM public.agent_connector_actions aca
                   LEFT JOIN integrations.connectors c ON c.id = aca.connector_id
                   WHERE c.id IS NULL`,
+    cleanup: {
+      exportStem: 'agent_connector_actions',
+      selectSql: `SELECT aca.* FROM public.agent_connector_actions aca
+                  WHERE NOT EXISTS (SELECT 1 FROM integrations.connectors r WHERE r.id = aca.connector_id)`,
+      deleteSql: `DELETE FROM public.agent_connector_actions aca
+                  WHERE NOT EXISTS (SELECT 1 FROM integrations.connectors r WHERE r.id = aca.connector_id)`,
+    },
   },
 ];
+
+/** Carried by drizzle/0020 — verified by the scripts, not rendered into 0025. */
+export const FK_SPECS_IN_0020: FkSpec[] = [
+  {
+    name: 'fk_conv_ws_workspace',
+    table: 'conversation.conversation_workspaces',
+    definition: 'FOREIGN KEY (workspace_id) REFERENCES workspace.workspaces(id) ON DELETE CASCADE',
+    orphanCheck: `SELECT count(*)::int AS n FROM conversation.conversation_workspaces cw
+                  WHERE NOT EXISTS (SELECT 1 FROM workspace.workspaces w WHERE w.id = cw.workspace_id)`,
+  },
+  {
+    name: 'fk_conversations_system_workspace',
+    table: 'conversation.conversations',
+    definition: 'FOREIGN KEY (system_workspace_id) REFERENCES workspace.workspaces(id) ON DELETE SET NULL',
+    orphanCheck: `SELECT count(*)::int AS n FROM conversation.conversations c
+                  WHERE c.system_workspace_id IS NOT NULL
+                    AND NOT EXISTS (SELECT 1 FROM workspace.workspaces w WHERE w.id = c.system_workspace_id)`,
+  },
+  {
+    name: 'fk_conversations_project',
+    table: 'conversation.conversations',
+    definition: 'FOREIGN KEY (project_id) REFERENCES project.projects(id) ON DELETE SET NULL',
+    orphanCheck: `SELECT count(*)::int AS n FROM conversation.conversations c
+                  WHERE c.project_id IS NOT NULL
+                    AND NOT EXISTS (SELECT 1 FROM project.projects p WHERE p.id = c.project_id)`,
+  },
+];
+
+/** Select specs by name from FK_SPECS ∪ FK_SPECS_IN_0020; throws on an unknown name. */
+export function fkSpecs(...names: string[]): FkSpec[] {
+  const all = new Map([...FK_SPECS, ...FK_SPECS_IN_0020].map((spec) => [spec.name, spec]));
+  return names.map((name) => {
+    const spec = all.get(name);
+    if (!spec) throw new Error(`Unknown FK spec: ${name}`);
+    return spec;
+  });
+}
+
+/**
+ * Canonical form for comparing a spec definition with pg_get_constraintdef():
+ * whitespace collapsed, NOT VALID dropped, and the `public.` prefix removed because
+ * Postgres omits the schema for names on the search_path.
+ */
+export function normalizeFkDefinition(def: string): string {
+  return def
+    .replace(/[\s]+/g, ' ')
+    .replace(/ NOT VALID$/, '')
+    .replace(new RegExp('(^|[^a-z0-9_])public[.]', 'g'), '$1')
+    .trim();
+}

@@ -1,30 +1,31 @@
 /**
- * Shared runner for the cross-schema FK scripts (2026-09-*-fk.ts).
+ * Shared runner for the cross-schema FK scripts (scripts/migrate/*-fk.ts).
  *
  * For each spec: add the constraint NOT VALID if missing, REPLACE it if its live
  * definition no longer matches (e.g. an older run created it without ON DELETE),
  * report orphans, and VALIDATE only when none remain. Retired constraints are
- * dropped. `--drop` removes every managed constraint (module rollback).
+ * dropped.
  *
- * The canonical definitions live in drizzle/0020_fk_actions_and_missing_indexes.sql;
- * these scripts must stay in sync with it.
+ * Specs come from fk-specs.ts (single source: drizzle/0025 is generated from it and
+ * drizzle/0020 carries FK_SPECS_IN_0020). Flags:
+ *   --dry-run         report orphans only, change nothing
+ *   --delete-orphans  export then delete dangling rows for specs that carry a
+ *                     `cleanup` (never without the JSON export)
+ *   --drop            remove every managed constraint (module rollback)
  *
  * A single dedicated connection is used with lock_timeout set, so an ALTER TABLE
- * never queues behind live traffic holding its ACCESS EXCLUSIVE lock.
+ * never queues behind live traffic holding its ACCESS EXCLUSIVE lock. Re-running on a
+ * live database is a no-op: validated, up-to-date constraints are left untouched.
  */
 import * as dotenv from 'dotenv';
+import * as fs from 'fs';
 import * as path from 'path';
 import { Client } from 'pg';
+import { normalizeFkDefinition as normalize, type FkSpec } from './fk-specs';
 
 dotenv.config({ path: path.resolve(__dirname, '..', '..', '.env') });
 
-export interface FkSpec {
-  name: string;
-  table: string;
-  /** Constraint body as pg_get_constraintdef() renders it, without NOT VALID. */
-  definition: string;
-  orphanCheck: string;
-}
+export type { FkSpec } from './fk-specs';
 
 export interface RetiredFk {
   name: string;
@@ -34,10 +35,10 @@ export interface RetiredFk {
 
 const LOCK_TIMEOUT_MS = Number(process.env.FK_LOCK_TIMEOUT_MS || '5000');
 
-const normalize = (def: string): string => def.replace(/\s+/g, ' ').replace(/ NOT VALID$/, '').trim();
-
 export async function runFkSpecs(specs: FkSpec[], retired: RetiredFk[] = []): Promise<void> {
   const drop = process.argv.includes('--drop');
+  const dryRun = process.argv.includes('--dry-run');
+  const deleteOrphans = process.argv.includes('--delete-orphans');
   const client = new Client({
     host: process.env.POSTGRES_HOST,
     port: Number(process.env.POSTGRES_PORT || '5432'),
@@ -52,11 +53,15 @@ export async function runFkSpecs(specs: FkSpec[], retired: RetiredFk[] = []): Pr
   let exitCode = 0;
   try {
     for (const r of retired) {
+      if (dryRun) {
+        console.log(`${r.name}: would retire (${r.reason})`);
+        continue;
+      }
       await client.query(`ALTER TABLE ${r.table} DROP CONSTRAINT IF EXISTS ${r.name}`);
       console.log(`${r.name}: retired (${r.reason})`);
     }
 
-    if (drop) {
+    if (drop && !dryRun) {
       for (const spec of specs) {
         await client.query(`ALTER TABLE ${spec.table} DROP CONSTRAINT IF EXISTS ${spec.name}`);
         console.log(`${spec.name}: dropped from ${spec.table}`);
@@ -65,6 +70,13 @@ export async function runFkSpecs(specs: FkSpec[], retired: RetiredFk[] = []): Pr
     }
 
     for (const spec of specs) {
+      if (dryRun) {
+        const { rows: probe } = await client.query<{ n: number }>(spec.orphanCheck);
+        console.log(`${spec.name}: ${probe[0].n} orphan refs (dry-run, nothing changed)`);
+        if (probe[0].n > 0) exitCode = 1;
+        continue;
+      }
+
       const { rows: live } = await client.query<{ def: string }>(
         `SELECT pg_get_constraintdef(c.oid) AS def
            FROM pg_constraint c
@@ -84,7 +96,27 @@ export async function runFkSpecs(specs: FkSpec[], retired: RetiredFk[] = []): Pr
         console.log(`${spec.name}: already up to date`);
       }
 
-      const { rows } = await client.query<{ n: number }>(spec.orphanCheck);
+      let { rows } = await client.query<{ n: number }>(spec.orphanCheck);
+      if (rows[0].n > 0 && spec.cleanup) {
+        if (!deleteOrphans) {
+          console.log(
+            `${spec.name}: ${rows[0].n} orphan refs — rerun with --delete-orphans to export + delete (opt-in)`,
+          );
+        } else {
+          const dangling = await client.query(spec.cleanup.selectSql);
+          const outDir = path.resolve(__dirname, 'out');
+          fs.mkdirSync(outDir, { recursive: true });
+          const file = path.join(
+            outDir,
+            `${spec.cleanup.exportStem}-${new Date().toISOString().replace(/[:.]/g, '-')}.json`,
+          );
+          fs.writeFileSync(file, JSON.stringify(dangling.rows, null, 2));
+          console.log(`${spec.name}: exported ${dangling.rowCount} dangling rows → ${file}`);
+          const removed = await client.query(spec.cleanup.deleteSql);
+          console.log(`${spec.name}: deleted ${removed.rowCount} dangling rows`);
+          rows = (await client.query<{ n: number }>(spec.orphanCheck)).rows;
+        }
+      }
       if (rows[0].n === 0) {
         await client.query(`ALTER TABLE ${spec.table} VALIDATE CONSTRAINT ${spec.name}`);
         console.log(`${spec.name}: validated (0 orphan refs)`);
