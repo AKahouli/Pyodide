@@ -347,7 +347,7 @@ export class AgentService {
     await this.agentRepository.deleteById(agentId);
 
     // Keep teams consistent: drop this agent from any team that referenced it.
-    await this.teamService.removeAgentFromAllTeams(agentId);
+    // team_members cascade on agent delete; children re-root via ON DELETE SET NULL (plan 4.3).
 
     // Drop any shares pointing at the now-deleted agent.
     // shared_agents cascade via the validated FK (plan 4.1).

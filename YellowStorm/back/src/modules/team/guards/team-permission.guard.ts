@@ -6,10 +6,10 @@ import {
   ForbiddenException,
 } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
-import { InjectModel } from '@nestjs/mongoose';
+import { Inject } from '@nestjs/common';
+import { isObjectId } from '@common/postgres';
+import { TEAM_STORE, TEAM_SHARE_STORE, type TeamStore, type TeamShareStore } from '../persistence/team.store';
 import { Model, Types } from 'mongoose';
-import { Team, TeamDocument } from '../schemas/team.schema';
-import { SharedTeam, SharedTeamDocument } from '../schemas/shared-team.schema';
 import { ErrorCode } from '../../exceptions/constants/error-codes';
 import {
   TEAM_PERMISSION_KEY,
@@ -18,7 +18,7 @@ import {
 import { TeamPermissionLevel } from '../interfaces/team.interface';
 
 export interface TeamContext {
-  team: TeamDocument;
+  team: unknown;
   isOwner: boolean;
   permission: TeamPermissionLevel | 'owner';
   shareId?: string;
@@ -34,10 +34,8 @@ interface RequestWithTeamContext {
 export class TeamPermissionGuard implements CanActivate {
   constructor(
     private readonly reflector: Reflector,
-    @InjectModel(Team.name)
-    private readonly teamModel: Model<TeamDocument>,
-    @InjectModel(SharedTeam.name)
-    private readonly sharedTeamModel: Model<SharedTeamDocument>,
+    @Inject(TEAM_STORE) private readonly teamStore: TeamStore,
+    @Inject(TEAM_SHARE_STORE) private readonly shareStore: TeamShareStore,
   ) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
@@ -54,25 +52,21 @@ export class TeamPermissionGuard implements CanActivate {
     const userId = request.user._id.toString();
     const teamId = request.params.id;
 
-    if (!teamId || !Types.ObjectId.isValid(teamId)) {
+    if (!teamId || !isObjectId(teamId)) {
       throw new NotFoundException(ErrorCode.TEAM_NOT_FOUND);
     }
 
-    const team = await this.teamModel
-      .findById(teamId)
-      .select('createdBy isActive')
-      .lean()
-      .exec();
+    const team = await this.teamStore.findById(teamId);
 
     if (!team) {
       throw new NotFoundException(ErrorCode.TEAM_NOT_FOUND);
     }
 
-    const isOwner = team.createdBy.toString() === userId;
+    const isOwner = team.createdBy === userId;
 
     if (isOwner) {
       request.teamContext = {
-        team: team as TeamDocument,
+        team: team as never,
         isOwner: true,
         permission: 'owner',
       };
@@ -85,13 +79,7 @@ export class TeamPermissionGuard implements CanActivate {
     }
 
     // Check shared access.
-    const share = await this.sharedTeamModel
-      .findOne({
-        teamId: new Types.ObjectId(teamId),
-        sharedWith: new Types.ObjectId(userId),
-      })
-      .lean()
-      .exec();
+    const share = await this.shareStore.find(teamId, userId);
 
     if (!share) {
       throw new ForbiddenException(ErrorCode.TEAM_FORBIDDEN);
@@ -105,10 +93,10 @@ export class TeamPermissionGuard implements CanActivate {
     }
 
     request.teamContext = {
-      team: team as TeamDocument,
+      team: team as never,
       isOwner: false,
       permission: sharePermission,
-      shareId: share._id.toString(),
+      shareId: share.id,
     };
 
     return true;

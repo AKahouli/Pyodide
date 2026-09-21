@@ -1,5 +1,4 @@
 import { Module, forwardRef } from '@nestjs/common';
-import { MongooseModule } from '@nestjs/mongoose';
 import { TeamController } from './controllers/team.controller';
 import { TeamShareController } from './controllers/team-share.controller';
 import { TeamCrudInternalController } from './controllers/team-crud-internal.controller';
@@ -7,13 +6,9 @@ import { AdminTeamAutoBuilderController } from './controllers/admin-team-auto-bu
 import { TeamService } from './team.service';
 import { TeamShareService } from './services/team-share.service';
 import { TeamAutoBuilderConfigService } from './services/team-auto-builder-config.service';
+import { TEAM_AUTO_BUILDER_STORE, TEAM_SHARE_STORE, TEAM_STORE } from './persistence/team.store';
+import { PgTeamAutoBuilderStore, PgTeamShareStore, PgTeamStore } from './persistence/pg-team.store';
 import { TeamPermissionGuard } from './guards/team-permission.guard';
-import { Team, TeamSchema } from './schemas/team.schema';
-import { SharedTeam, SharedTeamSchema } from './schemas/shared-team.schema';
-import {
-  TeamAutoBuilderConfig,
-  TeamAutoBuilderConfigSchema,
-} from './schemas/team-auto-builder-config.schema';
 import { AgentModule } from '../agent/agent.module';
 import { UserModule } from '../user/user.module';
 import { AuthorizationModule } from '../authorization/authorization.module';
@@ -25,11 +20,6 @@ import { ModelsModule } from '../models/models.module';
 
 @Module({
   imports: [
-    MongooseModule.forFeature([
-      { name: Team.name, schema: TeamSchema },
-      { name: SharedTeam.name, schema: SharedTeamSchema },
-      { name: TeamAutoBuilderConfig.name, schema: TeamAutoBuilderConfigSchema },
-    ]),
     forwardRef(() => AgentModule),
     UserModule,
     AuthorizationModule,
@@ -40,7 +30,11 @@ import { ModelsModule } from '../models/models.module';
     ModelsModule,
   ],
   controllers: [TeamController, TeamShareController, TeamCrudInternalController, AdminTeamAutoBuilderController],
-  providers: [TeamService, TeamShareService, TeamAutoBuilderConfigService, TeamPermissionGuard],
+  providers: [
+    // Teams cutover (plan 4.3-4.5): PG-backed stores.
+    { provide: TEAM_STORE, useClass: PgTeamStore },
+    { provide: TEAM_SHARE_STORE, useClass: PgTeamShareStore },
+    { provide: TEAM_AUTO_BUILDER_STORE, useClass: PgTeamAutoBuilderStore },TeamService, TeamShareService, TeamAutoBuilderConfigService, TeamPermissionGuard],
   exports: [TeamService, TeamShareService],
 })
 export class TeamModule {}

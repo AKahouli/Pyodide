@@ -1,10 +1,8 @@
 import { Inject, Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
-import { InjectModel } from '@nestjs/mongoose';
-import { Model, Types } from 'mongoose';
+import { isObjectId } from '@common/postgres';
 import { LoggerService } from '../../logger';
-import { Team, TeamDocument } from '../schemas/team.schema';
-import { SharedTeam, SharedTeamDocument } from '../schemas/shared-team.schema';
 import { USER_LOOKUP_PORT, type UserLookupPort } from '@common/ports/user-lookup.port';
+import { TEAM_SHARE_STORE, TEAM_STORE, type TeamRow, type TeamShareRow, type TeamShareStore, type TeamStore } from '../persistence/team.store';
 import {
   ITeamResponse,
   ITeamShareEntry,
@@ -18,10 +16,8 @@ import { ErrorCode } from '../../exceptions/constants/error-codes';
 @Injectable()
 export class TeamShareService {
   constructor(
-    @InjectModel(Team.name)
-    private readonly teamModel: Model<TeamDocument>,
-    @InjectModel(SharedTeam.name)
-    private readonly sharedTeamModel: Model<SharedTeamDocument>,
+    @Inject(TEAM_SHARE_STORE) private readonly shareStore: TeamShareStore,
+    @Inject(TEAM_STORE) private readonly teamStore: TeamStore,
     @Inject(USER_LOOKUP_PORT) private readonly userLookup: UserLookupPort,
     private readonly logger: LoggerService,
   ) {
@@ -73,20 +69,19 @@ export class TeamShareService {
       throw new NotFoundException(ErrorCode.TEAM_SHARE_USER_NOT_FOUND);
     }
 
-    const results: ITeamShareEntry[] = [];
+    // One batched upsert for the whole batch (plan 4.4).
+    const shares: TeamShareRow[] = await this.shareStore.upsertMany(
+      teamId,
+      ownerId,
+      validRecipients.map(({ user }) => user._id.toString()),
+      dto.permission,
+    );
+    const userByShare = new Map(validRecipients.map(({ user }) => [user._id.toString(), user]));
 
-    for (const { user } of validRecipients) {
-      const share = await this.sharedTeamModel.findOneAndUpdate(
-        { teamId: new Types.ObjectId(teamId), sharedWith: user._id },
-        {
-          $set: { permission: dto.permission, sharedBy: new Types.ObjectId(ownerId) },
-          $setOnInsert: { teamId: new Types.ObjectId(teamId), sharedWith: user._id },
-        },
-        { upsert: true, new: true },
-      );
-
-      results.push({
-        shareId: share._id.toString(),
+    const results: ITeamShareEntry[] = shares.map((share) => {
+      const user = userByShare.get(share.sharedWith)!;
+      return {
+        shareId: share.id,
         permission: share.permission as TeamPermissionLevel,
         user: {
           id: user._id.toString(),
@@ -95,8 +90,8 @@ export class TeamShareService {
           lastName: user.profile?.lastName,
         },
         createdAt: share.createdAt,
-      });
-    }
+      };
+    });
 
     this.logger.log('Team shared', {
       teamId,
@@ -111,18 +106,14 @@ export class TeamShareService {
 
   /** List all shares for a given team. Guard verifies owner. */
   async getTeamShares(teamId: string): Promise<ITeamShareEntry[]> {
-    const shares = await this.sharedTeamModel
-      .find({ teamId: new Types.ObjectId(teamId) })
-      .sort({ createdAt: -1 })
-      .lean()
-      .exec();
+    const shares = await this.shareStore.findByTeam(teamId);
 
     const users = await this.resolveUsers(shares.map((share) => String(share.sharedWith)));
 
     return shares.map((share) => {
       const user = users.get(String(share.sharedWith))!;
       return {
-        shareId: share._id.toString(),
+        shareId: share.id,
         permission: share.permission as TeamPermissionLevel,
         user: {
           id: user._id.toString(),
@@ -141,17 +132,11 @@ export class TeamShareService {
     shareId: string,
     dto: UpdateTeamSharePermissionDto,
   ): Promise<ITeamShareEntry> {
-    if (!Types.ObjectId.isValid(shareId)) {
+    if (!isObjectId(shareId)) {
       throw new NotFoundException(ErrorCode.TEAM_SHARE_NOT_FOUND);
     }
 
-    const share = await this.sharedTeamModel
-      .findOneAndUpdate(
-        { _id: new Types.ObjectId(shareId), teamId: new Types.ObjectId(teamId) },
-        { $set: { permission: dto.permission } },
-        { new: true },
-      )
-      .exec();
+    const share = await this.shareStore.updatePermission(shareId, teamId, dto.permission);
 
     if (!share) {
       throw new NotFoundException(ErrorCode.TEAM_SHARE_NOT_FOUND);
@@ -167,7 +152,7 @@ export class TeamShareService {
     });
 
     return {
-      shareId: share._id.toString(),
+      shareId: share.id,
       permission: share.permission as TeamPermissionLevel,
       user: {
         id: user._id.toString(),
@@ -181,31 +166,22 @@ export class TeamShareService {
 
   /** Owner revokes a specific share. Guard verifies owner of `teamId`. */
   async removeShare(teamId: string, shareId: string): Promise<void> {
-    if (!Types.ObjectId.isValid(shareId)) {
+    if (!isObjectId(shareId)) {
       throw new NotFoundException(ErrorCode.TEAM_SHARE_NOT_FOUND);
     }
 
-    const share = await this.sharedTeamModel
-      .findOneAndDelete({ _id: new Types.ObjectId(shareId), teamId: new Types.ObjectId(teamId) })
-      .lean()
-      .exec();
+    const share = await this.shareStore.deleteByIdAndTeam(shareId, teamId);
 
     if (!share) {
       throw new NotFoundException(ErrorCode.TEAM_SHARE_NOT_FOUND);
     }
 
-    this.logger.log('Team share revoked', { shareId, teamId: share.teamId.toString() });
+    this.logger.log('Team share revoked', { shareId, teamId: share.teamId });
   }
 
   /** Recipient removes a shared team from their own list. */
   async unshareFromSelf(userId: string, teamId: string): Promise<void> {
-    const result = await this.sharedTeamModel
-      .findOneAndDelete({
-        teamId: new Types.ObjectId(teamId),
-        sharedWith: new Types.ObjectId(userId),
-      })
-      .lean()
-      .exec();
+    const result = await this.shareStore.deleteForUser(teamId, userId);
 
     if (!result) {
       throw new NotFoundException(ErrorCode.TEAM_SHARE_NOT_FOUND);
@@ -214,43 +190,30 @@ export class TeamShareService {
     this.logger.log('User removed shared team', { userId, teamId });
   }
 
-  /** Remove all shares when a team is permanently deleted. */
-  async removeAllSharesForTeam(teamId: string): Promise<void> {
-    const result = await this.sharedTeamModel
-      .deleteMany({ teamId: new Types.ObjectId(teamId) })
-      .exec();
-
-    if (result.deletedCount > 0) {
-      this.logger.log('All shares removed for deleted team', {
-        teamId,
-        deletedCount: result.deletedCount,
-      });
-    }
-  }
+  /**
+   * No longer needed (plan 4.4): shared_teams cascade on team delete via the
+   * FK. Kept as a no-op for call-site compatibility.
+   */
+  async removeAllSharesForTeam(_teamId: string): Promise<void> {}
 
   /** All teams shared with a user, with shareInfo attached. */
   async getSharedTeamsForUser(userId: string): Promise<ITeamResponse[]> {
-    const shares = await this.sharedTeamModel
-      .find({ sharedWith: new Types.ObjectId(userId) })
-      .lean()
-      .exec();
+    const shares = await this.shareStore.listSharedWithUser(userId);
 
     if (shares.length === 0) return [];
 
     const users = await this.resolveUsers(shares.map((share) => String(share.sharedBy)));
 
     const teamIds = shares.map((s) => s.teamId);
-    const teams = await this.teamModel
-      .find({ _id: { $in: teamIds }, isActive: true })
-      .sort({ createdAt: -1 })
-      .lean()
-      .exec();
+    const teams = (await this.teamStore.findByIds(teamIds))
+      .filter((t) => t.isActive)
+      .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
 
     const shareMap = new Map<string, ISharedTeamInfo>();
     for (const share of shares) {
       const sharedByUser = users.get(String(share.sharedBy))!;
-      shareMap.set(share.teamId.toString(), {
-        shareId: share._id.toString(),
+      shareMap.set(share.teamId, {
+        shareId: share.id,
         permission: share.permission as TeamPermissionLevel,
         sharedBy: {
           id: sharedByUser._id.toString(),
@@ -263,33 +226,20 @@ export class TeamShareService {
 
     return teams.map((team) => {
       const response = this.toResponse(team);
-      response.shareInfo = shareMap.get(team._id.toString());
+      response.shareInfo = shareMap.get(team.id);
       return response;
     });
   }
 
   /** The permission level a user has on a team via sharing, or null. */
   async getSharePermission(userId: string, teamId: string): Promise<TeamPermissionLevel | null> {
-    const share = await this.sharedTeamModel
-      .findOne({
-        teamId: new Types.ObjectId(teamId),
-        sharedWith: new Types.ObjectId(userId),
-      })
-      .lean()
-      .exec();
-
+    const share = await this.shareStore.find(teamId, userId);
     return share ? (share.permission as TeamPermissionLevel) : null;
   }
 
   /** Full share info for a user on a specific team, or null. */
   async getShareInfo(userId: string, teamId: string): Promise<ISharedTeamInfo | null> {
-    const share = await this.sharedTeamModel
-      .findOne({
-        teamId: new Types.ObjectId(teamId),
-        sharedWith: new Types.ObjectId(userId),
-      })
-      .lean()
-      .exec();
+    const share = await this.shareStore.find(teamId, userId);
 
     if (!share) return null;
 
@@ -297,7 +247,7 @@ export class TeamShareService {
     const sharedByUser = users.get(String(share.sharedBy))!;
 
     return {
-      shareId: share._id.toString(),
+      shareId: share.id,
       permission: share.permission as TeamPermissionLevel,
       sharedBy: {
         id: sharedByUser._id.toString(),
@@ -309,10 +259,10 @@ export class TeamShareService {
   }
 
   /** Maps a lean team document to ITeamResponse (shared-team context). */
-  private toResponse(doc: Record<string, unknown>): ITeamResponse {
+  private toResponse(doc: TeamRow | Record<string, unknown>): ITeamResponse {
     const members = (doc.members as Array<Record<string, unknown>>) || [];
     return {
-      id: (doc._id as { toString(): string }).toString(),
+      id: doc.id as string,
       name: doc.name as string,
       description: (doc.description as string) || '',
       members: members.map((m) => this.toMemberResponse(m)),
