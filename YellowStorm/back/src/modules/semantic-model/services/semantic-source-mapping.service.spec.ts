@@ -100,6 +100,9 @@ describe('semantic source mapping domain', () => {
 });
 
 describe('SpreadsheetConceptResolver.parse', () => {
+  // ExcelJS xlsx round-trips are CPU-heavy under full-suite parallelism.
+  jest.setTimeout(30_000);
+
   const buildService = () => new SpreadsheetConceptResolver(
     { findById: jest.fn() } as unknown as WorkspaceDocumentService,
     { download: jest.fn() } as unknown as DocumentService,
