@@ -329,6 +329,20 @@ export class SemanticModelController {
     return this.sourceMappings.profileAsset(user._id.toString(),modelId,query.workspaceId,documentId,query);
   }
 
+  @Post(':modelId/source-assets/:documentId/profile')
+  @HttpCode(HttpStatus.ACCEPTED)
+  @ApiOperation({ summary: 'Request or reuse a durable structured-source analysis job' })
+  @RequirePermissions([Permissions.SEMANTIC_MODELS_READ,Permissions.SEMANTIC_MODELS_ALL],'any')
+  requestSourceAssetProfile(@CurrentUser() user: AuthUser,@Param('modelId') modelId: string,@Param('documentId') documentId: string,@Query() query: SourceAssetProfileQueryDto) {
+    return this.sourceMappings.requestProfile(user._id.toString(),modelId,query.workspaceId,documentId,query);
+  }
+
+  @Get(':modelId/source-assets/jobs/:jobId')
+  @RequirePermissions([Permissions.SEMANTIC_MODELS_READ,Permissions.SEMANTIC_MODELS_ALL],'any')
+  sourceAssetJob(@CurrentUser() user: AuthUser,@Param('modelId') modelId: string,@Param('jobId') jobId: string) {
+    return this.sourceMappings.discoveryJob(user._id.toString(),modelId,jobId);
+  }
+
   @Get(':modelId/source-mappings')
   @RequirePermissions([Permissions.SEMANTIC_MODELS_READ,Permissions.SEMANTIC_MODELS_ALL],'any')
   listSourceMappings(@CurrentUser() user: AuthUser,@Param('modelId') modelId: string) {

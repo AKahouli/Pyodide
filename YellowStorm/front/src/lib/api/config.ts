@@ -406,6 +406,7 @@ export const API_ENDPOINTS = {
     share: (id: string, targetUserId: string) => `/semantic-models/${id}/shares/${targetUserId}`,
     sourceAssets: (id: string) => `/semantic-models/${id}/source-assets`,
     sourceAssetProfile: (id: string, documentId: string) => `/semantic-models/${id}/source-assets/${documentId}/profile`,
+    sourceAssetJob: (id: string, jobId: string) => `/semantic-models/${id}/source-assets/jobs/${jobId}`,
     sourceMappings: (id: string) => `/semantic-models/${id}/source-mappings`,
     bulkDocumentSourceMappings: (id: string) => `/semantic-models/${id}/source-mappings/bulk-documents`,
     sourceMapping: (id: string, mappingId: string) => `/semantic-models/${id}/source-mappings/${mappingId}`,

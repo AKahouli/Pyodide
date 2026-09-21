@@ -23,6 +23,7 @@ export const CALL_CLASSIFICATION: Record<SemanticApiCall, ReadKind> = {
   listShares: 'curated-read',
   listSourceAssets: 'curated-read',
   profileSourceAsset: 'curated-read',
+  analyzeSourceAsset: 'command',
   listSourceMappings: 'curated-read',
   listRelationResolutionRules: 'curated-read',
   listSourceResolutionPolicies: 'curated-read',

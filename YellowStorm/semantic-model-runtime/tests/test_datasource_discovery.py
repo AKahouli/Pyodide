@@ -25,9 +25,36 @@ from app.jobs.recovery import (
 )
 from app.workers.datasource_tasks import (
     attempts_exhausted,
+    build_mapping_preview,
     discover_asset,
     run_discovery_for_payload,
 )
+
+
+def test_mapping_preview_resolves_only_bounded_persisted_samples() -> None:
+    profile = {
+        "samples": [
+            {"__sheetRow": 2, "customer_id": "C1", "name": "Acme"},
+            {"__sheetRow": 3, "customer_id": "C1", "name": "Duplicate"},
+            {"__sheetRow": 4, "customer_id": "", "name": "Missing"},
+        ],
+        "fieldProfiles": [{"name": "customer_id", "type": "text", "sample": "C1",
+                           "populatedRatio": 2 / 3, "uniqueRatio": 0.5}],
+        "warnings": [{"code": "sample", "message": "This is a bounded sample."}],
+    }
+    result = build_mapping_preview(profile, {
+        "fieldMappings": [
+            {"sourceField": "customer_id", "targetAttribute": "id", "mode": "direct"},
+            {"sourceField": "name", "targetAttribute": "name", "mode": "direct"},
+        ],
+        "identityFields": ["id"],
+    })
+
+    assert result is not None
+    assert [item["values"]["name"] for item in result["entities"]] == ["Acme"]
+    assert result["stats"] == {"scannedRows": 3, "resolvedEntities": 1,
+                               "duplicateKeysSkipped": 1, "nullIdentitySkipped": 1}
+    assert result["identityEvidence"][0]["name"] == "id"
 
 XLSX = {"workspaceId": "6512f0a1c9e77a001234aaa1", "assetId": "6512f0a1c9e77a001234bbb2",
         "originalName": "customer-registry.xlsx",

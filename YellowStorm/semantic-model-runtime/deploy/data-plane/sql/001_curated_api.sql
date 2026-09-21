@@ -107,4 +107,67 @@ GRANT USAGE ON SCHEMA semantic_jobs TO semantic_api_user;
 GRANT SELECT ON semantic_jobs.source_heads TO semantic_api_user;
 GRANT SELECT ON semantic_api.source_summary TO semantic_api_user;
 
+-- Gate E bounded source analysis. Profiles are authorized through at least one
+-- source mapping visible to the token's model; raw workbook cells are never stored.
+ALTER TABLE semantic_datasource.discovery_profiles ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS discovery_profile_api_access ON semantic_datasource.discovery_profiles;
+CREATE POLICY discovery_profile_api_access ON semantic_datasource.discovery_profiles
+  FOR SELECT TO semantic_api_user
+  USING (EXISTS (
+    SELECT 1 FROM semantic_model.source_mappings mapping
+    WHERE mapping.workspace_id = discovery_profiles.workspace_id
+      AND mapping.document_id = discovery_profiles.asset_id
+      AND mapping.model_id::text = (current_setting('request.jwt.claims', true)::json ->> 'model_id')
+      AND semantic_model.is_member(
+        mapping.model_id,
+        current_setting('request.jwt.claims', true)::json ->> 'sub'
+      )
+  ));
+
+ALTER TABLE semantic_datasource.mapping_health ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS mapping_health_api_access ON semantic_datasource.mapping_health;
+CREATE POLICY mapping_health_api_access ON semantic_datasource.mapping_health
+  FOR SELECT TO semantic_api_user
+  USING (
+    model_id::text = (current_setting('request.jwt.claims', true)::json ->> 'model_id')
+    AND semantic_model.is_member(
+      model_id,
+      current_setting('request.jwt.claims', true)::json ->> 'sub'
+    )
+  );
+
+CREATE OR REPLACE VIEW semantic_api.source_profile_summary WITH (security_invoker = true) AS
+  SELECT mapping.model_id::text AS model_id, mapping.id::text AS mapping_id,
+    profile.workspace_id, profile.asset_id, profile.source_fingerprint,
+    profile.source_version, profile.parser_version, profile.status,
+    profile.profile->'structure' AS structure,
+    profile.profile->'coverage' AS coverage,
+    profile.profile->'warnings' AS warnings, profile.completed_at
+  FROM semantic_model.source_mappings mapping
+  JOIN semantic_datasource.discovery_profiles profile
+    ON profile.workspace_id=mapping.workspace_id AND profile.asset_id=mapping.document_id;
+
+CREATE OR REPLACE VIEW semantic_api.source_preview WITH (security_invoker = true) AS
+  SELECT mapping.model_id::text AS model_id, mapping.id::text AS mapping_id,
+    profile.workspace_id, profile.asset_id, profile.source_fingerprint,
+    profile.options_fingerprint, profile.profile->'structure' AS structure,
+    profile.profile->'samples' AS samples,
+    profile.profile->'fieldProfiles' AS field_profiles,
+    profile.preview, profile.completed_at
+  FROM semantic_model.source_mappings mapping
+  JOIN semantic_datasource.discovery_profiles profile
+    ON profile.workspace_id=mapping.workspace_id AND profile.asset_id=mapping.document_id;
+
+CREATE OR REPLACE VIEW semantic_api.mapping_health WITH (security_invoker = true) AS
+  SELECT model_id::text AS model_id, mapping_id::text AS mapping_id,
+    source_fingerprint, mapping_version, state, missing_fields,
+    available_fields, warnings, checked_at
+  FROM semantic_datasource.mapping_health;
+
+GRANT USAGE ON SCHEMA semantic_datasource TO semantic_api_user;
+GRANT SELECT ON semantic_datasource.discovery_profiles,
+  semantic_datasource.mapping_health TO semantic_api_user;
+GRANT SELECT ON semantic_api.source_profile_summary, semantic_api.source_preview,
+  semantic_api.mapping_health TO semantic_api_user;
+
 NOTIFY pgrst, 'reload schema';

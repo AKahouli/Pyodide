@@ -346,6 +346,7 @@ export interface SheetProfile {
   fields?: SheetFieldProfile[];
   sampleRows?: Record<string, unknown>[];
   totalRows?: number;
+  complete?: boolean;
 }
 
 export interface SourceFieldMapping {
@@ -375,7 +376,7 @@ export interface ConceptSourceMapping {
   validatedAt?: string | null;
 }
 
-export type MappingHealthState = 'healthy' | 'changed' | 'unavailable' | 'broken';
+export type MappingHealthState = 'healthy' | 'changed' | 'unavailable' | 'broken' | 'checking';
 
 export interface MappingHealthItem extends ConceptSourceMapping {
   conceptLabel: string;

@@ -84,6 +84,7 @@ export class SemanticModelSourceReconciliationService {
     return {
       workspaceId: document.workspaceId, documentId: document.id, createdBy: document.createdBy,
       documentType: document.type, originalName: document.originalName, mimeType: document.mimeType,
+      sizeBytes: document.size, uploadedAt: document.uploadedAt, updatedAt: document.updatedAt,
       sourceUrl: document.sourceUrl, contentHash: document.contentHash, storagePath: document.path,
       documentStatus: document.status, indexingStatus: document.indexingStatus,
       indexingTaskId: document.indexingTaskId, folderId: document.parentId, metadata: document.metadata,

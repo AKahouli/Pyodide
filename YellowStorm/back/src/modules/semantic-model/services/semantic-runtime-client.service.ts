@@ -26,6 +26,22 @@ export interface RuntimeAcceptedJob {
   reused: boolean;
 }
 
+export interface RuntimeDiscoveryCommand {
+  actorUserId: string;
+  modelId: string;
+  workspaceId: string;
+  payload: Record<string, unknown>;
+}
+
+export interface RuntimeJob {
+  jobId: string;
+  jobType: string;
+  modelId: string | null;
+  state: string;
+  result: Record<string, unknown> | null;
+  errorCode: string | null;
+}
+
 export interface RuntimeCorrectionCommand {
   actorUserId: string;
   modelId: string;
@@ -109,6 +125,28 @@ export class SemanticRuntimeClientService {
     }
   }
 
+  private async get<T>(path: string, actorUserId: string): Promise<T> {
+    const base = this.requireWrites();
+    try {
+      const { data } = await axios.get<T>(`${base}${path}`, {
+        headers: {
+          'X-Semantic-Service-Key': this.config.runtimeServiceKey,
+          'X-Actor-User-Id': actorUserId,
+        },
+        timeout: this.config.runtimeRequestTimeoutMs,
+      });
+      return data;
+    } catch (error) {
+      if (axios.isAxiosError(error) && error.response?.status === 404) {
+        throw new NotFoundException(ErrorCode.SEMANTIC_MODEL_NOT_FOUND, this.errorDetail(error));
+      }
+      throw new ServiceUnavailableException(
+        ErrorCode.SEMANTIC_MODEL_UNAVAILABLE,
+        'Semantic runtime request failed',
+      );
+    }
+  }
+
   private errorDetail(error: unknown): string {
     if (axios.isAxiosError(error)) {
       const detail = (error.response?.data as { detail?: unknown } | undefined)?.detail;
@@ -124,6 +162,22 @@ export class SemanticRuntimeClientService {
     return this.post<RuntimeAcceptedJob>('/v1/semantic-model-population/runs', command, {
       'Idempotency-Key': idempotencyKey,
     });
+  }
+
+  async requestDatasourceDiscovery(
+    command: RuntimeDiscoveryCommand,
+    idempotencyKey: string,
+  ): Promise<RuntimeAcceptedJob> {
+    return this.post<RuntimeAcceptedJob>('/v1/semantic-model-datasource/discoveries', command, {
+      'Idempotency-Key': idempotencyKey,
+    });
+  }
+
+  async getJob(jobId: string, actorUserId: string): Promise<RuntimeJob> {
+    return this.get<RuntimeJob>(
+      `/v1/semantic-model-jobs/${encodeURIComponent(jobId)}`,
+      actorUserId,
+    );
   }
 
   async mirrorSpecification(command: {

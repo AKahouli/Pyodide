@@ -25,10 +25,26 @@ async def pool():
     connection = await asyncpg.connect(DSN)
     try:
         for schema in ("semantic_jobs", "semantic_datasource", "semantic_runtime",
-                       "semantic_population", "semantic_search"):
+                       "semantic_population", "semantic_search", "semantic_model"):
             await connection.execute(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE')
         for migration in MIGRATIONS:
             await connection.execute(migration.read_text(encoding="utf-8"))
+        await connection.execute("""
+            CREATE SCHEMA IF NOT EXISTS semantic_model;
+            CREATE TABLE IF NOT EXISTS semantic_model.workspace_links (
+              model_id UUID NOT NULL, workspace_id TEXT NOT NULL, enabled BOOLEAN NOT NULL DEFAULT true,
+              PRIMARY KEY (model_id, workspace_id)
+            );
+            CREATE TABLE IF NOT EXISTS semantic_model.source_mappings (
+              id UUID PRIMARY KEY DEFAULT gen_random_uuid(), model_id UUID NOT NULL,
+              concept_id UUID NOT NULL DEFAULT gen_random_uuid(), workspace_id TEXT NOT NULL,
+              document_id TEXT NOT NULL, sheet_name TEXT NOT NULL DEFAULT '',
+              asset_kind TEXT NOT NULL DEFAULT 'excel_sheet', field_mappings JSONB NOT NULL DEFAULT '[]',
+              status TEXT NOT NULL DEFAULT 'ready', created_by TEXT NOT NULL DEFAULT 'test-user',
+              validated_source_version TEXT, validated_at TIMESTAMPTZ,
+              created_at TIMESTAMPTZ NOT NULL DEFAULT now(), updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+            );
+        """)
     finally:
         await connection.close()
     value = await asyncpg.create_pool(DSN, min_size=1, max_size=6)
@@ -132,6 +148,258 @@ async def test_source_events_create_idempotent_revisions_and_ignore_stale_heads(
         "workspace-1", "document-1",
     )
     assert dict(head) == {"event_id": "aaa-delete", "revision": 3, "deleted": True}
+
+
+@pytest.mark.asyncio
+async def test_source_event_enqueues_one_discovery_per_mapped_sheet(pool: asyncpg.Pool):
+    model_id = "11111111-1111-1111-1111-111111111111"
+    workspace_id = "6512f0a1c9e77a001234aaa1"
+    document_id = "6512f0a1c9e77a001234bbb2"
+    await pool.execute(
+        "INSERT INTO semantic_model.workspace_links (model_id, workspace_id) VALUES ($1, $2)",
+        model_id, workspace_id,
+    )
+    for sheet in ("Customers", "Orders"):
+        await pool.execute(
+            "INSERT INTO semantic_model.source_mappings "
+            "(model_id, workspace_id, document_id, sheet_name) VALUES ($1, $2, $3, $4)",
+            model_id, workspace_id, document_id, sheet,
+        )
+    event = SourceEvent.model_validate({
+        "eventId": "event-profile", "eventType": "workspace.document.artifact_ready.v1",
+        "occurredAt": "2026-09-22T12:00:00Z",
+        "payload": {"workspaceId": workspace_id, "documentId": document_id,
+                    "createdBy": "user-1", "originalName": "data.xlsx",
+                    "mimeType": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    "sizeBytes": 1024, "uploadedAt": "2026-09-22T11:00:00Z",
+                    "updatedAt": "2026-09-22T11:30:00Z"},
+    })
+
+    await PostgresJobRepository(pool).record_source_event(event)
+
+    commands = await pool.fetch("SELECT command FROM semantic_jobs.jobs ORDER BY command->'payload'->'options'->>'sheetName'")
+    payloads = [json.loads(row["command"]) if isinstance(row["command"], str) else row["command"]
+                for row in commands]
+    assert [command["payload"]["options"]["sheetName"] for command in payloads] == [
+        "Customers", "Orders"]
+    assert await pool.fetchval(
+        "SELECT count(*) FROM semantic_datasource.mapping_health WHERE state='checking'"
+    ) == 2
+
+
+@pytest.mark.asyncio
+async def test_discovery_completion_persists_profile_health_and_cache(
+    pool: asyncpg.Pool, monkeypatch: pytest.MonkeyPatch,
+):
+    monkeypatch.setenv("SEMANTIC_MODEL_REALTIME_ENABLED", "true")
+    repository = PostgresJobRepository(pool)
+    model_id = "11111111-1111-1111-1111-111111111111"
+    workspace_id = "6512f0a1c9e77a001234aaa1"
+    document_id = "6512f0a1c9e77a001234bbb2"
+    content_hash = "9f2a1c0e5b6d7a8b9c0d1e2f3a4b5c6d"
+    await pool.execute(
+        "INSERT INTO semantic_model.workspace_links (model_id, workspace_id) VALUES ($1, $2)",
+        model_id, workspace_id,
+    )
+    await pool.execute(
+        "INSERT INTO semantic_model.source_mappings "
+        "(model_id, workspace_id, document_id, sheet_name, field_mappings, "
+        "validated_source_version) VALUES ($1, $2, $3, 'Customers', $4::jsonb, $5)",
+        model_id, workspace_id, document_id,
+        json.dumps([{"mode": "direct", "sourceField": "customer_id",
+                     "targetAttribute": "id"}]), content_hash,
+    )
+    source = {"workspaceId": workspace_id, "assetId": document_id,
+              "mimeType": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+              "sizeBytes": 1024, "contentHash": content_hash,
+              "sourceVersion": content_hash}
+    job_command = JobCommand.model_validate({
+        "actorUserId": "user-1", "modelId": model_id, "workspaceId": workspace_id,
+        "payload": {"source": source, "options": {"sheetName": "Customers"}},
+    })
+    admitted = await JobService(repository).admit(
+        job_type="datasource.discovery", command=job_command, idempotency_key="profile-1",
+        task_name="semantic-model-datasource.discover",
+        queue_name="semantic-model-datasource.batch",
+    )
+    task_id = await pool.fetchval("SELECT id FROM semantic_jobs.tasks")
+    lease = await repository.claim_task(
+        task_id=task_id, queue_name="semantic-model-datasource.batch",
+        lease_owner="worker", lease_seconds=30,
+    )
+    assert lease
+    profile = {
+        "profileId": "prof_test", "assetRef": {"workspaceId": workspace_id,
+        "assetId": document_id, "assetVersionId": f"md5:{content_hash}"},
+        "parserFingerprint": "sha256:parser", "status": "ready",
+        "structure": {"kind": "xlsx", "selectedSheet": "Customers"},
+        "samples": [{"customer_id": "C1"}], "warnings": [],
+        "coverage": {"sampled": True, "completeProfileDone": True},
+    }
+    await repository.complete_task(
+        task_id=task_id, lease_owner="worker", lease_epoch=lease.lease_epoch,
+        job_state="completed", result={"profile": profile,
+        "fieldProfiles": [{"name": "customer_id"}], "scannedRows": 1},
+    )
+
+    assert await pool.fetchval("SELECT count(*) FROM semantic_datasource.discovery_profiles") == 1
+    assert await pool.fetchval("SELECT state FROM semantic_datasource.mapping_health") == "healthy"
+    cached = await repository.get_cached_discovery_profile(
+        job_command.model_dump(by_alias=True, mode="json"), f"md5:{content_hash}",
+        "sha256:parser")
+    assert cached and cached["samples"] == [{"customer_id": "C1"}]
+    assert await repository.get_cached_discovery_profile(
+        job_command.model_dump(by_alias=True, mode="json"), f"md5:{content_hash}",
+        "sha256:new-parser") is None
+    refreshed = await JobService(repository).admit(
+        job_type="datasource.discovery", command=job_command,
+        idempotency_key="profile-1",
+        task_name="semantic-model-datasource.discover",
+        queue_name="semantic-model-datasource.batch",
+    )
+    assert refreshed.reused is False
+    assert refreshed.job_id != admitted.job_id
+    assert await pool.fetchval(
+        "SELECT count(*) FROM semantic_jobs.ui_signal_outbox WHERE event_type='datasource-status-changed'"
+    ) == 1
+
+
+@pytest.mark.asyncio
+async def test_stale_discovery_completions_cannot_overwrite_current_health(
+    pool: asyncpg.Pool,
+):
+    repository = PostgresJobRepository(pool)
+    model_id = "11111111-1111-1111-1111-111111111111"
+    workspace_id = "6512f0a1c9e77a001234aaa1"
+    document_id = "6512f0a1c9e77a001234bbb2"
+    await pool.execute(
+        "INSERT INTO semantic_model.workspace_links (model_id, workspace_id) VALUES ($1, $2)",
+        model_id, workspace_id,
+    )
+    await pool.execute(
+        "INSERT INTO semantic_model.source_mappings "
+        "(model_id, workspace_id, document_id, sheet_name) "
+        "VALUES ($1, $2, $3, 'Customers')",
+        model_id, workspace_id, document_id,
+    )
+    current = SourceEvent.model_validate({
+        "eventId": "current-event",
+        "eventType": "workspace.document.artifact_ready.v1",
+        "occurredAt": "2026-09-22T12:00:00Z",
+        "payload": {"workspaceId": workspace_id, "documentId": document_id,
+                    "createdBy": "user-1", "originalName": "data.xlsx",
+                    "mimeType": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    "sizeBytes": 2048, "updatedAt": "2026-09-22T12:00:00Z"},
+    })
+    await repository.record_source_event(current)
+    await pool.execute(
+        "UPDATE semantic_datasource.mapping_health SET state='healthy'"
+    )
+    stale_source = {
+        "workspaceId": workspace_id, "assetId": document_id,
+        "mimeType": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        "sourceVersion": "2026-09-22T11:00:00Z:1024",
+        "sourceEventId": "older-event",
+    }
+    stale_command = JobCommand.model_validate({
+        "actorUserId": "user-1", "modelId": model_id, "workspaceId": workspace_id,
+        "payload": {"source": stale_source, "options": {"sheetName": "Customers"}},
+    })
+
+    for key, state in (("stale-success", "completed"), ("stale-failure", "failed")):
+        admitted = await JobService(repository).admit(
+            job_type="datasource.discovery", command=stale_command,
+            idempotency_key=key, task_name="semantic-model-datasource.discover",
+            queue_name="semantic-model-datasource.batch",
+        )
+        task_id = await pool.fetchval(
+            "SELECT id FROM semantic_jobs.tasks WHERE job_id=$1::uuid", admitted.job_id)
+        lease = await repository.claim_task(
+            task_id=task_id, queue_name="semantic-model-datasource.batch",
+            lease_owner=key, lease_seconds=30,
+        )
+        assert lease
+        result = None
+        if state == "completed":
+            result = {"profile": {
+                "profileId": "prof_stale",
+                "assetRef": {"workspaceId": workspace_id, "assetId": document_id,
+                             "assetVersionId": "md5:stale"},
+                "parserFingerprint": "sha256:stale", "status": "ready",
+                "structure": {"kind": "xlsx", "selectedSheet": "Customers"},
+                "warnings": [],
+            }, "fieldProfiles": []}
+        await repository.complete_task(
+            task_id=task_id, lease_owner=key, lease_epoch=lease.lease_epoch,
+            job_state=state, result=result,
+            error_code="stale_failure" if state == "failed" else None,
+        )
+        assert await pool.fetchval(
+            "SELECT state FROM semantic_datasource.mapping_health"
+        ) == "healthy"
+
+    admitted = await JobService(repository).admit(
+        job_type="datasource.discovery", command=stale_command,
+        idempotency_key="stale-after-delete",
+        task_name="semantic-model-datasource.discover",
+        queue_name="semantic-model-datasource.batch",
+    )
+    task_id = await pool.fetchval(
+        "SELECT id FROM semantic_jobs.tasks WHERE job_id=$1::uuid", admitted.job_id)
+    lease = await repository.claim_task(
+        task_id=task_id, queue_name="semantic-model-datasource.batch",
+        lease_owner="stale-after-delete", lease_seconds=30,
+    )
+    assert lease
+    deleted = SourceEvent.model_validate({
+        "eventId": "deleted-event",
+        "eventType": "workspace.document.deleted.v1",
+        "occurredAt": "2026-09-22T13:00:00Z",
+        "payload": {"workspaceId": workspace_id, "documentId": document_id},
+    })
+    async with pool.acquire() as connection:
+        async with connection.transaction():
+            await connection.execute(
+                "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))",
+                f"{workspace_id}:{document_id}",
+            )
+            completion = asyncio.create_task(repository.complete_task(
+                task_id=task_id, lease_owner="stale-after-delete",
+                lease_epoch=lease.lease_epoch, job_state="completed",
+                result={"profile": {
+                    "profileId": "prof_deleted_stale",
+                    "assetRef": {"workspaceId": workspace_id, "assetId": document_id,
+                                 "assetVersionId": "md5:stale"},
+                    "parserFingerprint": "sha256:stale", "status": "ready",
+                    "structure": {"kind": "xlsx", "selectedSheet": "Customers"},
+                    "warnings": [],
+                }, "fieldProfiles": []},
+            ))
+            await asyncio.sleep(0.05)
+            assert completion.done() is False
+            await connection.execute(
+                "INSERT INTO semantic_jobs.source_revisions "
+                "(event_id, workspace_id, asset_id, revision, event_type, occurred_at, payload) "
+                "VALUES ($1, $2, $3, 2, $4, $5, $6::jsonb)",
+                deleted.event_id, workspace_id, document_id, deleted.event_type,
+                deleted.occurred_at,
+                json.dumps(deleted.payload.model_dump(by_alias=True, mode="json")),
+            )
+            await connection.execute(
+                "UPDATE semantic_jobs.source_heads SET revision=2, event_id=$3, event_type=$4, "
+                "occurred_at=$5, payload=$6::jsonb, deleted=true "
+                "WHERE workspace_id=$1 AND asset_id=$2",
+                workspace_id, document_id, deleted.event_id, deleted.event_type,
+                deleted.occurred_at,
+                json.dumps(deleted.payload.model_dump(by_alias=True, mode="json")),
+            )
+            await connection.execute(
+                "UPDATE semantic_datasource.mapping_health SET state='unavailable'"
+            )
+    await completion
+    assert await pool.fetchval(
+        "SELECT state FROM semantic_datasource.mapping_health"
+    ) == "unavailable"
 
 
 @pytest.mark.asyncio

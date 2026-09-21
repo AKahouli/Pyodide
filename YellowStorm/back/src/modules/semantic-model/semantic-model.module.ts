@@ -32,7 +32,6 @@ import { SemanticModelShareService } from './services/semantic-model-share.servi
 import { SemanticSearchGraphClient } from './services/semantic-search-graph-client.service';
 import { SemanticGraphIndexJobService } from './services/semantic-graph-index-job.service';
 import { SemanticGraphIndexWorkerService } from './services/semantic-graph-index-worker.service';
-import { SpreadsheetConceptResolver } from './services/spreadsheet-concept.resolver';
 import { DocumentExtractionConceptResolver } from './services/document-extraction-concept.resolver';
 import { SemanticCrossSourceService } from './services/semantic-cross-source.service';
 import { SemanticBusinessTrustService } from './services/semantic-business-trust.service';
@@ -66,7 +65,6 @@ import { SemanticRealtimeSignalService } from './services/semantic-realtime-sign
     SemanticModelBuildOrchestratorService,
     SemanticModelShareService,
     SemanticSourceMappingService,
-    SpreadsheetConceptResolver,
     DocumentExtractionConceptResolver,
     SemanticCrossSourceService,
     SemanticBusinessTrustService,

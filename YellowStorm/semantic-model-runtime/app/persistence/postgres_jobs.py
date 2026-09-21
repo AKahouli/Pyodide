@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 from typing import Any
 
 import asyncpg
 
+from app.datasource.discovery import parser_fingerprint
 from app.jobs.models import (
     Admission,
     IdempotencyConflict,
@@ -18,6 +20,10 @@ from app.jobs.models import (
 from app.jobs.recovery import backoff_seconds
 from app.persistence.ui_signal_outbox import enqueue_ui_signal
 
+TERMINAL_JOB_STATES = {
+    "completed", "completed_with_gaps", "failed", "cancelled", "superseded",
+}
+
 
 def _json(value: Any) -> str:
     return json.dumps(value, separators=(",", ":"), sort_keys=True)
@@ -27,6 +33,11 @@ def _object(value: Any) -> dict[str, Any]:
     if isinstance(value, str):
         value = json.loads(value)
     return value if isinstance(value, dict) else {}
+
+
+def _fingerprint(value: Any) -> str:
+    body = json.dumps(value, separators=(",", ":"), sort_keys=True)
+    return f"sha256:{hashlib.sha256(body.encode()).hexdigest()}"
 
 
 class PostgresJobRepository:
@@ -118,6 +129,27 @@ class PostgresJobRepository:
                         workspace_id,
                         asset_id,
                     )
+                if applied is not None:
+                    await connection.execute(
+                        """
+                        INSERT INTO semantic_datasource.mapping_health
+                          (model_id, mapping_id, mapping_version, state, warnings)
+                        SELECT m.model_id, m.id,
+                          'sha256:' || encode(digest(m.updated_at::text || m.field_mappings::text, 'sha256'), 'hex'),
+                          CASE WHEN $3 THEN 'unavailable' ELSE 'checking' END,
+                          jsonb_build_array(jsonb_build_object('code', 'source_observation_changed'))
+                        FROM semantic_model.source_mappings m
+                        WHERE m.workspace_id=$1 AND m.document_id=$2
+                        ON CONFLICT (model_id, mapping_id) DO UPDATE SET
+                          state=EXCLUDED.state, missing_fields='[]'::jsonb,
+                          available_fields='[]'::jsonb,
+                          warnings=EXCLUDED.warnings, checked_at=now()
+                        """,
+                        workspace_id, asset_id,
+                        event.event_type == "workspace.document.deleted.v1",
+                    )
+                    if not payload.get("deleted") and event.event_type != "workspace.document.deleted.v1":
+                        await self._enqueue_event_discovery(connection, event, payload)
                 if self.realtime_enabled and applied is not None:
                     models = await connection.fetch(
                         """
@@ -136,6 +168,79 @@ class PostgresJobRepository:
                         )
                 return {"revision": revision, "reused": False, "headAdvanced": applied is not None}
 
+    async def _enqueue_event_discovery(
+        self, connection: asyncpg.Connection, event: SourceEvent, payload: dict[str, Any]
+    ) -> None:
+        actor = payload.get("createdBy")
+        mime = payload.get("mimeType")
+        if not isinstance(actor, str) or not actor or not isinstance(mime, str):
+            return
+        source = {
+            "workspaceId": event.payload.workspace_id,
+            "assetId": event.payload.document_id,
+            "originalName": payload.get("originalName"),
+            "mimeType": mime,
+            "sizeBytes": payload.get("sizeBytes"),
+            "contentHash": payload.get("contentHash"),
+            "uploadedAt": payload.get("uploadedAt") or event.occurred_at.isoformat(),
+            "indexingStatus": payload.get("indexingStatus"),
+            "sourceEventId": event.event_id,
+        }
+        updated_at = payload.get("updatedAt")
+        size = payload.get("sizeBytes")
+        source["sourceVersion"] = (payload.get("contentHash") or
+                                   (f"{updated_at}:{size}" if updated_at and isinstance(size, int)
+                                    else None))
+        sheets = await connection.fetch(
+            """
+            SELECT DISTINCT sheet_name
+            FROM semantic_model.source_mappings
+            WHERE workspace_id=$1 AND document_id=$2
+            """,
+            event.payload.workspace_id, event.payload.document_id,
+        )
+        for row in sheets:
+            sheet_name = row["sheet_name"]
+            options = {"sheetName": sheet_name} if sheet_name else {}
+            command = {"actorUserId": actor, "modelId": None,
+                       "workspaceId": event.payload.workspace_id,
+                       "payload": {"source": source, "options": options}}
+            command_json = _json(command)
+            command_hash = _fingerprint(command)
+            idempotency_key = f"source-event:{_fingerprint({'eventId': event.event_id, 'sheet': sheet_name})}"
+            job = await connection.fetchrow(
+                """
+                INSERT INTO semantic_jobs.jobs
+                  (job_type, actor_user_id, workspace_id, idempotency_key, command_hash, command)
+                VALUES ('datasource.discovery', $1, $2, $3, $4, $5::jsonb)
+                ON CONFLICT (actor_user_id, idempotency_key) DO NOTHING
+                RETURNING id::text
+                """,
+                actor, event.payload.workspace_id, idempotency_key, command_hash, command_json,
+            )
+            if job is None:
+                continue
+            task = await connection.fetchrow(
+                """
+                INSERT INTO semantic_jobs.tasks (job_id, task_key, task_name, queue_name, payload)
+                VALUES ($1::uuid, 'datasource.discovery:initial',
+                        'semantic-model-datasource.discover', 'semantic-model-datasource.batch', $2::jsonb)
+                RETURNING id
+                """,
+                job["id"], command_json,
+            )
+            await connection.execute(
+                """
+                INSERT INTO semantic_jobs.outbox (task_id, event_type, payload)
+                VALUES ($1, 'task.dispatch', jsonb_build_object('jobId', $2::text, 'taskId', $1::bigint))
+                """,
+                task["id"], job["id"],
+            )
+            await connection.execute(
+                "INSERT INTO semantic_jobs.events (job_id, task_id, event_type) VALUES ($1::uuid, $2, 'job.queued')",
+                job["id"], task["id"],
+            )
+
     async def admit(
         self,
         *,
@@ -148,37 +253,52 @@ class PostgresJobRepository:
     ) -> Admission:
         command_json = _json(command.model_dump(by_alias=True, mode="json"))
         task_key = f"{job_type}:initial"
+        effective_key = idempotency_key
         async with self.pool.acquire() as connection:
             async with connection.transaction():
-                row = await connection.fetchrow(
-                    """
-                    INSERT INTO semantic_jobs.jobs
-                      (job_type, actor_user_id, model_id, workspace_id,
-                       idempotency_key, command_hash, command)
-                    VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb)
-                    ON CONFLICT (actor_user_id, idempotency_key) DO NOTHING
-                    RETURNING id::text, state
-                    """,
-                    job_type,
-                    command.actor_user_id,
-                    command.model_id,
-                    command.workspace_id,
-                    idempotency_key,
-                    command_hash,
-                    command_json,
-                )
-                if row is None:
+                while True:
+                    row = await connection.fetchrow(
+                        """
+                        INSERT INTO semantic_jobs.jobs
+                          (job_type, actor_user_id, model_id, workspace_id,
+                           idempotency_key, command_hash, command)
+                        VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb)
+                        ON CONFLICT (actor_user_id, idempotency_key) DO NOTHING
+                        RETURNING id::text, state
+                        """,
+                        job_type,
+                        command.actor_user_id,
+                        command.model_id,
+                        command.workspace_id,
+                        effective_key,
+                        command_hash,
+                        command_json,
+                    )
+                    if row is not None:
+                        break
                     existing = await connection.fetchrow(
                         """
-                        SELECT id::text, state, command_hash
+                        SELECT id::text, state, command_hash, result
                         FROM semantic_jobs.jobs
                         WHERE actor_user_id = $1 AND idempotency_key = $2
                         """,
                         command.actor_user_id,
-                        idempotency_key,
+                        effective_key,
                     )
                     if existing is None or existing["command_hash"] != command_hash:
                         raise IdempotencyConflict("idempotency key already has a different payload")
+                    if (job_type == "datasource.discovery"
+                            and effective_key == idempotency_key
+                            and existing["state"] in TERMINAL_JOB_STATES):
+                        result = _object(existing["result"])
+                        profile = result.get("profile")
+                        options = command.payload.get("options", {})
+                        current_parser = parser_fingerprint(
+                            options if isinstance(options, dict) else {})
+                        if (not isinstance(profile, dict)
+                                or profile.get("parserFingerprint") != current_parser):
+                            effective_key = f"{idempotency_key}:parser:{current_parser}"
+                            continue
                     return Admission(existing["id"], existing["state"], True)
 
                 task = await connection.fetchrow(
@@ -426,6 +546,13 @@ class PostgresJobRepository:
                     _json(result) if result is not None else None,
                     error_code,
                 )
+                affected_models: dict[str, str] = {}
+                if task_state == "completed" and result is not None:
+                    affected_models = await self._persist_datasource_result(
+                        connection, row["job_id"], result)
+                elif task_state == "failed":
+                    affected_models = await self._persist_datasource_failure(
+                        connection, row["job_id"], error_code)
                 event_type = "job.failed" if job_state == "failed" else "job.completed"
                 await connection.execute(
                     """
@@ -452,7 +579,228 @@ class PostgresJobRepository:
                             payload={"resource": row["job_id"], "status": job_state,
                                      "reason": "job_terminal"},
                         )
+                    for model_id, asset_id in affected_models.items():
+                        if job is not None and model_id == job["model_id"]:
+                            continue
+                        await enqueue_ui_signal(
+                            connection, model_id=model_id,
+                            event_type="datasource-status-changed", resource=asset_id,
+                            payload={"resource": asset_id, "status": job_state,
+                                     "reason": "mapping_health_recomputed"},
+                        )
                 return {"jobId": row["job_id"], "state": job_state}
+
+    async def _persist_datasource_result(
+        self, connection: asyncpg.Connection, job_id: str, result: dict[str, Any]
+    ) -> dict[str, str]:
+        job = await connection.fetchrow(
+            "SELECT job_type, command FROM semantic_jobs.jobs WHERE id = $1::uuid",
+            job_id,
+        )
+        if job is None or job["job_type"] != "datasource.discovery":
+            return {}
+        command = _object(job["command"])
+        payload = command.get("payload")
+        source = payload.get("source") if isinstance(payload, dict) else None
+        profile = result.get("profile")
+        if not isinstance(source, dict) or not isinstance(profile, dict):
+            return {}
+        await connection.execute(
+            "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))",
+            f"{source.get('workspaceId')}:{source.get('assetId')}",
+        )
+        asset_ref = profile.get("assetRef")
+        if not isinstance(asset_ref, dict):
+            return {}
+        options = payload.get("options") if isinstance(payload.get("options"), dict) else {}
+        stored_profile = {**profile}
+        for key in ("fieldProfiles", "contentFingerprint", "scannedRows"):
+            if key in result:
+                stored_profile[key] = result[key]
+        await connection.execute(
+            """
+            INSERT INTO semantic_datasource.discovery_profiles
+              (id, workspace_id, asset_id, source_fingerprint, source_version,
+               parser_version, options_fingerprint, status, profile, preview)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10::jsonb)
+            ON CONFLICT (workspace_id, asset_id, source_fingerprint, options_fingerprint)
+            DO UPDATE SET id=EXCLUDED.id, source_version=EXCLUDED.source_version,
+              parser_version=EXCLUDED.parser_version, status=EXCLUDED.status,
+              profile=EXCLUDED.profile, preview=EXCLUDED.preview, completed_at=now()
+            """,
+            profile.get("profileId"), asset_ref.get("workspaceId"), asset_ref.get("assetId"),
+            asset_ref.get("assetVersionId"), source.get("sourceVersion"),
+            profile.get("parserFingerprint"), _fingerprint(options), profile.get("status"),
+            _json(stored_profile), _json(result.get("mappingPreview"))
+            if isinstance(result.get("mappingPreview"), dict) else None,
+        )
+        if not await self._source_observation_is_current(connection, source):
+            return {}
+        model_ids = await self._recompute_mapping_health(
+            connection, asset_ref, source.get("sourceVersion"), stored_profile
+        )
+        asset_id = asset_ref.get("assetId")
+        return {model_id: asset_id for model_id in model_ids if isinstance(asset_id, str)}
+
+    async def _persist_datasource_failure(
+        self, connection: asyncpg.Connection, job_id: str, error_code: str | None
+    ) -> dict[str, str]:
+        job = await connection.fetchrow(
+            "SELECT job_type, command FROM semantic_jobs.jobs WHERE id = $1::uuid", job_id)
+        if job is None or job["job_type"] != "datasource.discovery":
+            return {}
+        command = _object(job["command"])
+        payload = command.get("payload")
+        source = payload.get("source") if isinstance(payload, dict) else None
+        options = payload.get("options") if isinstance(payload, dict) else None
+        if not isinstance(source, dict):
+            return {}
+        await connection.execute(
+            "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))",
+            f"{source.get('workspaceId')}:{source.get('assetId')}",
+        )
+        if not await self._source_observation_is_current(connection, source):
+            return {}
+        sheet_name = options.get("sheetName", "") if isinstance(options, dict) else ""
+        rows = await connection.fetch(
+            """
+            INSERT INTO semantic_datasource.mapping_health
+              (model_id, mapping_id, mapping_version, state, warnings)
+            SELECT m.model_id, m.id,
+              'sha256:' || encode(digest(m.updated_at::text || m.field_mappings::text, 'sha256'), 'hex'),
+              'unavailable', jsonb_build_array(jsonb_build_object('code', $4::text))
+            FROM semantic_model.source_mappings m
+            WHERE m.workspace_id=$1 AND m.document_id=$2 AND m.sheet_name=$3
+            ON CONFLICT (model_id, mapping_id) DO UPDATE SET
+              mapping_version=EXCLUDED.mapping_version, state=EXCLUDED.state,
+              missing_fields='[]'::jsonb, available_fields='[]'::jsonb,
+              warnings=EXCLUDED.warnings, checked_at=now()
+            RETURNING model_id::text
+            """,
+            source.get("workspaceId"), source.get("assetId"), sheet_name,
+            error_code or "discovery_failed",
+        )
+        asset_id = source.get("assetId")
+        return {row["model_id"]: asset_id for row in rows if isinstance(asset_id, str)}
+
+    async def _source_observation_is_current(
+        self, connection: asyncpg.Connection, source: dict[str, Any]
+    ) -> bool:
+        head = await connection.fetchrow(
+            """
+            SELECT event_id, payload, deleted
+            FROM semantic_jobs.source_heads
+            WHERE workspace_id=$1 AND asset_id=$2
+            """,
+            source.get("workspaceId"), source.get("assetId"),
+        )
+        if head is None:
+            return True
+        if head["deleted"]:
+            return False
+        source_event_id = source.get("sourceEventId")
+        if isinstance(source_event_id, str):
+            return source_event_id == head["event_id"]
+        payload = _object(head["payload"])
+        current_version = payload.get("contentHash")
+        if not current_version:
+            updated_at = payload.get("updatedAt")
+            size = payload.get("sizeBytes")
+            current_version = (
+                f"{updated_at}:{size}"
+                if updated_at and isinstance(size, int)
+                else None
+            )
+        expected_version = source.get("sourceVersion")
+        return (
+            not isinstance(current_version, str)
+            or not isinstance(expected_version, str)
+            or current_version == expected_version
+        )
+
+    async def _recompute_mapping_health(
+        self, connection: asyncpg.Connection, asset_ref: dict[str, Any],
+        source_version: Any, profile: dict[str, Any]
+    ) -> set[str]:
+        available = [field.get("name") for field in profile.get("fieldProfiles", [])
+                     if isinstance(field, dict) and isinstance(field.get("name"), str)]
+        structure = profile.get("structure") if isinstance(profile.get("structure"), dict) else {}
+        selected_sheet = structure.get("selectedSheet")
+        if structure.get("kind") == "csv":
+            selected_sheet = "CSV"
+        selected_sheet = selected_sheet if isinstance(selected_sheet, str) else ""
+        rows = await connection.fetch(
+            """
+            SELECT m.id::text, m.model_id::text, m.field_mappings,
+                   m.validated_source_version, COALESCE(w.enabled, false) AS source_enabled,
+                   m.updated_at
+            FROM semantic_model.source_mappings m
+            LEFT JOIN semantic_model.workspace_links w
+              ON w.model_id=m.model_id AND w.workspace_id=m.workspace_id
+            WHERE m.workspace_id=$1 AND m.document_id=$2 AND m.sheet_name=$3
+            """,
+            asset_ref.get("workspaceId"), asset_ref.get("assetId"), selected_sheet,
+        )
+        available_set = set(available)
+        model_ids: set[str] = set()
+        for row in rows:
+            model_ids.add(row["model_id"])
+            mappings = row["field_mappings"]
+            if isinstance(mappings, str):
+                mappings = json.loads(mappings)
+            required = [item.get("sourceField") for item in mappings or []
+                        if isinstance(item, dict) and item.get("mode") == "direct"
+                        and isinstance(item.get("sourceField"), str)]
+            missing = [field for field in required if field not in available_set]
+            if not row["source_enabled"]:
+                state = "unavailable"
+            elif missing:
+                state = "broken"
+            elif source_version and source_version == row["validated_source_version"]:
+                state = "healthy"
+            else:
+                state = "changed"
+            mapping_version = _fingerprint({"updatedAt": row["updated_at"].isoformat(),
+                                            "fields": mappings})
+            await connection.execute(
+                """
+                INSERT INTO semantic_datasource.mapping_health
+                  (model_id, mapping_id, source_fingerprint, mapping_version, state,
+                   missing_fields, available_fields, warnings)
+                VALUES ($1::uuid, $2::uuid, $3, $4, $5, $6::jsonb, $7::jsonb, $8::jsonb)
+                ON CONFLICT (model_id, mapping_id) DO UPDATE SET
+                  source_fingerprint=EXCLUDED.source_fingerprint,
+                  mapping_version=EXCLUDED.mapping_version, state=EXCLUDED.state,
+                  missing_fields=EXCLUDED.missing_fields,
+                  available_fields=EXCLUDED.available_fields,
+                  warnings=EXCLUDED.warnings, checked_at=now()
+                """,
+                row["model_id"], row["id"], asset_ref.get("assetVersionId"), mapping_version,
+                state, _json(missing), _json(available), _json(profile.get("warnings", [])),
+            )
+        return model_ids
+
+    async def get_cached_discovery_profile(
+        self, command: dict[str, Any], source_fingerprint: str, parser_version: str
+    ) -> dict[str, Any] | None:
+        payload = command.get("payload") if isinstance(command, dict) else None
+        source = payload.get("source") if isinstance(payload, dict) else None
+        if not isinstance(source, dict):
+            return None
+        options = payload.get("options") if isinstance(payload.get("options"), dict) else {}
+        row = await self.pool.fetchrow(
+            """
+            SELECT profile
+            FROM semantic_datasource.discovery_profiles
+            WHERE workspace_id=$1 AND asset_id=$2 AND source_fingerprint=$3
+              AND options_fingerprint=$4 AND parser_version=$5
+              AND source_version IS NOT DISTINCT FROM $6
+            ORDER BY completed_at DESC LIMIT 1
+            """,
+            source.get("workspaceId"), source.get("assetId"), source_fingerprint,
+            _fingerprint(options), parser_version, source.get("sourceVersion"),
+        )
+        return _object(row["profile"]) if row is not None else None
 
     async def requeue_task(
         self,
