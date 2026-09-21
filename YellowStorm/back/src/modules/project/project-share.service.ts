@@ -31,7 +31,7 @@ import {
 } from '../conversation/persistence/conversation-store';
 import { UserService } from '../user/user.service';
 import { NotificationsService } from '../notifications/notifications.service';
-import { NotificationType } from '../notifications/schemas/notification.schema';
+import { NotificationType } from '../notifications/notification.types';
 import { asAuthUser, type AuthUser } from '@common/auth/auth-user';
 
 type ShareEventType = 'project_shared' | 'project_share_revoked' | 'project_share_updated';

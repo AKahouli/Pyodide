@@ -18,7 +18,7 @@ import { ErrorCode } from '../exceptions/constants/error-codes';
 import { UserService } from '../user';
 import { USER_LOOKUP_PORT, type UserLookupPort } from '@common/ports/user-lookup.port';
 import { NotificationsService } from '../notifications/notifications.service';
-import { NotificationType } from '../notifications/schemas/notification.schema';
+import { NotificationType } from '../notifications/notification.types';
 import { asAuthUser, type AuthUser } from '@common/auth/auth-user';
 import type { WorkspaceRecord, WorkspaceShareRecord } from './ports/workspace-records';
 import { WORKSPACE_STORE, type WorkspaceStore } from './stores/workspace-store';

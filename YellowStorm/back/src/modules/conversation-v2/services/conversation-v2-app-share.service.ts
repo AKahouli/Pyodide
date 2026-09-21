@@ -7,7 +7,7 @@ import { EmailService } from '@modules/email';
 import { EmailTemplateRenderer } from '@modules/email/email-template-renderer.service';
 import { EmailTemplate } from '@modules/email/email-template.constants';
 import { NotificationsService } from '@modules/notifications/notifications.service';
-import { NotificationType } from '@modules/notifications/schemas/notification.schema';
+import { NotificationType } from '@modules/notifications/notification.types';
 import {
   BadRequestException,
   ErrorCode,

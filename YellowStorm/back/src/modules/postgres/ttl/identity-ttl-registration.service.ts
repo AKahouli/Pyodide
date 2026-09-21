@@ -2,8 +2,9 @@ import { Injectable, OnModuleInit } from '@nestjs/common';
 import { PgTtlSweeper } from './pg-ttl-sweeper.service';
 
 /**
- * Registers the identity-phase TTL sweeps (plan 1A.6), replacing the Mongo
- * TTL indexes on sessions, oauth_states, provider_link_tokens and audit_logs
+ * Registers the identity- and ops-phase TTL sweeps (plans 1A.6/1B.1.4),
+ * replacing the Mongo TTL indexes on sessions, oauth_states,
+ * provider_link_tokens, audit_logs and notifications
  * (retention: audit history is swept by age — created_at older than 730 days —
  * via the sweeper's olderThan mode from step 0.4).
  */
@@ -21,5 +22,6 @@ export class IdentityTtlRegistrationService implements OnModuleInit {
       column: 'created_at',
       olderThan: '730 days',
     });
+    this.sweeper.register({ schema: 'ops', table: 'notifications', column: 'expires_at' });
   }
 }

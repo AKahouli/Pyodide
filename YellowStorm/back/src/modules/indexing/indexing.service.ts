@@ -17,7 +17,7 @@ import {
 } from '../workspace/ports';
 import { IndexingClientService } from './indexing-client.service';
 import { NotificationsService } from '../notifications/notifications.service';
-import { NotificationType } from '../notifications/schemas/notification.schema';
+import { NotificationType } from '../notifications/notification.types';
 import { DocumentService } from '../document/document.service';
 import { LoggerService } from '../logger';
 import {

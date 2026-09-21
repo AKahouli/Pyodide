@@ -7,3 +7,5 @@ export * from './workspace.schema';
 export * from './governance.schema';
 export * from './identity.schema';
 export * from './authz.schema';
+export * from './ops.schema';
+export * from './catalog.schema';

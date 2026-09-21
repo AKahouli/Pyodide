@@ -1,29 +1,12 @@
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
 import { Document, HydratedDocument, Types } from 'mongoose';
+import { NotificationPriority, NotificationStatus, NotificationType } from '../notification.types';
 
 export type NotificationDocument = HydratedDocument<Notification>;
 
-export enum NotificationType {
-  INFO = 'info',
-  WARNING = 'warning',
-  ERROR = 'error',
-  SUCCESS = 'success',
-  SYSTEM = 'system',
-}
-
-export enum NotificationStatus {
-  PENDING = 'pending',
-  SENT = 'sent',
-  FAILED = 'failed',
-  READ = 'read',
-}
-
-export enum NotificationPriority {
-  LOW = 'low',
-  NORMAL = 'normal',
-  HIGH = 'high',
-  URGENT = 'urgent',
-}
+// Enums live in ../notification.types.ts (plan 1B.1.1); re-exported here until
+// the notifications cutover so in-module imports stay untouched.
+export { NotificationPriority, NotificationStatus, NotificationType };
 
 @Schema({ _id: false })
 export class NotificationMetadata {
