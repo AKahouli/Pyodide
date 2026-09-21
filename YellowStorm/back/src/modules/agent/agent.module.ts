@@ -1,4 +1,6 @@
 import { Module, forwardRef } from '@nestjs/common';
+import { AGENT_SHARE_STORE } from './persistence/agent-share.store';
+import { PgAgentShareStore } from './persistence/pg-agent-share.store';
 import { MongooseModule } from '@nestjs/mongoose';
 import { ConfigModule } from '@nestjs/config';
 import { AgentController } from './controllers/agent.controller';
@@ -13,7 +15,6 @@ import { AgentConnectorRuntimeService } from './services/agent-connector-runtime
 import { AgentPermissionGuard } from './guards/agent-permission.guard';
 import { A2AAdminGrpcClientService } from './services/a2a-admin.grpc-client.service';
 import { A2APublishService } from './services/a2a-publish.service';
-import { SharedAgent, SharedAgentSchema } from './schemas/shared-agent.schema';
 import a2aAdminConfig from '@config/a2a-admin.config';
 import { AgentTypeModule } from '../agent-type/agent-type.module';
 import { AuthorizationModule } from '../authorization/authorization.module';
@@ -37,7 +38,6 @@ import { AgentRepositoryModule } from './repositories/agent-repository.module';
     ConfigModule,
     ConfigModule.forFeature(a2aAdminConfig),
     MongooseModule.forFeature([
-      { name: SharedAgent.name, schema: SharedAgentSchema },
     ]),
     AgentTypeModule,
     AuthorizationModule,
@@ -55,8 +55,20 @@ import { AgentRepositoryModule } from './repositories/agent-repository.module';
     AgentRepositoryModule,
   ],
   controllers: [AgentController, PublicAgentController, AdminAgentController, AgentA2AController, AgentShareController, AgentCrudInternalController],
-  providers: [AgentService, AgentShareService, AgentConnectorRuntimeService, AgentPermissionGuard, A2AAdminGrpcClientService, A2APublishService, AgentTaskExecutionService, { provide: AGENT_TASK_EXECUTION, useExisting: AgentTaskExecutionService }],
+  providers: [
+    // Shares cutover (plan 4.1); exported for the telegram/whatsapp/widget guards.
+    { provide: AGENT_SHARE_STORE, useClass: PgAgentShareStore },
+    AgentService,
+    AgentShareService,
+    AgentConnectorRuntimeService,
+    AgentPermissionGuard,
+    A2AAdminGrpcClientService,
+    A2APublishService,
+    AgentTaskExecutionService,
+    { provide: AGENT_TASK_EXECUTION, useExisting: AgentTaskExecutionService },
+  ],
   exports: [
+    AGENT_SHARE_STORE,
     AgentService,
     AgentShareService,
     AgentConnectorRuntimeService,

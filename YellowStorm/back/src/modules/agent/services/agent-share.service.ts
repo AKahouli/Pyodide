@@ -1,8 +1,7 @@
 import { Inject, Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
-import { InjectModel } from '@nestjs/mongoose';
-import { Model, Types } from 'mongoose';
+import { isObjectId } from '@common/postgres';
 import { LoggerService } from '../../logger';
-import { SharedAgent, SharedAgentDocument } from '../schemas/shared-agent.schema';
+import { AGENT_SHARE_STORE, type AgentShareRow, type AgentShareStore } from '../persistence/agent-share.store';
 import { USER_LOOKUP_PORT, type UserLookupPort } from '@common/ports/user-lookup.port';
 import {
   IAgentShareEntry,
@@ -21,8 +20,8 @@ interface PopulatedUser {
 @Injectable()
 export class AgentShareService {
   constructor(
-    @InjectModel(SharedAgent.name)
-    private readonly sharedAgentModel: Model<SharedAgentDocument>,
+    @Inject(AGENT_SHARE_STORE)
+    private readonly shareStore: AgentShareStore,
     @Inject(USER_LOOKUP_PORT) private readonly userLookup: UserLookupPort,
     private readonly logger: LoggerService,
   ) {
@@ -74,20 +73,19 @@ export class AgentShareService {
       throw new NotFoundException(ErrorCode.CUSTOM_AGENT_SHARE_USER_NOT_FOUND);
     }
 
-    const results: IAgentShareEntry[] = [];
+    // One batched upsert for the whole batch (plan 4.1).
+    const shares = await this.shareStore.upsertMany(
+      agentId,
+      ownerId,
+      validRecipients.map(({ user }) => user._id.toString()),
+      dto.permission,
+    );
+    const userByShare = new Map(validRecipients.map(({ user }) => [user._id.toString(), user]));
 
-    for (const { user } of validRecipients) {
-      const share = await this.sharedAgentModel.findOneAndUpdate(
-        { agentId: new Types.ObjectId(agentId), sharedWith: user._id },
-        {
-          $set: { permission: dto.permission, sharedBy: new Types.ObjectId(ownerId) },
-          $setOnInsert: { agentId: new Types.ObjectId(agentId), sharedWith: user._id },
-        },
-        { upsert: true, new: true },
-      );
-
-      results.push({
-        shareId: share._id.toString(),
+    const results: IAgentShareEntry[] = shares.map((share: AgentShareRow) => {
+      const user = userByShare.get(share.sharedWith)!;
+      return {
+        shareId: share.id,
         permission: share.permission as AgentPermissionLevel,
         user: {
           id: user._id.toString(),
@@ -96,8 +94,8 @@ export class AgentShareService {
           lastName: user.profile?.lastName,
         },
         createdAt: share.createdAt,
-      });
-    }
+      };
+    });
 
     this.logger.log('Agent shared', {
       agentId,
@@ -112,18 +110,14 @@ export class AgentShareService {
 
   /** List all shares for a given agent. Guard verifies owner. */
   async getAgentShares(agentId: string): Promise<IAgentShareEntry[]> {
-    const shares = await this.sharedAgentModel
-      .find({ agentId: new Types.ObjectId(agentId) })
-      .sort({ createdAt: -1 })
-      .lean()
-      .exec();
+    const shares = await this.shareStore.findByAgent(agentId);
 
     const users = await this.resolveUsers(shares.map((share) => String(share.sharedWith)));
 
     return shares.map((share) => {
       const user = users.get(String(share.sharedWith))!;
       return {
-        shareId: share._id.toString(),
+        shareId: share.id,
         permission: share.permission as AgentPermissionLevel,
         user: {
           id: user._id.toString(),
@@ -142,17 +136,11 @@ export class AgentShareService {
     shareId: string,
     dto: UpdateAgentSharePermissionDto,
   ): Promise<IAgentShareEntry> {
-    if (!Types.ObjectId.isValid(shareId)) {
+    if (!isObjectId(shareId)) {
       throw new NotFoundException(ErrorCode.CUSTOM_AGENT_SHARE_NOT_FOUND);
     }
 
-    const share = await this.sharedAgentModel
-      .findOneAndUpdate(
-        { _id: new Types.ObjectId(shareId), agentId: new Types.ObjectId(agentId) },
-        { $set: { permission: dto.permission } },
-        { new: true },
-      )
-      .exec();
+    const share = await this.shareStore.updatePermission(shareId, agentId, dto.permission);
 
     if (!share) {
       throw new NotFoundException(ErrorCode.CUSTOM_AGENT_SHARE_NOT_FOUND);
@@ -168,7 +156,7 @@ export class AgentShareService {
     });
 
     return {
-      shareId: share._id.toString(),
+      shareId: share.id,
       permission: share.permission as AgentPermissionLevel,
       user: {
         id: user._id.toString(),
@@ -182,31 +170,22 @@ export class AgentShareService {
 
   /** Owner revokes a specific share. Guard verifies owner of `agentId`. */
   async removeShare(agentId: string, shareId: string): Promise<void> {
-    if (!Types.ObjectId.isValid(shareId)) {
+    if (!isObjectId(shareId)) {
       throw new NotFoundException(ErrorCode.CUSTOM_AGENT_SHARE_NOT_FOUND);
     }
 
-    const share = await this.sharedAgentModel
-      .findOneAndDelete({ _id: new Types.ObjectId(shareId), agentId: new Types.ObjectId(agentId) })
-      .lean()
-      .exec();
+    const share = await this.shareStore.deleteByIdAndAgent(shareId, agentId);
 
     if (!share) {
       throw new NotFoundException(ErrorCode.CUSTOM_AGENT_SHARE_NOT_FOUND);
     }
 
-    this.logger.log('Agent share revoked', { shareId, agentId: share.agentId.toString() });
+    this.logger.log('Agent share revoked', { shareId, agentId: share.agentId });
   }
 
   /** Recipient removes a shared agent from their own list. */
   async unshareFromSelf(userId: string, agentId: string): Promise<void> {
-    const result = await this.sharedAgentModel
-      .findOneAndDelete({
-        agentId: new Types.ObjectId(agentId),
-        sharedWith: new Types.ObjectId(userId),
-      })
-      .lean()
-      .exec();
+    const result = await this.shareStore.deleteForUser(agentId, userId);
 
     if (!result) {
       throw new NotFoundException(ErrorCode.CUSTOM_AGENT_SHARE_NOT_FOUND);
@@ -215,37 +194,26 @@ export class AgentShareService {
     this.logger.log('User removed shared agent', { userId, agentId });
   }
 
-  /** Remove all shares when an agent is permanently deleted. */
-  async removeAllSharesForAgent(agentId: string): Promise<void> {
-    const result = await this.sharedAgentModel
-      .deleteMany({ agentId: new Types.ObjectId(agentId) })
-      .exec();
-
-    if (result.deletedCount > 0) {
-      this.logger.log('All shares removed for deleted agent', {
-        agentId,
-        deletedCount: result.deletedCount,
-      });
-    }
-  }
+  /**
+   * No longer needed (plan 4.1): shared_agents rows cascade on agent delete
+   * via the validated FK. Kept as a no-op for call-site compatibility.
+   */
+  async removeAllSharesForAgent(_agentId: string): Promise<void> {}
 
   /**
    * A map of agentId -> shareInfo for every agent shared with the user.
    * Lets the agent service attach `shareInfo` while reusing its own mapping.
    */
   async getShareInfoMapForUser(userId: string): Promise<Map<string, ISharedAgentInfo>> {
-    const shares = await this.sharedAgentModel
-      .find({ sharedWith: new Types.ObjectId(userId) })
-      .lean()
-      .exec();
+    const shares = await this.shareStore.listSharedWithUser(userId);
 
     const users = await this.resolveUsers(shares.map((share) => String(share.sharedBy)));
 
     const shareMap = new Map<string, ISharedAgentInfo>();
     for (const share of shares) {
       const sharedByUser = users.get(String(share.sharedBy))!;
-      shareMap.set(share.agentId.toString(), {
-        shareId: share._id.toString(),
+      shareMap.set(share.agentId, {
+        shareId: share.id,
         permission: share.permission as AgentPermissionLevel,
         sharedBy: {
           id: sharedByUser._id.toString(),
@@ -261,26 +229,13 @@ export class AgentShareService {
 
   /** The permission level a user has on an agent via sharing, or null. */
   async getSharePermission(userId: string, agentId: string): Promise<AgentPermissionLevel | null> {
-    const share = await this.sharedAgentModel
-      .findOne({
-        agentId: new Types.ObjectId(agentId),
-        sharedWith: new Types.ObjectId(userId),
-      })
-      .lean()
-      .exec();
-
+    const share = await this.shareStore.find(agentId, userId);
     return share ? (share.permission as AgentPermissionLevel) : null;
   }
 
   /** Full share info for a user on a specific agent, or null. */
   async getShareInfo(userId: string, agentId: string): Promise<ISharedAgentInfo | null> {
-    const share = await this.sharedAgentModel
-      .findOne({
-        agentId: new Types.ObjectId(agentId),
-        sharedWith: new Types.ObjectId(userId),
-      })
-      .lean()
-      .exec();
+    const share = await this.shareStore.find(agentId, userId);
 
     if (!share) return null;
 
@@ -288,7 +243,7 @@ export class AgentShareService {
     const sharedByUser = users.get(String(share.sharedBy))!;
 
     return {
-      shareId: share._id.toString(),
+      shareId: share.id,
       permission: share.permission as AgentPermissionLevel,
       sharedBy: {
         id: sharedByUser._id.toString(),

@@ -350,7 +350,7 @@ export class AgentService {
     await this.teamService.removeAgentFromAllTeams(agentId);
 
     // Drop any shares pointing at the now-deleted agent.
-    await this.agentShareService.removeAllSharesForAgent(agentId);
+    // shared_agents cascade via the validated FK (plan 4.1).
 
     this.logger.log('Personal agent deleted', {
       agentId,

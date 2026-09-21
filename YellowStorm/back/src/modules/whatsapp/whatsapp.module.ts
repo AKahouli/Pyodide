@@ -10,7 +10,6 @@ import { SystemModule } from '@modules/system/system.module';
 import { WorkyModule } from '@modules/worky/worky.module';
 import { LoggerModule } from '@modules/logger';
 import { UserModule } from '@modules/user/user.module';
-import { SharedAgent, SharedAgentSchema } from '@modules/agent/schemas/shared-agent.schema';
 import { BaileysClientFactory } from './baileys/baileys-client.factory';
 import { MongoBaileysAuthStore } from './baileys/mongo-auth-state';
 import { WhatsAppIntegrationController } from './controllers/whatsapp-integration.controller';
@@ -45,7 +44,6 @@ import { WhatsAppInternalSendService } from './services/whatsapp-internal-send.s
       { name: AgentWhatsAppIntegration.name, schema: AgentWhatsAppIntegrationSchema },
       { name: WhatsAppAuthSession.name, schema: WhatsAppAuthSessionSchema },
       { name: WhatsAppChatBinding.name, schema: WhatsAppChatBindingSchema },
-      { name: SharedAgent.name, schema: SharedAgentSchema },
     ]),
     LoggerModule,
     SystemModule,
