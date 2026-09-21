@@ -27,5 +27,6 @@ export class IdentityTtlRegistrationService implements OnModuleInit {
     this.sweeper.register({ schema: 'ops', table: 'health_history', column: 'expire_at' });
     this.sweeper.register({ schema: 'integrations', table: 'connected_app_oauth_states', column: 'expires_at' });
     this.sweeper.register({ schema: 'integrations', table: 'admin_connector_oauth_states', column: 'expires_at' });
+    this.sweeper.register({ schema: 'channels', table: 'telegram_link_codes', column: 'expires_at' });
   }
 }

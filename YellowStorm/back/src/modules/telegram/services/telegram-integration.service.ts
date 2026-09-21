@@ -1,7 +1,5 @@
-import { Injectable } from '@nestjs/common';
-import { InjectModel } from '@nestjs/mongoose';
+import { Inject, Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { Model, Types } from 'mongoose';
 import { randomBytes, randomUUID } from 'node:crypto';
 import { CryptoService } from '@common/services/crypto.service';
 import { AgentService } from '@modules/agent/agent.service';
@@ -14,13 +12,8 @@ import {
 import { ErrorCode } from '@modules/exceptions/constants/error-codes';
 import { LoggerService } from '@modules/logger';
 import { stripTrailingChar } from '@common/utils';
-import {
-  AgentTelegramIntegration,
-  AgentTelegramIntegrationDocument,
-  TelegramIntegrationStatus,
-} from '../schemas/agent-telegram-integration.schema';
-import { TelegramChatBinding, TelegramChatBindingDocument } from '../schemas/telegram-chat-binding.schema';
-import { TelegramLinkCode, TelegramLinkCodeDocument } from '../schemas/telegram-link-code.schema';
+import { isObjectId } from '@common/postgres';
+import { TelegramIntegrationStatus } from '../schemas/agent-telegram-integration.schema';
 import { UpsertAgentTelegramIntegrationDto } from '../dto/upsert-agent-telegram-integration.dto';
 import {
   TelegramIntegrationMessageKey,
@@ -28,16 +21,13 @@ import {
 } from '../dto/telegram-integration-response.dto';
 import { TelegramApiService } from './telegram-api.service';
 import { TelegramLinkCodeService } from './telegram-link-code.service';
+import { TELEGRAM_INTEGRATION_STORE, type TelegramIntegrationRow, type TelegramIntegrationStore } from '../persistence/telegram.store';
 
 @Injectable()
 export class TelegramIntegrationService {
   constructor(
-    @InjectModel(AgentTelegramIntegration.name)
-    private readonly integrationModel: Model<AgentTelegramIntegrationDocument>,
-    @InjectModel(TelegramChatBinding.name)
-    private readonly bindingModel: Model<TelegramChatBindingDocument>,
-    @InjectModel(TelegramLinkCode.name)
-    private readonly linkCodeModel: Model<TelegramLinkCodeDocument>,
+    @Inject(TELEGRAM_INTEGRATION_STORE)
+    private readonly integrationStore: TelegramIntegrationStore,
     private readonly cryptoService: CryptoService,
     private readonly configService: ConfigService,
     private readonly agentService: AgentService,
@@ -53,10 +43,7 @@ export class TelegramIntegrationService {
     agentId: string,
   ): Promise<TelegramIntegrationResponseDto | null> {
     await this.assertAgentOwnership(userId, agentId);
-    const integration = await this.integrationModel
-      .findOne({ agentId: new Types.ObjectId(agentId) })
-      .lean()
-      .exec();
+    const integration = await this.integrationStore.findByAgent(agentId);
     return integration ? this.toResponse(integration) : null;
   }
 
@@ -74,9 +61,7 @@ export class TelegramIntegrationService {
       tokenProvided: !!dto.botToken,
     });
 
-    const existing = await this.integrationModel
-      .findOne({ agentId: new Types.ObjectId(agentId) })
-      .exec();
+    const existing = await this.integrationStore.findByAgent(agentId);
 
     if (!existing && !dto.botToken) {
       throw new BadRequestException(
@@ -92,40 +77,52 @@ export class TelegramIntegrationService {
       );
     }
 
-    const integration = existing ?? new this.integrationModel();
-    integration.userId = new Types.ObjectId(userId);
-    integration.agentId = new Types.ObjectId(agentId);
-    integration.enabled = dto.enabled;
-    integration.status = TelegramIntegrationStatus.PENDING;
-    integration.errorMessage = undefined;
-    if (!integration.webhookSecret) {
-      integration.webhookSecret = this.generateWebhookSecret();
-    }
+    // Pending fields; written once below (document save() parity).
+    let encryptedBotToken = existing?.encryptedBotToken ?? '';
+    let botUsername = existing?.botUsername ?? null;
 
     if (dto.botToken) {
       this.logger.log('Validating Telegram bot token via getMe', {
         userId,
         agentId,
-        integrationId: integration._id?.toString(),
+        integrationId: existing?.id,
         isNewIntegration: !existing,
       });
-      integration.encryptedBotToken = this.cryptoService.encrypt(dto.botToken);
+      encryptedBotToken = this.cryptoService.encrypt(dto.botToken);
       const me = await this.telegramApiService.getMe(dto.botToken);
-      integration.botUsername = me.username;
+      botUsername = me.username ?? null;
       this.logger.log('Telegram bot token validated', {
         userId,
         agentId,
-        integrationId: integration._id?.toString(),
+        integrationId: existing?.id,
         botUsername: me.username,
         botId: me.id,
       });
     }
 
-    const saved = await integration.save();
+    const webhookSecret = existing?.webhookSecret ?? this.generateWebhookSecret();
+    const saved = existing
+      ? (await this.integrationStore.update(existing.id, {
+          encryptedBotToken,
+          botUsername,
+          enabled: dto.enabled,
+          status: TelegramIntegrationStatus.PENDING,
+          errorMessage: null,
+        }))!
+      : (await this.integrationStore.insert({
+          userId,
+          agentId,
+          encryptedBotToken,
+          botUsername,
+          webhookSecret,
+          enabled: dto.enabled,
+          status: TelegramIntegrationStatus.PENDING,
+        }))!;
+
     this.logger.log('Telegram integration saved, syncing webhook state', {
       userId,
       agentId,
-      integrationId: saved._id.toString(),
+      integrationId: saved.id,
       enabled: saved.enabled,
       botUsername: saved.botUsername,
       hasToken: !!saved.encryptedBotToken,
@@ -134,7 +131,7 @@ export class TelegramIntegrationService {
     this.logger.log('Telegram integration upsert completed', {
       userId,
       agentId,
-      integrationId: saved._id.toString(),
+      integrationId: saved.id,
       status: response.status,
       messageKey: response.messageKey,
       webhookRegistered: response.webhookRegistered,
@@ -154,23 +151,21 @@ export class TelegramIntegrationService {
       );
     }
     await this.registerWebhook(integration);
-    integration.status = TelegramIntegrationStatus.ACTIVE;
-    integration.errorMessage = undefined;
-    await integration.save();
+    await this.integrationStore.update(integration.id, {
+      status: TelegramIntegrationStatus.ACTIVE,
+      errorMessage: null,
+    });
   }
 
   async deleteForAgent(userId: string, agentId: string): Promise<void> {
     const integration = await this.getIntegrationForAgent(userId, agentId);
     await this.clearWebhook(integration);
-    await Promise.all([
-      this.bindingModel.deleteMany({ integrationId: integration._id }).exec(),
-      this.linkCodeModel.deleteMany({ integrationId: integration._id }).exec(),
-      this.integrationModel.deleteOne({ _id: integration._id }).exec(),
-    ]);
+    // Bindings + link codes cascade via validated FKs (plan 4.7).
+    await this.integrationStore.delete(integration.id);
   }
 
-  async getByIntegrationId(integrationId: string): Promise<AgentTelegramIntegrationDocument> {
-    const integration = await this.integrationModel.findById(integrationId).exec();
+  async getByIntegrationId(integrationId: string): Promise<TelegramIntegrationRow> {
+    const integration = await this.integrationStore.findById(integrationId);
     if (!integration) {
       throw new NotFoundException(
         ErrorCode.TELEGRAM_INTEGRATION_NOT_FOUND,
@@ -183,14 +178,14 @@ export class TelegramIntegrationService {
   async getDocumentByAgentForUser(
     userId: string,
     agentId: string,
-  ): Promise<AgentTelegramIntegrationDocument> {
+  ): Promise<TelegramIntegrationRow> {
     return this.getIntegrationForAgent(userId, agentId);
   }
 
   async validateWebhookSecret(
     integrationId: string,
     secretToken: string | undefined,
-  ): Promise<AgentTelegramIntegrationDocument> {
+  ): Promise<TelegramIntegrationRow> {
     const integration = await this.getByIntegrationId(integrationId);
     if (!secretToken || secretToken !== integration.webhookSecret) {
       throw new UnauthorizedException(
@@ -206,35 +201,31 @@ export class TelegramIntegrationService {
     updateId?: number,
   ): Promise<'processed' | 'duplicate'> {
     if (updateId === undefined || updateId === null) {
-      await this.integrationModel.findByIdAndUpdate(integrationId, { lastWebhookAt: new Date() }).exec();
+      await this.integrationStore.touchLastWebhook(integrationId);
       return 'processed';
     }
-    const updated = await this.integrationModel.findOneAndUpdate(
-      {
-        _id: new Types.ObjectId(integrationId),
-        $or: [{ lastUpdateId: { $exists: false } }, { lastUpdateId: { $lt: updateId } }],
-      },
-      { $set: { lastUpdateId: updateId, lastWebhookAt: new Date() } },
-      { new: true },
-    );
-    return updated ? 'processed' : 'duplicate';
+    // Dedup: zero rows means a stale/duplicate update (plan 4.7).
+    const processed = await this.integrationStore.markWebhookUpdate(integrationId, updateId);
+    return processed ? 'processed' : 'duplicate';
   }
 
-  getDecryptedToken(integration: AgentTelegramIntegrationDocument): string {
+  getDecryptedToken(integration: TelegramIntegrationRow): string {
     return this.cryptoService.decrypt(integration.encryptedBotToken);
   }
 
   private async syncWebhookState(
-    integration: AgentTelegramIntegrationDocument,
+    integration: TelegramIntegrationRow,
   ): Promise<TelegramIntegrationResponseDto> {
     let webhookRegistered = false;
     let messageKey: TelegramIntegrationMessageKey = 'saved';
     let linkCode: string | undefined;
     let linkCodeExpiresAt: string | undefined;
+    let status = integration.status;
+    let errorMessage: string | null = integration.errorMessage;
 
     this.logger.log('Telegram webhook sync started', {
-      integrationId: integration._id.toString(),
-      agentId: integration.agentId.toString(),
+      integrationId: integration.id,
+      agentId: integration.agentId,
       enabled: integration.enabled,
       hasToken: !!integration.encryptedBotToken,
       botUsername: integration.botUsername,
@@ -243,14 +234,14 @@ export class TelegramIntegrationService {
     if (integration.enabled && integration.encryptedBotToken) {
       try {
         const webhookUrl = await this.registerWebhook(integration);
-        integration.status = TelegramIntegrationStatus.ACTIVE;
-        integration.errorMessage = undefined;
+        status = TelegramIntegrationStatus.ACTIVE;
+        errorMessage = null;
         webhookRegistered = true;
         messageKey = 'webhook_success';
 
         this.logger.log('Telegram webhook registered successfully', {
-          integrationId: integration._id.toString(),
-          agentId: integration.agentId.toString(),
+          integrationId: integration.id,
+          agentId: integration.agentId,
           webhookUrl,
           botUsername: integration.botUsername,
         });
@@ -260,44 +251,44 @@ export class TelegramIntegrationService {
         linkCodeExpiresAt = linkCodeResult.expiresAt;
 
         this.logger.log('Telegram link code generated for chat binding', {
-          integrationId: integration._id.toString(),
-          agentId: integration.agentId.toString(),
+          integrationId: integration.id,
+          agentId: integration.agentId,
           linkCode,
           expiresAt: linkCodeExpiresAt,
         });
       } catch (error) {
-        integration.status = TelegramIntegrationStatus.ERROR;
-        integration.errorMessage = (error as Error).message;
+        status = TelegramIntegrationStatus.ERROR;
+        errorMessage = (error as Error).message;
         messageKey = 'webhook_failed';
         this.logger.warn('Telegram webhook auto-registration failed during upsert', {
-          integrationId: integration._id.toString(),
-          agentId: integration.agentId.toString(),
+          integrationId: integration.id,
+          agentId: integration.agentId,
           botUsername: integration.botUsername,
           error: (error as Error).message,
         });
       }
     } else if (!integration.enabled && integration.encryptedBotToken) {
       this.logger.log('Telegram integration disabled, clearing webhook', {
-        integrationId: integration._id.toString(),
-        agentId: integration.agentId.toString(),
+        integrationId: integration.id,
+        agentId: integration.agentId,
       });
       await this.clearWebhook(integration);
-      integration.status = TelegramIntegrationStatus.PENDING;
-      integration.errorMessage = undefined;
+      status = TelegramIntegrationStatus.PENDING;
+      errorMessage = null;
       messageKey = 'disabled';
     } else {
       this.logger.log('Telegram webhook sync skipped', {
-        integrationId: integration._id.toString(),
-        agentId: integration.agentId.toString(),
+        integrationId: integration.id,
+        agentId: integration.agentId,
         enabled: integration.enabled,
         hasToken: !!integration.encryptedBotToken,
         reason: !integration.enabled ? 'integration_disabled' : 'no_bot_token',
       });
     }
 
-    await integration.save();
+    const updated = await this.integrationStore.update(integration.id, { status, errorMessage });
 
-    return this.toResponse(integration.toObject(), {
+    return this.toResponse(updated ?? integration, {
       webhookRegistered,
       messageKey,
       linkCode,
@@ -305,25 +296,25 @@ export class TelegramIntegrationService {
     });
   }
 
-  private async registerWebhook(integration: AgentTelegramIntegrationDocument): Promise<string> {
+  private async registerWebhook(integration: TelegramIntegrationRow): Promise<string> {
     const botToken = this.cryptoService.decrypt(integration.encryptedBotToken);
     const backendUrl = stripTrailingChar(this.configService.get<string>('app.backendUrl', ''), '/');
     if (!backendUrl) {
       this.logger.warn('Telegram webhook registration blocked: BACKEND_URL missing', {
-        integrationId: integration._id.toString(),
-        agentId: integration.agentId.toString(),
+        integrationId: integration.id,
+        agentId: integration.agentId,
       });
       throw new BadRequestException(
         ErrorCode.BAD_REQUEST,
         'BACKEND_URL must be configured to register Telegram webhook',
       );
     }
-    const webhookPath = `/api/v1/integrations/telegram/webhook/${integration._id.toString()}`;
+    const webhookPath = `/api/v1/integrations/telegram/webhook/${integration.id}`;
     const webhookUrl = `${backendUrl}${webhookPath}`;
 
     this.logger.log('Registering Telegram webhook with Telegram API', {
-      integrationId: integration._id.toString(),
-      agentId: integration.agentId.toString(),
+      integrationId: integration.id,
+      agentId: integration.agentId,
       webhookUrl,
       botUsername: integration.botUsername,
       hasWebhookSecret: !!integration.webhookSecret,
@@ -333,26 +324,26 @@ export class TelegramIntegrationService {
     return webhookUrl;
   }
 
-  private async clearWebhook(integration: AgentTelegramIntegrationDocument): Promise<void> {
+  private async clearWebhook(integration: TelegramIntegrationRow): Promise<void> {
     if (!integration.encryptedBotToken) {
       return;
     }
     try {
       this.logger.log('Deleting Telegram webhook via Telegram API', {
-        integrationId: integration._id.toString(),
-        agentId: integration.agentId.toString(),
+        integrationId: integration.id,
+        agentId: integration.agentId,
         botUsername: integration.botUsername,
       });
       const token = this.cryptoService.decrypt(integration.encryptedBotToken);
       await this.telegramApiService.deleteWebhook(token);
       this.logger.log('Telegram webhook deleted', {
-        integrationId: integration._id.toString(),
-        agentId: integration.agentId.toString(),
+        integrationId: integration.id,
+        agentId: integration.agentId,
       });
     } catch (error) {
       this.logger.warn('Failed to delete Telegram webhook', {
-        integrationId: integration._id.toString(),
-        agentId: integration.agentId.toString(),
+        integrationId: integration.id,
+        agentId: integration.agentId,
         error: (error as Error).message,
       });
     }
@@ -361,11 +352,9 @@ export class TelegramIntegrationService {
   private async getIntegrationForAgent(
     userId: string,
     agentId: string,
-  ): Promise<AgentTelegramIntegrationDocument> {
+  ): Promise<TelegramIntegrationRow> {
     await this.assertAgentOwnership(userId, agentId);
-    const integration = await this.integrationModel
-      .findOne({ agentId: new Types.ObjectId(agentId) })
-      .exec();
+    const integration = await this.integrationStore.findByAgent(agentId);
     if (!integration) {
       throw new NotFoundException(
         ErrorCode.TELEGRAM_INTEGRATION_NOT_FOUND,
@@ -376,6 +365,12 @@ export class TelegramIntegrationService {
   }
 
   private async assertAgentOwnership(userId: string, agentId: string): Promise<void> {
+    if (!isObjectId(agentId)) {
+      throw new NotFoundException(
+        ErrorCode.TELEGRAM_INTEGRATION_NOT_FOUND,
+        'Telegram integration not found for this agent',
+      );
+    }
     try {
       await this.agentService.findUserAgentById(userId, agentId);
     } catch (error) {
@@ -393,9 +388,9 @@ export class TelegramIntegrationService {
     integration: {
       enabled: boolean;
       encryptedBotToken: string;
-      botUsername?: string;
+      botUsername?: string | null;
       status?: string;
-      errorMessage?: string;
+      errorMessage?: string | null;
       updatedAt?: Date;
     },
     extras?: {
@@ -408,9 +403,9 @@ export class TelegramIntegrationService {
     return {
       enabled: integration.enabled,
       hasToken: !!integration.encryptedBotToken,
-      botUsername: integration.botUsername,
+      botUsername: integration.botUsername ?? undefined,
       status: integration.status as TelegramIntegrationResponseDto['status'],
-      errorMessage: integration.errorMessage,
+      errorMessage: integration.errorMessage ?? undefined,
       updatedAt: integration.updatedAt?.toISOString(),
       webhookRegistered: extras?.webhookRegistered,
       messageKey: extras?.messageKey,
