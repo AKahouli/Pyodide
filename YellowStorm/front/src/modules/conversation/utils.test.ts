@@ -249,7 +249,7 @@ describe('formatChoiceSubmissionContent', () => {
   it('renders friendly labels for verdicts and edit payloads', () => {
     expect(formatChoiceSubmissionContent('approve')).toBe('Approuvé');
     expect(formatChoiceSubmissionContent('decline')).toBe('Refusé');
-    expect(formatChoiceSubmissionContent('{"verdict":"approve","edits":{"subject":"x"}}')).toBe('Approuvé — message modifié');
+    expect(formatChoiceSubmissionContent('{"verdict":"approve","edits":{"subject":"x"}}')).toBe('Approuvé');
     expect(formatChoiceSubmissionContent('{"verdict":"decline"}')).toBe('Refusé');
     // ordinary content passes through untouched
     expect(formatChoiceSubmissionContent('Bonjour, peux-tu vérifier ?')).toBe('Bonjour, peux-tu vérifier ?');

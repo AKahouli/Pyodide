@@ -93,6 +93,29 @@ def _coerce_json(value: Any) -> Any:
         return value
 
 
+def _coerce_json_string_args(params: Any) -> Any:
+    """Parse a tool arg that arrived as a JSON-string list/object back into the
+    real structure. A model (or an upstream serialization) sometimes passes e.g.
+    attachments='[{...}]' or to_recipients='["a@b"]' as a string; the connector's
+    schema wants a list/dict, so it fails validation — and a gated send then
+    RETRIES, re-opening the approval card (one send, two cards). Only strings that
+    parse to a list/dict are touched; everything else is left exactly as-is."""
+    if not isinstance(params, dict):
+        return params
+    out: Dict[str, Any] = {}
+    for k, v in params.items():
+        if isinstance(v, str) and v.strip()[:1] in ("[", "{"):
+            try:
+                parsed = json.loads(v)
+            except (TypeError, json.JSONDecodeError):
+                parsed = None
+            if isinstance(parsed, (list, dict)):
+                out[k] = parsed
+                continue
+        out[k] = v
+    return out
+
+
 def _part_field(part: Any, *names: str) -> Any:
     for name in names:
         if isinstance(part, dict) and name in part:
@@ -522,6 +545,7 @@ async def call_mcp_tool(
     """
     merged_headers = _build_headers(server_config, auth_headers, action_key=action_key)
     merged_env = _build_env(server_config, auth_env)
+    params = _coerce_json_string_args(params)
 
     logger.info(
         "mcp_call_tool action=%s transport=%s header_names=%s request_payload=%s",
