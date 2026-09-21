@@ -1,22 +1,13 @@
 import { Test, TestingModule } from '@nestjs/testing';
-import { getModelToken } from '@nestjs/mongoose';
 import { AuthProviderHealthService } from './auth-provider-health.service';
-import { AuthProvider } from '../schemas/auth-provider.schema';
 import { CryptoService } from '@common/services/crypto.service';
 import { LoggerService } from '@modules/logger';
-
-function createQueryChain(resolvedValue: unknown) {
-  const chain: Record<string, jest.Mock> = {};
-  ['select', 'lean', 'sort', 'skip', 'limit', 'populate'].forEach((m) => {
-    chain[m] = jest.fn().mockReturnValue(chain);
-  });
-  chain.exec = jest.fn().mockResolvedValue(resolvedValue);
-  return chain;
-}
+import { AUTH_PROVIDER_STORE } from '../persistence/auth-provider.stores';
+import { makeProviderStoreFake, providerRecord, type AuthProviderStoreFake } from '../persistence/auth-provider-stores.fake';
 
 describe('AuthProviderHealthService', () => {
   let service: AuthProviderHealthService;
-  let authProviderModel: Record<string, jest.Mock>;
+  let providerStore: AuthProviderStoreFake;
   let cryptoService: { decrypt: jest.Mock };
 
   const mockLoggerService = {
@@ -39,9 +30,7 @@ describe('AuthProviderHealthService', () => {
   });
 
   beforeEach(async () => {
-    authProviderModel = {
-      find: jest.fn(),
-    };
+    providerStore = makeProviderStoreFake();
 
     cryptoService = {
       decrypt: jest.fn().mockReturnValue('decrypted-value'),
@@ -53,7 +42,7 @@ describe('AuthProviderHealthService', () => {
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         AuthProviderHealthService,
-        { provide: getModelToken(AuthProvider.name), useValue: authProviderModel },
+        { provide: AUTH_PROVIDER_STORE, useValue: providerStore },
         { provide: CryptoService, useValue: cryptoService },
         { provide: LoggerService, useValue: mockLoggerService },
       ],
@@ -65,8 +54,7 @@ describe('AuthProviderHealthService', () => {
   afterEach(() => jest.clearAllMocks());
 
   it('should return up when no providers are configured', async () => {
-    const chain = createQueryChain([]);
-    authProviderModel.find.mockReturnValue(chain);
+    providerStore.records.splice(0, providerStore.records.length, ...([].map((p) => providerRecord(p))));
 
     const result = await service.check();
 
@@ -75,8 +63,7 @@ describe('AuthProviderHealthService', () => {
   });
 
   it('should return up when all enabled providers are healthy', async () => {
-    const chain = createQueryChain([mockProvider()]);
-    authProviderModel.find.mockReturnValue(chain);
+    providerStore.records.splice(0, providerStore.records.length, ...([mockProvider()].map((p) => providerRecord(p))));
 
     const result = await service.check();
 
@@ -90,8 +77,7 @@ describe('AuthProviderHealthService', () => {
     cryptoService.decrypt.mockImplementation(() => {
       throw new Error('Unsupported state or unable to authenticate data');
     });
-    const chain = createQueryChain([mockProvider()]);
-    authProviderModel.find.mockReturnValue(chain);
+    providerStore.records.splice(0, providerStore.records.length, ...([mockProvider()].map((p) => providerRecord(p))));
 
     const result = await service.check();
 
@@ -105,8 +91,7 @@ describe('AuthProviderHealthService', () => {
       mockProvider({ providerKey: 'microsoft' }),
       mockProvider({ providerKey: 'google', clientId: 'bad-encrypted' }),
     ];
-    const chain = createQueryChain(providers);
-    authProviderModel.find.mockReturnValue(chain);
+    providerStore.records.splice(0, providerStore.records.length, ...(providers.map((p) => providerRecord(p))));
 
     // First provider decrypts fine, second fails
     let callCount = 0;
@@ -122,8 +107,7 @@ describe('AuthProviderHealthService', () => {
   });
 
   it('should return up when all providers are disabled', async () => {
-    const chain = createQueryChain([mockProvider({ enabled: false })]);
-    authProviderModel.find.mockReturnValue(chain);
+    providerStore.records.splice(0, providerStore.records.length, ...([mockProvider({ enabled: false })].map((p) => providerRecord(p))));
 
     const result = await service.check();
 
@@ -132,8 +116,7 @@ describe('AuthProviderHealthService', () => {
   });
 
   it('should skip URL check for disabled providers', async () => {
-    const chain = createQueryChain([mockProvider({ enabled: false })]);
-    authProviderModel.find.mockReturnValue(chain);
+    providerStore.records.splice(0, providerStore.records.length, ...([mockProvider({ enabled: false })].map((p) => providerRecord(p))));
 
     await service.check();
 
@@ -142,8 +125,7 @@ describe('AuthProviderHealthService', () => {
 
   it('should mark URL unreachable on network error', async () => {
     (global.fetch as jest.Mock).mockRejectedValue(new Error('ECONNREFUSED'));
-    const chain = createQueryChain([mockProvider()]);
-    authProviderModel.find.mockReturnValue(chain);
+    providerStore.records.splice(0, providerStore.records.length, ...([mockProvider()].map((p) => providerRecord(p))));
 
     const result = await service.check();
 
@@ -154,8 +136,7 @@ describe('AuthProviderHealthService', () => {
 
   it('should mark URL unreachable on 500 response', async () => {
     (global.fetch as jest.Mock).mockResolvedValue({ status: 500 });
-    const chain = createQueryChain([mockProvider()]);
-    authProviderModel.find.mockReturnValue(chain);
+    providerStore.records.splice(0, providerStore.records.length, ...([mockProvider()].map((p) => providerRecord(p))));
 
     const result = await service.check();
 
@@ -164,8 +145,7 @@ describe('AuthProviderHealthService', () => {
 
   it('should accept 302/400/405 as reachable (expected from OAuth endpoints)', async () => {
     (global.fetch as jest.Mock).mockResolvedValue({ status: 302 });
-    const chain = createQueryChain([mockProvider()]);
-    authProviderModel.find.mockReturnValue(chain);
+    providerStore.records.splice(0, providerStore.records.length, ...([mockProvider()].map((p) => providerRecord(p))));
 
     const result = await service.check();
 

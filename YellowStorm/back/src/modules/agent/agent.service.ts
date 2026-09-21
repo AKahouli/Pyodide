@@ -38,6 +38,7 @@ import { normalizeWidgetSettings } from './constants/widget-default-settings';
 import { AgentRepository, CreateAgentInput, UpdateAgentInput } from './repositories/agent.repository';
 import { AgentRecord } from './repositories/agent-record.mapper';
 import { AgentRoleEmbeddingService } from './services/agent-role-embedding.service';
+import { CHANNEL_TEARDOWN, type ChannelTeardown } from '../channels-teardown/channels-teardown.token';
 import {
   PLATFORM_COPILOT,
   PLATFORM_COPILOT_AGENT_SLUG,
@@ -102,10 +103,29 @@ export class AgentService {
     private readonly guardrailsSettingsService: GuardrailsSettingsService,
     private readonly agentRepository: AgentRepository,
     private readonly agentRoleEmbedding: AgentRoleEmbeddingService,
+    @Optional() @Inject(CHANNEL_TEARDOWN) private readonly channelTeardowns?: ChannelTeardown[],
     @Optional() private readonly connectorRuntimeService?: AgentConnectorRuntimeService,
     @Optional() private readonly systemService?: SystemService,
   ) {
     this.logger.setContext(AgentService.name);
+  }
+
+  /**
+   * Best-effort channel cleanup before the agent row disappears (plan 4.6):
+   * unregisters webhooks / revokes live tokens; the FK CASCADE only covers rows.
+   */
+  private async teardownChannels(agentId: string): Promise<void> {
+    for (const teardown of this.channelTeardowns ?? []) {
+      try {
+        await teardown.deleteForAgent(agentId);
+      } catch (error) {
+        this.logger.warn('Agent channel teardown failed', {
+          agentId,
+          teardown: teardown.constructor?.name,
+          error: (error as Error).message,
+        });
+      }
+    }
   }
 
   // ==========================================
@@ -344,13 +364,16 @@ export class AgentService {
       throw new ForbiddenException(ErrorCode.CUSTOM_AGENT_FORBIDDEN);
     }
 
+    // Channels first: webhooks/tokens must not outlive the agent row (plan 4.6).
+    await this.teardownChannels(agentId);
+
     await this.agentRepository.deleteById(agentId);
 
     // Keep teams consistent: drop this agent from any team that referenced it.
-    await this.teamService.removeAgentFromAllTeams(agentId);
+    // team_members cascade on agent delete; children re-root via ON DELETE SET NULL (plan 4.3).
 
     // Drop any shares pointing at the now-deleted agent.
-    await this.agentShareService.removeAllSharesForAgent(agentId);
+    // shared_agents cascade via the validated FK (plan 4.1).
 
     this.logger.log('Personal agent deleted', {
       agentId,
@@ -505,6 +528,9 @@ export class AgentService {
         'Platform Copilot technical identity is system-reserved',
       );
     }
+
+    // Channels first: webhooks/tokens must not outlive the agent row (plan 4.6).
+    await this.teardownChannels(agentId);
 
     await this.agentRepository.deleteById(agentId);
 

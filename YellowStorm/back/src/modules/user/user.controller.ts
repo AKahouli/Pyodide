@@ -15,7 +15,8 @@ import { CompleteProfileDto } from './dto/complete-profile.dto';
 import { SearchUsersDto } from './dto/search-users.dto';
 import { UserSearchResultDto } from './dto/user-search-result.dto';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
-import { UserDocument } from './schemas/user.schema';
+import { RegistrationApproval, UserDocument, UserStatus } from './schemas/user.schema';
+import { UserDocLike } from './persistence/user-record.mapper';
 import { UserResponse } from './interfaces/user.interface';
 import { Permissions, RequirePermissions } from '../authorization';
 
@@ -110,7 +111,7 @@ export class UserController {
   /**
    * Map UserDocument to UserResponse
    */
-  private mapUserToResponse(user: UserDocument): UserResponse {
+  private mapUserToResponse(user: UserDocument | UserDocLike): UserResponse {
     // permissions and roleNames are attached to user by JwtStrategy from JWT payload
     const userWithPermissions = user as unknown as {
       permissions?: string[];
@@ -144,8 +145,8 @@ export class UserController {
             startedAt: user.planStartedAt,
           }
         : undefined,
-      status: user.status,
-      registrationApproval: user.registrationApproval,
+      status: user.status as UserStatus,
+      registrationApproval: (user.registrationApproval ?? undefined) as RegistrationApproval | undefined,
       permissions: userWithPermissions.permissions,
       roleNames: userWithPermissions.roleNames,
     };

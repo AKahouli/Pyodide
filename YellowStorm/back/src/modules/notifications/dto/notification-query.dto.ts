@@ -1,7 +1,7 @@
 import { IsOptional, IsEnum, IsInt, Min, Max, IsBoolean } from 'class-validator';
 import { Type, Transform } from 'class-transformer';
 import { ApiPropertyOptional } from '@nestjs/swagger';
-import { NotificationType, NotificationStatus } from '../schemas/notification.schema';
+import { NotificationType, NotificationStatus } from '../notification.types';
 
 export class NotificationQueryDto {
   @ApiPropertyOptional({ minimum: 1, default: 1 })

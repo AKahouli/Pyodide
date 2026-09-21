@@ -1,21 +1,22 @@
 import * as crypto from 'crypto';
-import { Injectable } from '@nestjs/common';
+import { Inject, Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { InjectModel } from '@nestjs/mongoose';
-import { Model, Types } from 'mongoose';
+import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
+import { withTransaction } from '@common/postgres/transaction';
 import { CryptoService } from '@common/services/crypto.service';
 import { BadRequestException, NotFoundException } from '@modules/exceptions';
 import { ErrorCode } from '@modules/exceptions/constants/error-codes';
 import { LoggerService } from '@modules/logger';
+import { DRIZZLE_DB } from '@modules/postgres/postgres.constants';
+import * as schema from '@modules/postgres/schema';
+import { AdminConnectorAuthStatus } from '../schemas/admin-connector-auth.schema';
 import {
-  AdminConnectorAuth,
-  AdminConnectorAuthDocument,
-  AdminConnectorAuthStatus,
-} from '../schemas/admin-connector-auth.schema';
-import {
-  AdminConnectorOAuthState,
-  AdminConnectorOAuthStateDocument,
-} from '../schemas/admin-connector-oauth-state.schema';
+  CONNECTOR_ADMIN_AUTH_STORE,
+  CONNECTOR_ADMIN_OAUTH_STATE_STORE,
+  type ConnectorAdminAuthRow,
+  type ConnectorAdminAuthStore,
+  type ConnectorAdminOauthStateStore,
+} from '../persistence/connector.store';
 import { ConnectedAppDefinitionService } from '../../connected-app/services/connected-app-definition.service';
 
 const OAUTH_STATE_TTL_MS = 10 * 60 * 1000;
@@ -27,10 +28,11 @@ export class ConnectorAdminAuthService {
   private readonly backendUrl: string;
 
   constructor(
-    @InjectModel(AdminConnectorOAuthState.name)
-    private readonly oauthStateModel: Model<AdminConnectorOAuthStateDocument>,
-    @InjectModel(AdminConnectorAuth.name)
-    private readonly authModel: Model<AdminConnectorAuthDocument>,
+    @Inject(CONNECTOR_ADMIN_OAUTH_STATE_STORE)
+    private readonly oauthStateStore: ConnectorAdminOauthStateStore,
+    @Inject(CONNECTOR_ADMIN_AUTH_STORE)
+    private readonly authStore: ConnectorAdminAuthStore,
+    @Inject(DRIZZLE_DB) private readonly pgDb: NodePgDatabase<typeof schema>,
     private readonly cryptoService: CryptoService,
     private readonly configService: ConfigService,
     private readonly logger: LoggerService,
@@ -53,10 +55,10 @@ export class ConnectorAdminAuthService {
       codeChallenge = this.generateCodeChallenge(codeVerifier);
     }
 
-    await this.oauthStateModel.create({
+    await this.oauthStateStore.create({
       state,
       appKey: appConfig.appKey,
-      userId: new Types.ObjectId(userId),
+      userId,
       codeVerifier,
       expiresAt: new Date(Date.now() + OAUTH_STATE_TTL_MS),
     });
@@ -83,7 +85,8 @@ export class ConnectorAdminAuthService {
     code: string,
     state: string,
   ): Promise<{ success: boolean; appKey: string; error?: string }> {
-    const oauthState = await this.oauthStateModel.findOneAndDelete({ state }).exec();
+    // Atomic consume: expired states are deleted as invalid (plan 3.3).
+    const oauthState = await this.oauthStateStore.consume(state);
     if (!oauthState) {
       throw new BadRequestException(
         ErrorCode.CONNECTED_APP_OAUTH_STATE_INVALID,
@@ -98,13 +101,6 @@ export class ConnectorAdminAuthService {
       );
     }
 
-    if (oauthState.expiresAt < new Date()) {
-      throw new BadRequestException(
-        ErrorCode.CONNECTED_APP_OAUTH_STATE_INVALID,
-        'OAuth state has expired',
-      );
-    }
-
     const appConfig = await this.getOAuthConfig(appKey);
     const redirectUri = this.getRedirectUri(appKey);
     const tokenResponse = await this.exchangeCodeForTokens(
@@ -113,7 +109,7 @@ export class ConnectorAdminAuthService {
       redirectUri,
       appConfig.clientId,
       appConfig.clientSecret,
-      oauthState.codeVerifier,
+      oauthState.codeVerifier || undefined,
     );
 
     const accessToken =
@@ -129,28 +125,12 @@ export class ConnectorAdminAuthService {
       );
     }
 
-    await this.authModel.findOneAndUpdate(
-      { userId: oauthState.userId, appKey },
-      {
-        $set: {
-          accessToken: this.cryptoService.encrypt(accessToken),
-          refreshToken: refreshToken
-            ? this.cryptoService.encrypt(refreshToken)
-            : undefined,
-          tokenExpiresAt: expiresIn
-            ? new Date(Date.now() + expiresIn * 1000)
-            : undefined,
-          scopes: appConfig.scopes,
-          connected: true,
-          status: AdminConnectorAuthStatus.ACTIVE,
-          disconnectedAt: undefined,
-          errorMessage: undefined,
-          lastRefreshedAt: new Date(),
-          lastUsedAt: new Date(),
-        },
-      },
-      { upsert: true, new: true },
-    ).exec();
+    await this.authStore.upsertOnCallback(oauthState.userId, appKey, {
+      accessToken: this.cryptoService.encrypt(accessToken),
+      refreshToken: refreshToken ? this.cryptoService.encrypt(refreshToken) : null,
+      tokenExpiresAt: expiresIn ? new Date(Date.now() + expiresIn * 1000) : null,
+      scopes: appConfig.scopes,
+    });
 
     return { success: true, appKey };
   }
@@ -163,25 +143,20 @@ export class ConnectorAdminAuthService {
     disconnectedAt?: Date;
     providerEmail?: string;
   }> {
-    const record = await this.authModel
-      .findOne({ userId: new Types.ObjectId(userId), appKey })
-      .lean()
-      .exec();
+    const record = await this.authStore.findByUserAndApp(userId, appKey);
 
     return {
       appKey,
       connected: Boolean(record?.connected),
-      status: record?.status,
+      status: record?.status as AdminConnectorAuthStatus | undefined,
       connectedAt: record?.createdAt,
-      disconnectedAt: record?.disconnectedAt,
-      providerEmail: record?.providerEmail,
+      disconnectedAt: record?.disconnectedAt ?? undefined,
+      providerEmail: record?.providerEmail ?? undefined,
     };
   }
 
   async getValidToken(userId: string, appKey: string): Promise<string> {
-    const record = await this.authModel
-      .findOne({ userId: new Types.ObjectId(userId), appKey, connected: true })
-      .exec();
+    const record = await this.authStore.findConnected(userId, appKey);
 
     if (!record || !record.accessToken) {
       throw new NotFoundException(
@@ -195,12 +170,13 @@ export class ConnectorAdminAuthService {
       return this.refreshAccessToken(record, appKey);
     }
 
-    await this.authModel.updateOne({ _id: record._id }, { $set: { lastUsedAt: now } }).exec();
+    // Throttled: at most one write per minute per row (plan 3.2).
+    await this.authStore.touchLastUsedThrottled(record.id);
     return this.cryptoService.decrypt(record.accessToken);
   }
 
   async disconnect(userId: string, appKey: string): Promise<void> {
-    const record = await this.authModel.findOne({ userId: new Types.ObjectId(userId), appKey }).exec();
+    const record = await this.authStore.findByUserAndApp(userId, appKey);
     if (!record) {
       throw new NotFoundException(
         ErrorCode.CONNECTED_APP_NOT_CONNECTED,
@@ -221,20 +197,10 @@ export class ConnectorAdminAuthService {
       });
     }
 
-    await this.authModel.updateOne(
-      { _id: record._id },
-      {
-        $set: {
-          connected: false,
-          status: AdminConnectorAuthStatus.REVOKED,
-          disconnectedAt: new Date(),
-          accessToken: undefined,
-          refreshToken: undefined,
-          tokenExpiresAt: undefined,
-          errorMessage: undefined,
-        },
-      },
-    ).exec();
+    await this.authStore.markDisconnected(record.id, {
+      status: AdminConnectorAuthStatus.REVOKED,
+      disconnectedAt: new Date(),
+    });
   }
 
   buildCallbackHtml(appKey: string, success: boolean, error?: string): string {
@@ -264,91 +230,93 @@ ${statusMessage}
 </html>`;
   }
 
+  /** Single-flight refresh (plan 3.2): row lock + expiry re-check under the transaction. */
   private async refreshAccessToken(
-    record: AdminConnectorAuthDocument,
+    record: ConnectorAdminAuthRow,
     appKey: string,
   ): Promise<string> {
-    if (!record.refreshToken) {
-      await this.authModel.updateOne(
-        { _id: record._id },
-        {
-          $set: {
-            status: AdminConnectorAuthStatus.EXPIRED,
-            errorMessage: 'No refresh token available',
-          },
+    return withTransaction(this.pgDb, async () => {
+      const locked = (await this.authStore.findByIdForUpdate(record.id))!;
+      if (!locked || !locked.connected) {
+        throw new BadRequestException(
+          ErrorCode.CONNECTED_APP_TOKEN_REFRESH_FAILED,
+          'Admin connection is no longer active. Please reconnect.',
+        );
+      }
+
+      // Re-check under the lock: another caller may have refreshed already.
+      const stillExpiring =
+        !locked.tokenExpiresAt ||
+        locked.tokenExpiresAt.getTime() - TOKEN_EXPIRY_BUFFER_MS < Date.now();
+      if (!stillExpiring) {
+        return this.cryptoService.decrypt(locked.accessToken!);
+      }
+
+      if (!locked.refreshToken) {
+        await this.authStore.markStatus(
+          locked.id,
+          AdminConnectorAuthStatus.EXPIRED,
+          'No refresh token available',
+        );
+        throw new BadRequestException(
+          ErrorCode.CONNECTED_APP_TOKEN_REFRESH_FAILED,
+          'No refresh token available. Please reconnect.',
+        );
+      }
+
+      const appConfig = await this.getOAuthConfig(appKey);
+
+      const response = await fetch(appConfig.tokenUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded',
+          Accept: 'application/json',
         },
-      ).exec();
-      throw new BadRequestException(
-        ErrorCode.CONNECTED_APP_TOKEN_REFRESH_FAILED,
-        'No refresh token available. Please reconnect.',
-      );
-    }
+        body: new URLSearchParams({
+          grant_type: 'refresh_token',
+          refresh_token: this.cryptoService.decrypt(locked.refreshToken),
+          client_id: appConfig.clientId,
+          client_secret: appConfig.clientSecret,
+        }).toString(),
+      });
 
-    const appConfig = await this.getOAuthConfig(appKey);
+      if (!response.ok) {
+        await this.authStore.markStatus(
+          locked.id,
+          AdminConnectorAuthStatus.ERROR,
+          `Token refresh failed: ${response.status}`,
+        );
+        throw new BadRequestException(
+          ErrorCode.CONNECTED_APP_TOKEN_REFRESH_FAILED,
+          'Failed to refresh token. Please reconnect.',
+        );
+      }
 
-    const response = await fetch(appConfig.tokenUrl, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/x-www-form-urlencoded',
-        Accept: 'application/json',
-      },
-      body: new URLSearchParams({
-        grant_type: 'refresh_token',
-        refresh_token: this.cryptoService.decrypt(record.refreshToken),
-        client_id: appConfig.clientId,
-        client_secret: appConfig.clientSecret,
-      }).toString(),
+      const tokenResponse = await response.json() as {
+        access_token?: string;
+        refresh_token?: string;
+        expires_in?: number;
+      };
+
+      if (!tokenResponse.access_token) {
+        throw new BadRequestException(
+          ErrorCode.CONNECTED_APP_TOKEN_REFRESH_FAILED,
+          'Failed to refresh token. Please reconnect.',
+        );
+      }
+
+      await this.authStore.applyRefresh(locked.id, {
+        accessToken: this.cryptoService.encrypt(tokenResponse.access_token),
+        refreshToken: tokenResponse.refresh_token
+          ? this.cryptoService.encrypt(tokenResponse.refresh_token)
+          : locked.refreshToken ?? undefined,
+        tokenExpiresAt: tokenResponse.expires_in
+          ? new Date(Date.now() + tokenResponse.expires_in * 1000)
+          : null,
+      });
+
+      return tokenResponse.access_token;
     });
-
-    if (!response.ok) {
-      await this.authModel.updateOne(
-        { _id: record._id },
-        {
-          $set: {
-            status: AdminConnectorAuthStatus.ERROR,
-            errorMessage: `Token refresh failed: ${response.status}`,
-          },
-        },
-      ).exec();
-      throw new BadRequestException(
-        ErrorCode.CONNECTED_APP_TOKEN_REFRESH_FAILED,
-        'Failed to refresh token. Please reconnect.',
-      );
-    }
-
-    const tokenResponse = await response.json() as {
-      access_token?: string;
-      refresh_token?: string;
-      expires_in?: number;
-    };
-
-    if (!tokenResponse.access_token) {
-      throw new BadRequestException(
-        ErrorCode.CONNECTED_APP_TOKEN_REFRESH_FAILED,
-        'Failed to refresh token. Please reconnect.',
-      );
-    }
-
-    await this.authModel.updateOne(
-      { _id: record._id },
-      {
-        $set: {
-          accessToken: this.cryptoService.encrypt(tokenResponse.access_token),
-          refreshToken: tokenResponse.refresh_token
-            ? this.cryptoService.encrypt(tokenResponse.refresh_token)
-            : record.refreshToken,
-          tokenExpiresAt: tokenResponse.expires_in
-            ? new Date(Date.now() + tokenResponse.expires_in * 1000)
-            : undefined,
-          status: AdminConnectorAuthStatus.ACTIVE,
-          errorMessage: undefined,
-          lastRefreshedAt: new Date(),
-          lastUsedAt: new Date(),
-        },
-      },
-    ).exec();
-
-    return tokenResponse.access_token;
   }
 
   private async exchangeCodeForTokens(

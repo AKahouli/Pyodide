@@ -9,8 +9,7 @@ import { ConversationModule } from '@modules/conversation/conversation.module';
 import { SystemModule } from '@modules/system/system.module';
 import { WorkyModule } from '@modules/worky/worky.module';
 import { LoggerModule } from '@modules/logger';
-import { SharedAgent, SharedAgentSchema } from '@modules/agent/schemas/shared-agent.schema';
-import { User, UserSchema } from '@modules/user/schemas/user.schema';
+import { UserModule } from '@modules/user/user.module';
 import { BaileysClientFactory } from './baileys/baileys-client.factory';
 import { MongoBaileysAuthStore } from './baileys/mongo-auth-state';
 import { WhatsAppIntegrationController } from './controllers/whatsapp-integration.controller';
@@ -39,13 +38,12 @@ import { WhatsAppInternalSendService } from './services/whatsapp-internal-send.s
 @Module({
   imports: [
     ConfigModule.forFeature(whatsappConfig),
+    UserModule,
     AuthModule,
     MongooseModule.forFeature([
       { name: AgentWhatsAppIntegration.name, schema: AgentWhatsAppIntegrationSchema },
       { name: WhatsAppAuthSession.name, schema: WhatsAppAuthSessionSchema },
       { name: WhatsAppChatBinding.name, schema: WhatsAppChatBindingSchema },
-      { name: User.name, schema: UserSchema },
-      { name: SharedAgent.name, schema: SharedAgentSchema },
     ]),
     LoggerModule,
     SystemModule,

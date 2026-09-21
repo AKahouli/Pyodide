@@ -1,4 +1,8 @@
 /**
+ * RETIRED (plan 1B.4.7): agent_types now live in catalog.agent_types; this
+ * historical script's Mongo agent_types read no longer reflects the source of
+ * truth. Kept for reference only — do not run.
+ *
  * One-time backfill: copy every Mongo `agents` document into Postgres.
  *
  * Idempotent & safe:

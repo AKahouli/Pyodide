@@ -9,9 +9,18 @@ import type * as schema from '../schema';
 export interface TtlSweepSpec {
   schema: string;
   table: string;
-  /** Timestamp column whose expiry (<= now()) makes a row deletable. */
+  /**
+   * Expiry column (rows go when column <= now()), or — with `olderThan` — an
+   * age column (rows go when column < now() - interval), e.g. created_at.
+   */
   column: string;
   batchSize?: number;
+  /**
+   * PG interval literal for retention-based sweeps on non-expiry columns
+   * (timestamptz + interval is not immutable, so no generated expires_at).
+   * Example: '730 days' for audit_logs.created_at.
+   */
+  olderThan?: string;
 }
 
 const DEFAULT_BATCH_SIZE = 1000;
@@ -60,6 +69,9 @@ export class PgTtlSweeper {
     const label = `${spec.schema}.${spec.table}`;
     const batchSize = spec.batchSize ?? DEFAULT_BATCH_SIZE;
     const table = sql`${sql.identifier(spec.schema)}.${sql.identifier(spec.table)}`;
+    const expired = spec.olderThan
+      ? sql`${sql.identifier(spec.column)} < now() - ${spec.olderThan}::interval`
+      : sql`${sql.identifier(spec.column)} <= now()`;
     let deleted = 0;
     let batches = 0;
     try {
@@ -75,7 +87,7 @@ export class PgTtlSweeper {
             WHERE ctid = ANY(ARRAY(
               SELECT ctid
               FROM ${table}
-              WHERE ${sql.identifier(spec.column)} <= now()
+              WHERE ${expired}
               LIMIT ${batchSize}
               FOR UPDATE SKIP LOCKED
             ))

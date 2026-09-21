@@ -27,6 +27,7 @@ import { RequirePermissions } from '../authorization/decorators/require-permissi
 import { PermissionsGuard } from '../authorization/guards/permissions.guard';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { RegistrationApproval, UserDocument, UserStatus } from './schemas/user.schema';
+import { USER_STORE, UserRecordWithRoles, UserStore } from './persistence/user.store';
 import { Permissions } from '../authorization/constants/permissions';
 import {
   AdminListUsersQueryDto,
@@ -34,12 +35,11 @@ import {
   AdminUserResponse,
   AdminUserListResponse,
 } from './dto/admin-user.dto';
-import { InjectModel } from '@nestjs/mongoose';
+import { Inject } from '@nestjs/common';
 import { Model } from 'mongoose';
 import { User } from './schemas/user.schema';
 import { NotFoundException } from '../exceptions';
 import { ErrorCode } from '../exceptions/constants/error-codes';
-import { escapeRegex } from '../../common/utils';
 
 @ApiTags('Admin Users')
 @ApiBearerAuth()
@@ -52,7 +52,7 @@ export class AdminUserController {
     private readonly usageService: UsageService,
     private readonly authorizationService: AuthorizationService,
     private readonly auditLogService: AuditLogService,
-    @InjectModel(User.name) private readonly userModel: Model<UserDocument>,
+    @Inject(USER_STORE) private readonly userStore: UserStore,
   ) {}
 
   @Get()
@@ -73,48 +73,17 @@ export class AdminUserController {
       sortOrder = 'desc',
     } = query;
 
-    // Build filter
-    const filter: Record<string, unknown> = {};
-
-    if (search) {
-      const escapedSearch = escapeRegex(search);
-      filter.$or = [
-        { email: { $regex: escapedSearch, $options: 'i' } },
-        { 'profile.firstName': { $regex: escapedSearch, $options: 'i' } },
-        { 'profile.lastName': { $regex: escapedSearch, $options: 'i' } },
-      ];
-    }
-
-    if (status) {
-      filter.status = status;
-    }
-
-    if (emailVerified !== undefined) {
-      filter.emailVerified = emailVerified;
-    }
-
-    if (profileComplete !== undefined) {
-      filter.profileComplete = profileComplete;
-    }
-
-    // Build sort
-    const sort: Record<string, 1 | -1> = {
-      [sortBy]: sortOrder === 'asc' ? 1 : -1,
-    };
-
-    // Execute query
-    const skip = (page - 1) * limit;
-
-    const [users, total] = await Promise.all([
-      this.userModel
-        .find(filter)
-        .sort(sort)
-        .skip(skip)
-        .limit(limit)
-        .populate('roles', 'name')
-        .lean(),
-      this.userModel.countDocuments(filter),
-    ]);
+    // Execute query (roles joined by the store; filters/sort/pagination preserved)
+    const { users, total } = await this.userStore.listAdmin({
+      search,
+      status,
+      emailVerified,
+      profileComplete,
+      page,
+      limit,
+      sortBy: sortBy as 'createdAt' | 'email' | 'status',
+      sortOrder,
+    });
 
     const totalPages = Math.ceil(total / limit);
 
@@ -134,10 +103,7 @@ export class AdminUserController {
   @ApiResponse({ status: 200, description: 'User retrieved' })
   @ApiResponse({ status: 404, description: 'User not found' })
   async getUser(@Param('id') id: string): Promise<AdminUserResponse> {
-    const user = await this.userModel
-      .findById(id)
-      .populate('roles', 'name')
-      .lean();
+    const user = await this.userStore.findByIdWithRoles(id);
 
     if (!user) {
       throw new NotFoundException(ErrorCode.USER_NOT_FOUND);
@@ -290,7 +256,7 @@ export class AdminUserController {
 
     const updatedUser = await this.userService.assignPlan(
       id,
-      plan._id,
+      plan.id,
       plan.slug,
     );
 
@@ -306,47 +272,41 @@ export class AdminUserController {
     });
 
     // Re-fetch with roles populated
-    const populatedUser = await this.userModel
-      .findById(updatedUser._id)
-      .populate('roles', 'name')
-      .lean();
+    const populatedUser = await this.userStore.findByIdWithRoles(id);
 
     return this.mapToAdminUserResponse(populatedUser!);
   }
 
-  private mapToAdminUserResponse(user: Record<string, unknown>): AdminUserResponse {
-    const profile = user.profile as { firstName?: string; lastName?: string; company?: string } || {};
-    const roles = (user.roles || []) as Array<{ _id: { toString(): string }; name: string }>;
-
+  private mapToAdminUserResponse(user: UserRecordWithRoles): AdminUserResponse {
     return {
-      id: (user._id as { toString(): string }).toString(),
-      email: user.email as string,
-      emailVerified: user.emailVerified as boolean,
-      profileComplete: user.profileComplete as boolean,
+      id: user.id,
+      email: user.email,
+      emailVerified: user.emailVerified,
+      profileComplete: user.profileComplete,
       appearance: {
-        colorTheme: (user as { appearance?: { colorTheme?: 'default' | 'yellow' | 'orange' | 'blue' } }).appearance?.colorTheme ?? 'default',
+        colorTheme: user.colorTheme ?? 'default',
       },
       profile: {
-        firstName: profile.firstName,
-        lastName: profile.lastName,
-        company: profile.company,
+        firstName: user.firstName ?? undefined,
+        lastName: user.lastName ?? undefined,
+        company: user.company ?? undefined,
       },
       status: user.status as UserStatus,
-      registrationApproval: user.registrationApproval as RegistrationApproval | undefined,
+      registrationApproval: (user.registrationApproval ?? undefined) as RegistrationApproval | undefined,
       plan: user.planId
         ? {
-            id: (user.planId as { toString(): string }).toString(),
+            id: user.planId,
             slug: user.planSlug as string,
-            startedAt: user.planStartedAt as Date | undefined,
+            startedAt: (user.planStartedAt ?? undefined) as Date | undefined,
           }
         : undefined,
-      roles: roles.map((role) => ({
-        id: role._id.toString(),
+      roles: user.roles.map((role) => ({
+        id: role.id,
         name: role.name,
       })),
-      createdAt: user.createdAt as Date,
-      updatedAt: user.updatedAt as Date,
-      lastLoginAt: user.lastLoginAt as Date | undefined,
+      createdAt: user.createdAt,
+      updatedAt: user.updatedAt,
+      lastLoginAt: (user.lastLoginAt ?? undefined) as Date | undefined,
     };
   }
 }

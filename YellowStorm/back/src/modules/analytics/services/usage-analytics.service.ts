@@ -9,13 +9,13 @@ export class UsageAnalyticsService {
   constructor(@Inject(USAGE_STORE) private readonly usageStore: UsageStore) {}
 
   getUsageAnalytics(
-    consentingUserIds: Types.ObjectId[],
+    consentingUserIds: string[],
     dateFrom?: Date,
     dateTo?: Date,
     groupBy: GroupByPeriod = GroupByPeriod.DAY,
   ): Promise<UsageAnalyticsResponse> {
     return this.usageStore.getAnalytics(
-      consentingUserIds.map((id) => id.toString()),
+      consentingUserIds,
       dateFrom,
       dateTo,
       groupBy,

@@ -16,7 +16,7 @@ import {
 } from '@nestjs/swagger';
 import { A2APublishService } from '../services/a2a-publish.service';
 import { CurrentUser } from '../../auth/decorators/current-user.decorator';
-import { UserDocument } from '../../user/schemas/user.schema';
+import type { AuthUser } from '@common/auth/auth-user';
 import { AgentPermissionGuard, AgentContext } from '../guards/agent-permission.guard';
 import { RequireAgentPermission } from '../decorators/require-agent-permission.decorator';
 import {
@@ -41,7 +41,7 @@ export class AgentA2AController {
   @ApiResponse({ status: 403, description: 'Agent is a default agent or not owned by the caller' })
   @ApiResponse({ status: 404, description: 'Agent not found' })
   async publish(
-    @CurrentUser() user: UserDocument,
+    @CurrentUser() user: AuthUser,
     @Param('agentId') agentId: string,
     @Req() request: { agentContext: AgentContext },
   ): Promise<PublishAgentResult> {
@@ -57,7 +57,7 @@ export class AgentA2AController {
   @ApiResponse({ status: 200, description: 'Key rotated; new API key returned once' })
   @ApiResponse({ status: 409, description: 'Agent has not been published over A2A' })
   async rotateKey(
-    @CurrentUser() user: UserDocument,
+    @CurrentUser() user: AuthUser,
     @Param('agentId') agentId: string,
     @Req() request: { agentContext: AgentContext },
   ): Promise<RotateKeyResult> {
@@ -73,7 +73,7 @@ export class AgentA2AController {
   @ApiResponse({ status: 200, description: 'Agent revoked from the A2A surface' })
   @ApiResponse({ status: 409, description: 'Agent has not been published over A2A' })
   async revoke(
-    @CurrentUser() user: UserDocument,
+    @CurrentUser() user: AuthUser,
     @Param('agentId') agentId: string,
     @Req() request: { agentContext: AgentContext },
   ): Promise<RevokeAgentResult> {

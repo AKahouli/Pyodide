@@ -5,7 +5,7 @@ describe('ConversationService neutral persistence', () => {
   let conversationStore: Record<string, jest.Mock>;
   let agentRepository: Record<string, jest.Mock>;
   let featureVisibility: { getVisibility: jest.Mock };
-  let userModel: { find: jest.Mock; findById: jest.Mock };
+  let userLookup: { byId: jest.Mock; byIds: jest.Mock; byEmails: jest.Mock };
   let emailService: { sendBulk: jest.Mock };
   let service: ConversationService;
 
@@ -65,19 +65,21 @@ describe('ConversationService neutral persistence', () => {
       findByIds: jest.fn(),
     };
     featureVisibility = { getVisibility: jest.fn().mockResolvedValue({ platformCopilot: true }) };
-    userModel = {
-      find: jest.fn(() => ({
-        select: () => ({ lean: () => ({ exec: jest.fn().mockResolvedValue([]) }) }),
-      })),
-      findById: jest.fn(() => ({
-        lean: () => ({ exec: jest.fn().mockResolvedValue({ email: 'owner@example.com' }) }),
-      })),
+    userLookup = {
+      byId: jest.fn(async (id: string) => ({ id, email: 'owner@example.com', firstName: '', lastName: '', status: 'active' })),
+      byIds: jest.fn(async (ids: string[]) =>
+        new Map(ids.map((id) => [id, { id, email: 'owner@example.com', firstName: 'Owner', lastName: '', status: 'active' }]))),
+      byEmails: jest.fn(async (emails: string[]) => {
+        const map = new Map();
+        for (const email of emails) map.set(email.toLowerCase(), { id: `u-${email}`, email, firstName: '', lastName: '', status: 'active' });
+        return map;
+      }),
     };
     emailService = { sendBulk: jest.fn().mockResolvedValue(undefined) };
     const logger = { setContext: jest.fn(), log: jest.fn(), warn: jest.fn() };
     service = new ConversationService(
       conversationStore as never,
-      userModel as never,
+      userLookup as never,
       logger as never,
       { get: jest.fn((_key: string, fallback: unknown) => fallback) } as never,
       {} as never,
@@ -381,8 +383,8 @@ describe('ConversationService neutral persistence', () => {
         total: 2,
       });
       await service.findAllByUser(ownerId, {});
-      expect(userModel.find).toHaveBeenCalledTimes(1);
-      expect(userModel.find).toHaveBeenCalledWith({ _id: { $in: [ownerId] } });
+      expect(userLookup.byIds).toHaveBeenCalledTimes(1);
+      expect(userLookup.byIds).toHaveBeenCalledWith([ownerId]);
     });
   });
 
@@ -455,7 +457,7 @@ describe('ConversationService neutral persistence', () => {
       const logger = { setContext: jest.fn(), log: jest.fn(), warn: jest.fn() };
       const svc = new ConversationService(
         conversationStore as never,
-        userModel as never,
+        userLookup as never,
         logger as never,
         { get: jest.fn((_key: string, fallback: unknown) => fallback) } as never,
         workspaceService as never,

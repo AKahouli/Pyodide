@@ -26,7 +26,7 @@ import { WorkspaceShareService } from './workspace-share.service';
 import { SemanticModelProvisioningService } from '../semantic-model/services/semantic-model-provisioning.service';
 import { UsageService } from '../usage/usage.service';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
-import { UserDocument } from '../user/schemas/user.schema';
+import type { AuthUser } from '@common/auth/auth-user';
 import { WorkspaceOwnerGuard, WorkspaceAccessGuard } from './guards';
 import { CreateWorkspaceDto } from './dto/create-workspace.dto';
 import { UpdateWorkspaceDto } from './dto/update-workspace.dto';
@@ -59,7 +59,7 @@ export class WorkspaceController {
   @ApiOperation({ summary: 'Create a new workspace' })
   @ApiResponse({ status: 201, description: 'Workspace created successfully' })
   async create(
-    @CurrentUser() user: UserDocument,
+    @CurrentUser() user: AuthUser,
     @Body() dto: CreateWorkspaceDto,
   ) {
     // Get user's plan limits
@@ -89,7 +89,7 @@ export class WorkspaceController {
   @Get()
   @ApiOperation({ summary: 'List workspaces for current user' })
   async findAll(
-    @CurrentUser() user: UserDocument,
+    @CurrentUser() user: AuthUser,
     @Query() query: WorkspaceQueryDto,
   ) {
     return this.workspaceService.findAllByUser(user._id.toString(), query);
@@ -101,7 +101,7 @@ export class WorkspaceController {
   @Get('shared-with-me')
   @ApiOperation({ summary: 'List workspaces shared with current user' })
   async getSharedWithMe(
-    @CurrentUser() user: UserDocument,
+    @CurrentUser() user: AuthUser,
     @Query() query: WorkspaceQueryDto,
   ) {
     return this.workspaceShareService.findSharedWithUser(user._id.toString(), query);
@@ -113,7 +113,7 @@ export class WorkspaceController {
   @Get('personal')
   @ApiOperation({ summary: 'Get or create personal workspace for current user' })
   async getPersonal(
-    @CurrentUser() user: UserDocument,
+    @CurrentUser() user: AuthUser,
   ) {
     // Get user's plan for storage allocation
     const plan = await this.usageService.ensureUserHasPlan(
@@ -135,7 +135,7 @@ export class WorkspaceController {
   @Get('public')
   @ApiOperation({ summary: 'List public workspaces' })
   async getPublic(
-    @CurrentUser() user: UserDocument,
+    @CurrentUser() user: AuthUser,
     @Query() query: WorkspaceQueryDto,
   ) {
     return this.workspaceService.findPublic(user._id.toString(), query);
@@ -159,7 +159,7 @@ export class WorkspaceController {
   @ApiOperation({ summary: 'Get workspace by alias' })
   @ApiParam({ name: 'alias', description: 'Workspace alias' })
   async findByAlias(
-    @CurrentUser() user: UserDocument,
+    @CurrentUser() user: AuthUser,
     @Param('alias') alias: string,
   ) {
     return this.workspaceService.findByAlias(user._id.toString(), alias);
@@ -173,7 +173,7 @@ export class WorkspaceController {
   @ApiOperation({ summary: 'Update workspace' })
   @ApiParam({ name: 'id', description: 'Workspace ID' })
   async update(
-    @CurrentUser() user: UserDocument,
+    @CurrentUser() user: AuthUser,
     @Param('id') id: string,
     @Body() dto: UpdateWorkspaceDto,
   ) {
@@ -190,7 +190,7 @@ export class WorkspaceController {
   @ApiOperation({ summary: 'Set workspace public/private visibility' })
   @ApiParam({ name: 'id', description: 'Workspace ID' })
   async setVisibility(
-    @CurrentUser() user: UserDocument,
+    @CurrentUser() user: AuthUser,
     @Param('id') id: string,
     @Body() dto: UpdateVisibilityDto,
   ) {
@@ -206,7 +206,7 @@ export class WorkspaceController {
   @ApiOperation({ summary: 'Delete workspace and all its documents' })
   @ApiParam({ name: 'id', description: 'Workspace ID' })
   async delete(
-    @CurrentUser() user: UserDocument,
+    @CurrentUser() user: AuthUser,
     @Param('id') id: string,
   ) {
     // First delete all documents in the workspace

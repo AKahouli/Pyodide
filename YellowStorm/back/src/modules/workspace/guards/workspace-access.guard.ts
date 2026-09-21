@@ -3,13 +3,13 @@ import { isObjectId } from '@common/postgres';
 import { Request } from 'express';
 import { ForbiddenException, NotFoundException } from '../../exceptions';
 import { ErrorCode } from '../../exceptions/constants/error-codes';
-import { UserDocument } from '../../user/schemas/user.schema';
+import type { AuthUser } from '@common/auth/auth-user';
 import type { WorkspaceRecord } from '../ports/workspace-records';
 import { WORKSPACE_STORE, type WorkspaceStore } from '../stores/workspace-store';
 import { SHARE_STORE, type ShareStore } from '../stores/share-store';
 
 interface RequestWithWorkspace extends Request {
-  user?: UserDocument;
+  user?: AuthUser;
   workspace?: WorkspaceRecord;
   workspaceRole?: 'owner' | 'read' | 'readwrite';
 }

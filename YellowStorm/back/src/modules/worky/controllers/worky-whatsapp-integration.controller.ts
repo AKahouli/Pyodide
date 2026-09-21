@@ -16,7 +16,7 @@ import {
   ApiTags,
 } from '@nestjs/swagger';
 import { CurrentUser } from '@modules/auth/decorators/current-user.decorator';
-import { UserDocument } from '@modules/user/schemas/user.schema';
+import type { AuthUser } from '@common/auth/auth-user';
 import { WorkyWhatsAppConnectionService } from '@modules/whatsapp/services/worky-whatsapp-connection.service';
 import { WhatsAppConnectResponseDto } from '@modules/whatsapp/dto/whatsapp-connect-response.dto';
 import { WhatsAppIntegrationResponseDto } from '@modules/whatsapp/dto/whatsapp-integration-response.dto';
@@ -42,7 +42,7 @@ export class WorkyWhatsAppIntegrationController {
   @ApiParam({ name: 'id', description: 'Stream id' })
   @ApiResponse({ status: 200, type: WhatsAppIntegrationResponseDto })
   async getIntegration(
-    @CurrentUser() user: UserDocument,
+    @CurrentUser() user: AuthUser,
     @Param('id') streamId: string,
   ): Promise<WhatsAppIntegrationResponseDto | null> {
     return this.integrationService.getByStreamForUser(user._id.toString(), streamId);
@@ -54,7 +54,7 @@ export class WorkyWhatsAppIntegrationController {
   @ApiOperation({ summary: 'Start WhatsApp pairing for this Worky stream' })
   @ApiResponse({ status: 200, type: WhatsAppConnectResponseDto })
   async connect(
-    @CurrentUser() user: UserDocument,
+    @CurrentUser() user: AuthUser,
     @Param('id') streamId: string,
   ): Promise<WhatsAppConnectResponseDto> {
     return this.connectionService.connect(user._id.toString(), streamId);
@@ -65,7 +65,7 @@ export class WorkyWhatsAppIntegrationController {
   @ApiOperation({ summary: 'Get latest QR / pairing code for a Worky stream session' })
   @ApiResponse({ status: 200, type: WhatsAppPairingResponseDto })
   async getPairing(
-    @CurrentUser() user: UserDocument,
+    @CurrentUser() user: AuthUser,
     @Param('id') streamId: string,
     @Param('sessionId') sessionId: string,
   ): Promise<WhatsAppPairingResponseDto> {
@@ -78,7 +78,7 @@ export class WorkyWhatsAppIntegrationController {
   @ApiOperation({ summary: 'Reconnect WhatsApp for a Worky stream using stored auth' })
   @ApiResponse({ status: 200, type: WhatsAppIntegrationResponseDto })
   async reconnect(
-    @CurrentUser() user: UserDocument,
+    @CurrentUser() user: AuthUser,
     @Param('id') streamId: string,
     @Param('sessionId') sessionId: string,
   ): Promise<WhatsAppIntegrationResponseDto> {
@@ -90,7 +90,7 @@ export class WorkyWhatsAppIntegrationController {
   @RequirePermissions(Permissions.WORKY_STREAM_WRITE)
   @ApiOperation({ summary: 'Disconnect WhatsApp session for a Worky stream' })
   async disconnectSession(
-    @CurrentUser() user: UserDocument,
+    @CurrentUser() user: AuthUser,
     @Param('id') streamId: string,
     @Param('sessionId') sessionId: string,
   ): Promise<void> {
@@ -102,7 +102,7 @@ export class WorkyWhatsAppIntegrationController {
   @RequirePermissions(Permissions.WORKY_STREAM_WRITE)
   @ApiOperation({ summary: 'Remove WhatsApp integration for this Worky stream' })
   async deleteIntegration(
-    @CurrentUser() user: UserDocument,
+    @CurrentUser() user: AuthUser,
     @Param('id') streamId: string,
   ): Promise<void> {
     await this.connectionService.deleteIntegration(user._id.toString(), streamId);

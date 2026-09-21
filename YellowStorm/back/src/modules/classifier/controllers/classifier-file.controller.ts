@@ -5,7 +5,7 @@ import { AssignFileDto } from '../dto/assign-file.dto';
 import { ListFilesQueryDto } from '../dto/list-files-query.dto';
 import { IClassifierFileResponse } from '../interfaces/classifier.interface';
 import { CurrentUser } from '../../auth/decorators/current-user.decorator';
-import { UserDocument } from '../../user/schemas/user.schema';
+import type { AuthUser } from '@common/auth/auth-user';
 
 @ApiTags('Classifier · Files')
 @ApiBearerAuth()
@@ -19,7 +19,7 @@ export class ClassifierFileController {
   })
   @ApiParam({ name: 'workspaceId', description: 'Workspace ID' })
   list(
-    @CurrentUser() user: UserDocument,
+    @CurrentUser() user: AuthUser,
     @Param('workspaceId') workspaceId: string,
     @Query() query: ListFilesQueryDto,
   ): Promise<IClassifierFileResponse[]> {
@@ -33,7 +33,7 @@ export class ClassifierFileController {
   @ApiParam({ name: 'workspaceId', description: 'Workspace ID' })
   @ApiParam({ name: 'documentId', description: 'Workspace document ID' })
   assign(
-    @CurrentUser() user: UserDocument,
+    @CurrentUser() user: AuthUser,
     @Param('workspaceId') workspaceId: string,
     @Param('documentId') documentId: string,
     @Body() dto: AssignFileDto,

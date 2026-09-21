@@ -1,16 +1,15 @@
 import { SystemService } from './system.service';
+import type { SystemSettingRow } from './persistence/system-setting.store';
 
 describe('SystemService login settings', () => {
-  const store = new Map<string, unknown>();
-  const model = {
-    findOne: ({ key }: { key: string }) => ({
-      lean: () => ({ exec: async () => store.get(key) ?? null }),
-    }),
-    findOneAndUpdate: jest.fn(async ({ key }, update) => {
-      const saved = { key, value: update.value };
-      store.set(key, saved);
+  const rows = new Map<string, SystemSettingRow>();
+  const store = {
+    get: async (key: string) => rows.get(key) ?? null,
+    upsert: async (key: string, value: unknown) => {
+      const saved: SystemSettingRow = { key, value, updatedAt: new Date() };
+      rows.set(key, saved);
       return saved;
-    }),
+    },
   };
   const logger = {
     setContext: jest.fn(),
@@ -19,14 +18,14 @@ describe('SystemService login settings', () => {
     error: jest.fn(),
   };
   const build = () => new SystemService(
-    model as never,
+    store as never,
     {} as never,
     logger as never,
     {} as never,
   );
 
   beforeEach(() => {
-    store.clear();
+    rows.clear();
     jest.clearAllMocks();
   });
 

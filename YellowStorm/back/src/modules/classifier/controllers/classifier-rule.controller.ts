@@ -17,7 +17,7 @@ import { UpdateRuleDto } from '../dto/update-rule.dto';
 import { ListRulesQueryDto } from '../dto/list-rules-query.dto';
 import { IClassifierRuleResponse } from '../interfaces/classifier.interface';
 import { CurrentUser } from '../../auth/decorators/current-user.decorator';
-import { UserDocument } from '../../user/schemas/user.schema';
+import type { AuthUser } from '@common/auth/auth-user';
 
 @ApiTags('Classifier · Rules')
 @ApiBearerAuth()
@@ -28,7 +28,7 @@ export class ClassifierRuleController {
   @Get()
   @ApiOperation({ summary: 'List classifier rules (optionally filter by scope/workspace)' })
   list(
-    @CurrentUser() user: UserDocument,
+    @CurrentUser() user: AuthUser,
     @Query() query: ListRulesQueryDto,
   ): Promise<IClassifierRuleResponse[]> {
     return this.ruleService.list(user._id.toString(), query);
@@ -38,7 +38,7 @@ export class ClassifierRuleController {
   @HttpCode(HttpStatus.CREATED)
   @ApiOperation({ summary: 'Create a classifier rule (global or local to a workspace)' })
   create(
-    @CurrentUser() user: UserDocument,
+    @CurrentUser() user: AuthUser,
     @Body() dto: CreateRuleDto,
   ): Promise<IClassifierRuleResponse> {
     return this.ruleService.create(user._id.toString(), dto);
@@ -48,7 +48,7 @@ export class ClassifierRuleController {
   @ApiOperation({ summary: 'Update a rule text or enabled state' })
   @ApiParam({ name: 'id', description: 'Rule ID' })
   update(
-    @CurrentUser() user: UserDocument,
+    @CurrentUser() user: AuthUser,
     @Param('id') id: string,
     @Body() dto: UpdateRuleDto,
   ): Promise<IClassifierRuleResponse> {
@@ -60,7 +60,7 @@ export class ClassifierRuleController {
   @ApiOperation({ summary: 'Delete a classifier rule' })
   @ApiParam({ name: 'id', description: 'Rule ID' })
   delete(
-    @CurrentUser() user: UserDocument,
+    @CurrentUser() user: AuthUser,
     @Param('id') id: string,
   ): Promise<void> {
     return this.ruleService.delete(user._id.toString(), id);

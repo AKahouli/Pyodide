@@ -1,19 +1,17 @@
-import { Controller, Get, Param, Query, Res, Header } from '@nestjs/common';
+import { Controller, Get, Inject, Param, Query, Res, Header } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiParam, ApiQuery, ApiResponse } from '@nestjs/swagger';
 import { Response } from 'express';
 import { Public } from '@modules/auth/decorators/public.decorator';
 import { RateLimit } from '@modules/rate-limiter';
 import { LoggerService } from '@modules/logger';
-import { InjectModel } from '@nestjs/mongoose';
-import { Model, Types } from 'mongoose';
 import {
-  ConnectedAppOAuthState,
-  ConnectedAppOAuthStateDocument,
-} from '../../connected-app/schemas/connected-app-oauth-state.schema';
+  CONNECTED_APP_OAUTH_STATE_STORE,
+  type ConnectedAppOauthStateStore,
+} from '../../connected-app/persistence/connected-app.store';
 import {
-  AdminConnectorOAuthState,
-  AdminConnectorOAuthStateDocument,
-} from '../schemas/admin-connector-oauth-state.schema';
+  CONNECTOR_ADMIN_OAUTH_STATE_STORE,
+  type ConnectorAdminOauthStateStore,
+} from '../persistence/connector.store';
 import { ConnectedAppOAuthService } from '../../connected-app/services/connected-app-oauth.service';
 import { ConnectorAdminAuthService } from '../services/connector-admin-auth.service';
 
@@ -21,10 +19,10 @@ import { ConnectorAdminAuthService } from '../services/connector-admin-auth.serv
 @Controller('connected-apps')
 export class UnifiedOAuthCallbackController {
   constructor(
-    @InjectModel(ConnectedAppOAuthState.name)
-    private readonly userOAuthStateModel: Model<ConnectedAppOAuthStateDocument>,
-    @InjectModel(AdminConnectorOAuthState.name)
-    private readonly adminOAuthStateModel: Model<AdminConnectorOAuthStateDocument>,
+    @Inject(CONNECTED_APP_OAUTH_STATE_STORE)
+    private readonly userOAuthStateStore: ConnectedAppOauthStateStore,
+    @Inject(CONNECTOR_ADMIN_OAUTH_STATE_STORE)
+    private readonly adminOAuthStateStore: ConnectorAdminOauthStateStore,
     private readonly userOAuthService: ConnectedAppOAuthService,
     private readonly adminOAuthService: ConnectorAdminAuthService,
     private readonly logger: LoggerService,
@@ -85,17 +83,14 @@ export class UnifiedOAuthCallbackController {
     }
   }
 
+  // SELECT EXISTS routing (plan 3.3) — no model injection, no state consumption.
   private async determineFlowType(state: string): Promise<'user' | 'admin-connector' | null> {
-    const userState = await this.userOAuthStateModel.findOne({ state }).lean().exec();
-    if (userState) {
+    if (await this.userOAuthStateStore.exists(state)) {
       return 'user';
     }
-
-    const adminState = await this.adminOAuthStateModel.findOne({ state }).lean().exec();
-    if (adminState) {
+    if (await this.adminOAuthStateStore.exists(state)) {
       return 'admin-connector';
     }
-
     return null;
   }
 

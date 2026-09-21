@@ -1,9 +1,7 @@
-import { Injectable, OnApplicationBootstrap } from '@nestjs/common';
-import { InjectModel } from '@nestjs/mongoose';
-import { Model, Types } from 'mongoose';
-import { Role, RoleDocument } from './schemas/role.schema';
-import { User } from '../user/schemas/user.schema';
+import { Inject, Injectable, OnApplicationBootstrap } from '@nestjs/common';
 import { LoggerService } from '../logger';
+import { ROLE_STORE, type RoleRecord, type RoleStore } from './persistence/role.store';
+import { USER_STORE, type UserStore } from '../user/persistence/user.store';
 import {
   NotFoundException,
   ConflictException,
@@ -25,8 +23,8 @@ export class AuthorizationService implements OnApplicationBootstrap {
   private cacheLastUpdated: Date = new Date(0);
 
   constructor(
-    @InjectModel(Role.name) private readonly roleModel: Model<RoleDocument>,
-    @InjectModel(User.name) private readonly userModel: Model<typeof User>,
+    @Inject(ROLE_STORE) private readonly roleStore: RoleStore,
+    @Inject(USER_STORE) private readonly userStore: UserStore,
     private readonly logger: LoggerService,
   ) {
     this.logger.setContext(AuthorizationService.name);
@@ -58,12 +56,11 @@ export class AuthorizationService implements OnApplicationBootstrap {
     }
 
     // Check for existing role with same name
-    const existing = await this.roleModel.findOne({ name: dto.name.toLowerCase() });
-    if (existing) {
+    if (await this.roleStore.findByName(dto.name.toLowerCase())) {
       throw new ConflictException(ErrorCode.ROLE_ALREADY_EXISTS);
     }
 
-    const role = await this.roleModel.create({
+    const role = await this.roleStore.create({
       name: dto.name.toLowerCase(),
       description: dto.description,
       permissions: dto.permissions,
@@ -74,13 +71,13 @@ export class AuthorizationService implements OnApplicationBootstrap {
 
     this.invalidateCache();
 
-    this.logger.log('Role created', { roleId: role._id, name: role.name });
+    this.logger.log('Role created', { roleId: role.id, name: role.name });
 
     return this.toRoleResponse(role);
   }
 
   async updateRole(id: string, dto: UpdateRoleDto): Promise<RoleResponse> {
-    const role = await this.roleModel.findById(id);
+    const role = await this.roleStore.findById(id);
     if (!role) {
       throw new NotFoundException(ErrorCode.ROLE_NOT_FOUND);
     }
@@ -97,30 +94,30 @@ export class AuthorizationService implements OnApplicationBootstrap {
 
     // Check for name collision if name is being changed
     if (dto.name && dto.name.toLowerCase() !== role.name) {
-      const existing = await this.roleModel.findOne({ name: dto.name.toLowerCase() });
-      if (existing) {
+      if (await this.roleStore.findByName(dto.name.toLowerCase())) {
         throw new ConflictException(ErrorCode.ROLE_ALREADY_EXISTS);
       }
     }
 
     // Update role (system roles are fully editable - seeding only creates if not exists)
-    if (dto.name !== undefined) role.name = dto.name.toLowerCase();
-    if (dto.description !== undefined) role.description = dto.description;
-    if (dto.permissions !== undefined) role.permissions = dto.permissions;
-    if (dto.isActive !== undefined) role.isActive = dto.isActive;
-    if (dto.priority !== undefined) role.priority = dto.priority;
+    const patch: Partial<RoleRecord> = {};
+    if (dto.name !== undefined) patch.name = dto.name.toLowerCase();
+    if (dto.description !== undefined) patch.description = dto.description;
+    if (dto.permissions !== undefined) patch.permissions = dto.permissions;
+    if (dto.isActive !== undefined) patch.isActive = dto.isActive;
+    if (dto.priority !== undefined) patch.priority = dto.priority;
 
-    await role.save();
+    const updated = await this.roleStore.update(id, patch);
 
     this.invalidateCache();
 
-    this.logger.log('Role updated', { roleId: role._id, name: role.name, isSystem: role.isSystem });
+    this.logger.log('Role updated', { roleId: id, name: updated?.name, isSystem: updated?.isSystem });
 
-    return this.toRoleResponse(role);
+    return this.toRoleResponse(updated ?? role);
   }
 
   async deleteRole(id: string): Promise<void> {
-    const role = await this.roleModel.findById(id);
+    const role = await this.roleStore.findById(id);
     if (!role) {
       throw new NotFoundException(ErrorCode.ROLE_NOT_FOUND);
     }
@@ -130,16 +127,9 @@ export class AuthorizationService implements OnApplicationBootstrap {
       throw new ForbiddenException(ErrorCode.ROLE_SYSTEM_PROTECTED);
     }
 
-    // Remove role from all users
-    await this.userModel.updateMany(
-      { roles: new Types.ObjectId(id) },
-      {
-        $pull: { roles: new Types.ObjectId(id) },
-        $inc: { permissionsVersion: 1 },
-      },
-    );
-
-    await this.roleModel.deleteOne({ _id: id });
+    // Atomic: detaches every user and bumps their permissions_version in one
+    // transaction (plan 1A.2).
+    await this.roleStore.deleteByIdAndDetach(id);
 
     this.invalidateCache();
 
@@ -147,17 +137,17 @@ export class AuthorizationService implements OnApplicationBootstrap {
   }
 
   async findAllRoles(): Promise<RoleResponse[]> {
-    const roles = await this.roleModel.find().sort({ priority: -1, name: 1 });
+    const roles = await this.roleStore.findAll();
     return roles.map((role) => this.toRoleResponse(role));
   }
 
   async findActiveRoles(): Promise<RoleResponse[]> {
-    const roles = await this.roleModel.find({ isActive: true }).sort({ priority: -1, name: 1 });
+    const roles = await this.roleStore.findAllActive();
     return roles.map((role) => this.toRoleResponse(role));
   }
 
   async findRoleById(id: string): Promise<RoleResponse> {
-    const role = await this.roleModel.findById(id);
+    const role = await this.roleStore.findById(id);
     if (!role) {
       throw new NotFoundException(ErrorCode.ROLE_NOT_FOUND);
     }
@@ -165,48 +155,40 @@ export class AuthorizationService implements OnApplicationBootstrap {
   }
 
   async findRoleByName(name: string): Promise<RoleResponse | null> {
-    const role = await this.roleModel.findOne({ name: name.toLowerCase() });
+    const role = await this.roleStore.findByName(name.toLowerCase());
     return role ? this.toRoleResponse(role) : null;
   }
 
   // ==================== User Role Assignment ====================
 
   async assignRoleToUser(userId: string, roleId: string): Promise<void> {
-    const role = await this.roleModel.findById(roleId);
+    const role = await this.roleStore.findById(roleId);
     if (!role || !role.isActive) {
       throw new NotFoundException(ErrorCode.ROLE_NOT_FOUND);
     }
 
-    await this.userModel.findByIdAndUpdate(userId, {
-      $addToSet: { roles: new Types.ObjectId(roleId) },
-      $inc: { permissionsVersion: 1 }, // Invalidate old JWTs on next refresh
-    });
+    await this.userStore.addRoleAndBump(userId, roleId);
 
     this.logger.log('Role assigned to user', { userId, roleId, roleName: role.name });
   }
 
   async removeRoleFromUser(userId: string, roleId: string): Promise<void> {
-    await this.userModel.findByIdAndUpdate(userId, {
-      $pull: { roles: new Types.ObjectId(roleId) },
-      $inc: { permissionsVersion: 1 }, // Invalidate old JWTs on next refresh
-    });
+    await this.userStore.removeRoleAndBump(userId, roleId);
 
     this.logger.log('Role removed from user', { userId, roleId });
   }
 
   async getUserRoles(userId: string): Promise<RoleResponse[]> {
-    const user = await this.userModel
-      .findById(userId)
-      .populate<{ roles: RoleDocument[] }>('roles')
-      .lean();
-
-    if (!user || !user.roles) {
+    const user = await this.userStore.findByIdWithRoles(userId);
+    if (!user || user.roles.length === 0) {
       return [];
     }
 
+    const roles = await this.roleStore.findByIds(user.roles.map((r) => r.id));
     return user.roles
-      .filter((role: RoleDocument) => role.isActive)
-      .map((role: RoleDocument) => this.toRoleResponse(role));
+      .map((ref) => roles.get(ref.id))
+      .filter((role): role is RoleRecord => Boolean(role) && role!.isActive)
+      .map((role) => this.toRoleResponse(role));
   }
 
   // ==================== Permission Resolution ====================
@@ -215,7 +197,7 @@ export class AuthorizationService implements OnApplicationBootstrap {
    * Gets all permissions for a user by expanding their roles.
    * Uses cached role→permissions mapping for performance.
    */
-  async getUserPermissions(roleIds: Types.ObjectId[]): Promise<string[]> {
+  async getUserPermissions(roleIds: readonly (string | { toString(): string })[]): Promise<string[]> {
     if (this.isCacheStale()) {
       await this.refreshCache();
     }
@@ -234,7 +216,7 @@ export class AuthorizationService implements OnApplicationBootstrap {
    * Gets role names for a user's roles.
    * Uses cached role→name mapping for performance.
    */
-  async getUserRoleNames(roleIds: Types.ObjectId[]): Promise<string[]> {
+  async getUserRoleNames(roleIds: readonly (string | { toString(): string })[]): Promise<string[]> {
     if (this.isCacheStale()) {
       await this.refreshCache();
     }
@@ -264,14 +246,14 @@ export class AuthorizationService implements OnApplicationBootstrap {
   }
 
   private async refreshCache(): Promise<void> {
-    const roles = await this.roleModel.find({ isActive: true }).lean();
+    const roles = await this.roleStore.findAllActive();
 
     this.rolePermissionsCache.clear();
     this.roleNamesCache.clear();
 
     for (const role of roles) {
-      this.rolePermissionsCache.set(role._id.toString(), role.permissions);
-      this.roleNamesCache.set(role._id.toString(), role.name);
+      this.rolePermissionsCache.set(role.id, role.permissions);
+      this.roleNamesCache.set(role.id, role.name);
     }
 
     this.cacheLastUpdated = new Date();
@@ -282,34 +264,15 @@ export class AuthorizationService implements OnApplicationBootstrap {
 
   private async seedDefaultRoles(): Promise<void> {
     this.logger.log('Starting role seeding...');
-    let seededCount = 0;
-    let existingCount = 0;
-
-    for (const roleData of DEFAULT_ROLES) {
-      try {
-        const existing = await this.roleModel.findOne({ name: roleData.name });
-        if (!existing) {
-          await this.roleModel.create(roleData);
-          this.logger.log(`Default role seeded: ${roleData.name}`);
-          seededCount++;
-        } else {
-          existingCount++;
-        }
-      } catch (error) {
-        this.logger.error(`Failed to seed role: ${roleData.name}`, {
-          error: (error as Error).message,
-        });
-      }
-    }
-
-    this.logger.log(`Role seeding complete: ${seededCount} created, ${existingCount} already existed`);
+    await this.roleStore.ensureDefaults(DEFAULT_ROLES);
+    this.logger.log(`Role seeding complete: ${DEFAULT_ROLES.length} default roles ensured`);
   }
 
   // ==================== Helpers ====================
 
-  private toRoleResponse(role: RoleDocument): RoleResponse {
+  private toRoleResponse(role: RoleRecord): RoleResponse {
     return {
-      id: role._id.toString(),
+      id: role.id,
       name: role.name,
       description: role.description,
       permissions: role.permissions,

@@ -2,7 +2,7 @@ import { Body, Controller, Delete, Get, HttpCode, HttpStatus, Param, Patch, Post
 import { ApiBearerAuth, ApiOperation, ApiParam, ApiTags } from '@nestjs/swagger';
 import { Request } from 'express';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
-import { UserDocument } from '../user/schemas/user.schema';
+import type { AuthUser } from '@common/auth/auth-user';
 import { RequirePermissions } from '../authorization/decorators/require-permissions.decorator';
 import { Permissions } from '../authorization/constants/permissions';
 import { PermissionsGuard } from '../authorization/guards/permissions.guard';
@@ -43,7 +43,7 @@ export class AdminConnectorCategoryController {
   @ApiOperation({ summary: 'Create a connector category' })
   async create(
     @Body() dto: CreateConnectorCategoryDto,
-    @CurrentUser() user: UserDocument,
+    @CurrentUser() user: AuthUser,
     @Req() req: Request,
   ): Promise<IConnectorCategoryResponse> {
     const category = await this.categoryService.create(user._id.toString(), dto);
@@ -67,7 +67,7 @@ export class AdminConnectorCategoryController {
   async update(
     @Param('id') id: string,
     @Body() dto: UpdateConnectorCategoryDto,
-    @CurrentUser() user: UserDocument,
+    @CurrentUser() user: AuthUser,
     @Req() req: Request,
   ): Promise<IConnectorCategoryResponse> {
     const category = await this.categoryService.update(id, dto);
@@ -91,7 +91,7 @@ export class AdminConnectorCategoryController {
   @ApiParam({ name: 'id', description: 'Category ID' })
   async delete(
     @Param('id') id: string,
-    @CurrentUser() user: UserDocument,
+    @CurrentUser() user: AuthUser,
     @Req() req: Request,
   ): Promise<void> {
     await this.categoryService.delete(id);

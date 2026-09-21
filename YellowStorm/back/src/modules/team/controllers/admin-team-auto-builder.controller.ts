@@ -6,7 +6,7 @@ import { AuditLogService } from '../../authorization/services/audit-log.service'
 import { RequirePermissions } from '../../authorization/decorators/require-permissions.decorator';
 import { PermissionsGuard } from '../../authorization/guards/permissions.guard';
 import { CurrentUser } from '../../auth/decorators/current-user.decorator';
-import { UserDocument } from '../../user/schemas/user.schema';
+import type { AuthUser } from '@common/auth/auth-user';
 import { Permissions } from '../../authorization/constants/permissions';
 import { UpsertAutoBuilderConfigDto } from '../dto';
 import { ITeamAutoBuilderConfigResponse } from '../interfaces/team-auto-builder-config.interface';
@@ -33,7 +33,7 @@ export class AdminTeamAutoBuilderController {
   @ApiOperation({ summary: 'Update team auto-builder configuration' })
   async upsertConfig(
     @Body() dto: UpsertAutoBuilderConfigDto,
-    @CurrentUser() actor: UserDocument,
+    @CurrentUser() actor: AuthUser,
     @Req() req: Request,
   ): Promise<ITeamAutoBuilderConfigResponse> {
     const result = await this.configService.upsertConfig(dto);

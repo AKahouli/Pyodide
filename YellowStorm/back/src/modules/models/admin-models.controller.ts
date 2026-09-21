@@ -23,7 +23,7 @@ import { AuditLogService } from '../authorization/services/audit-log.service';
 import { RequirePermissions } from '../authorization/decorators/require-permissions.decorator';
 import { PermissionsGuard } from '../authorization/guards/permissions.guard';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
-import { UserDocument } from '../user/schemas/user.schema';
+import type { AuthUser } from '@common/auth/auth-user';
 import { Permissions } from '../authorization/constants/permissions';
 import { UpdateModelDto } from './dto/update-model.dto';
 import { NotFoundException } from '../exceptions';
@@ -66,7 +66,7 @@ export class AdminModelsController {
   async updateModel(
     @Param('id') id: string,
     @Body() dto: UpdateModelDto,
-    @CurrentUser() actor: UserDocument,
+    @CurrentUser() actor: AuthUser,
     @Req() req: Request,
   ): Promise<ModelResponse> {
     const model = await this.modelsService.updateModel(id, dto);
@@ -98,7 +98,7 @@ export class AdminModelsController {
   @ApiResponse({ status: 404, description: 'Model not found' })
   async setDefaultModel(
     @Param('id') id: string,
-    @CurrentUser() actor: UserDocument,
+    @CurrentUser() actor: AuthUser,
     @Req() req: Request,
   ): Promise<ModelResponse> {
     const model = await this.modelsService.setDefaultModel(id);
@@ -130,7 +130,7 @@ export class AdminModelsController {
   @ApiResponse({ status: 404, description: 'Model not found' })
   async clearDefaultModel(
     @Param('id') id: string,
-    @CurrentUser() actor: UserDocument,
+    @CurrentUser() actor: AuthUser,
     @Req() req: Request,
   ): Promise<ModelResponse> {
     const model = await this.modelsService.clearDefaultModel(id);
@@ -162,7 +162,7 @@ export class AdminModelsController {
   @ApiResponse({ status: 404, description: 'Model not found' })
   async setConversationV2DefaultModel(
     @Param('id') id: string,
-    @CurrentUser() actor: UserDocument,
+    @CurrentUser() actor: AuthUser,
     @Req() req: Request,
   ): Promise<ModelResponse> {
     const model = await this.modelsService.setConversationV2DefaultModel(id);
@@ -194,7 +194,7 @@ export class AdminModelsController {
   @ApiResponse({ status: 404, description: 'Model not found' })
   async clearConversationV2DefaultModel(
     @Param('id') id: string,
-    @CurrentUser() actor: UserDocument,
+    @CurrentUser() actor: AuthUser,
     @Req() req: Request,
   ): Promise<ModelResponse> {
     const model = await this.modelsService.clearConversationV2DefaultModel(id);
@@ -223,7 +223,7 @@ export class AdminModelsController {
   @ApiOperation({ summary: 'Sync models from LiteLLM' })
   @ApiResponse({ status: 200, description: 'Models synced' })
   async syncModels(
-    @CurrentUser() actor: UserDocument,
+    @CurrentUser() actor: AuthUser,
     @Req() req: Request,
   ): Promise<{ added: number; reactivated: number; deactivated: number; total: number }> {
     const result = await this.modelsService.syncModels();

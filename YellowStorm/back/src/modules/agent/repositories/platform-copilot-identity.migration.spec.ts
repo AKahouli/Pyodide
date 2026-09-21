@@ -6,6 +6,7 @@
  */
 jest.setTimeout(30_000);
 
+import { sql as sqlTag } from 'drizzle-orm';
 import * as fs from 'fs';
 import * as path from 'path';
 import { Types } from 'mongoose';
@@ -24,6 +25,22 @@ const followUpMigrationSql = fs.readFileSync(
   path.resolve(process.cwd(), 'drizzle/0003_platform_copilot_agent_slug.sql'),
   'utf8',
 );
+let CANONICAL_AGENT_TYPE_ID = new Types.ObjectId().toString();
+const FIXTURE_TOOL_ID = new Types.ObjectId().toString();
+const FIXTURE_SKILL_ID = new Types.ObjectId().toString();
+const FIXTURE_DISABLED_SKILL_ID = new Types.ObjectId().toString();
+
+/** fk_agents_agent_type requires the referenced type row to exist. */
+async function seedCanonicalAgentType(pool: { query: (text: string) => Promise<{ rows: Array<{ id: string }> }> }): Promise<void> {
+  await pool.query(
+    `INSERT INTO catalog.agent_types (id, name, slug, default_prompt)
+     VALUES ('${CANONICAL_AGENT_TYPE_ID}', 'Platform Copilot', 'platform_copilot', '')
+     ON CONFLICT DO NOTHING`,
+  );
+  const found = await pool.query(`SELECT id FROM catalog.agent_types WHERE slug = 'platform_copilot'`);
+  CANONICAL_AGENT_TYPE_ID = found.rows[0].id;
+}
+
 const agentTypeSlugMigrationSql = fs.readFileSync(
   path.resolve(process.cwd(), 'drizzle/0004_platform_copilot_agent_type_slug.sql'),
   'utf8',
@@ -47,7 +64,7 @@ const createInput = (slug: string): CreateAgentInput => ({
   id: new Types.ObjectId().toString(),
   name: `Agent ${new Types.ObjectId().toString().slice(-6)}`,
   slug,
-  agentType: new Types.ObjectId().toString(),
+  agentType: CANONICAL_AGENT_TYPE_ID,
   agentTypeSlug: 'platform_copilot',
   role: 'Custom role',
   description: 'Custom description',
@@ -56,9 +73,9 @@ const createInput = (slug: string): CreateAgentInput => ({
   instruction: 'Custom instruction',
   ignorePrePrompt: true,
   knowledgeBases: [new Types.ObjectId().toString()],
-  tools: [new Types.ObjectId().toString()],
-  skills: [new Types.ObjectId().toString()],
-  disabledSkills: [new Types.ObjectId().toString()],
+  tools: [FIXTURE_TOOL_ID],
+  skills: [FIXTURE_SKILL_ID],
+  disabledSkills: [FIXTURE_DISABLED_SKILL_ID],
   connectors: [new Types.ObjectId().toString()],
   connectorActionSelections: [],
   guardrails: { enabled: true },
@@ -77,6 +94,18 @@ describeIntegration('platform copilot identity migration', () => {
   const created: string[] = [];
 
   beforeEach(async () => {
+    await seedCanonicalAgentType(pool);
+    // fk_agent_*_skill/tool cascades demand the referenced catalog rows.
+    await pool.query(
+      `INSERT INTO catalog.tools (id, name, description) VALUES ('${FIXTURE_TOOL_ID}', 'spec-tool-${FIXTURE_TOOL_ID.slice(-6)}', '')
+       ON CONFLICT (id) DO NOTHING`,
+    );
+    for (const [label, id] of [['spec-skill', FIXTURE_SKILL_ID], ['spec-disabled', FIXTURE_DISABLED_SKILL_ID]] as const) {
+      await pool.query(
+        `INSERT INTO catalog.skills (id, slug, name, description, created_by) VALUES ('${id}', '${label}-${id.slice(-6)}', '${label}-${id.slice(-6)}', '', '000000000000000000000000')
+         ON CONFLICT (id) DO NOTHING`,
+      );
+    }
     await pool.query(
       `DELETE FROM agents WHERE slug IN ('my-second-brain', 'platform_copilot', 'platform-copilot')`,
     );
@@ -252,6 +281,10 @@ describeIntegration('platform copilot identity migration', () => {
   ])('rejects %s without mutation', async (_label, agentTypeSlug, expectedError) => {
     const canonical = createInput('platform-copilot');
     created.push(canonical.id);
+    // The corruption below sets a 24-char id that must exist for the FK.
+    await pool.query(
+      `INSERT INTO catalog.agent_types (id, name, slug, default_prompt) VALUES ('zzzzzzzzzzzzzzzzzzzzzzzz', 'Invalid Type', 'invalid_type', '') ON CONFLICT DO NOTHING`,
+    );
     await repository.create(canonical);
     await pool.query('UPDATE agents SET agent_type_slug = $1, agent_type_id = $2 WHERE id = $3', [
       agentTypeSlug,

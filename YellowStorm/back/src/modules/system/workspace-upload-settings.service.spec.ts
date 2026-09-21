@@ -1,58 +1,37 @@
 import { Test } from '@nestjs/testing';
-import { getModelToken } from '@nestjs/mongoose';
 import { BadRequestException } from '@nestjs/common';
-import { SystemSetting } from './schemas/system-setting.schema';
 import { WorkspaceUploadSettingsService } from './workspace-upload-settings.service';
 import { LoggerService } from '../logger';
+import { SYSTEM_SETTING_STORE, type SystemSettingRow, type SystemSettingStore } from './persistence/system-setting.store';
 import {
   DEFAULT_WORKSPACE_UPLOAD_EXTENSIONS,
   WORKSPACE_UPLOAD_SETTINGS_KEY,
 } from './constants/workspace-upload-settings.constants';
 import { EXTENSION_MIME_TYPES } from '../document/constants/mime-types.constant';
 
-interface StoredSetting {
-  key: string;
-  value: { allowedExtensions: string[] };
-  updatedAt?: Date;
-}
+class InMemorySettingStore implements SystemSettingStore {
+  private readonly rows = new Map<string, SystemSettingRow>();
 
-class InMemoryModel {
-  private store = new Map<string, StoredSetting>();
-
-  findOne({ key }: { key: string }): {
-    lean: () => { exec: () => Promise<StoredSetting | null> };
-  } {
-    const value = this.store.get(key) ?? null;
-    return {
-      lean: () => ({
-        exec: async () => value,
-      }),
-    };
+  async get(key: string): Promise<SystemSettingRow | null> {
+    return this.rows.get(key) ?? null;
   }
 
-  findOneAndUpdate(
-    filter: { key: string },
-    update: { key: string; value: { allowedExtensions: string[] } },
-  ): {
-    lean: () => { exec: () => Promise<StoredSetting> };
-  } {
-    const next: StoredSetting = { key: filter.key, value: update.value, updatedAt: new Date() };
-    this.store.set(filter.key, next);
-    return {
-      lean: () => ({
-        exec: async () => next,
-      }),
-    };
+  async getMany(keys: string[]): Promise<SystemSettingRow[]> {
+    return keys.flatMap((key) => (this.rows.has(key) ? [this.rows.get(key)!] : []));
   }
 
-  async create(doc: StoredSetting): Promise<StoredSetting> {
-    const stored = { ...doc, updatedAt: new Date() };
-    this.store.set(doc.key, stored);
-    return stored;
+  async upsert(key: string, value: unknown): Promise<SystemSettingRow> {
+    const row: SystemSettingRow = { key, value, updatedAt: new Date() };
+    this.rows.set(key, row);
+    return row;
   }
 
-  seed(value: StoredSetting): void {
-    this.store.set(value.key, value);
+  async delete(key: string): Promise<void> {
+    this.rows.delete(key);
+  }
+
+  seed(row: SystemSettingRow): void {
+    this.rows.set(row.key, row);
   }
 }
 
@@ -68,14 +47,14 @@ const buildLogger = (): LoggerService =>
 
 describe('WorkspaceUploadSettingsService', () => {
   let service: WorkspaceUploadSettingsService;
-  let model: InMemoryModel;
+  let store: InMemorySettingStore;
 
   beforeEach(async () => {
-    model = new InMemoryModel();
+    store = new InMemorySettingStore();
     const moduleRef = await Test.createTestingModule({
       providers: [
         WorkspaceUploadSettingsService,
-        { provide: getModelToken(SystemSetting.name), useValue: model },
+        { provide: SYSTEM_SETTING_STORE, useValue: store },
         { provide: LoggerService, useFactory: buildLogger },
       ],
     }).compile();
@@ -91,7 +70,7 @@ describe('WorkspaceUploadSettingsService', () => {
   });
 
   it('returns the stored list when present', async () => {
-    model.seed({
+    store.seed({
       key: WORKSPACE_UPLOAD_SETTINGS_KEY,
       value: { allowedExtensions: ['.pdf', '.png'] },
       updatedAt: new Date('2026-01-01T00:00:00Z'),
@@ -127,9 +106,10 @@ describe('WorkspaceUploadSettingsService', () => {
   });
 
   it('isExtensionAllowed respects the persisted list', async () => {
-    model.seed({
+    store.seed({
       key: WORKSPACE_UPLOAD_SETTINGS_KEY,
       value: { allowedExtensions: ['.txt'] },
+      updatedAt: new Date(),
     });
     await service.onApplicationBootstrap();
     expect(await service.isExtensionAllowed('notes.TXT')).toBe(true);

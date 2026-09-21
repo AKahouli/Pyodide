@@ -6,11 +6,12 @@ import {
   ForbiddenException,
 } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
-import { InjectModel } from '@nestjs/mongoose';
-import { Model, Types } from 'mongoose';
+import { Inject } from '@nestjs/common';
+import { Types } from 'mongoose';
+import { isObjectId } from '@common/postgres';
 import { AgentRepository } from '../repositories/agent.repository';
 import { AgentRecord } from '../repositories/agent-record.mapper';
-import { SharedAgent, SharedAgentDocument } from '../schemas/shared-agent.schema';
+import { AGENT_SHARE_STORE, type AgentShareStore } from '../persistence/agent-share.store';
 import { ErrorCode } from '../../exceptions/constants/error-codes';
 import {
   AGENT_PERMISSION_KEY,
@@ -36,8 +37,8 @@ export class AgentPermissionGuard implements CanActivate {
   constructor(
     private readonly reflector: Reflector,
     private readonly agentRepository: AgentRepository,
-    @InjectModel(SharedAgent.name)
-    private readonly sharedAgentModel: Model<SharedAgentDocument>,
+    @Inject(AGENT_SHARE_STORE)
+    private readonly shareStore: AgentShareStore,
   ) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
@@ -54,7 +55,7 @@ export class AgentPermissionGuard implements CanActivate {
     const userId = request.user._id.toString();
     const agentId = request.params.id ?? request.params.agentId;
 
-    if (!agentId || !Types.ObjectId.isValid(agentId)) {
+    if (!agentId || !isObjectId(agentId)) {
       throw new NotFoundException(ErrorCode.CUSTOM_AGENT_NOT_FOUND);
     }
 
@@ -103,13 +104,7 @@ export class AgentPermissionGuard implements CanActivate {
     }
 
     // Check shared access.
-    const share = await this.sharedAgentModel
-      .findOne({
-        agentId: new Types.ObjectId(agentId),
-        sharedWith: new Types.ObjectId(userId),
-      })
-      .lean()
-      .exec();
+    const share = await this.shareStore.find(agentId, userId);
 
     if (!share) {
       throw new ForbiddenException(ErrorCode.CUSTOM_AGENT_FORBIDDEN);
@@ -126,7 +121,7 @@ export class AgentPermissionGuard implements CanActivate {
       agent,
       isOwner: false,
       permission: sharePermission,
-      shareId: share._id.toString(),
+      shareId: share.id,
     };
 
     return true;

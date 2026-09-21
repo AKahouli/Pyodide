@@ -1,7 +1,6 @@
-import { Injectable, OnModuleInit } from '@nestjs/common';
-import { InjectModel } from '@nestjs/mongoose';
-import { Model } from 'mongoose';
+import { Inject, Injectable, OnModuleInit } from '@nestjs/common';
 import { AgentService } from '../agent/agent.service';
+import { SYSTEM_SETTING_STORE, type SystemSettingStore } from './persistence/system-setting.store';
 import type {
   AttachmentIntelligenceSettings,
   CompactionSettings,
@@ -12,7 +11,6 @@ import type {
   ConversationSettingsValue,
 } from './interfaces/conversation-settings.interface';
 import { DEFAULT_CONVERSATION_SETTINGS } from './interfaces/conversation-settings.interface';
-import { SystemSetting, SystemSettingDocument } from './schemas/system-setting.schema';
 
 const KEY = 'conversation_settings';
 const CACHE_MS = 5_000;
@@ -25,7 +23,7 @@ export class ConversationSettingsService implements OnModuleInit {
   private cacheVersion = 0;
 
   constructor(
-    @InjectModel(SystemSetting.name) private readonly settings: Model<SystemSettingDocument>,
+    @Inject(SYSTEM_SETTING_STORE) private readonly settings: SystemSettingStore,
     private readonly agents: AgentService,
   ) {}
 
@@ -46,7 +44,7 @@ export class ConversationSettingsService implements OnModuleInit {
   }
 
   private async loadSettings(version: number): Promise<ConversationSettings> {
-    const setting = await this.settings.findOne({ key: KEY }).lean().exec();
+    const setting = await this.settings.get(KEY);
     const stored = setting?.value as Partial<ConversationSettingsValue> | undefined;
     const settings: ConversationSettings = {
       redactSensitiveText: stored?.redactSensitiveText !== false,
@@ -174,14 +172,10 @@ export class ConversationSettingsService implements OnModuleInit {
         ...(value.attachmentIntelligence ?? current.attachmentIntelligence),
       },
     };
-    const updated = await this.settings.findOneAndUpdate(
-      { key: KEY },
-      { key: KEY, value: persisted },
-      { upsert: true, new: true, setDefaultsOnInsert: true },
-    ).lean().exec();
+    const updated = await this.settings.upsert(KEY, persisted);
     const result: ConversationSettings = {
       ...persisted,
-      updatedAt: updated?.updatedAt as Date | undefined,
+      updatedAt: updated.updatedAt,
     };
     this.cacheVersion += 1;
     this.cache = { settings: result, expiresAt: Date.now() + CACHE_MS };

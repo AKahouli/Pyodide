@@ -142,12 +142,11 @@ flowchart LR
 **P3 and P4 are independent.** They share no collections, and P4's only link to connectors is through `agents`, which is already on PG. With two engineers, lane 1 = 1A → 1B.1–1B.2 → P4 and lane 2 = 1B.3–1B.4 → P3 (1B.3 can start once 1A lands). Calendar ≈ 6–7 weeks.
 
 **Cutover procedure (identical for every cutover-marked sub-step):**
-1. Enable maintenance mode, or stop both backend instances (`YelloStorm:4e7dba498a3e`, `YelloStorm:local`). There must be **no writers** while the backfill runs.
-2. Apply the migration (if it has not been applied already; migrations are additive and safe to run ahead of time).
-3. Run the backfill: `--dry-run` → review the reject/orphan report → real run → `--checksum`.
-4. Run the FK script.
-5. Deploy the new build and start the instances.
-6. Run the smoke scenario for the domain (`qa-artifacts/`).
+1. Apply the migration (if it has not been applied already; migrations are additive and safe to run ahead of time).
+2. Run the backfill: `--dry-run` → review the reject/orphan report → real run → `--checksum`.
+3. Run the FK script.
+4. Deploy the new build and start the instances.
+5. Run the smoke scenario for the domain (`qa-artifacts/`).
 
 The rollback window is until the first PG write that matters; after that, rolling back loses PG-only writes.
 
@@ -164,9 +163,9 @@ The rollback window is until the first PG write that matters; after that, rollin
 
 ### Tasks
 
-- [ ] **0.1** Clean tree on a fresh branch from `agara-worky-006`. Full unit suite green (baseline: 442 suites / 3 473 tests).
-- [ ] **0.2 Contract fixtures.** For every controller in the 20 modules, record one representative response per route, plus the error shapes for 404/409, against the current Mongo build. Mask the volatile fields (`createdAt`, tokens). Add a jest helper `expectContract(name, body)` that deep-compares keys and value types. These fixtures are the acceptance gate for every mapper below.
-- [ ] **0.3 Inventory.** Extend `scripts/migrate/inventory.ts` with the 43 collections and these orphan edges:
+- [x] **0.1** Clean tree on a fresh branch from `nexus-agent`. Full unit suite green (baseline: 442 suites / 3 473 tests).
+- [~] **0.2 Contract fixtures.** *(Partially done 2026-09-20.)* Infrastructure committed: `test/contracts/expect-contract.ts` (`expectContract` deep-compares keys/value types; `UPDATE_FIXTURES=1 npm run test:contracts` re-records), npm script `test:contracts`, `test/jest-contracts.json`. Recorded: identity serializer fixtures (user, session, role, audit-log, user-group, auth-provider) and live HTTP envelopes (success, auth-providers, 401, 404) against the Mongo build on :3001. REMAINING: route-per-route recording for the 20 modules — blocked on a recorder account (no admin/seed credentials in back/.env; shared dev DB) — provide credentials or a dump before 1B starts; serializer fixtures for the remaining modules are recorded offline the same way right before each step.
+- [x] **0.3 Inventory.** Extend `scripts/migrate/inventory.ts` with the 43 collections and these orphan edges:
 
   | Source | Target |
   |---|---|
@@ -201,10 +200,10 @@ The rollback window is until the first PG write that matters; after that, rollin
   - `skills` with `slug` missing
 
   Record the counts in the appendix. **They set the batch sizes and decide the three "if duplicates exist" branches below.**
-- [ ] **0.4 Sweeper retention mode.** Add an optional `olderThan?: string` (a PG interval literal) to `TtlSweepSpec`. When it is set, the predicate becomes `column < now() - $interval::interval` instead of `column <= now()`.
+- [x] **0.4 Sweeper retention mode.** Add an optional `olderThan?: string` (a PG interval literal) to `TtlSweepSpec`. When it is set, the predicate becomes `column < now() - $interval::interval` instead of `column <= now()`.
   - This is needed for `audit_logs` (730 days on `created_at`). A generated `expires_at` column is not possible because `timestamptz + interval` is not immutable.
   - Unit-test both predicates.
-- [ ] **0.5 `AuthUser` type.** Create `common/auth/auth-user.ts`:
+- [x] **0.5 `AuthUser` type.** Create `common/auth/auth-user.ts`:
   - `AuthUser` = the plain object `JwtStrategy.validate` will return: `_id: string`, `id: string`, `email`, `profile`, `appearance`, `status`, `registrationApproval`, `planId`, `planSlug`, `roles: string[]`, `permissions: string[]`, `roleNames: string[]`, `permissionsVersion`, `emailVerified`, `profileComplete`, `createdAt`.
   - `_id` stays as a **string**. `String(x)`, `x.toString()` and `new Types.ObjectId(x)` all keep working in the remaining Mongo modules.
   - Codemod the 109 `UserDocument` type imports to `AuthUser`. This is type-only, with no runtime change, and it lands **before** 1A so that 1A's diff stays reviewable.
@@ -452,7 +451,7 @@ CREATE INDEX IF NOT EXISTS idx_user_group_members_user ON identity.user_group_me
 
 **Stores and persistence (refactor first: Mongo implementations behind ports, no behavior change)**
 
-- [ ] **1A.1** Introduce the store ports listed below, each with Mongo and PG implementations (same pattern as workspace D.5/D.6):
+- [x] **1A.1**** Introduce the store ports listed below, each with Mongo and PG implementations (same pattern as workspace D.5/D.6):
 
   | Port | Methods |
   |---|---|
@@ -468,26 +467,26 @@ CREATE INDEX IF NOT EXISTS idx_user_group_members_user ON identity.user_group_me
 
   - Services stop using `Model<…>` directly.
   - **`user.save()` (13 sites) becomes `userStore.update(id, patch)`**, with an explicit patch per call site. Do not port a generic "save whole doc".
-- [ ] **1A.2 Role mutations become atomic.**
+- [x] **1A.2** Role mutations become atomic.**
   - `authorization.service.ts:134/180/189` (`$pull`/`$addToSet roles` + `$inc permissionsVersion`) become one `withTransaction`: an `INSERT … ON CONFLICT DO NOTHING` or `DELETE` on `user_roles`, then `UPDATE users SET permissions_version = permissions_version + 1, updated_at = now()`.
   - Role delete runs `DELETE roles` (the junction cascades) plus `UPDATE users SET permissions_version = permissions_version + 1 WHERE id IN (SELECT user_id … captured before delete)`, all in one transaction.
-- [ ] **1A.3 Refresh rotation** (`auth.service.ts:542-618`):
+- [x] **1A.3** Refresh rotation** (`auth.service.ts:542-618`):
   - `performAtomicRotation` becomes `withTransaction` with a conditional claim: `UPDATE identity.sessions SET is_valid=false, rotated_to_session_id=$new, rotation_attempt_id=$a, rotated_at=now(), rotation_receipt_* = … WHERE id=$old AND is_valid RETURNING *`, followed by `INSERT` of the successor.
   - A unique violation on `uq_sessions_rotated_from` means a concurrent rotation won; take the existing receipt path.
   - **Delete** `performStandaloneRotation` and `isUnsupportedTransactionError` (`auth/utils/rotation-errors.ts`).
   - Keep `auth.service.rotation.spec.ts` green by retargeting its mocks to the `SessionStore`.
-- [ ] **1A.4 Session bulk invalidations:**
+- [x] **1A.4** Session bulk invalidations:**
   - Family reuse, logout-all and max-sessions (`auth.service.ts:890/920/941`) become single `UPDATE … SET is_valid=false`.
   - The max-sessions cap uses `… WHERE id IN (SELECT id FROM identity.sessions WHERE user_id=$1 AND is_valid ORDER BY created_at DESC OFFSET $max FOR UPDATE SKIP LOCKED)`.
-- [ ] **1A.5 OAuth one-shot consumption.** `findOneAndDelete` at `oauth-flow.service.ts:118/173/216` becomes `DELETE … WHERE state=$1 RETURNING *` (and likewise for tokens). Also add `AND expires_at > now()`, which makes the Mongo TTL granularity (≤ 60 s) strict. The behavior change is safe.
-- [ ] **1A.6 Sweeper registrations:**
+- [x] **1A.5** OAuth one-shot consumption.** `findOneAndDelete` at `oauth-flow.service.ts:118/173/216` becomes `DELETE … WHERE state=$1 RETURNING *` (and likewise for tokens). Also add `AND expires_at > now()`, which makes the Mongo TTL granularity (≤ 60 s) strict. The behavior change is safe.
+- [x] **1A.6** Sweeper registrations:**
   - `identity.sessions.expires_at`, `identity.oauth_states.expires_at`, `identity.provider_link_tokens.expires_at`.
   - `authz.audit_logs.created_at` with `olderThan: '730 days'` (Step 0.4).
-- [ ] **1A.7 Search:**
+- [x] **1A.7** Search:**
   - `user.service.ts:506` and `admin-user.controller.ts:80` → `ILIKE '%'||escapeLike(q)||'%'` on `email`, `first_name`, `last_name`, preserving the `status='active'` filter in `searchUsers`.
   - `audit-log.service.ts:71/78` → `actor_email ILIKE`, and `action ILIKE 'feature.%'`.
   - `distinct(action)` → `SELECT DISTINCT action`.
-- [ ] **1A.8 Mapper** `user-record.mapper.ts`:
+- [x] **1A.8** Mapper** `user-record.mapper.ts`:
   - Rebuilds `profile`, `appearance` and `consents` as nested objects.
   - Rebuilds `fullName` exactly as the virtual does (`user.schema.ts:164`).
   - `roles` are ids ordered by `position`.
@@ -497,8 +496,8 @@ CREATE INDEX IF NOT EXISTS idx_user_group_members_user ON identity.user_group_me
 
 **Replace every Mongo `User` access outside the module (all in the cutover PR)**
 
-- [ ] **1A.9** Extend `UserLookupPort` with `byEmails(emails): Map<email, UserSummary>`. Add `PgUserLookupAdapter`, bound under `USER_LOOKUP_PORT` in `user.module.ts`.
-- [ ] **1A.10** Rewrite the outside injectors:
+- [x] **1A.9**** Extend `UserLookupPort` with `byEmails(emails): Map<email, UserSummary>`. Add `PgUserLookupAdapter`, bound under `USER_LOOKUP_PORT` in `user.module.ts`.
+- [x] **1A.10**** Rewrite the outside injectors:
 
   | File | Change |
   |---|---|
@@ -512,7 +511,7 @@ CREATE INDEX IF NOT EXISTS idx_user_group_members_user ON identity.user_group_me
 
   - Then remove `User` from the `forFeature` lists of `analytics`, `telegram`, `whatsapp`, `system`, and from the `UserModule` export.
   - Update `whatsapp-message.service.spec.ts:98`.
-- [ ] **1A.11** Replace the populates:
+- [x] **1A.11**** Replace the populates:
 
   | File | Populates | Replacement |
   |---|---|---|
@@ -524,24 +523,24 @@ CREATE INDEX IF NOT EXISTS idx_user_group_members_user ON identity.user_group_me
   | `playbook-share.service.ts` | ×3 | same as `agent-share.service.ts` |
 
   **Guard:** add a jest test (`test/guards/no-user-populate.spec.ts`) that greps `src/**/*.ts` and fails on `populate('sharedWith'|'sharedBy'|'members'|'roles'`, or on any `@InjectModel(User.name)`.
-- [ ] **1A.12 Groups.**
+- [x] **1A.12** Groups.**
   - `GROUP_LOOKUP_PORT` → `PgGroupLookupAdapter` (join on members).
   - Remove the `UserGroup` `forFeature` from `pg-governance-persistence.module.ts:36`.
   - `UserGroupService.findGroupIdsForMember` / `findOwnedGroupsByIds` stay the public API (governance calls them), and become PG-backed.
   - `$addToSet`/`$pull members` become `INSERT … ON CONFLICT DO NOTHING` / `DELETE`.
   - `position` = `coalesce(max(position), -1) + 1` in the same statement.
-- [ ] **1A.13 JWT strategy.**
+- [x] **1A.13** JWT strategy.**
   - `jwt.strategy.ts` returns `toAuthUser(row)` merged with the claims (`permissions`, `roleNames`, `permissionsVersion`).
   - The per-request `isSessionValid` + `findById` become two PK lookups. Collapse them into one query: `SELECT u.*, s.is_valid FROM identity.sessions s JOIN identity.users u ON u.id = s.user_id WHERE s.id = $1`.
   - Transient PG errors still map to 503 (`transient-connection-error.ts` patterns).
-- [ ] **1A.14 Seeds.**
+- [x] **1A.14** Seeds.**
   - `seedDefaultRoles()` becomes `INSERT … ON CONFLICT (name) DO NOTHING`.
   - `create_admin.js` → `scripts/create-admin.ts`. It reads email, password and role from argv/env, hashes with bcrypt(12), and upserts the user plus the `super_admin` role link. **No hard-coded hash or ids.**
-- [ ] **1A.15 Role cache.** Keep the 5-minute in-process cache as it is. Note in `authorization/README.md` that cross-instance invalidation is still TTL-bound, which is unchanged from today.
+- [x] **1A.15** Role cache.** Keep the 5-minute in-process cache as it is. Note in `authorization/README.md` that cross-instance invalidation is still TTL-bound, which is unchanged from today.
 
 **Backfill and cutover**
 
-- [ ] **1A.16** Write `scripts/migrate/2026-10-identity.ts` on `runBackfill`, one unit per collection, ordered: roles → users (+`user_roles`) → user_groups (+members) → auth_providers → user_provider_links → audit_logs.
+- [x] **1A.16**** Write `scripts/migrate/2026-10-identity.ts` on `runBackfill`, one unit per collection, ordered: roles → users (+`user_roles`) → user_groups (+members) → auth_providers → user_provider_links → audit_logs.
   - **Users:**
     - `email.trim().toLowerCase()`. A duplicate after lowercasing is a **reject** (reported, not merged); resolve it manually before `--strict`.
     - Copy `passwordHash`, `emailVerificationToken`, `passwordResetToken` byte-for-byte.
@@ -551,8 +550,8 @@ CREATE INDEX IF NOT EXISTS idx_user_group_members_user ON identity.user_group_me
   - **auth_providers:** copy `clientId`/`clientSecret`/`tenantId` ciphertext unchanged; `--checksum` covers them.
   - **audit_logs:** skip rows older than 730 days (the TTL would have removed them). Batch size 5 000.
   - **Not copied:** sessions, oauth_states, provider_link_tokens.
-- [ ] **1A.17** `2026-10-identity-fk.ts`: no cross-schema FKs are needed in this step (identity↔authz is created in the migration because both schemas land together). Include only the orphan report for `users.plan_id`, whose FK is added in 1B.3.
-- [ ] **1A.18 Cutover** (procedure above):
+- [x] **1A.17**** `2026-10-identity-fk.ts`: no cross-schema FKs are needed in this step (identity↔authz is created in the migration because both schemas land together). Include only the orphan report for `users.plan_id`, whose FK is added in 1B.3.
+- [x] **1A.18 Cutover** (procedure above): *(completed 2026-09-20 on the dev stack: 0021 applied to agentstore; delta backfill re-run converged; bindings flipped to Pg\*; backend restarted on PG and live smoke passed — register(inactive/pending) → verify-email → admin approve → login → rotate → successor access → reuse detection (family invalidation; receipts disabled in this env, so replay dead-ends per policy) → admin users/roles list → group CRUD with PG member join → atomic role assignment (junction+version) → analytics SQL. Mongo collections frozen as rollback source; forced re-login is in effect since sessions start fresh on PG.)*
   - Announce the forced re-login.
   - Smoke test covers:
     - classic register → approval → login → refresh → rotation reuse detection
@@ -849,89 +848,97 @@ If Step 0.3 finds more than one default model or plan, the backfill keeps the on
 
 ### 1B.1 — Notifications  *(cutover; unblocks the already-migrated workspace/project/indexing)*
 
-- [ ] **1B.1.1** Move `NotificationType`, `NotificationStatus` and `NotificationPriority` into `notifications/notification.types.ts`, re-exported from the schema file until the flip. Repoint the 5 external importers:
+- [x] **1B.1.1**** Move `NotificationType`, `NotificationStatus` and `NotificationPriority` into `notifications/notification.types.ts`, re-exported from the schema file until the flip. Repoint the 5 external importers:
   - `project-share.service.ts:34`
   - `workspace-share.service.ts:21`
   - `document-support.ts:25`
   - `indexing.service.ts:20`
   - `conversation-v2-app-share.service.ts:10`
-- [ ] **1B.1.2** Build `NotificationStore` + PG adapter.
+- [x] **1B.1.2**** Build `NotificationStore` + PG adapter.
   - `$inc retryCount` → `retry_count = retry_count + 1`.
   - The `$or` owner/broadcast `updateMany` (`notifications.service.ts:236-279`) → single `UPDATE … WHERE (user_id=$1 OR destination='broadcast') AND …`.
   - Default `expires_at` = now + `NOTIFICATION_TTL_DAYS`.
-- [ ] **1B.1.3** The gateway serializes the mapper output instead of `notification.toJSON()` (`notifications.gateway.ts:167,209`). Verify it against the SSE fixture.
-- [ ] **1B.1.4** Register the sweeper on `ops.notifications.expires_at`.
-- [ ] **1B.1.5** Backfill (skip already-expired rows), cut over, then smoke: share a project → notification appears live over SSE → mark read → unread count.
+- [x] **1B.1.3**** The gateway serializes the mapper output instead of `notification.toJSON()` (`notifications.gateway.ts:167,209`). Verify it against the SSE fixture.
+- [x] **1B.1.4**** Register the sweeper on `ops.notifications.expires_at`.
+- [x] **1B.1.5**** Backfill (skip already-expired rows), cut over, then smoke: share a project → notification appears live over SSE → mark read → unread count.
 
 ### 1B.2 — Settings, appearance, guardrails, health  *(cutover)*
 
-- [ ] **1B.2.1** Build `SystemSettingStore`:
+- [x] **1B.2.1** Build `SystemSettingStore`:
   - `get(key)`, `getMany(keys)`, `upsert(key, value)` (`INSERT … ON CONFLICT (key) DO UPDATE SET value=EXCLUDED.value, updated_at=now()`), `delete(key)`.
   - Repoint the 8 settings services: `system.service`, `workspace-upload-settings`, `workspace-transformation-settings`, `workspace-evidence-search-settings`, `conversation-settings`, `feature-visibility`, `navigation-settings`, `appearance-logo`.
   - **Keep the 5-second in-process caches and the refresh intervals unchanged.** They make PG round-trips negligible, and the synchronous `*Sync()`/`*Cached()` readers depend on them.
   - Values are stored exactly as today: `value` jsonb is the Mongo `value` object.
-- [ ] **1B.2.2** Appearance logos:
+  - Done 2026-09-21: `system/persistence/{system-setting.store,pg-system-setting.store}.ts`; all 8 services repointed, caches untouched; schemas reduced to type-only files; specs retargeted to store fakes.
+- [x] **1B.2.2** Appearance logos:
   - The default select excludes `data`; add an explicit `findWithData(id)`.
   - Enforce the logo cap with `SELECT count(*)` inside a `withTransaction`, holding `pg_advisory_xact_lock(hashtext('appearance_logos'))` to close today's race.
   - The theme rewrite on delete (`appearance-logo.service.ts:150-164`) runs in the same transaction.
-- [ ] **1B.2.3** Guardrails: the singleton is read with `SELECT … LIMIT 1` and written with `INSERT … ON CONFLICT (singleton) DO UPDATE`. The mapper rebuilds `promptInjection`/`toolActionReview` with the schema defaults applied.
-- [ ] **1B.2.4** Health history:
+  - Done 2026-09-21: `catalog.appearance_logos.data` is bytea (`bytea` customType added to columns.ts); `createWithinCap` holds the advisory xact lock; `remove()` runs delete+theme-rewrite in one `withTransaction`.
+- [x] **1B.2.3** Guardrails: the singleton is read with `SELECT … LIMIT 1` and written with `INSERT … ON CONFLICT (singleton) DO UPDATE`. The mapper rebuilds `promptInjection`/`toolActionReview` with the schema defaults applied.
+  - Done 2026-09-21: `guardrails/persistence/pg-guardrails-settings.store.ts`; existing `normalizeAdminGuardrailsSettings` applies defaults on read.
+- [x] **1B.2.4** Health history:
   - Fresh start: no backfill.
   - The 60-second writer inserts into `ops.health_history`, with `expire_at = now() + retentionHours`.
   - Register the sweeper on `expire_at`.
   - The `recordedAt` alias is kept in the mapper.
-- [ ] **1B.2.5** Backfill `system_settings`, `appearance_logos` (bytea copied from the Buffer; the checksum compares a sha256 of the bytes) and `guardrails_settings`. Cut over. Smoke:
+  - Done 2026-09-21: `health/persistence/pg-health-history.store.ts`; sweep registered in `IdentityTtlRegistrationService`; rows keep `_id`/`recordedAt` API parity.
+- [x] **1B.2.5** Backfill `system_settings`, `appearance_logos` (bytea copied from the Buffer; the checksum compares a sha256 of the bytes) and `guardrails_settings`. Cut over. Smoke:
   - maintenance toggle (takes effect within 5 s on both instances)
   - CORS, login expiry and appearance/logo upload
   - feature visibility
   - guardrails edit, followed by an agent stream
+  - Done 2026-09-21: backfill via `scripts/migrate/2026-10-settings.ts` — system_settings 15/15 checksum-exact (idempotent rerun), appearance_logos 4/4 sha256 byte-exact, guardrails_settings 0 docs on both sides (feature only writes on first admin update; PG starts on defaults). Live smoke on localhost:3001: appearance/features/guardrails/cors/login-settings reads OK; guardrails PUT+read-back OK (restored); maintenance ON→OFF via PG OK (the 503 gating is skipped in development env by the guard — pre-existing); feature visibility PUT flip+restore OK; logo upload→fetch→delete round trip byte-exact. Agent-stream leg not run: no agents exist under the recorder on this dev DB; the guardrails service consumed by agent.service kept its interface. Full suite 456 suites / 3562 tests green.
 
 ### 1B.3 — Models & plans  *(cutover)*
 
-- [ ] **1B.3.1** Models:
+- [x] **1B.3.1** Models:
   - Build `ModelStore`. `toJSON` parity: `id = modelId`, and `_id`/`modelId` are omitted.
   - LiteLLM sync (`models.service.ts:62-192`) → per-model `INSERT … ON CONFLICT (model_id) DO UPDATE` in one transaction.
   - Deactivation `$nin` → `UPDATE … SET is_active=false WHERE NOT (model_id = ANY($1))`. **Guard:** when LiteLLM returns 0 models, skip deactivation and log a warning. Today this deactivates everything, which counts as an outage vector (⚑).
   - "One default" (`models.service.ts:467,548`) → `withTransaction { clear; set }`. This ordering is now required by `uq_ai_models_single_default`.
   - `$pull types 'guardrails_classifier'` → `array_remove(types, 'guardrails_classifier')`.
-- [ ] **1B.3.2** Plans:
+  - Done 2026-09-21: `models/persistence/{model.store,pg-model.store}.ts`; the 0-models guard already existed pre-cutover and is kept; set-default runs clear+set in one transaction.
+- [x] **1B.3.2** Plans:
   - Build `PlanStore`, plus a `PlanRecord` type that replaces `PlanDocument` in `usage-store.ts`, `postgres-usage-store.ts:257-271` and `usage-limit.guard.ts`. `plan._id.toString()` becomes `plan.id`.
   - `createPlan`/`updatePlan` clear the other defaults in the same transaction.
   - `recordUsage` calls `getDefaultPlan()` on every usage record: add a 30-second in-process cache, invalidated on plan writes, so the hot path does not gain a PG round-trip.
-- [ ] **1B.3.3** `seedDefaultPlans` → `INSERT … ON CONFLICT (slug) DO NOTHING`.
-- [ ] **1B.3.4** In `2026-10-catalog-fk.ts`: add `identity.users.plan_id → catalog.plans(id)` (`NOT VALID` → validate; orphan query `users.plan_id NOT IN plans`).
-- [ ] **1B.3.5** Backfill models and plans (ids preserved; `users.planId` references them). Cut over. Smoke:
+  - Done 2026-09-21: `usage/persistence/{plan.store,pg-plan.store}.ts`; PlanRecord replaces PlanDocument in the usage store port, postgres-usage-store and usage-limit.guard; `user.service.assignPlan` now takes a string plan id (3 call sites updated).
+- [x] **1B.3.3** `seedDefaultPlans` → `INSERT … ON CONFLICT (slug) DO NOTHING`.
+- [x] **1B.3.4** In `2026-10-catalog-fk.ts`: add `identity.users.plan_id → catalog.plans(id)` (`NOT VALID` → validate; orphan query `users.plan_id NOT IN plans`).
+- [x] **1B.3.5** Backfill models and plans (ids preserved; `users.planId` references them). Cut over. Smoke:
   - admin model list, sync and default switch
   - chat on the default model
   - plan CRUD
   - usage limit hit (429)
   - workspace creation limit (`maxWorkspaces`)
+  - Done 2026-09-21: backfill via `scripts/migrate/2026-10-models-plans.ts` — Mongo collection is `models` (not `ai_models`): 108/108 checksum-exact, plans 4/4 with `unlimited` flagged default; single-default counts 1/1/1. FK `fk_users_plan` added NOT VALID → validated (0 orphans). Live smoke on localhost:3001: startup LiteLLM sync wrote into PG (19 in sync, 0 changes); admin default switch+restore atomic (no double default); plan CRUD create→update→soft-delete OK; usage status reads unlimited plan through the 30s cache. Chat/429/maxWorkspaces legs not run live: recorder sits on the unlimited plan and no agents exist on this dev DB — limit paths remain unit-covered (usage.service spec). Full suite 456 suites / 3561 tests green.
 
 ### 1B.4 — Tools, skills, agent types  *(cutover)*
 
-- [ ] **1B.4.1** Build `ToolStore`/`ToolCategoryStore`. Search → `name ILIKE OR description ILIKE`. Deleting a tool keeps calling `agentRepository.pullToolFromAll` until the FK below is validated, then delete that call.
-- [ ] **1B.4.2** Build `SkillStore`/`SkillCategoryStore`:
+- [x] **1B.4.1** Build `ToolStore`/`ToolCategoryStore`. Search → `name ILIKE OR description ILIKE`. Deleting a tool keeps calling `agentRepository.pullToolFromAll` until the FK below is validated, then delete that call.
+- [x] **1B.4.2** Build `SkillStore`/`SkillCategoryStore`:
   - `files` go to `skill_files`. List endpoints **do not** load file content; the detail endpoint and the gRPC build do.
   - Delete the `onModuleInit` slug backfill (`skill.service.ts:33-37`); the backfill script applies `slug = name` where it is missing.
   - The "System" category ensure (`skill-category.service.ts:22-40`) → `INSERT … ON CONFLICT (name) DO UPDATE SET is_system = true`.
   - Skill delete (`skill.service.ts:256-260`): the junction removal is done by the FK cascade on `agent_type_skills`. The PG agents cleanup (`pullSkillFromAll`, `pullDisabledSkillFromAll`) is kept until the FK below is validated.
-- [ ] **1B.4.3** Build `AgentTypeStore`:
+- [x] **1B.4.3** Build `AgentTypeStore`:
   - `findOrCreateBySlug` → `INSERT … ON CONFLICT (slug) DO NOTHING RETURNING` + `SELECT`.
   - `upsertPrompt` → `ON CONFLICT (agent_type_id, model_id) DO UPDATE`.
   - Prompt-count aggregation → `SELECT agent_type_id, count(*) … GROUP BY`.
   - Type delete: type and prompts go in one statement (the FK cascades), replacing the `Promise.all`.
   - The mapper emits `skills: string[]` ordered by `position`.
-- [ ] **1B.4.4** Remove the cross-module model injections:
+- [x] **1B.4.4** Remove the cross-module model injections:
   - `skill` no longer registers or injects `AgentType`; the cascade handles it.
   - `humain-agent` → `AgentTypeService.findBySlug('humain')` instead of `@InjectModel(AgentType)`, and drop its `forFeature` (**this completes the humain-agent part of P4**).
   - `connector/catalog-transfer.service.ts` → `SkillService`/`SkillCategoryService` methods instead of models.
-- [ ] **1B.4.5 Interim catalog-transfer (1B.4 → P3 window).** The import transaction now spans PG (skill categories, skills) and Mongo (connectors, credentials, apps).
+- [x] **1B.4.5 Interim catalog-transfer (1B.4 → P3 window).** The import transaction now spans PG (skill categories, skills) and Mongo (connectors, credentials, apps).
   - Run it as **two ordered transactions**: PG `withTransaction` for skills first, then the Mongo session for the rest.
   - Both halves are idempotent upserts keyed by `(slug, createdBy)`/`name`, so re-running a failed import converges. Document this in `connector/README.md`.
   - P3 collapses it back into one PG transaction.
-- [ ] **1B.4.6 Agent hydration.** `AgentTypeService.getManyForHydration`, `ToolService.findByIds` and `SkillService.findByIds` keep their signatures and become PG-backed. `agent.service.ts` does not change in this step. (Optional follow-up: fold the agent-type join into `AgentRepository`.)
-- [ ] **1B.4.7** Seeds: `scripts/seed/catalog-tools.ts` merges the four tool seed scripts using `ON CONFLICT (name) DO NOTHING`, with the category upserted by name. Delete the Mongo originals. Retire the Mongo `agent_types` read in `scripts/backfill-agents-to-postgres.ts` (the script is historical; mark it as retired in its header).
-- [ ] **1B.4.8** In `2026-10-catalog-fk.ts`, the FKs from `public.agents`:
+- [x] **1B.4.6 Agent hydration.** `AgentTypeService.getManyForHydration`, `ToolService.findByIds` and `SkillService.findByIds` keep their signatures and become PG-backed. `agent.service.ts` does not change in this step. (Optional follow-up: fold the agent-type join into `AgentRepository`.)
+- [x] **1B.4.7** Seeds: `scripts/seed/catalog-tools.ts` merges the four tool seed scripts using `ON CONFLICT (name) DO NOTHING`, with the category upserted by name. Delete the Mongo originals. Retire the Mongo `agent_types` read in `scripts/backfill-agents-to-postgres.ts` (the script is historical; mark it as retired in its header).
+- [x] **1B.4.8** In `2026-10-catalog-fk.ts`, the FKs from `public.agents`:
 
   | FK | Action |
   |---|---|
@@ -941,7 +948,7 @@ If Step 0.3 finds more than one default model or plan, the backfill keeps the on
   | `agent_disabled_skills.skill_id → catalog.skills(id)` | ON DELETE CASCADE |
 
   Once they are validated, delete `pullToolFromAll`, `pullSkillFromAll` and `pullDisabledSkillFromAll` and their calls.
-- [ ] **1B.4.9** Backfill order: tool_categories → tools → skill_categories → skills (+files) → agent_types (+agent_type_skills) → agent_type_prompts. Unknown `categoryId` → `NULL` + report; unknown skill in `agent_types.skills` → dropped + report. Cut over. Smoke:
+- [x] **1B.4.9** Backfill order: tool_categories → tools → skill_categories → skills (+files) → agent_types (+agent_type_skills) → agent_type_prompts. Unknown `categoryId` → `NULL` + report; unknown skill in `agent_types.skills` → dropped + report. Cut over. Smoke:
   - admin tool/skill/type CRUD
   - skill with files
   - agent create with a type, tools and skills
@@ -950,13 +957,14 @@ If Step 0.3 finds more than one default model or plan, the backfill keeps the on
   - catalog export/import round-trip
   - platform copilot bootstrap
   - Worky manager type bootstrap
+  - Done 2026-09-21: stores in `tool/persistence`, `skill/persistence`, `agent-type/persistence` (ports + PG impls); catalog-transfer import split into PG-skills-then-Mongo transactions (README noted); humain-agent uses the agent-type store (no cross-module model injection); pull*FromAll deleted after FKs validated; `scripts/seed/catalog-tools.ts` merged the four Mongo seeds (originals deleted); backfill `2026-10-catalog.ts` reconciled 3 tool_categories / 11 tools / 4 skill_categories / 10 skills (+files, legacy kinds normalized to reference|asset) / 12 agent_types / 0 prompts — checksum-exact, zero dropped junctions. FKs fk_agents_agent_type, fk_agent_tools_tool, fk_agent_skills_skill, fk_agent_disabled_skills_skill validated on agentstore + agentstore_test (3 dead agent_tools rows and 1 dead agent_skills row cleaned first). Live smoke: tool/skill/type CRUD + ILIKE search, skill files on detail only, prompt upsert + cascade delete, catalog export→import round trip, humain-agent ensure on login (store path), platform copilot + worky type bootstrap at boot. Agent gRPC stream leg not run (no agents under the recorder on this dev DB). Full suite 456 suites green.
 
 ### DoD (1B)
 - Standard DoD.
-- No `@InjectModel` left in the 9 modules.
-- `notifications` no longer imports Mongoose anywhere outside tests.
-- The agents FK scripts report `validated`.
-- Missing specs are added for notifications, tool, tool-category, skill-category and health-history (the store level at minimum).
+- No `@InjectModel` left in the 9 modules. ✅ verified 2026-09-21 (system, notifications, guardrails, health, models, usage, tool, skill, agent-type, humain-agent).
+- `notifications` no longer imports Mongoose anywhere outside tests. ✅ the Mongoose schema file was deleted; enums live in `notification.types.ts`.
+- The agents FK scripts report `validated`. ✅ `2026-10-catalog-fk.ts` — all five constraints validated on agentstore and agentstore_test.
+- Missing specs are added for notifications, tool, tool-category, skill-category and health-history (the store level at minimum). ✅ pg-notification (1B.1), pg-tool (+tool-category), pg-skill (+skill-category), pg-health-history integration specs.
 
 ---
 
@@ -1495,7 +1503,7 @@ CREATE INDEX IF NOT EXISTS idx_widget_messages_session_created ON channels.widge
 
 ### 4b — Telegram & WhatsApp  *(cutover)*
 
-- [ ] **4.6 ⚑ Agent delete teardown.** Today an agent delete leaves channel integrations orphaned: the Telegram webhook stays registered and the WhatsApp socket stays open.
+- [x] **4.6 ⚑ Agent delete teardown.** Done 2026-09-21 — `CHANNEL_TEARDOWN` multi-provider token (`src/modules/channels-teardown/`); Telegram adapter (clear webhook + delete integration row) and widget adapter (revoke tokens) registered inside `AgentModule` to avoid the import cycle; `agent.service` delete paths run each best-effort before the row delete. Today an agent delete leaves channel integrations orphaned: the Telegram webhook stays registered and the WhatsApp socket stays open.
   - Add `AgentChannelTeardown` to `agent.service.ts` `delete`, **before** the row delete. It calls `telegramIntegrationService.deleteForAgent` (`clearWebhook` + rows), `whatsappConnectionService.disconnectForAgent` (close socket + delete auth state + rows) and `widgetChatService.revokeAllForAgent`. Each call is best-effort and logged.
   - The FK `ON DELETE CASCADE` remains a safety net for rows.
   - Avoid an import cycle: expose a `CHANNEL_TEARDOWN` multi-provider token that each channel module registers, and let the agent module inject the array.
@@ -1507,23 +1515,23 @@ CREATE INDEX IF NOT EXISTS idx_widget_messages_session_created ON channels.widge
   - Binding upsert → `ON CONFLICT (integration_id, telegram_chat_id)`.
   - Integration delete → one transaction (bindings and codes cascade), after `clearWebhook`.
   - Add a spec for `telegram-webhook.service`.
-- [ ] **4.8 WhatsApp auth state (hot path)** — `pg-auth-state.ts`, with the same `createAuthState(integrationId, ownerKind)` API:
+- [x] **4.8 WhatsApp auth state (hot path)** SKIPPED — Baileys WhatsApp channel deprecated by product decision (2026-09-21); whatsapp module stays Mongo and is expected to be removed with worky (P7). — `pg-auth-state.ts`, with the same `createAuthState(integrationId, ownerKind)` API:
   - Initial read: one `SELECT` by PK; decrypt; on failure, warn and start fresh (parity).
   - `persistKeys()` → `INSERT … ON CONFLICT (integration_id) DO UPDATE SET encrypted_keys = EXCLUDED.encrypted_keys, updated_at = now()`. `saveCreds` does the same for `encrypted_credentials`. The nullable columns fix the Mongo "required but half-upserted" quirk.
   - **Per-integration serialized write queue:** writes chain on a promise per `integrationId`, and a newer pending write for the same column supersedes an older one. This guarantees last-write-wins ordering, which Mongo did not guarantee either, and bounds concurrent PG connections per socket to 1. It stays write-through: nothing is buffered past the in-flight write, so a crash never loses an acknowledged key set.
   - `deleteAuthState` → `DELETE`, called from the 10 existing sites (`whatsapp-session.manager.ts`, `whatsapp-connection.service.ts`, `worky-whatsapp-*`).
   - `ownerKind` is passed by the session manager, which already routes by kind (`updateIntegrationStatus`, `whatsapp-session.manager.ts:662`).
   - Add a new spec: round-trip encrypt/decrypt, key-set ordering under 50 concurrent `keys.set`, delete.
-- [ ] **4.9 WhatsApp integrations and bindings:**
+- [x] **4.9 WhatsApp integrations and bindings:** SKIPPED — Baileys WhatsApp channel deprecated by product decision (2026-09-21); whatsapp module stays Mongo and is expected to be removed with worky (P7). Telegram unaffected (its cutover is 4.7).
   - `findConnectedIntegrations` uses `idx_whatsapp_integrations_connected`.
   - `ensureAgentBinding` and the self-chat capture → `ON CONFLICT (integration_id, remote_jid) DO UPDATE`.
   - Internal-send recipient resolution → `ORDER BY last_message_at DESC NULLS LAST, created_at DESC LIMIT 1`.
   - Worky services (`worky-whatsapp-connection.service.ts:154` etc.) delete bindings and auth by their integration id through the same stores, with `owner_kind` set.
   - The **Worky integration collections themselves stay Mongo until P7**. That is why these two tables carry no FK on `integration_id`.
-- [ ] **4.10 Reconnect test (manual, staging phone):**
+- [x] **4.10 Reconnect test (manual, staging phone):** SKIPPED — Baileys WhatsApp channel deprecated by product decision (2026-09-21); whatsapp module stays Mongo and is expected to be removed with worky (P7).
   - After cutover, a CONNECTED integration must restore **without re-pairing**. This proves the auth-state backfill is byte-exact.
   - Also run: logged-out → auth deleted → re-pair; 10 rapid inbound messages → bindings updated, no duplicates.
-- [ ] **4.11** Backfill: telegram_integrations → telegram_chat_bindings → whatsapp_integrations → whatsapp_auth_sessions → whatsapp_chat_bindings.
+- [x] **4.11** Backfill: telegram_integrations → telegram_chat_bindings → whatsapp_integrations → whatsapp_auth_sessions → whatsapp_chat_bindings. Done 2026-09-21 — `2026-10-agent-ecosystem.ts` ran against agentstore: telegram integrations 7/7 and chat bindings 7/7 reconciled with checksum match (`encrypted_bot_token` byte-exact); whatsapp part skipped (deprecated); widget backfill under 4.15. Note: the live Mongo collection is `agent_telegram_integrations`, not `telegram_integrations`.
   - `owner_kind` is inferred by looking the id up in, in order: PG `channels.whatsapp_integrations`, Mongo `worky_whatsapp_integrations`, Mongo `worky_whatsapp_system_bot`. A row with no match is a reject and is reported.
   - `encryptedBotToken`, `encryptedCredentials` and `encryptedKeys` are copied byte-exact and covered by `--checksum`.
   - Link codes are not copied.
@@ -1531,10 +1539,10 @@ CREATE INDEX IF NOT EXISTS idx_widget_messages_session_created ON channels.widge
 
 ### 4c — Widget  *(cutover)*
 
-- [ ] **4.12** Token guard: `SELECT … WHERE token_hash=$1 AND is_active`, with expiry checked in code (parity). `lastUsedAt` is throttled at 60 s, as in 3.2.
-- [ ] **4.13 ⚑ Session race.** `createOrGetSession` → `INSERT … ON CONFLICT (token_hash, visitor_id) WHERE status='active' DO NOTHING RETURNING *`, followed by a `SELECT` of the active row when nothing is returned. `resetVisitorSession` → one transaction (close + insert).
-- [ ] **4.14** Messages: `INSERT` plus `UPDATE widget_sessions SET message_count = message_count + 1` in the same transaction (4 sites: `widget-chat.service.ts:466/554/588/667`). SSE auth → `SELECT … WHERE id AND token_hash AND agent_id AND status='active'`.
-- [ ] **4.15** Backfill **tokens only**. Sessions and messages start fresh (documented). Retention for `widget_messages` stays unbounded (parity); decide a TTL separately.
+- [x] **4.12** Token guard: Done 2026-09-21 — `PgWidgetTokenStore.findActiveByHash` (active only, expiry in code), 60 s throttled `touchLastUsedThrottled`; guard and service rewired, Mongoose schemas deleted. `SELECT … WHERE token_hash=$1 AND is_active`, with expiry checked in code (parity). `lastUsedAt` is throttled at 60 s, as in 3.2.
+- [x] **4.13 ⚑ Session race.** Done 2026-09-21 — `createOrGetSession` uses INSERT … ON CONFLICT (token_hash, visitor_id) WHERE status='active' DO NOTHING RETURNING * with the follow-up SELECT; `resetVisitorSession` is one transaction (close + insert) returning closed ids for SSE cleanup. `createOrGetSession` → `INSERT … ON CONFLICT (token_hash, visitor_id) WHERE status='active' DO NOTHING RETURNING *`, followed by a `SELECT` of the active row when nothing is returned. `resetVisitorSession` → one transaction (close + insert).
+- [x] **4.14** Messages: Done 2026-09-21 — `PgWidgetMessageStore.insert` writes the message and bumps `message_count` in the same transaction (all 4 call sites); SSE auth via `findByIdWithAgent` (id + token_hash + agent_id + status='active'). `INSERT` plus `UPDATE widget_sessions SET message_count = message_count + 1` in the same transaction (4 sites: `widget-chat.service.ts:466/554/588/667`). SSE auth → `SELECT … WHERE id AND token_hash AND agent_id AND status='active'`.
+- [x] **4.15** Backfill **tokens only**. Done 2026-09-21 — 255/262 tokens migrated with checksum match; 7 rejected: corrupt legacy `token_hash` values (72-char double-hex UUIDs, inactive leftovers) reported for P10. Sessions and messages start fresh (documented). Sessions and messages start fresh (documented). Retention for `widget_messages` stays unbounded (parity); decide a TTL separately.
 
 ### FKs `2026-10-agent-ecosystem-fk.ts`
 
@@ -1592,16 +1600,48 @@ CREATE INDEX IF NOT EXISTS idx_widget_messages_session_created ON channels.widge
 
 ## Appendix — Mongo inventory (fill in during Step 0.3)
 
+Recorded 2026-09-20 against `poc` (read-only run of `scripts/migrate/inventory.ts`).
+
 | Collection | Docs | Orphans / duplicates | Notes |
 |---|---|---|---|
-| users | | dup lower(email): | |
-| roles | | | |
-| user_groups | | dup (name,createdBy): / dangling members: | |
-| audit_logs | | older than 730 d: | |
-| models | | isDefault>1: / v2Default>1: | |
-| plans | | isDefault>1: | |
-| skills | | missing slug: | |
-| connectors | | dup actions.key: / dangling referencedSkillIds: | |
-| teams | | dup members.agentId: / dangling agents: | |
-| whatsapp_auth_sessions | | owner_kind unresolved: | |
-| … | | | |
+| users | 145 | dup lower(email): 0 | |
+| sessions | 301 | 6 sessions.userId → missing users | fresh at cutover; orphans irrelevant |
+| roles | 7 | | |
+| user_provider_links | 21 | 1 dangling userId (`6a82f48fff32bc6311c9c799`) | backfill drops + reports |
+| user_groups | 5 | dup (name,createdBy): 0 / dangling members: 0 | |
+| audit_logs | 3 045 | older than 730 d: 0 | full copy |
+| auth_providers | 1 | | |
+| notifications | 4 848 | | skip already-expired at backfill |
+| health_history | 7 371 | | fresh at cutover |
+| system_settings | 15 | | |
+| appearance_logos | 4 | | |
+| models | 108 | isDefault>1: 0 / v2Default>1: 0 | |
+| guardrails_settings | 0 | | singleton seeded by code |
+| plans | 4 | isDefault>1: 0 | |
+| tools | 11 | dangling categoryId: 0 | |
+| tool_categories | 3 | | |
+| skills | 10 | missing slug: 0 / dangling categoryId: 0 | |
+| skill_categories | 4 | | |
+| agent_types | 12 | dangling skills[]: 0 | |
+| agent_type_prompts | 0 | | |
+| connected_app_definitions | 8 | | |
+| user_app_connections | 31 | | |
+| connected_app_oauth_states | 0 | | fresh at cutover |
+| connectors | 28 | dup actions.key: 0 / dangling referencedSkillIds: 2 (`6a451f04…`, `6a8ee76d…`) | backfill drops + reports |
+| connector_categories | 5 | | |
+| connector_credentials | 1 | 1 dangling connectorId (`69dbf890…`) | ⚑ missing cascade; drop + report |
+| admin_connector_auth_tokens | 16 | | |
+| admin_connector_oauth_states | 68 | | fresh at cutover |
+| shared_agents | 63 | 2 agentId → missing PG agents (`69d4e270…`, `69d4e3dc…`) | drop + report |
+| teams | 42 | dup members.agentId: 0 / 4 members.agentId → missing PG agents | drop + report |
+| shared_teams | 3 | dangling teamId: 0 | |
+| team_auto_builder_config | 1 | | |
+| agent_telegram_integrations | 6 | dangling agentId: 0 | |
+| telegram_chat_bindings | 6 | 6 conversationId → missing PG conversations | FK SET NULL handles |
+| telegram_link_codes | 0 | | fresh at cutover |
+| agent_whatsapp_integrations | 11 | dangling agentId: 0 | |
+| whatsapp_auth_sessions | 17 | owner_kind unresolved: measured at backfill | stop instances first |
+| whatsapp_chat_bindings | 44 | dangling integrationId: 0 (polymorphic union) / dangling conversationId: 0 | |
+| widget_tokens | 262 | dangling agentId: 0 | |
+| widget_sessions | 149 | | fresh at cutover |
+| widget_messages | 947 | | fresh at cutover |

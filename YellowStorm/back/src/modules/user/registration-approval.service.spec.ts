@@ -20,8 +20,11 @@ describe('RegistrationApprovalService', () => {
   } = {}) => {
     const lean = jest.fn().mockResolvedValue(overrides.emails ?? [{ email: 'sa@acme.io' }]);
     const select = jest.fn().mockReturnValue({ lean });
-    const userModel = {
-      find: jest.fn().mockReturnValue({ select }),
+    const superAdminDocs = overrides.emails ?? [{ email: 'sa@acme.io' }];
+    const userStore = {
+      findActiveByRole: jest.fn().mockResolvedValue(
+        superAdminDocs.map((d, i) => ({ id: i === 0 ? superAdminId.toString() : `u${i}`, email: d.email })),
+      ),
     };
     const authorizationService = {
       findRoleByName: jest.fn().mockResolvedValue(
@@ -55,25 +58,22 @@ describe('RegistrationApprovalService', () => {
       { getEmailLogo: jest.fn().mockResolvedValue(null) } as never,
     );
     const service = new RegistrationApprovalService(
-      userModel as never,
+      userStore as never,
       authorizationService as never,
       emailService as never,
       emailTemplateRenderer as never,
       configService as never,
       logger as never,
     );
-    return { service, userModel, authorizationService, emailService, logger, lean };
+    return { service, userStore, authorizationService, emailService, logger, lean };
   };
 
   it('sends a review email to active super admins', async () => {
-    const { service, emailService, userModel } = makeService();
+    const { service, emailService, userStore } = makeService();
 
     await service.notifySuperAdminsOfRegistration(applicant);
 
-    expect(userModel.find).toHaveBeenCalledWith({
-      roles: new Types.ObjectId(superAdminId.toString()),
-      status: UserStatus.ACTIVE,
-    });
+    expect(userStore.findActiveByRole).toHaveBeenCalledWith(superAdminId.toString());
     expect(emailService.send).toHaveBeenCalledTimes(1);
     const payload = emailService.send.mock.calls[0][0];
     expect(payload.to).toBe('sa@acme.io');
@@ -144,9 +144,12 @@ describe('RegistrationApprovalService decisions', () => {
   });
 
   const makeDecisionService = (user: ReturnType<typeof makeUserDoc> | null, sendResult?: { success: boolean; error?: string; attempts: number }) => {
-    const userModel = {
-      find: jest.fn(),
+    const userStore = {
       findById: jest.fn().mockResolvedValue(user),
+      update: jest.fn(async (_id: string, patch: Record<string, unknown>) => {
+        if (user) Object.assign(user, patch);
+        return user;
+      }),
     };
     const emailService = {
       isAvailable: jest.fn().mockReturnValue(true),
@@ -171,19 +174,19 @@ describe('RegistrationApprovalService decisions', () => {
       { getEmailLogo: jest.fn().mockResolvedValue(null) } as never,
     );
     const service = new RegistrationApprovalService(
-      userModel as never,
+      userStore as never,
       { findRoleByName: jest.fn() } as never,
       emailService as never,
       emailTemplateRenderer as never,
       configService as never,
       logger as never,
     );
-    return { service, userModel, emailService, logger };
+    return { service, userStore, emailService, logger };
   };
 
   it('approves an inactive pending user and sends a confirmation email', async () => {
     const user = makeUserDoc();
-    const { service, emailService } = makeDecisionService(user);
+    const { service, userStore, emailService } = makeDecisionService(user);
 
     const result = await service.approveRegistration(userId.toString());
 
@@ -193,7 +196,7 @@ describe('RegistrationApprovalService decisions', () => {
       status: UserStatus.ACTIVE,
       registrationApproval: RegistrationApproval.APPROVED,
     });
-    expect(user.save).toHaveBeenCalled();
+    expect(userStore.update).toHaveBeenCalled();
     expect(emailService.send).toHaveBeenCalledTimes(1);
     expect(emailService.send.mock.calls[0][0].to).toBe('jane@acme.io');
     expect(emailService.send.mock.calls[0][0].subject).toContain('approved');
@@ -205,7 +208,7 @@ describe('RegistrationApprovalService decisions', () => {
       status: UserStatus.ACTIVE,
       registrationApproval: RegistrationApproval.APPROVED,
     });
-    const { service, emailService } = makeDecisionService(user);
+    const { service, userStore, emailService } = makeDecisionService(user);
 
     const result = await service.approveRegistration(userId.toString());
 
@@ -216,7 +219,7 @@ describe('RegistrationApprovalService decisions', () => {
 
   it('reactivates a rejected user and sends a confirmation email', async () => {
     const user = makeUserDoc({ registrationApproval: RegistrationApproval.REJECTED });
-    const { service, emailService } = makeDecisionService(user);
+    const { service, userStore, emailService } = makeDecisionService(user);
 
     const result = await service.approveRegistration(userId.toString());
 
@@ -243,7 +246,7 @@ describe('RegistrationApprovalService decisions', () => {
 
   it('rejects an inactive pending user without sending email', async () => {
     const user = makeUserDoc();
-    const { service, emailService } = makeDecisionService(user);
+    const { service, userStore, emailService } = makeDecisionService(user);
 
     const result = await service.rejectRegistration(userId.toString());
 
@@ -252,7 +255,7 @@ describe('RegistrationApprovalService decisions', () => {
       status: UserStatus.INACTIVE,
       registrationApproval: RegistrationApproval.REJECTED,
     });
-    expect(user.save).toHaveBeenCalled();
+    expect(userStore.update).toHaveBeenCalled();
     expect(emailService.send).not.toHaveBeenCalled();
   });
 

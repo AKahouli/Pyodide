@@ -1,4 +1,5 @@
 import { AuthService } from './auth.service';
+import { makeSessionStoreFake } from './persistence/session-store.fake';
 import { ServiceUnavailableException } from '../exceptions';
 import { ErrorCode } from '../exceptions/constants/error-codes';
 import { isTransientSessionStoreError } from './utils/session-store-errors';

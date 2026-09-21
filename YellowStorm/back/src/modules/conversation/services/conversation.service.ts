@@ -2,8 +2,11 @@ import { Inject, Injectable, Optional, forwardRef } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { InjectModel } from '@nestjs/mongoose';
+import { USER_LOOKUP_PORT, type UserLookupPort } from '@common/ports/user-lookup.port';
 import { Model } from 'mongoose';
-import { User, UserDocument } from '../../user/schemas/user.schema';
+import { User } from '../../user/schemas/user.schema';
+import type { AuthUser } from '@common/auth/auth-user';
+import type { UserDocument } from '@modules/user/schemas/user.schema';
 import {
   CreateConversationData,
   UpdateConversationData,
@@ -50,7 +53,7 @@ export class ConversationService {
 
   constructor(
     @Inject(CONVERSATION_STORE) private readonly conversationStore: ConversationStore,
-    @InjectModel(User.name) private readonly userModel: Model<UserDocument>,
+    @Inject(USER_LOOKUP_PORT) private readonly userLookup: UserLookupPort,
     private readonly logger: LoggerService,
     private readonly configService: ConfigService,
     private readonly workspaceService: WorkspaceService,
@@ -361,12 +364,12 @@ export class ConversationService {
         ];
       }
       if (additions.length) {
-        const owner = await this.userModel.findById(userId).lean().exec();
+        const owner = await this.userLookup.byId(userId);
         void this.sendGroupInvitations(
           additions.map((invite) => invite.email),
           conversationId,
           current.title,
-          this.userName(owner) ?? 'Someone',
+          this.userName(this.toLookupShape(owner)) ?? 'Someone',
         );
       }
     }
@@ -643,12 +646,8 @@ export class ConversationService {
     const participantMap = new Map(
       participants?.map((participant) => [participant.email.toLowerCase(), participant.job]),
     );
-    const existing = await this.userModel
-      .find({ email: { $in: emails } })
-      .select('email')
-      .lean()
-      .exec();
-    const registered = new Set(existing.map((user) => user.email.toLowerCase()));
+    const byEmail = await this.userLookup.byEmails(emails);
+    const registered = new Set(byEmail.keys());
     const now = new Date().toISOString();
     return {
       isGroup: true,
@@ -664,7 +663,7 @@ export class ConversationService {
 
   private async mapToResponse(
     record: ConversationRecord,
-    users?: Map<string, Pick<UserDocument, 'email' | 'profile'>>,
+    users?: Map<string, Pick<AuthUser, 'email' | 'profile'>>,
   ): Promise<ConversationResponse> {
     const resolvedUsers =
       users ??
@@ -734,15 +733,20 @@ export class ConversationService {
 
   private async usersById(
     ids: string[],
-  ): Promise<Map<string, Pick<UserDocument, 'email' | 'profile'>>> {
+  ): Promise<Map<string, Pick<AuthUser, 'email' | 'profile'>>> {
     const unique = [...new Set(ids)];
     if (!unique.length) return new Map();
-    const users = await this.userModel
-      .find({ _id: { $in: unique } })
-      .select('email profile')
-      .lean()
-      .exec();
-    return new Map(users.map((user) => [user._id.toString(), user]));
+    const summaries = await this.userLookup.byIds(unique);
+    return new Map(
+      [...summaries.values()].map((s) => [
+        s.id,
+        { email: s.email, profile: { firstName: s.firstName, lastName: s.lastName } },
+      ]),
+    );
+  }
+
+  private toLookupShape(user?: { email: string; firstName: string; lastName: string } | null) {
+    return user ? { email: user.email, profile: { firstName: user.firstName, lastName: user.lastName } } : null;
   }
 
   private userName(
@@ -781,12 +785,12 @@ export class ConversationService {
     emails: string[],
     userId: string,
   ) {
-    const owner = await this.userModel.findById(userId).lean().exec();
+    const owner = await this.userLookup.byId(userId);
     void this.sendGroupInvitations(
       emails,
       record.id,
       record.title,
-      this.userName(owner) ?? 'Someone',
+      this.userName(this.toLookupShape(owner)) ?? 'Someone',
     );
   }
 

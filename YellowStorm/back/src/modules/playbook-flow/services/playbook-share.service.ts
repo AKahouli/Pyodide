@@ -1,8 +1,8 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Inject, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import { LoggerService } from '@modules/logger';
-import { UserService } from '@modules/user';
+import { USER_LOOKUP_PORT, type UserLookupPort } from '@common/ports/user-lookup.port';
 import { ErrorCode } from '@modules/exceptions/constants/error-codes';
 import { SharedPlaybook, SharedPlaybookDocument } from '../schemas/shared-playbook.schema';
 import { SharePlaybookDto, UpdatePlaybookSharePermissionDto } from '../dto/share-playbook.dto';
@@ -13,9 +13,15 @@ import {
 } from '../interfaces/playbook-share.interface';
 
 interface PopulatedUser {
-  _id: Types.ObjectId;
+  _id: string;
   email: string;
   profile?: { firstName?: string; lastName?: string };
+}
+
+function toPopulated(summary?: { id: string; email: string; firstName: string; lastName: string }): PopulatedUser | undefined {
+  return summary
+    ? { _id: summary.id, email: summary.email, profile: { firstName: summary.firstName, lastName: summary.lastName } }
+    : undefined;
 }
 
 @Injectable()
@@ -23,7 +29,7 @@ export class PlaybookShareService {
   constructor(
     @InjectModel(SharedPlaybook.name)
     private readonly sharedPlaybookModel: Model<SharedPlaybookDocument>,
-    private readonly userService: UserService,
+    @Inject(USER_LOOKUP_PORT) private readonly userLookup: UserLookupPort,
     private readonly logger: LoggerService,
   ) {
     this.logger.setContext(PlaybookShareService.name);
@@ -58,11 +64,11 @@ export class PlaybookShareService {
   async getPlaybookShares(playbookId: string): Promise<IPlaybookShareEntry[]> {
     const shares = await this.sharedPlaybookModel
       .find({ playbookId: new Types.ObjectId(playbookId) })
-      .populate('sharedWith', 'email profile')
       .sort({ createdAt: -1 })
       .exec();
 
-    return shares.map((share) => this.mapShare(share, share.sharedWith as unknown as PopulatedUser));
+    const users = await this.userLookup.byIds(shares.map((share) => String(share.sharedWith)));
+    return shares.map((share) => this.mapShare(share, toPopulated(users.get(String(share.sharedWith)))!));
   }
 
   async updateSharePermission(
@@ -80,15 +86,15 @@ export class PlaybookShareService {
         { $set: { permission: dto.permission } },
         { new: true },
       )
-      .populate('sharedWith', 'email profile')
       .exec();
 
     if (!share) {
       throw new NotFoundException(ErrorCode.PLAYBOOK_FLOW_NOT_FOUND, 'Playbook share not found');
     }
 
+    const users = await this.userLookup.byIds([String(share.sharedWith)]);
     this.logger.log('Playbook share permission updated', { playbookId, shareId, permission: dto.permission });
-    return this.mapShare(share, share.sharedWith as unknown as PopulatedUser);
+    return this.mapShare(share, toPopulated(users.get(String(share.sharedWith)))!);
   }
 
   async removeShare(playbookId: string, shareId: string): Promise<void> {
@@ -129,13 +135,14 @@ export class PlaybookShareService {
   async getShareInfoMapForUser(userId: string): Promise<Map<string, ISharedPlaybookInfo>> {
     const shares = await this.sharedPlaybookModel
       .find({ sharedWith: new Types.ObjectId(userId) })
-      .populate('sharedBy', 'email profile')
       .lean()
       .exec();
 
+    const users = await this.userLookup.byIds(shares.map((share) => String(share.sharedBy)));
+
     const shareMap = new Map<string, ISharedPlaybookInfo>();
     for (const share of shares) {
-      const sharedBy = share.sharedBy as unknown as PopulatedUser;
+      const sharedBy = toPopulated(users.get(String(share.sharedBy)))!;
       shareMap.set(share.playbookId.toString(), {
         shareId: share._id.toString(),
         permission: share.permission,
@@ -147,10 +154,11 @@ export class PlaybookShareService {
 
   private async resolveRecipients(ownerId: string, emails: string[]): Promise<PopulatedUser[]> {
     const normalizedEmails = Array.from(new Set(emails.map((email) => email.toLowerCase().trim()).filter(Boolean)));
-    const resolved = await Promise.all(normalizedEmails.map(async (email) => ({
+    const byEmail = await this.userLookup.byEmails(normalizedEmails);
+    const resolved = normalizedEmails.map((email) => ({
       email,
-      user: await this.userService.findByEmail(email),
-    })));
+      user: toPopulated(byEmail.get(email)),
+    }));
     const notFound = resolved.filter((entry) => !entry.user).map((entry) => entry.email);
     if (notFound.length > 0) {
       this.logger.warn('Playbook share rejected unknown recipients', { ownerId, notFound });

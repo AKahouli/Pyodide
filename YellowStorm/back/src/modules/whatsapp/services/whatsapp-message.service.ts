@@ -1,8 +1,9 @@
-import { Injectable } from '@nestjs/common';
+import { Inject, Injectable } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { ConfigService } from '@nestjs/config';
+import { USER_LOOKUP_PORT, type UserLookupPort } from '@common/ports/user-lookup.port';
 import { Model, Types } from 'mongoose';
-import { User, UserDocument, UserStatus } from '@modules/user/schemas/user.schema';
+import type { AuthUser } from '@common/auth/auth-user';
 import { ConversationService } from '@modules/conversation/services/conversation.service';
 import { MessageService } from '@modules/conversation/services/message.service';
 import { sanitizeSerializedToolValue } from '@modules/conversation/utils/public-component-sanitizer';
@@ -30,8 +31,8 @@ export class WhatsAppMessageService {
   constructor(
     @InjectModel(WhatsAppChatBinding.name)
     private readonly bindingModel: Model<WhatsAppChatBindingDocument>,
-    @InjectModel(User.name)
-    private readonly userModel: Model<UserDocument>,
+    @Inject(USER_LOOKUP_PORT)
+    private readonly userLookup: UserLookupPort,
     private readonly configService: ConfigService,
     private readonly logger: LoggerService,
     private readonly agentService: AgentService,
@@ -66,12 +67,8 @@ export class WhatsAppMessageService {
       return;
     }
 
-    const user = await this.userModel
-      .findById(integrationRef.userId)
-      .select('status email')
-      .lean()
-      .exec();
-    if (!user || user.status !== UserStatus.ACTIVE) {
+    const user = await this.userLookup.byId(String(integrationRef.userId));
+    if (!user || user.status !== 'active') {
       this.logger.warn('WhatsApp message dropped: owner inactive', {
         integrationId: integrationRef.integrationId.toString(),
         userId: integrationRef.userId.toString(),

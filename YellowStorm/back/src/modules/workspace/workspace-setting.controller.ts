@@ -19,7 +19,7 @@ import {
 } from '@nestjs/swagger';
 import { WorkspaceSettingService } from './workspace-setting.service';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
-import { UserDocument } from '../user/schemas/user.schema';
+import type { AuthUser } from '@common/auth/auth-user';
 import { CreateWorkspaceSettingDto } from './dto/create-workspace-setting.dto';
 import { UpdateWorkspaceSettingDto } from './dto/update-workspace-setting.dto';
 import { WorkspaceSettingQueryDto } from './dto/workspace-setting-query.dto';
@@ -39,7 +39,7 @@ export class WorkspaceSettingController {
   @ApiOperation({ summary: 'Create a new workspace setting' })
   @ApiResponse({ status: 201, description: 'Setting created successfully' })
   async create(
-    @CurrentUser() user: UserDocument,
+    @CurrentUser() user: AuthUser,
     @Body() dto: CreateWorkspaceSettingDto,
   ) {
     return this.workspaceSettingService.create(user._id.toString(), dto);
@@ -51,7 +51,7 @@ export class WorkspaceSettingController {
   @Get()
   @ApiOperation({ summary: 'List workspace settings for current user' })
   async findAll(
-    @CurrentUser() user: UserDocument,
+    @CurrentUser() user: AuthUser,
     @Query() query: WorkspaceSettingQueryDto,
   ) {
     return this.workspaceSettingService.findAllByUser(user._id.toString(), query);
@@ -73,7 +73,7 @@ export class WorkspaceSettingController {
   @ApiOperation({ summary: 'Get workspace setting by ID' })
   @ApiParam({ name: 'id', description: 'Setting ID' })
   async findOne(
-    @CurrentUser() user: UserDocument,
+    @CurrentUser() user: AuthUser,
     @Param('id') id: string,
   ) {
     return this.workspaceSettingService.findById(id, user._id.toString());
@@ -86,7 +86,7 @@ export class WorkspaceSettingController {
   @ApiOperation({ summary: 'Update workspace setting (owner only)' })
   @ApiParam({ name: 'id', description: 'Setting ID' })
   async update(
-    @CurrentUser() user: UserDocument,
+    @CurrentUser() user: AuthUser,
     @Param('id') id: string,
     @Body() dto: UpdateWorkspaceSettingDto,
   ) {
@@ -101,7 +101,7 @@ export class WorkspaceSettingController {
   @ApiOperation({ summary: 'Delete workspace setting (owner only)' })
   @ApiParam({ name: 'id', description: 'Setting ID' })
   async delete(
-    @CurrentUser() user: UserDocument,
+    @CurrentUser() user: AuthUser,
     @Param('id') id: string,
   ) {
     await this.workspaceSettingService.delete(id, user._id.toString());

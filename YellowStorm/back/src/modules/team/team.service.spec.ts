@@ -1,19 +1,22 @@
 import { Types } from 'mongoose';
 import { TeamService } from './team.service';
+import { TEAM_STORE, type TeamRow, type TeamStore } from './persistence/team.store';
 
 /**
  * Focused unit tests for the conversation-facing bits of TeamService:
- * `resolveAgentIds` (the @TeamName → agents expansion) and `removeAgentFromAllTeams`.
+ * `resolveAgentIds` and `resolveExecutionDefinition`.
+ * (removeAgentFromAllTeams was deleted in plan 4.3 — team_members rows
+ * cascade on agent delete and children re-root via ON DELETE SET NULL.)
  */
 describe('TeamService', () => {
   const userId = new Types.ObjectId().toString();
-  let teamModel: any;
+  let store: InMemoryTeamStore;
   let logger: any;
   let agentService: any;
   let teamShareService: any;
   let service: TeamService;
 
-  const member = (agentId: Types.ObjectId, order = 0, parentAgentId: Types.ObjectId | null = null) => ({
+  const member = (agentId: string, order = 0, parentAgentId: string | null = null) => ({
     agentId,
     parentAgentId,
     order,
@@ -21,22 +24,81 @@ describe('TeamService', () => {
     positionY: 0,
   });
 
+  class InMemoryTeamStore implements TeamStore {
+    readonly rows: TeamRow[] = [];
+
+    seed(over: { createdBy: string; members: TeamRow['members'] }): TeamRow {
+      const row: TeamRow = {
+        id: new Types.ObjectId().toString(),
+        name: 'Team ' + this.rows.length,
+        description: '',
+        isActive: true,
+        createdBy: over.createdBy,
+        members: over.members,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      };
+      this.rows.push(row);
+      return row;
+    }
+
+    async findByOwnerAndName(name: string, createdBy: string): Promise<TeamRow | null> {
+      return this.rows.find((r) => r.name === name && r.createdBy === createdBy) ?? null;
+    }
+
+    async findNameClash(name: string, createdBy: string, excludeId: string): Promise<TeamRow | null> {
+      return this.rows.find((r) => r.name === name && r.createdBy === createdBy && r.id !== excludeId) ?? null;
+    }
+
+    async create(row: { name: string; description: string; isActive: boolean; createdBy: string; members: TeamRow['members'] }): Promise<TeamRow> {
+      return this.seed(row);
+    }
+
+    async list(query: { createdBy: string }): Promise<{ rows: TeamRow[]; total: number }> {
+      const rows = this.rows.filter((r) => r.createdBy === query.createdBy);
+      return { rows, total: rows.length };
+    }
+
+    async findActiveByOwner(userId: string): Promise<TeamRow[]> {
+      return this.rows.filter((r) => r.createdBy === userId && r.isActive);
+    }
+
+    async findById(id: string): Promise<TeamRow | null> {
+      return this.rows.find((r) => r.id === id) ?? null;
+    }
+
+    async update(id: string, patch: Partial<TeamRow>): Promise<TeamRow | null> {
+      const row = this.rows.find((r) => r.id === id);
+      if (!row) return null;
+      Object.assign(row, patch);
+      return row;
+    }
+
+    async delete(id: string): Promise<TeamRow | null> {
+      const idx = this.rows.findIndex((r) => r.id === id);
+      return idx >= 0 ? this.rows.splice(idx, 1)[0] : null;
+    }
+
+    async findByIdsActiveForOwner(ids: string[], createdBy: string): Promise<TeamRow[]> {
+      return this.rows.filter((r) => ids.includes(r.id) && r.createdBy === createdBy && r.isActive);
+    }
+
+    async findByIds(ids: string[]): Promise<TeamRow[]> {
+      return this.rows.filter((r) => ids.includes(r.id));
+    }
+  }
+
   beforeEach(() => {
-    teamModel = {
-      find: jest.fn(),
-      findById: jest.fn(),
-      updateMany: jest.fn(),
-    };
+    store = new InMemoryTeamStore();
     logger = { setContext: jest.fn(), log: jest.fn() };
     agentService = { findByIds: jest.fn(), findByIdsUnrestricted: jest.fn() };
     teamShareService = {
       getSharedTeamsForUser: jest.fn().mockResolvedValue([]),
       getShareInfo: jest.fn().mockResolvedValue(null),
       getSharePermission: jest.fn().mockResolvedValue(null),
-      removeAllSharesForTeam: jest.fn().mockResolvedValue(undefined),
     };
     service = new TeamService(
-      teamModel as any,
+      store as unknown as TeamStore,
       logger as any,
       agentService as any,
       teamShareService as any,
@@ -49,121 +111,78 @@ describe('TeamService', () => {
   });
 
   describe('resolveExecutionDefinition', () => {
-    const executableTeam = (ownerId: string, members: any[]) => ({
-      _id: new Types.ObjectId(), createdBy: new Types.ObjectId(ownerId), isActive: true, members,
-    });
+    const oid = () => new Types.ObjectId().toString();
 
     it('authorizes a shared team and resolves its exact nested topology', async () => {
-      const ownerId = new Types.ObjectId().toString();
-      const root = new Types.ObjectId();
-      const nested = new Types.ObjectId();
-      const leaf = new Types.ObjectId();
-      teamModel.findById.mockReturnValue({ lean: () => ({ exec: () => Promise.resolve(executableTeam(ownerId, [
-        member(root), member(nested, 0, root), member(leaf, 0, nested),
-      ])) }) });
+      const ownerId = oid();
+      const root = oid();
+      const nested = oid();
+      const leaf = oid();
+      store.seed({ createdBy: ownerId, members: [member(root), member(nested, 0, root), member(leaf, 0, nested)] });
       teamShareService.getSharePermission.mockResolvedValue('read');
       agentService.findByIdsUnrestricted.mockResolvedValue([
-        { id: root.toString(), isActive: true, agentType: { slug: 'manager' } },
-        { id: nested.toString(), isActive: true, agentType: { slug: 'manager' } },
-        { id: leaf.toString(), isActive: true, agentType: { slug: 'worker' } },
+        { id: root, isActive: true, agentType: { slug: 'manager' } },
+        { id: nested, isActive: true, agentType: { slug: 'manager' } },
+        { id: leaf, isActive: true, agentType: { slug: 'worker' } },
       ]);
 
-      const result = await service.resolveExecutionDefinition(userId, new Types.ObjectId().toString());
-      expect(result.nodes.map((node) => node.agentId)).toEqual([root, nested, leaf].map(String));
+      const result = await service.resolveExecutionDefinition(userId, store.rows[0].id);
+      expect(result.nodes.map((node) => node.agentId)).toEqual([root, nested, leaf]);
       expect(agentService.findByIdsUnrestricted).toHaveBeenCalledTimes(1);
     });
 
     it('fails closed after team access is revoked', async () => {
-      teamModel.findById.mockReturnValue({ lean: () => ({ exec: () => Promise.resolve(executableTeam(new Types.ObjectId().toString(), [member(new Types.ObjectId())])) }) });
+      store.seed({ createdBy: oid(), members: [member(oid())] });
       teamShareService.getSharePermission.mockResolvedValue(null);
-      await expect(service.resolveExecutionDefinition(userId, new Types.ObjectId().toString())).rejects.toThrow();
+      await expect(service.resolveExecutionDefinition(userId, store.rows[0].id)).rejects.toThrow();
       expect(agentService.findByIdsUnrestricted).not.toHaveBeenCalled();
     });
 
     it('rejects an inactive or missing member instead of dropping it', async () => {
-      const root = new Types.ObjectId();
-      const leaf = new Types.ObjectId();
-      teamModel.findById.mockReturnValue({ lean: () => ({ exec: () => Promise.resolve(executableTeam(userId, [member(root), member(leaf, 0, root)])) }) });
+      const root = oid();
+      const leaf = oid();
+      store.seed({ createdBy: userId, members: [member(root), member(leaf, 0, root)] });
       agentService.findByIdsUnrestricted.mockResolvedValue([
-        { id: root.toString(), isActive: true, agentType: { slug: 'manager' } },
+        { id: root, isActive: true, agentType: { slug: 'manager' } },
       ]);
-      await expect(service.resolveExecutionDefinition(userId, new Types.ObjectId().toString())).rejects.toThrow();
+      await expect(service.resolveExecutionDefinition(userId, store.rows[0].id)).rejects.toThrow();
     });
   });
 
   describe('resolveAgentIds', () => {
     it('returns [] for empty input without hitting the DB', async () => {
+      const findByIdsActiveForOwner = jest.spyOn(store, 'findByIdsActiveForOwner');
       expect(await service.resolveAgentIds([], userId)).toEqual([]);
-      expect(teamModel.find).not.toHaveBeenCalled();
+      expect(findByIdsActiveForOwner).not.toHaveBeenCalled();
     });
 
     it('flattens and dedupes agent IDs across the resolved teams', async () => {
-      const a1 = new Types.ObjectId();
-      const a2 = new Types.ObjectId();
-      const a3 = new Types.ObjectId();
-      teamModel.find.mockReturnValue({
-        lean: () => ({
-          exec: () =>
-            Promise.resolve([
-              { members: [member(a1, 0), member(a2, 1)] },
-              { members: [member(a2, 0), member(a3, 1)] }, // a2 is shared → must be deduped
-            ]),
-        }),
-      });
+      const a1 = new Types.ObjectId().toString();
+      const a2 = new Types.ObjectId().toString();
+      const a3 = new Types.ObjectId().toString();
+      store.seed({ createdBy: userId, members: [member(a1, 0), member(a2, 1)] });
+      store.seed({ createdBy: userId, members: [member(a2, 0), member(a3, 1)] }); // a2 shared → deduped
 
       const result = await service.resolveAgentIds(
-        [new Types.ObjectId().toString(), new Types.ObjectId().toString()],
+        [store.rows[0].id, store.rows[1].id],
         userId,
       );
 
-      expect(result.sort()).toEqual([a1.toString(), a2.toString(), a3.toString()].sort());
-      // Only owned + active teams are queried.
-      const filter = teamModel.find.mock.calls[0][0];
-      expect(filter.createdBy).toBeInstanceOf(Types.ObjectId);
-      expect(filter.isActive).toBe(true);
+      expect(result.sort()).toEqual([a1, a2, a3].sort());
     });
 
     it('orders agents by hierarchy (root before its children)', async () => {
-      const root = new Types.ObjectId();
-      const child = new Types.ObjectId();
-      teamModel.find.mockReturnValue({
-        lean: () => ({
-          exec: () =>
-            Promise.resolve([{ members: [member(child, 0, root), member(root, 0, null)] }]),
-        }),
-      });
+      const root = new Types.ObjectId().toString();
+      const child = new Types.ObjectId().toString();
+      store.seed({ createdBy: userId, members: [member(child, 0, root), member(root, 0, null)] });
 
-      const result = await service.resolveAgentIds([new Types.ObjectId().toString()], userId);
-      expect(result).toEqual([root.toString(), child.toString()]);
+      const result = await service.resolveAgentIds([store.rows[0].id], userId);
+      expect(result).toEqual([root, child]);
     });
 
     it('ignores invalid team IDs', async () => {
       const result = await service.resolveAgentIds(['not-an-id'], userId);
       expect(result).toEqual([]);
-      expect(teamModel.find).not.toHaveBeenCalled();
-    });
-  });
-
-  describe('removeAgentFromAllTeams', () => {
-    it('pulls the agent from members and re-roots its children', async () => {
-      const exec = jest.fn().mockResolvedValue({ modifiedCount: 2 });
-      teamModel.updateMany.mockReturnValue({ exec });
-      const agentId = new Types.ObjectId().toString();
-
-      await service.removeAgentFromAllTeams(agentId);
-
-      // First call pulls the member; second call nulls dangling parent refs.
-      const [pullMatch, pullUpdate] = teamModel.updateMany.mock.calls[0];
-      expect(pullMatch['members.agentId'].toString()).toBe(agentId);
-      expect(pullUpdate.$pull.members.agentId.toString()).toBe(agentId);
-
-      const [parentMatch] = teamModel.updateMany.mock.calls[1];
-      expect(parentMatch['members.parentAgentId'].toString()).toBe(agentId);
-    });
-
-    it('is a no-op for an invalid agent id', async () => {
-      await service.removeAgentFromAllTeams('bad');
-      expect(teamModel.updateMany).not.toHaveBeenCalled();
     });
   });
 });

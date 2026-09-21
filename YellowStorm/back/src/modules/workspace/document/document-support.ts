@@ -22,7 +22,7 @@ import {
   UploadProgressNotification,
 } from '../interfaces/upload-session.interface';
 import { NotificationsService } from '../../notifications/notifications.service';
-import { NotificationType } from '../../notifications/schemas/notification.schema';
+import { NotificationType } from '../../notifications/notification.types';
 import { LoggerService } from '../../logger';
 import { BadRequestException } from '../../exceptions';
 import { ErrorCode } from '../../exceptions/constants/error-codes';

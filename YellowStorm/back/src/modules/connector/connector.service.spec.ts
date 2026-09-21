@@ -1,21 +1,95 @@
-import { Types } from 'mongoose';
 import { ConnectorService } from './connector.service';
-import { ConnectorActionSafety } from './schemas/connector.schema';
+import { ConnectorActionSafety, DynamicHeaderSource } from './schemas/connector.schema';
+import type {
+  ConnectorCategoryStore,
+  ConnectorRow,
+  ConnectorStore,
+} from './persistence/connector.store';
 import { SandboxRuntimeContext } from '../../common/runtime/sandbox-scope';
 
 const createPlaybookBindingSyncServiceMock = () => ({
   syncConnectorActions: jest.fn().mockResolvedValue(undefined),
 });
 
+/** Deep-partial row override: lets fixture literals use minimal action/header objects. */
+type RowOver = {
+  [K in keyof ConnectorRow]?: ConnectorRow[K] extends Array<infer T>
+    ? Array<Partial<T>>
+    : ConnectorRow[K];
+};
+
+const baseRow = (over: RowOver = {}): ConnectorRow =>
+  ({
+    id: '507f1f77bcf86cd799439031',
+    slug: 'github',
+    name: 'GitHub',
+    description: '',
+    icon: '',
+    color: '',
+    iconColor: 'light',
+    categoryId: null,
+    authType: 'none',
+    authConfigSchema: {},
+    authSourceType: 'none',
+    connectedAppKey: '',
+    runtimeAuthConfig: {},
+    mcpTransportType: 'streamable_http',
+    mcpServerUrl: '',
+    mcpServerConfig: {},
+    dynamicHeaders: [],
+    actions: [],
+    skillIds: [],
+    isActive: true,
+    isSystem: false,
+    isHidden: false,
+    createdBy: '507f1f77bcf86cd799439032',
+    createdAt: new Date('2026-01-01'),
+    updatedAt: new Date('2026-01-01'),
+    ...over,
+  }) as ConnectorRow;
+
+const connectorStoreMock = (over: Record<string, jest.Mock> = {}): ConnectorStore =>
+  ({
+    findBySlugAndOwner: jest.fn().mockResolvedValue(null),
+    findById: jest.fn().mockResolvedValue(null),
+    findActiveBySlug: jest.fn().mockResolvedValue(null),
+    findByIds: jest.fn().mockResolvedValue([]),
+    list: jest.fn().mockResolvedValue({ rows: [], total: 0 }),
+    findAllActive: jest.fn().mockResolvedValue([]),
+    findAllActiveVisible: jest.fn().mockResolvedValue([]),
+    findNamesByIds: jest.fn().mockResolvedValue(new Map()),
+    findIdsInCategories: jest.fn().mockResolvedValue([]),
+    findImportSlugs: jest.fn().mockResolvedValue([]),
+    insert: jest.fn(),
+    findAllExport: jest.fn().mockResolvedValue([]),
+    update: jest.fn().mockResolvedValue(null),
+    findBySlugExcludingOwner: jest.fn().mockResolvedValue(null),
+    delete: jest.fn().mockResolvedValue(null),
+    upsertSystemActionsBySlug: jest.fn(),
+    ...over,
+  }) as unknown as ConnectorStore;
+
+const categoryStoreMock = (over: Record<string, jest.Mock> = {}): ConnectorCategoryStore =>
+  ({
+    ensureSystem: jest.fn().mockResolvedValue(undefined),
+    findByNameInsensitive: jest.fn().mockResolvedValue(null),
+    findByOwnerName: jest.fn().mockResolvedValue(null),
+    findById: jest.fn().mockResolvedValue(null),
+    findAll: jest.fn().mockResolvedValue([]),
+    insert: jest.fn(),
+    update: jest.fn().mockResolvedValue(null),
+    delete: jest.fn().mockResolvedValue(true),
+    findNamesByIds: jest.fn().mockResolvedValue(new Map()),
+    findIdsByNameInsensitive: jest.fn().mockResolvedValue([]),
+    ...over,
+  }) as unknown as ConnectorCategoryStore;
+
 describe('ConnectorService findAllActive', () => {
   it('includes hidden Playbook MCP while excluding other hidden connectors', async () => {
-    const exec = jest.fn().mockResolvedValue([]);
-    const lean = jest.fn().mockReturnValue({ exec });
-    const sort = jest.fn().mockReturnValue({ lean });
-    const find = jest.fn().mockReturnValue({ sort });
+    const store = connectorStoreMock();
     const service = new ConnectorService(
-      { find } as any,
-      { find: jest.fn() } as any,
+      store,
+      categoryStoreMock(),
       { setContext: jest.fn(), log: jest.fn(), error: jest.fn(), warn: jest.fn() } as any,
       null as any,
       null as any,
@@ -24,44 +98,24 @@ describe('ConnectorService findAllActive', () => {
 
     await service.findAllActive();
 
-    expect(find).toHaveBeenCalledWith({
-      isActive: true,
-      $or: [
-        { isHidden: { $ne: true } },
-        { slug: 'playbook-mcp' },
-      ],
-    });
+    // The active + visible filter (hidden excluded, playbook-mcp exception)
+    // lives in the store port; the service pins the exception slug.
+    expect(store.findAllActiveVisible).toHaveBeenCalledWith('playbook-mcp');
   });
 });
 
 describe('ConnectorService importFromMcp', () => {
   it('persists normalized actions when creating a connector', async () => {
-    const create = jest.fn().mockResolvedValue({
-      _id: new Types.ObjectId(),
-      slug: 'searchv2',
-      name: 'SearchV2',
-      description: 'Search connector',
-      icon: '',
-      color: '',
-      authType: 'none',
-      authConfigSchema: {},
-      authSourceType: 'none',
-      connectedAppKey: '',
-      runtimeAuthConfig: {},
-      mcpTransportType: 'streamable_http',
-      mcpServerUrl: 'https://example.com/mcp',
-      mcpServerConfig: {},
-      actions: [],
-      referencedSkillIds: [],
-      isActive: true,
-      createdBy: new Types.ObjectId(),
-      createdAt: new Date(),
-      updatedAt: new Date(),
-    });
-    const findOne = jest.fn().mockReturnValue({
-      lean: jest.fn().mockReturnValue({
-        exec: jest.fn().mockResolvedValue(null),
-      }),
+    const store = connectorStoreMock({
+      insert: jest.fn().mockResolvedValue(
+        baseRow({
+          slug: 'searchv2',
+          name: 'SearchV2',
+          description: 'Search connector',
+          mcpServerUrl: 'https://example.com/mcp',
+          skillIds: ['507f1f77bcf86cd799439033'],
+        }),
+      ),
     });
     const logger = {
       setContext: jest.fn(),
@@ -70,11 +124,8 @@ describe('ConnectorService importFromMcp', () => {
     };
 
     const service = new ConnectorService(
-      {
-        create,
-        findOne,
-      } as any,
-      { find: jest.fn() } as any,
+      store,
+      categoryStoreMock(),
       logger as any,
       null as any,
       {
@@ -84,7 +135,7 @@ describe('ConnectorService importFromMcp', () => {
       createPlaybookBindingSyncServiceMock() as any,
     );
 
-    await service.create(new Types.ObjectId().toString(), {
+    const response = await service.create('507f1f77bcf86cd799439034', {
       slug: 'searchv2',
       name: 'SearchV2',
       description: 'Search connector',
@@ -99,7 +150,7 @@ describe('ConnectorService importFromMcp', () => {
       ],
     });
 
-    expect(create).toHaveBeenCalledWith(
+    expect(store.insert).toHaveBeenCalledWith(
       expect.objectContaining({
         actions: [
           expect.objectContaining({
@@ -116,49 +167,25 @@ describe('ConnectorService importFromMcp', () => {
         ],
       }),
     );
+    // The response maps the store row's skillIds onto referencedSkillIds.
+    expect(response.referencedSkillIds).toEqual(['507f1f77bcf86cd799439033']);
   });
 
   it('persists normalized actions when updating a connector', async () => {
-    const connectorId = new Types.ObjectId().toString();
-    const findById = jest.fn().mockReturnValue({
-      lean: jest.fn().mockReturnValue({
-        exec: jest.fn().mockResolvedValue({
-          _id: connectorId,
-          slug: 'github',
-          createdBy: new Types.ObjectId(),
-        }),
-      }),
-    });
-    const findByIdAndUpdate = jest.fn().mockReturnValue({
-      lean: jest.fn().mockReturnValue({
-        exec: jest.fn().mockResolvedValue({
-          _id: connectorId,
+    const connectorId = '507f1f77bcf86cd799439031';
+    const store = connectorStoreMock({
+      findById: jest.fn().mockResolvedValue(baseRow({ id: connectorId, slug: 'github' })),
+      update: jest.fn().mockResolvedValue(
+        baseRow({
+          id: connectorId,
           slug: 'github',
           name: 'GitHub',
           description: 'GitHub MCP',
-          icon: '',
-          color: '',
           authType: 'token',
-          authConfigSchema: {},
           authSourceType: 'credential',
-          connectedAppKey: '',
-          runtimeAuthConfig: {},
-          mcpTransportType: 'streamable_http',
-          mcpServerUrl: 'https://example.com/mcp',
-          mcpServerConfig: {},
-          actions: [
-            {
-              key: 'get_me',
-              label: 'Get Me',
-            },
-          ],
-          referencedSkillIds: [],
-          isActive: true,
-          createdBy: new Types.ObjectId(),
-          createdAt: new Date(),
-          updatedAt: new Date(),
+          actions: [{ key: 'get_me', label: 'Get Me' }],
         }),
-      }),
+      ),
     });
     const logger = {
       setContext: jest.fn(),
@@ -167,12 +194,8 @@ describe('ConnectorService importFromMcp', () => {
     };
 
     const service = new ConnectorService(
-      {
-        findById,
-        findByIdAndUpdate,
-        findOne: jest.fn(),
-      } as any,
-      { find: jest.fn() } as any,
+      store,
+      categoryStoreMock(),
       logger as any,
       null as any,
       {
@@ -198,75 +221,46 @@ describe('ConnectorService importFromMcp', () => {
       ],
     });
 
-    expect(findByIdAndUpdate).toHaveBeenCalledWith(
+    expect(store.update).toHaveBeenCalledWith(
       connectorId,
-      {
-        $set: expect.objectContaining({
-          actions: [
-            expect.objectContaining({
-              key: 'get_me',
-              label: 'Get Me',
-              description: 'Return current GitHub user',
-              parameterSchema: {},
-              outputSchema: {},
-              safety: 'read',
-              supportsBatch: false,
-              supportsIteration: false,
-              isEnabled: true,
-            }),
-          ],
-        }),
-      },
-      { new: true },
+      expect.objectContaining({
+        actions: [
+          expect.objectContaining({
+            key: 'get_me',
+            label: 'Get Me',
+            description: 'Return current GitHub user',
+            parameterSchema: {},
+            outputSchema: {},
+            safety: 'read',
+            supportsBatch: false,
+            supportsIteration: false,
+            isEnabled: true,
+          }),
+        ],
+      }),
     );
   });
 
   it('syncs referenced playbook bindings when connector actions change', async () => {
-    const connectorId = new Types.ObjectId().toString();
-    const findById = jest.fn().mockReturnValue({
-      lean: jest.fn().mockReturnValue({
-        exec: jest.fn().mockResolvedValue({
-          _id: connectorId,
+    const connectorId = '507f1f77bcf86cd799439031';
+    const store = connectorStoreMock({
+      findById: jest.fn().mockResolvedValue(
+        baseRow({
+          id: connectorId,
           slug: 'github',
-          createdBy: new Types.ObjectId(),
           actions: [
             { key: 'old_tool', parameterSchema: { properties: { oldArg: {} } }, isEnabled: true },
             { key: 'disabled_tool', parameterSchema: {}, isEnabled: true },
           ],
         }),
-      }),
-    });
-    const findByIdAndUpdate = jest.fn().mockReturnValue({
-      lean: jest.fn().mockReturnValue({
-        exec: jest.fn().mockResolvedValue({
-          _id: connectorId,
-          slug: 'github',
-          name: 'GitHub',
-          description: 'GitHub MCP',
-          icon: '',
-          color: '',
-          authType: 'token',
-          authConfigSchema: {},
-          authSourceType: 'credential',
-          connectedAppKey: '',
-          runtimeAuthConfig: {},
-          mcpTransportType: 'streamable_http',
-          mcpServerUrl: 'https://example.com/mcp',
-          mcpServerConfig: {},
-          actions: [],
-          referencedSkillIds: [],
-          isActive: true,
-          createdBy: new Types.ObjectId(),
-          createdAt: new Date(),
-          updatedAt: new Date(),
-        }),
-      }),
+      ),
+      update: jest.fn().mockResolvedValue(baseRow({ id: connectorId, slug: 'github', name: 'GitHub' })),
     });
     const playbookBindingSyncService = { syncConnectorActions: jest.fn().mockResolvedValue(undefined) };
     const logger = { setContext: jest.fn(), log: jest.fn(), error: jest.fn() };
     const service = new ConnectorService(
-      { findById, findByIdAndUpdate, findOne: jest.fn() } as any,
-      { find: jest.fn() } as any,
+      store,
+      categoryStoreMock(),
       logger as any,
       null as any,
       null as any,
@@ -325,51 +319,24 @@ describe('ConnectorService importFromMcp', () => {
   });
 
   it('does not fail connector updates when playbook binding sync fails', async () => {
-    const connectorId = new Types.ObjectId().toString();
-    const findById = jest.fn().mockReturnValue({
-      lean: jest.fn().mockReturnValue({
-        exec: jest.fn().mockResolvedValue({
-          _id: connectorId,
+    const connectorId = '507f1f77bcf86cd799439031';
+    const store = connectorStoreMock({
+      findById: jest.fn().mockResolvedValue(
+        baseRow({
+          id: connectorId,
           slug: 'github',
-          createdBy: new Types.ObjectId(),
           actions: [{ key: 'old_tool', isEnabled: true }],
         }),
-      }),
-    });
-    const updatedConnector = {
-      _id: connectorId,
-      slug: 'github',
-      name: 'GitHub',
-      description: 'GitHub MCP',
-      icon: '',
-      color: '',
-      authType: 'token',
-      authConfigSchema: {},
-      authSourceType: 'credential',
-      connectedAppKey: '',
-      runtimeAuthConfig: {},
-      mcpTransportType: 'streamable_http',
-      mcpServerUrl: 'https://example.com/mcp',
-      mcpServerConfig: {},
-      actions: [],
-      referencedSkillIds: [],
-      isActive: true,
-      createdBy: new Types.ObjectId(),
-      createdAt: new Date(),
-      updatedAt: new Date(),
-    };
-    const findByIdAndUpdate = jest.fn().mockReturnValue({
-      lean: jest.fn().mockReturnValue({
-        exec: jest.fn().mockResolvedValue(updatedConnector),
-      }),
+      ),
+      update: jest.fn().mockResolvedValue(baseRow({ id: connectorId, slug: 'github', name: 'GitHub' })),
     });
     const playbookBindingSyncService = {
       syncConnectorActions: jest.fn().mockRejectedValue(new Error('sync failed')),
     };
     const logger = { setContext: jest.fn(), log: jest.fn(), error: jest.fn(), warn: jest.fn() };
     const service = new ConnectorService(
-      { findById, findByIdAndUpdate, findOne: jest.fn() } as any,
-      { find: jest.fn() } as any,
+      store,
+      categoryStoreMock(),
       logger as any,
       null as any,
       null as any,
@@ -400,41 +367,10 @@ describe('ConnectorService importFromMcp', () => {
   });
 
   it('clears referenced skills when update payload provides an empty array', async () => {
-    const connectorId = new Types.ObjectId().toString();
-    const findById = jest.fn().mockReturnValue({
-      lean: jest.fn().mockReturnValue({
-        exec: jest.fn().mockResolvedValue({
-          _id: connectorId,
-          slug: 'github',
-          createdBy: new Types.ObjectId(),
-        }),
-      }),
-    });
-    const findByIdAndUpdate = jest.fn().mockReturnValue({
-      lean: jest.fn().mockReturnValue({
-        exec: jest.fn().mockResolvedValue({
-          _id: connectorId,
-          slug: 'github',
-          name: 'GitHub',
-          description: 'GitHub MCP',
-          icon: '',
-          color: '',
-          authType: 'token',
-          authConfigSchema: {},
-          authSourceType: 'credential',
-          connectedAppKey: '',
-          runtimeAuthConfig: {},
-          mcpTransportType: 'streamable_http',
-          mcpServerUrl: 'https://example.com/mcp',
-          mcpServerConfig: {},
-          actions: [],
-          referencedSkillIds: [],
-          isActive: true,
-          createdBy: new Types.ObjectId(),
-          createdAt: new Date(),
-          updatedAt: new Date(),
-        }),
-      }),
+    const connectorId = '507f1f77bcf86cd799439031';
+    const store = connectorStoreMock({
+      findById: jest.fn().mockResolvedValue(baseRow({ id: connectorId, slug: 'github' })),
+      update: jest.fn().mockResolvedValue(baseRow({ id: connectorId, slug: 'github', name: 'GitHub' })),
     });
     const logger = {
       setContext: jest.fn(),
@@ -443,12 +379,8 @@ describe('ConnectorService importFromMcp', () => {
     };
 
     const service = new ConnectorService(
-      {
-        findById,
-        findByIdAndUpdate,
-        findOne: jest.fn(),
-      } as any,
-      { find: jest.fn() } as any,
+      store,
+      categoryStoreMock(),
       logger as any,
       null as any,
       null as any,
@@ -459,44 +391,25 @@ describe('ConnectorService importFromMcp', () => {
       referencedSkillIds: [],
     });
 
-    expect(findByIdAndUpdate).toHaveBeenCalledWith(
+    // The DTO's referencedSkillIds maps to the store row's skillIds.
+    expect(store.update).toHaveBeenCalledWith(
       connectorId,
-      {
-        $set: expect.objectContaining({
-          referencedSkillIds: [],
-        }),
-      },
-      { new: true },
+      expect.objectContaining({
+        skillIds: [],
+      }),
     );
   });
 
   it('truncates oversized action fields before persisting', async () => {
-    const create = jest.fn().mockResolvedValue({
-      _id: new Types.ObjectId(),
-      slug: 'github',
-      name: 'GitHub',
-      description: 'GitHub connector',
-      icon: '',
-      color: '',
-      authType: 'none',
-      authConfigSchema: {},
-      authSourceType: 'none',
-      connectedAppKey: '',
-      runtimeAuthConfig: {},
-      mcpTransportType: 'streamable_http',
-      mcpServerUrl: 'https://example.com/mcp',
-      mcpServerConfig: {},
-      actions: [],
-      referencedSkillIds: [],
-      isActive: true,
-      createdBy: new Types.ObjectId(),
-      createdAt: new Date(),
-      updatedAt: new Date(),
-    });
-    const findOne = jest.fn().mockReturnValue({
-      lean: jest.fn().mockReturnValue({
-        exec: jest.fn().mockResolvedValue(null),
-      }),
+    const store = connectorStoreMock({
+      insert: jest.fn().mockResolvedValue(
+        baseRow({
+          slug: 'github',
+          name: 'GitHub',
+          description: 'GitHub connector',
+          mcpServerUrl: 'https://example.com/mcp',
+        }),
+      ),
     });
     const logger = {
       setContext: jest.fn(),
@@ -505,11 +418,8 @@ describe('ConnectorService importFromMcp', () => {
     };
 
     const service = new ConnectorService(
-      {
-        create,
-        findOne,
-      } as any,
-      { find: jest.fn() } as any,
+      store,
+      categoryStoreMock(),
       logger as any,
       null as any,
       {
@@ -519,7 +429,7 @@ describe('ConnectorService importFromMcp', () => {
       createPlaybookBindingSyncServiceMock() as any,
     );
 
-    await service.create(new Types.ObjectId().toString(), {
+    await service.create('507f1f77bcf86cd799439034', {
       slug: 'github',
       name: 'GitHub',
       description: 'GitHub connector',
@@ -533,7 +443,7 @@ describe('ConnectorService importFromMcp', () => {
       ],
     });
 
-    expect(create).toHaveBeenCalledWith(
+    expect(store.insert).toHaveBeenCalledWith(
       expect.objectContaining({
         actions: [
           expect.objectContaining({
@@ -547,16 +457,11 @@ describe('ConnectorService importFromMcp', () => {
   });
 
   it('creates a new connector with a unique slug when the imported name already exists', async () => {
-    const create = jest.fn().mockResolvedValue({});
-    const find = jest.fn().mockReturnValue({
-      select: jest.fn().mockReturnValue({
-        lean: jest.fn().mockReturnValue({
-          exec: jest.fn().mockResolvedValue([
-            { slug: 'sharepoint', name: 'SharePoint' },
-            { slug: 'sharepoint-2', name: 'SharePoint (2)' },
-          ]),
-        }),
-      }),
+    const store = connectorStoreMock({
+      findImportSlugs: jest
+        .fn()
+        .mockResolvedValue(['sharepoint', 'sharepoint-2']),
+      insert: jest.fn().mockResolvedValue(baseRow({ slug: 'sharepoint-3', name: 'SharePoint (3)' })),
     });
     const logger = {
       setContext: jest.fn(),
@@ -565,11 +470,8 @@ describe('ConnectorService importFromMcp', () => {
     };
 
     const service = new ConnectorService(
-      {
-        create,
-        find,
-      } as any,
-      { find: jest.fn() } as any,
+      store,
+      categoryStoreMock(),
       logger as any,
       null as any,
       {
@@ -590,12 +492,12 @@ describe('ConnectorService importFromMcp', () => {
       ],
     });
 
-    const createdBy = new Types.ObjectId().toString();
+    const createdBy = '507f1f77bcf86cd799439034';
     const result = await service.importFromMcp(createdBy, 'streamable_http', 'https://example.com/mcp');
 
     expect(result.error).toBeUndefined();
-    expect(find).toHaveBeenCalled();
-    expect(create).toHaveBeenCalledWith(
+    expect(store.findImportSlugs).toHaveBeenCalledWith(createdBy, 'sharepoint');
+    expect(store.insert).toHaveBeenCalledWith(
       expect.objectContaining({
         slug: 'sharepoint-3',
         name: 'SharePoint (3)',
@@ -607,13 +509,9 @@ describe('ConnectorService importFromMcp', () => {
   });
 
   it('keeps the original name and slug for the first import', async () => {
-    const create = jest.fn().mockResolvedValue({});
-    const find = jest.fn().mockReturnValue({
-      select: jest.fn().mockReturnValue({
-        lean: jest.fn().mockReturnValue({
-          exec: jest.fn().mockResolvedValue([]),
-        }),
-      }),
+    const store = connectorStoreMock({
+      findImportSlugs: jest.fn().mockResolvedValue([]),
+      insert: jest.fn().mockResolvedValue(baseRow({ slug: 'sharepoint', name: 'SharePoint' })),
     });
     const logger = {
       setContext: jest.fn(),
@@ -622,11 +520,8 @@ describe('ConnectorService importFromMcp', () => {
     };
 
     const service = new ConnectorService(
-      {
-        create,
-        find,
-      } as any,
-      { find: jest.fn() } as any,
+      store,
+      categoryStoreMock(),
       logger as any,
       null as any,
       {
@@ -641,9 +536,9 @@ describe('ConnectorService importFromMcp', () => {
       tools: [],
     });
 
-    await service.importFromMcp(new Types.ObjectId().toString(), 'streamable_http', 'https://example.com/mcp');
+    await service.importFromMcp('507f1f77bcf86cd799439034', 'streamable_http', 'https://example.com/mcp');
 
-    expect(create).toHaveBeenCalledWith(
+    expect(store.insert).toHaveBeenCalledWith(
       expect.objectContaining({
         slug: 'sharepoint',
         name: 'SharePoint',
@@ -659,11 +554,8 @@ describe('ConnectorService importFromMcp', () => {
     };
 
     const service = new ConnectorService(
-      {
-        create: jest.fn(),
-        find: jest.fn(),
-      } as any,
-      { find: jest.fn() } as any,
+      connectorStoreMock(),
+      categoryStoreMock(),
       logger as any,
       null as any,
       {
@@ -692,11 +584,8 @@ describe('ConnectorService importFromMcp', () => {
     };
 
     const service = new ConnectorService(
-      {
-        create: jest.fn(),
-        find: jest.fn(),
-      } as any,
-      { find: jest.fn() } as any,
+      connectorStoreMock(),
+      categoryStoreMock(),
       logger as any,
       null as any,
       {
@@ -723,18 +612,14 @@ describe('ConnectorService importFromMcp', () => {
 });
 
 describe('ConnectorService findByIdsForGrpc', () => {
-  const buildService = (connectorDoc: any, auth: any) => {
-    const find = jest.fn().mockReturnValue({
-      sort: jest.fn().mockReturnValue({
-        lean: jest.fn().mockReturnValue({
-          exec: jest.fn().mockResolvedValue(connectorDoc ? [connectorDoc] : []),
-        }),
-      }),
+  const buildService = (connectorRow: ConnectorRow | null, auth: any) => {
+    const store = connectorStoreMock({
+      findByIds: jest.fn().mockResolvedValue(connectorRow ? [connectorRow] : []),
     });
     const logger = { setContext: jest.fn(), log: jest.fn(), error: jest.fn(), warn: jest.fn() };
     return new ConnectorService(
-      { find } as any,
-      { find: jest.fn() } as any,
+      store,
+      categoryStoreMock(),
       logger as any,
       null as any,
       auth as any,
@@ -743,8 +628,9 @@ describe('ConnectorService findByIdsForGrpc', () => {
   };
 
   it('maps a connector to the gRPC wire shape with resolved auth + JSON-string schema', async () => {
-    const doc = {
-      _id: new Types.ObjectId(),
+    const connectorId = '507f1f77bcf86cd799439031';
+    const row = baseRow({
+      id: connectorId,
       name: 'SharePoint',
       authType: 'oauth2',
       authSourceType: 'connected_app',
@@ -752,7 +638,7 @@ describe('ConnectorService findByIdsForGrpc', () => {
       runtimeAuthConfig: { strategy: 'http_header_bearer' },
       mcpTransportType: 'streamable_http',
       mcpServerUrl: 'https://mcp-m365.example/',
-      dynamicHeaders: [{ headerName: 'X-User-Email', source: 'user_email', enabled: true }],
+      dynamicHeaders: [{ headerName: 'X-User-Email', source: DynamicHeaderSource.USER_EMAIL, enabled: true }],
       actions: [
         {
           key: 'search_files',
@@ -764,7 +650,7 @@ describe('ConnectorService findByIdsForGrpc', () => {
         { key: 'disabled_action', label: 'Nope', isEnabled: false },
       ],
       isActive: true,
-    };
+    });
     const auth = {
       resolveRuntimeAuth: jest.fn().mockResolvedValue({
         headers: { Authorization: 'Bearer TOKEN' },
@@ -772,13 +658,13 @@ describe('ConnectorService findByIdsForGrpc', () => {
       }),
       resolveDynamicHeaders: jest.fn().mockResolvedValue({ 'X-User-Email': 'a@b.c' }),
     };
-    const service = buildService(doc, auth);
+    const service = buildService(row, auth);
 
-    const [binding] = await service.findByIdsForGrpc([doc._id.toString()], 'user-1');
+    const [binding] = await service.findByIdsForGrpc([connectorId], 'user-1');
 
     expect(auth.resolveRuntimeAuth).toHaveBeenCalledWith('user-1', expect.objectContaining({ connectedAppKey: 'microsoft' }));
     expect(binding).toEqual({
-      connector_id: doc._id.toString(),
+      connector_id: connectorId,
       connector_name: 'SharePoint',
       mcp_transport_type: 'streamable_http',
       mcp_server_url: 'https://mcp-m365.example/',
@@ -800,8 +686,9 @@ describe('ConnectorService findByIdsForGrpc', () => {
   });
 
   it('resolves auth for a credential-source connector, passing connectorId', async () => {
-    const doc = {
-      _id: new Types.ObjectId(),
+    const connectorId = '507f1f77bcf86cd799439035';
+    const row = baseRow({
+      id: connectorId,
       name: 'Code Interpreter',
       authSourceType: 'credential',
       connectedAppKey: '',
@@ -810,36 +697,37 @@ describe('ConnectorService findByIdsForGrpc', () => {
       mcpServerUrl: 'https://ci/mcp',
       actions: [{ key: 'run', label: 'Run', isEnabled: true }],
       isActive: true,
-    };
+    });
     const auth = {
       resolveRuntimeAuth: jest.fn().mockResolvedValue({ headers: { Authorization: 'Bearer SAVED' }, env: {} }),
       resolveDynamicHeaders: jest.fn().mockResolvedValue({}),
     };
-    const service = buildService(doc, auth);
+    const service = buildService(row, auth);
 
-    const [binding] = await service.findByIdsForGrpc([doc._id.toString()], 'user-1');
+    const [binding] = await service.findByIdsForGrpc([connectorId], 'user-1');
 
     expect(auth.resolveRuntimeAuth).toHaveBeenCalledWith(
       'user-1',
-      expect.objectContaining({ authSourceType: 'credential', connectorId: doc._id.toString() }),
+      expect.objectContaining({ authSourceType: 'credential', connectorId }),
     );
     expect(binding.auth_headers).toEqual({ Authorization: 'Bearer SAVED' });
   });
 
   it('drops connectors that have no enabled action', async () => {
-    const doc = {
-      _id: new Types.ObjectId(),
+    const connectorId = '507f1f77bcf86cd799439036';
+    const row = baseRow({
+      id: connectorId,
       name: 'Empty',
       authSourceType: 'none',
       mcpTransportType: 'streamable_http',
       mcpServerUrl: 'https://x/',
       actions: [{ key: 'a', label: 'a', isEnabled: false }],
       isActive: true,
-    };
+    });
     const auth = { resolveRuntimeAuth: jest.fn(), resolveDynamicHeaders: jest.fn().mockResolvedValue({}) };
-    const service = buildService(doc, auth);
+    const service = buildService(row, auth);
 
-    const bindings = await service.findByIdsForGrpc([doc._id.toString()], 'user-1');
+    const bindings = await service.findByIdsForGrpc([connectorId], 'user-1');
     expect(bindings).toEqual([]);
     expect(auth.resolveRuntimeAuth).not.toHaveBeenCalled();
   });
@@ -851,8 +739,9 @@ describe('ConnectorService findByIdsForGrpc', () => {
     // serializes to {} over @grpc/proto-loader, so this has to travel as a
     // string -- dropping this field means every linkup/code-interpreter call
     // goes out unauthenticated (401) instead of failing loudly.
-    const doc = {
-      _id: new Types.ObjectId(),
+    const connectorId = '507f1f77bcf86cd799439037';
+    const row = baseRow({
+      id: connectorId,
       name: 'Linkup',
       authSourceType: 'none',
       mcpTransportType: 'streamable_http',
@@ -860,11 +749,11 @@ describe('ConnectorService findByIdsForGrpc', () => {
       mcpServerConfig: { headers: { Authorization: 'Bearer GATEWAY_TOKEN' } },
       actions: [{ key: 'search', label: 'Search', isEnabled: true }],
       isActive: true,
-    };
+    });
     const auth = { resolveRuntimeAuth: jest.fn(), resolveDynamicHeaders: jest.fn().mockResolvedValue({}) };
-    const service = buildService(doc, auth);
+    const service = buildService(row, auth);
 
-    const [binding] = await service.findByIdsForGrpc([doc._id.toString()], 'user-1');
+    const [binding] = await service.findByIdsForGrpc([connectorId], 'user-1');
 
     expect(binding.mcp_server_config_json).toBe(
       JSON.stringify({ headers: { Authorization: 'Bearer GATEWAY_TOKEN' } }),
@@ -882,22 +771,23 @@ describe('ConnectorService findByIdsForGrpc', () => {
       resolveRuntimeAuth: jest.fn(),
       resolveDynamicHeaders: jest.fn().mockResolvedValue({}),
     };
-    const ciDoc = () => ({
-      _id: new Types.ObjectId(),
-      name: 'Code Interpreter',
-      slug: 'code-interpreter',
-      authSourceType: 'none',
-      mcpTransportType: 'streamable_http',
-      mcpServerUrl: 'https://ci/mcp',
-      actions: [{ key: 'run', label: 'Run', isEnabled: true }],
-      isActive: true,
-    });
+    const ciRow = () =>
+      baseRow({
+        id: '507f1f77bcf86cd799439038',
+        name: 'Code Interpreter',
+        slug: 'code-interpreter',
+        authSourceType: 'none',
+        mcpTransportType: 'streamable_http',
+        mcpServerUrl: 'https://ci/mcp',
+        actions: [{ key: 'run', label: 'Run', isEnabled: true }],
+        isActive: true,
+      });
 
     it('stamps x-sandbox-* onto a code-interpreter connector when ctx is provided', async () => {
-      const doc = ciDoc();
-      const service = buildService(doc, { ...noAuth });
+      const row = ciRow();
+      const service = buildService(row, { ...noAuth });
 
-      const [binding] = await service.findByIdsForGrpc([doc._id.toString()], 'user-1', ctx);
+      const [binding] = await service.findByIdsForGrpc([row.id], 'user-1', ctx);
 
       expect(binding.auth_headers['x-sandbox-scope-id']).toBe('conversation:sess-1');
       expect(binding.auth_headers['x-sandbox-scope-type']).toBe('conversation');
@@ -906,19 +796,19 @@ describe('ConnectorService findByIdsForGrpc', () => {
     });
 
     it('does not stamp a non-code-interpreter connector', async () => {
-      const doc = { ...ciDoc(), name: 'Gmail', slug: 'gmail' };
-      const service = buildService(doc, { ...noAuth });
+      const row = { ...ciRow(), name: 'Gmail', slug: 'gmail' };
+      const service = buildService(row, { ...noAuth });
 
-      const [binding] = await service.findByIdsForGrpc([doc._id.toString()], 'user-1', ctx);
+      const [binding] = await service.findByIdsForGrpc([row.id], 'user-1', ctx);
 
       expect(binding.auth_headers['x-sandbox-scope-id']).toBeUndefined();
     });
 
     it('is unchanged when ctx is omitted (regression guard)', async () => {
-      const doc = ciDoc();
-      const service = buildService(doc, { ...noAuth });
+      const row = ciRow();
+      const service = buildService(row, { ...noAuth });
 
-      const [binding] = await service.findByIdsForGrpc([doc._id.toString()], 'user-1');
+      const [binding] = await service.findByIdsForGrpc([row.id], 'user-1');
 
       expect(binding.auth_headers['x-sandbox-scope-id']).toBeUndefined();
     });
@@ -927,38 +817,26 @@ describe('ConnectorService findByIdsForGrpc', () => {
 
 describe('ConnectorService findIdsByCategoryName', () => {
   it('returns active connector ids assigned to the named category', async () => {
-    const connectorId = new Types.ObjectId();
-    const categoryId = new Types.ObjectId();
-    const connectorExec = jest.fn().mockResolvedValue([{ _id: connectorId }]);
-    const categoryExec = jest.fn().mockResolvedValue([{ _id: categoryId }]);
-    const connectorModel = {
-      find: jest.fn().mockReturnValue({
-        select: jest.fn().mockReturnValue({ lean: jest.fn().mockReturnValue({ exec: connectorExec }) }),
-      }),
-    };
-    const categoryModel = {
-      find: jest.fn().mockReturnValue({
-        select: jest.fn().mockReturnValue({ lean: jest.fn().mockReturnValue({ exec: categoryExec }) }),
-      }),
-    };
+    const connectorId = '507f1f77bcf86cd799439039';
+    const categoryId = '507f1f77bcf86cd799439040';
+    const store = connectorStoreMock({
+      findIdsInCategories: jest.fn().mockResolvedValue([connectorId]),
+    });
+    const categoryStore = categoryStoreMock({
+      findIdsByNameInsensitive: jest.fn().mockResolvedValue([categoryId]),
+    });
     const service = new ConnectorService(
-      connectorModel as any,
-      categoryModel as any,
+      store,
+      categoryStore,
       { setContext: jest.fn() } as any,
       null as any,
       {} as any,
       createPlaybookBindingSyncServiceMock() as any,
     );
 
-    await expect(service.findIdsByCategoryName([connectorId.toString()], 'Web Search'))
-      .resolves.toEqual([connectorId.toString()]);
-    expect(categoryModel.find).toHaveBeenCalledWith({
-      name: { $regex: '^Web Search$', $options: 'i' },
-    });
-    expect(connectorModel.find).toHaveBeenCalledWith({
-      _id: { $in: [connectorId] },
-      categoryId: { $in: [categoryId] },
-      isActive: true,
-    });
+    await expect(service.findIdsByCategoryName([connectorId], 'Web Search'))
+      .resolves.toEqual([connectorId]);
+    expect(categoryStore.findIdsByNameInsensitive).toHaveBeenCalledWith('Web Search');
+    expect(store.findIdsInCategories).toHaveBeenCalledWith([connectorId], [categoryId]);
   });
 });

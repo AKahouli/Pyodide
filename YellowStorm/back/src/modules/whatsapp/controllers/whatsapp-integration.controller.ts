@@ -18,7 +18,7 @@ import {
   ApiTags,
 } from '@nestjs/swagger';
 import { CurrentUser } from '@modules/auth/decorators/current-user.decorator';
-import { UserDocument } from '@modules/user/schemas/user.schema';
+import type { AuthUser } from '@common/auth/auth-user';
 import { WhatsAppConnectResponseDto } from '../dto/whatsapp-connect-response.dto';
 import { WhatsAppIntegrationResponseDto } from '../dto/whatsapp-integration-response.dto';
 import { WhatsAppPairingResponseDto } from '../dto/whatsapp-pairing-response.dto';
@@ -44,7 +44,7 @@ export class WhatsAppIntegrationController {
   @ApiParam({ name: 'agentId', description: 'Agent ID' })
   @ApiResponse({ status: 200, type: WhatsAppIntegrationResponseDto })
   async getIntegration(
-    @CurrentUser() user: UserDocument,
+    @CurrentUser() user: AuthUser,
     @Param('agentId') agentId: string,
   ): Promise<WhatsAppIntegrationResponseDto | null> {
     return this.integrationService.getByAgentForUser(user._id.toString(), agentId);
@@ -57,7 +57,7 @@ export class WhatsAppIntegrationController {
   @ApiOperation({ summary: 'Notify backend to auto-reconnect after FAILED status' })
   @ApiResponse({ status: 200, type: WhatsAppIntegrationResponseDto })
   async autoRecover(
-    @CurrentUser() user: UserDocument,
+    @CurrentUser() user: AuthUser,
     @Param('agentId') agentId: string,
   ): Promise<WhatsAppIntegrationResponseDto> {
     return this.connectionService.autoRecover(user._id.toString(), agentId);
@@ -70,7 +70,7 @@ export class WhatsAppIntegrationController {
   @ApiOperation({ summary: 'Start WhatsApp pairing for this agent' })
   @ApiResponse({ status: 200, type: WhatsAppConnectResponseDto })
   async connect(
-    @CurrentUser() user: UserDocument,
+    @CurrentUser() user: AuthUser,
     @Param('agentId') agentId: string,
   ): Promise<WhatsAppConnectResponseDto> {
     return this.connectionService.connect(user._id.toString(), agentId);
@@ -82,7 +82,7 @@ export class WhatsAppIntegrationController {
   @ApiOperation({ summary: 'Enable or disable WhatsApp for this agent deployment' })
   @ApiResponse({ status: 200, type: WhatsAppIntegrationResponseDto })
   async updateEnabled(
-    @CurrentUser() user: UserDocument,
+    @CurrentUser() user: AuthUser,
     @Param('agentId') agentId: string,
     @Body() body: UpdateWhatsAppEnabledDto,
   ): Promise<WhatsAppIntegrationResponseDto> {
@@ -95,7 +95,7 @@ export class WhatsAppIntegrationController {
   @ApiOperation({ summary: 'Get latest QR / pairing code for a session' })
   @ApiResponse({ status: 200, type: WhatsAppPairingResponseDto })
   async getPairing(
-    @CurrentUser() user: UserDocument,
+    @CurrentUser() user: AuthUser,
     @Param('agentId') agentId: string,
     @Param('sessionId') sessionId: string,
   ): Promise<WhatsAppPairingResponseDto> {
@@ -109,7 +109,7 @@ export class WhatsAppIntegrationController {
   @ApiOperation({ summary: 'Reconnect WhatsApp using stored auth' })
   @ApiResponse({ status: 200, type: WhatsAppIntegrationResponseDto })
   async reconnect(
-    @CurrentUser() user: UserDocument,
+    @CurrentUser() user: AuthUser,
     @Param('agentId') agentId: string,
     @Param('sessionId') sessionId: string,
   ): Promise<WhatsAppIntegrationResponseDto> {
@@ -122,7 +122,7 @@ export class WhatsAppIntegrationController {
   @HttpCode(HttpStatus.NO_CONTENT)
   @ApiOperation({ summary: 'Disconnect WhatsApp session' })
   async disconnectSession(
-    @CurrentUser() user: UserDocument,
+    @CurrentUser() user: AuthUser,
     @Param('agentId') agentId: string,
     @Param('sessionId') sessionId: string,
   ): Promise<void> {
@@ -135,7 +135,7 @@ export class WhatsAppIntegrationController {
   @HttpCode(HttpStatus.NO_CONTENT)
   @ApiOperation({ summary: 'Remove WhatsApp integration for this agent' })
   async deleteIntegration(
-    @CurrentUser() user: UserDocument,
+    @CurrentUser() user: AuthUser,
     @Param('agentId') agentId: string,
   ): Promise<void> {
     await this.connectionService.deleteIntegration(user._id.toString(), agentId);

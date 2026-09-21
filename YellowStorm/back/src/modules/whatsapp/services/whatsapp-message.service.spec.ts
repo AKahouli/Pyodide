@@ -1,5 +1,6 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { getModelToken } from '@nestjs/mongoose';
+import { USER_LOOKUP_PORT } from '@common/ports/user-lookup.port';
 import { ConfigService } from '@nestjs/config';
 import { Types } from 'mongoose';
 import { User } from '@modules/user/schemas/user.schema';
@@ -48,8 +49,8 @@ describe('WhatsAppMessageService', () => {
     updateOne: jest.fn(),
   };
 
-  const mockUserModel = {
-    findById: jest.fn(),
+  const mockUserLookup = {
+    byId: jest.fn(),
   };
 
   const mockConfigService = {
@@ -95,7 +96,7 @@ describe('WhatsAppMessageService', () => {
       providers: [
         WhatsAppMessageService,
         { provide: getModelToken(WhatsAppChatBinding.name), useValue: mockBindingModel },
-        { provide: getModelToken(User.name), useValue: mockUserModel },
+        { provide: USER_LOOKUP_PORT, useValue: mockUserLookup },
         { provide: ConfigService, useValue: mockConfigService },
         { provide: LoggerService, useValue: mockLoggerService },
         { provide: AgentService, useValue: mockAgentService },
@@ -114,24 +115,12 @@ describe('WhatsAppMessageService', () => {
   const flushAsyncRouting = () => new Promise((resolve) => setImmediate(resolve));
 
   const mockActiveUser = () => {
-    mockUserModel.findById.mockReturnValue({
-      select: () => ({
-        lean: () => ({
-          exec: async () => ({ status: UserStatus.ACTIVE, email: 'user@example.com' }),
-        }),
-      }),
-    });
+    mockUserLookup.byId.mockResolvedValue({ id: 'u1', email: 'user@example.com', firstName: '', lastName: '', status: UserStatus.ACTIVE });
   };
 
   it('drops messages when owner user is inactive', async () => {
     const integrationRef = buildAgentIntegration();
-    mockUserModel.findById.mockReturnValue({
-      select: () => ({
-        lean: () => ({
-          exec: async () => ({ status: UserStatus.INACTIVE, email: 'inactive@example.com' }),
-        }),
-      }),
-    });
+    mockUserLookup.byId.mockResolvedValue({ id: 'u1', email: 'inactive@example.com', firstName: '', lastName: '', status: UserStatus.INACTIVE });
 
     await service.handleIncomingMessages(integrationRef, [], sendReply);
 

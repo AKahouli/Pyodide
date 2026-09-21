@@ -193,6 +193,7 @@ describe('AgentService connector skill inheritance', () => {
       guardrailsSettingsService as any,
       agentRepository as any,
       agentRoleEmbedding as any,
+      [], // channelTeardowns (plan 4.6); not exercised by this spec
       new AgentConnectorRuntimeService(
         logger as any,
         skillService as any,

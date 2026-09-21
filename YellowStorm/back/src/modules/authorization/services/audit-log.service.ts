@@ -1,20 +1,19 @@
-import { Injectable } from '@nestjs/common';
-import { InjectModel } from '@nestjs/mongoose';
-import { Model, Types, FilterQuery } from 'mongoose';
-import { AuditLog, AuditLogDocument } from '../schemas/audit-log.schema';
+import { Inject, Injectable } from '@nestjs/common';
+import { Types } from 'mongoose';
 import { LoggerService } from '../../logger';
+import { AUDIT_LOG_STORE, type AuditLogStore } from '../persistence/audit-log.store';
 import {
   CreateAuditLogParams,
   AuditLogQueryParams,
   AuditLogResponse,
-  IAuditLog,
 } from '../interfaces/audit-log.interface';
+import type { AuditLogRecord } from '../persistence/audit-log.store';
 import { escapeRegex } from '../../../common/utils';
 
 @Injectable()
 export class AuditLogService {
   constructor(
-    @InjectModel(AuditLog.name) private readonly auditLogModel: Model<AuditLogDocument>,
+    @Inject(AUDIT_LOG_STORE) private readonly auditLogStore: AuditLogStore,
     private readonly logger: LoggerService,
   ) {
     this.logger.setContext(AuditLogService.name);
@@ -62,54 +61,26 @@ export class AuditLogService {
     total: number;
     hasMore: boolean;
   }> {
-    const filter: FilterQuery<AuditLogDocument> = {};
-
-    if (params.actorId) {
-      filter.actorId = new Types.ObjectId(params.actorId);
-    }
-    if (params.actorEmail) {
-      filter.actorEmail = { $regex: escapeRegex(params.actorEmail), $options: 'i' };
-    }
-    if (params.action) {
-      filter.action = params.action;
-    }
-    if (params.feature) {
-      // Filter by action prefix (e.g., "users" matches "users.suspend", "users.activate")
-      filter.action = { $regex: `^${escapeRegex(params.feature)}\\.`, $options: 'i' };
-    }
-    if (params.targetType) {
-      filter.targetType = params.targetType;
-    }
-    if (params.status) {
-      filter.status = params.status;
-    }
-    if (params.startDate || params.endDate) {
-      filter.createdAt = {};
-      if (params.startDate) {
-        filter.createdAt.$gte = params.startDate;
-      }
-      if (params.endDate) {
-        filter.createdAt.$lte = params.endDate;
-      }
-    }
-
     const limit = params.limit ?? 50;
     const skip = params.skip ?? 0;
 
-    const [logs, total] = await Promise.all([
-      this.auditLogModel
-        .find(filter)
-        .sort({ createdAt: -1 })
-        .skip(skip)
-        .limit(limit)
-        .lean(),
-      this.auditLogModel.countDocuments(filter),
-    ]);
+    const { logs, total, hasMore } = await this.auditLogStore.findAll({
+      actorId: params.actorId,
+      actorEmail: params.actorEmail,
+      action: params.action,
+      feature: params.feature,
+      targetType: params.targetType,
+      status: params.status,
+      startDate: params.startDate,
+      endDate: params.endDate,
+      skip,
+      limit,
+    });
 
     return {
       logs: logs.map((log) => this.toAuditLogResponse(log)),
       total,
-      hasMore: skip + logs.length < total,
+      hasMore,
     };
   }
 
@@ -117,7 +88,7 @@ export class AuditLogService {
    * Gets distinct action values (for filter dropdowns).
    */
   async getDistinctActions(): Promise<string[]> {
-    return this.auditLogModel.distinct('action').exec();
+    return this.auditLogStore.getDistinctActions();
   }
 
   /**
@@ -143,15 +114,7 @@ export class AuditLogService {
     targetId: string,
     limit = 50,
   ): Promise<AuditLogResponse[]> {
-    const logs = await this.auditLogModel
-      .find({
-        targetType,
-        targetId: new Types.ObjectId(targetId),
-      })
-      .sort({ createdAt: -1 })
-      .limit(limit)
-      .lean();
-
+    const { logs } = await this.auditLogStore.findAll({ targetType, targetId, limit });
     return logs.map((log) => this.toAuditLogResponse(log));
   }
 
@@ -159,45 +122,40 @@ export class AuditLogService {
    * Gets audit logs for a specific actor.
    */
   async findByActor(actorId: string, limit = 50): Promise<AuditLogResponse[]> {
-    const logs = await this.auditLogModel
-      .find({ actorId: new Types.ObjectId(actorId) })
-      .sort({ createdAt: -1 })
-      .limit(limit)
-      .lean();
-
+    const { logs } = await this.auditLogStore.findAll({ actorId, limit });
     return logs.map((log) => this.toAuditLogResponse(log));
   }
 
   // ==================== Private Methods ====================
 
   private async saveAuditLog(params: CreateAuditLogParams): Promise<void> {
-    await this.auditLogModel.create({
-      actorId: new Types.ObjectId(params.actorId),
+    await this.auditLogStore.insert({
+      actorId: params.actorId,
       actorEmail: params.actorEmail,
       action: params.action,
-      targetId: params.targetId ? new Types.ObjectId(params.targetId) : undefined,
-      targetType: params.targetType,
-      metadata: params.metadata,
-      ipAddress: params.ipAddress,
-      userAgent: params.userAgent,
+      targetId: params.targetId ?? null,
+      targetType: params.targetType ?? null,
+      metadata: params.metadata ?? null,
+      ipAddress: params.ipAddress ?? null,
+      userAgent: params.userAgent ?? null,
       status: params.status,
-      failureReason: params.failureReason,
+      failureReason: params.failureReason ?? null,
     });
   }
 
-  private toAuditLogResponse(log: IAuditLog): AuditLogResponse {
+  private toAuditLogResponse(log: AuditLogRecord): AuditLogResponse {
     return {
-      id: log._id.toString(),
-      actorId: log.actorId.toString(),
+      id: log.id,
+      actorId: log.actorId,
       actorEmail: log.actorEmail,
       action: log.action,
-      targetId: log.targetId?.toString(),
-      targetType: log.targetType,
-      metadata: log.metadata,
-      ipAddress: log.ipAddress,
-      userAgent: log.userAgent,
+      targetId: log.targetId ?? undefined,
+      targetType: log.targetType ?? undefined,
+      metadata: log.metadata ?? undefined,
+      ipAddress: log.ipAddress ?? undefined,
+      userAgent: log.userAgent ?? undefined,
       status: log.status,
-      failureReason: log.failureReason,
+      failureReason: log.failureReason ?? undefined,
       createdAt: log.createdAt,
     };
   }

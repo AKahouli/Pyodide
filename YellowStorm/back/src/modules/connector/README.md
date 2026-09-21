@@ -475,3 +475,13 @@ async authorizeConnectorAppKey(...)
 - [Connected App Module](../connected-app/README.md) - OAuth app definitions
 - [Authorization Module](../authorization/README.md) - Permission system
 - [Crypto Service](../../common/services/crypto.service.ts) - Token encryption
+
+## Catalog import transaction boundary (plan 1B.4.5)
+
+With the skills cutover, `CatalogTransferService.importArchive` runs as **two
+ordered transactions**: a PostgreSQL transaction for skill categories and
+skills first, then the Mongo session for connector categories, connectors and
+security records. Both halves are idempotent upserts — skills keyed by
+`(slug, createdBy)`, categories by name, connectors by `(slug, createdBy)` —
+so re-running a failed import converges. P3 collapses this back into a single
+PostgreSQL transaction.

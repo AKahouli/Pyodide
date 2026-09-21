@@ -1,9 +1,7 @@
-import { Injectable } from '@nestjs/common';
-import { InjectModel } from '@nestjs/mongoose';
-import { Model, FilterQuery, Types } from 'mongoose';
+import { Inject, Injectable } from '@nestjs/common';
+import { isObjectId } from '@common/postgres';
 import { LoggerService } from '../logger';
-import { AgentType, AgentTypeDocument } from './schemas/agent-type.schema';
-import { AgentTypePrompt, AgentTypePromptDocument } from './schemas/agent-type-prompt.schema';
+import { AGENT_TYPE_STORE, type AgentTypePromptRow, type AgentTypeRow, type AgentTypeStore } from './persistence/agent-type.store';
 import { IAgentTypeResponse } from './interfaces/agent-type.interface';
 import { IAgentTypePromptResponse } from './interfaces/agent-type-prompt.interface';
 import { CreateAgentTypeDto } from './dto/create-agent-type.dto';
@@ -12,16 +10,13 @@ import { QueryAgentTypeDto } from './dto/query-agent-type.dto';
 import { PaginatedResponseDto } from '../../common/dto/pagination.dto';
 import { NotFoundException, ConflictException } from '../exceptions';
 import { ErrorCode } from '../exceptions/constants/error-codes';
-import { escapeRegex } from '../../common/utils';
 import { SkillService } from '../skill/skill.service';
 
 @Injectable()
 export class AgentTypeService {
   constructor(
-    @InjectModel(AgentType.name)
-    private readonly agentTypeModel: Model<AgentTypeDocument>,
-    @InjectModel(AgentTypePrompt.name)
-    private readonly agentTypePromptModel: Model<AgentTypePromptDocument>,
+    @Inject(AGENT_TYPE_STORE)
+    private readonly agentTypeStore: AgentTypeStore,
     private readonly skillService: SkillService,
     private readonly logger: LoggerService,
   ) {
@@ -38,24 +33,21 @@ export class AgentTypeService {
       }
     }
 
-    const existing = await this.agentTypeModel
-      .findOne({ $or: [{ name: dto.name }, { slug }] })
-      .lean()
-      .exec();
+    const existing = await this.agentTypeStore.findByNameOrSlug(dto.name, slug);
     if (existing) {
       throw new ConflictException(ErrorCode.AGENT_TYPE_ALREADY_EXISTS);
     }
 
-    const agentType = await this.agentTypeModel.create({
+    const agentType = await this.agentTypeStore.insert({
       name: dto.name,
       slug,
       defaultPrompt: dto.defaultPrompt ?? '',
-      skills: (dto.skills ?? []).map((id) => new Types.ObjectId(id)),
+      skills: dto.skills ?? [],
       isActive: dto.isActive ?? true,
     });
 
     this.logger.log('Agent type created', {
-      agentTypeId: agentType._id.toString(),
+      agentTypeId: agentType.id,
       name: agentType.name,
     });
 
@@ -63,41 +55,20 @@ export class AgentTypeService {
   }
 
   async findAll(query: QueryAgentTypeDto): Promise<PaginatedResponseDto<IAgentTypeResponse>> {
-    const filter: FilterQuery<AgentTypeDocument> = {};
-
-    if (query.search) {
-      const regex = { $regex: escapeRegex(query.search), $options: 'i' };
-      filter.name = regex;
-    }
-
-    if (query.isActive !== undefined) {
-      filter.isActive = query.isActive;
-    }
-
     const page = query.page ?? 1;
     const limit = query.limit ?? 10;
-    const skip = (page - 1) * limit;
 
-    const [agentTypes, total] = await Promise.all([
-      this.agentTypeModel
-        .find(filter)
-        .sort({ createdAt: -1 })
-        .skip(skip)
-        .limit(limit)
-        .lean()
-        .exec(),
-      this.agentTypeModel.countDocuments(filter).exec(),
-    ]);
+    const { rows, total } = await this.agentTypeStore.list({
+      search: query.search,
+      isActive: query.isActive,
+      page,
+      limit,
+    });
 
-    // Batch-query prompt counts
-    const agentTypeIds = agentTypes.map((at) => at._id);
-    const promptCounts = await this.getPromptCountsForIds(agentTypeIds);
+    const promptCounts = await this.agentTypeStore.promptCountsFor(rows.map((at) => at.id));
 
     return new PaginatedResponseDto(
-      agentTypes.map((at) => {
-        const count = promptCounts.get(at._id.toString()) ?? 0;
-        return this.toResponse(at, count);
-      }),
+      rows.map((at) => this.toResponse(at, promptCounts.get(at.id) ?? 0)),
       total,
       page,
       limit,
@@ -105,27 +76,23 @@ export class AgentTypeService {
   }
 
   async findById(id: string): Promise<IAgentTypeResponse> {
-    const agentType = await this.agentTypeModel.findById(id).lean().exec();
-
+    if (!isObjectId(id)) {
+      throw new NotFoundException(ErrorCode.AGENT_TYPE_NOT_FOUND);
+    }
+    const agentType = await this.agentTypeStore.findById(id);
     if (!agentType) {
       throw new NotFoundException(ErrorCode.AGENT_TYPE_NOT_FOUND);
     }
 
-    const promptCount = await this.agentTypePromptModel
-      .countDocuments({ agentType: new Types.ObjectId(id) })
-      .exec();
-
+    const promptCount = await this.agentTypeStore.promptCount(id);
     return this.toResponse(agentType, promptCount);
   }
 
   async findBySlug(slug: string): Promise<IAgentTypeResponse | null> {
-    const agentType = await this.agentTypeModel.findOne({ slug, isActive: true }).lean().exec();
+    const agentType = await this.agentTypeStore.findBySlug(slug, true);
     if (!agentType) return null;
 
-    const promptCount = await this.agentTypePromptModel
-      .countDocuments({ agentType: agentType._id })
-      .exec();
-
+    const promptCount = await this.agentTypeStore.promptCount(agentType.id);
     return this.toResponse(agentType, promptCount);
   }
 
@@ -138,43 +105,27 @@ export class AgentTypeService {
     slug: string,
     data: { name: string; defaultPrompt?: string; isActive?: boolean },
   ): Promise<IAgentTypeResponse> {
-    const agentType = await this.agentTypeModel.findOneAndUpdate(
-      { slug },
-      {
-        $setOnInsert: {
-          name: data.name,
-          slug,
-          defaultPrompt: data.defaultPrompt ?? '',
-          skills: [],
-          isActive: data.isActive ?? true,
-        },
-      },
-      { upsert: true, new: true, setDefaultsOnInsert: true },
-    ).lean().exec();
-    const promptCount = await this.agentTypePromptModel
-      .countDocuments({ agentType: agentType._id })
-      .exec();
+    const agentType = await this.agentTypeStore.findOrCreateBySlug(slug, {
+      name: data.name,
+      defaultPrompt: data.defaultPrompt ?? '',
+      isActive: data.isActive ?? true,
+    });
+    const promptCount = await this.agentTypeStore.promptCount(agentType.id);
     return this.toResponse(agentType, promptCount);
   }
 
   async findAllActive(): Promise<IAgentTypeResponse[]> {
-    const agentTypes = await this.agentTypeModel
-      .find({ isActive: true })
-      .sort({ name: 1 })
-      .lean()
-      .exec();
+    const agentTypes = await this.agentTypeStore.findAllActive();
+    const promptCounts = await this.agentTypeStore.promptCountsFor(agentTypes.map((at) => at.id));
 
-    const agentTypeIds = agentTypes.map((at) => at._id);
-    const promptCounts = await this.getPromptCountsForIds(agentTypeIds);
-
-    return agentTypes.map((at) => {
-      const count = promptCounts.get(at._id.toString()) ?? 0;
-      return this.toResponse(at, count);
-    });
+    return agentTypes.map((at) => this.toResponse(at, promptCounts.get(at.id) ?? 0));
   }
 
   async update(id: string, dto: UpdateAgentTypeDto): Promise<IAgentTypeResponse> {
-    const existing = await this.agentTypeModel.findById(id).lean().exec();
+    if (!isObjectId(id)) {
+      throw new NotFoundException(ErrorCode.AGENT_TYPE_NOT_FOUND);
+    }
+    const existing = await this.agentTypeStore.findById(id);
     if (!existing) {
       throw new NotFoundException(ErrorCode.AGENT_TYPE_NOT_FOUND);
     }
@@ -186,31 +137,19 @@ export class AgentTypeService {
       }
     }
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const updatePayload: Record<string, any> = { ...dto };
+    const updatePayload: Record<string, unknown> = { ...dto };
 
     if (dto.name && dto.name !== existing.name) {
       const slug = this.generateSlug(dto.name);
       updatePayload.slug = slug;
 
-      const duplicate = await this.agentTypeModel
-        .findOne({ _id: { $ne: id }, $or: [{ name: dto.name }, { slug }] })
-        .lean()
-        .exec();
+      const duplicate = await this.agentTypeStore.findByNameOrSlugExcluding(id, dto.name, slug);
       if (duplicate) {
         throw new ConflictException(ErrorCode.AGENT_TYPE_ALREADY_EXISTS);
       }
     }
 
-    if (dto.skills) {
-      updatePayload.skills = dto.skills.map((id) => new Types.ObjectId(id));
-    }
-
-    const agentType = await this.agentTypeModel
-      .findByIdAndUpdate(id, { $set: updatePayload }, { new: true })
-      .lean()
-      .exec();
-
+    const agentType = await this.agentTypeStore.update(id, updatePayload);
     if (!agentType) {
       throw new NotFoundException(ErrorCode.AGENT_TYPE_NOT_FOUND);
     }
@@ -220,26 +159,16 @@ export class AgentTypeService {
       changes: Object.keys(dto),
     });
 
-    const promptCount = await this.agentTypePromptModel
-      .countDocuments({ agentType: new Types.ObjectId(id) })
-      .exec();
-
+    const promptCount = await this.agentTypeStore.promptCount(id);
     return this.toResponse(agentType, promptCount);
   }
 
   async delete(id: string): Promise<void> {
-    const agentType = await this.agentTypeModel.findById(id).lean().exec();
+    // Type, junction rows and prompts cascade in one statement.
+    const agentType = await this.agentTypeStore.delete(id);
     if (!agentType) {
       throw new NotFoundException(ErrorCode.AGENT_TYPE_NOT_FOUND);
     }
-
-    // Check if any agents reference this type - done by AgentService via injection in controller
-    // The controller will call agentService to check before calling delete
-
-    await Promise.all([
-      this.agentTypeModel.findByIdAndDelete(id).exec(),
-      this.agentTypePromptModel.deleteMany({ agentType: new Types.ObjectId(id) }).exec(),
-    ]);
 
     this.logger.log('Agent type deleted', {
       agentTypeId: id,
@@ -252,17 +181,15 @@ export class AgentTypeService {
   // ==========================================
 
   async getPromptsForAgentType(agentTypeId: string): Promise<IAgentTypePromptResponse[]> {
-    const agentType = await this.agentTypeModel.findById(agentTypeId).lean().exec();
+    if (!isObjectId(agentTypeId)) {
+      throw new NotFoundException(ErrorCode.AGENT_TYPE_NOT_FOUND);
+    }
+    const agentType = await this.agentTypeStore.findById(agentTypeId);
     if (!agentType) {
       throw new NotFoundException(ErrorCode.AGENT_TYPE_NOT_FOUND);
     }
 
-    const prompts = await this.agentTypePromptModel
-      .find({ agentType: new Types.ObjectId(agentTypeId) })
-      .sort({ modelId: 1 })
-      .lean()
-      .exec();
-
+    const prompts = await this.agentTypeStore.promptsFor(agentTypeId);
     return prompts.map((p) => this.toPromptResponse(p));
   }
 
@@ -271,45 +198,23 @@ export class AgentTypeService {
     modelId: string,
     prompt: string,
   ): Promise<IAgentTypePromptResponse> {
-    const agentType = await this.agentTypeModel.findById(agentTypeId).lean().exec();
+    const agentType = await this.agentTypeStore.findById(agentTypeId);
     if (!agentType) {
       throw new NotFoundException(ErrorCode.AGENT_TYPE_NOT_FOUND);
     }
 
-    const result = await this.agentTypePromptModel
-      .findOneAndUpdate(
-        {
-          agentType: new Types.ObjectId(agentTypeId),
-          modelId,
-        },
-        {
-          $set: { prompt },
-          $setOnInsert: {
-            agentType: new Types.ObjectId(agentTypeId),
-            modelId,
-          },
-        },
-        { upsert: true, new: true },
-      )
-      .lean()
-      .exec();
+    const result = await this.agentTypeStore.upsertPrompt(agentTypeId, modelId, prompt);
 
     this.logger.log('Agent type prompt upserted', {
       agentTypeId,
       modelId,
     });
 
-    return this.toPromptResponse(result!);
+    return this.toPromptResponse(result);
   }
 
   async deletePrompt(agentTypeId: string, modelId: string): Promise<void> {
-    const result = await this.agentTypePromptModel
-      .findOneAndDelete({
-        agentType: new Types.ObjectId(agentTypeId),
-        modelId,
-      })
-      .exec();
-
+    const result = await this.agentTypeStore.deletePrompt(agentTypeId, modelId);
     if (!result) {
       throw new NotFoundException(ErrorCode.AGENT_TYPE_PROMPT_NOT_FOUND);
     }
@@ -321,20 +226,12 @@ export class AgentTypeService {
   }
 
   async resolvePrompt(agentTypeId: string, modelId: string): Promise<string> {
-    const prompt = await this.agentTypePromptModel
-      .findOne({
-        agentType: new Types.ObjectId(agentTypeId),
-        modelId,
-      })
-      .lean()
-      .exec();
-
+    const prompt = await this.agentTypeStore.findPrompt(agentTypeId, modelId);
     if (prompt) {
       return prompt.prompt;
     }
-
-    const agentType = await this.agentTypeModel.findById(agentTypeId).lean().exec();
-    return (agentType?.defaultPrompt as string) || '';
+    const agentType = await this.agentTypeStore.findById(agentTypeId);
+    return agentType?.defaultPrompt || '';
   }
 
   async resolvePromptsInBatch(
@@ -354,20 +251,11 @@ export class AgentTypeService {
     }
 
     // Query 1: Find all model-specific prompts in batch
-    const orConditions = Array.from(uniquePairs.values()).map((p) => ({
-      agentType: new Types.ObjectId(p.agentTypeId),
-      modelId: p.modelId,
-    }));
+    const modelPrompts = await this.agentTypeStore.findPromptsForPairs(Array.from(uniquePairs.values()));
 
-    const modelPrompts = await this.agentTypePromptModel
-      .find({ $or: orConditions })
-      .lean()
-      .exec();
-
-    // Fill found prompts
     const foundKeys = new Set<string>();
     for (const mp of modelPrompts) {
-      const key = `${mp.agentType.toString()}:${mp.modelId}`;
+      const key = `${mp.agentTypeId}:${mp.modelId}`;
       result.set(key, mp.prompt);
       foundKeys.add(key);
     }
@@ -382,20 +270,13 @@ export class AgentTypeService {
 
     // Query 2: Get defaultPrompt for missing agent types
     if (missingAgentTypeIds.size > 0) {
-      const agentTypes = await this.agentTypeModel
-        .find({
-          _id: { $in: Array.from(missingAgentTypeIds).map((id) => new Types.ObjectId(id)) },
-        })
-        .select('defaultPrompt')
-        .lean()
-        .exec();
+      const agentTypes = await this.agentTypeStore.findByIds(Array.from(missingAgentTypeIds));
 
       const defaultPromptMap = new Map<string, string>();
       for (const at of agentTypes) {
-        defaultPromptMap.set(at._id.toString(), (at.defaultPrompt as string) || '');
+        defaultPromptMap.set(at.id, at.defaultPrompt || '');
       }
 
-      // Fill missing pairs with defaultPrompt
       for (const [key, pair] of uniquePairs) {
         if (!foundKeys.has(key)) {
           result.set(key, defaultPromptMap.get(pair.agentTypeId) || '');
@@ -408,7 +289,7 @@ export class AgentTypeService {
 
   /**
    * Batch lookup used by AgentService to hydrate agents (which live in Postgres)
-   * with their agent-type name/slug/skills (which live in Mongo).
+   * with their agent-type name/slug/skills.
    */
   async getManyForHydration(
     ids: string[],
@@ -417,20 +298,10 @@ export class AgentTypeService {
     const unique = [...new Set(ids.filter(Boolean))];
     if (unique.length === 0) return map;
 
-    const docs = await this.agentTypeModel
-      .find({ _id: { $in: unique.map((id) => new Types.ObjectId(id)) } })
-      .select('name slug skills')
-      .lean()
-      .exec();
+    const docs = await this.agentTypeStore.findByIds(unique);
 
-    for (const d of docs as Array<Record<string, unknown>>) {
-      const id = (d._id as { toString(): string }).toString();
-      map.set(id, {
-        id,
-        name: (d.name as string) ?? '',
-        slug: (d.slug as string) ?? '',
-        skills: ((d.skills as Array<{ toString(): string }>) ?? []).map((s) => s.toString()),
-      });
+    for (const d of docs) {
+      map.set(d.id, { id: d.id, name: d.name, slug: d.slug, skills: d.skills });
     }
     return map;
   }
@@ -443,41 +314,14 @@ export class AgentTypeService {
     return name.toLowerCase().replace(/\s+/g, '_');
   }
 
-  private async getPromptCountsForIds(
-    agentTypeIds: Types.ObjectId[],
-  ): Promise<Map<string, number>> {
-    const countMap = new Map<string, number>();
-
-    if (agentTypeIds.length === 0) {
-      return countMap;
-    }
-
-    const counts = await this.agentTypePromptModel.aggregate<{
-      _id: Types.ObjectId;
-      count: number;
-    }>([
-      { $match: { agentType: { $in: agentTypeIds } } },
-      { $group: { _id: '$agentType', count: { $sum: 1 } } },
-    ]);
-
-    for (const c of counts) {
-      countMap.set(c._id.toString(), c.count);
-    }
-
-    return countMap;
-  }
-
-  private toResponse(
-    doc: AgentTypeDocument | Record<string, unknown>,
-    promptCount: number,
-  ): IAgentTypeResponse {
+  private toResponse(doc: AgentTypeRow | Record<string, unknown>, promptCount: number): IAgentTypeResponse {
     const d = doc as Record<string, unknown>;
     return {
-      id: (d._id as { toString(): string }).toString(),
+      id: d.id as string,
       name: d.name as string,
       slug: d.slug as string,
       defaultPrompt: (d.defaultPrompt as string) || '',
-      skills: ((d.skills as Array<{ toString(): string }>) || []).map((id) => id.toString()),
+      skills: (d.skills as string[]) || [],
       promptCount,
       isActive: d.isActive as boolean,
       createdAt: d.createdAt as Date,
@@ -485,17 +329,14 @@ export class AgentTypeService {
     };
   }
 
-  private toPromptResponse(
-    doc: AgentTypePromptDocument | Record<string, unknown>,
-  ): IAgentTypePromptResponse {
-    const d = doc as Record<string, unknown>;
+  private toPromptResponse(doc: AgentTypePromptRow | Record<string, unknown>): IAgentTypePromptResponse {
     return {
-      id: (d._id as { toString(): string }).toString(),
-      agentTypeId: (d.agentType as { toString(): string }).toString(),
-      modelId: d.modelId as string,
-      prompt: d.prompt as string,
-      createdAt: d.createdAt as Date,
-      updatedAt: d.updatedAt as Date,
+      id: doc.id as string,
+      agentTypeId: doc.agentTypeId as string,
+      modelId: doc.modelId as string,
+      prompt: doc.prompt as string,
+      createdAt: doc.createdAt as Date,
+      updatedAt: doc.updatedAt as Date,
     };
   }
 }

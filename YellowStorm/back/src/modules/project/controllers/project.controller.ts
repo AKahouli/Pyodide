@@ -29,7 +29,7 @@ import {
   IPaginatedSharedProjects,
 } from '../interfaces/project.interface';
 import { CurrentUser } from '../../auth/decorators/current-user.decorator';
-import { UserDocument } from '../../user/schemas/user.schema';
+import type { AuthUser } from '@common/auth/auth-user';
 
 @ApiTags('Projects')
 @ApiBearerAuth()
@@ -43,7 +43,7 @@ export class ProjectController {
   @Get()
   @ApiOperation({ summary: 'List user projects' })
   async findAll(
-    @CurrentUser() user: UserDocument,
+    @CurrentUser() user: AuthUser,
     @Query() query: QueryProjectDto,
   ): Promise<IProjectResponse[]> {
     return this.projectService.findAllByUser(user._id.toString(), query);
@@ -52,7 +52,7 @@ export class ProjectController {
   @Get('shared-with-me')
   @ApiOperation({ summary: 'List projects shared with the current user' })
   async findSharedWithMe(
-    @CurrentUser() user: UserDocument,
+    @CurrentUser() user: AuthUser,
     @Query() query: ShareQueryDto,
   ): Promise<IPaginatedSharedProjects> {
     return this.projectShareService.findSharedWithUser(user._id.toString(), query);
@@ -62,7 +62,7 @@ export class ProjectController {
   @ApiOperation({ summary: 'Get project by ID' })
   @ApiParam({ name: 'id', description: 'Project ID' })
   async findById(
-    @CurrentUser() user: UserDocument,
+    @CurrentUser() user: AuthUser,
     @Param('id') id: string,
   ): Promise<IProjectResponse> {
     return this.projectService.findById(user._id.toString(), id);
@@ -74,7 +74,7 @@ export class ProjectController {
   @ApiResponse({ status: 201, description: 'Project created' })
   @ApiResponse({ status: 409, description: 'Name already exists' })
   async create(
-    @CurrentUser() user: UserDocument,
+    @CurrentUser() user: AuthUser,
     @Body() dto: CreateProjectDto,
   ): Promise<IProjectResponse> {
     return this.projectService.create(user._id.toString(), dto);
@@ -84,7 +84,7 @@ export class ProjectController {
   @ApiOperation({ summary: 'Toggle public visibility of a project' })
   @ApiParam({ name: 'id', description: 'Project ID' })
   async setVisibility(
-    @CurrentUser() user: UserDocument,
+    @CurrentUser() user: AuthUser,
     @Param('id') id: string,
     @Body() dto: UpdateVisibilityDto,
   ): Promise<IProjectResponse> {
@@ -95,7 +95,7 @@ export class ProjectController {
   @ApiOperation({ summary: 'Rename a project' })
   @ApiParam({ name: 'id', description: 'Project ID' })
   async update(
-    @CurrentUser() user: UserDocument,
+    @CurrentUser() user: AuthUser,
     @Param('id') id: string,
     @Body() dto: UpdateProjectDto,
   ): Promise<IProjectResponse> {
@@ -107,7 +107,7 @@ export class ProjectController {
   @ApiOperation({ summary: 'Delete a project (detaches its conversations)' })
   @ApiParam({ name: 'id', description: 'Project ID' })
   async delete(
-    @CurrentUser() user: UserDocument,
+    @CurrentUser() user: AuthUser,
     @Param('id') id: string,
   ): Promise<void> {
     return this.projectService.delete(user._id.toString(), id);

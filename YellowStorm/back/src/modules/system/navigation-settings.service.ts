@@ -1,7 +1,5 @@
-import { BadRequestException, Injectable } from '@nestjs/common';
-import { InjectModel } from '@nestjs/mongoose';
-import { Model } from 'mongoose';
-import { SystemSetting, SystemSettingDocument } from './schemas/system-setting.schema';
+import { BadRequestException, Inject, Injectable } from '@nestjs/common';
+import { SYSTEM_SETTING_STORE, type SystemSettingStore } from './persistence/system-setting.store';
 import {
   DEFAULT_NAVIGATION_SETTINGS,
   NAVIGATION_TARGET_KEYS,
@@ -16,12 +14,12 @@ const NODE_ID_PATTERN = /^[a-z0-9][a-z0-9-]{0,63}$/;
 @Injectable()
 export class NavigationSettingsService {
   constructor(
-    @InjectModel(SystemSetting.name)
-    private readonly settings: Model<SystemSettingDocument>,
+    @Inject(SYSTEM_SETTING_STORE)
+    private readonly settings: SystemSettingStore,
   ) {}
 
   async getSettings(): Promise<NavigationSettings> {
-    const setting = await this.settings.findOne({ key: KEY }).lean().exec();
+    const setting = await this.settings.get(KEY);
     if (this.isSettings(setting?.value)) {
       try {
         const value = this.normalizePersistedSettings(setting.value);
@@ -39,11 +37,7 @@ export class NavigationSettingsService {
     this.validate(normalizedNodes);
     const current = await this.getSettings();
     const value = { revision: current.revision + 1, nodes: normalizedNodes };
-    await this.settings.findOneAndUpdate(
-      { key: KEY },
-      { key: KEY, value },
-      { upsert: true, new: true, setDefaultsOnInsert: true },
-    ).lean().exec();
+    await this.settings.upsert(KEY, value);
     return value;
   }
 

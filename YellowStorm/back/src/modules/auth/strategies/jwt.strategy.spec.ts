@@ -1,4 +1,5 @@
 import { JwtStrategy } from './jwt.strategy';
+import { makeSessionStoreFake, sessionRecord } from '../persistence/session-store.fake';
 import { ErrorCode } from '../../exceptions/constants/error-codes';
 import { UserStatus } from '../../user/schemas/user.schema';
 
@@ -14,6 +15,27 @@ describe('JwtStrategy account access', () => {
   };
 
   const makeStrategy = (user: { status: string } | null) => {
+    const sessionStore = makeSessionStoreFake([
+      sessionRecord({
+        id: 'session-1',
+        userId: 'user-1',
+        isValid: true,
+        expiresAt: new Date(Date.now() + 60_000),
+        deviceInfo: {},
+        refreshTokenHash: 'hash',
+        tokenFamily: 'family',
+      }),
+    ]);
+    if (user) {
+      (Object.assign(sessionStore.records[0], {}) as unknown as Record<string, unknown>);
+      jest.spyOn(sessionStore, 'findValidByIdWithUser').mockResolvedValue({
+        session: sessionStore.records[0],
+        user: { id: 'user-1', status: user.status } as never,
+        valid: true,
+      });
+    } else {
+      jest.spyOn(sessionStore, 'findValidByIdWithUser').mockResolvedValue(null);
+    }
     const configService = {
       get: jest.fn((key: string) => {
         const values: Record<string, string> = {
@@ -29,9 +51,10 @@ describe('JwtStrategy account access', () => {
     const strategy = new JwtStrategy(
       configService as never,
       userService as never,
-      authService as never,
+      { isSessionValid: jest.fn().mockResolvedValue(true) } as never,
+      sessionStore as never,
     );
-    return { strategy };
+    return { strategy, sessionStore };
   };
 
   it('rejects suspended users with AUTH_ACCOUNT_SUSPENDED', async () => {

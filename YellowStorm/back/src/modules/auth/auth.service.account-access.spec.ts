@@ -1,5 +1,6 @@
 import { Types } from 'mongoose';
 import { AuthService } from './auth.service';
+import { makeSessionStoreFake, sessionRecord } from './persistence/session-store.fake';
 import { ErrorCode } from '../exceptions/constants/error-codes';
 import { UserStatus } from '../user/schemas/user.schema';
 
@@ -23,29 +24,8 @@ describe('AuthService account access', () => {
     ...overrides,
   });
 
-  const makeSessionModel = () => {
-    const saved = { _id: new Types.ObjectId(), save: jest.fn().mockResolvedValue(undefined) };
-    const model: any = jest.fn().mockImplementation(() => saved);
-    model.countDocuments = jest.fn().mockResolvedValue(0);
-    model.find = jest.fn().mockReturnValue({
-      sort: () => ({ limit: () => ({ exec: jest.fn().mockResolvedValue([]) }) }),
-    });
-    model.findOne = jest.fn().mockResolvedValue(null);
-    model.findById = jest.fn();
-    model.deleteOne = jest.fn();
-    model.updateMany = jest.fn().mockResolvedValue({ modifiedCount: 1 });
-    model.findOneAndUpdate = jest.fn().mockResolvedValue({ _id: new Types.ObjectId() });
-    model.db = {
-      startSession: jest.fn().mockResolvedValue({
-        withTransaction: async (fn: () => Promise<unknown>) => fn(),
-        endSession: jest.fn().mockResolvedValue(undefined),
-      }),
-    };
-    return model;
-  };
-
   const build = (user: ReturnType<typeof buildUser>) => {
-    const sessionModel = makeSessionModel();
+    const sessionStore = makeSessionStoreFake();
     const humainAgentService = {
       ensureForUser: jest.fn().mockResolvedValue(undefined),
       syncFromProfile: jest.fn().mockResolvedValue(undefined),
@@ -84,7 +64,7 @@ describe('AuthService account access', () => {
       getOrCreatePersonalWorkspace: jest.fn().mockResolvedValue(undefined),
     };
     const service = new AuthService(
-      sessionModel as never,
+      sessionStore as never,
       userService as never,
       jwtService as never,
       configService as never,
@@ -97,7 +77,7 @@ describe('AuthService account access', () => {
       workspaceInitializer as never,
       humainAgentService as never,
     );
-    return { service, sessionModel, userService };
+    return { service, sessionStore, userService };
   };
 
   it('allows login for inactive users pending Super Admin approval', async () => {
@@ -133,23 +113,17 @@ describe('AuthService account access', () => {
 
   it('refreshes tokens for inactive users without invalidating sessions', async () => {
     const user = buildUser({ status: UserStatus.INACTIVE });
-    const { service, sessionModel } = build(user);
-    const sessionId = new Types.ObjectId();
-    sessionModel.findById.mockResolvedValue({
-      _id: sessionId,
-      userId: user._id,
-      isValid: true,
-      expiresAt: new Date(Date.now() + 60_000),
-      refreshTokenHash: 'hash',
-      tokenFamily: 'family-1',
-      save: jest.fn().mockResolvedValue(undefined),
+    const { service, sessionStore } = build(user);
+    const sessionId = 'c0000000000000000000aaa';
+    sessionStore.records.push({
+      ...sessionRecord({ id: sessionId, userId: String(user._id), refreshTokenHash: 'hash', tokenFamily: 'family-1' }),
     });
 
     await expect(
-      service.refreshTokens(`${sessionId.toString()}.token`, '127.0.0.1', 'jest-agent'),
+      service.refreshTokens(`${sessionId}.token`, '127.0.0.1', 'jest-agent'),
     ).resolves.toMatchObject({
       accessToken: 'signed.jwt.token',
     });
-    expect(sessionModel.updateMany).not.toHaveBeenCalled();
-  });
+    expect(sessionStore.invalidateByFamily).not.toHaveBeenCalled();
+});
 });

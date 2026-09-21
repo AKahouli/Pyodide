@@ -40,4 +40,4 @@ coverage/
 .env.example
 
 */.claude
-*cwd*
+*cwd*.smoke/

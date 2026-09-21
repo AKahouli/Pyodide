@@ -18,8 +18,8 @@ import { ErrorCode } from '../exceptions/constants/error-codes';
 import { UserService } from '../user';
 import { USER_LOOKUP_PORT, type UserLookupPort } from '@common/ports/user-lookup.port';
 import { NotificationsService } from '../notifications/notifications.service';
-import { NotificationType } from '../notifications/schemas/notification.schema';
-import { UserDocument } from '../user/schemas/user.schema';
+import { NotificationType } from '../notifications/notification.types';
+import { asAuthUser, type AuthUser } from '@common/auth/auth-user';
 import type { WorkspaceRecord, WorkspaceShareRecord } from './ports/workspace-records';
 import { WORKSPACE_STORE, type WorkspaceStore } from './stores/workspace-store';
 import { SHARE_STORE, type ShareStore } from './stores/share-store';
@@ -226,7 +226,7 @@ export class WorkspaceShareService {
             permission: entry.permission,
           });
         }
-        shared.push(this.mapToResponse(existingShare, user));
+        shared.push(this.mapToResponse(existingShare, asAuthUser(user)));
         continue;
       }
 
@@ -238,7 +238,7 @@ export class WorkspaceShareService {
         sharedBy: ownerId,
       });
 
-      shared.push(this.mapToResponse(share, user));
+      shared.push(this.mapToResponse(share, asAuthUser(user)));
       createdEvents.push({
         userId: user._id.toString(),
         shareId: share.id,
@@ -251,7 +251,7 @@ export class WorkspaceShareService {
     }
 
     for (const event of createdEvents) {
-      await this.pushShareNotification('workspace_shared', event.userId, workspace, owner, {
+      await this.pushShareNotification('workspace_shared', event.userId, workspace, asAuthUser(owner), {
         shareId: event.shareId,
         permission: event.permission,
       });
@@ -261,7 +261,7 @@ export class WorkspaceShareService {
         'workspace_share_updated',
         event.userId,
         workspace,
-        owner,
+        asAuthUser(owner),
         { shareId: event.shareId, permission: event.permission },
       );
     }
@@ -334,7 +334,7 @@ export class WorkspaceShareService {
             'workspace_share_updated',
             share.sharedWithUserId,
             workspace,
-            owner,
+            asAuthUser(owner),
             { shareId: share.id, permission },
           );
         }
@@ -376,7 +376,7 @@ export class WorkspaceShareService {
           'workspace_share_revoked',
           recipientId,
           workspace,
-          owner,
+          asAuthUser(owner),
           { shareId },
         );
       }
@@ -463,7 +463,7 @@ export class WorkspaceShareService {
     eventType: ShareEventType,
     recipientId: string,
     workspace: WorkspaceRecord,
-    owner: UserDocument,
+    owner: AuthUser,
     extra: { shareId: string; permission?: WorkspacePermission },
   ): Promise<void> {
     try {
@@ -522,7 +522,7 @@ export class WorkspaceShareService {
    */
   private mapToResponse(
     share: WorkspaceShareRecord,
-    userOverride?: UserDocument,
+    userOverride?: AuthUser,
     resolvedUser?: UserSummary,
   ): WorkspaceShareResponse {
     const userInfo = userOverride
