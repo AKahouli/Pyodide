@@ -61,7 +61,9 @@ services:
       realtime-db:
         condition: service_healthy
     ports:
-      - "127.0.0.1:3000:3000"
+      # Host port from POSTGREST_HOST_PORT in realtime.env (the --env-file);
+      # defaults to 3050 so loopback never collides with the NestJS backend on 3000.
+      - "127.0.0.1:${POSTGREST_HOST_PORT:-3050}:3000"
     env_file:
       - postgrest.env
     environment:

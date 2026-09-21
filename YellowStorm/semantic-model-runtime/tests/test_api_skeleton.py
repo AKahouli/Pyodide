@@ -1,7 +1,6 @@
 """Phase 2A skeleton acceptance (P2.1-P2.3, P2.10)."""
 
 import os
-import sys
 
 import pytest
 
@@ -38,6 +37,38 @@ def test_private_routes_require_service_key():
     assert client.post("/v1/semantic-model-population/runs").status_code == 401
 
 
+def _population_body() -> dict:
+    from app.population.compiler import canonical_spec_hash
+
+    spec = {
+        "modelId": "model-1", "modelVersionId": "v1",
+        "homeWorkspaceId": "6512f0a1c9e77a001234aaa1",
+        "concepts": [{
+            "conceptId": "c1", "key": "customer", "label": "Customer",
+            "identity": {"namespace": "crm", "keyComponents": ["customer_id"]},
+            "populationMode": "materialized",
+            "allowedFields": ["customer_id", "name"],
+        }],
+        "relations": [],
+        "sourceScope": [{"workspaceId": "6512f0a1c9e77a001234aaa1",
+                         "assetId": "6512f0a1c9e77a001234bbb1"}],
+    }
+    return {
+        "actorUserId": "user-1", "modelId": "model-1",
+        "workspaceId": "6512f0a1c9e77a001234aaa1",
+        "payload": {
+            "modelVersionId": "v1", "specHash": canonical_spec_hash(spec),
+            "purpose": "build", "specification": spec,
+            "sources": [{
+                "conceptId": "c1",
+                "source": {"workspaceId": "6512f0a1c9e77a001234aaa1",
+                           "assetId": "6512f0a1c9e77a001234bbb1", "mimeType": "text/csv"},
+                "columnMapping": {"customer_id": "customer_id"},
+            }],
+        },
+    }
+
+
 def test_no_durable_store_means_503_never_202():
     # §5.1: 202 only after a job is durably recorded. No store yet -> 503.
     body = {"actorUserId": "user-1", "payload": {}}
@@ -45,7 +76,8 @@ def test_no_durable_store_means_503_never_202():
     headers = {**AUTH, "Idempotency-Key": "idem-1"}
     r = client.post("/v1/semantic-model-datasource/discoveries", headers=headers, json=discovery)
     assert r.status_code == 503
-    r = client.post("/v1/semantic-model-population/runs", headers=headers, json=body)
+    r = client.post("/v1/semantic-model-population/runs", headers=headers,
+                    json=_population_body())
     assert r.status_code == 503
     r = client.get(
         "/v1/semantic-model-jobs/abc",
@@ -102,13 +134,32 @@ def test_unreadable_body_is_400_not_silent_empty():
     assert asyncio.run(check_body_size(req)) == "read_error"
 
 
+def _assert_no_heavy_libs_in_fresh_process(imports: str) -> None:
+    """Hermetic heavy-lib check: sibling tests may import anything, so the
+    assertion runs in a fresh interpreter importing only the given modules."""
+    import subprocess
+    import sys as _sys
+    from pathlib import Path
+
+    code = (
+        f"import sys, {imports}; "
+        "heavy = [m for m in ('openpyxl', 'xlrd', 'duckdb', 'torch', "
+        "'sentence_transformers') if m in sys.modules]; "
+        "assert not heavy, heavy; print('lazy-ok')"
+    )
+    completed = subprocess.run(
+        [_sys.executable, "-c", code],
+        cwd=Path(__file__).resolve().parents[1],
+        capture_output=True, text=True, timeout=60,
+    )
+    assert completed.returncode == 0, completed.stderr
+    assert "lazy-ok" in completed.stdout
+
+
 def test_api_import_pulls_no_heavy_libs():
-    for mod in ("openpyxl", "xlrd", "duckdb", "torch", "sentence_transformers"):
-        assert mod not in sys.modules, mod
+    _assert_no_heavy_libs_in_fresh_process("app.main")
 
 
 def test_worker_entries_import_without_heavy_libs():
-    import app.workers.datasource_tasks  # noqa: F401
-    import app.workers.population_tasks  # noqa: F401
-    for mod in ("openpyxl", "duckdb", "torch"):
-        assert mod not in sys.modules, mod
+    _assert_no_heavy_libs_in_fresh_process(
+        "app.workers.datasource_tasks, app.workers.population_tasks")

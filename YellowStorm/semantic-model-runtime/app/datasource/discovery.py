@@ -300,10 +300,11 @@ def preview_source(source: dict[str, Any], options: dict[str, Any] | None = None
     fingerprint travel alongside the schema-bound profile.
     """
     profile = discover(source, options)
-    # Terminal states carry no samples by contract: a protected, corrupt,
-    # unindexed or unsupported source is never parsed, and bytes passed for
-    # one are refused loudly instead of silently overriding its status.
-    if data is None or profile["status"] not in ("ready", "partial"):
+    # Only a ready profile may enter byte parsing. Terminal states carry no
+    # samples by contract, and a size-capped partial profile must keep its
+    # status and warning even when the supplied bytes happen to be smaller
+    # than the declared metadata: parsing must never upgrade it to ready.
+    if data is None or profile["status"] != "ready":
         return {"profile": profile, "ingestionPlan": plan_ingestion(profile)}
     from .parsers import parse_csv_preview, parse_xlsx_preview
 

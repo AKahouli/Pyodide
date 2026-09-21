@@ -77,13 +77,18 @@ export class ModelSpecificationService {
   }
 
   private canonicalize(spec: Omit<ModelSpecification, 'specHash'>): Omit<ModelSpecification, 'specHash'> {
+    // Code-unit `<` ordering, never localeCompare: the hash must be identical
+    // in every environment, and the Python runtime port sorts by code point.
     const sortConcepts = [...(spec.concepts ?? [])]
       .map((c: ConceptSpec) => ({ ...c, allowedFields: [...c.allowedFields].sort() }))
-      .sort((a, b) => a.conceptId.localeCompare(b.conceptId));
-    const sortRelations = [...(spec.relations ?? [])].sort((a, b) => a.relationId.localeCompare(b.relationId));
-    const sortScope = [...(spec.sourceScope ?? [])].sort((a, b) =>
-      `${a.workspaceId}:${a.assetId}`.localeCompare(`${b.workspaceId}:${b.assetId}`),
-    );
+      .sort((a, b) => (a.conceptId < b.conceptId ? -1 : a.conceptId > b.conceptId ? 1 : 0));
+    const sortRelations = [...(spec.relations ?? [])].sort((a, b) =>
+      (a.relationId < b.relationId ? -1 : a.relationId > b.relationId ? 1 : 0));
+    const sortScope = [...(spec.sourceScope ?? [])].sort((a, b) => {
+      const left = `${a.workspaceId}:${a.assetId}`;
+      const right = `${b.workspaceId}:${b.assetId}`;
+      return left < right ? -1 : left > right ? 1 : 0;
+    });
     return { ...spec, concepts: sortConcepts, relations: sortRelations, sourceScope: sortScope };
   }
 

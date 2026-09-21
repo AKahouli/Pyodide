@@ -16,13 +16,20 @@ from app.jobs.recovery import max_attempts_from_env, retry_seconds_from_env
 from .celery_app import DATASOURCE_QUEUES, celery_app
 
 logger = logging.getLogger(__name__)
+ASSET_FETCH_WALL_SECONDS = 35
 
 
 def attempts_exhausted(attempt_count: int, max_attempts: int) -> bool:
     return attempt_count > max_attempts
 
 
-def run_discovery_for_payload(command_dump: dict, *, authorize=None) -> dict:
+def task_lease_seconds(parser_timeout: int) -> int:
+    """Cover fetch, parser wall time, forced termination, and DB completion."""
+    return max(120, parser_timeout + ASSET_FETCH_WALL_SECONDS + 25)
+
+
+def run_discovery_for_payload(command_dump: dict, *, authorize=None,
+                              data: bytes | None = None) -> dict:
     """Pure durable-payload entry point (no DB, no I/O). Shared by task/tests.
 
     Never raises: every deterministic validation failure maps to an
@@ -39,8 +46,7 @@ def run_discovery_for_payload(command_dump: dict, *, authorize=None) -> dict:
     """
     from app.datasource.discovery import (
         deny_cross_workspace_verifier,
-        discover,
-        plan_ingestion,
+        preview_source,
         requires_cross_workspace_authorization,
     )
 
@@ -82,12 +88,67 @@ def run_discovery_for_payload(command_dump: dict, *, authorize=None) -> dict:
             if not allowed:
                 return {"ok": False, "errorCode": "workspace_forbidden"}
 
-        profile = discover(source, options if isinstance(options, dict) else None)
+        preview = preview_source(source, options if isinstance(options, dict) else None, data)
     except ValueError as exc:
         return {"ok": False, "errorCode": str(exc) or "invalid_source"}
-    plan = plan_ingestion(profile)
+    profile = preview["profile"]
     gaps = profile.get("status") in ("partial", "indexing_required")
-    return {"ok": True, "profile": profile, "ingestionPlan": plan,
+    return {"ok": True, **preview,
+            "jobState": "completed_with_gaps" if gaps else "completed"}
+
+
+async def run_discovery_for_task(command_dump: dict, *, fetch=None, upload=None) -> dict:
+    """Add execution-time authorized bytes to the otherwise-pure discovery."""
+    import asyncio
+
+    from pathlib import Path
+    import os
+    import tempfile
+
+    from app.datasource.asset_delivery import (AssetFetchError, fetch_workspace_asset,
+                                                upload_prepared_dataset)
+    from app.datasource.parser_sandbox import prepare_dataset_subprocess
+
+    if not isinstance(command_dump, dict):
+        return run_discovery_for_payload(command_dump)
+    inner = command_dump.get("payload", command_dump)
+    source = inner.get("source", inner) if isinstance(inner, dict) else None
+    options = inner.get("options") if isinstance(inner, dict) else None
+    if not isinstance(source, dict):
+        return run_discovery_for_payload(command_dump)
+    authorized_metadata = run_discovery_for_payload(command_dump, authorize=lambda **_: True)
+    if not authorized_metadata.get("ok"):
+        return authorized_metadata
+    metadata_profile = authorized_metadata["profile"]
+    is_tabular = metadata_profile.get("structure", {}).get("kind") in {"csv", "xlsx"}
+    if metadata_profile.get("status") != "ready" or not is_tabular:
+        return run_discovery_for_payload(command_dump)
+    actor = command_dump.get("actorUserId") or command_dump.get("actor_user_id")
+    if not isinstance(actor, str) or not actor:
+        return {"ok": False, "errorCode": "invalid_command"}
+    try:
+        async with asyncio.timeout(ASSET_FETCH_WALL_SECONDS):
+            data = await (fetch or fetch_workspace_asset)(source, actor)
+    except AssetFetchError as exc:
+        return {"ok": False, "errorCode": exc.code}
+    temp_root = os.environ.get("SEMANTIC_TASK_TEMP_DIR")
+    try:
+        with tempfile.TemporaryDirectory(prefix="semantic-dataset-", dir=temp_root) as directory:
+            artifact = Path(directory) / "dataset.parquet"
+            preview = await asyncio.to_thread(
+                prepare_dataset_subprocess, source,
+                options if isinstance(options, dict) else None, data, artifact,
+            )
+            uploader = upload or upload_prepared_dataset
+            async with asyncio.timeout(ASSET_FETCH_WALL_SECONDS):
+                await uploader(source, actor, preview["dataset"], artifact)
+    except ValueError as exc:
+        return {"ok": False, "errorCode": str(exc) or "parser_failed"}
+    except AssetFetchError as exc:
+        return {"ok": False, "errorCode": exc.code}
+    profile = preview["profile"]
+    gaps = profile.get("status") in ("partial", "indexing_required")
+    return {"ok": True, **preview,
             "jobState": "completed_with_gaps" if gaps else "completed"}
 
 
@@ -96,6 +157,7 @@ async def _run_task(task_id: int, lease_owner: str) -> dict:
 
     from app.jobs.models import StaleLease
     from app.persistence.postgres_jobs import PostgresJobRepository
+    from app.datasource.parser_sandbox import parser_timeout_seconds
 
     from .celery_app import DATASOURCE_QUEUES as _QUEUES
     import os
@@ -113,7 +175,8 @@ async def _run_task(task_id: int, lease_owner: str) -> dict:
     try:
         repository = PostgresJobRepository(pool)
         lease = await repository.claim_task(task_id=task_id, queue_name=_QUEUES[1],
-                                            lease_owner=lease_owner, lease_seconds=120)
+                                            lease_owner=lease_owner,
+                                            lease_seconds=task_lease_seconds(parser_timeout_seconds()))
         if lease is None:
             return {"ok": False, "errorCode": "lease_unavailable"}
         if attempts_exhausted(lease.attempt_count, max_attempts):
@@ -126,12 +189,10 @@ async def _run_task(task_id: int, lease_owner: str) -> dict:
             except StaleLease:
                 return {"ok": False, "errorCode": "stale_lease"}
             return {"ok": False, "errorCode": "attempts_exhausted"}
-        try:
-            outcome = run_discovery_for_payload(lease.payload)
-        except Exception:
-            # Defensive: run_discovery_for_payload never raises by contract,
-            # but a claimed task must always reach fenced terminal completion.
-            outcome = {"ok": False, "errorCode": "discovery_failed"}
+        # Deterministic source/parser failures are returned as outcomes. I/O,
+        # configuration, backend 5xx, and other infrastructure failures must
+        # escape to the requeue path below instead of becoming terminal jobs.
+        outcome = await run_discovery_for_task(lease.payload)
         if not outcome.get("ok"):
             try:
                 await repository.complete_task(task_id=task_id, lease_owner=lease_owner,
@@ -140,7 +201,8 @@ async def _run_task(task_id: int, lease_owner: str) -> dict:
             except StaleLease:
                 return {"ok": False, "errorCode": "stale_lease"}
             return outcome
-        result = {"profile": outcome["profile"], "ingestionPlan": outcome["ingestionPlan"]}
+        result = {key: value for key, value in outcome.items()
+                  if key not in {"ok", "jobState"}}
         try:
             await repository.complete_task(task_id=task_id, lease_owner=lease_owner,
                                            lease_epoch=lease.lease_epoch,

@@ -30,6 +30,7 @@ import { WorkspaceSettingController } from './workspace-setting.controller';
 import { WorkspaceDocumentController } from './workspace-document.controller';
 import { WorkspaceIngestController } from './workspace-ingest.controller';
 import { WorkspaceInternalController } from './workspace-internal.controller';
+import { WorkspaceAssetInternalController } from './workspace-asset-internal.controller';
 import { WorkspaceAccessCheckController } from './workspace-access-check.controller';
 import { WorkspaceShareController } from './workspace-share.controller';
 import { WorkspaceService } from './workspace.service';
@@ -88,6 +89,7 @@ import { PostgresModule } from '@modules/postgres/postgres.module';
     WorkspaceDocumentController,
     WorkspaceIngestController,
     WorkspaceInternalController,
+    WorkspaceAssetInternalController,
     WorkspaceAccessCheckController,
     WorkspaceShareController,
   ],
@@ -147,6 +149,7 @@ import { PostgresModule } from '@modules/postgres/postgres.module';
     WorkspaceService,
     WorkspaceSettingService,
     WorkspaceDocumentService,
+    WorkspaceDocumentRead,
     WorkspaceInitializerService,
     WorkspaceShareService,
     WorkspaceAccessGuard,

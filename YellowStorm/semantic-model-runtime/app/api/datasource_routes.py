@@ -6,10 +6,21 @@ import os
 
 from fastapi import APIRouter, Header, HTTPException, Request, status
 
-from app.jobs.models import DiscoveryCommand, IdempotencyConflict
+from app.jobs.models import DiscoveryCommand, IdempotencyConflict, SourceEvent
 from app.workers.celery_app import DATASOURCE_QUEUES
 
 router = APIRouter(prefix="/v1/semantic-model-datasource", tags=["datasource"])
+
+
+@router.post("/events", status_code=status.HTTP_202_ACCEPTED)
+async def receive_source_event(event: SourceEvent, request: Request) -> dict[str, object]:
+    if os.environ.get("SEMANTIC_MODEL_RUNTIME_WRITES_ENABLED") != "true":
+        raise HTTPException(status_code=503, detail="runtime_writes_disabled")
+    repository = getattr(request.app.state, "source_event_repository", None)
+    if repository is None:
+        raise HTTPException(status_code=503, detail="source_events_unavailable")
+    result = await repository.record_source_event(event)
+    return {"eventId": event.event_id, **result}
 
 
 @router.post("/discoveries", status_code=status.HTTP_202_ACCEPTED)

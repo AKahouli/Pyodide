@@ -61,6 +61,9 @@ export const configValidationSchema = Joi.object({
     is: false,
     then: Joi.valid(false),
   }),
+  SEMANTIC_MODEL_RUNTIME_URL: Joi.string().uri().optional().allow(''),
+  SEMANTIC_RUNTIME_SERVICE_KEY: Joi.string().max(500).optional().allow(''),
+  SEMANTIC_MODEL_RUNTIME_REQUEST_TIMEOUT_MS: Joi.number().integer().min(1000).max(60000).default(5000),
   SEMANTIC_MODEL_CONTEXT_SEARCH_ENABLED: Joi.boolean().default(false),
   SEMANTIC_MODEL_LLM_FALLBACK_ENABLED: Joi.boolean().default(false),
   SEMANTIC_PG_HOST: Joi.string().optional().allow(''),
@@ -159,6 +162,10 @@ export const configValidationSchema = Joi.object({
   STORAGE_MAX_FILE_SIZE_MB: Joi.number().min(1).max(500).default(50),
   STORAGE_MAX_FILES_PER_UPLOAD: Joi.number().min(1).max(50).default(10),
   STORAGE_SAS_EXPIRY_MINUTES: Joi.number().min(1).max(10080).default(60),
+  SEMANTIC_DATASET_STORAGE_PREFIX: Joi.string()
+    .pattern(/^(?!\/)(?!.*(?:^|\/)\.\.(?:\/|$))[A-Za-z0-9_-]+(?:\/[A-Za-z0-9_-]+)*$/)
+    .default('semantic-model/datasets'),
+  SEMANTIC_DATASET_MAX_SIZE_MB: Joi.number().integer().min(1).max(2048).default(200),
   STORAGE_ALLOWED_MIME_TYPES: Joi.string().optional(),
   STORAGE_HEALTH_CHECK_ENABLED: Joi.boolean().default(true),
   STORAGE_HEALTH_CHECK_INTERVAL_MS: Joi.number().min(10000).max(3600000).default(60000),

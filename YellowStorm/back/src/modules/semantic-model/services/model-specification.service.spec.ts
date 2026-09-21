@@ -97,6 +97,34 @@ describe('ModelSpecificationService (P1)', () => {
     expect(svc.validate(bad).map((i) => i.code)).toContain('materialization_without_eligibility');
   });
 
+  it('orders mixed-case ids by code unit, independent of locale', () => {
+    const mixed = base();
+    mixed.concepts.push(
+      {
+        conceptId: 'C-10',
+        key: 'upper',
+        label: 'Upper',
+        identity: { namespace: 't', keyComponents: ['id'] },
+        populationMode: 'materialized',
+        allowedFields: ['id'],
+      },
+      {
+        conceptId: 'c-2',
+        key: 'lower',
+        label: 'Lower',
+        identity: { namespace: 't', keyComponents: ['id'] },
+        populationMode: 'materialized',
+        allowedFields: ['id'],
+      },
+    );
+    const forward = svc.buildSnapshot(mixed).specHash;
+    const backward = svc.buildSnapshot({ ...mixed, concepts: [...mixed.concepts].reverse() });
+    expect(backward.specHash).toBe(forward);
+    // Code-unit order: 'C-10' (0x43…) precedes 'c-2' (0x63…) and 'c-customer'.
+    const snap = svc.buildSnapshot(mixed);
+    expect(snap.concepts.map((c) => c.conceptId)).toEqual(['C-10', 'c-2', 'c-customer']);
+  });
+
   it('declaration creates no instance edges (spec carries zero instances)', () => {
     const snap = svc.buildSnapshot(base());
     expect(JSON.stringify(snap)).not.toContain('recordRelations');

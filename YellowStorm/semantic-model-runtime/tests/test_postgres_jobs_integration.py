@@ -8,7 +8,7 @@ import asyncpg
 import pytest
 import pytest_asyncio
 
-from app.jobs.models import IdempotencyConflict, JobCommand, StaleLease
+from app.jobs.models import IdempotencyConflict, JobCommand, SourceEvent, StaleLease
 from app.jobs.service import JobService
 from app.persistence.postgres_jobs import PostgresJobRepository
 
@@ -72,6 +72,61 @@ async def test_same_key_different_operation_conflicts(pool: asyncpg.Pool):
             task_name="semantic-model-datasource.discover",
             queue_name="semantic-model-datasource.batch",
         )
+
+
+@pytest.mark.asyncio
+async def test_source_events_create_idempotent_revisions_and_ignore_stale_heads(pool: asyncpg.Pool):
+    repository = PostgresJobRepository(pool)
+    newer = SourceEvent.model_validate({
+        "eventId": "event-new", "eventType": "workspace.document.indexing_ready.v1",
+        "occurredAt": "2026-09-20T12:00:00Z",
+        "payload": {"workspaceId": "workspace-1", "documentId": "document-1"},
+    })
+    older = SourceEvent.model_validate({
+        "eventId": "reconcile:event-old", "eventType": "workspace.document.registered.v1",
+        "occurredAt": "2026-09-20T11:00:00Z",
+        "payload": {"workspaceId": "workspace-1", "documentId": "document-1"},
+    })
+
+    assert await repository.record_source_event(newer) == {
+        "revision": 1, "reused": False, "headAdvanced": True,
+    }
+    assert await repository.record_source_event(newer) == {"revision": 1, "reused": True}
+    await pool.execute(
+        "UPDATE semantic_jobs.source_heads SET last_reconciled_at = '2000-01-01'"
+    )
+    assert await repository.record_source_event(older) == {
+        "revision": 2, "reused": False, "headAdvanced": False,
+    }
+    head = await pool.fetchrow(
+        "SELECT event_id, revision, last_reconciled_at FROM semantic_jobs.source_heads "
+        "WHERE workspace_id = $1 AND asset_id = $2",
+        "workspace-1", "document-1",
+    )
+    assert head["event_id"] == "event-new" and head["revision"] == 1
+    assert head["last_reconciled_at"].year > 2000
+
+    await pool.execute(
+        "UPDATE semantic_jobs.source_heads SET last_reconciled_at = '2000-01-01'"
+    )
+    assert await repository.record_source_event(older) == {"revision": 2, "reused": True}
+    assert await pool.fetchval(
+        "SELECT last_reconciled_at > '2000-01-01' FROM semantic_jobs.source_heads"
+    ) is True
+
+    deleted = SourceEvent.model_validate({
+        "eventId": "aaa-delete", "eventType": "workspace.document.deleted.v1",
+        "occurredAt": "2026-09-20T12:00:00Z",
+        "payload": {"workspaceId": "workspace-1", "documentId": "document-1"},
+    })
+    assert await repository.record_source_event(deleted) == {
+        "revision": 3, "reused": False, "headAdvanced": True,
+    }
+    head = await pool.fetchrow(
+        "SELECT event_id, revision, deleted FROM semantic_jobs.source_heads WHERE workspace_id = $1 AND asset_id = $2",
+        "workspace-1", "document-1",
+    )
+    assert dict(head) == {"event_id": "aaa-delete", "revision": 3, "deleted": True}
 
 
 @pytest.mark.asyncio

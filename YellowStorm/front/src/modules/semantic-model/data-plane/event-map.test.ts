@@ -1,12 +1,17 @@
 import { describe, expect, it } from 'vitest';
 import { isNewerRevision, keysForEvent, parseSignal } from './event-map';
+import { semanticDataKeys } from './semantic-query-keys';
 
 describe('event-map (P2.SB20)', () => {
   it('maps each event to its resource keys', () => {
     expect(keysForEvent('m', null, 'data-revision-changed')).toHaveLength(4);
     expect(keysForEvent('m', null, 'review-items-changed')).toHaveLength(2);
     expect(keysForEvent('m', null, 'population-status-changed')).toHaveLength(2);
-    expect(keysForEvent('m', null, 'datasource-status-changed')).toHaveLength(2);
+    expect(keysForEvent('m', null, 'datasource-status-changed')).toEqual([
+      semanticDataKeys.sources('m'),
+      semanticDataKeys.jobs('m'),
+      semanticDataKeys.summary('m'),
+    ]);
     expect(keysForEvent('m', null, 'model-read-state-changed')).toHaveLength(1);
   });
 

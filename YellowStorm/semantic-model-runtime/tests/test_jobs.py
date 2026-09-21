@@ -5,6 +5,7 @@ from fastapi.testclient import TestClient
 
 from app.jobs.models import Admission, IdempotencyConflict
 from app.main import create_app
+from app.population.compiler import canonical_spec_hash
 
 
 class MemoryRepository:
@@ -14,6 +15,7 @@ class MemoryRepository:
         self.by_key: dict[tuple[str, str], tuple[str, str]] = {}
         self.jobs: dict[str, dict] = {}
         self.events: dict[str, list[dict]] = {}
+        self.source_events: dict[str, dict] = {}
 
     async def admit(self, **kwargs) -> Admission:  # type: ignore[no-untyped-def]
         command = kwargs["command"]
@@ -45,6 +47,14 @@ class MemoryRepository:
             return []
         return [e for e in self.events.get(job_id, []) if e["eventId"] > after][:limit]
 
+    async def record_source_event(self, event):  # type: ignore[no-untyped-def]
+        existing = self.source_events.get(event.event_id)
+        if existing:
+            return {"revision": existing["revision"], "reused": True}
+        result = {"revision": len(self.source_events) + 1, "reused": False, "headAdvanced": True}
+        self.source_events[event.event_id] = result
+        return result
+
 
 @pytest.fixture
 def job_client(monkeypatch: pytest.MonkeyPatch):
@@ -55,8 +65,37 @@ def job_client(monkeypatch: pytest.MonkeyPatch):
 
 
 AUTH = {"X-Semantic-Service-Key": "test-key", "Idempotency-Key": "idem-1"}
-BODY = {"actorUserId": "user-1", "modelId": "model-1", "payload": {"purpose": "build"}}
-DISCOVERY_BODY = {**BODY, "workspaceId": "6512f0a1c9e77a001234aaa1"}
+SPEC = {
+    "modelId": "model-1", "modelVersionId": "v1",
+    "homeWorkspaceId": "6512f0a1c9e77a001234aaa1",
+    "concepts": [{
+        "conceptId": "c1", "key": "customer", "label": "Customer",
+        "identity": {"namespace": "crm", "keyComponents": ["customer_id"]},
+        "populationMode": "materialized",
+        "allowedFields": ["customer_id", "name"],
+    }],
+    "relations": [],
+    "sourceScope": [{"workspaceId": "6512f0a1c9e77a001234aaa1",
+                     "assetId": "6512f0a1c9e77a001234bbb1"}],
+}
+BODY = {
+    "actorUserId": "user-1", "modelId": "model-1",
+    "workspaceId": "6512f0a1c9e77a001234aaa1",
+    "payload": {
+        "modelVersionId": "v1", "specHash": canonical_spec_hash(SPEC), "purpose": "build",
+        "specification": SPEC,
+        "sources": [{
+            "conceptId": "c1",
+            "source": {"workspaceId": "6512f0a1c9e77a001234aaa1",
+                       "assetId": "6512f0a1c9e77a001234bbb1", "mimeType": "text/csv"},
+            "options": {},
+            "columnMapping": {"customer_id": "customer_id", "name": "name"},
+        }],
+    },
+}
+# DiscoveryCommand accepts any payload dict, so the same body exercises the
+# cross-operation idempotency fence.
+DISCOVERY_BODY = dict(BODY)
 
 
 def test_admission_commits_before_202_and_reuses_same_command(job_client: TestClient):
@@ -76,7 +115,7 @@ def test_admission_commits_before_202_and_reuses_same_command(job_client: TestCl
 
 def test_idempotency_key_with_different_payload_is_409(job_client: TestClient):
     assert job_client.post("/v1/semantic-model-population/runs", headers=AUTH, json=BODY).status_code == 202
-    changed = {**BODY, "payload": {"purpose": "refresh"}}
+    changed = {**BODY, "payload": {**BODY["payload"], "purpose": "refresh"}}
     response = job_client.post("/v1/semantic-model-population/runs", headers=AUTH, json=changed)
     assert response.status_code == 409
 
@@ -117,7 +156,8 @@ def test_missing_idempotency_key_is_rejected(job_client: TestClient):
 def test_discovery_requires_canonical_workspace_at_admission(job_client: TestClient):
     """The worker authorizes against the canonical workspace, so admission must
     reject a missing or empty one instead of admitting a job it will fail."""
-    for body in ({**BODY}, {**BODY, "workspaceId": ""}, {**BODY, "workspaceId": None}):
+    for body in ({k: v for k, v in BODY.items() if k != "workspaceId"},
+                 {**BODY, "workspaceId": ""}, {**BODY, "workspaceId": None}):
         response = job_client.post(
             "/v1/semantic-model-datasource/discoveries", headers=AUTH, json=body
         )
@@ -126,9 +166,38 @@ def test_discovery_requires_canonical_workspace_at_admission(job_client: TestCli
         "/v1/semantic-model-datasource/discoveries", headers=AUTH, json=DISCOVERY_BODY
     )
     assert accepted.status_code == 202
-    # Population runs keep the optional workspace.
+    # Population runs require the same canonical home workspace.
+    for body in ({k: v for k, v in BODY.items() if k != "workspaceId"},
+                 {**BODY, "workspaceId": ""}):
+        response = job_client.post(
+            "/v1/semantic-model-population/runs",
+            headers={**AUTH, "Idempotency-Key": "idem-2"},
+            json=body,
+        )
+        assert response.status_code == 422, body
     assert job_client.post(
         "/v1/semantic-model-population/runs",
-        headers={**AUTH, "Idempotency-Key": "idem-2"},
+        headers={**AUTH, "Idempotency-Key": "idem-3"},
         json=BODY,
     ).status_code == 202
+
+
+def test_source_event_ingestion_is_authenticated_validated_and_idempotent(job_client: TestClient):
+    event = {
+        "eventId": "event-1",
+        "eventType": "workspace.document.indexing_ready.v1",
+        "occurredAt": "2026-09-20T12:00:00Z",
+        "payload": {"workspaceId": "workspace-1", "documentId": "document-1",
+                    "originalName": "report.pdf"},
+    }
+    url = "/v1/semantic-model-datasource/events"
+    headers = {"X-Semantic-Service-Key": "test-key"}
+    first = job_client.post(url, headers=headers, json=event)
+    duplicate = job_client.post(url, headers=headers, json=event)
+
+    assert first.status_code == 202
+    assert first.json() == {"eventId": "event-1", "revision": 1,
+                            "reused": False, "headAdvanced": True}
+    assert duplicate.json() == {"eventId": "event-1", "revision": 1, "reused": True}
+    assert job_client.post(url, json=event).status_code == 401
+    assert job_client.post(url, headers=headers, json={**event, "eventType": "unknown"}).status_code == 422

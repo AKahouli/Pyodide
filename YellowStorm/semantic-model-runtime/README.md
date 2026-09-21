@@ -10,6 +10,7 @@ Apply runtime-owned migrations from the required environment:
 
 ```powershell
 conda run -n meta python scripts/migrate.py
+conda run -n meta python scripts/migrate-curated.py
 ```
 
 Required secret configuration:
@@ -18,6 +19,10 @@ Required secret configuration:
   runtime API role. Do not use the logicalsearch reader or a superuser.
 - `SEMANTIC_RUNTIME_SERVICE_KEY`: private NestJS-to-runtime service key.
 - `SEMANTIC_BROKER_URL`: dedicated Phase 0 RabbitMQ URL.
+- `YELLOWSTORM_BACKEND_URL`: trusted NestJS origin used by datasource workers.
+- `YELLOWSTORM_INTERNAL_SERVICE_TOKEN`: must match NestJS
+  `INTERNAL_SERVICE_SECRET`; sent only to the configured backend origin.
+- `YELLOWSTORM_BACKEND_API_PREFIX`: NestJS global API prefix (default `api`).
 
 Feature switches default off:
 
@@ -58,8 +63,9 @@ No operator action is required after a worker or broker death.
 
 Datasource discovery requires the canonical top-level `workspaceId` at
 admission (`DiscoveryCommand`); it is never inferred from the payload, and
-cross-workspace access is authorized at execution time (fail-closed until the
-NestJS authorization client is wired).
+ready tabular assets are authorized at execution time by the identity-bound
+NestJS stream. Other cross-workspace source kinds remain fail-closed until
+their execution adapters are wired.
 
 Recovery uses `FOR UPDATE SKIP LOCKED`, so multiple API replicas and dispatcher
 instances never recover the same task twice. Migration `002` adds the partial

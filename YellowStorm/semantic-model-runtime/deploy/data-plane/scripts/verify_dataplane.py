@@ -18,6 +18,7 @@ import base64
 import hashlib
 import hmac
 import json
+import os
 import time
 import urllib.error
 import urllib.request
@@ -29,11 +30,16 @@ HERE = Path(__file__).resolve().parent
 DATAPLANE = HERE.parent
 REPO = DATAPLANE.parent.parent.parent.parent
 RT = "http://127.0.0.1:4000"
-PGRST = "http://127.0.0.1:3000"
+# Same variable the backend uses (SEMANTIC_DATA_REST_URL in back/.env);
+# defaults to the PostgREST host port from the compose file.
+PGRST = os.environ.get("SEMANTIC_DATA_REST_URL", "http://127.0.0.1:3050")
 EXTERNAL_ID = "yellowmind-semantic"
 TOPIC = "semantic-model:model-verify-1"
 # Deterministic fixture UUID so positive AND negative RLS cases are real.
 FIXTURE_MODEL_ID = "11111111-1111-1111-1111-111111111111"
+FIXTURE_MAPPING_ID = "11111111-1111-1111-1111-111111111112"
+FIXTURE_CONCEPT_ID = "11111111-1111-1111-1111-111111111113"
+FIXTURE_DOCUMENT_ID = "verify-document-1"
 FIXTURE_USER = "verify-user-1"
 OTHER_USER = "verify-user-2"
 
@@ -204,6 +210,31 @@ async def seed_fixture() -> bool:
                 FIXTURE_MODEL_ID,
                 FIXTURE_USER,
             )
+            await con.execute(
+                "INSERT INTO semantic_model.source_mappings "
+                "(id, model_id, concept_id, workspace_id, document_id, sheet_name, "
+                "asset_kind, created_by) VALUES ($1::uuid, $2::uuid, $3::uuid, "
+                "'verify-workspace-1', $4, '', 'document', $5)",
+                FIXTURE_MAPPING_ID,
+                FIXTURE_MODEL_ID,
+                FIXTURE_CONCEPT_ID,
+                FIXTURE_DOCUMENT_ID,
+                FIXTURE_USER,
+            )
+            await con.execute(
+                "INSERT INTO semantic_jobs.source_revisions "
+                "(event_id, workspace_id, asset_id, revision, event_type, occurred_at, payload) "
+                "VALUES ('verify-source-event-1', 'verify-workspace-1', $1, 1, "
+                "'workspace.document.indexing_ready.v1', now(), $2::jsonb)",
+                FIXTURE_DOCUMENT_ID,
+                json.dumps({"originalName": "verify-source.pdf", "mimeType": "application/pdf"}),
+            )
+            await con.execute(
+                "INSERT INTO semantic_jobs.source_heads "
+                "(workspace_id, asset_id, revision, event_id, event_type, occurred_at, payload) "
+                "SELECT workspace_id, asset_id, revision, event_id, event_type, occurred_at, payload "
+                "FROM semantic_jobs.source_revisions WHERE event_id = 'verify-source-event-1'"
+            )
         return True
     finally:
         await con.close()
@@ -221,6 +252,12 @@ async def drop_fixture() -> None:
 
     con = await asyncio.wait_for(asyncpg.connect(_runtime_url(), command_timeout=10), 20)
     try:
+        await con.execute(
+            "DELETE FROM semantic_jobs.source_heads WHERE event_id = 'verify-source-event-1'"
+        )
+        await con.execute(
+            "DELETE FROM semantic_jobs.source_revisions WHERE event_id = 'verify-source-event-1'"
+        )
         # Delete only rows this script can have created: fixture name + user.
         await con.execute(
             "DELETE FROM semantic_model.memberships WHERE model_id = $1::uuid AND user_id = $2",
@@ -240,6 +277,9 @@ async def main() -> None:
     status, _ = http("GET", PGRST + "/model_summary")
     assert status in (401, 403), status
     print("postgrest-anon-denied")
+    status, _ = http("GET", PGRST + "/source_summary")
+    assert status in (401, 403), status
+    print("postgrest-source-anon-denied")
     import asyncpg as _asyncpg
 
     _probe = await asyncio.wait_for(
@@ -262,10 +302,23 @@ async def main() -> None:
         assert status == 200 and FIXTURE_MODEL_ID in body, (status, body)
         print("postgrest-rls-authorized-visible")
         status, body = http(
+            "GET", PGRST + "/source_summary", user_jwt(FIXTURE_USER, FIXTURE_MODEL_ID)
+        )
+        assert status == 200 and FIXTURE_MAPPING_ID in body and "verify-source.pdf" in body, (
+            status,
+            body,
+        )
+        print("postgrest-source-authorized-visible")
+        status, body = http(
             "GET", PGRST + "/model_summary", user_jwt(OTHER_USER, FIXTURE_MODEL_ID)
         )
         assert status == 200 and body.strip() == "[]", (status, body)
         print("postgrest-rls-cross-user-denied")
+        status, body = http(
+            "GET", PGRST + "/source_summary", user_jwt(OTHER_USER, FIXTURE_MODEL_ID)
+        )
+        assert status == 200 and body.strip() == "[]", (status, body)
+        print("postgrest-source-cross-user-denied")
         status, body = http(
             "GET",
             PGRST + "/model_summary",

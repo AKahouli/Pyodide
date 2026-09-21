@@ -94,7 +94,90 @@ def test_csv_strict_mode_rejects_unterminated_quotes():
         parse_csv_preview(b'a,b\n"x,y\n')
 
 
-def test_csv_generated_header_names_cannot_collide():
+def test_csv_header_only_file_infers_delimiter():
+    parsed = parse_csv_preview(b"a;b\n")
+    assert parsed["structure"]["delimiter"] == ";"
+    assert parsed["structure"]["columns"] == ["a", "b"]
+    assert parsed["structure"]["dataRows"] == 0
+    assert parsed["coverage"] == {"sampled": True, "completeProfileDone": True}
+
+
+def test_csv_newline_dense_prefix_is_bounded():
+    import time
+
+    data = (b"\n" * 200_000) + b"a,b\n1,2\n"
+    started = time.perf_counter()
+    with pytest.raises(ValueError, match="csv_no_header_row"):
+        parse_csv_preview(data)
+    assert time.perf_counter() - started < 5
+
+    # Ordinary leading blanks still work.
+    parsed = parse_csv_preview(b"\n\na,b\n1,2\n")
+    assert parsed["structure"]["columns"] == ["a", "b"]
+    assert parsed["samples"][0][SHEET_ROW_KEY] == 4
+
+
+def test_csv_multiline_record_trips_the_physical_bound(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(parsers, "SCAN_ROW_LIMIT", 10)
+    # One quoted record spans 50 physical lines, then valid rows follow.
+    body = "note\n" + '"line1\n' + "\n".join(f"line{i}" for i in range(2, 51)) + '"\n'
+    tail = "".join(f"tail{i}\n" for i in range(5))
+    parsed = parse_csv_preview((body + tail).encode("utf-8"))
+    assert parsed["coverage"] == {"sampled": True, "completeProfileDone": False}
+    assert any(w["code"] == "scan_capped" for w in parsed["warnings"])
+    assert parsed["scannedRows"] == 1
+    # Traversal stopped at the bound: rows past it are absent.
+    assert len(parsed["samples"]) == 1
+    assert "line50" in parsed["samples"][0]["note"]
+
+
+def test_csv_record_starting_past_the_cap_is_never_consumed(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(parsers, "SCAN_ROW_LIMIT", 10)
+    head = "id\n" + "".join(f"{i}\n" for i in range(10))
+    # Raw bytes, NOT csv.writer: the writer would escape these into valid
+    # records and the test could not fail on the pre-fix implementation.
+    # A valid multiline record starting past the filled cap is never fetched.
+    parsed = parse_csv_preview((head + '"multi\nline"\n' + "tail\n").encode("utf-8"))
+    assert parsed["coverage"] == {"sampled": True, "completeProfileDone": False}
+    assert parsed["scannedRows"] == 10
+    assert len(parsed["samples"]) == 10
+    assert all("multi" not in str(row) for row in parsed["samples"])
+    # A malformed record starting past the cap is never consumed either: the
+    # old implementation fetched it and raised instead of returning partial.
+    parsed = parse_csv_preview((head + '"unterminated\n').encode("utf-8"))
+    assert parsed["coverage"] == {"sampled": True, "completeProfileDone": False}
+    assert parsed["scannedRows"] == 10
+
+
+def test_csv_physical_bound_is_inclusive(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(parsers, "SCAN_ROW_LIMIT", 10)
+    # Fewer than 10 data rows, but enough blank physical lines to reach the
+    # exact physical bound, then a raw malformed record. The inclusive bound
+    # stops at line SCAN+1 without fetching what follows.
+    body = "id\n" + "1\n2\n3\n" + "\n" * 7 + '"unterminated\n'
+    parsed = parse_csv_preview(body.encode("utf-8"))
+    assert parsed["coverage"] == {"sampled": True, "completeProfileDone": False}
+    assert parsed["scannedRows"] == 3
+    assert [row["id"] for row in parsed["samples"]] == ["1", "2", "3"]
+
+
+def test_csv_provenance_key_is_reserved():
+    parsed = parse_csv_preview(_csv([["__sheetRow", "id"], ["evil", "1"]]))
+    assert parsed["structure"]["columns"] == ["sheetRow", "id"]
+    row = parsed["samples"][0]
+    assert row[SHEET_ROW_KEY] == 2
+    assert row["sheetRow"] == "evil"
+    assert row["id"] == "1"
+    assert {p["name"] for p in parsed["fieldProfiles"]} == {"sheetRow", "id"}
+
+
+def test_xlsx_provenance_key_is_reserved():
+    parsed = parse_xlsx_preview(_xlsx({"S": [["__sheetRow", "id"], ["evil", "1"]]}))
+    assert parsed["structure"]["columns"] == ["sheetRow", "id"]
+    row = parsed["samples"][0]
+    assert row[SHEET_ROW_KEY] == 2
+    assert row["sheetRow"] == "evil"
+    assert {p["name"] for p in parsed["fieldProfiles"]} == {"sheetRow", "id"}
     parsed = parse_csv_preview(_csv([["id", "id", "id__2"], ["1", "2", "3"]]))
     assert parsed["structure"]["columns"] == ["id", "id__2", "id__2__2"]
     assert any(w["code"] == "headers_renamed" for w in parsed["warnings"])
@@ -127,9 +210,11 @@ def test_xlsx_sparse_huge_range_is_bounded_and_partial():
     # Stops at the physical traversal bound instead of walking the full range.
     assert parsed["coverage"] == {"sampled": True, "completeProfileDone": False}
     assert any(w["code"] == "scan_capped" for w in parsed["warnings"])
+    # Width comes from populated header cells: no synthetic padding columns.
+    # Values past the header width are outside the previewed schema and are
+    # omitted, matching the existing mapping behavior.
+    assert parsed["structure"]["columns"] == ["id"]
     assert parsed["samples"][0]["id"] == "top"
-    # Only the first 50 columns are previewed even with wider rows.
-    assert len(parsed["structure"]["columns"]) == 50
 
 
 def test_csv_encoding_fallback_and_size_gate():
@@ -187,6 +272,64 @@ def test_xlsx_sheets_selection_and_types():
         parse_xlsx_preview(b"not a workbook")
 
 
+def test_xlsx_iterator_not_advanced_past_budget(monkeypatch: pytest.MonkeyPatch):
+    pytest.importorskip("openpyxl")
+    from openpyxl.worksheet._read_only import ReadOnlyWorksheet
+
+    data_yields = {"n": 0}
+    real_iter_rows = ReadOnlyWorksheet.iter_rows
+
+    def counting_iter_rows(self, *args, **kwargs):
+        if kwargs.get("min_row", 1) == 2 and kwargs.get("values_only", False):
+            for row in real_iter_rows(self, *args, **kwargs):
+                data_yields["n"] += 1
+                yield row
+        else:
+            yield from real_iter_rows(self, *args, **kwargs)
+
+    monkeypatch.setattr(ReadOnlyWorksheet, "iter_rows", counting_iter_rows)
+    monkeypatch.setattr(parsers, "SCAN_ROW_LIMIT", 10)
+    parsed = parse_xlsx_preview(_xlsx({"S": [["id"]] + [[str(i)] for i in range(15)]}))
+    assert parsed["scannedRows"] == 10
+    assert parsed["coverage"] == {"sampled": True, "completeProfileDone": False}
+    # The data pass fetched exactly the budget: the 11th row was never parsed.
+    assert data_yields["n"] == 10
+
+
+def test_xlsx_sparse_iterator_not_advanced_past_budget(monkeypatch: pytest.MonkeyPatch):
+    pytest.importorskip("openpyxl")
+    from openpyxl.worksheet._read_only import ReadOnlyWorksheet
+
+    data_yields = {"n": 0}
+    real_iter_rows = ReadOnlyWorksheet.iter_rows
+
+    def counting_iter_rows(self, *args, **kwargs):
+        if kwargs.get("min_row", 1) == 2 and kwargs.get("values_only", False):
+            for row in real_iter_rows(self, *args, **kwargs):
+                data_yields["n"] += 1
+                yield row
+        else:
+            yield from real_iter_rows(self, *args, **kwargs)
+
+    monkeypatch.setattr(ReadOnlyWorksheet, "iter_rows", counting_iter_rows)
+    monkeypatch.setattr(parsers, "SCAN_ROW_LIMIT", 10)
+    openpyxl = pytest.importorskip("openpyxl")
+    workbook = openpyxl.Workbook()
+    sheet = workbook.active
+    sheet.title = "Sparse"
+    sheet.append(["id"])
+    for value in ("a", "b", "c"):
+        sheet.append([value])
+    sheet.cell(row=100, column=1, value="far")
+    buffer = io.BytesIO()
+    workbook.save(buffer)
+    parsed = parse_xlsx_preview(buffer.getvalue())
+    assert parsed["scannedRows"] == 3
+    assert parsed["coverage"] == {"sampled": True, "completeProfileDone": False}
+    # Sparse traversal stops at the physical budget, not the reported range.
+    assert data_yields["n"] == 10
+
+
 def test_xlsx_narrow_and_blank_sheets_have_no_synthetic_columns():
     narrow = parse_xlsx_preview(_xlsx({"One": [["only"], ["1"], ["2"]]}))
     assert narrow["structure"]["columns"] == ["only"]
@@ -222,6 +365,16 @@ def test_byte_path_skips_terminal_discovery_states():
     result = preview_source(doc, None, data)
     assert result["profile"]["status"] == "indexing_required"
     assert result["profile"]["samples"] == []
+
+    # Oversized metadata keeps its partial status and warning even when the
+    # supplied bytes are smaller: parsing must never upgrade it to ready.
+    huge = {**base, "sizeBytes": 60 * 1024 * 1024}
+    result = preview_source(huge, None, data)
+    assert result["profile"]["status"] == "partial"
+    assert result["profile"]["samples"] == []
+    assert any(w["code"] == "source_too_large_for_preview"
+               for w in result["profile"]["warnings"])
+    assert "fieldProfiles" not in result
     openpyxl = pytest.importorskip("openpyxl")
     workbook = openpyxl.Workbook()
     sheet = workbook.active

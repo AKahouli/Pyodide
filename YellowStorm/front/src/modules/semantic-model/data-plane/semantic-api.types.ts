@@ -12,6 +12,24 @@ export interface SemanticModelSummaryRow {
   updated_at: string;
 }
 
+export interface SemanticSourceSummaryRow {
+  mapping_id: string;
+  model_id: string;
+  workspace_id: string;
+  document_id: string;
+  sheet_name: string;
+  asset_kind: string;
+  mapping_status: string;
+  source_revision: number | null;
+  event_type: string | null;
+  deleted: boolean | null;
+  occurred_at: string | null;
+  original_name: string | null;
+  mime_type: string | null;
+  document_status: string | null;
+  indexing_status: string | null;
+}
+
 export interface SemanticDataTokenResponse {
   token: string;
   realtimeToken: string;

@@ -82,7 +82,9 @@ function valuesEqual(left: unknown, right: unknown): boolean {
 export function normalizeRelationValue(value: unknown, strategy: RelationMatchStrategy): string {
   const text = hasValue(value) ? String(value).trim() : '';
   if (strategy === 'exact') return text;
-  const lower = text.toLocaleLowerCase();
+  // toLowerCase, never toLocaleLowerCase: the hash/match contract must be
+  // host-locale independent, and the Python runtime port uses str.lower().
+  const lower = text.toLowerCase();
   if (strategy === 'case_insensitive') return lower;
   return lower
     .normalize('NFKD')

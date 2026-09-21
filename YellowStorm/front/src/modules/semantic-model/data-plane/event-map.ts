@@ -21,8 +21,9 @@ export function keysForEvent(
     case 'review-items-changed':
       return [semanticDataKeys.reviews(modelId), semanticDataKeys.summary(modelId)];
     case 'population-status-changed':
-    case 'datasource-status-changed':
       return [semanticDataKeys.jobs(modelId), semanticDataKeys.summary(modelId)];
+    case 'datasource-status-changed':
+      return [semanticDataKeys.sources(modelId), semanticDataKeys.jobs(modelId), semanticDataKeys.summary(modelId)];
     case 'model-read-state-changed':
       return [semanticDataKeys.summary(modelId)];
   }

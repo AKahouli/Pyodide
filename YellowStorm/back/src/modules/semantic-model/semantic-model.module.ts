@@ -5,6 +5,7 @@ import { AuthorizationModule } from '@modules/authorization';
 import { LoggerModule } from '@modules/logger';
 import { UserModule } from '@modules/user';
 import { WorkspaceModule } from '@modules/workspace';
+import { IntegrationEventsModule } from '@modules/integration-events/integration-events.module';
 import { SemanticModelController } from './controllers/semantic-model.controller';
 import { WorkspaceSemanticModelController } from './controllers/workspace-semantic-model.controller';
 import { SemanticDataTokenController } from './controllers/semantic-data-token.controller';
@@ -37,9 +38,12 @@ import { SemanticCrossSourceService } from './services/semantic-cross-source.ser
 import { SemanticBusinessTrustService } from './services/semantic-business-trust.service';
 import { ModelSpecificationService } from './services/model-specification.service';
 import { SemanticDataTokenService } from './services/semantic-data-token.service';
+import { SemanticRuntimeClientService } from './services/semantic-runtime-client.service';
+import { SemanticModelSourceEventHandler } from './integration/semantic-model-source-event.handler';
+import { SemanticModelSourceReconciliationService } from './integration/semantic-model-source-reconciliation.service';
 
 @Module({
-  imports: [ConfigModule.forFeature(semanticModelConfig),AuthorizationModule,LoggerModule,UserModule,forwardRef(() => WorkspaceModule)],
+  imports: [ConfigModule.forFeature(semanticModelConfig),AuthorizationModule,LoggerModule,UserModule,IntegrationEventsModule,forwardRef(() => WorkspaceModule)],
   controllers: [SemanticModelController,WorkspaceSemanticModelController,SemanticDataTokenController],
   providers: [
     SemanticModelDatabaseService,SemanticModelRepository,SemanticGraphRepository,SemanticModelOntologyRepository,SemanticAgeGraphRepository,SemanticModelService,
@@ -62,6 +66,9 @@ import { SemanticDataTokenService } from './services/semantic-data-token.service
     SemanticBusinessTrustService,
     ModelSpecificationService,
     SemanticDataTokenService,
+    SemanticRuntimeClientService,
+    SemanticModelSourceEventHandler,
+    SemanticModelSourceReconciliationService,
   ],
   exports: [SemanticModelDatabaseService,SemanticModelProvisioningService,SemanticModelService],
 })

@@ -31,6 +31,8 @@ export default registerAs('storage', () => ({
   maxFilesPerUpload: Number.parseInt(process.env.STORAGE_MAX_FILES_PER_UPLOAD || '10', 10),
 
   sasExpiryMinutes: Number.parseInt(process.env.STORAGE_SAS_EXPIRY_MINUTES || '60', 10),
+  semanticDatasetPrefix: process.env.SEMANTIC_DATASET_STORAGE_PREFIX || 'semantic-model/datasets',
+  semanticDatasetMaxSizeMb: Number.parseInt(process.env.SEMANTIC_DATASET_MAX_SIZE_MB || '200', 10),
 
   allowedMimeTypes: getAllowedStorageMimeTypes(),
 

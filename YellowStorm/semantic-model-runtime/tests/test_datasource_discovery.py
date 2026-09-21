@@ -5,8 +5,6 @@ Pure domain + durable-payload wiring. No DB, no network, no heavy libs.
 
 from __future__ import annotations
 
-import sys
-
 import pytest
 
 from app.datasource.discovery import (
@@ -407,5 +405,21 @@ def test_attempt_cap_is_bounded_and_env_validated():
 
 
 def test_domain_import_pulls_no_heavy_libs():
-    for mod in ("openpyxl", "xlrd", "duckdb", "torch", "sentence_transformers"):
-        assert mod not in sys.modules, mod
+    """Hermetic: importing the discovery domain must not initialize parser,
+    embedding, or query-engine libraries, regardless of what sibling tests
+    already imported in this process."""
+    import subprocess
+    import sys as _sys
+    from pathlib import Path
+
+    code = ("import sys, app.datasource.discovery; "
+            "heavy = [m for m in ('openpyxl', 'xlrd', 'duckdb', 'torch', "
+            "'sentence_transformers') if m in sys.modules]; "
+            "assert not heavy, heavy; print('lazy-ok')")
+    completed = subprocess.run(
+        [_sys.executable, "-c", code],
+        cwd=Path(__file__).resolve().parents[1],
+        capture_output=True, text=True, timeout=60,
+    )
+    assert completed.returncode == 0, completed.stderr
+    assert "lazy-ok" in completed.stdout

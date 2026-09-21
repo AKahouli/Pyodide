@@ -14,7 +14,7 @@ Env (all required, values never printed):
   SEM_AUTH_PW         dedicated PostgREST authenticator password
   SEM_AGE_PW          dedicated semantic_age_app password
   DEFINITIONS_SQL     path to back/scripts/semantic-model/000_deploy_all.sql
-  RUNTIME_MIGRATION   path to semantic-model-runtime/migrations/001_durable_jobs.sql
+  RUNTIME_MIGRATION   path to any file in semantic-model-runtime/migrations
   CURATED_SQL         path to deploy/data-plane/sql/001_curated_api.sql
 
 Idempotent: reruns only rotate the dedicated passwords and re-apply DDL.
@@ -63,7 +63,7 @@ def split_definitions(sql: str) -> tuple[str, str]:
     return sql[:start] + sql[end:], age_section
 
 
-async def bootstrap_agentstore(url: str, definitions: str, runtime_migration: str) -> None:
+async def bootstrap_agentstore(url: str, definitions: str, runtime_migrations: str) -> None:
     app_pw = os.environ["SEM_APP_PW"]
     auth_pw = os.environ["SEM_AUTH_PW"]
     con = await asyncio.wait_for(asyncpg.connect(url, command_timeout=30), 30)
@@ -114,7 +114,7 @@ async def bootstrap_agentstore(url: str, definitions: str, runtime_migration: st
         await con.execute('SET ROLE "semantic_app"')
         try:
             await con.execute(definitions)
-            await con.execute(runtime_migration)
+            await con.execute(runtime_migrations)
             await con.execute(curated)
         finally:
             await con.execute("RESET ROLE")
@@ -185,9 +185,14 @@ async def bootstrap_agegraph(url: str, age_section: str) -> None:
 async def main() -> None:
     full = Path(os.environ["DEFINITIONS_SQL"]).read_text(encoding="utf-8")
     definitions, age_section = split_definitions(full)
-    runtime_migration = Path(os.environ["RUNTIME_MIGRATION"]).read_text(encoding="utf-8")
+    migration_dir = Path(os.environ["RUNTIME_MIGRATION"]).parent
+    runtime_migrations = "\n".join(
+        path.read_text(encoding="utf-8") for path in sorted(migration_dir.glob("*.sql"))
+    )
+    if not runtime_migrations:
+        raise SystemExit("no runtime migrations found")
     await bootstrap_agentstore(
-        os.environ["BOOT_SU_AGENTSTORE"], definitions, runtime_migration
+        os.environ["BOOT_SU_AGENTSTORE"], definitions, runtime_migrations
     )
     await bootstrap_agegraph(os.environ["BOOT_SU_AGEGRAPH"], age_section)
     print("BOOTSTRAP-OK")

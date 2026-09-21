@@ -3,13 +3,16 @@
 // Commands stay on the NestJS/OpenAPI clients; this module never writes.
 import { PostgrestClient } from '@supabase/postgrest-js';
 import { getDataGrant } from './data-access-token';
-import { DATA_PAGE_DEFAULT, type SemanticModelSummaryRow } from './semantic-api.types';
+import { DATA_PAGE_DEFAULT, DATA_PAGE_MAX, type SemanticModelSummaryRow, type SemanticSourceSummaryRow } from './semantic-api.types';
 
 export interface DatabaseShape {
   semantic_api: {
     Tables: {
       model_summary: {
         Row: SemanticModelSummaryRow;
+      };
+      source_summary: {
+        Row: SemanticSourceSummaryRow;
       };
     };
   };
@@ -32,5 +35,19 @@ export async function fetchModelSummary(modelId: string): Promise<SemanticModelS
     .eq('model_id', modelId)
     .limit(DATA_PAGE_DEFAULT);
   if (error) throw new Error(`model summary read failed: ${error.message}`);
+  return data ?? [];
+}
+
+/** Current status for the model's bounded mapped-source inventory. */
+export async function fetchSourceSummary(modelId: string): Promise<SemanticSourceSummaryRow[]> {
+  const grant = await getDataGrant(modelId);
+  const client = scopedClient(grant.restUrl, grant.token);
+  const { data, error } = await client
+    .from('source_summary')
+    .select('mapping_id,model_id,workspace_id,document_id,sheet_name,asset_kind,mapping_status,source_revision,event_type,deleted,occurred_at,original_name,mime_type,document_status,indexing_status')
+    .eq('model_id', modelId)
+    .order('original_name')
+    .limit(DATA_PAGE_MAX);
+  if (error) throw new Error(`source summary read failed: ${error.message}`);
   return data ?? [];
 }

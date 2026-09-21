@@ -13,6 +13,8 @@ vi.mock('../../query/hooks', () => ({
   useSourceResolutionPolicies: () => ({ isLoading: false, data: [{ conceptId: 'organization', priorities: [{ mappingId: 'crm', rank: 1 }, { mappingId: 'excel', rank: 2 }] }] }),
   useMappingHealth: () => ({ isLoading: false, data: { items: [], summary: { healthy: 2, changed: 0, unavailable: 0, broken: 0 } } }),
 }));
+vi.mock('../../data-plane/use-semantic-model-channel', () => ({ useSemanticModelChannel: () => ({ live: false, polling: true }) }));
+vi.mock('../../data-plane/use-semantic-model-sources', () => ({ useSemanticModelSources: () => ({ isLoading: false, isError: false, refetch: vi.fn(), data: [{ mapping_id: 'source-1', model_id: 'model', workspace_id: 'workspace', document_id: 'document', sheet_name: 'Live', asset_kind: 'excel_sheet', mapping_status: 'ready', source_revision: 4, event_type: 'workspace.document.indexing_ready.v1', deleted: false, occurred_at: '2026-09-20T12:00:00Z', original_name: 'runtime-source.xlsx', mime_type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', document_status: 'completed', indexing_status: 'ready' }] }) }));
 
 describe('SemanticMappingsView', () => {
   beforeEach(() => useSemanticModelEditorStore.getState().hydrate({
@@ -27,9 +29,11 @@ describe('SemanticMappingsView', () => {
   it('summarizes mappings, primary source and relationship matching', () => {
     render(<QueryClientProvider client={new QueryClient()}><SemanticMappingsView modelId='model' canEdit /></QueryClientProvider>);
     expect(screen.getByText('CRM Production / customers')).toBeInTheDocument();
-    expect(screen.getByText('customers.xlsx / Customers')).toBeInTheDocument();
+    expect(screen.getByText('runtime-source.xlsx / Live')).toBeInTheDocument();
      expect(screen.getByText('id = customerId · cardinality.one_to_many · relationMatching.strategyOption.exact')).toBeInTheDocument();
     expect(screen.getByText('mappingHealth.allReady')).toBeInTheDocument();
+    expect(screen.getByText('customers.xlsx / Customers')).toBeInTheDocument();
+    expect(screen.getByText('sourceStatus.state.ready')).toBeInTheDocument();
   });
 
   it('does not offer source-priority edits to viewers', () => {

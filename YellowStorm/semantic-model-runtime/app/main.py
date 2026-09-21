@@ -10,6 +10,7 @@ IDs. P2.10: ``/health/live`` vs ``/health/ready``.
 
 from __future__ import annotations
 
+import logging
 import os
 import uuid
 from contextlib import asynccontextmanager
@@ -19,7 +20,7 @@ import asyncpg
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
 
-from .api import datasource_routes, health_routes, job_routes, population_routes
+from .api import datasource_routes, health_routes, index_routes, job_routes, population_routes
 from .jobs.dispatcher import OutboxDispatcher, OutboxRepository
 from .jobs.service import JobRepository, JobService
 from .persistence.postgres_jobs import PostgresJobRepository
@@ -28,6 +29,8 @@ from .security.service_auth import is_authorized
 MAX_BODY_BYTES = 256 * 1024
 REQUEST_ID_HEADER = "X-Request-Id"
 SERVICE_KEY_HEADER = "X-Semantic-Service-Key"
+
+logger = logging.getLogger(__name__)
 
 # Health is unauthenticated by design (load-balancer / core capability checks).
 OPEN_PATHS = {"/health/live", "/health/ready", "/openapi.json", "/docs"}
@@ -86,6 +89,26 @@ def create_app(job_repository: JobRepository | None = None) -> FastAPI:
             )
             repository = PostgresJobRepository(pool)
         app.state.job_service = JobService(repository) if repository else None
+        app.state.source_event_repository = repository
+        # Phase 6 canonical store shares the runtime database pool.
+        # A test may inject a fake; lifespan never overwrites it.
+        if getattr(app.state, "population_pool", None) is None:
+            app.state.population_pool = pool
+        # Phase 4 index pool. A test may inject a fake; otherwise creation is
+        # best-effort so the API stays up when the index is unreachable.
+        index_pool = getattr(app.state, "index_pool", None)
+        index_owned = False
+        if index_pool is None and os.environ.get("SEMANTIC_INDEX_DATABASE_URL"):
+            try:
+                from app.datasource.logical_index import create_index_pool
+
+                index_pool = await create_index_pool()
+                index_owned = True
+            except Exception:
+                logger.warning("semantic index pool unavailable; index reads disabled")
+                index_pool = None
+        app.state.index_pool = index_pool
+        app.state.index_pool_owned = index_owned
         if (
             repository is not None
             and os.environ.get("SEMANTIC_MODEL_RUNTIME_WRITES_ENABLED") == "true"
@@ -99,6 +122,8 @@ def create_app(job_repository: JobRepository | None = None) -> FastAPI:
         finally:
             if dispatcher:
                 await dispatcher.stop()
+            if app.state.index_pool_owned and app.state.index_pool is not None:
+                await app.state.index_pool.close()
             if pool:
                 await pool.close()
 
@@ -136,6 +161,7 @@ def create_app(job_repository: JobRepository | None = None) -> FastAPI:
 
     app.include_router(health_routes.router)
     app.include_router(datasource_routes.router)
+    app.include_router(index_routes.router)
     app.include_router(population_routes.router)
     app.include_router(job_routes.router)
     return app

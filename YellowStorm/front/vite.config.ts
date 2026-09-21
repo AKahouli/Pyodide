@@ -50,7 +50,10 @@ function getManualChunk(id: string): string | undefined {
     return 'vendor-pdf';
   }
 
-  if (id.includes('/node_modules/@cyntler/react-doc-viewer/')) {
+  if (
+    id.includes('/node_modules/docx-preview/')
+    || id.includes('/node_modules/docx/')
+  ) {
     return 'vendor-doc-viewer';
   }
 
@@ -111,7 +114,7 @@ export default defineConfig(({ mode }) => {
       dedupe: ['react', 'react-dom'],
     },
     optimizeDeps: {
-      include: ['@embedpdf/react-pdf-viewer', '@embedpdf/snippet', '@cyntler/react-doc-viewer'],
+      include: ['@embedpdf/react-pdf-viewer', '@embedpdf/snippet'],
       dedupe: ['react', 'react-dom'],
       esbuildOptions: {
         target: 'es2022',

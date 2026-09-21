@@ -45,13 +45,19 @@ def _disambiguate_headers(raw: list[str], warnings: list[dict[str, str]]) -> lis
     """Every final header is globally unique, and every rename warns.
 
     A rename is any deviation from the raw header text: empty or whitespace
-    fallbacks, normalization, and ``__N`` collision suffixes alike.
+    fallbacks, normalization, and ``__N`` collision suffixes alike. The
+    ``__sheetRow`` provenance key is reserved up front; a source column with
+    that name becomes the visible ``sheetRow`` (suffixed on further
+    collisions) so its values survive in samples and field profiles, which
+    exclude ``__*`` names by design.
     """
-    used: set[str] = set()
+    used: set[str] = {SHEET_ROW_KEY}
     headers: list[str] = []
     renamed = False
     for index, name in enumerate(raw, start=1):
         base = name.strip() or f"Column {index}"
+        if base == SHEET_ROW_KEY:
+            base = "sheetRow"
         candidate, suffix = base, 2
         while candidate in used:
             candidate = f"{base}__{suffix}"
@@ -164,26 +170,27 @@ def _decode_text(data: bytes, options: dict[str, Any],
 
 def _sniff_delimiter(text: str, options: dict[str, Any],
                      warnings: list[dict[str, str]]) -> str:
-    """Quote-aware delimiter selection over the first physical lines.
+    """Quote-aware delimiter selection over a bounded prefix.
 
-    Each candidate is parsed with the csv reader (quotes honored), so a comma
-    inside ``"..."`` never votes for comma. The winner needs consistent
-    multi-field rows; ties resolve in fixed ``, ; tab |`` order.
+    Only the first 64 KiB are inspected, so a newline-dense file cannot force
+    full-text materialization. Each candidate parses the first five non-empty
+    lines with the csv reader (quotes honored), so a comma inside ``"..."``
+    never votes for comma. The winner needs consistent multi-field rows, even
+    for a header-only file; ties resolve in fixed ``, ; tab |`` order.
     """
     override = options.get("delimiter")
     if isinstance(override, str) and override in _CSV_DELIMITERS:
         return override
-    sample = "\n".join([line for line in text.splitlines() if line.strip()][:5])
+    prefix = text[:65536]
+    sample = "\n".join([line for line in prefix.splitlines() if line.strip()][:5])
     best, best_fields = ",", 0
     for mark in _CSV_DELIMITERS:
         try:
             counts = [len(row) for row in csv.reader(io.StringIO(sample), delimiter=mark)]
         except csv.Error:
             continue
-        if len(counts) >= 2 and len(set(counts)) == 1 and counts[0] > 1 and counts[0] > best_fields:
+        if counts and len(set(counts)) == 1 and counts[0] > 1 and counts[0] > best_fields:
             best, best_fields = mark, counts[0]
-    if best_fields == 0:
-        best = ","
     _warn(warnings, "delimiter_sniffed",
           f"Delimiter {best!r} was inferred from the first rows; confirm it before mapping.")
     return best
@@ -230,26 +237,36 @@ def parse_csv_preview(data: bytes, options: dict[str, Any] | None = None) -> dic
     try:
         reader = csv.reader(io.StringIO(text), delimiter=delimiter, strict=True)
         for record in reader:
+            # Physical lines consumed, not records yielded: a quoted record
+            # spanning thousands of lines must trip the bound the moment it
+            # is consumed, or multiline input bypasses traversal limits.
             line_number = reader.line_num
-            if not any(cell.strip() for cell in record):
-                continue
-            if not headers:
-                header_row_number = line_number
-                headers = _disambiguate_headers(record, warnings)
-                _warn(warnings, "header_row_assumed",
-                      f"Row {header_row_number} is assumed to hold headers; confirm before mapping.")
-                if len(headers) > PREVIEW_MAX_COLUMNS:
-                    _warn(warnings, "columns_truncated",
-                          f"Only the first {PREVIEW_MAX_COLUMNS} columns are previewed.")
-                    headers = headers[:PREVIEW_MAX_COLUMNS]
-                continue
-            if scanned >= SCAN_ROW_LIMIT:
+            if any(cell.strip() for cell in record):
+                if not headers:
+                    header_row_number = line_number
+                    headers = _disambiguate_headers(record, warnings)
+                    _warn(warnings, "header_row_assumed",
+                          f"Row {header_row_number} is assumed to hold headers; confirm before mapping.")
+                    if len(headers) > PREVIEW_MAX_COLUMNS:
+                        _warn(warnings, "columns_truncated",
+                              f"Only the first {PREVIEW_MAX_COLUMNS} columns are previewed.")
+                        headers = headers[:PREVIEW_MAX_COLUMNS]
+                elif scanned < SCAN_ROW_LIMIT:
+                    scanned += 1
+                    row = {SHEET_ROW_KEY: line_number}
+                    for index, name in enumerate(headers):
+                        row[name] = record[index] if index < len(record) else ""
+                    records.append(row)
+            # Caps are checked at the end of the body so a reached limit
+            # stops before the next record is requested: a multiline,
+            # oversized, or malformed record starting beyond the bound is
+            # never consumed. The bound is inclusive: a record ending exactly
+            # on it consumed the whole budget, so traversal stops as partial
+            # rather than spending another fetch to prove completeness.
+            # A record already crossing the physical bound is processed once
+            # (its content is field-limit bounded) and then stops.
+            if scanned >= SCAN_ROW_LIMIT or line_number >= SCAN_ROW_LIMIT + 1:
                 break
-            scanned += 1
-            row = {SHEET_ROW_KEY: line_number}
-            for index, name in enumerate(headers):
-                row[name] = record[index] if index < len(record) else ""
-            records.append(row)
         else:
             complete = True
     except csv.Error as exc:
@@ -327,16 +344,29 @@ def parse_xlsx_preview(data: bytes, options: dict[str, Any] | None = None) -> di
 
         header_cells = list(next(sheet.iter_rows(min_row=1, max_row=1,
                                                  values_only=True), []))
-        # Width comes from the actual header row, never from a fixed max_col:
-        # padding iteration to 50 columns would invent synthetic Column N
-        # fields on narrow sheets. One row is cheap even at full Excel width.
-        headers = _disambiguate_headers(
-            ["" if value is None else Stringify(value) for value in header_cells], warnings)
+        # Width comes from populated header cells, not the worksheet-wide
+        # max_column: trailing padding from wider data rows or stale
+        # dimensions would otherwise invent synthetic Column N fields. One
+        # row is cheap even at full Excel width.
+        if any(v is not None and Stringify(v).strip() for v in header_cells):
+            while header_cells and (header_cells[-1] is None
+                                    or Stringify(header_cells[-1]).strip() == ""):
+                header_cells.pop()
+            raw_headers = ["" if v is None else Stringify(v) for v in header_cells]
+        elif header_cells:
+            # Header row exists but is entirely empty: positional fallback so
+            # data below is still previewed instead of silently dropped.
+            if len(header_cells) > PREVIEW_MAX_COLUMNS:
+                _warn(warnings, "columns_truncated",
+                      f"Only the first {PREVIEW_MAX_COLUMNS} columns are previewed.")
+            raw_headers = [""] * min(len(header_cells), PREVIEW_MAX_COLUMNS)
+        else:
+            raw_headers = []
+            _warn(warnings, "empty_sheet", "The selected sheet has no header row.")
+        headers = _disambiguate_headers(raw_headers, warnings)
         _warn(warnings, "header_row_assumed",
               "Row 1 is assumed to hold headers; confirm before mapping.")
         width = len(headers)
-        if not width:
-            _warn(warnings, "empty_sheet", "The selected sheet has no header row.")
         if width > PREVIEW_MAX_COLUMNS:
             _warn(warnings, "columns_truncated",
                   f"Only the first {PREVIEW_MAX_COLUMNS} columns are previewed.")
@@ -354,19 +384,24 @@ def parse_xlsx_preview(data: bytes, options: dict[str, Any] | None = None) -> di
             # of the reported dimensions, so a sparse sheet with a huge range
             # cannot force a full-workbook walk.
             physical += 1
-            if physical > SCAN_ROW_LIMIT + 1:
-                break
             cells = list(values)
-            if not any(v is not None and Stringify(v).strip() for v in cells):
-                continue
-            if scanned >= SCAN_ROW_LIMIT:
+            if any(v is not None and Stringify(v).strip() for v in cells):
+                if scanned < SCAN_ROW_LIMIT:
+                    scanned += 1
+                    row = {SHEET_ROW_KEY: number}
+                    for index, name in enumerate(headers):
+                        raw = cells[index] if index < len(cells) else None
+                        row[name] = _xlsx_value(raw)
+                    records.append(row)
+            # Caps are checked at the end of the body so a reached limit stops
+            # before the next worksheet row is requested. The physical bound
+            # has no header allowance: this pass starts at row 2, unlike the
+            # CSV line numbers. A file ending exactly on the budget therefore
+            # reports partial rather than spending another row parse to prove
+            # completeness; the batch preparation path remains the source of
+            # exact counts.
+            if scanned >= SCAN_ROW_LIMIT or physical >= SCAN_ROW_LIMIT:
                 break
-            scanned += 1
-            row = {SHEET_ROW_KEY: number}
-            for index, name in enumerate(headers):
-                raw = cells[index] if index < len(cells) else None
-                row[name] = _xlsx_value(raw)
-            records.append(row)
         else:
             complete = True
 

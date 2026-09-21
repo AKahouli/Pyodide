@@ -61,3 +61,45 @@ GRANT SELECT ON semantic_api.model_summary TO semantic_api_user;
 -- so PostgREST can never address them directly.
 GRANT USAGE ON SCHEMA semantic_model TO semantic_api_user;
 GRANT SELECT ON semantic_model.models TO semantic_api_user;
+
+-- Mapped source status. Runtime source heads share this database by deployment
+-- contract; raw event revisions and payloads remain outside the exposed schema.
+ALTER TABLE semantic_model.source_mappings ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS source_mapping_api_access ON semantic_model.source_mappings;
+CREATE POLICY source_mapping_api_access ON semantic_model.source_mappings
+  FOR SELECT TO semantic_api_user
+  USING (
+    model_id::text = (current_setting('request.jwt.claims', true)::json ->> 'model_id')
+    AND semantic_model.is_member(
+      model_id,
+      current_setting('request.jwt.claims', true)::json ->> 'sub'
+    )
+  );
+
+CREATE OR REPLACE VIEW semantic_api.source_summary WITH (security_invoker = true) AS
+  SELECT
+    mapping.id::text AS mapping_id,
+    mapping.model_id::text AS model_id,
+    mapping.workspace_id,
+    mapping.document_id,
+    mapping.sheet_name,
+    mapping.asset_kind,
+    mapping.status AS mapping_status,
+    head.revision AS source_revision,
+    head.event_type,
+    head.deleted,
+    head.occurred_at,
+    head.payload ->> 'originalName' AS original_name,
+    head.payload ->> 'mimeType' AS mime_type,
+    head.payload ->> 'documentStatus' AS document_status,
+    head.payload ->> 'indexingStatus' AS indexing_status
+  FROM semantic_model.source_mappings mapping
+  LEFT JOIN semantic_jobs.source_heads head
+    ON head.workspace_id = mapping.workspace_id AND head.asset_id = mapping.document_id;
+
+GRANT SELECT ON semantic_model.source_mappings TO semantic_api_user;
+GRANT USAGE ON SCHEMA semantic_jobs TO semantic_api_user;
+GRANT SELECT ON semantic_jobs.source_heads TO semantic_api_user;
+GRANT SELECT ON semantic_api.source_summary TO semantic_api_user;
+
+NOTIFY pgrst, 'reload schema';

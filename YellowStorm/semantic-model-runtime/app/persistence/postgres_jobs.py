@@ -11,6 +11,7 @@ from app.jobs.models import (
     JobCommand,
     Lease,
     OutboxItem,
+    SourceEvent,
     StaleLease,
 )
 from app.jobs.recovery import backoff_seconds
@@ -31,6 +32,90 @@ class PostgresJobRepository:
 
     def __init__(self, pool: asyncpg.Pool):
         self.pool = pool
+
+    async def record_source_event(self, event: SourceEvent) -> dict[str, Any]:
+        payload = event.payload.model_dump(by_alias=True, mode="json")
+        workspace_id = event.payload.workspace_id
+        asset_id = event.payload.document_id
+        is_reconciliation = event.event_id.startswith("reconcile:")
+        async with self.pool.acquire() as connection:
+            async with connection.transaction():
+                await connection.execute(
+                    "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))",
+                    f"{workspace_id}:{asset_id}",
+                )
+                existing = await connection.fetchrow(
+                    "SELECT revision FROM semantic_jobs.source_revisions WHERE event_id = $1",
+                    event.event_id,
+                )
+                if existing is not None:
+                    if is_reconciliation:
+                        await connection.execute(
+                            """
+                            UPDATE semantic_jobs.source_heads SET last_reconciled_at = now()
+                            WHERE workspace_id = $1 AND asset_id = $2
+                            """,
+                            workspace_id,
+                            asset_id,
+                        )
+                    return {"revision": existing["revision"], "reused": True}
+                revision = await connection.fetchval(
+                    """
+                    SELECT COALESCE(max(revision), 0) + 1
+                    FROM semantic_jobs.source_revisions
+                    WHERE workspace_id = $1 AND asset_id = $2
+                    """,
+                    workspace_id,
+                    asset_id,
+                )
+                await connection.execute(
+                    """
+                    INSERT INTO semantic_jobs.source_revisions
+                      (event_id, workspace_id, asset_id, revision, event_type, occurred_at, payload)
+                    VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb)
+                    """,
+                    event.event_id,
+                    workspace_id,
+                    asset_id,
+                    revision,
+                    event.event_type,
+                    event.occurred_at,
+                    _json(payload),
+                )
+                applied = await connection.fetchval(
+                    """
+                    INSERT INTO semantic_jobs.source_heads
+                      (workspace_id, asset_id, revision, event_id, event_type, occurred_at, payload, deleted)
+                    VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8)
+                    ON CONFLICT (workspace_id, asset_id) DO UPDATE
+                    SET revision = EXCLUDED.revision, event_id = EXCLUDED.event_id,
+                        event_type = EXCLUDED.event_type, occurred_at = EXCLUDED.occurred_at,
+                        payload = EXCLUDED.payload, deleted = EXCLUDED.deleted,
+                        last_reconciled_at = now(), updated_at = now()
+                    WHERE EXCLUDED.occurred_at > source_heads.occurred_at
+                       OR (EXCLUDED.occurred_at = source_heads.occurred_at
+                           AND EXCLUDED.revision > source_heads.revision)
+                    RETURNING revision
+                    """,
+                    workspace_id,
+                    asset_id,
+                    revision,
+                    event.event_id,
+                    event.event_type,
+                    event.occurred_at,
+                    _json(payload),
+                    event.event_type == "workspace.document.deleted.v1",
+                )
+                if is_reconciliation and applied is None:
+                    await connection.execute(
+                        """
+                        UPDATE semantic_jobs.source_heads SET last_reconciled_at = now()
+                        WHERE workspace_id = $1 AND asset_id = $2
+                        """,
+                        workspace_id,
+                        asset_id,
+                    )
+                return {"revision": revision, "reused": False, "headAdvanced": applied is not None}
 
     async def admit(
         self,
