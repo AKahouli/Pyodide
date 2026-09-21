@@ -107,4 +107,30 @@ describeIntegration('ConnectedAppTokenService single-flight refresh (integration
       jest.restoreAllMocks();
     }
   });
+
+  // R-06: a failing refresh must leave status='error' committed — the service
+  // returns the outcome from inside the transaction instead of throwing there.
+  it('a provider 400 rejects the call AND persists status=error', async () => {
+    jest.spyOn(global, 'fetch').mockImplementation(async () => {
+      return { ok: false, status: 400, text: async () => 'invalid_grant' } as unknown as Response;
+    });
+
+    try {
+      await expect(service.getValidToken('user-1', 'microsoft365')).rejects.toThrow();
+      const row = await store.findByIdForUpdate(connectionId);
+      expect(row!.status).toBe('error');
+      expect(row!.errorMessage).toContain('400');
+    } finally {
+      jest.restoreAllMocks();
+    }
+  });
+
+  it('a missing refresh token rejects the call AND persists status=expired', async () => {
+    await db.execute(`UPDATE integrations.user_app_connections SET refresh_token = NULL WHERE id = '${connectionId}'`);
+
+    await expect(service.getValidToken('user-1', 'microsoft365')).rejects.toThrow();
+
+    const row = await store.findByIdForUpdate(connectionId);
+    expect(row!.status).toBe('expired');
+  });
 });

@@ -22,6 +22,12 @@ import { ConnectedAppDefinitionService } from '../../connected-app/services/conn
 const OAUTH_STATE_TTL_MS = 10 * 60 * 1000;
 const TOKEN_EXPIRY_BUFFER_MS = 5 * 60 * 1000;
 
+/**
+ * Failure outcome of a refresh whose status was already written inside the
+ * transaction — returned (not thrown) so the write can commit (R-06).
+ */
+type RefreshOutcome = { ok: true; token: string } | { ok: false; message: string };
+
 @Injectable()
 export class ConnectorAdminAuthService {
   private readonly frontendUrl: string;
@@ -230,14 +236,20 @@ ${statusMessage}
 </html>`;
   }
 
-  /** Single-flight refresh (plan 3.2): row lock + expiry re-check under the transaction. */
+  /**
+   * Single-flight refresh (plan 3.2): row lock + expiry re-check under the transaction.
+   * Failures that write a terminal status return an outcome instead of throwing
+   * inside the transaction — a throw would roll the status write back and the
+   * record would never surface `expired`/`error` (remediation plan 3.1 / R-06).
+   */
   private async refreshAccessToken(
     record: ConnectorAdminAuthRow,
     appKey: string,
   ): Promise<string> {
-    return withTransaction(this.pgDb, async () => {
+    const outcome = await withTransaction(this.pgDb, async (): Promise<RefreshOutcome> => {
       const locked = (await this.authStore.findByIdForUpdate(record.id))!;
       if (!locked || !locked.connected) {
+        // Writes nothing — safe to throw.
         throw new BadRequestException(
           ErrorCode.CONNECTED_APP_TOKEN_REFRESH_FAILED,
           'Admin connection is no longer active. Please reconnect.',
@@ -249,7 +261,7 @@ ${statusMessage}
         !locked.tokenExpiresAt ||
         locked.tokenExpiresAt.getTime() - TOKEN_EXPIRY_BUFFER_MS < Date.now();
       if (!stillExpiring) {
-        return this.cryptoService.decrypt(locked.accessToken!);
+        return { ok: true, token: this.cryptoService.decrypt(locked.accessToken!) };
       }
 
       if (!locked.refreshToken) {
@@ -258,10 +270,7 @@ ${statusMessage}
           AdminConnectorAuthStatus.EXPIRED,
           'No refresh token available',
         );
-        throw new BadRequestException(
-          ErrorCode.CONNECTED_APP_TOKEN_REFRESH_FAILED,
-          'No refresh token available. Please reconnect.',
-        );
+        return { ok: false, message: 'No refresh token available. Please reconnect.' };
       }
 
       const appConfig = await this.getOAuthConfig(appKey);
@@ -286,10 +295,7 @@ ${statusMessage}
           AdminConnectorAuthStatus.ERROR,
           `Token refresh failed: ${response.status}`,
         );
-        throw new BadRequestException(
-          ErrorCode.CONNECTED_APP_TOKEN_REFRESH_FAILED,
-          'Failed to refresh token. Please reconnect.',
-        );
+        return { ok: false, message: 'Failed to refresh token. Please reconnect.' };
       }
 
       const tokenResponse = await response.json() as {
@@ -299,6 +305,7 @@ ${statusMessage}
       };
 
       if (!tokenResponse.access_token) {
+        // Writes nothing — safe to throw.
         throw new BadRequestException(
           ErrorCode.CONNECTED_APP_TOKEN_REFRESH_FAILED,
           'Failed to refresh token. Please reconnect.',
@@ -315,8 +322,13 @@ ${statusMessage}
           : null,
       });
 
-      return tokenResponse.access_token;
+      return { ok: true, token: tokenResponse.access_token };
     });
+
+    if (!outcome.ok) {
+      throw new BadRequestException(ErrorCode.CONNECTED_APP_TOKEN_REFRESH_FAILED, outcome.message);
+    }
+    return outcome.token;
   }
 
   private async exchangeCodeForTokens(
