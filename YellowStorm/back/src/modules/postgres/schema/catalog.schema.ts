@@ -1,7 +1,7 @@
 import { sql } from 'drizzle-orm';
 import { bigint, boolean, char, check, doublePrecision, index, integer, jsonb, numeric, pgSchema, primaryKey, text, timestamp, uniqueIndex, varchar } from 'drizzle-orm/pg-core';
 // Relative (not @common/*): pulled in by ts-node migration scripts without path aliases.
-import { objectId, timestamps } from '../../../common/postgres/columns';
+import { objectId, bytea, timestamps } from '../../../common/postgres/columns';
 
 /** P1B catalog tables (plan 2026-09-19 step 1B). */
 export const catalogSchema = pgSchema('catalog');
@@ -24,7 +24,7 @@ export const catalogAppearanceLogos = catalogSchema.table('appearance_logos', {
   width: integer('width').notNull(),
   height: integer('height').notNull(),
   /** Logo bytes; the default select excludes this column. */
-  data: text('data'),
+  data: bytea('data').notNull(),
   ...timestamps(),
 });
 

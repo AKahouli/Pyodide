@@ -1,30 +1,35 @@
 import { BadRequestException } from '@nestjs/common';
 import { DEFAULT_NAVIGATION_SETTINGS } from './interfaces/navigation-settings.interface';
 import { NavigationSettingsService } from './navigation-settings.service';
+import type { SystemSettingRow } from './persistence/system-setting.store';
 
 describe('NavigationSettingsService', () => {
-  const findOne = jest.fn();
-  const findOneAndUpdate = jest.fn();
-  const service = new NavigationSettingsService({ findOne, findOneAndUpdate } as never);
+  const get = jest.fn<Promise<SystemSettingRow | null>, []>();
+  const upsert = jest.fn<Promise<SystemSettingRow>, [string, unknown]>();
+  const service = new NavigationSettingsService({ get, upsert } as never);
 
   beforeEach(() => jest.clearAllMocks());
 
   it('returns the default tree when no setting exists', async () => {
-    findOne.mockReturnValue({ lean: () => ({ exec: jest.fn().mockResolvedValue(null) }) });
+    get.mockResolvedValue(null);
     await expect(service.getSettings()).resolves.toEqual(DEFAULT_NAVIGATION_SETTINGS);
   });
 
   it('falls back when a persisted tree is malformed', async () => {
-    findOne.mockReturnValue({ lean: () => ({ exec: jest.fn().mockResolvedValue({
+    get.mockResolvedValue({
+      key: 'navigation_settings',
+      updatedAt: new Date(),
       value: { revision: 4, nodes: [{ ...DEFAULT_NAVIGATION_SETTINGS.nodes[0], parentId: 'missing' }] },
-    }) }) });
+    });
     await expect(service.getSettings()).resolves.toEqual(DEFAULT_NAVIGATION_SETTINGS);
   });
 
   it('falls back when persisted node fields have invalid types', async () => {
-    findOne.mockReturnValue({ lean: () => ({ exec: jest.fn().mockResolvedValue({
+    get.mockResolvedValue({
+      key: 'navigation_settings',
+      updatedAt: new Date(),
       value: { revision: 4, nodes: [{ ...DEFAULT_NAVIGATION_SETTINGS.nodes[0], visible: 'yes' }] },
-    }) }) });
+    });
     await expect(service.getSettings()).resolves.toEqual(DEFAULT_NAVIGATION_SETTINGS);
   });
 
@@ -33,9 +38,11 @@ describe('NavigationSettingsService', () => {
       node.type === 'group' ? { ...node, targetKey: null } : { ...node }
     ));
     nodes[0].position = 9;
-    findOne.mockReturnValue({ lean: () => ({ exec: jest.fn().mockResolvedValue({
+    get.mockResolvedValue({
+      key: 'navigation_settings',
+      updatedAt: new Date(),
       value: { revision: 2, nodes },
-    }) }) });
+    });
 
     await expect(service.getSettings()).resolves.toEqual({
       revision: 2,
@@ -46,9 +53,11 @@ describe('NavigationSettingsService', () => {
   });
 
   it('enables launcher items in saved trees created before launcher visibility existed', async () => {
-    findOne.mockReturnValue({ lean: () => ({ exec: jest.fn().mockResolvedValue({
+    get.mockResolvedValue({
+      key: 'navigation_settings',
+      updatedAt: new Date(),
       value: { revision: 3, nodes: DEFAULT_NAVIGATION_SETTINGS.nodes },
-    }) }) });
+    });
 
     const settings = await service.getSettings();
     expect(settings.nodes.every((node) => node.launcherVisible)).toBe(true);
@@ -61,17 +70,15 @@ describe('NavigationSettingsService', () => {
   });
 
   it('persists a valid rearranged tree with a new revision', async () => {
-    findOne.mockReturnValue({ lean: () => ({ exec: jest.fn().mockResolvedValue(null) }) });
-    findOneAndUpdate.mockReturnValue({ lean: () => ({ exec: jest.fn().mockResolvedValue(null) }) });
+    get.mockResolvedValue(null);
     const nodes = DEFAULT_NAVIGATION_SETTINGS.nodes.map((node) => ({ ...node }));
     nodes[0].position = 9;
 
     const normalizedNodes = nodes.map((node) => ({ ...node, launcherVisible: true }));
     await expect(service.updateSettings(nodes)).resolves.toMatchObject({ revision: 2, nodes: normalizedNodes });
-    expect(findOneAndUpdate).toHaveBeenCalledWith(
-      { key: 'navigation_settings' },
-      { key: 'navigation_settings', value: { revision: 2, nodes: normalizedNodes } },
-      { upsert: true, new: true, setDefaultsOnInsert: true },
+    expect(upsert).toHaveBeenCalledWith(
+      'navigation_settings',
+      { revision: 2, nodes: normalizedNodes },
     );
   });
 

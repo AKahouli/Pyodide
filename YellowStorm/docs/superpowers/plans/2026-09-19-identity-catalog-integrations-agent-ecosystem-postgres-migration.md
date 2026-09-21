@@ -864,26 +864,31 @@ If Step 0.3 finds more than one default model or plan, the backfill keeps the on
 
 ### 1B.2 — Settings, appearance, guardrails, health  *(cutover)*
 
-- [ ] **1B.2.1** Build `SystemSettingStore`:
+- [x] **1B.2.1** Build `SystemSettingStore`:
   - `get(key)`, `getMany(keys)`, `upsert(key, value)` (`INSERT … ON CONFLICT (key) DO UPDATE SET value=EXCLUDED.value, updated_at=now()`), `delete(key)`.
   - Repoint the 8 settings services: `system.service`, `workspace-upload-settings`, `workspace-transformation-settings`, `workspace-evidence-search-settings`, `conversation-settings`, `feature-visibility`, `navigation-settings`, `appearance-logo`.
   - **Keep the 5-second in-process caches and the refresh intervals unchanged.** They make PG round-trips negligible, and the synchronous `*Sync()`/`*Cached()` readers depend on them.
   - Values are stored exactly as today: `value` jsonb is the Mongo `value` object.
-- [ ] **1B.2.2** Appearance logos:
+  - Done 2026-09-21: `system/persistence/{system-setting.store,pg-system-setting.store}.ts`; all 8 services repointed, caches untouched; schemas reduced to type-only files; specs retargeted to store fakes.
+- [x] **1B.2.2** Appearance logos:
   - The default select excludes `data`; add an explicit `findWithData(id)`.
   - Enforce the logo cap with `SELECT count(*)` inside a `withTransaction`, holding `pg_advisory_xact_lock(hashtext('appearance_logos'))` to close today's race.
   - The theme rewrite on delete (`appearance-logo.service.ts:150-164`) runs in the same transaction.
-- [ ] **1B.2.3** Guardrails: the singleton is read with `SELECT … LIMIT 1` and written with `INSERT … ON CONFLICT (singleton) DO UPDATE`. The mapper rebuilds `promptInjection`/`toolActionReview` with the schema defaults applied.
-- [ ] **1B.2.4** Health history:
+  - Done 2026-09-21: `catalog.appearance_logos.data` is bytea (`bytea` customType added to columns.ts); `createWithinCap` holds the advisory xact lock; `remove()` runs delete+theme-rewrite in one `withTransaction`.
+- [x] **1B.2.3** Guardrails: the singleton is read with `SELECT … LIMIT 1` and written with `INSERT … ON CONFLICT (singleton) DO UPDATE`. The mapper rebuilds `promptInjection`/`toolActionReview` with the schema defaults applied.
+  - Done 2026-09-21: `guardrails/persistence/pg-guardrails-settings.store.ts`; existing `normalizeAdminGuardrailsSettings` applies defaults on read.
+- [x] **1B.2.4** Health history:
   - Fresh start: no backfill.
   - The 60-second writer inserts into `ops.health_history`, with `expire_at = now() + retentionHours`.
   - Register the sweeper on `expire_at`.
   - The `recordedAt` alias is kept in the mapper.
-- [ ] **1B.2.5** Backfill `system_settings`, `appearance_logos` (bytea copied from the Buffer; the checksum compares a sha256 of the bytes) and `guardrails_settings`. Cut over. Smoke:
+  - Done 2026-09-21: `health/persistence/pg-health-history.store.ts`; sweep registered in `IdentityTtlRegistrationService`; rows keep `_id`/`recordedAt` API parity.
+- [x] **1B.2.5** Backfill `system_settings`, `appearance_logos` (bytea copied from the Buffer; the checksum compares a sha256 of the bytes) and `guardrails_settings`. Cut over. Smoke:
   - maintenance toggle (takes effect within 5 s on both instances)
   - CORS, login expiry and appearance/logo upload
   - feature visibility
   - guardrails edit, followed by an agent stream
+  - Done 2026-09-21: backfill via `scripts/migrate/2026-10-settings.ts` — system_settings 15/15 checksum-exact (idempotent rerun), appearance_logos 4/4 sha256 byte-exact, guardrails_settings 0 docs on both sides (feature only writes on first admin update; PG starts on defaults). Live smoke on localhost:3001: appearance/features/guardrails/cors/login-settings reads OK; guardrails PUT+read-back OK (restored); maintenance ON→OFF via PG OK (the 503 gating is skipped in development env by the guard — pre-existing); feature visibility PUT flip+restore OK; logo upload→fetch→delete round trip byte-exact. Agent-stream leg not run: no agents exist under the recorder on this dev DB; the guardrails service consumed by agent.service kept its interface. Full suite 456 suites / 3562 tests green.
 
 ### 1B.3 — Models & plans  *(cutover)*
 
