@@ -234,6 +234,27 @@ def test_connector_tool_does_not_inject_workspace_id_for_strict_schema(
     assert captured["params"] == {"query": "revenue"}
 
 
+def test_connector_tool_does_not_inject_workspace_id_for_strict_empty_schema(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured = {}
+
+    async def fake_call_mcp_tool(*args, **kwargs):
+        captured["params"] = args[4]
+        return {"text": "ok"}
+
+    monkeypatch.setattr(
+        "src.flow_engine.mcp.call_mcp_tool",
+        fake_call_mcp_tool,
+    )
+
+    tool = _first_connector_tool({}, workspace_names=["workspace-alpha"])
+
+    asyncio.run(tool.func())
+
+    assert captured["params"] == {}
+
+
 def test_connector_tool_strips_nullish_optional_parameters_before_mcp_call(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
