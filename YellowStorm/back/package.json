@@ -132,6 +132,7 @@
     ],
     "coverageDirectory": "../coverage",
     "testEnvironment": "node",
+    "maxWorkers": 2,
     "moduleNameMapper": {
       "^@/(.*)$": "<rootDir>/$1",
       "^@modules/(.*)$": "<rootDir>/modules/$1",
