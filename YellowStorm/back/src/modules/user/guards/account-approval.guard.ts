@@ -1,7 +1,7 @@
 import { CanActivate, ExecutionContext, Injectable } from '@nestjs/common';
 import { ForbiddenException } from '@modules/exceptions';
 import { ErrorCode } from '@modules/exceptions/constants/error-codes';
-import { UserStatus } from '../schemas/user.schema';
+import { UserStatus } from '../user.types';
 import { getFeatureAccessDenial } from '../utils/assert-account-accessible';
 
 export function isPendingApprovalAllowlistedPath(path: string): boolean {

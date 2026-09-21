@@ -6,7 +6,7 @@ import { DRIZZLE_DB } from '@modules/postgres/postgres.constants';
 import { newObjectId } from '@common/postgres';
 import { withTransaction, resolveQueryable, type PgQueryable } from '@common/postgres/transaction';
 import * as schema from '@modules/postgres/schema';
-import type { ConnectorAction } from '../schemas/connector.schema';
+import type { ConnectorAction } from '../connector.types';
 import {
   CONNECTOR_ADMIN_AUTH_STORE,
   CONNECTOR_ADMIN_OAUTH_STATE_STORE,

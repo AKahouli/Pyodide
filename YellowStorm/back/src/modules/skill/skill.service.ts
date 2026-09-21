@@ -8,7 +8,7 @@ import { stripTrailingChar, MULTIPART_SKILL_IMPORT_MAX_BYTES } from '../../commo
 import { BadRequestException, ConflictException, NotFoundException } from '../exceptions';
 import { ErrorCode } from '../exceptions/constants/error-codes';
 import { CreateSkillDto, QuerySkillDto, UpdateSkillDto } from './dto';
-import { SkillFileKind } from './schemas/skill.schema';
+import { SkillFileKind } from './skill.types';
 import { SKILL_CATEGORY_STORE, SKILL_STORE, type SkillCategoryStore, type SkillRow, type SkillStore } from './persistence/skill.store';
 import { ISkillResponse, IGrpcSkill } from './interfaces/skill.interface';
 

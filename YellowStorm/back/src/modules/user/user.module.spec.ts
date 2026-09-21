@@ -1,6 +1,5 @@
 import { UserModule } from './user.module';
 import { PgUserLookupAdapter } from './adapters/pg-user-lookup.adapter';
-import { MongoUserLookupAdapter } from './adapters/mongo-user-lookup.adapter';
 import { USER_LOOKUP_PORT } from '@common/ports/user-lookup.port';
 
 /**
@@ -14,6 +13,5 @@ describe('UserModule wiring', () => {
     const binding = providers.find((p) => p && p.provide === USER_LOOKUP_PORT);
     expect(binding).toBeDefined();
     expect(binding!.useExisting).toBe(PgUserLookupAdapter);
-    expect(binding!.useExisting).not.toBe(MongoUserLookupAdapter);
   });
 });

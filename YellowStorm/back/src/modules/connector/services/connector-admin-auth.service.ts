@@ -9,7 +9,7 @@ import { ErrorCode } from '@modules/exceptions/constants/error-codes';
 import { LoggerService } from '@modules/logger';
 import { DRIZZLE_DB } from '@modules/postgres/postgres.constants';
 import * as schema from '@modules/postgres/schema';
-import { AdminConnectorAuthStatus } from '../schemas/admin-connector-auth.schema';
+import { AdminConnectorAuthStatus } from '../connector.types';
 import {
   CONNECTOR_ADMIN_AUTH_STORE,
   CONNECTOR_ADMIN_OAUTH_STATE_STORE,

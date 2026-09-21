@@ -1,13 +1,12 @@
-import { Types } from 'mongoose';
 
 export type AuditLogStatus = 'success' | 'failure';
 
 export interface IAuditLog {
-  _id: Types.ObjectId;
-  actorId: Types.ObjectId;
+  _id: string;
+  actorId: string;
   actorEmail: string;
   action: string;
-  targetId?: Types.ObjectId;
+  targetId?: string;
   targetType?: string;
   metadata?: Record<string, unknown>;
   ipAddress?: string;

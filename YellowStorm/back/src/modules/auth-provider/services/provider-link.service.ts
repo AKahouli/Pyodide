@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { Inject } from '@nestjs/common';
-import { Model, Types, FlattenMaps } from 'mongoose';
+import { newObjectId } from '@common/postgres/object-id';
 import { USER_PROVIDER_LINK_STORE, type UserProviderLinkStore } from '../persistence/auth-provider.stores';
 import { UserService } from '@modules/user/user.service';
 import { LoggerService } from '@modules/logger';
@@ -41,7 +41,7 @@ export class ProviderLinkService {
    * Create a new provider link.
    */
   async createLink(
-    userId: string | Types.ObjectId,
+    userId: string,
     providerKey: string,
     providerUserId: string,
     providerEmail: string,

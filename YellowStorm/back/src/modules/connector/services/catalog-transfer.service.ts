@@ -1,13 +1,11 @@
+import { isObjectId } from '@common/postgres/object-id';
+import { normalizeObjectId } from '@common/postgres/object-id';
 import { Inject, Injectable } from '@nestjs/common';
-import { InjectConnection, InjectModel } from '@nestjs/mongoose';
-import { ClientSession, Connection, Model, Types } from 'mongoose';
 import { CryptoService } from '../../../common/services/crypto.service';
 import { BadRequestException } from '../../exceptions';
 import { ErrorCode } from '../../exceptions/constants/error-codes';
-import { ConnectedAppDefinition, ConnectedAppDefinitionDocument } from '../../connected-app/schemas/connected-app-definition.schema';
-import { UserAppConnection, UserAppConnectionDocument } from '../../connected-app/schemas/user-app-connection.schema';
 import { SKILL_CATEGORY_STORE, SKILL_STORE, type SkillCategoryStore, type SkillStore } from '../../skill/persistence/skill.store';
-import type { ConnectorAction, ConnectorDynamicHeader } from '../schemas/connector.schema';
+import type { ConnectorAction, ConnectorDynamicHeader } from '../connector.types';
 import type { ConnectorCredentialRow } from '../persistence/connector.store';
 import {
   CONNECTED_APP_DEFINITION_STORE,
@@ -15,7 +13,7 @@ import {
   type ConnectedAppDefinitionStore,
   type UserAppConnectionStore,
 } from '../../connected-app/persistence/connected-app.store';
-import { ConnectionStatus } from '../../connected-app/schemas/user-app-connection.schema';
+import { ConnectionStatus } from '../../connected-app/connected-app.types';
 import {
   CONNECTOR_ADMIN_AUTH_STORE,
   CONNECTOR_CATEGORY_STORE,
@@ -113,7 +111,7 @@ export class CatalogTransferService {
     archive: CatalogArchiveV1,
     conflictPolicy: CatalogConflictPolicy,
   ): Promise<CatalogImportResult> {
-    const ownerId = new Types.ObjectId(userId);
+    const ownerId = normalizeObjectId(userId);
     const result: CatalogImportResult = {
       skills: { created: 0, updated: 0, skipped: 0 },
       connectors: { created: 0, updated: 0, skipped: 0 },
@@ -201,7 +199,7 @@ export class CatalogTransferService {
     const connectorIds = connectors.map((connector) => String(connector.id ?? connector._id));
     const connectorSlugById = new Map(connectors.map((connector) => [String(connector.id ?? connector._id), connector.slug]));
     const appKeys = Array.from(new Set(connectors.map((connector) => connector.connectedAppKey).filter(Boolean)));
-    const ownerId = new Types.ObjectId(userId);
+    const ownerId = normalizeObjectId(userId);
     const [allCredentials, allDefinitions, userConnections, adminAuthRows] = await Promise.all([
       this.credentialStore.list({ userId: userId }),
       this.appDefinitionStore.findAll(),
@@ -312,7 +310,7 @@ export class CatalogTransferService {
 
   private async importConnectorCategories(
     categories: CatalogCategoryRecord[],
-    ownerId: Types.ObjectId,
+    ownerId: string,
     conflictPolicy: CatalogConflictPolicy,
     result: CatalogImportResult,
   ): Promise<Map<string, string>> {
@@ -410,7 +408,7 @@ export class CatalogTransferService {
 
   private async importConnectors(
     connectors: CatalogConnectorRecord[],
-    ownerId: Types.ObjectId,
+    ownerId: string,
     categoryIds: Map<string, string>,
     skillIds: Map<string, string>,
     conflictPolicy: CatalogConflictPolicy,
@@ -486,7 +484,7 @@ export class CatalogTransferService {
 
   private async importSecurity(
     archive: CatalogArchiveV1,
-    ownerId: Types.ObjectId,
+    ownerId: string,
     conflictPolicy: CatalogConflictPolicy,
     result: CatalogImportResult,
   ): Promise<void> {
@@ -704,7 +702,7 @@ export class CatalogTransferService {
         ...(action.resultMapping ? { resultMapping: action.resultMapping } : {}),
       })),
       referencedSkillSlugs: (connector.skillIds ?? connector.referencedSkillIds ?? [])
-        .map((id: Types.ObjectId) => skillSlugById.get(id.toString()))
+        .map((id: unknown) => skillSlugById.get(String(id)))
         .filter((slug: string | undefined): slug is string => Boolean(slug)),
       isActive: connector.isActive ?? true,
       isSystem: connector.isSystem ?? false,
@@ -754,7 +752,7 @@ export class CatalogTransferService {
   }
 
   private validateSelection(dto: ExportCatalogDto): void {
-    if (dto.selection === 'selected' && (!dto.ids?.length || dto.ids.some((id) => !Types.ObjectId.isValid(id)))) {
+    if (dto.selection === 'selected' && (!dto.ids?.length || dto.ids.some((id) => !isObjectId(id)))) {
       throw new BadRequestException(ErrorCode.BAD_REQUEST, 'Select at least one valid catalog item.');
     }
     if (dto.includeSecurity && !dto.passphrase) {

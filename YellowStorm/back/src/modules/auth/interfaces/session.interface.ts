@@ -1,8 +1,7 @@
-import { Types } from 'mongoose';
 import { DeviceInfoData } from './auth.interface';
 
 export interface CreateSessionData {
-  userId: Types.ObjectId;
+  userId: string;
   refreshTokenHash: string;
   deviceInfo: DeviceInfoData;
   ipAddress: string;
@@ -11,8 +10,8 @@ export interface CreateSessionData {
 }
 
 export interface ISessionDocument {
-  _id: Types.ObjectId;
-  userId: Types.ObjectId;
+  _id: string;
+  userId: string;
   refreshTokenHash: string;
   deviceInfo: DeviceInfoData;
   ipAddress: string;

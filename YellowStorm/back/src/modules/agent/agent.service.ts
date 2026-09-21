@@ -1,6 +1,6 @@
 import { Inject, Injectable, Optional, forwardRef } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { Types } from 'mongoose';
+import { isObjectId, newObjectId } from '@common/postgres/object-id';
 import { LoggerService } from '../logger';
 import { IAgentResponse, IAgentForStream, IGrpcAgent, IGrpcCompaction, ISharedAgentInfo } from './interfaces/agent.interface';
 import { AgentShareService } from './services/agent-share.service';
@@ -156,7 +156,7 @@ export class AgentService {
 
     await this.skillService.findByIds([...(dto.skills ?? []), ...(dto.disabledSkills ?? [])]);
 
-    const id = new Types.ObjectId().toString();
+    const id = newObjectId();
     const agentTypeSlug = await this.resolveAgentTypeSlug(dto.agentType);
     const agent = await this.agentRepository.create(
       this.dtoToCreateInput(userId, dto, { id, isDefault: false, slug: normalizedSlug, agentTypeSlug }),
@@ -409,7 +409,7 @@ export class AgentService {
 
     await this.skillService.findByIds([...(dto.skills ?? []), ...(dto.disabledSkills ?? [])]);
 
-    const id = new Types.ObjectId().toString();
+    const id = newObjectId();
     const agentTypeSlug = await this.resolveAgentTypeSlug(dto.agentType);
     const agent = await this.agentRepository.create(
       this.dtoToCreateInput(adminUserId, dto, { id, isDefault: true, slug: normalizedSlug, agentTypeSlug }),
@@ -1629,7 +1629,7 @@ export class AgentService {
   }
 
   async assertActiveDefaultAgent(agentId: string): Promise<void> {
-    if (!Types.ObjectId.isValid(agentId)) {
+    if (!isObjectId(agentId)) {
       throw new BadRequestException(ErrorCode.AGENT_UNAVAILABLE, 'The selected decision-flow agent is invalid');
     }
     const exists = await this.agentRepository.existsActiveDefault(agentId);
@@ -1676,7 +1676,7 @@ export class AgentService {
   }
 
   async findPlaybookPlannerById(agentId: string): Promise<PlaybookPlannerAgentConfig> {
-    if (!Types.ObjectId.isValid(agentId)) {
+    if (!isObjectId(agentId)) {
       throw new BadRequestException(ErrorCode.PLAYBOOK_PLANNER_UNAVAILABLE, 'The selected Playbook Planner agent is invalid');
     }
     const record = await this.agentRepository.findById(agentId);
@@ -1893,7 +1893,7 @@ export class AgentService {
   private normalizeConnectorActionSelections(
     connectorIds: string[] | undefined,
     selections?: Array<{ connectorId: string; actionKeys: string[] }>,
-  ): Array<{ connector: Types.ObjectId; actionKeys: string[] }> {
+  ): Array<{ connector: string; actionKeys: string[] }> {
     if (!connectorIds?.length || !selections?.length) {
       return [];
     }
@@ -1919,11 +1919,11 @@ export class AgentService {
         }
 
         return {
-          connector: new Types.ObjectId(selection.connectorId),
+          connector: selection.connectorId,
           actionKeys,
         };
       })
-      .filter(Boolean) as Array<{ connector: Types.ObjectId; actionKeys: string[] }>;
+      .filter(Boolean) as Array<{ connector: string; actionKeys: string[] }>;
   }
 
   private buildConnectorActionKeysByConnectorId(

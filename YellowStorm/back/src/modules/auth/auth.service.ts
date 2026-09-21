@@ -1,7 +1,6 @@
 import { Injectable, Inject, forwardRef } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
-import { Types } from 'mongoose';
 import * as bcrypt from 'bcrypt';
 import * as crypto from 'crypto';
 import { UAParser } from 'ua-parser-js';

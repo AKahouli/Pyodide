@@ -10,7 +10,7 @@ export interface UserSummary {
 export const USER_LOOKUP_PORT = Symbol('USER_LOOKUP_PORT');
 
 /**
- * Read-only access to user display data, replacing `.populate('…UserId',
+ * Read-only access to user display data, replacing the former Mongo populate of user fields ('…UserId',
  * 'email profile.firstName profile.lastName')` at Mongo boundaries. Backed by
  * Mongo today; swapped to PostgreSQL when identity migrates, with no caller
  * changes.

@@ -1,5 +1,5 @@
 import { Inject, Injectable } from '@nestjs/common';
-import { Types } from 'mongoose';
+import { newObjectId } from '@common/postgres/object-id';
 import { LoggerService } from '../logger';
 import { AgentRepository } from '../agent/repositories/agent.repository';
 import { AgentRoleEmbeddingService } from '../agent/services/agent-role-embedding.service';
@@ -77,7 +77,7 @@ export class HumainAgentService {
       const existing = await this.agentRepository.findByOwnerAndType(input.userId, agentType);
 
       if (!existing) {
-        const id = new Types.ObjectId().toString();
+        const id = newObjectId();
         await this.agentRepository.create({
           id,
           name, slug, agentType, agentTypeSlug, role, description, email: input.email,

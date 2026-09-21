@@ -1,5 +1,5 @@
 import { ConnectorService } from './connector.service';
-import { ConnectorActionSafety, DynamicHeaderSource } from './schemas/connector.schema';
+import { ConnectorActionSafety, DynamicHeaderSource } from './connector.types';
 import type {
   ConnectorCategoryStore,
   ConnectorRow,

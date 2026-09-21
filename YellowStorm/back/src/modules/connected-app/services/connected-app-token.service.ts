@@ -8,7 +8,7 @@ import {
   type UserAppConnectionRow,
   type UserAppConnectionStore,
 } from '../persistence/connected-app.store';
-import { ConnectionStatus } from '../schemas/user-app-connection.schema';
+import { ConnectionStatus } from '../connected-app.types';
 import { ConnectedAppDefinitionService } from './connected-app-definition.service';
 import { CryptoService } from '@common/services/crypto.service';
 import { LoggerService } from '@modules/logger';

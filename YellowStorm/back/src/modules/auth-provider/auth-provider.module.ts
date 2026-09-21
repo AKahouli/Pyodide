@@ -1,10 +1,5 @@
 import { Module, forwardRef } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
-import { MongooseModule } from '@nestjs/mongoose';
-import { AuthProvider, AuthProviderSchema } from './schemas/auth-provider.schema';
-import { UserProviderLink, UserProviderLinkSchema } from './schemas/user-provider-link.schema';
-import { OAuthState, OAuthStateSchema } from './schemas/oauth-state.schema';
-import { ProviderLinkToken, ProviderLinkTokenSchema } from './schemas/provider-link-token.schema';
 import { AuthProviderService } from './services/auth-provider.service';
 import { OAuthFlowService } from './services/oauth-flow.service';
 import { ProviderLinkService } from './services/provider-link.service';
@@ -24,12 +19,6 @@ import {
   USER_PROVIDER_LINK_STORE,
 } from './persistence/auth-provider.stores';
 import {
-  MongoAuthProviderStore,
-  MongoOAuthStateStore,
-  MongoProviderLinkTokenStore,
-  MongoUserProviderLinkStore,
-} from './persistence/mongo-auth-provider.stores';
-import {
   PgAuthProviderStore,
   PgOAuthStateStore,
   PgProviderLinkTokenStore,
@@ -39,12 +28,6 @@ import {
 @Module({
   imports: [
     ConfigModule,
-    MongooseModule.forFeature([
-      { name: AuthProvider.name, schema: AuthProviderSchema },
-      { name: UserProviderLink.name, schema: UserProviderLinkSchema },
-      { name: OAuthState.name, schema: OAuthStateSchema },
-      { name: ProviderLinkToken.name, schema: ProviderLinkTokenSchema },
-    ]),
     forwardRef(() => AuthModule),
     UserModule,
     forwardRef(() => UsageModule),

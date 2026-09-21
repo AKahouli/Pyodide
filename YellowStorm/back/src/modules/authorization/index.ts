@@ -4,8 +4,6 @@ export * from './services/audit-log.service';
 export * from './guards/permissions.guard';
 export * from './decorators/require-permissions.decorator';
 export * from './constants/permissions';
-export * from './schemas/role.schema';
-export * from './schemas/audit-log.schema';
 export * from './interfaces/role.interface';
 export * from './interfaces/audit-log.interface';
 export * from './dto/create-role.dto';

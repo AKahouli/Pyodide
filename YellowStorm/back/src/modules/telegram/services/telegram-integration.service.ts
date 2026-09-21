@@ -13,7 +13,7 @@ import { ErrorCode } from '@modules/exceptions/constants/error-codes';
 import { LoggerService } from '@modules/logger';
 import { stripTrailingChar } from '@common/utils';
 import { isObjectId } from '@common/postgres';
-import { TelegramIntegrationStatus } from '../schemas/agent-telegram-integration.schema';
+import { TelegramIntegrationStatus } from '../telegram.types';
 import { UpsertAgentTelegramIntegrationDto } from '../dto/upsert-agent-telegram-integration.dto';
 import {
   TelegramIntegrationMessageKey,

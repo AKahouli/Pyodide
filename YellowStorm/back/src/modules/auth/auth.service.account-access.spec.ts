@@ -2,7 +2,7 @@ import { Types } from 'mongoose';
 import { AuthService } from './auth.service';
 import { makeSessionStoreFake, sessionRecord } from './persistence/session-store.fake';
 import { ErrorCode } from '../exceptions/constants/error-codes';
-import { UserStatus } from '../user/schemas/user.schema';
+import { UserStatus } from '../user/user.types';
 
 jest.mock('bcrypt', () => ({
   hash: jest.fn().mockResolvedValue('hashed'),

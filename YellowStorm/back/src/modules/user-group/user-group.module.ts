@@ -1,17 +1,13 @@
 import { Module } from '@nestjs/common';
-import { MongooseModule } from '@nestjs/mongoose';
-import { UserGroup, UserGroupSchema } from './schemas/user-group.schema';
 import { UserGroupService } from './user-group.service';
 import { UserGroupController } from './user-group.controller';
 import { UserModule } from '../user/user.module';
 import { LoggerModule } from '../logger';
 import { USER_GROUP_STORE } from './persistence/user-group.store';
-import { MongoUserGroupStore } from './persistence/mongo-user-group.store';
 import { PgUserGroupStore } from './persistence/pg-user-group.store';
 
 @Module({
   imports: [
-    MongooseModule.forFeature([{ name: UserGroup.name, schema: UserGroupSchema }]),
     UserModule,
     LoggerModule,
   ],

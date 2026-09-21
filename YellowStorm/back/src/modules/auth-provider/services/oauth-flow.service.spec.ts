@@ -5,8 +5,6 @@ import { OAuthFlowService } from './oauth-flow.service';
 import { AuthProviderService } from './auth-provider.service';
 import { OAUTH_STATE_STORE, PROVIDER_LINK_TOKEN_STORE } from '../persistence/auth-provider.stores';
 import { ProviderLinkService } from './provider-link.service';
-import { OAuthState } from '../schemas/oauth-state.schema';
-import { ProviderLinkToken } from '../schemas/provider-link-token.schema';
 import { AuthService } from '@modules/auth/auth.service';
 import { UserService } from '@modules/user/user.service';
 import { UsageService } from '@modules/usage';
@@ -14,7 +12,7 @@ import { AuthorizationService } from '@modules/authorization/authorization.servi
 import { EmailService, EmailTemplateRenderer } from '@modules/email';
 import { LoggerService } from '@modules/logger';
 import { WorkspaceInitializerService } from '@modules/workspace/workspace-initializer.service';
-import { UserStatus } from '@modules/user/schemas/user.schema';
+import { UserStatus } from '@modules/user/user.types';
 import { ErrorCode } from '@modules/exceptions/constants/error-codes';
 
 // Mock global fetch

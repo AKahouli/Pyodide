@@ -1,4 +1,4 @@
-import type { ConnectionStatus } from '../schemas/user-app-connection.schema';
+import type { ConnectionStatus } from '../connected-app.types';
 
 /** Store ports for the integrations connected-app tables (plan step 3.1–3.3). */
 export const CONNECTED_APP_DEFINITION_STORE = Symbol('CONNECTED_APP_DEFINITION_STORE');

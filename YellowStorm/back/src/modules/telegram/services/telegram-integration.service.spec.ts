@@ -8,7 +8,7 @@ import { ErrorCode } from '@modules/exceptions/constants/error-codes';
 import { TelegramIntegrationService } from './telegram-integration.service';
 import { TelegramApiService } from './telegram-api.service';
 import { TelegramLinkCodeService } from './telegram-link-code.service';
-import { TelegramIntegrationStatus } from '../schemas/agent-telegram-integration.schema';
+import { TelegramIntegrationStatus } from '../telegram.types';
 import { TELEGRAM_INTEGRATION_STORE } from '../persistence/telegram.store';
 import { InMemoryTelegramIntegrationStore } from '../persistence/telegram.store.fake';
 

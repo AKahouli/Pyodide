@@ -1,3 +1,4 @@
+import { isObjectId } from '@common/postgres/object-id';
 import {
   Controller,
   Get,
@@ -12,7 +13,6 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { ApiTags, ApiOperation } from '@nestjs/swagger';
-import { Types } from 'mongoose';
 import { Public } from '../../auth/decorators/public.decorator';
 import { InternalServiceGuard } from '../../auth/guards/internal-service.guard';
 import { AgentCrudActorGuard, actingUserIdFrom } from '../../auth/guards/agent-crud-actor.guard';
@@ -94,7 +94,7 @@ export class AgentCrudInternalController {
   /** Language models work with slugs more reliably than ObjectIds; accept both. */
   private async resolveAgentTypeId(value: string): Promise<string> {
     const trimmed = value.trim();
-    if (Types.ObjectId.isValid(trimmed)) return trimmed;
+    if (isObjectId(trimmed)) return trimmed;
     const agentType = await this.agentTypeService.findBySlug(trimmed.toLowerCase());
     if (!agentType) {
       throw new BadRequestException(ErrorCode.AGENT_TYPE_NOT_FOUND);

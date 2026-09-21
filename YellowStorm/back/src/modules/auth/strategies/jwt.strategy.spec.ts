@@ -1,7 +1,7 @@
 import { JwtStrategy } from './jwt.strategy';
 import { makeSessionStoreFake, sessionRecord } from '../persistence/session-store.fake';
 import { ErrorCode } from '../../exceptions/constants/error-codes';
-import { UserStatus } from '../../user/schemas/user.schema';
+import { UserStatus } from '../../user/user.types';
 describe('JwtStrategy account access', () => {
   const payload = {
     sub: 'user-1',

@@ -1,5 +1,4 @@
 import { Inject, Injectable } from '@nestjs/common';
-import { Types } from 'mongoose';
 import { USAGE_STORE, type UsageStore } from '@modules/usage/persistence/usage-store';
 import { GroupByPeriod } from '../dto';
 import type { UsageAnalyticsResponse } from '../interfaces';

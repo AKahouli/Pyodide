@@ -1,6 +1,6 @@
 import { Inject, Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { Model, Types } from 'mongoose';
+import { newObjectId } from '@common/postgres/object-id';
 import { asAuthUser } from '@common/auth/auth-user';
 import * as crypto from 'crypto';
 import { AuthProviderService } from './auth-provider.service';
@@ -392,7 +392,7 @@ export class OAuthFlowService {
   /**
    * Create a short-lived temp token for frontend exchange.
    */
-  private async createTempLoginToken(userId: string | Types.ObjectId): Promise<string> {
+  private async createTempLoginToken(userId: string): Promise<string> {
     const token = crypto.randomBytes(32).toString('hex');
 
     await this.providerLinkTokenStore.create({

@@ -8,7 +8,7 @@ export const GROUP_LOOKUP_PORT = Symbol('GOVERNANCE_GROUP_LOOKUP_PORT');
 
 /**
  * Read-only group summaries for membership responses — the replacement for the
- * former `.populate('groupId', 'name members')`. Backed by identity.user_groups
+ * former Mongo populate of groupId ('name members'). Backed by identity.user_groups
  * in Postgres (remediation plan step 1).
  */
 export interface GovernanceGroupLookupPort {
