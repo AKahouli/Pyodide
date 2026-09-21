@@ -1,6 +1,6 @@
 # MongoDB → PostgreSQL — Remaining Migration Plan (Phases 0–10)
 
-> **Status:** Draft for review, 2026-09-18. Planning only — no code was changed to produce it.
+> **Status:** Draft of 2026-09-18; §1.2 / §1.3 refreshed 2026-09-21 after P1A, P1B, P3 and P4 landed and were remediated (`2026-09-21-postgres-migration-remediation.md`). The phase plan itself (P5–P10) is unchanged.
 > **Builds on:** `specs/2026-08-03-mongodb-to-postgresql-migration-feasibility.md`, the five `2026-08-05-agent-postgres-*` plans, and `plans/2026-08-29-conversation-postgres-migration.md`.
 > **Evidence base:** repo inspection of `back/` on branch `agara-worky-006` (working tree dirty) and a read-only inspection of the target DB `agentstore` (PostgreSQL 17.6).
 
@@ -24,41 +24,38 @@
 2. 14 indexes declared in `0005_conversation.sql` are not present under those names (e.g. `idx_messages_conversation_created`, `idx_conversations_owner_last_message`); very likely renamed/replaced by `0006_conversation_scalability.sql` — must be confirmed, not assumed.
 3. `drizzle/meta` only holds snapshots `0000` and `0005`; the next `drizzle-kit generate` will diff against a stale baseline.
 
-### 1.2 Code
+### 1.2 Code (refreshed 2026-09-21)
 
 | Domain | State |
 |---|---|
-| **Agents** | ✅ On Postgres (`AgentRepository`, junction tables). Remediation (2026-09-21) removed `agent/schemas/*.schema.ts` and the governance import; `shared_agents`, `teams`, `shared_teams`, `auto_builder_config` are on Postgres with FKs (R-03 closed). |
+| **Agents** | ✅ On Postgres (`AgentRepository`, junction tables; FKs to `catalog.agent_types/tools/skills` and `integrations.connectors`). `agent/schemas/*.schema.ts` are gone; `shared_agents`, `teams`, `shared_teams`, `auto_builder_config` are on Postgres with FKs. |
 | **App-data** | ✅ Own `app_data` schema. One Mongo coupling: `app-data-owner.controller.ts` (+ remote variant) injects `ConversationV2Session`. |
-| **Conversation v1** | ✅ Fresh-DB PG-only cutover (5 owned collections). Uncommitted WIP in the working tree (≈20 back files, ≈25 front files, ADK `chatbot.proto`/servicer). Remaining Mongo touch: `conversation.service.ts:53` injects `User`. Usage *events/windows* are in PG, but `usage.service.ts` still reads the Mongo `plans` collection. |
-| **Everything else** | ❌ Still Mongoose: **127 schema files (≈120 collections) across ~38 modules, ≈200 non-spec files using `@InjectModel`/`InjectConnection`**, one global `MongooseModule.forRoot` + a second isolated `logging` connection. |
+| **Conversation v1** | ✅ PG-only. `usage.service.ts` now reads plans from `catalog.plans`; users resolve through `USER_LOOKUP_PORT` (Postgres). |
+| **Identity, catalog, integrations, agent ecosystem** | ✅ On Postgres (P1A, P1B, P3, P4). All cross-schema FKs are validated and generated from `scripts/migrate/fk-specs.ts` into `drizzle/0025`; `npm run db:verify` and `reconcile-ids.ts --strict` are the health checks. |
+| **Everything else** | ❌ Still Mongoose — see §1.3 (≈109 collection models across 10 modules). |
 
 Not affected: **`yellowstorm-adk`, `mcp-*`, `yellowstorm-code-runtime` have no Mongo access** (only comments mention ObjectIds) — they reach data through Nest over gRPC/REST. **Front** has no datastore coupling; it only assumes 24-hex IDs (`isObjectIdLike` in `PlaybookExecutionComparePage.tsx`).
 
-### 1.3 Remaining collections by module
+### 1.3 Remaining Mongo surface (updated 2026-09-21, after the identity / catalog / integrations / agent-ecosystem remediation)
 
-| Module | Collections | Backend files coupled | Notes |
+Done and verified on Postgres: `agents`, `app-data`, conversation v1, `project`, `workspace`, `workspace-artifact`, `governance`, identity (`user`, `auth`, `auth-provider`, `authorization`, `user-group`), config/catalog (`system`, `models`, `guardrails`, `health` history, `usage` plans, `notifications`, `tool`, `skill`, `agent-type`, `humain-agent`), integrations (`connected-app`, `connector`) and the agent ecosystem (shared agents, `team`, `telegram`, `widget-chat`). The remaining Mongo modules — enforced by `src/common/testing/no-mongoose-in-migrated-modules.spec.ts`, whose allowlist is exactly this table — are:
+
+| Module | Mongo collections | Non-spec files with `@InjectModel` | Notes |
 |---|---|---|---|
-| `user` | users | 3 (+ imported by **24 modules**) | The hub. |
-| `auth` / `auth-provider` | sessions (TTL, 1 tx), auth_providers, oauth_states (TTL), provider_link_tokens (TTL), user_provider_links | 1 / 4 | |
-| `authorization` | roles, audit_logs (TTL 730 d) | 2 | |
-| `user-group` | user_groups | 1 | 4 `populate`s |
-| `system`, `models`, `guardrails`, `health`, `usage`(plans), `notifications`(TTL) | ~9 | 8+1+1+1+1+1 | config/leaf |
-| `tool`, `skill`, `agent-type` | tools, tool_categories, skills, skill_categories, agent_types, agent_type_prompts | 2 / 2 / 1 | referenced by `agents` junctions |
-| `workspace` | workspaces, workspace_documents, workspace_settings, workspace-shares, upload_sessions (TTL) | 10 | imports `Flow` from playbook-flow; raw `connection.collection('workspace_artifacts')` |
-| `project`, `workspace-artifact` | projects, project-shares, workspace_artifacts | 3 / 2 | |
-| `connected-app`, `connector` | 3 + 5 (credentials, oauth states TTL, categories) | 4 / 7 | 1 tx (`catalog-transfer`); **hard #2** update-pipeline on `flows` |
-| `team`, `agent` (shared), `humain-agent` | teams, shared_teams, team_auto_builder_config, shared_agents | 4 / 2 / 1 | |
-| `telegram`, `whatsapp`, `widget-chat` | 3 + 3 + 3 (link codes TTL) | 3 / 5 / 2 | |
-| `playbook-flow` | **29 schema files** (flows, executions, assistant*, node/prompt templates, replays, leases TTL, idempotency TTL, …) | **47** | Largest; `$lookup`/`$facet`/`bulkWrite` in 4 services |
-| `governance` | 12 | 22 | 5 transactions, **hard #1** scheduler pipelines |
-| `knowledge-intelligence`, `evaluation`, `classifier` | 6 / 4 / 4 | 6 / 3 / 6 | classifier depends on flows + workspace |
-| `worky` | **25** (+ ElectricSQL mirror, 619-line consumer) | 26 | 3 aggregations |
-| `conversation-v2`, `app-runtime`, `integration-events` | 3 / 5 (tickets TTL) / 1 | 4 / 5 / 2 | |
-| `logger` | logs (TTL 30 d, **separate connection**) | 1 | |
-| `analytics` | (reads users) | 1 | aggregation |
+| `playbook-flow` | 24 models (+3 subdocument helper files) | 47 | Largest. `$lookup` aggregations in `playbook-flow-artifact.service.ts` and `playbook-flow.service.ts`, a replay-report aggregation, 2 `bulkWrite` (node/prompt templates), leases + idempotency with TTL and duplicate-key semantics, 5 assistant collections (4 with TTL), event appends with `$inc`/`$push`, runtime index management, `FLOW_READ_PORT` (Mongo adapter used by `workspace` and `classifier`) |
+| `worky` | 26 models (25 schema files) | 26 (+1 `@InjectConnection`) | 619-line Electric consumer writing 7 collections + cursors; aggregations in budget / report / stream services; atomic budget `$inc`; cascade delete over 16 collections (`worky-stream.service.ts`); WhatsApp system-bot models (channel deprecated) |
+| `knowledge-intelligence` | 6 (all empty in dev) | 6 | Repositories already sit behind interfaces |
+| `classifier` | 4 | 5 | Reads flows through `FLOW_READ_PORT` |
+| `evaluation` | 4 | 3 | |
+| `conversation-v2` | 3 | 4 (+2 in `app-data` owner controllers) | Event store `$inc` counters; `(session_id, seq)` ordering |
+| `app-runtime` | 5 | 5 | Tickets (TTL), tool calls, source/finalized revisions; 7 unique indexes |
+| `integration-events` | 1 (outbox) | 2 | **Consumed by already-migrated modules** (`governance`, `workspace`, `indexing`, `semantic-model`) |
+| `logger` | 1 (`logs`, TTL 30 d, separate `logging` connection) | 1 | Aggregation in `log-buffer.service.ts` |
+| `whatsapp` | 3 | 5 | Deprecated by product decision; disabled with `WHATSAPP_ENABLED=false`; cleanup deferred |
+| `connector` (bridge) | — | 1 raw `connection.collection('flows')` | `connector-playbook-binding-sync.service.ts`; replaced in P5 |
+| `database` / `health` | — | — | `DatabaseModule` (`MongooseModule.forRoot`) and the Mongo ping in `health.service.ts`; removed in P10 |
 
-17 schemas carry TTL indexes; 2 files use transactions (`auth.service.ts`, `catalog-transfer.service.ts`) plus governance/knowledge-intelligence session threading; 7 files use `.aggregate()`; 5 files use `$lookup/$facet/bulkWrite`.
+Live TTL indexes still in Mongo: 8 (app-runtime tickets, logger logs, 4 playbook-assistant collections, execution leases, idempotency records). Mongo transactions in wired code: none. `.aggregate()` files: 7 (logger, 3 in playbook-flow, 3 in worky). `bulkWrite`: 2.
 
 ---
 

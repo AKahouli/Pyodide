@@ -10,5 +10,5 @@
   "69dbf89095975249af6f9ace": "connector credential whose connector 69dbf88f95975249af6f9aab no longer exists (dangling, the FK would reject it) — reject is correct",
   "69d4e270de27a0028dd31eed": "share of agent 69cc041611926f6b4aed4f1b, which no longer exists in Postgres (dangling) — reject is correct",
   "69d4e3dcde27a0028dd33280": "share of agent 69cc041611926f6b4aed4f11, which no longer exists in Postgres (dangling) — reject is correct",
-  "6ab13c68fe5067a78b45746e": "mistral-medium-3-5-backup: manual backup model created in Mongo after the models cutover; deliberately NOT copied (default). Insert it by hand if the backup entry is wanted"
+  "6ab13c68fe5067a78b45746e": "mistral-medium-3-5-backup: written to Mongo by a stale writer after the models cutover; the same model_id already exists in Postgres under a new id (created by the app at 2026-09-21T14:45Z), so nothing to copy"
 }

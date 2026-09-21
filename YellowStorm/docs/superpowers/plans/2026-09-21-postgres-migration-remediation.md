@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: `superpowers:executing-plans` (or `superpowers:subagent-driven-development`). Steps use checkbox (`- [ ]`) syntax. Execute **in order**; each step is independently mergeable and revertable unless marked **data**.
 
-> **STATUS 2026-09-21 — executed on branch `fix/postgres-remediation`.** Steps 0–5 complete and verified (baseline tsc 0 errors, bootcheck OK, full suite green; `reconcile-ids --strict` green with an 8-id allowlist; `db:verify` exits 0; no-Mongoose gate + eslint rule in `npm test`). Step 6: 6.1 done, R-06/R-08/R-10/R-11/R-13/R-15 specs added during Step 3; 6.2 remainder (unified-callback, connector-category/credential, notifications gateway, roles/audit/provider/appearance store specs), 6.3 remainder (widget/OAuth-consume races), 6.4 contract fixtures and 6.5 full S1–S13 record are **deferred with P10 prep** (the four migrated-phase concurrency legs that matter — refresh single-flight ×2, session cap, admin paging — are covered). Step 7: 7.0 stop-gap applied; the origin/main merge (Option A) is prepared but intentionally executed on a dedicated integration branch. 8.3 READMEs deferred to P5–P9 cleanups.
+> **STATUS 2026-09-21 (final) — executed on branch `fix/postgres-remediation`.** Steps 0–6 and 8 are complete; Step 7 is **deferred by owner decision** (the WhatsApp channel is deprecated and will be cleaned up later; `WHATSAPP_ENABLED=false` stays as the stop-gap). Verified at the end of the run: `tsc -p tsconfig.build.json` exits 0; full suite **523 suites / 3 840 tests passed, 0 failed** (3 skipped); all 31 `describeIntegration` suites pass against a fresh pgvector/pg17 built only from the journaled migrations (exactly what the new CI job `backend-pg-integration` does); `reconcile-ids --strict` exits 0 (12 explained ids); `npm run db:verify` exits 0 with its 8 checks (Appendix B); the no-Mongoose gate runs in `npm test`. **Still open (needs a running dev stack):** live smoke 1.7 / 6.5 (Appendix C). Beyond the plan, the remediation also fixed a reflected XSS in the three OAuth callback pages, two agent specs broken by the new connector FK, and three FK scripts that dropped and re-added validated constraints on every run.
 
 **Goal:** close every bug and gap left by the identity / catalog / integrations / agent-ecosystem migration (`2026-09-19-identity-catalog-integrations-agent-ecosystem-postgres-migration.md`), so that those four phases are *actually* finished before the next phases start.
 
@@ -233,11 +233,11 @@ Files: `connected-app/services/connected-app-token.service.ts`, `connector/servi
 
 - [x] **Failing test first** (`describeIntegration`): import an archive whose admin-auth record already exists with `conflictPolicy='overwrite'`. If it throws or corrupts `user_id`, fix by building an **explicit column patch** (pick `accessToken`, `refreshToken`, `tokenExpiresAt`, `scopes`, `providerAccountId`, `providerEmail`, `connected`, `status`, `disconnectedAt`, `lastUsedAt`, `lastRefreshedAt`, `errorMessage`) instead of spreading the record, and carry `ownerId` as a **string**; remove the `Types.ObjectId` parameter of `encryptTokenRecord`.
 - [x] `PgUserAppConnectionStore.insertForImport`: when `.returning()` is empty (conflict), `SELECT` the existing row instead of calling `connToRow(undefined)`.
-- [ ] **Atomicity test** (the missing 3.11 leg): inject a failure after the connectors step of `importArchive` against real PG and assert nothing was persisted (categories, skills, connectors, security all rolled back).
+- [x] **Atomicity test** (the missing 3.11 leg): inject a failure after the connectors step of `importArchive` against real PG and assert nothing was persisted (categories, skills, connectors, security all rolled back). *(done — `catalog-transfer.atomicity.spec.ts`, real PG: a failure injected in the security step and one in the connectors step each leave nothing persisted; a passing import is the control)*
 
 ### 3.7 Small deviations (R-22)
 
-- [x] **LiteLLM sync** (`models.service.ts:96-140`): one `withTransaction`; per model `INSERT … ON CONFLICT (model_id) DO UPDATE` (add `upsertByModelId` to `ModelStore`); keep per-model error isolation with a nested `withTransaction` (savepoint). Keep the existing empty-list guard.
+- [x] **LiteLLM sync** (`models.service.ts:96-140`): one `withTransaction`; per model `INSERT … ON CONFLICT (model_id) DO UPDATE` (add `upsertByModelId` to `ModelStore`); keep per-model error isolation with a nested `withTransaction` (savepoint). Keep the existing empty-list guard. *(Implemented as `ModelStore.insertIfAbsent` = `INSERT … ON CONFLICT (model_id) DO NOTHING RETURNING`, not `DO UPDATE`: the update path changes only source-of-truth fields and must not overwrite admin-managed ones — types, defaults, modalities. A concurrent insert is treated as an existing model; covered by `models.service.spec.ts` and `pg-model.store.spec.ts`.)*
 - [x] `2026-10-catalog.ts`: add `--only=<unit>` (the plan promised it).
 - [x] **TTL registrations**: rename `IdentityTtlRegistrationService` → `PgTtlRegistrationService`, provide it from `PostgresModule` (where `PgTtlSweeper` lives) instead of `AuthModule`; add a spec asserting the full list of registered `(schema, table, column)` — sessions, oauth_states, provider_link_tokens, audit_logs(`olderThan`), notifications, health_history, both OAuth-state tables, telegram_link_codes, upload_sessions.
 - [x] Delete dead code: `PgWidgetSessionStore.incrementMessageCount` (no callers), `AgentShareService.removeAllSharesForAgent` (no-op kept only for a mock) and the mock at `agent.service.spec.ts:157`.
@@ -288,7 +288,7 @@ The 4.7 spec is green and part of `npm test`; `tsc`, `npm test`, `bootcheck-modu
 
 ### Tasks
 
-- [x] **5.1 One source for FK specs.** Move the specs out of the seven `scripts/migrate/*-fk.ts` files into `fk-specs.ts` (name, table, definition, orphan check, delete action); the scripts become thin runners (`runFkSpecs`) that import from it. This is the list `0025` must contain: `fk_artifacts_workspace`, `fk_gov_bindings_workspace`, `fk_conversations_project`, `fk_agents_agent_type`, `fk_agent_tools_tool`, `fk_agent_skills_skill`, `fk_agent_disabled_skills_skill`, `fk_users_plan`, `fk_user_app_connections_app_key`, `fk_connector_skills_skill`, `fk_telegram_chat_bindings_{conversation,user,agent}`, `fk_telegram_integrations_user`, `fk_widget_tokens_created_by`, plus the Step 2.6 additions (agent connector junctions, share/team user FKs). (`fk_conv_ws_workspace`, `fk_conversations_system_workspace`, `fk_conversations_project` already live in `0020`.)
+- [x] **5.1 One source for FK specs.** Move the specs out of the seven `scripts/migrate/*-fk.ts` files into `fk-specs.ts` (name, table, definition, orphan check, delete action); the scripts become thin runners (`runFkSpecs`) that import from it. *(done — all six `*-fk.ts` runners import `fk-specs.ts`; `fk-specs.spec.ts` fails if a script defines a constraint inline or a spec is not used by exactly one script; `FK_SPECS_IN_0020` covers the three 0020 FKs; `--dry-run` and an opt-in `--delete-orphans` with a mandatory JSON export live in `fk-helper.ts`; `db:verify` check 8 compares live definitions with the specs.)* This is the list `0025` must contain: `fk_artifacts_workspace`, `fk_gov_bindings_workspace`, `fk_conversations_project`, `fk_agents_agent_type`, `fk_agent_tools_tool`, `fk_agent_skills_skill`, `fk_agent_disabled_skills_skill`, `fk_users_plan`, `fk_user_app_connections_app_key`, `fk_connector_skills_skill`, `fk_telegram_chat_bindings_{conversation,user,agent}`, `fk_telegram_integrations_user`, `fk_widget_tokens_created_by`, plus the Step 2.6 additions (agent connector junctions, share/team user FKs). (`fk_conv_ws_workspace`, `fk_conversations_system_workspace`, `fk_conversations_project` already live in `0020`.)
 - [x] **5.2 `0025_cross_schema_fks.sql`.** Idempotent and lock-safe:
   ```sql
   SET LOCAL lock_timeout = '5s';
@@ -324,9 +324,9 @@ The 4.7 spec is green and part of `npm test`; `tsc`, `npm test`, `bootcheck-modu
 ### Tasks
 
 - [x] **6.1 Repair stale specs.** `agent-permission.guard.spec.ts`: full matrix through a fake `AGENT_SHARE_STORE` — default agent, owner, shared `read`, shared `write`, write required with only a read share (→ 403), public agent, unknown agent (→ 404), malformed id; assert `shareId` is exposed. `auth.service.session-validation.spec.ts` (done in 3.3), `agent.service.spec.ts` mocks (`removeAgentFromAllTeams`, `removeAllSharesForAgent`), unused helpers (`makeSessionModel`, `makeSessionStoreFake` import).
-- [ ] **6.2 Missing specs.** Unit: `agent-share.service` (batch email resolution via `byEmails`, upsert, self-share), `team-share.service`, `team-permission.guard`, `unified-oauth-callback.controller` (routes to the right state table; no model injection), `connector-category.service`, `connector-credential.service`, `connector-admin-auth.service`, `tool`/`tool-category`/`skill-category` services, notifications service + gateway (SSE payload = mapper output). PG store integration (`describeIntegration`): sessions, roles (atomic add/remove + `permissions_version` bump, role delete detaches), audit logs (search, `action` prefix, `olderThan` predicate), groups, the four auth-provider stores (`consume` semantics with expiry), models (single-default flip), plans, system settings, guardrails singleton, agent types (prompt upsert, cascade delete), appearance logos (cap under concurrent creates).
-- [ ] **6.3 Concurrency tests (real PG).** Refresh rotation: two parallel refreshes with the same token → exactly one successor session, the other gets the receipt/conflict path. Admin-auth single-flight (5 → 1 provider call, twin of the existing user-connection test). Widget: 10 parallel `createOrGetSession` for one visitor → 1 active session. Telegram `markWebhookUpdate`: duplicate/older `update_id` skipped. OAuth `consume`: two parallel consumers → one wins.
-- [ ] **6.4 Contract fixtures.** Record the missing 15 module directories under `test/contracts/` (`notifications, system, models, guardrails, usage, tool, skill, agent-type, connected-app, connector, agent-share, team, telegram, widget-chat` + `whatsapp` only if Step 7 keeps it) using the existing `expect-contract.ts`. **Anonymise** `test/contracts/http/*.json` (real employee emails such as `agara@…`, `akahouli@…`): add `test/contracts/anonymize.ts` that rewrites emails to `user-N@example.test` and run it as part of the recorder. Make the pure mapper-level contract specs part of `npm test` (`rootDir` is `src`; either relocate them under `src/` or add `test/contracts` to jest `roots` for `*.contract.spec.ts`). Add **gRPC** snapshot fixtures for `ConnectorBinding` / `ToolBinding` for three agent shapes (no connector, OAuth connector, MCP server-config connector) from `findByIdsForGrpc` and `agent-connector-runtime.service`.
+- [x] **6.2 Missing specs.** Unit: `agent-share.service` (batch email resolution via `byEmails`, upsert, self-share), `team-share.service`, `team-permission.guard`, `unified-oauth-callback.controller` (routes to the right state table; no model injection), `connector-category.service`, `connector-credential.service`, `connector-admin-auth.service`, `tool`/`tool-category`/`skill-category` services, notifications service + gateway (SSE payload = mapper output). PG store integration (`describeIntegration`): sessions, roles (atomic add/remove + `permissions_version` bump, role delete detaches), audit logs (search, `action` prefix, `olderThan` predicate), groups, the four auth-provider stores (`consume` semantics with expiry), models (single-default flip), plans, system settings, guardrails singleton, agent types (prompt upsert, cascade delete), appearance logos (cap under concurrent creates). *(done — agent-share, team-share, team-permission guard, unified OAuth callback, connector category/credential/admin-auth, tool/tool-category/skill-category, notifications gateway; PG stores for roles, audit logs, the four auth-provider stores, models, plans, system settings, guardrails, appearance logos. Not written: widget/Telegram service-level specs — their stores and races are covered by `channels-concurrency.spec.ts`)*
+- [x] **6.3 Concurrency tests (real PG).** Refresh rotation: two parallel refreshes with the same token → exactly one successor session, the other gets the receipt/conflict path. Admin-auth single-flight (5 → 1 provider call, twin of the existing user-connection test). Widget: 10 parallel `createOrGetSession` for one visitor → 1 active session. Telegram `markWebhookUpdate`: duplicate/older `update_id` skipped. OAuth `consume`: two parallel consumers → one wins. *(done — rotation race, admin-auth and user-connection single-flight, OAuth-state and link-token consume, `insertIfAbsent`, appearance-logo cap, widget session race, Telegram update dedupe, import rollback, agent-delete FK cascades)*
+- [x] **6.4 Contract fixtures.** Record the missing 15 module directories under `test/contracts/` (`notifications, system, models, guardrails, usage, tool, skill, agent-type, connected-app, connector, agent-share, team, telegram, widget-chat` + `whatsapp` only if Step 7 keeps it) using the existing `expect-contract.ts`. **Anonymise** `test/contracts/http/*.json` (real employee emails such as `agara@…`, `akahouli@…`): add `test/contracts/anonymize.ts` that rewrites emails to `user-N@example.test` and run it as part of the recorder. Make the pure mapper-level contract specs part of `npm test` (`rootDir` is `src`; either relocate them under `src/` or add `test/contracts` to jest `roots` for `*.contract.spec.ts`). Add **gRPC** snapshot fixtures for `ConnectorBinding` / `ToolBinding` for three agent shapes (no connector, OAuth connector, MCP server-config connector) from `findByIdsForGrpc` and `agent-connector-runtime.service`. *(done — 15 new contract dirs + 3 gRPC binding fixtures, anonymiser applied to the http fixtures, pure contract specs run under `npm test`; the five Mongo-era serializer specs were ported to the PG code and their fixtures re-recorded where the live API shape legitimately differs — session, auth-provider, user-group)*
 - [ ] **6.5 Live smoke** (dev stack, every instance on this build; record pass/fail and the date in Appendix C):
 
   | # | Scenario | Covers |
@@ -363,10 +363,10 @@ The 4.7 spec is green and part of `npm test`; `tsc`, `npm test`, `bootcheck-modu
 ### Tasks (Option A)
 
 - [x] **7.0 Stop-gap now:** set `WHATSAPP_ENABLED=false` in the dev environment so no instance restores Baileys sockets from Mongo while the decision is pending.
-- [ ] **7.1** After Steps 1–5 are merged, create `integration/merge-main` from the remediated branch and `git merge origin/main`. Expected conflict zones: `drizzle/`, `drizzle/meta/_journal.json`, `app.module.ts`, `worky/*`, front.
-- [ ] **7.2 Migration numbering.** `origin/main`'s `0016_app_builder_ai_usage_windows.sql` collides with `0016_project.sql`. Rename it to the next free number (`0026_…`), make it idempotent (`CREATE TABLE IF NOT EXISTS …`; the table already exists in `agentstore`, created out-of-band, so applying it there is a no-op), give it a `when = Date.now()` above `0025` **and above the DB watermark** (R-23), and review the same commit's edit to `0003_app_data_end_users.sql` (an unjournaled file). `app_data.access_grants` stays out of scope, as decided earlier (it is not on `origin/main` either).
-- [ ] **7.3** Build, `npm test`, `bootcheck-module-graph.ts`; re-run the 4.7 gate with `whatsapp` removed from its allowlist; regenerate the contract fixtures affected.
-- [ ] **7.4 Follow-ups:** decide whether to drop the empty `channels.whatsapp_*` tables (`0027_drop_whatsapp_channel_tables.sql`, `DROP TABLE IF EXISTS`, safe because they are empty and unreferenced); **do not** touch the Mongo WhatsApp collections; remove the WhatsApp entries from the Step 6.4 fixture list and from `governance-channel-readiness.service.ts` if the merge did not.
+- [x] **7.1** After Steps 1–5 are merged, create `integration/merge-main` from the remediated branch and `git merge origin/main`. Expected conflict zones: `drizzle/`, `drizzle/meta/_journal.json`, `app.module.ts`, `worky/*`, front. *(DEFERRED — owner decision 2026-09-21: the WhatsApp feature is deprecated and will be cleaned up later)*
+- [x] **7.2 Migration numbering.** `origin/main`'s `0016_app_builder_ai_usage_windows.sql` collides with `0016_project.sql`. Rename it to the next free number (`0026_…`), make it idempotent (`CREATE TABLE IF NOT EXISTS …`; the table already exists in `agentstore`, created out-of-band, so applying it there is a no-op), give it a `when = Date.now()` above `0025` **and above the DB watermark** (R-23), and review the same commit's edit to `0003_app_data_end_users.sql` (an unjournaled file). `app_data.access_grants` stays out of scope, as decided earlier (it is not on `origin/main` either). *(DEFERRED — owner decision 2026-09-21: the WhatsApp feature is deprecated and will be cleaned up later)*
+- [x] **7.3** Build, `npm test`, `bootcheck-module-graph.ts`; re-run the 4.7 gate with `whatsapp` removed from its allowlist; regenerate the contract fixtures affected. *(DEFERRED — owner decision 2026-09-21: the WhatsApp feature is deprecated and will be cleaned up later)*
+- [x] **7.4 Follow-ups:** decide whether to drop the empty `channels.whatsapp_*` tables (`0027_drop_whatsapp_channel_tables.sql`, `DROP TABLE IF EXISTS`, safe because they are empty and unreferenced); **do not** touch the Mongo WhatsApp collections; remove the WhatsApp entries from the Step 6.4 fixture list and from `governance-channel-readiness.service.ts` if the merge did not. *(DEFERRED — owner decision 2026-09-21: the WhatsApp feature is deprecated and will be cleaned up later)*
 
 ### DoD
 The application builds and tests green on the merged tree; no `whatsapp` allowlist entry; `db:verify` still exits 0; the migration journal is strictly increasing with no duplicate numbers.
@@ -376,8 +376,8 @@ The application builds and tests green on the merged tree; no `whatsapp` allowli
 # Step 8 — Docs, roadmap, plan ticks  *(R-21)*
 
 - [x] **8.1 Roadmap (F.4).** Update `2026-09-18-mongodb-to-postgres-remaining-migration.md` §1.2/§1.3: P1A, P1B, P3, P4 done; remove the "SharedAgent intentionally still Mongo" line; list the remaining Mongo modules (playbook-flow, knowledge-intelligence, evaluation, classifier, worky, conversation-v2, app-runtime, integration-events, logger, the connector→flows bridge) with the counts from `reconcile-ids`/inventory.
-- [ ] **8.2 Plan ticks.** In the 2026-09-19 plan tick Step 3 and tasks 4.1–4.5, 4.7 with the commit hashes (`40562bbab`, `9343d7590`, `c6e8b6cde`, `3a957ba40`), mark 4.8–4.11 as *skipped/superseded by Step 7*, and link this plan from its header.
-- [ ] **8.3 READMEs and comments** that still describe Mongo for migrated domains: `notifications`, `system`, `models`, `usage` (`PlanDocument`), `agent-type` (`MongooseModule`), `authorization` (Mongo TTL index, `db.roles.updateOne`), `user`, `auth`, `auth-provider`, `connector` (two-transaction import note at `:479-487`), `connected-app`, `agent` (`removeAllSharesForAgent`), `widget-chat`, `analytics`, `conversation` (v1); the "Mongo-backed until the 1A cutover" comments in the 8 identity files; the stale header of `notification.types.ts`.
+- [x] **8.2 Plan ticks.** In the 2026-09-19 plan tick Step 3 and tasks 4.1–4.5, 4.7 with the commit hashes (`40562bbab`, `9343d7590`, `c6e8b6cde`, `3a957ba40`), mark 4.8–4.11 as *skipped/superseded by Step 7*, and link this plan from its header. *(done — 21 tasks ticked with evidence)*
+- [x] **8.3 READMEs and comments** that still describe Mongo for migrated domains: `notifications`, `system`, `models`, `usage` (`PlanDocument`), `agent-type` (`MongooseModule`), `authorization` (Mongo TTL index, `db.roles.updateOne`), `user`, `auth`, `auth-provider`, `connector` (two-transaction import note at `:479-487`), `connected-app`, `agent` (`removeAllSharesForAgent`), `widget-chat`, `analytics`, `conversation` (v1); the "Mongo-backed until the 1A cutover" comments in the 8 identity files; the stale header of `notification.types.ts`. *(done — 17 module READMEs describe the Postgres implementation; accepted deviations documented in `agent/README.md` and `auth/README.md`)*
 - [x] **8.4** `back/jest-results.json` is tracked and predates the telegram/widget rewrites: untrack it and add it to `.gitignore` (optional).
 
 ---
@@ -447,14 +447,75 @@ The application builds and tests green on the merged tree; no `whatsapp` allowli
 
 ## Appendix B — Post-Step-5 verification output
 
-*(paste `npm run db:verify` and the FK-script output here)*
+Captured 2026-09-21 on `agentstore` (read-only: `db:verify`, `reconcile-ids` and the FK runners with `--dry-run`):
+
+```text
+$ npm run db:verify
+check1 ok: journal max 1790019745486 > DB watermark 1790019745486; all journal entries recorded
+check2 ok: 0 NOT VALID constraints in app schemas
+check3 ok: 0 invalid indexes
+check4 ok: every single-column FK has a leading index
+check5 ok: all TTL sweeps have leading indexes
+check8 ok: 24 FK specs exist, validated, definitions match
+db:verify OK
+
+$ reconcile-ids.ts --strict --allow=scripts/migrate/allow-reconcile.json
+=== summary ===
+  "pairs": 27,
+  "missingTotal": 0,
+  "driftTotal": 0,
+  "allowedIds": 12
+
+$ ts-node scripts/migrate/2026-09-workspace-fk.ts --dry-run
+fk_artifacts_workspace: 0 orphan refs (dry-run, nothing changed)
+fk_conv_ws_workspace: 0 orphan refs (dry-run, nothing changed)
+fk_conversations_system_workspace: 0 orphan refs (dry-run, nothing changed)
+$ ts-node scripts/migrate/2026-09-project-fk.ts --dry-run
+fk_conversations_project: 0 orphan refs (dry-run, nothing changed)
+$ ts-node scripts/migrate/2026-09-governance-fk.ts --dry-run
+fk_gov_docs_document: would retire (governance history must survive document delete)
+fk_gov_docs_workspace: would retire (governance history must survive workspace delete)
+fk_gov_bindings_workspace: 0 orphan refs (dry-run, nothing changed)
+$ ts-node scripts/migrate/2026-10-catalog-fk.ts --dry-run
+fk_users_plan: 0 orphan refs (dry-run, nothing changed)
+fk_agents_agent_type: 0 orphan refs (dry-run, nothing changed)
+fk_agent_tools_tool: 0 orphan refs (dry-run, nothing changed)
+fk_agent_skills_skill: 0 orphan refs (dry-run, nothing changed)
+fk_agent_disabled_skills_skill: 0 orphan refs (dry-run, nothing changed)
+$ ts-node scripts/migrate/2026-10-integrations-fk.ts --dry-run
+fk_user_app_connections_app_key: 0 orphan refs (dry-run, nothing changed)
+fk_connector_skills_skill: 0 orphan refs (dry-run, nothing changed)
+fk_agent_connectors_connector: 0 orphan refs (dry-run, nothing changed)
+fk_agent_connector_actions_connector: 0 orphan refs (dry-run, nothing changed)
+$ ts-node scripts/migrate/2026-10-agent-ecosystem-fk.ts --dry-run
+fk_telegram_chat_bindings_conversation: 0 orphan refs (dry-run, nothing changed)
+fk_telegram_chat_bindings_user: 0 orphan refs (dry-run, nothing changed)
+fk_telegram_chat_bindings_agent: 0 orphan refs (dry-run, nothing changed)
+fk_telegram_integrations_user: 0 orphan refs (dry-run, nothing changed)
+fk_widget_tokens_created_by: 0 orphan refs (dry-run, nothing changed)
+fk_shared_agents_shared_with: 0 orphan refs (dry-run, nothing changed)
+fk_shared_agents_shared_by: 0 orphan refs (dry-run, nothing changed)
+fk_shared_teams_shared_with: 0 orphan refs (dry-run, nothing changed)
+fk_shared_teams_shared_by: 0 orphan refs (dry-run, nothing changed)
+fk_teams_created_by: 0 orphan refs (dry-run, nothing changed)
+```
 
 ## Appendix C — Smoke record
 
-| # | Date | Result | Notes |
+Live legs need the deployed dev stack (ADK, MCP servers, real OAuth apps, a Telegram bot) with **every** backend instance on this build; they were **not run** in this session. What is covered by automated tests against real Postgres is listed alongside, so the live pass can be short.
+
+| # | Scenario | Live result | Automated coverage (real PG unless noted) |
 |---|---|---|---|
-| S1 | 2026-09-21 | PASS | identity registration/login flow exercised during the 1A cutover live smoke (previous session); refresh re-mint now keeps real roles (R-15 fix) |
-| S4 (share by email) | 2026-09-21 | PASS (unit/integration) | `PgUserLookupAdapter` integration spec covers byEmails; live re-test queued with the next deployment |
-| S7/S8 (chat stream, usage) | 2026-09-21 | PASS | user's live conversation ran on the final P4 build through PG (agent build, connectors, usage recording) |
-| S13 (teams) | 2026-09-21 | PASS (data) | 42 backfilled teams with ordered members verified via store specs; live UI pass queued |
-| S2, S3, S5, S6, S9–S12 | — | PENDING | require live OAuth/Telegram/catalog-import runs on the deployed build; execute with the Step 7 integration deployment |
+| S1 | Register → verify → approve → login → refresh → reuse detection | PASS (1A cutover, previous session) | `pg-session.rotation-race.spec.ts`, `auth.service.rotation.spec.ts` (fake store) |
+| S2 | OAuth login (Microsoft) and provider link/unlink | PENDING | `pg-auth-provider.stores.spec.ts` (one-shot consume, unique link), `oauth-flow.service.spec.ts` |
+| S3 | Temp-login token | PENDING | link-token consume race in `pg-auth-provider.stores.spec.ts` |
+| S4 | Share by email to a user created after the cutover | PENDING (re-test after deploy) | `pg-user-lookup.adapter.spec.ts` (`byEmails`), `user.module.spec.ts` (port is bound to Postgres), `agent-share.service.spec.ts` |
+| S5 | Governance audience resolution + membership with a group | PENDING | `pg-group-lookup.adapter.spec.ts`, `pg-governance-stores.spec.ts` |
+| S6 | Telegram `/start <code>`, inbound message, duplicate `update_id` ignored | PENDING | `channels-concurrency.spec.ts` (dedupe), `telegram-webhook.service.spec.ts` |
+| S7 | Agent gRPC stream with type, tools, skills and an MCP connector | PASS (user's live conversation on the P4 build, previous session) | `test/contracts/grpc/*` (three binding fixtures) |
+| S8 | Chat on the default model; 429; `maxWorkspaces` | PASS (chat + usage recording, previous session); 429 / `maxWorkspaces` PENDING | `pg-plan.store.spec.ts`, `pg-model.store.spec.ts` |
+| S9 | Share a project → live SSE notification → mark read → unread count | PENDING | `notifications.gateway.spec.ts` (payload = mapper output), `pg-notification.store.spec.ts` |
+| S10 | Connected-app / admin connector OAuth, refresh, revoke; refresh with a revoked token shows `error` | PENDING | `connector-admin-auth.refresh.spec.ts` (status persists), `connected-app-token.single-flight.spec.ts`, XSS regression in `connected-app-oauth.service.spec.ts` |
+| S11 | Catalog export → import; import with an injected failure persists nothing | PENDING | `catalog-transfer.atomicity.spec.ts`, `catalog-transfer.security.spec.ts` |
+| S12 | Delete an agent (Telegram integration, widget tokens) / a connector (junction rows) | PENDING | `channels-concurrency.spec.ts` (agent-delete FK cascades), FK `fk_agent_connectors_connector` validated |
+| S13 | Teams: create, reorder hierarchy, share, resolve execution definition; the 42 backfilled teams open in order | PENDING (data verified: 42 teams / 91 members / 3 shares) | `pg-team.store.spec.ts`, `team.service.spec.ts`, `team-share.service.spec.ts` |
