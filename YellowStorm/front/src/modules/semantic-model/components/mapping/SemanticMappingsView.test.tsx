@@ -19,6 +19,7 @@ vi.mock('../../query/hooks', () => ({
 }));
 vi.mock('../../data-plane/use-semantic-model-channel', () => ({ useSemanticModelChannel: () => ({ live: false, polling: true }) }));
 vi.mock('../../data-plane/use-semantic-model-sources', () => ({ useSemanticModelSources: () => ({ isLoading: false, isError: false, refetch: vi.fn(), data: [{ mapping_id: 'source-1', model_id: 'model', workspace_id: 'workspace', document_id: 'document', sheet_name: 'Live', asset_kind: 'excel_sheet', mapping_status: 'ready', source_revision: 4, event_type: 'workspace.document.indexing_ready.v1', deleted: false, occurred_at: '2026-09-20T12:00:00Z', original_name: 'runtime-source.xlsx', mime_type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', document_status: 'completed', indexing_status: 'ready' }] }) }));
+vi.mock('../../data-plane/use-semantic-model-summary', () => ({ useSemanticModelSummary: () => ({ data: [{ active_data_revision: 4 }] }) }));
 
 describe('SemanticMappingsView', () => {
   beforeEach(() => useSemanticModelEditorStore.getState().hydrate({

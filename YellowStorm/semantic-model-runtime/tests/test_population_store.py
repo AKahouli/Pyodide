@@ -18,6 +18,18 @@ async def test_cas_create_and_update_sql_shapes():
     calls: list[tuple[str, tuple]] = []
 
     class FakePool:
+        def acquire(self):  # type: ignore[no-untyped-def]
+            return self
+
+        async def __aenter__(self):  # type: ignore[no-untyped-def]
+            return self
+
+        async def __aexit__(self, *_args):  # type: ignore[no-untyped-def]
+            return None
+
+        def transaction(self):  # type: ignore[no-untyped-def]
+            return self
+
         async def fetchrow(self, sql: str, *params):  # type: ignore[no-untyped-def]
             calls.append((sql, params))
             return {"version": 1} if "RETURNING version" in sql else {"id": "x"}

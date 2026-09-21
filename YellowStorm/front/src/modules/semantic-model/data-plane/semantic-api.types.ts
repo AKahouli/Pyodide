@@ -9,6 +9,7 @@ export interface SemanticModelSummaryRow {
   name: string;
   status: string;
   revision: number;
+  active_data_revision: number | null;
   updated_at: string;
 }
 

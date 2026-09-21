@@ -9,7 +9,7 @@ describe('SemanticModelService archived access', () => {
   };
   const repository = { findAccessible: jest.fn() };
   const ageGraph = { graphNameForModel: jest.fn((id: string) => `sem_${id}`) };
-  const service = new SemanticModelService({} as never, repository as never, {} as never, {} as never, ageGraph as never);
+  const service = new SemanticModelService({} as never, repository as never, {} as never, {} as never, ageGraph as never, {} as never);
 
   beforeEach(() => {
     repository.findAccessible.mockReset();
@@ -77,7 +77,8 @@ describe('SemanticModelService clone', () => {
       .mockResolvedValueOnce({ rows: [] });
     const cloneClient = { query: jest.fn().mockResolvedValue({ rows: [] }) };
     database.transaction.mockImplementation(async (work: (client: unknown) => Promise<unknown>) => work(cloneClient));
-    const service = new SemanticModelService(database as never, repository as never, graphRepository as never, {} as never, ageGraph as never);
+    const realtimeSignals = { enqueue: jest.fn() };
+    const service = new SemanticModelService(database as never, repository as never, graphRepository as never, {} as never, ageGraph as never, realtimeSignals as never);
 
     const clone = await service.clone('user-id', source.id, 'Source copy');
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 from typing import Any
 
 import asyncpg
@@ -15,6 +16,7 @@ from app.jobs.models import (
     StaleLease,
 )
 from app.jobs.recovery import backoff_seconds
+from app.persistence.ui_signal_outbox import enqueue_ui_signal
 
 
 def _json(value: Any) -> str:
@@ -32,6 +34,7 @@ class PostgresJobRepository:
 
     def __init__(self, pool: asyncpg.Pool):
         self.pool = pool
+        self.realtime_enabled = os.environ.get("SEMANTIC_MODEL_REALTIME_ENABLED") == "true"
 
     async def record_source_event(self, event: SourceEvent) -> dict[str, Any]:
         payload = event.payload.model_dump(by_alias=True, mode="json")
@@ -115,6 +118,22 @@ class PostgresJobRepository:
                         workspace_id,
                         asset_id,
                     )
+                if self.realtime_enabled and applied is not None:
+                    models = await connection.fetch(
+                        """
+                        SELECT DISTINCT model_id::text
+                        FROM semantic_model.source_mappings
+                        WHERE workspace_id = $1 AND document_id = $2
+                        """,
+                        workspace_id, asset_id,
+                    )
+                    for model in models:
+                        await enqueue_ui_signal(
+                            connection, model_id=model["model_id"],
+                            event_type="datasource-status-changed", resource=asset_id,
+                            payload={"resource": asset_id, "status": event.event_type,
+                                     "reason": "source_observation_changed"},
+                        )
                 return {"revision": revision, "reused": False, "headAdvanced": applied is not None}
 
     async def admit(
@@ -418,6 +437,21 @@ class PostgresJobRepository:
                     event_type,
                     job_state,
                 )
+                if self.realtime_enabled:
+                    job = await connection.fetchrow(
+                        "SELECT job_type, model_id::text FROM semantic_jobs.jobs WHERE id = $1::uuid",
+                        row["job_id"],
+                    )
+                    if job is not None and job["model_id"]:
+                        signal_type = ("datasource-status-changed"
+                                       if job["job_type"].startswith("datasource.")
+                                       else "population-status-changed")
+                        await enqueue_ui_signal(
+                            connection, model_id=job["model_id"], event_type=signal_type,
+                            resource=row["job_id"],
+                            payload={"resource": row["job_id"], "status": job_state,
+                                     "reason": "job_terminal"},
+                        )
                 return {"jobId": row["job_id"], "state": job_state}
 
     async def requeue_task(

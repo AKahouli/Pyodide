@@ -13,6 +13,7 @@ import { useSemanticModelEditorStore } from '../../store';
 import type { ConceptSourceMapping, MappingHealthItem, SemanticNodeType, SourceResolutionPolicy } from '../../types';
 import { useSemanticModelChannel } from '../../data-plane/use-semantic-model-channel';
 import { useSemanticModelSources } from '../../data-plane/use-semantic-model-sources';
+import { useSemanticModelSummary } from '../../data-plane/use-semantic-model-summary';
 import { PopulationRefreshPanel } from './PopulationRefreshPanel';
 import type { SemanticSourceSummaryRow } from '../../data-plane/semantic-api.types';
 
@@ -24,7 +25,8 @@ export function SemanticMappingsView({ modelId, canEdit, onRepairMapping }: Read
   const policies = useSourceResolutionPolicies(modelId);
   const health = useMappingHealth(modelId);
   const sources = useSemanticModelSources(modelId);
-  useSemanticModelChannel(modelId);
+  const summary = useSemanticModelSummary(modelId);
+  useSemanticModelChannel(modelId, summary.data?.[0]?.active_data_revision);
   const client = useQueryClient();
   useEffect(() => {
     if (!health.dataUpdatedAt) return;

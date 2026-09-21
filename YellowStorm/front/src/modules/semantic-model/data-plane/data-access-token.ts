@@ -20,12 +20,14 @@ const grants = new Map<string, CachedGrant>();
 // must never repopulate the cache (logout / account switch race).
 let generation = 0;
 
+export class SemanticDataApiDisabledError extends Error {}
+
 async function fetchGrant(modelId: string, gen: number): Promise<EnabledSemanticDataGrant> {
   // Domain command client (existing auth); never a direct PostgREST call.
   const grant = await semanticModelApi.dataToken(modelId);
   if (gen !== generation) throw new Error('data grant superseded by logout or model switch');
   if (!grant.capabilities.dataApi || !grant.token || !grant.restUrl || !grant.expiresAt) {
-    throw new Error('semantic data API is disabled');
+    throw new SemanticDataApiDisabledError('semantic data API is disabled');
   }
   const enabledGrant = grant as EnabledSemanticDataGrant;
   const ttlMs = Math.max(

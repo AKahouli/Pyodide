@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 from pathlib import Path
 
@@ -11,6 +12,7 @@ import pytest_asyncio
 from app.jobs.models import IdempotencyConflict, JobCommand, SourceEvent, StaleLease
 from app.jobs.service import JobService
 from app.persistence.postgres_jobs import PostgresJobRepository
+from app.persistence.ui_signal_outbox import UiSignalOutboxRepository, enqueue_ui_signal
 
 DSN = os.environ.get("SEMANTIC_RUNTIME_TEST_DATABASE_URL")
 pytestmark = pytest.mark.skipif(not DSN, reason="SEMANTIC_RUNTIME_TEST_DATABASE_URL not set")
@@ -36,7 +38,8 @@ async def pool():
 
 def command(purpose: str = "build") -> JobCommand:
     return JobCommand.model_validate(
-        {"actorUserId": "user-1", "modelId": "model-1", "payload": {"purpose": purpose}}
+        {"actorUserId": "user-1", "modelId": "11111111-1111-1111-1111-111111111111",
+         "payload": {"purpose": purpose}}
     )
 
 
@@ -200,6 +203,59 @@ async def test_completion_is_atomic_and_stale_duplicate_is_rejected(pool: asyncp
             job_state="completed",
             result={},
         )
+
+
+@pytest.mark.asyncio
+async def test_terminal_job_commit_enqueues_signal_when_realtime_is_enabled(
+    pool: asyncpg.Pool, monkeypatch: pytest.MonkeyPatch,
+):
+    monkeypatch.setenv("SEMANTIC_MODEL_REALTIME_ENABLED", "true")
+    repository = PostgresJobRepository(pool)
+    await admit(repository, key="signal-job")
+    task_id = await pool.fetchval("SELECT id FROM semantic_jobs.tasks")
+    lease = await repository.claim_task(
+        task_id=task_id, queue_name="semantic-model-population.batch",
+        lease_owner="worker", lease_seconds=30,
+    )
+    assert lease
+    await repository.complete_task(
+        task_id=task_id, lease_owner="worker", lease_epoch=lease.lease_epoch,
+        job_state="completed", result={"ok": True},
+    )
+    signal = await pool.fetchrow(
+        "SELECT event_type, payload FROM semantic_jobs.ui_signal_outbox")
+    assert signal["event_type"] == "population-status-changed"
+    payload = json.loads(signal["payload"]) if isinstance(signal["payload"], str) else signal["payload"]
+    assert set(payload) <= {"modelId", "resource", "status", "reason"}
+
+
+@pytest.mark.asyncio
+async def test_released_signal_is_coalesced_by_matching_enqueue(pool: asyncpg.Pool):
+    model_id = "11111111-1111-1111-1111-111111111111"
+    async with pool.acquire() as connection, connection.transaction():
+        signal_id = await enqueue_ui_signal(
+            connection, model_id=model_id, event_type="model-read-state-changed",
+            payload={"status": "old"},
+        )
+    repository = UiSignalOutboxRepository(pool)
+    claimed = await repository.claim(claim_owner="worker", claim_seconds=30, batch_size=1)
+    assert claimed[0].id == signal_id
+    assert await repository.release(
+        signal_id, "worker", error="down", retry_seconds=60, max_attempts=8,
+    ) is True
+
+    async with pool.acquire() as connection, connection.transaction():
+        coalesced_id = await enqueue_ui_signal(
+            connection, model_id=model_id, event_type="model-read-state-changed",
+            payload={"status": "new"},
+        )
+
+    row = await pool.fetchrow(
+        "SELECT id, status, payload FROM semantic_jobs.ui_signal_outbox")
+    assert row["id"] == coalesced_id == signal_id
+    assert row["status"] == "pending"
+    payload = json.loads(row["payload"]) if isinstance(row["payload"], str) else row["payload"]
+    assert payload["status"] == "new"
 
 
 @pytest.mark.asyncio

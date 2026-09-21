@@ -46,6 +46,7 @@ import { SemanticDataGrantService } from './services/semantic-data-grant.service
 import { SemanticExecutionOwnershipService } from './services/semantic-execution-ownership.service';
 import { SemanticAccessEventHandler } from './integration/semantic-access-event.handler';
 import { SemanticDataGrantRevocationService } from './services/semantic-data-grant-revocation.service';
+import { SemanticRealtimeSignalService } from './services/semantic-realtime-signal.service';
 
 @Module({
   imports: [ConfigModule.forFeature(semanticModelConfig),AuthorizationModule,LoggerModule,UserModule,IntegrationEventsModule,forwardRef(() => WorkspaceModule)],
@@ -74,6 +75,7 @@ import { SemanticDataGrantRevocationService } from './services/semantic-data-gra
     SemanticDataGrantService,
     SemanticDataGrantRevocationService,
     SemanticExecutionOwnershipService,
+    SemanticRealtimeSignalService,
     SemanticRuntimeClientService,
     SemanticPopulationRefreshService,
     SemanticModelSourceEventHandler,

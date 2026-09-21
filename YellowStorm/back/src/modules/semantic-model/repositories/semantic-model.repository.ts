@@ -177,8 +177,8 @@ export class SemanticModelRepository {
     return { ...model, currentDraftVersionId: version.rows[0].id };
   }
 
-  async update(modelId: string, expectedRevision: number, input: { name?: string; description?: string }): Promise<SemanticModelRow | null> {
-    const result = await this.database.query<SemanticModelRow>(
+  async update(client: PoolClient, modelId: string, expectedRevision: number, input: { name?: string; description?: string }): Promise<SemanticModelRow | null> {
+    const result = await client.query<SemanticModelRow>(
       `UPDATE semantic_model.models SET
         name = COALESCE($2, name), description = COALESCE($3, description),
         name_managed_by_system = CASE WHEN $2::text IS NOT NULL THEN false ELSE name_managed_by_system END,
@@ -187,7 +187,7 @@ export class SemanticModelRepository {
        RETURNING id, owner_user_id AS "ownerUserId", name, description, kind, status,
          revision::int, origin_workspace_id AS "originWorkspaceId", name_managed_by_system AS "nameManagedBySystem",
          current_draft_version_id AS "currentDraftVersionId",
-          current_published_version_id AS "currentPublishedVersionId", execution_owner AS "executionOwner",
+         current_published_version_id AS "currentPublishedVersionId", execution_owner AS "executionOwner",
          created_at AS "createdAt", updated_at AS "updatedAt"`,
       [modelId, input.name ?? null, input.description ?? null, expectedRevision],
     );

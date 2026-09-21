@@ -31,7 +31,7 @@ export async function fetchModelSummary(modelId: string): Promise<SemanticModelS
   const client = scopedClient(grant.restUrl, grant.token);
   const { data, error, status } = await client
     .from('model_summary')
-    .select('model_id,name,status,revision,updated_at')
+    .select('model_id,name,status,revision,active_data_revision,updated_at')
     .eq('model_id', modelId)
     .limit(DATA_PAGE_DEFAULT);
   if (status === 401 || status === 403) clearDataGrants(modelId);

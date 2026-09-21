@@ -24,6 +24,9 @@ from .api import datasource_routes, health_routes, index_routes, job_routes, pop
 from .jobs.dispatcher import OutboxDispatcher, OutboxRepository
 from .jobs.service import JobRepository, JobService
 from .persistence.postgres_jobs import PostgresJobRepository
+from .persistence.ui_signal_outbox import UiSignalOutboxRepository
+from .realtime.dispatcher import UiSignalDispatcher
+from .realtime.publisher import RealtimeBroadcastPublisher
 from .security.service_auth import is_authorized
 
 MAX_BODY_BYTES = 256 * 1024
@@ -74,6 +77,7 @@ def create_app(job_repository: JobRepository | None = None) -> FastAPI:
         age_pool: asyncpg.Pool | None = None
         repository = job_repository
         dispatcher: OutboxDispatcher | None = None
+        signal_dispatcher: UiSignalDispatcher | None = None
         database_url = os.environ.get("SEMANTIC_RUNTIME_DATABASE_URL", "")
         if repository is None and database_url:
             pool = await asyncpg.create_pool(
@@ -133,9 +137,29 @@ def create_app(job_repository: JobRepository | None = None) -> FastAPI:
         ):
             dispatcher = OutboxDispatcher(cast(OutboxRepository, repository))
             await dispatcher.start()
+        if pool is not None and os.environ.get("SEMANTIC_MODEL_REALTIME_ENABLED") == "true":
+            realtime_url = os.environ.get("SEMANTIC_REALTIME_URL", "")
+            tenant = os.environ.get("SEMANTIC_REALTIME_TENANT", "")
+            secret = os.environ.get("SEMANTIC_REALTIME_TENANT_JWT_SECRET", "")
+            if realtime_url and tenant and secret:
+                signal_dispatcher = UiSignalDispatcher(
+                    UiSignalOutboxRepository(pool),
+                    RealtimeBroadcastPublisher(
+                        url=realtime_url,
+                        tenant=tenant,
+                        jwt_secret=secret,
+                        timeout_seconds=float(os.environ.get(
+                            "SEMANTIC_REALTIME_HTTP_TIMEOUT_SECONDS", "3")),
+                    ),
+                )
+                await signal_dispatcher.start()
+            else:
+                logger.warning("semantic realtime enabled but publisher is not configured")
         try:
             yield
         finally:
+            if signal_dispatcher:
+                await signal_dispatcher.stop()
             if dispatcher:
                 await dispatcher.stop()
             if app.state.index_pool_owned and app.state.index_pool is not None:

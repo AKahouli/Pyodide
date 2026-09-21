@@ -141,7 +141,8 @@ async def resolve_review(review_id: str, command: ReviewResolveCommand,
         raise HTTPException(status_code=409, detail="review_resolution_conflict")
     resolved = await store.resolve_review_item(
         pool, review_id=review_id, model_id=command.model_id,
-        resolution=command.resolution, resolved_by=command.actor_user_id)
+        resolution=command.resolution, resolved_by=command.actor_user_id,
+        emit_signal=os.environ.get("SEMANTIC_MODEL_REALTIME_ENABLED") == "true")
     if not resolved:
         raise HTTPException(status_code=409, detail="review_resolution_conflict")
     return {"reviewId": review_id, "state": "resolved", "reused": False}
@@ -281,7 +282,8 @@ async def activate_revision(revision_id: str, command: ActivateRevisionCommand,
         pool, model_id=command.model_id, environment=command.environment,
         expected_version=expected_version, model_version_id=command.model_version_id,
         data_revision_id=revision_id, projection_ref=revision["projection_ref"],
-        correction_sequence=current_sequence)
+        correction_sequence=current_sequence,
+        emit_signal=os.environ.get("SEMANTIC_MODEL_REALTIME_ENABLED") == "true")
     if not swapped:
         raise HTTPException(status_code=409, detail="activation_race")
     binding = await store.get_active_binding(pool, command.model_id, command.environment)

@@ -52,15 +52,20 @@ CREATE OR REPLACE VIEW semantic_api.model_summary WITH (security_invoker = true)
     name,
     status,
     revision,
+    binding.version AS active_data_revision,
     updated_at
-  FROM semantic_model.models;
+  FROM semantic_model.models
+  LEFT JOIN semantic_runtime.active_bindings binding
+    ON binding.model_id = models.id::text AND binding.environment = 'production';
 GRANT SELECT ON semantic_api.model_summary TO semantic_api_user;
 
 -- RLS never grants access by itself: the data role needs table privileges,
 -- and the policy narrows visible rows. Tables stay out of the exposed schema,
 -- so PostgREST can never address them directly.
 GRANT USAGE ON SCHEMA semantic_model TO semantic_api_user;
+GRANT USAGE ON SCHEMA semantic_runtime TO semantic_api_user;
 GRANT SELECT ON semantic_model.models TO semantic_api_user;
+GRANT SELECT ON semantic_runtime.active_bindings TO semantic_api_user;
 
 -- Mapped source status. Runtime source heads share this database by deployment
 -- contract; raw event revisions and payloads remain outside the exposed schema.

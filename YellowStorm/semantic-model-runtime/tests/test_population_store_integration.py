@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import json
 from pathlib import Path
 
 import asyncpg
@@ -20,11 +21,13 @@ async def pool():
     connection = await asyncpg.connect(DSN)
     try:
         await connection.execute("CREATE EXTENSION IF NOT EXISTS pgcrypto")
+        await connection.execute("DROP SCHEMA IF EXISTS semantic_jobs CASCADE")
         await connection.execute("DROP SCHEMA IF EXISTS semantic_population CASCADE")
         await connection.execute("DROP SCHEMA IF EXISTS semantic_runtime CASCADE")
-        for name in ("005_runtime_store.sql", "006_population_store.sql",
-                     "008_versioned_specification_mirrors.sql",
-                     "009_invalidate_unverified_age_projections.sql"):
+        for name in ("001_durable_jobs.sql", "005_runtime_store.sql", "006_population_store.sql",
+                      "008_versioned_specification_mirrors.sql",
+                      "009_invalidate_unverified_age_projections.sql",
+                      "010_ui_signal_outbox.sql"):
             await connection.execute((ROOT / "migrations" / name).read_text(encoding="utf-8"))
     finally:
         await connection.close()
@@ -148,3 +151,18 @@ async def test_corrections_reviews_and_cas_binding(pool: asyncpg.Pool):
         data_revision_id="dr_3", projection_ref="age:graph_3",
         correction_sequence=2) is False
     assert (await store.get_active_binding(pool, "m1"))["data_revision_id"] == "dr_2"
+
+
+@pytest.mark.asyncio
+async def test_activation_atomically_enqueues_revision_signal(pool: asyncpg.Pool):
+    model_id = "11111111-1111-1111-1111-111111111111"
+    assert await store.cas_active_binding(
+        pool, model_id=model_id, expected_version=None, model_version_id="v1",
+        data_revision_id="dr_1", projection_ref="age:graph_1",
+        correction_sequence=0, emit_signal=True) is True
+    signal = await pool.fetchrow(
+        "SELECT event_type, payload FROM semantic_jobs.ui_signal_outbox")
+    payload = signal["payload"] if isinstance(signal["payload"], dict) else json.loads(signal["payload"])
+    assert signal["event_type"] == "data-revision-changed"
+    assert payload["dataRevision"] == 1
+    assert set(payload) <= {"modelId", "dataRevision", "resource", "status", "reason"}

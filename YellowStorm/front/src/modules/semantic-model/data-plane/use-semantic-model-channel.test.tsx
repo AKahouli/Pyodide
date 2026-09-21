@@ -6,10 +6,11 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 vi.mock('./data-access-token', () => ({
   getDataGrant: vi.fn(),
   clearDataGrants: vi.fn(),
+  SemanticDataApiDisabledError: class SemanticDataApiDisabledError extends Error {},
 }));
 vi.mock('./semantic-realtime-client', () => ({ subscribeModelTopic: vi.fn() }));
 
-import { getDataGrant } from './data-access-token';
+import { getDataGrant, SemanticDataApiDisabledError } from './data-access-token';
 import { subscribeModelTopic } from './semantic-realtime-client';
 import { useSemanticModelChannel } from './use-semantic-model-channel';
 
@@ -79,5 +80,46 @@ describe('use-semantic-model-channel (P2.SB20/SB24)', () => {
     await waitFor(() => expect(getDataGrant).toHaveBeenCalledWith('m1'));
     expect(subscribeModelTopic).not.toHaveBeenCalled();
     expect(result.current).toMatchObject({ live: false, polling: true });
+  });
+
+  it('ignores signals older than the authoritative revision', async () => {
+    vi.mocked(getDataGrant).mockResolvedValue({
+      capabilities: { dataApi: true, realtime: true },
+      token: 't',
+      realtimeToken: 'rt',
+      topic: 'semantic-model:m1',
+      restUrl: 'http://127.0.0.1:3000',
+      realtimeUrl: 'ws://127.0.0.1:4000',
+      expiresAt: new Date(Date.now() + 60_000).toISOString(),
+    });
+    let signal: ((event: string, payload: { modelId: string; dataRevision: number }) => void) | null = null;
+    vi.mocked(subscribeModelTopic).mockImplementation((options) => {
+      signal = (event, payload) =>
+        options.onSignal(event as 'data-revision-changed', payload);
+      return { close: vi.fn(), isConnected: () => true };
+    });
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const invalidate = vi.spyOn(client, 'invalidateQueries');
+
+    renderHook(() => useSemanticModelChannel('m1', 50), { wrapper: wrapper(client) });
+    await waitFor(() => expect(subscribeModelTopic).toHaveBeenCalledTimes(1));
+    invalidate.mockClear();
+
+    await act(async () => {
+      signal?.('data-revision-changed', { modelId: 'm1', dataRevision: 49 });
+      await new Promise((resolve) => setTimeout(resolve, 400));
+    });
+    expect(invalidate).not.toHaveBeenCalled();
+  });
+
+  it('does not poll or open a socket when the data API is disabled', async () => {
+    vi.mocked(getDataGrant).mockRejectedValue(new SemanticDataApiDisabledError('disabled'));
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+
+    const { result } = renderHook(() => useSemanticModelChannel('m1'), { wrapper: wrapper(client) });
+
+    await waitFor(() => expect(getDataGrant).toHaveBeenCalledWith('m1'));
+    expect(subscribeModelTopic).not.toHaveBeenCalled();
+    expect(result.current).toEqual({ live: false, polling: false });
   });
 });

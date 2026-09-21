@@ -4,9 +4,9 @@
 // polling of the active view. No business writes ever originate here.
 import { useEffect, useRef, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
-import { clearDataGrants, getDataGrant } from './data-access-token';
+import { clearDataGrants, getDataGrant, SemanticDataApiDisabledError } from './data-access-token';
 import { isNewerRevision, keysForEvent } from './event-map';
-import type { SemanticBroadcastPayload } from './semantic-api.types';
+import type { SemanticBroadcastEvent, SemanticBroadcastPayload } from './semantic-api.types';
 import { subscribeModelTopic, type RealtimeHandle } from './semantic-realtime-client';
 
 // Coalesce progress storms; terminal states refetch promptly anyway.
@@ -19,10 +19,14 @@ export interface ChannelStatus {
   polling: boolean;
 }
 
-export function useSemanticModelChannel(modelId: string | undefined): ChannelStatus {
+export function useSemanticModelChannel(
+  modelId: string | undefined,
+  authoritativeRevision?: number | null,
+): ChannelStatus {
   const queryClient = useQueryClient();
   const [status, setStatus] = useState<ChannelStatus>({ live: false, polling: false });
   const liveRef = useRef(false);
+  const dataApiRef = useRef(false);
   const revisionRef = useRef<number | null>(null);
   const pendingRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -31,6 +35,7 @@ export function useSemanticModelChannel(modelId: string | undefined): ChannelSta
     let handle: RealtimeHandle | null = null;
     let cancelled = false;
     liveRef.current = false;
+    dataApiRef.current = false;
     revisionRef.current = null;
     setStatus({ live: false, polling: false });
 
@@ -39,10 +44,13 @@ export function useSemanticModelChannel(modelId: string | undefined): ChannelSta
       if (!cancelled) setStatus({ live, polling: !live });
     };
 
-    const invalidate = (payload: SemanticBroadcastPayload) => {
+    const invalidate = (event: SemanticBroadcastEvent, payload: SemanticBroadcastPayload) => {
       if (payload.modelId !== modelId) return;
       if (!isNewerRevision(revisionRef.current, payload.dataRevision)) return;
       if (typeof payload.dataRevision === 'number') revisionRef.current = payload.dataRevision;
+      for (const key of keysForEvent(modelId, null, event)) {
+        void queryClient.invalidateQueries({ queryKey: key as readonly unknown[] });
+      }
       if (pendingRef.current) return;
       pendingRef.current = setTimeout(() => {
         pendingRef.current = null;
@@ -55,6 +63,7 @@ export function useSemanticModelChannel(modelId: string | undefined): ChannelSta
     void getDataGrant(modelId)
       .then((grant) => {
         if (cancelled) return;
+        dataApiRef.current = true;
         if (!grant.capabilities.realtime || !grant.realtimeUrl || !grant.topic || !grant.realtimeToken) {
           setLive(false);
           return;
@@ -69,11 +78,7 @@ export function useSemanticModelChannel(modelId: string | undefined): ChannelSta
             return fresh.realtimeToken;
           }),
           onSignal: (event, payload) => {
-            // Central mapping first (resource-scoped keys), then revision gate.
-            for (const key of keysForEvent(modelId, null, event)) {
-              void queryClient.invalidateQueries({ queryKey: key as readonly unknown[] });
-            }
-            invalidate(payload);
+            invalidate(event, payload);
           },
           onStatus: (connected) => {
             // Reconnect/resume always reconciles from the authoritative snapshot.
@@ -84,10 +89,18 @@ export function useSemanticModelChannel(modelId: string | undefined): ChannelSta
           },
         });
       })
-      .catch(() => setLive(false));
+      .catch((error: unknown) => {
+        if (error instanceof SemanticDataApiDisabledError) {
+          dataApiRef.current = false;
+          if (!cancelled) setStatus({ live: false, polling: false });
+          return;
+        }
+        dataApiRef.current = true;
+        setLive(false);
+      });
 
     const timer = setInterval(() => {
-      if (cancelled || liveRef.current) return;
+      if (cancelled || liveRef.current || !dataApiRef.current) return;
       void queryClient.invalidateQueries({ queryKey: ['semantic-models', 'data-plane', modelId] });
     }, FALLBACK_POLL_MS);
 
@@ -99,6 +112,12 @@ export function useSemanticModelChannel(modelId: string | undefined): ChannelSta
       clearDataGrants(modelId);
     };
   }, [modelId, queryClient]);
+
+  useEffect(() => {
+    if (typeof authoritativeRevision === 'number') {
+      revisionRef.current = authoritativeRevision;
+    }
+  }, [authoritativeRevision]);
 
   return status;
 }

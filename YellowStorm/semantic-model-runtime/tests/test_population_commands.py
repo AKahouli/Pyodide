@@ -32,6 +32,12 @@ class ScriptedPool:
     async def executemany(self, sql: str, rows) -> None:  # type: ignore[no-untyped-def]
         self.script.pop(0)
 
+    def acquire(self):  # type: ignore[no-untyped-def]
+        return AsyncContext(self)
+
+    def transaction(self):  # type: ignore[no-untyped-def]
+        return AsyncContext(self)
+
 
 class AsyncContext:
     def __init__(self, value) -> None:  # type: ignore[no-untyped-def]

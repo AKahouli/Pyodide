@@ -13,6 +13,8 @@ import hashlib
 import json
 from typing import Any
 
+from app.persistence.ui_signal_outbox import enqueue_ui_signal
+
 
 def _json(value: Any) -> str:
     return json.dumps(value, separators=(",", ":"), sort_keys=True)
@@ -184,34 +186,53 @@ async def model_correction_sequence(pool: Any, model_id: str) -> int:
 async def open_review_item(pool: Any, *, model_id: str, model_version_id: str,
                            data_revision_id: str | None, kind: str, prompt: str,
                            candidates: list[dict[str, Any]],
-                           evidence: dict[str, Any]) -> str:
-    row = await pool.fetchrow(
-        """
-        INSERT INTO semantic_population.review_items
-          (model_id, model_version_id, data_revision_id, kind, prompt,
-           candidates, evidence)
-        VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7::jsonb)
-        RETURNING id::text
-        """,
-        model_id, model_version_id, data_revision_id, kind, prompt,
-        _json(candidates), _json(evidence),
-    )
-    return row["id"]
+                           evidence: dict[str, Any], emit_signal: bool = False) -> str:
+    async with pool.acquire() as connection:
+        async with connection.transaction():
+            row = await connection.fetchrow(
+                """
+                INSERT INTO semantic_population.review_items
+                  (model_id, model_version_id, data_revision_id, kind, prompt,
+                   candidates, evidence)
+                VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7::jsonb)
+                RETURNING id::text
+                """,
+                model_id, model_version_id, data_revision_id, kind, prompt,
+                _json(candidates), _json(evidence),
+            )
+            if emit_signal:
+                await enqueue_ui_signal(
+                    connection, model_id=model_id, event_type="review-items-changed",
+                    resource=row["id"],
+                    payload={"resource": row["id"], "status": "open",
+                             "reason": "review_created"},
+                )
+            return row["id"]
 
 
 async def resolve_review_item(pool: Any, *, review_id: str, model_id: str,
-                              resolution: dict[str, Any], resolved_by: str) -> bool:
-    row = await pool.fetchrow(
-        """
-        UPDATE semantic_population.review_items
-        SET state = 'resolved', resolution = $3::jsonb, resolved_by = $4,
-            resolved_at = now()
-        WHERE id = $1::uuid AND model_id = $2 AND state = 'open'
-        RETURNING id
-        """,
-        review_id, model_id, _json(resolution), resolved_by,
-    )
-    return row is not None
+                              resolution: dict[str, Any], resolved_by: str,
+                              emit_signal: bool = False) -> bool:
+    async with pool.acquire() as connection:
+        async with connection.transaction():
+            row = await connection.fetchrow(
+                """
+                UPDATE semantic_population.review_items
+                SET state = 'resolved', resolution = $3::jsonb, resolved_by = $4,
+                    resolved_at = now()
+                WHERE id = $1::uuid AND model_id = $2 AND state = 'open'
+                RETURNING id
+                """,
+                review_id, model_id, _json(resolution), resolved_by,
+            )
+            if row is not None and emit_signal:
+                await enqueue_ui_signal(
+                    connection, model_id=model_id, event_type="review-items-changed",
+                    resource=review_id,
+                    payload={"resource": review_id, "status": "resolved",
+                             "reason": "review_resolved"},
+                )
+            return row is not None
 
 
 async def get_specification(pool: Any, home_workspace_id: str, model_id: str,
@@ -259,10 +280,32 @@ async def get_active_binding(pool: Any, model_id: str,
 async def cas_active_binding(pool: Any, *, model_id: str, environment: str = "production",
                              expected_version: int | None, model_version_id: str,
                              data_revision_id: str, projection_ref: str,
-                             correction_sequence: int) -> bool:
+                             correction_sequence: int, emit_signal: bool = False) -> bool:
     """Compare-and-swap the serving tuple. ``expected_version=None`` creates."""
+    async with pool.acquire() as connection:
+        async with connection.transaction():
+            row = await _cas_active_binding(
+                connection, model_id=model_id, environment=environment,
+                expected_version=expected_version, model_version_id=model_version_id,
+                data_revision_id=data_revision_id, projection_ref=projection_ref,
+                correction_sequence=correction_sequence,
+            )
+            if row is not None and emit_signal:
+                await enqueue_ui_signal(
+                    connection, model_id=model_id, event_type="data-revision-changed",
+                    resource=environment,
+                    payload={"dataRevision": int(row["version"]), "resource": environment,
+                             "status": "ready", "reason": "population_activated"},
+                )
+            return row is not None
+
+
+async def _cas_active_binding(connection: Any, *, model_id: str, environment: str,
+                              expected_version: int | None, model_version_id: str,
+                              data_revision_id: str, projection_ref: str,
+                              correction_sequence: int):  # type: ignore[no-untyped-def]
     if expected_version is None:
-        row = await pool.fetchrow(
+        return await connection.fetchrow(
             """
             INSERT INTO semantic_runtime.active_bindings
               (model_id, environment, model_version_id, data_revision_id,
@@ -274,8 +317,7 @@ async def cas_active_binding(pool: Any, *, model_id: str, environment: str = "pr
             model_id, environment, model_version_id, data_revision_id,
             projection_ref, correction_sequence,
         )
-        return row is not None
-    row = await pool.fetchrow(
+    return await connection.fetchrow(
         """
         UPDATE semantic_runtime.active_bindings
         SET model_version_id = $3, data_revision_id = $4, projection_ref = $5,
@@ -286,7 +328,6 @@ async def cas_active_binding(pool: Any, *, model_id: str, environment: str = "pr
         model_id, environment, model_version_id, data_revision_id,
         projection_ref, correction_sequence, expected_version,
     )
-    return row is not None
 
 
 async def set_revision_validation(pool: Any, revision_id: str, state: str) -> bool:
