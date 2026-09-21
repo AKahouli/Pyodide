@@ -358,7 +358,7 @@ export class SemanticModelController {
   @ApiOperation({ summary: 'Prepare or refresh population for the whole model or one mapping' })
   @RateLimit({ limit: 10, windowMs: 60_000, keyPrefix: 'semantic-model:population-refresh' })
   @RequirePermissions([Permissions.SEMANTIC_MODELS_UPDATE,Permissions.SEMANTIC_MODELS_ALL],'any')
-  requestPopulationRefresh(@CurrentUser() user: UserDocument,@Param('modelId') modelId: string,@Body() dto: RequestPopulationRefreshDto) {
+  requestPopulationRefresh(@CurrentUser() user: AuthUser,@Param('modelId') modelId: string,@Body() dto: RequestPopulationRefreshDto) {
     return this.populationRefresh.requestRefresh(user._id.toString(),modelId,dto);
   }
 
