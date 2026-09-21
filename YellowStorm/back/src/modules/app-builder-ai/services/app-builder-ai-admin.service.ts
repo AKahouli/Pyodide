@@ -1,11 +1,12 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, Optional } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Inject } from '@nestjs/common';
-import { and, desc, eq, gte, sql } from 'drizzle-orm';
+import { and, desc, eq, gte, inArray, sql } from 'drizzle-orm';
 import { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import { Model, Types } from 'mongoose';
 import { DRIZZLE_DB } from '@modules/postgres/postgres.constants';
 import * as schema from '@modules/postgres/schema';
+import { appDataApps } from '@modules/postgres/schema/app-data.schema';
 import { NotFoundException } from '../../exceptions';
 import { ErrorCode } from '../../exceptions/constants/error-codes';
 import { User, UserDocument } from '../../user/schemas/user.schema';
@@ -13,10 +14,19 @@ import {
   ConversationV2Session,
   ConversationV2SessionDocument,
 } from '../../conversation-v2/schemas/conversation-v2-session.schema';
+import { AppDataClientService } from '../../app-data/services/app-data-client.service';
 import { APP_BUILDER_AI_USAGE_SOURCE } from '../constants';
 import { AppBuilderAiSettingsService } from './app-builder-ai-settings.service';
 import { AppBuilderAiOfferService } from './app-builder-ai-offer.service';
 import { AppBuilderAiUsageService } from './app-builder-ai-usage.service';
+
+type AppUsageAgg = {
+  sessionId: string | null;
+  title: string;
+  totalTokens: number;
+  requestCount: number;
+  models: Array<{ model: string; totalTokens: number; requestCount: number }>;
+};
 
 @Injectable()
 export class AppBuilderAiAdminService {
@@ -30,6 +40,7 @@ export class AppBuilderAiAdminService {
     @InjectModel(User.name) private readonly users: Model<UserDocument>,
     @InjectModel(ConversationV2Session.name)
     private readonly sessions: Model<ConversationV2SessionDocument>,
+    @Optional() private readonly appDataClient?: AppDataClientService,
   ) {}
 
   async getOverview() {
@@ -233,6 +244,7 @@ export class AppBuilderAiAdminService {
         modelName: schema.usageLogs.modelName,
         sessionId: sql<string>`${schema.usageLogs.metadata}->>'sessionId'`,
         workspaceId: sql<string>`${schema.usageLogs.metadata}->>'workspaceId'`,
+        appDataId: sql<string>`${schema.usageLogs.metadata}->>'appDataId'`,
         appTitle: sql<string>`${schema.usageLogs.metadata}->>'appTitle'`,
         totalTokens: sql<number>`coalesce(sum(${schema.usageLogs.totalTokens}), 0)`,
         requestCount: sql<number>`coalesce(count(*), 0)`,
@@ -250,13 +262,11 @@ export class AppBuilderAiAdminService {
         schema.usageLogs.modelName,
         sql`${schema.usageLogs.metadata}->>'sessionId'`,
         sql`${schema.usageLogs.metadata}->>'workspaceId'`,
+        sql`${schema.usageLogs.metadata}->>'appDataId'`,
         sql`${schema.usageLogs.metadata}->>'appTitle'`,
       );
 
-    const byApp = new Map<
-      string,
-      { sessionId: string | null; title: string; totalTokens: number; requestCount: number; models: Array<{ model: string; totalTokens: number; requestCount: number }> }
-    >();
+    const byApp = new Map<string, AppUsageAgg>();
     const byModel = new Map<string, { model: string; totalTokens: number; requestCount: number }>();
     let unattributedTokens = 0;
     let unattributedRequests = 0;
@@ -270,30 +280,25 @@ export class AppBuilderAiAdminService {
       modelAgg.requestCount += requests;
       byModel.set(model, modelAgg);
 
-      const key = row.sessionId || row.workspaceId || '';
+      const key = row.sessionId || row.workspaceId || row.appDataId || '';
       if (!key) {
         unattributedTokens += tokens;
         unattributedRequests += requests;
         continue;
       }
-      const app = byApp.get(key) ?? {
+      this.mergeAppUsage(byApp, key, {
         sessionId: row.sessionId || null,
         title: row.appTitle || 'Untitled app',
-        totalTokens: 0,
-        requestCount: 0,
-        models: [],
-      };
-      app.totalTokens += tokens;
-      app.requestCount += requests;
-      const existingModel = app.models.find((m) => m.model === model);
-      if (existingModel) {
-        existingModel.totalTokens += tokens;
-        existingModel.requestCount += requests;
-      } else {
-        app.models.push({ model, totalTokens: tokens, requestCount: requests });
-      }
-      byApp.set(key, app);
+        totalTokens: tokens,
+        requestCount: requests,
+        model,
+      });
     }
+
+    const workspaceIds = apps
+      .map((app) => app.aiSessionId)
+      .filter((id): id is string => typeof id === 'string' && id.length > 0);
+    const appDataIdByWorkspace = await this.resolveAppDataIdsByWorkspace(workspaceIds);
 
     return {
       user: {
@@ -322,9 +327,14 @@ export class AppBuilderAiAdminService {
       },
       apps: apps.map((app) => {
         const sessionId = app._id.toString();
-        const usageRow =
-          byApp.get(sessionId)
-          || (app.aiSessionId ? byApp.get(app.aiSessionId) : undefined);
+        const appDataId = app.aiSessionId
+          ? appDataIdByWorkspace.get(app.aiSessionId)
+          : undefined;
+        const usageRow = this.mergeUsageRows(
+          byApp.get(sessionId),
+          app.aiSessionId ? byApp.get(app.aiSessionId) : undefined,
+          appDataId ? byApp.get(appDataId) : undefined,
+        );
         return {
           sessionId,
           title: app.deployedAppTitle || app.title || 'Untitled app',
@@ -341,6 +351,124 @@ export class AppBuilderAiAdminService {
         requestCount: unattributedRequests,
       },
     };
+  }
+
+  private async resolveAppDataIdsByWorkspace(
+    workspaceIds: string[],
+  ): Promise<Map<string, string>> {
+    const appDataIdByWorkspace = new Map<string, string>();
+    if (workspaceIds.length === 0) return appDataIdByWorkspace;
+
+    try {
+      const catalogRows = await this.db
+        .select({
+          workspaceId: appDataApps.workspaceId,
+          appDataId: appDataApps.appDataId,
+        })
+        .from(appDataApps)
+        .where(inArray(appDataApps.workspaceId, workspaceIds));
+      for (const row of catalogRows) {
+        appDataIdByWorkspace.set(row.workspaceId, row.appDataId);
+      }
+    } catch (err) {
+      this.logger.warn(
+        `Local app_data_apps lookup failed: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+
+    if (!this.appDataClient?.isEnabled()) {
+      return appDataIdByWorkspace;
+    }
+
+    const missing = workspaceIds.filter((id) => !appDataIdByWorkspace.has(id));
+    await Promise.all(
+      missing.map(async (workspaceId) => {
+        try {
+          const app = await this.appDataClient!.getAppByWorkspace(workspaceId);
+          if (app?.id) {
+            appDataIdByWorkspace.set(workspaceId, app.id);
+          }
+        } catch (err) {
+          this.logger.warn(
+            `Remote appDataId lookup failed for workspace ${workspaceId}: ${
+              err instanceof Error ? err.message : String(err)
+            }`,
+          );
+        }
+      }),
+    );
+
+    return appDataIdByWorkspace;
+  }
+
+  private mergeAppUsage(
+    byApp: Map<string, AppUsageAgg>,
+    key: string,
+    row: {
+      sessionId: string | null;
+      title: string;
+      totalTokens: number;
+      requestCount: number;
+      model: string;
+    },
+  ): void {
+    const app = byApp.get(key) ?? {
+      sessionId: row.sessionId,
+      title: row.title,
+      totalTokens: 0,
+      requestCount: 0,
+      models: [],
+    };
+    if (!app.sessionId && row.sessionId) app.sessionId = row.sessionId;
+    if ((!app.title || app.title === 'Untitled app') && row.title) {
+      app.title = row.title;
+    }
+    app.totalTokens += row.totalTokens;
+    app.requestCount += row.requestCount;
+    const existingModel = app.models.find((m) => m.model === row.model);
+    if (existingModel) {
+      existingModel.totalTokens += row.totalTokens;
+      existingModel.requestCount += row.requestCount;
+    } else {
+      app.models.push({
+        model: row.model,
+        totalTokens: row.totalTokens,
+        requestCount: row.requestCount,
+      });
+    }
+    byApp.set(key, app);
+  }
+
+  /** Combine usage keyed by sessionId, workspaceId, and/or appDataId for one app. */
+  private mergeUsageRows(
+    ...rows: Array<AppUsageAgg | undefined>
+  ): AppUsageAgg | undefined {
+    const present = rows.filter((r): r is AppUsageAgg => !!r);
+    if (present.length === 0) return undefined;
+    if (present.length === 1) return present[0];
+
+    const merged: AppUsageAgg = {
+      sessionId: present.find((r) => r.sessionId)?.sessionId ?? null,
+      title: present.find((r) => r.title && r.title !== 'Untitled app')?.title
+        ?? present[0].title,
+      totalTokens: 0,
+      requestCount: 0,
+      models: [],
+    };
+    for (const row of present) {
+      merged.totalTokens += row.totalTokens;
+      merged.requestCount += row.requestCount;
+      for (const model of row.models) {
+        const existing = merged.models.find((m) => m.model === model.model);
+        if (existing) {
+          existing.totalTokens += model.totalTokens;
+          existing.requestCount += model.requestCount;
+        } else {
+          merged.models.push({ ...model });
+        }
+      }
+    }
+    return merged;
   }
 
   async getAppDetail(userId: string, sessionId: string) {

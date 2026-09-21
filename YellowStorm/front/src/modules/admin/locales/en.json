@@ -2095,6 +2095,7 @@
   "appBuilderAi.detail.usage": "Current window usage",
   "appBuilderAi.detail.resetsAt": "Resets {{date}}",
   "appBuilderAi.detail.apps": "AI applications",
+  "appBuilderAi.detail.unattributed": "Unattributed usage",
   "appBuilderAi.detail.models": "By model",
   "appBuilderAi.empty.users": "No users match these filters.",
   "appBuilderAi.empty.models": "No App Builder AI usage in the last 24 hours.",

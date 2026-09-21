@@ -2114,6 +2114,7 @@
   "appBuilderAi.detail.usage": "Consommation de la fenêtre actuelle",
   "appBuilderAi.detail.resetsAt": "Réinitialisation {{date}}",
   "appBuilderAi.detail.apps": "Applications IA",
+  "appBuilderAi.detail.unattributed": "Usage non attribué",
   "appBuilderAi.detail.models": "Par modèle",
   "appBuilderAi.empty.users": "Aucun utilisateur ne correspond à ces filtres.",
   "appBuilderAi.empty.models": "Aucune consommation IA App Builder sur les dernières 24 heures.",

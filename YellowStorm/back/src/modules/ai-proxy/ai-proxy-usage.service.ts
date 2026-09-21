@@ -6,6 +6,8 @@ import { LoggerService } from '../logger';
 import { ModelsService } from '../models/models.service';
 import { UsageService, UsageType } from '../usage';
 import { AppBuilderAiUsageService } from '../app-builder-ai/services/app-builder-ai-usage.service';
+import { AppDataCatalogService } from '../app-data/services/app-data-catalog.service';
+import { AppDataClientService } from '../app-data/services/app-data-client.service';
 import {
   ConversationV2Session,
   ConversationV2SessionDocument,
@@ -49,6 +51,8 @@ export class AiProxyUsageService {
     @Optional()
     @InjectModel(ConversationV2Session.name)
     private readonly sessions?: Model<ConversationV2SessionDocument>,
+    @Optional() private readonly appDataCatalog?: AppDataCatalogService,
+    @Optional() private readonly appDataClient?: AppDataClientService,
   ) {}
 
   resolveTokens(usage?: LiteLlmTokenUsage | null): AiProxyResolvedTokens {
@@ -221,12 +225,18 @@ export class AiProxyUsageService {
     const result: Record<string, unknown> = {};
     if (auth.appDataId) result.appDataId = auth.appDataId;
     if (auth.endUserId) result.endUserId = auth.endUserId;
-    if (auth.workspaceId) result.workspaceId = auth.workspaceId;
 
-    if (auth.workspaceId && this.sessions) {
+    // Preview tickets carry workspaceId; deployed end-user JWTs only carry appDataId.
+    let workspaceId = auth.workspaceId;
+    if (!workspaceId && auth.appDataId) {
+      workspaceId = (await this.resolveWorkspaceId(auth.appDataId)) ?? undefined;
+    }
+    if (workspaceId) result.workspaceId = workspaceId;
+
+    if (workspaceId && this.sessions) {
       const session = await this.sessions
         .findOne({
-          aiSessionId: auth.workspaceId,
+          aiSessionId: workspaceId,
           deletedAt: null,
         })
         .select('_id title deployedAppTitle')
@@ -242,5 +252,49 @@ export class AiProxyUsageService {
     }
 
     return result;
+  }
+
+  /**
+   * Resolve workspace for deployed apps: remote App Data microservice first,
+   * then Nest-local catalog (APP_DATA_REMOTE=false).
+   */
+  private async resolveWorkspaceId(appDataId: string): Promise<string | null> {
+    if (this.appDataClient?.isEnabled()) {
+      try {
+        const status = await this.appDataClient.getStatus(appDataId);
+        const fromRemote = this.pickWorkspaceId(
+          status.app as Record<string, unknown> | undefined,
+        );
+        if (fromRemote) return fromRemote;
+      } catch (error) {
+        this.logger.warn('Failed to resolve workspaceId via App Data client', {
+          appDataId,
+          error: error instanceof Error ? error.message : 'Unknown error',
+        });
+      }
+    }
+
+    if (this.appDataCatalog) {
+      try {
+        const app = await this.appDataCatalog.findByAppDataId(appDataId);
+        if (app?.workspaceId) return app.workspaceId;
+      } catch (error) {
+        this.logger.warn('Failed to resolve workspaceId via App Data catalog', {
+          appDataId,
+          error: error instanceof Error ? error.message : 'Unknown error',
+        });
+      }
+    }
+
+    return null;
+  }
+
+  private pickWorkspaceId(app: Record<string, unknown> | undefined): string | null {
+    if (!app) return null;
+    for (const key of ['workspaceId', 'workspace_id'] as const) {
+      const value = app[key];
+      if (typeof value === 'string' && value.trim()) return value.trim();
+    }
+    return null;
   }
 }

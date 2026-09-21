@@ -197,6 +197,10 @@ export function AppBuilderAiPage() {
     limit?: number;
     resetsAt?: string;
   } | undefined;
+  const detailUnattributed = detail?.unattributed as {
+    totalTokens?: number;
+    requestCount?: number;
+  } | undefined;
 
   return (
     <div className='space-y-6'>
@@ -524,6 +528,18 @@ export function AppBuilderAiPage() {
                   ))}
                   {detailApps.length === 0 ? (
                     <p className='text-sm text-muted-foreground'>{t('appBuilderAi.empty.apps')}</p>
+                  ) : null}
+                  {detailUnattributed
+                    && (Number(detailUnattributed.totalTokens ?? 0) > 0
+                      || Number(detailUnattributed.requestCount ?? 0) > 0) ? (
+                    <div className='rounded-md border border-dashed p-3 text-sm'>
+                      <p className='font-medium'>{t('appBuilderAi.detail.unattributed')}</p>
+                      <p className='mt-1 text-muted-foreground'>
+                        {formatTokens(Number(detailUnattributed.totalTokens ?? 0))} ·{' '}
+                        {Number(detailUnattributed.requestCount ?? 0)}{' '}
+                        {t('appBuilderAi.models.requests')}
+                      </p>
+                    </div>
                   ) : null}
                 </div>
               </div>
