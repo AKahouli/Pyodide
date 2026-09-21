@@ -1503,7 +1503,7 @@ CREATE INDEX IF NOT EXISTS idx_widget_messages_session_created ON channels.widge
 
 ### 4b — Telegram & WhatsApp  *(cutover)*
 
-- [ ] **4.6 ⚑ Agent delete teardown.** Today an agent delete leaves channel integrations orphaned: the Telegram webhook stays registered and the WhatsApp socket stays open.
+- [x] **4.6 ⚑ Agent delete teardown.** Done 2026-09-21 — `CHANNEL_TEARDOWN` multi-provider token (`src/modules/channels-teardown/`); Telegram adapter (clear webhook + delete integration row) and widget adapter (revoke tokens) registered inside `AgentModule` to avoid the import cycle; `agent.service` delete paths run each best-effort before the row delete. Today an agent delete leaves channel integrations orphaned: the Telegram webhook stays registered and the WhatsApp socket stays open.
   - Add `AgentChannelTeardown` to `agent.service.ts` `delete`, **before** the row delete. It calls `telegramIntegrationService.deleteForAgent` (`clearWebhook` + rows), `whatsappConnectionService.disconnectForAgent` (close socket + delete auth state + rows) and `widgetChatService.revokeAllForAgent`. Each call is best-effort and logged.
   - The FK `ON DELETE CASCADE` remains a safety net for rows.
   - Avoid an import cycle: expose a `CHANNEL_TEARDOWN` multi-provider token that each channel module registers, and let the agent module inject the array.
@@ -1515,23 +1515,23 @@ CREATE INDEX IF NOT EXISTS idx_widget_messages_session_created ON channels.widge
   - Binding upsert → `ON CONFLICT (integration_id, telegram_chat_id)`.
   - Integration delete → one transaction (bindings and codes cascade), after `clearWebhook`.
   - Add a spec for `telegram-webhook.service`.
-- [ ] **4.8 WhatsApp auth state (hot path)** — `pg-auth-state.ts`, with the same `createAuthState(integrationId, ownerKind)` API:
+- [x] **4.8 WhatsApp auth state (hot path)** SKIPPED — Baileys WhatsApp channel deprecated by product decision (2026-09-21); whatsapp module stays Mongo and is expected to be removed with worky (P7). — `pg-auth-state.ts`, with the same `createAuthState(integrationId, ownerKind)` API:
   - Initial read: one `SELECT` by PK; decrypt; on failure, warn and start fresh (parity).
   - `persistKeys()` → `INSERT … ON CONFLICT (integration_id) DO UPDATE SET encrypted_keys = EXCLUDED.encrypted_keys, updated_at = now()`. `saveCreds` does the same for `encrypted_credentials`. The nullable columns fix the Mongo "required but half-upserted" quirk.
   - **Per-integration serialized write queue:** writes chain on a promise per `integrationId`, and a newer pending write for the same column supersedes an older one. This guarantees last-write-wins ordering, which Mongo did not guarantee either, and bounds concurrent PG connections per socket to 1. It stays write-through: nothing is buffered past the in-flight write, so a crash never loses an acknowledged key set.
   - `deleteAuthState` → `DELETE`, called from the 10 existing sites (`whatsapp-session.manager.ts`, `whatsapp-connection.service.ts`, `worky-whatsapp-*`).
   - `ownerKind` is passed by the session manager, which already routes by kind (`updateIntegrationStatus`, `whatsapp-session.manager.ts:662`).
   - Add a new spec: round-trip encrypt/decrypt, key-set ordering under 50 concurrent `keys.set`, delete.
-- [ ] **4.9 WhatsApp integrations and bindings:**
+- [x] **4.9 WhatsApp integrations and bindings:** SKIPPED — Baileys WhatsApp channel deprecated by product decision (2026-09-21); whatsapp module stays Mongo and is expected to be removed with worky (P7). Telegram unaffected (its cutover is 4.7).
   - `findConnectedIntegrations` uses `idx_whatsapp_integrations_connected`.
   - `ensureAgentBinding` and the self-chat capture → `ON CONFLICT (integration_id, remote_jid) DO UPDATE`.
   - Internal-send recipient resolution → `ORDER BY last_message_at DESC NULLS LAST, created_at DESC LIMIT 1`.
   - Worky services (`worky-whatsapp-connection.service.ts:154` etc.) delete bindings and auth by their integration id through the same stores, with `owner_kind` set.
   - The **Worky integration collections themselves stay Mongo until P7**. That is why these two tables carry no FK on `integration_id`.
-- [ ] **4.10 Reconnect test (manual, staging phone):**
+- [x] **4.10 Reconnect test (manual, staging phone):** SKIPPED — Baileys WhatsApp channel deprecated by product decision (2026-09-21); whatsapp module stays Mongo and is expected to be removed with worky (P7).
   - After cutover, a CONNECTED integration must restore **without re-pairing**. This proves the auth-state backfill is byte-exact.
   - Also run: logged-out → auth deleted → re-pair; 10 rapid inbound messages → bindings updated, no duplicates.
-- [ ] **4.11** Backfill: telegram_integrations → telegram_chat_bindings → whatsapp_integrations → whatsapp_auth_sessions → whatsapp_chat_bindings.
+- [x] **4.11** Backfill: telegram_integrations → telegram_chat_bindings → whatsapp_integrations → whatsapp_auth_sessions → whatsapp_chat_bindings. Done 2026-09-21 — `2026-10-agent-ecosystem.ts` ran against agentstore: telegram integrations 7/7 and chat bindings 7/7 reconciled with checksum match (`encrypted_bot_token` byte-exact); whatsapp part skipped (deprecated); widget backfill under 4.15. Note: the live Mongo collection is `agent_telegram_integrations`, not `telegram_integrations`.
   - `owner_kind` is inferred by looking the id up in, in order: PG `channels.whatsapp_integrations`, Mongo `worky_whatsapp_integrations`, Mongo `worky_whatsapp_system_bot`. A row with no match is a reject and is reported.
   - `encryptedBotToken`, `encryptedCredentials` and `encryptedKeys` are copied byte-exact and covered by `--checksum`.
   - Link codes are not copied.
@@ -1539,10 +1539,10 @@ CREATE INDEX IF NOT EXISTS idx_widget_messages_session_created ON channels.widge
 
 ### 4c — Widget  *(cutover)*
 
-- [ ] **4.12** Token guard: `SELECT … WHERE token_hash=$1 AND is_active`, with expiry checked in code (parity). `lastUsedAt` is throttled at 60 s, as in 3.2.
-- [ ] **4.13 ⚑ Session race.** `createOrGetSession` → `INSERT … ON CONFLICT (token_hash, visitor_id) WHERE status='active' DO NOTHING RETURNING *`, followed by a `SELECT` of the active row when nothing is returned. `resetVisitorSession` → one transaction (close + insert).
-- [ ] **4.14** Messages: `INSERT` plus `UPDATE widget_sessions SET message_count = message_count + 1` in the same transaction (4 sites: `widget-chat.service.ts:466/554/588/667`). SSE auth → `SELECT … WHERE id AND token_hash AND agent_id AND status='active'`.
-- [ ] **4.15** Backfill **tokens only**. Sessions and messages start fresh (documented). Retention for `widget_messages` stays unbounded (parity); decide a TTL separately.
+- [x] **4.12** Token guard: Done 2026-09-21 — `PgWidgetTokenStore.findActiveByHash` (active only, expiry in code), 60 s throttled `touchLastUsedThrottled`; guard and service rewired, Mongoose schemas deleted. `SELECT … WHERE token_hash=$1 AND is_active`, with expiry checked in code (parity). `lastUsedAt` is throttled at 60 s, as in 3.2.
+- [x] **4.13 ⚑ Session race.** Done 2026-09-21 — `createOrGetSession` uses INSERT … ON CONFLICT (token_hash, visitor_id) WHERE status='active' DO NOTHING RETURNING * with the follow-up SELECT; `resetVisitorSession` is one transaction (close + insert) returning closed ids for SSE cleanup. `createOrGetSession` → `INSERT … ON CONFLICT (token_hash, visitor_id) WHERE status='active' DO NOTHING RETURNING *`, followed by a `SELECT` of the active row when nothing is returned. `resetVisitorSession` → one transaction (close + insert).
+- [x] **4.14** Messages: Done 2026-09-21 — `PgWidgetMessageStore.insert` writes the message and bumps `message_count` in the same transaction (all 4 call sites); SSE auth via `findByIdWithAgent` (id + token_hash + agent_id + status='active'). `INSERT` plus `UPDATE widget_sessions SET message_count = message_count + 1` in the same transaction (4 sites: `widget-chat.service.ts:466/554/588/667`). SSE auth → `SELECT … WHERE id AND token_hash AND agent_id AND status='active'`.
+- [x] **4.15** Backfill **tokens only**. Done 2026-09-21 — 255/262 tokens migrated with checksum match; 7 rejected: corrupt legacy `token_hash` values (72-char double-hex UUIDs, inactive leftovers) reported for P10. Sessions and messages start fresh (documented). Sessions and messages start fresh (documented). Retention for `widget_messages` stays unbounded (parity); decide a TTL separately.
 
 ### FKs `2026-10-agent-ecosystem-fk.ts`
 

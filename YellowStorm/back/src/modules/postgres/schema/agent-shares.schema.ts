@@ -1,10 +1,10 @@
 import { sql } from 'drizzle-orm';
-import { check, index, pgSchema, uniqueIndex, varchar } from 'drizzle-orm/pg-core';
+import { check, index, pgTable, uniqueIndex, varchar } from 'drizzle-orm/pg-core';
 import { agents } from './agents.schema';
 import { objectId, timestamps } from '../../../common/postgres/columns';
 
 /** P4 agent shares (plan 2026-09-19 step 4a) — same schema as agents for the FK. */
-export const sharedAgents = pgSchema('public').table(
+export const sharedAgents = pgTable(
   'shared_agents',
   {
     id: objectId('id').primaryKey(),
