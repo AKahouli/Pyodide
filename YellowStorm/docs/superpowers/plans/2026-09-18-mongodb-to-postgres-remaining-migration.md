@@ -28,7 +28,7 @@
 
 | Domain | State |
 |---|---|
-| **Agents** | ✅ On Postgres (`AgentRepository`, junction tables). Leftovers from Plan 5: `agent/schemas/agent.schema.ts` still exists and `governance/services/governance-scope-overview.service.ts:17` still imports `Agent, AgentDocument` from it. `SharedAgent` intentionally still Mongo. |
+| **Agents** | ✅ On Postgres (`AgentRepository`, junction tables). Remediation (2026-09-21) removed `agent/schemas/*.schema.ts` and the governance import; `shared_agents`, `teams`, `shared_teams`, `auto_builder_config` are on Postgres with FKs (R-03 closed). |
 | **App-data** | ✅ Own `app_data` schema. One Mongo coupling: `app-data-owner.controller.ts` (+ remote variant) injects `ConversationV2Session`. |
 | **Conversation v1** | ✅ Fresh-DB PG-only cutover (5 owned collections). Uncommitted WIP in the working tree (≈20 back files, ≈25 front files, ADK `chatbot.proto`/servicer). Remaining Mongo touch: `conversation.service.ts:53` injects `User`. Usage *events/windows* are in PG, but `usage.service.ts` still reads the Mongo `plans` collection. |
 | **Everything else** | ❌ Still Mongoose: **127 schema files (≈120 collections) across ~38 modules, ≈200 non-spec files using `@InjectModel`/`InjectConnection`**, one global `MongooseModule.forRoot` + a second isolated `logging` connection. |
