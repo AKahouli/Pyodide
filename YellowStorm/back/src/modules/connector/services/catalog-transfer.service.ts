@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Inject, Injectable } from '@nestjs/common';
 import { InjectConnection, InjectModel } from '@nestjs/mongoose';
 import { ClientSession, Connection, Model, Types } from 'mongoose';
 import { CryptoService } from '../../../common/services/crypto.service';
@@ -6,8 +6,11 @@ import { BadRequestException } from '../../exceptions';
 import { ErrorCode } from '../../exceptions/constants/error-codes';
 import { ConnectedAppDefinition, ConnectedAppDefinitionDocument } from '../../connected-app/schemas/connected-app-definition.schema';
 import { UserAppConnection, UserAppConnectionDocument } from '../../connected-app/schemas/user-app-connection.schema';
-import { Skill, SkillDocument } from '../../skill/schemas/skill.schema';
-import { SkillCategory, SkillCategoryDocument } from '../../skill/schemas/skill-category.schema';
+import { SKILL_CATEGORY_STORE, SKILL_STORE, type SkillCategoryStore, type SkillStore } from '../../skill/persistence/skill.store';
+import { withTransaction } from '@common/postgres/transaction';
+import { DRIZZLE_DB } from '@modules/postgres/postgres.constants';
+import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
+import * as schema from '@modules/postgres/schema';
 import { ExportCatalogDto } from '../dto/catalog-transfer.dto';
 import {
   CatalogArchiveV1,
@@ -34,8 +37,9 @@ export class CatalogTransferService {
     @InjectModel(ConnectorCategory.name) private readonly connectorCategoryModel: Model<ConnectorCategoryDocument>,
     @InjectModel(ConnectorCredential.name) private readonly credentialModel: Model<ConnectorCredentialDocument>,
     @InjectModel(AdminConnectorAuth.name) private readonly adminAuthModel: Model<AdminConnectorAuthDocument>,
-    @InjectModel(Skill.name) private readonly skillModel: Model<SkillDocument>,
-    @InjectModel(SkillCategory.name) private readonly skillCategoryModel: Model<SkillCategoryDocument>,
+    @Inject(SKILL_STORE) private readonly skillStore: SkillStore,
+    @Inject(SKILL_CATEGORY_STORE) private readonly skillCategoryStore: SkillCategoryStore,
+    @Inject(DRIZZLE_DB) private readonly pgDb: NodePgDatabase<typeof schema>,
     @InjectModel(ConnectedAppDefinition.name) private readonly appDefinitionModel: Model<ConnectedAppDefinitionDocument>,
     @InjectModel(UserAppConnection.name) private readonly appConnectionModel: Model<UserAppConnectionDocument>,
     @InjectConnection() private readonly connection: Connection,
@@ -55,7 +59,7 @@ export class CatalogTransferService {
       (connector.referencedSkillIds ?? []).map((id) => id.toString()),
     )));
     const skills = skillIds.length
-      ? await this.skillModel.find({ _id: { $in: skillIds.map((id) => new Types.ObjectId(id)) } }).lean().exec()
+      ? await this.skillStore.findAllExport(skillIds)
       : [];
     const archive = await this.buildArchive(userId, 'connectors', connectors, skills, Boolean(dto.includeSecurity));
     return this.serializeArchive(archive, dto.passphrase);
@@ -66,10 +70,7 @@ export class CatalogTransferService {
     dto: ExportCatalogDto,
   ): Promise<{ filename: string; buffer: Buffer; securityIncluded: boolean }> {
     this.validateSelection(dto);
-    const skillFilter = dto.selection === 'all'
-      ? {}
-      : { _id: { $in: dto.ids!.map((id) => new Types.ObjectId(id)) } };
-    const skills = await this.skillModel.find(skillFilter).lean().exec();
+    const skills = await this.skillStore.findAllExport(dto.selection === 'all' ? undefined : dto.ids);
     const archive = await this.buildArchive(userId, 'skills', [], skills, false);
     return this.serializeArchive(archive);
   }
@@ -108,25 +109,31 @@ export class CatalogTransferService {
       categories: { created: 0, reused: 0 },
       security: { credentials: 0, connectedApps: 0, tokens: 0 },
     };
+    // Interim two-phase import (plan 1B.4.5): skills live in PostgreSQL and the
+    // rest of the catalog in Mongo, so the former single transaction runs as two
+    // ordered ones — PG first, then Mongo. Both halves are idempotent upserts
+    // (skills by (slug, createdBy), connectors/categories by (slug, createdBy)
+    // or name), so re-running a failed import converges. P3 collapses this back
+    // into one PG transaction.
+    const skillIds = await withTransaction(this.pgDb, async () => {
+      const skillCategoryIds = await this.importSkillCategories(
+        archive.skillCategories,
+        conflictPolicy,
+        result,
+      );
+      return this.importSkills(
+        archive.skills,
+        userId,
+        skillCategoryIds,
+        conflictPolicy,
+        result,
+      );
+    });
     try {
       await session.withTransaction(async () => {
-        const skillCategoryIds = await this.importSkillCategories(
-          archive.skillCategories,
-          conflictPolicy,
-          session,
-          result,
-        );
         const connectorCategoryIds = await this.importConnectorCategories(
           archive.connectorCategories,
           ownerId,
-          conflictPolicy,
-          session,
-          result,
-        );
-        const skillIds = await this.importSkills(
-          archive.skills,
-          ownerId,
-          skillCategoryIds,
           conflictPolicy,
           session,
           result,
@@ -158,14 +165,14 @@ export class CatalogTransferService {
     includeSecurity: boolean,
   ): Promise<CatalogArchiveV1> {
     const connectorCategoryIds = connectors.flatMap((item) => item.categoryId ? [item.categoryId] : []);
-    const skillCategoryIds = skills.flatMap((item) => item.categoryId ? [item.categoryId] : []);
+    const skillCategoryIds = Array.from(new Set(skills.flatMap((item) => item.categoryId ? [String(item.categoryId)] : [])));
     const [connectorCategories, skillCategories] = await Promise.all([
       this.connectorCategoryModel.find({ _id: { $in: connectorCategoryIds } }).lean().exec(),
-      this.skillCategoryModel.find({ _id: { $in: skillCategoryIds } }).lean().exec(),
+      this.resolveSkillCategories(skillCategoryIds),
     ]);
     const connectorCategoryNames = this.categoryNameMap(connectorCategories);
-    const skillCategoryNames = this.categoryNameMap(skillCategories);
-    const skillSlugById = new Map(skills.map((skill) => [skill._id.toString(), skill.slug || skill.name]));
+    const skillCategoryNames = new Map(skillCategories.map((c) => [c.id, c.name]));
+    const skillSlugById = new Map(skills.map((skill) => [skill.id, skill.slug || skill.name]));
     const archive: CatalogArchiveV1 = {
       format: 'yellowstorm-catalog',
       version: 1,
@@ -256,35 +263,38 @@ export class CatalogTransferService {
     };
   }
 
+  /** Category id -> name for PG-backed skill categories (export archive). */
+  private async resolveSkillCategories(ids: string[]) {
+    if (!ids.length) return [];
+    const all = await this.skillCategoryStore.findAll();
+    const wanted = new Set(ids);
+    return all.filter((c) => wanted.has(c.id));
+  }
+
   private async importSkillCategories(
     categories: CatalogCategoryRecord[],
     conflictPolicy: CatalogConflictPolicy,
-    session: ClientSession,
     result: CatalogImportResult,
-  ): Promise<Map<string, Types.ObjectId>> {
-    const ids = new Map<string, Types.ObjectId>();
+  ): Promise<Map<string, string>> {
+    const ids = new Map<string, string>();
     for (const category of categories) {
-      let existing = await this.skillCategoryModel.findOne({ name: category.name }).session(session).exec();
+      let existing = await this.skillCategoryStore.findByNameInsensitive(category.name);
       if (!existing) {
         if (category.isSystem) {
           throw new BadRequestException(ErrorCode.BAD_REQUEST, 'System skill categories cannot be created by catalog import.');
         }
-        [existing] = await this.skillCategoryModel.create([category], { session });
+        existing = await this.skillCategoryStore.insert({ name: category.name, description: category.description });
         result.categories.created += 1;
       } else {
         if (!existing.isSystem && category.isSystem) {
           throw new BadRequestException(ErrorCode.BAD_REQUEST, 'A skill category cannot be elevated to a system category.');
         }
         if (conflictPolicy === 'overwrite' && !existing.isSystem) {
-          existing = await this.skillCategoryModel.findByIdAndUpdate(
-            existing._id,
-            { $set: { description: category.description } },
-            { new: true, session },
-          ).exec() ?? existing;
+          existing = await this.skillCategoryStore.update(existing.id, { description: category.description }) ?? existing;
         }
         result.categories.reused += 1;
       }
-      ids.set(category.name, existing._id as Types.ObjectId);
+      ids.set(category.name, existing.id);
     }
     return ids;
   }
@@ -328,40 +338,65 @@ export class CatalogTransferService {
 
   private async importSkills(
     skills: CatalogSkillRecord[],
-    ownerId: Types.ObjectId,
-    categoryIds: Map<string, Types.ObjectId>,
+    userId: string,
+    categoryIds: Map<string, string>,
     conflictPolicy: CatalogConflictPolicy,
-    session: ClientSession,
     result: CatalogImportResult,
-  ): Promise<Map<string, Types.ObjectId>> {
-    const ids = new Map<string, Types.ObjectId>();
+  ): Promise<Map<string, string>> {
+    const ids = new Map<string, string>();
     for (const skill of skills) {
-      const data = {
-        ...skill,
-        categoryId: skill.categoryName ? categoryIds.get(skill.categoryName) ?? null : null,
-        createdBy: ownerId,
-      } as Record<string, unknown>;
-      delete data.categoryName;
-      let existing = await this.skillModel.findOne({ slug: skill.slug, createdBy: ownerId }).session(session).exec();
+      const categoryId = skill.categoryName ? categoryIds.get(skill.categoryName) ?? null : null;
+      const files = (skill.files ?? []).map((file) => ({
+        path: file.path,
+        kind: file.kind,
+        mimeType: file.mimeType ?? '',
+        content: file.content ?? '',
+      }));
+      const existing = await this.skillStore.findByOwnerSlug(userId, skill.slug);
       if (existing && conflictPolicy === 'skip') {
         result.skills.skipped += 1;
-      } else if (existing) {
-        existing = await this.skillModel.findByIdAndUpdate(existing._id, { $set: data }, { new: true, session }).exec();
-        result.skills.updated += 1;
-      } else {
-        [existing] = await this.skillModel.create([data], { session });
-        result.skills.created += 1;
+        ids.set(skill.slug, existing.id);
+        continue;
       }
-      ids.set(skill.slug, existing!._id as Types.ObjectId);
-    }
-
-    const referenced = Array.from(new Set(skills.map((skill) => skill.slug)));
-    if (referenced.length) {
-      const destinationSkills = await this.skillModel
-        .find({ slug: { $in: referenced }, createdBy: ownerId })
-        .session(session)
-        .exec();
-      destinationSkills.forEach((skill) => ids.set(skill.slug, skill._id as Types.ObjectId));
+      if (existing) {
+        const updated = await this.skillStore.update(existing.id, {
+          name: skill.name,
+          description: skill.description,
+          icon: skill.icon,
+          color: skill.color,
+          iconColor: skill.iconColor,
+          categoryId,
+          license: skill.license,
+          compatibility: skill.compatibility,
+          metadata: skill.metadata,
+          allowedTools: skill.allowedTools,
+          instructions: skill.instructions,
+          files,
+          isActive: skill.isActive,
+        });
+        result.skills.updated += 1;
+        ids.set(skill.slug, updated!.id);
+      } else {
+        const created = await this.skillStore.insert({
+          slug: skill.slug,
+          name: skill.name,
+          description: skill.description,
+          icon: skill.icon,
+          color: skill.color,
+          iconColor: skill.iconColor,
+          categoryId,
+          license: skill.license,
+          compatibility: skill.compatibility,
+          metadata: skill.metadata,
+          allowedTools: skill.allowedTools,
+          instructions: skill.instructions,
+          files,
+          isActive: skill.isActive,
+          createdBy: userId,
+        });
+        result.skills.created += 1;
+        ids.set(skill.slug, created.id);
+      }
     }
     return ids;
   }
@@ -370,7 +405,7 @@ export class CatalogTransferService {
     connectors: CatalogConnectorRecord[],
     ownerId: Types.ObjectId,
     categoryIds: Map<string, Types.ObjectId>,
-    skillIds: Map<string, Types.ObjectId>,
+    skillIds: Map<string, string>,
     conflictPolicy: CatalogConflictPolicy,
     session: ClientSession,
     result: CatalogImportResult,
@@ -382,11 +417,8 @@ export class CatalogTransferService {
         .exec();
       const missingSkills = connector.referencedSkillSlugs.filter((slug) => !skillIds.has(slug));
       if (missingSkills.length) {
-        const existingSkills = await this.skillModel
-          .find({ slug: { $in: missingSkills }, createdBy: ownerId })
-          .session(session)
-          .exec();
-        existingSkills.forEach((skill) => skillIds.set(skill.slug, skill._id as Types.ObjectId));
+        const resolved = await this.skillStore.findIdsBySlugs(String(ownerId), missingSkills);
+        resolved.forEach((id, slug) => skillIds.set(slug, id));
       }
       const unresolved = connector.referencedSkillSlugs.filter((slug) => !skillIds.has(slug));
       if (unresolved.length) {

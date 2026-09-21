@@ -1,63 +1,44 @@
-import { Injectable, OnModuleInit } from '@nestjs/common';
-import { InjectModel } from '@nestjs/mongoose';
-import { Model, FilterQuery, Types } from 'mongoose';
+import { Inject, Injectable } from '@nestjs/common';
 import AdmZip = require('adm-zip');
 import * as yaml from 'js-yaml';
 import { LoggerService } from '../logger';
-import { AgentRepository } from '../agent/repositories/agent.repository';
-import { AgentType, AgentTypeDocument } from '../agent-type/schemas/agent-type.schema';
+import { isObjectId } from '@common/postgres';
 import { PaginatedResponseDto } from '../../common/dto/pagination.dto';
-import { escapeRegex, stripTrailingChar, MULTIPART_SKILL_IMPORT_MAX_BYTES } from '../../common/utils';
+import { stripTrailingChar, MULTIPART_SKILL_IMPORT_MAX_BYTES } from '../../common/utils';
 import { BadRequestException, ConflictException, NotFoundException } from '../exceptions';
 import { ErrorCode } from '../exceptions/constants/error-codes';
 import { CreateSkillDto, QuerySkillDto, UpdateSkillDto } from './dto';
-import { Skill, SkillDocument, SkillFileKind } from './schemas/skill.schema';
-import { SkillCategory, SkillCategoryDocument } from './schemas/skill-category.schema';
+import { SkillFileKind } from './schemas/skill.schema';
+import { SKILL_CATEGORY_STORE, SKILL_STORE, type SkillCategoryStore, type SkillRow, type SkillStore } from './persistence/skill.store';
 import { ISkillResponse, IGrpcSkill } from './interfaces/skill.interface';
 
 @Injectable()
-export class SkillService implements OnModuleInit {
+export class SkillService {
   constructor(
-    @InjectModel(Skill.name)
-    private readonly skillModel: Model<SkillDocument>,
-    @InjectModel(SkillCategory.name)
-    private readonly skillCategoryModel: Model<SkillCategoryDocument>,
-    private readonly agentRepository: AgentRepository,
-    @InjectModel(AgentType.name)
-    private readonly agentTypeModel: Model<AgentTypeDocument>,
+    @Inject(SKILL_STORE)
+    private readonly skillStore: SkillStore,
+    @Inject(SKILL_CATEGORY_STORE)
+    private readonly categoryStore: SkillCategoryStore,
     private readonly logger: LoggerService,
   ) {
     this.logger.setContext(SkillService.name);
   }
 
-  async onModuleInit(): Promise<void> {
-    await this.skillModel.updateMany(
-      { $or: [{ slug: { $exists: false } }, { slug: '' }] },
-      [{ $set: { slug: '$name' } }],
-    ).exec();
-  }
-
   async create(createdBy: string, dto: CreateSkillDto): Promise<ISkillResponse> {
     const slug = dto.slug ?? dto.name;
-    const existing = await this.skillModel
-      .findOne({
-        createdBy: new Types.ObjectId(createdBy),
-        $or: [{ name: dto.name }, { slug }],
-      })
-      .lean()
-      .exec();
+    const existing = await this.skillStore.findByOwnerNameOrSlug(createdBy, dto.name, slug);
     if (existing) {
       throw new ConflictException(ErrorCode.SKILL_ALREADY_EXISTS);
     }
 
-    const skill = await this.skillModel.create({
+    const skill = await this.skillStore.insert({
       slug,
       name: dto.name,
       description: dto.description,
       icon: dto.icon ?? '',
       color: dto.color ?? '',
       iconColor: dto.iconColor ?? 'light',
-      categoryId: dto.categoryId ? new Types.ObjectId(dto.categoryId) : null,
+      categoryId: dto.categoryId ?? null,
       license: dto.license ?? '',
       compatibility: dto.compatibility ?? '',
       metadata: dto.metadata ?? {},
@@ -70,33 +51,26 @@ export class SkillService implements OnModuleInit {
         content: file.content ?? '',
       })),
       isActive: dto.isActive ?? true,
-      createdBy: new Types.ObjectId(createdBy),
+      createdBy,
     });
 
     return this.toResponse(skill);
   }
 
   async findAll(query: QuerySkillDto): Promise<PaginatedResponseDto<ISkillResponse>> {
-    const filter: FilterQuery<SkillDocument> = {};
-    if (query.search) {
-      const regex = { $regex: escapeRegex(query.search), $options: 'i' };
-      filter.$or = [{ name: regex }, { description: regex }];
-    }
-    if (query.isActive !== undefined) {
-      filter.isActive = query.isActive;
-    }
-
     const page = query.page ?? 1;
     const limit = query.limit ?? 10;
-    const skip = (page - 1) * limit;
 
-    const [skills, total] = await Promise.all([
-      this.skillModel.find(filter).sort({ createdAt: -1 }).skip(skip).limit(limit).lean().exec(),
-      this.skillModel.countDocuments(filter).exec(),
-    ]);
+    // List endpoints do not load file content (plan 1B.4.2).
+    const { rows, total } = await this.skillStore.list({
+      search: query.search,
+      isActive: query.isActive,
+      page,
+      limit,
+    });
 
     return new PaginatedResponseDto(
-      skills.map((skill) => this.toResponse(skill)),
+      rows.map((skill) => this.toResponse(skill)),
       total,
       page,
       limit,
@@ -104,7 +78,10 @@ export class SkillService implements OnModuleInit {
   }
 
   async findById(id: string): Promise<ISkillResponse> {
-    const skill = await this.skillModel.findById(id).lean().exec();
+    if (!isObjectId(id)) {
+      throw new NotFoundException(ErrorCode.SKILL_NOT_FOUND);
+    }
+    const skill = await this.skillStore.findById(id);
     if (!skill) {
       throw new NotFoundException(ErrorCode.SKILL_NOT_FOUND);
     }
@@ -112,16 +89,7 @@ export class SkillService implements OnModuleInit {
   }
 
   async findByIds(ids: string[]): Promise<ISkillResponse[]> {
-    if (!ids.length) {
-      return [];
-    }
-
-    const skills = await this.skillModel
-      .find({ _id: { $in: ids.map((id) => new Types.ObjectId(id)) }, isActive: true })
-      .sort({ name: 1 })
-      .lean()
-      .exec();
-
+    const skills = await this.skillStore.findByIds(ids);
     return skills.map((skill) => this.toResponse(skill));
   }
 
@@ -152,72 +120,46 @@ export class SkillService implements OnModuleInit {
   }
 
   async findAllActive(): Promise<ISkillResponse[]> {
-    const skills = await this.skillModel
-      .find({ isActive: true })
-      .sort({ name: 1 })
-      .lean()
-      .exec();
-
+    const skills = await this.skillStore.findAllActive();
     const categoryNameById = await this.buildCategoryNameMap(skills);
 
     return skills.map((skill) =>
       this.toResponse({
         ...skill,
-        categoryName: skill.categoryId
-          ? (categoryNameById.get(skill.categoryId.toString()) ?? null)
-          : null,
+        categoryName: skill.categoryId ? (categoryNameById.get(skill.categoryId) ?? null) : null,
       }),
     );
   }
 
   /** Resolve category id -> name for the given skills in a single query. */
   private async buildCategoryNameMap(
-    skills: Array<{ categoryId?: Types.ObjectId | null }>,
+    skills: Array<{ categoryId?: string | null }>,
   ): Promise<Map<string, string>> {
     const categoryIds = Array.from(
-      new Set(
-        skills
-          .map((s) => s.categoryId?.toString())
-          .filter((id): id is string => Boolean(id)),
-      ),
+      new Set(skills.map((s) => s.categoryId).filter((id): id is string => Boolean(id))),
     );
     if (!categoryIds.length) return new Map();
-
-    const categories = await this.skillCategoryModel
-      .find({ _id: { $in: categoryIds.map((id) => new Types.ObjectId(id)) } })
-      .select('_id name')
-      .lean()
-      .exec();
-
-    return new Map(
-      categories.map((cat: Record<string, unknown>) => [
-        (cat._id as { toString(): string }).toString(),
-        cat.name as string,
-      ]),
-    );
+    return this.categoryStore.findNamesByIds(categoryIds);
   }
 
   async update(id: string, dto: UpdateSkillDto): Promise<ISkillResponse> {
-    const existing = await this.skillModel.findById(id).lean().exec();
+    if (!isObjectId(id)) {
+      throw new NotFoundException(ErrorCode.SKILL_NOT_FOUND);
+    }
+    const existing = await this.skillStore.findById(id);
     if (!existing) {
       throw new NotFoundException(ErrorCode.SKILL_NOT_FOUND);
     }
 
     if (dto.name && dto.name !== existing.name) {
-      const duplicate = await this.skillModel
-        .findOne({ _id: { $ne: new Types.ObjectId(id) }, name: dto.name, createdBy: existing.createdBy })
-        .lean()
-        .exec();
+      const duplicate = await this.skillStore.findByOwnerNameExcluding(existing.createdBy, id, dto.name);
       if (duplicate) {
         throw new ConflictException(ErrorCode.SKILL_ALREADY_EXISTS);
       }
     }
 
     if (dto.slug && dto.slug !== existing.slug) {
-      const duplicate = await this.skillModel
-        .findOne({ _id: { $ne: new Types.ObjectId(id) }, slug: dto.slug, createdBy: existing.createdBy })
-        .lean()
-        .exec();
+      const duplicate = await this.skillStore.findByOwnerSlugExcluding(existing.createdBy, id, dto.slug);
       if (duplicate) {
         throw new ConflictException(ErrorCode.SKILL_ALREADY_EXISTS);
       }
@@ -232,14 +174,11 @@ export class SkillService implements OnModuleInit {
         content: file.content ?? '',
       }));
     }
-    if (Object.prototype.hasOwnProperty.call(dto, 'categoryId')) {
-      updateData.categoryId = dto.categoryId ? new Types.ObjectId(dto.categoryId) : null;
+    if (Object.prototype.hasOwnProperty.call(updateData, 'categoryId')) {
+      updateData.categoryId = (updateData.categoryId as string) || null;
     }
 
-    const updated = await this.skillModel
-      .findByIdAndUpdate(id, { $set: updateData }, { new: true })
-      .lean()
-      .exec();
+    const updated = await this.skillStore.update(id, updateData);
     if (!updated) {
       throw new NotFoundException(ErrorCode.SKILL_NOT_FOUND);
     }
@@ -247,17 +186,12 @@ export class SkillService implements OnModuleInit {
   }
 
   async delete(id: string): Promise<void> {
-    const skill = await this.skillModel.findByIdAndDelete(id).lean().exec();
+    // agent_skills / agent_disabled_skills junction rows cascade via the
+    // validated agent FKs; agent_type_skills cascades on the skills table.
+    const skill = await this.skillStore.delete(id);
     if (!skill) {
       throw new NotFoundException(ErrorCode.SKILL_NOT_FOUND);
     }
-
-    const skillId = new Types.ObjectId(id);
-    await Promise.all([
-      this.agentRepository.pullSkillFromAll(id),
-      this.agentRepository.pullDisabledSkillFromAll(id),
-      this.agentTypeModel.updateMany({ skills: skillId }, { $pull: { skills: skillId } }).exec(),
-    ]);
   }
 
   async importPackage(createdBy: string, file: { originalname: string; buffer: Buffer; size?: number }): Promise<ISkillResponse> {
@@ -412,19 +346,19 @@ export class SkillService implements OnModuleInit {
     return normalized.startsWith(rootPrefix) ? normalized.slice(rootPrefix.length) : normalized;
   }
 
-  private toResponse(skill: SkillDocument | Record<string, unknown>): ISkillResponse {
+  private toResponse(skill: SkillRow | Record<string, unknown>): ISkillResponse {
     const doc = skill as Record<string, unknown>;
     const files = Array.isArray(doc.files) ? doc.files as Array<Record<string, unknown>> : [];
 
     return {
-      id: (doc._id as { toString(): string }).toString(),
+      id: (doc.id as { toString(): string }).toString(),
       slug: (doc.slug as string) || (doc.name as string),
       name: doc.name as string,
       description: (doc.description as string) || '',
       icon: (doc.icon as string) || '',
       color: (doc.color as string) || '',
       iconColor: ((doc.iconColor as 'light' | 'dark') || 'light'),
-      categoryId: doc.categoryId ? (doc.categoryId as { toString(): string }).toString() : null,
+      categoryId: (doc.categoryId as string) || null,
       categoryName: (doc.categoryName as string | null | undefined) ?? null,
       license: (doc.license as string) || '',
       compatibility: (doc.compatibility as string) || '',
@@ -438,7 +372,7 @@ export class SkillService implements OnModuleInit {
         content: (file.content as string) || '',
       })),
       isActive: (doc.isActive as boolean) ?? true,
-      createdBy: doc.createdBy ? (doc.createdBy as { toString(): string }).toString() : '',
+      createdBy: (doc.createdBy as { toString(): string })?.toString() ?? '',
       createdAt: doc.createdAt as Date,
       updatedAt: doc.updatedAt as Date,
     };

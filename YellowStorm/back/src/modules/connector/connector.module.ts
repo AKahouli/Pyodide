@@ -39,8 +39,10 @@ import { ConnectorMcpRuntimeService } from './services/connector-mcp-runtime.ser
 import { AgentMcpConnectorBootstrapService } from './services/agent-mcp-connector-bootstrap.service';
 import { CatalogTransferService } from './services/catalog-transfer.service';
 import { AdminCatalogTransferController } from './admin-catalog-transfer.controller';
-import { Skill, SkillSchema } from '../skill/schemas/skill.schema';
-import { SkillCategory, SkillCategorySchema } from '../skill/schemas/skill-category.schema';
+import { SKILL_STORE } from '../skill/persistence/skill.store';
+import { PgSkillStore } from '../skill/persistence/pg-skill.store';
+import { SKILL_CATEGORY_STORE } from '../skill/persistence/skill.store';
+import { PgSkillCategoryStore } from '../skill/persistence/pg-skill.store';
 import {
   ConnectedAppDefinition,
   ConnectedAppDefinitionSchema,
@@ -62,8 +64,6 @@ import {
       { name: ConnectedAppOAuthState.name, schema: ConnectedAppOAuthStateSchema },
       { name: ConnectedAppDefinition.name, schema: ConnectedAppDefinitionSchema },
       { name: UserAppConnection.name, schema: UserAppConnectionSchema },
-      { name: Skill.name, schema: SkillSchema },
-      { name: SkillCategory.name, schema: SkillCategorySchema },
     ]),
     AuthorizationModule,
     ConnectedAppModule,
@@ -99,6 +99,9 @@ import {
       provide: 'ConnectorAuthService',
       useExisting: ConnectorAuthServiceImpl,
     },
+      // Catalog-transfer reads/writes PG-backed skills (plan 1B.4.5).
+    { provide: SKILL_STORE, useClass: PgSkillStore },
+    { provide: SKILL_CATEGORY_STORE, useClass: PgSkillCategoryStore },
   ],
   exports: [ConnectorService, ConnectorCredentialService, 'ConnectorAuthService', ConnectorTransferService, ConnectorMcpRuntimeService],
 })

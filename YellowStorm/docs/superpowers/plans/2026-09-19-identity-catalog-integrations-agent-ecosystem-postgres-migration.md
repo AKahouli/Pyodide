@@ -916,29 +916,29 @@ If Step 0.3 finds more than one default model or plan, the backfill keeps the on
 
 ### 1B.4 — Tools, skills, agent types  *(cutover)*
 
-- [ ] **1B.4.1** Build `ToolStore`/`ToolCategoryStore`. Search → `name ILIKE OR description ILIKE`. Deleting a tool keeps calling `agentRepository.pullToolFromAll` until the FK below is validated, then delete that call.
-- [ ] **1B.4.2** Build `SkillStore`/`SkillCategoryStore`:
+- [x] **1B.4.1** Build `ToolStore`/`ToolCategoryStore`. Search → `name ILIKE OR description ILIKE`. Deleting a tool keeps calling `agentRepository.pullToolFromAll` until the FK below is validated, then delete that call.
+- [x] **1B.4.2** Build `SkillStore`/`SkillCategoryStore`:
   - `files` go to `skill_files`. List endpoints **do not** load file content; the detail endpoint and the gRPC build do.
   - Delete the `onModuleInit` slug backfill (`skill.service.ts:33-37`); the backfill script applies `slug = name` where it is missing.
   - The "System" category ensure (`skill-category.service.ts:22-40`) → `INSERT … ON CONFLICT (name) DO UPDATE SET is_system = true`.
   - Skill delete (`skill.service.ts:256-260`): the junction removal is done by the FK cascade on `agent_type_skills`. The PG agents cleanup (`pullSkillFromAll`, `pullDisabledSkillFromAll`) is kept until the FK below is validated.
-- [ ] **1B.4.3** Build `AgentTypeStore`:
+- [x] **1B.4.3** Build `AgentTypeStore`:
   - `findOrCreateBySlug` → `INSERT … ON CONFLICT (slug) DO NOTHING RETURNING` + `SELECT`.
   - `upsertPrompt` → `ON CONFLICT (agent_type_id, model_id) DO UPDATE`.
   - Prompt-count aggregation → `SELECT agent_type_id, count(*) … GROUP BY`.
   - Type delete: type and prompts go in one statement (the FK cascades), replacing the `Promise.all`.
   - The mapper emits `skills: string[]` ordered by `position`.
-- [ ] **1B.4.4** Remove the cross-module model injections:
+- [x] **1B.4.4** Remove the cross-module model injections:
   - `skill` no longer registers or injects `AgentType`; the cascade handles it.
   - `humain-agent` → `AgentTypeService.findBySlug('humain')` instead of `@InjectModel(AgentType)`, and drop its `forFeature` (**this completes the humain-agent part of P4**).
   - `connector/catalog-transfer.service.ts` → `SkillService`/`SkillCategoryService` methods instead of models.
-- [ ] **1B.4.5 Interim catalog-transfer (1B.4 → P3 window).** The import transaction now spans PG (skill categories, skills) and Mongo (connectors, credentials, apps).
+- [x] **1B.4.5 Interim catalog-transfer (1B.4 → P3 window).** The import transaction now spans PG (skill categories, skills) and Mongo (connectors, credentials, apps).
   - Run it as **two ordered transactions**: PG `withTransaction` for skills first, then the Mongo session for the rest.
   - Both halves are idempotent upserts keyed by `(slug, createdBy)`/`name`, so re-running a failed import converges. Document this in `connector/README.md`.
   - P3 collapses it back into one PG transaction.
-- [ ] **1B.4.6 Agent hydration.** `AgentTypeService.getManyForHydration`, `ToolService.findByIds` and `SkillService.findByIds` keep their signatures and become PG-backed. `agent.service.ts` does not change in this step. (Optional follow-up: fold the agent-type join into `AgentRepository`.)
-- [ ] **1B.4.7** Seeds: `scripts/seed/catalog-tools.ts` merges the four tool seed scripts using `ON CONFLICT (name) DO NOTHING`, with the category upserted by name. Delete the Mongo originals. Retire the Mongo `agent_types` read in `scripts/backfill-agents-to-postgres.ts` (the script is historical; mark it as retired in its header).
-- [ ] **1B.4.8** In `2026-10-catalog-fk.ts`, the FKs from `public.agents`:
+- [x] **1B.4.6 Agent hydration.** `AgentTypeService.getManyForHydration`, `ToolService.findByIds` and `SkillService.findByIds` keep their signatures and become PG-backed. `agent.service.ts` does not change in this step. (Optional follow-up: fold the agent-type join into `AgentRepository`.)
+- [x] **1B.4.7** Seeds: `scripts/seed/catalog-tools.ts` merges the four tool seed scripts using `ON CONFLICT (name) DO NOTHING`, with the category upserted by name. Delete the Mongo originals. Retire the Mongo `agent_types` read in `scripts/backfill-agents-to-postgres.ts` (the script is historical; mark it as retired in its header).
+- [x] **1B.4.8** In `2026-10-catalog-fk.ts`, the FKs from `public.agents`:
 
   | FK | Action |
   |---|---|
@@ -948,7 +948,7 @@ If Step 0.3 finds more than one default model or plan, the backfill keeps the on
   | `agent_disabled_skills.skill_id → catalog.skills(id)` | ON DELETE CASCADE |
 
   Once they are validated, delete `pullToolFromAll`, `pullSkillFromAll` and `pullDisabledSkillFromAll` and their calls.
-- [ ] **1B.4.9** Backfill order: tool_categories → tools → skill_categories → skills (+files) → agent_types (+agent_type_skills) → agent_type_prompts. Unknown `categoryId` → `NULL` + report; unknown skill in `agent_types.skills` → dropped + report. Cut over. Smoke:
+- [x] **1B.4.9** Backfill order: tool_categories → tools → skill_categories → skills (+files) → agent_types (+agent_type_skills) → agent_type_prompts. Unknown `categoryId` → `NULL` + report; unknown skill in `agent_types.skills` → dropped + report. Cut over. Smoke:
   - admin tool/skill/type CRUD
   - skill with files
   - agent create with a type, tools and skills
@@ -957,13 +957,14 @@ If Step 0.3 finds more than one default model or plan, the backfill keeps the on
   - catalog export/import round-trip
   - platform copilot bootstrap
   - Worky manager type bootstrap
+  - Done 2026-09-21: stores in `tool/persistence`, `skill/persistence`, `agent-type/persistence` (ports + PG impls); catalog-transfer import split into PG-skills-then-Mongo transactions (README noted); humain-agent uses the agent-type store (no cross-module model injection); pull*FromAll deleted after FKs validated; `scripts/seed/catalog-tools.ts` merged the four Mongo seeds (originals deleted); backfill `2026-10-catalog.ts` reconciled 3 tool_categories / 11 tools / 4 skill_categories / 10 skills (+files, legacy kinds normalized to reference|asset) / 12 agent_types / 0 prompts — checksum-exact, zero dropped junctions. FKs fk_agents_agent_type, fk_agent_tools_tool, fk_agent_skills_skill, fk_agent_disabled_skills_skill validated on agentstore + agentstore_test (3 dead agent_tools rows and 1 dead agent_skills row cleaned first). Live smoke: tool/skill/type CRUD + ILIKE search, skill files on detail only, prompt upsert + cascade delete, catalog export→import round trip, humain-agent ensure on login (store path), platform copilot + worky type bootstrap at boot. Agent gRPC stream leg not run (no agents under the recorder on this dev DB). Full suite 456 suites green.
 
 ### DoD (1B)
 - Standard DoD.
-- No `@InjectModel` left in the 9 modules.
-- `notifications` no longer imports Mongoose anywhere outside tests.
-- The agents FK scripts report `validated`.
-- Missing specs are added for notifications, tool, tool-category, skill-category and health-history (the store level at minimum).
+- No `@InjectModel` left in the 9 modules. ✅ verified 2026-09-21 (system, notifications, guardrails, health, models, usage, tool, skill, agent-type, humain-agent).
+- `notifications` no longer imports Mongoose anywhere outside tests. ✅ the Mongoose schema file was deleted; enums live in `notification.types.ts`.
+- The agents FK scripts report `validated`. ✅ `2026-10-catalog-fk.ts` — all five constraints validated on agentstore and agentstore_test.
+- Missing specs are added for notifications, tool, tool-category, skill-category and health-history (the store level at minimum). ✅ pg-notification (1B.1), pg-tool (+tool-category), pg-skill (+skill-category), pg-health-history integration specs.
 
 ---
 

@@ -46,6 +46,7 @@ describe('CatalogTransferService export fidelity', () => {
     isHidden: true,
   };
   const skill = {
+    id: skillId.toString(),
     _id: skillId,
     slug: 'document-search',
     name: 'document-search',
@@ -73,14 +74,14 @@ describe('CatalogTransferService export fidelity', () => {
         isSystem: false,
       }])),
     };
-    const skillModel = { find: jest.fn().mockReturnValue(query([skill])) };
-    const skillCategoryModel = {
-      find: jest.fn().mockReturnValue(query([{
-        _id: skillCategoryId,
+    const skillStore = { findAllExport: jest.fn().mockResolvedValue([skill]) };
+    const skillCategoryStore = {
+      findAll: jest.fn().mockResolvedValue([{
+        id: skillCategoryId.toString(),
         name: 'Retrieval',
         description: 'Retrieval skills',
         isSystem: false,
-      }])),
+      }]),
     };
     const credentialModel = {
       find: jest.fn().mockReturnValue(query(includeSecurity ? [{
@@ -123,8 +124,9 @@ describe('CatalogTransferService export fidelity', () => {
       connectorCategoryModel as never,
       credentialModel as never,
       adminAuthModel as never,
-      skillModel as never,
-      skillCategoryModel as never,
+      skillStore as never,
+      skillCategoryStore as never,
+      { execute: jest.fn() } as never,
       appDefinitionModel as never,
       appConnectionModel as never,
       {} as never,
@@ -206,12 +208,9 @@ describe('CatalogTransferService export fidelity', () => {
   });
 
   it('rejects attempts to elevate an existing category to system status', async () => {
-    const existingCategory = { _id: new Types.ObjectId(), name: 'Normal', isSystem: false };
-    const skillCategoryModel = {
-      findOne: jest.fn().mockReturnValue({
-        session: () => ({ exec: jest.fn().mockResolvedValue(existingCategory) }),
-      }),
-      findByIdAndUpdate: jest.fn(),
+    const skillCategoryStore = {
+      findByNameInsensitive: jest.fn().mockResolvedValue({ id: new Types.ObjectId().toString(), name: 'Normal', isSystem: false }),
+      update: jest.fn(),
     };
     const service = new CatalogTransferService(
       {} as never,
@@ -219,7 +218,8 @@ describe('CatalogTransferService export fidelity', () => {
       {} as never,
       {} as never,
       {} as never,
-      skillCategoryModel as never,
+      skillCategoryStore as never,
+      {} as never,
       {} as never,
       {} as never,
       {} as never,
@@ -229,7 +229,6 @@ describe('CatalogTransferService export fidelity', () => {
       importSkillCategories(
         categories: Array<{ name: string; description: string; isSystem: boolean }>,
         policy: 'overwrite',
-        session: unknown,
         result: unknown,
       ): Promise<unknown>;
     }).importSkillCategories.bind(service);
@@ -237,9 +236,8 @@ describe('CatalogTransferService export fidelity', () => {
     await expect(importCategories(
       [{ name: 'Normal', description: 'Changed', isSystem: true }],
       'overwrite',
-      {},
       { categories: { created: 0, reused: 0 } },
     )).rejects.toThrow('A skill category cannot be elevated to a system category.');
-    expect(skillCategoryModel.findByIdAndUpdate).not.toHaveBeenCalled();
+    expect(skillCategoryStore.update).not.toHaveBeenCalled();
   });
 });

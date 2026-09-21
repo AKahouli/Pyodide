@@ -3,6 +3,7 @@ import { Types } from 'mongoose';
 import * as schema from '@modules/postgres/schema';
 import { PgUserStore } from './pg-user.store';
 import type { NewUser } from './user.store';
+import { sql as sqlTag } from 'drizzle-orm';
 import { describeIntegration, makeTestDb } from '../../postgres/testing/pg-integration';
 
 describeIntegration('PgUserStore (integration)', () => {
@@ -53,6 +54,8 @@ describeIntegration('PgUserStore (integration)', () => {
   });
 
   it('update patches explicit columns, clears nulls, and stamps updated_at', async () => {
+    // fk_users_plan requires the referenced plan to exist.
+    await db.execute(sqlTag`INSERT INTO catalog.plans (id, name, slug) VALUES ('64b000000000000000000009', 'Spec Plan', 'spec-plan') ON CONFLICT (id) DO NOTHING`);
     const record = await store.create(newUser());
     created.push(record.id);
     const before = record.updatedAt;

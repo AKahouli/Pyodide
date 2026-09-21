@@ -1,9 +1,7 @@
 import { Test } from '@nestjs/testing';
-import { getModelToken } from '@nestjs/mongoose';
 import { Types } from 'mongoose';
 import { AgentTypeService } from './agent-type.service';
-import { AgentType } from './schemas/agent-type.schema';
-import { AgentTypePrompt } from './schemas/agent-type-prompt.schema';
+import { AGENT_TYPE_STORE, type AgentTypeRow, type AgentTypeStore } from './persistence/agent-type.store';
 import { SkillService } from '../skill/skill.service';
 import { LoggerService } from '../logger';
 
@@ -13,48 +11,45 @@ function loggerStub() {
 
 describe('AgentTypeService.getManyForHydration', () => {
   it('returns a map of id -> {id,name,slug,skills} for the requested ids', async () => {
-    const t1 = new Types.ObjectId(); const s1 = new Types.ObjectId();
-    const docs = [{ _id: t1, name: 'Mono', slug: 'mono-agent', skills: [s1] }];
-    const agentTypeModel = {
-      find: jest.fn().mockReturnValue({ select: () => ({ lean: () => ({ exec: () => Promise.resolve(docs) }) }) }),
+    const t1 = new Types.ObjectId().toString(); const s1 = new Types.ObjectId().toString();
+    const store = {
+      findByIds: jest.fn().mockResolvedValue([{ id: t1, name: 'Mono', slug: 'mono-agent', skills: [s1] }]),
     };
     const moduleRef = await Test.createTestingModule({
       providers: [
         AgentTypeService,
-        { provide: getModelToken(AgentType.name), useValue: agentTypeModel },
-        { provide: getModelToken(AgentTypePrompt.name), useValue: {} },
+        { provide: AGENT_TYPE_STORE, useValue: store },
         { provide: SkillService, useValue: {} },
         { provide: LoggerService, useValue: loggerStub() },
       ],
     }).compile();
     const service = moduleRef.get(AgentTypeService);
 
-    const map = await service.getManyForHydration([t1.toString()]);
-    expect(map.get(t1.toString())).toEqual({ id: t1.toString(), name: 'Mono', slug: 'mono-agent', skills: [s1.toString()] });
+    const map = await service.getManyForHydration([t1]);
+    expect(map.get(t1)).toEqual({ id: t1, name: 'Mono', slug: 'mono-agent', skills: [s1] });
   });
 
   it('returns an empty map for empty input without querying', async () => {
-    const agentTypeModel = { find: jest.fn() };
+    const store = { findByIds: jest.fn() };
     const moduleRef = await Test.createTestingModule({
       providers: [
         AgentTypeService,
-        { provide: getModelToken(AgentType.name), useValue: agentTypeModel },
-        { provide: getModelToken(AgentTypePrompt.name), useValue: {} },
+        { provide: AGENT_TYPE_STORE, useValue: store },
         { provide: SkillService, useValue: {} },
         { provide: LoggerService, useValue: loggerStub() },
       ],
     }).compile();
     const service = moduleRef.get(AgentTypeService);
     expect((await service.getManyForHydration([])).size).toBe(0);
-    expect(agentTypeModel.find).not.toHaveBeenCalled();
+    expect(store.findByIds).not.toHaveBeenCalled();
   });
 });
 
 describe('AgentTypeService.findOrCreateBySlug', () => {
   it('uses an atomic create-only upsert and returns the canonical type', async () => {
-    const typeId = new Types.ObjectId();
-    const agentType = {
-      _id: typeId,
+    const typeId = new Types.ObjectId().toString();
+    const row: AgentTypeRow = {
+      id: typeId,
       name: 'Platform Copilot',
       slug: 'platform_copilot',
       defaultPrompt: 'existing prompt',
@@ -63,15 +58,14 @@ describe('AgentTypeService.findOrCreateBySlug', () => {
       createdAt: new Date(),
       updatedAt: new Date(),
     };
-    const exec = jest.fn().mockResolvedValue(agentType);
-    const lean = jest.fn().mockReturnValue({ exec });
-    const findOneAndUpdate = jest.fn().mockReturnValue({ lean });
-    const countDocuments = jest.fn().mockReturnValue({ exec: jest.fn().mockResolvedValue(0) });
+    const store = {
+      findOrCreateBySlug: jest.fn().mockResolvedValue(row),
+      promptCount: jest.fn().mockResolvedValue(0),
+    } as unknown as AgentTypeStore;
     const moduleRef = await Test.createTestingModule({
       providers: [
         AgentTypeService,
-        { provide: getModelToken(AgentType.name), useValue: { findOneAndUpdate } },
-        { provide: getModelToken(AgentTypePrompt.name), useValue: { countDocuments } },
+        { provide: AGENT_TYPE_STORE, useValue: store },
         { provide: SkillService, useValue: {} },
         { provide: LoggerService, useValue: loggerStub() },
       ],
@@ -83,11 +77,10 @@ describe('AgentTypeService.findOrCreateBySlug', () => {
       isActive: true,
     });
 
-    expect(result.id).toBe(typeId.toString());
-    expect(findOneAndUpdate).toHaveBeenCalledWith(
-      { slug: 'platform_copilot' },
-      { $setOnInsert: expect.objectContaining({ slug: 'platform_copilot', name: 'Platform Copilot' }) },
-      { upsert: true, new: true, setDefaultsOnInsert: true },
+    expect(result.id).toBe(typeId);
+    expect(store.findOrCreateBySlug).toHaveBeenCalledWith(
+      'platform_copilot',
+      expect.objectContaining({ name: 'Platform Copilot' }),
     );
   });
 });
