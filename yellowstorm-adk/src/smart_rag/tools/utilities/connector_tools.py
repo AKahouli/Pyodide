@@ -604,11 +604,10 @@ def _with_default_workspace_params(
         else None
     )
 
-    # Empty schemas represent the legacy generic `params` envelope. Explicit
-    # schemas only receive workspace values when they declare the parameter.
+    # Bind workspace values only when the action explicitly declares a
+    # workspace parameter. Empty schemas may describe strict zero-argument
+    # MCP tools, or legacy tools whose real parameters are unavailable.
     if not isinstance(properties, dict) or not properties:
-        if _needs_workspace_binding(merged_params.get("workspace_id")):
-            merged_params["workspace_id"] = default_workspace_id
         return merged_params
 
     available_workspace_ids = [
