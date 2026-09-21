@@ -9,3 +9,4 @@ export * from './identity.schema';
 export * from './authz.schema';
 export * from './ops.schema';
 export * from './catalog.schema';
+export * from './integrations.schema';
