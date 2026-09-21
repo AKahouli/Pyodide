@@ -1,16 +1,18 @@
 import { Test, TestingModule } from '@nestjs/testing';
-import { getModelToken } from '@nestjs/mongoose';
 import { ConfigService } from '@nestjs/config';
-import { Types } from 'mongoose';
 import { ConnectedAppOAuthService } from './connected-app-oauth.service';
 import { ConnectedAppDefinitionService } from './connected-app-definition.service';
-import { ConnectedAppOAuthState } from '../schemas/connected-app-oauth-state.schema';
-import { UserAppConnection } from '../schemas/user-app-connection.schema';
+import {
+  CONNECTED_APP_OAUTH_STATE_STORE,
+  USER_APP_CONNECTION_STORE,
+} from '../persistence/connected-app.store';
+import { InMemoryConnectionStore, InMemoryOauthStateStore } from '../persistence/connected-app.store.fake';
+import { ConnectionStatus } from '../schemas/user-app-connection.schema';
 import { CryptoService } from '@common/services/crypto.service';
 import { LoggerService } from '@modules/logger';
 import { ErrorCode } from '@modules/exceptions/constants/error-codes';
 
-const userId = new Types.ObjectId().toString();
+const userId = '507f1f77bcf86cd799439011';
 
 const mockAppConfig = {
   appKey: 'google-drive',
@@ -41,20 +43,14 @@ const mockAppConfigTenant = {
 
 describe('ConnectedAppOAuthService', () => {
   let service: ConnectedAppOAuthService;
-  let oauthStateModel: Record<string, jest.Mock>;
-  let connectionModel: Record<string, jest.Mock>;
+  let oauthStateStore: InMemoryOauthStateStore;
+  let connectionStore: InMemoryConnectionStore;
   let definitionService: Record<string, jest.Mock>;
   let cryptoService: Record<string, jest.Mock>;
 
   beforeEach(async () => {
-    oauthStateModel = {
-      create: jest.fn(),
-      findOneAndDelete: jest.fn(),
-    };
-
-    connectionModel = {
-      findOneAndUpdate: jest.fn(),
-    };
+    oauthStateStore = new InMemoryOauthStateStore();
+    connectionStore = new InMemoryConnectionStore();
 
     definitionService = {
       findByKey: jest.fn(),
@@ -68,22 +64,10 @@ describe('ConnectedAppOAuthService', () => {
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         ConnectedAppOAuthService,
-        {
-          provide: getModelToken(ConnectedAppOAuthState.name),
-          useValue: oauthStateModel,
-        },
-        {
-          provide: getModelToken(UserAppConnection.name),
-          useValue: connectionModel,
-        },
-        {
-          provide: ConnectedAppDefinitionService,
-          useValue: definitionService,
-        },
-        {
-          provide: CryptoService,
-          useValue: cryptoService,
-        },
+        { provide: CONNECTED_APP_OAUTH_STATE_STORE, useValue: oauthStateStore },
+        { provide: USER_APP_CONNECTION_STORE, useValue: connectionStore },
+        { provide: ConnectedAppDefinitionService, useValue: definitionService },
+        { provide: CryptoService, useValue: cryptoService },
         {
           provide: ConfigService,
           useValue: {
@@ -111,16 +95,17 @@ describe('ConnectedAppOAuthService', () => {
   describe('buildAuthorizationUrl', () => {
     it('should generate state, save to DB, and return URL with correct params', async () => {
       definitionService.findByKey.mockResolvedValue(mockAppConfig);
-      oauthStateModel.create.mockResolvedValue({});
 
       const url = await service.buildAuthorizationUrl(userId, 'google-drive');
 
       expect(definitionService.findByKey).toHaveBeenCalledWith('google-drive');
-      expect(oauthStateModel.create).toHaveBeenCalledWith(
+      const state = new URL(url).searchParams.get('state')!;
+      expect(await oauthStateStore.exists(state)).toBe(true);
+      const saved = await oauthStateStore.consume(state);
+      expect(saved).toEqual(
         expect.objectContaining({
           appKey: 'google-drive',
-          userId: expect.any(Types.ObjectId),
-          state: expect.any(String),
+          userId,
           expiresAt: expect.any(Date),
         }),
       );
@@ -137,23 +122,19 @@ describe('ConnectedAppOAuthService', () => {
 
     it('should add PKCE params when enabled', async () => {
       definitionService.findByKey.mockResolvedValue(mockAppConfigPkce);
-      oauthStateModel.create.mockResolvedValue({});
 
       const url = await service.buildAuthorizationUrl(userId, 'google-drive');
 
       expect(url).toContain('code_challenge=');
       expect(url).toContain('code_challenge_method=S256');
       // codeVerifier should be saved in state
-      expect(oauthStateModel.create).toHaveBeenCalledWith(
-        expect.objectContaining({
-          codeVerifier: expect.any(String),
-        }),
-      );
+      const state = new URL(url).searchParams.get('state')!;
+      const saved = await oauthStateStore.consume(state);
+      expect(saved?.codeVerifier).toEqual(expect.any(String));
     });
 
     it('should replace {tenant} in URL when tenantId present', async () => {
       definitionService.findByKey.mockResolvedValue(mockAppConfigTenant);
-      oauthStateModel.create.mockResolvedValue({});
 
       const url = await service.buildAuthorizationUrl(userId, 'microsoft');
 
@@ -163,18 +144,9 @@ describe('ConnectedAppOAuthService', () => {
   });
 
   describe('handleCallback', () => {
-    const validState = {
-      state: 'valid-state',
-      appKey: 'google-drive',
-      userId: new Types.ObjectId(userId),
-      codeVerifier: undefined,
-      expiresAt: new Date(Date.now() + 60000), // not expired
-    };
-
     it('should validate state, exchange code, encrypt tokens, and upsert connection', async () => {
-      oauthStateModel.findOneAndDelete.mockResolvedValue(validState);
+      oauthStateStore.seed({ state: 'valid-state', appKey: 'google-drive', userId });
       definitionService.findByKey.mockResolvedValue(mockAppConfig);
-      connectionModel.findOneAndUpdate.mockResolvedValue({});
 
       global.fetch = jest.fn().mockResolvedValue({
         ok: true,
@@ -187,32 +159,29 @@ describe('ConnectedAppOAuthService', () => {
 
       const result = await service.handleCallback('google-drive', 'auth_code', 'valid-state');
 
-      expect(oauthStateModel.findOneAndDelete).toHaveBeenCalledWith({ state: 'valid-state' });
+      // The state is consumed atomically (deleted) on use.
+      expect(oauthStateStore.consumed).toContain('valid-state');
+      expect(await oauthStateStore.exists('valid-state')).toBe(false);
       expect(cryptoService.encrypt).toHaveBeenCalledWith('new_access');
       expect(cryptoService.encrypt).toHaveBeenCalledWith('new_refresh');
-      expect(connectionModel.findOneAndUpdate).toHaveBeenCalledWith(
-        { userId: validState.userId, appKey: 'google-drive' },
+      expect(connectionStore.rows[0]).toEqual(
         expect.objectContaining({
-          $set: expect.objectContaining({
-            accessToken: 'encrypted_new_access',
-            refreshToken: 'encrypted_new_refresh',
-            status: 'active',
-          }),
+          userId,
+          appKey: 'google-drive',
+          accessToken: 'encrypted_new_access',
+          refreshToken: 'encrypted_new_refresh',
+          status: ConnectionStatus.ACTIVE,
         }),
-        { upsert: true, new: true },
       );
       expect(result).toEqual({ success: true, appKey: 'google-drive' });
     });
 
     it('should throw on invalid state (not found)', async () => {
-      oauthStateModel.findOneAndDelete.mockResolvedValue(null);
-
       await expect(
         service.handleCallback('google-drive', 'code', 'invalid-state'),
       ).rejects.toThrow();
 
       try {
-        oauthStateModel.findOneAndDelete.mockResolvedValue(null);
         await service.handleCallback('google-drive', 'code', 'invalid-state');
       } catch (error) {
         expect((error as any).code).toBe(ErrorCode.CONNECTED_APP_OAUTH_STATE_INVALID);
@@ -220,20 +189,23 @@ describe('ConnectedAppOAuthService', () => {
     });
 
     it('should throw on expired state', async () => {
-      const expiredState = {
-        ...validState,
-        expiresAt: new Date(Date.now() - 60000), // expired
-      };
-      oauthStateModel.findOneAndDelete.mockResolvedValue(expiredState);
+      // Atomic consumption with expiry: an expired state consumes to null.
+      oauthStateStore.seed({ state: 'valid-state', appKey: 'google-drive', userId, expired: true });
 
       await expect(
         service.handleCallback('google-drive', 'code', 'valid-state'),
       ).rejects.toThrow();
+
+      try {
+        oauthStateStore.seed({ state: 'valid-state', appKey: 'google-drive', userId, expired: true });
+        await service.handleCallback('google-drive', 'code', 'valid-state');
+      } catch (error) {
+        expect((error as any).code).toBe(ErrorCode.CONNECTED_APP_OAUTH_STATE_INVALID);
+      }
     });
 
     it('should throw on app key mismatch', async () => {
-      const mismatchState = { ...validState, appKey: 'different-app' };
-      oauthStateModel.findOneAndDelete.mockResolvedValue(mismatchState);
+      oauthStateStore.seed({ state: 'valid-state', appKey: 'different-app', userId });
 
       await expect(
         service.handleCallback('google-drive', 'code', 'valid-state'),
@@ -241,7 +213,7 @@ describe('ConnectedAppOAuthService', () => {
     });
 
     it('should throw on provider error in token response (data.error)', async () => {
-      oauthStateModel.findOneAndDelete.mockResolvedValue(validState);
+      oauthStateStore.seed({ state: 'valid-state', appKey: 'google-drive', userId });
       definitionService.findByKey.mockResolvedValue(mockAppConfig);
 
       global.fetch = jest.fn().mockResolvedValue({
@@ -257,7 +229,7 @@ describe('ConnectedAppOAuthService', () => {
       ).rejects.toThrow();
 
       try {
-        oauthStateModel.findOneAndDelete.mockResolvedValue({ ...validState });
+        oauthStateStore.seed({ state: 'valid-state', appKey: 'google-drive', userId });
         await service.handleCallback('google-drive', 'expired_code', 'valid-state');
       } catch (error) {
         expect((error as any).code).toBe(ErrorCode.CONNECTED_APP_OAUTH_FAILED);
@@ -265,7 +237,7 @@ describe('ConnectedAppOAuthService', () => {
     });
 
     it('should throw when token exchange HTTP request fails', async () => {
-      oauthStateModel.findOneAndDelete.mockResolvedValue(validState);
+      oauthStateStore.seed({ state: 'valid-state', appKey: 'google-drive', userId });
       definitionService.findByKey.mockResolvedValue(mockAppConfig);
 
       global.fetch = jest.fn().mockResolvedValue({
@@ -280,7 +252,7 @@ describe('ConnectedAppOAuthService', () => {
     });
 
     it('should throw when no access_token in response', async () => {
-      oauthStateModel.findOneAndDelete.mockResolvedValue(validState);
+      oauthStateStore.seed({ state: 'valid-state', appKey: 'google-drive', userId });
       definitionService.findByKey.mockResolvedValue(mockAppConfig);
 
       global.fetch = jest.fn().mockResolvedValue({

@@ -7,6 +7,26 @@ import { ErrorCode } from '../../exceptions/constants/error-codes';
 import { ConnectedAppDefinition, ConnectedAppDefinitionDocument } from '../../connected-app/schemas/connected-app-definition.schema';
 import { UserAppConnection, UserAppConnectionDocument } from '../../connected-app/schemas/user-app-connection.schema';
 import { SKILL_CATEGORY_STORE, SKILL_STORE, type SkillCategoryStore, type SkillStore } from '../../skill/persistence/skill.store';
+import type { ConnectorAction, ConnectorDynamicHeader } from '../schemas/connector.schema';
+import type { ConnectorCredentialRow } from '../persistence/connector.store';
+import {
+  CONNECTED_APP_DEFINITION_STORE,
+  USER_APP_CONNECTION_STORE,
+  type ConnectedAppDefinitionStore,
+  type UserAppConnectionStore,
+} from '../../connected-app/persistence/connected-app.store';
+import { ConnectionStatus } from '../../connected-app/schemas/user-app-connection.schema';
+import {
+  CONNECTOR_ADMIN_AUTH_STORE,
+  CONNECTOR_CATEGORY_STORE,
+  CONNECTOR_CREDENTIAL_STORE,
+  CONNECTOR_STORE,
+  type ConnectorCategoryStore,
+  type ConnectorCredentialStore,
+  type ConnectorAdminAuthRow,
+  type ConnectorAdminAuthStore,
+  type ConnectorStore,
+} from '../persistence/connector.store';
 import { withTransaction } from '@common/postgres/transaction';
 import { DRIZZLE_DB } from '@modules/postgres/postgres.constants';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
@@ -21,10 +41,6 @@ import {
   CatalogSkillRecord,
   EncryptedCatalogArchive,
 } from '../interfaces/catalog-transfer.interface';
-import { AdminConnectorAuth, AdminConnectorAuthDocument } from '../schemas/admin-connector-auth.schema';
-import { Connector, ConnectorDocument } from '../schemas/connector.schema';
-import { ConnectorCategory, ConnectorCategoryDocument } from '../schemas/connector-category.schema';
-import { ConnectorCredential, ConnectorCredentialDocument } from '../schemas/connector-credential.schema';
 import { decryptCatalogArchive, encryptCatalogArchive } from '../utils/catalog-archive-crypto.util';
 
 const MAX_ARCHIVE_BYTES = 50 * 1024 * 1024;
@@ -33,16 +49,15 @@ const SLUG_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 @Injectable()
 export class CatalogTransferService {
   constructor(
-    @InjectModel(Connector.name) private readonly connectorModel: Model<ConnectorDocument>,
-    @InjectModel(ConnectorCategory.name) private readonly connectorCategoryModel: Model<ConnectorCategoryDocument>,
-    @InjectModel(ConnectorCredential.name) private readonly credentialModel: Model<ConnectorCredentialDocument>,
-    @InjectModel(AdminConnectorAuth.name) private readonly adminAuthModel: Model<AdminConnectorAuthDocument>,
+    @Inject(CONNECTOR_STORE) private readonly connectorStore: ConnectorStore,
+    @Inject(CONNECTOR_CATEGORY_STORE) private readonly connectorCategoryStore: ConnectorCategoryStore,
+    @Inject(CONNECTOR_CREDENTIAL_STORE) private readonly credentialStore: ConnectorCredentialStore,
+    @Inject(CONNECTOR_ADMIN_AUTH_STORE) private readonly adminAuthStore: ConnectorAdminAuthStore,
     @Inject(SKILL_STORE) private readonly skillStore: SkillStore,
     @Inject(SKILL_CATEGORY_STORE) private readonly skillCategoryStore: SkillCategoryStore,
+    @Inject(CONNECTED_APP_DEFINITION_STORE) private readonly appDefinitionStore: ConnectedAppDefinitionStore,
+    @Inject(USER_APP_CONNECTION_STORE) private readonly appConnectionStore: UserAppConnectionStore,
     @Inject(DRIZZLE_DB) private readonly pgDb: NodePgDatabase<typeof schema>,
-    @InjectModel(ConnectedAppDefinition.name) private readonly appDefinitionModel: Model<ConnectedAppDefinitionDocument>,
-    @InjectModel(UserAppConnection.name) private readonly appConnectionModel: Model<UserAppConnectionDocument>,
-    @InjectConnection() private readonly connection: Connection,
     private readonly cryptoService: CryptoService,
   ) {}
 
@@ -51,12 +66,9 @@ export class CatalogTransferService {
     dto: ExportCatalogDto,
   ): Promise<{ filename: string; buffer: Buffer; securityIncluded: boolean }> {
     this.validateSelection(dto);
-    const connectorFilter = dto.selection === 'all'
-      ? {}
-      : { _id: { $in: dto.ids!.map((id) => new Types.ObjectId(id)) } };
-    const connectors = await this.connectorModel.find(connectorFilter).lean().exec();
+    const connectors = await this.connectorStore.findAllExport(dto.selection === 'all' ? undefined : dto.ids);
     const skillIds = Array.from(new Set(connectors.flatMap((connector) =>
-      (connector.referencedSkillIds ?? []).map((id) => id.toString()),
+      connector.skillIds.map((id) => id.toString()),
     )));
     const skills = skillIds.length
       ? await this.skillStore.findAllExport(skillIds)
@@ -102,59 +114,48 @@ export class CatalogTransferService {
     conflictPolicy: CatalogConflictPolicy,
   ): Promise<CatalogImportResult> {
     const ownerId = new Types.ObjectId(userId);
-    const session = await this.connection.startSession();
     const result: CatalogImportResult = {
       skills: { created: 0, updated: 0, skipped: 0 },
       connectors: { created: 0, updated: 0, skipped: 0 },
       categories: { created: 0, reused: 0 },
       security: { credentials: 0, connectedApps: 0, tokens: 0 },
     };
-    // Interim two-phase import (plan 1B.4.5): skills live in PostgreSQL and the
-    // rest of the catalog in Mongo, so the former single transaction runs as two
-    // ordered ones — PG first, then Mongo. Both halves are idempotent upserts
-    // (skills by (slug, createdBy), connectors/categories by (slug, createdBy)
-    // or name), so re-running a failed import converges. P3 collapses this back
-    // into one PG transaction.
-    const skillIds = await withTransaction(this.pgDb, async () => {
+    // Plan 3.7: the whole catalog import is one PG transaction again. All
+    // upserts are idempotent — skills by (slug, createdBy), connectors by
+    // (slug, createdBy), connections by (userId, appKey), credentials by
+    // (connectorId, userId, displayName) — so re-running converges.
+    await withTransaction(this.pgDb, async () => {
       const skillCategoryIds = await this.importSkillCategories(
         archive.skillCategories,
         conflictPolicy,
         result,
       );
-      return this.importSkills(
+      const skillIds = await this.importSkills(
         archive.skills,
         userId,
         skillCategoryIds,
         conflictPolicy,
         result,
       );
+      const connectorCategoryIds = await this.importConnectorCategories(
+        archive.connectorCategories,
+        ownerId,
+        conflictPolicy,
+        result,
+      );
+      await this.importConnectors(
+        archive.connectors,
+        ownerId,
+        connectorCategoryIds,
+        skillIds,
+        conflictPolicy,
+        result,
+      );
+      if (archive.securityIncluded && archive.security) {
+        await this.importSecurity(archive, ownerId, conflictPolicy, result);
+      }
     });
-    try {
-      await session.withTransaction(async () => {
-        const connectorCategoryIds = await this.importConnectorCategories(
-          archive.connectorCategories,
-          ownerId,
-          conflictPolicy,
-          session,
-          result,
-        );
-        await this.importConnectors(
-          archive.connectors,
-          ownerId,
-          connectorCategoryIds,
-          skillIds,
-          conflictPolicy,
-          session,
-          result,
-        );
-        if (archive.securityIncluded && archive.security) {
-          await this.importSecurity(archive, ownerId, conflictPolicy, session, result);
-        }
-      });
-      return result;
-    } finally {
-      await session.endSession();
-    }
+    return result;
   }
 
   private async buildArchive(
@@ -164,13 +165,13 @@ export class CatalogTransferService {
     skills: Array<Record<string, any>>,
     includeSecurity: boolean,
   ): Promise<CatalogArchiveV1> {
-    const connectorCategoryIds = connectors.flatMap((item) => item.categoryId ? [item.categoryId] : []);
+    const connectorCategoryIds = Array.from(new Set(connectors.flatMap((item) => item.categoryId ? [String(item.categoryId)] : [])));
     const skillCategoryIds = Array.from(new Set(skills.flatMap((item) => item.categoryId ? [String(item.categoryId)] : [])));
     const [connectorCategories, skillCategories] = await Promise.all([
-      this.connectorCategoryModel.find({ _id: { $in: connectorCategoryIds } }).lean().exec(),
+      this.resolveConnectorCategories(connectorCategoryIds),
       this.resolveSkillCategories(skillCategoryIds),
     ]);
-    const connectorCategoryNames = this.categoryNameMap(connectorCategories);
+    const connectorCategoryNames = new Map(connectorCategories.map((c) => [c.id, c.name]));
     const skillCategoryNames = new Map(skillCategories.map((c) => [c.id, c.name]));
     const skillSlugById = new Map(skills.map((skill) => [skill.id, skill.slug || skill.name]));
     const archive: CatalogArchiveV1 = {
@@ -197,16 +198,26 @@ export class CatalogTransferService {
   }
 
   private async exportSecurity(userId: string, connectors: Array<Record<string, any>>) {
-    const connectorIds = connectors.map((connector) => connector._id);
-    const connectorSlugById = new Map(connectors.map((connector) => [connector._id.toString(), connector.slug]));
+    const connectorIds = connectors.map((connector) => String(connector.id ?? connector._id));
+    const connectorSlugById = new Map(connectors.map((connector) => [String(connector.id ?? connector._id), connector.slug]));
     const appKeys = Array.from(new Set(connectors.map((connector) => connector.connectedAppKey).filter(Boolean)));
     const ownerId = new Types.ObjectId(userId);
-    const [credentials, definitions, connections, adminAuth] = await Promise.all([
-      this.credentialModel.find({ connectorId: { $in: connectorIds }, userId: ownerId }).lean().exec(),
-      this.appDefinitionModel.find({ appKey: { $in: appKeys } }).lean().exec(),
-      this.appConnectionModel.find({ appKey: { $in: appKeys }, userId: ownerId }).lean().exec(),
-      this.adminAuthModel.find({ appKey: { $in: appKeys }, userId: ownerId }).lean().exec(),
+    const [allCredentials, allDefinitions, userConnections, adminAuthRows] = await Promise.all([
+      this.credentialStore.list({ userId: userId }),
+      this.appDefinitionStore.findAll(),
+      this.appConnectionStore.listByUser(userId),
+      Promise.all(appKeys.map((appKey) => this.adminAuthStore.findByUserAndApp(userId, appKey))),
     ]);
+    const connectorIdSet = new Set(connectorIds);
+    const appKeySet = new Set(appKeys);
+    const credentials = allCredentials.filter((c) => connectorIdSet.has(c.connectorId));
+    const definitions = allDefinitions.filter((d) => appKeySet.has(d.appKey));
+    const connections = userConnections.filter((c) => appKeySet.has(c.appKey));
+    const adminAuth = adminAuthRows.filter(
+      (a): a is ConnectorAdminAuthRow => a !== null && appKeySet.has(a.appKey),
+    );
+    void definitions;
+    void connections;
     return {
       connectorCredentials: credentials.map((credential) => ({
         connectorSlug: connectorSlugById.get(credential.connectorId.toString()) ?? '',
@@ -303,35 +314,31 @@ export class CatalogTransferService {
     categories: CatalogCategoryRecord[],
     ownerId: Types.ObjectId,
     conflictPolicy: CatalogConflictPolicy,
-    session: ClientSession,
     result: CatalogImportResult,
-  ): Promise<Map<string, Types.ObjectId>> {
-    const ids = new Map<string, Types.ObjectId>();
+  ): Promise<Map<string, string>> {
+    const ids = new Map<string, string>();
     for (const category of categories) {
-      let existing = await this.connectorCategoryModel
-        .findOne({ name: category.name, createdBy: ownerId })
-        .session(session)
-        .exec();
+      let existing = await this.connectorCategoryStore.findByOwnerName(String(ownerId), category.name);
       if (!existing) {
         if (category.isSystem) {
           throw new BadRequestException(ErrorCode.BAD_REQUEST, 'System connector categories cannot be created by catalog import.');
         }
-        [existing] = await this.connectorCategoryModel.create([{ ...category, createdBy: ownerId }], { session });
+        existing = await this.connectorCategoryStore.insert({
+          name: category.name,
+          description: category.description,
+          createdBy: String(ownerId),
+        });
         result.categories.created += 1;
       } else {
         if (!existing.isSystem && category.isSystem) {
           throw new BadRequestException(ErrorCode.BAD_REQUEST, 'A connector category cannot be elevated to a system category.');
         }
         if (conflictPolicy === 'overwrite' && !existing.isSystem) {
-          existing = await this.connectorCategoryModel.findByIdAndUpdate(
-            existing._id,
-            { $set: { description: category.description } },
-            { new: true, session },
-          ).exec() ?? existing;
+          existing = await this.connectorCategoryStore.update(existing.id, { description: category.description }) ?? existing;
         }
         result.categories.reused += 1;
       }
-      ids.set(category.name, existing._id as Types.ObjectId);
+      ids.set(category.name, existing.id);
     }
     return ids;
   }
@@ -404,20 +411,17 @@ export class CatalogTransferService {
   private async importConnectors(
     connectors: CatalogConnectorRecord[],
     ownerId: Types.ObjectId,
-    categoryIds: Map<string, Types.ObjectId>,
+    categoryIds: Map<string, string>,
     skillIds: Map<string, string>,
     conflictPolicy: CatalogConflictPolicy,
-    session: ClientSession,
     result: CatalogImportResult,
   ): Promise<void> {
+    const createdBy = String(ownerId);
     for (const connector of connectors) {
-      const existing = await this.connectorModel
-        .findOne({ slug: connector.slug, createdBy: ownerId })
-        .session(session)
-        .exec();
+      const existing = await this.connectorStore.findBySlugAndOwner(connector.slug, createdBy);
       const missingSkills = connector.referencedSkillSlugs.filter((slug) => !skillIds.has(slug));
       if (missingSkills.length) {
-        const resolved = await this.skillStore.findIdsBySlugs(String(ownerId), missingSkills);
+        const resolved = await this.skillStore.findIdsBySlugs(createdBy, missingSkills);
         resolved.forEach((id, slug) => skillIds.set(slug, id));
       }
       const unresolved = connector.referencedSkillSlugs.filter((slug) => !skillIds.has(slug));
@@ -427,29 +431,54 @@ export class CatalogTransferService {
           `Connector '${connector.slug}' references missing skills: ${unresolved.join(', ')}.`,
         );
       }
-      const data = {
-        ...connector,
-        runtimeAuthConfig: this.restoreRedactedValues(
-          connector.runtimeAuthConfig,
-          existing?.runtimeAuthConfig ?? {},
-        ),
-        mcpServerConfig: this.restoreRedactedValues(
-          connector.mcpServerConfig,
-          existing?.mcpServerConfig ?? {},
-        ),
-        categoryId: connector.categoryName ? categoryIds.get(connector.categoryName) ?? null : null,
-        referencedSkillIds: connector.referencedSkillSlugs.map((slug) => skillIds.get(slug)),
-        createdBy: ownerId,
-      } as Record<string, unknown>;
-      delete data.categoryName;
-      delete data.referencedSkillSlugs;
       if (existing && conflictPolicy === 'skip') {
         result.connectors.skipped += 1;
-      } else if (existing) {
-        await this.connectorModel.findByIdAndUpdate(existing._id, { $set: data }, { session }).exec();
+        continue;
+      }
+      const common = {
+        slug: connector.slug,
+        name: connector.name,
+        description: connector.description,
+        icon: connector.icon ?? '',
+        color: connector.color ?? '',
+        iconColor: connector.iconColor ?? 'light',
+        categoryId: connector.categoryName ? categoryIds.get(connector.categoryName) ?? null : null,
+        authType: connector.authType ?? 'none',
+        authConfigSchema: connector.authConfigSchema ?? {},
+        authSourceType: connector.authSourceType ?? 'credential',
+        connectedAppKey: connector.connectedAppKey ?? '',
+        mcpTransportType: connector.mcpTransportType ?? 'streamable_http',
+        mcpServerUrl: connector.mcpServerUrl ?? '',
+        skillIds: connector.referencedSkillSlugs.map((slug) => skillIds.get(slug)!),
+        isActive: connector.isActive ?? true,
+      };
+      if (existing) {
+        await this.connectorStore.update(existing.id, {
+          ...common,
+          runtimeAuthConfig: this.restoreRedactedValues(
+            connector.runtimeAuthConfig,
+            existing.runtimeAuthConfig ?? {},
+          ) as Record<string, unknown>,
+          mcpServerConfig: this.restoreRedactedValues(
+            connector.mcpServerConfig,
+            existing.mcpServerConfig ?? {},
+          ) as Record<string, unknown>,
+          dynamicHeaders: (connector.dynamicHeaders ?? []) as ConnectorDynamicHeader[],
+          actions: (connector.actions ?? []) as ConnectorAction[],
+          isHidden: connector.isHidden ?? false,
+        });
         result.connectors.updated += 1;
       } else {
-        await this.connectorModel.create([data], { session });
+        await this.connectorStore.insert({
+          ...common,
+          runtimeAuthConfig: connector.runtimeAuthConfig ?? {},
+          mcpServerConfig: connector.mcpServerConfig ?? {},
+          dynamicHeaders: (connector.dynamicHeaders ?? []) as ConnectorDynamicHeader[],
+          actions: (connector.actions ?? []) as ConnectorAction[],
+          isSystem: false,
+          isHidden: connector.isHidden ?? false,
+          createdBy,
+        });
         result.connectors.created += 1;
       }
     }
@@ -459,63 +488,114 @@ export class CatalogTransferService {
     archive: CatalogArchiveV1,
     ownerId: Types.ObjectId,
     conflictPolicy: CatalogConflictPolicy,
-    session: ClientSession,
     result: CatalogImportResult,
   ): Promise<void> {
     const security = archive.security!;
+    const owner = String(ownerId);
     for (const definition of security.connectedAppDefinitions) {
+      const existing = await this.appDefinitionStore.findByKey(definition.appKey);
       const encrypted = {
-        ...definition,
+        appKey: definition.appKey,
+        displayName: definition.displayName,
+        description: definition.description ?? null,
+        iconKey: definition.iconKey ?? null,
+        authorizationUrl: definition.authorizationUrl,
+        tokenUrl: definition.tokenUrl,
+        revokeUrl: definition.revokeUrl ?? null,
         clientId: this.cryptoService.encrypt(definition.clientId),
         clientSecret: this.cryptoService.encrypt(definition.clientSecret),
-        tenantId: definition.tenantId ? this.cryptoService.encrypt(definition.tenantId) : undefined,
+        tenantId: definition.tenantId ? this.cryptoService.encrypt(definition.tenantId) : null,
+        scopes: definition.scopes ?? [],
+        pkceEnabled: definition.pkceEnabled ?? true,
+        enabled: definition.enabled ?? true,
+        sortOrder: definition.sortOrder ?? 0,
       };
-      const existing = await this.appDefinitionModel.findOne({ appKey: definition.appKey }).session(session).exec();
       if (!existing) {
-        await this.appDefinitionModel.create([encrypted], { session });
+        await this.appDefinitionStore.insert(encrypted);
         result.security.connectedApps += 1;
       } else if (conflictPolicy === 'overwrite') {
-        await this.appDefinitionModel.updateOne({ _id: existing._id }, { $set: encrypted }, { session }).exec();
+        await this.appDefinitionStore.update(existing.id, encrypted);
         result.security.connectedApps += 1;
       }
     }
     for (const connection of security.userAppConnections) {
       const data = this.encryptTokenRecord(connection, ownerId);
-      await this.appConnectionModel.updateOne(
-        { userId: ownerId, appKey: connection.appKey },
-        conflictPolicy === 'overwrite' ? { $set: data } : { $setOnInsert: data },
-        { upsert: true, session },
-      ).exec();
+      const existing = await this.appConnectionStore.findByUserAndApp(owner, connection.appKey);
+      if (!existing) {
+        await this.appConnectionStore.insertForImport(owner, connection.appKey, {
+          accessToken: String(data.accessToken ?? ''),
+          refreshToken: (data.refreshToken as string | undefined) ?? null,
+          tokenExpiresAt: (data.tokenExpiresAt as Date | null) ?? null,
+          scopes: (data.scopes as string[]) ?? [],
+          providerAccountId: (data.providerAccountId as string | undefined) ?? null,
+          providerEmail: (data.providerEmail as string | undefined) ?? null,
+          status: (data.status as ConnectionStatus) ?? ConnectionStatus.ACTIVE,
+          errorMessage: (data.errorMessage as string | undefined) ?? null,
+        });
+      } else if (conflictPolicy === 'overwrite') {
+        await this.appConnectionStore.updateById(existing.id, {
+          accessToken: String(data.accessToken ?? ''),
+          refreshToken: (data.refreshToken as string | undefined) ?? null,
+          tokenExpiresAt: (data.tokenExpiresAt as Date | null) ?? null,
+          scopes: (data.scopes as string[]) ?? [],
+          providerAccountId: (data.providerAccountId as string | undefined) ?? null,
+          providerEmail: (data.providerEmail as string | undefined) ?? null,
+          status: (data.status as ConnectionStatus) ?? ConnectionStatus.ACTIVE,
+          errorMessage: (data.errorMessage as string | undefined) ?? null,
+        });
+      }
       result.security.tokens += 1;
     }
     for (const auth of security.adminConnectorAuth) {
       const data = this.encryptTokenRecord(auth, ownerId);
-      await this.adminAuthModel.updateOne(
-        { userId: ownerId, appKey: auth.appKey },
-        conflictPolicy === 'overwrite' ? { $set: data } : { $setOnInsert: data },
-        { upsert: true, session },
-      ).exec();
+      const existing = await this.adminAuthStore.findByUserAndApp(owner, auth.appKey);
+      if (!existing) {
+        await this.adminAuthStore.insertForImport(owner, auth.appKey, {
+          accessToken: (data.accessToken as string | undefined) ?? null,
+          refreshToken: (data.refreshToken as string | undefined) ?? null,
+          tokenExpiresAt: (data.tokenExpiresAt as Date | null) ?? null,
+          scopes: (data.scopes as string[]) ?? [],
+          providerAccountId: (data.providerAccountId as string | undefined) ?? null,
+          providerEmail: (data.providerEmail as string | undefined) ?? null,
+          connected: (data.connected as boolean) ?? true,
+          status: (data.status as string) ?? 'active',
+          disconnectedAt: (data.disconnectedAt as Date | null) ?? null,
+          lastUsedAt: (data.lastUsedAt as Date | null) ?? null,
+          lastRefreshedAt: (data.lastRefreshedAt as Date | null) ?? null,
+          errorMessage: (data.errorMessage as string | undefined) ?? null,
+        });
+      } else if (conflictPolicy === 'overwrite') {
+        await this.adminAuthStore.updateById(existing.id, data as Partial<ConnectorAdminAuthRow>);
+      }
       result.security.tokens += 1;
     }
     for (const credential of security.connectorCredentials) {
-      const connector = await this.connectorModel
-        .findOne({ slug: credential.connectorSlug, createdBy: ownerId })
-        .session(session)
-        .exec();
+      const connector = await this.connectorStore.findBySlugAndOwner(credential.connectorSlug, owner);
       if (!connector) continue;
-      const data = {
-        ...credential,
-        connectorId: connector._id,
-        userId: ownerId,
+      const existing = await this.credentialStore.findByConnectorUserDisplayName(
+        connector.id,
+        owner,
+        credential.displayName,
+      );
+      const payload: Partial<Pick<ConnectorCredentialRow, 'displayName' | 'authPayload' | 'status' | 'expiresAt' | 'lastValidatedAt'>> = {
+        displayName: credential.displayName,
+        authPayload: credential.authPayload ?? {},
+        status: (credential.status as string) ?? 'active',
         lastValidatedAt: this.optionalDate(credential.lastValidatedAt),
         expiresAt: this.optionalDate(credential.expiresAt),
-      } as Record<string, unknown>;
-      delete data.connectorSlug;
-      await this.credentialModel.updateOne(
-        { connectorId: connector._id, userId: ownerId, displayName: credential.displayName },
-        conflictPolicy === 'overwrite' ? { $set: data } : { $setOnInsert: data },
-        { upsert: true, session },
-      ).exec();
+      };
+      if (!existing) {
+        await this.credentialStore.insert({
+          connectorId: connector.id,
+          displayName: credential.displayName,
+          authPayload: payload.authPayload!,
+          status: payload.status!,
+          expiresAt: payload.expiresAt ?? null,
+          userId: owner,
+        });
+      } else if (conflictPolicy === 'overwrite') {
+        await this.credentialStore.update(existing.id, payload);
+      }
       result.security.credentials += 1;
     }
   }
@@ -599,7 +679,7 @@ export class CatalogTransferService {
         citationMode: action.citationMode ?? 'none',
         ...(action.resultMapping ? { resultMapping: action.resultMapping } : {}),
       })),
-      referencedSkillSlugs: (connector.referencedSkillIds ?? [])
+      referencedSkillSlugs: (connector.skillIds ?? connector.referencedSkillIds ?? [])
         .map((id: Types.ObjectId) => skillSlugById.get(id.toString()))
         .filter((slug: string | undefined): slug is string => Boolean(slug)),
       isActive: connector.isActive ?? true,
@@ -684,8 +764,11 @@ export class CatalogTransferService {
     }
   }
 
-  private categoryNameMap(categories: Array<Record<string, any>>): Map<string, string> {
-    return new Map(categories.map((category) => [category._id.toString(), category.name]));
+  private async resolveConnectorCategories(ids: string[]) {
+    if (!ids.length) return [];
+    const all = await this.connectorCategoryStore.findAll();
+    const wanted = new Set(ids);
+    return all.filter((c) => wanted.has(c.id));
   }
 
   private projectCategory(category: Record<string, any>): CatalogCategoryRecord {

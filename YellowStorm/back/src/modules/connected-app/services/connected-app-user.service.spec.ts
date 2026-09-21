@@ -1,12 +1,12 @@
 import { Test, TestingModule } from '@nestjs/testing';
-import { getModelToken } from '@nestjs/mongoose';
-import { Types } from 'mongoose';
 import { ConnectedAppUserService } from './connected-app-user.service';
 import { ConnectedAppDefinitionService } from './connected-app-definition.service';
-import { UserAppConnection, ConnectionStatus } from '../schemas/user-app-connection.schema';
+import { USER_APP_CONNECTION_STORE } from '../persistence/connected-app.store';
+import { InMemoryConnectionStore } from '../persistence/connected-app.store.fake';
+import { ConnectionStatus } from '../schemas/user-app-connection.schema';
 import { LoggerService } from '@modules/logger';
 
-const userId = new Types.ObjectId().toString();
+const userId = '507f1f77bcf86cd799439011';
 
 const mockApps = [
   {
@@ -27,24 +27,13 @@ const mockApps = [
   },
 ];
 
-const mockConnection = {
-  appKey: 'google-drive',
-  status: ConnectionStatus.ACTIVE,
-  scopes: ['drive.readonly'],
-  providerEmail: 'user@gmail.com',
-  createdAt: new Date('2026-01-01'),
-};
-
 describe('ConnectedAppUserService', () => {
   let service: ConnectedAppUserService;
-  let connectionModel: Record<string, jest.Mock>;
+  let connectionStore: InMemoryConnectionStore;
   let definitionService: Record<string, jest.Mock>;
 
   beforeEach(async () => {
-    connectionModel = {
-      find: jest.fn(),
-    };
-
+    connectionStore = new InMemoryConnectionStore();
     definitionService = {
       findAllEnabled: jest.fn(),
     };
@@ -52,14 +41,8 @@ describe('ConnectedAppUserService', () => {
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         ConnectedAppUserService,
-        {
-          provide: getModelToken(UserAppConnection.name),
-          useValue: connectionModel,
-        },
-        {
-          provide: ConnectedAppDefinitionService,
-          useValue: definitionService,
-        },
+        { provide: USER_APP_CONNECTION_STORE, useValue: connectionStore },
+        { provide: ConnectedAppDefinitionService, useValue: definitionService },
         {
           provide: LoggerService,
           useValue: { setContext: jest.fn(), log: jest.fn(), error: jest.fn(), warn: jest.fn() },
@@ -74,10 +57,13 @@ describe('ConnectedAppUserService', () => {
   describe('getAvailableApps', () => {
     it('should return apps with connected=true/false based on user connections', async () => {
       definitionService.findAllEnabled.mockResolvedValue(mockApps);
-      connectionModel.find.mockReturnValue({
-        lean: jest.fn().mockReturnValue({
-          exec: jest.fn().mockResolvedValue([mockConnection]),
-        }),
+      connectionStore.seed({
+        userId,
+        appKey: 'google-drive',
+        status: ConnectionStatus.ACTIVE,
+        scopes: ['drive.readonly'],
+        providerEmail: 'user@gmail.com',
+        createdAt: new Date('2026-01-01'),
       });
 
       const result = await service.getAvailableApps(userId);
@@ -96,11 +82,6 @@ describe('ConnectedAppUserService', () => {
 
     it('should return all apps with connected=false when no connections', async () => {
       definitionService.findAllEnabled.mockResolvedValue(mockApps);
-      connectionModel.find.mockReturnValue({
-        lean: jest.fn().mockReturnValue({
-          exec: jest.fn().mockResolvedValue([]),
-        }),
-      });
 
       const result = await service.getAvailableApps(userId);
 
@@ -112,10 +93,13 @@ describe('ConnectedAppUserService', () => {
 
   describe('getUserConnections', () => {
     it('should return connection metadata without tokens', async () => {
-      connectionModel.find.mockReturnValue({
-        lean: jest.fn().mockReturnValue({
-          exec: jest.fn().mockResolvedValue([mockConnection]),
-        }),
+      connectionStore.seed({
+        userId,
+        appKey: 'google-drive',
+        status: ConnectionStatus.ACTIVE,
+        scopes: ['drive.readonly'],
+        providerEmail: 'user@gmail.com',
+        createdAt: new Date('2026-01-01'),
       });
       definitionService.findAllEnabled.mockResolvedValue(mockApps);
 
@@ -133,12 +117,6 @@ describe('ConnectedAppUserService', () => {
     });
 
     it('should return empty array when no connections', async () => {
-      connectionModel.find.mockReturnValue({
-        lean: jest.fn().mockReturnValue({
-          exec: jest.fn().mockResolvedValue([]),
-        }),
-      });
-
       const result = await service.getUserConnections(userId);
 
       expect(result).toEqual([]);
@@ -147,16 +125,20 @@ describe('ConnectedAppUserService', () => {
     });
 
     it('should skip connections for apps that no longer exist', async () => {
-      const orphanConnection = {
+      connectionStore.seed({
+        userId,
+        appKey: 'google-drive',
+        status: ConnectionStatus.ACTIVE,
+        scopes: ['drive.readonly'],
+        providerEmail: 'user@gmail.com',
+        createdAt: new Date('2026-01-01'),
+      });
+      connectionStore.seed({
+        userId,
         appKey: 'deleted-app',
         status: ConnectionStatus.ACTIVE,
         scopes: [],
         createdAt: new Date(),
-      };
-      connectionModel.find.mockReturnValue({
-        lean: jest.fn().mockReturnValue({
-          exec: jest.fn().mockResolvedValue([mockConnection, orphanConnection]),
-        }),
       });
       definitionService.findAllEnabled.mockResolvedValue(mockApps);
 

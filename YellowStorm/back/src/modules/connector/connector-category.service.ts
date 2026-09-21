@@ -1,9 +1,8 @@
-import { Injectable, OnModuleInit } from '@nestjs/common';
-import { InjectModel } from '@nestjs/mongoose';
-import { Model, Types } from 'mongoose';
+import { Inject, Injectable, OnModuleInit } from '@nestjs/common';
+import { isObjectId } from '@common/postgres';
 import { ConflictException, ForbiddenException, NotFoundException } from '../exceptions';
 import { ErrorCode } from '../exceptions/constants/error-codes';
-import { ConnectorCategory, ConnectorCategoryDocument } from './schemas/connector-category.schema';
+import { CONNECTOR_CATEGORY_STORE, type ConnectorCategoryRow, type ConnectorCategoryStore } from './persistence/connector.store';
 import { CreateConnectorCategoryDto } from './dto/create-connector-category.dto';
 import { UpdateConnectorCategoryDto } from './dto/update-connector-category.dto';
 import { IConnectorCategoryResponse } from './interfaces/connector.interface';
@@ -11,35 +10,22 @@ import { IConnectorCategoryResponse } from './interfaces/connector.interface';
 /** Reserved built-in category. Connectors assigned to it are hidden from end users. */
 export const SYSTEM_CATEGORY_NAME = 'System';
 export const WEB_SEARCH_CATEGORY_NAME = 'Web Search';
-const SYSTEM_OWNER_ID = new Types.ObjectId('000000000000000000000000');
+const SYSTEM_OWNER_ID = '000000000000000000000000';
 
 @Injectable()
 export class ConnectorCategoryService implements OnModuleInit {
   constructor(
-    @InjectModel(ConnectorCategory.name)
-    private readonly categoryModel: Model<ConnectorCategoryDocument>,
+    @Inject(CONNECTOR_CATEGORY_STORE)
+    private readonly categoryStore: ConnectorCategoryStore,
   ) {}
 
   /** Ensure the reserved "System" category exists and is flagged, on every boot. */
   async onModuleInit(): Promise<void> {
-    const existing = await this.categoryModel
-      .findOne({ name: { $regex: `^${SYSTEM_CATEGORY_NAME}$`, $options: 'i' } })
-      .exec();
-
-    if (existing) {
-      if (!existing.isSystem) {
-        existing.isSystem = true;
-        await existing.save();
-      }
-      return;
-    }
-
-    await this.categoryModel.create({
-      name: SYSTEM_CATEGORY_NAME,
-      description: 'Built-in connectors hidden from users.',
-      isSystem: true,
-      createdBy: SYSTEM_OWNER_ID,
-    });
+    await this.categoryStore.ensureSystem(
+      SYSTEM_CATEGORY_NAME,
+      SYSTEM_OWNER_ID,
+      'Built-in connectors hidden from users.',
+    );
   }
 
   async create(createdBy: string, dto: CreateConnectorCategoryDto): Promise<IConnectorCategoryResponse> {
@@ -50,35 +36,32 @@ export class ConnectorCategoryService implements OnModuleInit {
       );
     }
 
-    const existing = await this.categoryModel
-      .findOne({ name: dto.name, createdBy: new Types.ObjectId(createdBy) })
-      .lean()
-      .exec();
+    const existing = await this.categoryStore.findByOwnerName(createdBy, dto.name);
 
     if (existing) {
       throw new ConflictException(ErrorCode.CONNECTOR_CATEGORY_ALREADY_EXISTS);
     }
 
-    const category = await this.categoryModel.create({
+    const category = await this.categoryStore.insert({
       name: dto.name,
       description: dto.description ?? '',
-      createdBy: new Types.ObjectId(createdBy),
+      createdBy,
     });
 
     return this.toResponse(category);
   }
 
   async findAll(): Promise<IConnectorCategoryResponse[]> {
-    const categories = await this.categoryModel.find().sort({ name: 1 }).lean().exec();
+    const categories = await this.categoryStore.findAll();
     return categories.map((c) => this.toResponse(c));
   }
 
   async findById(id: string): Promise<IConnectorCategoryResponse> {
-    if (!Types.ObjectId.isValid(id)) {
+    if (!isObjectId(id)) {
       throw new NotFoundException(ErrorCode.CONNECTOR_CATEGORY_NOT_FOUND);
     }
 
-    const category = await this.categoryModel.findById(id).lean().exec();
+    const category = await this.categoryStore.findById(id);
     if (!category) {
       throw new NotFoundException(ErrorCode.CONNECTOR_CATEGORY_NOT_FOUND);
     }
@@ -87,11 +70,11 @@ export class ConnectorCategoryService implements OnModuleInit {
   }
 
   async update(id: string, dto: UpdateConnectorCategoryDto): Promise<IConnectorCategoryResponse> {
-    if (!Types.ObjectId.isValid(id)) {
+    if (!isObjectId(id)) {
       throw new NotFoundException(ErrorCode.CONNECTOR_CATEGORY_NOT_FOUND);
     }
 
-    const current = await this.categoryModel.findById(id).exec();
+    const current = await this.categoryStore.findById(id);
     if (!current) {
       throw new NotFoundException(ErrorCode.CONNECTOR_CATEGORY_NOT_FOUND);
     }
@@ -111,30 +94,25 @@ export class ConnectorCategoryService implements OnModuleInit {
     }
 
     if (dto.name && dto.name !== current.name) {
-      const conflict = await this.categoryModel
-        .findOne({ name: dto.name, createdBy: current.createdBy, _id: { $ne: current._id } })
-        .lean()
-        .exec();
-      if (conflict) {
+      const conflict = await this.categoryStore.findByOwnerName(current.createdBy, dto.name);
+      if (conflict && conflict.id !== current.id) {
         throw new ConflictException(ErrorCode.CONNECTOR_CATEGORY_ALREADY_EXISTS);
       }
-      current.name = dto.name;
     }
 
-    if (dto.description !== undefined) {
-      current.description = dto.description;
+    const updated = await this.categoryStore.update(id, dto);
+    if (!updated) {
+      throw new NotFoundException(ErrorCode.CONNECTOR_CATEGORY_NOT_FOUND);
     }
-
-    await current.save();
-    return this.toResponse(current);
+    return this.toResponse(updated);
   }
 
   async delete(id: string): Promise<void> {
-    if (!Types.ObjectId.isValid(id)) {
+    if (!isObjectId(id)) {
       throw new NotFoundException(ErrorCode.CONNECTOR_CATEGORY_NOT_FOUND);
     }
 
-    const current = await this.categoryModel.findById(id).exec();
+    const current = await this.categoryStore.findById(id);
     if (!current) {
       throw new NotFoundException(ErrorCode.CONNECTOR_CATEGORY_NOT_FOUND);
     }
@@ -146,13 +124,13 @@ export class ConnectorCategoryService implements OnModuleInit {
       );
     }
 
-    await current.deleteOne();
+    await this.categoryStore.delete(id);
   }
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  private toResponse(doc: any): IConnectorCategoryResponse {
+  private toResponse(doc: ConnectorCategoryRow): IConnectorCategoryResponse {
     return {
-      id: doc._id?.toString() ?? doc.id,
+      id: doc.id,
       name: doc.name,
       description: doc.description ?? '',
       isSystem: doc.isSystem ?? false,

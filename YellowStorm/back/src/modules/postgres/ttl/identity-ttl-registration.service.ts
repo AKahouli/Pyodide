@@ -2,11 +2,12 @@ import { Injectable, OnModuleInit } from '@nestjs/common';
 import { PgTtlSweeper } from './pg-ttl-sweeper.service';
 
 /**
- * Registers the identity- and ops-phase TTL sweeps (plans 1A.6/1B.1.4/1B.2.4),
- * replacing the Mongo TTL indexes on sessions, oauth_states,
- * provider_link_tokens, audit_logs, notifications and health_history
- * (retention: audit history is swept by age — created_at older than 730 days —
- * via the sweeper's olderThan mode from step 0.4).
+ * Registers the identity-, ops- and integrations-phase TTL sweeps
+ * (plans 1A.6 / 1B.1.4 / 1B.2.4 / step 3.3), replacing the Mongo TTL indexes
+ * on sessions, oauth_states, provider_link_tokens, audit_logs, notifications,
+ * health_history and both OAuth state tables (retention: audit history is
+ * swept by age — created_at older than 730 days — via the sweeper's olderThan
+ * mode from step 0.4).
  */
 @Injectable()
 export class IdentityTtlRegistrationService implements OnModuleInit {
@@ -24,5 +25,7 @@ export class IdentityTtlRegistrationService implements OnModuleInit {
     });
     this.sweeper.register({ schema: 'ops', table: 'notifications', column: 'expires_at' });
     this.sweeper.register({ schema: 'ops', table: 'health_history', column: 'expire_at' });
+    this.sweeper.register({ schema: 'integrations', table: 'connected_app_oauth_states', column: 'expires_at' });
+    this.sweeper.register({ schema: 'integrations', table: 'admin_connector_oauth_states', column: 'expires_at' });
   }
 }

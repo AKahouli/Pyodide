@@ -1,17 +1,13 @@
-import { Injectable } from '@nestjs/common';
-import { InjectModel } from '@nestjs/mongoose';
+import { Inject, Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { Model, Types } from 'mongoose';
 import * as crypto from 'crypto';
 import {
-  ConnectedAppOAuthState,
-  ConnectedAppOAuthStateDocument,
-} from '../schemas/connected-app-oauth-state.schema';
-import {
-  UserAppConnection,
-  UserAppConnectionDocument,
-  ConnectionStatus,
-} from '../schemas/user-app-connection.schema';
+  CONNECTED_APP_OAUTH_STATE_STORE,
+  USER_APP_CONNECTION_STORE,
+  type ConnectedAppOauthStateStore,
+  type UserAppConnectionStore,
+} from '../persistence/connected-app.store';
+import { ConnectionStatus } from '../schemas/user-app-connection.schema';
 import { ConnectedAppDefinitionService } from './connected-app-definition.service';
 import { CryptoService } from '@common/services/crypto.service';
 import { LoggerService } from '@modules/logger';
@@ -26,10 +22,10 @@ export class ConnectedAppOAuthService {
   private readonly backendUrl: string;
 
   constructor(
-    @InjectModel(ConnectedAppOAuthState.name)
-    private readonly oauthStateModel: Model<ConnectedAppOAuthStateDocument>,
-    @InjectModel(UserAppConnection.name)
-    private readonly connectionModel: Model<UserAppConnectionDocument>,
+    @Inject(CONNECTED_APP_OAUTH_STATE_STORE)
+    private readonly oauthStateStore: ConnectedAppOauthStateStore,
+    @Inject(USER_APP_CONNECTION_STORE)
+    private readonly connectionStore: UserAppConnectionStore,
     private readonly definitionService: ConnectedAppDefinitionService,
     private readonly cryptoService: CryptoService,
     private readonly configService: ConfigService,
@@ -53,10 +49,10 @@ export class ConnectedAppOAuthService {
       codeChallenge = this.generateCodeChallenge(codeVerifier);
     }
 
-    await this.oauthStateModel.create({
+    await this.oauthStateStore.create({
       state,
       appKey: appConfig.appKey,
-      userId: new Types.ObjectId(userId),
+      userId,
       codeVerifier,
       expiresAt: new Date(Date.now() + OAUTH_STATE_TTL_MS),
     });
@@ -101,7 +97,8 @@ export class ConnectedAppOAuthService {
     code: string,
     state: string,
   ): Promise<{ success: boolean; appKey: string; error?: string }> {
-    const oauthState = await this.oauthStateModel.findOneAndDelete({ state });
+    // Atomic consume: expired states are deleted as invalid (plan 3.3).
+    const oauthState = await this.oauthStateStore.consume(state);
     if (!oauthState) {
       throw new BadRequestException(
         ErrorCode.CONNECTED_APP_OAUTH_STATE_INVALID,
@@ -112,12 +109,6 @@ export class ConnectedAppOAuthService {
       throw new BadRequestException(
         ErrorCode.CONNECTED_APP_OAUTH_STATE_INVALID,
         'State app key mismatch',
-      );
-    }
-    if (oauthState.expiresAt < new Date()) {
-      throw new BadRequestException(
-        ErrorCode.CONNECTED_APP_OAUTH_STATE_INVALID,
-        'OAuth state has expired',
       );
     }
 
@@ -132,7 +123,7 @@ export class ConnectedAppOAuthService {
       redirectUri,
       appConfig.clientId,
       appConfig.clientSecret,
-      oauthState.codeVerifier,
+      oauthState.codeVerifier ?? undefined,
     );
 
     const accessToken = tokenResponse.access_token;
@@ -153,21 +144,14 @@ export class ConnectedAppOAuthService {
       ? new Date(Date.now() + tokenResponse.expires_in * 1000)
       : undefined;
 
-    await this.connectionModel.findOneAndUpdate(
-      { userId: oauthState.userId, appKey },
-      {
-        $set: {
-          accessToken: encryptedAccessToken,
-          refreshToken: encryptedRefreshToken,
-          tokenExpiresAt,
-          scopes: appConfig.scopes,
-          status: ConnectionStatus.ACTIVE,
-          errorMessage: undefined,
-          lastRefreshedAt: new Date(),
-        },
-      },
-      { upsert: true, new: true },
-    );
+    await this.connectionStore.upsertOnCallback(oauthState.userId, appKey, {
+      accessToken: encryptedAccessToken,
+      refreshToken: encryptedRefreshToken ?? null,
+      tokenExpiresAt: tokenExpiresAt ?? null,
+      scopes: appConfig.scopes,
+      status: ConnectionStatus.ACTIVE,
+      errorMessage: null,
+    });
 
     this.logger.log('Connected app OAuth completed', {
       userId: oauthState.userId.toString(),
