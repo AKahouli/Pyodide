@@ -1,5 +1,6 @@
 import { Inject } from '@nestjs/common';
 import { and, arrayContains, asc, desc, eq, ilike, inArray, or, sql, type SQL } from 'drizzle-orm';
+import { escapeLike } from '@common/postgres/like';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import { DRIZZLE_DB } from '@modules/postgres/postgres.constants';
 import { newObjectId } from '@common/postgres';
@@ -136,7 +137,7 @@ export class PgToolStore implements ToolStore {
   async list(query: ToolListQuery): Promise<{ rows: ToolRow[]; total: number }> {
     const conditions: SQL[] = [];
     if (query.search) {
-      const pattern = `%${query.search}%`;
+      const pattern = `%${escapeLike(query.search)}%`;
       conditions.push(or(ilike(schema.catalogTools.name, pattern), ilike(schema.catalogTools.description, pattern))!);
     }
     if (query.agentType) conditions.push(arrayContains(schema.catalogTools.defaultAgentTypes, [query.agentType]));

@@ -86,8 +86,14 @@ export function makeSessionStoreFake(seed: SessionRecord[] = []): SessionStoreFa
     }),
     countActiveForUser: jest.fn(async (userId: string) =>
       records.filter((r) => r.userId === userId && r.isValid && r.expiresAt > new Date()).length),
-    findOldestActive: jest.fn(async (userId: string, limit: number) =>
-      records.filter((r) => r.userId === userId && r.isValid).slice(0, limit)),
+    invalidateOldestBeyond: jest.fn(async (userId: string, keep: number) => {
+      const valid = records
+        .filter((r) => r.userId === userId && r.isValid)
+        .sort((a, b) => (b.lastActivityAt?.getTime() ?? 0) - (a.lastActivityAt?.getTime() ?? 0));
+      const stale = valid.slice(keep);
+      for (const r of stale) r.isValid = false;
+      return stale.length;
+    }),
     findValidByIdWithUser: jest.fn(async (id: string) => {
       const session = records.find((r) => r.id === id);
       if (!session) return null;

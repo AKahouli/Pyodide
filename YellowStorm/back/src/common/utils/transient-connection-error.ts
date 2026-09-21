@@ -41,12 +41,24 @@ const TRANSIENT_SQLSTATES = new Set([
 
 const SQLSTATE_TOKEN = /\b[0-9A-Z]{5}\b/g;
 
+/** Walk err → cause → cause.cause: drizzle wraps the underlying pg error. */
+function* errorChain(error: Error): Generator<Error> {
+  let current: unknown = error;
+  for (let depth = 0; depth < 3 && current instanceof Error; depth++) {
+    yield current;
+    current = (current as { cause?: unknown }).cause;
+  }
+}
+
 export function isTransientConnectionError(error: unknown): boolean {
   if (!(error instanceof Error)) return false;
-  const rawCode = (error as NodeJS.ErrnoException).code;
-  const code = typeof rawCode === 'string' ? rawCode : undefined;
-  if (code && TRANSIENT_SQLSTATES.has(code)) return true;
-  const message = `${error.message} ${code ?? ''}`;
-  if (TRANSIENT_CONNECTION_ERROR_PATTERNS.some((pattern) => message.includes(pattern))) return true;
-  return (message.match(SQLSTATE_TOKEN) ?? []).some((token) => TRANSIENT_SQLSTATES.has(token));
+  for (const candidate of errorChain(error)) {
+    const rawCode = (candidate as NodeJS.ErrnoException).code;
+    const code = typeof rawCode === 'string' ? rawCode : undefined;
+    if (code && TRANSIENT_SQLSTATES.has(code)) return true;
+    const message = `${candidate.message} ${code ?? ''}`;
+    if (TRANSIENT_CONNECTION_ERROR_PATTERNS.some((pattern) => message.includes(pattern))) return true;
+    if ((message.match(SQLSTATE_TOKEN) ?? []).some((token) => TRANSIENT_SQLSTATES.has(token))) return true;
+  }
+  return false;
 }

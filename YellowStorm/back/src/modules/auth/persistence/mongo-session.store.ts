@@ -91,13 +91,18 @@ export class MongoSessionStore implements SessionStore {
       .exec();
   }
 
-  async findOldestActive(userId: string, limit: number): Promise<SessionRecord[]> {
+  async invalidateOldestBeyond(userId: string, keep: number): Promise<number> {
     const docs = await this.sessionModel
       .find({ userId: new Types.ObjectId(userId), isValid: true })
-      .sort({ lastActivityAt: 1 })
-      .limit(limit)
+      .sort({ lastActivityAt: -1 })
+      .skip(keep)
       .exec();
-    return docs.map((doc) => toRecord(doc as unknown as AnyDoc));
+    if (docs.length === 0) return 0;
+    await this.sessionModel.updateMany(
+      { _id: { $in: docs.map((d) => d._id) } },
+      { $set: { isValid: false, updatedAt: new Date() } },
+    ).exec();
+    return docs.length;
   }
 
   async rotateAtomic(params: {

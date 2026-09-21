@@ -1,10 +1,13 @@
 import { Inject } from '@nestjs/common';
-import { and, desc, eq, inArray, ne, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, inArray, ne, sql } from 'drizzle-orm';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import { DRIZZLE_DB } from '@modules/postgres/postgres.constants';
 import { isObjectId, newObjectId } from '@common/postgres';
+import { isUniqueViolation } from '@common/postgres/errors';
 import { resolveQueryable, withTransaction, type PgQueryable } from '@common/postgres/transaction';
 import * as schema from '@modules/postgres/schema';
+import { ConflictException } from '@modules/exceptions';
+import { ErrorCode } from '@modules/exceptions/constants/error-codes';
 import type { PopulatedGroupRecord, UserGroupStore } from './user-group.store';
 
 type GroupRow = typeof schema.identityUserGroups.$inferSelect;
@@ -32,7 +35,7 @@ export class PgUserGroupStore implements UserGroupStore {
       .from(schema.identityUserGroupMembers)
       .innerJoin(schema.identityUsers, eq(schema.identityUsers.id, schema.identityUserGroupMembers.userId))
       .where(inArray(schema.identityUserGroupMembers.groupId, groups.map((g) => g.id)))
-      .orderBy(desc(schema.identityUserGroupMembers.position));
+      .orderBy(asc(schema.identityUserGroupMembers.position));
 
     const byGroup = new Map<string, PopulatedGroupRecord['members']>();
     for (const row of memberRows) {
@@ -52,21 +55,29 @@ export class PgUserGroupStore implements UserGroupStore {
   }
 
   async create(init: { ownerId: string; name: string; description: string; memberIds: string[] }): Promise<PopulatedGroupRecord> {
-    return withTransaction(this.db, async (tx) => {
-      const id = newObjectId();
-      const rows: GroupRow[] = await tx
-        .insert(schema.identityUserGroups)
-        .values({ id, name: init.name, description: init.description, createdBy: init.ownerId })
-        .returning();
-      const validMembers = [...new Set(init.memberIds)].filter(isObjectId);
-      if (validMembers.length > 0) {
-        await tx
-          .insert(schema.identityUserGroupMembers)
-          .values(validMembers.map((userId, position) => ({ groupId: id, userId, position })))
-          .onConflictDoNothing();
+    try {
+      return await withTransaction(this.db, async (tx) => {
+        const id = newObjectId();
+        const rows: GroupRow[] = await tx
+          .insert(schema.identityUserGroups)
+          .values({ id, name: init.name, description: init.description, createdBy: init.ownerId })
+          .returning();
+        const validMembers = [...new Set(init.memberIds)].filter(isObjectId);
+        if (validMembers.length > 0) {
+          await tx
+            .insert(schema.identityUserGroupMembers)
+            .values(validMembers.map((userId, position) => ({ groupId: id, userId, position })))
+            .onConflictDoNothing();
+        }
+        return (await this.attachMembers(rows))[0];
+      });
+    } catch (error) {
+      if (isUniqueViolation(error, 'uq_user_groups_owner_name')) {
+        // Race with the service's pre-check: surface the same 409.
+        throw new ConflictException(ErrorCode.USER_GROUP_ALREADY_EXISTS);
       }
-      return (await this.attachMembers(rows))[0];
-    });
+      throw error;
+    }
   }
 
   async existsOwnedByName(ownerId: string, name: string, excludeId?: string): Promise<boolean> {
@@ -112,10 +123,17 @@ export class PgUserGroupStore implements UserGroupStore {
 
   async update(id: string, patch: { name?: string; description?: string }): Promise<void> {
     if (!isObjectId(id)) return;
-    await this.q
-      .update(schema.identityUserGroups)
-      .set({ ...patch, updatedAt: new Date() })
-      .where(eq(schema.identityUserGroups.id, id));
+    try {
+      await this.q
+        .update(schema.identityUserGroups)
+        .set({ ...patch, updatedAt: new Date() })
+        .where(eq(schema.identityUserGroups.id, id));
+    } catch (error) {
+      if (isUniqueViolation(error, 'uq_user_groups_owner_name')) {
+        throw new ConflictException(ErrorCode.USER_GROUP_ALREADY_EXISTS);
+      }
+      throw error;
+    }
   }
 
   async deleteById(id: string): Promise<void> {
@@ -127,17 +145,22 @@ export class PgUserGroupStore implements UserGroupStore {
     if (!isObjectId(id)) return;
     const valid = [...new Set(userIds)].filter(isObjectId);
     if (valid.length === 0) return;
-    // $addToSet parity with position appended after the existing members.
-    await this.q
-      .insert(schema.identityUserGroupMembers)
-      .values(
-        valid.map((userId) => ({
-          groupId: id,
-          userId,
-          position: sql`(SELECT COALESCE(MAX(position), -1) + 1 FROM identity.user_group_members WHERE group_id = ${id})`,
-        })),
+    // $addToSet parity, distinct positions (R-11): a per-row MAX subquery sees
+    // the pre-statement snapshot, so a whole batch would share one position.
+    const values = sql.join(
+      valid.map((userId, ord) => sql`(${userId}, ${ord}::int)`),
+      sql`, `,
+    );
+    await this.q.execute(sql`
+      WITH base AS (
+        SELECT COALESCE(MAX(position), -1) + 1 AS next
+        FROM identity.user_group_members WHERE group_id = ${id}
       )
-      .onConflictDoNothing();
+      INSERT INTO identity.user_group_members (group_id, user_id, position)
+      SELECT ${id}, u.id, (SELECT next FROM base) + u.ord
+      FROM (VALUES ${values}) AS u(id, ord)
+      ON CONFLICT DO NOTHING
+    `);
   }
 
   async removeMember(id: string, memberId: string): Promise<void> {

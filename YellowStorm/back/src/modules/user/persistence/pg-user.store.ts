@@ -3,6 +3,7 @@ import { and, asc, desc, eq, ilike, inArray, isNull, ne, or, sql } from 'drizzle
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import { DRIZZLE_DB } from '@modules/postgres/postgres.constants';
 import { isObjectId, newObjectId, normalizeObjectId } from '@common/postgres';
+import { isUniqueViolation } from '@common/postgres/errors';
 import { resolveQueryable, withTransaction } from '@common/postgres/transaction';
 import * as schema from '@modules/postgres/schema';
 import { escapeLike } from '@common/postgres/like';
@@ -16,6 +17,8 @@ import {
   UserSearchHit,
   UserStore,
 } from './user.store';
+import { ConflictException } from '@modules/exceptions';
+import { ErrorCode } from '@modules/exceptions/constants/error-codes';
 import { toSearchHit } from './user-record.mapper';
 
 type UserRow = typeof schema.identityUsers.$inferSelect;
@@ -182,35 +185,48 @@ export class PgUserStore implements UserStore {
 
   async create(init: NewUser): Promise<UserRecord> {
     const id = newObjectId();
-    const rows: UserRow[] = await this.q
-      .insert(schema.identityUsers)
-      .values({
-        id,
-        email: init.email.toLowerCase(),
-        passwordHash: init.passwordHash,
-        emailVerified: init.emailVerified ?? false,
-        emailVerificationToken: init.emailVerificationToken ?? null,
-        emailVerificationExpiry: init.emailVerificationExpiry ?? null,
-        firstName: init.firstName ?? null,
-        lastName: init.lastName ?? null,
-        company: init.company ?? null,
-        profileRole: init.profileRole ?? '',
-        description: init.description ?? '',
-        microsoftAccountId: init.microsoftAccountId ?? null,
-        profileComplete: init.profileComplete ?? false,
-        status: init.status ?? 'active',
-        registrationApproval: init.registrationApproval ?? null,
-      })
-      .returning();
-    if (init.roleIds?.length) {
-      await this.q
-        .insert(schema.identityUserRoles)
-        .values(init.roleIds.map((roleId, position) => ({ userId: id, roleId, position })))
-        .onConflictDoNothing();
+    try {
+      // User + role junction in one transaction (R-15): a partial insert must
+      // not survive a junction failure.
+      const record = await withTransaction(this.db, async (tx) => {
+        const rows: UserRow[] = await tx
+          .insert(schema.identityUsers)
+          .values({
+            id,
+            email: init.email.toLowerCase(),
+            passwordHash: init.passwordHash,
+            emailVerified: init.emailVerified ?? false,
+            emailVerificationToken: init.emailVerificationToken ?? null,
+            emailVerificationExpiry: init.emailVerificationExpiry ?? null,
+            firstName: init.firstName ?? null,
+            lastName: init.lastName ?? null,
+            company: init.company ?? null,
+            profileRole: init.profileRole ?? '',
+            description: init.description ?? '',
+            microsoftAccountId: init.microsoftAccountId ?? null,
+            profileComplete: init.profileComplete ?? false,
+            status: init.status ?? 'active',
+            registrationApproval: init.registrationApproval ?? null,
+          })
+          .returning();
+        if (init.roleIds?.length) {
+          await tx
+            .insert(schema.identityUserRoles)
+            .values(init.roleIds.map((roleId, position) => ({ userId: id, roleId, position })))
+            .onConflictDoNothing();
+        }
+        const record = PgUserStore.toRecord(rows[0]);
+        record.roleIds = init.roleIds ?? [];
+        return record;
+      });
+      return record;
+    } catch (error) {
+      if (isUniqueViolation(error, 'uq_users_email')) {
+        // Race with the service's pre-check: surface the same 409.
+        throw new ConflictException(ErrorCode.USER_ALREADY_EXISTS, 'Email already registered');
+      }
+      throw error;
     }
-    const record = PgUserStore.toRecord(rows[0]);
-    record.roleIds = init.roleIds ?? [];
-    return record;
   }
 
   async update(id: string, patch: UserPatch): Promise<UserRecord | null> {
@@ -300,10 +316,8 @@ export class PgUserStore implements UserStore {
     const offset = ((filter.page ?? 1) - 1) * limit;
 
     const rows = await this.q
-      .select({ user: schema.identityUsers, roleId: schema.identityUserRoles.roleId, roleName: schema.authzRoles.name })
+      .select()
       .from(schema.identityUsers)
-      .leftJoin(schema.identityUserRoles, eq(schema.identityUserRoles.userId, schema.identityUsers.id))
-      .leftJoin(schema.authzRoles, eq(schema.authzRoles.id, schema.identityUserRoles.roleId))
       .where(where)
       .orderBy(direction(sortColumn))
       .limit(limit)
@@ -314,22 +328,32 @@ export class PgUserStore implements UserStore {
       .from(schema.identityUsers)
       .where(where);
 
-    // The join fans users out per role; re-fold preserving order and role position.
-    const byId = new Map<string, UserRecordWithRoles>();
-    const order: string[] = [];
-    for (const row of rows) {
-      const record = byId.get(row.user.id)?.roles ? byId.get(row.user.id)! : null;
-      const entry =
-        record ??
-        (() => {
-          const withRoles: UserRecordWithRoles = { ...PgUserStore.toRecord(row.user), roles: [] };
-          byId.set(row.user.id, withRoles);
-          order.push(row.user.id);
-          return withRoles;
-        })();
-      if (row.roleId) entry.roles.push({ id: row.roleId, name: row.roleName ?? '' });
+    // Attach roles for the page only (R-10): joining before LIMIT fans users
+    // out per role and shrinks every page by the roles count.
+    const rolesByUser = new Map<string, Array<{ id: string; name: string }>>();
+    if (rows.length > 0) {
+      const roleRows = await this.q
+        .select({
+          userId: schema.identityUserRoles.userId,
+          roleId: schema.identityUserRoles.roleId,
+          roleName: schema.authzRoles.name,
+        })
+        .from(schema.identityUserRoles)
+        .innerJoin(schema.authzRoles, eq(schema.authzRoles.id, schema.identityUserRoles.roleId))
+        .where(inArray(schema.identityUserRoles.userId, rows.map((u) => u.id)))
+        .orderBy(asc(schema.identityUserRoles.position));
+      for (const row of roleRows) {
+        const roles = rolesByUser.get(row.userId) ?? [];
+        roles.push({ id: row.roleId, name: row.roleName ?? '' });
+        rolesByUser.set(row.userId, roles);
+      }
     }
-    return { users: order.map((id) => byId.get(id)!), total: totalRows[0]?.total ?? 0 };
+
+    const users: UserRecordWithRoles[] = rows.map((user) => ({
+      ...PgUserStore.toRecord(user),
+      roles: rolesByUser.get(user.id) ?? [],
+    }));
+    return { users, total: totalRows[0]?.total ?? 0 };
   }
 
   async countByStatus(): Promise<Record<UserRecord['status'], number>> {

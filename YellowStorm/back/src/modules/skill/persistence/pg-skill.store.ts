@@ -1,5 +1,6 @@
 import { Inject } from '@nestjs/common';
 import { and, asc, desc, eq, ilike, inArray, ne, or, sql, type SQL } from 'drizzle-orm';
+import { escapeLike } from '@common/postgres/like';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import { DRIZZLE_DB } from '@modules/postgres/postgres.constants';
 import { newObjectId } from '@common/postgres';
@@ -183,7 +184,7 @@ export class PgSkillStore implements SkillStore {
   async list(query: SkillListQuery): Promise<{ rows: SkillRow[]; total: number }> {
     const conditions: SQL[] = [];
     if (query.search) {
-      const pattern = `%${query.search}%`;
+      const pattern = `%${escapeLike(query.search)}%`;
       conditions.push(or(ilike(schema.catalogSkills.name, pattern), ilike(schema.catalogSkills.description, pattern))!);
     }
     if (query.isActive !== undefined) conditions.push(eq(schema.catalogSkills.isActive, query.isActive));

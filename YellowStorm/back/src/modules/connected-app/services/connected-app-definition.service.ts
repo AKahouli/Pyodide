@@ -149,7 +149,8 @@ export class ConnectedAppDefinitionService {
       definition.appKey = dto.appKey.toLowerCase();
     }
 
-    // '****' keeps the stored ciphertext; '' clears tenantId (Mongo $unset parity).
+    // '****' keeps the stored ciphertext (echoed back by the admin UI);
+    // '' clears tenantId (Mongo $unset parity).
     const patch: Partial<ConnectedAppDefinitionRow> = {
       ...(dto.displayName !== undefined ? { displayName: dto.displayName } : {}),
       ...(dto.description !== undefined ? { description: dto.description } : {}),
@@ -165,8 +166,8 @@ export class ConnectedAppDefinitionService {
       ...(dto.clientId && dto.clientId !== '****' ? { clientId: this.cryptoService.encrypt(dto.clientId) } : {}),
       ...(dto.clientSecret && dto.clientSecret !== '****' ? { clientSecret: this.cryptoService.encrypt(dto.clientSecret) } : {}),
     };
-    if (dto.tenantId !== undefined) {
-      patch.tenantId = dto.tenantId && dto.tenantId !== '****' ? this.cryptoService.encrypt(dto.tenantId) : null;
+    if (dto.tenantId !== undefined && dto.tenantId !== '****') {
+      patch.tenantId = dto.tenantId ? this.cryptoService.encrypt(dto.tenantId) : null;
     }
 
     const updated = await this.definitionStore.update(id, patch);
