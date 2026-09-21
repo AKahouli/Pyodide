@@ -25,15 +25,11 @@ export function WorkyMobileStream({
   approvalFor,
   onApprovalClose,
   model,
-  onWhatsAppClick,
-  whatsappConnected,
 }: {
   streamId: string;
   approvalFor: WorkyPendingClarification | null;
   onApprovalClose: () => void;
   model: WorkyExecutiveViewModel;
-  onWhatsAppClick?: () => void;
-  whatsappConnected?: boolean;
 }): JSX.Element {
   const navigate = useNavigate();
   const activeSheet = useWorkyUiStore((s) => s.activeSheet);
@@ -76,8 +72,6 @@ export function WorkyMobileStream({
         open={activeSheet === 'chat'}
         onOpenChange={(o) => setActiveSheet(o ? 'chat' : null)}
         sessionStatus={model.session?.status}
-        onWhatsAppClick={onWhatsAppClick}
-        whatsappConnected={whatsappConnected}
       />
       <ApprovalSheet
         streamId={streamId}

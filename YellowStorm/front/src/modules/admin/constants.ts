@@ -2,7 +2,7 @@
  * Admin Module Constants
  */
 
-import { Users, Shield, FileText, CreditCard, BarChart3, Settings, ScrollText, Flag, Cpu, Wrench, Puzzle, Bot, KeyRound, Plug, Cable, Palette, Sparkles, FolderCog, Wand2, MessageCircle, MessageSquare, Gauge } from 'lucide-react';
+import { Users, Shield, FileText, CreditCard, BarChart3, Settings, ScrollText, Flag, Cpu, Wrench, Puzzle, Bot, KeyRound, Plug, Cable, Palette, Sparkles, FolderCog, Wand2, MessageSquare, Gauge } from 'lucide-react';
 import type { AdminMenuItem } from './types';
 import type { FeatureVisibility } from './types';
 import type { ModuleTranslationKey } from '@/modules/localization';
@@ -312,16 +312,6 @@ export const ADMIN_MENU_ITEMS: AdminMenuItem[] = [
     permissions: ['conversations.settings.manage', 'conversations.*', '*'],
     description: 'Manage conversation behavior',
     descriptionKey: 'menu.conversationSettings.description',
-  },
-  {
-    id: 'worky-whatsapp-system',
-    label: 'Worky WhatsApp System',
-    labelKey: 'menu.workyWhatsAppSystem.label',
-    path: '/admin/worky-whatsapp-system',
-    icon: MessageCircle,
-    permissions: ['worky.admin.governance', 'worky.admin.*', '*'],
-    description: 'Pair the shared Worky WhatsApp system bot',
-    descriptionKey: 'menu.workyWhatsAppSystem.description',
   },
   {
     id: 'tools',

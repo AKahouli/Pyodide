@@ -39,7 +39,6 @@ import {
 import { EvaluationTab } from "./EvaluationTab";
 import { AgentTelegramIntegrationSection } from "./AgentTelegramIntegrationSection";
 import { AgentDeploymentSection } from "./AgentDeploymentSection";
-import { AgentWhatsAppIntegrationSection } from "./AgentWhatsAppIntegrationSection";
 import { AgentConnectorFields } from './AgentConnectorFields';
 import { AgentGuardrailsTab } from './AgentGuardrailsTab';
 import { AgentReasoningEffortField } from './AgentReasoningEffortField';
@@ -661,11 +660,6 @@ export function CreateEditAgentDialog({
                       readOnly={readOnly}
                     />
                     <AgentTelegramIntegrationSection agentId={agent?.id ?? null} readOnly={readOnly} />
-                    <AgentWhatsAppIntegrationSection
-                      agentId={agent?.id ?? null}
-                      agentName={watchedName || agent?.name}
-                      readOnly={readOnly}
-                    />
                   </div>
                 </TabsContent>
 

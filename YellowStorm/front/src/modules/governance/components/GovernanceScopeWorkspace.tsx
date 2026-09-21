@@ -65,7 +65,7 @@ const DEFAULT_PROMPT_INJECTION_GUARDRAILS: PromptInjectionGuardrailsConfig = {
   blockMessage: 'I cannot follow this instruction.',
 };
 
-const channelKeys = ['widget', 'whatsapp', 'telegram', 'api'] as const;
+const channelKeys = ['widget', 'telegram', 'api'] as const;
 
 const scopeTypeOptions: GovernanceScope['type'][] = ['organization', 'municipality', 'department', 'business_unit', 'country', 'team', 'custom'];
 const SCOPE_DESCRIPTION_MAX_LENGTH = 2000;
@@ -120,7 +120,6 @@ export function buildScopeSettingsPayload(scope: GovernanceScope, draft: ScopeSe
 
 const channelLabelKeys = {
   widget: 'scopeShell.channels.widget',
-  whatsapp: 'scopeShell.channels.whatsapp',
   telegram: 'scopeShell.channels.telegram',
   api: 'scopeShell.channels.api',
 } as const;

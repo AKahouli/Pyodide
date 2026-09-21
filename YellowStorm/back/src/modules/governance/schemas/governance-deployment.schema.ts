@@ -6,7 +6,6 @@ export type GovernanceDeploymentStatus = 'draft' | 'dry_run' | 'ready_for_review
 
 export interface GovernanceChannels {
   widget?: { enabled: boolean; tokenId?: Types.ObjectId; allowedOrigins?: string[]; status?: string };
-  whatsapp?: { enabled: boolean; integrationId?: Types.ObjectId; phoneNumber?: string; status?: string };
   telegram?: { enabled: boolean; integrationId?: Types.ObjectId; botUsername?: string; status?: string };
 }
 

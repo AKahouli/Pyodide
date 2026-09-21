@@ -7,7 +7,6 @@ import { PlanDeltaToast } from './PlanDeltaToast';
 import { ApprovalModal } from './ApprovalModal';
 import { TaskDetailDrawer } from './TaskDetailDrawer';
 import { FileViewerSidebar } from '@/modules/file-viewer';
-import { WorkyWhatsAppConnectModal } from './WorkyWhatsAppConnectModal';
 import { workyKeys } from '../query/queryKeys';
 import { subscribeToStreamEvents } from '../stream/sse';
 import { useWorkyStore } from '../store';
@@ -17,9 +16,7 @@ import {
   useMessages,
   useStream,
   useUpdateStream,
-  useWorkyWhatsAppIntegration,
 } from '../query/hooks';
-import { isWhatsAppConnected } from '@/lib/whatsapp-integration-utils';
 import { useIsMobile } from '@/hooks/use-mobile';
 import { WorkyMobileStream } from './mobile/WorkyMobileStream';
 import { WorkyVoiceDock } from './desktop/WorkyVoiceDock';
@@ -71,15 +68,12 @@ function WorkyStreamBody({ streamId }: { streamId: string }): JSX.Element {
   const updateStream = useUpdateStream();
   const [selectedTask, setSelectedTask] = useState<WorkyTask | null>(null);
   const [approvalFor, setApprovalFor] = useState<WorkyPendingClarification | null>(null);
-  const [whatsappModalOpen, setWhatsappModalOpen] = useState(false);
-  const whatsappQuery = useWorkyWhatsAppIntegration(streamId);
   const isMobile = useIsMobile();
   const pushActivity = useWorkyUiStore((s) => s.pushActivity);
   const clearActivity = useWorkyUiStore((s) => s.clearActivity);
   const activitySeq = useRef(0);
 
   useEffect(() => {
-    setWhatsappModalOpen(false);
     setStreaming(false);
   }, [streamId, setStreaming]);
 
@@ -320,8 +314,6 @@ function WorkyStreamBody({ streamId }: { streamId: string }): JSX.Element {
         approvalFor={approvalFor}
         onApprovalClose={() => setApprovalFor(null)}
         model={executiveModel}
-        onWhatsAppClick={() => setWhatsappModalOpen(true)}
-        whatsappConnected={isWhatsAppConnected(whatsappQuery.data?.status)}
       />
     );
   }
@@ -347,8 +339,6 @@ function WorkyStreamBody({ streamId }: { streamId: string }): JSX.Element {
       ) : null}
       <WorkyActivityRail
         streamId={streamId}
-        onWhatsAppClick={() => setWhatsappModalOpen(true)}
-        whatsappConnected={isWhatsAppConnected(whatsappQuery.data?.status)}
         model={executiveModel}
       />
       {/* Sidebar-mode file viewer host. Floating mode is mounted globally in
@@ -360,8 +350,6 @@ function WorkyStreamBody({ streamId }: { streamId: string }): JSX.Element {
         streamId={streamId}
         open={orchestratorOpen}
         onOpenChange={setOrchestratorOpen}
-        onWhatsAppClick={() => setWhatsappModalOpen(true)}
-        whatsappConnected={isWhatsAppConnected(whatsappQuery.data?.status)}
         sessionStatus={executiveModel.session?.status}
       />
       <PlanDeltaToast />
@@ -371,13 +359,6 @@ function WorkyStreamBody({ streamId }: { streamId: string }): JSX.Element {
           streamId={streamId}
           interaction={approvalFor}
           onClose={() => setApprovalFor(null)}
-        />
-      ) : null}
-      {whatsappModalOpen ? (
-        <WorkyWhatsAppConnectModal
-          open
-          streamId={streamId}
-          onClose={() => setWhatsappModalOpen(false)}
         />
       ) : null}
       <WorkyVoiceDock

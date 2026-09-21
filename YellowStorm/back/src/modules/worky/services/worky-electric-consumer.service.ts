@@ -33,7 +33,6 @@ import {
   mapPlanStepComponent,
   mapPlanStepArtifact,
 } from '../electric/worky-electric.mapper';
-import { WorkyWhatsAppDeliveryService } from './worky-whatsapp-delivery.service';
 
 /**
  * Nest-side `ShapeStream` consumer that mirrors the manager's Postgres rows
@@ -70,7 +69,6 @@ export class WorkyElectricConsumerService implements OnModuleInit, OnModuleDestr
     @InjectModel(WorkyMessageComponent.name) private readonly messageComponentModel: Model<WorkyMessageComponentDocument>,
     @InjectModel(WorkyPlanStepComponent.name) private readonly planStepComponentModel: Model<WorkyPlanStepComponentDocument>,
     @InjectModel(WorkyPlanStepArtifact.name) private readonly planStepArtifactModel: Model<WorkyPlanStepArtifactDocument>,
-    private readonly whatsappDelivery: WorkyWhatsAppDeliveryService,
   ) {
     this.logger.setContext(WorkyElectricConsumerService.name);
   }
@@ -266,15 +264,6 @@ export class WorkyElectricConsumerService implements OnModuleInit, OnModuleDestr
       if (adopted) return adopted;
     }
     const update: Record<string, unknown> = { $set };
-    if (set.role === 'manager') {
-      update.$setOnInsert = {
-        whatsappDelivery: {
-          status: 'pending',
-          attempts: 0,
-          nextAttemptAt: new Date(),
-        },
-      };
-    }
     return this.messageModel
       .findOneAndUpdate(
         { streamId: streamOid, externalId: row.id },
@@ -320,14 +309,6 @@ export class WorkyElectricConsumerService implements OnModuleInit, OnModuleDestr
           ...event,
           payload: { ...event.payload, id: String(doc?._id ?? row.id) },
         });
-        if (set.role === 'manager' && doc?._id) {
-          void this.whatsappDelivery.attempt(doc._id as Types.ObjectId).catch((error) => {
-            this.logger.warn('[worky-electric] immediate WhatsApp delivery attempt failed', {
-              messageId: doc._id.toString(),
-              error: error instanceof Error ? error.message : String(error),
-            });
-          });
-        }
         if (this.debug) {
           this.logger.debug('[worky-electric] applied', {
             shape: 'messages',
