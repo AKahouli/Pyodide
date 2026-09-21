@@ -1,0 +1,10 @@
+{
+  "6a1fedf1c28850c632d6f5d5": "legacy corrupt widget token_hash (72 chars > 64) — P10",
+  "6a1feeafc28850c632d6f730": "legacy corrupt widget token_hash (72 chars > 64) — P10",
+  "6a1fef0fc28850c632d6f854": "legacy corrupt widget token_hash (72 chars > 64) — P10",
+  "6a1ff0a1c28850c632d6faf6": "legacy corrupt widget token_hash (72 chars > 64) — P10",
+  "6a1ff350d98833a496c3b625": "legacy corrupt widget token_hash (72 chars > 64) — P10",
+  "6a1ff3a4d98833a496c3b696": "legacy corrupt widget token_hash (72 chars > 64) — P10",
+  "6a82f48fff32bc6311c9c799": "provider link for a user deleted from Mongo (owner 6a82f48eff32bc6311c9c78d absent on both sides) — reject is correct",
+  "6a1ff1e4c28850c632d6fd5a": "legacy corrupt widget token_hash (72 chars > 64) — P10"
+}
