@@ -106,7 +106,19 @@ function WorkyStreamBody({ streamId }: { streamId: string }): JSX.Element {
             planDeltaRef: null,
             createdAt: new Date().toISOString(),
           };
-          if (m.id) appendMessage(m);
+          if (m.id) {
+            appendMessage(m);
+            // Also land it in the React Query cache. The messages effect
+            // (setMessages) replaces the store list wholesale from this cache on
+            // every refetch/setQueryData — e.g. the next useSendMessage.onSuccess.
+            // Without this the SSE-only message lives only in the store and gets
+            // wiped on the next send, even though it's already durable in Mongo.
+            qc.setQueryData<WorkyMessage[]>(workyKeys.messages(streamId), (existing) => {
+              if (!existing) return existing;
+              if (existing.some((x) => x.id === m.id)) return existing;
+              return [...existing, m];
+            });
+          }
           if (m.role === 'manager') resetAssistantText();
           break;
         }
@@ -273,9 +285,11 @@ function WorkyStreamBody({ streamId }: { streamId: string }): JSX.Element {
     pushActivity,
   ]);
 
-  // Reset the in-session activity feed when switching streams.
+  // Reset per-stream UI when switching streams: the activity feed and the task
+  // detail drawer (its selectedTask is a stale task from the previous stream).
   useEffect(() => {
     clearActivity();
+    setSelectedTask(null);
   }, [streamId, clearActivity]);
 
   useEffect(() => {
