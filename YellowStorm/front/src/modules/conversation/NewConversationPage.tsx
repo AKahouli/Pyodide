@@ -27,7 +27,6 @@ import { createGovernedConversation } from './api';
 import type { Conversation } from './types';
 import { ConversationHomePanels } from './components/ConversationHomePanels';
 import { ConversationScopeHeader } from './components/ConversationScopeHeader';
-import { HomePromptSuggestions } from './components/HomePromptSuggestions';
 import { useHomeMotion } from './hooks/useHomeMotion';
 import './conversation-home.css';
 import './conversation-home-motion.css';
@@ -296,11 +295,11 @@ export function NewConversationPage() {
               showModelSelector={!presentationScope}
               governedMode={Boolean(presentationScope)}
               enableTeamMentions={!presentationScope}
+              autoFocus
               extraTools={presentationScope ? <ReliabilityCheckToggle /> : <><WebSearchConnectorToggle /><ReliabilityCheckToggle /></>}
-              belowTextarea={<>
-                <HomePromptSuggestions scopeName={presentationScope?.name} disabled={inputDisabled || isLimitExceeded || isUploading || isSending} />
+              belowTextarea={
                 <ComposerSuggestionChips fetchDisabled={inputDisabled || isLimitExceeded || isUploading || isSending} />
-              </>}
+              }
             />
             </div>
             {!presentationScope && <SelectedConnectorRepo />}

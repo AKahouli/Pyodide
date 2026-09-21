@@ -35,6 +35,7 @@ vi.mock('@/components/ai-elements/input', () => ({
     showWorkspaceSelect,
     governedMode,
     onFilesAdded,
+    autoFocus,
   }: {
     onSubmit: (
       message: { text: string },
@@ -56,11 +57,13 @@ vi.mock('@/components/ai-elements/input', () => ({
     showWorkspaceSelect?: boolean;
     governedMode?: boolean;
     onFilesAdded?: (files: File[], localIds: string[]) => void;
+    autoFocus?: boolean;
   }) => (
     <>
       <span>{preserveWorkspaceSelectionOnSubmit ? 'workspace-selection-preserved' : 'workspace-selection-reset'}</span>
       <span>{showWorkspaceSelect ? 'workspace-selector-visible' : 'workspace-selector-hidden'}</span>
       <span>{governedMode ? 'governed-composer' : 'standard-composer'}</span>
+      <span>{autoFocus ? 'composer-autofocus' : 'composer-no-autofocus'}</span>
       {extraTools}
       <button
         type='button'
@@ -183,7 +186,20 @@ vi.mock('@/modules/auth/useAuth', () => ({
   useAuth: () => ({ user: { id: 'user-1', email: 'amine@example.com', profile: { firstName: 'Amine' } } }),
 }));
 
-vi.mock('./api', () => ({ createGovernedConversation: createGovernedConversationMock }));
+vi.mock('./api', () => ({
+  createGovernedConversation: createGovernedConversationMock,
+  fetchConversationSettings: vi.fn().mockResolvedValue({
+    composerSuggestions: {
+      enabled: false,
+      agentId: null,
+      debounceMs: 400,
+      minimumDraftLength: 3,
+      requestsPerMinute: 60,
+      maxOutputTokens: 256,
+    },
+    attachmentIntelligence: { enabled: true, maxIndexedTabularRows: 500 },
+  }),
+}));
 
 vi.mock('./components/ConversationHomePanels', () => ({
   ConversationHomePanels: () => <div>home-panels</div>,
@@ -264,6 +280,7 @@ describe('NewConversationPage', () => {
       expect(screen.queryByText('newConversation.mode.chat')).not.toBeInTheDocument();
       expect(screen.queryByText('newConversation.mode.agent')).not.toBeInTheDocument();
     });
+    expect(screen.getByText('composer-autofocus')).toBeInTheDocument();
   });
 
   it('forwards selected connector repo on first legacy message', async () => {

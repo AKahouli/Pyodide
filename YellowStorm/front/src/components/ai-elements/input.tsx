@@ -90,9 +90,11 @@ interface InputProps {
   extraTools?: ReactNode;
   /** Fires on each textarea input event with the current value. */
   onTextChange?: (text: string) => void;
+  /** Focuses the composer on mount. */
+  autoFocus?: boolean;
 }
 
-const Input = memo(function Input({ toolLabels, onSubmit: externalSubmit, draftKey, initialInput, initialMention, onStop, status: externalStatus, disabled, submitDisabled, requireContent = false, placeholder, onFilesAdded, onFileRemoved, uploadingFiles, accept, maxFiles, attachmentsDisabled, members, autoMention, showWorkspaceSelect = true, preserveWorkspaceSelectionOnSubmit = false, showModelSelector = false, showReasoningEffort = true, governedMode = false, mentionAgents, enableTeamMentions = true, workspaceOptions, onWorkspaceSelectionChange, belowTextarea, extraTools, onTextChange }: InputProps = {}) {
+const Input = memo(function Input({ toolLabels, onSubmit: externalSubmit, draftKey, initialInput, initialMention, onStop, status: externalStatus, disabled, submitDisabled, requireContent = false, placeholder, onFilesAdded, onFileRemoved, uploadingFiles, accept, maxFiles, attachmentsDisabled, members, autoMention, showWorkspaceSelect = true, preserveWorkspaceSelectionOnSubmit = false, showModelSelector = false, showReasoningEffort = true, governedMode = false, mentionAgents, enableTeamMentions = true, workspaceOptions, onWorkspaceSelectionChange, belowTextarea, extraTools, onTextChange, autoFocus = false }: InputProps = {}) {
   const models = useModels();
   const chefs = useChefs();
   const defaultModel = useDefaultModel();
@@ -530,8 +532,8 @@ const Input = memo(function Input({ toolLabels, onSubmit: externalSubmit, draftK
           </PromptInputAttachments>
           <PromptInputBody>
             {governedMode
-              ? <PromptInputTextarea ref={textareaRef} disabled={disabled} placeholder={placeholder} onInput={handleTextareaInput} />
-              : <InputContextMenu onMentionAgent={handleContextMentionAgent} onCreateAgent={() => setShowCreateAgentDialog(true)}><PromptInputTextarea ref={textareaRef} disabled={disabled} placeholder={placeholder} onInput={handleTextareaInput} /></InputContextMenu>}
+              ? <PromptInputTextarea ref={textareaRef} autoFocus={autoFocus} disabled={disabled} placeholder={placeholder} onInput={handleTextareaInput} />
+              : <InputContextMenu onMentionAgent={handleContextMentionAgent} onCreateAgent={() => setShowCreateAgentDialog(true)}><PromptInputTextarea ref={textareaRef} autoFocus={autoFocus} disabled={disabled} placeholder={placeholder} onInput={handleTextareaInput} /></InputContextMenu>}
           </PromptInputBody>
           {belowTextarea}
           <PromptInputFooter className='flex-wrap'>
