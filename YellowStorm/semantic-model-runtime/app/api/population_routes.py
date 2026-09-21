@@ -75,7 +75,8 @@ async def mirror_specification(command: MirrorSpecificationCommand,
     if actual != command.spec_hash:
         raise HTTPException(status_code=422, detail="spec_hash_mismatch")
     existing = await store.get_specification(pool, command.home_workspace_id,
-                                             command.model_id, command.model_version_id)
+                                             command.model_id, command.model_version_id,
+                                             command.spec_hash)
     if existing is not None:
         if existing["spec_hash"] != command.spec_hash:
             raise HTTPException(status_code=409, detail="specification_conflict")

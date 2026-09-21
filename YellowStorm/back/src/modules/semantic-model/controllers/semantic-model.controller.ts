@@ -28,6 +28,7 @@ import {
   SaveSourceResolutionPolicyDto,
   ListReviewItemsQueryDto,
   ResolveReviewItemDto,
+  RequestPopulationRefreshDto,
 } from '../dto';
 import { ShareSemanticModelDto, UpdateSemanticModelShareDto } from '../dto/semantic-model-share.dto';
 import { SemanticModelShareService } from '../services/semantic-model-share.service';
@@ -44,6 +45,7 @@ import { SemanticModelMappingProposalService } from '../services/semantic-model-
 import { SemanticModelBuildOrchestratorService } from '../services/semantic-model-build-orchestrator.service';
 import { SemanticCrossSourceService } from '../services/semantic-cross-source.service';
 import { SemanticBusinessTrustService } from '../services/semantic-business-trust.service';
+import { SemanticPopulationRefreshService } from '../services/semantic-population-refresh.service';
 
 @ApiTags('Semantic Models')
 @ApiBearerAuth()
@@ -65,6 +67,7 @@ export class SemanticModelController {
     private readonly sourceMappings: SemanticSourceMappingService,
     private readonly crossSource: SemanticCrossSourceService,
     private readonly businessTrust: SemanticBusinessTrustService,
+    private readonly populationRefresh: SemanticPopulationRefreshService,
   ) {}
 
   @Get()
@@ -349,6 +352,14 @@ export class SemanticModelController {
   @RequirePermissions([Permissions.SEMANTIC_MODELS_UPDATE,Permissions.SEMANTIC_MODELS_ALL],'any')
   deleteSourceMapping(@CurrentUser() user: UserDocument,@Param('modelId') modelId: string,@Param('mappingId') mappingId: string,@Body() dto: ExpectedModelRevisionDto) {
     return this.sourceMappings.delete(user._id.toString(),modelId,mappingId,dto.expectedRevision);
+  }
+
+  @Post(':modelId/population/refresh')
+  @ApiOperation({ summary: 'Prepare or refresh population for the whole model or one mapping' })
+  @RateLimit({ limit: 10, windowMs: 60_000, keyPrefix: 'semantic-model:population-refresh' })
+  @RequirePermissions([Permissions.SEMANTIC_MODELS_UPDATE,Permissions.SEMANTIC_MODELS_ALL],'any')
+  requestPopulationRefresh(@CurrentUser() user: UserDocument,@Param('modelId') modelId: string,@Body() dto: RequestPopulationRefreshDto) {
+    return this.populationRefresh.requestRefresh(user._id.toString(),modelId,dto);
   }
 
   @Get(':modelId/relation-resolution-rules')

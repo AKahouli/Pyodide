@@ -21,7 +21,7 @@ import { DocumentExtractionConceptResolver } from './document-extraction-concept
 import { SpreadsheetConceptResolver } from './spreadsheet-concept.resolver';
 import type { AttributeDefinition } from '../domain/semantic-model.types';
 
-const STRUCTURED_MIME_PREFIXES = [
+export const STRUCTURED_MIME_PREFIXES = [
   'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
   'application/vnd.ms-excel',
   'text/csv',

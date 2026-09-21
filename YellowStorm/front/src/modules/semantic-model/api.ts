@@ -1,7 +1,7 @@
 import { apiClient } from '@/lib/api/client';
 import { API_ENDPOINTS } from '@/lib/api/config';
 import type { ApiResponse } from '@/lib/api/client';
-import type { AgeGraphEdge, AgeGraphNode, AgeGraphOperation, ConceptSourceMapping, KnowledgeBinding, MappingHealthResponse, MappingProposalJob, Paginated, RelationMatchStrategy, RelationResolutionPreview, RelationResolutionRule, SemanticBuildApplyMode, SemanticBuildJob, SemanticBuildStatus, SemanticCorpusManifest, SemanticDataPreview, SemanticEvidenceSearchResponse, SemanticGraph, SemanticGraphOperation, SemanticModel, SemanticModelMappingProposalResponse, SemanticModelManualInstances, SemanticModelMember,
+import type { AgeGraphEdge, AgeGraphNode, AgeGraphOperation, ConceptSourceMapping, KnowledgeBinding, MappingHealthResponse, MappingProposalJob, Paginated, PopulationRefreshResponse, RelationMatchStrategy, RelationResolutionPreview, RelationResolutionRule, SemanticBuildApplyMode, SemanticBuildJob, SemanticBuildStatus, SemanticCorpusManifest, SemanticDataPreview, SemanticEvidenceSearchResponse, SemanticGraph, SemanticGraphOperation, SemanticModel, SemanticModelMappingProposalResponse, SemanticModelManualInstances, SemanticModelMember,
 SemanticModelShareResult, SemanticModelShareRole, SemanticReadiness, SemanticReviewItem, SemanticVersion,
 SheetProfile, SourceMappingDraft, SourceMappingPreviewDraft, SourceMappingPreviewResponse, SourceResolutionPolicy,
 StructuredSourceAsset, ValidationIssue } from './types';
@@ -220,6 +220,9 @@ export const semanticModelApi = {
   },
   async mappingHealth(id: string): Promise<MappingHealthResponse> {
     return unwrap(await apiClient.post<ApiResponse<MappingHealthResponse>>(API_ENDPOINTS.semanticModels.mappingHealth(id), {}, { timeout: 0 }));
+  },
+  async requestPopulationRefresh(id: string, body: { purpose: 'build' | 'refresh'; scope: { kind: 'model' } | { kind: 'mapping'; mappingId: string } }): Promise<PopulationRefreshResponse> {
+    return unwrap(await apiClient.post<ApiResponse<PopulationRefreshResponse>>(API_ENDPOINTS.semanticModels.populationRefresh(id), body, { timeout: 0 }));
   },
   async readiness(id: string): Promise<SemanticReadiness> {
     return unwrap(await apiClient.get<ApiResponse<SemanticReadiness>>(API_ENDPOINTS.semanticModels.readiness(id)));

@@ -30,14 +30,13 @@ def revision_id_for(model_version_id: str, spec_hash: str, dataset_fingerprints:
 async def mirror_specification(pool: Any, *, home_workspace_id: str, model_id: str,
                                model_version_id: str, spec_hash: str,
                                specification: dict[str, Any]) -> str:
-    """Insert-only mirror: the same version arriving with different content is
-    a conflict, never a silent rewrite (revisions pin their own spec_hash)."""
+    """Insert an immutable snapshot; edited drafts receive a new hash-keyed row."""
     row = await pool.fetchrow(
         """
         INSERT INTO semantic_runtime.specifications
           (home_workspace_id, model_id, model_version_id, spec_hash, specification)
         VALUES ($1, $2, $3, $4, $5::jsonb)
-        ON CONFLICT (home_workspace_id, model_id, model_version_id) DO NOTHING
+        ON CONFLICT (home_workspace_id, model_id, model_version_id, spec_hash) DO NOTHING
         RETURNING id::text
         """,
         home_workspace_id, model_id, model_version_id, spec_hash, _json(specification),
@@ -46,10 +45,11 @@ async def mirror_specification(pool: Any, *, home_workspace_id: str, model_id: s
         return row["id"]
     existing = await pool.fetchrow(
         "SELECT id::text, spec_hash FROM semantic_runtime.specifications "
-        "WHERE home_workspace_id = $1 AND model_id = $2 AND model_version_id = $3",
-        home_workspace_id, model_id, model_version_id,
+        "WHERE home_workspace_id = $1 AND model_id = $2 AND model_version_id = $3 "
+        "AND spec_hash = $4",
+        home_workspace_id, model_id, model_version_id, spec_hash,
     )
-    if existing is None or existing["spec_hash"] != spec_hash:
+    if existing is None:
         raise ValueError("specification_conflict")
     return existing["id"]
 
@@ -215,11 +215,12 @@ async def resolve_review_item(pool: Any, *, review_id: str, model_id: str,
 
 
 async def get_specification(pool: Any, home_workspace_id: str, model_id: str,
-                            model_version_id: str) -> dict[str, Any] | None:
+                            model_version_id: str, spec_hash: str) -> dict[str, Any] | None:
     row = await pool.fetchrow(
         "SELECT id::text, spec_hash, specification FROM semantic_runtime.specifications "
-        "WHERE home_workspace_id = $1 AND model_id = $2 AND model_version_id = $3",
-        home_workspace_id, model_id, model_version_id,
+        "WHERE home_workspace_id = $1 AND model_id = $2 AND model_version_id = $3 "
+        "AND spec_hash = $4",
+        home_workspace_id, model_id, model_version_id, spec_hash,
     )
     return dict(row) if row else None
 

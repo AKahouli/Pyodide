@@ -394,6 +394,14 @@ export interface MappingHealthResponse {
   summary: Record<MappingHealthState, number>;
 }
 
+export interface PopulationRefreshResponse {
+  jobId: string;
+  status: string;
+  progressUrl: string;
+  reused: boolean;
+  skipped: Array<{ mappingId: string; reason: string }>;
+}
+
 export interface SemanticReadiness {
   status: 'not_configured' | 'needs_review' | 'ready';
   score: number;

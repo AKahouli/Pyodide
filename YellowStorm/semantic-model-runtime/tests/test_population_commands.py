@@ -165,7 +165,7 @@ def test_activation_swaps_binding_only_on_expected_tuple(client: TestClient):
                        headers=AUTH, json=body).status_code == 409
 
 
-def _mirror_body(spec_hash: str | None = None) -> dict:
+def _mirror_body(spec_hash: str | None = None, asset_id: str = "a1") -> dict:
     from app.population.compiler import canonical_spec_hash
 
     spec = {
@@ -177,7 +177,7 @@ def _mirror_body(spec_hash: str | None = None) -> dict:
             "allowedFields": ["customer_id"],
         }],
         "relations": [],
-        "sourceScope": [{"workspaceId": "w1", "assetId": "a1"}],
+        "sourceScope": [{"workspaceId": "w1", "assetId": asset_id}],
     }
     return {"homeWorkspaceId": "w1", "modelId": "m1", "modelVersionId": "v1",
             "specHash": canonical_spec_hash(spec) if spec_hash is None else spec_hash,
@@ -197,22 +197,24 @@ def test_mirror_specification_validates_and_reuses(client: TestClient):
                         headers=AUTH, json=body)
     assert again.json()["reused"] is True
 
-    _inject(client, ScriptedPool([{"id": "s1", "spec_hash": "sha256:" + "b" * 64}]))
-    assert client.post("/v1/semantic-model-population/specifications",
-                       headers=AUTH, json=body).status_code == 409
+    changed = _mirror_body(asset_id="a2")
+    _inject(client, ScriptedPool([None, {"id": "s2"}]))
+    changed_response = client.post("/v1/semantic-model-population/specifications",
+                                   headers=AUTH, json=changed)
+    assert changed_response.status_code == 200
+    assert changed_response.json()["reused"] is False
 
     bad = _mirror_body(spec_hash="sha256:" + "0" * 64)
     _inject(client, ScriptedPool([]))
     assert client.post("/v1/semantic-model-population/specifications",
                        headers=AUTH, json=bad).status_code == 422
 
-    # Lost-insert race: pre-check saw nothing, the store insert conflicted,
-    # and the winner holds different content.
+    # Lost-insert race: an identical concurrent insert wins and is reused.
     raced = _mirror_body()
     _inject(client, ScriptedPool([None, None,
-                                  {"id": "s1", "spec_hash": "sha256:" + "b" * 64}]))
+                                  {"id": "s1", "spec_hash": raced["specHash"]}]))
     assert client.post("/v1/semantic-model-population/specifications",
-                       headers=AUTH, json=raced).status_code == 409
+                       headers=AUTH, json=raced).status_code == 200
 
 
 def test_commands_require_service_key_and_store(client: TestClient):

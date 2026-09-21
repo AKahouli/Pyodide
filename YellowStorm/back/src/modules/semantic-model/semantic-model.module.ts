@@ -39,6 +39,7 @@ import { SemanticBusinessTrustService } from './services/semantic-business-trust
 import { ModelSpecificationService } from './services/model-specification.service';
 import { SemanticDataTokenService } from './services/semantic-data-token.service';
 import { SemanticRuntimeClientService } from './services/semantic-runtime-client.service';
+import { SemanticPopulationRefreshService } from './services/semantic-population-refresh.service';
 import { SemanticModelSourceEventHandler } from './integration/semantic-model-source-event.handler';
 import { SemanticModelSourceReconciliationService } from './integration/semantic-model-source-reconciliation.service';
 
@@ -67,6 +68,7 @@ import { SemanticModelSourceReconciliationService } from './integration/semantic
     ModelSpecificationService,
     SemanticDataTokenService,
     SemanticRuntimeClientService,
+    SemanticPopulationRefreshService,
     SemanticModelSourceEventHandler,
     SemanticModelSourceReconciliationService,
   ],

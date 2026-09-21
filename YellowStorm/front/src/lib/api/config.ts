@@ -415,6 +415,7 @@ export const API_ENDPOINTS = {
     sourceResolutionPolicies: (id: string) => `/semantic-models/${id}/source-resolution-policies`,
     sourceResolutionPolicy: (id: string, conceptId: string) => `/semantic-models/${id}/source-resolution-policies/${conceptId}`,
     dataPreview: (id: string) => `/semantic-models/${id}/data-preview`,
+    populationRefresh: (id: string) => `/semantic-models/${id}/population/refresh`,
     mappingHealth: (id: string) => `/semantic-models/${id}/mapping-health`,
     readiness: (id: string) => `/semantic-models/${id}/readiness`,
     reviewItems: (id: string) => `/semantic-models/${id}/review-items`,

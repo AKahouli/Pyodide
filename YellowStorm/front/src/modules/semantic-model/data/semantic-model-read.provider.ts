@@ -58,6 +58,7 @@ export const CALL_CLASSIFICATION: Record<SemanticApiCall, ReadKind> = {
   createSourceMapping: 'command',
   deleteSourceMapping: 'command',
   createBulkDocumentSourceMappings: 'command',
+  requestPopulationRefresh: 'command',
   saveRelationResolutionRule: 'command',
   saveSourceResolutionPolicy: 'command',
   resolveReviewItem: 'command',

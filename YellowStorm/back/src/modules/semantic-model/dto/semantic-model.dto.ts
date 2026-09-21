@@ -4,6 +4,7 @@ import {
   ArrayMinSize,
   IsArray,
   IsBoolean,
+  IsDefined,
   IsIn,
   IsInt,
   IsObject,
@@ -16,6 +17,7 @@ import {
   Min,
   MinLength,
   ValidateNested,
+  ValidateIf,
 } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 
@@ -614,4 +616,29 @@ export class ResolveReviewItemDto {
   @IsString()
   @MaxLength(500)
   note?: string;
+}
+
+export class PopulationRefreshScopeDto {
+  @ApiProperty({ enum: ['model', 'mapping'] })
+  @IsIn(['model', 'mapping'])
+  kind!: 'model' | 'mapping';
+
+  @ApiPropertyOptional({ description: 'Required when kind is mapping' })
+  @ValidateIf((scope: PopulationRefreshScopeDto) => scope.kind === 'mapping')
+  @IsDefined()
+  @IsUUID()
+  mappingId?: string;
+}
+
+export class RequestPopulationRefreshDto {
+  @ApiProperty({ enum: ['build', 'refresh'] })
+  @IsIn(['build', 'refresh'])
+  purpose!: 'build' | 'refresh';
+
+  @ApiProperty({ description: 'Whole model or one mapping', example: { kind: 'model' } })
+  @IsDefined()
+  @IsObject()
+  @ValidateNested()
+  @Type(() => PopulationRefreshScopeDto)
+  scope!: PopulationRefreshScopeDto;
 }

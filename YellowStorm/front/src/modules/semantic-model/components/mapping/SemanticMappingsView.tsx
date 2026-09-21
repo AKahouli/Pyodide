@@ -13,6 +13,7 @@ import { useSemanticModelEditorStore } from '../../store';
 import type { ConceptSourceMapping, MappingHealthItem, SemanticNodeType, SourceResolutionPolicy } from '../../types';
 import { useSemanticModelChannel } from '../../data-plane/use-semantic-model-channel';
 import { useSemanticModelSources } from '../../data-plane/use-semantic-model-sources';
+import { PopulationRefreshPanel } from './PopulationRefreshPanel';
 import type { SemanticSourceSummaryRow } from '../../data-plane/semantic-api.types';
 
 export function SemanticMappingsView({ modelId, canEdit, onRepairMapping }: Readonly<{ modelId: string; canEdit: boolean; onRepairMapping?: (mapping: ConceptSourceMapping) => void }>) {
@@ -29,6 +30,7 @@ export function SemanticMappingsView({ modelId, canEdit, onRepairMapping }: Read
     if (!health.dataUpdatedAt) return;
     void Promise.all([
       client.invalidateQueries({ queryKey: semanticModelQueryKeys.readiness(modelId) }),
+      client.invalidateQueries({ queryKey: semanticModelQueryKeys.sourceMappings(modelId) }),
       client.invalidateQueries({ queryKey: ['semantic-models', 'review-items', modelId] }),
     ]);
   }, [client, health.dataUpdatedAt, modelId]);
@@ -40,6 +42,7 @@ export function SemanticMappingsView({ modelId, canEdit, onRepairMapping }: Read
   return <div className='h-full overflow-y-auto bg-muted/20 p-4 sm:p-6'><div className='mx-auto max-w-5xl space-y-6'>
     <div><h2 className='text-xl font-semibold'>{t('mappingsView.title')}</h2><p className='text-sm text-muted-foreground'>{t('mappingsView.description')}</p></div>
     <SourceStatus rows={sources.data ?? []} loading={sources.isLoading} error={sources.isError} retry={() => void sources.refetch()} />
+    <PopulationRefreshPanel modelId={modelId} mappings={(mappings.data ?? []).filter((mapping) => health.data?.items.some((item) => item.id === mapping.id && item.state === 'healthy'))} canEdit={canEdit} />
     <MappingHealth modelId={modelId} items={health.data?.items ?? []} canEdit={canEdit} mappings={mappings.data ?? []} onRepairMapping={onRepairMapping} />
     {mappedConcepts.map((concept) => <ConceptMappings key={concept.id} modelId={modelId} concept={concept} mappings={(mappings.data ?? []).filter((mapping) => mapping.conceptId === concept.id)} policy={(policies.data ?? []).find((policy) => policy.conceptId === concept.id)} canEdit={canEdit} />)}
     {!mappedConcepts.length && <div className='rounded-2xl border border-dashed bg-background p-10 text-center text-sm text-muted-foreground'>{t('mappingsView.empty')}</div>}

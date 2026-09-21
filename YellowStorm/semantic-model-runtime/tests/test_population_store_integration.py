@@ -22,7 +22,8 @@ async def pool():
         await connection.execute("CREATE EXTENSION IF NOT EXISTS pgcrypto")
         await connection.execute("DROP SCHEMA IF EXISTS semantic_population CASCADE")
         await connection.execute("DROP SCHEMA IF EXISTS semantic_runtime CASCADE")
-        for name in ("005_runtime_store.sql", "006_population_store.sql"):
+        for name in ("005_runtime_store.sql", "006_population_store.sql",
+                     "008_versioned_specification_mirrors.sql"):
             await connection.execute((ROOT / "migrations" / name).read_text(encoding="utf-8"))
     finally:
         await connection.close()
@@ -87,10 +88,11 @@ async def test_revision_lifecycle_with_idempotent_writes(pool: asyncpg.Pool):
     assert await store.set_revision_projection(pool, revision, "graph:pop_y") is False
     assert (await store.get_data_revision(pool, revision))["projection_ref"] == "graph:pop_x"
 
-    with pytest.raises(ValueError):
-        await store.mirror_specification(
-            pool, home_workspace_id="ws1", model_id="m1", model_version_id="v1",
-            spec_hash="sha256:" + "b" * 64, specification={"concepts": []})
+    second_spec_id = await store.mirror_specification(
+        pool, home_workspace_id="ws1", model_id="m1", model_version_id="v1",
+        spec_hash="sha256:" + "b" * 64, specification={"concepts": []})
+    assert second_spec_id != spec_id
+    assert await pool.fetchval("SELECT count(*) FROM semantic_runtime.specifications") == 2
 
 
 @pytest.mark.asyncio

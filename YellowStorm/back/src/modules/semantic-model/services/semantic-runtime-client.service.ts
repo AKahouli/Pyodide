@@ -126,6 +126,16 @@ export class SemanticRuntimeClientService {
     });
   }
 
+  async mirrorSpecification(command: {
+    homeWorkspaceId: string;
+    modelId: string;
+    modelVersionId: string;
+    specHash: string;
+    specification: Record<string, unknown>;
+  }): Promise<{ modelId: string; modelVersionId: string; specHash: string; reused: boolean }> {
+    return this.post('/v1/semantic-model-population/specifications', command);
+  }
+
   async recordCorrection(
     command: RuntimeCorrectionCommand,
   ): Promise<{ sequence: number; modelId: string; state: string }> {
