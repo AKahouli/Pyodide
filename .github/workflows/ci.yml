@@ -152,6 +152,56 @@ jobs:
           name: backend-coverage
           path: YellowStorm/back/coverage/lcov.info
 
+  # Every describeIntegration spec against a real PostgreSQL. These are the regression
+  # proofs for the migration remediation (refresh-token status, LIKE escaping, admin paging,
+  # rotation / OAuth / widget-session races, import atomicity, FK cascades) and they are
+  # skipped by backend-tests, which has no database. Unlike backend-tests this job FAILS the
+  # build. Validated locally on a fresh pgvector/pgvector:pg17 with exactly these commands.
+  backend-pg-integration:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: YellowStorm/back
+    services:
+      postgres:
+        image: pgvector/pgvector:pg17
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: agentstore_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d agentstore_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    env:
+      POSTGRES_HOST: localhost
+      POSTGRES_PORT: 5432
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      # Placeholder application database: the suites refuse to touch it (they only use
+      # POSTGRES_TEST_DB, and only when it differs from POSTGRES_DB).
+      POSTGRES_DB: agentstore
+      POSTGRES_TEST_DB: agentstore_test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: YellowStorm/back/package-lock.json
+      - run: npm ci
+      - name: Apply migrations to the test database
+        # The runner targets POSTGRES_DB, so point it at the test database explicitly.
+        run: POSTGRES_DB=agentstore_test npx ts-node scripts/migrate-postgres.ts
+      - name: Run PostgreSQL integration specs
+        run: |
+          specs=$(git ls-files 'src/*.spec.ts' | xargs grep -l describeIntegration)
+          echo "$specs" | wc -l
+          npx jest --ci --runInBand --forceExit $specs
+
   python-tests:
     runs-on: ubuntu-latest
     defaults:

@@ -29,6 +29,8 @@ let CANONICAL_AGENT_TYPE_ID = new Types.ObjectId().toString();
 const FIXTURE_TOOL_ID = new Types.ObjectId().toString();
 const FIXTURE_SKILL_ID = new Types.ObjectId().toString();
 const FIXTURE_DISABLED_SKILL_ID = new Types.ObjectId().toString();
+// fk_agent_connectors_connector (0025) requires the connector row to exist.
+const FIXTURE_CONNECTOR_ID = new Types.ObjectId().toString();
 
 /** fk_agents_agent_type requires the referenced type row to exist. */
 async function seedCanonicalAgentType(pool: { query: (text: string) => Promise<{ rows: Array<{ id: string }> }> }): Promise<void> {
@@ -76,7 +78,7 @@ const createInput = (slug: string): CreateAgentInput => ({
   tools: [FIXTURE_TOOL_ID],
   skills: [FIXTURE_SKILL_ID],
   disabledSkills: [FIXTURE_DISABLED_SKILL_ID],
-  connectors: [new Types.ObjectId().toString()],
+  connectors: [FIXTURE_CONNECTOR_ID],
   connectorActionSelections: [],
   guardrails: { enabled: true },
   deploymentSettings: { channel: 'custom' },
@@ -107,6 +109,11 @@ describeIntegration('platform copilot identity migration', () => {
       );
     }
     await pool.query(
+      `INSERT INTO integrations.connectors (id, slug, name, description, mcp_server_url, created_by)
+       VALUES ('${FIXTURE_CONNECTOR_ID}', 'spec-connector-${FIXTURE_CONNECTOR_ID.slice(-6)}', 'spec-connector-${FIXTURE_CONNECTOR_ID.slice(-6)}', '', 'http://localhost:0/mcp', '000000000000000000000000')
+       ON CONFLICT (id) DO NOTHING`,
+    );
+    await pool.query(
       `DELETE FROM agents WHERE slug IN ('my-second-brain', 'platform_copilot', 'platform-copilot')`,
     );
   });
@@ -117,7 +124,10 @@ describeIntegration('platform copilot identity migration', () => {
       `DELETE FROM agents WHERE slug IN ('my-second-brain', 'platform_copilot', 'platform-copilot')`,
     );
   });
-  afterAll(async () => close());
+  afterAll(async () => {
+    await pool.query(`DELETE FROM integrations.connectors WHERE id = '${FIXTURE_CONNECTOR_ID}'`);
+    await close();
+  });
 
   it('renames the legacy Agent in place without changing capabilities', async () => {
     const legacy = createInput('my-second-brain');

@@ -9,6 +9,16 @@ jest.setTimeout(60000);
 
 const oid = () => new Types.ObjectId().toString();
 
+/** Connectors seeded by createAgent; removed once the whole file has run. */
+const seededConnectorIds = new Set<string>();
+afterAll(async () => {
+  if (seededConnectorIds.size === 0) return;
+  const { db, close } = makeTestDb();
+  const ids = [...seededConnectorIds].map((id) => sqlTag`${id}`);
+  await db.execute(sqlTag`DELETE FROM integrations.connectors WHERE id IN (${sqlTag.join(ids, sqlTag`, `)})`);
+  await close();
+});
+
 /** Create many agents concurrently and register their ids for cleanup. */
 async function seed(repo: AgentRepository, sink: string[], db: { execute: (q: ReturnType<typeof sqlTag>) => Promise<unknown> }, inputs: CreateAgentInput[]): Promise<void> {
   sink.push(...inputs.map((i) => i.id));
@@ -26,6 +36,12 @@ async function createAgent(repo: AgentRepository, db: { execute: (q: ReturnType<
   }
   for (const skillId of [...(input.skills ?? []), ...(input.disabledSkills ?? [])]) {
     await db.execute(sqlTag`INSERT INTO catalog.skills (id, slug, name, description, created_by) VALUES (${skillId}, ${'skill-' + skillId}, ${'skill-' + skillId}, '', '000000000000000000000000') ON CONFLICT DO NOTHING`);
+  }
+  // fk_agent_connectors_connector / fk_agent_connector_actions_connector (0025) need real connectors.
+  const connectorIds = [...new Set([...(input.connectors ?? []), ...(input.connectorActionSelections ?? []).map((s) => s.connectorId)])];
+  for (const connectorId of connectorIds) {
+    await db.execute(sqlTag`INSERT INTO integrations.connectors (id, slug, name, description, mcp_server_url, created_by) VALUES (${connectorId}, ${'spec-connector-' + connectorId}, ${'spec-connector-' + connectorId}, '', 'http://localhost:0/mcp', '000000000000000000000000') ON CONFLICT DO NOTHING`);
+    seededConnectorIds.add(connectorId);
   }
   return repo.create(input);
 }
@@ -282,10 +298,14 @@ describeIntegration('AgentRepository plan-4 methods (integration)', () => {
     expect(a.slug).toBe(slug);
   });
 
-  it('setRoleEmbedding stores a 2560-dim halfvec on the agent', async () => {
+  it('setRoleEmbedding stores a halfvec of the column dimension on the agent', async () => {
     const input = createInput({});
     created.push(input.id); await createAgent(repo, db, input);
-    const vec = Array.from({ length: 2560 }, (_, i) => (i % 7) / 10);
+    // The dimension is a property of the migrated column (3072 since 0004, 2560 on older
+    // databases): read it instead of hard-coding one.
+    const dim = await (db as never as { execute: (q: unknown) => Promise<{ rows: Array<{ dim: number }> }> })
+      .execute(sqlTag`SELECT atttypmod AS dim FROM pg_attribute WHERE attrelid = 'public.agents'::regclass AND attname = 'role_embedding'`);
+    const vec = Array.from({ length: dim.rows[0].dim }, (_, i) => (i % 7) / 10);
     await repo.setRoleEmbedding(input.id, vec);
     const rows = await (db as never as { execute: (q: unknown) => Promise<{ rows: Array<{ has: boolean }> }> })
       .execute(sqlTag`SELECT role_embedding IS NOT NULL AS has FROM agents WHERE id = ${input.id}`);
