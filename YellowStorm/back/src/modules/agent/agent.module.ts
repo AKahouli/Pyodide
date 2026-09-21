@@ -32,6 +32,15 @@ import { AgentTaskExecutionService } from './services/agent-task-execution.servi
 import { AGENT_TASK_EXECUTION } from './agent-task-execution.token';
 import { UsageModule } from '../usage/usage.module';
 import { AgentRepositoryModule } from './repositories/agent-repository.module';
+import { CHANNEL_TEARDOWN, type ChannelTeardown } from '../channels-teardown/channels-teardown.token';
+import { TelegramChannelTeardown } from '../channels-teardown/telegram-channel-teardown';
+import { WidgetChannelTeardown } from '../channels-teardown/widget-channel-teardown';
+import { CryptoService } from '@common/services/crypto.service';
+import { TelegramApiService } from '../telegram/services/telegram-api.service';
+import { TELEGRAM_INTEGRATION_STORE } from '../telegram/persistence/telegram.store';
+import { PgTelegramIntegrationStore } from '../telegram/persistence/pg-telegram.store';
+import { WIDGET_TOKEN_STORE } from '../widget-chat/persistence/widget.store';
+import { PgWidgetTokenStore } from '../widget-chat/persistence/pg-widget.store';
 
 @Module({
   imports: [
@@ -58,6 +67,19 @@ import { AgentRepositoryModule } from './repositories/agent-repository.module';
   providers: [
     // Shares cutover (plan 4.1); exported for the telegram/whatsapp/widget guards.
     { provide: AGENT_SHARE_STORE, useClass: PgAgentShareStore },
+    // Channel teardown (plan 4.6). The adapters live here, not in the channel
+    // modules, because those import AgentModule (a reverse import would cycle).
+    CryptoService,
+    TelegramApiService,
+    { provide: TELEGRAM_INTEGRATION_STORE, useClass: PgTelegramIntegrationStore },
+    { provide: WIDGET_TOKEN_STORE, useClass: PgWidgetTokenStore },
+    TelegramChannelTeardown,
+    WidgetChannelTeardown,
+    {
+      provide: CHANNEL_TEARDOWN,
+      useFactory: (...teardowns: ChannelTeardown[]) => teardowns,
+      inject: [TelegramChannelTeardown, WidgetChannelTeardown],
+    },
     AgentService,
     AgentShareService,
     AgentConnectorRuntimeService,
