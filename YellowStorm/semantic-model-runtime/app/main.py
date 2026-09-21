@@ -71,6 +71,7 @@ def create_app(job_repository: JobRepository | None = None) -> FastAPI:
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         pool: asyncpg.Pool | None = None
+        age_pool: asyncpg.Pool | None = None
         repository = job_repository
         dispatcher: OutboxDispatcher | None = None
         database_url = os.environ.get("SEMANTIC_RUNTIME_DATABASE_URL", "")
@@ -109,6 +110,21 @@ def create_app(job_repository: JobRepository | None = None) -> FastAPI:
                 index_pool = None
         app.state.index_pool = index_pool
         app.state.index_pool_owned = index_owned
+        if getattr(app.state, "age_pool", None) is None and os.environ.get("SEMANTIC_AGEGRAPH_DATABASE_URL"):
+            age_pool = await asyncpg.create_pool(
+                os.environ["SEMANTIC_AGEGRAPH_DATABASE_URL"],
+                min_size=1,
+                max_size=int(os.environ.get("SEMANTIC_AGEGRAPH_POOL_MAX", "3")),
+                command_timeout=30,
+                server_settings={
+                    "application_name": "semantic-model-runtime-age",
+                    "search_path": 'ag_catalog, "$user", public',
+                    "statement_timeout": "30s",
+                    "lock_timeout": "5s",
+                    "idle_in_transaction_session_timeout": "30s",
+                },
+            )
+            app.state.age_pool = age_pool
         if (
             repository is not None
             and os.environ.get("SEMANTIC_MODEL_RUNTIME_WRITES_ENABLED") == "true"
@@ -124,6 +140,8 @@ def create_app(job_repository: JobRepository | None = None) -> FastAPI:
                 await dispatcher.stop()
             if app.state.index_pool_owned and app.state.index_pool is not None:
                 await app.state.index_pool.close()
+            if age_pool:
+                await age_pool.close()
             if pool:
                 await pool.close()
 

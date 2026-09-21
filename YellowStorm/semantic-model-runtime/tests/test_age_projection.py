@@ -3,9 +3,9 @@ from __future__ import annotations
 import pytest
 
 from app.population.age_projection import (PopulationError, compile_projection, create_graph_sql,
-                                           drop_graph_sql, drop_projection, project_revision,
-                                           projection_graph_name, render_edge_batch,
-                                           render_vertex_batch, validate_projection)
+                                            drop_graph_sql, drop_projection, project_revision,
+                                            projection_counts, projection_graph_name, render_edge_batch,
+                                            render_vertex_batch, validate_projection)
 
 
 class FakeConnection:
@@ -15,6 +15,10 @@ class FakeConnection:
     async def execute(self, sql: str, *params):  # type: ignore[no-untyped-def]
         self.statements.append(sql)
         return "OK"
+
+    async def fetchval(self, sql: str, *params):  # type: ignore[no-untyped-def]
+        self.statements.append(sql)
+        return "2" if "count(n)" in sql else "1"
 
 
 def test_graph_name_is_server_generated_and_safe():
@@ -64,6 +68,11 @@ async def test_project_revision_batches_and_drops():
     assert len(conn.statements) == 3  # create + 2 vertex batches
     await drop_projection(conn, "pop_dr_1")
     assert conn.statements[-1] == drop_graph_sql("pop_dr_1")
+
+
+@pytest.mark.asyncio
+async def test_projection_counts_reads_live_graph_counts():
+    assert await projection_counts(FakeConnection(), "pop_dr_1") == {"vertices": 2, "edges": 1}
 
 
 def test_drop_rejects_unsafe_names():

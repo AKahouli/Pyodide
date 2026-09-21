@@ -6,13 +6,12 @@ plan's simple representation: ``Entity`` vertices carrying ``concept_id`` and
 ``RELATED_TO`` edges carrying ``relation_id``; business labels render from the
 specification, never from mutable user labels in executable Cypher. Graph
 names are server-generated from the revision id and sanitized; values travel
-as escaped literals inside allowlisted query shapes (P6.19). Live execution
-needs an AGE-capable connection and is covered by fake-connection tests here;
-a live smoke pass is required before activation depends on it.
+as escaped literals inside allowlisted query shapes (P6.19).
 """
 
 from __future__ import annotations
 
+import json
 import re
 from typing import Any
 
@@ -20,6 +19,7 @@ from .compiler import PopulationError
 
 MAX_BATCH_VERTICES = 500
 MAX_BATCH_EDGES = 500
+LIVE_PROJECTION_PREFIX = "age:v1:"
 _CYPHER_TAG = "$agecypher$"
 _GRAPH_RE = re.compile(r"^pop_[a-z0-9_]{1,64}$")
 _KEY_RE = re.compile(r"[^a-zA-Z0-9_]")
@@ -33,6 +33,20 @@ def projection_graph_name(revision_id: Any) -> str:
     if slug[0].isdigit():
         slug = "g_" + slug
     return f"pop_{slug}"
+
+
+def live_projection_ref(graph: str) -> str:
+    return LIVE_PROJECTION_PREFIX + _check_graph(graph)
+
+
+def is_live_projection_ref(value: Any) -> bool:
+    if not isinstance(value, str) or not value.startswith(LIVE_PROJECTION_PREFIX):
+        return False
+    try:
+        _check_graph(value[len(LIVE_PROJECTION_PREFIX):])
+    except PopulationError:
+        return False
+    return True
 
 
 def _check_graph(graph: str) -> str:
@@ -146,6 +160,28 @@ async def project_revision(connection: Any, *, graph: str,
     for batch in _chunks(list(edges), MAX_BATCH_EDGES):
         await connection.execute(render_edge_batch(graph, batch))
     return {"graph": graph, "vertices": len(vertices), "edges": len(edges)}
+
+
+async def projection_exists(connection: Any, graph: str) -> bool:
+    return bool(await connection.fetchval(
+        "SELECT EXISTS (SELECT 1 FROM ag_catalog.ag_graph WHERE name = $1)",
+        _check_graph(graph),
+    ))
+
+
+def _agtype_count(value: Any) -> int:
+    parsed = json.loads(value) if isinstance(value, str) else value
+    if isinstance(parsed, bool) or not isinstance(parsed, int) or parsed < 0:
+        raise PopulationError("invalid_projection_count")
+    return parsed
+
+
+async def projection_counts(connection: Any, graph: str) -> dict[str, int]:
+    vertices = await connection.fetchval(_cypher(
+        graph, "MATCH (n) RETURN count(n)", "value ag_catalog.agtype"))
+    edges = await connection.fetchval(_cypher(
+        graph, "MATCH ()-[r]->() RETURN count(r)", "value ag_catalog.agtype"))
+    return {"vertices": _agtype_count(vertices), "edges": _agtype_count(edges)}
 
 
 async def drop_projection(connection: Any, graph: str) -> None:

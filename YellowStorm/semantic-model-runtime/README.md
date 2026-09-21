@@ -17,6 +17,16 @@ Required secret configuration:
 
 - `SEMANTIC_RUNTIME_DATABASE_URL`: semantic PostgreSQL connection for the
   runtime API role. Do not use the logicalsearch reader or a superuser.
+- `SEMANTIC_AGEGRAPH_DATABASE_URL`: dedicated Apache AGE connection used only
+  for immutable revision projections. The runtime sets
+  `search_path = ag_catalog, "$user", public` on every pooled connection.
+  The deployed AGE 1.6 service permits graph DDL and Cypher for the application
+  role without explicit `LOAD 'age'`; startup/route execution fails closed if
+  that server capability is unavailable.
+
+Only `age:v1:pop_*` projection references represent a live, count-validated
+graph. Migration `009` invalidates older compile-only references and bindings;
+the affected revisions must be projected again before activation.
 - `SEMANTIC_RUNTIME_SERVICE_KEY`: private NestJS-to-runtime service key.
 - `SEMANTIC_BROKER_URL`: dedicated Phase 0 RabbitMQ URL.
 - `YELLOWSTORM_BACKEND_URL`: trusted NestJS origin used by datasource workers.

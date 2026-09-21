@@ -23,7 +23,8 @@ async def pool():
         await connection.execute("DROP SCHEMA IF EXISTS semantic_population CASCADE")
         await connection.execute("DROP SCHEMA IF EXISTS semantic_runtime CASCADE")
         for name in ("005_runtime_store.sql", "006_population_store.sql",
-                     "008_versioned_specification_mirrors.sql"):
+                     "008_versioned_specification_mirrors.sql",
+                     "009_invalidate_unverified_age_projections.sql"):
             await connection.execute((ROOT / "migrations" / name).read_text(encoding="utf-8"))
     finally:
         await connection.close()
@@ -86,7 +87,9 @@ async def test_revision_lifecycle_with_idempotent_writes(pool: asyncpg.Pool):
 
     assert await store.set_revision_projection(pool, revision, "graph:pop_x") is True
     assert await store.set_revision_projection(pool, revision, "graph:pop_y") is False
-    assert (await store.get_data_revision(pool, revision))["projection_ref"] == "graph:pop_x"
+    assert await store.set_revision_projection(
+        pool, revision, "age:v1:pop_x", "graph:pop_x") is True
+    assert (await store.get_data_revision(pool, revision))["projection_ref"] == "age:v1:pop_x"
 
     second_spec_id = await store.mirror_specification(
         pool, home_workspace_id="ws1", model_id="m1", model_version_id="v1",

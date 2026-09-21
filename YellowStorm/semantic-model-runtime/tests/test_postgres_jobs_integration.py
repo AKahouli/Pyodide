@@ -22,7 +22,9 @@ async def pool():
     assert DSN
     connection = await asyncpg.connect(DSN)
     try:
-        await connection.execute("DROP SCHEMA IF EXISTS semantic_jobs CASCADE")
+        for schema in ("semantic_jobs", "semantic_datasource", "semantic_runtime",
+                       "semantic_population", "semantic_search"):
+            await connection.execute(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE')
         for migration in MIGRATIONS:
             await connection.execute(migration.read_text(encoding="utf-8"))
     finally:

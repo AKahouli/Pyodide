@@ -302,11 +302,12 @@ async def set_revision_validation(pool: Any, revision_id: str, state: str) -> bo
     return row is not None
 
 
-async def set_revision_projection(pool: Any, revision_id: str, projection_ref: str) -> bool:
+async def set_revision_projection(pool: Any, revision_id: str, projection_ref: str,
+                                  expected_projection_ref: str | None = None) -> bool:
     row = await pool.fetchrow(
         "UPDATE semantic_population.data_revisions SET projection_ref = $2 "
-        "WHERE id = $1 AND projection_ref IS NULL RETURNING id",
-        revision_id, projection_ref,
+        "WHERE id = $1 AND projection_ref IS NOT DISTINCT FROM $3 RETURNING id",
+        revision_id, projection_ref, expected_projection_ref,
     )
     return row is not None
 
