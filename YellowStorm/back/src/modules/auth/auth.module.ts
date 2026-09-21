@@ -14,7 +14,6 @@ import { User, UserSchema } from '../user/schemas/user.schema';
 import { SESSION_STORE } from './persistence/session.store';
 import { MongoSessionStore } from './persistence/mongo-session.store';
 import { PgSessionStore } from './persistence/pg-session.store';
-import { IdentityTtlRegistrationService } from '@modules/postgres/ttl/identity-ttl-registration.service';
 import { UserModule } from '../user';
 import { UsageModule } from '../usage';
 import { AuthorizationModule } from '../authorization/authorization.module';
@@ -56,7 +55,6 @@ import { HumainAgentModule } from '../humain-agent/humain-agent.module';
     // Mongo-backed until the 1A cutover; swap useClass to PgSessionStore then.
     { provide: SESSION_STORE, useClass: PgSessionStore },
     PgSessionStore,
-    IdentityTtlRegistrationService,
   ],
   exports: [AuthService, JwtAuthGuard, JwtStrategy, InternalServiceGuard, AgentCrudActorGuard, JwtModule, SESSION_STORE],
 })

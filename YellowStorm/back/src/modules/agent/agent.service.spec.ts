@@ -153,8 +153,7 @@ describe('AgentService connector skill inheritance', () => {
     const agentShareService = {
       getShareInfoMapForUser: jest.fn().mockResolvedValue(new Map()),
       getShareInfo: jest.fn().mockResolvedValue(null),
-      getSharePermission: jest.fn().mockResolvedValue(null),
-      removeAllSharesForAgent: jest.fn().mockResolvedValue(undefined),
+      getSharePermission: jest.fn().mockResolvedValue(null),
     };
     const guardrailsSettingsService = {
       getSettings: jest.fn().mockResolvedValue({

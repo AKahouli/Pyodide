@@ -2,6 +2,7 @@ import { Test } from '@nestjs/testing';
 import { ModelsService } from './models.service';
 import { LiteLLMClient } from './litellm.client';
 import { LoggerService } from '../logger';
+import { DRIZZLE_DB } from '@modules/postgres/postgres.constants';
 import { LiteLLMModelInfoEntry } from './interfaces/model.interface';
 import { MODEL_STORE, type ModelRow, type ModelStore } from './persistence/model.store';
 
@@ -138,11 +139,22 @@ describe('ModelsService', () => {
     store = new InMemoryModelStore();
     fetchModels = jest.fn();
 
+    // Fake transactional db: withTransaction passes straight through (outer
+    // and nested SAVEPOINT calls), so the sync's transactional wrap is
+    // exercised without a database.
+    const fakeTx: { transaction: (cb: (tx: unknown) => Promise<unknown>) => Promise<unknown> } = {
+      transaction: async (cb) => cb(fakeTx),
+    };
+    const fakeDb = {
+      transaction: async (cb: (tx: unknown) => Promise<unknown>) => cb(fakeTx),
+    };
+
     const mod = await Test.createTestingModule({
       providers: [
         ModelsService,
         { provide: MODEL_STORE, useValue: store as unknown as ModelStore },
         { provide: LiteLLMClient, useValue: { fetchModels, isConfigured: () => true } },
+        { provide: DRIZZLE_DB, useValue: fakeDb },
         {
           provide: LoggerService,
           useValue: { log: jest.fn(), warn: jest.fn(), error: jest.fn(), debug: jest.fn() },

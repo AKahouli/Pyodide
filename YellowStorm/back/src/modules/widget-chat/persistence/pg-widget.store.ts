@@ -220,12 +220,6 @@ export class PgWidgetSessionStore implements WidgetSessionStore {
     return row ? sessionToRow(row) : null;
   }
 
-  async incrementMessageCount(id: string): Promise<void> {
-    await this.q
-      .update(schema.channelsWidgetSessions)
-      .set({ messageCount: sql`${schema.channelsWidgetSessions.messageCount} + 1`, updatedAt: new Date() })
-      .where(eq(schema.channelsWidgetSessions.id, id));
-  }
 }
 
 export class PgWidgetMessageStore implements WidgetMessageStore {

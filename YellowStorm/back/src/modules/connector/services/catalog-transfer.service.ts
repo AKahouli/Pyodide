@@ -519,7 +519,7 @@ export class CatalogTransferService {
       }
     }
     for (const connection of security.userAppConnections) {
-      const data = this.encryptTokenRecord(connection, ownerId);
+      const data = this.encryptTokenRecord(connection);
       const existing = await this.appConnectionStore.findByUserAndApp(owner, connection.appKey);
       if (!existing) {
         await this.appConnectionStore.insertForImport(owner, connection.appKey, {
@@ -547,7 +547,7 @@ export class CatalogTransferService {
       result.security.tokens += 1;
     }
     for (const auth of security.adminConnectorAuth) {
-      const data = this.encryptTokenRecord(auth, ownerId);
+      const data = this.encryptTokenRecord(auth);
       const existing = await this.adminAuthStore.findByUserAndApp(owner, auth.appKey);
       if (!existing) {
         await this.adminAuthStore.insertForImport(owner, auth.appKey, {
@@ -565,7 +565,22 @@ export class CatalogTransferService {
           errorMessage: (data.errorMessage as string | undefined) ?? null,
         });
       } else if (conflictPolicy === 'overwrite') {
-        await this.adminAuthStore.updateById(existing.id, data as Partial<ConnectorAdminAuthRow>);
+        // Explicit columns (R-13): the archive record's ids/keys must not leak
+        // into the UPDATE.
+        await this.adminAuthStore.updateById(existing.id, {
+          accessToken: (data.accessToken as string | undefined) ?? null,
+          refreshToken: (data.refreshToken as string | undefined) ?? null,
+          tokenExpiresAt: (data.tokenExpiresAt as Date | null) ?? null,
+          scopes: (data.scopes as string[]) ?? [],
+          providerAccountId: (data.providerAccountId as string | undefined) ?? null,
+          providerEmail: (data.providerEmail as string | undefined) ?? null,
+          connected: (data.connected as boolean) ?? true,
+          status: (data.status as string) ?? 'active',
+          disconnectedAt: (data.disconnectedAt as Date | null) ?? null,
+          lastUsedAt: (data.lastUsedAt as Date | null) ?? null,
+          lastRefreshedAt: (data.lastRefreshedAt as Date | null) ?? null,
+          errorMessage: (data.errorMessage as string | undefined) ?? null,
+        });
       }
       result.security.tokens += 1;
     }
@@ -600,16 +615,25 @@ export class CatalogTransferService {
     }
   }
 
-  private encryptTokenRecord(record: Record<string, any>, ownerId: Types.ObjectId): Record<string, unknown> {
+  /**
+   * Explicit column patch for an archive token record (R-13): never spread the
+   * raw record (it carries archive ids/keys) and never fabricate a userId —
+   * ownership is handled by the store call sites.
+   */
+  private encryptTokenRecord(record: Record<string, any>): Record<string, unknown> {
     return {
-      ...record,
-      userId: ownerId,
       accessToken: record.accessToken ? this.cryptoService.encrypt(record.accessToken) : undefined,
       refreshToken: record.refreshToken ? this.cryptoService.encrypt(record.refreshToken) : undefined,
       tokenExpiresAt: this.optionalDate(record.tokenExpiresAt),
+      scopes: record.scopes,
+      providerAccountId: record.providerAccountId,
+      providerEmail: record.providerEmail,
+      connected: record.connected,
+      status: record.status,
       disconnectedAt: this.optionalDate(record.disconnectedAt),
       lastUsedAt: this.optionalDate(record.lastUsedAt),
       lastRefreshedAt: this.optionalDate(record.lastRefreshedAt),
+      errorMessage: record.errorMessage,
     };
   }
 

@@ -268,7 +268,7 @@ export class PgUserAppConnectionStore implements UserAppConnectionStore {
   }
 
   async insertForImport(userId: string, appKey: string, payload: UpsertConnectionPayload): Promise<UserAppConnectionRow> {
-    const [row] = await this.q
+    const inserted = await this.q
       .insert(schema.integrationsUserAppConnections)
       .values({
         id: newObjectId(),
@@ -287,7 +287,18 @@ export class PgUserAppConnectionStore implements UserAppConnectionStore {
         target: [schema.integrationsUserAppConnections.userId, schema.integrationsUserAppConnections.appKey],
       })
       .returning();
-    return connToRow(row);
+    // Conflict with the (user, app) unique index: return the existing row
+    // instead of mapping `undefined` (R-13).
+    if (inserted[0]) return connToRow(inserted[0]);
+    const [existing] = await this.q
+      .select()
+      .from(schema.integrationsUserAppConnections)
+      .where(and(
+        eq(schema.integrationsUserAppConnections.userId, userId),
+        eq(schema.integrationsUserAppConnections.appKey, appKey),
+      ))
+      .limit(1);
+    return connToRow(existing);
   }
 
   async updateById(id: string, patch: Partial<UpsertConnectionPayload> & { lastRefreshedAt?: Date | null; lastUsedAt?: Date | null }): Promise<void> {
