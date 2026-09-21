@@ -1,6 +1,5 @@
 import { Inject, Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { Types } from 'mongoose';
 import * as bcrypt from 'bcrypt';
 import * as crypto from 'crypto';
 import { LoggerService } from '../logger';
@@ -359,9 +358,9 @@ export class UserService {
   }
 
   /** Assign a plan to a user */
-  async assignPlan(userId: string, planId: Types.ObjectId, planSlug: string): Promise<UserDocLike> {
+  async assignPlan(userId: string, planId: string, planSlug: string): Promise<UserDocLike> {
     const updated = await this.userStore.update(userId, {
-      planId: String(planId),
+      planId,
       planSlug,
       planStartedAt: new Date(),
     });

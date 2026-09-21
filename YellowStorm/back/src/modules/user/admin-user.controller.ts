@@ -256,7 +256,7 @@ export class AdminUserController {
 
     const updatedUser = await this.userService.assignPlan(
       id,
-      plan._id,
+      plan.id,
       plan.slug,
     );
 

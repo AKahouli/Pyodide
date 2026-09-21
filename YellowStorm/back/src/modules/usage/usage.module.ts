@@ -1,6 +1,4 @@
 import { Module, forwardRef } from '@nestjs/common';
-import { MongooseModule } from '@nestjs/mongoose';
-import { Plan, PlanSchema } from './schemas/plan.schema';
 import { PostgresModule } from '../postgres';
 import { UsageService } from './usage.service';
 import { UsageController } from './usage.controller';
@@ -10,10 +8,11 @@ import { UserModule } from '../user/user.module';
 import { AuthorizationModule } from '../authorization/authorization.module';
 import { PostgresUsageStore } from './persistence/postgres-usage-store';
 import { USAGE_STORE } from './persistence/usage-store';
+import { PLAN_STORE } from './persistence/plan.store';
+import { PgPlanStore } from './persistence/pg-plan.store';
 
 @Module({
   imports: [
-    MongooseModule.forFeature([{ name: Plan.name, schema: PlanSchema }]),
     PostgresModule,
     LoggerModule,
     forwardRef(() => UserModule),
@@ -23,6 +22,8 @@ import { USAGE_STORE } from './persistence/usage-store';
   providers: [
     PostgresUsageStore,
     { provide: USAGE_STORE, useExisting: PostgresUsageStore },
+    // Plans cutover (plan 1B.3.2): catalog.plans; Mongo data backfilled before this flip.
+    { provide: PLAN_STORE, useClass: PgPlanStore },
     UsageService,
     UsageLimitGuard,
   ],

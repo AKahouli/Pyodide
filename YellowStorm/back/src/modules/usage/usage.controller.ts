@@ -62,10 +62,10 @@ export class UsageController {
       user.planId,
     );
     return {
-      id: plan._id.toString(),
+      id: plan.id,
       name: plan.name,
       slug: plan.slug,
-      description: plan.description,
+      description: plan.description ?? undefined,
       tokenLimit: plan.tokenLimit,
       windowHours: plan.windowHours,
       requestsPerMinute: plan.requestsPerMinute,
@@ -125,10 +125,10 @@ export class UsageController {
   async getPlanById(@Param('id') id: string): Promise<PlanResponse> {
     const plan = await this.usageService.getPlanById(id);
     return {
-      id: plan._id.toString(),
+      id: plan.id,
       name: plan.name,
       slug: plan.slug,
-      description: plan.description,
+      description: plan.description ?? undefined,
       tokenLimit: plan.tokenLimit,
       windowHours: plan.windowHours,
       requestsPerMinute: plan.requestsPerMinute,
@@ -165,7 +165,7 @@ export class UsageController {
       actorId: actor._id.toString(),
       actorEmail: actor.email,
       action: 'plans.create',
-      targetId: plan._id.toString(),
+      targetId: plan.id,
       targetType: 'Plan',
       metadata: { planName: plan.name, planSlug: plan.slug },
       ipAddress: req.ip,
@@ -173,10 +173,10 @@ export class UsageController {
     });
 
     return {
-      id: plan._id.toString(),
+      id: plan.id,
       name: plan.name,
       slug: plan.slug,
-      description: plan.description,
+      description: plan.description ?? undefined,
       tokenLimit: plan.tokenLimit,
       windowHours: plan.windowHours,
       requestsPerMinute: plan.requestsPerMinute,
@@ -214,7 +214,7 @@ export class UsageController {
       actorId: actor._id.toString(),
       actorEmail: actor.email,
       action: 'plans.update',
-      targetId: plan._id.toString(),
+      targetId: plan.id,
       targetType: 'Plan',
       metadata: { planName: plan.name, planSlug: plan.slug, updatedFields: Object.keys(dto) },
       ipAddress: req.ip,
@@ -222,10 +222,10 @@ export class UsageController {
     });
 
     return {
-      id: plan._id.toString(),
+      id: plan.id,
       name: plan.name,
       slug: plan.slug,
-      description: plan.description,
+      description: plan.description ?? undefined,
       tokenLimit: plan.tokenLimit,
       windowHours: plan.windowHours,
       requestsPerMinute: plan.requestsPerMinute,

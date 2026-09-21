@@ -5,7 +5,8 @@ export { UsageModule } from './usage.module';
 export { UsageService } from './usage.service';
 
 // Schemas
-export { Plan, PlanSchema, PlanDocument, PlanTier } from './schemas/plan.schema';
+export { PlanTier } from './schemas/plan.schema';
+export { PLAN_STORE, type PlanRecord } from './persistence/plan.store';
 export { UsageType } from './usage-type.enum';
 
 // Guards

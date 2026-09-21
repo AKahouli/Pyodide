@@ -326,7 +326,7 @@ export class OAuthFlowService {
       defaultPlan = await this.usageService.getDefaultPlan();
       await this.userService.assignPlan(
         newUser._id.toString(),
-        defaultPlan._id as Types.ObjectId,
+        defaultPlan.id,
         defaultPlan.slug,
       );
     } catch (error) {

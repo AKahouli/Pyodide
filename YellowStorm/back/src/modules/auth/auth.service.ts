@@ -106,7 +106,7 @@ export class AuthService {
       defaultPlan = await this.usageService.getDefaultPlan();
       await this.userService.assignPlan(
         user._id.toString(),
-        defaultPlan._id as Types.ObjectId,
+        defaultPlan.id,
         defaultPlan.slug,
       );
       this.logger.log('Default plan assigned to user', {

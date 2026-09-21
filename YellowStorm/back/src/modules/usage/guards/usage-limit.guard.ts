@@ -12,12 +12,12 @@ import { CHECK_USAGE_KEY, CheckUsageOptions } from '../decorators/check-usage.de
 import { ForbiddenException } from '../../exceptions';
 import { ErrorCode } from '../../exceptions/constants/error-codes';
 import type { AuthUser } from '@common/auth/auth-user';
-import { PlanDocument } from '../schemas/plan.schema';
+import type { PlanRecord } from '../persistence/plan.store';
 
 // Extend Express Request to include user
 interface RequestWithUser extends Request {
   user?: AuthUser;
-  userPlan?: PlanDocument;
+  userPlan?: PlanRecord;
 }
 
 /**

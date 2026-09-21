@@ -892,24 +892,27 @@ If Step 0.3 finds more than one default model or plan, the backfill keeps the on
 
 ### 1B.3 — Models & plans  *(cutover)*
 
-- [ ] **1B.3.1** Models:
+- [x] **1B.3.1** Models:
   - Build `ModelStore`. `toJSON` parity: `id = modelId`, and `_id`/`modelId` are omitted.
   - LiteLLM sync (`models.service.ts:62-192`) → per-model `INSERT … ON CONFLICT (model_id) DO UPDATE` in one transaction.
   - Deactivation `$nin` → `UPDATE … SET is_active=false WHERE NOT (model_id = ANY($1))`. **Guard:** when LiteLLM returns 0 models, skip deactivation and log a warning. Today this deactivates everything, which counts as an outage vector (⚑).
   - "One default" (`models.service.ts:467,548`) → `withTransaction { clear; set }`. This ordering is now required by `uq_ai_models_single_default`.
   - `$pull types 'guardrails_classifier'` → `array_remove(types, 'guardrails_classifier')`.
-- [ ] **1B.3.2** Plans:
+  - Done 2026-09-21: `models/persistence/{model.store,pg-model.store}.ts`; the 0-models guard already existed pre-cutover and is kept; set-default runs clear+set in one transaction.
+- [x] **1B.3.2** Plans:
   - Build `PlanStore`, plus a `PlanRecord` type that replaces `PlanDocument` in `usage-store.ts`, `postgres-usage-store.ts:257-271` and `usage-limit.guard.ts`. `plan._id.toString()` becomes `plan.id`.
   - `createPlan`/`updatePlan` clear the other defaults in the same transaction.
   - `recordUsage` calls `getDefaultPlan()` on every usage record: add a 30-second in-process cache, invalidated on plan writes, so the hot path does not gain a PG round-trip.
-- [ ] **1B.3.3** `seedDefaultPlans` → `INSERT … ON CONFLICT (slug) DO NOTHING`.
-- [ ] **1B.3.4** In `2026-10-catalog-fk.ts`: add `identity.users.plan_id → catalog.plans(id)` (`NOT VALID` → validate; orphan query `users.plan_id NOT IN plans`).
-- [ ] **1B.3.5** Backfill models and plans (ids preserved; `users.planId` references them). Cut over. Smoke:
+  - Done 2026-09-21: `usage/persistence/{plan.store,pg-plan.store}.ts`; PlanRecord replaces PlanDocument in the usage store port, postgres-usage-store and usage-limit.guard; `user.service.assignPlan` now takes a string plan id (3 call sites updated).
+- [x] **1B.3.3** `seedDefaultPlans` → `INSERT … ON CONFLICT (slug) DO NOTHING`.
+- [x] **1B.3.4** In `2026-10-catalog-fk.ts`: add `identity.users.plan_id → catalog.plans(id)` (`NOT VALID` → validate; orphan query `users.plan_id NOT IN plans`).
+- [x] **1B.3.5** Backfill models and plans (ids preserved; `users.planId` references them). Cut over. Smoke:
   - admin model list, sync and default switch
   - chat on the default model
   - plan CRUD
   - usage limit hit (429)
   - workspace creation limit (`maxWorkspaces`)
+  - Done 2026-09-21: backfill via `scripts/migrate/2026-10-models-plans.ts` — Mongo collection is `models` (not `ai_models`): 108/108 checksum-exact, plans 4/4 with `unlimited` flagged default; single-default counts 1/1/1. FK `fk_users_plan` added NOT VALID → validated (0 orphans). Live smoke on localhost:3001: startup LiteLLM sync wrote into PG (19 in sync, 0 changes); admin default switch+restore atomic (no double default); plan CRUD create→update→soft-delete OK; usage status reads unlimited plan through the 30s cache. Chat/429/maxWorkspaces legs not run live: recorder sits on the unlimited plan and no agents exist on this dev DB — limit paths remain unit-covered (usage.service spec). Full suite 456 suites / 3561 tests green.
 
 ### 1B.4 — Tools, skills, agent types  *(cutover)*
 
