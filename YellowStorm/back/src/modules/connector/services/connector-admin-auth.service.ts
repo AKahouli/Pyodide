@@ -28,6 +28,8 @@ const TOKEN_EXPIRY_BUFFER_MS = 5 * 60 * 1000;
  */
 type RefreshOutcome = { ok: true; token: string } | { ok: false; message: string };
 
+const escapeHtml = (v: string): string => v.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
+
 @Injectable()
 export class ConnectorAdminAuthService {
   private readonly frontendUrl: string;
@@ -215,11 +217,11 @@ export class ConnectorAdminAuthService {
       appKey,
       success,
       error: error || undefined,
-    });
+    }).replace(/</g, '\\u003c');
 
     const statusMessage = success
       ? '<p style="color:green">Connected successfully. You can close this window.</p>'
-      : `<p style="color:red">Connection failed: ${error || 'unknown error'}</p>`;
+      : `<p style="color:red">Connection failed: ${escapeHtml(error || 'unknown error')}</p>`;
 
     return `<!DOCTYPE html>
 <html>

@@ -162,18 +162,22 @@ export class ConnectedAppOAuthService {
   }
 
   buildCallbackHtml(appKey: string, success: boolean, error?: string): string {
+    // `error` comes from the public provider query string and `appKey` from the URL:
+    // escape both for the HTML body and keep `<` out of the inline script payload so a
+    // value containing "</script>" cannot break out (reflected XSS).
     const payload = JSON.stringify({
       type: 'connected-app-oauth-result',
       appKey,
       success,
       error: error || undefined,
-    });
+    }).replace(/</g, '\\u003c');
 
     this.logger.log('Building callback HTML', { appKey, success, frontendUrl: this.frontendUrl });
 
+    const escapeHtml = (value: string): string => value.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
     const statusMsg = success
       ? '<p style="color:green">Connected successfully. You can close this window.</p>'
-      : `<p style="color:red">Connection failed: ${error || 'unknown error'}</p>`;
+      : `<p style="color:red">Connection failed: ${escapeHtml(error || 'unknown error')}</p>`;
 
     return `<!DOCTYPE html>
 <html>

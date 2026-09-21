@@ -288,5 +288,20 @@ describe('ConnectedAppOAuthService', () => {
       expect(html).toContain('"success":false');
       expect(html).not.toContain('window.close()');
     });
+
+    it('escapes attacker-controlled error text (reflected XSS): no raw tags reach the page', () => {
+      const payload = '</script><img src=x onerror=alert(1)>';
+      const html = service.buildCallbackHtml('google-drive', false, payload);
+
+      // Visible message is HTML-escaped.
+      expect(html).toContain('Connection failed: &#60;/script&#62;&#60;img src=x onerror=alert(1)&#62;');
+      // The inline script payload never contains a raw "<": it cannot close the script tag.
+      const script = html.slice(html.indexOf('<script>'), html.lastIndexOf('</script>'));
+      expect(script).not.toContain('</script>');
+      expect(script).not.toContain('<img');
+      expect(script).toContain('\\u003c/script>');
+      // Exactly one real <script> block remains.
+      expect(html.match(/<script>/g)).toHaveLength(1);
+    });
   });
 });
