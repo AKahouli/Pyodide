@@ -105,6 +105,12 @@ export interface EvaluationTargetRunResult {
   status: 'completed' | 'failed';
   targetAnswer: string;
   toolCalls: Array<{ nodeId: string; iteration: number; trace: unknown[] }>;
+  tokenUsage?: {
+    total_tokens?: number;
+    prompt_tokens?: number;
+    completion_tokens?: number;
+    [key: string]: unknown;
+  };
   durationMs: number;
   error: string | null;
 }
@@ -115,6 +121,12 @@ export interface EvaluationJudgeRunResult {
   judgeFaithfulnessScore?: number;
   judgeReasoning?: string;
   toolCalls: Array<{ nodeId: string; iteration: number; trace: unknown[] }>;
+  tokenUsage?: {
+    total_tokens?: number;
+    prompt_tokens?: number;
+    completion_tokens?: number;
+    [key: string]: unknown;
+  };
   durationMs: number;
   error: string | null;
 }
@@ -126,6 +138,12 @@ interface EvaluationStreamResult {
   judgeFaithfulnessScore?: number;
   judgeReasoning?: string;
   toolCalls: Array<{ nodeId: string; iteration: number; trace: unknown[] }>;
+  tokenUsage?: {
+    total_tokens?: number;
+    prompt_tokens?: number;
+    completion_tokens?: number;
+    [key: string]: unknown;
+  };
   durationMs: number;
   error: string | null;
 }
@@ -1880,6 +1898,7 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
       status: result.status,
       targetAnswer: result.targetAnswer,
       toolCalls: result.toolCalls,
+      tokenUsage: result.tokenUsage,
       durationMs: result.durationMs,
       error: result.error,
     };
@@ -1913,6 +1932,7 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
       judgeFaithfulnessScore: result.judgeFaithfulnessScore,
       judgeReasoning: result.judgeReasoning,
       toolCalls: result.toolCalls,
+      tokenUsage: result.tokenUsage,
       durationMs: result.durationMs,
       error: result.error,
     };
@@ -2073,11 +2093,28 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
       let judgeFaithfulnessScore: number | undefined;
       let judgeReasoning: string | undefined;
       const tracesByNode = new Map<string, { nodeId: string; iteration: number; trace: unknown[] }>();
+      let tokenUsage: { total_tokens?: number; prompt_tokens?: number; completion_tokens?: number; [key: string]: unknown } | undefined;
       let status: 'completed' | 'failed' = 'failed';
       let error: string | null = null;
       let resolved = false;
       let timer: NodeJS.Timeout;
-      const finalize = () => { if (!resolved) { resolved = true; clearTimeout(timer); resolve({ status, targetAnswer, judgeScore, judgeFaithfulnessScore, judgeReasoning, toolCalls: [...tracesByNode.values()], durationMs: Date.now() - startedAt, error }); } };
+      const finalize = () => {
+        if (!resolved) {
+          resolved = true;
+          clearTimeout(timer);
+          resolve({
+            status,
+            targetAnswer,
+            judgeScore,
+            judgeFaithfulnessScore,
+            judgeReasoning,
+            toolCalls: [...tracesByNode.values()],
+            tokenUsage,
+            durationMs: Date.now() - startedAt,
+            error,
+          });
+        }
+      };
       timer = setTimeout(() => {
         status = 'failed';
         error = `Evaluation step timed out after ${String(timeoutMs / 1000)}s`;
@@ -2105,6 +2142,23 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
                 trace: trace.filter((item): item is Record<string, unknown> =>
                   item !== null && typeof item === 'object' && !Array.isArray(item)),
               });
+            }
+          }
+
+          // Token usage extraction from LLM response events
+          const usage = payload.token_usage ?? payload.usage_metadata ?? payload.llm_token_usage;
+          if (usage && typeof usage === 'object' && !Array.isArray(usage)) {
+            const u = usage as Record<string, unknown>;
+            const total = u.total_tokens ?? u.totalTokens;
+            const prompt = u.prompt_tokens ?? u.promptTokens ?? u.input_tokens;
+            const completion = u.completion_tokens ?? u.completionTokens ?? u.output_tokens;
+            if (typeof total === 'number' || typeof prompt === 'number' || typeof completion === 'number') {
+              tokenUsage = {
+                ...tokenUsage,
+                total_tokens: typeof total === 'number' ? total : tokenUsage?.total_tokens,
+                prompt_tokens: typeof prompt === 'number' ? prompt : tokenUsage?.prompt_tokens,
+                completion_tokens: typeof completion === 'number' ? completion : tokenUsage?.completion_tokens,
+              };
             }
           }
 

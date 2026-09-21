@@ -29,6 +29,24 @@ const ALLOWED_EXTENSIONS = ['.xlsx', '.csv'];
 const EVAL_TIMEOUT_SECONDS = 600;
 const ORPHAN_RUN_MAX_AGE_MS = 15 * 60 * 1000;
 
+function mergeTokenUsage(
+  a?: { total_tokens?: number; prompt_tokens?: number; completion_tokens?: number; [key: string]: unknown },
+  b?: { total_tokens?: number; prompt_tokens?: number; completion_tokens?: number; [key: string]: unknown },
+): { total_tokens?: number; prompt_tokens?: number; completion_tokens?: number; [key: string]: unknown } | undefined {
+  if (!a && !b) return undefined;
+  const total = (a?.total_tokens ?? 0) + (b?.total_tokens ?? 0);
+  const prompt = (a?.prompt_tokens ?? 0) + (b?.prompt_tokens ?? 0);
+  const completion = (a?.completion_tokens ?? 0) + (b?.completion_tokens ?? 0);
+  const hasAny = typeof a?.total_tokens === 'number' || typeof a?.prompt_tokens === 'number' || typeof a?.completion_tokens === 'number' ||
+                 typeof b?.total_tokens === 'number' || typeof b?.prompt_tokens === 'number' || typeof b?.completion_tokens === 'number';
+  if (!hasAny) return undefined;
+  return {
+    total_tokens: total > 0 ? total : undefined,
+    prompt_tokens: prompt > 0 ? prompt : undefined,
+    completion_tokens: completion > 0 ? completion : undefined,
+  };
+}
+
 interface SnapshotLike {
   nodes?: { id?: string }[];
   [key: string]: unknown;
@@ -578,6 +596,8 @@ export class LogicalSearchEvaluationService implements OnModuleInit {
       let fileWriteChain: Promise<void> = Promise.resolve();
       const persist = (completed: { index: number; queryId: string; queryText: string }): void => {
         fileWriteChain = fileWriteChain.then(async () => {
+          const result = resultsByIndex[completed.index];
+          if (!result) return;
           const snapshotResults = resultsByIndex.filter((r): r is EvaluationQueryResult => r !== null);
           await writeFile(join(runDir, 'results.json.tmp'), JSON.stringify(snapshotResults, null, 2), 'utf-8');
           await rename(join(runDir, 'results.json.tmp'), join(runDir, 'results.json'));
@@ -592,6 +612,7 @@ export class LogicalSearchEvaluationService implements OnModuleInit {
             updatedAt: new Date().toISOString(),
           });
           await this.repository.applyRunProgress(evaluationId);
+          await this.repository.applyResult(evaluationId, result);
         }).catch((writeError) => {
           this.logger.warn(
             `[${completed.queryId}] failed to persist run output: ${writeError instanceof Error ? writeError.message : String(writeError)}`,
@@ -650,6 +671,7 @@ export class LogicalSearchEvaluationService implements OnModuleInit {
                 targetDurationMs: targetRun.durationMs,
                 error: targetRun.error,
                 toolCalls: targetRun.toolCalls,
+                tokenUsage: targetRun.tokenUsage,
               });
               this.logger.log(`[${queryId}] ${targetRun.status} (target failed; judge skipped)`);
               persist({ index, queryId, queryText });
@@ -668,6 +690,7 @@ export class LogicalSearchEvaluationService implements OnModuleInit {
             }));
 
             const judgeStatus = judgeRun.status === 'completed' ? 'completed' : 'failed';
+            const mergedTokenUsage = mergeTokenUsage(targetRun.tokenUsage, judgeRun.tokenUsage);
             resultsByIndex[index] = buildQueryResult({
               queryId,
               query: queryText,
@@ -681,6 +704,7 @@ export class LogicalSearchEvaluationService implements OnModuleInit {
               judgeDurationMs: judgeRun.durationMs,
               error: judgeRun.error ?? targetRun.error,
               toolCalls: targetRun.toolCalls,
+              tokenUsage: mergedTokenUsage,
               judgeScore: judgeRun.judgeScore,
               judgeFaithfulnessScore: judgeRun.judgeFaithfulnessScore,
               judgeReasoning: judgeRun.judgeReasoning,
@@ -702,6 +726,7 @@ export class LogicalSearchEvaluationService implements OnModuleInit {
               durationMs,
               error: message,
               toolCalls: [],
+              tokenUsage: undefined,
             });
             this.logger.warn(`[${queryId}] failed: ${message}`);
             persist({ index, queryId, queryText });
@@ -837,11 +862,25 @@ export class LogicalSearchEvaluationService implements OnModuleInit {
       'Semantic Similarity', 'Fact Recall', 'Fact Precision', 'Answer Quality',
       'Answer Exact Match', 'Judge Score', 'Judge Faithfulness', 'Judge Reasoning',
       'Status', 'Duration (ms)', 'Target Duration (ms)', 'Judge Duration (ms)', 'Error',
+      'Execution Logs / Tool Calls', 'Token Usage',
     ] as const;
 
     const detailsSheetData = results.map((r) => {
       const ret = r.metrics.retrieval;
       const ans = r.metrics.answer;
+      const toolCallsText = r.tool_calls && r.tool_calls.length > 0
+        ? (r.tool_calls as Array<Record<string, unknown>>).map((tc) => {
+            const fn = tc['function'] as Record<string, unknown> | undefined;
+            const name = String(tc['tool_name'] ?? tc['name'] ?? fn?.['name'] ?? 'unknown_tool');
+            const input = tc['args'] ?? tc['input'] ?? tc['parameters'] ?? {};
+            const output = tc['output'] ?? tc['result'] ?? tc['output_summary'] ?? tc['response'] ?? {};
+            const duration = typeof tc['duration_ms'] === 'number' ? tc['duration_ms'] : (typeof tc['execution_time'] === 'number' ? tc['execution_time'] : undefined);
+            return `[${name}] input=${JSON.stringify(input)} output=${JSON.stringify(output)}${duration !== undefined ? ` duration_ms=${duration}` : ''}`;
+          }).join(' | ')
+        : '';
+      const tokenUsageText = r.token_usage
+        ? `Total: ${r.token_usage.total_tokens ?? 'N/A'} | Prompt: ${r.token_usage.prompt_tokens ?? 'N/A'} | Completion: ${r.token_usage.completion_tokens ?? 'N/A'}`
+        : '';
       return {
         'Query ID': r.query_id,
         'Query': r.query,
@@ -873,6 +912,8 @@ export class LogicalSearchEvaluationService implements OnModuleInit {
         'Target Duration (ms)': r.target_duration_ms ?? '',
         'Judge Duration (ms)': r.judge_duration_ms ?? '',
         'Error': r.error ?? '',
+        'Execution Logs / Tool Calls': toolCallsText,
+        'Token Usage': tokenUsageText,
       };
     });
 

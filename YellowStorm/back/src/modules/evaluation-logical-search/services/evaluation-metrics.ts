@@ -709,6 +709,13 @@ export interface EvaluationQueryResult {
   retrieved_files: string[];
   retrieved_pages: number[];
   retrieved_sources: FilePagePair[];
+  tool_calls?: ToolCall[];
+  token_usage?: {
+    total_tokens?: number;
+    prompt_tokens?: number;
+    completion_tokens?: number;
+    [key: string]: unknown;
+  };
   judge_score?: number;
   judge_faithfulness_score?: number;
   judge_reasoning?: string;
@@ -727,6 +734,12 @@ export function buildQueryResult(input: {
   judgeDurationMs?: number;
   error?: string | null;
   toolCalls: { nodeId: string; iteration: number; trace: unknown[] }[];
+  tokenUsage?: {
+    total_tokens?: number;
+    prompt_tokens?: number;
+    completion_tokens?: number;
+    [key: string]: unknown;
+  };
   judgeScore?: number;
   judgeFaithfulnessScore?: number;
   judgeReasoning?: string;
@@ -760,6 +773,8 @@ export function buildQueryResult(input: {
     retrieved_files: retrieval.retrieved_files,
     retrieved_pages: retrieval.retrieved_pages,
     retrieved_sources: retrieval.retrieved_sources,
+    tool_calls: toolCalls.length > 0 ? toolCalls : undefined,
+    token_usage: input.tokenUsage,
     judge_score: input.judgeScore,
     judge_faithfulness_score: input.judgeFaithfulnessScore,
     judge_reasoning: input.judgeReasoning,

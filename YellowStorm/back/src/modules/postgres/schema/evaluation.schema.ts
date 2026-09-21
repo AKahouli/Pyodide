@@ -2,23 +2,27 @@ import { sql } from 'drizzle-orm';
 import {
   char,
   check,
+  doublePrecision,
   index,
   integer,
   jsonb,
-  pgTable,
+  pgSchema,
   text,
   timestamp,
+  uniqueIndex,
   uuid,
   varchar,
 } from 'drizzle-orm/pg-core';
 
+const evaluationSchema = pgSchema('evaluation');
+
 /**
- * Logical Search evaluation runs. Persisted in Postgres (requirement) while
+ * Logical Search evaluation runs. Persisted in the `evaluation` schema while
  * referenced entities (agent, flow, workspace, execution) stay in Mongo →
  * char(24) ids without cross-DB FKs, like the agents schema.
  */
-export const logicalSearchEvaluations = pgTable(
-  'logical_search_evaluations',
+export const evaluationRuns = evaluationSchema.table(
+  'evaluation',
   {
     id: uuid('id').primaryKey().defaultRandom(),
     ownerId: char('owner_id', { length: 24 }).notNull(),
@@ -48,5 +52,43 @@ export const logicalSearchEvaluations = pgTable(
     check('lse_query_count_non_negative', sql`${t.queryCount} >= 0`),
     index('idx_lse_owner_created').on(t.ownerId, sql`${t.createdAt} DESC`),
     index('idx_lse_status').on(t.status),
+  ],
+);
+
+/**
+ * Per-query results of a Logical Search evaluation run, written in real time as
+ * each query completes (one row per benchmark question per run).
+ */
+export const evaluationResults = evaluationSchema.table(
+  'evaluation_result',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    evaluationId: uuid('evaluation_id').notNull().references(() => evaluationRuns.id, { onDelete: 'cascade' }),
+    queryId: varchar('query_id', { length: 64 }).notNull(),
+    query: text('query').notNull(),
+    expectedAnswer: text('expected_answer').notNull(),
+    generatedAnswer: text('generated_answer').notNull().default(''),
+    // completed | failed (normalized from the run result status)
+    status: varchar('status', { length: 30 }).notNull(),
+    durationMs: integer('duration_ms'),
+    targetDurationMs: integer('target_duration_ms'),
+    judgeDurationMs: integer('judge_duration_ms'),
+    judgeScore: doublePrecision('judge_score'),
+    judgeFaithfulnessScore: doublePrecision('judge_faithfulness_score'),
+    judgeReasoning: text('judge_reasoning'),
+    retrievedFiles: jsonb('retrieved_files').$type<string[]>(),
+    toolCalls: jsonb('tool_calls'),
+    tokenUsage: jsonb('token_usage'),
+    error: text('error'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    check(
+      'lser_status_values',
+      sql`${t.status} IN ('completed', 'failed')`,
+    ),
+    uniqueIndex('idx_lser_evaluation_query').on(t.evaluationId, t.queryId),
+    index('idx_lser_evaluation').on(t.evaluationId),
   ],
 );
