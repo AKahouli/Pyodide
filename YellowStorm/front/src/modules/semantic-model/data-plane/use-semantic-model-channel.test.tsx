@@ -23,6 +23,7 @@ describe('use-semantic-model-channel (P2.SB20/SB24)', () => {
 
   it('subscribes once per model and invalidates on signal, then cleans up', async () => {
     vi.mocked(getDataGrant).mockResolvedValue({
+      capabilities: { dataApi: true, realtime: true },
       token: 't',
       realtimeToken: 'rt',
       topic: 'semantic-model:m1',
@@ -59,5 +60,24 @@ describe('use-semantic-model-channel (P2.SB20/SB24)', () => {
 
     unmount();
     expect(close).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not subscribe when realtime is disabled', async () => {
+    vi.mocked(getDataGrant).mockResolvedValue({
+      capabilities: { dataApi: true, realtime: false },
+      token: 't',
+      realtimeToken: null,
+      topic: null,
+      restUrl: 'http://127.0.0.1:3000',
+      realtimeUrl: null,
+      expiresAt: new Date(Date.now() + 60_000).toISOString(),
+    });
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+
+    const { result } = renderHook(() => useSemanticModelChannel('m1'), { wrapper: wrapper(client) });
+
+    await waitFor(() => expect(getDataGrant).toHaveBeenCalledWith('m1'));
+    expect(subscribeModelTopic).not.toHaveBeenCalled();
+    expect(result.current).toMatchObject({ live: false, polling: true });
   });
 });

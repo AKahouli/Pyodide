@@ -55,12 +55,19 @@ export function useSemanticModelChannel(modelId: string | undefined): ChannelSta
     void getDataGrant(modelId)
       .then((grant) => {
         if (cancelled) return;
+        if (!grant.capabilities.realtime || !grant.realtimeUrl || !grant.topic || !grant.realtimeToken) {
+          setLive(false);
+          return;
+        }
         handle = subscribeModelTopic({
           realtimeUrl: grant.realtimeUrl,
           modelId,
           topic: grant.topic,
           token: grant.realtimeToken,
-          refreshToken: () => getDataGrant(modelId).then((fresh) => fresh.realtimeToken),
+          refreshToken: () => getDataGrant(modelId).then((fresh) => {
+            if (!fresh.realtimeToken) throw new Error('semantic realtime is disabled');
+            return fresh.realtimeToken;
+          }),
           onSignal: (event, payload) => {
             // Central mapping first (resource-scoped keys), then revision gate.
             for (const key of keysForEvent(modelId, null, event)) {

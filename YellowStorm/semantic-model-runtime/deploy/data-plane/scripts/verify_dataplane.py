@@ -39,6 +39,7 @@ TOPIC = "semantic-model:model-verify-1"
 FIXTURE_MODEL_ID = "11111111-1111-1111-1111-111111111111"
 FIXTURE_MAPPING_ID = "11111111-1111-1111-1111-111111111112"
 FIXTURE_CONCEPT_ID = "11111111-1111-1111-1111-111111111113"
+FIXTURE_GRANT_ID = "11111111-1111-4111-8111-111111111114"
 FIXTURE_DOCUMENT_ID = "verify-document-1"
 FIXTURE_USER = "verify-user-1"
 OTHER_USER = "verify-user-2"
@@ -171,15 +172,18 @@ async def roundtrip(tenant_jwt: str) -> None:
         raise SystemExit("broadcast not received")
 
 
-def user_jwt(sub: str, model_id: str) -> str:
+def user_jwt(sub: str, model_id: str, grant_id: str | None = None) -> str:
+    claims = {
+        "role": "semantic_api_user",
+        "sub": sub,
+        "model_id": model_id,
+        "exp": int(time.time()) + 300,
+    }
+    if grant_id:
+        claims |= {"grant_id": grant_id, "scope_hash": "verify-scope", "jti": "verify-jti"}
     return jwt(
         env("PGRST_JWT_SECRET"),
-        {
-            "role": "semantic_api_user",
-            "sub": sub,
-            "model_id": model_id,
-            "exp": int(time.time()) + 300,
-        },
+        claims,
     )
 
 
@@ -234,6 +238,20 @@ async def seed_fixture() -> bool:
                 "(workspace_id, asset_id, revision, event_id, event_type, occurred_at, payload) "
                 "SELECT workspace_id, asset_id, revision, event_id, event_type, occurred_at, payload "
                 "FROM semantic_jobs.source_revisions WHERE event_id = 'verify-source-event-1'"
+            )
+            await con.execute(
+                "INSERT INTO semantic_access.read_grants "
+                "(id, actor_user_id, model_id, scope_hash, expires_at, jti) "
+                "VALUES ($1::uuid, $2, $3::uuid, 'verify-scope', now()+interval '5 minutes', 'verify-jti')",
+                FIXTURE_GRANT_ID,
+                FIXTURE_USER,
+                FIXTURE_MODEL_ID,
+            )
+            await con.execute(
+                "INSERT INTO semantic_access.read_grant_sources (grant_id, workspace_id, asset_id) "
+                "VALUES ($1::uuid, 'verify-workspace-1', $2)",
+                FIXTURE_GRANT_ID,
+                FIXTURE_DOCUMENT_ID,
             )
         return True
     finally:
@@ -304,11 +322,29 @@ async def main() -> None:
         status, body = http(
             "GET", PGRST + "/source_summary", user_jwt(FIXTURE_USER, FIXTURE_MODEL_ID)
         )
+        assert status == 200 and body.strip() == "[]", (status, body)
+        print("postgrest-source-member-without-grant-denied")
+        status, body = http(
+            "GET", PGRST + "/source_summary", user_jwt(FIXTURE_USER, FIXTURE_MODEL_ID, FIXTURE_GRANT_ID)
+        )
         assert status == 200 and FIXTURE_MAPPING_ID in body and "verify-source.pdf" in body, (
             status,
             body,
         )
         print("postgrest-source-authorized-visible")
+        con = await asyncio.wait_for(_asyncpg.connect(_runtime_url(), command_timeout=10), 20)
+        try:
+            await con.execute(
+                "UPDATE semantic_access.read_grants SET revoked_at=now() WHERE id=$1::uuid",
+                FIXTURE_GRANT_ID,
+            )
+        finally:
+            await con.close()
+        status, body = http(
+            "GET", PGRST + "/source_summary", user_jwt(FIXTURE_USER, FIXTURE_MODEL_ID, FIXTURE_GRANT_ID)
+        )
+        assert status == 200 and body.strip() == "[]", (status, body)
+        print("postgrest-source-revoked-grant-denied")
         status, body = http(
             "GET", PGRST + "/model_summary", user_jwt(OTHER_USER, FIXTURE_MODEL_ID)
         )

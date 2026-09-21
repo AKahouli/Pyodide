@@ -40,4 +40,28 @@ describe('SemanticGraphIndexWorkerService advisory lock release', () => {
     expect(lockClient.release).toHaveBeenCalledTimes(1);
     expect(lockClient.release).toHaveBeenCalledWith(err);
   });
+
+  it('does not project after runtime ownership supersedes the claimed job', async () => {
+    const lockClient = {
+      query: jest.fn()
+        .mockResolvedValueOnce({ rows: [{ acquired: true }] })
+        .mockResolvedValueOnce({ rows: [], rowCount: 0 })
+        .mockResolvedValueOnce({ rows: [] }),
+      release: jest.fn(),
+    };
+    const ageGraph = { dropGraph: jest.fn(), buildGraph: jest.fn() };
+    const svc = new SemanticGraphIndexWorkerService(
+      { acquireClient: jest.fn().mockResolvedValue(lockClient) } as never,
+      {} as never,
+      ageGraph as never,
+      {} as never,
+      { setContext: jest.fn(), warn: jest.fn(), error: jest.fn() } as never,
+    );
+
+    await (svc as unknown as { index: (t: typeof target) => Promise<void> }).index(target);
+
+    expect(ageGraph.dropGraph).not.toHaveBeenCalled();
+    expect(ageGraph.buildGraph).not.toHaveBeenCalled();
+    expect(lockClient.release).toHaveBeenCalledWith(undefined);
+  });
 });

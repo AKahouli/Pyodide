@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { Inject, Injectable, OnModuleInit, Optional } from '@nestjs/common';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import { withTransaction } from '@common/postgres';
@@ -31,6 +32,9 @@ import type { RunCodeWorkspaceMetadata } from './interfaces/run-code-source.inte
 import type { WorkspaceRecord } from './ports/workspace-records';
 import { WORKSPACE_STORE, type WorkspaceStore } from './stores/workspace-store';
 import { SHARE_STORE, type ShareStore } from './stores/share-store';
+import { SemanticDataGrantRevocationService } from '../semantic-model/services/semantic-data-grant-revocation.service';
+import { IntegrationEventOutboxService } from '../integration-events/services/integration-event-outbox.service';
+import { WorkspaceIntegrationEvents } from '../integration-events/contracts';
 
 @Injectable()
 export class WorkspaceService implements OnModuleInit {
@@ -44,7 +48,9 @@ export class WorkspaceService implements OnModuleInit {
     @Inject(FLOW_READ_PORT)
     private readonly flowReadPort: FlowReadPort,
     private readonly logger: LoggerService,
+    private readonly semanticGrantRevocations: SemanticDataGrantRevocationService,
     @Optional() @Inject(DRIZZLE_DB) private readonly db?: NodePgDatabase<typeof schema>,
+    @Optional() private readonly outbox?: IntegrationEventOutboxService,
   ) {
     this.logger.setContext('WorkspaceService');
   }
@@ -438,7 +444,14 @@ export class WorkspaceService implements OnModuleInit {
       );
     }
 
-    await this.workspaceStore.updateFields(workspaceId, { isPublic });
+    if (workspace.isPublic && !isPublic) {
+      await this.semanticGrantRevocations.runWithWorkspaceRevocation(workspaceId, undefined, async () => {
+        await this.recordWorkspaceAccessChanged(workspaceId, 'visibility_private');
+        await this.workspaceStore.updateFields(workspaceId, { isPublic });
+      });
+    } else {
+      await this.workspaceStore.updateFields(workspaceId, { isPublic });
+    }
     this.logger.log('Workspace visibility updated', { workspaceId, ownerId, isPublic });
     return this.mapToResponse({ ...workspace, isPublic });
   }
@@ -475,17 +488,19 @@ export class WorkspaceService implements OnModuleInit {
     // Remove every reference BEFORE the workspace row: conversations first
     // (the conversation store runs on its own connection), then shares and
     // the workspace itself atomically.
-    await this.conversationStore.removeWorkspaceFromAll(workspaceId);
-
     const deleteSharesAndWorkspace = async (): Promise<void> => {
       await this.shareStore.deleteManyByWorkspace(workspaceId);
       await this.workspaceStore.deleteById(workspaceId);
     };
-    if (this.db) {
-      await withTransaction(this.db, deleteSharesAndWorkspace);
-    } else {
-      await deleteSharesAndWorkspace();
-    }
+    await this.semanticGrantRevocations.runWithWorkspaceRevocation(workspaceId, undefined, async () => {
+      await this.recordWorkspaceAccessChanged(workspaceId, 'deleted');
+      await this.conversationStore.removeWorkspaceFromAll(workspaceId);
+      if (this.db) {
+        await withTransaction(this.db, deleteSharesAndWorkspace);
+      } else {
+        await deleteSharesAndWorkspace();
+      }
+    });
 
     // Remove workspace reference from all agents' knowledge bases
     await this.agentRepository.pullKnowledgeBaseFromAll(workspaceId);
@@ -497,6 +512,22 @@ export class WorkspaceService implements OnModuleInit {
       workspaceId,
       userId,
       name: workspace.name,
+    });
+  }
+
+  private async recordWorkspaceAccessChanged(
+    workspaceId: string,
+    changeType: 'visibility_private' | 'deleted',
+  ): Promise<void> {
+    if (!this.outbox) return;
+    const occurredAt = new Date();
+    await this.outbox.record({
+      eventId: randomUUID(),
+      eventType: WorkspaceIntegrationEvents.AccessChangedV1,
+      aggregateType: 'workspace_access',
+      aggregateId: workspaceId,
+      payload: { workspaceId, changeType, occurredAt: occurredAt.toISOString() },
+      occurredAt,
     });
   }
 

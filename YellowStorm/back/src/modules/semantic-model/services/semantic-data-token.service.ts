@@ -5,15 +5,16 @@ import semanticModelConfig from '@config/semantic-model.config';
 import { LoggerService } from '@modules/logger';
 import { ErrorCode } from '@modules/exceptions/constants/error-codes';
 import { ServiceUnavailableException } from '@modules/exceptions';
-import { SemanticModelService } from './semantic-model.service';
+import { SemanticDataGrantService } from './semantic-data-grant.service';
 
 export interface SemanticDataToken {
-  token: string;
-  realtimeToken: string;
-  topic: string;
-  restUrl: string;
-  realtimeUrl: string;
-  expiresAt: string;
+  capabilities: { dataApi: boolean; realtime: boolean };
+  token: string | null;
+  realtimeToken: string | null;
+  topic: string | null;
+  restUrl: string | null;
+  realtimeUrl: string | null;
+  expiresAt: string | null;
 }
 
 // P2.SB06: existing-auth token bridge. The browser keeps its Yellowmind
@@ -24,41 +25,57 @@ export class SemanticDataTokenService {
   constructor(
     @Inject(semanticModelConfig.KEY)
     private readonly config: ConfigType<typeof semanticModelConfig>,
-    private readonly models: SemanticModelService,
+    private readonly grants: SemanticDataGrantService,
     private readonly logger: LoggerService,
   ) {
     this.logger.setContext(SemanticDataTokenService.name);
   }
 
   async issue(userId: string, modelId: string): Promise<SemanticDataToken> {
-    await this.models.requireRole(userId, modelId, ['owner', 'editor', 'viewer']);
+    if (!this.config.dataApiEnabled) {
+      return {
+        capabilities: { dataApi: false, realtime: false },
+        token: null,
+        realtimeToken: null,
+        topic: null,
+        restUrl: null,
+        realtimeUrl: null,
+        expiresAt: null,
+      };
+    }
     const dataSecret = this.config.dataJwtSecret;
     const realtimeSecret = this.config.realtimeJwtSecret;
-    if (!dataSecret || !realtimeSecret) {
+    if (!dataSecret || (this.config.realtimeEnabled && !realtimeSecret)) {
       throw new ServiceUnavailableException(
         ErrorCode.SEMANTIC_MODEL_UNAVAILABLE,
         'Semantic data plane is not configured',
       );
     }
-    const expiresAt = new Date(Date.now() + this.config.dataTokenTtlSeconds * 1000);
+    const grant = await this.grants.issue(userId, modelId, this.config.dataTokenTtlSeconds);
+    const expiresAt = grant.expiresAt;
     const exp = Math.floor(expiresAt.getTime() / 1000);
     return {
+      capabilities: { dataApi: true, realtime: this.config.realtimeEnabled },
       token: signHs256(dataSecret, {
         sub: userId,
         role: 'semantic_api_user',
         model_id: modelId,
+        grant_id: grant.grantId,
+        scope_hash: grant.scopeHash,
+        jti: grant.jti,
+        aud: 'yellowmind-semantic-data',
         iss: 'yellowmind',
         exp,
       }),
-      realtimeToken: signHs256(realtimeSecret, {
+      realtimeToken: this.config.realtimeEnabled ? signHs256(realtimeSecret, {
         sub: userId,
         role: 'authenticated',
         model_id: modelId,
         exp,
-      }),
-      topic: `semantic-model:${modelId}`,
+      }) : null,
+      topic: this.config.realtimeEnabled ? `semantic-model:${modelId}` : null,
       restUrl: this.config.dataRestUrl,
-      realtimeUrl: this.config.dataRealtimeUrl,
+      realtimeUrl: this.config.realtimeEnabled ? this.config.dataRealtimeUrl : null,
       expiresAt: expiresAt.toISOString(),
     };
   }

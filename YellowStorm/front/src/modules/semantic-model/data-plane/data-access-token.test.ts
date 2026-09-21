@@ -6,6 +6,7 @@ import { semanticModelApi } from '../api';
 import { clearDataGrants, getDataGrant } from './data-access-token';
 
 const grant = (modelId: string) => ({
+  capabilities: { dataApi: true as const, realtime: true },
   token: 't',
   realtimeToken: 'rt',
   topic: `semantic-model:${modelId}`,
@@ -75,5 +76,21 @@ describe('data-access-token (P2.SB17)', () => {
     await getDataGrant('m1');
     expect(semanticModelApi.dataToken).toHaveBeenCalledTimes(2);
     vi.restoreAllMocks();
+  });
+
+  it('rejects a disabled data-plane capability without caching credentials', async () => {
+    vi.mocked(semanticModelApi.dataToken).mockResolvedValue({
+      capabilities: { dataApi: false, realtime: false },
+      token: null,
+      realtimeToken: null,
+      topic: null,
+      restUrl: null,
+      realtimeUrl: null,
+      expiresAt: null,
+    });
+
+    await expect(getDataGrant('m1')).rejects.toThrow('semantic data API is disabled');
+    await expect(getDataGrant('m1')).rejects.toThrow('semantic data API is disabled');
+    expect(semanticModelApi.dataToken).toHaveBeenCalledTimes(2);
   });
 });

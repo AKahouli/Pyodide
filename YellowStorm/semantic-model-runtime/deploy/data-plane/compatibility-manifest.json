@@ -45,6 +45,7 @@
   "scripts": {
     "bootstrap_dataplane.py": "one-shot roles/schemas/definitions/graph (env-driven, secret-free source)",
     "sql/001_curated_api.sql": "semantic_api, definer helper, RLS, security-invoker view (applied as semantic_app)",
+    "sql/002_source_authorization.sql": "grant-bound source RLS replacing membership-only source access (applied as semantic_app)",
     "provision_tenant.py": "idempotent tenant + namespace policy (control DB only)",
     "verify_dataplane.py": "anon denial, RLS read, private broadcast round-trip"
   },

@@ -31,13 +31,21 @@ export interface SemanticSourceSummaryRow {
 }
 
 export interface SemanticDataTokenResponse {
-  token: string;
-  realtimeToken: string;
-  topic: string;
-  restUrl: string;
-  realtimeUrl: string;
-  expiresAt: string;
+  capabilities: { dataApi: boolean; realtime: boolean };
+  token: string | null;
+  realtimeToken: string | null;
+  topic: string | null;
+  restUrl: string | null;
+  realtimeUrl: string | null;
+  expiresAt: string | null;
 }
+
+export type EnabledSemanticDataGrant = SemanticDataTokenResponse & {
+  capabilities: { dataApi: true; realtime: boolean };
+  token: string;
+  restUrl: string;
+  expiresAt: string;
+};
 
 export type SemanticBroadcastEvent =
   | 'data-revision-changed'

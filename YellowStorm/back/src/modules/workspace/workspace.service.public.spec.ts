@@ -38,6 +38,9 @@ function makeService(over: { workspaceModel?: any } = {}) {
   (svc as any).userLookup = { byIds: jest.fn().mockResolvedValue(new Map()) };
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   (svc as any).logger = { setContext: () => {}, log: () => {}, warn: () => {} };
+  (svc as any).semanticGrantRevocations = {
+    runWithWorkspaceRevocation: jest.fn(async (_workspaceId: string, _userId: string | undefined, work: () => Promise<unknown>) => work()),
+  };
   return { svc, workspaceModel, workspaceStore };
 }
 
@@ -85,6 +88,35 @@ describe('WorkspaceService.setVisibility', () => {
     expect(workspaceStore.updateFields).toHaveBeenCalledWith(WS, { isPublic: true });
     expect(save).not.toHaveBeenCalled();
     expect(res.isPublic).toBe(true);
+  });
+
+  it('revokes source grants when a public workspace becomes private', async () => {
+    const doc: any = {
+      _id: new Types.ObjectId(WS), name: 'W', alias: 'w', storagePrefix: 'w', description: '',
+      createdBy: new Types.ObjectId(OWNER), documentCount: 0, usedStorage: 0, allocatedStorage: 100,
+      isSystem: false, isPersonal: false, shareCount: 0, isPublic: true,
+      createdAt: new Date(), updatedAt: new Date(),
+    };
+    const { svc } = makeService({ workspaceModel: { findById: () => ({ exec: () => Promise.resolve(doc) }) } });
+
+    await svc.setVisibility(WS, OWNER, false);
+
+    expect((svc as any).semanticGrantRevocations.runWithWorkspaceRevocation)
+      .toHaveBeenCalledWith(WS, undefined, expect.any(Function));
+  });
+
+  it('keeps public visibility when durable grant revocation fails', async () => {
+    const doc: any = {
+      _id: new Types.ObjectId(WS), name: 'W', alias: 'w', storagePrefix: 'w', description: '',
+      createdBy: new Types.ObjectId(OWNER), documentCount: 0, usedStorage: 0, allocatedStorage: 100,
+      isSystem: false, isPersonal: false, shareCount: 0, isPublic: true,
+      createdAt: new Date(), updatedAt: new Date(),
+    };
+    const { svc, workspaceStore } = makeService({ workspaceModel: { findById: () => ({ exec: () => Promise.resolve(doc) }) } });
+    (svc as any).semanticGrantRevocations.runWithWorkspaceRevocation.mockRejectedValue(new Error('agentstore unavailable'));
+
+    await expect(svc.setVisibility(WS, OWNER, false)).rejects.toThrow('agentstore unavailable');
+    expect(workspaceStore.updateFields).not.toHaveBeenCalled();
   });
 });
 
@@ -159,6 +191,9 @@ describe('WorkspaceService.delete ordering', () => {
     s.agentRepository = { pullKnowledgeBaseFromAll: jest.fn(async () => { calls.push('agents'); }) };
     s.flowReadPort = { removeWorkspaceReference: jest.fn(async () => { calls.push('flows'); }) };
     s.logger = { setContext: () => {}, log: () => {}, warn: () => {} };
+    s.semanticGrantRevocations = {
+      runWithWorkspaceRevocation: jest.fn(async (_workspaceId: string, _userId: string | undefined, work: () => Promise<unknown>) => work()),
+    };
     if (withDb) {
       s.db = { transaction: jest.fn(async (fn: (tx: unknown) => Promise<unknown>) => {
         calls.push('begin');
@@ -180,5 +215,13 @@ describe('WorkspaceService.delete ordering', () => {
     const { svc, calls } = build(false);
     await svc.delete(WS, OWNER);
     expect(calls).toEqual(['conversations', 'shares', 'workspace', 'agents', 'flows']);
+  });
+
+  it('keeps the workspace when durable grant revocation fails', async () => {
+    const { svc, calls } = build(false);
+    (svc as any).semanticGrantRevocations.runWithWorkspaceRevocation.mockRejectedValue(new Error('agentstore unavailable'));
+
+    await expect(svc.delete(WS, OWNER)).rejects.toThrow('agentstore unavailable');
+    expect(calls).toEqual([]);
   });
 });

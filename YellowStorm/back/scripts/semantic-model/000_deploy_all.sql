@@ -499,3 +499,35 @@ CREATE TABLE IF NOT EXISTS semantic_model.graph_index_jobs (
 CREATE INDEX IF NOT EXISTS graph_index_jobs_ready_idx
   ON semantic_model.graph_index_jobs (next_attempt_at, updated_at)
   WHERE status IN ('pending','in_progress');
+
+-- 014 - Revocable source-read grants
+CREATE SCHEMA IF NOT EXISTS semantic_access;
+CREATE TABLE IF NOT EXISTS semantic_access.read_grants (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(), actor_user_id TEXT NOT NULL,
+  model_id UUID NOT NULL REFERENCES semantic_model.models(id) ON DELETE CASCADE,
+  scope_hash TEXT NOT NULL, issued_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  expires_at TIMESTAMPTZ NOT NULL, revoked_at TIMESTAMPTZ,
+  jti TEXT NOT NULL UNIQUE, CHECK (expires_at > issued_at)
+);
+CREATE TABLE IF NOT EXISTS semantic_access.read_grant_sources (
+  grant_id UUID NOT NULL REFERENCES semantic_access.read_grants(id) ON DELETE CASCADE,
+  workspace_id TEXT NOT NULL, asset_id TEXT
+);
+CREATE UNIQUE INDEX IF NOT EXISTS semantic_read_grant_sources_uidx
+  ON semantic_access.read_grant_sources (grant_id, workspace_id, COALESCE(asset_id, ''));
+CREATE INDEX IF NOT EXISTS semantic_read_grants_actor_model_idx ON semantic_access.read_grants (actor_user_id, model_id);
+CREATE INDEX IF NOT EXISTS semantic_read_grants_expires_idx ON semantic_access.read_grants (expires_at);
+CREATE INDEX IF NOT EXISTS semantic_read_grant_sources_scope_idx ON semantic_access.read_grant_sources (grant_id, workspace_id, asset_id);
+REVOKE ALL ON SCHEMA semantic_access FROM PUBLIC;
+REVOKE ALL ON ALL TABLES IN SCHEMA semantic_access FROM PUBLIC;
+
+-- 015 - Per-model execution ownership
+ALTER TABLE semantic_model.models
+  ADD COLUMN IF NOT EXISTS execution_owner TEXT NOT NULL DEFAULT 'legacy',
+  ADD COLUMN IF NOT EXISTS runtime_claimed_at TIMESTAMPTZ,
+  ADD COLUMN IF NOT EXISTS runtime_claimed_by TEXT;
+ALTER TABLE semantic_model.models DROP CONSTRAINT IF EXISTS semantic_models_execution_owner_check;
+ALTER TABLE semantic_model.models ADD CONSTRAINT semantic_models_execution_owner_check CHECK (execution_owner IN ('legacy', 'runtime'));
+ALTER TABLE semantic_model.graph_index_jobs DROP CONSTRAINT IF EXISTS graph_index_jobs_status_check;
+ALTER TABLE semantic_model.graph_index_jobs ADD CONSTRAINT graph_index_jobs_status_check CHECK (status IN ('pending','in_progress','indexed','failed','superseded'));
+CREATE INDEX IF NOT EXISTS semantic_models_execution_owner_idx ON semantic_model.models (execution_owner, updated_at DESC);

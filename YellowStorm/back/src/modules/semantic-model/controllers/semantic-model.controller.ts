@@ -46,6 +46,7 @@ import { SemanticModelBuildOrchestratorService } from '../services/semantic-mode
 import { SemanticCrossSourceService } from '../services/semantic-cross-source.service';
 import { SemanticBusinessTrustService } from '../services/semantic-business-trust.service';
 import { SemanticPopulationRefreshService } from '../services/semantic-population-refresh.service';
+import { SemanticExecutionOwnershipService } from '../services/semantic-execution-ownership.service';
 
 @ApiTags('Semantic Models')
 @ApiBearerAuth()
@@ -68,6 +69,7 @@ export class SemanticModelController {
     private readonly crossSource: SemanticCrossSourceService,
     private readonly businessTrust: SemanticBusinessTrustService,
     private readonly populationRefresh: SemanticPopulationRefreshService,
+    private readonly executionOwnership: SemanticExecutionOwnershipService,
   ) {}
 
   @Get()
@@ -105,6 +107,12 @@ export class SemanticModelController {
   @RequirePermissions([Permissions.SEMANTIC_MODELS_CREATE,Permissions.SEMANTIC_MODELS_ALL],'any')
   clone(@CurrentUser() user: AuthUser,@Param('modelId') modelId: string,@Body() dto: CloneSemanticModelDto) {
     return this.models.clone(user._id.toString(),modelId,dto.name);
+  }
+
+  @Post(':modelId/runtime/claim')
+  @RequirePermissions([Permissions.SEMANTIC_MODELS_UPDATE,Permissions.SEMANTIC_MODELS_ALL],'any')
+  claimRuntimeOwnership(@CurrentUser() user: AuthUser,@Param('modelId') modelId: string,@Body() dto: ExpectedModelRevisionDto) {
+    return this.executionOwnership.claimRuntimeOwnership(user._id.toString(), modelId, dto.expectedRevision);
   }
 
   @Get(':modelId/overview')

@@ -50,6 +50,7 @@ describe('SemanticModelService clone', () => {
     const ageGraph = { dropGraph: jest.fn(), buildGraph: jest.fn() };
     const source = {
       id: 'source-model', role: 'owner', status: 'draft', description: 'Source',
+      executionOwner: 'runtime',
       currentDraftVersionId: 'source-version', currentPublishedVersionId: null,
     };
     const sourceGraph = {
@@ -66,7 +67,7 @@ describe('SemanticModelService clone', () => {
       recordRelations: [{ id: 'record-relation', relationTypeId: 'relation-ab', sourceRecordId: 'record-a', targetRecordId: 'record-b', values: {} }],
     };
     repository.findAccessible.mockResolvedValue(source);
-    repository.create.mockResolvedValue({ id: 'clone-model', currentDraftVersionId: 'clone-version', description: 'Source', status: 'draft', role: 'owner' });
+    repository.create.mockResolvedValue({ id: 'clone-model', currentDraftVersionId: 'clone-version', description: 'Source', status: 'draft', role: 'owner', executionOwner: 'legacy' });
     graphRepository.getGraph.mockResolvedValue(sourceGraph);
     ageGraph.buildGraph.mockResolvedValue({ vertexCount: 2, edgeCount: 1, failedVertexCount: 0, failedEdgeCount: 0 });
     database.query
@@ -74,12 +75,15 @@ describe('SemanticModelService clone', () => {
       .mockResolvedValueOnce({ rows: [{ workspaceId: 'workspace-1' }] })
       .mockResolvedValueOnce({ rows: [{ targetKind: 'node_type', targetId: 'node-a', resourceKind: 'workspace', workspaceId: 'workspace-1', documentId: null, inclusionMode: 'dynamic', retrievalMode: 'broad', priority: 0, enabled: true, protected: false, availability: 'available' }] })
       .mockResolvedValueOnce({ rows: [] });
-    database.transaction.mockImplementation(async (work: (client: unknown) => Promise<unknown>) => work({ query: jest.fn().mockResolvedValue({ rows: [] }) }));
+    const cloneClient = { query: jest.fn().mockResolvedValue({ rows: [] }) };
+    database.transaction.mockImplementation(async (work: (client: unknown) => Promise<unknown>) => work(cloneClient));
     const service = new SemanticModelService(database as never, repository as never, graphRepository as never, {} as never, ageGraph as never);
 
     const clone = await service.clone('user-id', source.id, 'Source copy');
 
     expect(clone.id).toBe('clone-model');
+    expect(clone.executionOwner).toBe('legacy');
+    expect(cloneClient.query).not.toHaveBeenCalledWith(expect.stringContaining("execution_owner='runtime'"), expect.anything());
     expect(repository.create).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ ownerUserId: 'user-id', name: 'Source copy' }));
     expect(graphRepository.apply).toHaveBeenCalledTimes(6);
     expect(graphRepository.apply.mock.calls[2][3].entity.sourceNodeTypeId).not.toBe('node-a');

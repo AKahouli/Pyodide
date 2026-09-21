@@ -42,6 +42,10 @@ import { SemanticRuntimeClientService } from './services/semantic-runtime-client
 import { SemanticPopulationRefreshService } from './services/semantic-population-refresh.service';
 import { SemanticModelSourceEventHandler } from './integration/semantic-model-source-event.handler';
 import { SemanticModelSourceReconciliationService } from './integration/semantic-model-source-reconciliation.service';
+import { SemanticDataGrantService } from './services/semantic-data-grant.service';
+import { SemanticExecutionOwnershipService } from './services/semantic-execution-ownership.service';
+import { SemanticAccessEventHandler } from './integration/semantic-access-event.handler';
+import { SemanticDataGrantRevocationService } from './services/semantic-data-grant-revocation.service';
 
 @Module({
   imports: [ConfigModule.forFeature(semanticModelConfig),AuthorizationModule,LoggerModule,UserModule,IntegrationEventsModule,forwardRef(() => WorkspaceModule)],
@@ -67,11 +71,15 @@ import { SemanticModelSourceReconciliationService } from './integration/semantic
     SemanticBusinessTrustService,
     ModelSpecificationService,
     SemanticDataTokenService,
+    SemanticDataGrantService,
+    SemanticDataGrantRevocationService,
+    SemanticExecutionOwnershipService,
     SemanticRuntimeClientService,
     SemanticPopulationRefreshService,
     SemanticModelSourceEventHandler,
     SemanticModelSourceReconciliationService,
+    SemanticAccessEventHandler,
   ],
-  exports: [SemanticModelDatabaseService,SemanticModelProvisioningService,SemanticModelService],
+  exports: [SemanticModelDatabaseService,SemanticModelProvisioningService,SemanticModelService,SemanticDataGrantRevocationService],
 })
 export class SemanticModelModule {}

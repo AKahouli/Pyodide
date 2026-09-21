@@ -64,6 +64,11 @@ export const configValidationSchema = Joi.object({
   SEMANTIC_MODEL_RUNTIME_URL: Joi.string().uri().optional().allow(''),
   SEMANTIC_RUNTIME_SERVICE_KEY: Joi.string().max(500).optional().allow(''),
   SEMANTIC_MODEL_RUNTIME_REQUEST_TIMEOUT_MS: Joi.number().integer().min(1000).max(60000).default(5000),
+  SEMANTIC_MODEL_DATA_API_ENABLED: Joi.boolean().default(false),
+  SEMANTIC_MODEL_REALTIME_ENABLED: Joi.boolean().default(false).when('SEMANTIC_MODEL_DATA_API_ENABLED', {
+    is: false,
+    then: Joi.valid(false),
+  }),
   SEMANTIC_MODEL_CONTEXT_SEARCH_ENABLED: Joi.boolean().default(false),
   SEMANTIC_MODEL_LLM_FALLBACK_ENABLED: Joi.boolean().default(false),
   SEMANTIC_PG_HOST: Joi.string().optional().allow(''),

@@ -4,14 +4,14 @@
 // Supabase Auth, no shadow users, no service_role anywhere near the browser.
 import { AUTH_LOST_EVENT } from '@/lib/api/client';
 import { semanticModelApi } from '../api';
-import type { SemanticDataTokenResponse } from './semantic-api.types';
+import type { EnabledSemanticDataGrant } from './semantic-api.types';
 
 interface CachedGrant {
   modelId: string;
-  response: SemanticDataTokenResponse;
+  response: EnabledSemanticDataGrant;
   // Refresh well before expiry; revocation still enforced server-side per call.
   refreshAtMs: number;
-  inflight: Promise<SemanticDataTokenResponse> | null;
+  inflight: Promise<EnabledSemanticDataGrant> | null;
 }
 
 const RENEW_FRACTION = 0.75;
@@ -20,24 +20,28 @@ const grants = new Map<string, CachedGrant>();
 // must never repopulate the cache (logout / account switch race).
 let generation = 0;
 
-async function fetchGrant(modelId: string, gen: number): Promise<SemanticDataTokenResponse> {
+async function fetchGrant(modelId: string, gen: number): Promise<EnabledSemanticDataGrant> {
   // Domain command client (existing auth); never a direct PostgREST call.
   const grant = await semanticModelApi.dataToken(modelId);
   if (gen !== generation) throw new Error('data grant superseded by logout or model switch');
+  if (!grant.capabilities.dataApi || !grant.token || !grant.restUrl || !grant.expiresAt) {
+    throw new Error('semantic data API is disabled');
+  }
+  const enabledGrant = grant as EnabledSemanticDataGrant;
   const ttlMs = Math.max(
     10_000,
-    new Date(grant.expiresAt).getTime() - Date.now(),
+    new Date(enabledGrant.expiresAt).getTime() - Date.now(),
   );
   grants.set(modelId, {
     modelId,
-    response: grant,
+    response: enabledGrant,
     refreshAtMs: Date.now() + ttlMs * RENEW_FRACTION,
     inflight: null,
   });
-  return grant;
+  return enabledGrant;
 }
 
-function clearInflight(modelId: string, inflight: Promise<SemanticDataTokenResponse>): void {
+function clearInflight(modelId: string, inflight: Promise<EnabledSemanticDataGrant>): void {
   if (grants.get(modelId)?.inflight === inflight) {
     const current = grants.get(modelId);
     if (current) current.inflight = null;
@@ -45,14 +49,14 @@ function clearInflight(modelId: string, inflight: Promise<SemanticDataTokenRespo
 }
 
 /** Current grant for a model, refreshing single-flight before expiry. */
-export function getDataGrant(modelId: string): Promise<SemanticDataTokenResponse> {
+export function getDataGrant(modelId: string): Promise<EnabledSemanticDataGrant> {
   const cached = grants.get(modelId);
   if (cached && Date.now() < cached.refreshAtMs) return Promise.resolve(cached.response);
   if (cached?.inflight) return cached.inflight;
   const inflight = fetchGrant(modelId, generation);
   grants.set(modelId, {
     modelId,
-    response: cached?.response as SemanticDataTokenResponse,
+    response: cached?.response as EnabledSemanticDataGrant,
     refreshAtMs: cached?.refreshAtMs ?? 0,
     inflight,
   });

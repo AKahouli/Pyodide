@@ -1,4 +1,5 @@
-import { Inject, Injectable, forwardRef } from '@nestjs/common';
+import { randomUUID } from 'node:crypto';
+import { Inject, Injectable, Optional, forwardRef } from '@nestjs/common';
 import type { UserSummary } from '@common/ports/user-lookup.port';
 import { isObjectId } from '@common/postgres';
 import {
@@ -23,6 +24,9 @@ import { asAuthUser, type AuthUser } from '@common/auth/auth-user';
 import type { WorkspaceRecord, WorkspaceShareRecord } from './ports/workspace-records';
 import { WORKSPACE_STORE, type WorkspaceStore } from './stores/workspace-store';
 import { SHARE_STORE, type ShareStore } from './stores/share-store';
+import { WorkspaceIntegrationEvents } from '../integration-events/contracts';
+import { IntegrationEventOutboxService } from '../integration-events/services/integration-event-outbox.service';
+import { SemanticDataGrantRevocationService } from '../semantic-model/services/semantic-data-grant-revocation.service';
 
 type ShareEventType = 'workspace_shared' | 'workspace_share_revoked' | 'workspace_share_updated';
 
@@ -36,6 +40,8 @@ export class WorkspaceShareService {
     private readonly userService: UserService,
     @Inject(forwardRef(() => NotificationsService))
     private readonly notificationsService: NotificationsService,
+    private readonly semanticGrantRevocations: SemanticDataGrantRevocationService,
+    @Optional() private readonly outbox?: IntegrationEventOutboxService,
   ) {
     this.logger.setContext('WorkspaceShareService');
   }
@@ -251,6 +257,13 @@ export class WorkspaceShareService {
     }
 
     for (const event of createdEvents) {
+      await this.recordAccessChanged(workspaceId, event.userId, 'created');
+    }
+    for (const event of updatedEvents) {
+      await this.recordAccessChanged(workspaceId, event.userId, 'permission_updated');
+    }
+
+    for (const event of createdEvents) {
       await this.pushShareNotification('workspace_shared', event.userId, workspace, asAuthUser(owner), {
         shareId: event.shareId,
         permission: event.permission,
@@ -324,6 +337,7 @@ export class WorkspaceShareService {
     this.logger.log('Share permission updated', { shareId, permission });
 
     if (changed) {
+      await this.recordAccessChanged(workspaceId, share.sharedWithUserId, 'permission_updated');
       try {
         const [workspace, owner] = await Promise.all([
           this.workspaceStore.findById(share.workspaceId),
@@ -361,8 +375,11 @@ export class WorkspaceShareService {
 
     const recipientId = share.sharedWithUserId;
 
-    await this.shareStore.deleteById(shareId);
-    await this.workspaceStore.incrementCounters(workspaceId, { shareCount: -1 });
+    await this.semanticGrantRevocations.runWithWorkspaceRevocation(workspaceId, recipientId, async () => {
+      await this.recordAccessChanged(workspaceId, recipientId, 'revoked');
+      await this.shareStore.deleteById(shareId);
+      await this.workspaceStore.incrementCounters(workspaceId, { shareCount: -1 });
+    });
 
     this.logger.log('Share revoked', { shareId, workspaceId });
 
@@ -386,6 +403,23 @@ export class WorkspaceShareService {
         error: err instanceof Error ? err.message : 'Unknown error',
       });
     }
+  }
+
+  private async recordAccessChanged(
+    workspaceId: string,
+    userId: string,
+    changeType: 'created' | 'permission_updated' | 'revoked',
+  ): Promise<void> {
+    if (!this.outbox) return;
+    const occurredAt = new Date();
+    await this.outbox.record({
+      eventId: randomUUID(),
+      eventType: WorkspaceIntegrationEvents.AccessChangedV1,
+      aggregateType: 'workspace_access',
+      aggregateId: `${workspaceId}:${userId}`,
+      payload: { workspaceId, userId, changeType, occurredAt: occurredAt.toISOString() },
+      occurredAt,
+    });
   }
 
   /**

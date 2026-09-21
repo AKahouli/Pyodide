@@ -15,11 +15,11 @@ Env (all required, values never printed):
   SEM_AGE_PW          dedicated semantic_age_app password
   DEFINITIONS_SQL     path to back/scripts/semantic-model/000_deploy_all.sql
   RUNTIME_MIGRATION   path to any file in semantic-model-runtime/migrations
-  CURATED_SQL         path to deploy/data-plane/sql/001_curated_api.sql
+  CURATED_SQL         path to any file in deploy/data-plane/sql
 
 Idempotent: reruns only rotate the dedicated passwords and re-apply DDL.
-Curated reads (semantic_api, RLS, view) are owned by sql/001_curated_api.sql,
-applied separately as semantic_app.
+Curated reads (semantic_api, RLS, views) are owned by deploy/data-plane/sql,
+applied in filename order as semantic_app.
 """
 
 import asyncio
@@ -110,7 +110,11 @@ async def bootstrap_agentstore(url: str, definitions: str, runtime_migrations: s
             'IN SCHEMA "semantic_api" GRANT SELECT ON TABLES TO "semantic_api_user"'
         )
         # DDL as the owner role so nothing stays superuser-owned.
-        curated = Path(os.environ["CURATED_SQL"]).read_text(encoding="utf-8")
+        curated_dir = Path(os.environ["CURATED_SQL"]).parent
+        curated = "\n".join(
+            path.read_text(encoding="utf-8")
+            for path in sorted(curated_dir.glob("*.sql"))
+        )
         await con.execute('SET ROLE "semantic_app"')
         try:
             await con.execute(definitions)

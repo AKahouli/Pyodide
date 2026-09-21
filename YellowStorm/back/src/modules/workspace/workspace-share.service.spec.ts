@@ -10,7 +10,7 @@ const WS = new Types.ObjectId().toString();
 
 // D.10 cutover: the service now reads through the WorkspaceStore/ShareStore
 // contracts, so the harness injects store mocks shaped per test.
-function build(overrides: { workspaceStore?: any; shareStore?: any } = {}) {
+function build(overrides: { workspaceStore?: any; shareStore?: any; outbox?: any; semanticGrantRevocations?: any } = {}) {
   const workspaceStore: any = {
     findById: jest.fn().mockResolvedValue(null),
     filterOwned: jest.fn().mockResolvedValue([]),
@@ -27,6 +27,10 @@ function build(overrides: { workspaceStore?: any; shareStore?: any } = {}) {
     deleteById: jest.fn().mockResolvedValue(undefined),
     ...overrides.shareStore,
   };
+  const semanticGrantRevocations = {
+    runWithWorkspaceRevocation: jest.fn(async (_workspaceId: string, _userId: string, work: () => Promise<unknown>) => work()),
+    ...overrides.semanticGrantRevocations,
+  };
   const svc = new WorkspaceShareService(
     workspaceStore,
     shareStore,
@@ -34,8 +38,10 @@ function build(overrides: { workspaceStore?: any; shareStore?: any } = {}) {
     { setContext: jest.fn(), log: jest.fn(), warn: jest.fn() } as unknown as LoggerService,
     {} as unknown as UserService,
     {} as unknown as NotificationsService,
+    semanticGrantRevocations as never,
+    overrides.outbox,
   );
-  return { svc, workspaceStore, shareStore };
+  return { svc, workspaceStore, shareStore, semanticGrantRevocations };
 }
 
 describe('WorkspaceShareService — public access', () => {
@@ -117,5 +123,43 @@ describe('WorkspaceShareService write access', () => {
     await expect(svc.assertUserHasWriteAccess(USER, WS)).rejects.toBeInstanceOf(
       ForbiddenException,
     );
+  });
+
+  it('records an access-change event when a share is revoked', async () => {
+    const outbox = { record: jest.fn().mockResolvedValue(undefined) };
+    const { svc } = build({
+      outbox,
+      shareStore: {
+        findById: jest.fn().mockResolvedValue({
+          id: 'share-1', workspaceId: WS, ownerId: new Types.ObjectId().toString(), sharedWithUserId: USER,
+        }),
+      },
+    });
+
+    await svc.revoke(WS, 'share-1');
+
+    expect(outbox.record).toHaveBeenCalledWith(expect.objectContaining({
+      eventType: 'workspace.access.changed.v1',
+      aggregateId: `${WS}:${USER}`,
+      payload: expect.objectContaining({ workspaceId: WS, userId: USER, changeType: 'revoked' }),
+    }));
+  });
+
+  it('keeps the share when durable grant revocation fails', async () => {
+    const deleteById = jest.fn();
+    const { svc } = build({
+      shareStore: {
+        findById: jest.fn().mockResolvedValue({
+          id: 'share-1', workspaceId: WS, ownerId: new Types.ObjectId().toString(), sharedWithUserId: USER,
+        }),
+        deleteById,
+      },
+      semanticGrantRevocations: {
+        runWithWorkspaceRevocation: jest.fn().mockRejectedValue(new Error('agentstore unavailable')),
+      },
+    });
+
+    await expect(svc.revoke(WS, 'share-1')).rejects.toThrow('agentstore unavailable');
+    expect(deleteById).not.toHaveBeenCalled();
   });
 });

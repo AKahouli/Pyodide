@@ -26,6 +26,8 @@ describe('SemanticModelController validation synchronization', () => {
       {} as never,
       {} as never,
       {} as never,
+      {} as never,
+      {} as never,
     );
 
     await expect(controller.validate({ _id: { toString: () => 'user-id' } } as never, 'model-id'))
