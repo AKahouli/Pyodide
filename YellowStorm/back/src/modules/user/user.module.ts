@@ -30,8 +30,7 @@ import { PgUserStore } from './persistence/pg-user.store';
     RegistrationApprovalService,
     MongoUserLookupAdapter,
     PgUserLookupAdapter,
-    { provide: USER_LOOKUP_PORT, useExisting: MongoUserLookupAdapter },
-    // Mongo-backed until the 1A cutover; swap useClass to PgUserStore then.
+    { provide: USER_LOOKUP_PORT, useExisting: PgUserLookupAdapter },
     { provide: USER_STORE, useClass: PgUserStore },
     PgUserStore,
   ],

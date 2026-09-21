@@ -1,7 +1,5 @@
 import { Module } from '@nestjs/common';
-import { MongooseModule } from '@nestjs/mongoose';
-import { UserGroup, UserGroupSchema } from '@modules/user-group/schemas/user-group.schema';
-import { MongoGroupLookupAdapter } from '../mongo/mongo-group-lookup.adapter';
+import { PgGroupLookupAdapter } from './pg-group-lookup.adapter';
 import { PgProgramStore } from './pg-program.store';
 import { PgScopeStore } from './pg-scope.store';
 import { PgGovernanceDocumentStore } from './pg-document.store';
@@ -32,13 +30,11 @@ import {
   SCOPE_STORE,
 } from '../index';
 
-// Groups are out of migration scope: the membership populate group lookup stays Mongo-backed.
-const GROUP_LOOKUP_MONGO = MongooseModule.forFeature([{ name: UserGroup.name, schema: UserGroupSchema }]);
-
 /** PostgreSQL bindings for the governance store tokens. */
 @Module({
-  imports: [GROUP_LOOKUP_MONGO],
   providers: [
+    PgGroupLookupAdapter,
+    { provide: GROUP_LOOKUP_PORT, useExisting: PgGroupLookupAdapter },
     PgProgramStore,
     { provide: PROGRAM_STORE, useExisting: PgProgramStore },
     PgScopeStore,
@@ -65,8 +61,6 @@ const GROUP_LOOKUP_MONGO = MongooseModule.forFeature([{ name: UserGroup.name, sc
     { provide: METRIC_STORE, useExisting: PgMetricStore },
     PgGovernanceTransactionRunner,
     { provide: GOVERNANCE_TRANSACTION, useExisting: PgGovernanceTransactionRunner },
-    MongoGroupLookupAdapter,
-    { provide: GROUP_LOOKUP_PORT, useExisting: MongoGroupLookupAdapter },
   ],
   exports: [
     PROGRAM_STORE,
