@@ -1,0 +1,74 @@
+{
+  "conv_v2_connectors": [
+    {
+      "connector_id": "64b000000000000000000a01",
+      "connector_name": "Graph Mail",
+      "mcp_transport_type": "streamable_http",
+      "mcp_server_url": "https://mcp.example.test/mail",
+      "auth_headers": {
+        "Authorization": "Bearer runtime-token"
+      },
+      "auth_env": {},
+      "mcp_server_config_json": "{}",
+      "actions": [
+        {
+          "action_key": "list_messages",
+          "label": "List messages",
+          "description": "List recent messages",
+          "parameter_schema_json": "{\"type\":\"object\",\"properties\":{\"top\":{\"type\":\"number\"}}}",
+          "result_kind": "generic",
+          "citation_mode": "none",
+          "result_mapping_json": "{}"
+        }
+      ]
+    }
+  ],
+  "connector_bindings": [
+    {
+      "connector_id": "64b000000000000000000a01",
+      "connector_name": "Graph Mail",
+      "connector_slug": "graph-mail",
+      "actions": [
+        {
+          "action_key": "list_messages",
+          "label": "List messages",
+          "description": "List recent messages",
+          "parameter_schema": {
+            "type": "object",
+            "properties": {
+              "top": {
+                "type": "number"
+              }
+            }
+          },
+          "safety": "read",
+          "result_kind": "generic",
+          "citation_mode": "none",
+          "result_mapping_json": "{}"
+        }
+      ],
+      "fixed_params": {},
+      "mcp_transport_type": "streamable_http",
+      "mcp_server_url": "https://mcp.example.test/mail",
+      "mcp_server_config": {},
+      "auth_headers": {
+        "Authorization": "Bearer runtime-token"
+      },
+      "auth_env": {},
+      "dynamic_headers": [
+        {
+          "header_name": "X-Workspace-Id",
+          "source": "workspace"
+        }
+      ]
+    }
+  ],
+  "tools": [
+    {
+      "name": "graph-mail_list_messages",
+      "description": "List recent messages",
+      "prompt": "",
+      "top_k": 0
+    }
+  ]
+}

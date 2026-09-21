@@ -126,6 +126,14 @@
       "ts"
     ],
     "rootDir": "src",
+    "roots": [
+      "<rootDir>",
+      "<rootDir>/../test/contracts"
+    ],
+    "testPathIgnorePatterns": [
+      "/node_modules/",
+      "/test/contracts/http/"
+    ],
     "testRegex": ".*\\.spec\\.ts$",
     "transform": {
       "^.+\\.(t|j)s$": "ts-jest"

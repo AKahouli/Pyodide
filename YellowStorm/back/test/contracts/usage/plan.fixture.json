@@ -1,0 +1,24 @@
+{
+  "id": "64b000000000000000000501",
+  "name": "Pro",
+  "slug": "pro",
+  "description": "Pro plan",
+  "tokenLimit": 1000000,
+  "windowHours": 5,
+  "requestsPerMinute": 60,
+  "maxTokensPerRequest": 32000,
+  "features": [
+    "chat",
+    "agents"
+  ],
+  "priority": 10,
+  "priceMonthly": 20,
+  "priceYearly": 200,
+  "currency": "USD",
+  "isActive": true,
+  "isDefault": false,
+  "displayOrder": 2,
+  "maxWorkspaces": 5,
+  "workspaceStorageBytes": 1073741824,
+  "isUnlimited": false
+}

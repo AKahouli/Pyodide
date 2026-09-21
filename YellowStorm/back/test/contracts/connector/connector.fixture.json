@@ -1,0 +1,75 @@
+{
+  "id": "64b000000000000000000a01",
+  "slug": "graph-mail",
+  "name": "Graph Mail",
+  "description": "Read mail",
+  "icon": "mail",
+  "color": "#0078d4",
+  "iconColor": "light",
+  "categoryId": "64b000000000000000000a02",
+  "categoryName": "Productivity",
+  "authType": "oauth2",
+  "authConfigSchema": {},
+  "authSourceType": "connected_app",
+  "connectedAppKey": "microsoft",
+  "runtimeAuthConfig": {},
+  "mcpTransportType": "streamable_http",
+  "mcpServerUrl": "https://mcp.example.test/mail",
+  "mcpServerConfig": {},
+  "dynamicHeaders": [
+    {
+      "headerName": "X-Workspace-Id",
+      "source": "workspace",
+      "enabled": true
+    },
+    {
+      "headerName": "X-User-Id",
+      "source": "user_id",
+      "enabled": true
+    }
+  ],
+  "actions": [
+    {
+      "key": "list_messages",
+      "label": "List messages",
+      "description": "List recent messages",
+      "parameterSchema": {
+        "type": "object",
+        "properties": {
+          "top": {
+            "type": "number"
+          }
+        }
+      },
+      "outputSchema": {},
+      "safety": "read",
+      "supportsBatch": false,
+      "supportsIteration": true,
+      "isEnabled": true,
+      "resultKind": "generic",
+      "citationMode": "none"
+    },
+    {
+      "key": "disabled_action",
+      "label": "Disabled",
+      "description": "",
+      "parameterSchema": {},
+      "outputSchema": {},
+      "safety": "write",
+      "supportsBatch": false,
+      "supportsIteration": false,
+      "isEnabled": false,
+      "resultKind": "generic",
+      "citationMode": "none"
+    }
+  ],
+  "referencedSkillIds": [
+    "64b000000000000000000701"
+  ],
+  "isActive": true,
+  "isSystem": false,
+  "isHidden": false,
+  "createdBy": "64b000000000000000000001",
+  "createdAt": "<volatile>",
+  "updatedAt": "<volatile>"
+}

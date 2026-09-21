@@ -1,33 +1,29 @@
 import 'reflect-metadata';
-import { Types } from 'mongoose';
-import { UserGroupSchema } from '@modules/user-group/schemas/user-group.schema';
-import { expectContract, hydrateDoc } from '../expect-contract';
+import { UserGroupService } from '@modules/user-group/user-group.service';
+import type { PopulatedGroupRecord } from '@modules/user-group/persistence/user-group.store';
+import { expectContract } from '../expect-contract';
 
-
-/** Serializer contract for Mongo `user_groups` — parity gate for the 1A UserGroupStore mapper. */
-const wire = (): Record<string, unknown> =>
-  JSON.parse(
-    JSON.stringify(
-      hydrateDoc(UserGroupSchema, {
-        _id: new Types.ObjectId('64b000000000000000000030'),
-        name: 'platform-team',
-        description: 'Platform engineers',
-        members: [
-          new Types.ObjectId('64b000000000000000000001'),
-          new Types.ObjectId('64b000000000000000000004'),
-        ],
-        createdBy: new Types.ObjectId('64b000000000000000000001'),
-        createdAt: new Date('2026-01-01T00:00:00Z'),
-        updatedAt: new Date('2026-01-15T00:00:00Z'),
-      }).toJSON(),
-    ),
-  );
+/** Wire contract for user groups built from a PG PopulatedGroupRecord. */
+const record: PopulatedGroupRecord = {
+  id: '64b000000000000000000030',
+  name: 'platform-team',
+  description: 'Platform engineers',
+  createdBy: '64b000000000000000000001',
+  members: [
+    { id: '64b000000000000000000001', email: 'jane.doe@example.com', firstName: 'Jane', lastName: 'Doe' },
+    { id: '64b000000000000000000004', email: 'john@example.com', firstName: null, lastName: null },
+  ],
+  createdAt: new Date('2026-01-01T00:00:00Z'),
+  updatedAt: new Date('2026-01-15T00:00:00Z'),
+};
 
 describe('user-group serializer contract', () => {
-  it('matches the recorded Mongo toJSON shape', () => {
-    const body = wire();
+  it('matches the recorded wire shape', () => {
+    const service = Object.create(UserGroupService.prototype) as unknown as { toResponse(r: unknown): unknown };
+    const body = JSON.parse(JSON.stringify(service.toResponse(record))) as Record<string, unknown>;
     expectContract('user-group/user-group.serializer', body);
-    expect(body.id).toBe('64b000000000000000000030');
+    expect(body.id).toBe(record.id);
+    expect(body.memberCount).toBe(2);
     expect(body).not.toHaveProperty('_id');
     expect(body).not.toHaveProperty('__v');
   });

@@ -1,4 +1,6 @@
 {
+  "type": "oauth",
+  "id": "64b000000000000000000040",
   "providerKey": "microsoft",
   "displayName": "Microsoft",
   "clientId": "****",
@@ -16,7 +18,7 @@
   "sortOrder": 0,
   "pkceEnabled": true,
   "enabled": true,
+  "linkedUserCount": 3,
   "createdAt": "<volatile>",
-  "updatedAt": "<volatile>",
-  "id": "64b000000000000000000040"
+  "updatedAt": "<volatile>"
 }
