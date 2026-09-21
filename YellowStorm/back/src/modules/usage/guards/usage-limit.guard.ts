@@ -44,8 +44,16 @@ export class UsageLimitGuard implements CanActivate {
       return true;
     }
 
-    const request = context.switchToHttp().getRequest<RequestWithUser>();
+    const request = context.switchToHttp().getRequest<RequestWithUser & {
+      aiProxyAuth?: { mode?: string };
+    }>();
     const user = request.user;
+
+    // App Builder AI Proxy uses a dedicated quota (AppBuilderAiUsageLimitGuard).
+    const mode = request.aiProxyAuth?.mode;
+    if (mode === 'ai_preview' || mode === 'app_end_user') {
+      return true;
+    }
 
     // If no user, let auth guard handle it
     if (!user) {

@@ -13,7 +13,9 @@ describe('ConversationV2DeployService', () => {
     'conversationV2.appBuilderDeployedAppsPathPrefix': '/apps',
   };
   const config = {
-    get: jest.fn((key: string) => configValues[key]),
+    get: jest.fn((key: string, defaultValue?: unknown) =>
+      Object.prototype.hasOwnProperty.call(configValues, key) ? configValues[key] : defaultValue,
+    ),
   };
   const revisions = {
     patchRevisionWithFiles: jest.fn().mockResolvedValue(undefined),
@@ -38,6 +40,9 @@ describe('ConversationV2DeployService', () => {
     configValues['conversationV2.appBuilderDeployTimeoutMs'] = 600_000;
     configValues['conversationV2.appBuilderDeployInitialStatusDelayMs'] = 15_000;
     configValues['conversationV2.appBuilderDeployStatusPollIntervalMs'] = 15_000;
+    delete configValues['app.backendUrl'];
+    delete configValues['app.nodeEnv'];
+    delete process.env.ALLOW_LOCALHOST_DEPLOY_API;
     service = new ConversationV2DeployService(
       config as unknown as ConfigService,
       revisions as unknown as RuntimeRevisionService,
@@ -163,6 +168,59 @@ describe('ConversationV2DeployService', () => {
     await expect(service.deploy('2e65d5fa87a0499f', 'rev_15')).rejects.toThrow(
       'Deployment failed: revision manifest not found',
     );
+  });
+
+  it('injects public BACKEND_URL as VITE_YM_API_BASE_URL', async () => {
+    configValues['app.backendUrl'] = 'https://api.yellowsys.org';
+    jest.spyOn(global, 'fetch').mockResolvedValueOnce(
+      jsonResponse({
+        status: 'ready',
+        app_id: '2e65d5fa87a0499f',
+        url: 'https://apps.yellowsys.org/apps/2e65d5fa87a0499f/',
+      }),
+    );
+
+    await expect(service.deploy('2e65d5fa87a0499f', 'rev_15')).resolves.toEqual({
+      appId: '2e65d5fa87a0499f',
+      url: 'https://apps.yellowsys.org/apps/2e65d5fa87a0499f/',
+      revisionId: undefined,
+      runtimeEnv: {
+        VITE_APP_BASE: '/apps/2e65d5fa87a0499f/',
+        VITE_YM_API_BASE_URL: 'https://api.yellowsys.org/api/v1',
+      },
+    });
+  });
+
+  it('refuses to bake localhost BACKEND_URL into deployed apps', async () => {
+    configValues['app.backendUrl'] = 'http://localhost:3000';
+    configValues['app.nodeEnv'] = 'production';
+    delete process.env.ALLOW_LOCALHOST_DEPLOY_API;
+
+    await expect(service.deploy('2e65d5fa87a0499f', 'rev_15')).rejects.toThrow(
+      /BACKEND_URL must be a public URL/,
+    );
+  });
+
+  it('allows localhost BACKEND_URL in development with a warning', async () => {
+    configValues['app.backendUrl'] = 'http://localhost:3000';
+    configValues['app.nodeEnv'] = 'development';
+    jest.spyOn(global, 'fetch').mockResolvedValueOnce(
+      jsonResponse({
+        status: 'ready',
+        app_id: '2e65d5fa87a0499f',
+        url: 'https://apps.yellowsys.org/apps/2e65d5fa87a0499f/',
+      }),
+    );
+
+    await expect(service.deploy('2e65d5fa87a0499f', 'rev_15')).resolves.toEqual({
+      appId: '2e65d5fa87a0499f',
+      url: 'https://apps.yellowsys.org/apps/2e65d5fa87a0499f/',
+      revisionId: undefined,
+      runtimeEnv: {
+        VITE_APP_BASE: '/apps/2e65d5fa87a0499f/',
+        VITE_YM_API_BASE_URL: 'http://localhost:3000/api/v1',
+      },
+    });
   });
 
   it('rejects with a timeout error when the app-builder does not answer in time', async () => {

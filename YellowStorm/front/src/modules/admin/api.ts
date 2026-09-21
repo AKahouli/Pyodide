@@ -117,9 +117,29 @@ import type {
   CatalogExportRequest,
   CatalogConflictPolicy,
   CatalogImportResult,
+  AppBuilderAiOverview,
+  AppBuilderAiOffer,
+  AppBuilderAiOfferListResponse,
+  CreateAppBuilderAiOfferRequest,
+  UpdateAppBuilderAiOfferRequest,
+  AppBuilderAiOfferMutationResponse,
+  AppBuilderAiUserRow,
+  AppBuilderAiUserListParams,
+  AppBuilderAiUserListResponse,
+  AppBuilderAiEnabledResponse,
 } from './types';
 import type {
 } from '@/modules/worky/types';
+
+export type {
+  AppBuilderAiOverview,
+  AppBuilderAiOffer,
+  AppBuilderAiUserRow,
+  AppBuilderAiUserListParams,
+  AppBuilderAiUserListResponse,
+  CreateAppBuilderAiOfferRequest,
+  UpdateAppBuilderAiOfferRequest,
+};
 
 // Helper to build query string
 function buildQueryString(params: AnalyticsQueryParams): string {
@@ -538,6 +558,92 @@ export async function assignPlanToUser(
   const response = await apiClient.post<ApiResponse<AdminUserResponse>>(
     API_ENDPOINTS.adminUsers.assignPlan(userId),
     data
+  );
+  return response.data.data;
+}
+
+// App Builder AI API
+
+export async function getAppBuilderAiOverview(): Promise<AppBuilderAiOverview> {
+  const response = await apiClient.get<ApiResponse<AppBuilderAiOverview>>(
+    API_ENDPOINTS.adminAppBuilderAi.overview,
+  );
+  return response.data.data;
+}
+
+export async function setAppBuilderAiEnabled(
+  enabled: boolean,
+): Promise<AppBuilderAiEnabledResponse> {
+  const response = await apiClient.put<ApiResponse<AppBuilderAiEnabledResponse>>(
+    API_ENDPOINTS.adminAppBuilderAi.enabled,
+    { enabled },
+  );
+  return response.data.data;
+}
+
+export async function listAppBuilderAiOffers(): Promise<AppBuilderAiOfferListResponse> {
+  const response = await apiClient.get<ApiResponse<AppBuilderAiOfferListResponse>>(
+    API_ENDPOINTS.adminAppBuilderAi.offers,
+  );
+  return response.data.data;
+}
+
+export async function createAppBuilderAiOffer(
+  data: CreateAppBuilderAiOfferRequest,
+): Promise<AppBuilderAiOfferMutationResponse> {
+  const response = await apiClient.post<ApiResponse<AppBuilderAiOfferMutationResponse>>(
+    API_ENDPOINTS.adminAppBuilderAi.offers,
+    data,
+  );
+  return response.data.data;
+}
+
+export async function updateAppBuilderAiOffer(
+  id: string,
+  data: UpdateAppBuilderAiOfferRequest,
+): Promise<AppBuilderAiOfferMutationResponse> {
+  const response = await apiClient.put<ApiResponse<AppBuilderAiOfferMutationResponse>>(
+    API_ENDPOINTS.adminAppBuilderAi.offerById(id),
+    data,
+  );
+  return response.data.data;
+}
+
+export async function deleteAppBuilderAiOffer(id: string): Promise<void> {
+  await apiClient.delete(API_ENDPOINTS.adminAppBuilderAi.offerById(id));
+}
+
+export async function listAppBuilderAiUsers(
+  params: AppBuilderAiUserListParams = {},
+): Promise<AppBuilderAiUserListResponse> {
+  const searchParams = new URLSearchParams();
+  if (params.q) searchParams.set('q', params.q);
+  if (params.offerId) searchParams.set('offerId', params.offerId);
+  if (params.page) searchParams.set('page', String(params.page));
+  if (params.limit) searchParams.set('limit', String(params.limit));
+  const query = searchParams.toString();
+  const response = await apiClient.get<ApiResponse<AppBuilderAiUserListResponse>>(
+    `${API_ENDPOINTS.adminAppBuilderAi.users}${query ? `?${query}` : ''}`,
+  );
+  return response.data.data;
+}
+
+export async function getAppBuilderAiUserDetail(
+  userId: string,
+): Promise<Record<string, unknown>> {
+  const response = await apiClient.get<ApiResponse<Record<string, unknown>>>(
+    API_ENDPOINTS.adminAppBuilderAi.userById(userId),
+  );
+  return response.data.data;
+}
+
+export async function assignAppBuilderAiOffer(
+  userId: string,
+  offerId: string,
+): Promise<Record<string, unknown>> {
+  const response = await apiClient.post<ApiResponse<Record<string, unknown>>>(
+    API_ENDPOINTS.adminAppBuilderAi.assignOffer(userId),
+    { offerId },
   );
   return response.data.data;
 }

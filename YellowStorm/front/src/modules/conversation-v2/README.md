@@ -58,6 +58,8 @@ The **App Builder** flow:
 8. **Publish** button deploys via `POST …/deploy`.
 9. **Share** button shares the deployed app by email.
 
+Invite / register links use `buildAppRegisterInviteUrl` (hash route ending in `/register`). Preview chrome copy stays product-facing via `preview-user-message` helpers. Sessions with **App Builder AI** (`hasAiFeatures`) need a publicly reachable Nest URL for the AI Proxy on deploy.
+
 The **Browser Runtime Host** enables OpenCode to execute file operations
 directly in the browser via Socket.IO — no server sandbox needed for most tasks.
 
@@ -563,6 +565,8 @@ tool views, deploy controls).
 | `utils/app-source.ts` | Icons, text vs binary file detection |
 | `utils/app-build-phase.ts` | Build phase enum + progress calculation |
 | `utils/npm-install-output.ts` | Parse npm install output for progress |
+| `utils/app-register-invite-url.ts` | Build hash-route register/invite URLs for end-users |
+| `utils/preview-user-message.ts` | Product-facing preview status copy (no tool jargon) |
 
 ### hooks/
 

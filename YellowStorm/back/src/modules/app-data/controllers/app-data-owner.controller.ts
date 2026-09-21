@@ -76,7 +76,7 @@ export class AppDataOwnerController {
   }
 
   @Get('end-users')
-  @ApiOperation({ summary: 'List registered app end-users and their CRUD grants' })
+  @ApiOperation({ summary: 'List registered app end-users and their CRUD + AI grants' })
   async listEndUsers(@Param('id') sessionId: string) {
     this.assertEndUserManagementEnabled();
     const app = await this.requireApp(sessionId);
@@ -84,7 +84,7 @@ export class AppDataOwnerController {
   }
 
   @Put('end-users/:userId/grants')
-  @ApiOperation({ summary: 'Update CRUD grants for an app end-user' })
+  @ApiOperation({ summary: 'Update CRUD + AI grants for an app end-user' })
   async updateEndUserGrants(
     @Param('id') sessionId: string,
     @Param('userId') userId: string,
@@ -93,12 +93,8 @@ export class AppDataOwnerController {
     this.assertEndUserManagementEnabled();
     const app = await this.requireApp(sessionId);
     await this.endUsers.requireById(app.id, userId);
-    const grants: AppDataEndUserGrants = {
-      create: body.create === true,
-      read: body.read === true,
-      update: body.update === true,
-      delete: body.delete === true,
-    };
+    const current = await this.grants.getGrants(app.id, userId);
+    const grants: AppDataEndUserGrants = AppDataEndUserGrantsService.mergeGrants(current, body);
     const updated = await this.grants.updateGrants(app.id, userId, grants);
     await this.audit.record({
       appId: app.id,

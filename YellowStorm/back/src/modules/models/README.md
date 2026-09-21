@@ -361,11 +361,11 @@ All public endpoints require JWT authentication.
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| `GET` | `/models` | List active **chat** models (filtered to `type === "chat"`) |
-| `GET` | `/models/:id` | Get model by ID |
-| `GET` | `/models/chef/:chefSlug` | Get active **chat** models by provider |
+| `GET` | `/model-catalog` | List active **chat** models (filtered to `type === "chat"`) |
+| `GET` | `/model-catalog/:id` | Get model by ID |
+| `GET` | `/model-catalog/chef/:chefSlug` | Get active **chat** models by provider |
 
-> **Note:** the public endpoints intentionally return only `type === "chat"` models so that conversation model selectors never surface embeddings, image-generation, etc. The admin endpoints (`/admin/models`) return **all** types.
+> **Note:** `/api/v1/models` is reserved for the OpenAI-compatible AI Proxy (`AiProxyController`). Platform UI catalog uses `/model-catalog`. The public catalog endpoints intentionally return only `type === "chat"` models so that conversation model selectors never surface embeddings, image-generation, etc. The admin endpoints (`/admin/models`) return **all** types.
 
 ### Admin Endpoints
 

@@ -117,6 +117,8 @@ const REMOTE_PROVIDERS = [
         AppDataReleaseBindingService,
         AppDataProvisioningService,
         AppDataMcpDispatcherService,
+        AppDataEndUserAuthService,
+        AppDataEndUserGrantsService,
       ],
 })
 export class AppDataModule {}

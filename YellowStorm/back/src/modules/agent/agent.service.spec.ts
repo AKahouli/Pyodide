@@ -1021,11 +1021,12 @@ describe('AgentService connector skill inheritance', () => {
         fixed_params: { limit: 10 },
         actions: [expect.objectContaining({
           action_key: 'search',
-          parameter_schema: {
+          parameter_schema: {},
+          parameter_schema_json: JSON.stringify({
             type: 'object',
             properties: { query: { type: 'string' }, limit: { type: 'number' } },
             additionalProperties: false,
-          },
+          }),
         })],
       }),
     ]);

@@ -38,6 +38,8 @@ export interface DeployedAppSummary extends AppRevisionCatalogFields {
   shareId: string | null;
   /** Recipient may open the conversation with full access (shared apps only). */
   canOpenConversation: boolean;
+  /** Generated app integrates Approach B AI features. */
+  hasAiFeatures: boolean;
 }
 
 export interface DraftAppSummary extends AppRevisionCatalogFields {
@@ -45,11 +47,15 @@ export interface DraftAppSummary extends AppRevisionCatalogFields {
   title: string;
   lastUpdatedAt: string;
   deployStatus: Exclude<ConversationV2DeployStatus, 'deployed'>;
+  /** Generated app integrates Approach B AI features. */
+  hasAiFeatures: boolean;
 }
 
 export interface SessionRevisionContext {
   aiSessionId: string | null;
   lastDeployedRevisionId: string | null;
+  hasAiFeatures: boolean;
+  aiFeaturesCheckedRevisionId: string | null;
 }
 
 const EMPTY_REVISION_CATALOG: AppRevisionCatalogFields = {
@@ -137,7 +143,7 @@ export class ConversationV2SessionService {
     const docs = await this.model
       .find({ ownerId, deletedAt: null, deployStatus: 'deployed', deployedUrl: { $ne: null } })
       .sort({ lastDeployedAt: -1 })
-      .select('title deployedAppTitle deployedUrl lastDeployedAt')
+      .select('title deployedAppTitle deployedUrl lastDeployedAt hasAiFeatures')
       .lean()
       .exec();
     return docs.map((doc) => ({
@@ -151,6 +157,7 @@ export class ConversationV2SessionService {
       source: 'owned' as const,
       shareId: null,
       canOpenConversation: true,
+      hasAiFeatures: doc.hasAiFeatures === true,
       ...EMPTY_REVISION_CATALOG,
     }));
   }
@@ -170,7 +177,7 @@ export class ConversationV2SessionService {
         $or: [{ deployStatus: { $ne: 'deployed' } }, { deployedUrl: null }],
       })
       .sort({ lastEventAt: -1 })
-      .select('title deployedAppTitle deployStatus lastEventAt')
+      .select('title deployedAppTitle deployStatus lastEventAt hasAiFeatures')
       .lean()
       .exec();
     return docs.map((doc) => ({
@@ -181,6 +188,7 @@ export class ConversationV2SessionService {
         '',
       lastUpdatedAt: new Date(doc.lastEventAt).toISOString(),
       deployStatus: (doc.deployStatus as DraftAppSummary['deployStatus']) ?? 'idle',
+      hasAiFeatures: doc.hasAiFeatures === true,
       ...EMPTY_REVISION_CATALOG,
     }));
   }
@@ -193,7 +201,7 @@ export class ConversationV2SessionService {
 
     const docs = await this.model
       .find({ _id: { $in: uniqueIds.map((id) => new Types.ObjectId(id)) }, deletedAt: null })
-      .select('aiSessionId lastDeployedRevisionId')
+      .select('aiSessionId lastDeployedRevisionId hasAiFeatures aiFeaturesCheckedRevisionId')
       .lean()
       .exec();
 
@@ -210,9 +218,63 @@ export class ConversationV2SessionService {
             doc.lastDeployedRevisionId.trim()
               ? doc.lastDeployedRevisionId.trim()
               : null,
+          hasAiFeatures: doc.hasAiFeatures === true,
+          aiFeaturesCheckedRevisionId:
+            typeof doc.aiFeaturesCheckedRevisionId === 'string' &&
+            doc.aiFeaturesCheckedRevisionId.trim()
+              ? doc.aiFeaturesCheckedRevisionId.trim()
+              : null,
         },
       ]),
     );
+  }
+
+  /**
+   * Persist App Builder AI capability flag. When `checkedRevisionId` is null,
+   * only force `hasAiFeatures` (e.g. runtime AI proxy usage) without clearing
+   * a prior checked revision.
+   */
+  async setAiFeaturesFlag(
+    sessionId: string,
+    hasAiFeatures: boolean,
+    checkedRevisionId: string | null,
+  ): Promise<void> {
+    if (!Types.ObjectId.isValid(sessionId)) return;
+    const $set: Record<string, unknown> = { hasAiFeatures };
+    if (checkedRevisionId) {
+      $set.aiFeaturesCheckedRevisionId = checkedRevisionId;
+    }
+    await this.model.updateOne(
+      { _id: new Types.ObjectId(sessionId), deletedAt: null },
+      { $set },
+    );
+  }
+
+  /**
+   * Stamp the revision that was scanned for AI usage without clearing a prior
+   * `hasAiFeatures: true` (runtime proof must survive a negative static scan).
+   * Returns the effective flag after the write.
+   */
+  async recordAiFeaturesCheckedWithoutDemote(
+    sessionId: string,
+    checkedRevisionId: string,
+  ): Promise<boolean> {
+    if (!Types.ObjectId.isValid(sessionId)) return false;
+    const id = new Types.ObjectId(sessionId);
+    await this.model.updateOne(
+      { _id: id, deletedAt: null },
+      { $set: { aiFeaturesCheckedRevisionId: checkedRevisionId } },
+    );
+    await this.model.updateOne(
+      { _id: id, deletedAt: null, hasAiFeatures: { $ne: true } },
+      { $set: { hasAiFeatures: false } },
+    );
+    const doc = await this.model
+      .findOne({ _id: id, deletedAt: null })
+      .select('hasAiFeatures')
+      .lean()
+      .exec();
+    return doc?.hasAiFeatures === true;
   }
 
   async list(ownerId: string, dto: ListSessionsDto): Promise<PointerSummary[]> {

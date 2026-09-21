@@ -1,14 +1,27 @@
 /**
  * Deployed apps are served under /apps/{sessionId}/ on apps.yellowsys.org.
  * Vite `base` (import.meta.env.BASE_URL) keeps a trailing slash for static hosting.
- * React Router `basename` must not have a trailing slash.
+ * React Router `basename` must not have a trailing slash — a trailing slash creates
+ * `/apps/{id}//register` when linking to absolute paths like `/register`.
  */
+
+/** Collapse repeated slashes (except the leading one). */
+export function collapsePathSlashes(path: string): string {
+  if (!path) return path;
+  return path.replace(/\/{2,}/g, '/');
+}
+
+function normalizeBaseUrl(raw: string | undefined): string {
+  const base = collapsePathSlashes((raw ?? '/').trim() || '/');
+  if (base === '/') return '/';
+  return base.startsWith('/') ? base : `/${base}`;
+}
 
 /** Basename for <BrowserRouter> — no trailing slash (React Router contract). */
 export function resolveRouterBasename(): string {
-  const base = import.meta.env.BASE_URL ?? '/';
+  const base = normalizeBaseUrl(import.meta.env.BASE_URL);
   if (base === '/') return '';
-  return base.endsWith('/') ? base.slice(0, -1) : base;
+  return base.replace(/\/+$/, '');
 }
 
 /**
@@ -16,7 +29,7 @@ export function resolveRouterBasename(): string {
  * Prefer this over navigate('/') which resolves to /apps/{id} without '/'.
  */
 export function resolveAppHomeHref(): string {
-  const base = import.meta.env.BASE_URL ?? '/';
+  const base = normalizeBaseUrl(import.meta.env.BASE_URL);
   if (base === '/') return '/';
   return base.endsWith('/') ? base : `${base}/`;
 }
@@ -24,6 +37,19 @@ export function resolveAppHomeHref(): string {
 /** True when a React Router location path means the app index. */
 export function isAppHomePath(path: string | null | undefined): boolean {
   return path == null || path === '' || path === '/';
+}
+
+/**
+ * Join an in-app path onto the Vite base without producing `//`.
+ * `path` may be `register`, `/register`, or `/register?invite=…`.
+ */
+export function joinAppPath(path: string): string {
+  const home = resolveAppHomeHref().replace(/\/+$/, '');
+  const [pathnamePart, query = ''] = path.split('?');
+  const segment = collapsePathSlashes(`/${(pathnamePart || '').replace(/^\/+/, '')}`);
+  const suffix = query ? `?${query}` : '';
+  if (!home || home === '') return `${segment}${suffix}`;
+  return `${home}${segment}${suffix}`;
 }
 
 /**
@@ -44,9 +70,18 @@ export function ensureAppHomeTrailingSlash(): void {
   );
 }
 
+/** Fix accidental `//` in the pathname (e.g. `/apps/id//register`). */
+export function collapseDuplicateSlashesInLocation(): void {
+  if (typeof window === 'undefined') return;
+  const { pathname, search, hash } = window.location;
+  if (!pathname.includes('//')) return;
+  const cleaned = collapsePathSlashes(pathname);
+  if (cleaned === pathname) return;
+  window.history.replaceState(window.history.state, '', `${cleaned}${search}${hash}`);
+}
+
 /** Public file under Vite `base` (works for `/` and `/apps/{id}/`). */
 export function resolvePublicAsset(relativePath: string): string {
-  const base = import.meta.env.BASE_URL ?? '/';
-  const prefix = base.endsWith('/') ? base : `${base}/`;
+  const prefix = resolveAppHomeHref();
   return `${prefix}${relativePath.replace(/^\//, '')}`;
 }

@@ -28,16 +28,25 @@ app-builder/
 │   ├── DraftAppCard.tsx                 # Card for draft apps
 │   ├── DeleteDeployedAppButton.tsx       # Delete/unshare button with confirmation dialog
 │   ├── DeleteDraftAppButton.tsx          # Delete draft button with confirmation dialog
-│   ├── AppEndUsersDialog.tsx             # Dialog to manage end-user CRUD permissions
+│   ├── AppEndUsersDialog.tsx             # Dialog to manage end-user CRUD + useAi permissions
+│   ├── AppAiBadge.tsx                    # Badge when session/app has AI features
 │   └── hub/
 │       ├── AppBuilderCreateWithAgent.tsx # Inline Agent composer for creating new apps
-│       ├── AppBuilderFilters.tsx         # Search, tab, sort, view-mode filter bar
+│       ├── AppBuilderFilters.tsx         # Search, tab, sort, view-mode, optional AI filter
 │       ├── AppBuilderGrid.tsx            # Grid/list layout with pagination
 │       └── AppBuilderPagination.tsx      # Previous/Next pagination controls
 └── locales/
     ├── en.json                           # English translations
     └── fr.json                           # French translations
 ```
+
+### App Builder AI (hub)
+
+- Cards show `AppAiBadge` when `hasAiFeatures` is set on the catalog item / session.
+- `AppEndUsersDialog` can toggle end-user **AI** grant (`useAi`) in addition to CRUD — forwarded to Nest App Data (MS ACL `use_ai` when remote).
+- Filters may include an AI facet via `useAppBuilderFilters` (see locales `app-builder`).
+
+Backend counterpart: [`../../../../back/src/modules/app-builder-ai/README.md`](../../../../back/src/modules/app-builder-ai/README.md).
 
 ---
 

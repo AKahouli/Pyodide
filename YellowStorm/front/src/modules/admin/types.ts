@@ -1860,3 +1860,97 @@ export interface UpsertTeamAutoBuilderConfigRequest {
   temperature: number;
   isEnabled: boolean;
 }
+
+// ===== App Builder AI =====
+
+export interface AppBuilderAiOverview {
+  enabled: boolean;
+  periodHours: number;
+  totalTokens: number;
+  requestCount: number;
+  errorCount: number;
+  aiAppsCount: number;
+  usersWithOffer: number;
+  topModels: Array<{ model: string; totalTokens: number; requestCount: number }>;
+}
+
+export interface AppBuilderAiOffer {
+  id: string;
+  name: string;
+  slug: string;
+  description?: string;
+  tokenLimit: number;
+  windowHours: number;
+  requestsPerMinute?: number;
+  maxTokensPerRequest?: number;
+  priority?: number;
+  isActive: boolean;
+  isDefault: boolean;
+  displayOrder?: number;
+}
+
+export interface AppBuilderAiOfferListResponse {
+  items: AppBuilderAiOffer[];
+}
+
+export interface CreateAppBuilderAiOfferRequest {
+  name: string;
+  slug: string;
+  description?: string;
+  tokenLimit: number;
+  windowHours: number;
+  requestsPerMinute?: number;
+  maxTokensPerRequest?: number;
+  priority?: number;
+  isActive?: boolean;
+  isDefault?: boolean;
+  displayOrder?: number;
+}
+
+export type UpdateAppBuilderAiOfferRequest = Partial<CreateAppBuilderAiOfferRequest>;
+
+export interface AppBuilderAiOfferMutationResponse {
+  id: string;
+  slug: string;
+  name: string;
+}
+
+export interface AppBuilderAiUserRow {
+  userId: string;
+  email: string;
+  displayName: string | null;
+  aiAppsCount: number;
+  offer: {
+    id: string;
+    name: string;
+    slug: string;
+    tokenLimit: number;
+  } | null;
+  usage: {
+    currentUsage: number;
+    limit: number;
+    resetsAt: string;
+    percentUsed: number;
+  } | null;
+}
+
+export interface AppBuilderAiUserListParams {
+  q?: string;
+  offerId?: string;
+  page?: number;
+  limit?: number;
+}
+
+export interface AppBuilderAiUserListResponse {
+  items: AppBuilderAiUserRow[];
+  pagination: {
+    page: number;
+    limit: number;
+    total: number;
+    totalPages: number;
+  };
+}
+
+export interface AppBuilderAiEnabledResponse {
+  enabled: boolean;
+}

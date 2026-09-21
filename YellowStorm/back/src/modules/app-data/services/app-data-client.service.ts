@@ -83,7 +83,13 @@ export class AppDataClientService {
       'GET',
       `/v1/internal/apps/${encodeURIComponent(appDataId)}/status`,
     );
-    return res.body;
+    return {
+      ...res.body,
+      app: normalizeRemoteAppRow(res.body.app),
+      environments: Array.isArray(res.body.environments)
+        ? res.body.environments.map((env) => normalizeRemoteRecord(env))
+        : [],
+    };
   }
 
   async ensureApp(
@@ -168,7 +174,64 @@ export class AppDataClientService {
         createdAt: string;
       }>;
     }>('GET', `/v1/internal/apps/${encodeURIComponent(appDataId)}/end-users`);
-    return res.body.users ?? [];
+    return (res.body.users ?? []).map((user) => ({
+      ...user,
+      grants: this.normalizeGrants(user.grants),
+    }));
+  }
+
+  async getEndUser(
+    appDataId: string,
+    userId: string,
+  ): Promise<{
+    id: string;
+    email: string;
+    displayName: string | null;
+    status: string;
+    grants: AppDataEndUserGrants;
+    createdAt: string;
+  } | null> {
+    const path = `/v1/internal/apps/${encodeURIComponent(appDataId)}/end-users/${encodeURIComponent(userId)}`;
+    try {
+      const res = await this.request<{
+        user: {
+          id: string;
+          email: string;
+          displayName: string | null;
+          status: string;
+          grants: AppDataEndUserGrants;
+          createdAt: string;
+        };
+      }>('GET', path, { tolerant404: true });
+      if (res.status === 404 || !res.body?.user) {
+        // Older MS builds may 404 the single-user route; fall back to list.
+        if (res.status === 404) {
+          const users = await this.listEndUsers(appDataId);
+          return users.find((u) => u.id === userId) ?? null;
+        }
+        return null;
+      }
+      return {
+        ...res.body.user,
+        grants: this.normalizeGrants(res.body.user.grants),
+      };
+    } catch (err) {
+      if (err instanceof AppDataException && err.appDataCode === AppDataErrorCode.REMOTE_UNAVAILABLE) {
+        throw err;
+      }
+      const users = await this.listEndUsers(appDataId);
+      return users.find((u) => u.id === userId) ?? null;
+    }
+  }
+
+  private normalizeGrants(grants: AppDataEndUserGrants | undefined): AppDataEndUserGrants {
+    return {
+      create: grants?.create === true,
+      read: grants?.read === true,
+      update: grants?.update === true,
+      delete: grants?.delete === true,
+      useAi: grants?.useAi === true,
+    };
   }
 
   async replaceWildcardGrants(
@@ -518,4 +581,44 @@ export class AppDataClientService {
         );
     }
   }
+}
+
+function pickString(record: Record<string, unknown>, ...keys: string[]): string | null {
+  for (const key of keys) {
+    const value = record[key];
+    if (typeof value === 'string' && value.trim()) return value;
+  }
+  return null;
+}
+
+function normalizeRemoteRecord(row: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = { ...row };
+  const workspaceId = pickString(row, 'workspaceId', 'workspace_id');
+  if (workspaceId) out.workspaceId = workspaceId;
+  const ownerUserId = pickString(row, 'ownerUserId', 'owner_user_id');
+  if (ownerUserId) out.ownerUserId = ownerUserId;
+  else if ('owner_user_id' in row || 'ownerUserId' in row) out.ownerUserId = null;
+  const appId = pickString(row, 'appId', 'app_id');
+  if (appId) out.appId = appId;
+  const databaseName = pickString(row, 'databaseName', 'database_name');
+  if (databaseName) out.databaseName = databaseName;
+  if ('current_version' in row && !('currentVersion' in out)) {
+    out.currentVersion = row.current_version;
+  }
+  if ('public_url' in row && !('publicUrl' in out)) {
+    out.publicUrl = row.public_url;
+  }
+  return out;
+}
+
+function normalizeRemoteAppRow(app: RemoteAppRow | undefined): RemoteAppRow {
+  if (!app || typeof app !== 'object') {
+    return { id: '', workspaceId: '' };
+  }
+  const normalized = normalizeRemoteRecord(app as Record<string, unknown>);
+  return {
+    ...normalized,
+    id: String(normalized.id ?? ''),
+    workspaceId: String(normalized.workspaceId ?? ''),
+  };
 }

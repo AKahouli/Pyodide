@@ -231,6 +231,39 @@ export const usageWindows = conversationSchema.table(
   (t) => [check('usage_windows_id_object_id', objectIdCheck(t.id)), check('usage_windows_window_hours_positive', sql`${t.windowHours} > 0`), check('usage_windows_counts_non_negative', sql`${t.inputTokens} >= 0 AND ${t.outputTokens} >= 0 AND ${t.totalTokens} >= 0 AND ${t.requestCount} >= 0`), check('usage_windows_valid_range', sql`${t.windowEnd} > ${t.windowStart}`), uniqueIndex('uq_usage_windows_user_window').on(t.userId, t.windowStart, t.windowEnd), index('idx_usage_windows_user_end').on(t.userId, sql`${t.windowEnd} DESC`), index('idx_usage_windows_start_plan').on(t.windowStart, t.planSlug)],
 );
 
+/** Dedicated quota windows for App Builder AI Proxy (independent from platform usage_windows). */
+export const appBuilderAiUsageWindows = conversationSchema.table(
+  'app_builder_ai_usage_windows',
+  {
+    id: char('id', { length: 24 }).primaryKey(),
+    userId: varchar('user_id', { length: 100 }).notNull(),
+    windowStart: timestamp('window_start', { withTimezone: true }).notNull(),
+    windowEnd: timestamp('window_end', { withTimezone: true }).notNull(),
+    windowHours: integer('window_hours').notNull(),
+    inputTokens: integer('input_tokens').notNull().default(0),
+    outputTokens: integer('output_tokens').notNull().default(0),
+    totalTokens: integer('total_tokens').notNull().default(0),
+    requestCount: integer('request_count').notNull().default(0),
+    offerId: varchar('offer_id', { length: 100 }),
+    offerSlug: varchar('offer_slug', { length: 50 }),
+    tokenLimitAtCreation: integer('token_limit_at_creation'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    check('ab_ai_usage_windows_id_object_id', objectIdCheck(t.id)),
+    check('ab_ai_usage_windows_window_hours_positive', sql`${t.windowHours} > 0`),
+    check(
+      'ab_ai_usage_windows_counts_non_negative',
+      sql`${t.inputTokens} >= 0 AND ${t.outputTokens} >= 0 AND ${t.totalTokens} >= 0 AND ${t.requestCount} >= 0`,
+    ),
+    check('ab_ai_usage_windows_valid_range', sql`${t.windowEnd} > ${t.windowStart}`),
+    uniqueIndex('uq_ab_ai_usage_windows_user_window').on(t.userId, t.windowStart, t.windowEnd),
+    index('idx_ab_ai_usage_windows_user_end').on(t.userId, sql`${t.windowEnd} DESC`),
+    index('idx_ab_ai_usage_windows_start_offer').on(t.windowStart, t.offerSlug),
+  ],
+);
+
 export const usageLogs = conversationSchema.table(
   'usage_logs',
   {

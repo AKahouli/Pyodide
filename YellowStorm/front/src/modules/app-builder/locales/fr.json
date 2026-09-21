@@ -4,10 +4,15 @@
     "tooltip": "App Builder"
   },
   "page": {
-    "title": "App Builder",
-    "description": "Parcourez vos applications déployées, partagées et brouillons au même endroit.",
+    "title": "App Market",
+    "eyebrow": "Marketplace",
+    "description": "Découvrez, ouvrez et gérez vos applications en ligne, partagées et brouillons au même endroit.",
+    "emptyTitle": "Votre catalogue est vide",
     "empty": "Aucune application pour le moment. Commencez avec l'Agent ci-dessus, puis publiez quand vous êtes prêt.",
-    "error": "Impossible de charger vos applications."
+    "errorTitle": "Impossible de charger le catalogue",
+    "error": "Impossible de charger vos applications.",
+    "loading": "Chargement de vos applications…",
+    "retry": "Réessayer"
   },
   "createWithAgent": {
     "eyebrow": "Créer avec l'Agent",
@@ -53,8 +58,12 @@
     "filters": {
       "searchPlaceholder": "Rechercher des applications...",
       "statusLabel": "Statut",
+      "aiOnly": "IA",
+      "aiOnlyHint": "Afficher uniquement les applications avec des fonctionnalités d'IA",
       "clear": "Effacer les filtres",
-      "noResults": "Aucune application ne correspond à vos filtres."
+      "noResultsTitle": "Aucun résultat",
+      "noResults": "Aucune application ne correspond à vos filtres.",
+      "emptyTitle": "Rien ici pour le moment"
     },
     "sort": {
       "label": "Trier",
@@ -79,10 +88,21 @@
   },
   "card": {
     "untitled": "Application sans titre",
+    "liveHint": "Application en ligne — ouvrez-la, partagez-la ou gérez les utilisateurs.",
+    "sharedHint": "Partagée avec vous — ouvrez l'application en ligne quand vous en avez besoin.",
+    "openHint": "Actions rapides",
+    "continueHint": "Continuer dans la conversation",
+    "category": {
+      "live": "En ligne",
+      "shared": "Partagée",
+      "draft": "En cours"
+    },
+    "versionsCount": "{{count}} versions",
+    "version": "Version {{number}}",
     "deployedAt": "Déployée le {{date}}",
-    "deployedRevision": "Version déployée · {{revision}}",
-    "latestRevision": "Dernière version · {{revision}} ({{date}})",
-    "latestRevisionWithCount": "Dernière version · {{revision}} ({{date}}) · {{count}} versions",
+    "deployedRevision": "Version déployée · {{version}}",
+    "latestRevision": "Dernière version · {{version}} ({{date}})",
+    "latestRevisionWithCount": "Dernière version · {{version}} ({{date}}) · {{count}} versions",
     "updatedAt": "Modifiée le {{date}}",
     "draftHint": "Pas encore publiée — reprenez dans la conversation pour déployer.",
     "draftStatus": {
@@ -93,6 +113,9 @@
     "continue": "Continuer la création",
     "deployed": "Déployée",
     "shared": "Partagée",
+    "ai": "IA",
+    "aiFeatures": "Fonctionnalités d'IA",
+    "aiFeaturesHint": "Cette application intègre des capacités d'IA",
     "open": "Ouvrir l'application",
     "conversation": "Accéder à la conversation",
     "share": "Partager l'app et la conversation",
@@ -116,9 +139,9 @@
   },
   "endUsers": {
     "title": "Utilisateurs et permissions",
-    "description": "Utilisateurs inscrits et permissions CRUD pour cette application déployée.",
+    "description": "Utilisateurs inscrits et permissions pour cette application déployée.",
     "descriptionNamed": "Gérer les utilisateurs et permissions pour « {{title}} ».",
-    "hint": "Les nouveaux utilisateurs n'ont aucune permission par défaut. Accordez explicitement les droits CRUD nécessaires.",
+    "hint": "Les nouveaux utilisateurs n'ont aucune permission par défaut. Accordez explicitement les droits nécessaires.",
     "searchPlaceholder": "Rechercher par nom ou e-mail…",
     "refresh": "Actualiser",
     "retry": "Réessayer",
@@ -145,13 +168,15 @@
       "label": "Appliquer un profil",
       "none": "Aucune permission",
       "readOnly": "Lecture seule",
-      "full": "Accès complet"
+      "full": "Accès complet",
+      "hint": "Les profils CRUD ne modifient pas l'IA — activez-la séparément."
     },
     "grants": {
       "create": "Créer",
       "read": "Lire",
       "update": "Modifier",
-      "delete": "Supprimer"
+      "delete": "Supprimer",
+      "useAi": "Utilisation de l'IA"
     }
   }
 }

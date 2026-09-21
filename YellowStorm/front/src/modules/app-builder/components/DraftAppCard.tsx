@@ -1,6 +1,6 @@
 import { memo, type ReactNode } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { AlertCircle, Loader2, MessageSquare, PencilLine } from 'lucide-react';
+import { AlertCircle, Layers, Loader2, MessageSquare, PencilLine } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import {
@@ -13,8 +13,15 @@ import { cn } from '@/lib/utils';
 import { useModuleTranslation } from '@/modules/localization';
 import type { AppViewMode } from '../hooks/useAppBuilderFilters';
 import type { DraftApp } from '../types';
+import {
+  appCardBadgeClass,
+  appCardIconClass,
+  appCardSurfaceClass,
+  type AppCardTone,
+} from './app-card-tones';
 import { DeleteDraftAppButton } from './DeleteDraftAppButton';
 import { AppRevisionMeta } from './AppRevisionMeta';
+import { AppAiBadge } from './AppAiBadge';
 
 interface DraftAppCardProps {
   app: DraftApp;
@@ -36,7 +43,7 @@ function ActionButton({
         <Button
           variant='ghost'
           size='icon'
-          className='h-7 w-7'
+          className='size-8 text-muted-foreground hover:text-foreground'
           aria-label={label}
           onClick={(e) => {
             e.stopPropagation();
@@ -51,6 +58,12 @@ function ActionButton({
   );
 }
 
+function draftTone(status: DraftApp['deployStatus']): AppCardTone {
+  if (status === 'error') return 'error';
+  if (status === 'deploying') return 'busy';
+  return 'draft';
+}
+
 export const DraftAppCard = memo(function DraftAppCard({
   app,
   view = 'grid',
@@ -58,29 +71,52 @@ export const DraftAppCard = memo(function DraftAppCard({
   const { t } = useModuleTranslation('app-builder');
   const navigate = useNavigate();
   const title = app.title || t('card.untitled');
+  const tone = draftTone(app.deployStatus);
+  const versionCount = app.finalizedVersionCount ?? 0;
 
   const statusBadge =
     app.deployStatus === 'deploying' ? (
-      <Badge variant='outline' className='shrink-0 gap-1 border-amber-500/30 px-1.5 py-0 text-[10px] text-amber-700 dark:text-amber-300'>
-        <Loader2 className='h-3 w-3 animate-spin' />
+      <Badge variant='outline' className={cn(appCardBadgeClass('busy'), 'normal-case tracking-normal')}>
+        <Loader2 className='size-3 animate-spin' aria-hidden />
         {t('card.draftStatus.deploying')}
       </Badge>
     ) : app.deployStatus === 'error' ? (
-      <Badge variant='outline' className='shrink-0 gap-1 border-destructive/40 px-1.5 py-0 text-[10px] text-destructive'>
-        <AlertCircle className='h-3 w-3' />
+      <Badge variant='outline' className={cn(appCardBadgeClass('error'), 'normal-case tracking-normal')}>
+        <AlertCircle className='size-3' aria-hidden />
         {t('card.draftStatus.error')}
       </Badge>
     ) : (
-      <Badge variant='outline' className='shrink-0 border-amber-500/30 px-1.5 py-0 text-[10px] text-amber-800 dark:text-amber-200'>
+      <Badge variant='outline' className={appCardBadgeClass('draft')}>
         {t('card.draftStatus.idle')}
       </Badge>
     );
+
+  const featureChips = (
+    <div className='mt-2.5 flex flex-wrap items-center gap-1.5'>
+      <Badge
+        variant='secondary'
+        className='h-5 gap-1 border-0 bg-muted/70 px-2 text-[10px] font-medium text-muted-foreground'
+      >
+        {t('card.category.draft')}
+      </Badge>
+      {app.hasAiFeatures ? <AppAiBadge /> : null}
+      {versionCount > 0 ? (
+        <Badge
+          variant='secondary'
+          className='h-5 gap-1 border-0 bg-muted/70 px-2 text-[10px] font-medium text-muted-foreground'
+        >
+          <Layers className='size-2.5' aria-hidden />
+          {t('card.versionsCount', { count: versionCount })}
+        </Badge>
+      ) : null}
+    </div>
+  );
 
   const actions = (
     <TooltipProvider>
       <div
         className={cn(
-          'flex items-center gap-0.5 opacity-60 transition group-hover:opacity-100',
+          'flex items-center gap-0.5 opacity-70 transition-opacity group-hover:opacity-100',
           view === 'list' && 'shrink-0',
         )}
         onClick={(e) => e.stopPropagation()}
@@ -89,7 +125,7 @@ export const DraftAppCard = memo(function DraftAppCard({
           label={t('card.continue')}
           onClick={() => navigate(`/conversation-v2/${app.sessionId}`)}
         >
-          <MessageSquare className='h-3.5 w-3.5' />
+          <MessageSquare className='size-3.5' />
         </ActionButton>
         <DeleteDraftAppButton sessionId={app.sessionId} />
       </div>
@@ -98,38 +134,40 @@ export const DraftAppCard = memo(function DraftAppCard({
 
   const body = (
     <>
-      <div className='flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-amber-500/15'>
-        <PencilLine className='h-4 w-4 text-amber-700 dark:text-amber-300' />
+      <div className={appCardIconClass(tone)}>
+        <PencilLine className='size-5' aria-hidden />
       </div>
       <div className='min-w-0 flex-1'>
         <div className='flex min-w-0 items-start gap-2'>
-          <h3 className='min-w-0 flex-1 truncate text-sm font-medium leading-snug tracking-tight' title={title}>
+          <h3
+            className='min-w-0 flex-1 truncate text-base font-semibold leading-snug tracking-tight text-foreground'
+            title={title}
+          >
             {title}
           </h3>
           {statusBadge}
         </div>
-        <p className='mt-0.5 line-clamp-2 text-xs text-muted-foreground'>{t('card.draftHint')}</p>
-        <p className='mt-0.5 text-[11px] text-muted-foreground'>
+        <p className='mt-1 line-clamp-2 text-sm leading-relaxed text-muted-foreground'>
+          {t('card.draftHint')}
+        </p>
+        <p className='mt-1.5 text-[11px] tabular-nums text-muted-foreground'>
           {t('card.updatedAt', { date: new Date(app.lastUpdatedAt).toLocaleString() })}
         </p>
+        {featureChips}
         <AppRevisionMeta revision={app} showDeployedRevision={false} />
       </div>
     </>
   );
 
   if (view === 'list') {
-    return (
-      <div className='group relative flex items-center gap-3 rounded-lg border border-amber-500/15 bg-card px-4 py-3 transition hover:border-amber-500/30 hover:bg-accent/30'>
-        {body}
-        {actions}
-      </div>
-    );
+    return <div className={appCardSurfaceClass(tone, 'list')}>{body}{actions}</div>;
   }
 
   return (
-    <div className='group relative flex h-full flex-col rounded-xl border border-amber-500/15 bg-gradient-to-br from-amber-500/[0.04] to-transparent bg-card p-5 transition hover:border-amber-500/30 hover:shadow-sm'>
-      <div className='flex items-start gap-3'>{body}</div>
-      <div className='-mx-5 -mb-5 mt-4 flex items-center justify-end border-t border-border/50 bg-accent/20 px-3 py-2'>
+    <div className={appCardSurfaceClass(tone, 'grid')}>
+      <div className='flex flex-1 items-start gap-3.5 p-5 pb-4'>{body}</div>
+      <div className='mt-auto flex items-center justify-between gap-2 border-t border-border/50 bg-muted/20 px-3 py-2.5'>
+        <span className='truncate text-[11px] text-muted-foreground'>{t('card.continueHint')}</span>
         {actions}
       </div>
     </div>

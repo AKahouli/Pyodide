@@ -18,6 +18,7 @@ export interface AppBuilderFilterState {
   tab: AppBuilderTab;
   sort: AppSortKey;
   view: AppViewMode;
+  aiOnly: boolean;
 }
 
 function isTab(value: string | null): value is AppBuilderTab {
@@ -30,6 +31,10 @@ function isSortKey(value: string | null): value is AppSortKey {
 
 function isViewMode(value: string | null): value is AppViewMode {
   return value === 'grid' || value === 'list';
+}
+
+function hasAiFeatures(app: DeployedApp | DraftApp): boolean {
+  return app.hasAiFeatures === true;
 }
 
 function matchesDeployed(app: DeployedApp, search: string): boolean {
@@ -100,6 +105,7 @@ export function useAppBuilderFilters(catalog: AppBuilderCatalog) {
   const sort: AppSortKey = isSortKey(sortParam) ? sortParam : defaultSort;
   const viewParam = searchParams.get('view');
   const view: AppViewMode = isViewMode(viewParam) ? viewParam : 'grid';
+  const aiOnly = searchParams.get('ai') === '1';
 
   const [searchInput, setSearchInputState] = useState(rawSearch);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -179,6 +185,11 @@ export function useAppBuilderFilters(catalog: AppBuilderCatalog) {
     [applyParam],
   );
 
+  const setAiOnly = useCallback(
+    (value: boolean) => applyParam('ai', value ? '1' : ''),
+    [applyParam],
+  );
+
   const clearAll = useCallback(() => {
     if (debounceRef.current) clearTimeout(debounceRef.current);
     setSearchInputState('');
@@ -187,6 +198,7 @@ export function useAppBuilderFilters(catalog: AppBuilderCatalog) {
         const next = new URLSearchParams(prev);
         next.delete('q');
         next.delete('sort');
+        next.delete('ai');
         return next;
       },
       { replace: true },
@@ -194,23 +206,41 @@ export function useAppBuilderFilters(catalog: AppBuilderCatalog) {
   }, [setSearchParams]);
 
   const filters: AppBuilderFilterState = useMemo(
-    () => ({ search: rawSearch, tab, sort, view }),
-    [rawSearch, tab, sort, view],
+    () => ({ search: rawSearch, tab, sort, view, aiOnly }),
+    [rawSearch, tab, sort, view, aiOnly],
   );
 
   const filteredDeployed = useMemo(
-    () => sortDeployed(catalog.deployed.filter((app) => matchesDeployed(app, rawSearch)), sort),
-    [catalog.deployed, rawSearch, sort],
+    () =>
+      sortDeployed(
+        catalog.deployed.filter(
+          (app) => matchesDeployed(app, rawSearch) && (!aiOnly || hasAiFeatures(app)),
+        ),
+        sort,
+      ),
+    [catalog.deployed, rawSearch, sort, aiOnly],
   );
 
   const filteredShared = useMemo(
-    () => sortDeployed(catalog.shared.filter((app) => matchesDeployed(app, rawSearch)), sort),
-    [catalog.shared, rawSearch, sort],
+    () =>
+      sortDeployed(
+        catalog.shared.filter(
+          (app) => matchesDeployed(app, rawSearch) && (!aiOnly || hasAiFeatures(app)),
+        ),
+        sort,
+      ),
+    [catalog.shared, rawSearch, sort, aiOnly],
   );
 
   const filteredDrafts = useMemo(
-    () => sortDrafts(catalog.drafts.filter((app) => matchesDraft(app, rawSearch)), sort),
-    [catalog.drafts, rawSearch, sort],
+    () =>
+      sortDrafts(
+        catalog.drafts.filter(
+          (app) => matchesDraft(app, rawSearch) && (!aiOnly || hasAiFeatures(app)),
+        ),
+        sort,
+      ),
+    [catalog.drafts, rawSearch, sort, aiOnly],
   );
 
   const filteredAll = useMemo(
@@ -243,7 +273,7 @@ export function useAppBuilderFilters(catalog: AppBuilderCatalog) {
     return filteredDeployed;
   }, [tab, filteredAll, filteredDeployed, filteredShared, filteredDrafts]);
 
-  const hasActiveFilters = !!rawSearch || sort !== defaultSort;
+  const hasActiveFilters = !!rawSearch || sort !== defaultSort || aiOnly;
   const isEmpty = activeList.length === 0;
   const isCatalogEmpty =
     catalog.deployed.length === 0 &&
@@ -257,6 +287,7 @@ export function useAppBuilderFilters(catalog: AppBuilderCatalog) {
     setTab,
     setSort,
     setView,
+    setAiOnly,
     clearAll,
     hasActiveFilters,
     tabCounts,

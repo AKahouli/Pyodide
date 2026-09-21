@@ -204,6 +204,16 @@ export const ADMIN_MENU_ITEMS: AdminMenuItem[] = [
     descriptionKey: 'menu.plans.description',
   },
   {
+    id: 'app-builder-ai',
+    label: 'App Builder AI',
+    labelKey: 'menu.appBuilderAi.label',
+    path: '/admin/app-builder-ai',
+    icon: Sparkles,
+    permissions: ['app_builder_ai.read', 'app_builder_ai.manage', 'app_builder_ai.*', '*'],
+    description: 'Control App Builder AI access, offers, and usage',
+    descriptionKey: 'menu.appBuilderAi.description',
+  },
+  {
     id: 'reports',
     label: 'Reports',
     labelKey: 'menu.reports.label',

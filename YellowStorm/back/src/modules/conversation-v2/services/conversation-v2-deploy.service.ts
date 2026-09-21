@@ -72,6 +72,11 @@ export class ConversationV2DeployService {
       VITE_APP_BASE: this.resolveDeployAppBasePath(aiSessionId),
     };
 
+    const backendUrl = this.resolveDeployBackendUrl();
+    if (backendUrl) {
+      productionEnv.VITE_YM_API_BASE_URL = `${backendUrl}/api/v1`;
+    }
+
     if (this.config.get<boolean>('appData.enabled', false) && this.appDataDeployment) {
       try {
         const env = await this.appDataDeployment.prepareProduction(aiSessionId, revisionId);
@@ -295,6 +300,45 @@ export class ConversationV2DeployService {
       deployTimeoutMs ?? this.config.get<number>('conversationV2.appBuilderDeployTimeoutMs') ?? 0;
     this.logger.error(`App-builder deployment timed out after ${timeoutMs / 1000}s`);
     throw new ServiceUnavailableException('Deployment service timed out');
+  }
+
+  /**
+   * Public API origin baked into deployed apps as VITE_YM_API_BASE_URL.
+   * Loopback defaults are unreachable from apps.yellowsys.org browsers.
+   * Allowed in non-production (local POC) with a warning; production must set
+   * a public BACKEND_URL (or ALLOW_LOCALHOST_DEPLOY_API=true as escape hatch).
+   */
+  private resolveDeployBackendUrl(): string {
+    const raw = (this.config.get<string>('app.backendUrl') || '').trim().replace(/\/$/, '');
+    if (!raw) return '';
+    if (this.isLoopbackUrl(raw)) {
+      const nodeEnv = (this.config.get<string>('app.nodeEnv') || process.env.NODE_ENV || '').toLowerCase();
+      const allowLocalhost =
+        process.env.ALLOW_LOCALHOST_DEPLOY_API === 'true'
+        || nodeEnv === 'development'
+        || nodeEnv === 'test';
+      if (!allowLocalhost) {
+        this.logger.error(
+          `Refusing to deploy with loopback BACKEND_URL=${raw}. Set BACKEND_URL to a browser-reachable public API origin.`,
+        );
+        throw new ServiceUnavailableException(
+          'BACKEND_URL must be a public URL reachable from the browser (not localhost). Set BACKEND_URL and redeploy.',
+        );
+      }
+      this.logger.warn(
+        `Deploying with loopback BACKEND_URL=${raw} (${nodeEnv || 'dev'}). Deployed apps on remote hosts cannot call this API — set BACKEND_URL to a public origin for real deploys.`,
+      );
+    }
+    return raw;
+  }
+
+  private isLoopbackUrl(url: string): boolean {
+    try {
+      const host = new URL(url).hostname.toLowerCase();
+      return host === 'localhost' || host === '127.0.0.1' || host === '[::1]' || host === '::1';
+    } catch {
+      return false;
+    }
   }
 
   /**

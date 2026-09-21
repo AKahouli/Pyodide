@@ -113,6 +113,20 @@
       "when": 1789221000000,
       "tag": "0015_conversation_carbon_baseline",
       "breakpoints": true
+    },
+    {
+      "idx": 16,
+      "version": "7",
+      "when": 1789746000000,
+      "tag": "0016_app_builder_ai_usage_windows",
+      "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "7",
+      "when": 1789750000000,
+      "tag": "0017_app_data_end_user_ai_grant",
+      "breakpoints": true
     }
   ]
 }

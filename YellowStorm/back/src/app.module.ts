@@ -12,6 +12,7 @@ import microsoftConfig from './config/microsoft.config';
 import healthConfig from './config/health.config';
 import workspaceConfig from './config/workspace.config';
 import litellmConfig from './config/litellm.config';
+import aiProxyConfig from './config/ai-proxy.config';
 import conversationConfig from './config/conversation.config';
 import conversationV2Config from './config/conversation-v2.config';
 import appRuntimeConfig from './config/app-runtime.config';
@@ -79,6 +80,8 @@ import { GovernanceModule } from './modules/governance';
 import { IntegrationEventsModule } from './modules/integration-events/integration-events.module';
 import { WorkspaceArtifactModule } from './modules/workspace-artifact/workspace-artifact.module';
 import { SemanticModelModule } from './modules/semantic-model/semantic-model.module';
+import { AiProxyModule } from './modules/ai-proxy/ai-proxy.module';
+import { AppBuilderAiModule } from './modules/app-builder-ai/app-builder-ai.module';
 
 @Module({
   imports: [
@@ -149,6 +152,8 @@ import { SemanticModelModule } from './modules/semantic-model/semantic-model.mod
     MemoryCardsModule,
     GovernanceModule,
     SemanticModelModule,
+    AiProxyModule,
+    AppBuilderAiModule,
   ],
   providers: [
     // Global JWT Auth Guard - all routes require authentication by default
