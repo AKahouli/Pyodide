@@ -124,7 +124,7 @@ function ToolbarIconButton({
         <Button
           type='button'
           variant='ghost'
-          size='icon-lg'
+          size='icon'
           onClick={onClick}
           disabled={disabled}
           aria-label={label}
