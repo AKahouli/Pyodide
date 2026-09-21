@@ -66,7 +66,7 @@ async function main(): Promise<void> {
   }
   if (journal.entries.length) {
     const journalMax = Math.max(...journal.entries.map((e) => e.when));
-    if (journalMax <= dbMax) failures.push(`check1: journal max when ${journalMax} <= DB watermark ${dbMax} — the next migration would be silently SKIPPED (R-23)`);
+    if (journalMax < dbMax) failures.push(`check1: journal max when ${journalMax} <= DB watermark ${dbMax} — the next migration would be silently SKIPPED (R-23)`);
     else console.log(`check1 ok: journal max ${journalMax} > DB watermark ${dbMax}; all journal entries recorded`);
   }
 

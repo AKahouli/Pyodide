@@ -33,7 +33,9 @@
     "repair:conversation-owner-members": "ts-node scripts/migrations/2026-09-18-repair-conversation-owner-members.ts",
     "backfill:humain-embeddings": "ts-node scripts/backfill-humain-role-embeddings.ts",
     "release": "commit-and-tag-version",
-    "release:patch": "commit-and-tag-version --release-as patch"
+    "release:patch": "commit-and-tag-version --release-as patch",
+    "db:verify": "ts-node scripts/migrate/verify-postgres-state.ts",
+    "db:record-applied": "ts-node scripts/migrate/record-applied-migrations.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.901.0",

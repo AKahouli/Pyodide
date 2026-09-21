@@ -39,10 +39,23 @@ ALTER TABLE ${spec.table} VALIDATE CONSTRAINT ${spec.name};
 `);
 }
 
-blocks.push('-- Fresh statistics for the new tables (39 of 48 were never analyzed).');
-for (const schema of ANALYZE_SCHEMAS) {
-  blocks.push(`ANALYZE ${schema}.*;`);
-}
+blocks.push(`-- Fresh statistics for the new tables (39 of 48 were never analyzed).
+DO $analyze$
+DECLARE t record;
+BEGIN
+  FOR t IN
+    SELECT n.nspname AS schema, c.relname AS name
+      FROM pg_class c
+      JOIN pg_namespace n ON n.oid = c.relnamespace
+      LEFT JOIN pg_stat_user_tables s ON s.relid = c.oid
+     WHERE c.relkind = 'r'
+       AND n.nspname IN (${ANALYZE_SCHEMAS.map((x) => `'${x}'`).join(', ')})
+       AND s.last_analyze IS NULL AND s.last_autoanalyze IS NULL
+  LOOP
+    EXECUTE 'ANALYZE ' || quote_ident(t.schema) || '.' || quote_ident(t.name);
+  END LOOP;
+END
+$analyze$;`);
 
 const sql = header + blocks.join('\n') + '\n';
 const out = path.resolve(__dirname, '..', '..', 'drizzle', '0025_cross_schema_fks.sql');

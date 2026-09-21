@@ -179,10 +179,19 @@ END $$;
 ALTER TABLE public.agent_connector_actions VALIDATE CONSTRAINT fk_agent_connector_actions_connector;
 
 -- Fresh statistics for the new tables (39 of 48 were never analyzed).
-ANALYZE identity.*;
-ANALYZE authz.*;
-ANALYZE catalog.*;
-ANALYZE ops.*;
-ANALYZE integrations.*;
-ANALYZE teams.*;
-ANALYZE channels.*;
+DO $analyze$
+DECLARE t record;
+BEGIN
+  FOR t IN
+    SELECT n.nspname AS schema, c.relname AS name
+      FROM pg_class c
+      JOIN pg_namespace n ON n.oid = c.relnamespace
+      LEFT JOIN pg_stat_user_tables s ON s.relid = c.oid
+     WHERE c.relkind = 'r'
+       AND n.nspname IN ('identity', 'authz', 'catalog', 'ops', 'integrations', 'teams', 'channels')
+       AND s.last_analyze IS NULL AND s.last_autoanalyze IS NULL
+  LOOP
+    EXECUTE 'ANALYZE ' || quote_ident(t.schema) || '.' || quote_ident(t.name);
+  END LOOP;
+END
+$analyze$;
