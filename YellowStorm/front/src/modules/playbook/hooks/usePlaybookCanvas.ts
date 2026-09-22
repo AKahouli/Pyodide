@@ -3,7 +3,7 @@
  * Bridges ReactFlow state with Zustand store using serialization helpers.
  */
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   type Node,
   type Edge,
@@ -34,7 +34,14 @@ import {
   flowEdgesToPlaybookEdges,
 } from './helpers/control-edge-serializer';
 import { wouldCreateCycle } from './helpers/cycle-router-validator';
-import type { DataBinding, PlaybookTask, PlaybookNodeData, ArtifactKind } from '../types';
+import type { DataBinding, PlaybookEdge, PlaybookTask, PlaybookNodeData, TaskOutputPort, ArtifactKind } from '../types';
+import {
+  buildTaskFromBlueprint,
+  planConnectionForNewTask,
+  planInsertOnEdge,
+  type BlueprintTitles,
+  type StepBlueprint,
+} from '../utils/step-creation';
 import { getEffectiveNodeType } from '../utils/node-type';
 import { hasArtifactKindMismatch, createCompatibleInputPort } from '../utils/port-compatibility';
 import {
@@ -105,7 +112,62 @@ export interface TriggerNodeActions {
   onEdit: () => void;
 }
 
-export function usePlaybookCanvas(triggerActions?: TriggerNodeActions) {
+export interface EmptyConnectDrop {
+  nodeId: string;
+  handleId: string | null;
+  screenPosition: { x: number; y: number };
+  flowPosition: { x: number; y: number };
+}
+
+/**
+ * Structural connection validity shared by hover highlighting and snapping.
+ * Type compatibility stays in the commit path (mismatch dialog / compatible
+ * port creation) so every entry point keeps one compatibility rule.
+ */
+function buildIsValidConnection(
+  nodesRef: React.MutableRefObject<Node[]>,
+): (connection: Connection | Edge) => boolean {
+  return (connection) => {
+    if (!connection.source || !connection.target || connection.source === connection.target) return false;
+    if (connection.target === TRIGGER_NODE_ID) return false;
+    return nodesRef.current.some((n) => n.id === connection.target);
+  };
+}
+
+function toFlowControlEdge(pbEdge: PlaybookEdge, isRouterSource: boolean, typeMatch = true): Edge {
+  const sourcePortId = pbEdge.sourceOutputPortId || 'default';
+  const targetPortId = pbEdge.targetInputPortId || 'default';
+  const isErrorEdge = isRouterSource && sourcePortId === '__error__';
+  return {
+    id: pbEdge.id,
+    source: pbEdge.sourceId,
+    target: pbEdge.targetId,
+    sourceHandle: sourcePortId,
+    targetHandle: targetPortId,
+    type: isRouterSource ? 'conditional' : 'animated',
+    animated: !isRouterSource,
+    data: {
+      sourceOutputPortId: sourcePortId,
+      targetInputPortId: targetPortId,
+      isTypeMatch: isRouterSource ? undefined : typeMatch,
+      routerLabel: isRouterSource ? sourcePortId : null,
+    },
+    style: isRouterSource
+      ? {
+          strokeDasharray: '6 4',
+          ...(isErrorEdge ? { stroke: 'var(--destructive)' } : {}),
+        }
+      : undefined,
+  };
+}
+
+export function usePlaybookCanvas(
+  triggerActions?: TriggerNodeActions,
+  options?: {
+    /** Called when a connection drag from an output ends over empty canvas. */
+    onConnectDropOnEmpty?: (drop: EmptyConnectDrop) => void;
+  },
+) {
   const playbook = useCurrentPlaybook();
   const { t } = useModuleTranslation('playbook');
   const { screenToFlowPosition } = useReactFlow();
@@ -640,7 +702,23 @@ export function usePlaybookCanvas(triggerActions?: TriggerNodeActions) {
         }
       }
 
-      if (!targetNodeId || targetNodeId === start.nodeId) return;
+      if (!targetNodeId || targetNodeId === start.nodeId) {
+        if (!targetNodeId && options?.onConnectDropOnEmpty) {
+          const point = 'clientX' in event && 'clientY' in event
+            ? { x: (event as MouseEvent).clientX, y: (event as MouseEvent).clientY }
+            : (() => {
+              const touch = (event as TouchEvent).changedTouches?.[0];
+              return { x: touch?.clientX ?? 0, y: touch?.clientY ?? 0 };
+            })();
+          options.onConnectDropOnEmpty({
+            nodeId: start.nodeId,
+            handleId: start.handleId,
+            screenPosition: point,
+            flowPosition: screenToFlowPosition(point),
+          });
+        }
+        return;
+      }
 
       autoConnectToNodeBody(start, targetNodeId);
     },
@@ -767,43 +845,205 @@ export function usePlaybookCanvas(triggerActions?: TriggerNodeActions) {
     [captureSnapshot, playbook?.id, syncDataBindings, syncEdges, triggerActions, updateTasks],
   );
 
+  const isValidConnection = useMemo(() => buildIsValidConnection(nodesRef), []);
+
+  const createConnectedTask = useCallback(
+    (
+      blueprint: StepBlueprint,
+      opts: {
+        position: { x: number; y: number };
+        titles: BlueprintTitles;
+        source?: { nodeId: string; sourcePortId?: string | null } | null;
+      },
+    ): PlaybookTask | null => {
+      const allTasks = nodesToTasks(nodesRef.current);
+      const includeTrigger = playbook?.automatedTriggerType === 'mail';
+      let task = buildTaskFromBlueprint(blueprint, {
+        position: opts.position,
+        executionOrder: allTasks.length,
+        titles: opts.titles,
+      });
+
+      let flowEdge: Edge | null = null;
+      let binding: DataBinding | null = null;
+
+      if (opts.source) {
+        const sourceNode = nodesRef.current.find((n) => n.id === opts.source!.nodeId);
+        const sourceData = sourceNode?.data as PlaybookNodeData | undefined;
+        if (sourceNode && sourceData) {
+          const isTrigger = sourceNode.id === TRIGGER_NODE_ID;
+          const sourceTask = isTrigger ? null : allTasks.find((tk) => tk.id === sourceNode.id) ?? null;
+          const plan = planConnectionForNewTask(
+            {
+              nodeId: sourceNode.id,
+              task: sourceTask,
+              outputPorts: (sourceData.outputPorts ?? []) as TaskOutputPort[],
+              sourcePortId: opts.source.sourcePortId ?? null,
+            },
+            task,
+          );
+          task = { ...task, inputPorts: plan.taskInputPorts, outputPorts: plan.taskOutputPorts };
+          binding = plan.binding;
+          if (plan.edge) {
+            const isRouterSource = !isTrigger && sourceTask !== null && getEffectiveNodeType(sourceTask) === 'router';
+            flowEdge = toFlowControlEdge(plan.edge, isRouterSource);
+          }
+        }
+      }
+
+      // Compute every next value before touching state: React may invoke
+      // setState updaters twice (StrictMode), so updaters must stay pure.
+      const updatedNodes = preserveUI(buildNodes([...allTasks, task], includeTrigger), nodesRef.current);
+      const nextEdges = flowEdge ? [...edgesRef.current, flowEdge] : null;
+      const nextBindings = binding ? [...dataBindingsRef.current, binding] : null;
+
+      captureSnapshot();
+      nodesRef.current = updatedNodes;
+      setNodes(updatedNodes);
+      if (nextEdges) {
+        edgesRef.current = nextEdges;
+        setEdges(nextEdges);
+      }
+      if (nextBindings) {
+        dataBindingsRef.current = nextBindings;
+      }
+      deferStoreUpdate(() => updateTasks(nodesToTasks(updatedNodes)));
+      if (nextEdges) deferStoreUpdate(() => syncEdges(nextEdges));
+      if (nextBindings) deferStoreUpdate(() => syncDataBindings(nextBindings));
+      selectStep(task.id);
+      return task;
+    },
+    [captureSnapshot, playbook?.automatedTriggerType, selectStep, syncDataBindings, syncEdges, updateTasks],
+  );
+
+  const insertTaskOnEdge = useCallback(
+    (
+      edgeId: string,
+      blueprint: StepBlueprint,
+      opts: { titles: BlueprintTitles; position?: { x: number; y: number } | null },
+    ): PlaybookTask | null => {
+      const flowEdge = edgesRef.current.find((e) => e.id === edgeId);
+      if (!flowEdge) return null;
+      const allTasks = nodesToTasks(nodesRef.current);
+      const edgeData = (flowEdge.data || {}) as { sourceOutputPortId?: string; targetInputPortId?: string };
+      const pbEdge: PlaybookEdge = {
+        id: flowEdge.id,
+        sourceId: flowEdge.source,
+        targetId: flowEdge.target,
+        sourceOutputPortId: edgeData.sourceOutputPortId || flowEdge.sourceHandle || 'default',
+        targetInputPortId: edgeData.targetInputPortId || flowEdge.targetHandle || 'default',
+      };
+
+      const sourceNode = nodesRef.current.find((n) => n.id === pbEdge.sourceId);
+      const targetNode = nodesRef.current.find((n) => n.id === pbEdge.targetId);
+      if (!sourceNode || !targetNode) return null;
+      const position = opts.position ?? {
+        x: (sourceNode.position.x + targetNode.position.x) / 2,
+        y: (sourceNode.position.y + targetNode.position.y) / 2 - 60,
+      };
+
+      let task = buildTaskFromBlueprint(blueprint, {
+        position,
+        executionOrder: allTasks.length,
+        titles: opts.titles,
+      });
+      const plan = planInsertOnEdge(pbEdge, allTasks, dataBindingsRef.current, task, {
+        allowPortCreation: blueprint.kind === 'blank',
+      });
+      if (!plan) {
+        showWarning(t('canvas.insertIncompatible'));
+        return null;
+      }
+      task = { ...task, inputPorts: plan.taskInputPorts, outputPorts: plan.taskOutputPorts };
+
+      const sourceTask = allTasks.find((tk) => tk.id === pbEdge.sourceId) ?? null;
+      const isRouterSource = sourceTask !== null && getEffectiveNodeType(sourceTask) === 'router';
+
+      // Compute every next value before touching state: React may invoke
+      // setState updaters twice (StrictMode), so updaters must stay pure.
+      const updatedNodes = preserveUI(
+        buildNodes([...allTasks, task], playbook?.automatedTriggerType === 'mail'),
+        nodesRef.current,
+      );
+      const nextEdges = [
+        ...edgesRef.current.filter((e) => e.id !== edgeId),
+        ...plan.addedEdges.map((edge) => toFlowControlEdge(
+          edge,
+          isRouterSource && edge.sourceId === pbEdge.sourceId,
+        )),
+      ];
+      const removedBindingIds = new Set(plan.removedBindingIds);
+      const bindingsChanged = plan.addedBindings.length > 0 || plan.removedBindingIds.length > 0;
+      const nextBindings = bindingsChanged
+        ? [
+            ...dataBindingsRef.current.filter((b) => !removedBindingIds.has(b.id)),
+            ...plan.addedBindings,
+          ]
+        : null;
+
+      captureSnapshot();
+      nodesRef.current = updatedNodes;
+      setNodes(updatedNodes);
+      edgesRef.current = nextEdges;
+      setEdges(nextEdges);
+      if (nextBindings) {
+        dataBindingsRef.current = nextBindings;
+      }
+      deferStoreUpdate(() => updateTasks(nodesToTasks(updatedNodes)));
+      deferStoreUpdate(() => syncEdges(nextEdges));
+      if (nextBindings) deferStoreUpdate(() => syncDataBindings(nextBindings));
+      selectStep(task.id);
+      return task;
+    },
+    [captureSnapshot, playbook?.automatedTriggerType, selectStep, syncDataBindings, syncEdges, t, updateTasks],
+  );
+
   const updateNodeData = useCallback(
     (nodeId: string, data: Partial<PlaybookTask>) => {
-      setNodes((nds) => {
-        const tasks = playbook?.tasks ?? nodesToTasks(nds);
-        const prevTask = tasks.find((t) => t.id === nodeId);
-        const nextParentId = data.containerConfig
-          ? data.containerConfig.parentIteratorId ?? null
-          : prevTask?.containerConfig?.parentIteratorId ?? null;
-        const isNewAssignment =
-          nextParentId && nextParentId !== prevTask?.containerConfig?.parentIteratorId;
+      // Read the store imperatively: a same-tick flush+create sequence must see
+      // the freshest tasks, not a stale closure over playbook?.tasks.
+      const liveTasks = usePlaybookStore.getState().currentPlaybook?.tasks;
+      const tasks = liveTasks?.length ? liveTasks : nodesToTasks(nodesRef.current);
+      const prevTask = tasks.find((t) => t.id === nodeId);
+      const nextParentId = data.containerConfig
+        ? data.containerConfig.parentIteratorId ?? null
+        : prevTask?.containerConfig?.parentIteratorId ?? null;
+      const isNewAssignment =
+        nextParentId && nextParentId !== prevTask?.containerConfig?.parentIteratorId;
 
-        const patched = tasks.map((t) => {
-          if (t.id !== nodeId) return t;
-          const nextTask = {
-            ...t,
-            ...data,
-            containerConfig: data.containerConfig ?? t.containerConfig,
-          };
-          if (isNewAssignment) {
-            const pos = getIteratorChildAbsolutePositionForNewChild(tasks, nextParentId!);
-            if (pos) {
-              nextTask.positionX = pos.x;
-              nextTask.positionY = pos.y;
-            }
+      const patched = tasks.map((t) => {
+        if (t.id !== nodeId) return t;
+        const nextTask = {
+          ...t,
+          ...data,
+          containerConfig: data.containerConfig ?? t.containerConfig,
+        };
+        if (isNewAssignment) {
+          const pos = getIteratorChildAbsolutePositionForNewChild(tasks, nextParentId!);
+          if (pos) {
+            nextTask.positionX = pos.x;
+            nextTask.positionY = pos.y;
           }
-          return nextTask;
-        });
-        const updated = preserveUI(
-          buildNodes(patched, playbook?.automatedTriggerType === 'mail'),
-          nds,
-        );
-        captureSnapshot();
-        updateTasks(patched);
-        return updated;
+        }
+        return nextTask;
       });
+      // Compute outside the setState updater (StrictMode double-invocation safety)
+      // and update the ref synchronously so same-tick callers see the patch.
+      const updated = preserveUI(
+        buildNodes(patched, playbook?.automatedTriggerType === 'mail'),
+        nodesRef.current,
+      );
+      captureSnapshot();
+      nodesRef.current = updated;
+      // Pure functional write: re-merges with any node changes queued in this
+      // same tick (e.g. React Flow selection dispatched just before a flush).
+      setNodes((nds) => preserveUI(
+        buildNodes(patched, playbook?.automatedTriggerType === 'mail'),
+        nds,
+      ));
+      updateTasks(patched);
     },
-    [updateTasks, captureSnapshot, playbook?.automatedTriggerType, playbook?.tasks],
+    [updateTasks, captureSnapshot, playbook?.automatedTriggerType],
   );
 
   const setIteratorNodeSize = useCallback(
@@ -1011,6 +1251,9 @@ export function usePlaybookCanvas(triggerActions?: TriggerNodeActions) {
     onNodeMouseEnter,
     onNodeMouseLeave,
     connectionDragHoveredId,
+    isValidConnection,
+    createConnectedTask,
+    insertTaskOnEdge,
     addNode,
     removeNode,
     updateNodeData,

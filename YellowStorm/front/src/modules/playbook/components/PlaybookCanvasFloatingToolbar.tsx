@@ -1,6 +1,6 @@
 import { Fragment, forwardRef, useCallback, useEffect, useId, useImperativeHandle, useLayoutEffect, useRef, useState } from 'react';
 import type { PointerEvent as ReactPointerEvent, RefObject } from 'react';
-import { ChevronDown, GripVertical, LayoutGrid, Plus, Redo2, Undo2, Cable, FolderOpen, PanelLeftClose, PanelLeftOpen, Loader2, Download, Wand2, Trash2, GitBranch, Hand, DatabaseZap, Copy, Scissors, ClipboardPaste, Sparkles, MoreHorizontal } from 'lucide-react';
+import { ChevronDown, GripVertical, LayoutGrid, Plus, Redo2, Undo2, Cable, FolderOpen, PanelLeftClose, PanelLeftOpen, Loader2, Download, Wand2, Trash2, GitBranch, Hand, DatabaseZap, Copy, Scissors, ClipboardPaste, Sparkles, MoreHorizontal, Rows } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import {
@@ -56,6 +56,8 @@ interface Props {
   minTopOffset?: number;
   minLeftOffset?: number;
   avoidRectPadding?: number;
+  compactCards?: boolean;
+  onToggleCompactCards?: () => void;
 }
 
 export interface PlaybookCanvasFloatingToolbarHandle {
@@ -109,6 +111,8 @@ export const PlaybookCanvasFloatingToolbar = forwardRef<PlaybookCanvasFloatingTo
   minTopOffset = 0,
   minLeftOffset = DEFAULT_POSITION.x,
   avoidRectPadding = 12,
+  compactCards = true,
+  onToggleCompactCards,
 }: Props, ref) {
   const { t } = useModuleTranslation('playbook');
   const yellowmindOpen = usePlatformCopilotPanelStore((s) => s.open);
@@ -339,6 +343,14 @@ export const PlaybookCanvasFloatingToolbar = forwardRef<PlaybookCanvasFloatingTo
       disabled,
     },
     {
+      key: 'compact',
+      label: compactCards ? t('toolbar.showFullCards') : t('toolbar.showCompactCards'),
+      icon: Rows,
+      onClick: onToggleCompactCards,
+      active: compactCards,
+      hidden: !onToggleCompactCards,
+    },
+    {
       key: 'explorer',
       label: explorerOpen ? t('toolbar.hideExplorer') : t('toolbar.showExplorer'),
       icon: FolderOpen,
@@ -421,7 +433,7 @@ export const PlaybookCanvasFloatingToolbar = forwardRef<PlaybookCanvasFloatingTo
       hidden: !onPasteClipboard,
     },
   ];
-  const primaryActionKeys = new Set(['undo', 'redo', 'layout', 'designer']);
+  const primaryActionKeys = new Set(['undo', 'redo', 'layout', 'compact', 'designer']);
   const visibleActions = actionButtons.filter((action) => !action.hidden);
   const primaryActions = visibleActions.filter((action) => primaryActionKeys.has(action.key));
   const overflowActions = visibleActions.filter((action) => !primaryActionKeys.has(action.key));

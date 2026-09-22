@@ -1,6 +1,6 @@
 import { createContext, useContext, useMemo, useState, useCallback, useEffect } from 'react';
 import { type NodeProps, Handle, Position, useUpdateNodeInternals } from '@xyflow/react';
-import { Bot, Copy, Trash2, Play, Loader2, SkipForward, Power, PlayCircle, Pencil, FileText, Cable, X, Sparkles, Scissors, ClipboardPaste, FastForward, Repeat2 } from 'lucide-react';
+import { Bot, Copy, Trash2, Play, Loader2, SkipForward, Power, PlayCircle, Pencil, FileText, Cable, X, Sparkles, Scissors, ClipboardPaste, FastForward, Repeat2, MoreVertical, Plus, CheckCircle2, AlertTriangle, Zap, ClipboardCheck } from 'lucide-react';
 import { toast } from 'sonner';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -13,6 +13,13 @@ import {
   ContextMenuTrigger,
 } from '@/components/ui/context-menu';
 import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
+import {
   Node,
   NodeHeader,
   NodeTitle,
@@ -22,6 +29,7 @@ import { PlaybookStatusBadge } from './PlaybookStatusBadge';
 import { InputFilesPopover } from './InputFilesPopover';
 import { PortLabel } from './PortLabel';
 import { useModuleTranslation } from '@/modules/localization';
+import type { ModuleTranslationKey, TranslationParams } from '@/modules/localization';
 import { useAgentStore } from '@/modules/agent/store';
 import { CreateEditAgentDialog } from '@/modules/agent/components/CreateEditAgentDialog';
 import type { UserAgentFormValues } from '@/modules/agent/components/AgentFormSchema';
@@ -152,6 +160,31 @@ function getInputConstantLabel(binding: DataBinding | undefined): string | undef
   return formatConstantInputLabel(binding.constantValue);
 }
 
+type Translate = (key: ModuleTranslationKey<'playbook'>, params?: TranslationParams) => string;
+
+/**
+ * One-line configuration summary for the compact card: the input source when
+ * bound, otherwise the action/evaluation focus, otherwise the agent.
+ */
+export function getCompactCardSummary(
+  task: {
+    inputFiles?: InputFile[];
+    selectedAction?: string;
+    evaluationConfig?: { expectation?: string } | null;
+  },
+  agentName: string | null | undefined,
+  t: Translate,
+): string {
+  const firstFile = task.inputFiles?.[0];
+  if (firstFile?.name) return t('nodeCard.summaryFrom', { name: firstFile.name });
+  if (task.selectedAction) {
+    return `${String(task.selectedAction).charAt(0).toUpperCase()}${String(task.selectedAction).slice(1)}`;
+  }
+  if (task.evaluationConfig?.expectation?.trim()) return task.evaluationConfig.expectation.trim();
+  if (agentName) return agentName;
+  return t('nodeCard.summaryFallback');
+}
+
 export interface NodeDataActions {
   updateNodeData: (nodeId: string, data: Partial<PlaybookNodeData>) => void;
   setIteratorNodeSize?: (nodeId: string, size: { width: number; height: number }) => void;
@@ -160,9 +193,14 @@ export interface NodeDataActions {
   openOutputFormatEditor?: (nodeId: string) => void;
   onConnectorDrop?: (taskId: string, payload: ConnectorDropPayload) => void;
   onSkillDrop?: (taskId: string, payload: SkillDropPayload) => void;
+  /** Opens the shared next-step picker anchored to this node's "+" affordance. */
+  onAddNextStep?: (nodeId: string, anchor: { x: number; y: number }) => void;
 }
 
 export const NodeDataActionsContext = createContext<NodeDataActions | null>(null);
+
+/** Page-level density switch for compact (~240px) task cards. */
+export const CardDensityContext = createContext<boolean>(false);
 
 export const NodeContextMenuContext = createContext<NodeContextMenuActions | null>(null);
 
@@ -364,6 +402,132 @@ function getPortTopPercent(idx: number, total: number): number {
   return step * (idx + 1);
 }
 
+const COMPACT_KIND_ICON = {
+  agent: Bot,
+  action: Zap,
+  evaluation: ClipboardCheck,
+} as const;
+
+type CompactReadiness = 'ready' | 'not-configured' | 'missing-inputs';
+
+/**
+ * Compact ~240px card: kind icon + two-line title + overflow menu, one-line
+ * configuration summary, one contextual status, and the "+" next-step affordance.
+ * Detailed configuration lives in the docked inspector.
+ */
+function CompactCardBody({
+  id,
+  title,
+  summary,
+  status,
+  readiness,
+  nodeKind,
+  isEnabled,
+  canExecute,
+  hasResults,
+  actions,
+  onAddNextStep,
+  onViewResults,
+  headerBgClass,
+}: {
+  id: string;
+  title: string;
+  summary: string;
+  status: StepStatus | undefined;
+  readiness: CompactReadiness;
+  nodeKind: keyof typeof COMPACT_KIND_ICON;
+  isEnabled: boolean;
+  canExecute: boolean;
+  hasResults: boolean;
+  actions: NodeContextMenuActions | null;
+  onAddNextStep: (anchor: { x: number; y: number }) => void;
+  onViewResults: () => void;
+  headerBgClass: string;
+}) {
+  const { t } = useModuleTranslation('playbook');
+  const KindIcon = COMPACT_KIND_ICON[nodeKind];
+  const readinessConfig = readiness === 'missing-inputs'
+    ? { icon: AlertTriangle, className: 'text-amber-500', label: t('nodeCard.missingInputs') }
+    : readiness === 'ready'
+      ? { icon: CheckCircle2, className: 'text-emerald-600', label: t('nodeCard.ready') }
+      : { icon: AlertTriangle, className: 'text-muted-foreground', label: t('node.notConfigured') };
+  const ReadinessIcon = readinessConfig.icon;
+
+  return (
+    <div className={cn('relative flex flex-col gap-1 px-3 py-2.5 transition-colors duration-300', headerBgClass)}>
+      <div className="flex items-start gap-2">
+        <KindIcon className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" aria-hidden="true" />
+        <NodeTitle className="min-w-0 flex-1 text-sm font-semibold leading-snug line-clamp-2" title={title}>
+          {title}
+        </NodeTitle>
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="nodrag nopan h-6 w-6 shrink-0 text-muted-foreground hover:text-foreground"
+              aria-label={t('nodeCard.moreActions')}
+              onClick={(e) => e.stopPropagation()}
+            >
+              <MoreVertical className="h-4 w-4" />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end">
+            <DropdownMenuItem onClick={() => actions?.onEdit(id)}>
+              <Pencil className="mr-2 h-4 w-4" />
+              {t('nodeContextMenu.edit')}
+            </DropdownMenuItem>
+            <DropdownMenuItem disabled={!canExecute} onClick={() => actions?.onExecuteStep(id)}>
+              <Play className="mr-2 h-4 w-4" />
+              {t('node.executeStep')}
+            </DropdownMenuItem>
+            {hasResults && (
+              <DropdownMenuItem onClick={onViewResults}>
+                <FileText className="mr-2 h-4 w-4" />
+                {t('node.viewResults')}
+              </DropdownMenuItem>
+            )}
+            <DropdownMenuItem onClick={() => actions?.onClone(id)}>
+              <Copy className="mr-2 h-4 w-4" />
+              {t('nodeContextMenu.clone')}
+            </DropdownMenuItem>
+            <DropdownMenuItem onClick={() => actions?.onToggleEnabled(id)}>
+              <Power className="mr-2 h-4 w-4" />
+              {isEnabled ? t('node.disable') : t('node.enable')}
+            </DropdownMenuItem>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem className="text-destructive focus:text-destructive" onClick={() => actions?.onDelete(id)}>
+              <Trash2 className="mr-2 h-4 w-4" />
+              {t('nodeContextMenu.delete')}
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+      </div>
+      <p className="truncate text-xs text-muted-foreground" title={summary}>{summary}</p>
+      {status ? (
+        <PlaybookStatusBadge status={status} size="xs" />
+      ) : (
+        <span className={cn('inline-flex items-center gap-1 text-[11px]', readinessConfig.className)}>
+          <ReadinessIcon className="h-3 w-3" aria-hidden="true" />
+          {readinessConfig.label}
+        </span>
+      )}
+      <button
+        type="button"
+        className="nodrag nopan absolute -bottom-3 right-3 z-20 flex h-6 w-6 items-center justify-center rounded-full border bg-background shadow-sm transition-colors hover:border-primary/60 hover:text-primary"
+        aria-label={t('nodeCard.addNextStep')}
+        onClick={(e) => {
+          e.stopPropagation();
+          const rect = e.currentTarget.getBoundingClientRect();
+          onAddNextStep({ x: rect.left + rect.width / 2, y: rect.bottom + 10 });
+        }}
+      >
+        <Plus className="h-3.5 w-3.5" />
+      </button>
+    </div>
+  );
+}
+
 export function PlaybookNode({ id, data: rawData, selected }: NodeProps) {
   const data = rawData as unknown as PlaybookNodeData;
   const actions = useContext(NodeContextMenuContext);
@@ -471,6 +635,8 @@ export function PlaybookNode({ id, data: rawData, selected }: NodeProps) {
   const isSelected = Boolean(selected);
   const isRecentlyChanged = data.isRecentlyChanged === true;
   const isCompact = data.isCompact === true;
+  const compactCards = useContext(CardDensityContext);
+  const useCompactCard = compactCards && !isCompact;
   const selectedClass = isSelected
     ? 'border-2 border-[#ffcd03] ring-4 ring-inset ring-[#ffcd03]/60 shadow-lg shadow-[#ffcd03]/25 animate-[pulse_4.5s_ease-in-out_infinite]'
     : '';
@@ -741,6 +907,7 @@ export function PlaybookNode({ id, data: rawData, selected }: NodeProps) {
           className={cn(
             'group',
             isCompact && '!w-[200px]',
+            useCompactCard && '!w-[240px]',
             ringClass,
             selectedClass,
             disabledClass,
@@ -863,6 +1030,40 @@ export function PlaybookNode({ id, data: rawData, selected }: NodeProps) {
             />
           ) : null}
 
+          {useCompactCard ? (
+            <CompactCardBody
+              id={id}
+              title={data.title || t('node.untitled')}
+              summary={getCompactCardSummary(
+                {
+                  inputFiles,
+                  selectedAction: effectiveTask.selectedAction,
+                  evaluationConfig: effectiveTask.evaluationConfig,
+                },
+                agent?.name,
+                t,
+              )}
+              status={status}
+              readiness={
+                unboundRequiredPortIds.size > 0
+                  ? 'missing-inputs'
+                  : isConfigured
+                    ? 'ready'
+                    : 'not-configured'
+              }
+              nodeKind={nodeType === 'evaluation' ? 'evaluation' : isActionMode ? 'action' : 'agent'}
+              isEnabled={isEnabled}
+              canExecute={
+                isEnabled && isConfigured && Boolean(actions?.canExecute) && !actions?.isExecuting
+              }
+              hasResults={Boolean(status && status !== 'pending' && status !== 'running')}
+              onViewResults={() => openExecutionDetailTab('results', id)}
+              actions={actions}
+              onAddNextStep={(anchor) => nodeDataActions?.onAddNextStep?.(id, anchor)}
+              headerBgClass={headerBgClass}
+            />
+          ) : (
+          <>
           <NodeHeader className={cn('transition-colors duration-300', headerBgClass)}>
             <div className="flex items-center justify-between w-full gap-2">
               <div className="flex items-center gap-2 min-w-0">
@@ -1240,6 +1441,8 @@ export function PlaybookNode({ id, data: rawData, selected }: NodeProps) {
               </div>
             </div>
           </NodeContent>
+          )}
+          </>
           )}
           {isStepRunning && (
             <div className="absolute inset-0 rounded-md pointer-events-none z-10 animate-running-node-glow" />
