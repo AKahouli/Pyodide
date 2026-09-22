@@ -132,7 +132,7 @@ export class WorkyVoiceController {
   @HttpCode(HttpStatus.OK)
   @RequirePermissions(Permissions.WORKY_STREAM_WRITE)
   @ApiOperation({ summary: 'Ingest one finished voice turn into smart-memory (thematic memory)' })
-  async ingestThematicMemory(@CurrentUser() user: UserDocument, @Body() dto: VoiceThematicMemoryDto) {
+  async ingestThematicMemory(@CurrentUser() user: AuthUser, @Body() dto: VoiceThematicMemoryDto) {
     return this.thematicMemory.ingestTurn(user._id.toString(), dto.text);
   }
 
@@ -140,7 +140,7 @@ export class WorkyVoiceController {
   @HttpCode(HttpStatus.OK)
   @RequirePermissions(Permissions.WORKY_STREAM_WRITE)
   @ApiOperation({ summary: 'Retrieve thematic (smart-memory) context for a query — a concierge tool' })
-  async retrieveThematicMemory(@CurrentUser() user: UserDocument, @Body() dto: VoiceThematicRetrieveDto) {
+  async retrieveThematicMemory(@CurrentUser() user: AuthUser, @Body() dto: VoiceThematicRetrieveDto) {
     return this.thematicMemory.retrieve(user._id.toString(), dto.query);
   }
 }

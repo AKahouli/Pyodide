@@ -4,7 +4,6 @@ import { PostgresModule } from '../postgres/postgres.module';
 import { AuthorizationModule } from '../authorization/authorization.module';
 import { RateLimiterModule } from '../rate-limiter/rate-limiter.module';
 import { AppDataModule } from '../app-data/app-data.module';
-import { SystemSetting, SystemSettingSchema } from '../system/schemas/system-setting.schema';
 import { User, UserSchema } from '../user/schemas/user.schema';
 import {
   ConversationV2Session,
@@ -29,7 +28,6 @@ import { AdminAppBuilderAiController } from './controllers/admin-app-builder-ai.
     forwardRef(() => AuthorizationModule),
     forwardRef(() => AppDataModule),
     MongooseModule.forFeature([
-      { name: SystemSetting.name, schema: SystemSettingSchema },
       { name: AppBuilderAiOffer.name, schema: AppBuilderAiOfferSchema },
       { name: User.name, schema: UserSchema },
       { name: ConversationV2Session.name, schema: ConversationV2SessionSchema },

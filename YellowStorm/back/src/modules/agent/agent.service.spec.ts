@@ -193,6 +193,7 @@ describe('AgentService connector skill inheritance', () => {
       guardrailsSettingsService as any,
       agentRepository as any,
       agentRoleEmbedding as any,
+      [],
       new AgentConnectorRuntimeService(
         logger as any,
         skillService as any,

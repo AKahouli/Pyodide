@@ -55,7 +55,6 @@ export default tseslint.config(
       '!src/modules/database/**',
       '!src/modules/health/**',
       '!src/modules/app-data/**',
-      '!src/modules/whatsapp/**',
       '!src/modules/connector/services/connector-playbook-binding-sync.service.ts',
     ],
     rules: {

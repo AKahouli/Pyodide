@@ -30,7 +30,9 @@ const ALLOWLIST: Array<[string, string]> = [
   ['modules/database/', 'P9 logger (connection shell)'],
   ['modules/health/', 'health Mongo ping (P9)'],
   ['modules/app-data/', '2 controllers (P8)'],
-  ['modules/whatsapp/', 'deprecated — removed with Step 7/P7'],
+  ['modules/ai-proxy/', 'still Mongo-backed (preview tickets / usage)'],
+  ['modules/app-builder-ai/', 'still Mongo-backed (offers / usage)'],
+  ['modules/user/schemas/user.schema.ts', 'legacy schema until app-builder-ai drops InjectModel(User)'],
   ['modules/connector/services/connector-playbook-binding-sync.service.ts', 'bridge — removed with P5'],
 ];
 

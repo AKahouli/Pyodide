@@ -62,7 +62,7 @@ import { PgWidgetTokenStore } from '../widget-chat/persistence/pg-widget.store';
   ],
   controllers: [AgentController, PublicAgentController, AdminAgentController, AgentA2AController, AgentShareController, AgentCrudInternalController],
   providers: [
-    // Shares cutover (plan 4.1); exported for the telegram/whatsapp/widget guards.
+    // Shares cutover (plan 4.1); exported for the telegram/widget guards.
     { provide: AGENT_SHARE_STORE, useClass: PgAgentShareStore },
     // Channel teardown (plan 4.6). The adapters live here, not in the channel
     // modules, because those import AgentModule (a reverse import would cycle).

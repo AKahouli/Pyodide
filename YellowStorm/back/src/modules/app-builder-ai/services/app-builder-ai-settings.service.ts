@@ -1,7 +1,5 @@
-import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
-import { InjectModel } from '@nestjs/mongoose';
-import { Model } from 'mongoose';
-import { SystemSetting, SystemSettingDocument } from '../../system/schemas/system-setting.schema';
+import { Inject, Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
+import { SYSTEM_SETTING_STORE, type SystemSettingStore } from '../../system/persistence/system-setting.store';
 import {
   APP_BUILDER_AI_SETTINGS_KEY,
   DEFAULT_APP_BUILDER_AI_SETTINGS,
@@ -30,8 +28,7 @@ export class AppBuilderAiSettingsService implements OnModuleInit, OnModuleDestro
   private refreshTimer?: NodeJS.Timeout;
 
   constructor(
-    @InjectModel(SystemSetting.name)
-    private readonly settings: Model<SystemSettingDocument>,
+    @Inject(SYSTEM_SETTING_STORE) private readonly settings: SystemSettingStore,
   ) {}
 
   async onModuleInit(): Promise<void> {
@@ -65,23 +62,13 @@ export class AppBuilderAiSettingsService implements OnModuleInit, OnModuleDestro
 
   async setEnabled(enabled: boolean): Promise<AppBuilderAiSettings> {
     const persisted = normalize({ ...(await this.getSettings()), enabled });
-    await this.settings
-      .findOneAndUpdate(
-        { key: APP_BUILDER_AI_SETTINGS_KEY },
-        { key: APP_BUILDER_AI_SETTINGS_KEY, value: persisted },
-        { upsert: true, new: true, setDefaultsOnInsert: true },
-      )
-      .lean()
-      .exec();
+    await this.settings.upsert(APP_BUILDER_AI_SETTINGS_KEY, persisted);
     this.cache = { value: persisted, expiresAt: Date.now() + CACHE_MS };
     return persisted;
   }
 
   private async refresh(): Promise<AppBuilderAiSettings> {
-    const setting = await this.settings
-      .findOne({ key: APP_BUILDER_AI_SETTINGS_KEY })
-      .lean()
-      .exec();
+    const setting = await this.settings.get(APP_BUILDER_AI_SETTINGS_KEY);
     const value = normalize(setting?.value);
     this.cache = { value, expiresAt: Date.now() + CACHE_MS };
     return value;

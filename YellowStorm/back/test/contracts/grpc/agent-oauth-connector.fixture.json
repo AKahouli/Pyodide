@@ -33,14 +33,8 @@
           "action_key": "list_messages",
           "label": "List messages",
           "description": "List recent messages",
-          "parameter_schema": {
-            "type": "object",
-            "properties": {
-              "top": {
-                "type": "number"
-              }
-            }
-          },
+          "parameter_schema": {},
+          "parameter_schema_json": "{\"type\":\"object\",\"properties\":{\"top\":{\"type\":\"number\"}}}",
           "safety": "read",
           "result_kind": "generic",
           "citation_mode": "none",

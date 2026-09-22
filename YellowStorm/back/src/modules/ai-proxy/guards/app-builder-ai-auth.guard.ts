@@ -13,7 +13,7 @@ import { ErrorCode } from '../../exceptions/constants/error-codes';
 import { JwtPayload } from '../../auth/interfaces/jwt-payload.interface';
 import { AuthService } from '../../auth/auth.service';
 import { UserService } from '../../user/user.service';
-import { UserDocument } from '../../user/schemas/user.schema';
+import type { UserDocLike } from '../../user/persistence/user-record.mapper';
 import { AppDataClientService } from '../../app-data/services/app-data-client.service';
 import { AppDataCatalogService } from '../../app-data/services/app-data-catalog.service';
 import { AppDataEndUserAuthService } from '../../app-data/services/app-data-end-user-auth.service';
@@ -32,7 +32,7 @@ interface AppEndUserJwtHints {
 }
 
 type AiProxyAuthedRequest = Request & {
-  user?: UserDocument;
+  user?: UserDocLike;
   aiProxyAuth?: {
     mode: 'platform' | 'app_end_user' | 'ai_preview';
     appDataId?: string;
@@ -99,7 +99,7 @@ export class AppBuilderAiAuthGuard implements CanActivate {
 
   private async verifyAiPreviewTicket(
     ticket: string,
-  ): Promise<{ user: UserDocument; workspaceId: string }> {
+  ): Promise<{ user: UserDocLike; workspaceId: string }> {
     if (!this.aiPreviewTickets) {
       throw new UnauthorizedException(
         ErrorCode.UNAUTHORIZED,
@@ -135,7 +135,7 @@ export class AppBuilderAiAuthGuard implements CanActivate {
     }
   }
 
-  private async authenticatePlatformAccess(token: string): Promise<UserDocument> {
+  private async authenticatePlatformAccess(token: string): Promise<UserDocLike> {
     const secret = this.configService.get<string>('jwt.secret');
     if (!secret) {
       throw new UnauthorizedException(ErrorCode.UNAUTHORIZED, 'JWT is not configured');
@@ -173,7 +173,7 @@ export class AppBuilderAiAuthGuard implements CanActivate {
   private async authenticateAppEndUser(
     token: string,
     hints: AppEndUserJwtHints,
-  ): Promise<UserDocument> {
+  ): Promise<UserDocLike> {
     if (!hints.appDataId || !hints.sub) {
       throw new UnauthorizedException(ErrorCode.INVALID_TOKEN, 'Invalid app end-user token');
     }
