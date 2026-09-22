@@ -566,6 +566,13 @@ def _teams_chat_id(result) -> Optional[str]:
     missing one means the reply can never route back."""
     try:
         top = json.loads(result) if isinstance(result, str) else (result or {})
+        # MCP tools return the real payload as a JSON string under "text" — unwrap
+        # it, or chat_id is invisible and the reply can never route back.
+        if isinstance(top, dict) and "chat_id" not in top and isinstance(top.get("text"), str):
+            try:
+                top = json.loads(top["text"])
+            except (ValueError, TypeError):
+                pass
         # Prefer the id the send tool surfaces explicitly; fall back to the one
         # Graph echoes on the created message (not always present).
         return top.get("chat_id") or (top.get("data") or {}).get("chatId")

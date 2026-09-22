@@ -898,3 +898,25 @@ def test_dep_gate_deferral_emits_no_terminal_event():
     node_terms = [e for e in recorded if is_terminal_event(e)
                   and e.node_info and e.node_info.path]
     assert not node_terms, f"deferral recorded a terminal node event: {node_terms}"
+
+
+def test_teams_chat_id_unwraps_the_mcp_text_envelope():
+    """The send_teams_message MCP tool returns its payload as a JSON string under
+    "text" — the chat id must be read from inside it, else the Teams wait never
+    gets a conversation_id and the poller stays blind (session c7b084e1)."""
+    import json
+    envelope = {"text": json.dumps({
+        "status": "success",
+        "chat_id": "19:abc_def@unq.gbl.spaces",
+        "data": {"id": "1790066864309", "chatId": "19:abc_def@unq.gbl.spaces"}})}
+    assert nodes._teams_chat_id(envelope) == "19:abc_def@unq.gbl.spaces"
+    # a JSON-string envelope works too (result arriving as a str)
+    assert nodes._teams_chat_id(json.dumps(envelope)) == "19:abc_def@unq.gbl.spaces"
+
+
+def test_teams_chat_id_still_reads_the_flat_shapes():
+    """Back-compat: a flat dict/string with chat_id (or data.chatId) still works."""
+    assert nodes._teams_chat_id({"chat_id": "19:x@unq.gbl.spaces"}) == "19:x@unq.gbl.spaces"
+    assert nodes._teams_chat_id({"data": {"chatId": "19:y@unq.gbl.spaces"}}) == "19:y@unq.gbl.spaces"
+    assert nodes._teams_chat_id({"text": "not json"}) is None
+    assert nodes._teams_chat_id(None) is None
