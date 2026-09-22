@@ -136,13 +136,6 @@ export class InMemoryWidgetSessionStore implements WidgetSessionStore {
     );
   }
 
-  async incrementMessageCount(id: string): Promise<void> {
-    const row = this.rows.find((r) => r.id === id);
-    if (row) {
-      row.messageCount += 1;
-      row.updatedAt = new Date();
-    }
-  }
 
   private async findActive(tokenHash: string, visitorId: string): Promise<WidgetSessionRow | null> {
     return this.rows.find((r) => r.tokenHash === tokenHash && r.visitorId === visitorId && r.status === 'active') ?? null;

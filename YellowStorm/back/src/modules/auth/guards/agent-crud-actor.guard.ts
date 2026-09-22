@@ -1,5 +1,5 @@
+import { isObjectId } from '@common/postgres/object-id';
 import { CanActivate, ExecutionContext, Injectable } from '@nestjs/common';
-import { Types } from 'mongoose';
 import { BadRequestException } from '@modules/exceptions';
 import { ErrorCode } from '@modules/exceptions/constants/error-codes';
 
@@ -15,7 +15,7 @@ export class AgentCrudActorGuard implements CanActivate {
     const headers = context.switchToHttp().getRequest<{ headers: Record<string, string | string[] | undefined> }>().headers;
     const userId = headers['x-yellowstorm-user-id'];
     const correlationId = headers['x-correlation-id'];
-    if (typeof userId !== 'string' || !Types.ObjectId.isValid(userId)) {
+    if (typeof userId !== 'string' || !isObjectId(userId)) {
       throw new BadRequestException(ErrorCode.BAD_REQUEST, 'Missing or invalid trusted agent-crud acting user');
     }
     if (typeof correlationId !== 'string' || !correlationId.trim() || correlationId.length > 200) {

@@ -3,7 +3,7 @@ import { WidgetChatService } from '@modules/widget-chat/services/widget-chat.ser
 import { WhatsAppIntegrationService } from '@modules/whatsapp/services/whatsapp-integration.service';
 import { WhatsAppIntegrationStatus } from '@modules/whatsapp/schemas/agent-whatsapp-integration.schema';
 import { TelegramIntegrationService } from '@modules/telegram/services/telegram-integration.service';
-import { TelegramIntegrationStatus } from '@modules/telegram/schemas/agent-telegram-integration.schema';
+import { TelegramIntegrationStatus } from '@modules/telegram/telegram.types';
 import type { GovernanceReadinessCheck } from './governance-deployment.service';
 
 @Injectable()

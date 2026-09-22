@@ -1,7 +1,6 @@
 import { Module, forwardRef } from '@nestjs/common';
 import { AGENT_SHARE_STORE } from './persistence/agent-share.store';
 import { PgAgentShareStore } from './persistence/pg-agent-share.store';
-import { MongooseModule } from '@nestjs/mongoose';
 import { ConfigModule } from '@nestjs/config';
 import { AgentController } from './controllers/agent.controller';
 import { PublicAgentController } from './controllers/public-agent.controller';
@@ -46,8 +45,6 @@ import { PgWidgetTokenStore } from '../widget-chat/persistence/pg-widget.store';
   imports: [
     ConfigModule,
     ConfigModule.forFeature(a2aAdminConfig),
-    MongooseModule.forFeature([
-    ]),
     AgentTypeModule,
     AuthorizationModule,
     ToolModule,

@@ -3,7 +3,7 @@ import { ConnectedAppUserService } from './connected-app-user.service';
 import { ConnectedAppDefinitionService } from './connected-app-definition.service';
 import { USER_APP_CONNECTION_STORE } from '../persistence/connected-app.store';
 import { InMemoryConnectionStore } from '../persistence/connected-app.store.fake';
-import { ConnectionStatus } from '../schemas/user-app-connection.schema';
+import { ConnectionStatus } from '../connected-app.types';
 import { LoggerService } from '@modules/logger';
 
 const userId = '507f1f77bcf86cd799439011';

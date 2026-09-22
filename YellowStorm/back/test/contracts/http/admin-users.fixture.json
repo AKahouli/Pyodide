@@ -4,15 +4,15 @@
     "users": [
       {
         "id": "6ab01464b68fc5a92f1122a6",
-        "email": "pg-migration-recorder@yellowstorm.dev",
+        "email": "user-3@example.test",
         "emailVerified": true,
         "profileComplete": true,
         "appearance": {
           "colorTheme": "default"
         },
         "profile": {
-          "firstName": "PG",
-          "lastName": "Recorder",
+          "firstName": "First",
+          "lastName": "Last",
           "company": ""
         },
         "status": "active",
@@ -29,16 +29,16 @@
       },
       {
         "id": "6aac62c191c784b78a053b73",
-        "email": "qa-paste-20260917@example.com",
+        "email": "user-5@example.test",
         "emailVerified": true,
         "profileComplete": true,
         "appearance": {
           "colorTheme": "default"
         },
         "profile": {
-          "firstName": "Qa",
-          "lastName": "Paste",
-          "company": "QA"
+          "firstName": "First",
+          "lastName": "Last",
+          "company": "Company"
         },
         "status": "active",
         "registrationApproval": "approved",
@@ -59,16 +59,16 @@
       },
       {
         "id": "6aa94466ecc66234a45c47e8",
-        "email": "achebbah@yellowsys.fr",
+        "email": "user-1@example.test",
         "emailVerified": true,
         "profileComplete": true,
         "appearance": {
           "colorTheme": "default"
         },
         "profile": {
-          "firstName": "Ahmed",
-          "lastName": "Chabbah",
-          "company": "Yellowsys"
+          "firstName": "First",
+          "lastName": "Last",
+          "company": "Company"
         },
         "status": "active",
         "plan": {
@@ -88,16 +88,16 @@
       },
       {
         "id": "6aa7f619c7901ff84fab2afd",
-        "email": "mouanes@yellowsys.fr",
+        "email": "user-2@example.test",
         "emailVerified": true,
         "profileComplete": true,
         "appearance": {
           "colorTheme": "default"
         },
         "profile": {
-          "firstName": "Meriam",
-          "lastName": "OUANES",
-          "company": "yellowsys"
+          "firstName": "First",
+          "lastName": "Last",
+          "company": "Company"
         },
         "status": "active",
         "plan": {
@@ -117,7 +117,7 @@
       },
       {
         "id": "6aa6ef854b47a840026c25ab",
-        "email": "qa-newuser-1789325189@yellowsys.fr",
+        "email": "user-4@example.test",
         "emailVerified": false,
         "profileComplete": false,
         "appearance": {

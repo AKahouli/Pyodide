@@ -46,8 +46,8 @@ The authentication module provides:
 ├─────────────────────────────────────────────────────────────────────────────┤
 │                                                                              │
 │  ┌──────────────────┐    ┌──────────────────┐    ┌──────────────────┐       │
-│  │  AuthController  │───►│   AuthService    │───►│  Session Schema  │       │
-│  │  (REST API)      │    │ (Business Logic) │    │    (MongoDB)     │       │
+│  │  AuthController  │───►│   AuthService    │───►│  SESSION_STORE   │       │
+│  │  (REST API)      │    │ (Business Logic) │    │ (PgSessionStore) │       │
 │  └────────┬─────────┘    └────────┬─────────┘    └──────────────────┘       │
 │           │                       │                                          │
 │           │                       ▼                                          │
@@ -88,7 +88,7 @@ The authentication module provides:
 | **passport-jwt** | JWT strategy for Passport |
 | **@nestjs/jwt** | JWT token signing and verification |
 | **bcrypt** | Password hashing (12 rounds default) |
-| **MongoDB/Mongoose** | Session storage with TTL indexes |
+| **PostgreSQL/Drizzle** | Session storage (`identity.sessions`), expired rows swept by `PgTtlSweeper` |
 | **ua-parser-js** | User agent parsing for device info |
 | **crypto** | Secure token generation |
 
@@ -399,9 +399,11 @@ Example: 507f1f77bcf86cd799439011.a1b2c3d4e5f6...
 
 ### Session Schema
 
+Sessions are persisted in the Postgres table `identity.sessions` (Drizzle: `postgres/schema/identity.schema.ts`) behind the `SESSION_STORE` port, bound to `PgSessionStore`. `user_id` has an `ON DELETE CASCADE` FK to `identity.users`; `device_info` is `jsonb`. Refresh-token rotation bookkeeping (`rotated_from_session_id`, `rotated_to_session_id`, `rotation_attempt_id`, `rotated_at`, `rotation_receipt_*`) is stored on the same row, and rotation runs inside a `withTransaction` block. The shape below is the logical model:
+
 ```typescript
 class Session {
-  userId: ObjectId;           // Reference to user
+  userId: ObjectId;           // Reference to user (user_id FK)
   refreshTokenHash: string;   // bcrypt hash of token
   deviceInfo: {
     userAgent: string;
@@ -414,7 +416,7 @@ class Session {
   };
   ipAddress: string;
   isValid: boolean;           // false = revoked
-  expiresAt: Date;            // TTL for auto-cleanup
+  expiresAt: Date;            // expires_at; expired rows are deleted by PgTtlSweeper
   lastActivityAt?: Date;
   tokenFamily: string;        // For reuse detection
   createdAt: Date;
@@ -424,11 +426,19 @@ class Session {
 
 ### Database Indexes
 
-```javascript
-{ userId: 1, isValid: 1 }     // Active session queries
-{ expiresAt: 1 }              // TTL index (auto-delete expired)
-{ tokenFamily: 1 }            // Token reuse detection
 ```
+idx_sessions_user_valid (user_id, is_valid)   -- Active session queries
+idx_sessions_user_ip (user_id, ip_address)
+idx_sessions_expires (expires_at)             -- used by the TTL sweep
+idx_sessions_token_family (token_family)      -- Token reuse detection
+uq_sessions_rotated_from (rotated_from_session_id) WHERE NOT NULL   -- unique partial: one successor per rotated session
+```
+
+There is no Mongo-style TTL index: `PgTtlRegistrationService` registers `identity.sessions.expires_at` with `PgTtlSweeper`, which deletes expired rows periodically.
+
+### Accepted deviations (documented)
+
+- `PgSessionStore` and the OAuth-state / link-token stores (auth-provider module) compare `expires_at` against the application clock (a JS `Date` bound as a query parameter), not the database `now()`. Clock skew between the app and the database therefore shifts effective expiry by the skew.
 
 ### Token Reuse Detection
 
@@ -804,7 +814,6 @@ APP_FRONTEND_URL=https://app.yellostorm.com
         },
       }),
     }),
-    MongooseModule.forFeature([{ name: Session.name, schema: SessionSchema }]),
     UserModule,
     UsageModule,
     AuthorizationModule,

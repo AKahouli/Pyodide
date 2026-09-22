@@ -7,7 +7,6 @@ import {
 } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
 import { Inject } from '@nestjs/common';
-import { Types } from 'mongoose';
 import { isObjectId } from '@common/postgres';
 import { AgentRepository } from '../repositories/agent.repository';
 import { AgentRecord } from '../repositories/agent-record.mapper';
@@ -27,7 +26,7 @@ export interface AgentContext {
 }
 
 interface RequestWithAgentContext {
-  user: { _id: Types.ObjectId; permissions?: string[] };
+  user: { _id: string; permissions?: string[] };
   params: { id?: string; agentId?: string };
   agentContext?: AgentContext;
 }

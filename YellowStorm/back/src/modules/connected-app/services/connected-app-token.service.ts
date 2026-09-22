@@ -8,7 +8,7 @@ import {
   type UserAppConnectionRow,
   type UserAppConnectionStore,
 } from '../persistence/connected-app.store';
-import { ConnectionStatus } from '../schemas/user-app-connection.schema';
+import { ConnectionStatus } from '../connected-app.types';
 import { ConnectedAppDefinitionService } from './connected-app-definition.service';
 import { CryptoService } from '@common/services/crypto.service';
 import { LoggerService } from '@modules/logger';
@@ -19,6 +19,12 @@ import { MailboxCapabilityResponse } from '../interfaces/connected-app.interface
 const TOKEN_EXPIRY_BUFFER_MS = 5 * 60 * 1000;
 const M365_MAIL_APP_KEYS = ['microsoft365', 'microsoft', 'm365'];
 const REQUIRED_MAILBOX_SCOPES = ['mail.read'];
+
+/**
+ * Failure outcome of a refresh whose status was already written inside the
+ * transaction — returned (not thrown) so the write can commit (R-06).
+ */
+type RefreshOutcome = { ok: true; token: string } | { ok: false; message: string };
 
 @Injectable()
 export class ConnectedAppTokenService {
@@ -163,14 +169,20 @@ export class ConnectedAppTokenService {
    * lock, token expiry is re-checked — when a concurrent caller already
    * refreshed, the fresh token is decrypted and returned without another
    * provider call.
+   *
+   * Failures that write a terminal status return an outcome instead of
+   * throwing inside the transaction: a throw would roll the status write back
+   * and the connection would never surface `expired`/`error` (remediation
+   * plan 3.1 / R-06).
    */
   private async refreshAccessToken(
     connection: UserAppConnectionRow,
     appKey: string,
   ): Promise<string> {
-    return withTransaction(this.pgDb, async () => {
+    const outcome = await withTransaction(this.pgDb, async (): Promise<RefreshOutcome> => {
       const locked = (await this.connectionStore.findByIdForUpdate(connection.id))!;
       if (!locked || locked.status !== ConnectionStatus.ACTIVE) {
+        // Writes nothing — safe to throw.
         throw new BadRequestException(
           ErrorCode.CONNECTED_APP_TOKEN_REFRESH_FAILED,
           'Connection is no longer active. Please reconnect.',
@@ -182,7 +194,7 @@ export class ConnectedAppTokenService {
         !locked.tokenExpiresAt ||
         locked.tokenExpiresAt.getTime() - TOKEN_EXPIRY_BUFFER_MS < Date.now();
       if (!stillExpiring) {
-        return this.cryptoService.decrypt(locked.accessToken);
+        return { ok: true, token: this.cryptoService.decrypt(locked.accessToken) };
       }
 
       if (!locked.refreshToken) {
@@ -191,10 +203,7 @@ export class ConnectedAppTokenService {
           ConnectionStatus.EXPIRED,
           'No refresh token available',
         );
-        throw new BadRequestException(
-          ErrorCode.CONNECTED_APP_TOKEN_REFRESH_FAILED,
-          'No refresh token available. Please reconnect.',
-        );
+        return { ok: false, message: 'No refresh token available. Please reconnect.' };
       }
 
       const appConfig = await this.definitionService.findByKey(appKey);
@@ -236,10 +245,7 @@ export class ConnectedAppTokenService {
             `Token refresh failed: ${response.status}`,
           );
 
-          throw new BadRequestException(
-            ErrorCode.CONNECTED_APP_TOKEN_REFRESH_FAILED,
-            'Failed to refresh token. Please reconnect.',
-          );
+          return { ok: false, message: 'Failed to refresh token. Please reconnect.' };
         }
 
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -257,10 +263,8 @@ export class ConnectedAppTokenService {
 
         this.logger.log('Token refreshed successfully', { appKey, userId: locked.userId });
 
-        return newAccessToken;
+        return { ok: true, token: newAccessToken };
       } catch (error) {
-        if (error instanceof BadRequestException) throw error;
-
         this.logger.error('Token refresh error', {
           appKey,
           error: (error as Error).message,
@@ -272,12 +276,14 @@ export class ConnectedAppTokenService {
           (error as Error).message,
         );
 
-        throw new BadRequestException(
-          ErrorCode.CONNECTED_APP_TOKEN_REFRESH_FAILED,
-          'Failed to refresh token. Please reconnect.',
-        );
+        return { ok: false, message: 'Failed to refresh token. Please reconnect.' };
       }
     });
+
+    if (!outcome.ok) {
+      throw new BadRequestException(ErrorCode.CONNECTED_APP_TOKEN_REFRESH_FAILED, outcome.message);
+    }
+    return outcome.token;
   }
 
   private async revokeTokenAtProvider(revokeUrl: string, token: string): Promise<void> {

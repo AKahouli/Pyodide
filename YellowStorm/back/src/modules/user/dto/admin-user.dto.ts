@@ -1,7 +1,7 @@
 import { IsString, IsOptional, IsNumber, Min, Max, IsEnum } from 'class-validator';
 import { ApiPropertyOptional, ApiProperty } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
-import { RegistrationApproval, UserStatus } from '../schemas/user.schema';
+import { RegistrationApproval, UserStatus } from '../user.types';
 
 export class AdminListUsersQueryDto {
   @ApiPropertyOptional({ description: 'Page number', default: 1 })

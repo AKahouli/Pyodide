@@ -592,3 +592,15 @@
 .dark .shiki span[style] {
   color: var(--shiki-dark) !important;
 }
+
+/* Playbook canvas: highlight handles that accept the in-flight connection
+   (React Flow applies .valid after isValidConnection passes). */
+.react-flow__handle.valid {
+  box-shadow: 0 0 0 3px hsl(var(--primary) / 0.4);
+}
+
+/* Docked step inspector is ~400px wide: collapse the wide (lg:) form grids
+   that were designed for the full-screen editor dialog. */
+[data-docked-node-editor] [class*="lg:grid-cols"] {
+  grid-template-columns: minmax(0, 1fr) !important;
+}

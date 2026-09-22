@@ -1,7 +1,7 @@
 import { Inject, Injectable } from '@nestjs/common';
 import { LoggerService } from '../logger';
 import { TOOL_STORE, type ToolRow, type ToolStore } from './persistence/tool.store';
-import { ToolAttributeType } from './schemas/tool.schema';
+import { ToolAttributeType } from './tool.types';
 import { IToolResponse } from './interfaces/tool.interface';
 import { CreateToolDto } from './dto/create-tool.dto';
 import { UpdateToolDto } from './dto/update-tool.dto';

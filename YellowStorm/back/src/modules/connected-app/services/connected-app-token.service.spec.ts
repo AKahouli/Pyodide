@@ -4,7 +4,7 @@ import { ConnectedAppDefinitionService } from './connected-app-definition.servic
 import { USER_APP_CONNECTION_STORE } from '../persistence/connected-app.store';
 import { InMemoryConnectionStore } from '../persistence/connected-app.store.fake';
 import { DRIZZLE_DB } from '@modules/postgres/postgres.constants';
-import { ConnectionStatus } from '../schemas/user-app-connection.schema';
+import { ConnectionStatus } from '../connected-app.types';
 import { CryptoService } from '@common/services/crypto.service';
 import { LoggerService } from '@modules/logger';
 import { ErrorCode } from '@modules/exceptions/constants/error-codes';

@@ -1,7 +1,6 @@
 import { Injectable, Inject, forwardRef } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
-import { Types } from 'mongoose';
 import * as bcrypt from 'bcrypt';
 import * as crypto from 'crypto';
 import { UAParser } from 'ua-parser-js';
@@ -763,25 +762,19 @@ export class AuthService {
   }
 
   /**
-   * Enforce maximum sessions per user limit
+   * Enforce maximum sessions per user limit: keep the newest `max - 1` valid
+   * sessions so the one about to be created fits under the cap.
    */
   private async enforceSessionLimit(userId: string): Promise<void> {
-    const sessionCount = await this.sessionStore.countActiveForUser(userId);
+    const invalidated = await this.sessionStore.invalidateOldestBeyond(
+      userId,
+      this.maxSessionsPerUser - 1,
+    );
 
-    if (sessionCount >= this.maxSessionsPerUser) {
-      // Invalidate oldest sessions
-      const oldestSessions = await this.sessionStore.findOldestActive(
-        userId,
-        sessionCount - this.maxSessionsPerUser + 1,
-      );
-
-      for (const stale of oldestSessions) {
-        await this.sessionStore.invalidateById(stale.id);
-      }
-
+    if (invalidated > 0) {
       this.logger.debug('Oldest sessions invalidated due to limit', {
         userId,
-        count: oldestSessions.length,
+        count: invalidated,
       });
     }
   }

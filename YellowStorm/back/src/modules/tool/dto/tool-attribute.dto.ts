@@ -1,6 +1,6 @@
 import { IsString, IsEnum, IsOptional, IsArray, IsNotEmpty, ValidateIf } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { ToolAttributeType } from '../schemas/tool.schema';
+import { ToolAttributeType } from '../tool.types';
 
 export class ToolAttributeDto {
   @ApiProperty({ description: 'Attribute name', example: 'apiKey' })

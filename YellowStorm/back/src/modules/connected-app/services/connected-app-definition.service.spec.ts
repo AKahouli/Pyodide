@@ -206,6 +206,40 @@ describe('ConnectedAppDefinitionService', () => {
       expect(definitionStore.rows[0].displayName).toBe('Updated Name');
     });
 
+    // R-07: the admin UI echoes '****' — the stored ciphertext must survive.
+    it('keeps the stored tenantId ciphertext when the dto echoes ****', async () => {
+      definitionStore.seed({ id: definitionId, appKey: 'google-drive', tenantId: 'encrypted_tenant' });
+
+      await service.update(definitionId, { tenantId: '****' } as any);
+
+      expect(definitionStore.rows[0].tenantId).toBe('encrypted_tenant');
+      expect(cryptoService.encrypt).not.toHaveBeenCalled();
+    });
+
+    it('clears tenantId when the dto sends an empty string', async () => {
+      definitionStore.seed({ id: definitionId, appKey: 'google-drive', tenantId: 'encrypted_tenant' });
+
+      await service.update(definitionId, { tenantId: '' } as any);
+
+      expect(definitionStore.rows[0].tenantId).toBeNull();
+    });
+
+    it('re-encrypts a new tenantId value', async () => {
+      definitionStore.seed({ id: definitionId, appKey: 'google-drive', tenantId: 'encrypted_tenant' });
+
+      await service.update(definitionId, { tenantId: 'new-tenant' } as any);
+
+      expect(definitionStore.rows[0].tenantId).toBe('encrypted_new-tenant');
+    });
+
+    it('leaves tenantId untouched when absent from the dto', async () => {
+      definitionStore.seed({ id: definitionId, appKey: 'google-drive', tenantId: 'encrypted_tenant' });
+
+      await service.update(definitionId, { displayName: 'Renamed' } as any);
+
+      expect(definitionStore.rows[0].tenantId).toBe('encrypted_tenant');
+    });
+
     it('should re-encrypt changed secrets', async () => {
       definitionStore.seed({ id: definitionId, appKey: 'google-drive' });
 

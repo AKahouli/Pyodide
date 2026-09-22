@@ -1,13 +1,11 @@
+import { isObjectId } from '@common/postgres/object-id';
+import { normalizeObjectId } from '@common/postgres/object-id';
 import { Inject, Injectable } from '@nestjs/common';
-import { InjectConnection, InjectModel } from '@nestjs/mongoose';
-import { ClientSession, Connection, Model, Types } from 'mongoose';
 import { CryptoService } from '../../../common/services/crypto.service';
 import { BadRequestException } from '../../exceptions';
 import { ErrorCode } from '../../exceptions/constants/error-codes';
-import { ConnectedAppDefinition, ConnectedAppDefinitionDocument } from '../../connected-app/schemas/connected-app-definition.schema';
-import { UserAppConnection, UserAppConnectionDocument } from '../../connected-app/schemas/user-app-connection.schema';
 import { SKILL_CATEGORY_STORE, SKILL_STORE, type SkillCategoryStore, type SkillStore } from '../../skill/persistence/skill.store';
-import type { ConnectorAction, ConnectorDynamicHeader } from '../schemas/connector.schema';
+import type { ConnectorAction, ConnectorDynamicHeader } from '../connector.types';
 import type { ConnectorCredentialRow } from '../persistence/connector.store';
 import {
   CONNECTED_APP_DEFINITION_STORE,
@@ -15,7 +13,7 @@ import {
   type ConnectedAppDefinitionStore,
   type UserAppConnectionStore,
 } from '../../connected-app/persistence/connected-app.store';
-import { ConnectionStatus } from '../../connected-app/schemas/user-app-connection.schema';
+import { ConnectionStatus } from '../../connected-app/connected-app.types';
 import {
   CONNECTOR_ADMIN_AUTH_STORE,
   CONNECTOR_CATEGORY_STORE,
@@ -113,7 +111,7 @@ export class CatalogTransferService {
     archive: CatalogArchiveV1,
     conflictPolicy: CatalogConflictPolicy,
   ): Promise<CatalogImportResult> {
-    const ownerId = new Types.ObjectId(userId);
+    const ownerId = normalizeObjectId(userId);
     const result: CatalogImportResult = {
       skills: { created: 0, updated: 0, skipped: 0 },
       connectors: { created: 0, updated: 0, skipped: 0 },
@@ -201,7 +199,7 @@ export class CatalogTransferService {
     const connectorIds = connectors.map((connector) => String(connector.id ?? connector._id));
     const connectorSlugById = new Map(connectors.map((connector) => [String(connector.id ?? connector._id), connector.slug]));
     const appKeys = Array.from(new Set(connectors.map((connector) => connector.connectedAppKey).filter(Boolean)));
-    const ownerId = new Types.ObjectId(userId);
+    const ownerId = normalizeObjectId(userId);
     const [allCredentials, allDefinitions, userConnections, adminAuthRows] = await Promise.all([
       this.credentialStore.list({ userId: userId }),
       this.appDefinitionStore.findAll(),
@@ -312,7 +310,7 @@ export class CatalogTransferService {
 
   private async importConnectorCategories(
     categories: CatalogCategoryRecord[],
-    ownerId: Types.ObjectId,
+    ownerId: string,
     conflictPolicy: CatalogConflictPolicy,
     result: CatalogImportResult,
   ): Promise<Map<string, string>> {
@@ -410,7 +408,7 @@ export class CatalogTransferService {
 
   private async importConnectors(
     connectors: CatalogConnectorRecord[],
-    ownerId: Types.ObjectId,
+    ownerId: string,
     categoryIds: Map<string, string>,
     skillIds: Map<string, string>,
     conflictPolicy: CatalogConflictPolicy,
@@ -486,7 +484,7 @@ export class CatalogTransferService {
 
   private async importSecurity(
     archive: CatalogArchiveV1,
-    ownerId: Types.ObjectId,
+    ownerId: string,
     conflictPolicy: CatalogConflictPolicy,
     result: CatalogImportResult,
   ): Promise<void> {
@@ -519,7 +517,7 @@ export class CatalogTransferService {
       }
     }
     for (const connection of security.userAppConnections) {
-      const data = this.encryptTokenRecord(connection, ownerId);
+      const data = this.encryptTokenRecord(connection);
       const existing = await this.appConnectionStore.findByUserAndApp(owner, connection.appKey);
       if (!existing) {
         await this.appConnectionStore.insertForImport(owner, connection.appKey, {
@@ -547,7 +545,7 @@ export class CatalogTransferService {
       result.security.tokens += 1;
     }
     for (const auth of security.adminConnectorAuth) {
-      const data = this.encryptTokenRecord(auth, ownerId);
+      const data = this.encryptTokenRecord(auth);
       const existing = await this.adminAuthStore.findByUserAndApp(owner, auth.appKey);
       if (!existing) {
         await this.adminAuthStore.insertForImport(owner, auth.appKey, {
@@ -565,7 +563,22 @@ export class CatalogTransferService {
           errorMessage: (data.errorMessage as string | undefined) ?? null,
         });
       } else if (conflictPolicy === 'overwrite') {
-        await this.adminAuthStore.updateById(existing.id, data as Partial<ConnectorAdminAuthRow>);
+        // Explicit columns (R-13): the archive record's ids/keys must not leak
+        // into the UPDATE.
+        await this.adminAuthStore.updateById(existing.id, {
+          accessToken: (data.accessToken as string | undefined) ?? null,
+          refreshToken: (data.refreshToken as string | undefined) ?? null,
+          tokenExpiresAt: (data.tokenExpiresAt as Date | null) ?? null,
+          scopes: (data.scopes as string[]) ?? [],
+          providerAccountId: (data.providerAccountId as string | undefined) ?? null,
+          providerEmail: (data.providerEmail as string | undefined) ?? null,
+          connected: (data.connected as boolean) ?? true,
+          status: (data.status as string) ?? 'active',
+          disconnectedAt: (data.disconnectedAt as Date | null) ?? null,
+          lastUsedAt: (data.lastUsedAt as Date | null) ?? null,
+          lastRefreshedAt: (data.lastRefreshedAt as Date | null) ?? null,
+          errorMessage: (data.errorMessage as string | undefined) ?? null,
+        });
       }
       result.security.tokens += 1;
     }
@@ -600,16 +613,25 @@ export class CatalogTransferService {
     }
   }
 
-  private encryptTokenRecord(record: Record<string, any>, ownerId: Types.ObjectId): Record<string, unknown> {
+  /**
+   * Explicit column patch for an archive token record (R-13): never spread the
+   * raw record (it carries archive ids/keys) and never fabricate a userId —
+   * ownership is handled by the store call sites.
+   */
+  private encryptTokenRecord(record: Record<string, any>): Record<string, unknown> {
     return {
-      ...record,
-      userId: ownerId,
       accessToken: record.accessToken ? this.cryptoService.encrypt(record.accessToken) : undefined,
       refreshToken: record.refreshToken ? this.cryptoService.encrypt(record.refreshToken) : undefined,
       tokenExpiresAt: this.optionalDate(record.tokenExpiresAt),
+      scopes: record.scopes,
+      providerAccountId: record.providerAccountId,
+      providerEmail: record.providerEmail,
+      connected: record.connected,
+      status: record.status,
       disconnectedAt: this.optionalDate(record.disconnectedAt),
       lastUsedAt: this.optionalDate(record.lastUsedAt),
       lastRefreshedAt: this.optionalDate(record.lastRefreshedAt),
+      errorMessage: record.errorMessage,
     };
   }
 
@@ -680,7 +702,7 @@ export class CatalogTransferService {
         ...(action.resultMapping ? { resultMapping: action.resultMapping } : {}),
       })),
       referencedSkillSlugs: (connector.skillIds ?? connector.referencedSkillIds ?? [])
-        .map((id: Types.ObjectId) => skillSlugById.get(id.toString()))
+        .map((id: unknown) => skillSlugById.get(String(id)))
         .filter((slug: string | undefined): slug is string => Boolean(slug)),
       isActive: connector.isActive ?? true,
       isSystem: connector.isSystem ?? false,
@@ -730,7 +752,7 @@ export class CatalogTransferService {
   }
 
   private validateSelection(dto: ExportCatalogDto): void {
-    if (dto.selection === 'selected' && (!dto.ids?.length || dto.ids.some((id) => !Types.ObjectId.isValid(id)))) {
+    if (dto.selection === 'selected' && (!dto.ids?.length || dto.ids.some((id) => !isObjectId(id)))) {
       throw new BadRequestException(ErrorCode.BAD_REQUEST, 'Select at least one valid catalog item.');
     }
     if (dto.includeSecurity && !dto.passphrase) {

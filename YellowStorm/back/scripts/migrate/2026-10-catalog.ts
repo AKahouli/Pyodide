@@ -31,6 +31,10 @@ interface Report {
 const report: Report = { toolsMissingCategory: [], skillsMissingCategory: [], droppedAgentTypeSkills: [] };
 
 async function main(): Promise<void> {
+  // --only=<unit> runs a single unit (tool_categories|tools|skill_categories|skills|agent_types|agent_type_prompts).
+  const only = process.argv.find((a) => a.startsWith('--only='))?.split('=')[1] ?? null;
+  const shouldRun = (unit: string): boolean => only === null || only === unit;
+
   if (!process.env.MONGODB_URI) throw new Error('MONGODB_URI is required');
   await mongoose.connect(process.env.MONGODB_URI);
   const mdb = mongoose.connection.db!;
@@ -56,7 +60,7 @@ async function main(): Promise<void> {
   );
 
   // ── tool_categories ─────────────────────────────────────────────────
-  await runBackfill({
+  if (shouldRun('tool_categories')) await runBackfill({
     collection: mdb.collection('tool_categories'),
     build: (doc: MongoDoc): Row => ({
       id: String(doc._id),
@@ -88,7 +92,7 @@ async function main(): Promise<void> {
   });
 
   // ── tools ───────────────────────────────────────────────────────────
-  await runBackfill({
+  if (shouldRun('tools')) await runBackfill({
     collection: mdb.collection('tools'),
     build: (doc: MongoDoc): Row => {
       const categoryId = s(doc.categoryId);
@@ -146,7 +150,7 @@ async function main(): Promise<void> {
   });
 
   // ── skill_categories ────────────────────────────────────────────────
-  await runBackfill({
+  if (shouldRun('skill_categories')) await runBackfill({
     collection: mdb.collection('skill_categories'),
     build: (doc: MongoDoc): Row => ({
       id: String(doc._id),
@@ -179,7 +183,7 @@ async function main(): Promise<void> {
   });
 
   // ── skills (+files) ─────────────────────────────────────────────────
-  await runBackfill({
+  if (shouldRun('skills')) await runBackfill({
     collection: mdb.collection('skills'),
     build: (doc: MongoDoc): Row => {
       const categoryId = s(doc.categoryId);
@@ -276,7 +280,7 @@ async function main(): Promise<void> {
   for (const row of (await pool.query('SELECT id FROM catalog.skills')).rows) pgSkillIds.add(row.id);
 
   // ── agent_types (+ junction) ────────────────────────────────────────
-  await runBackfill({
+  if (shouldRun('agent_types')) await runBackfill({
     collection: mdb.collection('agent_types'),
     build: (doc: MongoDoc): Row => {
       const skills = arr(doc.skills);
@@ -334,7 +338,7 @@ async function main(): Promise<void> {
   });
 
   // ── agent_type_prompts ──────────────────────────────────────────────
-  await runBackfill({
+  if (shouldRun('agent_type_prompts')) await runBackfill({
     collection: mdb.collection('agent_type_prompts'),
     build: (doc: MongoDoc): Row => ({
       id: String(doc._id),

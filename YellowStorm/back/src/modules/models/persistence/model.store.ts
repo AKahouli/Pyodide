@@ -50,7 +50,12 @@ export interface ModelStore {
   findByModelId(modelId: string): Promise<ModelRow | null>;
   findByIdOrLitellmModel(id: string): Promise<ModelRow | null>;
   list(options: ModelFindOptions): Promise<ModelRow[]>;
-  insert(row: NewModelRow): Promise<void>;
+  /**
+   * INSERT ... ON CONFLICT (model_id) DO NOTHING. Returns false when the model
+   * already existed (e.g. a concurrent sync on another instance inserted it first),
+   * so callers never hit a unique violation that would abort their savepoint.
+   */
+  insertIfAbsent(row: NewModelRow): Promise<boolean>;
   /** `defaultReasoningEffort: null` clears the column. */
   updateByModelId(modelId: string, patch: ModelPatch): Promise<ModelRow | null>;
   /** Deactivate every model not in `modelIds`; returns the affected count. */

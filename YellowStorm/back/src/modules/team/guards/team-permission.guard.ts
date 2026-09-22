@@ -9,7 +9,7 @@ import { Reflector } from '@nestjs/core';
 import { Inject } from '@nestjs/common';
 import { isObjectId } from '@common/postgres';
 import { TEAM_STORE, TEAM_SHARE_STORE, type TeamStore, type TeamShareStore } from '../persistence/team.store';
-import { Model, Types } from 'mongoose';
+import { newObjectId } from '@common/postgres/object-id';
 import { ErrorCode } from '../../exceptions/constants/error-codes';
 import {
   TEAM_PERMISSION_KEY,
@@ -25,7 +25,7 @@ export interface TeamContext {
 }
 
 interface RequestWithTeamContext {
-  user: { _id: Types.ObjectId };
+  user: { _id: string };
   params: { id?: string };
   teamContext?: TeamContext;
 }

@@ -67,7 +67,11 @@ async function main(): Promise<void> {
   // ---- reference data ----------------------------------------------------
   const roleDocs = await col('roles').find({}).toArray();
   const validRoleIds = new Set(roleDocs.map((r) => String(r._id)));
-  const userIds = new Set<string>();
+  // Preload from PG (remediation 2.2): with --only=user_groups|user_provider_links
+  // the users unit never runs, so the set must not depend on it.
+  const userIds = new Set<string>(
+    (await pool.query('SELECT id FROM identity.users')).rows.map((r) => r.id),
+  );
 
   await run('roles', async () => {
     await runBackfill({
@@ -228,6 +232,12 @@ async function main(): Promise<void> {
         }
         return map;
       },
+      checksumRows: async (ids) => {
+        // Full row read-back incl. password_hash and the one-time tokens
+        // (plan 2.2). roles/dropped_roles are unit-internal → undefined.
+        const r = await pool.query('SELECT * FROM identity.users WHERE id = ANY($1)', [ids]);
+        return new Map(r.rows.map((row) => [row.id, { ...row, roles: undefined, dropped_roles: undefined }]));
+      },
       pgCount: async () => (await pool.query('SELECT count(*)::int AS n FROM identity.users')).rows[0].n,
       pgIds: async () => (await pool.query('SELECT id FROM identity.users')).rows.map((r) => r.id),
     });
@@ -368,6 +378,11 @@ async function main(): Promise<void> {
            VALUES ($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT (id) DO NOTHING`,
           [unit.id, unit.user_id, unit.provider_key, unit.provider_user_id, unit.provider_email, unit.linked_at, unit.created_at, unit.updated_at],
         );
+      },
+      checksumRows: async (ids) => {
+        // Full row read-back (plan 2.2).
+        const r = await pool.query('SELECT * FROM identity.user_provider_links WHERE id = ANY($1)', [ids]);
+        return new Map(r.rows.map((row) => [row.id, row]));
       },
       pgCount: async () => (await pool.query('SELECT count(*)::int AS n FROM identity.user_provider_links')).rows[0].n,
       pgIds: async () => (await pool.query('SELECT id FROM identity.user_provider_links')).rows.map((r) => r.id),

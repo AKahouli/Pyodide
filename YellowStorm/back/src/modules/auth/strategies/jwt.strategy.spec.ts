@@ -1,8 +1,7 @@
 import { JwtStrategy } from './jwt.strategy';
 import { makeSessionStoreFake, sessionRecord } from '../persistence/session-store.fake';
 import { ErrorCode } from '../../exceptions/constants/error-codes';
-import { UserStatus } from '../../user/schemas/user.schema';
-
+import { UserStatus } from '../../user/user.types';
 describe('JwtStrategy account access', () => {
   const payload = {
     sub: 'user-1',
@@ -82,6 +81,25 @@ describe('JwtStrategy account access', () => {
     await expect(strategy.validate(payload)).resolves.toMatchObject({
       status: UserStatus.ACTIVE,
       permissions: [],
+    });
+  });
+
+  // R-09: a Postgres outage must answer 503 so clients keep retrying —
+  // never 401, which would destroy a valid login context.
+  it('answers 503 (not 401) when the session store is down with a wrapped 57P01', async () => {
+    const { strategy, sessionStore } = makeStrategy({ status: UserStatus.ACTIVE });
+    jest.spyOn(sessionStore, 'findValidByIdWithUser').mockRejectedValue(
+      new Error('Failed query: select ...', {
+        cause: Object.assign(new Error('terminating connection due to administrator command'), { code: '57P01' }),
+      }),
+    );
+
+    await expect(strategy.validate(payload)).rejects.toMatchObject({
+      code: ErrorCode.AUTH_DEPENDENCY_UNAVAILABLE,
+      getStatus: expect.anything(),
+    });
+    await strategy.validate(payload).catch((e) => {
+      expect(e.getStatus()).toBe(503);
     });
   });
 });

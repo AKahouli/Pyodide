@@ -2,7 +2,7 @@
   "success": true,
   "data": {
     "id": "6ab01464b68fc5a92f1122a6",
-    "email": "pg-migration-recorder@yellowstorm.dev",
+    "email": "user-1@example.test",
     "emailVerified": true,
     "profileComplete": true,
     "appearance": {
@@ -10,8 +10,8 @@
       "language": "en"
     },
     "profile": {
-      "firstName": "PG",
-      "lastName": "Recorder",
+      "firstName": "First",
+      "lastName": "Last",
       "company": ""
     },
     "consents": {

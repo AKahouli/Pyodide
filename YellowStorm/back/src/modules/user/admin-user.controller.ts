@@ -1,3 +1,5 @@
+import type { AuthUser } from '@common/auth/auth-user';
+import { RegistrationApproval, UserStatus } from './user.types';
 import {
   Controller,
   Get,
@@ -26,7 +28,6 @@ import { AuditLogService } from '../authorization/services/audit-log.service';
 import { RequirePermissions } from '../authorization/decorators/require-permissions.decorator';
 import { PermissionsGuard } from '../authorization/guards/permissions.guard';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
-import { RegistrationApproval, UserDocument, UserStatus } from './schemas/user.schema';
 import { USER_STORE, UserRecordWithRoles, UserStore } from './persistence/user.store';
 import { Permissions } from '../authorization/constants/permissions';
 import {
@@ -36,8 +37,6 @@ import {
   AdminUserListResponse,
 } from './dto/admin-user.dto';
 import { Inject } from '@nestjs/common';
-import { Model } from 'mongoose';
-import { User } from './schemas/user.schema';
 import { NotFoundException } from '../exceptions';
 import { ErrorCode } from '../exceptions/constants/error-codes';
 
@@ -121,7 +120,7 @@ export class AdminUserController {
   @ApiResponse({ status: 404, description: 'User not found' })
   async suspendUser(
     @Param('id') id: string,
-    @CurrentUser() actor: UserDocument,
+    @CurrentUser() actor: AuthUser,
     @Req() req: Request,
   ): Promise<{ message: string }> {
     const user = await this.userService.findById(id);
@@ -154,7 +153,7 @@ export class AdminUserController {
   @ApiResponse({ status: 404, description: 'User not found' })
   async activateUser(
     @Param('id') id: string,
-    @CurrentUser() actor: UserDocument,
+    @CurrentUser() actor: AuthUser,
     @Req() req: Request,
   ): Promise<{ message: string }> {
     const user = await this.userService.findById(id);
@@ -187,7 +186,7 @@ export class AdminUserController {
   @ApiResponse({ status: 404, description: 'User not found' })
   async approveRegistration(
     @Param('id') id: string,
-    @CurrentUser() actor: UserDocument,
+    @CurrentUser() actor: AuthUser,
     @Req() req: Request,
   ): Promise<{ message: string }> {
     const result = await this.registrationApprovalService.approveRegistration(id);
@@ -215,7 +214,7 @@ export class AdminUserController {
   @ApiResponse({ status: 404, description: 'User not found' })
   async rejectRegistration(
     @Param('id') id: string,
-    @CurrentUser() actor: UserDocument,
+    @CurrentUser() actor: AuthUser,
     @Req() req: Request,
   ): Promise<{ message: string }> {
     const result = await this.registrationApprovalService.rejectRegistration(id);
@@ -244,7 +243,7 @@ export class AdminUserController {
   async assignPlan(
     @Param('id') id: string,
     @Body() dto: AssignPlanDto,
-    @CurrentUser() actor: UserDocument,
+    @CurrentUser() actor: AuthUser,
     @Req() req: Request,
   ): Promise<AdminUserResponse> {
     const user = await this.userService.findById(id);

@@ -1,5 +1,6 @@
 import { Inject } from '@nestjs/common';
 import { and, asc, desc, eq, ilike, inArray, sql, type SQL } from 'drizzle-orm';
+import { escapeLike } from '@common/postgres/like';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import { DRIZZLE_DB } from '@modules/postgres/postgres.constants';
 import { newObjectId } from '@common/postgres';
@@ -168,7 +169,7 @@ export class PgAgentTypeStore implements AgentTypeStore {
 
   async list(query: AgentTypeListQuery): Promise<{ rows: AgentTypeRow[]; total: number }> {
     const conditions: SQL[] = [];
-    if (query.search) conditions.push(ilike(schema.catalogAgentTypes.name, `%${query.search}%`));
+    if (query.search) conditions.push(ilike(schema.catalogAgentTypes.name, `%${escapeLike(query.search)}%`));
     if (query.isActive !== undefined) conditions.push(eq(schema.catalogAgentTypes.isActive, query.isActive));
     const filter = conditions.length > 0 ? and(...conditions) : undefined;
 

@@ -2,7 +2,7 @@ import { SemanticModelController } from './semantic-model.controller';
 
 jest.mock('@modules/authorization', () => ({
   Permissions: new Proxy({}, { get: (_target, property) => String(property) }),
-  PermissionsGuard: class PermissionsGuard {},
+  PermissionsGuard: class PermissionsGuard { },
   RequirePermissions: () => () => undefined,
 }));
 
@@ -28,6 +28,7 @@ describe('SemanticModelController validation synchronization', () => {
       {} as never,
       {} as never,
       {} as never,
+
     );
 
     await expect(controller.validate({ _id: { toString: () => 'user-id' } } as never, 'model-id'))

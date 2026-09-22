@@ -11,13 +11,7 @@ import {
 import { BadRequestException, ConflictException, NotFoundException } from '../exceptions';
 import { ErrorCode } from '../exceptions/constants/error-codes';
 import { CreateConnectorDto, QueryConnectorDto, UpdateConnectorDto } from './dto';
-import {
-  ConnectorAction,
-  ConnectorDynamicHeader,
-  ConnectorActionResultKind,
-  ConnectorCitationMode,
-  DynamicHeaderSource,
-} from './schemas/connector.schema';
+import { ConnectorAction, ConnectorDynamicHeader, ConnectorActionResultKind, ConnectorCitationMode, DynamicHeaderSource } from './connector.types';
 import {
   CONNECTOR_CATEGORY_STORE,
   CONNECTOR_STORE,

@@ -1,0 +1,8 @@
+{
+  "id": "64b000000000000000000802",
+  "agentTypeId": "64b000000000000000000801",
+  "modelId": "gpt-4o",
+  "prompt": "Model specific prompt",
+  "createdAt": "<volatile>",
+  "updatedAt": "<volatile>"
+}

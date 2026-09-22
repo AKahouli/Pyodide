@@ -13,9 +13,7 @@ import {
   PlaybookIntentNormalizationLimits,
 } from './interfaces/playbook-settings.interface';
 import { LoggerService } from '../logger';
-import { User } from '../user/schemas/user.schema';
 import type { AuthUser } from '@common/auth/auth-user';
-import type { UserDocument } from '@modules/user/schemas/user.schema';
 import { BadRequestException } from '../exceptions';
 import { ErrorCode } from '../exceptions/constants/error-codes';
 import { APPEARANCE_COLOR_THEMES, APPEARANCE_SETTINGS_KEY } from './constants/appearance-logo.constants';

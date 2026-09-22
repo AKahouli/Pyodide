@@ -1,5 +1,7 @@
 import { Inject } from '@nestjs/common';
 import { and, asc, desc, eq, ilike, inArray, or, sql, type SQL } from 'drizzle-orm';
+import { escapeLike } from '@common/postgres/like';
+import { countOver, pageOf } from '@common/postgres/pagination';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import { DRIZZLE_DB } from '@modules/postgres/postgres.constants';
 import { newObjectId } from '@common/postgres';
@@ -128,24 +130,37 @@ export class PgTeamStore implements TeamStore {
 
   async list(query: TeamListQuery): Promise<{ rows: TeamRow[]; total: number }> {
     const conditions: SQL[] = [eq(schema.teams.createdBy, query.createdBy)];
-    if (query.search) conditions.push(ilike(schema.teams.name, `%${query.search}%`));
+    if (query.search) conditions.push(ilike(schema.teams.name, `%${escapeLike(query.search)}%`));
     if (query.isActive !== undefined) conditions.push(eq(schema.teams.isActive, query.isActive));
     const filter = and(...conditions);
+    const offset = (query.page - 1) * query.limit;
 
-    // pageOf: total via COUNT(*) OVER() so pagination is one round trip (plan 4.3).
+    // pageOf: total via COUNT(*) OVER() so pagination is one round trip (plan 4.3),
+    // with an exact COUNT fallback when the requested page is past the end (R-12).
     const rows = await this.q
-      .select({
-        team: schema.teams,
-        total: sql<number>`count(*) OVER ()::int`,
-      })
+      .select({ team: schema.teams, total: countOver() })
       .from(schema.teams)
       .where(filter)
       .orderBy(desc(schema.teams.createdAt))
-      .offset((query.page - 1) * query.limit)
+      .offset(offset)
       .limit(query.limit);
 
-    const total = rows[0]?.total ?? 0;
-    const teams = rows.map((r) => r.team);
+    const { items, total } = await pageOf(
+      rows,
+      offset > 0
+        ? {
+            offset,
+            count: async () =>
+              (
+                await this.q
+                  .select({ n: sql<number>`count(*)::int` })
+                  .from(schema.teams)
+                  .where(filter)
+              )[0]?.n ?? 0,
+          }
+        : undefined,
+    );
+    const teams = items.map((i) => i.team);
     const members = await hydrateMembers(this.q, teams.map((t) => t.id));
     return { rows: teams.map((t) => teamToRow(t, members.get(t.id) ?? [])), total };
   }

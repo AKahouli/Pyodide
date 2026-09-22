@@ -195,12 +195,6 @@ export class AgentShareService {
   }
 
   /**
-   * No longer needed (plan 4.1): shared_agents rows cascade on agent delete
-   * via the validated FK. Kept as a no-op for call-site compatibility.
-   */
-  async removeAllSharesForAgent(_agentId: string): Promise<void> {}
-
-  /**
    * A map of agentId -> shareInfo for every agent shared with the user.
    * Lets the agent service attach `shareInfo` while reusing its own mapping.
    */

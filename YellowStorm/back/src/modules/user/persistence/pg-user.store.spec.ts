@@ -127,4 +127,47 @@ describeIntegration('PgUserStore (integration)', () => {
     expect((await store.findById(a.id))!.colorTheme).toBe('orange');
     await store.setColorThemeForAll('default');
   });
+
+  // R-10: pagination must count USERS, not joined rows — a user with 3 roles
+  // used to eat 3 slots of the page.
+  it('listAdmin pages users (not role rows) and keeps complete role lists in order', async () => {
+    const marker = `r10${oid().slice(-8)}`;
+    const roleA = await makeRole();
+    const roleB = await makeRole();
+    const roleC = await makeRole();
+    const multi = await store.create(newUser({ email: `${marker}-multi@example.com`, roleIds: [roleA, roleB, roleC] }));
+    const plain1 = await store.create(newUser({ email: `${marker}-p1@example.com` }));
+    const plain2 = await store.create(newUser({ email: `${marker}-p2@example.com` }));
+    created.push(multi.id, plain1.id, plain2.id);
+
+    const paging = { search: marker, sortBy: 'createdAt' as const, sortOrder: 'desc' as const };
+    const page = await store.listAdmin({ ...paging, limit: 2, page: 1 });
+    expect(page.users).toHaveLength(2);
+    expect(page.total).toBe(3);
+    for (const user of page.users) {
+      if (user.id === multi.id) expect(user.roles.map((r) => r.id)).toEqual([roleA, roleB, roleC]);
+      else expect(user.roles).toEqual([]);
+    }
+
+    const page2 = await store.listAdmin({ ...paging, limit: 2, page: 2 });
+    expect(page2.users).toHaveLength(1);
+    const page1Ids = page.users.map((u) => u.id);
+    expect(page2.users.every((u) => !page1Ids.includes(u.id))).toBe(true);
+  });
+
+  // R-15: two parallel creates with the same email → one wins, one 409, no 500.
+  it('surfaces a duplicate-email race as ConflictException', async () => {
+    const email = `race-${oid().slice(-8)}@example.com`;
+    const results = await Promise.allSettled([
+      store.create(newUser({ email })),
+      store.create(newUser({ email })),
+    ]);
+    const fulfilled = results.filter((r) => r.status === 'fulfilled');
+    const rejected = results.filter((r) => r.status === 'rejected');
+    expect(fulfilled).toHaveLength(1);
+    expect(rejected).toHaveLength(1);
+    const rejectedRecord = (rejected[0] as PromiseRejectedResult).reason as { status?: number };
+    expect(rejectedRecord.status).toBe(409);
+    created.push((fulfilled[0] as PromiseFulfilledResult<{ id: string }>).value.id);
+  });
 });

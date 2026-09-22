@@ -11,18 +11,8 @@
  */
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import mongoose from 'mongoose';
 
 const CONTRACTS_DIR = __dirname;
-
-/**
- * Build a hydrated Mongoose document from a POJO without touching the
- * database, so serializer fixtures exercise the real schema toJSON transform.
- */
-export function hydrateDoc(schema: mongoose.Schema, doc: Record<string, unknown>): { toJSON(): unknown } {
-  const model = mongoose.model('ContractFixture', schema);
-  return model.hydrate(doc) as unknown as { toJSON(): unknown };
-}
 
 /** Keys whose stored value is cosmetic; replaced by `<volatile>` in fixtures. */
 const VOLATILE_KEYS = new Set([

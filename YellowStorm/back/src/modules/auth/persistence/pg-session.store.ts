@@ -152,14 +152,20 @@ export class PgSessionStore implements SessionStore {
     return rows[0]?.n ?? 0;
   }
 
-  async findOldestActive(userId: string, limit: number): Promise<SessionRecord[]> {
-    const rows: SessionRow[] = await this.q
-      .select()
-      .from(schema.identitySessions)
-      .where(and(eq(schema.identitySessions.userId, userId), eq(schema.identitySessions.isValid, true)))
-      .orderBy(asc(schema.identitySessions.lastActivityAt))
-      .limit(limit);
-    return rows.map(PgSessionStore.toRecord);
+  async invalidateOldestBeyond(userId: string, keep: number): Promise<number> {
+    // One statement (R-15): newest `keep` stay valid, the rest are invalidated
+    // under their row locks — no count + per-row loop.
+    const result = await this.q.execute(sql`
+      UPDATE identity.sessions SET is_valid = false, updated_at = now()
+      WHERE id IN (
+        SELECT id FROM identity.sessions
+        WHERE user_id = ${userId} AND is_valid
+        ORDER BY last_activity_at DESC NULLS LAST
+        OFFSET ${keep}
+        FOR UPDATE SKIP LOCKED
+      )
+    `);
+    return result.rowCount ?? 0;
   }
 
   /**
@@ -210,7 +216,16 @@ export class PgSessionStore implements SessionStore {
   async findValidByIdWithUser(id: string): Promise<{ session: SessionRecord; user: UserRecordShape; valid: boolean } | null> {
     if (!isObjectId(id)) return null;
     const rows = await this.q
-      .select({ session: schema.identitySessions, user: schema.identityUsers })
+      .select({
+        session: schema.identitySessions,
+        user: schema.identityUsers,
+        // Real role ids (R-15): refresh re-mints the access token's permission
+        // claims from these, so a hard-coded [] would drop every role.
+        roleIds: sql<string[]>`COALESCE((
+          SELECT array_agg(ur.role_id ORDER BY ur.position)
+          FROM identity.user_roles ur WHERE ur.user_id = ${schema.identityUsers.id}
+        ), '{}')`,
+      })
       .from(schema.identitySessions)
       .innerJoin(schema.identityUsers, eq(schema.identityUsers.id, schema.identitySessions.userId))
       .where(eq(schema.identitySessions.id, id))
@@ -218,14 +233,14 @@ export class PgSessionStore implements SessionStore {
     if (rows.length === 0) return null;
     const session = PgSessionStore.toRecord(rows[0].session);
     const valid = session.isValid && session.expiresAt > new Date();
-    const user = PgSessionStore.toUserRecordRow(rows[0].user);
+    const user = PgSessionStore.toUserRecordRow(rows[0].user, rows[0].roleIds ?? []);
     return { session, user, valid };
   }
 
-  private static toUserRecordRow(row: typeof schema.identityUsers.$inferSelect): UserRecordShape {
+  private static toUserRecordRow(row: typeof schema.identityUsers.$inferSelect, roleIds: string[]): UserRecordShape {
     return {
       ...row,
-      roleIds: [],
+      roleIds,
       status: row.status as UserRecordShape['status'],
       registrationApproval: row.registrationApproval as UserRecordShape['registrationApproval'],
       colorTheme: row.colorTheme as UserRecordShape['colorTheme'],

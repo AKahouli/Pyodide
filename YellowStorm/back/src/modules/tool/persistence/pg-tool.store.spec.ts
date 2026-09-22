@@ -61,4 +61,43 @@ describeIntegration('PgToolStore + PgToolCategoryStore (integration)', () => {
     expect(await categories.delete(created1.id)).toBe(true);
     expect(await categories.findById(created1.id)).toBeNull();
   });
+
+  // R-12: the search term must be literal — % and _ are not wildcards.
+  it('list search treats % and _ literally', async () => {
+    const categoryId = oid();
+    await db.execute(`INSERT INTO catalog.tool_categories (id, name, description) VALUES ('${categoryId}', 'spec-cat-${categoryId.slice(-6)}', '')`);
+    createdCategories.push(categoryId);
+    const withPct = await tools.insert({
+      name: `spec-100%tool-${oid().slice(-4)}`,
+      description: 'pct sign',
+      icon: 'FaBolt',
+      color: '#112233',
+      iconColor: 'dark',
+      categoryId,
+      defaultAgentTypes: [],
+      attributes: [],
+      requiredAppKey: null,
+      isActive: true,
+    });
+    const plain = await tools.insert({
+      name: `spec-plain-${oid().slice(-6)}`,
+      description: 'no wildcard',
+      icon: 'FaBolt',
+      color: '#112233',
+      iconColor: 'dark',
+      categoryId,
+      defaultAgentTypes: [],
+      attributes: [],
+      requiredAppKey: null,
+      isActive: true,
+    });
+    created.push(withPct.id, plain.id);
+
+    const hits = await tools.list({ search: '100%tool', page: 1, limit: 100 });
+    expect(hits.rows.map((r) => r.id)).toContain(withPct.id);
+    const wildcard = await tools.list({ search: '%', page: 1, limit: 100 });
+    expect(wildcard.rows.map((r) => r.id)).not.toContain(plain.id);
+    const underscore = await tools.list({ search: 'plain_%', page: 1, limit: 100 });
+    expect(underscore.rows.map((r) => r.id)).not.toContain(plain.id);
+  });
 });

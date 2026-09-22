@@ -1,8 +1,9 @@
-import { Inject } from '@nestjs/common';
+import { Inject, Injectable } from '@nestjs/common';
 import { UserLookupPort, type UserSummary } from '@common/ports/user-lookup.port';
 import { USER_STORE, type UserStore } from '../persistence/user.store';
 
-/** PostgreSQL UserLookupPort over USER_STORE (step 1A.9) — bound at the cutover. */
+/** PostgreSQL UserLookupPort over USER_STORE (bound by the remediation plan, step 1). */
+@Injectable()
 export class PgUserLookupAdapter implements UserLookupPort {
   constructor(@Inject(USER_STORE) private readonly userStore: UserStore) {}
 

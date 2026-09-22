@@ -1,12 +1,8 @@
 import { Inject, Injectable, Optional, forwardRef } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Cron, CronExpression } from '@nestjs/schedule';
-import { InjectModel } from '@nestjs/mongoose';
 import { USER_LOOKUP_PORT, type UserLookupPort } from '@common/ports/user-lookup.port';
-import { Model } from 'mongoose';
-import { User } from '../../user/schemas/user.schema';
 import type { AuthUser } from '@common/auth/auth-user';
-import type { UserDocument } from '@modules/user/schemas/user.schema';
 import {
   CreateConversationData,
   UpdateConversationData,

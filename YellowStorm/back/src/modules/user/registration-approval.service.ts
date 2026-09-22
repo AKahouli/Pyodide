@@ -1,6 +1,6 @@
 import { Inject, Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { RegistrationApproval, UserStatus } from './schemas/user.schema';
+import { RegistrationApproval, UserStatus } from './user.types';
 import { USER_STORE, type UserRecord, type UserStore } from './persistence/user.store';
 import { AuthorizationService } from '@modules/authorization/authorization.service';
 import { EmailService, EmailTemplateRenderer, EmailTemplate } from '@modules/email';

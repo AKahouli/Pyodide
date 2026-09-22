@@ -28,7 +28,7 @@ The system module provides:
 - **Path Whitelisting**: Certain paths always bypass maintenance (health checks, status endpoints)
 - **Decorator-Based Bypass**: Mark specific endpoints to skip maintenance checks
 - **Cached Status**: In-memory caching for high-performance status checks
-- **Appearance**: Global color palettes plus a custom sidebar logo library stored in MongoDB
+- **Appearance**: Global color palettes plus a custom sidebar logo library stored in PostgreSQL (`catalog` schema)
 - **Audit Logging**: All maintenance changes are logged for accountability
 
 ---
@@ -68,8 +68,8 @@ The system module provides:
 │                               │                          │                  │
 │                               ▼                          ▼                  │
 │                    ┌──────────────────┐      ┌───────────────────┐         │
-│                    │   In-Memory      │      │     MongoDB       │         │
-│                    │     Cache        │      │ system_settings   │         │
+│                    │   In-Memory      │      │    PostgreSQL     │         │
+│                    │     Cache        │      │catalog.system_sett│         │
 │                    │  (5s TTL)        │      │                   │         │
 │                    └──────────────────┘      └───────────────────┘         │
 │                                                                              │
@@ -83,7 +83,7 @@ The system module provides:
 | Technology | Purpose |
 |------------|---------|
 | **NestJS** | Module framework with global guard registration |
-| **Mongoose** | MongoDB ODM for settings persistence |
+| **Drizzle ORM / PostgreSQL** | Settings persistence via `SYSTEM_SETTING_STORE` / `APPEARANCE_LOGO_STORE` ports (`PgSystemSettingStore`, `PgAppearanceLogoStore`) |
 | **Reflector** | Read decorator metadata for bypass decisions |
 | **AuthorizationModule** | Permission-based access control |
 
@@ -109,9 +109,11 @@ system/
 │   └── maintenance.guard.ts          # Global maintenance guard
 ├── decorators/
 │   └── skip-maintenance.decorator.ts # Bypass decorator
-├── schemas/
-│   ├── system-setting.schema.ts      # MongoDB schema
-│   └── appearance-logo.schema.ts     # Custom logo binary documents
+├── persistence/
+│   ├── system-setting.store.ts       # SYSTEM_SETTING_STORE port
+│   ├── pg-system-setting.store.ts    # PgSystemSettingStore (catalog.system_settings)
+│   ├── appearance-logo.store.ts      # APPEARANCE_LOGO_STORE port
+│   └── pg-appearance-logo.store.ts   # PgAppearanceLogoStore (catalog.appearance_logos)
 ├── interfaces/
 │   ├── maintenance.interface.ts      # TypeScript interfaces
 │   └── appearance.interface.ts       # Palettes + logo catalog
@@ -130,19 +132,16 @@ system/
 
 A generic key-value store for system-wide settings:
 
-```typescript
-@Schema({ timestamps: true, collection: 'system_settings' })
-export class SystemSetting {
-  @Prop({ required: true, unique: true, index: true })
-  key: string;                    // e.g., "maintenance_mode"
+Postgres table `catalog.system_settings` (Drizzle: `postgres/schema/catalog.schema.ts`), accessed through `SYSTEM_SETTING_STORE` -> `PgSystemSettingStore`:
 
-  @Prop({ type: Object, required: true })
-  value: MaintenanceValue | Record<string, unknown>;
+| Column | Type | Notes |
+|--------|------|-------|
+| `id` | `char(24)` | Primary key |
+| `key` | `varchar(100)` | e.g., `"maintenance_mode"`; unique (`uq_system_settings_key`) |
+| `value` | `jsonb` | `MaintenanceValue` or another JSON payload |
+| `created_at`, `updated_at` | `timestamptz` | |
 
-  createdAt: Date;
-  updatedAt: Date;
-}
-```
+Custom logos are stored in `catalog.appearance_logos` (`name`, `content_type`, `width`, `height`, `data bytea`, timestamps).
 
 ### MaintenanceValue Schema
 
@@ -198,7 +197,7 @@ interface MaintenanceResponse {
 When maintenance is enabled:
 
 1. Admin calls `POST /experimental/system/maintenance` with `enabled: true`
-2. Service stores the setting in MongoDB
+2. Service stores the setting in Postgres (`catalog.system_settings`)
 3. Cache is immediately updated
 4. All subsequent requests (except bypassed) receive 503
 
@@ -225,7 +224,7 @@ When the frontend receives a 503 with `code: 'MAINTENANCE_MODE'`, it should:
 
 ## Appearance
 
-Appearance settings live in `system_settings` under the key `appearance_settings`. Custom logos are stored separately in `appearance_logos` (binary `data` is `select: false`). Built-in ids `yellowmind` and `kpmg` are never persisted as files.
+Appearance settings live in `catalog.system_settings` under the key `appearance_settings`. Custom logos are stored separately in `catalog.appearance_logos` (binary `data` is a `bytea` column excluded from the default select; only `findWithData` reads it). Built-in ids `yellowmind` and `kpmg` are never persisted as files.
 
 ### Layout
 
@@ -250,7 +249,7 @@ The backend does **not** resize images (`sharp` is not used). The SPA contain-fi
 
 Helmet defaults `Cross-Origin-Resource-Policy` to `same-origin`. The public file GET sets `Cross-Origin-Resource-Policy: cross-origin` so the SPA `<img>` can load the logo. Any legacy SVG blob is served as `application/octet-stream` with `Content-Disposition: attachment`.
 
-`POST /experimental/system/appearance` accepts optional `applyToAllUsers`. When `true`, `defaultColorTheme` is copied onto every user document. Logo-only saves must send `applyToAllUsers: false` (or omit it).
+`POST /experimental/system/appearance` accepts optional `applyToAllUsers`. When `true`, `defaultColorTheme` is copied onto every user. Logo-only saves must send `applyToAllUsers: false` (or omit it).
 
 ### Error codes
 
@@ -400,7 +399,7 @@ Public. Returns the global palette, per-theme logo ids, and the logo catalog (bu
 
 ### POST /experimental/system/appearance
 
-Requires `SYSTEM_MAINTENANCE`. Body is `defaultColorTheme`, `themes` (each theme has `labelKey` and `logo`), and optional `applyToAllUsers`. Logo ids must exist in the catalog. When `applyToAllUsers` is true, every user document is updated to that palette.
+Requires `SYSTEM_MAINTENANCE`. Body is `defaultColorTheme`, `themes` (each theme has `labelKey` and `logo`), and optional `applyToAllUsers`. Logo ids must exist in the catalog. When `applyToAllUsers` is true, every user row is updated to that palette.
 
 ### GET /experimental/system/appearance/logos/:id/file
 
@@ -442,7 +441,7 @@ private readonly CACHE_TTL_MS = 5000; // 5 seconds
 │  Application Startup                                         │
 │         │                                                    │
 │         ▼                                                    │
-│  1. Load from MongoDB ──► Initialize cache                   │
+│  1. Load from Postgres ──► Initialize cache                   │
 │         │                                                    │
 │         ▼                                                    │
 │  2. Start periodic refresh (every 5 seconds)                 │

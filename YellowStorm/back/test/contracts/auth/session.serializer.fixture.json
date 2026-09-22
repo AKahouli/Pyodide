@@ -1,15 +1,12 @@
 {
-  "userId": "64b000000000000000000001",
+  "id": "64b000000000000000000010",
   "deviceInfo": {
     "userAgent": "jest",
     "browser": "chrome",
     "os": "linux"
   },
   "ipAddress": "127.0.0.1",
-  "isValid": true,
-  "expiresAt": "<volatile>",
-  "lastActivityAt": "<volatile>",
   "createdAt": "<volatile>",
-  "updatedAt": "<volatile>",
-  "id": "64b000000000000000000010"
+  "lastActivityAt": "<volatile>",
+  "isCurrent": true
 }

@@ -1,5 +1,5 @@
+import { newObjectId } from '@common/postgres/object-id';
 import { Injectable, OnApplicationBootstrap } from '@nestjs/common';
-import { Types } from 'mongoose';
 import { AgentRepository } from '@modules/agent/repositories/agent.repository';
 import {
   PLATFORM_COPILOT,
@@ -28,7 +28,7 @@ export class PlatformCopilotBootstrapService implements OnApplicationBootstrap {
       isActive: true,
     });
     await this.agentRepository.createDefaultSystemAgentIfMissing({
-      id: new Types.ObjectId().toString(),
+      id: newObjectId(),
       slug: PLATFORM_COPILOT_AGENT_SLUG,
       name: 'Yellowmind',
       agentType: agentType.id,

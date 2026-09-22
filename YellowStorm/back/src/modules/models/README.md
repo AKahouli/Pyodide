@@ -57,7 +57,7 @@ The models module provides:
 │          ┌─────────────┴─────────────┐                                       │
 │          ▼                           ▼                                       │
 │  ┌──────────────────┐    ┌─────────────────────────┐                        │
-│  │   LiteLLMClient  │    │  MongoDB (AiModel)      │                        │
+│  │   LiteLLMClient  │    │  Postgres (ai_models)    │                        │
 │  │   (HTTP Client)  │    │  - modelId              │                        │
 │  └────────┬─────────┘    │  - name, chef           │                        │
 │           │              │  - litellmModel         │                        │
@@ -85,7 +85,7 @@ The models module provides:
 | Technology | Purpose |
 |------------|---------|
 | **NestJS** | Module framework with dependency injection |
-| **Mongoose** | MongoDB ODM for model persistence |
+| **Drizzle ORM / PostgreSQL** | Model persistence (`catalog.ai_models`) via `MODEL_STORE` / `PgModelStore` |
 | **Axios** | HTTP client for LiteLLM API communication |
 | **ConfigModule** | Feature-specific configuration management |
 | **AuthorizationModule** | Permission-based access control for admin endpoints |
@@ -104,8 +104,9 @@ models/
 ├── models.service.spec.ts         # Unit tests (sync, classification, public filtering)
 ├── litellm.client.ts              # LiteLLM API client
 ├── litellm-connection.service.ts  # Connection management with auto-reconnect
-├── schemas/
-│   └── model.schema.ts            # MongoDB schema definition
+├── persistence/
+│   ├── model.store.ts             # MODEL_STORE port
+│   └── pg-model.store.ts          # PgModelStore (catalog.ai_models)
 ├── interfaces/
 │   └── model.interface.ts         # TypeScript interfaces
 └── dto/
@@ -118,53 +119,30 @@ models/
 
 ### AiModel Schema
 
-```typescript
-@Schema({ timestamps: true, collection: 'models' })
-export class AiModel {
-  @Prop({ required: true, unique: true, index: true })
-  modelId: string;          // e.g., "gpt-4o"
+Postgres table `catalog.ai_models` (Drizzle: `postgres/schema/catalog.schema.ts`), accessed through `MODEL_STORE` -> `PgModelStore`. Ids are `char(24)`. Main columns:
 
-  @Prop({ required: true })
-  name: string;             // e.g., "GPT-4o"
+| Column | Notes |
+|--------|-------|
+| `model_id` | e.g., `gpt-4o`; unique |
+| `name`, `chef`, `chef_slug` | Display name, provider display name, URL-friendly provider slug |
+| `litellm_model` | Full LiteLLM identifier (e.g., `azure/gpt-4.1`); default `""` |
+| `providers` | `text[]` of provider slugs |
+| `type` | Classification (`chat`, `embedding`, `image_generation`, ...); `""` = unclassified, set by admin. Initialised from the LiteLLM mode for new models, never overwritten on re-sync. A `types text[]` column also exists |
+| `is_active` | Whether the model is available for use |
+| `is_default`, `is_conversation_v2_default` | At most one row each may be true (partial unique indexes) |
+| pricing / capability columns | `max_input_tokens`, `max_output_tokens`, `input_cost_per_token`, `output_cost_per_token`, `cached_input_cost_per_token`, `supports_reasoning`, `reasoning_efforts` (`jsonb`), `default_reasoning_effort`, `input_modalities`, `omit_temperature` |
 
-  @Prop({ required: true })
-  chef: string;             // e.g., "OpenAI" (display name)
-
-  @Prop({ required: true, index: true })
-  chefSlug: string;         // e.g., "openai" (URL-friendly)
-
-  @Prop({ default: '' })
-  litellmModel: string;     // Full LiteLLM identifier (e.g., "azure/gpt-4.1", "anthropic/claude-sonnet-4-5")
-
-  @Prop({ type: [String], default: [] })
-  providers: string[];      // List of provider slugs
-
-  @Prop({ default: '', index: true })
-  type: string;             // Classification: chat | embedding | image_generation | ...
-                            // '' = unclassified, set by admin. Initialised from
-                            // LiteLLM mode for new models, never overwritten on re-sync.
-
-  @Prop({ default: true })
-  isActive: boolean;        // Whether model is available for use
-
-  @Prop({ default: false })
-  isDefault: boolean;       // Only one model can be default
-
-  @Prop({ default: false })
-  isConversationV2Default: boolean; // Only one model can be the conversation-v2 default
-}
-```
+The LiteLLM sync inserts new models with `PgModelStore.insertIfAbsent` (`INSERT ... ON CONFLICT (model_id) DO NOTHING`), so concurrent syncs cannot create duplicates.
 
 ### Database Indexes
 
 | Index | Fields | Purpose |
 |-------|--------|---------|
-| Primary | `modelId` (unique) | Fast lookups by model ID |
-| Chef filter | `chefSlug, isActive` | Filter models by provider |
-| Type filter | `type, isActive` | Filter active models by classification (e.g. chat-only public list) |
-| Active filter | `isActive` | List active models only |
-| Default lookup | `isDefault` | Find default model |
-| Conversation-v2 default lookup | `isConversationV2Default` | Find conversation-v2 default model |
+| Unique | `model_id` (`uq_ai_models_model_id`) | Fast lookups by model ID, no duplicates |
+| Chef filter | `chef_slug, is_active` | Filter models by provider |
+| Type filter | `type, is_active`; GIN on `types` | Filter active models by classification (e.g. chat-only public list) |
+| Partial unique | `is_default` WHERE `is_default` | Guarantees a single default model |
+| Partial unique | `is_conversation_v2_default` WHERE true | Guarantees a single conversation-v2 default model |
 
 ### Response Interfaces
 

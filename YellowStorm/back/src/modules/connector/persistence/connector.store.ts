@@ -1,4 +1,4 @@
-import type { ConnectorAction, ConnectorDynamicHeader } from '../schemas/connector.schema';
+import type { ConnectorAction, ConnectorDynamicHeader } from '../connector.types';
 
 /** Store ports for the integrations connector tables (plan step 3.4–3.6). */
 export const CONNECTOR_STORE = Symbol('CONNECTOR_STORE');

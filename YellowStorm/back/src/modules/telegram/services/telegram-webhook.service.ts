@@ -10,7 +10,6 @@ import { sanitizeSerializedToolValue } from '@modules/conversation/utils/public-
 import { ConversationSettingsService } from '@modules/system/conversation-settings.service';
 import { LoggerService } from '@modules/logger';
 import { AgentService } from '@modules/agent/agent.service';
-import { TelegramChatBinding, TelegramChatBindingDocument } from '../schemas/telegram-chat-binding.schema';
 import { TelegramUpdate } from '../interfaces/telegram-update.interface';
 import { TelegramIntegrationService } from './telegram-integration.service';
 import { TelegramApiService } from './telegram-api.service';

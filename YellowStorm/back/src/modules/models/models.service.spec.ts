@@ -2,6 +2,7 @@ import { Test } from '@nestjs/testing';
 import { ModelsService } from './models.service';
 import { LiteLLMClient } from './litellm.client';
 import { LoggerService } from '../logger';
+import { DRIZZLE_DB } from '@modules/postgres/postgres.constants';
 import { LiteLLMModelInfoEntry } from './interfaces/model.interface';
 import { MODEL_STORE, type ModelRow, type ModelStore } from './persistence/model.store';
 
@@ -79,9 +80,19 @@ class InMemoryModelStore implements ModelStore {
     return rows;
   }
 
-  async insert(newRow: ModelRow): Promise<void> {
+  /** Rows another instance inserts between the service's read and its write. */
+  readonly racedInserts = new Map<string, ModelRow>();
+
+  async insertIfAbsent(newRow: ModelRow): Promise<boolean> {
+    const raced = this.racedInserts.get(newRow.modelId);
+    if (raced) {
+      this.rows.set(raced.modelId, raced);
+      return false;
+    }
+    if (this.rows.has(newRow.modelId)) return false;
     this.inserted.push(newRow);
     this.rows.set(newRow.modelId, newRow);
+    return true;
   }
 
   async updateByModelId(modelId: string, patch: Partial<ModelRow>): Promise<ModelRow | null> {
@@ -138,11 +149,22 @@ describe('ModelsService', () => {
     store = new InMemoryModelStore();
     fetchModels = jest.fn();
 
+    // Fake transactional db: withTransaction passes straight through (outer
+    // and nested SAVEPOINT calls), so the sync's transactional wrap is
+    // exercised without a database.
+    const fakeTx: { transaction: (cb: (tx: unknown) => Promise<unknown>) => Promise<unknown> } = {
+      transaction: async (cb) => cb(fakeTx),
+    };
+    const fakeDb = {
+      transaction: async (cb: (tx: unknown) => Promise<unknown>) => cb(fakeTx),
+    };
+
     const mod = await Test.createTestingModule({
       providers: [
         ModelsService,
         { provide: MODEL_STORE, useValue: store as unknown as ModelStore },
         { provide: LiteLLMClient, useValue: { fetchModels, isConfigured: () => true } },
+        { provide: DRIZZLE_DB, useValue: fakeDb },
         {
           provide: LoggerService,
           useValue: { log: jest.fn(), warn: jest.fn(), error: jest.fn(), debug: jest.fn() },
@@ -162,6 +184,27 @@ describe('ModelsService', () => {
       expect(store.inserted).toHaveLength(3);
       expect(result.added).toBe(3);
       expect(result.total).toBe(3);
+    });
+
+    it('treats a model inserted concurrently by another instance as existing (no duplicate, no failure)', async () => {
+      fetchModels.mockResolvedValue([entry('gpt-4o', 'chat', 'openai')]);
+      // The other instance wins the insert between our read and our write; its row
+      // carries an admin-chosen type that the sync must not overwrite.
+      store.racedInserts.set('gpt-4o', row({
+        modelId: 'gpt-4o',
+        chefSlug: 'azure',
+        litellmModel: 'azure/old',
+        type: 'embedding',
+        types: ['embedding'],
+        isActive: true,
+      }));
+
+      const result = await svc.syncModels();
+
+      expect(result.added).toBe(0);
+      expect(store.inserted).toHaveLength(0);
+      expect(store.rows.get('gpt-4o')!.types).toEqual(['embedding']);
+      expect(store.rows.get('gpt-4o')!.chefSlug).toBe('openai');
     });
 
     it('initialises new models with types from LiteLLM mode', async () => {

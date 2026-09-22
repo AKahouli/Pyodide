@@ -6,6 +6,7 @@ import postgresConfig, { PostgresConfig } from '../../config/postgres.config';
 import { PG_POOL, DRIZZLE_DB } from './postgres.constants';
 import { PostgresConnectionService } from './postgres-connection.service';
 import { PgTtlSweeper } from './ttl/pg-ttl-sweeper.service';
+import { PgTtlRegistrationService } from './ttl/pg-ttl-registration.service';
 import { attachCheckedOutClientErrorHandler, buildPgSslOptions } from './pg-pool-options';
 import { LoggerService } from '../logger';
 import * as schema from './schema';
@@ -52,6 +53,7 @@ import * as schema from './schema';
     },
     PostgresConnectionService,
     PgTtlSweeper,
+    PgTtlRegistrationService,
   ],
   exports: [PostgresConnectionService, PgTtlSweeper, PG_POOL, DRIZZLE_DB],
 })

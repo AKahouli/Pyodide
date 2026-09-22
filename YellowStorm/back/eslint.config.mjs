@@ -37,6 +37,40 @@ export default tseslint.config(
     },
   },
   {
+    // F.3 / remediation 4.7: migrated modules must not import Mongoose.
+    // Mirrors src/common/testing/no-mongoose-in-migrated-modules.spec.ts
+    // (which carries the allowlist of still-Mongo-backed modules).
+    files: [
+      'src/**/*.ts',
+      '!src/**/*.spec.ts',
+      '!src/modules/playbook-flow/**',
+      '!src/modules/worky/**',
+      '!src/modules/knowledge-intelligence/**',
+      '!src/modules/classifier/**',
+      '!src/modules/evaluation/**',
+      '!src/modules/conversation-v2/**',
+      '!src/modules/app-runtime/**',
+      '!src/modules/integration-events/**',
+      '!src/modules/logger/**',
+      '!src/modules/database/**',
+      '!src/modules/health/**',
+      '!src/modules/app-data/**',
+      '!src/modules/whatsapp/**',
+      '!src/modules/connector/services/connector-playbook-binding-sync.service.ts',
+    ],
+    rules: {
+      'no-restricted-imports': [
+        'error',
+        {
+          paths: [
+            { name: 'mongoose', message: 'Module migrated to Postgres — no Mongoose imports (see no-mongoose-in-migrated-modules.spec.ts).' },
+            { name: '@nestjs/mongoose', message: 'Module migrated to Postgres — no Mongoose imports (see no-mongoose-in-migrated-modules.spec.ts).' },
+          ],
+        },
+      ],
+    },
+  },
+  {
     ignores: ['dist/**', 'node_modules/**', 'coverage/**'],
   },
 );

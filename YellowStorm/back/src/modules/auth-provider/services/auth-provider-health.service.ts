@@ -1,6 +1,5 @@
 import { Injectable } from '@nestjs/common';
 import { Inject } from '@nestjs/common';
-import { Model } from 'mongoose';
 import { AUTH_PROVIDER_STORE, type AuthProviderStore } from '../persistence/auth-provider.stores';
 import { CryptoService } from '@common/services/crypto.service';
 import { LoggerService } from '@modules/logger';

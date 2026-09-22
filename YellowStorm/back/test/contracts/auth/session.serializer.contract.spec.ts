@@ -1,47 +1,44 @@
 import 'reflect-metadata';
-import { Types } from 'mongoose';
-import { SessionSchema } from '@modules/auth/schemas/session.schema';
-import { expectContract, hydrateDoc } from '../expect-contract';
-
+import { AuthService } from '@modules/auth/auth.service';
+import { sessionRecord, makeSessionStoreFake } from '@modules/auth/persistence/session-store.fake';
+import { expectContract } from '../expect-contract';
 
 /**
- * Serializer contract for Mongo `sessions` — the PG session mapper (step 1A)
- * must reproduce the exact masking: refresh token hash, token family and all
- * rotation bookkeeping (including receipt material) never serialize.
+ * Wire contract for the session list (`AuthService.getUserSessions`) built from
+ * a PG SessionRecord: refresh token hash, token family and all rotation
+ * bookkeeping (including receipt material) must never serialize.
  */
-const wire = (): Record<string, unknown> =>
-  JSON.parse(
-    JSON.stringify(
-      hydrateDoc(SessionSchema, {
-        _id: new Types.ObjectId('64b000000000000000000010'),
-        userId: new Types.ObjectId('64b000000000000000000001'),
-        refreshTokenHash: 'sha256-should-not-serialize',
-        deviceInfo: { userAgent: 'jest', browser: 'chrome', os: 'linux' },
-        ipAddress: '127.0.0.1',
-        isValid: true,
-        expiresAt: new Date('2026-02-01T00:00:00Z'),
-        lastActivityAt: new Date('2026-01-15T00:00:00Z'),
-        tokenFamily: 'family-should-not-serialize',
-        rotatedFromSessionId: new Types.ObjectId('64b000000000000000000011'),
-        rotationAttemptId: 'attempt-should-not-serialize',
-        createdAt: new Date('2026-01-01T00:00:00Z'),
-        updatedAt: new Date('2026-01-15T00:00:00Z'),
-      }).toJSON(),
-    ),
-  );
+const wire = async (): Promise<Record<string, unknown>> => {
+  const store = makeSessionStoreFake([
+    sessionRecord({
+      id: '64b000000000000000000010',
+      userId: '64b000000000000000000001',
+      refreshTokenHash: 'sha256-should-not-serialize',
+      deviceInfo: { userAgent: 'jest', browser: 'chrome', os: 'linux' },
+      ipAddress: '127.0.0.1',
+      tokenFamily: 'family-should-not-serialize',
+      rotatedFromSessionId: '64b000000000000000000011',
+      rotatedToSessionId: '64b000000000000000000012',
+      rotationAttemptId: 'attempt-should-not-serialize',
+      rotationReceiptCiphertext: 'receipt-should-not-serialize',
+      createdAt: new Date('2026-01-01T00:00:00Z'),
+      lastActivityAt: new Date('2026-01-15T00:00:00Z'),
+    }),
+  ]);
+  const service = Object.create(AuthService.prototype) as AuthService;
+  (service as unknown as { sessionStore: unknown }).sessionStore = store;
+  const [session] = await service.getUserSessions('64b000000000000000000001', '64b000000000000000000010');
+  return JSON.parse(JSON.stringify(session));
+};
 
 describe('session serializer contract', () => {
-  it('matches the recorded Mongo toJSON shape', () => {
-    const body = wire();
+  it('matches the recorded session wire shape', async () => {
+    const body = await wire();
     expectContract('auth/session.serializer', body);
     expect(body.id).toBe('64b000000000000000000010');
-    expect(body).not.toHaveProperty('refreshTokenHash');
-    expect(body).not.toHaveProperty('tokenFamily');
-    expect(body).not.toHaveProperty('rotatedFromSessionId');
-    expect(body).not.toHaveProperty('rotatedToSessionId');
-    expect(body).not.toHaveProperty('rotationAttemptId');
-    expect(body).not.toHaveProperty('rotationReceiptCiphertext');
-    expect(body).not.toHaveProperty('_id');
-    expect(body).not.toHaveProperty('__v');
+    expect(body.isCurrent).toBe(true);
+    for (const key of ['refreshTokenHash', 'tokenFamily', 'rotatedFromSessionId', 'rotatedToSessionId', 'rotationAttemptId', 'rotationReceiptCiphertext', '_id', '__v']) {
+      expect(body).not.toHaveProperty(key);
+    }
   });
 });

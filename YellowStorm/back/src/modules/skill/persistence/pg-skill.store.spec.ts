@@ -73,4 +73,16 @@ describeIntegration('PgSkillStore + PgSkillCategoryStore (integration)', () => {
     expect(row!.isSystem).toBe(true);
     createdCategories.push(row!.id);
   });
+
+  // R-12: the search term must be literal — % and _ are not wildcards.
+  it('list search treats % and _ literally', async () => {
+    const withPct = await skills.insert(newSkill(`spec-100%skill-${oid().slice(-4)}`));
+    const plain = await skills.insert(newSkill(`spec-plain-${oid().slice(-6)}`));
+    createdSkills.push(withPct.id, plain.id);
+
+    const hits = await skills.list({ search: '100%skill', page: 1, limit: 100 });
+    expect(hits.rows.map((r) => r.id)).toContain(withPct.id);
+    const wildcard = await skills.list({ search: '%', page: 1, limit: 100 });
+    expect(wildcard.rows.map((r) => r.id)).not.toContain(plain.id);
+  });
 });

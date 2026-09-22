@@ -95,18 +95,22 @@ export class UnifiedOAuthCallbackController {
   }
 
   private buildErrorHtml(appKey: string, error: string): string {
+    // appKey / error are attacker-controllable (URL + provider query): escape for
+    // the HTML body and serialise as JSON (with < escaped) inside the script.
+    const htmlError = error.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
+    const js = (v: string): string => JSON.stringify(v).replace(/</g, '\\u003c');
     return `<!DOCTYPE html>
 <html>
 <head><title>Authentication Error</title></head>
 <body>
-<p style="color:red">Authentication failed: ${error}</p>
+<p style="color:red">Authentication failed: ${htmlError}</p>
 <script>
   if (window.opener) {
     window.opener.postMessage({
       type: 'oauth-result',
-      appKey: '${appKey}',
+      appKey: ${js(appKey)},
       success: false,
-      error: '${error}'
+      error: ${js(error)}
     }, '*');
   }
   setTimeout(function() { window.close(); }, 2000);

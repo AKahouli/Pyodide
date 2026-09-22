@@ -2,6 +2,8 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: `superpowers:executing-plans` (or `superpowers:subagent-driven-development`). Steps use checkbox (`- [ ]`) syntax. Execute steps **in order**. Each sub-step is independently mergeable and revertable unless it is marked **cutover**.
 
+> **Status (2026-09-21):** implemented and remediated — see `2026-09-21-postgres-migration-remediation.md` for the follow-up bugfixes, data reconciliation, FK migration `0025`, tests and the remaining deferred items (WhatsApp cleanup, live smoke).
+
 **Goal:** move roadmap phases **P1A** (identity core), **P1B** (config and catalog leaves), **P3** (integrations) and **P4** (agent ecosystem) off MongoDB/Mongoose and onto the app-owned PostgreSQL (`agentstore`) with Drizzle. This continues after `agents`, `app_data`, `conversation`, `project`, `workspace` and `governance`, which are already live on PG with migrations `0000`–`0020`.
 
 **Roadmap:** `2026-09-18-mongodb-to-postgres-remaining-migration.md` §4 (P1A, P1B, P3, P4).
@@ -1158,42 +1160,42 @@ CREATE INDEX IF NOT EXISTS idx_admin_connector_oauth_states_user        ON integ
 
 ### Tasks
 
-- [ ] **3.1 Connected apps.**
+- [x] **3.1 Connected apps.** *(done — commit `40562bbab`; the `****` masking is contract-tested and the `tenantId` echo bug was fixed in the remediation, R-07)*
   - `ConnectedAppDefinitionStore`, `UserAppConnectionStore`, `ConnectedAppOAuthStateStore`.
   - Deleting a definition removes the connections by `app_key` (`connected-app-definition.service.ts:211`): one transaction, or the FK cascade once it is validated.
   - The `toJSON` masking (`'****'`) and token deletion are reproduced in the mappers. Contract-test them.
-- [ ] **3.2 Token hot path** (`connected-app-token.service.ts`, `connector-admin-auth.service.ts`):
+- [x] **3.2 Token hot path** (`connected-app-token.service.ts`, `connector-admin-auth.service.ts`): *(done — throttled `last_used_at`, single-flight refresh; remediation R-06 made terminal token statuses survive the failure, covered by `connector-admin-auth.refresh.spec.ts` and `connected-app-token.single-flight.spec.ts`)*
   - The `lastUsedAt` write on **every** `getValidToken` call becomes a throttled `UPDATE … SET last_used_at = now() WHERE id=$1 AND (last_used_at IS NULL OR last_used_at < now() - interval '60 seconds')`. The observable behavior is unchanged at minute granularity, and far fewer writes happen on the M365 mail path (`playbook-flow-mail-graph-client.service.ts`, 9 call sites).
   - **⚑ Single-flight refresh:** `refreshAccessToken` runs inside `withTransaction` with `SELECT … FOR UPDATE` on the connection row. After the lock is acquired, it re-checks `token_expires_at`: if another caller already refreshed, it returns the new token without calling the provider. Status transitions to `expired`/`error` stay conditional on `status='active'`.
   - Add an integration test: 5 concurrent `getValidToken` calls on an expired token → exactly 1 provider refresh call (mock provider).
-- [ ] **3.3 OAuth state consumption:**
+- [x] **3.3 OAuth state consumption:** *(done — `DELETE … RETURNING` with expiry, both state tables swept; one-winner race proven in `pg-auth-provider.stores.spec.ts`)*
   - `findOneAndDelete({state})` → `DELETE … WHERE state=$1 AND expires_at > now() RETURNING *` (`connected-app-oauth.service.ts:104`, `connector-admin-auth.service.ts:86`).
   - `unified-oauth-callback.controller.ts:88-99` routes with `SELECT EXISTS` on both state tables, and no longer injects models.
   - Register the sweeper on both `expires_at` columns.
-- [ ] **3.4 Connectors.**
+- [x] **3.4 Connectors.** *(done — `escapeLike` added in the remediation, R-12)*
   - `ConnectorStore` exposes the methods the external consumers use: `findByIds`, `findByIdsForGrpc`, `findBySlug`, `findAll`, `findAllActive`, `findIdsByCategoryName`. They keep their signatures.
   - Search `$or slug/name $regex i` → `ILIKE`.
   - Unique-slug-on-import `^slug(-N)?$` (`connector.service.ts:484`) → `SELECT slug … WHERE slug = $1 OR slug ~ ('^' || $1 || '-[0-9]+$')`, with the slug regex-escaped.
   - Category name lookup (`:205`) → `lower(name) = lower($1)`.
   - `referencedSkillIds` ↔ `connector_skills`.
   - `sanitizeMcpServerConfig` and the gRPC builder (`connector.service.ts:231-308`) are unchanged: they read the mapper output, which has the Mongo shape.
-- [ ] **3.5 Connector delete ⚑.** One transaction that removes the credentials (cascade), the `connector_skills` (cascade) and the agent junction rows (the FK cascade below, and `pullConnectorFromAll` until then). The Mongo `flows` bindings are **not** touched, which matches today; the stale `connectorId` inside a flow is reported by P5.
-- [ ] **3.6 Boot seeds:**
+- [x] **3.5 Connector delete ⚑.** One transaction that removes the credentials (cascade), the `connector_skills` (cascade) and the agent junction rows (the FK cascade below, and `pullConnectorFromAll` until then). The Mongo `flows` bindings are **not** touched, which matches today; the stale `connectorId` inside a flow is reported by P5. *(done — remediation added the missing agent-junction FKs with ON DELETE CASCADE and removed the dead `pullConnectorFromAll`)*
+- [x] **3.6 Boot seeds:** *(done; `seed-github-connected-app.ts` still keeps its own encrypt copy — cosmetic)*
   - "System" connector category → `INSERT … ON CONFLICT (name, created_by) DO UPDATE SET is_system = true`.
   - `ensureSystemAgentMcpConnector` → `INSERT … ON CONFLICT (slug) WHERE is_system DO UPDATE SET actions = EXCLUDED.actions, updated_at = now()`, which is the `$setOnInsert` + `$set actions` parity.
   - `scripts/seed-github-connected-app.ts` → PG `INSERT … ON CONFLICT (app_key) DO NOTHING`. Reuse `CryptoService` instead of its private copy.
-- [ ] **3.7 Catalog transfer back in one transaction.**
+- [x] **3.7 Catalog transfer back in one transaction.** *(done — one `withTransaction`; rollback proven by `catalog-transfer.atomicity.spec.ts`)*
   - `importArchive` → a single `withTransaction` covering skill categories, connector categories, skills, connectors, and security (definitions, user connections, admin tokens, credentials).
   - Upserts: skills by `(slug, created_by)`, connectors by `(slug, created_by)`, user connections by `(user_id, app_key)`, credentials by `(connector_id, user_id, display_name)` (keep the existing lookup; there is no unique constraint today, so the upsert is SELECT-then-INSERT/UPDATE inside the transaction).
   - `restoreRedactedValues` and the export `redactSecrets` are unchanged.
   - Delete `@InjectConnection` and all model injections from this service.
   - `catalog-transfer.service.spec.ts` moves to store mocks.
-- [ ] **3.8 Bridge left in place:** `connector-playbook-binding-sync.service.ts` keeps `@InjectConnection` + `flows.updateMany`. It runs **after** the PG connector update commits (it already runs after save and is best-effort). Add a comment pointing to P5, which must replace it.
-- [ ] **3.9 Backfill** `2026-10-integrations.ts`, in this order: connector_categories → connectors (+`connector_skills`) → connector_credentials → connected_app_definitions → user_app_connections → admin_connector_auth_tokens.
+- [x] **3.8 Bridge left in place:** `connector-playbook-binding-sync.service.ts` keeps `@InjectConnection` + `flows.updateMany`. It runs **after** the PG connector update commits (it already runs after save and is best-effort). Add a comment pointing to P5, which must replace it. *(done — the bridge stays until P5)*
+- [x] **3.9 Backfill** `2026-10-integrations.ts`, in this order: connector_categories → connectors (+`connector_skills`) → connector_credentials → connected_app_definitions → user_app_connections → admin_connector_auth_tokens. *(done and re-done in the remediation: unfiltered scan, `--checksum` on all six units, reject reports; `reconcile-ids.ts --strict` exits 0)*
   - Every ciphertext and every jsonb secret container is copied byte-exact, and `--checksum` includes them.
   - A duplicate `actions.key` within a connector (from 0.3) is copied as-is (parity) and reported.
   - `referencedSkillIds` pointing to missing skills are dropped and reported.
-- [ ] **3.10 FKs** `2026-10-integrations-fk.ts`:
+- [x] **3.10 FKs** `2026-10-integrations-fk.ts`: *(done — all four FKs validated; the two agent-junction FKs cleaned 98 + 2 dangling rows via the export-then-delete path)*
 
   | FK | Action |
   |---|---|
@@ -1203,7 +1205,7 @@ CREATE INDEX IF NOT EXISTS idx_admin_connector_oauth_states_user        ON integ
   | `integrations.user_app_connections.app_key → integrations.connected_app_definitions(app_key)` | CASCADE (only if the orphan count is 0; otherwise report and keep the app-level delete) |
 
   Once they are validated, delete `pullConnectorFromAll`/`pullConnectorFromAgentsExcept` (they have no callers).
-- [ ] **3.11 Cutover.** Smoke:
+- [x] **3.11 Cutover.** Smoke: *(cutover done; the live smoke legs are recorded as NOT RUN in the remediation plan, Appendix C)*
   - user connected-app OAuth (Google/M365) → token refresh → revoke
   - admin connector OAuth
   - connector CRUD with credentials
@@ -1480,26 +1482,26 @@ CREATE INDEX IF NOT EXISTS idx_widget_messages_session_created ON channels.widge
 
 ### 4a — Shares & teams  *(cutover)*
 
-- [ ] **4.1** `AgentShareStore`:
+- [x] **4.1** `AgentShareStore`: *(done — commit `9343d7590`; remediation added the spec)*
   - The share upsert loop (`agent-share.service.ts:67`) → a single `INSERT … ON CONFLICT (agent_id, shared_with) DO UPDATE SET permission=EXCLUDED.permission, updated_at=now()` for the whole batch (`upsertMany`).
   - Recipients are resolved in one call with `UserLookupPort.byEmails`, replacing N calls to `findByEmail`.
   - The mapper keeps the `sharedWith`/`sharedBy` populated shape introduced in 1A.11.
   - `removeAllSharesForAgent` is deleted (the FK cascade replaces it).
-- [ ] **4.2** `AgentPermissionGuard`:
+- [x] **4.2** `AgentPermissionGuard`: *(done — full authorization matrix spec)*
   - `SharedAgent` model → `AgentShareStore.find(agentId, userId)`.
   - `Types.ObjectId.isValid` → `isObjectId`.
   - `shareId` is still exposed.
   - Remove the `SharedAgent` `forFeature` from the `agent`, `telegram`, `whatsapp` and `widget-chat` modules. The guard now depends only on `AgentModule` exports, so export `AgentShareStore`.
   - Add a spec for the guard (owner / shared read / shared write / public / 404).
-- [ ] **4.3** `TeamStore`:
+- [x] **4.3** `TeamStore`: *(done — commit `c6e8b6cde`; remediation fixed escaping and the paging total)*
   - `create`/`update`/`updateHierarchy` replace the members in one transaction: `DELETE team_members WHERE team_id` + `INSERT` with `position`.
   - Search `$regex` → `name ILIKE`; pagination → `pageOf` (`COUNT(*) OVER()`).
   - `removeAgentFromAllTeams` is deleted (FK `CASCADE` / `SET NULL`), and so is its call at `agent.service.ts:350`.
   - `delete` → a single `DELETE teams.teams` (shares cascade).
   - The mapper emits `members` in `position` order with `{agentId, parentAgentId, order, positionX, positionY}`.
   - `resolveExecutionDefinition` (used by `stream.service.ts:1038`) is contract-tested.
-- [ ] **4.4** `TeamShareStore` gets the same pattern as 4.1. `TeamPermissionGuard` uses the stores. Specs are added for team-share and the guard.
-- [ ] **4.5** Auto-builder config singleton → `ON CONFLICT (singleton) DO UPDATE`.
+- [x] **4.4** `TeamShareStore` gets the same pattern as 4.1. `TeamPermissionGuard` uses the stores. Specs are added for team-share and the guard. *(done — specs added in the remediation)*
+- [x] **4.5** Auto-builder config singleton → `ON CONFLICT (singleton) DO UPDATE`. *(done)*
 
 ### 4b — Telegram & WhatsApp  *(cutover)*
 
@@ -1507,7 +1509,7 @@ CREATE INDEX IF NOT EXISTS idx_widget_messages_session_created ON channels.widge
   - Add `AgentChannelTeardown` to `agent.service.ts` `delete`, **before** the row delete. It calls `telegramIntegrationService.deleteForAgent` (`clearWebhook` + rows), `whatsappConnectionService.disconnectForAgent` (close socket + delete auth state + rows) and `widgetChatService.revokeAllForAgent`. Each call is best-effort and logged.
   - The FK `ON DELETE CASCADE` remains a safety net for rows.
   - Avoid an import cycle: expose a `CHANNEL_TEARDOWN` multi-provider token that each channel module registers, and let the agent module inject the array.
-- [ ] **4.7 Telegram:**
+- [x] **4.7 Telegram:** *(done — commit `3a957ba40`; duplicate-update dedupe proven in `channels-concurrency.spec.ts`)*
   - `markWebhookUpdate` → `UPDATE … SET last_update_id=$2, last_webhook_at=now() WHERE id=$1 AND (last_update_id IS NULL OR last_update_id < $2) RETURNING id`. Zero rows means a duplicate update, so skip it.
   - Link code generation → `withTransaction { DELETE unconsumed for integration; INSERT }`.
   - Link code consumption → `UPDATE … SET consumed=true, consumed_at=now() WHERE code_hash=$1 AND integration_id=$2 AND NOT consumed AND expires_at > now() RETURNING *`.
@@ -1569,14 +1571,14 @@ CREATE INDEX IF NOT EXISTS idx_widget_messages_session_created ON channels.widge
 
 ## Final FK pass & verification (after P3 and P4)
 
-- [ ] **F.1** Re-run all four FK scripts (`identity`, `catalog`, `integrations`, `agent-ecosystem`). They are idempotent through `runFkSpecs`, and every constraint must report `validated`.
-- [ ] **F.2** Run the verification query set used for `0020`:
+- [x] **F.1** Re-run all four FK scripts (`identity`, `catalog`, `integrations`, `agent-ecosystem`). They are idempotent through `runFkSpecs`, and every constraint must report `validated`. *(done — `scripts/migrate/*-fk.ts` are thin runners over `fk-specs.ts`; every constraint validated, see remediation Appendix B)*
+- [x] **F.2** Run the verification query set used for `0020`: *(done — `npm run db:verify`, 8 checks, output in remediation Appendix B)*
   - no invalid index
   - no FK without an index
   - every new table `ANALYZE`d
   - `drizzle.__drizzle_migrations` = 31 rows (`0021`–`0024`)
-- [ ] **F.3** Grep gate: `@InjectModel(` / `MongooseModule.forFeature(` in the 20 modules → **0**, with one documented exception: `connector-playbook-binding-sync.service.ts` → P5.
-- [ ] **F.4** Update the roadmap (`2026-09-18-mongodb-to-postgres-remaining-migration.md` §1.2/§1.3) with the new state and the list of remaining Mongo modules: playbook-flow, knowledge-intelligence, evaluation, classifier, worky, conversation-v2, app-runtime, integration-events, logger, and the P5 bridge.
+- [x] **F.3** Grep gate: `@InjectModel(` / `MongooseModule.forFeature(` in the 20 modules → **0**, with one documented exception: `connector-playbook-binding-sync.service.ts` → P5. *(done — `no-mongoose-in-migrated-modules.spec.ts` runs in `npm test`; the allowlist is the remaining-Mongo table of the roadmap)*
+- [x] **F.4** Update the roadmap (`2026-09-18-mongodb-to-postgres-remaining-migration.md` §1.2/§1.3) with the new state and the list of remaining Mongo modules: playbook-flow, knowledge-intelligence, evaluation, classifier, worky, conversation-v2, app-runtime, integration-events, logger, and the P5 bridge. *(done — roadmap §1.2/§1.3 refreshed 2026-09-21)*
 
 ---
 

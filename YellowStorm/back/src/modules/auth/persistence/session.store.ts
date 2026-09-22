@@ -71,8 +71,12 @@ export interface SessionStore {
   invalidateByFamily(tokenFamily: string): Promise<void>;
   deleteById(id: string): Promise<void>;
   countActiveForUser(userId: string): Promise<number>;
-  /** Oldest still-valid sessions (max-sessions cap). */
-  findOldestActive(userId: string, limit: number): Promise<SessionRecord[]>;
+  /**
+   * Max-sessions cap (remediation 3.4): keep the `keep` most-recently-active
+   * valid sessions, invalidate the rest in ONE statement. Returns the count
+   * invalidated.
+   */
+  invalidateOldestBeyond(userId: string, keep: number): Promise<number>;
   /**
    * One transaction: claim the predecessor (`is_valid` conditional), insert the
    * successor, write the predecessor bookkeeping. Throws RotationConflictError

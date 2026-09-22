@@ -83,7 +83,6 @@ export interface WidgetSessionStore {
   resetVisitorSession(row: NewWidgetSession): Promise<{ session: WidgetSessionRow; closedSessionIds: string[] }>;
   /** SSE auth (plan 4.14): WHERE id AND token_hash AND agent_id AND status='active'. */
   findByIdWithAgent(id: string, tokenHash: string, agentId: string): Promise<WidgetSessionRow | null>;
-  incrementMessageCount(id: string): Promise<void>;
 }
 
 export interface WidgetMessageInput {
