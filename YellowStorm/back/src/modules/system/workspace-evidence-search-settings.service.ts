@@ -1,8 +1,6 @@
-import { BadRequestException, Injectable } from '@nestjs/common';
-import { InjectModel } from '@nestjs/mongoose';
-import { Model } from 'mongoose';
+import { BadRequestException, Inject, Injectable } from '@nestjs/common';
 import { ConnectorService } from '../connector/connector.service';
-import { SystemSetting, SystemSettingDocument } from './schemas/system-setting.schema';
+import { SYSTEM_SETTING_STORE, type SystemSettingStore } from './persistence/system-setting.store';
 import type {
   WorkspaceEvidenceSearchConnectorOption,
   WorkspaceEvidenceSearchSettings,
@@ -13,10 +11,10 @@ const KEY = 'workspace_evidence_search';
 
 @Injectable()
 export class WorkspaceEvidenceSearchSettingsService {
-  constructor(@InjectModel(SystemSetting.name) private readonly settings: Model<SystemSettingDocument>, private readonly connectors: ConnectorService) {}
+  constructor(@Inject(SYSTEM_SETTING_STORE) private readonly settings: SystemSettingStore, private readonly connectors: ConnectorService) {}
 
   async getSettings(): Promise<WorkspaceEvidenceSearchSettings> {
-    const setting = await this.settings.findOne({ key: KEY }).lean().exec();
+    const setting = await this.settings.get(KEY);
     const value = setting?.value as Partial<WorkspaceEvidenceSearchSettingsValue> | undefined;
     return { connectorId: typeof value?.connectorId === 'string' ? value.connectorId : null, updatedAt: setting?.updatedAt as Date | undefined };
   }
@@ -42,7 +40,7 @@ export class WorkspaceEvidenceSearchSettingsService {
       const connector = await this.connectors.findById(connectorId);
       if (!connector.isActive) throw new BadRequestException('The selected evidence search connector must be active');
     }
-    const updated = await this.settings.findOneAndUpdate({ key: KEY }, { key: KEY, value: { connectorId } }, { upsert: true, new: true, setDefaultsOnInsert: true }).lean().exec();
-    return { connectorId, updatedAt: updated?.updatedAt as Date | undefined };
+    const updated = await this.settings.upsert(KEY, { connectorId });
+    return { connectorId, updatedAt: updated.updatedAt };
   }
 }

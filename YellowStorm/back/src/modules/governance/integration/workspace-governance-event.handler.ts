@@ -6,6 +6,7 @@ import { WorkspaceIntegrationEvents, type WorkspaceDocumentEventV1 } from '@modu
 import type { IntegrationEventEnvelope } from '@modules/integration-events/interfaces/integration-event.interface';
 import { KnowledgeExtractionOrchestratorService } from '@modules/knowledge-intelligence/services/knowledge-extraction-orchestrator.service';
 import { WorkspaceEvidenceSearchSettingsService } from '@modules/system/workspace-evidence-search-settings.service';
+import { FeatureVisibilityService } from '@modules/system/feature-visibility.service';
 import { GovernanceWorkspaceBindingService } from '../services/governance-workspace-binding.service';
 import { GovernanceDocumentService } from '../services/governance-document.service';
 
@@ -18,6 +19,7 @@ export class WorkspaceGovernanceEventHandler implements OnModuleInit {
   constructor(
     private readonly registry: IntegrationEventHandlerRegistryService,
     private readonly config: ConfigService,
+    private readonly featureVisibility: FeatureVisibilityService,
     private readonly bindings: GovernanceWorkspaceBindingService,
     private readonly documents: GovernanceDocumentService,
     private readonly intelligence: KnowledgeExtractionOrchestratorService,
@@ -36,20 +38,20 @@ export class WorkspaceGovernanceEventHandler implements OnModuleInit {
       try {
         const programId = binding.programId.toString();
         if (event.eventType === WorkspaceIntegrationEvents.DocumentDeletedV1) {
-          await this.documents.archiveFromWorkspaceDeletion(programId, payload.documentId, binding.createdBy.toString(), { id: event.eventId, occurredAt: event.occurredAt });
+          await this.documents.archiveFromWorkspaceDeletion(programId, payload.documentId, binding.createdBy, { id: event.eventId, occurredAt: event.occurredAt });
           continue;
         }
         if (binding.ingestionMode === 'manual') continue;
-        const governed = await this.documents.upsertFromWorkspace(programId, payload.documentId, binding.createdBy.toString(), { id: event.eventId, occurredAt: event.occurredAt });
-        if (event.eventType !== WorkspaceIntegrationEvents.IndexingReadyV1 || !this.config.get<boolean>('dataRoom.validityIntelligenceEnabled')) continue;
+        const governed = await this.documents.upsertFromWorkspace(programId, payload.documentId, binding.createdBy, { id: event.eventId, occurredAt: event.occurredAt });
+        if (event.eventType !== WorkspaceIntegrationEvents.IndexingReadyV1 || !this.featureVisibility.isEnabled('dataRoomValidityIntelligence')) continue;
         const { connectorId } = await this.evidenceSettings.getSettings();
         if (!connectorId) continue;
         const inputHash = createHash('sha256').update(JSON.stringify({ programId, documentId: payload.documentId, contentHash: payload.contentHash ?? null, indexingAttemptId: payload.indexingAttemptId ?? null, connectorId })).digest('hex');
-        await this.intelligence.enqueue({ programId, documentId: payload.documentId, connectorId, requestedByUserId: binding.createdBy.toString(), jobType: 'technical_metadata', inputHash, engineVersion: 'technical-metadata-v1' });
-        governed.lastIntegrationEventId = event.eventId;
+        await this.intelligence.enqueue({ programId, documentId: payload.documentId, connectorId, requestedByUserId: binding.createdBy, jobType: 'technical_metadata', inputHash, engineVersion: 'technical-metadata-v1' });
+        void governed;
       } catch (error) {
-        this.logger.error('Failed to process workspace event for governance binding', { bindingId: binding._id.toString(), eventId: event.eventId, error: error instanceof Error ? error.message : 'Unknown error' });
-        failures.push(binding._id.toString());
+        this.logger.error('Failed to process workspace event for governance binding', { bindingId: binding.id, eventId: event.eventId, error: error instanceof Error ? error.message : 'Unknown error' });
+        failures.push(binding.id);
       }
     }
     if (failures.length > 0) throw new BadRequestException(`Workspace event processing failed for binding(s): ${failures.join(', ')}`);

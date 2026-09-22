@@ -135,6 +135,7 @@ describe('AgentService connector skill inheritance', () => {
     };
     const connectorService = {
       findByIds: jest.fn(),
+      findIdsByCategoryName: jest.fn().mockResolvedValue([]),
     };
     const connectorAuthService = {
       resolveRuntimeAuth: jest.fn(),
@@ -192,6 +193,7 @@ describe('AgentService connector skill inheritance', () => {
       guardrailsSettingsService as any,
       agentRepository as any,
       agentRoleEmbedding as any,
+      [],
       new AgentConnectorRuntimeService(
         logger as any,
         skillService as any,
@@ -322,9 +324,28 @@ describe('AgentService connector skill inheritance', () => {
     expect(JSON.parse(result[0].agent_params?.params.guardrails_json as string).classifier)
       .toEqual({ omitTemperature: true });
     expect(result[0].agent_params?.params.temperature).toBe('0');
+
+    connectorService.findIdsByCategoryName.mockResolvedValue(['connector-1']);
+    const restricted = await service.buildAgentsForStream(
+      userId,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      false,
+    );
+
+    expect(restricted[0].tools).toEqual([]);
+    expect(JSON.parse(restricted[0].agent_params?.params.connector_bindings_json as string)).toEqual([]);
+    expect(restricted[0].skills?.map((skill) => skill.id as string)).toEqual(['type-skill', 'agent-skill']);
   });
 
-  it('exposes every enabled Playbook MCP action to Platform Copilot', async () => {
+  it('excludes legacy Playbook orchestration actions from Platform Copilot', async () => {
     const { service, connectorService, modelsService } = createService();
     const enabledActions = [
       'search_playbooks',
@@ -377,14 +398,20 @@ describe('AgentService connector skill inheritance', () => {
         undefined,
         undefined,
         undefined,
+        undefined,
         { conversationId: 'conversation-1', correlationId: 'message-1', playbookHandoffAttached: true },
       );
 
+      const expectedActions = enabledActions.filter((action) => ![
+        'assess_playbook_request',
+        'continue_playbook_clarification',
+        'start_playbook_construction',
+      ].includes(action));
       expect(result[0].tools.map((tool) => tool.name)).toEqual(
-        enabledActions.map((action) => `playbook-mcp_${action}`),
+        expectedActions.map((action) => `playbook-mcp_${action}`),
       );
       const bindings = JSON.parse(result[0].agent_params?.params.connector_bindings_json as string);
-      expect(bindings[0].actions.map((action: { action_key: string }) => action.action_key)).toEqual(enabledActions);
+      expect(bindings[0].actions.map((action: { action_key: string }) => action.action_key)).toEqual(expectedActions);
       expect(result[0].tools.map((tool) => tool.name)).not.toEqual(
         expect.arrayContaining(['playbook-mcp_disabled_action']),
       );
@@ -417,6 +444,7 @@ describe('AgentService connector skill inheritance', () => {
       userId,
       undefined,
       ['platform-agent'],
+      undefined,
       undefined,
       undefined,
       undefined,
@@ -484,6 +512,7 @@ describe('AgentService connector skill inheritance', () => {
     expect(agentRepository.findDefaultByType).toHaveBeenCalledWith('555555555555555555555555');
     expect(result).toHaveLength(1);
     expect(result[0].name).toBe('Mono Agent Instance');
+    expect(result[0].agent_type).toBe('mono-agent');
   });
 
   it('uses the selected model for an untagged mono-agent request', async () => {
@@ -533,6 +562,7 @@ describe('AgentService connector skill inheritance', () => {
       undefined,
       undefined,
       undefined,
+      undefined,
       'high',
     );
 
@@ -557,6 +587,25 @@ describe('AgentService connector skill inheritance', () => {
       { agentTypeId: 'type-worker', modelId: 'native-model' },
     ]);
     expect(result[0].chatbot.model).toBe('native-model');
+  });
+
+  it('uses the admin default model for a tagged agent with no model override', async () => {
+    const { service, modelsService } = createService();
+    const taggedAgent: IAgentForStream = {
+      id: 'tagged-agent', name: 'Tagged Agent', agentTypeName: 'Worker', agentTypeSlug: 'worker',
+      agentTypeId: 'type-worker', role: 'Role', description: '', temperature: 0, model: '',
+      instruction: '', ignorePrePrompt: false, knowledgeBases: [], toolIds: [], guardrails: defaultGuardrails,
+      connectorIds: [], connectorActionSelections: [], skillIds: [], disabledSkillIds: [], agentTypeSkillIds: [],
+      enable_temporary_child_agents: false, max_temporary_child_agents: 4, isDefault: false, isDefaultForType: false,
+    };
+    jest.spyOn(service as any, 'getAgentsForUser').mockResolvedValue([taggedAgent]);
+    modelsService.getDefaultModel.mockResolvedValue({ id: 'admin-default' } as any);
+    modelsService.findById.mockImplementation(async (id: string) => ({ id, omitTemperature: false }));
+
+    const result = await service.buildAgentsForStream(userId, 'request-model', ['tagged-agent']);
+
+    expect(modelsService.getDefaultModel).toHaveBeenCalled();
+    expect(result[0].chatbot.model).toBe('admin-default');
   });
 
   it('uses a tagged agent reasoning effort only when its model supports the value', async () => {
@@ -719,6 +768,7 @@ describe('AgentService connector skill inheritance', () => {
       'connector-skill',
     ]);
     expect(result).toHaveLength(1);
+    expect(result[0].agent_type).toBe('worker');
     expect(result[0].tools.map((tool) => tool.name)).toEqual([
       'workspace_run_code',
       'workspace_upload_file',
@@ -972,11 +1022,12 @@ describe('AgentService connector skill inheritance', () => {
         fixed_params: { limit: 10 },
         actions: [expect.objectContaining({
           action_key: 'search',
-          parameter_schema: {
+          parameter_schema: {},
+          parameter_schema_json: JSON.stringify({
             type: 'object',
             properties: { query: { type: 'string' }, limit: { type: 'number' } },
             additionalProperties: false,
-          },
+          }),
         })],
       }),
     ]);

@@ -44,6 +44,7 @@ describe('SemanticModelMappingProposalService AGE mutation synchronization', () 
     }),
   };
   const indexJobs = { enqueue: jest.fn().mockResolvedValue(undefined) };
+  const ownership = { assertLegacyWriteAllowed: jest.fn().mockResolvedValue(undefined) };
   const service = new SemanticModelMappingProposalService(
     {} as never,
     models as never,
@@ -52,6 +53,7 @@ describe('SemanticModelMappingProposalService AGE mutation synchronization', () 
     {} as never,
     ageGraph as never,
     indexJobs as never,
+    ownership as never,
   );
 
   beforeEach(() => {
@@ -74,7 +76,7 @@ describe('SemanticModelMappingProposalService AGE mutation synchronization', () 
 
     expect(graphCommands.apply).toHaveBeenCalled();
     expect(ageGraph.buildGraph).not.toHaveBeenCalled();
-    expect(indexJobs.enqueue).toHaveBeenCalledWith('model-id');
+    expect(indexJobs.enqueue).not.toHaveBeenCalled();
   });
 
   it('rebuilds and indexes after creating a graph-viewer edge', async () => {
@@ -89,7 +91,7 @@ describe('SemanticModelMappingProposalService AGE mutation synchronization', () 
 
     expect(graphCommands.apply).toHaveBeenCalled();
     expect(ageGraph.buildGraph).not.toHaveBeenCalled();
-    expect(indexJobs.enqueue).toHaveBeenCalledWith('model-id');
+    expect(indexJobs.enqueue).not.toHaveBeenCalled();
   });
 
   it('allows a shared viewer to index without rebuilding the AGE graph', async () => {

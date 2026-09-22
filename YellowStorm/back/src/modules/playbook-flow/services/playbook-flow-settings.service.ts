@@ -21,6 +21,11 @@ export interface ResolvedPlaybookPlannerAgentConfig extends Omit<PlaybookPlanner
   omitTemperature: boolean;
 }
 
+export interface ResolvedEvaluationModelConfig {
+  model: string;
+  omitTemperature: boolean;
+}
+
 @Injectable()
 export class PlaybookFlowSettingsService {
   constructor(
@@ -124,6 +129,10 @@ export class PlaybookFlowSettingsService {
   }
 
   async resolveAdvisorEvaluationModelId(): Promise<string> {
+    return (await this.resolveAdvisorEvaluationModelConfig()).model;
+  }
+
+  async resolveAdvisorEvaluationModelConfig(): Promise<ResolvedEvaluationModelConfig> {
     const adminSettings = await this.getAdminSettings();
     const configuredModelId = adminSettings.advisorEvaluationModelId?.trim() || null;
 
@@ -132,7 +141,7 @@ export class PlaybookFlowSettingsService {
       if (validation.valid && validation.model) {
         const identifier = this.modelsService.getModelIdentifier(validation.model);
         if (identifier) {
-          return identifier;
+          return { model: identifier, omitTemperature: validation.model.omitTemperature === true };
         }
       }
 
@@ -145,7 +154,7 @@ export class PlaybookFlowSettingsService {
       throw new ServiceUnavailableException(ErrorCode.AI_SERVICE_ERROR);
     }
 
-    return fallbackIdentifier;
+    return { model: fallbackIdentifier, omitTemperature: defaultModel?.omitTemperature === true };
   }
 
   async resolveReplayEvaluationModelId(): Promise<string> {

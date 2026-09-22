@@ -9,6 +9,29 @@ describe('parseMarkdownBlocks', () => {
     expect(blocks.map((b) => b.kind)).toEqual(['heading', 'paragraph', 'bullet', 'numbered', 'quote', 'paragraph']);
   });
 
+  it('parses GFM tables into header + body rows with inline runs', () => {
+    const blocks = parseMarkdownBlocks('| Fixing | Rate |\n| --- | :---: |\n| **EUR3M** | `1.2` |\n| -15D | 0.5 |');
+    expect(blocks).toHaveLength(1);
+    const table = blocks[0];
+    expect(table.kind).toBe('table');
+    expect(table.kind === 'table' && table.header.map((runs) => runs[0].text)).toEqual(['Fixing', 'Rate']);
+    expect(table.kind === 'table' && table.rows[0][0]).toEqual([{ text: 'EUR3M', bold: true }]);
+    expect(table.kind === 'table' && table.rows[0][1]).toEqual([{ text: '1.2', code: true }]);
+    expect(table.kind === 'table' && table.rows[1].map((runs) => runs[0].text)).toEqual(['-15D', '0.5']);
+  });
+
+  it('accepts single-dash delimiters and keeps escaped pipes inside cells', () => {
+    const blocks = parseMarkdownBlocks('| a | b |\n| - | - |\n| x \\| y | z |');
+    const table = blocks[0];
+    expect(table.kind).toBe('table');
+    expect(table.kind === 'table' && table.rows[0].map((runs) => runs[0].text)).toEqual(['x | y', 'z']);
+  });
+
+  it('keeps pipe-only text as a paragraph when no delimiter row follows', () => {
+    const blocks = parseMarkdownBlocks('a | b');
+    expect(blocks).toEqual([{ kind: 'paragraph', runs: [{ text: 'a | b' }] }]);
+  });
+
   it('captures fenced code blocks verbatim', () => {
     const blocks = parseMarkdownBlocks('```python\nprint(1)\nprint(2)\n```');
     expect(blocks).toEqual([{ kind: 'code', text: 'print(1)\nprint(2)' }]);
@@ -71,8 +94,18 @@ describe('buildExportBlocks', () => {
     const blocks = buildExportBlocks(messages, { user: 'User', assistant: 'Assistant' });
     expect(blocks).toEqual([
       { role: 'user', label: 'User', timestamp: '2026-01-01T10:00:00Z', markdown: 'Question?' },
-      { role: 'ai', label: 'Assistant', timestamp: '2026-01-01T10:00:05Z', markdown: 'Answer' },
+      { role: 'ai', label: 'Assistant', timestamp: '2026-01-01T10:00:05Z', markdown: 'Answer', components: [{ type: 'text', data: { content: 'Answer' } }] },
     ]);
+  });
+
+  it('keeps chart-only answers that have no markdown', () => {
+    const messages = [
+      { conversationType: 'ai', components: [{ id: 'c', type: 'chart', data: { kind: 'bar', data: [{ x: 1 }], series: [], config: {}, xAxisKey: 'x' } }], createdAt: '2026-01-01T10:00:05Z' },
+    ] as unknown as Message[];
+    const blocks = buildExportBlocks(messages, { user: 'User', assistant: 'Assistant' });
+    expect(blocks).toHaveLength(1);
+    expect(blocks[0].markdown).toBe('');
+    expect(blocks[0].components).toHaveLength(1);
   });
 
   it('exports each answer AFTER its question even when the answer timestamp is earlier', () => {

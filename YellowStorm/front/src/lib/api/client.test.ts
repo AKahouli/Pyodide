@@ -52,7 +52,7 @@ vi.mock('@/modules/conversation-v2/conversationV2Stream', () => ({
   conversationV2StreamService: { reconnectWithNewToken: reconnectConversationV2Mock },
 }));
 
-import './client';
+import { clearAuthData, scheduleProactiveRefresh } from './client';
 
 const responseErrorHandler = responseUseMock.mock.calls[0]?.[1] as (error: unknown) => Promise<unknown>;
 
@@ -80,5 +80,40 @@ describe('apiClient token refresh', () => {
       ...originalRequest,
       headers: { Authorization: 'Bearer fresh-token' },
     }));
+  });
+
+  it('refreshes shortly before the access token expires', async () => {
+    vi.useFakeTimers();
+    const nowSeconds = Math.floor(Date.now() / 1000);
+    const payload = btoa(JSON.stringify({ exp: nowSeconds + 120 }))
+      .replace(/\+/g, '-')
+      .replace(/\//g, '_')
+      .replace(/=+$/, '');
+
+    scheduleProactiveRefresh(`header.${payload}.signature`);
+    await vi.advanceTimersByTimeAsync(61_000);
+
+    expect(apiClientPostMock).toHaveBeenCalledWith(
+      '/auth/refresh',
+      null,
+      expect.objectContaining({ headers: expect.objectContaining({ 'X-Refresh-Attempt-Id': expect.any(String) }) }),
+    );
+    clearAuthData();
+    vi.useRealTimers();
+  });
+
+  it('cancels proactive refresh when auth data is cleared', async () => {
+    vi.useFakeTimers();
+    const payload = btoa(JSON.stringify({ exp: Math.floor(Date.now() / 1000) + 120 }))
+      .replace(/\+/g, '-')
+      .replace(/\//g, '_')
+      .replace(/=+$/, '');
+
+    scheduleProactiveRefresh(`header.${payload}.signature`);
+    clearAuthData();
+    await vi.advanceTimersByTimeAsync(120_000);
+
+    expect(apiClientPostMock).not.toHaveBeenCalled();
+    vi.useRealTimers();
   });
 });

@@ -9,6 +9,7 @@ import {
   Pencil,
   Trash2,
   ChevronRight,
+  Users,
 } from 'lucide-react';
 import {
   SidebarMenu,
@@ -29,6 +30,7 @@ import { useAuth } from '@/modules/auth';
 import { isPendingAdminApproval } from '@/modules/auth/utils/isPendingAdminApproval';
 import {
   useProjects,
+  useSharedProjects,
   useProjectStore,
   CreateProjectDialog,
   RenameProjectDialog,
@@ -167,21 +169,20 @@ const ProjectRow = memo(function ProjectRow({ project, onRename, onDelete, insid
   );
 });
 
-export const ProjectsSection = memo(function ProjectsSection() {
+export const ProjectsSection = memo(function ProjectsSection({ label }: { label?: string }) {
   const { t } = useModuleTranslation('sidebar');
   const { user } = useAuth();
   const pendingApproval = isPendingAdminApproval(user);
   const projects = useProjects();
+  const sharedProjects = useSharedProjects();
   const fetchProjects = useProjectStore((s) => s.fetchProjects);
+  const fetchSharedProjects = useProjectStore((s) => s.fetchSharedProjects);
   const createProject = useProjectStore((s) => s.createProject);
   const renameProject = useProjectStore((s) => s.renameProject);
   const deleteProject = useProjectStore((s) => s.deleteProject);
   const navigate = useNavigate();
 
-  const [open, setOpen] = useState<boolean>(() => {
-    if (typeof window === 'undefined') return false;
-    return localStorage.getItem('projects:sectionOpen') === 'true';
-  });
+  const [open, setOpen] = useState(false);
   const [createOpen, setCreateOpen] = useState(false);
   const [renameTarget, setRenameTarget] = useState<Project | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<Project | null>(null);
@@ -189,14 +190,9 @@ export const ProjectsSection = memo(function ProjectsSection() {
   useEffect(() => {
     if (pendingApproval) return;
     fetchProjects();
+    fetchSharedProjects();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pendingApproval]);
-
-  useEffect(() => {
-    if (typeof window !== 'undefined') {
-      localStorage.setItem('projects:sectionOpen', String(open));
-    }
-  }, [open]);
 
   const handleCreate = useCallback(
     async (name: string) => {
@@ -228,9 +224,9 @@ export const ProjectsSection = memo(function ProjectsSection() {
         <SidebarMenu>
           <SidebarMenuItem>
             <CollapsibleTrigger asChild>
-              <SidebarMenuButton tooltip={t('actions.projects.label')}>
+              <SidebarMenuButton tooltip={label ?? t('actions.projects.label')}>
                 <Folder />
-                <span>{t('actions.projects.label')}</span>
+                <span>{label ?? t('actions.projects.label')}</span>
                 <ChevronDown
                   className={`ml-auto h-4 w-4 transition-transform ${open ? '' : '-rotate-90'}`}
                 />
@@ -291,6 +287,25 @@ export const ProjectsSection = memo(function ProjectsSection() {
                 </DropdownMenu>
               </SidebarMenuItem>
             )}
+
+            {sharedProjects.length > 0 && (
+              <SidebarMenuItem className='pt-2'>
+                <span className='flex items-center gap-1.5 px-2 text-[11px] font-medium uppercase tracking-wide text-muted-foreground'>
+                  <Users className='h-3 w-3' />
+                  {t('projects.sharedWithMe')}
+                </span>
+              </SidebarMenuItem>
+            )}
+            {sharedProjects.map((project) => (
+              <SidebarMenuItem key={`shared-${project.id}`}>
+                <SidebarMenuButton asChild tooltip={`${project.name} · ${project.owner.email}`}>
+                  <NavLink to={`/projet/${project.id}`} draggable={false}>
+                    <Folder className='h-4 w-4' />
+                    <span className='truncate'>{project.name}</span>
+                  </NavLink>
+                </SidebarMenuButton>
+              </SidebarMenuItem>
+            ))}
           </SidebarMenu>
         </CollapsibleContent>
       </Collapsible>

@@ -10,6 +10,7 @@ export interface DeployState {
   deployStatus: DeployStatus;
   deployedUrl: string | null;
   lastDeployedAt: string | null;
+  ownerInviteToken?: string | null;
 }
 
 export interface CreateSessionResponse {

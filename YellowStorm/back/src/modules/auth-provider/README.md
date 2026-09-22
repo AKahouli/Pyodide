@@ -16,14 +16,14 @@ A generic, admin-configurable OAuth 2.0 provider system that supports any standa
 
 ## Schemas
 
-Four MongoDB collections back the module:
+Four Postgres tables in the `identity` schema back the module (Drizzle: `postgres/schema/identity.schema.ts`), each behind a store port with a `Pg*` adapter in `persistence/pg-auth-provider.stores.ts`:
 
-| Collection | Purpose |
-|------------|---------|
-| `auth_providers` | Provider configurations (clientId, encrypted clientSecret, URLs, scopes) |
-| `user_provider_links` | Junction table mapping user ↔ provider (compound unique: `providerKey` + `providerUserId`) |
-| `oauth_states` | CSRF state + PKCE code_verifier (10min TTL, auto-deleted via MongoDB TTL index) |
-| `provider_link_tokens` | Account linking verification and temp login tokens (TTL auto-deleted) |
+| Table | Store (port -> adapter) / Purpose |
+|-------|---------|
+| `identity.auth_providers` | `AUTH_PROVIDER_STORE` -> `PgAuthProviderStore`. Unique on `provider_key`. Provider configurations (clientId, encrypted clientSecret, URLs, scopes) |
+| `identity.user_provider_links` | `USER_PROVIDER_LINK_STORE` -> `PgUserProviderLinkStore`. Junction table mapping user ↔ provider (unique on `provider_key` + `provider_user_id`; `user_id` FK to `identity.users` with `ON DELETE CASCADE`) |
+| `identity.oauth_states` | `OAUTH_STATE_STORE` -> `PgOAuthStateStore`. CSRF state + PKCE code_verifier (10min TTL, unique on `state`, expired rows swept by `PgTtlSweeper`) |
+| `identity.provider_link_tokens` | `PROVIDER_LINK_TOKEN_STORE` -> `PgProviderLinkTokenStore`. Account linking verification and temp login tokens (unique on `token`, `user_id` FK with `ON DELETE CASCADE`, expired rows swept by `PgTtlSweeper`) |
 
 ## Services
 
@@ -105,11 +105,11 @@ In development, if `ENCRYPTION_KEY` is not set, a deterministic dev key is used.
 **What does NOT break:**
 - Email/password login — unaffected
 - Existing JWT sessions — tokens are signed with `JWT_SECRET`, not `ENCRYPTION_KEY`
-- User accounts and provider links — intact in MongoDB
+- User accounts and provider links — intact in Postgres
 
 **Recovery:**
 1. **Old key available** — restore it in `ENCRYPTION_KEY`, everything works immediately
-2. **Old key lost** — delete all providers (Admin UI or `db.auth_providers.deleteMany({})`), then re-create them with the correct credentials. User-provider links (`user_provider_links` collection) remain valid since they reference `providerKey` + `providerUserId`, not the encrypted secrets
+2. **Old key lost** — delete all providers (Admin UI, or `DELETE FROM identity.auth_providers`), then re-create them with the correct credentials. User-provider links (`identity.user_provider_links` table) remain valid since they reference `providerKey` + `providerUserId`, not the encrypted secrets
 
 **Treat `ENCRYPTION_KEY` like `JWT_SECRET`** — back it up, never lose it in production. Losing `JWT_SECRET` only invalidates sessions (users re-login), but losing `ENCRYPTION_KEY` requires re-entering all OAuth provider credentials.
 

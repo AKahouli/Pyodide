@@ -43,6 +43,25 @@ export const TOOL_FUNCTION_LABEL: Record<string, string> = {
   message_ask_user: 'Asking question',
 
   webpage_show: 'Displaying webpage',
+
+  // OpenCode App Builder runtime (sanitized function names from APImanus)
+  app_list: 'Reviewing files',
+  app_search: 'Searching the app',
+  app_read: 'Reading a file',
+  app_write: 'Updating a file',
+  app_apply_patch: 'Updating a file',
+  app_delete: 'Removing a file',
+  app_run: 'Running a check',
+  app_dev_server: 'Refreshing preview',
+  app_preview_inspect: 'Checking preview',
+  app_finalize: 'Publishing changes',
+  app_provision: 'Setting up data',
+  app_schema_get: 'Reading data schema',
+  app_schema_plan: 'Planning data schema',
+  app_schema_apply: 'Applying data schema',
+  app_policy_apply: 'Updating data access',
+  app_row_insert: 'Adding sample data',
+  app_row_query: 'Reading sample data',
 };
 
 /** Which arg to surface next to the label, mirrors Manus' TOOL_FUNCTION_ARG_MAP. */
@@ -82,7 +101,7 @@ export const TOOL_GROUP_LABEL: Record<string, string> = {
   search: 'Search',
   info: 'Search',
   message: 'Message',
-  mcp: 'MCP',
+  mcp: 'App builder',
   webpage: 'Web Page',
 };
 

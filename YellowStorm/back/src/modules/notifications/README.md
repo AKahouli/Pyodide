@@ -7,7 +7,7 @@ Real-time notifications system using Server-Sent Events (SSE) for push notificat
 This module provides:
 - SSE connection for real-time push notifications
 - Heartbeat every 15 seconds to keep connections alive
-- MongoDB storage for notification persistence and auditing
+- PostgreSQL storage (`ops.notifications`) for notification persistence and auditing
 - Multi-tab support (max 10 connections per user, new connections refused after limit)
 - Broadcast notifications to all connected users
 
@@ -21,8 +21,8 @@ This module provides:
                                    │                          │
                                    ▼                          ▼
                         ┌──────────────────┐         ┌─────────────────┐
-                        │     MongoDB      │         │  Frontend SSE   │
-                        │  (Persistence)   │         │   Connections   │
+                        │   PostgreSQL     │         │  Frontend SSE   │
+                        │  (Pg store port) │         │   Connections   │
                         └──────────────────┘         └─────────────────┘
 ```
 
@@ -83,7 +83,7 @@ eventSource.onmessage = (event) => {
 
 ```typescript
 import { NotificationsService } from '../notifications';
-import { NotificationType, NotificationPriority } from '../notifications/schemas/notification.schema';
+import { NotificationType, NotificationPriority } from '../notifications/notification.types';
 
 @Injectable()
 export class YourService {
@@ -159,6 +159,8 @@ const stats = this.notificationsService.getConnectionStats();
 
 ## Notification Schema
 
+Notifications are stored in the Postgres table `ops.notifications` (Drizzle: `postgres/schema/ops.schema.ts`) behind the `NOTIFICATION_STORE` port, bound to `PgNotificationStore`. The logical shape below is flattened into columns (`source_module`, `priority`, `expires_at`, `metadata_extra` for `metadata.extra`; `data` and `actions` are `jsonb`) and CHECK constraints enforce the `type`, `status` and `priority` enums. Retry bookkeeping uses `retry_count` and `last_error`.
+
 ```typescript
 {
   userId?: ObjectId;           // Target user (null for broadcast)
@@ -176,7 +178,7 @@ const stats = this.notificationsService.getConnectionStats();
   metadata: {
     sourceModule: string;      // Module that sent the notification
     priority: NotificationPriority;
-    expiresAt?: Date;          // TTL for auto-cleanup
+    expiresAt?: Date;          // expires_at; expired rows deleted by PgTtlSweeper
     extra?: object;
   };
   createdAt: Date;
@@ -219,13 +221,15 @@ NOTIFICATION_MAX_PAYLOAD_SIZE_BYTES=10240     # Max data payload size
 
 ## Database Indexes
 
-```typescript
-{ userId: 1, status: 1, createdAt: -1 }  // User notifications query
-{ destination: 1, status: 1 }             // Broadcast queries
-{ 'metadata.expiresAt': 1 }               // TTL auto-cleanup
-{ createdAt: -1 }                         // Recent notifications
-{ status: 1, retryCount: 1 }              // Failed notification retry
 ```
+idx_notifications_user_status_created (user_id, status, created_at DESC)  -- User notifications query
+idx_notifications_destination_status (destination, status)                -- Broadcast queries
+idx_notifications_expires (expires_at) WHERE expires_at IS NOT NULL       -- partial index for the TTL sweep
+idx_notifications_created (created_at DESC)                               -- Recent notifications
+idx_notifications_status_retry (status, retry_count)                      -- Failed notification retry
+```
+
+There is no Mongo TTL index: `PgTtlRegistrationService` registers `ops.notifications.expires_at` with `PgTtlSweeper`, which deletes rows whose `expires_at` has passed.
 
 ## Frontend Integration
 

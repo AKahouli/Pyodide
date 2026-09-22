@@ -101,6 +101,17 @@ class AgentSuggestion(BaseModel):
         super().__init__(**_sync_workspace_aliases(data))
 
 
+class AgentTeamNode(BaseModel):
+    agent_id: str
+    parent_agent_id: Optional[str] = None
+    order: int = 0
+
+
+class AgentTeamDefinition(BaseModel):
+    team_id: str
+    nodes: List[AgentTeamNode]
+
+
 class RunAgentTeamRequest(BaseModel):
     """Schema for running agent team requests."""
 
@@ -112,6 +123,7 @@ class RunAgentTeamRequest(BaseModel):
     attached_files: Optional[List[Dict]] = None
     attached_images: Optional[List[Dict]] = None
     previous_attached_files: Optional[List[Dict]] = None
+    attachment_context: Optional[str] = None  # Bounded backend-built attachment text (untrusted-data wrapped)
     manager_prompt: str = "You are a manager agent that coordinates tasks between specialized agents."
     chatbot_name: dict
     agents: Optional[List[AgentSuggestion]] = []
@@ -128,6 +140,7 @@ class RunAgentTeamRequest(BaseModel):
     skills: Optional[List[Skill]] = None  # Conversation-level skills selected by the user
     deep_search_enabled: bool = False
     correction_replay_context: Optional[CorrectionReplayContext] = None
+    team_definition: Optional[AgentTeamDefinition] = None
 
     def __init__(self, **data: Any) -> None:
         super().__init__(**_sync_workspace_aliases(data))

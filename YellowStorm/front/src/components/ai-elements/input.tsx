@@ -1,12 +1,14 @@
+import { resolveMentions } from './resolve-mentions';
 import { PromptInput, PromptInputActionAddAttachments, PromptInputActionMenu, PromptInputActionMenuContent, PromptInputActionMenuTrigger, PromptInputAttachment, PromptInputAttachments, PromptInputBody, PromptInputButton, PromptInputFooter, type PromptInputMessage, PromptInputProvider, PromptInputSpeechButton, PromptInputSubmit, PromptInputTextarea, PromptInputTools } from '@/components/ai-elements/prompt-input';
 import { MentionPopup, type MentionAgent } from '@/components/ai-elements/mention-popup';
 import { InputContextMenu } from '@/components/ai-elements/input-context-menu';
+import { ContentAwareSubmit } from './content-aware-submit';
 import { CreateEditAgentDialog } from '@/modules/agent/components/CreateEditAgentDialog';
 import { ConnectorReposDialog } from '@/components/ai-elements/connector-repos-dialog';
 import { RecentConnectorsMenu, ManageConnectorsDialog, useRecentConnectors } from '@/modules/connector';
 import { RecentSkillsMenu, ManageSkillsDialog, useRecentSkills, SelectedSkillsPills } from '@/modules/skill';
 
-import { CheckIcon, Pencil } from 'lucide-react';
+import { Pencil, Plus } from 'lucide-react';
 import { useRef, useState, useEffect, useCallback, useMemo, memo, type ReactNode } from 'react';
 import { DropdownMenuItem } from '@/components/ui/dropdown-menu';
 import { SketchBoardDialog } from '@/modules/conversation/components/SketchBoard';
@@ -14,7 +16,7 @@ import { useProviderAttachments } from '@/components/ai-elements/prompt-input';
 import { toast } from 'sonner';
 import Usage from '../ui/usage';
 import { useModels, useChefs, useModelById, useDefaultModel } from '@/modules/models';
-import { useSelectedModelId, useSetSelectedModelId, useSelectedWorkspaceIds, useSetSelectedWorkspaceIds, useResetSelectedWorkspaceIds, useSelectedSemanticModelId, useSetSelectedSemanticModelId, useSetSelectedConnectorRepo, useSelectedConnectorRepo, useSelectedSkillIds, useToggleSelectedSkill } from '@/modules/conversation/store';
+import { useSelectedModelId, useSetSelectedModelId, useSelectedReasoningEffort, useSetSelectedReasoningEffort, useSelectedWorkspaceIds, useSetSelectedWorkspaceIds, useResetSelectedWorkspaceIds, useSelectedSemanticModelId, useSetSelectedSemanticModelId, useSetSelectedConnectorRepo, useSelectedConnectorRepo, useSelectedSkillIds, useToggleSelectedSkill } from '@/modules/conversation/store';
 import { WorkspaceSelect } from '@/modules/workspace/components/WorkspaceSelect';
 import { SemanticModelSelect } from '@/modules/conversation/components/SemanticModelSelect';
 import { useCurrentConversation } from '@/modules/conversation/store';
@@ -26,19 +28,7 @@ import type { UserAgentFormValues } from '@/modules/agent/components/AgentFormSc
 import { useModuleTranslation } from '@/modules/localization';
 import { getActiveConnectors, getActiveSkills, type ConnectorOption } from '@/modules/agent/api';
 import type { SkillOption } from '@/modules/agent/types';
-import {
-  ModelSelector,
-  ModelSelectorContent,
-  ModelSelectorEmpty,
-  ModelSelectorGroup,
-  ModelSelectorInput,
-  ModelSelectorItem,
-  ModelSelectorList,
-  ModelSelectorLogo,
-  ModelSelectorLogoGroup,
-  ModelSelectorName,
-  ModelSelectorTrigger,
-} from '@/components/ai-elements/model-selector';
+import { ModelReasoningSelector } from '@/components/ai-elements/model-reasoning-selector';
 
 const SUBMITTING_TIMEOUT = 200;
 const STREAMING_TIMEOUT = 2000;
@@ -65,22 +55,30 @@ export interface FileUploadInfo {
 }
 
 interface InputProps {
-  onSubmit?: (message: PromptInputMessage, modelId: string, agentIds?: string[], memberIds?: string[], workspaceIds?: string[], connectorRepo?: { connectorId: string; connectorName: string; repoId: string; repoName: string; repoUrl?: string }, teamIds?: string[]) => void;
+  toolLabels?: { attachments: string; knowledge: string; data: string };
+  onSubmit?: (message: PromptInputMessage, modelId: string, agentIds?: string[], memberIds?: string[], workspaceIds?: string[], connectorRepo?: { connectorId: string; connectorName: string; repoId: string; repoName: string; repoUrl?: string }, teamIds?: string[]) => void | Promise<void>;
+  draftKey?: string;
+  initialInput?: string;
+  initialMention?: { id: string; name: string; kind: 'agent' | 'team' };
   onStop?: () => void;
   status?: 'submitted' | 'streaming' | 'ready' | 'error';
   disabled?: boolean;
   submitDisabled?: boolean;
+  requireContent?: boolean;
   placeholder?: string;
   onFilesAdded?: (files: File[], ids: string[]) => void;
   onFileRemoved?: (id: string) => void;
   uploadingFiles?: FileUploadInfo[];
   accept?: string;
   maxFiles?: number;
+  /** Hides the add-attachments entry (admin attachment feature off). */
+  attachmentsDisabled?: boolean;
   members?: Array<{ id: string; name: string }>;
   autoMention?: { id: string; name: string; isMember?: boolean; _msgId?: string };
   showWorkspaceSelect?: boolean;
   preserveWorkspaceSelectionOnSubmit?: boolean;
   showModelSelector?: boolean;
+  showReasoningEffort?: boolean;
   governedMode?: boolean;
   mentionAgents?: MentionAgent[];
   enableTeamMentions?: boolean;
@@ -92,14 +90,18 @@ interface InputProps {
   extraTools?: ReactNode;
   /** Fires on each textarea input event with the current value. */
   onTextChange?: (text: string) => void;
+  /** Focuses the composer on mount. */
+  autoFocus?: boolean;
 }
 
-const Input = memo(function Input({ onSubmit: externalSubmit, onStop, status: externalStatus, disabled, submitDisabled, placeholder, onFilesAdded, onFileRemoved, uploadingFiles, accept, maxFiles, members, autoMention, showWorkspaceSelect = true, preserveWorkspaceSelectionOnSubmit = false, showModelSelector = false, governedMode = false, mentionAgents, enableTeamMentions = true, workspaceOptions, onWorkspaceSelectionChange, belowTextarea, extraTools, onTextChange }: InputProps = {}) {
+const Input = memo(function Input({ toolLabels, onSubmit: externalSubmit, draftKey, initialInput, initialMention, onStop, status: externalStatus, disabled, submitDisabled, requireContent = false, placeholder, onFilesAdded, onFileRemoved, uploadingFiles, accept, maxFiles, attachmentsDisabled, members, autoMention, showWorkspaceSelect = true, preserveWorkspaceSelectionOnSubmit = false, showModelSelector = false, showReasoningEffort = true, governedMode = false, mentionAgents, enableTeamMentions = true, workspaceOptions, onWorkspaceSelectionChange, belowTextarea, extraTools, onTextChange, autoFocus = false }: InputProps = {}) {
   const models = useModels();
   const chefs = useChefs();
   const defaultModel = useDefaultModel();
   const selectedModelId = useSelectedModelId();
   const setSelectedModelId = useSetSelectedModelId();
+  const selectedReasoningEffort = useSelectedReasoningEffort();
+  const setSelectedReasoningEffort = useSetSelectedReasoningEffort();
   const selectedWorkspaceIds = useSelectedWorkspaceIds();
   const setSelectedWorkspaceIds = useSetSelectedWorkspaceIds();
   const resetSelectedWorkspaceIds = useResetSelectedWorkspaceIds();
@@ -107,7 +109,6 @@ const Input = memo(function Input({ onSubmit: externalSubmit, onStop, status: ex
   const setSelectedSemanticModelId = useSetSelectedSemanticModelId();
   const selectedConnectorRepo = useSelectedConnectorRepo();
   const setSelectedConnectorRepo = useSetSelectedConnectorRepo();
-  const [modelSelectorOpen, setModelSelectorOpen] = useState(false);
   const [status, setStatus] = useState<'submitted' | 'streaming' | 'ready' | 'error'>('ready');
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
@@ -116,13 +117,12 @@ const Input = memo(function Input({ onSubmit: externalSubmit, onStop, status: ex
   const [mentionFilter, setMentionFilter] = useState('');
   const [mentionStartIndex, setMentionStartIndex] = useState<number | null>(null);
   const [mentionAnchorPos, setMentionAnchorPos] = useState({ top: 0, left: 0 });
-  const [mentionMap, setMentionMap] = useState<Map<string, { id: string; type: 'agent' | 'member' | 'team' }>>(new Map());
+  const [mentionMap, setMentionMap] = useState<Map<string, { id: string; type: 'agent' | 'member' | 'team' }>>(() => new Map(initialMention ? [[initialMention.name, { id: initialMention.id, type: initialMention.kind }]] : []));
   const [showCreateAgentDialog, setShowCreateAgentDialog] = useState(false);
   const [savingAgent, setSavingAgent] = useState(false);
   const [sketchOpen, setSketchOpen] = useState(false);
   const lastAppliedMentionMsgId = useRef<string | null>(null);
   const { t } = useModuleTranslation('common');
-  const { t: tConversation } = useModuleTranslation('conversation');
 
   const currentConversation = useCurrentConversation();
   const [sharedAgents, setSharedAgents] = useState<Agent[]>([]);
@@ -470,7 +470,7 @@ const Input = memo(function Input({ onSubmit: externalSubmit, onStop, status: ex
   }, [onWorkspaceSelectionChange, setSelectedWorkspaceIds]);
 
   const handleSubmit = useCallback(
-    (message: PromptInputMessage) => {
+    async (message: PromptInputMessage) => {
       // Block submission while an answer is being generated
       if (submitDisabled || derivedStatus === 'streaming' || derivedStatus === 'submitted') {
         return;
@@ -483,55 +483,12 @@ const Input = memo(function Input({ onSubmit: externalSubmit, onStop, status: ex
         return;
       }
 
-      // Extract agent and member IDs from mentions still present in the text
-      // Checks both typed mentions (mentionMap) and pasted @AgentName patterns
-      const agentIdSet = new Set<string>();
-      const memberIdSet = new Set<string>();
-      const teamIdSet = new Set<string>();
-
-      if (message.text) {
-        // Typed mentions tracked via popup selection
-        for (const [name, data] of mentionMap) {
-          if (message.text.includes(`@${name}`)) {
-            if (data.type === 'agent') {
-              agentIdSet.add(data.id);
-            } else if (data.type === 'team') {
-              teamIdSet.add(data.id);
-            } else {
-              memberIdSet.add(data.id);
-            }
-          }
-        }
-        // Pasted or untracked mentions — match against known teams (checked before
-        // agents so a team name isn't mistaken for a same-named agent)
-        for (const team of memoizedTeams) {
-          if (!teamIdSet.has(team.id) && message.text.includes(`@${team.name}`)) {
-            teamIdSet.add(team.id);
-          }
-        }
-        // Pasted or untracked mentions — match against known agents
-        for (const agent of memoizedAgents) {
-          if (!agentIdSet.has(agent.id) && agent.isActive && message.text.includes(`@${agent.name}`)) {
-            agentIdSet.add(agent.id);
-          }
-        }
-        // Pasted or untracked mentions — match against group members (if any)
-        if (members) {
-          for (const member of members) {
-            if (!memberIdSet.has(member.id) && message.text.includes(`@${member.name}`)) {
-              memberIdSet.add(member.id);
-            }
-          }
-        }
-      }
-      const agentIds = [...agentIdSet];
-      const memberIds = [...memberIdSet];
-      const teamIds = [...teamIdSet];
+      const { agentIds, memberIds, teamIds } = resolveMentions(message.text ?? '', mentionMap, memoizedAgents, memoizedTeams, members);
       const allowedWorkspaceIds = workspaceOptions?.map((workspace) => workspace.id);
       const submittedWorkspaceIds = allowedWorkspaceIds ? selectedWorkspaceIds.filter((id) => allowedWorkspaceIds.includes(id)) : selectedWorkspaceIds;
 
       if (externalSubmit) {
-        externalSubmit(
+        const result = await externalSubmit(
           message,
           model,
           agentIds.length > 0 ? agentIds : undefined,
@@ -544,7 +501,7 @@ const Input = memo(function Input({ onSubmit: externalSubmit, onStop, status: ex
         if (!preserveWorkspaceSelectionOnSubmit) {
           resetSelectedWorkspaceIds();
         }
-        return;
+        return result;
       }
 
       setStatus('submitted');
@@ -564,7 +521,8 @@ const Input = memo(function Input({ onSubmit: externalSubmit, onStop, status: ex
 
   return (
     <div>
-      <PromptInputProvider onFilesAdded={onFilesAdded} onFileRemoved={onFileRemoved} maxFiles={maxFiles} onError={(err) => toast.error(err.message)}>
+      {/* maxFiles 0 also blocks drag-drop when attachments are disabled */}
+      <PromptInputProvider key={draftKey} draftKey={draftKey} initialInput={initialInput} onFilesAdded={onFilesAdded} onFileRemoved={onFileRemoved} maxFiles={attachmentsDisabled ? 0 : maxFiles} onError={(err) => toast.error(err.message)}>
         <PromptInput globalDrop multiple onSubmit={handleSubmit} accept={accept} maxFiles={maxFiles}>
           <PromptInputAttachments>
             {(attachment) => {
@@ -574,16 +532,16 @@ const Input = memo(function Input({ onSubmit: externalSubmit, onStop, status: ex
           </PromptInputAttachments>
           <PromptInputBody>
             {governedMode
-              ? <PromptInputTextarea ref={textareaRef} disabled={disabled} placeholder={placeholder} onInput={handleTextareaInput} />
-              : <InputContextMenu onMentionAgent={handleContextMentionAgent} onCreateAgent={() => setShowCreateAgentDialog(true)}><PromptInputTextarea ref={textareaRef} disabled={disabled} placeholder={placeholder} onInput={handleTextareaInput} /></InputContextMenu>}
+              ? <PromptInputTextarea ref={textareaRef} autoFocus={autoFocus} disabled={disabled} placeholder={placeholder} onInput={handleTextareaInput} />
+              : <InputContextMenu onMentionAgent={handleContextMentionAgent} onCreateAgent={() => setShowCreateAgentDialog(true)}><PromptInputTextarea ref={textareaRef} autoFocus={autoFocus} disabled={disabled} placeholder={placeholder} onInput={handleTextareaInput} /></InputContextMenu>}
           </PromptInputBody>
           {belowTextarea}
-          <PromptInputFooter>
-            <PromptInputTools>
+          <PromptInputFooter className='flex-wrap'>
+            <PromptInputTools className='min-w-0 flex-wrap'>
               <PromptInputActionMenu>
-                <PromptInputActionMenuTrigger />
+                <PromptInputActionMenuTrigger size={toolLabels ? 'sm' : undefined} {...(toolLabels ? { 'aria-label': toolLabels.attachments } : {})}>{toolLabels && <><Plus className='size-4' /><span>{toolLabels.attachments}</span></>}</PromptInputActionMenuTrigger>
                 <PromptInputActionMenuContent>
-                  <PromptInputActionAddAttachments />
+                  {!attachmentsDisabled && <PromptInputActionAddAttachments />}
                   <DropdownMenuItem onSelect={() => setSketchOpen(true)}>
                     <Pencil className='mr-2 size-4' /> {t('input.drawSketch')}
                   </DropdownMenuItem>
@@ -602,52 +560,26 @@ const Input = memo(function Input({ onSubmit: externalSubmit, onStop, status: ex
                   />}
                 </PromptInputActionMenuContent>
               </PromptInputActionMenu>
-              {showWorkspaceSelect && <WorkspaceSelect selectedIds={selectedWorkspaceIds} onChange={handleWorkspaceSelectionChange} disabled={disabled || submitDisabled || Boolean(selectedSemanticModelId)} workspaceOptions={workspaceOptions} className='size-11 md:size-8' />}
-              {showWorkspaceSelect && <SemanticModelSelect value={selectedSemanticModelId} onChange={setSelectedSemanticModelId} disabled={disabled || submitDisabled} />}
-               {showModelSelector && !governedMode && models.length > 0 && <ModelSelector onOpenChange={setModelSelectorOpen} open={modelSelectorOpen}>
-                 <ModelSelectorTrigger asChild>
-                   <PromptInputButton type='button' disabled={disabled || submitDisabled}>
-                     {selectedModelData?.chefSlug && <ModelSelectorLogo provider={selectedModelData.chefSlug} />}
-                     <ModelSelectorName>{selectedModelData?.name ?? tConversation('newConversation.modelSelector.unset')}</ModelSelectorName>
-                   </PromptInputButton>
-                 </ModelSelectorTrigger>
-                 <ModelSelectorContent>
-                   <ModelSelectorInput placeholder={tConversation('newConversation.modelSelector.search')} />
-                   <ModelSelectorList>
-                     <ModelSelectorEmpty>{tConversation('newConversation.modelSelector.empty')}</ModelSelectorEmpty>
-                     {chefs.map((chef) => (
-                       <ModelSelectorGroup heading={chef.name} key={chef.slug}>
-                        {models
-                          .filter((m) => m.chefSlug === chef.slug)
-                          .map((m) => (
-                            <ModelSelectorItem
-                              key={m.id}
-                              onSelect={() => {
-                                setSelectedModelId(m.id);
-                                setModelSelectorOpen(false);
-                              }}
-                               value={`${m.name} ${m.chef}`}>
-                              <ModelSelectorLogo provider={m.chefSlug} />
-                              <ModelSelectorName>{m.name}</ModelSelectorName>
-                              <ModelSelectorLogoGroup>
-                                {m.providers.map((provider) => (
-                                  <ModelSelectorLogo key={provider} provider={provider} />
-                                ))}
-                              </ModelSelectorLogoGroup>
-                               {model === m.id && <CheckIcon className='ml-auto size-4 text-muted-foreground' />}
-                            </ModelSelectorItem>
-                          ))}
-                      </ModelSelectorGroup>
-                    ))}
-                  </ModelSelectorList>
-                </ModelSelectorContent>
-               </ModelSelector>}
+              {showWorkspaceSelect && <WorkspaceSelect selectedIds={selectedWorkspaceIds} onChange={handleWorkspaceSelectionChange} disabled={disabled || submitDisabled || Boolean(selectedSemanticModelId)} workspaceOptions={workspaceOptions} label={toolLabels?.knowledge} className={toolLabels ? 'h-11 w-auto px-3' : 'size-11 md:size-8'} />}
+              {showWorkspaceSelect && <SemanticModelSelect label={toolLabels?.data} value={selectedSemanticModelId} onChange={setSelectedSemanticModelId} disabled={disabled || submitDisabled} />}
+               {showModelSelector && !governedMode && models.length > 0 && <ModelReasoningSelector
+                 models={models}
+                 chefs={chefs}
+                 model={selectedModelData}
+                 reasoningEffort={selectedReasoningEffort ?? selectedModelData?.reasoning?.defaultEffort}
+                 showReasoningEffort={showReasoningEffort}
+                 disabled={disabled || submitDisabled}
+                 onModelChange={setSelectedModelId}
+                 onReasoningEffortChange={setSelectedReasoningEffort}
+               />}
               {extraTools}
             </PromptInputTools>
-            <div className='flex flex-row w-fit gap-3 px-1'>
+            <div className='ml-auto flex w-fit shrink-0 flex-row gap-3 px-1'>
               <Usage />
 
-              <PromptInputSubmit status={derivedStatus} disabled={disabled || submitDisabled} onStop={onStop} />
+              {requireContent
+                ? <ContentAwareSubmit hasCompletedFiles={Boolean(uploadingFiles?.some((file) => file.status === 'completed'))} status={derivedStatus} disabled={disabled || submitDisabled} onStop={onStop} />
+                : <PromptInputSubmit status={derivedStatus} disabled={disabled || submitDisabled} onStop={onStop} />}
             </div>
           </PromptInputFooter>
         </PromptInput>

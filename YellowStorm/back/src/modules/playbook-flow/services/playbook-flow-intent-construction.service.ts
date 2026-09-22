@@ -1,6 +1,6 @@
 import { Injectable, Logger, Optional } from '@nestjs/common';
 import { randomUUID } from 'crypto';
-import { NotFoundException } from '@modules/exceptions';
+import { ConflictException, NotFoundException } from '@modules/exceptions';
 import { ErrorCode } from '@modules/exceptions/constants/error-codes';
 import { RequestPlaybookFlowIntentDto } from '../dto/request-playbook-flow-intent.dto';
 import type { PlaybookIntentConstructionEvent, PlaybookIntentConstructionStartResult, PlaybookIntentConstructionStatus } from '../interfaces/playbook-flow-intent-construction.interface';
@@ -8,7 +8,7 @@ import { PlaybookFlowIntentService, type PlaybookIntentSuggestion } from './play
 import { PlaybookIntentBlueprintCompilerService } from './playbook-intent-blueprint-compiler.service';
 import type { PreparedConstructionInput } from '../interfaces/playbook-assistant.interface';
 import type { PlaybookIntentDiagnostic } from '../interfaces/playbook-flow-intent-diagnostic.interface';
-import { PlaybookAssistantOperationService, type PersistableConstructionEvent } from '../assistant/playbook-assistant-operation.service';
+import { PLAYBOOK_ASSISTANT_WORKER_LEASE_MS, PlaybookAssistantOperationService, type PersistableConstructionEvent } from '../assistant/playbook-assistant-operation.service';
 import type { UpdatePlaybookFlowDto } from '../dto/update-playbook-flow.dto';
 import type { TrustedConversationPlaybookContextV1 } from '@modules/conversation/interfaces/conversation-playbook-handoff.interface';
 
@@ -26,6 +26,7 @@ interface PlaybookIntentConstructionJob {
 @Injectable()
 export class PlaybookFlowIntentConstructionService {
   private static readonly JOB_RETENTION_MS = 5 * 60 * 1000;
+  private static readonly WORKER_HEARTBEAT_MS = 60 * 1000;
 
   private readonly jobs = new Map<string, PlaybookIntentConstructionJob>();
   private readonly logger = new Logger(PlaybookFlowIntentConstructionService.name);
@@ -164,6 +165,7 @@ export class PlaybookFlowIntentConstructionService {
   private async run(job: PlaybookIntentConstructionJob, dto: RequestPlaybookFlowIntentDto, context: Awaited<ReturnType<PlaybookFlowIntentService['buildIntentAnalysisContext']>>): Promise<void> {
     job.status = 'running';
     const cancellationWatcher = this.watchDurableCancellation(job);
+    const leaseHeartbeat = this.startWorkerLeaseHeartbeat(job);
     const startedAt = Date.now();
     let llmCalls = 0;
     let failureKind: 'strict_validation' | undefined;
@@ -207,6 +209,7 @@ export class PlaybookFlowIntentConstructionService {
       this.scheduleCleanup(job);
     } finally {
       if (cancellationWatcher) clearInterval(cancellationWatcher);
+      if (leaseHeartbeat) clearInterval(leaseHeartbeat);
     }
   }
 
@@ -233,6 +236,7 @@ export class PlaybookFlowIntentConstructionService {
   private async runPrepared(job: PlaybookIntentConstructionJob, suggestions: PlaybookIntentSuggestion[]): Promise<void> {
     job.status = 'running';
     const cancellationWatcher = this.watchDurableCancellation(job);
+    const leaseHeartbeat = this.startWorkerLeaseHeartbeat(job);
     try {
       await this.emit(job, { type: 'progress', constructionId: job.id, playbookId: job.flowId, phase: 'planning', message: 'Preparing advisor remediation preview' });
       await this.emitSuggestions(job, suggestions);
@@ -242,6 +246,7 @@ export class PlaybookFlowIntentConstructionService {
       this.scheduleCleanup(job);
     } finally {
       if (cancellationWatcher) clearInterval(cancellationWatcher);
+      if (leaseHeartbeat) clearInterval(leaseHeartbeat);
     }
   }
 
@@ -429,7 +434,11 @@ export class PlaybookFlowIntentConstructionService {
         const status = await this.operationService.getStatus(job.flowId, job.ownerId, job.id);
         if (['completed', 'failed', 'cancelled'].includes(status.status)) {
           job.status = status.status;
-          job.abortController.abort();
+          this.stopLocalWorker(job);
+          return;
+        }
+        if (error instanceof ConflictException) {
+          this.stopLocalWorker(job);
           return;
         }
       }
@@ -450,7 +459,7 @@ export class PlaybookFlowIntentConstructionService {
         .then((status) => {
           if (status.status === 'cancelled') {
             job.status = 'cancelled';
-            job.abortController.abort();
+            this.stopLocalWorker(job);
           }
         })
         .catch((error) => {
@@ -462,6 +471,49 @@ export class PlaybookFlowIntentConstructionService {
     }, 500);
     timer.unref?.();
     return timer;
+  }
+
+  private startWorkerLeaseHeartbeat(job: PlaybookIntentConstructionJob): NodeJS.Timeout | null {
+    if (!this.operationService) return null;
+    let renewing = false;
+    let consecutiveFailures = 0;
+    let leaseDeadline = Date.now() + PLAYBOOK_ASSISTANT_WORKER_LEASE_MS - PlaybookFlowIntentConstructionService.WORKER_HEARTBEAT_MS;
+    const timer = setInterval(() => {
+      if (job.abortController.signal.aborted) return;
+      if (Date.now() >= leaseDeadline) {
+        this.stopLocalWorker(job);
+        return;
+      }
+      if (renewing) return;
+      renewing = true;
+      const renewalStartedAt = Date.now();
+      void this.operationService!.renewWorkerLease(job.flowId, job.ownerId, job.id)
+        .then((renewed) => {
+          consecutiveFailures = 0;
+          if (!renewed) {
+            this.stopLocalWorker(job);
+            return;
+          }
+          leaseDeadline = renewalStartedAt + PLAYBOOK_ASSISTANT_WORKER_LEASE_MS - PlaybookFlowIntentConstructionService.WORKER_HEARTBEAT_MS;
+          if (Date.now() >= leaseDeadline) this.stopLocalWorker(job);
+        })
+        .catch((error) => {
+          consecutiveFailures += 1;
+          this.logger.warn(`playbook_intent_construction_lease_renewal_failed constructionId=${job.id} message=${error instanceof Error ? error.message : 'unknown'}`);
+          if (consecutiveFailures >= 3) this.stopLocalWorker(job);
+        })
+        .finally(() => {
+          renewing = false;
+        });
+    }, PlaybookFlowIntentConstructionService.WORKER_HEARTBEAT_MS);
+    timer.unref?.();
+    return timer;
+  }
+
+  private stopLocalWorker(job: PlaybookIntentConstructionJob): void {
+    if (job.abortController.signal.aborted) return;
+    job.abortController.abort();
+    this.scheduleCleanup(job);
   }
 
   private getJob(flowId: string, ownerId: string, constructionId: string): PlaybookIntentConstructionJob {

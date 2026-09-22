@@ -31,14 +31,18 @@ export class ShareController {
       shareType: dto.shareType,
       title: dto.title,
       recipientEmails: dto.recipientEmails,
+      shareWorkspaces: dto.shareWorkspaces,
       expiresInDays: dto.expiresInDays,
     });
   }
 
   @Get(':conversationId/shares')
   @UseGuards(ConversationOwnerGuard)
-  async getShares(@Param('conversationId') conversationId: string) {
-    return this.shareService.getSharesForConversation(conversationId);
+  async getShares(
+    @CurrentUser() user: { _id: string },
+    @Param('conversationId') conversationId: string,
+  ) {
+    return this.shareService.getSharesForConversation(conversationId, user._id.toString());
   }
 
   @Delete(':conversationId/share/:shareId')

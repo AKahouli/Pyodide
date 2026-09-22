@@ -1,9 +1,8 @@
-import { Types } from 'mongoose';
-
 export type GovernanceScopeAudienceMode = 'all_authenticated' | 'restricted';
 
+/** Audience ids are 24-hex ObjectId strings (validate with `isObjectId` from `@common/postgres`). */
 export interface GovernanceScopeAudience {
   mode: GovernanceScopeAudienceMode;
-  userIds: Types.ObjectId[];
-  groupIds: Types.ObjectId[];
+  userIds: string[];
+  groupIds: string[];
 }

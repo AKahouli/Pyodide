@@ -65,6 +65,7 @@ export enum ErrorCode {
   CHAT_BRANCH_INVALID = 'ERR_1421',
   CHAT_BRANCH_UNSUPPORTED = 'ERR_1422',
   CHAT_BRANCH_SEED_FAILED = 'ERR_1423',
+  CHAT_ATTACHMENTS_DISABLED = 'ERR_1424',
 
   // External service errors (1500-1599)
   EXTERNAL_SERVICE_ERROR = 'ERR_1500',
@@ -85,6 +86,7 @@ export enum ErrorCode {
   USAGE_LIMIT_EXCEEDED = 'ERR_1700',
   USAGE_RATE_LIMITED = 'ERR_1701',
   USAGE_REQUEST_TOO_LARGE = 'ERR_1702',
+  APP_BUILDER_AI_DISABLED = 'ERR_1703',
   PLAN_NOT_FOUND = 'ERR_1710',
   PLAN_ALREADY_EXISTS = 'ERR_1711',
   PLAN_INACTIVE = 'ERR_1712',
@@ -258,6 +260,10 @@ export enum ErrorCode {
   PROJECT_NOT_FOUND = 'ERR_2700',
   PROJECT_ALREADY_EXISTS = 'ERR_2701',
   PROJECT_FORBIDDEN = 'ERR_2702',
+  PROJECT_SHARE_NOT_FOUND = 'ERR_2704',
+  PROJECT_SHARE_SELF = 'ERR_2705',
+  PROJECT_SHARE_PUBLIC = 'ERR_2706',
+  PROJECT_SHARE_READ_ONLY = 'ERR_2707',
 
   // Classifier errors (2800-2899)
   CLASSIFIER_FOLDER_NOT_FOUND = 'ERR_2800',
@@ -304,21 +310,6 @@ export enum ErrorCode {
   TELEGRAM_USER_INACTIVE = 'ERR_3207',
   TELEGRAM_DUPLICATE_UPDATE = 'ERR_3208',
 
-  // WhatsApp integration errors (3210-3219)
-  WHATSAPP_INTEGRATION_NOT_FOUND = 'ERR_3210',
-  WHATSAPP_SESSION_NOT_FOUND = 'ERR_3211',
-  WHATSAPP_SESSION_NOT_PAIRING = 'ERR_3212',
-  WHATSAPP_ALREADY_CONNECTED = 'ERR_3213',
-  WHATSAPP_DISABLED = 'ERR_3214',
-  WHATSAPP_SEND_FAILED = 'ERR_3215',
-  WHATSAPP_PAIRING_FAILED = 'ERR_3216',
-  WHATSAPP_AUTH_INVALID = 'ERR_3217',
-  WHATSAPP_USER_INACTIVE = 'ERR_3218',
-  WHATSAPP_NETWORK_UNREACHABLE = 'ERR_3219',
-  WHATSAPP_SYSTEM_BOT_NOT_CONNECTED = 'ERR_3220',
-  WHATSAPP_SYSTEM_BOT_PHONE_MISMATCH = 'ERR_3221',
-  WHATSAPP_SYSTEM_BOT_PHONE_NOT_CONFIGURED = 'ERR_3222',
-
   // Team errors (3300-3399)
   TEAM_NOT_FOUND = 'ERR_3300',
   TEAM_ALREADY_EXISTS = 'ERR_3301',
@@ -334,6 +325,7 @@ export enum ErrorCode {
   TEAM_SHARE_USER_NOT_FOUND = 'ERR_3311',
   TEAM_GENERATE_FAILED = 'ERR_3312',
   TEAM_AUTO_BUILDER_NOT_CONFIGURED = 'ERR_3313',
+  TEAM_NOT_EXECUTABLE = 'ERR_3314',
 
   // User Group errors (3350-3399)
   USER_GROUP_NOT_FOUND = 'ERR_3350',
@@ -427,6 +419,31 @@ export enum ErrorCode {
   GOVERNED_TEAM_NOT_ALLOWED = 'ERR_3687',
   GOVERNED_CONVERSATION_RUNTIME_IMMUTABLE = 'ERR_3688',
 
+  // App Data errors (4000-4099)
+  APP_DATA_DISABLED = 'ERR_4000',
+  APP_DATA_REMOTE_UNAVAILABLE = 'ERR_4001',
+  APP_DATA_NOT_PROVISIONED = 'ERR_4002',
+  APP_DATA_INVALID_IDENTIFIER = 'ERR_4003',
+  APP_DATA_INVALID_MANIFEST = 'ERR_4004',
+  APP_DATA_VERSION_CONFLICT = 'ERR_4005',
+  APP_DATA_DESTRUCTIVE_BLOCKED = 'ERR_4006',
+  APP_DATA_PROD_DOWNGRADE_BLOCKED = 'ERR_4007',
+  APP_DATA_POLICY_DENIED = 'ERR_4008',
+  APP_DATA_ROW_NOT_FOUND = 'ERR_4009',
+  APP_DATA_LIMIT_EXCEEDED = 'ERR_4010',
+  APP_DATA_BINDING_NOT_FOUND = 'ERR_4011',
+  APP_DATA_ENVIRONMENT_FORBIDDEN = 'ERR_4012',
+  APP_DATA_DEPLOY_CONFIG_MISSING = 'ERR_4013',
+  APP_DATA_AUTH_REQUIRED = 'ERR_4014',
+  APP_DATA_AUTH_INVALID = 'ERR_4015',
+  APP_DATA_EMAIL_TAKEN = 'ERR_4016',
+  APP_DATA_USER_DISABLED = 'ERR_4017',
+  APP_DATA_GRANT_DENIED = 'ERR_4018',
+  APP_DATA_INVITE_INVALID = 'ERR_4019',
+  APP_DATA_INVITE_EXPIRED = 'ERR_4020',
+  APP_DATA_INVITE_CONSUMED = 'ERR_4021',
+  APP_DATA_INVITE_MISMATCH = 'ERR_4022',
+
   // Semantic Model errors (3700-3799)
   SEMANTIC_MODEL_NOT_FOUND = 'ERR_3700',
   SEMANTIC_MODEL_NAME_EXISTS = 'ERR_3701',
@@ -439,6 +456,7 @@ export enum ErrorCode {
   SEMANTIC_MODEL_VERSION_IMMUTABLE = 'ERR_3708',
   SEMANTIC_MODEL_NO_DRAFT = 'ERR_3709',
   SEMANTIC_MODEL_UNAVAILABLE = 'ERR_3710',
+  SEMANTIC_MODEL_RUNTIME_OWNED = 'ERR_3711',
 }
 
 export const ErrorMessages: Record<ErrorCode, string> = {
@@ -515,6 +533,7 @@ export const ErrorMessages: Record<ErrorCode, string> = {
   [ErrorCode.CHAT_BRANCH_INVALID]: 'The selected conversation branch is invalid.',
   [ErrorCode.CHAT_BRANCH_UNSUPPORTED]: 'This conversation cannot be branched.',
   [ErrorCode.CHAT_BRANCH_SEED_FAILED]: 'Failed to initialize the branched conversation.',
+  [ErrorCode.CHAT_ATTACHMENTS_DISABLED]: 'Attachments are disabled for this conversation.',
 
   [ErrorCode.EXTERNAL_SERVICE_ERROR]: 'External service error.',
   [ErrorCode.AI_SERVICE_ERROR]: 'AI service encountered an error.',
@@ -530,6 +549,7 @@ export const ErrorMessages: Record<ErrorCode, string> = {
   [ErrorCode.APPEARANCE_LOGO_LIMIT_REACHED]: 'Maximum number of custom logos reached.',
 
   [ErrorCode.USAGE_LIMIT_EXCEEDED]: 'Usage limit exceeded. Please upgrade your plan or wait for the limit to reset.',
+  [ErrorCode.APP_BUILDER_AI_DISABLED]: 'App Builder AI access is currently disabled by an administrator.',
   [ErrorCode.USAGE_RATE_LIMITED]: 'Rate limit exceeded. Please slow down your requests.',
   [ErrorCode.USAGE_REQUEST_TOO_LARGE]: 'Request exceeds maximum allowed tokens for your plan.',
   [ErrorCode.PLAN_NOT_FOUND]: 'Plan not found.',
@@ -669,6 +689,10 @@ export const ErrorMessages: Record<ErrorCode, string> = {
   [ErrorCode.PROJECT_NOT_FOUND]: 'Project not found.',
   [ErrorCode.PROJECT_ALREADY_EXISTS]: 'A project with this name already exists.',
   [ErrorCode.PROJECT_FORBIDDEN]: 'You do not have access to this project.',
+  [ErrorCode.PROJECT_SHARE_NOT_FOUND]: 'Project share not found.',
+  [ErrorCode.PROJECT_SHARE_SELF]: 'You cannot share a project with yourself.',
+  [ErrorCode.PROJECT_SHARE_PUBLIC]: 'This project is public and cannot be shared.',
+  [ErrorCode.PROJECT_SHARE_READ_ONLY]: 'You have read-only access to this project.',
 
   [ErrorCode.CLASSIFIER_FOLDER_NOT_FOUND]: 'Classifier folder not found.',
   [ErrorCode.CLASSIFIER_FOLDER_NAME_EXISTS]: 'A folder with this name already exists at this location.',
@@ -788,6 +812,31 @@ export const ErrorMessages: Record<ErrorCode, string> = {
   [ErrorCode.SEMANTIC_MODEL_VERSION_IMMUTABLE]: 'Published Semantic Model versions cannot be changed.',
   [ErrorCode.SEMANTIC_MODEL_NO_DRAFT]: 'This Semantic Model has no editable draft.',
   [ErrorCode.SEMANTIC_MODEL_UNAVAILABLE]: 'Semantic Model storage is temporarily unavailable.',
+  [ErrorCode.SEMANTIC_MODEL_RUNTIME_OWNED]: 'This Semantic Model is owned by the semantic runtime.',
+
+  [ErrorCode.APP_DATA_DISABLED]: 'App Data is disabled on this instance.',
+  [ErrorCode.APP_DATA_REMOTE_UNAVAILABLE]: 'The App Data microservice is unavailable.',
+  [ErrorCode.APP_DATA_NOT_PROVISIONED]: 'App Data has not been provisioned for this workspace.',
+  [ErrorCode.APP_DATA_INVALID_IDENTIFIER]: 'The provided identifier is invalid.',
+  [ErrorCode.APP_DATA_INVALID_MANIFEST]: 'The schema manifest is invalid.',
+  [ErrorCode.APP_DATA_VERSION_CONFLICT]: 'Schema version conflict.',
+  [ErrorCode.APP_DATA_DESTRUCTIVE_BLOCKED]: 'Destructive schema change blocked. Confirm with confirmDestructive.',
+  [ErrorCode.APP_DATA_PROD_DOWNGRADE_BLOCKED]: 'Production schema downgrade is not allowed.',
+  [ErrorCode.APP_DATA_POLICY_DENIED]: 'Policy denied this operation.',
+  [ErrorCode.APP_DATA_ROW_NOT_FOUND]: 'The requested row was not found.',
+  [ErrorCode.APP_DATA_LIMIT_EXCEEDED]: 'App Data row or storage limit exceeded.',
+  [ErrorCode.APP_DATA_BINDING_NOT_FOUND]: 'App Data binding not found.',
+  [ErrorCode.APP_DATA_ENVIRONMENT_FORBIDDEN]: 'Access to this environment is forbidden.',
+  [ErrorCode.APP_DATA_DEPLOY_CONFIG_MISSING]: 'Deployment configuration is missing.',
+  [ErrorCode.APP_DATA_AUTH_REQUIRED]: 'Authentication is required for App Data access.',
+  [ErrorCode.APP_DATA_AUTH_INVALID]: 'App Data authentication failed.',
+  [ErrorCode.APP_DATA_EMAIL_TAKEN]: 'This email address is already registered.',
+  [ErrorCode.APP_DATA_USER_DISABLED]: 'This user account is disabled.',
+  [ErrorCode.APP_DATA_GRANT_DENIED]: 'Permission grant denied.',
+  [ErrorCode.APP_DATA_INVITE_INVALID]: 'The invite token is invalid.',
+  [ErrorCode.APP_DATA_INVITE_EXPIRED]: 'The invite token has expired.',
+  [ErrorCode.APP_DATA_INVITE_CONSUMED]: 'The invite token has already been used.',
+  [ErrorCode.APP_DATA_INVITE_MISMATCH]: 'The invite token does not match this user.',
 
   [ErrorCode.CONNECTOR_NOT_FOUND]: 'Connector not found.',
   [ErrorCode.CONNECTOR_ALREADY_EXISTS]: 'A connector with this slug already exists.',
@@ -803,24 +852,6 @@ export const ErrorMessages: Record<ErrorCode, string> = {
   [ErrorCode.TELEGRAM_INTEGRATION_DISABLED]: 'Telegram integration is disabled for this agent.',
   [ErrorCode.TELEGRAM_USER_INACTIVE]: 'The linked platform user is inactive.',
   [ErrorCode.TELEGRAM_DUPLICATE_UPDATE]: 'Telegram update already processed.',
-
-  [ErrorCode.WHATSAPP_INTEGRATION_NOT_FOUND]: 'WhatsApp integration not found for this agent.',
-  [ErrorCode.WHATSAPP_SESSION_NOT_FOUND]: 'WhatsApp session not found.',
-  [ErrorCode.WHATSAPP_SESSION_NOT_PAIRING]: 'WhatsApp session is not waiting for pairing.',
-  [ErrorCode.WHATSAPP_ALREADY_CONNECTED]: 'WhatsApp is already connected for this agent.',
-  [ErrorCode.WHATSAPP_DISABLED]: 'WhatsApp integration is disabled.',
-  [ErrorCode.WHATSAPP_SEND_FAILED]: 'Failed to send message to WhatsApp.',
-  [ErrorCode.WHATSAPP_PAIRING_FAILED]: 'WhatsApp pairing failed.',
-  [ErrorCode.WHATSAPP_AUTH_INVALID]: 'WhatsApp authentication data is invalid.',
-  [ErrorCode.WHATSAPP_USER_INACTIVE]: 'The linked platform user is inactive.',
-  [ErrorCode.WHATSAPP_NETWORK_UNREACHABLE]:
-    'Cannot reach web.whatsapp.com from this server. Check firewall, VPN, or network policy.',
-  [ErrorCode.WHATSAPP_SYSTEM_BOT_NOT_CONNECTED]:
-    'Worky WhatsApp system bot is not connected. An administrator must pair the system number first.',
-  [ErrorCode.WHATSAPP_SYSTEM_BOT_PHONE_MISMATCH]:
-    'Paired WhatsApp number does not match the configured system bot phone.',
-  [ErrorCode.WHATSAPP_SYSTEM_BOT_PHONE_NOT_CONFIGURED]:
-    'System bot phone is not configured. Set it in the Worky WhatsApp admin page before pairing.',
 
   [ErrorCode.TEAM_NOT_FOUND]: 'Team not found.',
   [ErrorCode.TEAM_ALREADY_EXISTS]: 'A team with this name already exists.',
@@ -839,4 +870,5 @@ export const ErrorMessages: Record<ErrorCode, string> = {
   [ErrorCode.TEAM_GENERATE_FAILED]: 'Failed to generate team hierarchy.',
   [ErrorCode.TEAM_AUTO_BUILDER_NOT_CONFIGURED]:
     'Team auto-builder is not configured. Please contact an administrator.',
+  [ErrorCode.TEAM_NOT_EXECUTABLE]: 'This team is not executable. Repair its hierarchy and try again.',
 };

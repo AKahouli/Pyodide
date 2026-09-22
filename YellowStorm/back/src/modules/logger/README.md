@@ -28,7 +28,6 @@ A production-grade, global logging module with MongoDB persistence, buffered wri
 | `LOGGING_MONGODB_URI` | `MONGODB_URI` | Separate MongoDB URI for logging (falls back to main DB) |
 | `LOGGING_BUFFER_SIZE` | `100` | Max logs in buffer before auto-flush |
 | `LOGGING_FLUSH_INTERVAL_MS` | `5000` | Flush interval in milliseconds |
-| `LOGGING_TTL_DAYS` | `30` | Days to retain logs before auto-deletion |
 | `LOGGING_PERSISTENCE_ENABLED` | `true` | Enable/disable database persistence |
 | `LOGGING_DEFAULT_SAVE` | `true` | Default value for `save` option |
 | `LOGGING_DEFAULT_DISPLAY` | `true` | Default value for `display` option |
@@ -62,7 +61,6 @@ LOG_LEVEL=info
 LOGGING_MONGODB_URI=mongodb://localhost:27017/yellostorm_logs
 LOGGING_BUFFER_SIZE=100
 LOGGING_FLUSH_INTERVAL_MS=5000
-LOGGING_TTL_DAYS=30
 ```
 
 ## Basic Usage

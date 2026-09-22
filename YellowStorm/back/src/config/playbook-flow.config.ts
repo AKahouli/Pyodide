@@ -36,7 +36,6 @@ export default registerAs('playbook-flow', () => ({
   maxConcurrentPerModel: Number.parseInt(process.env.PLAYBOOK_MAX_CONCURRENT_PER_MODEL || '10', 10),
   dynamicReasoningEnabled: process.env.PLAYBOOK_DYNAMIC_REASONING_ENABLED === 'true',
   asyncDesignEnabled: process.env.PLAYBOOK_ASYNC_DESIGN_ENABLED === 'true',
-  mcpAssistantEnabled: process.env.PLAYBOOK_MCP_ASSISTANT_ENABLED === 'true',
   mcpServerUrl: process.env.PLAYBOOK_MCP_SERVER_URL || 'http://localhost:8025/mcp',
   mcpIngressToken: process.env.PLAYBOOK_MCP_INGRESS_TOKEN || '',
   maxConcurrentGlobalDesignOperations: Number.parseInt(process.env.PLAYBOOK_MAX_CONCURRENT_GLOBAL_DESIGN_OPERATIONS || '10', 10),

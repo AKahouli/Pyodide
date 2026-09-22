@@ -50,6 +50,13 @@ class Step(BaseModel):
     result: Optional[str] = None
     error: Optional[str] = None
     blocked_reason: Optional[str] = None
+    # The interrupt id this step is parked on (mail:/ask:), set when it blocks.
+    # Load-bearing on a rebuild: a still-parked ask/await node must re-park under
+    # this EXACT id, not a fresh node-path-derived one — the node path shifts as
+    # the plan grows mid-session (create_task adds steps), and a shifted id would
+    # orphan the bound mail wait and leave the step stuck 'running'. See
+    # nodes.factory's blocked-await branch.
+    interrupt_id: Optional[str] = None
     # True only for a human-agent persona (human_agents.py); a plain step's
     # assignee/assignee_name are also populated (with the executor's own
     # id/name — see plan_turn), so this is the actual gate for persona

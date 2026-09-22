@@ -1,0 +1,13 @@
+{
+  "id": "64b000000000000000000801",
+  "name": "Researcher",
+  "slug": "researcher",
+  "defaultPrompt": "You research.",
+  "skills": [
+    "64b000000000000000000701"
+  ],
+  "promptCount": 2,
+  "isActive": true,
+  "createdAt": "<volatile>",
+  "updatedAt": "<volatile>"
+}

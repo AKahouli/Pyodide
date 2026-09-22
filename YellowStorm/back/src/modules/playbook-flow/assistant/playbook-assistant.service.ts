@@ -67,7 +67,7 @@ export class PlaybookAssistantService {
   ) {}
 
   assertEnabled(): void {
-    if (!this.config.mcpAssistantEnabled) {
+    if (!this.featureVisibility.isEnabled('playbookMcpAssistant')) {
       throw new ServiceUnavailableException(ErrorCode.SERVICE_UNAVAILABLE, 'Playbook MCP assistant is disabled');
     }
   }

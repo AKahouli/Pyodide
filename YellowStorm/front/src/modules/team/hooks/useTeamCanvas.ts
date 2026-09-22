@@ -34,16 +34,12 @@ export interface OrgChartNodeData extends Record<string, unknown> {
   order: number;
   agentName: string;
   agentTypeName: string;
+  agentTypeSlug: string;
   agentRole: string;
   agentDescription: string;
-  hasChildren: boolean;
 }
 
 export function membersToNodes(members: TeamMemberWithAgent[]): Node[] {
-  const parentIds = new Set(
-    members.filter((m) => m.parentAgentId).map((m) => m.parentAgentId!),
-  );
-
   return members.map((m) => ({
     id: m.agentId,
     type: 'orgChartAgent',
@@ -54,9 +50,9 @@ export function membersToNodes(members: TeamMemberWithAgent[]): Node[] {
       order: m.order,
       agentName: m.agent?.name || 'Unknown Agent',
       agentTypeName: m.agent?.agentType?.name || '',
+      agentTypeSlug: m.agent?.agentType?.slug || '',
       agentRole: m.agent?.role || '',
       agentDescription: m.agent?.description || '',
-      hasChildren: parentIds.has(m.agentId),
     } satisfies OrgChartNodeData,
   }));
 }
@@ -96,7 +92,7 @@ function getAgentInfo(agentId: string) {
   return {
     id: agent.id,
     name: agent.name,
-    agentType: agent.agentType,
+    agentType: { ...agent.agentType, slug: agent.agentType.slug || '' },
     role: agent.role,
     description: agent.description,
   };
@@ -218,6 +214,12 @@ export function useTeamCanvas() {
       const target = connection.target;
       if (!source || !target) return;
 
+      const sourceData = nodesRef.current.find((node) => node.id === source)?.data as OrgChartNodeData | undefined;
+      if (sourceData?.agentTypeSlug !== 'manager') {
+        toast.warning(tTeam('orgChart.managerSourceOnly', 'Only manager agents can have children.'));
+        return;
+      }
+
       if (wouldCreateCycle(membersRef.current, target, source)) {
         toast.warning(
           tTeam('orgChart.cyclePrevented', 'Cannot create this relationship — it would cause a cycle.'),
@@ -283,9 +285,9 @@ export function useTeamCanvas() {
           order: newMember.order,
           agentName: agentInfo?.name || 'Unknown Agent',
           agentTypeName: agentInfo?.agentType?.name || '',
+          agentTypeSlug: agentInfo?.agentType?.slug || '',
           agentRole: agentInfo?.role || '',
           agentDescription: agentInfo?.description || '',
-          hasChildren: false,
         } satisfies OrgChartNodeData,
       };
       setNodes((prev) => [...prev, newNode]);

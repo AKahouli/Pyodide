@@ -190,6 +190,7 @@ export class AgentConnectorRuntimeService {
     userId?: string,
     actionKeysByConnectorId?: Map<string, Set<string>>,
     fixedParamsByConnectorId?: Map<string, Record<string, unknown>>,
+    agentId?: string,
   ): Promise<Record<string, unknown>[]> {
     const bindings = connectorIds
       .map((connectorId) => connectorsMap.get(connectorId))
@@ -208,13 +209,12 @@ export class AgentConnectorRuntimeService {
             action_key: action.key,
             label: action.label || action.key,
             description: action.description || '',
-            // MCP tool schemas (e.g. Notion) nest 30+ levels; embedded as a
-            // Struct they blow past protobuf's ~100-level recursion limit and
-            // the Python runtime fails to decode the whole request
-            // (DecodeError on RunRequest). Ship the schema as a JSON string —
-            // consumers parse it with json.loads.
+            parameter_schema: {},
             parameter_schema_json: JSON.stringify(action.parameterSchema || {}),
             safety: String(action.safety || 'unknown').toLowerCase(),
+            result_kind: action.resultKind || 'generic',
+            citation_mode: action.citationMode || 'none',
+            result_mapping_json: JSON.stringify(action.resultMapping || {}),
           })),
         fixed_params: fixedParamsByConnectorId?.get(connector.id) || {},
         mcp_transport_type: connector.mcpTransportType || '',
@@ -222,6 +222,9 @@ export class AgentConnectorRuntimeService {
         mcp_server_config: connector.mcpServerConfig || {},
         auth_headers: {} as Record<string, string>,
         auth_env: {} as Record<string, string>,
+        dynamic_headers: (connector.dynamicHeaders || [])
+          .filter((header: any) => header.enabled !== false && header.source === 'workspace')
+          .map((header: any) => ({ header_name: header.headerName, source: header.source })),
       }))
       .filter((binding: any) => binding.actions.length > 0);
 

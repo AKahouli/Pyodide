@@ -176,8 +176,8 @@ export function useUpdateGovernanceScopeAudience(programId: string | null, scope
   });
 }
 
-export function useAvailableGovernedScopes(enabled = true) {
-  return useQuery({ queryKey: governanceQueryKeys.availableScopes(), queryFn: governanceApi.listAvailableScopes, enabled, retry: 1 });
+export function useAvailableGovernedScopes(enabled = true, userId?: string) {
+  return useQuery({ queryKey: governanceQueryKeys.availableScopes(userId), queryFn: governanceApi.listAvailableScopes, enabled, retry: 1 });
 }
 
 export function useGovernanceDocumentEvents(programId: string | null, documentId: string | null) {

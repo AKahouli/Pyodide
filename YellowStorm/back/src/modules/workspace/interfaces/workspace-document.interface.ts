@@ -1,4 +1,4 @@
-import { DocumentStatus, DocumentType, IndexingStatus } from '../schemas/workspace-document.schema';
+import { DocumentStatus, DocumentType, IndexingStatus } from './document-status.enum';
 
 export interface RequestUploadUrlData {
   filename: string;

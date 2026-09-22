@@ -1,6 +1,9 @@
 import { Injectable } from '@nestjs/common';
 import type { AdvisorScoringMode } from '../../schemas/playbook-flow.schema';
-import { PlaybookFlowSettingsService } from '../playbook-flow-settings.service';
+import {
+  PlaybookFlowSettingsService,
+  type ResolvedEvaluationModelConfig,
+} from '../playbook-flow-settings.service';
 
 @Injectable()
 export class PlaybookFlowAdvisorModelService {
@@ -8,6 +11,10 @@ export class PlaybookFlowAdvisorModelService {
 
   async resolveEvaluationModel(_scoringMode: AdvisorScoringMode): Promise<string> {
     return this.settingsService.resolveAdvisorEvaluationModelId();
+  }
+
+  async resolveEvaluationModelConfig(_scoringMode: AdvisorScoringMode): Promise<ResolvedEvaluationModelConfig> {
+    return this.settingsService.resolveAdvisorEvaluationModelConfig();
   }
 
   async resolveReplayEvaluationModel(): Promise<string> {

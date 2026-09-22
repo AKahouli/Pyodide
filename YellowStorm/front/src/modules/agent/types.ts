@@ -6,7 +6,7 @@ export interface Agent {
   id: string;
   name: string;
   slug: string;
-  agentType: { id: string; name: string };
+  agentType: { id: string; name: string; slug?: string };
   role: string;
   description: string;
   temperature: number;
@@ -298,39 +298,6 @@ export interface AgentTelegramIntegration {
 export interface AgentTelegramIntegrationInput {
   enabled: boolean;
   botToken?: string;
-}
-
-export type AgentWhatsAppIntegrationStatus =
-  | 'PAIRING'
-  | 'CONNECTED'
-  | 'DISCONNECTED'
-  | 'FAILED';
-
-export interface AgentWhatsAppIntegration {
-  enabled: boolean;
-  status: AgentWhatsAppIntegrationStatus;
-  sessionId?: string;
-  phoneNumber?: string;
-  displayName?: string;
-  lastActivityAt?: string;
-  errorMessage?: string;
-  updatedAt?: string;
-}
-
-export interface AgentWhatsAppEnabledInput {
-  enabled: boolean;
-}
-
-export interface AgentWhatsAppConnectResponse {
-  sessionId: string;
-  status: 'PAIRING';
-  qrCode?: string;
-  pairingCode?: string;
-}
-
-export interface AgentWhatsAppPairingResponse {
-  qrCode?: string;
-  pairingCode?: string;
 }
 
 export interface AgentType {

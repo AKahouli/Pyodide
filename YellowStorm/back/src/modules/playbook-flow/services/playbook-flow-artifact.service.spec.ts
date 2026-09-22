@@ -6,9 +6,9 @@ function queryResult(value: unknown) {
 }
 
 describe('PlaybookFlowArtifactService', () => {
-  const executionModel = { findById: jest.fn(), findOne: jest.fn() };
-  const taskResultModel = { find: jest.fn() };
-  const accessService = { assertExecutionAccess: jest.fn() };
+  const executionModel = { findById: jest.fn(), findOne: jest.fn(), find: jest.fn(), collection: { name: 'flowexecutions' } };
+  const taskResultModel = { find: jest.fn(), aggregate: jest.fn(), collection: { name: 'flowtaskresults' } };
+  const accessService = { assertExecutionAccess: jest.fn(), findAccessibleFlow: jest.fn() };
   const documentService = {
     isAvailable: jest.fn(() => true),
     exists: jest.fn(),
@@ -17,6 +17,8 @@ describe('PlaybookFlowArtifactService', () => {
   };
   const jwtService = { signAsync: jest.fn(), verifyAsync: jest.fn() };
   const configService = { get: jest.fn((key: string) => ({ 'jwt.secret': 'secret', 'jwt.issuer': 'issuer' })[key]) };
+  const flowModel = { aggregate: jest.fn() };
+  const playbookShareService = { getSharedPlaybookIdsForUser: jest.fn() };
   const service = new PlaybookFlowArtifactService(
     executionModel as any,
     taskResultModel as any,
@@ -24,12 +26,21 @@ describe('PlaybookFlowArtifactService', () => {
     documentService as any,
     jwtService as any,
     configService as any,
+    flowModel as any,
+    playbookShareService as any,
   );
 
   beforeEach(() => {
     jest.clearAllMocks();
     executionModel.findById.mockReturnValue(queryResult({ ownerId: 'owner-1', flowId: 'flow-1' }));
     executionModel.findOne.mockReturnValue(queryResult({ _id: 'execution-1' }));
+    executionModel.find.mockReturnValue({
+      select: jest.fn().mockReturnThis(),
+      sort: jest.fn().mockReturnThis(),
+      limit: jest.fn().mockReturnThis(),
+      lean: jest.fn().mockReturnThis(),
+      exec: jest.fn().mockResolvedValue([]),
+    });
     taskResultModel.find.mockReturnValue(queryResult([{
       taskId: 'task-1', iteration: 0, components: [{ type: 'artifact', data: { filename: 'report.pdf', file_path: 'owner-1/system_execution-1/report.pdf' } }],
     }]));
@@ -41,6 +52,8 @@ describe('PlaybookFlowArtifactService', () => {
       size: 3,
     }));
     jwtService.signAsync.mockResolvedValue('capability-token');
+    flowModel.aggregate.mockResolvedValue([]);
+    playbookShareService.getSharedPlaybookIdsForUser.mockResolvedValue([]);
   });
 
   it('scopes lookup to the authorized execution and returns no storage details', async () => {
@@ -56,6 +69,22 @@ describe('PlaybookFlowArtifactService', () => {
       expect.objectContaining({ audience: 'yellostorm-playbook-artifact', expiresIn: 600 }),
     );
     expect(JSON.stringify(result)).not.toContain('system_execution-1');
+  });
+
+  it('filters access before limiting artifact-bearing results', async () => {
+    flowModel.aggregate.mockResolvedValue([{
+      playbookId: 'flow-1', playbookName: 'Weekly review', execution: { _id: 'execution-1', ownerId: 'owner-1' },
+      taskResult: { executionId: 'execution-1', taskId: 'task-1', iteration: 0, generatedAt: new Date('2026-09-13T10:01:00Z'), components: [{ type: 'artifact', data: { artifactId: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', filename: 'review.pdf', mimeType: 'application/pdf' } }] },
+    }]);
+
+    await expect(service.listRecent('user-1', 6)).resolves.toEqual([expect.objectContaining({
+      artifactId: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', playbookId: 'flow-1', playbookName: 'Weekly review', executionId: 'execution-1',
+    })]);
+    expect(flowModel.aggregate).toHaveBeenCalledWith(expect.arrayContaining([
+      { $match: { ownerId: 'user-1' } },
+      { $limit: 6 },
+    ]));
+    expect(JSON.stringify(flowModel.aggregate.mock.calls[0][0])).toContain('components.type');
   });
 
   it('publishes into execution-scoped storage and verifies the object', async () => {

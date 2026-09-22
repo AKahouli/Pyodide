@@ -5,42 +5,38 @@ const actorId = '507f1f77bcf86cd799439011';
 const programId = '507f1f77bcf86cd799439012';
 const otherUserId = '507f1f77bcf86cd799439013';
 
-function queryResult<T>(value: T) {
-  return { select: jest.fn().mockReturnThis(), lean: jest.fn().mockReturnThis(), exec: jest.fn().mockResolvedValue(value) };
-}
-
 describe('GovernanceProgramService delete authorization', () => {
-  function buildService(ownerUserId = actorId, membership: unknown = null) {
-    const program = { _id: { toString: () => programId }, ownerUserId: { toString: () => ownerUserId } };
-    const programModel = { findById: jest.fn().mockReturnValue({ exec: jest.fn().mockResolvedValue(program) }), deleteOne: jest.fn().mockResolvedValue({}) };
-    const scopeModel = { countDocuments: jest.fn().mockResolvedValue(0) };
-    const documentModel = { countDocuments: jest.fn().mockResolvedValue(0) };
-    const bindingModel = { countDocuments: jest.fn().mockResolvedValue(0) };
-    const membershipModel = { findOne: jest.fn().mockReturnValue(queryResult(membership)) };
-    const service = new GovernanceProgramService(programModel as never, scopeModel as never, documentModel as never, bindingModel as never, membershipModel as never);
-    return { service, programModel };
+  function buildService(ownerUserId = actorId, memberships: unknown[] = []) {
+    const program = { id: programId, ownerUserId, name: 'Program', defaultLanguage: 'fr', status: 'draft', metadata: {}, createdAt: new Date(), updatedAt: new Date() };
+    const programStore = { findById: jest.fn().mockResolvedValue(program), deleteById: jest.fn().mockResolvedValue(undefined), findByOwnerAndId: jest.fn().mockResolvedValue(program) };
+    const scopeStore = { countByProgram: jest.fn().mockResolvedValue(0) };
+    const documentStore = { countByProgram: jest.fn().mockResolvedValue(0) };
+    const bindingStore = { countByProgram: jest.fn().mockResolvedValue(0) };
+    const membershipStore = { findActiveForUser: jest.fn().mockResolvedValue(memberships), findActiveByUser: jest.fn().mockResolvedValue([]) };
+    const service = new GovernanceProgramService(programStore as never, scopeStore as never, documentStore as never, bindingStore as never, membershipStore as never);
+    return { service, programStore };
   }
 
   it('allows the program owner to delete an empty program', async () => {
-    const { service, programModel } = buildService();
+    const { service, programStore } = buildService();
 
     await service.delete(actorId, programId);
 
-    expect(programModel.deleteOne).toHaveBeenCalled();
+    expect(programStore.deleteById).toHaveBeenCalledWith(programId);
   });
 
   it('allows a program admin to delete an empty program', async () => {
-    const { service, programModel } = buildService(otherUserId, { _id: 'membership-1' });
+    const { service, programStore } = buildService(otherUserId, [{ programId, userId: actorId, scopeId: null, role: 'program_admin' }]);
 
     await service.delete(actorId, programId);
 
-    expect(programModel.deleteOne).toHaveBeenCalled();
+    expect(programStore.deleteById).toHaveBeenCalledWith(programId);
   });
 
   it('rejects non-owner users without a program admin membership', async () => {
-    const { service, programModel } = buildService(otherUserId);
+    const { service, programStore } = buildService(otherUserId);
 
     await expect(service.delete(actorId, programId)).rejects.toBeInstanceOf(ForbiddenException);
-    expect(programModel.deleteOne).not.toHaveBeenCalled();
+    expect(programStore.deleteById).not.toHaveBeenCalled();
   });
 });

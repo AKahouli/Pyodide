@@ -1,7 +1,7 @@
-import { Injectable, OnApplicationBootstrap } from '@nestjs/common';
-import { InjectModel } from '@nestjs/mongoose';
-import { Model } from 'mongoose';
-import { SystemSetting, SystemSettingDocument, MaintenanceValue, RegistrationValue, AppearanceValue, CorsSettingsValue, EmailLogoValue } from './schemas/system-setting.schema';
+import { Inject, Injectable, OnApplicationBootstrap } from '@nestjs/common';
+import { MaintenanceValue, RegistrationValue, AppearanceValue, CorsSettingsValue, EmailLogoValue } from './schemas/system-setting.schema';
+import { SYSTEM_SETTING_STORE, type SystemSettingStore } from './persistence/system-setting.store';
+import { USER_STORE, type UserStore } from '../user/persistence/user.store';
 import { MaintenanceStatus } from './interfaces/maintenance.interface';
 import { RegistrationStatus } from './interfaces/registration.interface';
 import { AppearanceSettings, AppearanceThemeSettings } from './interfaces/appearance.interface';
@@ -13,7 +13,7 @@ import {
   PlaybookIntentNormalizationLimits,
 } from './interfaces/playbook-settings.interface';
 import { LoggerService } from '../logger';
-import { User, UserDocument } from '../user/schemas/user.schema';
+import type { AuthUser } from '@common/auth/auth-user';
 import { BadRequestException } from '../exceptions';
 import { ErrorCode } from '../exceptions/constants/error-codes';
 import { APPEARANCE_COLOR_THEMES, APPEARANCE_SETTINGS_KEY } from './constants/appearance-logo.constants';
@@ -22,6 +22,7 @@ import {
   DEFAULT_DOCUMENT_TREE_INJECTION_SETTINGS,
   DocumentTreeInjectionSettings,
 } from './interfaces/document-tree-settings.interface';
+import { DEFAULT_LOGIN_SETTINGS, LoginSettings, parseLoginExpiry } from './interfaces/login-settings.interface';
 
 const MAINTENANCE_KEY = 'maintenance_mode';
 const REGISTRATION_KEY = 'registration_settings';
@@ -29,6 +30,7 @@ const APPEARANCE_KEY = APPEARANCE_SETTINGS_KEY;
 const PLAYBOOK_SETTINGS_KEY = 'playbook_settings';
 const CORS_SETTINGS_KEY = 'cors_settings';
 const DOCUMENT_TREE_INJECTION_KEY = 'document_tree_injection_settings';
+const LOGIN_SETTINGS_KEY = 'login_settings';
 export const EMAIL_LOGO_KEY = 'email_logo';
 export const EMAIL_LOGO_MAX_BYTES = 512 * 1024;
 const CACHE_TTL_MS = 5000; // 5 seconds
@@ -120,20 +122,21 @@ export class SystemService implements OnApplicationBootstrap {
   private appearanceCache: AppearanceThemeSettings | null = null;
   private playbookSettingsCache: AdminPlaybookSettings | null = null;
   private corsSettingsCache: CorsSettingsValue | null = null;
+  private loginSettingsCache: LoginSettings | null = null;
   private emailLogoCache: EmailLogoValue | null = null;
   private lastCacheUpdate = 0;
   private lastAppearanceCacheUpdate = 0;
   private lastRegistrationCacheUpdate = 0;
   private lastPlaybookSettingsCacheUpdate = 0;
   private lastCorsCacheUpdate = 0;
+  private lastLoginSettingsCacheUpdate = 0;
   private lastEmailLogoCachedAt = 0;
   private refreshInterval: ReturnType<typeof setInterval> | null = null;
 
   constructor(
-    @InjectModel(SystemSetting.name)
-    private readonly systemSettingModel: Model<SystemSettingDocument>,
-    @InjectModel(User.name)
-    private readonly userModel: Model<UserDocument>,
+    @Inject(SYSTEM_SETTING_STORE)
+    private readonly systemSettings: SystemSettingStore,
+    @Inject(USER_STORE) private readonly userStore: UserStore,
     private readonly logger: LoggerService,
     private readonly appearanceLogoService: AppearanceLogoService,
   ) {
@@ -149,6 +152,7 @@ export class SystemService implements OnApplicationBootstrap {
         this.refreshAppearanceCache(),
         this.refreshPlaybookSettingsCache(),
         this.refreshCorsSettingsCache(),
+        this.refreshLoginSettingsCache(),
       ]);
       this.logger.log('System service initialized', {
         maintenanceEnabled: this.maintenanceCache?.enabled ?? false,
@@ -172,6 +176,9 @@ export class SystemService implements OnApplicationBootstrap {
         this.refreshCorsSettingsCache().catch((err) => {
           this.logger.warn('Periodic CORS settings cache refresh failed', { error: err.message });
         });
+        this.refreshLoginSettingsCache().catch((err) => {
+          this.logger.warn('Periodic login settings cache refresh failed', { error: err.message });
+        });
       }, CACHE_TTL_MS);
     } catch (error) {
       this.logger.warn('Failed to initialize system service', { error: (error as Error).message });
@@ -180,6 +187,7 @@ export class SystemService implements OnApplicationBootstrap {
       this.registrationCache = { enabled: true };
       this.appearanceCache = DEFAULT_APPEARANCE;
       this.playbookSettingsCache = DEFAULT_ADMIN_PLAYBOOK_SETTINGS;
+      this.loginSettingsCache = DEFAULT_LOGIN_SETTINGS;
     }
   }
 
@@ -237,11 +245,7 @@ export class SystemService implements OnApplicationBootstrap {
       estimatedEndAt: enabled ? options.estimatedEndAt : undefined,
     };
 
-    await this.systemSettingModel.findOneAndUpdate(
-      { key: MAINTENANCE_KEY },
-      { key: MAINTENANCE_KEY, value },
-      { upsert: true, new: true },
-    );
+    await this.systemSettings.upsert(MAINTENANCE_KEY, value);
 
     // Immediately update cache
     this.maintenanceCache = {
@@ -267,7 +271,7 @@ export class SystemService implements OnApplicationBootstrap {
    */
   private async refreshMaintenanceCache(): Promise<MaintenanceStatus> {
     try {
-      const setting = await this.systemSettingModel.findOne({ key: MAINTENANCE_KEY });
+      const setting = await this.systemSettings.get(MAINTENANCE_KEY);
 
       if (setting && this.isMaintenanceValue(setting.value)) {
         this.maintenanceCache = {
@@ -311,6 +315,61 @@ export class SystemService implements OnApplicationBootstrap {
     await this.refreshAppearanceCache();
     await this.refreshPlaybookSettingsCache();
     await this.refreshCorsSettingsCache();
+    await this.refreshLoginSettingsCache();
+  }
+
+  // ─── Login Settings ─────────────────────────────────────────────
+
+  async getLoginSettings(): Promise<LoginSettings> {
+    if (this.loginSettingsCache && Date.now() - this.lastLoginSettingsCacheUpdate < CACHE_TTL_MS) {
+      return this.loginSettingsCache;
+    }
+    return this.refreshLoginSettingsCache();
+  }
+
+  getLoginSettingsSync(): LoginSettings {
+    return this.loginSettingsCache ?? DEFAULT_LOGIN_SETTINGS;
+  }
+
+  async setLoginSettings(settings: LoginSettings): Promise<LoginSettings> {
+    const accessMs = parseLoginExpiry(settings.accessExpiry);
+    const refreshMs = parseLoginExpiry(settings.refreshExpiry);
+    const minute = 60_000;
+    const day = 24 * 60 * minute;
+
+    if (!accessMs || accessMs < minute || accessMs > 30 * day) {
+      throw new BadRequestException('Access token expiry must be between 1 minute and 30 days');
+    }
+    if (!refreshMs || refreshMs < 10 * minute || refreshMs > 365 * day) {
+      throw new BadRequestException('Refresh token expiry must be between 10 minutes and 365 days');
+    }
+    if (refreshMs < accessMs) {
+      throw new BadRequestException('Refresh token expiry must not be shorter than access token expiry');
+    }
+
+    const value = { accessExpiry: settings.accessExpiry, refreshExpiry: settings.refreshExpiry };
+    await this.systemSettings.upsert(LOGIN_SETTINGS_KEY, value);
+    this.loginSettingsCache = value;
+    this.lastLoginSettingsCacheUpdate = Date.now();
+    return value;
+  }
+
+  private async refreshLoginSettingsCache(): Promise<LoginSettings> {
+    try {
+      const setting = await this.systemSettings.get(LOGIN_SETTINGS_KEY);
+      const value = setting?.value as Partial<LoginSettings> | undefined;
+      const accessMs = typeof value?.accessExpiry === 'string' ? parseLoginExpiry(value.accessExpiry) : null;
+      const refreshMs = typeof value?.refreshExpiry === 'string' ? parseLoginExpiry(value.refreshExpiry) : null;
+      this.loginSettingsCache = accessMs && refreshMs && refreshMs >= accessMs
+        ? { accessExpiry: value!.accessExpiry!, refreshExpiry: value!.refreshExpiry! }
+        : DEFAULT_LOGIN_SETTINGS;
+      this.lastLoginSettingsCacheUpdate = Date.now();
+      return this.loginSettingsCache;
+    } catch (error) {
+      this.logger.error('Failed to refresh login settings cache', { error: (error as Error).message });
+      this.loginSettingsCache = this.loginSettingsCache ?? DEFAULT_LOGIN_SETTINGS;
+      return this.loginSettingsCache;
+    }
   }
 
   // ─── CORS Settings ─────────────────────────────────────────────
@@ -325,11 +384,7 @@ export class SystemService implements OnApplicationBootstrap {
 
   async setCorsSettings(origins: CorsSettingsValue['origins'], userId?: string): Promise<CorsSettingsValue> {
     const value: CorsSettingsValue = { origins };
-    await this.systemSettingModel.findOneAndUpdate(
-      { key: CORS_SETTINGS_KEY },
-      { key: CORS_SETTINGS_KEY, value },
-      { upsert: true, new: true },
-    );
+    await this.systemSettings.upsert(CORS_SETTINGS_KEY, value);
     this.corsSettingsCache = value;
     this.lastCorsCacheUpdate = Date.now();
     return value;
@@ -344,7 +399,7 @@ export class SystemService implements OnApplicationBootstrap {
 
   private async refreshCorsSettingsCache(): Promise<CorsSettingsValue> {
     try {
-      const setting = await this.systemSettingModel.findOne({ key: CORS_SETTINGS_KEY }).lean().exec();
+      const setting = await this.systemSettings.get(CORS_SETTINGS_KEY);
       const raw = setting?.value as Partial<CorsSettingsValue> | undefined;
       if (raw?.origins && Array.isArray(raw.origins)) {
         this.corsSettingsCache = {
@@ -377,10 +432,7 @@ export class SystemService implements OnApplicationBootstrap {
     }
 
     try {
-      const setting = await this.systemSettingModel
-        .findOne({ key: EMAIL_LOGO_KEY })
-        .lean()
-        .exec();
+      const setting = await this.systemSettings.get(EMAIL_LOGO_KEY);
       this.emailLogoCache = setting && this.isEmailLogoValue(setting.value) ? setting.value : null;
     } catch (error) {
       this.logger.error('Failed to load email logo setting', { error: (error as Error).message });
@@ -415,11 +467,7 @@ export class SystemService implements OnApplicationBootstrap {
       updatedBy: userId,
     };
 
-    await this.systemSettingModel.findOneAndUpdate(
-      { key: EMAIL_LOGO_KEY },
-      { key: EMAIL_LOGO_KEY, value },
-      { upsert: true, new: true },
-    );
+    await this.systemSettings.upsert(EMAIL_LOGO_KEY, value);
 
     this.emailLogoCache = value;
     this.lastEmailLogoCachedAt = Date.now();
@@ -437,7 +485,7 @@ export class SystemService implements OnApplicationBootstrap {
    * Remove the custom email logo so emails fall back to the bundled default.
    */
   async clearEmailLogo(userId?: string): Promise<void> {
-    await this.systemSettingModel.deleteOne({ key: EMAIL_LOGO_KEY });
+    await this.systemSettings.delete(EMAIL_LOGO_KEY);
     this.emailLogoCache = null;
     this.lastEmailLogoCachedAt = Date.now();
     this.logger.log('Email logo removed', { updatedBy: userId });
@@ -485,11 +533,7 @@ export class SystemService implements OnApplicationBootstrap {
       themes: settings.themes,
     };
 
-    await this.systemSettingModel.findOneAndUpdate(
-      { key: APPEARANCE_KEY },
-      { key: APPEARANCE_KEY, value },
-      { upsert: true, new: true },
-    );
+    await this.systemSettings.upsert(APPEARANCE_KEY, value);
 
     this.appearanceCache = {
       defaultColorTheme: settings.defaultColorTheme,
@@ -500,7 +544,7 @@ export class SystemService implements OnApplicationBootstrap {
   }
 
   async getDocumentTreeInjectionSettings(): Promise<DocumentTreeInjectionSettings> {
-    const setting = await this.systemSettingModel.findOne({ key: DOCUMENT_TREE_INJECTION_KEY }).lean().exec();
+    const setting = await this.systemSettings.get(DOCUMENT_TREE_INJECTION_KEY);
     const value = setting?.value as Partial<DocumentTreeInjectionSettings> | undefined;
     return {
       enabled: typeof value?.enabled === 'boolean'
@@ -511,11 +555,7 @@ export class SystemService implements OnApplicationBootstrap {
 
   async setDocumentTreeInjectionSettings(enabled: boolean): Promise<DocumentTreeInjectionSettings> {
     const value = { enabled: Boolean(enabled) };
-    await this.systemSettingModel.findOneAndUpdate(
-      { key: DOCUMENT_TREE_INJECTION_KEY },
-      { key: DOCUMENT_TREE_INJECTION_KEY, value },
-      { upsert: true, new: true },
-    );
+    await this.systemSettings.upsert(DOCUMENT_TREE_INJECTION_KEY, value);
     return value;
   }
 
@@ -542,25 +582,16 @@ export class SystemService implements OnApplicationBootstrap {
       playbookExecution: normalizePlaybookExecutionSettings(settings.playbookExecution),
     };
 
-    await this.systemSettingModel.findOneAndUpdate(
-      { key: PLAYBOOK_SETTINGS_KEY },
-      { key: PLAYBOOK_SETTINGS_KEY, value },
-      { upsert: true, new: true },
-    );
+    await this.systemSettings.upsert(PLAYBOOK_SETTINGS_KEY, value);
 
     this.playbookSettingsCache = value;
     this.lastPlaybookSettingsCacheUpdate = Date.now();
     return value;
   }
 
-  async applyAppearanceToAllUsers(colorTheme: AppearanceSettings['defaultColorTheme']): Promise<number> {
-    const result = await this.userModel.updateMany({}, { $set: { 'appearance.colorTheme': colorTheme } });
-    this.logger.log('Applied appearance theme to all users', {
-      colorTheme,
-      matchedCount: result.matchedCount,
-      modifiedCount: result.modifiedCount,
-    });
-    return result.modifiedCount;
+  async applyAppearanceToAllUsers(colorTheme: AppearanceSettings['defaultColorTheme']): Promise<void> {
+    await this.userStore.setColorThemeForAll(colorTheme);
+    this.logger.log('Applied appearance theme to all users', { colorTheme });
   }
 
   // ─── Registration ───────────────────────────────────────────────
@@ -613,11 +644,7 @@ export class SystemService implements OnApplicationBootstrap {
       classicAuthEnabled: this.registrationCache?.classicAuthEnabled ?? true,
     };
 
-    await this.systemSettingModel.findOneAndUpdate(
-      { key: REGISTRATION_KEY },
-      { key: REGISTRATION_KEY, value },
-      { upsert: true, new: true },
-    );
+    await this.systemSettings.upsert(REGISTRATION_KEY, value);
 
     // Immediately update cache
     this.registrationCache = {
@@ -653,11 +680,7 @@ export class SystemService implements OnApplicationBootstrap {
       classicAuthEnabled: enabled,
     };
 
-    await this.systemSettingModel.findOneAndUpdate(
-      { key: REGISTRATION_KEY },
-      { key: REGISTRATION_KEY, value },
-      { upsert: true, new: true },
-    );
+    await this.systemSettings.upsert(REGISTRATION_KEY, value);
 
     this.registrationCache = {
       enabled: value.enabled,
@@ -679,7 +702,7 @@ export class SystemService implements OnApplicationBootstrap {
    */
   private async refreshRegistrationCache(): Promise<RegistrationStatus> {
     try {
-      const setting = await this.systemSettingModel.findOne({ key: REGISTRATION_KEY });
+      const setting = await this.systemSettings.get(REGISTRATION_KEY);
 
       if (setting && this.isRegistrationValue(setting.value)) {
         this.registrationCache = {
@@ -709,7 +732,7 @@ export class SystemService implements OnApplicationBootstrap {
 
   private async refreshAppearanceCache(): Promise<AppearanceThemeSettings> {
     try {
-      const setting = await this.systemSettingModel.findOne({ key: APPEARANCE_KEY });
+      const setting = await this.systemSettings.get(APPEARANCE_KEY);
 
       if (setting && this.isAppearanceValue(setting.value)) {
         this.appearanceCache = normalizeAppearanceSettings(setting.value);
@@ -731,7 +754,7 @@ export class SystemService implements OnApplicationBootstrap {
 
   private async refreshPlaybookSettingsCache(): Promise<AdminPlaybookSettings> {
     try {
-      const setting = await this.systemSettingModel.findOne({ key: PLAYBOOK_SETTINGS_KEY }).lean().exec();
+      const setting = await this.systemSettings.get(PLAYBOOK_SETTINGS_KEY);
       const value = setting?.value as Partial<AdminPlaybookSettings> | undefined;
 
       this.playbookSettingsCache = {

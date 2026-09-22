@@ -1,4 +1,4 @@
-import { NotificationType, NotificationPriority, NotificationStatus } from '../schemas/notification.schema';
+import { NotificationType, NotificationPriority, NotificationStatus } from '../notification.types';
 
 export interface NotificationAction {
   label?: string;

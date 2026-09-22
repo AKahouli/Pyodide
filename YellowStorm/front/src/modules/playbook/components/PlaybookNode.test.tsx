@@ -1,7 +1,7 @@
 import { forwardRef } from 'react';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
-import { NodeDataActionsContext, PlaybookNode } from './PlaybookNode';
+import { CanvasDesignContext, CardDensityContext, NodeDataActionsContext, PlaybookNode } from './PlaybookNode';
 
 const storeState = vi.hoisted(() => ({
   currentPlaybook: {
@@ -9,6 +9,7 @@ const storeState = vi.hoisted(() => ({
     tasks: [],
   },
   selectedStepId: null as string | null,
+  openExecutionDetailTab: vi.fn(),
   addInputFileToTask: vi.fn(),
   bindResourceToInputPort: vi.fn(),
   removeInputFileFromTask: vi.fn(),
@@ -16,6 +17,7 @@ const storeState = vi.hoisted(() => ({
     taskResults: [
       {
         taskId: 'node-1',
+        status: 'completed',
         artifacts: [
           {
             portId: 'out-1',
@@ -147,6 +149,47 @@ vi.mock('./PortLabel', () => ({
 }));
 
 describe('PlaybookNode', () => {
+  function renderCompact(extra: Record<string, unknown> = {}, design = false) {
+    return render(<CardDensityContext.Provider value={true}><CanvasDesignContext.Provider value={design}>
+      <PlaybookNode {...({ id: 'node-1', selected: false, data: {
+        id: 'node-1', title: 'Extract text', assignedAgentId: 'agent-1', executionOrder: 0,
+        inputPorts: [], outputPorts: [], ...extra,
+      } } as any)} />
+    </CanvasDesignContext.Provider></CardDensityContext.Provider>);
+  }
+
+  it('restores a clickable Advisor score on compact cards', () => {
+    renderCompact({ stepJudgeStatus: 'evaluated', stepJudgeResult: { overallScore: 0.87 } });
+    const badge = screen.getByRole('button', { name: 'nodeCard.advisorEvaluation' });
+    expect(badge).toHaveTextContent('87%');
+    fireEvent.click(badge);
+    expect(storeState.openExecutionDetailTab).toHaveBeenCalledWith('judge', 'node-1');
+  });
+
+  it('shows Advisor failure instead of a stale score', () => {
+    renderCompact({ stepJudgeStatus: 'failed', stepJudgeResult: { overallScore: 90 } });
+    expect(screen.getByRole('button', { name: 'nodeCard.advisorEvaluation' })).toHaveTextContent('node.advisorState.failed');
+    expect(screen.queryByText('90%')).not.toBeInTheDocument();
+  });
+
+  it('shows readiness in design even after an execution', () => {
+    renderCompact({ stepStatus: 'completed' }, true);
+    expect(screen.getByText('nodeCard.ready')).toBeInTheDocument();
+    expect(screen.queryByText('completed')).not.toBeInTheDocument();
+  });
+
+  it('keeps compact cards free of repeated source summaries', () => {
+    const { container } = renderCompact();
+    expect(container.querySelector('p[title]')).not.toBeInTheDocument();
+  });
+
+  it('anchors the completed result beside the output rail', () => {
+    renderCompact({ outputPorts: [{ id: 'out-1', name: 'Report', artifactKind: 'document' }] });
+    const trigger = screen.getByRole('button', { name: 'nodeOutput.open' });
+    expect(trigger).toHaveTextContent('nodeOutput.badge');
+    expect(trigger.parentElement).toHaveClass('bottom-[calc(100%+0.375rem)]');
+  });
+
   beforeEach(() => {
     vi.clearAllMocks();
     storeState.currentPlaybook = {
@@ -158,6 +201,7 @@ describe('PlaybookNode', () => {
       taskResults: [
         {
           taskId: 'node-1',
+          status: 'completed',
           artifacts: [
             {
               portId: 'out-1',

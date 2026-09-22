@@ -30,6 +30,7 @@ export class CorrectiveReplayContextService {
         content: question.content,
         attachedFileIds: question.attachedFileIds?.map((id) => id.toString()) ?? [],
         webSearchEnabled: question.webSearchEnabled ?? false,
+        webConnectorAccessEnabled: true,
         deepSearchEnabled: false,
         modelId: question.modelId,
         agentIds: question.agentIds?.map((id) => id.toString()) ?? [],

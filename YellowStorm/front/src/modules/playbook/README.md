@@ -58,7 +58,7 @@ The playbook module is a self-contained feature module that handles:
 
 - Entry points: `src/modules/playbook/api.ts`, `src/modules/playbook/store.ts`, `src/modules/playbook/components/PlaybookCanvasPage.tsx`, `back/src/modules/playbook-flow/*`, `yellowstorm-adk/src/flow_engine/*`
 - Runtime flow: frontend loads the playbook, seeds the save baseline, autosaves through full or delta save, backend persists the flow and logs timing, ADK compiles the graph and reuses cached graphs for repeated identical runs.
-- Contracts: `GET /api/v1/playbooks/:id?view=base|enriched`, `PATCH /api/v1/playbooks/:id`, `PATCH /api/v1/playbooks/:id/delta`, `PLAYBOOK_DELTA_PATCH_ENABLED`, `VITE_PLAYBOOK_DELTA_AUTOSAVE_ENABLED`, `PLAYBOOK_GRAPH_CACHE_ENABLED`
+- Contracts: `GET /api/v1/playbooks/:id?view=base|enriched`, `PATCH /api/v1/playbooks/:id`, `PATCH /api/v1/playbooks/:id/delta`, `PLAYBOOK_DELTA_PATCH_ENABLED`, `PLAYBOOK_GRAPH_CACHE_ENABLED`
 - Invariants: optimistic concurrency uses `expectedUpdatedAt`; delta autosave must degrade to full save on explicit delta-disabled responses; playbook reads must keep base and enriched flows equivalent except for replay metadata.
 - Pitfalls: Vite only loads root-level `.env` files, so `front/src/.env` is ignored; delta autosave will always fall back to full mode if the store never seeds `lastSavedRequestBodyByPlaybookId` for the active route.
 

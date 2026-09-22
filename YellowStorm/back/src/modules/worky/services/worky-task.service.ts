@@ -1,10 +1,11 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, NotFoundException } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import { WorkyTask, WorkyTaskDocument } from '../schemas/worky-task.schema';
 import { WorkyPlanStepComponent, WorkyPlanStepComponentDocument } from '../schemas/worky-plan-step-component.schema';
 import { WorkyPlanStepArtifact, WorkyPlanStepArtifactDocument } from '../schemas/worky-plan-step-artifact.schema';
 import { LoggerService } from '../../logger';
+import { DocumentService } from '../../document/document.service';
 
 const PROJECTION_LIMIT = 2000;
 
@@ -23,8 +24,39 @@ export class WorkyTaskService {
     private readonly stepComponents: Model<WorkyPlanStepComponentDocument>,
     @InjectModel(WorkyPlanStepArtifact.name)
     private readonly stepArtifacts: Model<WorkyPlanStepArtifactDocument>,
+    private readonly documents: DocumentService,
   ) {
     this.logger.setContext(WorkyTaskService.name);
+  }
+
+  /**
+   * Sign a task artifact's stored file for viewing/downloading — mirrors the
+   * conversation's ConversationArtifactService.resolveDownloadUrl so the task
+   * drawer can open generated files in the same file viewer. Scoped to the task
+   * (stream + step) so a caller can't sign another stream's artifact; the route
+   * guard already checks stream ownership. `artifactId` is the artifact's
+   * externalId (the id surfaced by getResultContent).
+   */
+  async resolveArtifactUrl(taskId: string, artifactId: string): Promise<{ viewUrl: string; downloadUrl: string }> {
+    if (!Types.ObjectId.isValid(taskId)) throw new NotFoundException('Task not found');
+    const task = await this.tasks.findById(new Types.ObjectId(taskId)).lean().exec();
+    if (!task || typeof task.externalId !== 'string') throw new NotFoundException('Task not found');
+    const art = await this.stepArtifacts
+      .findOne({ streamId: task.streamId as Types.ObjectId, stepExternalId: task.externalId, externalId: artifactId })
+      .lean()
+      .exec();
+    const filePath = art?.filePath as string | undefined;
+    if (!art || !filePath) throw new NotFoundException('Artifact not found');
+    const filename = ((art.filename as string) || 'artifact').replace(/["\r\n]/g, '');
+    const [viewUrl, downloadUrl] = await Promise.all([
+      this.documents.generateSasUrl(filePath, { expiryMinutes: 10, checkExists: true }),
+      this.documents.generateSasUrl(filePath, {
+        expiryMinutes: 10,
+        contentDisposition: `attachment; filename="${filename}"`,
+        checkExists: true,
+      }),
+    ]);
+    return { viewUrl, downloadUrl };
   }
 
   /**

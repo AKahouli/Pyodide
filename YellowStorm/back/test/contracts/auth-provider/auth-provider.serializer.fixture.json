@@ -1,0 +1,24 @@
+{
+  "type": "oauth",
+  "id": "64b000000000000000000040",
+  "providerKey": "microsoft",
+  "displayName": "Microsoft",
+  "clientId": "****",
+  "clientSecret": "****",
+  "tenantId": "****",
+  "authorizationUrl": "https://login.microsoftonline.com/common/oauth2/v2.0/authorize",
+  "tokenUrl": "https://login.microsoftonline.com/common/oauth2/v2.0/token",
+  "userinfoUrl": "https://graph.microsoft.com/oidc/userinfo",
+  "scopes": [
+    "openid",
+    "email",
+    "profile"
+  ],
+  "iconKey": "microsoft",
+  "sortOrder": 0,
+  "pkceEnabled": true,
+  "enabled": true,
+  "linkedUserCount": 3,
+  "createdAt": "<volatile>",
+  "updatedAt": "<volatile>"
+}

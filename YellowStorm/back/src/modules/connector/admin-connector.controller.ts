@@ -22,7 +22,7 @@ import {
 import { Request } from 'express';
 import { PaginatedResponseDto } from '../../common/dto/pagination.dto';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
-import { UserDocument } from '../user/schemas/user.schema';
+import type { AuthUser } from '@common/auth/auth-user';
 import { RequirePermissions } from '../authorization/decorators/require-permissions.decorator';
 import { Permissions } from '../authorization/constants/permissions';
 import { PermissionsGuard } from '../authorization/guards/permissions.guard';
@@ -76,7 +76,7 @@ export class AdminConnectorController {
   @ApiOperation({ summary: 'Create a connector' })
   async create(
     @Body() dto: CreateConnectorDto,
-    @CurrentUser() user: UserDocument,
+    @CurrentUser() user: AuthUser,
     @Req() req: Request,
   ): Promise<IConnectorResponse> {
     const connector = await this.connectorService.create(user._id.toString(), dto);
@@ -98,7 +98,7 @@ export class AdminConnectorController {
   @ApiOperation({ summary: 'Inspect an MCP server to discover available tools' })
   async inspectMcp(
     @Body() body: InspectMcpDto,
-    @CurrentUser() user: UserDocument,
+    @CurrentUser() user: AuthUser,
   ): Promise<IMcpInspectResult> {
     const resolvedToken = body.connectedAppKey && !body.connectorId
       ? await this.connectorAdminAuthService.getValidToken(user._id.toString(), body.connectedAppKey)
@@ -177,7 +177,7 @@ export class AdminConnectorController {
   @ApiOperation({ summary: 'Inspect an MCP server and import its tools as a new connector' })
   async importFromMcp(
     @Body() body: { transportType: string; serverUrl: string; serverConfig?: Record<string, unknown> },
-    @CurrentUser() user: UserDocument,
+    @CurrentUser() user: AuthUser,
     @Req() req: Request,
   ): Promise<IMcpInspectResult> {
     const result = await this.connectorService.importFromMcp(
@@ -205,7 +205,7 @@ export class AdminConnectorController {
   async update(
     @Param('id') id: string,
     @Body() dto: UpdateConnectorDto,
-    @CurrentUser() user: UserDocument,
+    @CurrentUser() user: AuthUser,
     @Req() req: Request,
   ): Promise<IConnectorResponse> {
     const connector = await this.connectorService.update(id, dto);
@@ -228,7 +228,7 @@ export class AdminConnectorController {
   @ApiOperation({ summary: 'Delete a connector' })
   async delete(
     @Param('id') id: string,
-    @CurrentUser() user: UserDocument,
+    @CurrentUser() user: AuthUser,
     @Req() req: Request,
   ): Promise<void> {
     const connector = await this.connectorService.findById(id);
@@ -252,7 +252,7 @@ export class AdminConnectorController {
   @ApiParam({ name: 'appKey', description: 'Connected app key' })
   async authorizeConnectorApp(
     @Param('appKey') appKey: string,
-    @CurrentUser() user: UserDocument,
+    @CurrentUser() user: AuthUser,
   ) {
     const authorizationUrl = await this.connectorAdminAuthService.buildAuthorizationUrl(
       user._id.toString(),
@@ -268,7 +268,7 @@ export class AdminConnectorController {
   @ApiParam({ name: 'appKey', description: 'Connected app key' })
   async getConnectorAppStatus(
     @Param('appKey') appKey: string,
-    @CurrentUser() user: UserDocument,
+    @CurrentUser() user: AuthUser,
   ) {
     return this.connectorAdminAuthService.getStatus(user._id.toString(), appKey);
   }
@@ -280,7 +280,7 @@ export class AdminConnectorController {
   @ApiParam({ name: 'appKey', description: 'Connected app key' })
   async disconnectConnectorApp(
     @Param('appKey') appKey: string,
-    @CurrentUser() user: UserDocument,
+    @CurrentUser() user: AuthUser,
   ): Promise<void> {
     await this.connectorAdminAuthService.disconnect(user._id.toString(), appKey);
   }
@@ -292,7 +292,7 @@ export class AdminConnectorController {
   @ApiParam({ name: 'id', description: 'Connector ID' })
   async authorizeConnector(
     @Param('id') id: string,
-    @CurrentUser() user: UserDocument,
+    @CurrentUser() user: AuthUser,
   ) {
     const connector = await this.connectorService.findById(id);
 
@@ -318,7 +318,7 @@ export class AdminConnectorController {
   @ApiParam({ name: 'id', description: 'Connector ID' })
   async inspectConnector(
     @Param('id') id: string,
-    @CurrentUser() user: UserDocument,
+    @CurrentUser() user: AuthUser,
     @Body() dto: InspectConnectorDto,
   ) {
     const connector = await this.connectorService.findById(id);

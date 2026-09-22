@@ -48,6 +48,29 @@ const connector: ConnectorResponse = {
 };
 
 describe('CreateEditConnectorDialog tool table', () => {
+  it('loads and saves a workspace-sourced dynamic header', async () => {
+    const user = userEvent.setup();
+    const onSave = vi.fn();
+    render(
+      <CreateEditConnectorDialog
+        open
+        onOpenChange={vi.fn()}
+        connector={{
+          ...connector,
+          dynamicHeaders: [{ headerName: 'Workspace-Id', source: 'workspace', enabled: true }],
+        }}
+        onSave={onSave}
+      />,
+    );
+
+    expect(await screen.findByText('connectors.form.dynamicHeaders.sources.workspace')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'connectors.form.dialog.update' }));
+
+    expect(onSave).toHaveBeenCalledWith(expect.objectContaining({
+      dynamicHeaders: [expect.objectContaining({ headerName: 'Workspace-Id', source: 'workspace', enabled: true })],
+    }));
+  });
+
   it('submits the hidden connector visibility setting', async () => {
     const user = userEvent.setup();
     const onSave = vi.fn();

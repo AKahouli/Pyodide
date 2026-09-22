@@ -6,6 +6,7 @@ import {
   Get,
   HttpCode,
   HttpStatus,
+  Logger,
   NotFoundException,
   NotImplementedException,
   Param,
@@ -27,6 +28,7 @@ import type {
   AppRevisionCatalogFields,
   DeployedAppSummary,
   DraftAppSummary,
+  SessionRevisionContext,
 } from './services/conversation-v2-session.service';
 import { ConversationV2ShareService } from './services/conversation-v2-share.service';
 import { ConversationV2OwnerGuard } from './guards/conversation-v2-owner.guard';
@@ -54,8 +56,11 @@ import { VmUnavailableException } from './exceptions/vm-unavailable.exception';
 import { ConversationV2EventStoreService, PersistedEventRow } from './services/conversation-v2-event-store.service';
 import { ConversationV2DeployService } from './services/conversation-v2-deploy.service';
 import { ConversationV2AppShareService } from './services/conversation-v2-app-share.service';
+import { ConversationV2AppAiFeaturesService } from './services/conversation-v2-app-ai-features.service';
 import { normalizeAppSourceCephPrefix } from './utils/normalize-app-source-ceph-prefix';
 import { RuntimeTicketService } from '@modules/app-runtime/services/runtime-ticket.service';
+import { AiPreviewTicketService } from '@modules/ai-proxy/services/ai-preview-ticket.service';
+import type { AiPreviewTicketResult } from '@modules/ai-proxy/services/ai-preview-ticket.service';
 import { RuntimeRevisionService } from '@modules/app-runtime/services/runtime-revision.service';
 import { RuntimeBindingService } from '@modules/app-runtime/services/runtime-binding.service';
 import { RuntimeFinalizedRevisionService } from '@modules/app-runtime/services/runtime-finalized-revision.service';
@@ -74,6 +79,8 @@ interface ConversationV2Request {
 @ApiBearerAuth()
 @Controller('conversation-v2')
 export class ConversationV2Controller {
+  private readonly logger = new Logger(ConversationV2Controller.name);
+
   constructor(
     private readonly grpcClient: ConversationV2GrpcClientService,
     private readonly sessions: ConversationV2SessionService,
@@ -86,10 +93,24 @@ export class ConversationV2Controller {
     private readonly deployment: ConversationV2DeployService,
     private readonly appShares: ConversationV2AppShareService,
     private readonly runtimeTickets: RuntimeTicketService,
+    private readonly aiPreviewTickets: AiPreviewTicketService,
     private readonly runtimeRevisions: RuntimeRevisionService,
     private readonly runtimeBindings: RuntimeBindingService,
     private readonly finalizedRevisions: RuntimeFinalizedRevisionService,
+    private readonly appAiFeatures: ConversationV2AppAiFeaturesService,
   ) {}
+
+  /**
+   * Fire-and-forget rollback of a half-created session: drop the draft pointer
+   * (which references the system workspace) before the workspace itself.
+   */
+  private discardDraft(draftId: Types.ObjectId, systemWorkspaceId: string): void {
+    void this.sessions
+      .deleteDraft(draftId)
+      .catch(() => undefined)
+      .then(() => this.workspaceService.deleteSystemWorkspace(systemWorkspaceId))
+      .catch(() => undefined);
+  }
 
   @Post('sessions')
   @HttpCode(HttpStatus.CREATED)
@@ -136,8 +157,7 @@ export class ConversationV2Controller {
     try {
       aiSessionId = await this.grpcClient.createSession(user.id, workspaceIds);
     } catch (err) {
-      this.workspaceService.deleteSystemWorkspace(systemWorkspaceId).catch(() => undefined);
-      this.sessions.deleteDraft(draftId).catch(() => undefined);
+      this.discardDraft(draftId, systemWorkspaceId);
       throw err;
     }
 
@@ -145,8 +165,7 @@ export class ConversationV2Controller {
       await this.sessions.attachAiSession(draftId, aiSessionId, systemWorkspaceId);
     } catch (err) {
       this.grpcClient.stopSession(user.id, aiSessionId).catch(() => undefined);
-      this.workspaceService.deleteSystemWorkspace(systemWorkspaceId).catch(() => undefined);
-      this.sessions.deleteDraft(draftId).catch(() => undefined);
+      this.discardDraft(draftId, systemWorkspaceId);
       throw err;
     }
 
@@ -183,21 +202,39 @@ export class ConversationV2Controller {
     ]);
     const ownedIds = new Set(deployed.map((app) => app.sessionId));
     const filteredShared = shared.filter((app) => !ownedIds.has(app.sessionId));
-    const revisionBySession = await this.buildRevisionCatalogBySessionId([
-      ...deployed,
-      ...filteredShared,
-      ...drafts,
-    ]);
+    const catalogApps = [...deployed, ...filteredShared, ...drafts];
+    const { revisionBySession, contexts } =
+      await this.buildRevisionCatalogBySessionId(catalogApps);
+    const aiBySession = await this.appAiFeatures.resolveForCatalog(
+      catalogApps.map((app) => {
+        const context = contexts.get(app.sessionId);
+        const revision = revisionBySession.get(app.sessionId);
+        const revisionId =
+          revision?.lastDeployedRevisionId
+          ?? revision?.latestFinalizedRevisionId
+          ?? null;
+        return {
+          sessionId: app.sessionId,
+          workspaceId: context?.aiSessionId ?? null,
+          revisionId,
+          hasAiFeatures: context?.hasAiFeatures === true || app.hasAiFeatures === true,
+          aiFeaturesCheckedRevisionId: context?.aiFeaturesCheckedRevisionId ?? null,
+        };
+      }),
+    );
+
+    const withCatalog = <T extends { sessionId: string; hasAiFeatures: boolean }>(
+      app: T,
+      includeDeployedRevision: boolean,
+    ): T & AppRevisionCatalogFields => ({
+      ...this.applyRevisionCatalog(app, revisionBySession.get(app.sessionId), includeDeployedRevision),
+      hasAiFeatures: aiBySession.get(app.sessionId) === true,
+    });
+
     return {
-      deployed: deployed.map((app) =>
-        this.applyRevisionCatalog(app, revisionBySession.get(app.sessionId), true),
-      ),
-      shared: filteredShared.map((app) =>
-        this.applyRevisionCatalog(app, revisionBySession.get(app.sessionId), true),
-      ),
-      drafts: drafts.map((app) =>
-        this.applyRevisionCatalog(app, revisionBySession.get(app.sessionId), false),
-      ),
+      deployed: deployed.map((app) => withCatalog(app, true)),
+      shared: filteredShared.map((app) => withCatalog(app, true)),
+      drafts: drafts.map((app) => withCatalog(app, false)),
     };
   }
 
@@ -315,6 +352,23 @@ export class ConversationV2Controller {
     });
   }
 
+  /**
+   * Opaque AI preview ticket for BrowserRuntimeHost relay.
+   * Never injected into the generated app / iframe — parent holds plaintext only.
+   */
+  @Post('sessions/:id/ai-preview-ticket')
+  @HttpCode(HttpStatus.OK)
+  @UseGuards(ConversationV2SessionAccessGuard)
+  @RequireConversationSessionPermission(ConversationV2SessionPermissions.SESSION_WRITE)
+  issueAiPreviewTicket(
+    @CurrentConversationSession() session: ConversationV2ResolvedSession,
+  ): Promise<AiPreviewTicketResult> {
+    return this.aiPreviewTickets.issue({
+      conversationSessionId: this.requireWorkspaceId(session),
+      billableUserId: session.ownerId,
+    });
+  }
+
   @Get('sessions/:id/workspace-documents')
   @UseGuards(ConversationV2SessionAccessGuard)
   @RequireConversationSessionPermission(ConversationV2SessionPermissions.WORKSPACE_DOCUMENTS_READ)
@@ -377,19 +431,15 @@ export class ConversationV2Controller {
   ): Promise<{ deleted: true }> {
     const pointer = session.pointer;
     const ownerId = session.ownerId;
-    // Known: there's a small race window between deleteAllByWorkspace and
-    // deleteSystemWorkspace where a concurrent stream's fire-and-forget
-    // createFromAiArtifact can insert a new document row pointing at the
-    // workspace we're about to remove. The document row then outlives the
-    // workspace (no FK constraints in Mongo). Documents are tiny and a future
-    // orphan-sweep cron would handle them; acceptable for the rework.
-    if (pointer?.systemWorkspaceId) {
-      const wsId = pointer.systemWorkspaceId.toString();
+    // Capture the system workspace id, then drop the session reference first
+    // so the workspace is never deleted while something still points at it.
+    const wsId = pointer?.systemWorkspaceId?.toString();
+    await this.sessions.softDelete(ownerId, id);
+    await this.appShares.deleteAllSharesForSession(id);
+    if (wsId) {
       await this.workspaceDocuments.deleteAllByWorkspace(wsId);
       await this.workspaceService.deleteSystemWorkspace(wsId);
     }
-    await this.sessions.softDelete(ownerId, id);
-    await this.appShares.deleteAllSharesForSession(id);
     return { deleted: true };
   }
 
@@ -482,6 +532,7 @@ export class ConversationV2Controller {
     deployStatus: string;
     deployedUrl: string | null;
     lastDeployedAt: string | null;
+    ownerInviteToken: string | null;
   }> {
     const pointer = session.pointer;
     const ownerId = session.ownerId;
@@ -528,10 +579,34 @@ export class ConversationV2Controller {
       deployedUrl,
       lastDeployedAt,
     });
+
+    try {
+      await this.appAiFeatures.detectAndPersist(id, pointer.aiSessionId, revisionId);
+    } catch (err) {
+      this.logger.warn(
+        `AI features detect after deploy failed for session ${id}: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+    }
+
+    let ownerInviteToken: string | null = null;
+    try {
+      ownerInviteToken = await this.appShares.createOwnerInvite({
+        ownerId,
+        sessionId: id,
+        title: deployedAppTitle || 'Untitled app',
+        deployedUrl,
+      });
+    } catch (err) {
+      this.logger.warn(`Owner auto-invite failed for session ${id}: ${err}`);
+    }
+
     return {
       deployStatus: 'deployed',
       deployedUrl,
       lastDeployedAt: lastDeployedAt.toISOString(),
+      ownerInviteToken,
     };
   }
 
@@ -799,7 +874,10 @@ export class ConversationV2Controller {
 
   private async buildRevisionCatalogBySessionId(
     apps: Array<{ sessionId: string }>,
-  ): Promise<Map<string, AppRevisionCatalogFields>> {
+  ): Promise<{
+    revisionBySession: Map<string, AppRevisionCatalogFields>;
+    contexts: Map<string, SessionRevisionContext>;
+  }> {
     const sessionIds = apps.map((app) => app.sessionId);
     const contexts = await this.sessions.resolveRevisionContextBySessionIds(sessionIds);
     const workspaceIds = [
@@ -824,7 +902,7 @@ export class ConversationV2Controller {
         finalizedVersionCount: finalized?.versionCount ?? 0,
       });
     }
-    return revisionBySession;
+    return { revisionBySession, contexts };
   }
 
   private applyRevisionCatalog<T extends { sessionId: string }>(

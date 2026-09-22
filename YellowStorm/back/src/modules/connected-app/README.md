@@ -8,7 +8,7 @@ The Connected App module enables OAuth 2.0 integrations with third-party service
 - [Architecture](#architecture)
 - [OAuth Flow](#oauth-flow)
 - [Module Structure](#module-structure)
-- [Database Collections](#database-collections)
+- [Database Tables](#database-tables)
 - [API Endpoints](#api-endpoints)
 - [Environment Variables](#environment-variables)
 - [Supported Providers](#supported-providers)
@@ -69,7 +69,7 @@ The Connected App module provides a complete OAuth 2.0 implementation for user-l
 ├─────────────────────────────────────────────────────────────────┤
 │  CryptoService (Encryption)                                      │
 ├─────────────────────────────────────────────────────────────────┤
-│  Collections:                                                    │
+│  Tables (Postgres, schema integrations):                         │
 │  - connected_app_definitions     (OAuth app configs)             │
 │  - user_app_connections         (User connections)              │
 │  - connected_app_oauth_states    (OAuth state storage)           │
@@ -143,10 +143,9 @@ back/src/modules/connected-app/
 │   ├── create-connected-app-definition.dto.ts
 │   ├── update-connected-app-definition.dto.ts
 │   ├── index.ts
-├── schemas/
-│   ├── connected-app-definition.schema.ts    # OAuth app config
-│   ├── connected-app-oauth-state.schema.ts    # OAuth state (TTL)
-│   └── user-app-connection.schema.ts         # User connections
+├── persistence/
+│   ├── connected-app.store.ts                # Store ports (definition, user connection, OAuth state)
+│   └── pg-connected-app.store.ts             # Pg* adapters (Drizzle, integrations schema)
 ├── services/
 │   ├── connected-app-definition.service.ts
 │   ├── connected-app-oauth.service.ts        # OAuth flow logic
@@ -165,9 +164,11 @@ back/src/modules/connected-app/
 
 ---
 
-## Database Collections
+## Database Tables
 
-### `connected_app_definitions`
+Persistence is PostgreSQL (Drizzle, schema `integrations`; `postgres/schema/integrations.schema.ts`). `ConnectedAppModule` binds `CONNECTED_APP_DEFINITION_STORE` -> `PgConnectedAppDefinitionStore`, `USER_APP_CONNECTION_STORE` -> `PgUserAppConnectionStore` and `CONNECTED_APP_OAUTH_STATE_STORE` -> `PgConnectedAppOauthStateStore`. Unique indexes: `connected_app_definitions (app_key)`, `user_app_connections (user_id, app_key)`, `connected_app_oauth_states (state)`. `user_id` carries no FK. The TypeScript shapes below are logical models.
+
+### `integrations.connected_app_definitions`
 
 OAuth application definitions (admin-managed).
 
@@ -191,7 +192,7 @@ OAuth application definitions (admin-managed).
 }
 ```
 
-### `user_app_connections`
+### `integrations.user_app_connections`
 
 User-specific OAuth connections.
 
@@ -206,8 +207,6 @@ User-specific OAuth connections.
   status: 'active' | 'expired' | 'revoked' | 'error';
   providerAccountId?: string;  // Provider account ID
   providerEmail?: string;      // Provider account email
-  connectedAt: Date;
-  disconnectedAt: Date;
   lastRefreshedAt: Date;
   lastUsedAt: Date;
   errorMessage?: string;       // Error details
@@ -216,9 +215,9 @@ User-specific OAuth connections.
 }
 ```
 
-### `connected_app_oauth_states`
+### `integrations.connected_app_oauth_states`
 
-Temporary OAuth state storage (TTL: 10 minutes).
+Temporary OAuth state storage (TTL: 10 minutes; expired rows are swept by `PgTtlSweeper`).
 
 ```typescript
 {
@@ -429,13 +428,10 @@ body.set('code_verifier', codeVerifier);
 
 ### TTL-Based Cleanup
 
-OAuth states automatically expire:
+OAuth states expire after 10 minutes and are deleted by `PgTtlSweeper` (registered for `integrations.connected_app_oauth_states.expires_at` in `PgTtlRegistrationService`):
 
 ```typescript
-ConnectedAppOAuthStateSchema.index(
-  { expiresAt: 1 },
-  { expireAfterSeconds: 0 }
-);
+this.sweeper.register({ schema: 'integrations', table: 'connected_app_oauth_states', column: 'expires_at' });
 ```
 
 ### Token Refresh Buffer

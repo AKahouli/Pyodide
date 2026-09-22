@@ -111,3 +111,15 @@ class AgentToolsManager:
                 raise ValueError("No agents available for manager")
 
         return tools
+
+    def create_tools_for_agent_ids(self, agent_ids: List[str], q=None, search_web: bool = False) -> List[Any]:
+        tools = []
+        for agent_id in agent_ids:
+            agent = self.agent_repository.get_agent_by_id(agent_id)
+            if not agent:
+                raise ValueError(f"Agent {agent_id} not found")
+            agent_name = agent.get("name", "")
+            delegate_func = self.delegation_factory.make_delegate_function(agent_name, q, search_web)
+            delegate_func.__name__ = f"delegate_to_{self._helper.sanitize_function_name(agent_name)}"
+            tools.append(delegate_func)
+        return tools

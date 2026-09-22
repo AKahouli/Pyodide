@@ -1,22 +1,36 @@
-import { Injectable } from '@nestjs/common';
-import { InjectModel } from '@nestjs/mongoose';
-import { Model, Types } from 'mongoose';
+import { Inject, Injectable } from '@nestjs/common';
 import { ConflictException, ForbiddenException, NotFoundException, ValidationException } from '@modules/exceptions';
 import { ErrorCode } from '@modules/exceptions/constants/error-codes';
 import { AuditLogService } from '@modules/authorization/services/audit-log.service';
 import { UserGroupService } from '@modules/user-group';
 import { CreateGovernanceScopeDto, GovernanceScopeKnowledgeDto, UpdateGovernanceScopeDto } from '../dto';
+import {
+  BINDING_STORE,
+  DEPLOYMENT_STORE,
+  DRY_RUN_STORE,
+  GOVERNANCE_DOCUMENT_STORE,
+  MEMBERSHIP_STORE,
+  METRIC_STORE,
+  PUBLICATION_ATTEMPT_STORE,
+  REVISION_STORE,
+  SCOPE_STORE,
+  GOVERNANCE_TRANSACTION,
+  type BindingStore,
+  type GovernanceTransactionRunner,
+  type DeploymentStore,
+  type DryRunStore,
+  type GovernanceDocumentStore,
+  type GovernanceScopeKnowledge,
+  type GovernanceScopeRecord,
+  type MembershipStore,
+  type MetricStore,
+  type PublicationAttemptStore,
+  type RevisionStore,
+  type ScopeStore,
+} from '../persistence';
 import { GovernanceProgramService } from './governance-program.service';
-import { GovernanceScope, GovernanceScopeDocument, GovernanceScopeKnowledgeSchemaClass } from '../schemas/governance-scope.schema';
-import { GovernanceDocument, GovernanceDocumentDocument } from '../schemas/governance-document.schema';
-import { GovernanceWorkspaceBinding, GovernanceWorkspaceBindingDocument } from '../schemas/governance-workspace-binding.schema';
-import { GovernanceMembership, GovernanceMembershipDocument } from '../schemas/governance-membership.schema';
-import { GovernanceDeployment, GovernanceDeploymentDocument } from '../schemas/governance-deployment.schema';
-import { GovernanceDeploymentRevision, GovernanceDeploymentRevisionDocument } from '../schemas/governance-deployment-revision.schema';
-import { GovernanceDryRun, GovernanceDryRunDocument } from '../schemas/governance-dry-run.schema';
-import { GovernanceMetric, GovernanceMetricDocument } from '../schemas/governance-metric.schema';
-import { GovernancePublicationAttempt, GovernancePublicationAttemptDocument } from '../schemas/governance-publication-attempt.schema';
 import { GovernanceDraftPreparationService } from './governance-draft-preparation.service';
+import type { GovernanceScopeType } from '../domain/governance-types';
 
 export interface GovernanceScopeKnowledgeResponse {
   sourceMode: 'llm_only' | 'workspaces_only';
@@ -42,28 +56,20 @@ export interface GovernanceScopeResponse {
 @Injectable()
 export class GovernanceScopeService {
   constructor(
-    @InjectModel(GovernanceScope.name)
-    private readonly scopeModel: Model<GovernanceScopeDocument>,
-    @InjectModel(GovernanceDocument.name)
-    private readonly documentModel: Model<GovernanceDocumentDocument>,
-    @InjectModel(GovernanceWorkspaceBinding.name)
-    private readonly bindingModel: Model<GovernanceWorkspaceBindingDocument>,
-    @InjectModel(GovernanceMembership.name)
-    private readonly membershipModel: Model<GovernanceMembershipDocument>,
-    @InjectModel(GovernanceDeployment.name)
-    private readonly deploymentModel: Model<GovernanceDeploymentDocument>,
-    @InjectModel(GovernanceDeploymentRevision.name)
-    private readonly revisionModel: Model<GovernanceDeploymentRevisionDocument>,
-    @InjectModel(GovernanceDryRun.name)
-    private readonly dryRunModel: Model<GovernanceDryRunDocument>,
-    @InjectModel(GovernanceMetric.name)
-    private readonly metricModel: Model<GovernanceMetricDocument>,
-    @InjectModel(GovernancePublicationAttempt.name)
-    private readonly publicationAttemptModel: Model<GovernancePublicationAttemptDocument>,
+    @Inject(SCOPE_STORE) private readonly scopeStore: ScopeStore,
+    @Inject(GOVERNANCE_DOCUMENT_STORE) private readonly documentStore: GovernanceDocumentStore,
+    @Inject(BINDING_STORE) private readonly bindingStore: BindingStore,
+    @Inject(MEMBERSHIP_STORE) private readonly membershipStore: MembershipStore,
+    @Inject(DEPLOYMENT_STORE) private readonly deploymentStore: DeploymentStore,
+    @Inject(REVISION_STORE) private readonly revisionStore: RevisionStore,
+    @Inject(DRY_RUN_STORE) private readonly dryRunStore: DryRunStore,
+    @Inject(METRIC_STORE) private readonly metricStore: MetricStore,
+    @Inject(PUBLICATION_ATTEMPT_STORE) private readonly publicationAttemptStore: PublicationAttemptStore,
     private readonly programService: GovernanceProgramService,
     private readonly userGroupService: UserGroupService,
     private readonly auditLogService: AuditLogService,
     private readonly draftPreparation: GovernanceDraftPreparationService,
+    @Inject(GOVERNANCE_TRANSACTION) private readonly tx: GovernanceTransactionRunner,
   ) {}
 
   async create(ownerUserId: string, programId: string, dto: CreateGovernanceScopeDto): Promise<GovernanceScopeResponse> {
@@ -72,17 +78,23 @@ export class GovernanceScopeService {
     await this.assertValidParent(programId, dto.parentScopeId);
     const metadata = dto.metadata ? this.normalizeDescription(dto.metadata) : undefined;
     const knowledge = dto.knowledge ? this.normalizeKnowledge(dto.knowledge) : undefined;
-    const scope = await this.scopeModel.create({ ...dto, metadata, ...(knowledge ? { knowledge } : {}), name: dto.name.trim(), programId: new Types.ObjectId(programId) });
+    const scope = await this.scopeStore.insert({
+      programId,
+      name: dto.name.trim(),
+      type: dto.type as GovernanceScopeType | undefined,
+      status: dto.status as GovernanceScopeRecord['status'] | undefined,
+      parentScopeId: dto.parentScopeId,
+      agentIds: dto.agentIds,
+      metadata,
+      knowledge,
+    });
     return this.toResponse(scope);
   }
 
   async list(ownerUserId: string, programId: string): Promise<GovernanceScopeResponse[]> {
     await this.programService.assertOwnedProgram(ownerUserId, programId);
     const accessibleScopeIds = await this.getAccessibleScopeIds(ownerUserId, programId);
-    const filter = accessibleScopeIds.includes('*')
-      ? { programId: new Types.ObjectId(programId) }
-      : { programId: new Types.ObjectId(programId), _id: { $in: accessibleScopeIds.map((id) => new Types.ObjectId(id)) } };
-    const scopes = await this.scopeModel.find(filter).sort({ createdAt: 1 }).lean().exec();
+    const scopes = await this.scopeStore.listByProgram(programId, accessibleScopeIds.includes('*') ? '*' : accessibleScopeIds);
     return scopes.map((scope) => this.toResponse(scope));
   }
 
@@ -95,33 +107,25 @@ export class GovernanceScopeService {
     await this.programService.assertOwnedProgram(ownerUserId, programId);
     await this.assertScopeAccess(ownerUserId, programId, scopeId);
     await this.assertCanUpdateScope(ownerUserId, programId, scopeId, dto);
-    const scope = await this.scopeModel.findOne({ _id: new Types.ObjectId(scopeId), programId: new Types.ObjectId(programId) }).exec();
-    if (!scope) throw new NotFoundException(ErrorCode.GOVERNANCE_SCOPE_NOT_FOUND);
-    if (dto.name !== undefined) {
-      const name = dto.name.trim();
-      await this.assertNoDuplicate(programId, name, scopeId);
-      scope.name = name;
-    }
-    if (dto.parentScopeId !== undefined) {
-      await this.assertValidParent(programId, dto.parentScopeId, scopeId);
-      scope.parentScopeId = dto.parentScopeId ? new Types.ObjectId(dto.parentScopeId) : undefined;
-    }
-    if (dto.type !== undefined) scope.type = dto.type as GovernanceScope['type'];
-    if (dto.status !== undefined) {
-      scope.status = dto.status;
-      if (dto.status === 'inactive') await this.suspendPublishedDeployment(ownerUserId, ownerEmail, programId, scopeId);
-    }
-    if (dto.agentIds !== undefined) scope.agentIds = dto.agentIds.map((id) => new Types.ObjectId(id));
-    if (dto.knowledge !== undefined) scope.knowledge = this.normalizeKnowledge(dto.knowledge);
-    if (dto.metadata !== undefined) {
-      const metadata = this.normalizeDescription(dto.metadata);
-      this.assertMetadataUpdateAllowed(metadata);
-      scope.metadata = this.mergeMetadata(scope.metadata, metadata);
-    }
-    await scope.save();
+    const current = await this.scopeStore.findByProgramAndId(programId, scopeId);
+    if (!current) throw new NotFoundException(ErrorCode.GOVERNANCE_SCOPE_NOT_FOUND);
+    if (dto.name !== undefined) await this.assertNoDuplicate(programId, dto.name.trim(), scopeId);
+    if (dto.parentScopeId !== undefined) await this.assertValidParent(programId, dto.parentScopeId, scopeId);
+    if (dto.metadata !== undefined) this.assertMetadataUpdateAllowed(dto.metadata);
+    if (dto.status === 'inactive') await this.suspendPublishedDeployment(ownerUserId, ownerEmail, programId, scopeId);
+    const updated = await this.scopeStore.update(scopeId, {
+      ...(dto.name !== undefined ? { name: dto.name.trim() } : {}),
+      ...(dto.parentScopeId !== undefined ? { parentScopeId: dto.parentScopeId || null } : {}),
+      ...(dto.type !== undefined ? { type: dto.type as GovernanceScopeType } : {}),
+      ...(dto.status !== undefined ? { status: dto.status } : {}),
+      ...(dto.agentIds !== undefined ? { agentIds: dto.agentIds } : {}),
+      ...(dto.knowledge !== undefined ? { knowledge: this.normalizeKnowledge(dto.knowledge) } : {}),
+      ...(dto.metadata !== undefined ? { metadata: this.mergeMetadata(current.metadata, this.normalizeDescription(dto.metadata)) } : {}),
+    });
+    if (!updated) throw new NotFoundException(ErrorCode.GOVERNANCE_SCOPE_NOT_FOUND);
     const materialChange = dto.name !== undefined || dto.parentScopeId !== undefined || dto.type !== undefined || dto.status !== undefined || dto.agentIds !== undefined || dto.metadata?.classification !== undefined;
     if (materialChange) await this.draftPreparation.prepare(ownerUserId, ownerEmail, programId, scopeId);
-    return this.toResponse(scope);
+    return this.toResponse(updated);
   }
 
   async delete(ownerUserId: string, programId: string, scopeId: string): Promise<void> {
@@ -130,40 +134,49 @@ export class GovernanceScopeService {
     await this.deleteScopeTree(programId, scopeId);
   }
 
+  /** Deletes the scope and its whole subtree atomically, children before parents, set-based. */
   private async deleteScopeTree(programId: string, scopeId: string): Promise<void> {
-    const programObjectId = new Types.ObjectId(programId);
-    const scopeObjectId = new Types.ObjectId(scopeId);
-    const children = await this.scopeModel.find({ programId: programObjectId, parentScopeId: scopeObjectId }).select('_id').lean().exec();
-    await Promise.all(children.map((child) => this.deleteScopeTree(programId, child._id.toString())));
-    const deployments = await this.deploymentModel.find({ programId: programObjectId, scopeId: scopeObjectId }).select('_id').lean().exec();
-    const deploymentIds = deployments.map((deployment) => deployment._id);
-    await this.bindingModel.deleteMany({ programId: programObjectId, visibility: 'multi_scope', scopeIds: { $size: 1, $all: [scopeObjectId] } });
-    await Promise.all([
-      this.bindingModel.deleteMany({ programId: programObjectId, visibility: 'scope_specific', scopeIds: scopeObjectId }),
-      this.bindingModel.updateMany({ programId: programObjectId, visibility: 'multi_scope', scopeIds: scopeObjectId }, [{ $set: { scopeIds: { $filter: { input: '$scopeIds', as: 'scopeId', cond: { $ne: ['$$scopeId', scopeObjectId] } } } } }, { $set: { visibility: { $cond: [{ $eq: [{ $size: '$scopeIds' }, 1] }, 'scope_specific', 'multi_scope'] } } }]),
-      this.documentModel.updateMany({ programId: programObjectId, ownerScopeId: scopeObjectId }, { $unset: { ownerScopeId: '' }, $inc: { governanceRevision: 1 } }),
-      this.membershipModel.deleteMany({ programId: programObjectId, scopeId: scopeObjectId }),
-      this.metricModel.deleteMany({ programId: programObjectId, scopeId: scopeObjectId }),
-      this.dryRunModel.deleteMany({ programId: programObjectId, scopeId: scopeObjectId }),
-      this.publicationAttemptModel.deleteMany({ programId: programObjectId, scopeId: scopeObjectId }),
-      deploymentIds.length > 0 ? this.revisionModel.deleteMany({ deploymentId: { $in: deploymentIds } }) : Promise.resolve(),
-      deploymentIds.length > 0 ? this.deploymentModel.deleteMany({ _id: { $in: deploymentIds } }) : Promise.resolve(),
-    ]);
-    await this.scopeModel.deleteOne({ _id: scopeObjectId, programId: programObjectId });
+    await this.tx.run(async () => {
+      const scopeIds = this.collectSubtree(scopeId, await this.scopeStore.listHierarchy(programId));
+      const scopeIdSet = new Set(scopeIds);
+      const deploymentIds = (await this.deploymentStore.listByProgram(programId)).filter((deployment) => scopeIdSet.has(deployment.scopeId)).map((deployment) => deployment.id);
+      await this.bindingStore.removeScopesFromProgramBindings(programId, scopeIds);
+      await this.documentStore.clearOwnerScopes(programId, scopeIds);
+      await this.membershipStore.deleteByProgramAndScopeIds(programId, scopeIds);
+      await this.metricStore.deleteByProgramAndScopeIds(programId, scopeIds);
+      await this.dryRunStore.deleteByProgramAndScopeIds(programId, scopeIds);
+      await this.publicationAttemptStore.deleteByProgramAndScopeIds(programId, scopeIds);
+      await this.revisionStore.deleteByDeploymentIds(deploymentIds);
+      await this.deploymentStore.deleteByProgramAndScopeIds(programId, scopeIds);
+      await this.scopeStore.deleteByIdsAndProgram(scopeIds, programId);
+    });
+  }
+
+  /** Breadth-first subtree walk (root first); the visited set guards against parent cycles. */
+  private collectSubtree(rootId: string, hierarchy: Array<{ id: string; parentScopeId: string | null }>): string[] {
+    const childrenByParent = new Map<string, string[]>();
+    for (const node of hierarchy) {
+      if (!node.parentScopeId) continue;
+      childrenByParent.set(node.parentScopeId, [...(childrenByParent.get(node.parentScopeId) ?? []), node.id]);
+    }
+    const visited = new Set<string>([rootId]);
+    const queue = [rootId];
+    for (let index = 0; index < queue.length; index += 1) {
+      for (const child of childrenByParent.get(queue[index]) ?? []) {
+        if (visited.has(child)) continue;
+        visited.add(child);
+        queue.push(child);
+      }
+    }
+    return queue;
   }
 
   private async assertCanDeleteScope(ownerUserId: string, programId: string, scopeId: string): Promise<void> {
     if (await this.isProgramOwner(ownerUserId, programId)) return;
-    const membership = await this.membershipModel.findOne({
-      userId: new Types.ObjectId(ownerUserId),
-      programId: new Types.ObjectId(programId),
-      status: 'active',
-      $or: [
-        { scopeId: null, role: 'program_admin' },
-        { scopeId: new Types.ObjectId(scopeId), role: 'scope_admin' },
-      ],
-    }).select('_id').lean().exec();
-    if (membership) return;
+    const groupIds = await this.userGroupService.findGroupIdsForMember(ownerUserId);
+    const memberships = await this.membershipStore.findActiveForUser(programId, ownerUserId, groupIds);
+    const allowed = memberships.some((membership) => (!membership.scopeId && membership.role === 'program_admin') || (membership.scopeId === scopeId && membership.role === 'scope_admin'));
+    if (allowed) return;
     throw new ForbiddenException(ErrorCode.GOVERNANCE_ACCESS_DENIED);
   }
 
@@ -182,30 +195,13 @@ export class GovernanceScopeService {
   private async canManageScope(ownerUserId: string, programId: string, scopeId: string): Promise<boolean> {
     if (await this.isProgramOwner(ownerUserId, programId)) return true;
     const groupIds = await this.userGroupService.findGroupIdsForMember(ownerUserId);
-    const membership = await this.membershipModel.findOne({
-      programId: new Types.ObjectId(programId),
-      status: 'active',
-      role: { $in: ['program_admin', 'scope_admin'] },
-      $or: [
-        { userId: new Types.ObjectId(ownerUserId) },
-        ...(groupIds.length > 0 ? [{ groupId: { $in: groupIds.map((id) => new Types.ObjectId(id)) } }] : []),
-      ],
-      $and: [{
-        $or: [
-          { scopeId: null },
-          { scopeId: new Types.ObjectId(scopeId) },
-        ],
-      }],
-    }).select('_id').lean().exec();
-    return Boolean(membership);
+    const memberships = await this.membershipStore.findActiveForUser(programId, ownerUserId, groupIds);
+    return memberships.some((membership) => ['program_admin', 'scope_admin'].includes(membership.role) && (!membership.scopeId || membership.scopeId === scopeId));
   }
 
   private async suspendPublishedDeployment(actorId: string, actorEmail: string, programId: string, scopeId: string): Promise<void> {
-    const result = await this.deploymentModel.updateOne(
-      { programId: new Types.ObjectId(programId), scopeId: new Types.ObjectId(scopeId), status: 'published' },
-      { $set: { status: 'suspended' } },
-    ).exec();
-    if (result.modifiedCount > 0) {
+    const changed = await this.deploymentStore.suspendPublished(programId, scopeId);
+    if (changed) {
       this.auditLogService.logSuccess({ actorId, actorEmail, action: 'governance.deployment.suspended', targetType: 'governance_scope', targetId: scopeId, metadata: { programId, scopeId, reason: 'scope_inactive' } });
     }
   }
@@ -222,7 +218,7 @@ export class GovernanceScopeService {
    * scheme/path). With web sources enabled but both lists empty, every web
    * source is authorized.
    */
-  private normalizeKnowledge(knowledge: GovernanceScopeKnowledgeDto): GovernanceScopeKnowledgeSchemaClass {
+  private normalizeKnowledge(knowledge: GovernanceScopeKnowledgeDto): GovernanceScopeKnowledge {
     const webSourcesEnabled = knowledge.webSourcesEnabled ?? false;
     return {
       sourceMode: knowledge.sourceMode ?? 'llm_only',
@@ -271,22 +267,23 @@ export class GovernanceScopeService {
   }
 
   async countProgramScopes(programId: string, scopeIds: string[]): Promise<number> {
-    return this.scopeModel.countDocuments({ programId: new Types.ObjectId(programId), _id: { $in: scopeIds.map((id) => new Types.ObjectId(id)) } });
+    const scopes = await this.scopeStore.listByProgram(programId, scopeIds);
+    return scopes.length;
   }
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  private async findOwnedScope(ownerUserId: string, programId: string, scopeId: string): Promise<any> {
+  private async findOwnedScope(ownerUserId: string, programId: string, scopeId: string): Promise<GovernanceScopeRecord> {
     await this.programService.assertOwnedProgram(ownerUserId, programId);
     await this.assertScopeAccess(ownerUserId, programId, scopeId);
-    const scope = await this.scopeModel.findOne({ _id: new Types.ObjectId(scopeId), programId: new Types.ObjectId(programId) }).lean().exec();
+    const scope = await this.scopeStore.findByProgramAndId(programId, scopeId);
     if (!scope) throw new NotFoundException(ErrorCode.GOVERNANCE_SCOPE_NOT_FOUND);
     return scope;
   }
 
   private async assertNoDuplicate(programId: string, name: string, excludeScopeId?: string): Promise<void> {
-    const filter = excludeScopeId ? { programId: new Types.ObjectId(programId), name, _id: { $ne: new Types.ObjectId(excludeScopeId) } } : { programId: new Types.ObjectId(programId), name };
-    const duplicate = await this.scopeModel.findOne(filter).lean().exec();
-    if (duplicate) throw new ConflictException(ErrorCode.GOVERNANCE_SCOPE_NAME_EXISTS);
+    const duplicates = await this.scopeStore.listByProgram(programId, '*');
+    if (duplicates.some((scope) => scope.name === name && scope.id !== excludeScopeId)) {
+      throw new ConflictException(ErrorCode.GOVERNANCE_SCOPE_NAME_EXISTS);
+    }
   }
 
   private async assertScopeAccess(ownerUserId: string, programId: string, scopeId: string): Promise<void> {
@@ -295,19 +292,12 @@ export class GovernanceScopeService {
     throw new NotFoundException(ErrorCode.GOVERNANCE_SCOPE_NOT_FOUND);
   }
 
-  private async getAccessibleScopeIds(ownerUserId: string, programId: string): Promise<string[]> {
+  async getAccessibleScopeIds(ownerUserId: string, programId: string): Promise<string[]> {
     if (await this.isProgramOwner(ownerUserId, programId)) return ['*'];
     const groupIds = await this.userGroupService.findGroupIdsForMember(ownerUserId);
-    const memberships = await this.membershipModel.find({
-      programId: new Types.ObjectId(programId),
-      status: 'active',
-      $or: [
-        { userId: new Types.ObjectId(ownerUserId) },
-        ...(groupIds.length > 0 ? [{ groupId: { $in: groupIds.map((id) => new Types.ObjectId(id)) } }] : []),
-      ],
-    }).lean().exec();
+    const memberships = await this.membershipStore.findActiveForUser(programId, ownerUserId, groupIds);
     if (memberships.some((membership) => !membership.scopeId)) return ['*'];
-    return memberships.map((membership) => membership.scopeId?.toString()).filter((scopeId): scopeId is string => Boolean(scopeId));
+    return memberships.map((membership) => membership.scopeId).filter((scopeId): scopeId is string => Boolean(scopeId));
   }
 
   private async isProgramOwner(ownerUserId: string, programId: string): Promise<boolean> {
@@ -323,37 +313,36 @@ export class GovernanceScopeService {
   private async assertValidParent(programId: string, parentScopeId?: string, scopeId?: string): Promise<void> {
     if (!parentScopeId) return;
     if (scopeId && parentScopeId === scopeId) throw new ConflictException(ErrorCode.GOVERNANCE_SCOPE_PARENT_INVALID);
-    const parent = await this.scopeModel.findOne({ _id: new Types.ObjectId(parentScopeId), programId: new Types.ObjectId(programId) }).lean().exec();
+    const parent = await this.scopeStore.findByProgramAndId(programId, parentScopeId);
     if (!parent) throw new ConflictException(ErrorCode.GOVERNANCE_SCOPE_PARENT_INVALID);
     if (!scopeId) return;
-    let cursor = parent.parentScopeId?.toString();
+    let cursor = parent.parentScopeId;
     while (cursor) {
       if (cursor === scopeId) throw new ConflictException(ErrorCode.GOVERNANCE_SCOPE_PARENT_INVALID);
-      const ancestor = await this.scopeModel.findOne({ _id: new Types.ObjectId(cursor), programId: new Types.ObjectId(programId) }).select('parentScopeId').lean().exec();
-      cursor = ancestor?.parentScopeId?.toString();
+      const ancestor = await this.scopeStore.findByProgramAndId(programId, cursor);
+      cursor = ancestor?.parentScopeId;
     }
   }
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  private toResponse(doc: any): GovernanceScopeResponse {
-    const knowledge = doc.knowledge ?? {};
+  private toResponse(scope: GovernanceScopeRecord): GovernanceScopeResponse {
+    const knowledge = scope.knowledge ?? { sourceMode: 'llm_only' as const, webSourcesEnabled: false, webAllowedDomains: [], webBlockedDomains: [] };
     return {
-      id: doc._id.toString(),
-      programId: doc.programId.toString(),
-      parentScopeId: doc.parentScopeId?.toString(),
-      name: doc.name,
-      type: doc.type,
-      status: doc.status,
-      agentIds: (doc.agentIds ?? []).map((id: Types.ObjectId) => id.toString()),
-      metadata: doc.metadata ?? {},
+      id: scope.id,
+      programId: scope.programId,
+      parentScopeId: scope.parentScopeId,
+      name: scope.name,
+      type: scope.type,
+      status: scope.status,
+      agentIds: scope.agentIds ?? [],
+      metadata: scope.metadata ?? {},
       knowledge: {
         sourceMode: knowledge.sourceMode ?? 'llm_only',
         webSourcesEnabled: knowledge.webSourcesEnabled ?? false,
         webAllowedDomains: knowledge.webAllowedDomains ?? [],
         webBlockedDomains: knowledge.webBlockedDomains ?? [],
       },
-      createdAt: doc.createdAt instanceof Date ? doc.createdAt.toISOString() : doc.createdAt,
-      updatedAt: doc.updatedAt instanceof Date ? doc.updatedAt.toISOString() : doc.updatedAt,
+      createdAt: scope.createdAt instanceof Date ? scope.createdAt.toISOString() : String(scope.createdAt),
+      updatedAt: scope.updatedAt instanceof Date ? scope.updatedAt.toISOString() : String(scope.updatedAt),
     };
   }
 }

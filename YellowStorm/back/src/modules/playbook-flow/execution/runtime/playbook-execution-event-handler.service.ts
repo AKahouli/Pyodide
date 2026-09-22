@@ -72,6 +72,10 @@ export class PlaybookExecutionEventHandlerService {
       await this.getNodeHandler().handleSkipped(executionId, taskNodeId, iteration);
     } else if (eventType === 'NodeSuspended') {
       await this.getNodeHandler().handleSuspended(executionId, taskNodeId, iteration, payload);
+    } else if (eventType === 'IteratorChildStepStarted') {
+      await this.getNodeHandler().handleIteratorChildStarted(executionId, taskNodeId, iteration, payload);
+    } else if (eventType === 'IteratorChildStepCompleted') {
+      await this.getNodeHandler().handleIteratorChildCompleted(executionId, taskNodeId, iteration, payload);
     } else if (eventType === 'RouterDecision') {
       await this.handleRouterDecision(context, taskNodeId, iteration, payload);
     } else if (eventType === 'ApprovalRequested') {

@@ -53,6 +53,8 @@ vi.mock("../query/hooks", () => ({
     isError: false,
   }),
   useSemanticGraph: () => ({ data: graph, isLoading: false, isError: false }),
+  useSemanticReadiness: () => ({ data: { status: 'not_configured', score: 0, completeAreas: 0, totalAreas: 5, areas: [] }, isLoading: false, isError: false }),
+  useSourceMappings: () => ({ data: [], isLoading: false, isError: false }),
 }));
 
 vi.mock("../hooks/use-knowledge-linking", () => ({
@@ -88,6 +90,12 @@ vi.mock("../components/editor/SemanticModelInspector", () => ({
 }));
 vi.mock("../components/versions/VersionsPanel", () => ({
   VersionsPanel: () => null,
+}));
+vi.mock("../components/mapping/SemanticMappingsView", () => ({
+  SemanticMappingsView: () => null,
+}));
+vi.mock("../data-plane/use-semantic-model-channel", () => ({
+  useSemanticModelChannel: () => ({ live: false, polling: false }),
 }));
 
 describe("SemanticModelEditorPage", () => {
@@ -146,5 +154,13 @@ describe("SemanticModelEditorPage", () => {
 
     expect(await screen.findByText("semantic-model-canvas")).toBeInTheDocument();
     expect(screen.queryByText("editor.loading")).not.toBeInTheDocument();
+  });
+
+  it("shows an empty model as not configured instead of ready", async () => {
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
+    render(<QueryClientProvider client={queryClient}><SemanticModelEditorPage /></QueryClientProvider>);
+
+    expect(await screen.findByRole('button', { name: 'readinessState.notConfigured' })).toBeInTheDocument();
+    expect(screen.queryByText(/% ready/i)).not.toBeInTheDocument();
   });
 });

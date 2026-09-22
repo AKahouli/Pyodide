@@ -350,19 +350,73 @@ async def test_an_unknown_token_is_not_an_error():
     ctx.set_code.assert_not_called()
 
 
-async def test_mail_reply_supersedes_an_in_flight_turn():
+async def test_mail_reply_serializes_behind_an_in_flight_turn_not_cancels():
+    """Two mail replies for DIFFERENT waits must BOTH resume: the second waits for
+    the in-flight turn to finish, it does NOT cancel it. Each reply answers its
+    own atomically-claimed wait, so cancelling drops a real answer — seen live in
+    session 98daf300, where Rabeb's reply cancelled Firas's and Firas's step
+    stayed blocked with its wait already consumed."""
     rm = MagicMock(claim_mail_wait=AsyncMock(return_value=dict(_WAIT)))
     service = MagicMock(resume_turn=AsyncMock())
     s = _servicer(rm=rm, service=service)
 
-    async def forever():
-        await asyncio.sleep(60)
-    prev = asyncio.create_task(forever())
+    done = asyncio.Event()
+    async def prior():
+        await done.wait()
+    prev = asyncio.create_task(prior())
     s._running["s1"] = prev
 
     await s.DeliverMailReply(pb.DeliverMailReplyRequest(
         token="YW-tok", reply_body="reply", agents=_AGENTS), _ctx())
-    await _drain(s)
+    await asyncio.sleep(0.05)  # let the reply task start and hit the serialize wait
+    assert not prev.cancelled(), "a mail reply must NOT cancel an in-flight turn"
+    assert service.resume_turn.await_count == 0, "the reply must wait for the in-flight turn"
 
-    assert prev.cancelled(), "two turns must never run on one session"
+    done.set()  # in-flight turn finishes → the serialized reply proceeds
+    await _drain(s)
+    assert not prev.cancelled()
     service.resume_turn.assert_awaited_once()
+
+
+async def test_converse_drives_parked_plan_with_no_open_interrupt():
+    """An amend that adds work to a PARKED plan with no card/await open must be
+    DRIVEN — else the new execute step is orphaned pending forever (session
+    dd85c187: declined mail, "use Teams" amend never ran)."""
+    rm = MagicMock(
+        snapshot=AsyncMock(return_value={
+            "session": {"status": "blocked", "interrupt_id": None},
+            "plan": {"id": "p1"},
+            "steps": [{"step_id": "s1", "status": "completed"}]}),
+        outstanding_interrupts=AsyncMock(return_value=[]))
+    added = MagicMock(steps=[MagicMock()], ops=[])
+    service = MagicMock(plan_turn=AsyncMock(), resume_turn=AsyncMock(),
+                        converse_turn=AsyncMock(return_value=added),
+                        continue_turn=AsyncMock())
+    s = _servicer(rm=rm, service=service)
+    resp = await s.RunTask(pb.RunRequest(
+        user_id="u", session_id="s1", message="use Teams not email", agents=_AGENTS), _ctx())
+    assert resp.accepted is True
+    await _drain(s)
+    service.converse_turn.assert_awaited_once()
+    service.continue_turn.assert_awaited_once()       # parked plan got driven
+
+
+async def test_converse_does_not_drive_when_a_card_is_open():
+    """A still-outstanding card/await owns the plan's resume — the amend must NOT
+    drive (that would double-run / hijack the awaited step)."""
+    rm = MagicMock(
+        snapshot=AsyncMock(return_value={
+            "session": {"status": "blocked", "interrupt_id": "confirm::x"},
+            "plan": {"id": "p1"},
+            "steps": [{"step_id": "s1", "status": "blocked"}]}),
+        outstanding_interrupts=AsyncMock(return_value=[("confirm::x", "s1")]))
+    added = MagicMock(steps=[MagicMock()], ops=[])
+    service = MagicMock(plan_turn=AsyncMock(), resume_turn=AsyncMock(),
+                        converse_turn=AsyncMock(return_value=added),
+                        continue_turn=AsyncMock())
+    s = _servicer(rm=rm, service=service)
+    await s.RunTask(pb.RunRequest(
+        user_id="u", session_id="s1", message="also loop in Sana", agents=_AGENTS), _ctx())
+    await _drain(s)
+    service.converse_turn.assert_awaited_once()
+    service.continue_turn.assert_not_awaited()

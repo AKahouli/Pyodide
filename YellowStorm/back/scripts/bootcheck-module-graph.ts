@@ -2,7 +2,7 @@
  * Verifies the Nest module graph resolves (catches "module at index [N] is
  * undefined" circular-dependency errors) WITHOUT instantiating providers or
  * connecting to any database. Uses preview mode.
- * Usage: npx ts-node back/scripts/bootcheck-module-graph.ts
+ * Usage: npx ts-node -r tsconfig-paths/register scripts/bootcheck-module-graph.ts
  */
 import { NestFactory } from '@nestjs/core';
 import { AppModule } from '../src/app.module';

@@ -1,29 +1,40 @@
-import { Injectable } from '@nestjs/common';
-import { InjectModel } from '@nestjs/mongoose';
-import { Model, Types, PipelineStage } from 'mongoose';
-import { User, UserDocument } from '@modules/user/schemas/user.schema';
+import { Inject, Injectable } from '@nestjs/common';
+import { sql } from 'drizzle-orm';
+import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
+import { DRIZZLE_DB } from '@modules/postgres/postgres.constants';
+import * as schema from '@modules/postgres/schema';
 import { LoggerService } from '@modules/logger';
 import { GroupByPeriod } from '../dto';
 import { UserAnalyticsResponse, TimeSeriesDataPoint } from '../interfaces';
 
+type UserRow = typeof schema.identityUsers.$inferSelect;
+
+/**
+ * User analytics over PostgreSQL identity.users (plan 1A.10 — the last of the
+ * three Mongo aggregations, ported to SQL).
+ */
 @Injectable()
 export class UserAnalyticsService {
   constructor(
-    @InjectModel(User.name)
-    private readonly userModel: Model<UserDocument>,
+    @Inject(DRIZZLE_DB) private readonly db: NodePgDatabase<typeof schema>,
     private readonly logger: LoggerService,
   ) {
     this.logger.setContext('UserAnalyticsService');
   }
 
+  private get q(): NodePgDatabase<typeof schema> {
+    return this.db;
+  }
+
   /**
    * Get IDs of users who have consented to data sharing
    */
-  async getConsentingUserIds(): Promise<Types.ObjectId[]> {
-    const users = await this.userModel
-      .find({ 'consents.dataSharing': true }, { _id: 1 })
-      .lean();
-    return users.map((u) => u._id as Types.ObjectId);
+  async getConsentingUserIds(): Promise<string[]> {
+    const rows = await this.q
+      .select({ id: schema.identityUsers.id })
+      .from(schema.identityUsers)
+      .where(sql`${schema.identityUsers.consentDataSharing} = true`);
+    return rows.map((r) => r.id);
   }
 
   /**
@@ -34,35 +45,10 @@ export class UserAnalyticsService {
     dateTo?: Date,
     groupBy: GroupByPeriod = GroupByPeriod.DAY,
   ): Promise<UserAnalyticsResponse> {
-    const matchStage: Record<string, unknown> = {
-      'consents.dataSharing': true,
-    };
+    const totalConsentingUsers = await this.countConsenting();
 
-    if (dateFrom || dateTo) {
-      matchStage.createdAt = {};
-      if (dateFrom) {
-        (matchStage.createdAt as Record<string, unknown>).$gte = dateFrom;
-      }
-      if (dateTo) {
-        (matchStage.createdAt as Record<string, unknown>).$lte = dateTo;
-      }
-    }
-
-    // Get total consenting users
-    const totalConsentingUsers = await this.userModel.countDocuments({
-      'consents.dataSharing': true,
-    });
-
-    // Get new users over time
-    const newUsersOverTime = await this.getNewUsersOverTime(
-      matchStage,
-      groupBy,
-    );
-
-    // Get verification status
+    const newUsersOverTime = await this.getNewUsersOverTime(dateFrom, dateTo, groupBy);
     const verificationStatus = await this.getVerificationStatus();
-
-    // Get profile completion rates
     const profileCompletion = await this.getProfileCompletion();
 
     return {
@@ -73,85 +59,79 @@ export class UserAnalyticsService {
     };
   }
 
+  private async countConsenting(): Promise<number> {
+    const rows = await this.q
+      .select({ n: sql<number>`count(*)::int` })
+      .from(schema.identityUsers)
+      .where(sql`${schema.identityUsers.consentDataSharing} = true`);
+    return rows[0]?.n ?? 0;
+  }
+
   private async getNewUsersOverTime(
-    matchStage: Record<string, unknown>,
+    dateFrom: Date | undefined,
+    dateTo: Date | undefined,
     groupBy: GroupByPeriod,
   ): Promise<TimeSeriesDataPoint[]> {
-    const dateFormat = this.getDateFormat(groupBy);
+    const format = this.getDateFormat(groupBy);
+    const conditions = [sql`${schema.identityUsers.consentDataSharing} = true`];
+    if (dateFrom) conditions.push(sql`${schema.identityUsers.createdAt} >= ${dateFrom}`);
+    if (dateTo) conditions.push(sql`${schema.identityUsers.createdAt} <= ${dateTo}`);
+    const where = sql.join(conditions, sql` AND `);
 
-    const pipeline: PipelineStage[] = [
-      { $match: matchStage },
-      {
-        $group: {
-          _id: {
-            $dateToString: { format: dateFormat, date: '$createdAt' },
-          },
-          count: { $sum: 1 },
-        },
-      },
-      { $sort: { _id: 1 as const } },
-      {
-        $project: {
-          _id: 0,
-          date: '$_id',
-          count: 1,
-        },
-      },
-    ];
-
-    return this.userModel.aggregate<TimeSeriesDataPoint>(pipeline);
+    // The format comes from a fixed whitelist (getDateFormat), safe to inline —
+    // PG rejects bind parameters as the to_char format inside GROUP BY.
+    const fmt = sql.raw(`'${format}'`);
+    const rows = await this.q
+      .select({
+        date: sql<string>`to_char(${schema.identityUsers.createdAt}, ${fmt})`,
+        count: sql<number>`count(*)::int`,
+      })
+      .from(schema.identityUsers)
+      .where(where)
+      .groupBy(sql`to_char(${schema.identityUsers.createdAt}, ${fmt})`)
+      .orderBy(sql`to_char(${schema.identityUsers.createdAt}, ${fmt})`);
+    return rows;
   }
 
   private async getVerificationStatus(): Promise<{
     verified: number;
     unverified: number;
   }> {
-    const result = await this.userModel.aggregate([
-      { $match: { 'consents.dataSharing': true } },
-      {
-        $group: {
-          _id: '$emailVerified',
-          count: { $sum: 1 },
-        },
-      },
-    ]);
-
-    const verified = result.find((r) => r._id === true)?.count || 0;
-    const unverified = result.find((r) => r._id === false)?.count || 0;
-
-    return { verified, unverified };
+    const rows = await this.q
+      .select({
+        verified: sql<number>`count(*) FILTER (WHERE ${schema.identityUsers.emailVerified})::int`,
+        unverified: sql<number>`count(*) FILTER (WHERE NOT ${schema.identityUsers.emailVerified})::int`,
+      })
+      .from(schema.identityUsers)
+      .where(sql`${schema.identityUsers.consentDataSharing} = true`);
+    return { verified: rows[0]?.verified ?? 0, unverified: rows[0]?.unverified ?? 0 };
   }
 
   private async getProfileCompletion(): Promise<{
     complete: number;
     incomplete: number;
   }> {
-    const result = await this.userModel.aggregate([
-      { $match: { 'consents.dataSharing': true } },
-      {
-        $group: {
-          _id: '$profileComplete',
-          count: { $sum: 1 },
-        },
-      },
-    ]);
-
-    const complete = result.find((r) => r._id === true)?.count || 0;
-    const incomplete = result.find((r) => r._id === false)?.count || 0;
-
-    return { complete, incomplete };
+    const rows = await this.q
+      .select({
+        complete: sql<number>`count(*) FILTER (WHERE ${schema.identityUsers.profileComplete})::int`,
+        incomplete: sql<number>`count(*) FILTER (WHERE NOT ${schema.identityUsers.profileComplete})::int`,
+      })
+      .from(schema.identityUsers)
+      .where(sql`${schema.identityUsers.consentDataSharing} = true`);
+    return { complete: rows[0]?.complete ?? 0, incomplete: rows[0]?.incomplete ?? 0 };
   }
 
+  /** PG to_char format matching the Mongo $dateToString output. */
   private getDateFormat(groupBy: GroupByPeriod): string {
     switch (groupBy) {
       case GroupByPeriod.DAY:
-        return '%Y-%m-%d';
+        return 'YYYY-MM-DD';
       case GroupByPeriod.WEEK:
-        return '%Y-W%V';
+        return 'IYYY-"W"IW';
       case GroupByPeriod.MONTH:
-        return '%Y-%m';
+        return 'YYYY-MM';
       default:
-        return '%Y-%m-%d';
+        return 'YYYY-MM-DD';
     }
   }
 }

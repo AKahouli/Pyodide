@@ -1,6 +1,6 @@
 import { ForbiddenException } from '@modules/exceptions';
 import { ErrorCode } from '@modules/exceptions/constants/error-codes';
-import { UserStatus } from '../schemas/user.schema';
+import { UserStatus } from '../user.types';
 import {
   AccountApprovalGuard,
   isPendingApprovalAllowlistedPath,

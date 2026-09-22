@@ -97,3 +97,22 @@ export interface HealthHistoryStats {
     minutes: number;
   };
 }
+
+// App Data microservice health
+export interface AppDataMicroserviceHealth {
+  reachable: boolean;
+  live: boolean;
+  ready: boolean;
+  database?: string;
+  error?: string;
+}
+
+export interface AppDataHealthResult {
+  enabled: boolean;
+  mcp: boolean;
+  publicApi: boolean;
+  dataTab: boolean;
+  remote: boolean;
+  remoteReady?: boolean;
+  microservice?: AppDataMicroserviceHealth;
+}

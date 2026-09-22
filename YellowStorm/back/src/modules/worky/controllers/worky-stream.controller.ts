@@ -32,7 +32,7 @@ import {
 import { WorkyStreamAccessGuard } from '../guards/worky-stream-access.guard';
 import { RequirePermissions } from '../../authorization/decorators/require-permissions.decorator';
 import { CurrentUser } from '../../auth/decorators/current-user.decorator';
-import { UserDocument } from '../../user/schemas/user.schema';
+import type { AuthUser } from '@common/auth/auth-user';
 import { Permissions } from '../../authorization/constants/permissions';
 
 @ApiTags('Worky')
@@ -51,7 +51,7 @@ export class WorkyStreamController {
   @ApiOperation({ summary: 'Create a Worky stream' })
   @ApiResponse({ status: 201, description: 'Stream created' })
   async create(
-    @CurrentUser() user: UserDocument,
+    @CurrentUser() user: AuthUser,
     @Body() dto: CreateWorkyStreamDto,
   ): Promise<IWorkyStreamResponse> {
     return this.streams.create(user._id.toString(), dto);
@@ -63,7 +63,7 @@ export class WorkyStreamController {
     summary: 'List the owner’s Worky streams (paginated, with per-stream task stats)',
   })
   async findAll(
-    @CurrentUser() user: UserDocument,
+    @CurrentUser() user: AuthUser,
     @Query() query: QueryWorkyStreamsDto,
   ): Promise<IWorkyStreamListResult> {
     return this.streams.findAllForUser(user._id.toString(), query);
@@ -75,7 +75,7 @@ export class WorkyStreamController {
   @ApiOperation({ summary: 'Get a Worky stream by id' })
   @ApiParam({ name: 'id', description: 'Stream id' })
   async findById(
-    @CurrentUser() user: UserDocument,
+    @CurrentUser() user: AuthUser,
     @Param('id') id: string,
   ): Promise<IWorkyStreamResponse> {
     return this.streams.findById(user._id.toString(), id);
@@ -87,7 +87,7 @@ export class WorkyStreamController {
   @ApiOperation({ summary: 'Patch a Worky stream (title only)' })
   @ApiParam({ name: 'id', description: 'Stream id' })
   async update(
-    @CurrentUser() user: UserDocument,
+    @CurrentUser() user: AuthUser,
     @Param('id') id: string,
     @Body() dto: UpdateWorkyStreamDto,
   ): Promise<IWorkyStreamResponse> {
@@ -101,7 +101,7 @@ export class WorkyStreamController {
   @ApiOperation({ summary: 'Delete a Worky stream and its artifact workspace' })
   @ApiParam({ name: 'id', description: 'Stream id' })
   async delete(
-    @CurrentUser() user: UserDocument,
+    @CurrentUser() user: AuthUser,
     @Param('id') id: string,
   ): Promise<{ ok: true; deletedWorkspaceId: string | null }> {
     return this.streams.delete(user._id.toString(), id);

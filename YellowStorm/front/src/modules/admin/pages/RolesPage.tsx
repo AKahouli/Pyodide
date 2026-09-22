@@ -12,8 +12,6 @@ import {
   Pencil,
   Trash2,
   Lock,
-  ChevronDown,
-  ChevronRight,
 } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -24,7 +22,6 @@ import { Label } from '@/components/ui/label';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { Badge } from '@/components/ui/badge';
-import { Checkbox } from '@/components/ui/checkbox';
 import {
   Table,
   TableBody,
@@ -51,14 +48,9 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
-import {
-  Collapsible,
-  CollapsibleContent,
-  CollapsibleTrigger,
-} from '@/components/ui/collapsible';
 import { getAllRoles, createRole, updateRole, deleteRole } from '../api';
-import { PERMISSION_GROUPS } from '../types';
 import type { RoleResponse, CreateRoleRequest, UpdateRoleRequest } from '../types';
+import { countSelectedRolePermissions, RolePermissionsEditor } from '../components/RolePermissionsEditor';
 import { useModuleTranslation } from '@/modules/localization';
 import type { ModuleTranslationKey, TranslationParams } from '@/modules/localization';
 
@@ -490,82 +482,19 @@ export function RolesPage() {
               <div className="flex items-center justify-between">
                 <h4 className="font-medium">{t('roles.permissions.title')}</h4>
                 <span className="text-sm text-muted-foreground">
-                  {t('roles.permissions.selected', { count: formData.permissions.length })}
+                  {t('roles.permissions.selected', { count: countSelectedRolePermissions(formData.permissions) })}
                 </span>
               </div>
 
-              <div className="space-y-2 rounded-lg border p-4 max-h-64 overflow-y-auto">
-                  {PERMISSION_GROUPS.map((group) => {
-                    const groupPerms = group.permissions.map((p) => p.value);
-                    const selectedCount = groupPerms.filter((p) =>
-                      formData.permissions.includes(p)
-                    ).length;
-                    const allSelected = selectedCount === groupPerms.length;
-                    const someSelected = selectedCount > 0 && !allSelected;
-
-                    return (
-                      <Collapsible
-                        key={group.namespace}
-                        open={expandedGroups.has(group.namespace)}
-                        onOpenChange={() => toggleGroup(group.namespace)}
-                        disabled={group.disabled}
-                      >
-                        <div className="flex items-center gap-2 py-1">
-                          <CollapsibleTrigger asChild>
-                            <Button variant="ghost" size="sm" className="p-0 h-6 w-6">
-                              {expandedGroups.has(group.namespace) ? (
-                                <ChevronDown className="h-4 w-4" />
-                              ) : (
-                                <ChevronRight className="h-4 w-4" />
-                              )}
-                            </Button>
-                          </CollapsibleTrigger>
-                          <Checkbox
-                            id={`group-${group.namespace}`}
-                            checked={allSelected}
-                            ref={(el) => {
-                              if (el) {
-                                (el as HTMLButtonElement & { indeterminate: boolean }).indeterminate = someSelected;
-                              }
-                            }}
-                            onCheckedChange={() => toggleAllInGroup(group.namespace, groupPerms)}
-                          />
-                          <Label
-                            htmlFor={`group-${group.namespace}`}
-                            className="flex-1 cursor-pointer font-medium"
-                          >
-                          {t(group.labelKey)}
-                          </Label>
-                          {selectedCount > 0 && (
-                            <Badge variant="secondary" className="text-xs">
-                              {selectedCount}
-                            </Badge>
-                          )}
-                        </div>
-                        <CollapsibleContent className="pl-10 space-y-1 pt-1">
-                          {group.permissions.map((perm) => (
-                            <div key={perm.value} className="flex items-start gap-2 py-1">
-                              <Checkbox
-                                id={`perm-${perm.value}`}
-                                checked={formData.permissions.includes(perm.value)}
-                                onCheckedChange={() => togglePermission(perm.value)}
-                              />
-                              <div className="flex-1">
-                                <Label
-                                  htmlFor={`perm-${perm.value}`}
-                                  className="cursor-pointer text-sm"
-                                >
-                                  {t(perm.labelKey)}
-                                </Label>
-                                <p className="text-xs text-muted-foreground">{t(perm.descriptionKey)}</p>
-                              </div>
-                            </div>
-                          ))}
-                        </CollapsibleContent>
-                      </Collapsible>
-                    );
-                  })}
-                </div>
+              <RolePermissionsEditor
+                permissions={formData.permissions}
+                expandedGroups={expandedGroups}
+                onToggleGroup={toggleGroup}
+                onTogglePermission={togglePermission}
+                onToggleAllInGroup={toggleAllInGroup}
+                onChange={(permissions) => setFormData((current) => ({ ...current, permissions }))}
+                t={t}
+              />
               </div>
             </div>
 

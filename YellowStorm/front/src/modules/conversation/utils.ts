@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import type { ChatMessage } from '@/components/ai-elements/chat-conversation';
-import type { CitationBBox, MessageContentPart } from '@/components/ai-elements/ai-message-content';
+import type { CitationBBox, CitationData, MessageContentPart } from '@/components/ai-elements/ai-message-content';
 import type { ModuleTranslationKey } from '@/modules/localization';
 import type { ChartComponentData, ChartKind, ChartLayout, ChoiceComponentData, Message, MessageComponent } from './types';
 import { translateConversation } from './translation';
@@ -26,7 +26,7 @@ const conversationVisibleComponentTypes = new Set([
   'choice',
 ]);
 
-function getComponentType(component: MessageComponent): string {
+export function getComponentType(component: MessageComponent): string {
   return typeof component.type === 'object' && component.type !== null
     ? (component.type as { type?: string }).type || ''
     : component.type;
@@ -106,6 +106,34 @@ export function formatTimingMs(ms: number | undefined): string {
  * the canonical per-interaction displayText (readable) over the raw canonical
  * JSON that is persisted as message.content.
  */
+const VERDICT_LABELS: Record<string, string> = {
+  approve: 'Approuvé', approuver: 'Approuvé', yes: 'Approuvé', oui: 'Approuvé',
+  decline: 'Refusé', refuser: 'Refusé', no: 'Refusé', non: 'Refusé',
+};
+
+/**
+ * A gate approval/decline is sent as the machine payload ("approve", or the
+ * edit-on-card JSON {"verdict","edits"}). Render a friendly label for the user
+ * bubble instead of the raw payload; any other content passes through unchanged.
+ */
+export function formatChoiceSubmissionContent(content: string): string {
+  const raw = (content ?? '').trim();
+  if (!raw) return content;
+  if (raw.startsWith('{')) {
+    try {
+      const parsed = JSON.parse(raw) as { verdict?: unknown; edits?: unknown; answer?: unknown; askInterruptId?: unknown };
+      if (parsed && typeof parsed === 'object' && 'verdict' in parsed) {
+        return VERDICT_LABELS[String(parsed.verdict).toLowerCase()] ?? String(parsed.verdict);
+      }
+      // Targeted ask card: show just the typed answer, not the {askInterruptId, answer} payload.
+      if (parsed && typeof parsed === 'object' && 'askInterruptId' in parsed && typeof parsed.answer === 'string') {
+        return parsed.answer;
+      }
+    } catch { /* not our payload — fall through */ }
+  }
+  return VERDICT_LABELS[raw.toLowerCase()] ?? content;
+}
+
 export function getUserMessageDisplayText(msg: Message): string {
   if (msg.interactions?.length) {
     const displayTexts = msg.interactions.map((interaction) => interaction.displayText).filter(Boolean);
@@ -147,31 +175,19 @@ function asCitationBBox(value: unknown): CitationBBox | undefined {
   return bbox.every(Number.isFinite) ? bbox as CitationBBox : undefined;
 }
 
-function buildCitationData(data: Record<string, unknown>): {
-  parentId: string;
-  sourceType: 'text' | 'image';
-  source: string;
-  fileName?: string;
-  externalId: string;
-  page: string;
-  pageContent: string;
-  workspaceId: string;
-  reference?: string;
-  path?: string;
-  height?: string;
-  width?: string;
-  highlightText?: string;
-  highlightBBox?: CitationBBox;
-  blockBBox?: CitationBBox;
-} {
+function buildCitationData(data: Record<string, unknown>): CitationData {
   const textSource = data.text_source as Record<string, unknown> | undefined;
   const imageSource = data.image_source as Record<string, unknown> | undefined;
-  const sourceData = textSource || imageSource || data;
-  const sourceType = imageSource ? 'image' : ((sourceData.sourceType as 'text' | 'image') || 'text');
+  const webSource = data.web_source as Record<string, unknown> | undefined;
+  const sourceData = webSource || textSource || imageSource || data;
+  const sourceType = webSource || sourceData.sourceKind === 'web' || sourceData.sourceType === 'web'
+    ? 'web'
+    : imageSource ? 'image' : ((sourceData.sourceType as 'text' | 'image') || 'text');
 
   return {
     parentId: (data.parentId as string) || (data.parent_id as string) || '',
     sourceType,
+    ...(sourceType === 'web' ? { sourceKind: 'web' as const } : {}),
     source: (sourceData.source as string) || (sourceData.fileName as string) || (sourceData.file_name as string) || '',
     fileName: (sourceData.fileName as string) || (sourceData.file_name as string) || undefined,
     externalId: (sourceData.externalId as string) || (sourceData.external_id as string) || '',
@@ -185,6 +201,15 @@ function buildCitationData(data: Record<string, unknown>): {
     highlightText: (sourceData.highlightText as string) || (sourceData.highlight_text as string) || undefined,
     highlightBBox: asCitationBBox(sourceData.highlightBBox ?? sourceData.highlight_bbox),
     blockBBox: asCitationBBox(sourceData.blockBBox ?? sourceData.block_bbox),
+    title: (sourceData.title as string) || undefined,
+    exactText: (sourceData.exactText as string) || (sourceData.exact_text as string) || undefined,
+    prefix: (sourceData.prefix as string) || undefined,
+    suffix: (sourceData.suffix as string) || undefined,
+    evidenceOrigin: sourceData.evidenceOrigin === 'page_content' || sourceData.evidence_origin === 'page_content'
+      ? 'page_content'
+      : sourceData.evidenceOrigin === 'search_snippet' || sourceData.evidence_origin === 'search_snippet'
+        ? 'search_snippet'
+        : undefined,
   };
 }
 
@@ -268,6 +293,7 @@ function mapSingleComponent(comp: MessageComponent): MessageContentPart {
         title: (data.title as string) || '',
         items: (data.items as string[]) || [],
         status: (data.status as 'pending' | 'in_progress' | 'completed') || undefined,
+        agentId: (data.agentId as string) || undefined,
       };
     case 'error':
       return {
@@ -566,72 +592,87 @@ export function normalizeChoiceComponentData(data: unknown): ChoiceComponentData
     : undefined;
   const labels = raw.labels && typeof raw.labels === 'object' ? raw.labels as ChoiceComponentData['labels'] : undefined;
   const progress = raw.progress && typeof raw.progress === 'object' && typeof (raw.progress as Record<string, unknown>).current === 'number' && typeof (raw.progress as Record<string, unknown>).total === 'number' ? raw.progress as ChoiceComponentData['progress'] : undefined;
-  return { schemaVersion: 1, questionId: raw.questionId, prompt: raw.prompt, ...(typeof raw.description === 'string' ? { description: raw.description } : {}), presentation, selectionMode, submitBehavior: selectionMode === 'multiple' || presentation === 'list' || otherOption || raw.submitBehavior === 'explicit' ? 'explicit' : 'immediate', options: normalizedOptions as ChoiceComponentData['options'], ...(otherOption ? { otherOption } : {}), ...(labels ? { labels } : {}), ...(progress ? { progress } : {}), ...(typeof raw.fallbackText === 'string' ? { fallbackText: raw.fallbackText } : {}), dismissible: raw.dismissible === true, status: raw.status === 'submitted' || raw.status === 'disabled' ? raw.status : 'ready' };
+  // Edit-on-card: keep editable draft fields so the renderer can show inputs.
+  const fields = (Array.isArray(raw.fields) ? raw.fields : [])
+    .filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === 'object' && !Array.isArray(item))
+    .filter((f) => typeof f.key === 'string' && typeof f.label === 'string')
+    .map((f) => ({ key: f.key as string, label: f.label as string, value: typeof f.value === 'string' ? f.value : '', ...(f.multiline === true ? { multiline: true } : {}), ...(f.type === 'list' || f.type === 'text' ? { type: f.type as 'list' | 'text' } : {}), ...(f.markdown === true ? { markdown: true } : {}) }));
+  const editable = raw.editable === true && fields.length > 0;
+  return { schemaVersion: 1, questionId: raw.questionId, prompt: raw.prompt, ...(typeof raw.description === 'string' ? { description: raw.description } : {}), presentation, selectionMode, submitBehavior: selectionMode === 'multiple' || presentation === 'list' || otherOption || raw.submitBehavior === 'explicit' ? 'explicit' : 'immediate', options: normalizedOptions as ChoiceComponentData['options'], ...(otherOption ? { otherOption } : {}), ...(labels ? { labels } : {}), ...(progress ? { progress } : {}), ...(typeof raw.fallbackText === 'string' ? { fallbackText: raw.fallbackText } : {}), dismissible: raw.dismissible === true, status: raw.status === 'submitted' || raw.status === 'disabled' ? raw.status : 'ready', ...(editable ? { editable: true, fields } : {}) };
 }
 
 /**
  * Converts message components to markdown for copy-to-clipboard
  */
+export function isVisibleConversationComponent(comp: MessageComponent): boolean {
+  return Boolean(comp) && conversationVisibleComponentTypes.has(getComponentType(comp));
+}
+
+/** True for components exported as rendered visuals (images) rather than markdown. */
+export function isVisualConversationComponent(comp: MessageComponent): boolean {
+  const type = getComponentType(comp);
+  return type === 'chart' || type === 'webPreview';
+}
+
+/** Converts a single visible component to markdown (chart/webPreview have none). */
+export function componentToMarkdown(comp: MessageComponent): string {
+  const data = comp.data || {};
+  switch (comp.type) {
+    case 'text':
+      return (data.content as string) || '';
+    case 'code': {
+      const lang = (data.language as string) || '';
+      const content = (data.content as string) || '';
+      return `\`\`\`${lang}\n${content}\n\`\`\``;
+    }
+    case 'plan': {
+      const title = (data.title as string) || '';
+      const steps = (data.steps as string[]) || [];
+      return `**${title}**\n${steps.map((s) => `- ${s}`).join('\n')}`;
+    }
+    case 'checkpoint':
+      return `---\n**${(data.content as string) || ''}**`;
+    case 'error': {
+      const errTitle = (data.title as string) || translateConversation('messageActions.markdown.errorFallback');
+      const errContent = (data.content as string) || '';
+      return `> **${errTitle}**: ${errContent}`;
+    }
+    case 'sandbox': {
+      const code = (data.code as string) || '';
+      const output = (data.output as string) || '';
+      const error = (data.error as string) || '';
+      let result = `\`\`\`python\n${code}\n\`\`\``;
+      if (output) result += `\n\n${translateConversation('messageActions.markdown.outputLabel')}\n\`\`\`\n${output}\n\`\`\``;
+      if (error) result += `\n\n${translateConversation('messageActions.markdown.errorLabel')}\n\`\`\`\n${error}\n\`\`\``;
+      return result;
+    }
+    case 'webPreview': {
+      const content = (data.content as string) || '';
+      return `\`\`\`html\n${content}\n\`\`\``;
+    }
+    case 'artifact': {
+      const filename = (data.filename as string) || 'file';
+      return `📎 [${filename}]`;
+    }
+    case 'citation': {
+      const reference = (data.reference as string) || '';
+      const source = (data.source as string) || (data.fileName as string) || translateConversation('messageActions.markdown.defaultCitation');
+      const displayLabel = reference || source;
+      const page = (data.page as string) || '';
+      return page ? `[${displayLabel}, p.${page}]` : `[${displayLabel}]`;
+    }
+    default:
+      return (data.content as string) || '';
+  }
+}
+
 export function componentsToMarkdown(components: MessageComponent[]): string {
   if (!components || !Array.isArray(components)) {
     return '';
   }
-  const fallbackErrorTitle = translateConversation('messageActions.markdown.errorFallback');
-  const outputLabel = translateConversation('messageActions.markdown.outputLabel');
-  const errorLabel = translateConversation('messageActions.markdown.errorLabel');
-  const defaultCitationSource = translateConversation('messageActions.markdown.defaultCitation');
   return components
-    .filter((comp) => comp && conversationVisibleComponentTypes.has(getComponentType(comp)))
-    .map((comp) => {
-      const data = comp.data || {};
-      switch (comp.type) {
-        case 'text':
-          return (data.content as string) || '';
-        case 'code': {
-          const lang = (data.language as string) || '';
-          const content = (data.content as string) || '';
-          return `\`\`\`${lang}\n${content}\n\`\`\``;
-        }
-        case 'plan': {
-          const title = (data.title as string) || '';
-          const steps = (data.steps as string[]) || [];
-          return `**${title}**\n${steps.map((s) => `- ${s}`).join('\n')}`;
-        }
-        case 'checkpoint':
-          return `---\n**${(data.content as string) || ''}**`;
-        case 'error': {
-          const errTitle = (data.title as string) || fallbackErrorTitle;
-          const errContent = (data.content as string) || '';
-          return `> **${errTitle}**: ${errContent}`;
-        }
-        case 'sandbox': {
-          const code = (data.code as string) || '';
-          const output = (data.output as string) || '';
-          const error = (data.error as string) || '';
-          let result = `\`\`\`python\n${code}\n\`\`\``;
-          if (output) result += `\n\n${outputLabel}\n\`\`\`\n${output}\n\`\`\``;
-          if (error) result += `\n\n${errorLabel}\n\`\`\`\n${error}\n\`\`\``;
-          return result;
-        }
-        case 'webPreview': {
-          const content = (data.content as string) || '';
-          return `\`\`\`html\n${content}\n\`\`\``;
-        }
-        case 'artifact': {
-          const filename = (data.filename as string) || 'file';
-          return `📎 [${filename}]`;
-        }
-        case 'citation': {
-          const reference = (data.reference as string) || '';
-          const source = (data.source as string) || (data.fileName as string) || defaultCitationSource;
-          const displayLabel = reference || source;
-          const page = (data.page as string) || '';
-          return page ? `[${displayLabel}, p.${page}]` : `[${displayLabel}]`;
-        }
-        default:
-          return (data.content as string) || '';
-      }
-    })
+    .filter((comp) => isVisibleConversationComponent(comp))
+    .map((comp) => componentToMarkdown(comp))
     .filter(Boolean)
     .join('\n\n');
 }

@@ -111,7 +111,7 @@ describe('AppBuilderPage', () => {
     renderPage();
 
     expect(await screen.findByTestId('create-with-agent')).toBeInTheDocument();
-    expect(screen.getByText(/page\.empty/)).toBeInTheDocument();
+    expect(screen.getByText('page.empty')).toBeInTheDocument();
   });
 
   it('switches to shared apps via status filter', async () => {
@@ -178,7 +178,7 @@ describe('AppBuilderPage', () => {
     renderPage('/?tab=shared');
 
     expect(await screen.findByText('Shared app')).toBeInTheDocument();
-    expect(screen.getByText(/card\.shared/)).toBeInTheDocument();
+    expect(screen.getByText('card.shared')).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /card\.conversation/i })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /card\.share/i })).not.toBeInTheDocument();
   });
@@ -211,7 +211,7 @@ describe('AppBuilderPage', () => {
 
     renderPage();
 
-    expect(await screen.findByText(/page\.empty/)).toBeInTheDocument();
+    expect(await screen.findByText('page.empty')).toBeInTheDocument();
   });
 
   it('filters apps by search query from URL', async () => {

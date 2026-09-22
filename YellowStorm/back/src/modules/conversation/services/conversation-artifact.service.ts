@@ -16,6 +16,35 @@ export class ConversationArtifactService {
     private readonly workspaceDocumentService: WorkspaceDocumentService,
   ) {}
 
+  async listRecent(userId: string, limit: number): Promise<Array<{
+    source: 'conversation';
+    artifactId: string;
+    filename: string;
+    artifactKind?: string;
+    mimeType?: string;
+    conversationId: string;
+    conversationTitle: string;
+    messageId: string;
+    generatedAt: string;
+  }>> {
+    const messages = await this.messageService.listRecentArtifactMessages(userId, Math.max(limit * 3, 12));
+    return messages.flatMap((message) => (message.components ?? [])
+      .filter((component) => component.type === 'artifact')
+      .map((component) => ({
+        source: 'conversation' as const,
+        artifactId: typeof component.data?.artifactId === 'string' ? component.data.artifactId : '',
+        filename: typeof component.data?.filename === 'string' ? component.data.filename : 'artifact',
+        artifactKind: typeof component.data?.artifactKind === 'string' ? component.data.artifactKind : undefined,
+        mimeType: typeof component.data?.mimeType === 'string' ? component.data.mimeType : undefined,
+        conversationId: message.conversationId,
+        conversationTitle: message.conversationTitle,
+        messageId: message.id,
+        generatedAt: message.updatedAt.toISOString(),
+      })))
+      .filter((artifact) => artifact.artifactId)
+      .slice(0, limit);
+  }
+
   async resolveDownloadUrl(
     conversationId: string,
     messageId: string,
@@ -54,6 +83,7 @@ export class ConversationArtifactService {
     conversationId: string,
     messageId: string,
     selector: ResolveCitationUrlDto,
+    userId?: string,
   ): Promise<{ url: string; fileName: string; mimeType: string }> {
     const message = await this.messageService.getMessageDocument(messageId);
     if (message.conversationId.toString() !== conversationId) {
@@ -79,7 +109,12 @@ export class ConversationArtifactService {
     const persistedCitation = [...uniqueCitations.values()][0];
 
     const conversation = await this.conversationService.getConversationDocument(conversationId);
-    const allowedWorkspaceIds = new Set((conversation.workspaces || []).map((id) => id.toString()));
+    const allowedWorkspaceIds = new Set(
+      await this.conversationService.filterAccessibleWorkspaceIds(
+        userId,
+        (conversation.workspaces || []).map((id) => id.toString()),
+      ),
+    );
     if (conversation.systemWorkspaceId) {
       allowedWorkspaceIds.add(conversation.systemWorkspaceId.toString());
     }

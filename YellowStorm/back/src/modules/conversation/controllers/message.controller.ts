@@ -29,7 +29,7 @@ import { CheckUsage } from '../../usage/decorators/check-usage.decorator';
 import { UsageLimitGuard } from '../../usage/guards/usage-limit.guard';
 import { RequestContextService } from '../../request-context';
 import { LoggerService } from '../../logger';
-import { UserDocument } from '../../user/schemas/user.schema';
+import type { AuthUser } from '@common/auth/auth-user';
 import { resolveStickyAgentRouting } from '../utils/sticky-agent-routing';
 import { ChoiceInteractionService } from '../services/choice-interaction.service';
 import { GovernedConversationRuntimeService } from '../../governance/services/governed-conversation-runtime.service';
@@ -95,36 +95,24 @@ export class MessageController {
 
   @Post(':messageId/citations/url')
   async getCitationUrl(
+    @CurrentUser() user: { _id: string },
     @Param('conversationId') conversationId: string,
     @Param('messageId') messageId: string,
     @Body() dto: ResolveCitationUrlDto,
   ): Promise<{ url: string; fileName: string; mimeType: string }> {
-    return this.conversationArtifactService.resolveCitationUrl(conversationId, messageId, dto);
-  }
-
-  /**
-   * Merge directly-mentioned agents with the agents of any mentioned teams,
-   * deduped. Returns undefined when nothing is mentioned, so downstream behaviour
-   * is identical to a plain agent mention with no teams.
-   */
-  private async resolveAgentIds(
-    userId: string,
-    agentIds?: string[],
-    teamIds?: string[],
-  ): Promise<string[] | undefined> {
-    const merged = new Set<string>(agentIds || []);
-    if (teamIds?.length) {
-      const teamAgentIds = await this.teamService.resolveAgentIds(teamIds, userId);
-      teamAgentIds.forEach((id) => merged.add(id));
-    }
-    return merged.size > 0 ? [...merged] : undefined;
+    return this.conversationArtifactService.resolveCitationUrl(
+      conversationId,
+      messageId,
+      dto,
+      user._id.toString(),
+    );
   }
 
   /**
    * Human-readable display name for logs/observability: "First Last" when a
    * profile name is set, otherwise falls back to the user's email.
    */
-  private resolveDisplayName(user: UserDocument): string {
+  private resolveDisplayName(user: AuthUser): string {
     const fullName = `${user.profile?.firstName ?? ''} ${user.profile?.lastName ?? ''}`.trim();
     return fullName || user.email;
   }
@@ -133,7 +121,7 @@ export class MessageController {
   @UseGuards(UsageLimitGuard)
   @CheckUsage()
   async sendMessage(
-    @CurrentUser() user: UserDocument,
+    @CurrentUser() user: AuthUser,
     @Param('conversationId') conversationId: string,
     @Body() dto: SendMessageDto,
   ) {
@@ -154,13 +142,27 @@ export class MessageController {
       hasFiles: !!dto.attachedFileIds?.length,
       fileCount: dto.attachedFileIds?.length || 0,
       webSearchEnabled: dto.webSearchEnabled,
+      webConnectorAccessEnabled: dto.webConnectorAccessEnabled,
       deepSearchEnabled: dto.deepSearchEnabled,
       modelId: dto.modelId,
       agentIds: dto.agentIds,
     });
 
+    // Hard gate: never trust a stale frontend — reject attachments when the
+    // admin feature switch is off instead of silently dropping the files.
+    if (dto.attachedFileIds?.length && !this.conversationSettings.isAttachmentIntelligenceEnabledCached()) {
+      throw new BadRequestException(
+        ErrorCode.CHAT_ATTACHMENTS_DISABLED,
+        'Conversation file attachments are disabled',
+      );
+    }
+
     const conversation = await this.conversationService.getConversationDocument(conversationId);
     const platformCopilot = conversation.runtimePurpose === PLATFORM_COPILOT;
+    const teamId = dto.teamIds?.[0];
+    if ((dto.teamIds?.length ?? 0) > 1 || (teamId && (dto.agentIds?.length ?? 0) > 0)) {
+      throw new BadRequestException(ErrorCode.TEAM_NOT_EXECUTABLE, 'Select one team without standalone agents.');
+    }
     if (platformCopilot) {
       const hasRuntimeOverride = [
         dto.agentIds,
@@ -171,6 +173,7 @@ export class MessageController {
         dto.reasoningEffort,
         dto.skillIds,
         dto.connectorRepo,
+        dto.webConnectorAccessEnabled,
       ].some((value) => value !== undefined);
       if (hasRuntimeOverride) {
         throw new ForbiddenException(
@@ -218,9 +221,7 @@ export class MessageController {
       settle(!governedConversation && !platformCopilot && dto.modelId
         ? this.modelsService.validateModelActive(dto.modelId, 'chat')
         : Promise.resolve(undefined)),
-      settle(!platformCopilot
-        ? this.resolveAgentIds(user._id.toString(), dto.agentIds, dto.teamIds)
-        : Promise.resolve(undefined)),
+      settle(!platformCopilot ? Promise.resolve(dto.agentIds) : Promise.resolve(undefined)),
       settle(dto.reasoningEffort && dto.modelId && !platformCopilot
         ? this.modelsService.findById(dto.modelId)
         : Promise.resolve(undefined)),
@@ -328,8 +329,9 @@ export class MessageController {
     const stickyAgentIds =
       conversation.taggedAgentIds?.map((id) => id.toString()) ?? [];
     const willRunAi = !dto.memberIds?.length;
-    const { effectiveAgentIds, shouldReplaceSticky } =
-      resolveStickyAgentRouting({
+    const { effectiveAgentIds, shouldReplaceSticky } = teamId
+      ? { effectiveAgentIds: [] as string[], shouldReplaceSticky: false }
+      : resolveStickyAgentRouting({
         mentionedAgentIds,
         stickyAgentIds,
         reuseSticky: willRunAi,
@@ -424,11 +426,13 @@ export class MessageController {
             taskSummary: canonicalTaskSummary,
             attachedFileIds: dto.attachedFileIds ?? [],
             webSearchEnabled: dto.webSearchEnabled ?? false,
+            webConnectorAccessEnabled: dto.webConnectorAccessEnabled ?? true,
             deepSearchEnabled: dto.deepSearchEnabled ?? false,
             modelId: dto.modelId,
             semanticModelId: effectiveSemanticModelId,
             reasoningEffort: effectiveReasoningEffort,
             agentIds: effectiveAgentIds ?? [],
+            teamId,
             skillIds: dto.skillIds ?? [],
             connectorRepo: dto.connectorRepo,
             clientContext: dto.clientContext,
@@ -473,11 +477,13 @@ export class MessageController {
             taskSummary: canonicalTaskSummary,
             attachedFileIds: dto.attachedFileIds ?? [],
             webSearchEnabled: dto.webSearchEnabled ?? false,
+            webConnectorAccessEnabled: dto.webConnectorAccessEnabled ?? true,
             deepSearchEnabled: dto.deepSearchEnabled ?? false,
             modelId: dto.modelId,
             semanticModelId: effectiveSemanticModelId,
             reasoningEffort: effectiveReasoningEffort,
             agentIds: effectiveAgentIds ?? [],
+            teamId,
             skillIds: dto.skillIds ?? [],
             connectorRepo: dto.connectorRepo,
             clientContext: dto.clientContext,
@@ -563,11 +569,13 @@ export class MessageController {
           taskSummary: canonicalTaskSummary,
           attachedFileIds: dto.attachedFileIds,
           webSearchEnabled: dto.webSearchEnabled,
+          webConnectorAccessEnabled: dto.webConnectorAccessEnabled,
           deepSearchEnabled: dto.deepSearchEnabled,
           modelId: dto.modelId,
           semanticModelId: effectiveSemanticModelId,
           reasoningEffort: effectiveReasoningEffort,
           agentIds: effectiveAgentIds,
+          teamId,
           connectorRepo: dto.connectorRepo,
           skillIds: dto.skillIds,
           clientContext: dto.clientContext,
@@ -599,7 +607,7 @@ export class MessageController {
   }
 
   private async resumePlatformCopilotTurn(
-    user: UserDocument,
+    user: AuthUser,
     conversationId: string,
     pinnedAgentId: string,
     dto: SendMessageDto,
@@ -648,6 +656,7 @@ export class MessageController {
         content: turn.userMessage.content ?? dto.content,
         attachedFileIds: dto.attachedFileIds,
         webSearchEnabled: dto.webSearchEnabled,
+        webConnectorAccessEnabled: dto.webConnectorAccessEnabled,
         deepSearchEnabled: dto.deepSearchEnabled,
         agentIds: [pinnedAgentId],
         clientContext: dto.clientContext,
@@ -694,6 +703,7 @@ export class MessageController {
       content: dto.content,
       attachedFileIds: dto.attachedFileIds ?? [],
       webSearchEnabled: dto.webSearchEnabled ?? false,
+      webConnectorAccessEnabled: dto.webConnectorAccessEnabled ?? true,
       deepSearchEnabled: dto.deepSearchEnabled ?? false,
       modelId: dto.modelId ?? null,
       semanticModelId: dto.semanticModelId ?? null,
@@ -782,7 +792,7 @@ export class MessageController {
 
   @Post(':messageId/stop')
   async stopStream(
-    @CurrentUser() user: UserDocument,
+    @CurrentUser() user: AuthUser,
     @Param('conversationId') conversationId: string,
     @Param('messageId') messageId: string,
   ) {
@@ -804,7 +814,7 @@ export class MessageController {
   @Post(':messageId/reliability-evaluation/rerun')
   @HttpCode(HttpStatus.ACCEPTED)
   async rerunReliabilityEvaluation(
-    @CurrentUser() user: UserDocument,
+    @CurrentUser() user: AuthUser,
     @Param('conversationId') conversationId: string,
     @Param('messageId') messageId: string,
   ) {
@@ -820,7 +830,7 @@ export class MessageController {
   @UseGuards(UsageLimitGuard)
   @CheckUsage()
   async regenerate(
-    @CurrentUser() user: UserDocument,
+    @CurrentUser() user: AuthUser,
     @Param('conversationId') conversationId: string,
     @Param('messageId') messageId: string,
   ) {
@@ -900,6 +910,7 @@ export class MessageController {
           content: currentContent,
           attachedFileIds: userMessage.attachedFileIds?.map((id) => id.toString()) ?? [],
           webSearchEnabled: userMessage.webSearchEnabled,
+          webConnectorAccessEnabled: true,
           deepSearchEnabled: false,
           modelId: userMessage.modelId,
           reasoningEffort: userMessage.reasoningEffort,

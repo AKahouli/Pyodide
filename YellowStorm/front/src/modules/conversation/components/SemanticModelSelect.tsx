@@ -10,9 +10,10 @@ interface SemanticModelSelectProps {
   value: string | null;
   onChange: (id: string | null) => void;
   disabled?: boolean;
+  label?: string;
 }
 
-export function SemanticModelSelect({ value, onChange, disabled }: SemanticModelSelectProps) {
+export function SemanticModelSelect({ value, onChange, disabled, label }: SemanticModelSelectProps) {
   const { t } = useModuleTranslation('conversation');
   const published = useSemanticModels({ status: 'published', limit: 100 });
   const drafts = useSemanticModels({ status: 'draft', limit: 100 });
@@ -28,12 +29,13 @@ export function SemanticModelSelect({ value, onChange, disabled }: SemanticModel
           type='button'
           variant={value ? 'secondary' : 'ghost'}
           size='icon'
-          className='size-11 md:size-8'
+          className={label ? 'h-11 w-auto gap-2 px-3' : 'size-11 md:size-8'}
           disabled={disabled}
-          aria-label={selected ? t('input.semanticModel.selected', { name: selected.name }) : t('input.semanticModel.select')}
+          aria-label={`${label ? `${label}: ` : ''}${selected ? t('input.semanticModel.selected', { name: selected.name }) : t('input.semanticModel.select')}`}
           title={selected?.name ?? t('input.semanticModel.select')}
         >
           <Network className='size-4' />
+          {label && <span>{label}</span>}
         </Button>
       </PopoverTrigger>
       <PopoverContent className='w-80 p-0' align='start'>

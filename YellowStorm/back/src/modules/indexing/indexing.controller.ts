@@ -44,7 +44,7 @@ export class IndexingController {
       deepSearch === 'true',
     );
     return {
-      id: document._id.toString(),
+      id: document.id,
       indexingStatus: document.indexingStatus,
       message: 'Re-indexing triggered',
     };

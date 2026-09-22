@@ -3,9 +3,21 @@
  */
 
 import * as React from 'react';
-import { AUTH_STORAGE_KEYS, bumpAuthGeneration, isTransientAuthFailure } from '@/lib/api';
+import { AUTH_LOST_EVENT, AUTH_STORAGE_KEYS, bumpAuthGeneration, clearAuthData,
+getAuthGeneration, isTransientAuthFailure, scheduleProactiveRefresh } from '@/lib/api';
+import { clearDataGrants } from '@/modules/semantic-model/data-plane/data-access-token';
+
+/**
+ * Single credential-clearing seam for this provider: local auth data plus
+ * every data-plane grant, so no path can remove credentials while leaving a
+ * previous session's grants reusable. (Refresh-failure logout in the shared
+ * client additionally dispatches AUTH_LOST_EVENT, which clears grants too.)
+ */
+function clearCredentials(): void {
+  clearAuthData();
+  clearDataGrants();
+}
 import * as authApi from './api';
-import { notificationsService } from '@/modules/notifications';
 import type { AuthContextType, AuthState, LoginCredentials, RegisterCredentials, CompleteProfileData, User } from './types';
 
 const initialState: AuthState = {
@@ -23,7 +35,6 @@ export const AuthContext = React.createContext<AuthContextType | null>(null);
 interface AuthProviderProps {
   children: React.ReactNode;
 }
-
 export function AuthProvider({ children }: AuthProviderProps) {
   const [state, setState] = React.useState<AuthState>(initialState);
 
@@ -77,14 +88,14 @@ export function AuthProvider({ children }: AuthProviderProps) {
 
         // Definitive denial (the shared axios client already cleared
         // credentials and redirects when refresh is definitively rejected).
-        clearLocalAuthData();
+        clearCredentials();
         setState({
           ...initialState,
           isLoading: false,
           registrationEnabled,
         });
       } catch {
-        clearLocalAuthData();
+        clearCredentials();
         setState({ ...initialState, isLoading: false, registrationEnabled });
       }
     } else {
@@ -108,12 +119,22 @@ export function AuthProvider({ children }: AuthProviderProps) {
     void validateStoredSession();
   }, [validateStoredSession]);
 
+  React.useEffect(() => {
+    const onAuthLost = () => setState({ ...initialState, isLoading: false });
+    window.addEventListener(AUTH_LOST_EVENT, onAuthLost);
+    return () => window.removeEventListener(AUTH_LOST_EVENT, onAuthLost);
+  }, []);
+
   const login = React.useCallback(async (credentials: LoginCredentials): Promise<void> => {
     const response = await authApi.login(credentials);
 
     // Store access token and user data
     localStorage.setItem(AUTH_STORAGE_KEYS.accessToken, response.accessToken);
     localStorage.setItem(AUTH_STORAGE_KEYS.user, JSON.stringify(response.user));
+    scheduleProactiveRefresh(response.accessToken);
+    // A new principal must never reuse the previous session's data-plane grants.
+    // Grants only here: the fresh credentials above must survive.
+    clearDataGrants();
 
     setState((prev) => ({
       ...prev,
@@ -147,7 +168,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
       // Invalidate any in-flight refresh/recovery so a late response cannot
       // log the user back in after an explicit logout.
       bumpAuthGeneration();
-      clearLocalAuthData();
+      clearCredentials();
       setState({
         ...initialState,
         isLoading: false,
@@ -209,8 +230,12 @@ export function AuthProvider({ children }: AuthProviderProps) {
   }, []);
 
   const refreshUser = React.useCallback(async (): Promise<void> => {
+    const generationAtStart = getAuthGeneration();
     try {
       const user = await authApi.getCurrentUser();
+      if (getAuthGeneration() !== generationAtStart) {
+        return;
+      }
       localStorage.setItem(AUTH_STORAGE_KEYS.user, JSON.stringify(user));
 
       setState((prev) => ({
@@ -228,27 +253,34 @@ export function AuthProvider({ children }: AuthProviderProps) {
   }, []);
 
   React.useEffect(() => {
-    if (!state.isAuthenticated || state.user?.status !== 'inactive') {
+    if (!state.isAuthenticated) {
       return;
     }
 
-    const poll = () => {
+    const revalidate = () => {
       void refreshUser().catch(() => undefined);
     };
-    poll();
-    const interval = window.setInterval(poll, 15_000);
     const onVisibility = () => {
       if (!document.hidden) {
-        poll();
+        revalidate();
       }
     };
     document.addEventListener('visibilitychange', onVisibility);
-    window.addEventListener('focus', poll);
+    window.addEventListener('focus', revalidate);
+
+    const interval = state.user?.status === 'inactive'
+      ? window.setInterval(revalidate, 15_000)
+      : null;
+    if (interval !== null) {
+      revalidate();
+    }
 
     return () => {
-      window.clearInterval(interval);
+      if (interval !== null) {
+        window.clearInterval(interval);
+      }
       document.removeEventListener('visibilitychange', onVisibility);
-      window.removeEventListener('focus', poll);
+      window.removeEventListener('focus', revalidate);
     };
   }, [state.isAuthenticated, state.user?.status, refreshUser]);
 
@@ -277,10 +309,4 @@ export function AuthProvider({ children }: AuthProviderProps) {
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
-}
-
-// Helper function to clear local auth data
-function clearLocalAuthData() {
-  localStorage.removeItem(AUTH_STORAGE_KEYS.accessToken);
-  localStorage.removeItem(AUTH_STORAGE_KEYS.user);
 }

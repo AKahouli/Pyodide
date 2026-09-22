@@ -11,8 +11,14 @@ import {
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { ScrollArea } from '@/components/ui/scroll-area';
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from '@/components/ui/tooltip';
 import type { FilesTreeNode } from '../../types';
 import { useConversationV2Translation } from '../../translation';
 import { fileIconForName, formatBytes } from '../../utils/app-source';
@@ -63,15 +69,15 @@ function TreeNode({
           type='button'
           onClick={() => setOpen((v) => !v)}
           className={cn(
-            'flex w-full items-center gap-1 rounded-md px-1.5 py-1 text-left text-xs transition-colors',
-            'text-muted-foreground hover:bg-accent/60 hover:text-foreground',
+            'flex w-full items-center gap-1.5 rounded-md px-1.5 py-1.5 text-left text-xs transition-colors',
+            'text-muted-foreground hover:bg-accent/70 hover:text-foreground',
           )}
-          style={{ paddingLeft: 6 + depth * 12 }}
+          style={{ paddingLeft: 8 + depth * 12 }}
         >
-          <span className='flex size-3.5 shrink-0 items-center justify-center'>
+          <span className='flex size-3.5 shrink-0 items-center justify-center text-muted-foreground/80'>
             {open ? <ChevronDownIcon className='size-3' /> : <ChevronRightIcon className='size-3' />}
           </span>
-          <Icon className='size-3.5 shrink-0 text-amber-600/90 dark:text-amber-400/90' />
+          <Icon className='size-3.5 shrink-0 text-muted-foreground' />
           <span className='min-w-0 truncate font-medium'>{node.name || 'project'}</span>
         </button>
         {open &&
@@ -94,19 +100,19 @@ function TreeNode({
     <button
       type='button'
       onClick={() => path && onSelect(path)}
-      title={path}
+      title={node.name}
       className={cn(
-        'flex w-full items-center gap-1 rounded-md px-1.5 py-1 text-left text-xs transition-colors',
+        'flex w-full items-center gap-1.5 rounded-md px-1.5 py-1.5 text-left text-xs transition-colors',
         selected
-          ? 'bg-primary/12 text-foreground ring-1 ring-primary/20'
-          : 'text-muted-foreground hover:bg-accent/60 hover:text-foreground',
+          ? 'bg-primary/10 text-foreground ring-1 ring-inset ring-primary/20'
+          : 'text-muted-foreground hover:bg-accent/70 hover:text-foreground',
       )}
-      style={{ paddingLeft: 22 + depth * 12 }}
+      style={{ paddingLeft: 24 + depth * 12 }}
     >
-      <Icon className='size-3.5 shrink-0 opacity-85' />
+      <Icon className='size-3.5 shrink-0 opacity-80' />
       <span className='min-w-0 flex-1 truncate'>{node.name}</span>
       {node.size != null && node.size > 0 && (
-        <span className='shrink-0 text-[10px] tabular-nums text-muted-foreground/55'>
+        <span className='shrink-0 text-[10px] tabular-nums text-muted-foreground/50'>
           {formatBytes(node.size)}
         </span>
       )}
@@ -142,52 +148,82 @@ export function AppSourceFileTree({ tree, selectedPath, onSelect, className }: A
   const treeKey = `${expansionMode}-${searchActive}-${roots.length}`;
 
   return (
-    <div className={cn('flex h-full min-h-0 flex-col overflow-hidden border-r bg-muted/15', className)}>
-      <div className='shrink-0 space-y-1.5 border-b bg-card/50 px-2 py-1.5'>
+    <div
+      className={cn(
+        'flex h-full min-h-0 flex-col overflow-hidden border-r border-border/80 bg-muted/20',
+        className,
+      )}
+    >
+      <div className='shrink-0 space-y-2 border-b border-border/80 bg-card/50 px-2.5 py-2'>
         <div className='flex items-center gap-1'>
-          <FolderIcon className='size-3.5 shrink-0 text-primary' />
-          <span className='min-w-0 flex-1 truncate text-xs font-semibold'>{t('nodepod.explorer')}</span>
+          <FolderIcon className='size-3.5 shrink-0 text-muted-foreground' />
+          <span className='min-w-0 flex-1 truncate text-xs font-semibold tracking-tight'>
+            {t('nodepod.explorer')}
+          </span>
           {fileCount > 0 && (
-            <Badge variant='secondary' className='shrink-0 tabular-nums text-[10px] font-normal'>
+            <Badge
+              variant='secondary'
+              className='h-5 shrink-0 px-1.5 tabular-nums text-[10px] font-normal'
+            >
               {fileCount}
             </Badge>
           )}
-          <button
-            type='button'
-            onClick={() => setExpansionMode('all')}
-            className='inline-flex size-6 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground'
-            aria-label={t('nodepod.expandAll')}
-          >
-            <ChevronsUpDownIcon className='size-3.5' />
-          </button>
-          <button
-            type='button'
-            onClick={() => setExpansionMode('none')}
-            className='inline-flex size-6 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground'
-            aria-label={t('nodepod.collapseAll')}
-          >
-            <ChevronsDownUpIcon className='size-3.5' />
-          </button>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                type='button'
+                variant='ghost'
+                size='icon-sm'
+                className='size-7 text-muted-foreground'
+                onClick={() => setExpansionMode('all')}
+                aria-label={t('nodepod.expandAll')}
+              >
+                <ChevronsUpDownIcon className='size-3.5' />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent side='bottom' className='text-xs'>
+              {t('nodepod.expandAll')}
+            </TooltipContent>
+          </Tooltip>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                type='button'
+                variant='ghost'
+                size='icon-sm'
+                className='size-7 text-muted-foreground'
+                onClick={() => setExpansionMode('none')}
+                aria-label={t('nodepod.collapseAll')}
+              >
+                <ChevronsDownUpIcon className='size-3.5' />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent side='bottom' className='text-xs'>
+              {t('nodepod.collapseAll')}
+            </TooltipContent>
+          </Tooltip>
         </div>
 
         <div className='relative'>
-          <SearchIcon className='pointer-events-none absolute left-2 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground' />
+          <SearchIcon className='pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground' />
           <Input
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             placeholder={t('nodepod.searchFiles')}
-            className='h-7 bg-background/80 pl-7 pr-7 text-xs'
+            className='h-8 bg-background/90 pl-8 pr-8 text-xs shadow-none'
             aria-label={t('nodepod.searchFiles')}
           />
           {search && (
-            <button
+            <Button
               type='button'
+              variant='ghost'
+              size='icon-sm'
               onClick={() => setSearch('')}
-              className='absolute right-1 top-1/2 flex size-5 -translate-y-1/2 items-center justify-center rounded text-muted-foreground hover:bg-muted hover:text-foreground'
+              className='absolute right-1 top-1/2 size-6 -translate-y-1/2 text-muted-foreground'
               aria-label={t('nodepod.clearSearch')}
             >
               <XIcon className='size-3' />
-            </button>
+            </Button>
           )}
         </div>
       </div>
@@ -195,9 +231,12 @@ export function AppSourceFileTree({ tree, selectedPath, onSelect, className }: A
       <ScrollArea className='min-h-0 flex-1'>
         <div className='p-1.5' key={treeKey}>
           {roots.length === 0 ? (
-            <p className='px-2 py-8 text-center text-xs text-muted-foreground'>
-              {searchActive ? t('nodepod.noSearchResults') : t('nodepod.noFiles')}
-            </p>
+            <div className='flex flex-col items-center gap-2 px-3 py-10 text-center'>
+              <FolderIcon className='size-5 text-muted-foreground/40' />
+              <p className='text-xs text-muted-foreground'>
+                {searchActive ? t('nodepod.noSearchResults') : t('nodepod.noFiles')}
+              </p>
+            </div>
           ) : (
             roots.map((node) => (
               <TreeNode

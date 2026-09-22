@@ -37,13 +37,9 @@ const TONE: Record<string, string> = {
  */
 export function WorkyActivityRail({
   streamId,
-  onWhatsAppClick,
-  whatsappConnected,
   model,
 }: {
   streamId: string;
-  onWhatsAppClick?: () => void;
-  whatsappConnected?: boolean;
   model?: WorkyExecutiveViewModel;
 }): JSX.Element {
   const { t } = useModuleTranslation('worky');
@@ -111,8 +107,6 @@ export function WorkyActivityRail({
           <PromptBar
             streamId={streamId}
             sessionStatus={model?.session?.status}
-            onWhatsAppClick={onWhatsAppClick}
-            whatsappConnected={whatsappConnected}
           />
         </div>
       ) : (

@@ -1,5 +1,5 @@
 export { PlaybookButton } from './components/PlaybookButton';
-export { PlaybookListPage } from './components/PlaybookListPage';
+export { PlaybooksConsolePage } from './console/PlaybooksConsolePage';
 export { PlaybookCanvasPage } from './components/PlaybookCanvasPage';
 export { PlaybookExecutionPage } from './components/PlaybookExecutionPage';
 export { ArtifactBadge } from './components/ArtifactBadge';

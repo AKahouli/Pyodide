@@ -11,7 +11,7 @@ import { ModelResponse, ModelsListResponse } from './interfaces/model.interface'
 import { NotFoundException, ErrorCode } from '../exceptions';
 
 @ApiTags('Models')
-@Controller('models')
+@Controller('model-catalog')
 @ApiBearerAuth()
 export class ModelsController {
   constructor(private readonly modelsService: ModelsService) {}

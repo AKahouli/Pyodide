@@ -15,7 +15,7 @@ import { ApiTags, ApiOperation, ApiBearerAuth, ApiResponse, ApiParam } from '@ne
 import { WorkspaceShareService } from './workspace-share.service';
 import { WorkspaceOwnerGuard } from './guards';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
-import { UserDocument } from '../user/schemas/user.schema';
+import type { AuthUser } from '@common/auth/auth-user';
 import {
   ShareWorkspaceDto,
   ShareQueryDto,
@@ -46,7 +46,7 @@ export class WorkspaceShareController {
   })
   @ApiParam({ name: 'id', description: 'Workspace ID' })
   async share(
-    @CurrentUser() user: UserDocument,
+    @CurrentUser() user: AuthUser,
     @Param('id') workspaceId: string,
     @Body() dto: ShareWorkspaceDto,
   ): Promise<ShareWorkspaceResult> {

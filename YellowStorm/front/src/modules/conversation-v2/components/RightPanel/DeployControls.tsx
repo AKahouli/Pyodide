@@ -17,11 +17,12 @@ import {
 } from '@/components/ui/tooltip';
 import { useConversationV2Store } from '../../store';
 import { useConversationV2Translation } from '../../translation';
+import { buildAppRegisterInviteUrl } from '../../utils/app-register-invite-url';
 import { ShareDeployDialog } from './ShareDeployDialog';
 
 const modeTabClass = (active: boolean) =>
   cn(
-    'inline-flex items-center rounded-md px-2 py-1 text-xs font-medium transition-colors',
+    'inline-flex items-center rounded-md px-2.5 py-1 text-xs font-medium transition-all',
     '@max-[620px]/right-panel:px-1.5 @max-[620px]/right-panel:py-0.5',
     active
       ? 'bg-background text-foreground shadow-sm'
@@ -46,7 +47,7 @@ export function AppViewModeToggle() {
     <div
       role='tablist'
       aria-label={t('deploy.modeSwitch')}
-      className='inline-flex max-w-full shrink items-center rounded-lg border bg-muted/40 p-0.5'
+      className='inline-flex max-w-full shrink items-center rounded-lg border border-border/80 bg-muted/50 p-0.5 shadow-sm'
     >
       <button
         type='button'
@@ -64,7 +65,12 @@ export function AppViewModeToggle() {
         className={modeTabClass(showingDeployed)}
         onClick={() => setAppViewMode('deployed')}
       >
-        <span className='truncate'>{t('deploy.modeDeploy')}</span>
+        <span className='inline-flex items-center gap-1.5 truncate'>
+          {showingDeployed && (
+            <span className='size-1.5 rounded-full bg-ok' aria-hidden />
+          )}
+          {t('deploy.modeDeploy')}
+        </span>
       </button>
     </div>
   );
@@ -79,6 +85,7 @@ export function DeployControls() {
   const { t } = useConversationV2Translation();
   const deployStatus = useConversationV2Store((s) => s.deployStatus);
   const deployedUrl = useConversationV2Store((s) => s.deployedUrl);
+  const ownerInviteToken = useConversationV2Store((s) => s.ownerInviteToken);
   const appViewMode = useConversationV2Store((s) => s.appViewMode);
   const sessionId = useConversationV2Store((s) => s.sessionId);
   const deploy = useConversationV2Store((s) => s.deploy);
@@ -112,7 +119,10 @@ export function DeployControls() {
 
   const handleOpenDeployed = () => {
     if (!deployedUrl) return;
-    window.open(deployedUrl, '_blank', 'noopener,noreferrer');
+    const url = ownerInviteToken
+      ? buildAppRegisterInviteUrl(deployedUrl, ownerInviteToken)
+      : deployedUrl;
+    window.open(url, '_blank', 'noopener,noreferrer');
   };
 
   return (

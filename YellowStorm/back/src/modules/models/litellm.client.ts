@@ -1,13 +1,12 @@
 import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { AxiosError } from 'axios';
 import { LoggerService } from '../logger';
 import {
   LiteLLMModelInfoEntry,
   LiteLLMModelInfoResponse,
   LiteLLMHealthStatus,
 } from './interfaces/model.interface';
-import { LiteLLMConnectionService, LiteLLMConnectionStatus } from './litellm-connection.service';
+import { LiteLLMConnectionService, LiteLLMConnectionStatus, describeLiteLlmHttpError } from './litellm-connection.service';
 
 @Injectable()
 export class LiteLLMClient {
@@ -63,21 +62,6 @@ export class LiteLLMClient {
   }
 
   private extractErrorMessage(error: unknown): string {
-    if (error instanceof AxiosError) {
-      if (error.response) {
-        return `HTTP ${error.response.status}: ${error.response.statusText}`;
-      }
-      if (error.code === 'ECONNREFUSED') {
-        return 'Connection refused';
-      }
-      if (error.code === 'ETIMEDOUT' || error.code === 'ECONNABORTED') {
-        return 'Connection timeout';
-      }
-      return error.message;
-    }
-    if (error instanceof Error) {
-      return error.message;
-    }
-    return 'Unknown error';
+    return describeLiteLlmHttpError(error);
   }
 }

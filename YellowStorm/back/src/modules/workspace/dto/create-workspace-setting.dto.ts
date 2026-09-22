@@ -10,7 +10,7 @@ import {
   Max,
   IsEnum,
 } from 'class-validator';
-import { RagType } from '../schemas/workspace-setting.schema';
+import { RagType } from '../interfaces/workspace-setting.interface';
 
 export class CreateWorkspaceSettingDto {
   @ApiProperty({ description: 'Setting name', example: 'Default RAG Config', maxLength: 100 })

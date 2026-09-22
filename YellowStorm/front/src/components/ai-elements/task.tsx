@@ -28,16 +28,20 @@ export const Task = ({ defaultOpen = true, className, ...props }: TaskProps) => 
 export type TaskTriggerProps = ComponentProps<typeof CollapsibleTrigger> & {
   title: string;
   active?: boolean;
+  /** Hides the built-in bot icon so a parent can render its own interactive icon beside the trigger. */
+  hideIcon?: boolean;
 };
 
-export const TaskTrigger = ({ children, className, title, active = false, ...props }: TaskTriggerProps) => (
+export const TaskTrigger = ({ children, className, title, active = false, hideIcon = false, ...props }: TaskTriggerProps) => (
   <CollapsibleTrigger asChild className={cn('group', className)} {...props}>
     {children ?? (
       <button type='button' data-active={active || undefined} className={cn('flex w-full cursor-pointer items-center gap-2 overflow-hidden text-sm text-muted-foreground transition-colors hover:text-foreground', active && 'text-foreground')}>
-        <span className='relative flex size-8 shrink-0 items-center justify-center' aria-hidden='true'>
-          {active && <Loader2 data-agent-spinner className='absolute size-7 animate-spin text-running [animation-duration:1.2s]' />}
-          <BotIcon className={cn('relative size-4 transition-colors', active && 'text-running')} />
-        </span>
+        {!hideIcon && (
+          <span className='relative flex size-8 shrink-0 items-center justify-center' aria-hidden='true'>
+            {active && <Loader2 data-agent-spinner className='absolute size-7 animate-spin text-running [animation-duration:1.2s]' />}
+            <BotIcon className={cn('relative size-4 transition-colors', active && 'text-running')} />
+          </span>
+        )}
         <span className='text-md shrink-0 font-medium'>{title}</span>
         <ChevronDownIcon className='size-4 shrink-0 transition-transform group-data-[state=open]:rotate-180' />
         <span className={cn('relative h-0.5 min-w-8 flex-1 overflow-hidden', active ? 'bg-running/20' : 'bg-border')} aria-hidden='true'>

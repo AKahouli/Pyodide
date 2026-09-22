@@ -17,6 +17,7 @@ import json
 from collections import deque
 from typing import Any, Callable, Coroutine
 
+from langgraph.config import get_stream_writer
 from langgraph.graph import END, START, StateGraph
 from structlog import get_logger
 
@@ -219,6 +220,30 @@ def _build_body_subgraph(
     return compiled
 
 
+def _child_event_payload(child_result: dict[str, Any], index: int) -> dict[str, Any]:
+    """Build the streaming payload for one child result of an iteration turn.
+
+    Keys with empty/None values are omitted — google.protobuf.Struct rejects None.
+    """
+    payload: dict[str, Any] = {
+        "iterationIndex": index,
+        "taskId": str(child_result.get("taskId") or ""),
+        "taskTitle": str(child_result.get("taskTitle") or ""),
+        "status": str(child_result.get("status") or "completed"),
+    }
+    output = child_result.get("output")
+    error = child_result.get("error")
+    if output:
+        payload["output"] = str(output)
+    if error:
+        payload["error"] = str(error)
+    if child_result.get("components"):
+        payload["components"] = child_result["components"]
+    if child_result.get("artifacts"):
+        payload["artifacts"] = child_result["artifacts"]
+    return payload
+
+
 def _coerce_to_list(value: Any) -> list[Any]:
     if isinstance(value, list):
         return value
@@ -396,6 +421,11 @@ def _register_iterator_subgraph(
         logger.info("[iterator] No children for iterator — items processed inline", iterator_id=it_id)
 
     async def _run_iterator(state: ExecutionState, _it_id: str = it_id) -> dict[str, Any]:
+        try:
+            writer = get_stream_writer()
+        except RuntimeError:
+            writer = lambda _: None
+
         items = _resolve_items_from_bindings(_it_id, data_bindings, state, max_items, raw_edges=raw_edges)
         if not items:
             items = _resolve_items(state, collection_path, max_items)
@@ -409,6 +439,14 @@ def _register_iterator_subgraph(
         )
         iteration = state["iterations"].get(_it_id, 0)
         child_results: list[dict[str, Any]] = []
+
+        # Surface the iterator itself as a running step so the UI shows a live badge.
+        writer({
+            "type": "NodeStarted",
+            "node_id": _it_id,
+            "iteration": iteration,
+            "payload": {"label": str(node_lookup.get(_it_id, {}).get("label") or _it_id)},
+        })
 
         for index, item in enumerate(items):
             if state.get("cancelled", False):
@@ -426,6 +464,20 @@ def _register_iterator_subgraph(
                     "pending_approval": None,
                     "cancelled": state.get("cancelled", False),
                 }
+                # Announce this turn's children so their results stream per iteration
+                # instead of appearing only when the whole iterator completes.
+                for child_id in children:
+                    writer({
+                        "type": "IteratorChildStepStarted",
+                        "node_id": _it_id,
+                        "iteration": iteration,
+                        "payload": {
+                            "iterationIndex": index,
+                            "taskId": child_id,
+                            "taskTitle": str(node_lookup.get(child_id, {}).get("label") or child_id),
+                            "status": "running",
+                        },
+                    })
                 try:
                     result_state = await body_subgraph.ainvoke(child_state)
                     child_task_outputs = result_state.get("task_outputs", {})
@@ -447,23 +499,43 @@ def _register_iterator_subgraph(
                     child_results.append({
                         "index": index,
                         "status": "completed",
-                        "item_preview": str(item)[:240],
+                        "itemPreview": str(item)[:240],
                         "output": str(child_task_outputs),
                         "childResults": iteration_child_results,
                     })
+                    for child_result in iteration_child_results:
+                        writer({
+                            "type": "IteratorChildStepCompleted",
+                            "node_id": _it_id,
+                            "iteration": iteration,
+                            "payload": _child_event_payload(child_result, index),
+                        })
                 except Exception as exc:
                     logger.error("[iterator] Child subgraph failed", iterator_id=_it_id, index=index, error=str(exc))
+                    for child_id in children:
+                        writer({
+                            "type": "IteratorChildStepCompleted",
+                            "node_id": _it_id,
+                            "iteration": iteration,
+                            "payload": {
+                                "iterationIndex": index,
+                                "taskId": child_id,
+                                "taskTitle": str(node_lookup.get(child_id, {}).get("label") or child_id),
+                                "status": "failed",
+                                "error": str(exc),
+                            },
+                        })
                     child_results.append({
                         "index": index,
                         "status": "failed",
-                        "item_preview": str(item)[:240],
+                        "itemPreview": str(item)[:240],
                         "error": str(exc),
                     })
             else:
                 child_results.append({
                     "index": index,
                     "status": "completed",
-                    "item_preview": str(item)[:240],
+                    "itemPreview": str(item)[:240],
                     "output": str(item),
                 })
 

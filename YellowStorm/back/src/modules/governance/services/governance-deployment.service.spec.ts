@@ -5,49 +5,75 @@ describe('GovernanceDeploymentService', () => {
   const actorEmail = 'owner@example.com';
   const deploymentId = '507f1f77bcf86cd799439012';
   const programId = '507f1f77bcf86cd799439013';
+  const scopeId = '507f1f77bcf86cd799439015';
   const revisionId = '507f1f77bcf86cd799439014';
   const agentId = '507f1f77bcf86cd799439016';
 
-  function buildService(deployment: Record<string, unknown>, revision: Record<string, unknown> | null, passedDryRun: Record<string, unknown> | null = { _id: '507f1f77bcf86cd799439017' }, scopeRoleError?: Error) {
-    const deploymentModel = {
-      findById: jest.fn().mockReturnValue({
-        exec: jest.fn().mockResolvedValue(deployment),
-        lean: jest.fn().mockReturnValue({ exec: jest.fn().mockResolvedValue(deployment) }),
-      }),
-      findOneAndUpdate: jest.fn().mockImplementation((_filter, update) => ({ exec: jest.fn().mockImplementation(async () => {
-        if (!revision || deployment.currentDraftRevisionId !== revision._id) return null;
-        Object.assign(deployment, update.$set);
+  function buildService(deployment: Record<string, unknown>, revision: Record<string, unknown> | null, passedDryRun: Record<string, unknown> | null = { id: '507f1f77bcf86cd799439017' }, scopeRoleError?: Error) {
+    const deploymentStore = {
+      findById: jest.fn().mockResolvedValue(deployment),
+      findByProgramAndScope: jest.fn().mockResolvedValue(null),
+      listByProgramScopes: jest.fn().mockResolvedValue([deployment]),
+      update: jest.fn().mockResolvedValue(deployment),
+      publishGuarded: jest.fn().mockImplementation(async (_id: string, draftRevisionId: string, targetRevisionId: string) => {
+        if (!revision || deployment.currentDraftRevisionId !== revision.id) return null;
+        deployment.currentPublishedRevisionId = targetRevisionId;
+        deployment.status = 'published';
         return deployment;
-      }) })),
+      }),
     };
-    const revisionModel = {
-      findOne: jest.fn().mockReturnValue({ exec: jest.fn().mockResolvedValue(revision) }),
-      findById: jest.fn().mockReturnValue({ lean: jest.fn().mockReturnValue({ exec: jest.fn().mockResolvedValue(revision) }) }),
+    const revisionStore = {
+      findByDeploymentAndId: jest.fn().mockResolvedValue(revision),
+      findById: jest.fn().mockResolvedValue(revision),
+      update: jest.fn().mockImplementation(async (_id: string, patch: Record<string, unknown>) => Object.assign(revision ?? {}, patch)),
     };
-    const dryRunModel = { findOne: jest.fn().mockReturnValue({ select: jest.fn().mockReturnValue({ lean: jest.fn().mockReturnValue({ exec: jest.fn().mockResolvedValue(passedDryRun) }) }) }) };
-    const sourceModel = { find: jest.fn() };
-    const attemptModel = { create: jest.fn().mockResolvedValue({}) };
+    const dryRunStore = { findPassedByDeploymentAndRevision: jest.fn().mockResolvedValue(passedDryRun) };
+    const bindingStore = { filterWorkspaceIdsBoundToScope: jest.fn().mockResolvedValue([]) };
+    const attemptStore = { insert: jest.fn().mockResolvedValue({}) };
     const programService = { assertOwnedProgram: jest.fn().mockResolvedValue(undefined) };
     const scopeService = { findById: jest.fn().mockResolvedValue({ status: 'active', agentIds: [agentId] }) };
     const accessService = { assertScopeAccess: jest.fn().mockResolvedValue(undefined), assertScopeRole: scopeRoleError ? jest.fn().mockRejectedValue(scopeRoleError) : jest.fn().mockResolvedValue(undefined), getAccessibleScopeIds: jest.fn().mockResolvedValue(['*']) };
     const auditLogService = { logSuccess: jest.fn(), logFailure: jest.fn() };
     const draftPreparationService = { prepare: jest.fn().mockResolvedValue(undefined) };
-    const service = new GovernanceDeploymentService(deploymentModel as never, revisionModel as never, dryRunModel as never, sourceModel as never, attemptModel as never, programService as never, scopeService as never, accessService as never, auditLogService as never, draftPreparationService as never);
-    return { service, attemptModel, auditLogService, accessService, scopeService, draftPreparationService };
+    // Simulated transaction: snapshot the in-memory revision and restore it when fn throws (rollback).
+    const tx = {
+      run: jest.fn(async (fn: () => Promise<unknown>) => {
+        const snapshot = revision ? { ...revision } : null;
+        try {
+          return await fn();
+        } catch (error) {
+          if (revision && snapshot) {
+            for (const key of Object.keys(revision)) delete revision[key];
+            Object.assign(revision, snapshot);
+          }
+          throw error;
+        }
+      }),
+    };
+    const service = new GovernanceDeploymentService(deploymentStore as never, revisionStore as never, dryRunStore as never, bindingStore as never, attemptStore as never, programService as never, scopeService as never, accessService as never, auditLogService as never, draftPreparationService as never, tx as never);
+    return { tx, service, attemptStore, revisionStore, deploymentStore, auditLogService, accessService, scopeService, draftPreparationService };
+  }
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  function deploymentRecord(overrides: Record<string, unknown> = {}): any {
+    return { id: deploymentId, programId, scopeId, name: 'Public scope', status: 'dry_run', currentDraftRevisionId: revisionId, channels: {}, createdAt: new Date(), updatedAt: new Date(), ...overrides };
+  }
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  function revisionRecord(overrides: Record<string, unknown> = {}): any {
+    return { id: revisionId, deploymentId, revisionNumber: 1, agentId, allowedAgentIds: [agentId], workspaceIds: [], status: 'draft', snapshots: {}, createdBy: actorId, createdAt: new Date(), updatedAt: new Date(), ...overrides };
   }
 
   it('prepares the authoritative first draft after creating a deployment', async () => {
-    const scopeId = '507f1f77bcf86cd799439015';
-    const deployment = { _id: deploymentId, programId, scopeId, name: 'Public scope', status: 'draft', channels: {}, createdAt: new Date(), updatedAt: new Date() };
-    const deploymentModel = {
-      findOne: jest.fn().mockReturnValue({ lean: () => ({ exec: jest.fn().mockResolvedValue(null) }) }),
-      create: jest.fn().mockResolvedValue(deployment),
+    const deploymentStore = {
+      insert: jest.fn().mockResolvedValue(deploymentRecord({ status: 'draft' })),
+      findByProgramAndScope: jest.fn().mockResolvedValue(null),
     };
     const scopeService = { findById: jest.fn().mockResolvedValue({ id: scopeId, agentIds: [agentId] }) };
     const accessService = { assertScopeAccess: jest.fn().mockResolvedValue(undefined) };
     const auditLogService = { logSuccess: jest.fn() };
     const draftPreparationService = { prepare: jest.fn().mockResolvedValue(undefined) };
-    const service = new GovernanceDeploymentService(deploymentModel as never, {} as never, {} as never, {} as never, {} as never, {} as never, scopeService as never, accessService as never, auditLogService as never, draftPreparationService as never);
+    const service = new GovernanceDeploymentService(deploymentStore as never, {} as never, {} as never, {} as never, {} as never, {} as never, scopeService as never, accessService as never, auditLogService as never, draftPreparationService as never);
 
     await service.create(actorId, actorEmail, programId, { scopeId, name: ' Public scope ' });
 
@@ -55,90 +81,104 @@ describe('GovernanceDeploymentService', () => {
   });
 
   it('publishes the selected draft revision as the public revision', async () => {
-    const deployment = { _id: deploymentId, programId, scopeId: '507f1f77bcf86cd799439015', status: 'dry_run', currentDraftRevisionId: revisionId, currentPublishedRevisionId: undefined as string | undefined, channels: {}, save: jest.fn() };
-    const revision = { _id: revisionId, agentId, allowedAgentIds: [agentId], status: 'draft', publishedBy: undefined, publishedAt: undefined, save: jest.fn() };
-    const { service, attemptModel } = buildService(deployment, revision);
+    const deployment = deploymentRecord();
+    const revision = revisionRecord();
+    const { service, attemptStore } = buildService(deployment, revision);
 
     const result = await service.publish(actorId, actorEmail, deploymentId, {});
 
     expect(revision.status).toBe('published');
     expect(deployment.currentPublishedRevisionId).toBe(revisionId);
-    expect(attemptModel.create).toHaveBeenCalledWith(expect.objectContaining({ status: 'success', revisionId: expect.anything() }));
+    expect(attemptStore.insert).toHaveBeenCalledWith(expect.objectContaining({ status: 'success', revisionId }));
     expect(result.currentPublishedRevisionId).toBe(revisionId);
   });
 
   it('publishes even when channel configuration is not ready', async () => {
-    const deployment = { _id: deploymentId, programId, scopeId: '507f1f77bcf86cd799439015', status: 'dry_run', currentDraftRevisionId: revisionId, currentPublishedRevisionId: undefined, channels: { widget: { enabled: true, status: 'not_configured' } }, save: jest.fn() };
-    const revision = { _id: revisionId, agentId, allowedAgentIds: [agentId], status: 'draft', save: jest.fn() };
-    const { service, attemptModel, auditLogService } = buildService(deployment, revision);
+    const deployment = deploymentRecord({ channels: { widget: { enabled: true, status: 'not_configured' } } });
+    const revision = revisionRecord();
+    const { service, attemptStore, auditLogService } = buildService(deployment, revision);
 
     await expect(service.publish(actorId, actorEmail, deploymentId, {})).resolves.toMatchObject({ currentPublishedRevisionId: revisionId });
-    expect(attemptModel.create).toHaveBeenCalledWith(expect.objectContaining({ status: 'success', errorCode: undefined }));
+    expect(attemptStore.insert).toHaveBeenCalledWith(expect.objectContaining({ status: 'success', errorCode: undefined }));
     expect(auditLogService.logFailure).not.toHaveBeenCalled();
   });
 
   it('blocks publishing archived deployments', async () => {
-    const deployment = { _id: deploymentId, programId, scopeId: '507f1f77bcf86cd799439015', status: 'archived', currentDraftRevisionId: revisionId, currentPublishedRevisionId: revisionId, channels: {}, save: jest.fn() };
-    const revision = { _id: revisionId, agentId, allowedAgentIds: [agentId], status: 'published', save: jest.fn() };
+    const deployment = deploymentRecord({ status: 'archived', currentPublishedRevisionId: revisionId });
+    const revision = revisionRecord({ status: 'published' });
     const { service } = buildService(deployment, revision);
 
     await expect(service.publish(actorId, actorEmail, deploymentId, {})).rejects.toMatchObject({ code: 'ERR_3670' });
   });
 
   it('blocks publishing rejected revisions', async () => {
-    const deployment = { _id: deploymentId, programId, scopeId: '507f1f77bcf86cd799439015', status: 'dry_run', currentDraftRevisionId: revisionId, channels: {}, save: jest.fn() };
-    const revision = { _id: revisionId, agentId, allowedAgentIds: [agentId], status: 'rejected', save: jest.fn() };
-    const { service, attemptModel } = buildService(deployment, revision);
+    const deployment = deploymentRecord();
+    const revision = revisionRecord({ status: 'rejected' });
+    const { service, attemptStore } = buildService(deployment, revision);
 
     await expect(service.publish(actorId, actorEmail, deploymentId, {})).rejects.toMatchObject({ code: 'ERR_3651' });
-    expect(attemptModel.create).toHaveBeenCalledWith(expect.objectContaining({ status: 'failed', errorCode: 'ERR_3651' }));
+    expect(attemptStore.insert).toHaveBeenCalledWith(expect.objectContaining({ status: 'failed', errorCode: 'ERR_3651' }));
   });
 
   it('publishes a reviewed suspended deployment when its scope is active', async () => {
-    const deployment = { _id: deploymentId, programId, scopeId: '507f1f77bcf86cd799439015', status: 'suspended', currentDraftRevisionId: revisionId, currentPublishedRevisionId: '507f1f77bcf86cd799439099', channels: {}, save: jest.fn() };
-    const revision = { _id: revisionId, agentId, allowedAgentIds: [agentId], status: 'draft', save: jest.fn() };
+    const deployment = deploymentRecord({ status: 'suspended', currentPublishedRevisionId: '507f1f77bcf86cd799439099' });
+    const revision = revisionRecord();
     const { service } = buildService(deployment, revision);
     await expect(service.publish(actorId, actorEmail, deploymentId, {})).resolves.toMatchObject({ status: 'published', currentPublishedRevisionId: revisionId });
   });
 
   it('blocks a suspended deployment while its scope is inactive', async () => {
-    const deployment = { _id: deploymentId, programId, scopeId: '507f1f77bcf86cd799439015', status: 'suspended', currentDraftRevisionId: revisionId, currentPublishedRevisionId: '507f1f77bcf86cd799439099', channels: {}, save: jest.fn() };
-    const revision = { _id: revisionId, agentId, allowedAgentIds: [agentId], status: 'draft', save: jest.fn() };
+    const deployment = deploymentRecord({ status: 'suspended', currentPublishedRevisionId: '507f1f77bcf86cd799439099' });
+    const revision = revisionRecord();
     const { service, scopeService } = buildService(deployment, revision);
     scopeService.findById.mockResolvedValue({ status: 'inactive', agentIds: [agentId] });
     await expect(service.publish(actorId, actorEmail, deploymentId, {})).rejects.toMatchObject({ code: 'ERR_3670' });
   });
 
   it('blocks a non-suspended deployment while its scope is inactive', async () => {
-    const deployment = { _id: deploymentId, programId, scopeId: '507f1f77bcf86cd799439015', status: 'dry_run', currentDraftRevisionId: revisionId, currentPublishedRevisionId: undefined, channels: {}, save: jest.fn() };
-    const revision = { _id: revisionId, agentId, allowedAgentIds: [agentId], status: 'draft', save: jest.fn() };
+    const deployment = deploymentRecord();
+    const revision = revisionRecord();
     const { service, scopeService } = buildService(deployment, revision);
     scopeService.findById.mockResolvedValue({ status: 'inactive', agentIds: [agentId] });
     await expect(service.publish(actorId, actorEmail, deploymentId, { allowPartial: true })).rejects.toMatchObject({ code: 'ERR_3670' });
   });
 
   it('blocks publishing when the draft revision has no passed dry-run', async () => {
-    const deployment = { _id: deploymentId, programId, scopeId: '507f1f77bcf86cd799439015', status: 'dry_run', currentDraftRevisionId: revisionId, channels: {}, save: jest.fn() };
-    const revision = { _id: revisionId, agentId, allowedAgentIds: [agentId], status: 'draft', save: jest.fn() };
-    const { service, attemptModel } = buildService(deployment, revision, null);
+    const deployment = deploymentRecord();
+    const revision = revisionRecord();
+    const { service, attemptStore } = buildService(deployment, revision, null);
 
     await expect(service.publish(actorId, actorEmail, deploymentId, {})).rejects.toMatchObject({ code: 'ERR_3670' });
-    expect(attemptModel.create).toHaveBeenCalledWith(expect.objectContaining({ status: 'blocked', errorCode: 'ERR_3670' }));
+    expect(attemptStore.insert).toHaveBeenCalledWith(expect.objectContaining({ status: 'blocked', errorCode: 'ERR_3670' }));
   });
 
   it('blocks publishing when the actor is not a scope approver', async () => {
-    const deployment = { _id: deploymentId, programId, scopeId: '507f1f77bcf86cd799439015', status: 'dry_run', currentDraftRevisionId: revisionId, channels: {}, save: jest.fn() };
-    const revision = { _id: revisionId, agentId, allowedAgentIds: [agentId], status: 'draft', save: jest.fn() };
-    const { service, accessService, attemptModel } = buildService(deployment, revision, { _id: '507f1f77bcf86cd799439017' }, new Error('forbidden'));
+    const deployment = deploymentRecord();
+    const revision = revisionRecord();
+    const { service, accessService, attemptStore } = buildService(deployment, revision, { id: '507f1f77bcf86cd799439017' }, new Error('forbidden'));
 
     await expect(service.publish(actorId, actorEmail, deploymentId, {})).rejects.toThrow('forbidden');
-    expect(accessService.assertScopeRole).toHaveBeenCalledWith(actorId, programId, deployment.scopeId, ['scope_approver']);
-    expect(revision.save).not.toHaveBeenCalled();
-    expect(attemptModel.create).not.toHaveBeenCalled();
+    expect(accessService.assertScopeRole).toHaveBeenCalledWith(actorId, programId, scopeId, ['scope_approver']);
+    expect(revision.status).toBe('draft');
+    expect(attemptStore.insert).not.toHaveBeenCalled();
+  });
+
+  it('rolls back the failed publish when the guarded deployment swap loses the race', async () => {
+    const deployment = deploymentRecord();
+    const revision = revisionRecord();
+    const service = buildService(deployment, revision);
+    service.deploymentStore.publishGuarded.mockResolvedValue(null);
+    service.deploymentStore.findById.mockResolvedValue({ ...deployment, currentPublishedRevisionId: '507f1f77bcf86cd799439099' });
+
+    await expect(service.service.publish(actorId, actorEmail, deploymentId, {})).rejects.toMatchObject({ code: 'ERR_3670' });
+    expect(service.tx.run).toHaveBeenCalled();
+    expect(revision.status).toBe('draft');
+    expect(revision.publishedBy).toBeFalsy();
+    expect(revision.publishedAt).toBeFalsy();
   });
 
   it('blocks suspend when no revision is published', async () => {
-    const deployment = { _id: deploymentId, programId, scopeId: '507f1f77bcf86cd799439015', status: 'dry_run', currentPublishedRevisionId: undefined, channels: {}, save: jest.fn() };
+    const deployment = deploymentRecord({ status: 'dry_run', currentPublishedRevisionId: undefined });
     const { service } = buildService(deployment, null);
 
     await expect(service.suspend(actorId, actorEmail, deploymentId)).rejects.toMatchObject({ code: 'ERR_3653' });

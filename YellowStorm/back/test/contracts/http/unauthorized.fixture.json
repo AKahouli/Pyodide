@@ -1,0 +1,12 @@
+{
+  "success": false,
+  "error": {
+    "timestamp": "<volatile>",
+    "path": "/api/v1/workspaces",
+    "method": "GET",
+    "requestId": "<volatile>",
+    "code": "ERR_1003",
+    "message": "Unauthorized",
+    "statusCode": 401
+  }
+}

@@ -1,0 +1,33 @@
+{
+  "fixtureId": "cross-workspace-selection",
+  "scenario": "Model with home Workspace A explicitly selects an authorized asset from Workspace B",
+  "homeWorkspace": { "workspaceId": "6512f0a1c9e77a001234aaa1" },
+  "selectedSource": {
+    "workspaceId": "6512f0a1c9e77a001234fff6",
+    "assetId": "6512f0a1c9e77a0012347777",
+    "originalName": "supplier-terms.xlsx",
+    "mimeType": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    "sizeBytes": 94208,
+    "contentHash": "3d6c8b0a1e2f4d5c6a7b8c9d0e1f2a3b",
+    "uploadedAt": "2026-09-08T11:00:00.000Z",
+    "indexingStatus": null
+  },
+  "expectedResolution": {
+    "assetRef": {
+      "workspaceId": "6512f0a1c9e77a001234fff6",
+      "assetId": "6512f0a1c9e77a0012347777",
+      "assetVersionId": "md5:3d6c8b0a1e2f4d5c6a7b8c9d0e1f2a3b",
+      "sourceVersionVerification": "partial"
+    },
+    "authorization": {
+      "homeWorkspaceGrant": "granted",
+      "sourceWorkspaceGrant": "granted",
+      "rule": "Resolution and every later read recheck CURRENT authorization on the source workspace; the home-workspace grant alone resolves nothing, and cached grants do not survive revocation-sensitive reads."
+    },
+    "discovery": {
+      "status": "ready",
+      "coverage": { "sampled": true, "completeProfileDone": false }
+    },
+    "isolation": "Evidence is never deduplicated across workspaces in a way that exposes existence or content to an unauthorized actor"
+  }
+}

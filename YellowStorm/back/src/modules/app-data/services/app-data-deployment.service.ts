@@ -28,29 +28,35 @@ export class AppDataDeploymentService {
     private readonly policies: AppDataPolicyService,
   ) {}
 
+  /**
+   * Generated apps NEVER talk to this backend for App Data: the public CRUD /
+   * auth / invite surface lives in the app-data microservice in every mode.
+   * So even in local mode (APP_DATA_REMOTE=false) the URL points at the
+   * microservice — local microservice for dev/preview, deployed microservice
+   * for PROD — never at the removed monolith /api/v1/app-data/public/... path.
+   */
   resolvePublicUrl(appDataId: string, environment: 'dev' | 'prod'): string {
-    let base: string;
-    if (environment === 'prod') {
-      const prodBase = this.config.get<string>('appData.publicBaseUrlProd') || '';
-      const fallback =
-        this.config.get<string>('appData.publicBaseUrl') ||
-        this.config.get<string>('appRuntime.publicBaseUrl') ||
-        '';
-      if (!prodBase && process.env.NODE_ENV === 'production') {
+    const devBase = (
+      this.config.get<string>('appData.remotePublicBaseUrl') || 'http://localhost:8443'
+    ).replace(/\/$/, '');
+    if (environment === 'dev') {
+      return `${devBase}/v1/apps/${appDataId}/dev`;
+    }
+
+    // PROD deployed apps are served over HTTPS. An https page cannot call an
+    const prodBase = (
+      this.config.get<string>('appData.remotePublicBaseUrlProd') || ''
+    ).trim().replace(/\/$/, '');
+    if (!prodBase) {
+      if (process.env.NODE_ENV === 'production') {
         throw new AppDataException(
           AppDataErrorCode.DEPLOY_CONFIG_MISSING,
-          'APP_DATA_PUBLIC_BASE_URL_PROD is required when deploying App Data apps in production',
+          'APP_DATA_REMOTE_PUBLIC_BASE_URL_PROD is required when deploying App Data apps in production',
         );
       }
-      base = prodBase || fallback || 'http://127.0.0.1:3000';
-    } else {
-      base =
-        this.config.get<string>('appData.publicBaseUrl') ||
-        this.config.get<string>('appRuntime.publicBaseUrl') ||
-        'http://127.0.0.1:3000';
+      return `${devBase}/v1/apps/${appDataId}/prod`;
     }
-    const trimmed = base.replace(/\/$/, '');
-    return `${trimmed}/api/v1/app-data/public/${appDataId}/${environment}`;
+    return `${prodBase}/v1/apps/${appDataId}/prod`;
   }
 
   buildRuntimeEnv(appDataId: string, environment: 'dev' | 'prod'): AppDataRuntimeEnv {

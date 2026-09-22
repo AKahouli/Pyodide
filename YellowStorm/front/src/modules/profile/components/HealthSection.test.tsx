@@ -7,6 +7,7 @@ import * as profileApi from '../api';
 const fetchHealthMock = vi.fn();
 const fetchHistoryMock = vi.fn();
 const fetchStatsMock = vi.fn();
+const fetchAppDataHealthMock = vi.fn();
 
 vi.mock('@/modules/localization', () => ({
   useModuleTranslation: () => ({ t: (key: string) => key }),
@@ -41,6 +42,15 @@ vi.mock('@/lib/use-api-action', () => ({
         execute: () => {
           options.onSuccess?.({ uptimePercentage: 100, period: { minutes: 60 }, totalRecords: 0, avgResponseTimes: {} });
           fetchStatsMock();
+        },
+        isLoading: false,
+      };
+    }
+    if (fn === profileApi.getAppDataHealth) {
+      return {
+        execute: () => {
+          options.onSuccess?.({ enabled: true, mcp: true, publicApi: false, dataTab: true, remote: true, remoteReady: true, microservice: { reachable: true, live: true, ready: true, database: 'connected' } });
+          fetchAppDataHealthMock();
         },
         isLoading: false,
       };
@@ -91,6 +101,7 @@ describe('HealthSection', () => {
     await waitFor(() => {
       expect(screen.getByText('health.overall.title')).toBeInTheDocument();
       expect(screen.getByText('health.serviceChecks.title')).toBeInTheDocument();
+      expect(screen.getByText('health.appData.title')).toBeInTheDocument();
     });
 
     fireEvent.click(screen.getByText('health.actions.refresh'));
@@ -98,5 +109,6 @@ describe('HealthSection', () => {
     expect(fetchHealthMock).toHaveBeenCalled();
     expect(fetchHistoryMock).toHaveBeenCalled();
     expect(fetchStatsMock).toHaveBeenCalled();
+    expect(fetchAppDataHealthMock).toHaveBeenCalled();
   });
 });

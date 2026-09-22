@@ -1,12 +1,18 @@
 import { createHash } from 'crypto';
-import { Injectable } from '@nestjs/common';
-import { InjectModel } from '@nestjs/mongoose';
-import { Model, Types } from 'mongoose';
+import { Inject, Injectable } from '@nestjs/common';
 import { AuditLogService } from '@modules/authorization/services/audit-log.service';
-import { GovernanceDeployment, GovernanceDeploymentDocument } from '../schemas/governance-deployment.schema';
-import { GovernanceDeploymentRevision, GovernanceDeploymentRevisionDocument } from '../schemas/governance-deployment-revision.schema';
-import { GovernanceScope, GovernanceScopeDocument } from '../schemas/governance-scope.schema';
-import { GovernanceWorkspaceBinding, GovernanceWorkspaceBindingDocument } from '../schemas/governance-workspace-binding.schema';
+import {
+  BINDING_STORE,
+  DEPLOYMENT_STORE,
+  REVISION_STORE,
+  SCOPE_STORE,
+  type BindingStore,
+  type DeploymentStore,
+  type GovernanceRevisionRecord,
+  type RevisionStore,
+  type ScopeStore,
+  GOVERNANCE_TRANSACTION, PASSTHROUGH_TRANSACTION, type GovernanceTransactionRunner
+} from '../persistence';
 
 type AudienceSnapshot = { mode: 'all_authenticated' | 'restricted'; userIds: string[]; groupIds: string[] };
 
@@ -17,24 +23,25 @@ export interface PrepareGovernanceDraftOptions {
 @Injectable()
 export class GovernanceDraftPreparationService {
   constructor(
-    @InjectModel(GovernanceScope.name) private readonly scopeModel: Model<GovernanceScopeDocument>,
-    @InjectModel(GovernanceWorkspaceBinding.name) private readonly bindingModel: Model<GovernanceWorkspaceBindingDocument>,
-    @InjectModel(GovernanceDeployment.name) private readonly deploymentModel: Model<GovernanceDeploymentDocument>,
-    @InjectModel(GovernanceDeploymentRevision.name) private readonly revisionModel: Model<GovernanceDeploymentRevisionDocument>,
+    @Inject(SCOPE_STORE) private readonly scopeStore: ScopeStore,
+    @Inject(BINDING_STORE) private readonly bindingStore: BindingStore,
+    @Inject(DEPLOYMENT_STORE) private readonly deploymentStore: DeploymentStore,
+    @Inject(REVISION_STORE) private readonly revisionStore: RevisionStore,
     private readonly auditLogService: AuditLogService,
+    @Inject(GOVERNANCE_TRANSACTION) private readonly tx: GovernanceTransactionRunner = PASSTHROUGH_TRANSACTION,
   ) {}
 
   async prepare(actorId: string, actorEmail: string, programId: string, scopeId: string, options: PrepareGovernanceDraftOptions = {}): Promise<void> {
     const [scope, deployment, bindings] = await Promise.all([
-      this.scopeModel.findOne({ _id: new Types.ObjectId(scopeId), programId: new Types.ObjectId(programId) }).lean().exec(),
-      this.deploymentModel.findOne({ programId: new Types.ObjectId(programId), scopeId: new Types.ObjectId(scopeId) }).exec(),
-      this.bindingModel.find({ programId: new Types.ObjectId(programId), enabled: true, $or: [{ visibility: 'program_shared' }, { scopeIds: new Types.ObjectId(scopeId) }] }).select('_id workspaceId visibility ingestionMode defaults').lean().exec(),
+      this.scopeStore.findByProgramAndId(programId, scopeId),
+      this.deploymentStore.findByProgramAndScope(programId, scopeId),
+      this.bindingStore.listEnabled(programId, [scopeId]),
     ]);
     if (!scope || !deployment || deployment.status === 'archived') return;
 
-    const allowedAgentIds = (scope.agentIds ?? []).map(String);
-    const workspaceIds = [...new Set(bindings.map((binding) => binding.workspaceId.toString()))].sort();
-    const workspaceBindingSnapshot = Object.fromEntries(bindings.map((binding) => [binding._id.toString(), { workspaceId: binding.workspaceId.toString(), visibility: binding.visibility, ingestionMode: binding.ingestionMode, defaults: binding.defaults ?? {} }] as const).sort(([a], [b]) => a.localeCompare(b)));
+    const allowedAgentIds = scope.agentIds ?? [];
+    const workspaceIds = [...new Set(bindings.map((binding) => binding.workspaceId))].sort();
+    const workspaceBindingSnapshot = Object.fromEntries(bindings.map((binding) => [binding.id, { workspaceId: binding.workspaceId, visibility: binding.visibility, ingestionMode: binding.ingestionMode, defaults: binding.defaults ?? {} }] as const).sort(([a], [b]) => a.localeCompare(b)));
     const scopeSnapshot = {
       name: scope.name,
       type: scope.type,
@@ -44,59 +51,60 @@ export class GovernanceDraftPreparationService {
     const audienceSnapshot = this.toAudienceSnapshot(scope.audience);
     const configuration = { allowedAgentIds: [...allowedAgentIds].sort(), workspaceIds, workspaceBindingSnapshot, scopeSnapshot, audienceSnapshot };
     const configurationFingerprint = createHash('sha256').update(JSON.stringify(configuration)).digest('hex');
-    const currentDraft = deployment.currentDraftRevisionId ? await this.revisionModel.findById(deployment.currentDraftRevisionId).lean().exec() : null;
+    const currentDraft = deployment.currentDraftRevisionId ? await this.revisionStore.findById(deployment.currentDraftRevisionId) : null;
     if (currentDraft?.configurationFingerprint === configurationFingerprint) return;
 
-    const existingRevisionCount = await this.revisionModel.countDocuments({ deploymentId: deployment._id });
-    await this.deploymentModel.updateOne({ _id: deployment._id }, { $max: { revisionSequence: existingRevisionCount } }).exec();
-    const sequencedDeployment = await this.deploymentModel.findOneAndUpdate(
-      { _id: deployment._id, currentDraftRevisionId: deployment.currentDraftRevisionId },
-      { $inc: { revisionSequence: 1 } },
-      { new: true },
-    ).exec();
+    const existingRevisionCount = await this.revisionStore.countByDeployment(deployment.id);
+    await this.deploymentStore.maxRevisionSequence(deployment.id, existingRevisionCount);
+    const sequencedDeployment = await this.deploymentStore.incrementRevisionSequenceGuarded(deployment.id, deployment.currentDraftRevisionId ?? null);
     if (!sequencedDeployment) return this.prepare(actorId, actorEmail, programId, scopeId, options);
     const revisionNumber = sequencedDeployment.revisionSequence;
-    const revision = await this.revisionModel.create({
-      deploymentId: deployment._id,
-      revisionNumber,
-      status: 'draft',
-      agentId: allowedAgentIds[0] ? new Types.ObjectId(allowedAgentIds[0]) : undefined,
-      allowedAgentIds: allowedAgentIds.map((id) => new Types.ObjectId(id)),
-      workspaceIds: workspaceIds.map((id) => new Types.ObjectId(id)),
-      agentSnapshot: {},
-      workspaceBindingSnapshot,
-      channelSnapshot: deployment.channels ?? {},
-      configurationFingerprint,
-      scopeSnapshot,
-      audienceSnapshot,
-      previousAudienceSnapshot: currentDraft?.previousAudienceSnapshot && Object.keys(currentDraft.previousAudienceSnapshot).length > 0
-        ? currentDraft.previousAudienceSnapshot
-        : (options.previousAudience ?? {}),
-      createdBy: new Types.ObjectId(actorId),
+    // Revision insert, draft pointer swap and scope review status commit together.
+    const revision = await this.tx.run(async () => {
+      const inserted = await this.revisionStore.insert({
+        deploymentId: deployment.id,
+        revisionNumber,
+        status: 'draft',
+        agentId: allowedAgentIds[0],
+        allowedAgentIds,
+        workspaceIds,
+        agentSnapshot: {},
+        workspaceBindingSnapshot,
+        channelSnapshot: (deployment.channels as Record<string, unknown>) ?? {},
+        configurationFingerprint,
+        scopeSnapshot,
+        audienceSnapshot,
+        previousAudienceSnapshot: this.previousAudienceFor(currentDraft, options),
+        createdBy: actorId,
+      });
+      const draftSwapped = await this.deploymentStore.setDraftRevisionIfSequence(deployment.id, revisionNumber, inserted.id);
+      if (!draftSwapped) {
+        await this.revisionStore.deleteByIdAndStatus(inserted.id, 'draft');
+        return null;
+      }
+      await this.scopeStore.setMetadataReviewStatus(scope.id, 'in_review');
+      return inserted;
     });
-    const draftSwap = await this.deploymentModel.updateOne({ _id: deployment._id, revisionSequence: revisionNumber }, { $set: { currentDraftRevisionId: revision._id } }).exec();
-    if (draftSwap.modifiedCount !== 1) {
-      await this.revisionModel.deleteOne({ _id: revision._id, status: 'draft' }).exec();
-      return this.prepare(actorId, actorEmail, programId, scopeId, options);
-    }
-    await Promise.all([
-      this.scopeModel.updateOne({ _id: scope._id }, {
-        $set: {
-          'metadata.review.status': 'in_review',
-        },
-      }).exec(),
-    ]);
+    if (!revision) return this.prepare(actorId, actorEmail, programId, scopeId, options);
     this.auditLogService.logSuccess({
       actorId,
       actorEmail,
       action: 'governance.revision.prepared',
       targetType: 'governance_revision',
-      targetId: revision._id.toString(),
-      metadata: { programId, scopeId, deploymentId: deployment._id.toString(), configurationFingerprint },
+      targetId: revision.id,
+      metadata: { programId, scopeId, deploymentId: deployment.id, configurationFingerprint },
     });
   }
 
-  private toAudienceSnapshot(audience: { mode?: string; userIds?: Types.ObjectId[]; groupIds?: Types.ObjectId[] } | undefined): AudienceSnapshot {
+  /** Keeps the previous audience snapshot of the last draft when it is non-empty (documented Mongo behaviour). */
+  private previousAudienceFor(currentDraft: GovernanceRevisionRecord | null, options: PrepareGovernanceDraftOptions): Record<string, unknown> {
+    if (currentDraft?.previousAudienceSnapshot && Object.keys(currentDraft.previousAudienceSnapshot).length > 0) {
+      return currentDraft.previousAudienceSnapshot;
+    }
+    return options.previousAudience ?? {};
+  }
+
+  private toAudienceSnapshot(audience: { mode?: string; userIds?: string[]; groupIds?: string[] } | undefined): AudienceSnapshot {
     return {
       mode: audience?.mode === 'all_authenticated' ? 'all_authenticated' : 'restricted',
       userIds: (audience?.userIds ?? []).map(String).sort(),

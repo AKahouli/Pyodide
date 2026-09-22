@@ -3,7 +3,7 @@ import { MessageEvent } from '@nestjs/common';
 import { Subject, Observable, BehaviorSubject, takeUntil } from 'rxjs';
 import { ConfigService } from '@nestjs/config';
 import { LoggerService } from '../logger';
-import { NotificationDocument } from './schemas/notification.schema';
+import type { NotificationWire } from './persistence/notification.mapper';
 import { SSEConnection, SSEConnectionStats } from './interfaces/notification.interface';
 
 interface InternalSSEConnection extends SSEConnection {
@@ -154,7 +154,7 @@ export class NotificationsGateway implements OnModuleInit, OnModuleDestroy {
    */
   async sendToUser(
     userId: string,
-    notification: NotificationDocument,
+    notification: NotificationWire,
   ): Promise<boolean> {
     const userConns = this.userConnections.get(userId);
     if (!userConns || userConns.size === 0) {
@@ -164,7 +164,7 @@ export class NotificationsGateway implements OnModuleInit, OnModuleDestroy {
 
     const message: MessageEvent = {
       type: 'notification',
-      data: JSON.stringify(notification.toJSON()),
+      data: JSON.stringify(notification),
     };
 
     let sentCount = 0;
@@ -195,7 +195,7 @@ export class NotificationsGateway implements OnModuleInit, OnModuleDestroy {
     this.logger.debug('Notification sent to user', {
       userId,
       sentCount,
-      notificationId: notification._id,
+      notificationId: notification.id,
     });
     return sentCount > 0;
   }
@@ -203,10 +203,10 @@ export class NotificationsGateway implements OnModuleInit, OnModuleDestroy {
   /**
    * Broadcast notification to all connected users
    */
-  async broadcast(notification: NotificationDocument): Promise<void> {
+  async broadcast(notification: NotificationWire): Promise<void> {
     const message: MessageEvent = {
       type: 'notification',
-      data: JSON.stringify(notification.toJSON()),
+      data: JSON.stringify(notification),
     };
 
     let sentCount = 0;
@@ -231,7 +231,7 @@ export class NotificationsGateway implements OnModuleInit, OnModuleDestroy {
     }
 
     this.logger.log('Broadcast notification sent', {
-      notificationId: notification._id,
+      notificationId: notification.id,
       sentCount,
       failedCount: failedConnections.length,
     });

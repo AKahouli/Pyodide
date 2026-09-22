@@ -1,0 +1,33 @@
+{
+  "fixtureId": "unindexed-document",
+  "scenario": "Uploaded DOCX whose logical indexing failed (indexingStatus = failed)",
+  "source": {
+    "workspaceId": "6512f0a1c9e77a001234aaa1",
+    "assetId": "6512f0a1c9e77a001234eee5",
+    "originalName": "sop-expenses-draft.docx",
+    "mimeType": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    "sizeBytes": 884736,
+    "contentHash": null,
+    "uploadedAt": "2026-09-12T16:44:00.000Z",
+    "indexingStatus": "failed",
+    "indexingError": "vectorstore indexing pipeline returned failure",
+    "lastIndexedAt": null
+  },
+  "expectedResolution": {
+    "assetRef": {
+      "workspaceId": "6512f0a1c9e77a001234aaa1",
+      "assetId": "6512f0a1c9e77a001234eee5",
+      "assetVersionId": "obs:6512f0a1c9e77a001234eee5:1",
+      "sourceVersionVerification": "unknown",
+      "indexObservationId": null
+    },
+    "discovery": {
+      "status": "indexing_required",
+      "warnings": [
+        { "code": "indexing_required", "message": "Population needs the existing logical index; this asset's indexing failed. Re-run the unchanged upload/indexing workflow." }
+      ],
+      "coverage": { "sampled": true, "completeProfileDone": false }
+    },
+    "population": "no evidence packets; never silently fall back to local parsing or a parallel OCR pipeline"
+  }
+}

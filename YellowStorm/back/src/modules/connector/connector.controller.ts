@@ -21,7 +21,7 @@ import {
 import { Request } from 'express';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
-import { UserDocument } from '../user/schemas/user.schema';
+import type { AuthUser } from '@common/auth/auth-user';
 import {
   CreateConnectorCredentialDto,
   UpdateConnectorCredentialDto,
@@ -60,7 +60,7 @@ export class ConnectorController {
   @Get('repositories')
   @ApiOperation({ summary: 'Get repositories for a connected app (e.g., GitHub repos)' })
   async getRepositories(
-    @CurrentUser() user: UserDocument,
+    @CurrentUser() user: AuthUser,
     @Query('appKey') appKey: string,
     @Query('search') search?: string,
     @Query('page') page?: string,
@@ -86,7 +86,7 @@ export class ConnectorController {
   @ApiOperation({ summary: 'List credentials for a connector owned by the current user' })
   async listCredentials(
     @Param('connectorId') connectorId: string,
-    @CurrentUser() user: UserDocument,
+    @CurrentUser() user: AuthUser,
   ): Promise<IConnectorCredentialResponse[]> {
     return this.credentialService.findAllForUser(user._id.toString(), { connectorId });
   }
@@ -97,7 +97,7 @@ export class ConnectorController {
   async createCredential(
     @Param('connectorId') connectorId: string,
     @Body() dto: CreateConnectorCredentialDto,
-    @CurrentUser() user: UserDocument,
+    @CurrentUser() user: AuthUser,
   ): Promise<IConnectorCredentialResponse> {
     return this.credentialService.create(user._id.toString(), {
       ...dto,
@@ -110,7 +110,7 @@ export class ConnectorController {
   @ApiParam({ name: 'id', description: 'Credential ID' })
   async getCredential(
     @Param('id') id: string,
-    @CurrentUser() user: UserDocument,
+    @CurrentUser() user: AuthUser,
   ): Promise<IConnectorCredentialResponse> {
     return this.credentialService.findById(id, user._id.toString());
   }
@@ -121,7 +121,7 @@ export class ConnectorController {
   async updateCredential(
     @Param('id') id: string,
     @Body() dto: UpdateConnectorCredentialDto,
-    @CurrentUser() user: UserDocument,
+    @CurrentUser() user: AuthUser,
   ): Promise<IConnectorCredentialResponse> {
     return this.credentialService.update(id, user._id.toString(), dto);
   }
@@ -132,7 +132,7 @@ export class ConnectorController {
   @ApiParam({ name: 'id', description: 'Credential ID' })
   async deleteCredential(
     @Param('id') id: string,
-    @CurrentUser() user: UserDocument,
+    @CurrentUser() user: AuthUser,
   ): Promise<void> {
     await this.credentialService.delete(id, user._id.toString());
   }
@@ -142,7 +142,7 @@ export class ConnectorController {
   @ApiParam({ name: 'id', description: 'Credential ID' })
   async validateCredential(
     @Param('id') id: string,
-    @CurrentUser() user: UserDocument,
+    @CurrentUser() user: AuthUser,
   ): Promise<IConnectorCredentialResponse> {
     return this.credentialService.validateCredential(id, user._id.toString());
   }
@@ -155,7 +155,7 @@ export class ConnectorController {
   @ApiParam({ name: 'id', description: 'Connector ID' })
   async authorizeConnector(
     @Param('id') id: string,
-    @CurrentUser() user: UserDocument,
+    @CurrentUser() user: AuthUser,
   ) {
     const connector = await this.connectorService.findById(id);
 
@@ -180,7 +180,7 @@ export class ConnectorController {
   @ApiParam({ name: 'id', description: 'Connector ID' })
   async inspectConnector(
     @Param('id') id: string,
-    @CurrentUser() user: UserDocument,
+    @CurrentUser() user: AuthUser,
     @Body() dto: InspectConnectorDto,
   ) {
     const connector = await this.connectorService.findById(id);
@@ -207,7 +207,7 @@ export class ConnectorController {
   @ApiOperation({ summary: 'Import one or more connector items into a workspace' })
   async importFromConnector(
     @Body() dto: ImportConnectorItemDto,
-    @CurrentUser() user: UserDocument,
+    @CurrentUser() user: AuthUser,
   ): Promise<unknown> {
     return this.transferService.importToWorkspace(
       user._id.toString(),
@@ -229,7 +229,7 @@ export class ConnectorController {
   @ApiOperation({ summary: 'Export a workspace document to a remote connector' })
   async exportToConnector(
     @Body() dto: ExportToConnectorDto,
-    @CurrentUser() user: UserDocument,
+    @CurrentUser() user: AuthUser,
   ): Promise<unknown> {
     return this.transferService.exportFromWorkspace(
       user._id.toString(),

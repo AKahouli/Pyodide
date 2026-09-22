@@ -1,7 +1,8 @@
 import { ConfigService } from '@nestjs/config';
 import { WidgetChatService } from './widget-chat.service';
 import { NotFoundException, ServiceUnavailableException } from '@modules/exceptions';
-import { DocumentStatus, IndexingStatus } from '@modules/workspace/schemas/workspace-document.schema';
+import { DocumentStatus, IndexingStatus } from '@modules/workspace/interfaces/document-status.enum';
+import { InMemoryWidgetMessageStore, InMemoryWidgetSessionStore, InMemoryWidgetTokenStore } from '../persistence/widget.store.fake';
 
 const WS_ID = '507f1f77bcf86cd799439011';
 const DOC_ID = '507f1f77bcf86cd799439012';
@@ -32,11 +33,14 @@ function createCitationService() {
     debug: jest.fn(),
     error: jest.fn(),
   };
+  const tokenStore = new InMemoryWidgetTokenStore();
+  const sessionStore = new InMemoryWidgetSessionStore();
+  const messageStore = new InMemoryWidgetMessageStore();
 
   const service = new WidgetChatService(
-    {} as any,
-    {} as any,
-    {} as any,
+    tokenStore,
+    sessionStore,
+    messageStore,
     {} as any,
     {} as any,
     {} as any,
@@ -47,7 +51,7 @@ function createCitationService() {
     logger as any,
   );
 
-  return { service, documentService, workspaceDocumentService, workspaceService, logger };
+  return { service, tokenStore, sessionStore, messageStore, documentService, workspaceDocumentService, workspaceService, logger };
 }
 
 function buildDocResponse(path: string) {
@@ -243,5 +247,53 @@ describe('WidgetChatService.getCitationFile', () => {
         agentKnowledgeBaseIds: [WS_ID],
       }),
     ).rejects.toBeInstanceOf(ServiceUnavailableException);
+  });
+});
+
+describe('WidgetChatService sessions (PG stores, plan 4.13)', () => {
+  const metadata = {};
+
+  it('reuses the active visitor session instead of creating a new one', async () => {
+    const { service, sessionStore } = createCitationService();
+
+    const first = await service.createOrGetSession('hash-1', 'agent-1', 'visitor-1', metadata);
+    const second = await service.createOrGetSession('hash-1', 'agent-1', 'visitor-1', metadata);
+
+    expect(second.id).toBe(first.id);
+    expect(sessionStore.rows).toHaveLength(1);
+  });
+
+  it('resetVisitorSession closes the active session and starts a fresh one in one transaction', async () => {
+    const { service, sessionStore } = createCitationService();
+    const original = await service.createOrGetSession('hash-1', 'agent-1', 'visitor-1', metadata);
+
+    const result = await service.resetVisitorSession('hash-1', 'agent-1', 'visitor-1', metadata);
+
+    expect(result.sessionId).not.toBe(original.id);
+    const rows = sessionStore.rows;
+    expect(rows).toHaveLength(2);
+    expect(rows.find((r) => r.id === original.id)!.status).toBe('closed');
+    expect(rows.find((r) => r.id === result.sessionId)!.status).toBe('active');
+  });
+});
+
+describe('WidgetChatService tokens (PG stores, plan 4.12)', () => {
+  it('hides tokenHash from list/update/revoke results', async () => {
+    const { service, tokenStore } = createCitationService();
+    const created = await service.createToken('agent-1', 'user-1', { label: 'CI' });
+
+    expect(created.token).toBeDefined();
+    const listed = await service.listTokens('agent-1');
+    expect(listed).toHaveLength(1);
+    expect(listed[0]).not.toHaveProperty('tokenHash');
+    expect(listed[0]).toMatchObject({ id: created.id, label: 'CI', isActive: true });
+
+    await service.updateToken('agent-1', created.id, { isActive: false });
+    expect(tokenStore.rows[0].isActive).toBe(false);
+    expect(tokenStore.rows[0]).toHaveProperty('tokenHash');
+
+    const revoked = await service.revokeToken('agent-1', created.id);
+    expect(revoked).not.toHaveProperty('tokenHash');
+    expect(await service.listTokens('agent-1')).toHaveLength(0);
   });
 });

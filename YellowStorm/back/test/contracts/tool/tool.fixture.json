@@ -1,0 +1,24 @@
+{
+  "id": "64b000000000000000000601",
+  "name": "web_search",
+  "description": "Search the web",
+  "icon": "search",
+  "color": "#ffcc00",
+  "iconColor": "dark",
+  "categoryId": "64b000000000000000000602",
+  "defaultAgentTypes": [
+    "64b000000000000000000603"
+  ],
+  "attributes": [
+    {
+      "id": "a1",
+      "name": "maxResults",
+      "type": "number",
+      "value": 5
+    }
+  ],
+  "requiredAppKey": "microsoft",
+  "isActive": true,
+  "createdAt": "<volatile>",
+  "updatedAt": "<volatile>"
+}

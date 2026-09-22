@@ -46,6 +46,10 @@ from src.smart_rag.tools.utilities.code_interpreter_payload import (
     _extract_workspace_name_hint,
     build_code_interpreter_payload_context,
 )
+from src.smart_rag.tools.utilities.connector_tools import (
+    apply_dynamic_workspace_headers,
+    without_dynamic_workspace_headers,
+)
 
 logger = get_logger(__name__)
 
@@ -134,6 +138,18 @@ def _log_payload(value: Any) -> str:
         return json.dumps(value, ensure_ascii=False, default=str, indent=2)
     except (TypeError, ValueError):
         return str(value)
+
+
+def _json_object(value: Any) -> Dict[str, Any]:
+    if isinstance(value, dict):
+        return value
+    if isinstance(value, str) and value.strip():
+        try:
+            parsed = json.loads(value)
+            return parsed if isinstance(parsed, dict) else {}
+        except json.JSONDecodeError:
+            return {}
+    return {}
 
 
 def _is_locate_answer_citations_tool(tool_name: str) -> bool:
@@ -243,6 +259,9 @@ def _component_to_connector_citation_source(
     component: Dict[str, Any],
 ) -> Optional[Dict[str, Any]]:
     data = component.get("data") or {}
+    web_source = data.get("web_source")
+    if isinstance(web_source, dict):
+        return {"type": "web", **web_source}
     text_source = data.get("text_source")
     if isinstance(text_source, dict):
         return {
@@ -287,7 +306,15 @@ def _append_citation_guidance(text: str, references: List[str]) -> str:
 
 def _build_connector_citation_signature(source: Dict[str, Any]) -> str:
     source_type = str(source.get("type") or "text")
-    if source_type == "image":
+    if source_type == "web":
+        parts = [
+            source_type,
+            str(source.get("source") or ""),
+            str(source.get("exact_text") or ""),
+            str(source.get("prefix") or ""),
+            str(source.get("suffix") or ""),
+        ]
+    elif source_type == "image":
         parts = [
             source_type,
             str(source.get("path") or ""),
@@ -353,6 +380,11 @@ def _compact_citation_source(source: Dict[str, Any]) -> Dict[str, Any]:
         "highlight_text",
         "highlight_bbox",
         "block_bbox",
+        "title",
+        "exact_text",
+        "prefix",
+        "suffix",
+        "evidence_origin",
     )
     return {
         key: source[key]
@@ -365,6 +397,7 @@ def _collect_connector_response_components(
     collector: ToolResultCollector,
     response: Any,
     tool_name: str = "",
+    trusted_citations: bool = False,
 ) -> Any:
     if not isinstance(response, dict):
         return response
@@ -372,7 +405,7 @@ def _collect_connector_response_components(
     is_located_answer_citations = _is_locate_answer_citations_tool(tool_name)
     normalized_response = (
         dict(response)
-        if is_located_answer_citations
+        if is_located_answer_citations or trusted_citations
         else _strip_legacy_citation_fields(response)
     )
 
@@ -446,7 +479,24 @@ def _collect_connector_response_components(
         if not is_new_source:
             continue
 
-        if source_type == "image":
+        if source_type == "web":
+            collector.add_component(
+                "citation",
+                {
+                    "parent_id": "",
+                    "web_source": {
+                        "type": "web",
+                        "source": str(source.get("source") or ""),
+                        "title": str(source.get("title") or ""),
+                        "reference": reference,
+                        "exact_text": str(source.get("exact_text") or ""),
+                        "prefix": str(source.get("prefix") or ""),
+                        "suffix": str(source.get("suffix") or ""),
+                        "evidence_origin": str(source.get("evidence_origin") or ""),
+                    },
+                },
+            )
+        elif source_type == "image":
             component_payload = {
                 "parent_id": "",
                 "image_source": {
@@ -830,6 +880,25 @@ def _json_schema_type_to_python(schema: Dict[str, Any]) -> Any:
     return Any
 
 
+def _sanitize_mcp_params_for_send(params: Dict[str, Any]) -> Dict[str, Any]:
+    """Drop null or empty payload values before invoking a strict MCP tool."""
+    if not isinstance(params, dict):
+        return {}
+
+    cleaned: Dict[str, Any] = {}
+    for key, value in params.items():
+        if value is None:
+            continue
+        if isinstance(value, str) and not value.strip():
+            continue
+        if isinstance(value, (list, tuple, set)) and not value:
+            continue
+        if isinstance(value, dict) and not value:
+            continue
+        cleaned[key] = value
+    return cleaned
+
+
 def _build_args_schema_for_connector_tool(
     tool_name: str,
     parameter_schema: Dict[str, Any],
@@ -871,6 +940,25 @@ def _build_args_schema_for_connector_tool(
             )
 
     return create_model(f"{tool_name}Input", **field_defs)
+
+
+_WORKSPACE_PARAMETER_NAMES = {
+    "workspace_id",
+    "workspaceId",
+    "workspace_ids",
+    "workspaceIds",
+    "workspace_name",
+    "workspaceName",
+    "brain_id",
+    "brainId",
+    "brain_ids",
+    "brainIds",
+}
+
+
+def _schema_accepts_workspace_parameter(parameter_schema: Dict[str, Any]) -> bool:
+    properties = parameter_schema.get("properties") if isinstance(parameter_schema, dict) else None
+    return isinstance(properties, dict) and bool(_WORKSPACE_PARAMETER_NAMES.intersection(properties))
 
 
 def _collect_workspace_paths(
@@ -1717,60 +1805,6 @@ def _format_search_result(result: Dict[str, Any]) -> str:
 # ---------------------------------------------------------------------------
 
 
-def _coerce_action_parameter_schema(action: Any) -> Dict[str, Any]:
-    """Decode a connector action's parameter schema.
-
-    Schemas arrive as a JSON string ("parameter_schema_json"): deeply nested MCP
-    tool schemas (e.g. Notion, 30+ levels) overflow protobuf's ~100-message
-    recursion limit when embedded as a Struct, which made the whole RunRequest
-    fail to decode. Plain dicts are still accepted for backward compatibility.
-    """
-    if not isinstance(action, dict):
-        return {}
-    raw_json = action.get("parameter_schema_json")
-    if isinstance(raw_json, str) and raw_json.strip():
-        try:
-            parsed = json.loads(raw_json)
-        except json.JSONDecodeError:
-            return {}
-        return parsed if isinstance(parsed, dict) else {}
-    schema = action.get("parameter_schema")
-    return schema if isinstance(schema, dict) else {}
-
-
-def _format_schema_for_tool_description(schema: Any, max_chars: int = 12000) -> str:
-    """Render a connector action's JSON schema for the LLM-facing description.
-
-    The pydantic args schema built for connector tools is intentionally shallow
-    (nested objects become opaque dicts), so the model cannot see nested key
-    names, nesting, or required sub-fields and ends up guessing shapes that the
-    MCP server's own validation rejects. Embedding the structural schema in the
-    description closes that gap. Bulky human-oriented keys are stripped to keep
-    prompts small; very large schemas are truncated.
-    """
-    if not isinstance(schema, dict) or not schema:
-        return ""
-
-    def _prune(node: Any) -> Any:
-        if isinstance(node, dict):
-            return {
-                key: _prune(value)
-                for key, value in node.items()
-                if key not in ("description", "title", "examples", "format", "$schema", "$id")
-            }
-        if isinstance(node, list):
-            return [_prune(item) for item in node]
-        return node
-
-    try:
-        rendered = json.dumps(_prune(schema), separators=(",", ":"), ensure_ascii=False)
-    except (TypeError, ValueError):
-        return ""
-    if len(rendered) > max_chars:
-        rendered = rendered[:max_chars] + "...(schema truncated)"
-    return rendered
-
-
 def _create_connector_mcp_tools(
     bindings: List[Dict[str, Any]],
     collector: ToolResultCollector,
@@ -1811,6 +1845,7 @@ def _create_connector_mcp_tools(
         fixed_params = binding.get("fixed_params", {})
         binding_auth_headers = binding.get("auth_headers") or {}
         binding_auth_env = binding.get("auth_env") or {}
+        binding_dynamic_headers = binding.get("dynamic_headers") or []
         # The MCP server can hide search_relevant_documents behind the X-Deep-Search
         # header; strip it so the gated action never surfaces to the agent.
         binding_auth_headers.pop("X-Deep-Search", None)
@@ -1822,8 +1857,18 @@ def _create_connector_mcp_tools(
                     else a.get("action_key", a.get("name", "")),
                     "label": None if isinstance(a, str) else a.get("label"),
                     "description": None if isinstance(a, str) else a.get("description"),
-                    "parameter_schema": _coerce_action_parameter_schema(a),
+                    "parameter_schema": {}
+                    if isinstance(a, str)
+                    else (
+                        a.get("parameter_schema") or {}
+                        if a.get("parameter_schema")
+                        else {}
+                    ),
+                    "parameter_schema_json": "" if isinstance(a, str) else str(a.get("parameter_schema_json") or ""),
                     "safety": "unknown" if isinstance(a, str) else str(a.get("safety") or "unknown").lower(),
+                    "result_kind": "generic" if isinstance(a, str) else str(a.get("result_kind") or "generic"),
+                    "citation_mode": "none" if isinstance(a, str) else str(a.get("citation_mode") or "none"),
+                    "result_mapping": {} if isinstance(a, str) else _json_object(a.get("result_mapping") or a.get("result_mapping_json")),
                 }
                 for a in raw_actions
             ]
@@ -1859,23 +1904,27 @@ def _create_connector_mcp_tools(
                 action.get("description") or f"Connector action '{action_key}'"
             )
             action_parameter_schema = action.get("parameter_schema") or {}
+            parameter_schema_json = str(action.get("parameter_schema_json") or "")
+            if parameter_schema_json:
+                try:
+                    parsed_parameter_schema = json.loads(parameter_schema_json)
+                    if isinstance(parsed_parameter_schema, dict):
+                        action_parameter_schema = parsed_parameter_schema
+                except (TypeError, json.JSONDecodeError):
+                    logger.warning(
+                        "Invalid connector parameter_schema_json",
+                        connector_id=connector_id,
+                        action_key=action_key,
+                    )
+            accepts_workspace_parameter = _schema_accepts_workspace_parameter(action_parameter_schema)
             action_safety = str(action.get("safety") or "unknown").lower()
+            action_result_kind = str(action.get("result_kind") or "generic")
+            action_citation_mode = str(action.get("citation_mode") or "none")
+            action_result_mapping = action.get("result_mapping") or {}
             tool_name = build_connector_tool_name(connector_slug, action_key)
             args_schema = _build_args_schema_for_connector_tool(
                 tool_name,
                 action_parameter_schema,
-            )
-            schema_block = _format_schema_for_tool_description(action_parameter_schema)
-            schema_properties = (
-                action_parameter_schema.get("properties")
-                if isinstance(action_parameter_schema, dict)
-                else None
-            )
-            # Only inject the runtime workspace_id argument for servers whose
-            # tool schema actually declares it (our own MCP gateway). Third-
-            # party servers (e.g. mcp.notion.com) reject the unknown key.
-            schema_allows_workspace_id = isinstance(schema_properties, dict) and (
-                "workspace_id" in schema_properties
             )
 
             def _make_mcp_tool(
@@ -1886,7 +1935,6 @@ def _create_connector_mcp_tools(
                 ad: str = action_description,
                 safety: str = action_safety,
                 arg_schema: Any = args_schema,
-                sb: str = schema_block,
                 tt: str = transport_type,
                 su: str = server_url,
                 sc: Dict[str, Any] = server_config,
@@ -1894,6 +1942,7 @@ def _create_connector_mcp_tools(
                 tn: str = tool_name,
                 ah: Dict[str, str] = dict(binding_auth_headers),
                 ae: Dict[str, str] = binding_auth_env,
+                dynamic_headers: List[Dict[str, Any]] = list(binding_dynamic_headers),
                 _uid: Optional[str] = user_id,
                 _wi: Optional[List[str]] = workspace_ids,
                 sid: str = session_id,
@@ -1904,8 +1953,12 @@ def _create_connector_mcp_tools(
                 call_budget: Optional[SandboxCallBudget] = sandbox_call_budget if is_code_interpreter else None,
                 suppress_file_paths: bool = is_code_interpreter and bool(sandbox_inputs),
                 action_keys: set[str] = set(available_action_keys),
-                sw: bool = schema_allows_workspace_id,
                 internal_token: str = platform_api_token,
+                result_kind: str = action_result_kind,
+                citation_mode: str = action_citation_mode,
+                result_mapping: Dict[str, Any] = action_result_mapping,
+                connector_slug_value: str = connector_slug,
+                accepts_workspace: bool = accepts_workspace_parameter,
             ) -> StructuredTool:
                 async def _execute_mcp(*args: Any, **kwargs: Any) -> Any:
                     raw_params = kwargs.get("params")
@@ -1919,18 +1972,10 @@ def _create_connector_mcp_tools(
                         params = {}
                     merged_params = {**fp, **params}
                     merged_params.pop("user_id", None)
+                    merged_params = _sanitize_mcp_params_for_send(merged_params)
                     for filename_param in ("file_name", "file_names"):
                         if params.get(filename_param) in (None, "", []):
                             merged_params.pop(filename_param, None)
-                    # The shallow args model fills omitted optional fields with
-                    # None and those Nones reach this coroutine. Strict MCP
-                    # servers (FastMCP, e.g. Notion) reject explicit nulls for
-                    # optional fields — omit them instead of sending null.
-                    merged_params = {
-                        key: value
-                        for key, value in merged_params.items()
-                        if value is not None
-                    }
                     _last_mcp_actual_args.set(dict(merged_params))
                     if call_budget is not None and not await call_budget.try_acquire():
                         return call_budget.limit_message
@@ -1967,8 +2012,7 @@ def _create_connector_mcp_tools(
                             effective_auth_headers.pop("file_names", None)
                             if _wi:
                                 effective_auth_headers["workspace_id"] = json.dumps(_wi) if len(_wi) > 1 else _wi[0]
-                                effective_auth_headers["Workspace-Id"] = ",".join(_wi)
-                                if sw:
+                                if accepts_workspace:
                                     merged_params["workspace_id"] = _wi[0] if len(_wi) == 1 else _wi
                                 merged_params.pop("workspace_name", None)
                                 effective_auth_headers.pop("workspace_name", None)
@@ -1980,12 +2024,22 @@ def _create_connector_mcp_tools(
                                 "playbook_connector_mcp_context_headers workspace_id=%s",
                                 effective_auth_headers.get("workspace_id"),
                             )
+                        if tt in ("streamable_http", "sse"):
+                            effective_auth_headers = apply_dynamic_workspace_headers(
+                                effective_auth_headers,
+                                dynamic_headers,
+                                _wi,
+                            )
+                        effective_server_config = without_dynamic_workspace_headers(
+                            sc,
+                            dynamic_headers,
+                        )
 
                         async def _call(action: str, action_params: Dict[str, Any]) -> Any:
                             return await call_mcp_tool(
                                 tt,
                                 su,
-                                sc,
+                                effective_server_config,
                                 action,
                                 action_params,
                                 auth_headers=effective_auth_headers,
@@ -2004,8 +2058,26 @@ def _create_connector_mcp_tools(
                             if guard is not None and ak == "sandbox_create"
                             else await _call(ak, merged_params)
                         )
-                        if isinstance(response, dict) and ak == "send_file_to_user":
-                            source_path = response.get("path")
+                        if result_kind in {"web_search", "web_fetch"}:
+                            from src.web_citations import normalize_web_connector_response
+
+                            response = normalize_web_connector_response(
+                                response,
+                                result_kind,
+                                citation_mode,
+                                result_mapping,
+                                connector_id=cid,
+                                connector_slug=connector_slug_value,
+                                action_key=ak,
+                            )
+                        send_failed = (
+                            isinstance(response, str)
+                            and response.startswith(f"Connector action '{ak}' failed")
+                        )
+                        if ak == "send_file_to_user" and not send_failed:
+                            source_path = (
+                                response.get("path") if isinstance(response, dict) else None
+                            ) or merged_params.get("path")
                             if (
                                 isinstance(source_path, str)
                                 and source_path.strip()
@@ -2017,7 +2089,7 @@ def _create_connector_mcp_tools(
                                 encoded_file = await call_mcp_tool(
                                     tt,
                                     su,
-                                    sc,
+                                    effective_server_config,
                                     "file_download_base64",
                                     download_params,
                                     auth_headers=effective_auth_headers,
@@ -2068,6 +2140,7 @@ def _create_connector_mcp_tools(
                                 collector,
                                 response,
                                 tool_name=ak,
+                                trusted_citations=result_kind in {"web_search", "web_fetch"},
                             )
                         return response
                     except SandboxMountValidationError as e:
@@ -2087,12 +2160,6 @@ def _create_connector_mcp_tools(
                     description=(
                         f"{ad} (connector: {cn}, action: {al}). "
                         "Use this connector action to search, browse, or inspect remote items first."
-                        + (
-                            "\n\nExact parameter JSON schema — use these key names, nesting, and required fields exactly:\n"
-                            + sb
-                            if sb
-                            else ""
-                        )
                     ),
                     func=None,
                     coroutine=_execute_mcp,

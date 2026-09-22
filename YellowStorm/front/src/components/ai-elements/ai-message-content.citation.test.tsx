@@ -42,6 +42,29 @@ describe('openCitationSource', () => {
     expect(openFileViewerFromUrlLoader).not.toHaveBeenCalled();
   });
 
+  it('opens first-class web citations with a text fragment', async () => {
+    const openSpy = vi.spyOn(window, 'open').mockReturnValue(null);
+    await openCitationSource(makeCitation({
+      sourceType: 'web', sourceKind: 'web', source: 'https://example.com/article?q=1',
+      exactText: 'Revenue increased by 38%', prefix: 'Results', suffix: 'Outlook',
+    }), 'sidebar', 'Source');
+
+    expect(openSpy).toHaveBeenCalledWith(
+      'https://example.com/article?q=1#:~:text=Results-,Revenue%20increased%20by%2038%25,-Outlook',
+      '_blank', 'noopener,noreferrer',
+    );
+  });
+
+  it('does not open an invalid first-class web citation URL', async () => {
+    const openSpy = vi.spyOn(window, 'open').mockReturnValue(null);
+
+    await openCitationSource(makeCitation({
+      sourceType: 'web', sourceKind: 'web', source: 'https://[', exactText: 'Evidence',
+    }), 'sidebar', 'Source');
+
+    expect(openSpy).not.toHaveBeenCalled();
+  });
+
   it('loads workspace document citations through the file viewer', async () => {
     const openSpy = vi.spyOn(window, 'open').mockReturnValue(null);
 

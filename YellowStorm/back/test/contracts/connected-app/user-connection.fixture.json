@@ -1,0 +1,11 @@
+{
+  "appKey": "microsoft",
+  "displayName": "Microsoft",
+  "iconKey": "microsoft",
+  "status": "active",
+  "scopes": [
+    "User.Read"
+  ],
+  "providerEmail": "user-1@example.test",
+  "connectedAt": "2026-09-21T20:44:05.085Z"
+}

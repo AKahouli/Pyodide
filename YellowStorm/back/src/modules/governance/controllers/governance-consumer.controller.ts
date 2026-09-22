@@ -1,7 +1,7 @@
 import { Controller, Get } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { CurrentUser } from '@modules/auth/decorators/current-user.decorator';
-import { UserDocument } from '@modules/user/schemas/user.schema';
+import type { AuthUser } from '@common/auth/auth-user';
 import { AvailableGovernedScope, GovernanceConsumerScopeService } from '../services/governance-consumer-scope.service';
 
 @ApiTags('Governance consumer')
@@ -12,7 +12,7 @@ export class GovernanceConsumerController {
 
   @Get('available-scopes')
   @ApiOperation({ summary: 'List published governed assistants available to the current user' })
-  listAvailable(@CurrentUser() user: UserDocument): Promise<AvailableGovernedScope[]> {
+  listAvailable(@CurrentUser() user: AuthUser): Promise<AvailableGovernedScope[]> {
     return this.consumerScopeService.listAvailable(user._id.toString());
   }
 }

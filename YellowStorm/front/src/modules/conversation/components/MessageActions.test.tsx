@@ -18,7 +18,9 @@ const exportBlocksToDocxMock = vi.hoisted(() => vi.fn().mockResolvedValue(new Bl
 const downloadBlobMock = vi.hoisted(() => vi.fn());
 const notificationSuccessMock = vi.hoisted(() => vi.fn());
 const notificationErrorMock = vi.hoisted(() => vi.fn());
-const modelMock = vi.hoisted(() => ({ value: { id: 'model-1', name: 'Model One' } as { id: string; name: string } | undefined }));
+const modelMock = vi.hoisted(() => ({
+  value: { id: 'model-1', name: 'Model One' } as { id: string; name: string } | undefined,
+}));
 
 vi.mock('@/components/ui/tooltip', () => ({
   TooltipProvider: ({ children }: { children: ReactNode }) => <>{children}</>,
@@ -31,7 +33,11 @@ vi.mock('@/components/ui/dropdown-menu', () => ({
   DropdownMenu: ({ children }: { children: ReactNode }) => <>{children}</>,
   DropdownMenuTrigger: ({ children }: { children: ReactNode }) => <>{children}</>,
   DropdownMenuContent: ({ children }: { children: ReactNode }) => <>{children}</>,
-  DropdownMenuItem: ({ children, onClick, disabled }: { children: ReactNode; onClick?: () => void; disabled?: boolean }) => <button onClick={onClick} disabled={disabled}>{children}</button>,
+  DropdownMenuItem: ({ children, onClick, disabled }: { children: ReactNode; onClick?: () => void; disabled?: boolean }) => (
+    <button onClick={onClick} disabled={disabled}>
+      {children}
+    </button>
+  ),
 }));
 
 vi.mock('@/components/ui/popover', () => ({
@@ -57,16 +63,20 @@ vi.mock('@/lib/notifications', () => ({
 
 vi.mock('react-router-dom', () => ({ useNavigate: () => navigateMock }));
 vi.mock('@/modules/auth', () => ({
-  useAuth: () => ({ user: { id: 'user-owner', permissions: ['playbook.create'] } }),
+  useAuth: () => ({
+    user: { id: 'user-owner', permissions: ['playbook.create'] },
+  }),
 }));
 vi.mock('../api', () => ({
   branchConversation: branchConversationMock,
   prepareConversationPlaybookHandoff: prepareConversationPlaybookHandoffMock,
 }));
 vi.mock('@/modules/models', () => ({
-  useModelById: (id: string) => id === 'model-1' ? modelMock.value : undefined,
+  useModelById: (id: string) => (id === 'model-1' ? modelMock.value : undefined),
 }));
-vi.mock('@/modules/playbook/features', () => ({ playbookFeatures: { mcpAssistantEnabled: true } }));
+vi.mock('@/modules/admin/featureVisibilityStore', () => ({
+  useFeatureVisibilityStore: (selector: (state: { visibility: { playbookMcpAssistant: boolean } }) => unknown) => selector({ visibility: { playbookMcpAssistant: true } }),
+}));
 vi.mock('@/modules/platform-copilot/platformCopilotPanelStore', () => ({
   usePlatformCopilotPanelStore: (selector: (state: Record<string, unknown>) => unknown) => selector({ openHandoff: openHandoffMock }),
 }));
@@ -79,11 +89,27 @@ vi.mock('../store', () => ({
       setReplyingToMessage: vi.fn(),
       currentConversation: { runtimeMode: 'standard', createdBy: 'user-owner' },
       messages: [
-        { id: 'user-1', conversationType: 'user', modelId: 'model-1', content: 'Design incident response' },
+        {
+          id: 'user-1',
+          conversationType: 'user',
+          modelId: 'model-1',
+          content: 'Design incident response',
+        },
         { id: 'ai-1', conversationType: 'ai', questionMessageId: 'user-1' },
       ],
       activeBranches: new Map([['user-1', 'ai-1']]),
       fetchConversations: fetchConversationsMock,
+      conversationUsage: {
+        tokens: {
+          input: 93_210,
+          output: 31_505,
+          cachedInput: 4_019,
+          reasoning: 0,
+          total: 128_734,
+        },
+        cost: { usd: 0.287, complete: true },
+        carbon: { gramsCo2e: 6.2, estimated: true, complete: true },
+      },
     }),
 }));
 
@@ -99,12 +125,16 @@ vi.mock('../utils', async () => {
 });
 
 vi.mock('./ReportDialog', () => ({ ReportDialog: () => null }));
-vi.mock('./TimingIndicator', () => ({ TimingIndicator: () => <div>timing</div> }));
-const pdfExportMock = vi.hoisted(() => ({ onFinish: null as null | ((ok: boolean) => void) }));
+vi.mock('./TimingIndicator', () => ({
+  TimingIndicator: () => <div>timing</div>,
+}));
+const pdfExportMock = vi.hoisted(() => ({
+  onFinish: null as null | ((ok: boolean) => void),
+}));
 vi.mock('./MessagePdfExport', () => ({
   MessagePdfExport: ({ onFinish }: { onFinish: (ok: boolean) => void }) => {
     pdfExportMock.onFinish = onFinish;
-    return <div data-testid='message-pdf-export' />;
+    return <div data-testid="message-pdf-export" />;
   },
 }));
 
@@ -130,18 +160,39 @@ describe('MessageActions', () => {
 
     render(
       <MessageActions
-        message={{ id: 'ai-1', feedback: null, components: [], isComplete: false, isStreaming: false, modelId: 'model-1', createdAt: '2026-07-29T13:00:00.000Z' } as never}
+        message={
+          {
+            id: 'ai-1',
+            feedback: null,
+            components: [],
+            isComplete: false,
+            isStreaming: false,
+            modelId: 'model-1',
+            createdAt: '2026-07-29T13:00:00.000Z',
+          } as never
+        }
         isLastAiMessage
-        conversationId='conv-1'
+        conversationId="conv-1"
       />,
     );
 
-    const actions = screen.getByRole('button', { name: 'messageActions.likeAria' }).parentElement;
+    const actions = screen.getByRole('button', {
+      name: 'messageActions.likeAria',
+    }).parentElement;
     expect(actions).not.toHaveClass('opacity-0', 'group-hover/msg:opacity-100');
     expect(screen.getByText('Model One')).toBeInTheDocument();
-    expect(screen.getByText(
-      new Intl.DateTimeFormat('en', { dateStyle: 'medium', timeStyle: 'medium' }).format(new Date('2026-07-29T13:00:00.000Z')),
-    )).toBeInTheDocument();
+    expect(screen.getByText('128.7K tokens')).toBeInTheDocument();
+    expect(screen.getByText('· $0.287')).toBeInTheDocument();
+    expect(screen.getByText('· ≈ 6.2 gCO₂e')).not.toHaveClass('hidden');
+    expect(document.querySelector('[data-conversation-usage-summary]')).toHaveClass('w-full', 'shrink-0', 'flex-wrap', 'sm:w-auto', 'sm:shrink', 'sm:flex-nowrap');
+    expect(
+      screen.getByText(
+        new Intl.DateTimeFormat('en', {
+          dateStyle: 'medium',
+          timeStyle: 'medium',
+        }).format(new Date('2026-07-29T13:00:00.000Z')),
+      ),
+    ).toBeInTheDocument();
 
     await userEvent.click(screen.getByRole('button', { name: 'messageActions.likeAria' }));
     expect(updateFeedbackMock).toHaveBeenCalledWith('conv-1', 'ai-1', 'like');
@@ -160,9 +211,18 @@ describe('MessageActions', () => {
     branchConversationMock.mockResolvedValueOnce({ id: 'branch-1' });
     render(
       <MessageActions
-        message={{ id: 'ai-1', conversationType: 'ai', questionMessageId: 'user-1', components: [], isComplete: true, isStreaming: false } as never}
+        message={
+          {
+            id: 'ai-1',
+            conversationType: 'ai',
+            questionMessageId: 'user-1',
+            components: [],
+            isComplete: true,
+            isStreaming: false,
+          } as never
+        }
         isLastAiMessage={false}
-        conversationId='conv-1'
+        conversationId="conv-1"
       />,
     );
 
@@ -170,13 +230,15 @@ describe('MessageActions', () => {
 
     await userEvent.click(screen.getByRole('button', { name: 'messageActions.branch' }));
 
-    await waitFor(() => expect(branchConversationMock).toHaveBeenCalledWith(
-      'conv-1',
-      expect.objectContaining({
-        targetMessageId: 'ai-1',
-        activeBranches: { 'user-1': 'ai-1' },
-      }),
-    ));
+    await waitFor(() =>
+      expect(branchConversationMock).toHaveBeenCalledWith(
+        'conv-1',
+        expect.objectContaining({
+          targetMessageId: 'ai-1',
+          activeBranches: { 'user-1': 'ai-1' },
+        }),
+      ),
+    );
     await waitFor(() => expect(navigateMock).toHaveBeenCalledWith('/conversation/branch-1'));
   });
 
@@ -188,31 +250,48 @@ describe('MessageActions', () => {
       platformConversationId: 'platform-1',
       suggestedPrompt: 'Create a reusable Playbook',
       expiresAt: new Date(Date.now() + 60_000).toISOString(),
-      preview: { executionSummaries: [], planSteps: [], actions: [], resources: [], omissions: {} },
+      preview: {
+        executionSummaries: [],
+        planSteps: [],
+        actions: [],
+        resources: [],
+        omissions: {},
+      },
       provenance: {},
     };
     prepareConversationPlaybookHandoffMock.mockResolvedValueOnce(handoff);
     render(
       <MessageActions
-        message={{ id: 'ai-1', conversationType: 'ai', questionMessageId: 'user-1', components: [], isComplete: true, isStreaming: false } as never}
+        message={
+          {
+            id: 'ai-1',
+            conversationType: 'ai',
+            questionMessageId: 'user-1',
+            components: [],
+            isComplete: true,
+            isStreaming: false,
+          } as never
+        }
         isLastAiMessage={false}
-        conversationId='conv-1'
+        conversationId="conv-1"
       />,
     );
 
     await userEvent.click(screen.getByRole('button', { name: 'messageActions.playbookHandoff' }));
 
-    await waitFor(() => expect(prepareConversationPlaybookHandoffMock).toHaveBeenCalledWith(
-      'conv-1',
-      expect.objectContaining({
-        contractVersion: 1,
-        targetMessageId: 'ai-1',
-        displayedAnswerVersion: 'original',
-        activeBranches: { 'user-1': 'ai-1' },
-        branchSelectionFingerprint: expect.stringMatching(/^[a-f0-9]{64}$/),
-        creationRequestId: expect.any(String),
-      }),
-    ));
+    await waitFor(() =>
+      expect(prepareConversationPlaybookHandoffMock).toHaveBeenCalledWith(
+        'conv-1',
+        expect.objectContaining({
+          contractVersion: 1,
+          targetMessageId: 'ai-1',
+          displayedAnswerVersion: 'original',
+          activeBranches: { 'user-1': 'ai-1' },
+          branchSelectionFingerprint: expect.stringMatching(/^[a-f0-9]{64}$/),
+          creationRequestId: expect.any(String),
+        }),
+      ),
+    );
     await waitFor(() => expect(openHandoffMock).toHaveBeenCalledWith(handoff));
   });
 
@@ -220,9 +299,17 @@ describe('MessageActions', () => {
     modelMock.value = undefined;
     const { rerender } = render(
       <MessageActions
-        message={{ id: 'ai-1', conversationType: 'ai', components: [], modelId: 'retired-model', createdAt: 'invalid' } as never}
+        message={
+          {
+            id: 'ai-1',
+            conversationType: 'ai',
+            components: [],
+            modelId: 'retired-model',
+            createdAt: 'invalid',
+          } as never
+        }
         isLastAiMessage={false}
-        conversationId='conv-1'
+        conversationId="conv-1"
       />,
     );
 
@@ -231,9 +318,16 @@ describe('MessageActions', () => {
 
     rerender(
       <MessageActions
-        message={{ id: 'ai-1', conversationType: 'ai', components: [], createdAt: 'invalid' } as never}
+        message={
+          {
+            id: 'ai-1',
+            conversationType: 'ai',
+            components: [],
+            createdAt: 'invalid',
+          } as never
+        }
         isLastAiMessage={false}
-        conversationId='conv-1'
+        conversationId="conv-1"
       />,
     );
     expect(screen.getByText('messageActions.modelUnavailable')).toBeInTheDocument();
@@ -242,49 +336,104 @@ describe('MessageActions', () => {
   it('lists cited sources and opens them in the document viewer', async () => {
     render(
       <MessageActions
-        message={{
-          id: 'ai-1',
-          conversationType: 'ai',
-          components: [
-            { type: 'text', data: { content: 'answer', citations: [{ source: 'docs/impl-guide.pdf', page: '4', parentId: '', sourceType: 'text', externalId: '', pageContent: '', workspaceId: '' }, { source: 'https://example.com/spec', parentId: '', sourceType: 'text', externalId: '', page: '', pageContent: '', workspaceId: '' }] } },
-          ],
-          isComplete: true,
-          isStreaming: false,
-        } as never}
+        message={
+          {
+            id: 'ai-1',
+            conversationType: 'ai',
+            components: [
+              {
+                type: 'text',
+                data: {
+                  content: 'answer',
+                  citations: [
+                    {
+                      source: 'docs/impl-guide.pdf',
+                      page: '4',
+                      parentId: '',
+                      sourceType: 'text',
+                      externalId: '',
+                      pageContent: '',
+                      workspaceId: '',
+                    },
+                    {
+                      source: 'https://example.com/spec',
+                      parentId: '',
+                      sourceType: 'text',
+                      externalId: '',
+                      page: '',
+                      pageContent: '',
+                      workspaceId: '',
+                    },
+                  ],
+                },
+              },
+            ],
+            isComplete: true,
+            isStreaming: false,
+          } as never
+        }
         isLastAiMessage={false}
-        conversationId='conv-1'
+        conversationId="conv-1"
       />,
     );
 
     expect(screen.getByText('messageActions.sources')).toBeInTheDocument();
     await userEvent.click(screen.getByRole('button', { name: /impl-guide\.pdf/ }));
-    await waitFor(() => expect(openCitationSourceMock).toHaveBeenCalledWith(
-      expect.objectContaining({ source: 'docs/impl-guide.pdf' }),
-      'sidebar',
-      'ai.citations.defaultSource',
-      { conversationId: 'conv-1', messageId: 'ai-1' },
-    ));
+    await waitFor(() => expect(openCitationSourceMock).toHaveBeenCalledWith(expect.objectContaining({ source: 'docs/impl-guide.pdf' }), 'sidebar', 'ai.citations.defaultSource', { conversationId: 'conv-1', messageId: 'ai-1' }));
     expect(screen.getByRole('button', { name: 'spec' })).toBeInTheDocument();
   });
 
   it('lists each source document once, without page numbers', () => {
     render(
       <MessageActions
-        message={{
-          id: 'ai-1',
-          conversationType: 'ai',
-          components: [
-            { type: 'text', data: { content: 'answer', citations: [
-              { source: 'docs/impl-guide.pdf', page: '3', parentId: '', sourceType: 'text', externalId: '', pageContent: '', workspaceId: '' },
-              { source: 'docs/impl-guide.pdf', page: '7', reference: '[2]', parentId: '', sourceType: 'text', externalId: '', pageContent: '', workspaceId: '' },
-              { source: 'https://example.com/spec', parentId: '', sourceType: 'text', externalId: '', page: '', pageContent: '', workspaceId: '' },
-            ] } },
-          ],
-          isComplete: true,
-          isStreaming: false,
-        } as never}
+        message={
+          {
+            id: 'ai-1',
+            conversationType: 'ai',
+            components: [
+              {
+                type: 'text',
+                data: {
+                  content: 'answer',
+                  citations: [
+                    {
+                      source: 'docs/impl-guide.pdf',
+                      page: '3',
+                      parentId: '',
+                      sourceType: 'text',
+                      externalId: '',
+                      pageContent: '',
+                      workspaceId: '',
+                    },
+                    {
+                      source: 'docs/impl-guide.pdf',
+                      page: '7',
+                      reference: '[2]',
+                      parentId: '',
+                      sourceType: 'text',
+                      externalId: '',
+                      pageContent: '',
+                      workspaceId: '',
+                    },
+                    {
+                      source: 'https://example.com/spec',
+                      parentId: '',
+                      sourceType: 'text',
+                      externalId: '',
+                      page: '',
+                      pageContent: '',
+                      workspaceId: '',
+                    },
+                  ],
+                },
+              },
+            ],
+            isComplete: true,
+            isStreaming: false,
+          } as never
+        }
         isLastAiMessage={false}
-        conversationId='conv-1'
+        conversationId="conv-1"
       />,
     );
 
@@ -297,9 +446,17 @@ describe('MessageActions', () => {
   it('hides the sources button when the answer has no citations', () => {
     render(
       <MessageActions
-        message={{ id: 'ai-1', conversationType: 'ai', components: [], isComplete: true, isStreaming: false } as never}
+        message={
+          {
+            id: 'ai-1',
+            conversationType: 'ai',
+            components: [],
+            isComplete: true,
+            isStreaming: false,
+          } as never
+        }
         isLastAiMessage={false}
-        conversationId='conv-1'
+        conversationId="conv-1"
       />,
     );
     expect(screen.queryByRole('button', { name: 'messageActions.sources' })).not.toBeInTheDocument();
@@ -308,20 +465,35 @@ describe('MessageActions', () => {
   it('exports the answer to DOCX', async () => {
     render(
       <MessageActions
-        message={{ id: 'ai-1', conversationType: 'ai', components: [], isComplete: true, isStreaming: false, createdAt: '2026-07-29T13:00:00.000Z' } as never}
+        message={
+          {
+            id: 'ai-1',
+            conversationType: 'ai',
+            components: [],
+            isComplete: true,
+            isStreaming: false,
+            createdAt: '2026-07-29T13:00:00.000Z',
+          } as never
+        }
         isLastAiMessage={false}
-        conversationId='conv-1'
+        conversationId="conv-1"
       />,
     );
 
     await userEvent.click(screen.getByRole('button', { name: 'messageActions.exportDocx' }));
     await waitFor(() => {
       expect(exportBlocksToDocxMock).toHaveBeenCalledWith(
-        [{
-          label: 'export.assistantLabel',
-          timestamp: new Intl.DateTimeFormat('en', { dateStyle: 'medium', timeStyle: 'medium' }).format(new Date('2026-07-29T13:00:00.000Z')),
-          markdown: 'markdown',
-        }],
+        [
+          {
+            label: 'export.assistantLabel',
+            timestamp: new Intl.DateTimeFormat('en', {
+              dateStyle: 'medium',
+              timeStyle: 'medium',
+            }).format(new Date('2026-07-29T13:00:00.000Z')),
+            markdown: 'markdown',
+            components: [],
+          },
+        ],
         'exportPdf.untitledConversation',
       );
       expect(downloadBlobMock).toHaveBeenCalledWith(expect.any(Blob), expect.stringMatching(/\.docx$/));
@@ -332,9 +504,18 @@ describe('MessageActions', () => {
   it('exports the answer to HTML', async () => {
     render(
       <MessageActions
-        message={{ id: 'ai-1', conversationType: 'ai', components: [], isComplete: true, isStreaming: false, createdAt: '2026-07-29T13:00:00.000Z' } as never}
+        message={
+          {
+            id: 'ai-1',
+            conversationType: 'ai',
+            components: [],
+            isComplete: true,
+            isStreaming: false,
+            createdAt: '2026-07-29T13:00:00.000Z',
+          } as never
+        }
         isLastAiMessage={false}
-        conversationId='conv-1'
+        conversationId="conv-1"
       />,
     );
 
@@ -346,9 +527,18 @@ describe('MessageActions', () => {
   it('exports the answer to PDF via the print pipeline', async () => {
     render(
       <MessageActions
-        message={{ id: 'ai-1', conversationType: 'ai', components: [], isComplete: true, isStreaming: false, createdAt: '2026-07-29T13:00:00.000Z' } as never}
+        message={
+          {
+            id: 'ai-1',
+            conversationType: 'ai',
+            components: [],
+            isComplete: true,
+            isStreaming: false,
+            createdAt: '2026-07-29T13:00:00.000Z',
+          } as never
+        }
         isLastAiMessage={false}
-        conversationId='conv-1'
+        conversationId="conv-1"
       />,
     );
 

@@ -33,7 +33,7 @@ def _server_defines_display_purpose(tool: BaseTool) -> bool:
 
 
 class PurposeAwareMcpTool(BaseTool):
-    """Adds display metadata to an MCP declaration without changing execution."""
+    """Adds display metadata to an ADK tool declaration without changing execution."""
 
     def __init__(self, wrapped_tool: BaseTool):
         super().__init__(
@@ -42,6 +42,9 @@ class PurposeAwareMcpTool(BaseTool):
             is_long_running=getattr(wrapped_tool, "is_long_running", False),
         )
         self._wrapped_tool = wrapped_tool
+        child_agent = getattr(wrapped_tool, "agent", None)
+        if child_agent is not None:
+            self.agent = child_agent
         # Existing callbacks use this protected ADK attribute to identify the
         # microsandbox connection that owns a materialized MCP tool.
         self._mcp_session_manager = getattr(wrapped_tool, "_mcp_session_manager", None)

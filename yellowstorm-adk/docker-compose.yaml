@@ -14,8 +14,10 @@ services:
       yellowstorm-code-runtime:
         condition: service_healthy
     ports:
-      - "3017:8001"  # FastAPI/REST endpoint
-      - "50051:50051"  # gRPC endpoint
+      # Container ports follow the ADK `.env` (PORT / GRPC_PORT); host ports
+      # default as before and can be overridden via ADK_HOST_PORT / GRPC_HOST_PORT.
+      - "${ADK_HOST_PORT:-3017}:${PORT:-8001}"  # FastAPI/REST endpoint
+      - "${GRPC_HOST_PORT:-50051}:${GRPC_PORT:-50051}"  # gRPC endpoint
   yellowstorm-code-runtime:
     build:
       context: ../yellowstorm-code-runtime

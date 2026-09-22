@@ -2,9 +2,8 @@ import { GovernanceChannelReadinessService } from './governance-channel-readines
 
 describe('GovernanceChannelReadinessService', () => {
   const widgetChatService = { hasActiveToken: jest.fn() };
-  const whatsappIntegrationService = { getByAgentForUser: jest.fn() };
   const telegramIntegrationService = { getByAgentForUser: jest.fn() };
-  const service = new GovernanceChannelReadinessService(widgetChatService as never, whatsappIntegrationService as never, telegramIntegrationService as never);
+  const service = new GovernanceChannelReadinessService(widgetChatService as never, telegramIntegrationService as never);
 
   beforeEach(() => {
     jest.clearAllMocks();
@@ -27,22 +26,7 @@ describe('GovernanceChannelReadinessService', () => {
   });
 
   it('does not create readiness checks for disabled channels', async () => {
-    await expect(service.buildChannelChecks('user-1', 'agent-1', { whatsapp: { enabled: false } })).resolves.toEqual([]);
-  });
-
-  it('reports disabled whatsapp integrations as non-blocking warnings', async () => {
-    whatsappIntegrationService.getByAgentForUser.mockResolvedValue({
-      enabled: false,
-      status: 'CONNECTED',
-    });
-
-    const checks = await service.buildChannelChecks('user-1', 'agent-1', {
-      whatsapp: { enabled: true },
-    });
-
-    expect(checks).toEqual([
-      expect.objectContaining({ key: 'agent-1:whatsapp_ready', status: 'warning', severity: 'warning' }),
-    ]);
+    await expect(service.buildChannelChecks('user-1', 'agent-1', { telegram: { enabled: false } })).resolves.toEqual([]);
   });
 
   it('groups legacy and agent-scoped channel configuration by agent', () => {

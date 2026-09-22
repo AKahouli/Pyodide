@@ -1,4 +1,4 @@
-import { UsageType } from '../schemas/usage.schema';
+import { UsageType } from '../usage-type.enum';
 import { PlanSummary } from './plan.interface';
 
 /**

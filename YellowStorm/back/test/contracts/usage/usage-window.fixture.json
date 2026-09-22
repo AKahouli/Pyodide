@@ -1,0 +1,15 @@
+{
+  "id": "64b000000000000000000502",
+  "userId": "64b000000000000000000001",
+  "windowStart": "2026-01-01T00:00:00.000Z",
+  "windowEnd": "2026-01-01T05:00:00.000Z",
+  "windowHours": 5,
+  "inputTokens": 10,
+  "outputTokens": 20,
+  "totalTokens": 30,
+  "requestCount": 2,
+  "planSlug": "pro",
+  "tokenLimitAtCreation": 1000000,
+  "createdAt": "<volatile>",
+  "updatedAt": "<volatile>"
+}

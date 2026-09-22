@@ -1,4 +1,3 @@
-import { Types } from 'mongoose';
 import { MessageComponent, ComponentType } from '@modules/conversation/interfaces/message.interface';
 
 export interface WidgetSessionInfo {
@@ -16,21 +15,21 @@ interface RequestWithWidget {
   widgetTokenHash?: string;
   widgetAgentId?: string;
   widgetAgent?: {
-    _id: Types.ObjectId;
+    _id: string;
     name: string;
     role: string;
     description: string;
     temperature: number;
-    agentType: Types.ObjectId;
-    knowledgeBases: Types.ObjectId[];
-    tools: Types.ObjectId[];
-    skills: Types.ObjectId[];
-    disabledSkills: Types.ObjectId[];
-    connectors: Types.ObjectId[];
+    agentType: string;
+    knowledgeBases: string[];
+    tools: string[];
+    skills: string[];
+    disabledSkills: string[];
+    connectors: string[];
     instruction?: string;
     ignorePrePrompt: boolean;
     llmModel?: string;
     isActive: boolean;
-    createdBy: Types.ObjectId;
+    createdBy: string;
   };
 }

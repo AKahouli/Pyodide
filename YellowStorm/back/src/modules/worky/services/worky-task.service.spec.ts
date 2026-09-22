@@ -19,7 +19,8 @@ const makeService = (tasks: unknown[]) => {
   const logger = { setContext: jest.fn() } as never;
   const stepComponents = makeChain([]) as never;
   const stepArtifacts = makeChain([]) as never;
-  return new WorkyTaskService(model, logger, stepComponents, stepArtifacts);
+  const documents = { generateSasUrl: jest.fn() } as never;
+  return new WorkyTaskService(model, logger, stepComponents, stepArtifacts, documents);
 };
 
 describe('WorkyTaskService.projectForBoard', () => {

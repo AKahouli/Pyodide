@@ -18,13 +18,13 @@ export function AppSourceFileViewer({ path, content }: AppSourceFileViewerProps)
 
   if (content == null) {
     return (
-      <div className='flex size-full flex-col items-center justify-center gap-3 px-6 text-center bg-muted/10'>
-        <div className='flex size-14 items-center justify-center rounded-2xl bg-muted/60'>
-          <FileIcon className='size-7 text-muted-foreground/45' />
+      <div className='flex size-full flex-col items-center justify-center gap-4 bg-gradient-to-b from-muted/30 to-background px-6 text-center'>
+        <div className='flex size-14 items-center justify-center rounded-2xl border border-border/60 bg-card shadow-sm'>
+          <FileIcon className='size-6 text-muted-foreground/50' />
         </div>
-        <div className='space-y-1'>
-          <p className='text-sm font-medium text-foreground/80'>{t('nodepod.selectFile')}</p>
-          <p className='text-xs text-muted-foreground'>{t('nodepod.explorerHint')}</p>
+        <div className='max-w-xs space-y-1.5'>
+          <p className='text-sm font-semibold tracking-tight'>{t('nodepod.selectFile')}</p>
+          <p className='text-xs leading-relaxed text-muted-foreground'>{t('nodepod.explorerHint')}</p>
         </div>
       </div>
     );
@@ -32,12 +32,12 @@ export function AppSourceFileViewer({ path, content }: AppSourceFileViewerProps)
 
   if (content instanceof Uint8Array) {
     return (
-      <div className='flex size-full flex-col items-center justify-center gap-3 px-6 text-center bg-muted/10'>
-        <div className='flex size-14 items-center justify-center rounded-2xl bg-muted/60'>
-          <EyeOffIcon className='size-7 text-muted-foreground/45' />
+      <div className='flex size-full flex-col items-center justify-center gap-4 bg-gradient-to-b from-muted/30 to-background px-6 text-center'>
+        <div className='flex size-14 items-center justify-center rounded-2xl border border-border/60 bg-card shadow-sm'>
+          <EyeOffIcon className='size-6 text-muted-foreground/50' />
         </div>
-        <div className='space-y-1'>
-          <p className='text-sm font-medium'>{filename}</p>
+        <div className='max-w-xs space-y-1.5'>
+          <p className='text-sm font-semibold tracking-tight'>{filename}</p>
           <p className='text-xs text-muted-foreground'>
             {t('nodepod.binaryFile', { size: formatBytes(content.byteLength) })}
           </p>
@@ -50,18 +50,28 @@ export function AppSourceFileViewer({ path, content }: AppSourceFileViewerProps)
 
   return (
     <div className='flex h-full min-h-0 flex-col overflow-hidden bg-background'>
-      <header className='flex shrink-0 items-center gap-2 border-b bg-card/40 px-3 py-2'>
-        <div className='flex size-7 shrink-0 items-center justify-center rounded-md bg-muted/70'>
+      <header className='flex h-11 shrink-0 items-center gap-2.5 border-b border-border/80 bg-card/60 px-3 backdrop-blur-sm'>
+        <div className='flex size-8 shrink-0 items-center justify-center rounded-lg bg-muted/80'>
           <FileTypeIcon className='size-3.5 text-muted-foreground' />
         </div>
         <div className='min-w-0 flex-1'>
-          <p className='truncate text-xs font-medium' title={filename}>{filename}</p>
-          <p className='truncate text-[10px] text-muted-foreground' title={path}>{path}</p>
+          <p className='truncate text-xs font-semibold tracking-tight' title={filename}>
+            {filename}
+          </p>
+          <p className='truncate text-[10px] text-muted-foreground' title={path}>
+            {path}
+          </p>
         </div>
-        <Badge variant='outline' className='shrink-0 text-[10px] font-normal tabular-nums'>
+        <Badge
+          variant='outline'
+          className='hidden h-6 shrink-0 border-border/70 px-2 text-[10px] font-normal tabular-nums sm:inline-flex'
+        >
           {lineCount} {t('nodepod.lines')}
         </Badge>
-        <Badge variant='secondary' className='gap-1 shrink-0 text-[10px] font-normal uppercase tracking-wide'>
+        <Badge
+          variant='secondary'
+          className='h-6 gap-1 shrink-0 px-2 text-[10px] font-medium uppercase tracking-wide'
+        >
           <LockIcon className='size-2.5' />
           {t('nodepod.readOnly')}
         </Badge>

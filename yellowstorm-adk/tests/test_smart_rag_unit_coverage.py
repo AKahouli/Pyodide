@@ -46,20 +46,6 @@ class TestSmartRagPackage:
             _ = smart_rag.NotARealExport
 
 
-class TestParallelPrompts:
-    def test_parallel_execution_prompt_non_empty(self):
-        from src.smart_rag.infrastructure.processing.parallel_prompts import get_parallel_execution_prompt
-
-        text = get_parallel_execution_prompt()
-        assert "Parallel Execution" in text
-
-    def test_agent_coordination_prompt_non_empty(self):
-        from src.smart_rag.infrastructure.processing.parallel_prompts import get_agent_coordination_prompt
-
-        text = get_agent_coordination_prompt()
-        assert "Multi-Agent Coordination" in text
-
-
 class TestPlanGenerator:
     @pytest.mark.asyncio
     async def test_generate_execution_plan_success(self):

@@ -27,6 +27,7 @@ CREATE TABLE IF NOT EXISTS "app_data"."end_user_grants" (
   "can_read" boolean DEFAULT false NOT NULL,
   "can_update" boolean DEFAULT false NOT NULL,
   "can_delete" boolean DEFAULT false NOT NULL,
+  "can_use_ai" boolean DEFAULT false NOT NULL,
   "updated_at" timestamptz DEFAULT now() NOT NULL
 );
 

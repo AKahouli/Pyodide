@@ -61,6 +61,28 @@ def _agent_by_type(agents, agent_type: str):
     return next((a for a in agents if a.agent_type == agent_type), None)
 
 
+def _card_answer(message: str):
+    """Classify a message that came from an answer CARD (never plain chat).
+
+    Cards are the ONLY way to answer an interrupt. Returns ('confirm', None,
+    message) for an approve/decline verdict (JSON with a questionId — resume_turn
+    parses verdict+questionId), ('ask', <interrupt_id>, <text>) for a targeted ask
+    card (JSON {askInterruptId, answer}), else None. Plain chat is a message for
+    the planner (answer/amend), so it never silently resolves a pending gate/ask."""
+    s = (message or "").strip()
+    if not s.startswith("{"):
+        return None
+    try:
+        d = json.loads(s)
+    except (ValueError, TypeError):
+        return None
+    if isinstance(d.get("questionId"), str):
+        return ("confirm", None, message)
+    if isinstance(d.get("askInterruptId"), str):
+        return ("ask", d["askInterruptId"], str(d.get("answer") or ""))
+    return None
+
+
 def _requester(request) -> Optional[dict]:
     """The turn's requester {name, email, role} from RunRequest.user_*, or None
     when the client sent no identity (older backend) — then behaviour is
@@ -142,6 +164,9 @@ def _connectors_to_dicts(connectors) -> list:
                 "label": a.label,
                 "description": a.description,
                 "parameter_schema": schema,
+                "result_kind": a.result_kind or "generic",
+                "citation_mode": a.citation_mode or "none",
+                "result_mapping": _parse_mcp_config(a.result_mapping_json),
             })
         out.append({
             "connector_id": c.connector_id,
@@ -214,7 +239,13 @@ class CompanionAiServicer(pb_grpc.CompanionAiServicer):
         # Instead run it as a concurrent conversation with the planner, alongside
         # the still-executing plan. Tracked in _bg only (NOT _running): the
         # executing turn keeps ownership of _running, so Stop still targets it.
-        if await self._plan_is_executing(request.session_id):
+        # Cards are the ONLY way to answer an interrupt. So a PLAIN chat (not a
+        # card) while a plan exists — executing OR parked on a gate/await — is a
+        # message for the planner: it answers from the live plan+results (or amends
+        # it), running alongside without superseding. A card answer falls through to
+        # the resume path below. This is what makes chat never mis-consume a gate.
+        card = _card_answer(request.message)
+        if card is None and await self._has_live_plan(request.session_id):
             task = asyncio.create_task(self._run_converse(request, run_id))
             self._bg.add(task)
             task.add_done_callback(self._bg.discard)
@@ -228,7 +259,7 @@ class CompanionAiServicer(pb_grpc.CompanionAiServicer):
         executor = _agent_by_type(request.agents, EXECUTOR_AGENT_TYPE)
         model = (executor.chatbot.model if executor else "") or DEFAULT_MODEL
         prev = self._running.get(request.session_id)
-        task = asyncio.create_task(self._run_turn(request, model, run_id, prev))
+        task = asyncio.create_task(self._run_turn(request, model, run_id, prev, card))
         self._bg.add(task)
         task.add_done_callback(self._bg.discard)
         task.add_done_callback(self._forget_running(request.session_id))
@@ -237,12 +268,13 @@ class CompanionAiServicer(pb_grpc.CompanionAiServicer):
                     request.session_id, run_id)
         return pb.RunResponse(session_id=request.session_id, accepted=True, run_id=run_id)
 
-    async def _plan_is_executing(self, session_id: str) -> bool:
-        """True when a plan is mid-execution — running, with steps projected, and
-        NOT parked on user input. A message then talks WITH the planner alongside
-        the plan instead of superseding it. False during the initial planning
-        phase (no steps yet) and while blocked on an ask/await_reply (that message
-        is the awaited answer → the normal resume path handles it)."""
+    async def _has_live_plan(self, session_id: str) -> bool:
+        """True when a plan EXISTS and isn't finished/paused — executing OR parked
+        on a gate/await. A plain chat then talks WITH the planner (answer/amend)
+        alongside the plan, on its own session, superseding nothing. False during
+        the initial planning phase (no steps yet), when paused, or once terminal —
+        those go through the normal turn path (plan/continue). Answers to a parked
+        interrupt come from its CARD (the resume path), never from plain chat."""
         if self._rm is None:
             return False
         try:
@@ -252,14 +284,14 @@ class CompanionAiServicer(pb_grpc.CompanionAiServicer):
         if not snap:
             return False
         sess = snap.get("session") or {}
-        return (sess.get("status") == "running" and not sess.get("interrupt_id")
-                and bool(snap.get("steps")))
+        return (bool(snap.get("steps"))
+                and sess.get("status") in ("running", "blocked", "waiting", "partially_blocked"))
 
     async def _run_converse(self, request: pb.RunRequest, run_id: str) -> None:
         token = active_turn_id.set(run_id)
         try:
             planner = _agent_by_type(request.agents, PLANNER_AGENT_TYPE)
-            await self._svc.converse_turn(
+            plan = await self._svc.converse_turn(
                 session_id=request.session_id, user_id=request.user_id,
                 message=request.message,
                 planner_model=planner.chatbot.model if planner else None,
@@ -268,6 +300,29 @@ class CompanionAiServicer(pb_grpc.CompanionAiServicer):
                 requester=_requester(request))
             logger.info("[worky] converse turn done (session=%s run=%s)",
                         request.session_id, run_id)
+            # An amend that adds work to a PARKED plan promised "runs on resume",
+            # but a plain execute step has no resume trigger (no card, no mail
+            # reply) — it was orphaned pending forever (seen: session dd85c187).
+            # Drive it now, but only when no turn is executing (else the drive
+            # loop already picks it up) and nothing is waiting on a card/await
+            # (that resume owns the plan). continue_turn replays done steps and
+            # runs just the new ones.
+            sid = request.session_id
+            running = self._running.get(sid)
+            if (plan and (plan.steps or plan.ops)
+                    and (running is None or running.done())
+                    and self._rm is not None
+                    and not await self._rm.outstanding_interrupts(sid)):
+                executor = _agent_by_type(request.agents, EXECUTOR_AGENT_TYPE)
+                requester = _requester(request)
+                logger.info("[worky] converse added work to a parked plan — driving "
+                            "it (session=%s run=%s)", sid, run_id)
+                await self._svc.continue_turn(
+                    session_id=sid, user_id=request.user_id,
+                    model=(executor.chatbot.model if executor else "") or DEFAULT_MODEL,
+                    connectors=_agent_connector_bindings(executor),
+                    executor_prompt=_with_requester(
+                        executor.prompt if executor else None, requester))
         except asyncio.CancelledError:
             raise
         except Exception as exc:
@@ -287,7 +342,7 @@ class CompanionAiServicer(pb_grpc.CompanionAiServicer):
         return _cb
 
     async def _run_turn(self, request: pb.RunRequest, model: str, run_id: str,
-                        prev: Optional[asyncio.Task] = None) -> None:
+                        prev: Optional[asyncio.Task] = None, card=None) -> None:
         token = active_turn_id.set(run_id)
         try:
             # Last-answer-wins: cancel any in-flight turn for this session so two
@@ -316,16 +371,16 @@ class CompanionAiServicer(pb_grpc.CompanionAiServicer):
             # otherwise → plan. Because we cancelled the prior turn above, a
             # correction sent during the answerable window re-resumes with the
             # newer answer instead of racing the old one.
-            interrupt_id, status = None, None
+            status = None
             if self._rm is not None:
                 snap = await self._rm.snapshot(request.session_id)
                 if snap:
-                    interrupt_id = snap["session"].get("interrupt_id")
                     status = snap["session"].get("status")
-            # Three ways in: a pending interrupt → this message is the answer
-            # (resume); a paused plan → continue where it left off; otherwise a
-            # fresh turn (plan).
-            mode = ("resume — message is an answer" if interrupt_id
+            # Reached only for a CARD answer, a paused plan, or a new session
+            # (plain chat with a live plan was routed to converse before here).
+            #   card → resume the targeted interrupt; paused → continue; else → plan.
+            mode = ("resume — targeted ask card" if card and card[0] == "ask"
+                    else "resume — confirm card" if card
                     else "continue — resume paused plan" if status == "paused"
                     else "new turn — planning")
             logger.info("[worky] 4. %s (session=%s)", mode, request.session_id)
@@ -334,7 +389,16 @@ class CompanionAiServicer(pb_grpc.CompanionAiServicer):
             # the planner/executor address them directly and never delegate or
             # email work back to the person who asked for it.
             requester = _requester(request)
-            if interrupt_id:
+            if card and card[0] == "ask":
+                # Targeted ask card: answer THIS parked ask — interrupt_id wins over
+                # the session default in resume_turn, so parallel asks never cross.
+                await self._svc.resume_turn(
+                    session_id=request.session_id, user_id=request.user_id,
+                    answer=card[2], model=model, connectors=connectors,
+                    interrupt_id=card[1],
+                    executor_prompt=_with_requester(executor_prompt, requester))
+            elif card:
+                # Confirm gate card: resume_turn parses the verdict + its questionId.
                 await self._svc.resume_turn(
                     session_id=request.session_id, user_id=request.user_id,
                     answer=request.message, model=model, connectors=connectors,
@@ -489,8 +553,14 @@ class CompanionAiServicer(pb_grpc.CompanionAiServicer):
         else:
             wait = await self._rm.claim_mail_wait(request.token, reply_from=request.reply_from)
         if wait is None:
-            logger.info("[worky] DeliverMailReply ignored — token/chat unknown, wrong sender, "
-                        "already delivered, expired or cancelled")
+            # Include the token/chat + sender so a real reply that fails to route
+            # is distinguishable from routine catch-up noise (the poller re-offers
+            # every token it finds in the inbox, and most belong to other/old
+            # sessions or are already delivered).
+            ref = f"chat={request.chat_id}" if request.chat_id else f"token={request.token}"
+            logger.info("[worky] DeliverMailReply ignored (%s from=%r) — unknown, wrong "
+                        "sender, not-yet-parked, already delivered, expired or cancelled",
+                        ref, request.reply_from or "?")
             return pb.DeliverMailReplyResponse(delivered=False)
 
         session_id, user_id = wait["session_id"], wait["user_id"]
@@ -530,15 +600,21 @@ class CompanionAiServicer(pb_grpc.CompanionAiServicer):
                                  channel: str = "Email") -> None:
         session_id = wait["session_id"]
         try:
-            # Same last-answer-wins handshake as RunTask: never let two turns run
-            # on one session, or the reply races whatever is already in flight.
+            # SERIALIZE, don't supersede. Two turns must never run at once on one
+            # session (they'd race the plan/ADK session), but a mail reply must
+            # NOT cancel what's already in flight: unlike a RunTask correction,
+            # each reply answers its OWN distinct wait (claimed atomically before
+            # this task), so cancelling would drop a real answer. Seen live
+            # (session 98daf300): two replies swept together — Firas + Rabeb —
+            # arrived ~56ms apart; the second cancelled the first, and Firas's
+            # step stayed blocked with its wait already consumed. Wait for the
+            # prior turn to finish, then run this one.
             if prev is not None and not prev.done():
-                logger.info("[worky] superseding in-flight turn for mail reply (session=%s)",
+                logger.info("[worky] serializing mail reply behind an in-flight turn (session=%s)",
                             session_id)
-                prev.cancel()
                 try:
                     await prev
-                except BaseException:  # noqa: BLE001 — prev's cancellation is expected
+                except BaseException:  # noqa: BLE001 — prev's own failure is its turn's problem
                     pass
             executor = _agent_by_type(request.agents, EXECUTOR_AGENT_TYPE)
             # A reply quotes the mail it answers, so it carries our own

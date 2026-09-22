@@ -9,10 +9,13 @@ import {
   deleteEmailLogo,
   getAppearanceSettings,
   getEmailLogo,
+  getNavigationSettings,
   setAppearanceSettings,
+  updateNavigationSettings,
   uploadEmailLogo,
 } from '../api';
 import type { AppearanceSettings, EmailLogo } from '../types';
+import { DEFAULT_NAVIGATION_SETTINGS } from '../navigation';
 
 const { refreshUserMock, useAuthMock } = vi.hoisted(() => {
   const refreshUser = vi.fn().mockResolvedValue(undefined);
@@ -44,6 +47,8 @@ vi.mock('../api', () => ({
   updateAppearanceLogo: vi.fn(),
   deleteAppearanceLogo: vi.fn(),
   getEmailLogo: vi.fn(),
+  getNavigationSettings: vi.fn(),
+  updateNavigationSettings: vi.fn(),
   uploadEmailLogo: vi.fn(),
   deleteEmailLogo: vi.fn(),
 }));
@@ -75,6 +80,8 @@ describe('AppearancePage', () => {
     vi.mocked(getAppearanceSettings).mockReset();
     vi.mocked(setAppearanceSettings).mockReset();
     vi.mocked(getEmailLogo).mockReset();
+    vi.mocked(getNavigationSettings).mockReset();
+    vi.mocked(updateNavigationSettings).mockReset();
     vi.mocked(uploadEmailLogo).mockReset();
     vi.mocked(deleteEmailLogo).mockReset();
     vi.mocked(deleteAppearanceLogo).mockReset();
@@ -85,6 +92,8 @@ describe('AppearancePage', () => {
     vi.mocked(getAppearanceSettings).mockResolvedValue(settings);
     vi.mocked(setAppearanceSettings).mockResolvedValue(settings);
     vi.mocked(getEmailLogo).mockResolvedValue(null);
+    vi.mocked(getNavigationSettings).mockResolvedValue(DEFAULT_NAVIGATION_SETTINGS);
+    vi.mocked(updateNavigationSettings).mockResolvedValue(DEFAULT_NAVIGATION_SETTINGS);
     vi.mocked(uploadEmailLogo).mockResolvedValue(logo);
     vi.mocked(deleteEmailLogo).mockResolvedValue(undefined);
   });

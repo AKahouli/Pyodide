@@ -29,7 +29,7 @@ import { ErrorCode } from '../exceptions/constants/error-codes';
 import { RequirePermissions } from '../authorization/decorators/require-permissions.decorator';
 import { PermissionsGuard } from '../authorization/guards/permissions.guard';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
-import { UserDocument } from '../user/schemas/user.schema';
+import type { AuthUser } from '@common/auth/auth-user';
 import { Permissions } from '../authorization/constants/permissions';
 import {
   CreateAgentTypeDto,
@@ -78,7 +78,7 @@ export class AdminAgentTypeController {
   @ApiResponse({ status: 409, description: 'Agent type name already exists' })
   async create(
     @Body() dto: CreateAgentTypeDto,
-    @CurrentUser() user: UserDocument,
+    @CurrentUser() user: AuthUser,
     @Req() req: Request,
   ): Promise<IAgentTypeResponse> {
     const agentType = await this.agentTypeService.create(dto);
@@ -107,7 +107,7 @@ export class AdminAgentTypeController {
   async update(
     @Param('id') id: string,
     @Body() dto: UpdateAgentTypeDto,
-    @CurrentUser() user: UserDocument,
+    @CurrentUser() user: AuthUser,
     @Req() req: Request,
   ): Promise<IAgentTypeResponse> {
     const agentType = await this.agentTypeService.update(id, dto);
@@ -135,7 +135,7 @@ export class AdminAgentTypeController {
   @ApiResponse({ status: 404, description: 'Agent type not found' })
   async delete(
     @Param('id') id: string,
-    @CurrentUser() user: UserDocument,
+    @CurrentUser() user: AuthUser,
     @Req() req: Request,
   ): Promise<void> {
     const agentCount = await this.agentService.countByAgentType(id);
@@ -184,7 +184,7 @@ export class AdminAgentTypeController {
     @Param('id') id: string,
     @Param('modelId') modelId: string,
     @Body() dto: UpsertAgentTypePromptDto,
-    @CurrentUser() user: UserDocument,
+    @CurrentUser() user: AuthUser,
     @Req() req: Request,
   ): Promise<IAgentTypePromptResponse> {
     const result = await this.agentTypeService.upsertPrompt(id, modelId, dto.prompt);
@@ -214,7 +214,7 @@ export class AdminAgentTypeController {
   async deletePrompt(
     @Param('id') id: string,
     @Param('modelId') modelId: string,
-    @CurrentUser() user: UserDocument,
+    @CurrentUser() user: AuthUser,
     @Req() req: Request,
   ): Promise<void> {
     await this.agentTypeService.deletePrompt(id, modelId);

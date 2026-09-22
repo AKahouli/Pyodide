@@ -147,13 +147,14 @@ describe('PlaybookAssistantService.runTurn', () => {
         conversationId: 'conversation-1', conversationType: 'user', senderId: 'user-1', content: 'Build lead generation',
       }) };
     const featureVisibility = {
+      isEnabled: jest.fn().mockReturnValue(true),
       getVisibility: jest.fn().mockResolvedValue({ platformCopilot: overrides.platformCopilotEnabled ?? true }),
     };
     const workspaceDocumentService = { findByIds: jest.fn().mockResolvedValue([]) };
     const workspaceShareService = { assertUserHasAccess: jest.fn().mockResolvedValue(undefined) };
     const playbookHandoffService = { consume: jest.fn().mockResolvedValue(undefined) };
     const service = new PlaybookAssistantService(
-      { mcpAssistantEnabled: true } as any,
+      {} as any,
       {} as any,
       accessService as any,
       constructionService as any,

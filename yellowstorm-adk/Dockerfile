@@ -210,11 +210,11 @@ FROM runtime-base AS runtime
 COPY --from=scanned --chown=azureuser:azureuser /opt/app/security/trivy-report.json /opt/app/security/trivy-report.json
 
 USER 1000:1000
-EXPOSE 8000
+EXPOSE 8001
 EXPOSE 50051
 
 HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
-  CMD python -c "import socket; s=socket.socket(); s.settimeout(5); r=s.connect_ex(('127.0.0.1',8000)); s.close(); raise SystemExit(0 if r==0 else 1)"
+  CMD python -c "import os,socket; p=int(os.environ.get('PORT','8001')); s=socket.socket(); s.settimeout(5); r=s.connect_ex(('127.0.0.1',p)); s.close(); raise SystemExit(0 if r==0 else 1)"
 
 STOPSIGNAL SIGTERM
 ENTRYPOINT ["python", "-m"]

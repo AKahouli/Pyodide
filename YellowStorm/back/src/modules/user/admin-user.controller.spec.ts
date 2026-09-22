@@ -1,6 +1,6 @@
 import { Types } from 'mongoose';
 import { AdminUserController } from './admin-user.controller';
-import { UserStatus } from './schemas/user.schema';
+import { UserStatus } from './user.types';
 
 describe('AdminUserController registration decisions', () => {
   const actor = { _id: new Types.ObjectId(), email: 'sa@acme.io' };

@@ -12,7 +12,6 @@ import * as pageApi from './page-api';
 import * as artifactApi from './artifact-api';
 import { DEFAULT_PAGE_LIMIT, validateFiles } from './utils';
 import { getErrorMessage } from '@/lib/error-codes';
-import { dataRoomFeatures } from '@/config/dataRoomFeatures';
 import type { ApiError } from '@/lib/api/client';
 import type { ModuleTranslationKey, TranslationParams } from '@/modules/localization';
 import type {
@@ -410,6 +409,8 @@ const initialState: WorkspaceState = {
   isSavingRule: false,
 };
 
+let workspaceFetchGeneration = 0;
+
 // ===== Store =====
 
 export const useWorkspaceStore = create<WorkspaceStore>()(
@@ -508,6 +509,7 @@ export const useWorkspaceStore = create<WorkspaceStore>()(
           return;
         }
 
+        const fetchGeneration = workspaceFetchGeneration;
         set({ isLoadingWorkspaces: true, error: null });
 
         try {
@@ -529,18 +531,21 @@ export const useWorkspaceStore = create<WorkspaceStore>()(
             allWorkspaces = [personalWorkspace, ...allWorkspaces];
           }
 
-          const newCache = new Map(state.searchQuery ? [] : state.workspaces);
+          if (fetchGeneration !== workspaceFetchGeneration) return;
+
+          const newCache = new Map(state.searchQuery ? [] : get().workspaces);
           newCache.set(page, allWorkspaces);
 
           set({
             workspaces: newCache,
             currentPage: page,
             totalPages: result.pagination.totalPages,
-            totalWorkspaces: result.pagination.total + (personalWorkspace ? 1 : 0),
+            totalWorkspaces: result.pagination.total,
             isLoadingWorkspaces: false,
           });
 
         } catch (err) {
+          if (fetchGeneration !== workspaceFetchGeneration) return;
           const fallback = tError('fetchWorkspaces', 'Failed to fetch workspaces');
           const message = err instanceof Error ? err.message : fallback;
           set({ error: message, isLoadingWorkspaces: false });
@@ -548,6 +553,7 @@ export const useWorkspaceStore = create<WorkspaceStore>()(
       },
 
       searchWorkspaces: async (query) => {
+        workspaceFetchGeneration += 1;
         set({
           searchQuery: query,
           workspaces: new Map(), // Clear cache on search
@@ -633,6 +639,24 @@ export const useWorkspaceStore = create<WorkspaceStore>()(
           // Invalidate cache and refresh
           get().invalidateWorkspaceCache();
           await get().fetchWorkspaces(1);
+
+          // The create response is authoritative even if the list request races
+          // with backend replication or another in-flight refresh.
+          set((state) => {
+            const page = state.workspaces.get(1) ?? [];
+            if (page.some((item) => item.id === workspace.id)) return state;
+
+            const personalIndex = page.findIndex((item) => item.isPersonal);
+            const nextPage = [...page];
+            nextPage.splice(personalIndex + 1, 0, workspace);
+            const nextTotal = state.totalWorkspaces + 1;
+
+            return {
+              workspaces: new Map(state.workspaces).set(1, nextPage.slice(0, DEFAULT_PAGE_LIMIT)),
+              totalWorkspaces: nextTotal,
+              totalPages: Math.max(state.totalPages, Math.ceil(nextTotal / DEFAULT_PAGE_LIMIT)),
+            };
+          });
 
           set({
             isCreating: false,
@@ -1109,11 +1133,13 @@ export const useWorkspaceStore = create<WorkspaceStore>()(
 
       // ===== Cache Management =====
       invalidateWorkspaceCache: () => {
+        workspaceFetchGeneration += 1;
         set({
           workspaces: new Map(),
           currentPage: 1,
           totalPages: 0,
           totalWorkspaces: 0,
+          isLoadingWorkspaces: false,
           // A stale filter would silently re-apply itself to the next
           // fetchWorkspaces call (create/delete flows refetch right after).
           searchQuery: '',

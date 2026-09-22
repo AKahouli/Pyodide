@@ -11,6 +11,8 @@ When sources disagree, use this order:
 3. The user's current request and confirmed decisions.
 4. Obsidian memory notes.
 
+when you're working on conversation then must always consider conversation feature (http://localhost:5173/#/conversation) not Conversation v2 feature unless user request it explicitly. 
+when it comes to build an AI logics feature requiring the usage of LLM inference then you must prefer to create a dedicated agent through our YellowStorm ADK (this dedicated agent will be configurable through our agent library)  instead of implementing the logic by using a direct approach like chat completion. 
 Memory is useful context, but it may be stale. Verify important claims against the repository before changing code.
 
 ## Repository Map

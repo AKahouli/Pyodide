@@ -1,0 +1,59 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://yellowmind.dev/schemas/semantic-model-runtime/v1/evidence-envelope.schema.json",
+  "title": "EvidenceEnvelope",
+  "type": "object",
+  "description": "Bounded evidence packet. Null/unknown values are explicit; rawText is bounded exact source evidence, never a whole document.",
+  "required": ["evidenceId", "assetRef", "locator", "origin", "sourceVersionVerification", "rawText", "coverage"],
+  "additionalProperties": false,
+  "properties": {
+    "evidenceId": { "type": "string" },
+    "assetRef": { "$ref": "asset-ref.schema.json" },
+    "indexObservationId": { "type": ["string", "null"] },
+    "locator": {
+      "type": "object",
+      "description": "sectionPk/blockPk are database ids and die on reindex; sectionKey/blockKey are parser-local keys. Both are represented explicitly and never conflated.",
+      "required": [],
+      "additionalProperties": true,
+      "properties": {
+        "documentPk": { "type": ["integer", "string", "null"] },
+        "sectionPk": { "type": ["integer", "string", "null"] },
+        "sectionKey": { "type": ["string", "null"] },
+        "blockPk": { "type": ["integer", "string", "null"] },
+        "blockKey": { "type": ["string", "null"] },
+        "pageNumber": { "type": ["integer", "null"] },
+        "sheetName": { "type": ["string", "null"] },
+        "sourceRowNumber": { "type": ["integer", "null"] },
+        "columnId": { "type": ["string", "null"] },
+        "cellCoordinate": { "type": ["string", "null"] },
+        "datasetRevisionId": { "type": ["string", "null"] },
+        "textSpan": {
+          "type": ["object", "null"],
+          "properties": {
+            "start": { "type": "integer", "minimum": 0 },
+            "end": { "type": "integer", "minimum": 0 }
+          }
+        },
+        "contentHash": { "type": ["string", "null"] }
+      }
+    },
+    "origin": {
+      "type": "string",
+      "enum": ["native_text", "ocr", "generated_visual_description", "source_metadata", "human_assertion"],
+      "description": "Generated descriptions guide discovery; they do not automatically prove a business fact."
+    },
+    "sourceVersionVerification": { "type": "string", "enum": ["verified", "partial", "unknown"] },
+    "rawText": { "type": "string" },
+    "coverage": {
+      "type": "object",
+      "required": ["directBlocksComplete", "requiredSubsectionsComplete", "unresolvedReferences", "visualContentPending"],
+      "additionalProperties": false,
+      "properties": {
+        "directBlocksComplete": { "type": "boolean" },
+        "requiredSubsectionsComplete": { "type": "boolean" },
+        "unresolvedReferences": { "type": "array", "items": { "type": "string" } },
+        "visualContentPending": { "type": "boolean" }
+      }
+    }
+  }
+}

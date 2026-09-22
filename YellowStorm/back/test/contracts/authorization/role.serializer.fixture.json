@@ -1,0 +1,14 @@
+{
+  "name": "super_admin",
+  "description": "Full platform access",
+  "permissions": [
+    "users.read",
+    "users.write"
+  ],
+  "isActive": true,
+  "isSystem": true,
+  "priority": 100,
+  "createdAt": "<volatile>",
+  "updatedAt": "<volatile>",
+  "id": "64b000000000000000000003"
+}

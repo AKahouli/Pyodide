@@ -1,0 +1,31 @@
+{
+  "fixtureId": "indexed-document",
+  "scenario": "Uploaded PDF whose logical indexing completed (webhook confirmed, indexingStatus = completed)",
+  "source": {
+    "workspaceId": "6512f0a1c9e77a001234aaa1",
+    "assetId": "6512f0a1c9e77a001234ddd4",
+    "originalName": "msa-acme-2026.pdf",
+    "mimeType": "application/pdf",
+    "sizeBytes": 2411724,
+    "contentHash": null,
+    "uploadedAt": "2026-09-05T09:15:00.000Z",
+    "indexingStatus": "completed",
+    "indexingTaskId": "idx_task_8842",
+    "lastIndexedAt": "2026-09-05T09:22:41.000Z"
+  },
+  "expectedResolution": {
+    "assetRef": {
+      "workspaceId": "6512f0a1c9e77a001234aaa1",
+      "assetId": "6512f0a1c9e77a001234ddd4",
+      "assetVersionId": "obs:6512f0a1c9e77a001234ddd4:1",
+      "sourceVersionVerification": "partial",
+      "indexObservationId": "obs_e16f7a2b4c5d6e7f8091a2b3"
+    },
+    "discovery": {
+      "status": "ready",
+      "structure": { "kind": "document", "sections": 42, "blocks": 913, "visualContentPending": false },
+      "coverage": { "sampled": true, "completeProfileDone": false }
+    },
+    "population": "evidence reads go through the read-only logical-index adapter; block primary keys are never durable cross-reindex identity"
+  }
+}

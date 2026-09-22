@@ -1,6 +1,4 @@
-import { Injectable } from '@nestjs/common';
-import { InjectModel } from '@nestjs/mongoose';
-import { Model } from 'mongoose';
+import { Inject, Injectable } from '@nestjs/common';
 import {
   AgentGuardrails,
   GuardrailMode,
@@ -8,7 +6,7 @@ import {
   ToolActionReviewConfig,
 } from '@modules/agent/interfaces/agent.interface';
 import { UpdateGuardrailsSettingsDto } from '../dto/guardrails-settings.dto';
-import { GuardrailsSettings, GuardrailsSettingsDocument } from '../schemas/guardrails-settings.schema';
+import { GUARDRAILS_SETTINGS_STORE, type GuardrailsSettingsStore } from '../persistence/guardrails-settings.store';
 
 export interface AdminGuardrailsSettings extends AgentGuardrails {
   forceActivation: boolean;
@@ -106,13 +104,13 @@ export function normalizeAdminGuardrailsSettings(value?: RawAdminGuardrailsSetti
 @Injectable()
 export class GuardrailsSettingsService {
   constructor(
-    @InjectModel(GuardrailsSettings.name)
-    private readonly model: Model<GuardrailsSettingsDocument>,
+    @Inject(GUARDRAILS_SETTINGS_STORE)
+    private readonly store: GuardrailsSettingsStore,
   ) {}
 
   async getSettings(): Promise<AdminGuardrailsSettings> {
-    const existing = await this.model.findOne().lean().exec();
-    return normalizeAdminGuardrailsSettings(existing as Partial<AdminGuardrailsSettings> | undefined);
+    const existing = await this.store.find();
+    return normalizeAdminGuardrailsSettings(existing ?? undefined);
   }
 
   async updateSettings(input: UpdateGuardrailsSettingsDto): Promise<AdminGuardrailsSettings> {
@@ -123,11 +121,7 @@ export class GuardrailsSettingsService {
       promptInjection: { ...current.promptInjection, ...input.promptInjection },
       toolActionReview: { ...current.toolActionReview, ...input.toolActionReview },
     });
-    const doc = await this.model
-      .findOneAndUpdate({}, { $set: next }, { upsert: true, new: true, setDefaultsOnInsert: true })
-      .lean()
-      .exec();
-
-    return normalizeAdminGuardrailsSettings(doc as Partial<AdminGuardrailsSettings>);
+    await this.store.upsert(next);
+    return next;
   }
 }

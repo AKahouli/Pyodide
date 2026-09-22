@@ -1,8 +1,8 @@
 /**
  * Convert LaTeX math delimiters (`\[ ... \]` display, `\( ... \)` inline) to
- * the `$$` / `$` delimiters understood by remark-math, so model-emitted LaTeX
- * renders through KaTeX. remark-math only recognizes `$` delimiters, and
- * models commonly emit `\[ ... \]` / `\( ... \)`.
+ * `$$` delimiters understood by remark-math, so model-emitted LaTeX renders
+ * through KaTeX. Single-dollar text math is disabled in the renderer because
+ * it conflicts with currency, while `$$...$$` still supports inline math.
  *
  * Fenced code blocks and inline code spans are copied verbatim (LaTeX examples
  * shown as code must stay literal), and an unclosed delimiter — the normal
@@ -17,7 +17,7 @@ function lineEndOf(markdown: string, from: number): number {
   return newline === -1 ? markdown.length : newline + 1;
 }
 
-/** Copies a `$...$`-equivalent span; empty content is left verbatim. */
+/** Copies a math span; empty content is left verbatim. */
 function convertSpan(markdown: string, start: number, open: string, close: string, wrapper: (inner: string) => string): { replacement: string; next: number } | null {
   const closeIndex = markdown.indexOf(close, start + open.length);
   if (closeIndex === -1) return null;
@@ -78,7 +78,7 @@ export function normalizeMathDelimiters(markdown: string): string {
       continue;
     }
     const span = markdown.startsWith('\\(', i)
-      ? convertSpan(markdown, i, '\\(', '\\)', (inner) => `$${inner}$`)
+      ? convertSpan(markdown, i, '\\(', '\\)', (inner) => `$$${inner}$$`)
       : markdown.startsWith('\\[', i)
         ? convertSpan(markdown, i, '\\[', '\\]', (inner) => `$$\n${inner}\n$$`)
         : null;

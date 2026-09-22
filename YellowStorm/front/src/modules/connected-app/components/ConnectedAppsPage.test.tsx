@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { MemoryRouter } from 'react-router-dom';
 import { render, screen } from '@testing-library/react';
 import type { ConnectedAppWithStatus } from '../types';
 
@@ -17,6 +18,14 @@ vi.mock('./AppCard', () => ({
   AppCard: ({ app }: { app: ConnectedAppWithStatus }) => (
     <div data-testid={`app-card-${app.appKey}`}>{app.displayName}</div>
   ),
+}));
+
+vi.mock('@/modules/admin/hooks/usePermissions', () => ({
+  usePermissions: () => ({
+    hasAnyPermission: () => true,
+    canUseFeature: () => true,
+    canSeeMenu: () => true,
+  }),
 }));
 
 import { ConnectedAppsPage } from './ConnectedAppsPage';
@@ -49,7 +58,7 @@ describe('ConnectedAppsPage', () => {
     mockLoadingRef.current = true;
     mockAppsRef.current = [];
 
-    render(<ConnectedAppsPage />);
+    render(<MemoryRouter><ConnectedAppsPage /></MemoryRouter>);
 
     expect(screen.getByText('page.title')).toBeInTheDocument();
     // The spinner is an animated div, check for its presence
@@ -61,7 +70,7 @@ describe('ConnectedAppsPage', () => {
     mockLoadingRef.current = false;
     mockAppsRef.current = [];
 
-    render(<ConnectedAppsPage />);
+    render(<MemoryRouter><ConnectedAppsPage /></MemoryRouter>);
 
     expect(screen.getByText('page.empty')).toBeInTheDocument();
   });
@@ -69,7 +78,7 @@ describe('ConnectedAppsPage', () => {
   it('should render AppCard for each app', () => {
     mockAppsRef.current = sampleApps;
 
-    render(<ConnectedAppsPage />);
+    render(<MemoryRouter><ConnectedAppsPage /></MemoryRouter>);
 
     expect(screen.getByTestId('app-card-google-drive')).toBeInTheDocument();
     expect(screen.getByTestId('app-card-github')).toBeInTheDocument();
@@ -78,7 +87,7 @@ describe('ConnectedAppsPage', () => {
   });
 
   it('should call fetchApps on mount', () => {
-    render(<ConnectedAppsPage />);
+    render(<MemoryRouter><ConnectedAppsPage /></MemoryRouter>);
 
     expect(mockFetchApps).toHaveBeenCalledTimes(1);
   });

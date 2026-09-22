@@ -15,7 +15,7 @@ import { WorkyPlanningService } from '../services/worky-planning.service';
 import { WorkyTurnKickoffService } from '../services/worky-turn-kickoff.service';
 import { CreateWorkyMessageDto } from '../dto/create-worky-message.dto';
 import { CurrentUser } from '../../auth/decorators/current-user.decorator';
-import { UserDocument } from '../../user/schemas/user.schema';
+import type { AuthUser } from '@common/auth/auth-user';
 import { RequirePermissions } from '../../authorization/decorators/require-permissions.decorator';
 import { Permissions } from '../../authorization/constants/permissions';
 
@@ -35,7 +35,7 @@ export class WorkyMessageController {
   @ApiOperation({ summary: 'Send an owner message; kicks off a planning turn' })
   @ApiParam({ name: 'id', description: 'Stream id' })
   async sendMessage(
-    @CurrentUser() user: UserDocument,
+    @CurrentUser() user: AuthUser,
     @Param('id') streamId: string,
     @Body() dto: CreateWorkyMessageDto,
   ): Promise<{ id: string; content: string; createdAt: string; turnId: string; turnStarted: true }> {
@@ -60,7 +60,7 @@ export class WorkyMessageController {
   @ApiOperation({ summary: 'List owner ↔ manager message history' })
   @ApiParam({ name: 'id', description: 'Stream id' })
   async listMessages(
-    @CurrentUser() user: UserDocument,
+    @CurrentUser() user: AuthUser,
     @Param('id') streamId: string,
     @Query('limit') limit?: string,
   ): Promise<

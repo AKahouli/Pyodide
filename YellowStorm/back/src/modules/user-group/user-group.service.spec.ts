@@ -1,256 +1,187 @@
 import { Test, TestingModule } from '@nestjs/testing';
-import { getModelToken } from '@nestjs/mongoose';
 import { Types } from 'mongoose';
 import { ConflictException, NotFoundException } from '@nestjs/common';
 import { UserGroupService } from './user-group.service';
-import { UserGroup } from './schemas/user-group.schema';
 import { LoggerService } from '../logger';
+import { USER_GROUP_STORE, type PopulatedGroupRecord, type UserGroupStore } from './persistence/user-group.store';
 
 const OWNER = new Types.ObjectId().toString();
 const OTHER = new Types.ObjectId().toString();
 const MEMBER_A = new Types.ObjectId().toString();
 const MEMBER_B = new Types.ObjectId().toString();
 
-/** A populated member doc, as mongoose returns after .populate(). */
-function memberDoc(id: string, email: string) {
-  return { _id: new Types.ObjectId(id), email, profile: { firstName: 'F', lastName: 'L' } };
+function member(id: string, email: string): PopulatedGroupRecord['members'][number] {
+  return { id, email, firstName: 'F', lastName: 'L' };
 }
 
-/** Build a lean group object mimicking a populated find result. */
-function leanGroup(overrides: Partial<Record<string, unknown>> = {}) {
+function group(overrides: Partial<PopulatedGroupRecord> = {}): PopulatedGroupRecord {
   return {
-    _id: new Types.ObjectId(),
+    id: new Types.ObjectId().toString(),
     name: 'My Group',
     description: '',
+    createdBy: OWNER,
     members: [],
-    createdBy: new Types.ObjectId(OWNER),
     createdAt: new Date(),
     updatedAt: new Date(),
     ...overrides,
   };
 }
 
+/** In-memory UserGroupStore fake mirroring the port contract. */
+function fakeStore(seed: PopulatedGroupRecord[] = []): UserGroupStore {
+  const groups = [...seed];
+  return {
+    create: jest.fn(async (init) => {
+      const created = group({ name: init.name, description: init.description, createdBy: init.ownerId });
+      groups.push(created);
+      return created;
+    }),
+    existsOwnedByName: jest.fn(async (ownerId, name, excludeId) =>
+      groups.some((g) => g.createdBy === ownerId && g.name === name && g.id !== excludeId),
+    ),
+    findAllForUser: jest.fn(async (ownerId) => groups.filter((g) => g.createdBy === ownerId)),
+    findOwnedById: jest.fn(async (ownerId, id) => groups.find((g) => g.id === id && g.createdBy === ownerId) ?? null),
+    findOwnedByIds: jest.fn(async (ownerId, ids) => groups.filter((g) => ids.includes(g.id) && g.createdBy === ownerId)),
+    update: jest.fn(async (id, patch) => {
+      const g = groups.find((x) => x.id === id);
+      if (g) Object.assign(g, patch);
+    }),
+    deleteById: jest.fn(async (id) => {
+      const idx = groups.findIndex((g) => g.id === id);
+      if (idx >= 0) groups.splice(idx, 1);
+    }),
+    addMembers: jest.fn(async (id, userIds) => {
+      const g = groups.find((x) => x.id === id);
+      if (!g) return;
+      for (const userId of userIds) if (!g.members.some((m) => m.id === userId)) g.members.push(member(userId, `${userId}@x.io`));
+    }),
+    removeMember: jest.fn(async (id, memberId) => {
+      const g = groups.find((x) => x.id === id);
+      if (g) g.members = g.members.filter((m) => m.id !== memberId);
+    }),
+    findOwnedGroupIdsForMember: jest.fn(async () => []),
+    findGroupIdsForMember: jest.fn(async () => []),
+  };
+}
+
+async function setup(store: UserGroupStore): Promise<{ service: UserGroupService; store: UserGroupStore }> {
+  const moduleRef: TestingModule = await Test.createTestingModule({
+    providers: [
+      UserGroupService,
+      { provide: USER_GROUP_STORE, useValue: store },
+      { provide: LoggerService, useValue: { setContext: jest.fn(), log: jest.fn(), warn: jest.fn(), error: jest.fn() } },
+    ],
+  }).compile();
+  return { service: moduleRef.get(UserGroupService), store };
+}
+
 describe('UserGroupService', () => {
-  let service: UserGroupService;
-  let model: any;
-
-  beforeEach(async () => {
-    model = {
-      findOne: jest.fn(),
-      find: jest.fn(),
-      findById: jest.fn(),
-      create: jest.fn(),
-      updateOne: jest.fn(),
-      findByIdAndDelete: jest.fn(),
-    };
-
-    const moduleRef: TestingModule = await Test.createTestingModule({
-      providers: [
-        UserGroupService,
-        { provide: getModelToken(UserGroup.name), useValue: model },
-        { provide: LoggerService, useValue: { setContext: jest.fn(), log: jest.fn(), warn: jest.fn(), error: jest.fn() } },
-      ],
-    }).compile();
-
-    service = moduleRef.get(UserGroupService);
+  it('rejects a duplicate name for the same owner', async () => {
+    const store = fakeStore([group({ name: 'My Group' })]);
+    const { service } = await setup(store);
+    await expect(service.create(OWNER, { name: 'My Group' })).rejects.toBeInstanceOf(ConflictException);
   });
 
-  describe('create', () => {
-    it('rejects a duplicate name for the same owner', async () => {
-      model.findOne.mockReturnValue({ lean: () => ({ exec: () => Promise.resolve(leanGroup()) }) });
-      await expect(service.create(OWNER, { name: 'My Group' })).rejects.toBeInstanceOf(ConflictException);
-    });
-
-    it('creates a group and returns a mapped response with memberCount', async () => {
-      model.findOne.mockReturnValue({ lean: () => ({ exec: () => Promise.resolve(null) }) });
-      const created = leanGroup({ name: 'New', members: [new Types.ObjectId(MEMBER_A)] });
-      // create() returns a doc; then service re-fetches populated:
-      model.create.mockResolvedValue({ _id: created._id });
-      model.findById.mockReturnValue({
-        populate: () => ({ lean: () => ({ exec: () => Promise.resolve({ ...created, members: [memberDoc(MEMBER_A, 'a@x.io')] }) }) }),
-      });
-
-      const res = await service.create(OWNER, { name: 'New', memberIds: [MEMBER_A] });
-      expect(res.name).toBe('New');
-      expect(res.memberCount).toBe(1);
-      expect(res.members[0]).toEqual({ id: MEMBER_A, email: 'a@x.io', firstName: 'F', lastName: 'L' });
-    });
+  it('creates a group and returns a mapped response with memberCount', async () => {
+    const store = fakeStore();
+    const { service } = await setup(store);
+    const res = await service.create(OWNER, { name: 'New', memberIds: [MEMBER_A] });
+    expect(res.name).toBe('New');
+    expect(res.memberCount).toBe(0);
+    expect(store.create).toHaveBeenCalledWith({ ownerId: OWNER, name: 'New', description: '', memberIds: [MEMBER_A] });
   });
 
-  describe('findById', () => {
-    it('throws NotFound when the group belongs to another user', async () => {
-      model.findById.mockReturnValue({
-        populate: () => ({ lean: () => ({ exec: () => Promise.resolve(leanGroup({ createdBy: new Types.ObjectId(OTHER) })) }) }),
-      });
-      await expect(service.findById(OWNER, new Types.ObjectId().toString())).rejects.toBeInstanceOf(NotFoundException);
-    });
-
-    it('throws NotFound for a malformed id', async () => {
-      await expect(service.findById(OWNER, 'not-an-id')).rejects.toBeInstanceOf(NotFoundException);
-    });
-
-    it('drops null members (deleted user refs) from the response', async () => {
-      model.findById.mockReturnValue({
-        populate: () => ({
-          lean: () => ({
-            exec: () => Promise.resolve(leanGroup({ members: [null, memberDoc(MEMBER_A, 'a@x.io')] })),
-          }),
-        }),
-      });
-
-      const res = await service.findById(OWNER, new Types.ObjectId().toString());
-
-      expect(res.members).toHaveLength(1);
-      expect(res.memberCount).toBe(1);
-      expect(res.members[0]).toEqual({ id: MEMBER_A, email: 'a@x.io', firstName: 'F', lastName: 'L' });
-    });
+  it('throws NotFound when the group belongs to another user', async () => {
+    const owned = group({ createdBy: OTHER });
+    const { service } = await setup(fakeStore([owned]));
+    await expect(service.findById(OWNER, owned.id)).rejects.toBeInstanceOf(NotFoundException);
   });
 
-  describe('update', () => {
-    it('rejects renaming to a name that clashes with another group of the same owner', async () => {
-      const id = new Types.ObjectId().toString();
-      const hydratedDoc = {
-        _id: new Types.ObjectId(id),
-        name: 'Old Name',
-        description: '',
-        createdBy: new Types.ObjectId(OWNER),
-        save: jest.fn().mockResolvedValue(undefined),
-      };
-      model.findById.mockReturnValueOnce({ exec: () => Promise.resolve(hydratedDoc) });
-      model.findOne.mockReturnValue({ lean: () => ({ exec: () => Promise.resolve(leanGroup({ name: 'New Name' })) }) });
-
-      await expect(service.update(OWNER, id, { name: 'New Name' })).rejects.toBeInstanceOf(ConflictException);
-      expect(hydratedDoc.save).not.toHaveBeenCalled();
-    });
-
-    it('throws NotFound when a non-owner tries to update', async () => {
-      const id = new Types.ObjectId().toString();
-      const hydratedDoc = {
-        _id: new Types.ObjectId(id),
-        name: 'Old Name',
-        description: '',
-        createdBy: new Types.ObjectId(OTHER),
-        save: jest.fn().mockResolvedValue(undefined),
-      };
-      model.findById.mockReturnValueOnce({ exec: () => Promise.resolve(hydratedDoc) });
-
-      await expect(service.update(OWNER, id, { name: 'New Name' })).rejects.toBeInstanceOf(NotFoundException);
-      expect(hydratedDoc.save).not.toHaveBeenCalled();
-    });
-
-    it('renames and updates the description, saving and returning the populated response', async () => {
-      const id = new Types.ObjectId().toString();
-      const hydratedDoc = {
-        _id: new Types.ObjectId(id),
-        name: 'Old Name',
-        description: 'Old desc',
-        createdBy: new Types.ObjectId(OWNER),
-        save: jest.fn().mockResolvedValue(undefined),
-      };
-      model.findById
-        .mockReturnValueOnce({ exec: () => Promise.resolve(hydratedDoc) })
-        .mockReturnValueOnce({
-          populate: () => ({
-            lean: () => ({
-              exec: () =>
-                Promise.resolve(
-                  leanGroup({ _id: hydratedDoc._id, name: 'New Name', description: 'New desc' }),
-                ),
-            }),
-          }),
-        });
-      model.findOne.mockReturnValue({ lean: () => ({ exec: () => Promise.resolve(null) }) });
-
-      const res = await service.update(OWNER, id, { name: 'New Name', description: 'New desc' });
-
-      expect(hydratedDoc.name).toBe('New Name');
-      expect(hydratedDoc.description).toBe('New desc');
-      expect(hydratedDoc.save).toHaveBeenCalledTimes(1);
-      expect(res.name).toBe('New Name');
-      expect(res.description).toBe('New desc');
-    });
+  it('throws NotFound for a malformed id', async () => {
+    const { service } = await setup(fakeStore());
+    await expect(service.findById(OWNER, 'not-an-id')).rejects.toBeInstanceOf(NotFoundException);
   });
 
-  describe('delete', () => {
-    it('deletes the group when called by its owner', async () => {
-      const id = new Types.ObjectId().toString();
-      const hydratedDoc = { _id: new Types.ObjectId(id), createdBy: new Types.ObjectId(OWNER) };
-      model.findById.mockReturnValueOnce({ exec: () => Promise.resolve(hydratedDoc) });
-      model.findByIdAndDelete.mockReturnValue({ exec: () => Promise.resolve(hydratedDoc) });
-
-      await service.delete(OWNER, id);
-
-      expect(model.findByIdAndDelete).toHaveBeenCalledWith(hydratedDoc._id);
-    });
-
-    it('throws NotFound when a non-owner tries to delete', async () => {
-      const id = new Types.ObjectId().toString();
-      const hydratedDoc = { _id: new Types.ObjectId(id), createdBy: new Types.ObjectId(OTHER) };
-      model.findById.mockReturnValueOnce({ exec: () => Promise.resolve(hydratedDoc) });
-
-      await expect(service.delete(OWNER, id)).rejects.toBeInstanceOf(NotFoundException);
-      expect(model.findByIdAndDelete).not.toHaveBeenCalled();
-    });
+  it('members arrive already filtered by the store (populate parity handled there)', async () => {
+    const owned = group({ members: [member(MEMBER_A, 'a@x.io')] });
+    const { service } = await setup(fakeStore([owned]));
+    const res = await service.findById(OWNER, owned.id);
+    expect(res.members).toEqual([{ id: MEMBER_A, email: 'a@x.io', firstName: 'F', lastName: 'L' }]);
+    expect(res.memberCount).toBe(1);
   });
 
-  describe('addMembers', () => {
-    it('adds members idempotently via $addToSet and returns the populated group', async () => {
-      const id = new Types.ObjectId().toString();
-      model.findById
-        .mockReturnValueOnce({ exec: () => Promise.resolve({ _id: new Types.ObjectId(id), createdBy: new Types.ObjectId(OWNER) }) })
-        .mockReturnValueOnce({
-          populate: () => ({ lean: () => ({ exec: () => Promise.resolve(leanGroup({ members: [memberDoc(MEMBER_A, 'a@x.io'), memberDoc(MEMBER_B, 'b@x.io')] })) }) }),
-        });
-      model.updateOne.mockReturnValue({ exec: () => Promise.resolve({ modifiedCount: 1 }) });
-
-      const res = await service.addMembers(OWNER, id, [MEMBER_A, MEMBER_B]);
-      expect(model.updateOne).toHaveBeenCalledWith(
-        { _id: expect.anything() },
-        { $addToSet: { members: { $each: expect.any(Array) } } },
-      );
-      expect(res.memberCount).toBe(2);
-    });
-
-    it('throws NotFound when a non-owner tries to add members', async () => {
-      const id = new Types.ObjectId().toString();
-      model.findById.mockReturnValue({ exec: () => Promise.resolve({ _id: new Types.ObjectId(id), createdBy: new Types.ObjectId(OTHER) }) });
-      await expect(service.addMembers(OWNER, id, [MEMBER_A])).rejects.toBeInstanceOf(NotFoundException);
-    });
-
-    it('collapses duplicate ids before writing the $addToSet payload', async () => {
-      const id = new Types.ObjectId().toString();
-      model.findById
-        .mockReturnValueOnce({ exec: () => Promise.resolve({ _id: new Types.ObjectId(id), createdBy: new Types.ObjectId(OWNER) }) })
-        .mockReturnValueOnce({
-          populate: () => ({ lean: () => ({ exec: () => Promise.resolve(leanGroup({ members: [memberDoc(MEMBER_A, 'a@x.io'), memberDoc(MEMBER_B, 'b@x.io')] })) }) }),
-        });
-      model.updateOne.mockReturnValue({ exec: () => Promise.resolve({ modifiedCount: 1 }) });
-
-      await service.addMembers(OWNER, id, [MEMBER_A, MEMBER_A, MEMBER_B]);
-
-      const each = model.updateOne.mock.calls[0][1].$addToSet.members.$each;
-      expect(each).toHaveLength(2);
-      expect(new Set(each.map((oid: Types.ObjectId) => oid.toString())).size).toBe(2);
-    });
+  it('rejects renaming to a name that clashes with another group of the same owner', async () => {
+    const owned = group({ name: 'Old Name' });
+    const clash = group({ name: 'New Name' });
+    const { service } = await setup(fakeStore([owned, clash]));
+    await expect(service.update(OWNER, owned.id, { name: 'New Name' })).rejects.toBeInstanceOf(ConflictException);
   });
 
-  describe('removeMember', () => {
-    it('pulls the member and returns the populated group', async () => {
-      const id = new Types.ObjectId().toString();
-      model.findById
-        .mockReturnValueOnce({ exec: () => Promise.resolve({ _id: new Types.ObjectId(id), createdBy: new Types.ObjectId(OWNER) }) })
-        .mockReturnValueOnce({ populate: () => ({ lean: () => ({ exec: () => Promise.resolve(leanGroup({ members: [] })) }) }) });
-      model.updateOne.mockReturnValue({ exec: () => Promise.resolve({ modifiedCount: 1 }) });
+  it('throws NotFound when a non-owner tries to update', async () => {
+    const foreign = group({ createdBy: OTHER });
+    const { service } = await setup(fakeStore([foreign]));
+    await expect(service.update(OWNER, foreign.id, { name: 'New Name' })).rejects.toBeInstanceOf(NotFoundException);
+  });
 
-      const res = await service.removeMember(OWNER, id, MEMBER_A);
-      expect(model.updateOne).toHaveBeenCalledWith({ _id: expect.anything() }, { $pull: { members: expect.anything() } });
-      expect(res.memberCount).toBe(0);
-    });
+  it('renames and updates the description', async () => {
+    const owned = group({ name: 'Old Name', description: 'Old desc' });
+    const { service, store } = await setup(fakeStore([owned]));
+    const res = await service.update(OWNER, owned.id, { name: 'New Name', description: 'New desc' });
+    expect(res.name).toBe('New Name');
+    expect(res.description).toBe('New desc');
+    expect(store.update).toHaveBeenCalledWith(owned.id, { name: 'New Name', description: 'New desc' });
+  });
 
-    it('throws NotFound when a non-owner tries to remove a member', async () => {
-      const id = new Types.ObjectId().toString();
-      model.findById.mockReturnValue({ exec: () => Promise.resolve({ _id: new Types.ObjectId(id), createdBy: new Types.ObjectId(OTHER) }) });
-      await expect(service.removeMember(OWNER, id, MEMBER_A)).rejects.toBeInstanceOf(NotFoundException);
-    });
+  it('deletes the group when called by its owner', async () => {
+    const owned = group();
+    const { service, store } = await setup(fakeStore([owned]));
+    await service.delete(OWNER, owned.id);
+    expect(store.deleteById).toHaveBeenCalledWith(owned.id);
+  });
+
+  it('throws NotFound when a non-owner tries to delete', async () => {
+    const foreign = group({ createdBy: OTHER });
+    const { service, store } = await setup(fakeStore([foreign]));
+    await expect(service.delete(OWNER, foreign.id)).rejects.toBeInstanceOf(NotFoundException);
+    expect(store.deleteById).not.toHaveBeenCalled();
+  });
+
+  it('adds members idempotently and returns the populated group', async () => {
+    const owned = group();
+    const { service } = await setup(fakeStore([owned]));
+    const res = await service.addMembers(OWNER, owned.id, [MEMBER_A]);
+    expect(res.members.map((m) => m.id)).toContain(MEMBER_A);
+    expect(res.memberCount).toBe(1);
+  });
+
+  it('removes a member', async () => {
+    const owned = group({ members: [member(MEMBER_A, 'a@x.io'), member(MEMBER_B, 'b@x.io')] });
+    const { service } = await setup(fakeStore([owned]));
+    const res = await service.removeMember(OWNER, owned.id, MEMBER_A);
+    expect(res.members.map((m) => m.id)).toEqual([MEMBER_B]);
+  });
+
+  it('removeMember with a malformed id is a silent no-op on the store', async () => {
+    const owned = group({ members: [member(MEMBER_A, 'a@x.io')] });
+    const { service } = await setup(fakeStore([owned]));
+    const res = await service.removeMember(OWNER, owned.id, 'not-an-id');
+    expect(res.memberCount).toBe(1);
+  });
+
+  it('findGroupIdsForMember and findOwnedGroupIdsForMember delegate to the store', async () => {
+    const store = fakeStore();
+    const { service } = await setup(store);
+    await service.findGroupIdsForMember(MEMBER_A);
+    await service.findOwnedGroupIdsForMember(OWNER, MEMBER_A);
+    expect(store.findGroupIdsForMember).toHaveBeenCalledWith(MEMBER_A);
+    expect(store.findOwnedGroupIdsForMember).toHaveBeenCalledWith(OWNER, MEMBER_A);
+  });
+
+  it('findOwnedGroupsByIds returns only owned groups', async () => {
+    const mine = group();
+    const theirs = group({ createdBy: OTHER });
+    const { service } = await setup(fakeStore([mine, theirs]));
+    const res = await service.findOwnedGroupsByIds(OWNER, [mine.id, theirs.id]);
+    expect(res.map((g) => g.id)).toEqual([mine.id]);
   });
 });

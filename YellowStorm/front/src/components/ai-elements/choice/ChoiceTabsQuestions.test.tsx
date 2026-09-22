@@ -29,7 +29,7 @@ function question(componentId: string, questionId: string, prompt: string): { co
   };
 }
 
-it('renders each question as a tab and submits all answers at the end', async () => {
+it('pages through questions and submits all answers at the end', async () => {
   const user = userEvent.setup();
   const onSubmitAll = vi.fn().mockResolvedValue(undefined);
 
@@ -40,14 +40,14 @@ it('renders each question as a tab and submits all answers at the end', async ()
     />,
   );
 
-  const submit = screen.getByRole('button', { name: 'choice.submitAll' });
-  expect(submit).toBeDisabled();
-
-  await user.click(screen.getByRole('tab', { name: /Pick a region/ }));
+  const next = screen.getByRole('button', { name: 'choice.next' });
+  expect(next).toBeDisabled();
   await user.click(screen.getByRole('radio', { name: 'Option A for region' }));
-  await user.click(screen.getByRole('tab', { name: /Pick a scope/ }));
+  expect(next).toBeEnabled();
+  await user.click(next);
   await user.click(screen.getByRole('radio', { name: 'Option B for scope' }));
 
+  const submit = screen.getByRole('button', { name: 'choice.submitAll' });
   expect(submit).toBeEnabled();
   await user.click(submit);
 
@@ -83,14 +83,16 @@ it('keeps the submit disabled until every question has an answer', async () => {
     />,
   );
 
-  const submit = screen.getByRole('button', { name: 'choice.submitAll' });
-  await user.click(screen.getByRole('tab', { name: /Pick a region/ }));
+  const next = screen.getByRole('button', { name: 'choice.next' });
   await user.click(screen.getByRole('radio', { name: 'Option A for region' }));
+  await user.click(next);
+  const submit = screen.getByRole('button', { name: 'choice.submitAll' });
   expect(submit).toBeDisabled();
-
-  await user.click(screen.getByRole('tab', { name: /Pick a scope/ }));
   await user.click(screen.getByRole('radio', { name: 'Option B for scope' }));
   expect(submit).toBeEnabled();
+
+  await user.click(screen.getByRole('button', { name: 'choice.back' }));
+  expect(screen.getByRole('radio', { name: 'Option A for region' })).toBeChecked();
 });
 
 it('shows a single submitted summary once all interactions are provided', async () => {
@@ -107,10 +109,10 @@ it('shows a single submitted summary once all interactions are provided', async 
   );
 
   await waitFor(() => expect(screen.getByText('choice.submitted')).toBeInTheDocument());
-  expect(screen.queryByRole('tab')).not.toBeInTheDocument();
+  expect(screen.queryByText('Pick a region')).not.toBeInTheDocument();
 });
 
-it('supports the Other free-text option inside a tab', async () => {
+it('supports the Other free-text option inside a page', async () => {
   const user = userEvent.setup();
   const onSubmitAll = vi.fn().mockResolvedValue(undefined);
   const other = {

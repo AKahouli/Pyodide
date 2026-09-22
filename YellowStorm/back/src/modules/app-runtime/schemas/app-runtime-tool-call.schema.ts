@@ -53,6 +53,14 @@ export class AppRuntimeToolCall {
   @Prop({ type: String, default: null })
   resultingRevisionId?: string | null;
 
+  /** Epoch ms when status became `running` (Phase 0 tool-efficiency telemetry). */
+  @Prop({ type: Number, default: null })
+  startedAtMs?: number | null;
+
+  /** Wall time from `startedAtMs` to settle (succeeded/failed). */
+  @Prop({ type: Number, default: null })
+  durationMs?: number | null;
+
   createdAt!: Date;
   updatedAt!: Date;
 }
@@ -60,3 +68,5 @@ export class AppRuntimeToolCall {
 export const AppRuntimeToolCallSchema = SchemaFactory.createForClass(AppRuntimeToolCall);
 
 AppRuntimeToolCallSchema.index({ bindingId: 1, createdAt: -1 });
+AppRuntimeToolCallSchema.index({ workspaceId: 1, createdAt: -1 });
+AppRuntimeToolCallSchema.index({ tool: 1, createdAt: -1 });

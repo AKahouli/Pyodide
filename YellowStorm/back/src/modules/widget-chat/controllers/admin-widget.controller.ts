@@ -3,7 +3,7 @@ import { ApiTags, ApiBearerAuth } from '@nestjs/swagger';
 import { Request } from 'express';
 import { CurrentUser } from '@modules/auth/decorators/current-user.decorator';
 import { RequirePermissions, PermissionsGuard } from '@modules/authorization';
-import { UserDocument } from '@modules/user/schemas/user.schema';
+import type { AuthUser } from '@common/auth/auth-user';
 import { WidgetChatService } from '../services/widget-chat.service';
 import { CreateWidgetTokenDto, UpdateWidgetTokenDto } from '../dto/widget-chat.dto';
 
@@ -19,7 +19,7 @@ export class AdminWidgetController {
   async createToken(
     @Param('agentId') agentId: string,
     @Body() dto: CreateWidgetTokenDto,
-    @CurrentUser() user: UserDocument,
+    @CurrentUser() user: AuthUser,
   ) {
     return this.widgetChatService.createToken(agentId, user._id.toString(), {
       label: dto.label,

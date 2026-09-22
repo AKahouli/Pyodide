@@ -8,7 +8,7 @@ The widget-chat module exposes a **public, token-authenticated** chat API for em
 - [Architecture](#architecture)
 - [Directory Structure](#directory-structure)
 - [Authentication & CORS](#authentication--cors)
-- [MongoDB Schemas](#mongodb-schemas)
+- [Postgres Tables](#postgres-tables)
 - [API Endpoints](#api-endpoints)
 - [SSE Events](#sse-events)
 - [Streaming Pipeline](#streaming-pipeline)
@@ -71,7 +71,7 @@ All public widget routes use `@Public()` (skip JWT) and `@SkipMaintenance()`.
 │  └─────────────────────┘     │   (conversation)     │     (yellowstorm-adk) │
 │                               └─────────────────────┘                        │
 │  ┌─────────────────────┐     ┌─────────────────────┐                        │
-│  │ AdminWidgetController│     │ MongoDB              │                        │
+│  │ AdminWidgetController│     │ Postgres (channels)  │                        │
 │  │  token CRUD          │     │ widget_tokens        │                        │
 │  └─────────────────────┘     │ widget_sessions      │                        │
 │                               │ widget_messages      │                        │
@@ -97,10 +97,9 @@ widget-chat/
 │   └── widget-token.guard.ts        # Token hash, expiry, origin, active agent
 ├── dto/
 │   └── widget-chat.dto.ts
-├── schemas/
-│   ├── widget-token.schema.ts
-│   ├── widget-session.schema.ts
-│   └── widget-message.schema.ts
+├── persistence/
+│   ├── widget.store.ts             # WIDGET_TOKEN_STORE, WIDGET_SESSION_STORE, WIDGET_MESSAGE_STORE ports
+│   └── pg-widget.store.ts          # PgWidgetTokenStore, PgWidgetSessionStore, PgWidgetMessageStore
 └── interfaces/
     └── widget-chat.interface.ts
 ```
@@ -127,41 +126,43 @@ Browser calls from third-party origins require the API host to allow those origi
 
 ---
 
-## MongoDB Schemas
+## Postgres Tables
 
-### `widget_tokens`
+Stores are bound in `WidgetChatModule`: `WIDGET_TOKEN_STORE` -> `PgWidgetTokenStore`, `WIDGET_SESSION_STORE` -> `PgWidgetSessionStore`, `WIDGET_MESSAGE_STORE` -> `PgWidgetMessageStore` (Drizzle, `channels` schema). Field names below are the logical (camelCase) names of the snake_case columns.
+
+### `channels.widget_tokens`
 
 | Field | Type | Notes |
 |-------|------|-------|
-| `tokenHash` | string | SHA-256 of secret token, unique |
-| `agentId` | ObjectId | Ref `Agent` |
+| `tokenHash` | string | SHA-256 of secret token, unique (`uq_widget_tokens_hash`) |
+| `agentId` | ObjectId | FK to `public.agents(id)` `ON DELETE CASCADE` |
 | `label` | string? | Admin label |
 | `allowedOrigins` | string[] | Empty = no origin check |
 | `isActive` | boolean | Default `true` |
-| `expiresAt` | Date? | Optional expiry |
+| `expiresAt` | Date? | Optional expiry, checked in code (not swept by TTL) |
 | `lastUsedAt` | Date? | Updated on each chat |
-| `createdBy` | ObjectId | Ref `User` |
+| `createdBy` | ObjectId | Creator user id (no FK) |
 
 `tokenHash` is stripped from JSON responses.
 
-### `widget_sessions`
+### `channels.widget_sessions`
 
 | Field | Type | Notes |
 |-------|------|-------|
 | `tokenHash` | string | Indexed |
-| `agentId` | ObjectId | Indexed |
+| `agentId` | ObjectId | FK to `public.agents(id)` `ON DELETE CASCADE`, indexed |
 | `visitorId` | string | Max 64 chars from client |
 | `metadata` | object | `ip`, `userAgent`, `origin` |
 | `status` | `active` \| `closed` | |
 | `messageCount` | number | Incremented per user/assistant message |
 
-Unique partial index: `{ tokenHash, visitorId }` where `status: 'active'` (one active session per visitor per token).
+Unique partial index `uq_widget_sessions_active_visitor` on `(token_hash, visitor_id)` WHERE `status = 'active'` (one active session per visitor per token).
 
-### `widget_messages`
+### `channels.widget_messages`
 
 | Field | Type | Notes |
 |-------|------|-------|
-| `sessionId` | ObjectId | Ref session |
+| `sessionId` | ObjectId | FK to `channels.widget_sessions(id)` `ON DELETE CASCADE` |
 | `tokenHash` | string | |
 | `agentId` | ObjectId | |
 | `role` | `user` \| `assistant` | |

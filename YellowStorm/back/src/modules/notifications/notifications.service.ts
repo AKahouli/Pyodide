@@ -1,20 +1,15 @@
-import { Injectable, OnModuleDestroy } from '@nestjs/common';
-import { InjectModel } from '@nestjs/mongoose';
-import { Model, Types } from 'mongoose';
+import { Inject, Injectable, OnModuleDestroy } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import {
-  Notification,
-  NotificationDocument,
-  NotificationStatus,
-  NotificationType,
-  NotificationPriority,
-} from './schemas/notification.schema';
+import { NotificationPriority, NotificationStatus, NotificationType } from './notification.types';
+import { NOTIFICATION_STORE, type NotificationRecord, type NotificationStore } from './persistence/notification.store';
+import { toNotificationWire, type NotificationWire } from './persistence/notification.mapper';
 import { NotificationsGateway } from './notifications.gateway';
 import {
   CreateNotificationData,
   InternalNotificationData,
   NotificationQueryParams,
   PaginatedNotifications,
+  NotificationResponse,
 } from './interfaces/notification.interface';
 import { NotificationQueryDto } from './dto/notification-query.dto';
 import { MarkReadDto } from './dto/mark-read.dto';
@@ -39,8 +34,7 @@ export class NotificationsService implements OnModuleDestroy {
   private readonly maxPayloadSize: number;
 
   constructor(
-    @InjectModel(Notification.name)
-    private readonly notificationModel: Model<NotificationDocument>,
+    @Inject(NOTIFICATION_STORE) private readonly notificationStore: NotificationStore,
     private readonly gateway: NotificationsGateway,
     private readonly configService: ConfigService,
     loggerService: LoggerService,
@@ -69,18 +63,18 @@ export class NotificationsService implements OnModuleDestroy {
     userId: string,
     notification: InternalNotificationData,
     options?: SendNotificationOptions,
-  ): Promise<NotificationDocument> {
-    const doc = await this.create({
+  ): Promise<NotificationWire> {
+    const record = await this.create({
       ...notification,
       userId,
       destination: userId,
     });
 
     if (!options?.skipPush) {
-      await this.pushToUser(userId, doc);
+      await this.pushToUser(userId, record);
     }
 
-    return doc;
+    return toNotificationWire(record);
   }
 
   /**
@@ -89,17 +83,17 @@ export class NotificationsService implements OnModuleDestroy {
   async broadcast(
     notification: InternalNotificationData,
     options?: SendNotificationOptions,
-  ): Promise<NotificationDocument> {
-    const doc = await this.create({
+  ): Promise<NotificationWire> {
+    const record = await this.create({
       ...notification,
       destination: 'broadcast',
     });
 
     if (!options?.skipPush) {
-      await this.pushBroadcast(doc);
+      await this.pushBroadcast(record);
     }
 
-    return doc;
+    return toNotificationWire(record);
   }
 
   /**
@@ -108,22 +102,22 @@ export class NotificationsService implements OnModuleDestroy {
   async send(
     dto: CreateNotificationData,
     options?: SendNotificationOptions,
-  ): Promise<NotificationDocument> {
-    const doc = await this.create(dto);
+  ): Promise<NotificationWire> {
+    const record = await this.create(dto);
 
     if (!options?.skipPush) {
       if (dto.destination === 'broadcast') {
-        await this.pushBroadcast(doc);
+        await this.pushBroadcast(record);
       } else if (dto.destination.startsWith('role:')) {
         this.logger.warn('Role-based notifications not yet implemented', {
           destination: dto.destination,
         });
       } else {
-        await this.pushToUser(dto.destination, doc);
+        await this.pushToUser(dto.destination, record);
       }
     }
 
-    return doc;
+    return toNotificationWire(record);
   }
 
   /**
@@ -136,53 +130,29 @@ export class NotificationsService implements OnModuleDestroy {
     const { page = 1, limit = 20, status, type, unreadOnly } = query;
     const skip = (page - 1) * limit;
 
-    const filter: Record<string, unknown> = {
-      $or: [
-        { userId: new Types.ObjectId(userId) },
-        { destination: 'broadcast' },
-      ],
-    };
-
-    if (status) {
-      filter.status = status;
-    }
-
-    if (type) {
-      filter.type = type;
-    }
-
-    if (unreadOnly) {
-      filter.status = { $ne: NotificationStatus.READ };
-    }
-
-    const [notifications, total] = await Promise.all([
-      this.notificationModel
-        .find(filter)
-        .sort({ createdAt: -1 })
-        .skip(skip)
-        .limit(limit)
-        .lean()
-        .exec(),
-      this.notificationModel.countDocuments(filter).exec(),
-    ]);
+    const { records, total } = await this.notificationStore.findForUser(userId, {
+      status,
+      type,
+      unreadOnly: Boolean(unreadOnly),
+      skip,
+      limit,
+    });
 
     return {
-      notifications: notifications.map((n) => ({
-        id: n._id.toString(),
-        userId: n.userId?.toString(),
-        type: n.type,
-        title: n.title,
-        message: n.message,
-        data: n.data,
-        actions: n.actions,
-        destination: n.destination,
-        status: n.status,
-        metadata: n.metadata,
-        createdAt: n.createdAt.toISOString(),
-        updatedAt: n.updatedAt.toISOString(),
-        sentAt: n.sentAt?.toISOString(),
-        readAt: n.readAt?.toISOString(),
-      })),
+      notifications: records.map((n): NotificationResponse => {
+        const wire = toNotificationWire(n);
+        return {
+          ...wire,
+          createdAt: wire.createdAt.toISOString(),
+          updatedAt: wire.updatedAt.toISOString(),
+          sentAt: wire.sentAt?.toISOString(),
+          readAt: wire.readAt?.toISOString(),
+          metadata: {
+            ...wire.metadata,
+            expiresAt: wire.metadata.expiresAt?.toISOString(),
+          },
+        } as unknown as NotificationResponse;
+      }),
       pagination: {
         page,
         limit,
@@ -195,33 +165,16 @@ export class NotificationsService implements OnModuleDestroy {
   /**
    * Get unread notifications for a user
    */
-  async getUnread(userId: string): Promise<NotificationDocument[]> {
-    return this.notificationModel
-      .find({
-        $or: [
-          { userId: new Types.ObjectId(userId) },
-          { destination: 'broadcast' },
-        ],
-        status: { $ne: NotificationStatus.READ },
-      })
-      .sort({ createdAt: -1 })
-      .limit(50)
-      .exec();
+  async getUnread(userId: string): Promise<NotificationWire[]> {
+    const records = await this.notificationStore.findUnread(userId);
+    return records.map(toNotificationWire);
   }
 
   /**
    * Get unread count
    */
   async getUnreadCount(userId: string): Promise<number> {
-    return this.notificationModel
-      .countDocuments({
-        $or: [
-          { userId: new Types.ObjectId(userId) },
-          { destination: 'broadcast' },
-        ],
-        status: { $ne: NotificationStatus.READ },
-      })
-      .exec();
+    return this.notificationStore.countUnread(userId);
   }
 
   /**
@@ -233,52 +186,16 @@ export class NotificationsService implements OnModuleDestroy {
   ): Promise<{ updated: number }> {
     const { notificationIds } = dto;
 
-    const result = await this.notificationModel
-      .updateMany(
-        {
-          _id: {
-            $in: notificationIds.map((id) => new Types.ObjectId(id)),
-          },
-          $or: [
-            { userId: new Types.ObjectId(userId) },
-            { destination: 'broadcast' },
-          ],
-        },
-        {
-          $set: {
-            status: NotificationStatus.READ,
-            readAt: new Date(),
-          },
-        },
-      )
-      .exec();
-
-    return { updated: result.modifiedCount };
+    const updated = await this.notificationStore.markReadByIdsForUser(userId, notificationIds);
+    return { updated };
   }
 
   /**
    * Mark all as read for user
    */
   async markAllAsRead(userId: string): Promise<{ updated: number }> {
-    const result = await this.notificationModel
-      .updateMany(
-        {
-          $or: [
-            { userId: new Types.ObjectId(userId) },
-            { destination: 'broadcast' },
-          ],
-          status: { $ne: NotificationStatus.READ },
-        },
-        {
-          $set: {
-            status: NotificationStatus.READ,
-            readAt: new Date(),
-          },
-        },
-      )
-      .exec();
-
-    return { updated: result.modifiedCount };
+    const updated = await this.notificationStore.markAllReadForUser(userId);
+    return { updated };
   }
 
   /**
@@ -288,9 +205,7 @@ export class NotificationsService implements OnModuleDestroy {
     notificationId: string,
     userId: string,
   ): Promise<void> {
-    const notification = await this.notificationModel
-      .findById(notificationId)
-      .exec();
+    const notification = await this.notificationStore.findById(notificationId);
 
     if (!notification) {
       throw new NotFoundException(
@@ -301,7 +216,7 @@ export class NotificationsService implements OnModuleDestroy {
 
     // Check ownership
     if (
-      notification.userId?.toString() !== userId &&
+      notification.userId !== userId &&
       notification.destination !== 'broadcast'
     ) {
       throw new ForbiddenException(
@@ -310,7 +225,7 @@ export class NotificationsService implements OnModuleDestroy {
       );
     }
 
-    await this.notificationModel.deleteOne({ _id: notificationId }).exec();
+    await this.notificationStore.deleteById(notificationId);
   }
 
   /**
@@ -331,7 +246,7 @@ export class NotificationsService implements OnModuleDestroy {
 
   private async create(
     dto: CreateNotificationData,
-  ): Promise<NotificationDocument> {
+  ): Promise<NotificationRecord> {
     // Validate payload size
     if (dto.data && !validatePayloadSize(dto.data, this.maxPayloadSize)) {
       throw new BadRequestException(
@@ -348,26 +263,22 @@ export class NotificationsService implements OnModuleDestroy {
       dto.metadata?.expiresAt ||
       new Date(Date.now() + this.defaultTtlDays * 24 * 60 * 60 * 1000);
 
-    const notification = new this.notificationModel({
-      userId: dto.userId ? new Types.ObjectId(dto.userId) : undefined,
+    const saved = await this.notificationStore.create({
+      userId: dto.userId,
       type: dto.type,
       title: sanitizedTitle,
       message: sanitizedMessage,
       data: dto.data,
       actions: dto.actions,
       destination: dto.destination,
-      status: NotificationStatus.PENDING,
-      metadata: {
-        sourceModule: dto.metadata?.sourceModule || 'system',
-        priority: dto.metadata?.priority || NotificationPriority.NORMAL,
-        expiresAt,
-        extra: dto.metadata?.extra,
-      },
+      sourceModule: dto.metadata?.sourceModule || 'system',
+      priority: dto.metadata?.priority || NotificationPriority.NORMAL,
+      expiresAt,
+      extra: dto.metadata?.extra,
     });
 
-    const saved = await notification.save();
     this.logger.debug('Notification created', {
-      id: saved._id,
+      id: saved.id,
       destination: dto.destination,
     });
     return saved;
@@ -375,58 +286,40 @@ export class NotificationsService implements OnModuleDestroy {
 
   private async pushToUser(
     userId: string,
-    notification: NotificationDocument,
+    record: NotificationRecord,
   ): Promise<void> {
     try {
-      const sent = await this.gateway.sendToUser(userId, notification);
+      const sent = await this.gateway.sendToUser(userId, toNotificationWire(record));
 
       if (sent) {
-        await this.notificationModel
-          .updateOne(
-            { _id: notification._id },
-            { $set: { status: NotificationStatus.SENT, sentAt: new Date() } },
-          )
-          .exec();
+        await this.notificationStore.markSent(record.id);
       }
     } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unknown error';
       this.logger.error('Failed to push notification', {
-        notificationId: notification._id,
+        notificationId: record.id,
         userId,
-        error: error instanceof Error ? error.message : 'Unknown error',
+        error: message,
       });
 
-      await this.notificationModel
-        .updateOne(
-          { _id: notification._id },
-          {
-            $set: {
-              status: NotificationStatus.FAILED,
-              lastError: String(error),
-            },
-            $inc: { retryCount: 1 },
-          },
-        )
-        .exec();
+      await this.notificationStore.markFailed(record.id, message);
     }
   }
 
   private async pushBroadcast(
-    notification: NotificationDocument,
+    record: NotificationRecord,
   ): Promise<void> {
     try {
-      await this.gateway.broadcast(notification);
+      await this.gateway.broadcast(toNotificationWire(record));
 
-      await this.notificationModel
-        .updateOne(
-          { _id: notification._id },
-          { $set: { status: NotificationStatus.SENT, sentAt: new Date() } },
-        )
-        .exec();
+      await this.notificationStore.markSent(record.id);
     } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unknown error';
       this.logger.error('Failed to broadcast notification', {
-        notificationId: notification._id,
-        error: error instanceof Error ? error.message : 'Unknown error',
+        notificationId: record.id,
+        error: message,
       });
+      await this.notificationStore.markFailed(record.id, message);
     }
   }
 }

@@ -258,4 +258,26 @@ describe('PlaybookDataFlowSection', () => {
       expect.objectContaining({ role: 'context', artifactKind: 'text', required: false }),
     ]);
   });
+
+  it('groups each source with its input and keeps outputs in an independent list', () => {
+    const { container } = render(
+      <PlaybookDataFlowSection
+        targetNodeId="task-1"
+        inputPortsOverride={[
+          { id: 'prompt', name: 'Prompt', artifactKind: 'text', required: true },
+          { id: 'context', name: 'Context', artifactKind: 'document', required: false },
+        ]}
+        outputPortsOverride={[{ id: 'summary', name: 'Summary', artifactKind: 'text' }]}
+        showOutputPorts
+      />,
+    );
+
+    expect(container.querySelectorAll('.data-flow-input-card')).toHaveLength(2);
+    expect(container.querySelectorAll('.data-flow-output-row')).toHaveLength(1);
+    expect(screen.getAllByText('dataFlow.getsDataFrom')).toHaveLength(2);
+    expect(screen.queryByText('dataFlow.sourcesColumn')).not.toBeInTheDocument();
+    expect(screen.getByDisplayValue('Prompt')).toBeInTheDocument();
+    expect(screen.getByDisplayValue('Context')).toBeInTheDocument();
+    expect(screen.getByDisplayValue('Summary')).toBeInTheDocument();
+  });
 });

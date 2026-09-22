@@ -480,6 +480,22 @@ describe('useConversationV2Store', () => {
     expect(useConversationV2Store.getState().rightPanelMode).toBe('app');
   });
 
+  it('sendMessage skips a duplicate in-flight send (double-submit guard)', async () => {
+    const sendSpy = vi
+      .spyOn(conversationV2Api, 'sendMessage')
+      .mockResolvedValue(undefined);
+    useConversationV2Store.setState({ sessionId: 'session-1' });
+    const store = useConversationV2Store.getState();
+    const first = store.sendMessage('duplicate');
+    await store.sendMessage('duplicate');
+    await first;
+    expect(sendSpy).toHaveBeenCalledTimes(1);
+    const userMessages = useConversationV2Store
+      .getState()
+      .events.filter((e) => e.type === 'message' && (e as { role?: string }).role === 'user');
+    expect(userMessages).toHaveLength(1);
+  });
+
   it('sendMessage ships baseRevisionId when a historical version is selected', async () => {
     const sendSpy = vi
       .spyOn(conversationV2Api, 'sendMessage')

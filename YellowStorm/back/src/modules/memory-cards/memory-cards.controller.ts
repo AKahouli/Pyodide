@@ -13,7 +13,7 @@ import { DeleteMemoryCardsDto } from './dto/delete-memory-cards.dto';
 import { MemoryCardResponse } from './interfaces/memory-card.interface';
 import { AgentService } from '../agent/agent.service';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
-import { UserDocument } from '../user/schemas/user.schema';
+import type { AuthUser } from '@common/auth/auth-user';
 
 @ApiTags('Memory Cards')
 @ApiBearerAuth()
@@ -62,7 +62,7 @@ export class MemoryCardsController {
   async remove(
     @Query('agentId') agentId: string,
     @Body() dto: DeleteMemoryCardsDto,
-    @CurrentUser() user: UserDocument,
+    @CurrentUser() user: AuthUser,
   ): Promise<{ deleted: number }> {
     if (!agentId) {
       throw new BadRequestException('agentId is required');

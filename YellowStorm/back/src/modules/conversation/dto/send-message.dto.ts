@@ -89,6 +89,11 @@ export class SendMessageDto {
   @IsBoolean()
   webSearchEnabled?: boolean;
 
+  @ApiPropertyOptional({ description: 'Allow agents to use connectors in the Web Search category', default: true })
+  @IsOptional()
+  @IsBoolean()
+  webConnectorAccessEnabled?: boolean;
+
   @ApiPropertyOptional({ default: false })
   @IsOptional()
   @IsBoolean()

@@ -12,6 +12,7 @@ import microsoftConfig from './config/microsoft.config';
 import healthConfig from './config/health.config';
 import workspaceConfig from './config/workspace.config';
 import litellmConfig from './config/litellm.config';
+import aiProxyConfig from './config/ai-proxy.config';
 import conversationConfig from './config/conversation.config';
 import conversationV2Config from './config/conversation-v2.config';
 import appRuntimeConfig from './config/app-runtime.config';
@@ -20,12 +21,11 @@ import playbookFlowConfig from './config/playbook-flow.config';
 import grpcSecurityConfig from './config/grpc-security.config';
 import grpcSecurityV2Config from './config/grpc-security-v2.config';
 import telegramConfig from './config/telegram.config';
-import whatsappConfig from './config/whatsapp.config';
 import workyConfig from './config/worky.config';
 import memoryCardsConfig from './config/memory-cards.config';
 import dataRoomConfig from './config/data-room.config';
-import governedConversationsConfig from './config/governed-conversations.config';
 import semanticModelConfig from './config/semantic-model.config';
+import agentMcpConfig from './config/agent-mcp.config';
 
 // Global Modules
 import { LoggerModule } from './modules/logger';
@@ -73,7 +73,6 @@ import { ProjectModule } from './modules/project';
 import { ClassifierModule } from './modules/classifier';
 import { TelegramModule } from './modules/telegram';
 import { WidgetChatModule } from './modules/widget-chat/widget-chat.module';
-import { WhatsAppModule } from './modules/whatsapp';
 import { WorkyModule } from './modules/worky';
 import { GuardrailsModule } from './modules/guardrails/guardrails.module';
 import { MemoryCardsModule } from './modules/memory-cards/memory-cards.module';
@@ -81,6 +80,8 @@ import { GovernanceModule } from './modules/governance';
 import { IntegrationEventsModule } from './modules/integration-events/integration-events.module';
 import { WorkspaceArtifactModule } from './modules/workspace-artifact/workspace-artifact.module';
 import { SemanticModelModule } from './modules/semantic-model/semantic-model.module';
+import { AiProxyModule } from './modules/ai-proxy/ai-proxy.module';
+import { AppBuilderAiModule } from './modules/app-builder-ai/app-builder-ai.module';
 
 @Module({
   imports: [
@@ -88,7 +89,7 @@ import { SemanticModelModule } from './modules/semantic-model/semantic-model.mod
     ConfigModule.forRoot({
       isGlobal: true,
       envFilePath: ['.env'],
-      load: [appConfig, jwtConfig, authConfig, microsoftConfig, healthConfig, workspaceConfig, litellmConfig, conversationConfig, conversationV2Config, appRuntimeConfig, appDataConfig, playbookFlowConfig, grpcSecurityConfig, grpcSecurityV2Config, telegramConfig, whatsappConfig, workyConfig, memoryCardsConfig, dataRoomConfig, governedConversationsConfig, semanticModelConfig],
+      load: [appConfig, jwtConfig, authConfig, microsoftConfig, healthConfig, workspaceConfig, litellmConfig, conversationConfig, conversationV2Config, appRuntimeConfig, appDataConfig, playbookFlowConfig, grpcSecurityConfig, grpcSecurityV2Config, telegramConfig, workyConfig, memoryCardsConfig, dataRoomConfig, semanticModelConfig, agentMcpConfig],
       validationSchema: configValidationSchema,
       validationOptions: {
         abortEarly: true,
@@ -141,7 +142,6 @@ import { SemanticModelModule } from './modules/semantic-model/semantic-model.mod
     ConnectedAppModule,
     ConnectorModule,
     TelegramModule,
-    WhatsAppModule,
     ProjectModule,
     ClassifierModule,
     HealthModule,
@@ -152,6 +152,8 @@ import { SemanticModelModule } from './modules/semantic-model/semantic-model.mod
     MemoryCardsModule,
     GovernanceModule,
     SemanticModelModule,
+    AiProxyModule,
+    AppBuilderAiModule,
   ],
   providers: [
     // Global JWT Auth Guard - all routes require authentication by default

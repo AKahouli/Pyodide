@@ -16,6 +16,15 @@ import type {
   AppDataTableDef,
 } from '../constants/app-data.types';
 
+/**
+ * SQL DEFAULT expressions safe to embed in DDL or forward to the microservice:
+ * numeric/boolean literals, quoted string literals, and a fixed function
+ * allowlist. A bare identifier (e.g. "now") would be parsed by Postgres as a
+ * column reference (0A000).
+ */
+const SAFE_SQL_DEFAULTS =
+  /^(now\(\)|current_timestamp|gen_random_uuid\(\)|uuid_generate_v4\(\))$/i;
+
 /** Double-quote a validated PostgreSQL identifier. */
 export function quoteIdent(name: string): string {
   assertIdentifier(name);
@@ -76,8 +85,19 @@ export function formatDefault(def: AppDataColumnDef): string | null {
   if (def.default === undefined) return null;
   if (def.default === null) return 'NULL';
   if (typeof def.default === 'boolean') return def.default ? 'TRUE' : 'FALSE';
-  if (typeof def.default === 'number') return String(def.default);
-  return `'${String(def.default).replace(/'/g, "''")}'`;
+  if (typeof def.default === 'number') {
+    if (!Number.isFinite(def.default)) return null;
+    return String(def.default);
+  }
+  if (typeof def.default === 'string') {
+    const s = def.default.trim();
+    if (SAFE_SQL_DEFAULTS.test(s)) {
+      return s.toLowerCase() === 'now()' ? 'now()' : s.toLowerCase();
+    }
+    // Quoted string literal — escape single quotes.
+    return `'${s.replace(/'/g, "''")}'`;
+  }
+  return null;
 }
 
 export function validateManifest(
@@ -142,6 +162,96 @@ export function validateManifest(
       );
     }
   }
+}
+
+/**
+ * Repair common LLM mistakes in an MCP-submitted manifest instead of failing
+ * the whole tool call: a numeric `version` key nested inside `tables` is
+ * promoted to the manifest level (when missing there) and dropped either way,
+ * and non-object table entries are discarded so `validateManifest` judges
+ * only the real tables. Returns the original reference untouched when the
+ * manifest already has the expected shape.
+ */
+export function normalizeSchemaManifest(
+  manifest: AppDataSchemaManifest,
+): { manifest: AppDataSchemaManifest; changed: boolean; warnings: string[] } {
+  if (!manifest || typeof manifest !== 'object') {
+    return { manifest, changed: false, warnings: [] };
+  }
+  const rawTables: unknown = manifest.tables;
+  if (!rawTables || typeof rawTables !== 'object' || Array.isArray(rawTables)) {
+    return { manifest, changed: false, warnings: [] };
+  }
+
+  let version = manifest.version;
+  let changed = false;
+  const warnings: string[] = [];
+  const tables: Record<string, AppDataTableDef> = {};
+
+  for (const [tableName, tableDef] of Object.entries(rawTables as Record<string, unknown>)) {
+    if (tableName === 'version') {
+      // Frequent LLM slip: the manifest-level version copied inside `tables`.
+      if (typeof version !== 'number' && typeof tableDef === 'number') {
+        version = tableDef;
+      }
+      changed = true;
+      continue;
+    }
+    if (!tableDef || typeof tableDef !== 'object' || Array.isArray(tableDef)) {
+      warnings.push(`Table "${tableName}" dropped — expected an object with columns, got ${typeof tableDef}`);
+      changed = true;
+      continue;
+    }
+    tables[tableName] = tableDef as AppDataTableDef;
+  }
+
+  if (!changed) {
+    return { manifest, changed: false, warnings: [] };
+  }
+  return { manifest: { version: version as number, tables }, changed: true, warnings };
+}
+
+export function safeSqlDefault(raw: unknown): string | null {
+  if (typeof raw === 'number' && Number.isFinite(raw)) return String(raw);
+  if (typeof raw === 'boolean') return raw ? 'true' : 'false';
+  if (typeof raw !== 'string') return null;
+  const s = raw.trim();
+  if (/^-?\d+(\.\d+)?$/.test(s)) return s;
+  if (SAFE_SQL_DEFAULTS.test(s)) {
+    return s.toLowerCase() === 'now()' ? 'now()' : s.toLowerCase();
+  }
+  if (s.length >= 2 && s.startsWith("'") && s.endsWith("'")) {
+    return `'${s.slice(1, -1).replace(/'/g, "''")}'`;
+  }
+  return null;
+}
+
+/**
+ * Validate and normalise the `tables` argument of a seed MCP tool call.
+ * Returns the parsed table entries or throws an McpError-shaped exception.
+ */
+export function validateSeedTables(
+  rawTables: unknown,
+): { name: string; rows: Record<string, unknown>[] }[] {
+  if (!rawTables || typeof rawTables !== 'object' || Array.isArray(rawTables)) {
+    throw new AppDataException(
+      AppDataErrorCode.INVALID_MANIFEST,
+      'seed requires a "tables" object map ({ "<table>": [ {row}, ... ] })',
+    );
+  }
+  const tables = Object.entries(rawTables as Record<string, unknown>)
+    .filter(([, rows]) => Array.isArray(rows))
+    .map(([name, rows]) => ({
+      name,
+      rows: rows as Record<string, unknown>[],
+    }));
+  if (tables.length === 0) {
+    throw new AppDataException(
+      AppDataErrorCode.INVALID_MANIFEST,
+      'seed requires at least one table with a rows array',
+    );
+  }
+  return tables;
 }
 
 export function advisoryLockKey(appDataId: string, environment: AppDataEnvironment): string {

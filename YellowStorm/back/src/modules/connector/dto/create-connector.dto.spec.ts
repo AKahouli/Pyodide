@@ -1,6 +1,6 @@
 import { plainToInstance } from 'class-transformer';
 import { validate } from 'class-validator';
-import { CreateConnectorDto } from './create-connector.dto';
+import { ConnectorActionDto, CreateConnectorDto } from './create-connector.dto';
 import { UpdateConnectorDto } from './update-connector.dto';
 
 describe('Connector hidden visibility DTO', () => {
@@ -14,5 +14,22 @@ describe('Connector hidden visibility DTO', () => {
     const errors = await validate(plainToInstance(Dto, { isHidden: 'true' }));
 
     expect(errors.find((error) => error.property === 'isHidden')).toBeDefined();
+  });
+});
+
+describe('ConnectorActionDto web citation semantics', () => {
+  it('accepts configured web search semantics', async () => {
+    const errors = await validate(plainToInstance(ConnectorActionDto, {
+      key: 'search', label: 'Search', resultKind: 'web_search', citationMode: 'text_fragment',
+      resultMapping: { itemsPath: 'results', fields: { url: ['href'] } },
+    }));
+    expect(errors).toEqual([]);
+  });
+
+  it('rejects unknown result and citation modes', async () => {
+    const errors = await validate(plainToInstance(ConnectorActionDto, {
+      key: 'search', label: 'Search', resultKind: 'website', citationMode: 'trusted',
+    }));
+    expect(errors.map((error) => error.property)).toEqual(expect.arrayContaining(['resultKind', 'citationMode']));
   });
 });

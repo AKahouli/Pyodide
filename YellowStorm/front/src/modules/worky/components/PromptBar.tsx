@@ -1,4 +1,4 @@
-import { MessageCircle, Send } from 'lucide-react';
+import { Send } from 'lucide-react';
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type JSX } from 'react';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
@@ -12,8 +12,6 @@ interface PromptBarProps {
   streamId: string;
   status?: WorkyStreamStatus;
   sessionStatus?: string | null;
-  onWhatsAppClick?: () => void;
-  whatsappConnected?: boolean;
 }
 
 /**
@@ -29,8 +27,6 @@ export function PromptBar({
   streamId,
   status,
   sessionStatus,
-  onWhatsAppClick,
-  whatsappConnected,
 }: PromptBarProps): JSX.Element {
   const { t } = useModuleTranslation('worky');
   const [value, setValue] = useState('');
@@ -140,26 +136,6 @@ export function PromptBar({
               }
             }}
           />
-          {onWhatsAppClick ? (
-            <Button
-              type='button'
-              size='icon'
-              variant='ghost'
-              onClick={onWhatsAppClick}
-              disabled={isDisabled}
-              aria-label={t('whatsapp.openModal')}
-              data-testid='worky-prompt-whatsapp'
-              className='relative size-10 shrink-0 rounded-lg'
-            >
-              <MessageCircle className='h-4 w-4' />
-              {whatsappConnected ? (
-                <span
-                  className='absolute right-1 top-1 h-2 w-2 rounded-full bg-green-500'
-                  data-testid='worky-prompt-whatsapp-connected'
-                />
-              ) : null}
-            </Button>
-          ) : null}
           <Button
             type='submit'
             size='icon'

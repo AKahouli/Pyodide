@@ -1,4 +1,4 @@
-import { IsString, IsOptional, IsIn, IsArray, IsEmail, IsInt, Min, Max, MaxLength, ArrayMaxSize } from 'class-validator';
+import { IsString, IsOptional, IsIn, IsArray, IsEmail, IsInt, IsBoolean, Min, Max, MaxLength, ArrayMaxSize } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Transform } from 'class-transformer';
 
@@ -24,6 +24,11 @@ export class CreateShareDto {
   @ArrayMaxSize(20)
   @IsEmail({}, { each: true })
   recipientEmails?: string[];
+
+  @ApiPropertyOptional({ description: 'Also grant read access to referenced workspaces owned by the sharer' })
+  @IsOptional()
+  @IsBoolean()
+  shareWorkspaces?: boolean;
 
   @ApiPropertyOptional({ description: 'Expiry in days', minimum: 1, maximum: 365 })
   @IsOptional()

@@ -1,20 +1,17 @@
-import { Injectable } from '@nestjs/common';
-import { InjectModel } from '@nestjs/mongoose';
+import { Inject, Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { createHash, randomBytes } from 'node:crypto';
-import { Model, Types } from 'mongoose';
 import { LoggerService } from '@modules/logger';
 import { ErrorCode } from '@modules/exceptions/constants/error-codes';
 import { BadRequestException } from '@modules/exceptions';
-import { TelegramLinkCode, TelegramLinkCodeDocument } from '../schemas/telegram-link-code.schema';
-import { AgentTelegramIntegrationDocument } from '../schemas/agent-telegram-integration.schema';
+import { TELEGRAM_LINK_CODE_STORE, type TelegramIntegrationRow, type TelegramLinkCodeRow, type TelegramLinkCodeStore } from '../persistence/telegram.store';
 import { TelegramLinkCodeResponseDto } from '../dto/telegram-integration-response.dto';
 
 @Injectable()
 export class TelegramLinkCodeService {
   constructor(
-    @InjectModel(TelegramLinkCode.name)
-    private readonly linkCodeModel: Model<TelegramLinkCodeDocument>,
+    @Inject(TELEGRAM_LINK_CODE_STORE)
+    private readonly linkCodeStore: TelegramLinkCodeStore,
     private readonly configService: ConfigService,
     private readonly logger: LoggerService,
   ) {
@@ -22,7 +19,7 @@ export class TelegramLinkCodeService {
   }
 
   async generateForIntegration(
-    integration: AgentTelegramIntegrationDocument,
+    integration: TelegramIntegrationRow,
   ): Promise<TelegramLinkCodeResponseDto> {
     const ttlSeconds = this.configService.get<number>('telegram.linkCodeTtlSeconds', 900);
     const length = this.configService.get<number>('telegram.linkCodeLength', 8);
@@ -30,18 +27,13 @@ export class TelegramLinkCodeService {
     const codeHash = this.hashCode(code);
     const expiresAt = new Date(Date.now() + ttlSeconds * 1000);
 
-    await this.linkCodeModel.deleteMany({
-      integrationId: integration._id,
-      consumed: false,
-    });
-
-    await this.linkCodeModel.create({
-      integrationId: integration._id,
+    // withTransaction { DELETE unconsumed; INSERT } (plan 4.7).
+    await this.linkCodeStore.generate({
+      integrationId: integration.id,
       userId: integration.userId,
       agentId: integration.agentId,
       codeHash,
       expiresAt,
-      consumed: false,
     });
 
     return {
@@ -52,22 +44,11 @@ export class TelegramLinkCodeService {
 
   async consumeCodeOrThrow(
     code: string,
-    integrationId: Types.ObjectId,
-  ): Promise<TelegramLinkCodeDocument> {
+    integrationId: string,
+  ): Promise<TelegramLinkCodeRow> {
     const codeHash = this.hashCode(code);
-    const now = new Date();
-    const record = await this.linkCodeModel.findOneAndUpdate(
-      {
-        codeHash,
-        integrationId,
-        consumed: false,
-        expiresAt: { $gt: now },
-      },
-      {
-        $set: { consumed: true, consumedAt: now },
-      },
-      { new: true },
-    );
+    // Conditional UPDATE ... RETURNING (plan 4.7).
+    const record = await this.linkCodeStore.consume(codeHash, integrationId);
 
     if (!record) {
       throw new BadRequestException(

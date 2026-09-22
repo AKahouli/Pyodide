@@ -1,29 +1,11 @@
 import type { ConversationLatencyMetricsV1 } from './latency.interface';
+import type { ConversationUsageAttribution, ConversationUsageMetrics } from '../utils/usage-metrics';
 
 export type ConversationType = 'user' | 'ai';
 
-export type {
-  ConversationLatencyMetricsV1,
-  ConversationLatencyQuality,
-} from './latency.interface';
+export type { ConversationLatencyMetricsV1, ConversationLatencyQuality } from './latency.interface';
 
-export type ComponentType =
-  | 'text'
-  | 'code'
-  | 'agentActivity'
-  | 'plan'
-  | 'queue'
-  | 'checkpoint'
-  | 'chart'
-  | 'task'
-  | 'error'
-  | 'sources'
-  | 'sandbox'
-  | 'webPreview'
-  | 'artifact'
-  | 'citation'
-  | 'toolActivity'
-  | 'choice';
+export type ComponentType = 'text' | 'code' | 'agentActivity' | 'plan' | 'queue' | 'checkpoint' | 'chart' | 'task' | 'error' | 'sources' | 'sandbox' | 'webPreview' | 'artifact' | 'citation' | 'toolActivity' | 'choice';
 
 export interface AgentActivityData extends Record<string, unknown> {
   summary: string;
@@ -96,7 +78,12 @@ export interface ReliabilityEvaluation {
   claimCounts?: ReliabilityClaimCounts;
   claims?: ReliabilityFinding[];
   findings?: ReliabilityFinding[];
-  evaluator?: { modelId: string; modelName: string; evaluatorVersion: string; promptVersion: string };
+  evaluator?: {
+    modelId: string;
+    modelName: string;
+    evaluatorVersion: string;
+    promptVersion: string;
+  };
   requestedAt?: string;
   evaluatedAt?: string;
   durationMs?: number;
@@ -124,11 +111,13 @@ export interface MessageReplayContext {
   taskSummary?: string;
   attachedFileIds: string[];
   webSearchEnabled: boolean;
+  webConnectorAccessEnabled?: boolean;
   deepSearchEnabled: boolean;
   modelId?: string;
   semanticModelId?: string;
   reasoningEffort?: string;
   agentIds: string[];
+  teamId?: string;
   skillIds: string[];
   connectorRepo?: {
     connectorId: string;
@@ -172,16 +161,7 @@ export interface AppliedCorrection {
 
 export type CorrectionAttemptStatus = 'generating' | 'generated' | 'evaluating' | 'accepted' | 'rejected' | 'failed';
 export type CorrectionAttemptDecision = 'accepted' | 'rejected' | 'failed';
-export type CorrectionPolicyReason =
-  | 'policy_requirements_met'
-  | 'answer_empty'
-  | 'evaluation_not_applicable'
-  | 'evaluation_not_completed'
-  | 'score_below_threshold'
-  | 'score_below_original'
-  | 'critical_claim_unresolved'
-  | 'candidate_generation_failed'
-  | 'candidate_evaluation_failed';
+export type CorrectionPolicyReason = 'policy_requirements_met' | 'answer_empty' | 'evaluation_not_applicable' | 'evaluation_not_completed' | 'score_below_threshold' | 'score_below_original' | 'critical_claim_unresolved' | 'candidate_generation_failed' | 'candidate_evaluation_failed';
 
 export interface ResponseCorrectionAttempt {
   attemptId: string;
@@ -198,7 +178,12 @@ export interface ResponseCorrectionAttempt {
   createdAt: string;
   generatedAt?: string;
   completedAt?: string;
-  correctionModel?: { modelId: string; modelName: string; correctorVersion: string; promptVersion: string };
+  correctionModel?: {
+    modelId: string;
+    modelName: string;
+    correctorVersion: string;
+    promptVersion: string;
+  };
 }
 
 export interface ResponseCorrectionWorkflow {
@@ -221,7 +206,12 @@ export interface ResponseCorrectionWorkflow {
   startedAt?: string;
   completedAt?: string;
   durationMs?: number;
-  correctionModel?: { modelId: string; modelName: string; correctorVersion: string; promptVersion: string };
+  correctionModel?: {
+    modelId: string;
+    modelName: string;
+    correctorVersion: string;
+    promptVersion: string;
+  };
   strategy?: 'existing_evidence' | 'corrective_replay';
   attempts?: ResponseCorrectionAttempt[];
   publishedAttemptId?: string;
@@ -285,6 +275,7 @@ export interface CompleteAIMessageData {
   interaction?: Record<string, unknown>;
   modelRequestTelemetry?: ModelRequestTelemetry;
   latencyMetrics?: ConversationLatencyMetricsV1;
+  usageAttribution?: ConversationUsageAttribution;
 }
 
 export interface ModelRequestTelemetry {
@@ -304,6 +295,7 @@ export interface MessageQueryParams {
 export interface CursorPaginatedMessages {
   messages: MessageResponse[];
   branchesByQuestion: Record<string, MessageResponse[]>;
+  conversationUsage: ConversationUsageMetrics;
   pagination: { mode: 'cursor'; limit: number; hasMore: boolean; nextCursor: string | null };
 }
 
@@ -343,6 +335,7 @@ export interface MessageResponse {
   timeToFirstChunk?: number;
   timeToFirstToken?: number;
   latencyMetrics?: ConversationLatencyMetricsV1;
+  conversationUsage?: ConversationUsageMetrics;
   requestId?: string;
   agentIds?: string[];
   memberIds?: string[];
@@ -357,6 +350,7 @@ export interface MessageResponse {
 
 export interface PaginatedMessages {
   messages: MessageResponse[];
+  conversationUsage: ConversationUsageMetrics;
   pagination: {
     page: number;
     limit: number;

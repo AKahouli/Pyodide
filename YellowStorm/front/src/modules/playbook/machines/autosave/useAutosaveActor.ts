@@ -30,11 +30,13 @@ export function useAutosaveActor(enabled: boolean): AutosaveActorSnapshot {
   const snapshot = useSelector(actor, (state) => state);
   const status = (enabled ? snapshot.value : 'clean') as AutosaveStatus;
 
-  return {
+  // Stable identity across renders: useAutosave keys its debounce effect on this
+  // object, so a fresh literal every render would tear down the pending save timer.
+  return useMemo(() => ({
     status,
     canSaveNow: enabled && !['savingDelta', 'savingFull', 'conflict'].includes(status),
     isSaving: enabled && ['savingDelta', 'savingFull'].includes(status),
     isBlockedByConflict: enabled && status === 'conflict',
     send: actor.send,
-  };
+  }), [actor, enabled, status]);
 }

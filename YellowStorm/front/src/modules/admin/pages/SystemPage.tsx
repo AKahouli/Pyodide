@@ -58,6 +58,7 @@ import type { MaintenanceStatus, RegistrationStatus } from '../types';
 import { CorsSettingsCard } from '../components/CorsSettingsCard';
 import { FeatureVisibilityCard } from '../components/FeatureVisibilityCard';
 import { SensitiveTextRedactionCard } from '../components/SensitiveTextRedactionCard';
+import { LoginSettingsCard } from '../components/LoginSettingsCard';
 import { useModuleTranslation } from '@/modules/localization';
 import type { ModuleTranslationKey, TranslationParams } from '@/modules/localization';
 
@@ -343,6 +344,8 @@ export function SystemPage() {
       <FeatureVisibilityCard />
 
       <SensitiveTextRedactionCard />
+
+      <LoginSettingsCard />
 
       {/* Maintenance Mode Card */}
       <Card>

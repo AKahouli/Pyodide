@@ -8,9 +8,30 @@ import pytest
 from src.connector_tool_name import build_connector_tool_name
 from src.smart_rag.tools.utilities.connector_tools import (
     ConnectorToolContext,
+    apply_dynamic_workspace_headers,
     create_connector_tools,
+    without_dynamic_workspace_headers,
 )
 from src.smart_rag.infrastructure.external.purpose_aware_mcp import DISPLAY_PURPOSE_KEY
+
+
+def test_dynamic_workspace_headers_override_stale_values_and_omit_empty_scope() -> None:
+    config = [{"header_name": "Workspace-Id", "source": "workspace"}]
+
+    assert apply_dynamic_workspace_headers(
+        {"workspace-id": "stale", "Authorization": "Bearer token"},
+        config,
+        ["workspace-1", "workspace-2", "workspace-1"],
+    ) == {
+        "Authorization": "Bearer token",
+        "Workspace-Id": "workspace-1,workspace-2",
+    }
+    assert apply_dynamic_workspace_headers(
+        {"Workspace-Id": "stale"}, config, []
+    ) == {}
+    assert without_dynamic_workspace_headers(
+        {"headers": {"workspace-id": "stale", "X-Other": "kept"}}, config
+    ) == {"headers": {"X-Other": "kept"}}
 
 
 def _connector_binding(
@@ -19,6 +40,8 @@ def _connector_binding(
     fixed_params=None,
     action_key="search",
     connector_slug="workspace",
+    dynamic_headers=None,
+    parameter_schema_json=None,
 ):
     return {
         "connector_id": "connector-1",
@@ -28,12 +51,14 @@ def _connector_binding(
         "mcp_server_url": "https://example.com/mcp",
         "auth_headers": auth_headers or {},
         "fixed_params": fixed_params or {},
+        "dynamic_headers": dynamic_headers or [],
         "actions": [
             {
                 "action_key": action_key,
                 "label": "Search",
                 "description": "Search workspace content",
                 "parameter_schema": parameter_schema,
+                **({"parameter_schema_json": parameter_schema_json} if parameter_schema_json is not None else {}),
             }
         ],
     }
@@ -50,6 +75,8 @@ def _first_connector_tool(
     action_key="search",
     connector_slug="workspace",
     user_id=None,
+    dynamic_headers=None,
+    parameter_schema_json=None,
 ):
     tools = create_connector_tools(
         [_connector_binding(
@@ -58,6 +85,8 @@ def _first_connector_tool(
             fixed_params,
             action_key,
             connector_slug,
+            dynamic_headers,
+            parameter_schema_json,
         )],
         ConnectorToolContext(
             workspace_id=workspace_id,
@@ -181,7 +210,31 @@ def test_connector_tool_name_sanitization_does_not_change_mcp_action(
     assert captured["action_key"] == "search\u001c"
 
 
-def test_connector_tool_binds_generic_params_as_workspace_id(
+def test_connector_tool_does_not_inject_workspace_id_for_strict_schema(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured = {}
+
+    async def fake_call_mcp_tool(*args, **kwargs):
+        captured["params"] = args[4]
+        return {"text": "ok"}
+
+    monkeypatch.setattr(
+        "src.flow_engine.mcp.call_mcp_tool",
+        fake_call_mcp_tool,
+    )
+
+    tool = _first_connector_tool(
+        {"type": "object", "properties": {"query": {"type": "string"}}},
+        workspace_names=["workspace-alpha"],
+    )
+
+    asyncio.run(tool.func(query="revenue"))
+
+    assert captured["params"] == {"query": "revenue"}
+
+
+def test_connector_tool_does_not_inject_workspace_id_for_strict_empty_schema(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     captured = {}
@@ -197,11 +250,90 @@ def test_connector_tool_binds_generic_params_as_workspace_id(
 
     tool = _first_connector_tool({}, workspace_names=["workspace-alpha"])
 
-    asyncio.run(tool.func(query="revenue"))
+    asyncio.run(tool.func())
+
+    assert captured["params"] == {}
+
+
+def test_connector_tool_strips_nullish_optional_parameters_before_mcp_call(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured = {}
+
+    async def fake_call_mcp_tool(*args, **kwargs):
+        captured["params"] = args[4]
+        return {"text": "ok"}
+
+    monkeypatch.setattr("src.flow_engine.mcp.call_mcp_tool", fake_call_mcp_tool)
+
+    tool = _first_connector_tool(
+        {
+            "type": "object",
+            "properties": {
+                "query": {"type": "string"},
+                "query_type": {"type": "string", "enum": ["internal", "user"]},
+                "page_size": {"type": "integer"},
+                "data_source_url": {"type": "string"},
+                "teamspace_id": {"type": "string"},
+                "filters": {"type": "object"},
+                "sort": {"type": "string", "enum": ["relevance", "last_edited", "created"]},
+            },
+            "required": ["query"],
+        }
+    )
+
+    asyncio.run(
+        tool.func(
+            query="Emails",
+            query_type=None,
+            page_size=None,
+            data_source_url=None,
+            teamspace_id=None,
+            filters=None,
+            sort=None,
+        )
+    )
+
+    assert captured["params"] == {"query": "Emails"}
+
+
+def test_connector_tool_uses_serialized_parameter_schema_for_model_contract(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured = {}
+
+    async def fake_call_mcp_tool(*args, **kwargs):
+        captured["params"] = args[4]
+        return {"text": "ok"}
+
+    monkeypatch.setattr(
+        "src.flow_engine.mcp.call_mcp_tool",
+        fake_call_mcp_tool,
+    )
+
+    tool = _first_connector_tool(
+        {},
+        workspace_names=["workspace-alpha"],
+        parameter_schema_json=(
+            '{"type":"object","properties":{'
+            '"entity_type":{"type":"string","enum":["message"]},'
+            '"query":{"type":"string"},'
+            '"size":{"type":"integer"}},'
+            '"required":["entity_type","query"]}'
+        ),
+    )
+
+    assert "entity_type" in tool.custom_schema["parameters"]["properties"]
+    assert "query" in tool.custom_schema["parameters"]["properties"]
+    assert "size" in tool.custom_schema["parameters"]["properties"]
+    assert "top" not in tool.custom_schema["parameters"]["properties"]
+    assert "sort" not in tool.custom_schema["parameters"]["properties"]
+
+    asyncio.run(tool.func(entity_type="message", query="from:sender@example.com"))
 
     assert captured["params"] == {
-        "query": "revenue",
-        "workspace_id": "workspace-alpha",
+        "entity_type": "message",
+        "query": "from:sender@example.com",
     }
 
 
@@ -417,12 +549,59 @@ def test_connector_tool_injects_streamable_http_file_workspace_headers(
         "Authorization": "Bearer token",
         "X-User-Id": "user-1",
         "workspace_id": '["workspace-1", "workspace-2", "workspace-alpha"]',
-        "Workspace-Id": "workspace-1,workspace-2",
         "x-conversation-id": "conversation-1",
         # The run's own Ceph folder rides last, so the sandbox mounts somewhere a
         # connector can drop a file mid-run and the code interpreter can read it.
         "x-workspace-paths": "user-1/workspace-alpha,user-1/workspace-beta,user-1/system_conversation-1",
+        # Exact document object keys, so the sandbox can mount the real files
+        # (essential for CODE_ONLY attachments excluded from search indexing).
+        "x-file-paths": "user-1/workspace-alpha/Search Explanation.docx,user-1/workspace-beta/private-notes.txt",
     }
+
+
+def test_connector_tool_percent_encodes_unsafe_file_paths(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured = {}
+
+    async def fake_call_mcp_tool(*args, **kwargs):
+        captured["auth_headers"] = kwargs.get("auth_headers")
+        return {"text": "ok"}
+
+    monkeypatch.setattr("src.flow_engine.mcp.call_mcp_tool", fake_call_mcp_tool)
+
+    tool = _first_connector_tool(
+        {},
+        workspace_id="workspace-1",
+        workspace_names=["workspace-alpha"],
+        auth_headers={"Authorization": "Bearer token", "X-User-Id": "user-1"},
+        brain_documents=[
+            {
+                "file_name": "report—final.csv",
+                "workspace_id": "workspace-1",
+                "workspace_name": "workspace-alpha",
+                "filepath": "user-1/conv-1/report—final.csv",
+            },
+            {
+                "file_name": "a,b.csv",
+                "workspace_id": "workspace-1",
+                "workspace_name": "workspace-alpha",
+                "filepath": "user-1/conv-1/a,b.csv",
+            },
+        ],
+        session_id="conversation-1",
+        connector_slug="code-interpreter",
+        user_id="user-1",
+    )
+
+    asyncio.run(tool.func(query="revenue"))
+
+    header = captured["auth_headers"]["x-file-paths"]
+    entries = header.split(",")
+    # Both keys survive the comma-delimited list and the latin-1 header encode.
+    assert len(entries) == 2
+    for entry in entries:
+        entry.encode("latin-1")
 
 
 def test_logical_search_connector_sends_only_authorization_and_workspace_scope(
@@ -454,6 +633,9 @@ def test_logical_search_connector_sends_only_authorization_and_workspace_scope(
     )
     binding["connector_name"] = "Logical Search MCP"
     binding["connector_slug"] = "logical-search"
+    binding["dynamic_headers"] = [
+        {"header_name": "Workspace-Id", "source": "workspace"}
+    ]
     binding["mcp_server_config"] = {
         "headers": {
             "aUtHoRiZaTiOn": "Bearer gateway-token",
@@ -505,6 +687,9 @@ def test_sse_connector_tool_gets_conversation_and_execution_ids(
     binding = _connector_binding({"type": "object", "properties": {}})
     binding["mcp_transport_type"] = "sse"
     binding["auth_headers"] = {"Authorization": "Bearer token"}
+    binding["dynamic_headers"] = [
+        {"header_name": "Workspace-Id", "source": "workspace"}
+    ]
     tool = create_connector_tools(
         [binding],
         ConnectorToolContext(workspace_id="workspace-1", session_id="conversation-1"),
@@ -516,6 +701,7 @@ def test_sse_connector_tool_gets_conversation_and_execution_ids(
         "Authorization": "Bearer token",
         "x-conversation-id": "conversation-1",
         "x-execution-id": "e-123",
+        "Workspace-Id": "workspace-1",
     }
 
 
@@ -579,9 +765,7 @@ def test_code_interpreter_mounts_selected_workspace_without_selected_documents(
 
     asyncio.run(tool.func())
 
-    assert captured["auth_headers"]["Workspace-Id"] == (
-        "selected-workspace,private-workspace"
-    )
+    assert "Workspace-Id" not in captured["auth_headers"]
     assert captured["auth_headers"]["x-workspace-paths"] == (
         "user-1/selected-workspace,private-owner/private-prefix"
     )
@@ -621,9 +805,7 @@ def test_code_interpreter_keeps_selected_root_when_workspace_aliases_collide(
 
     asyncio.run(tool.func())
 
-    assert captured["auth_headers"]["Workspace-Id"] == (
-        "selected-workspace,private-workspace"
-    )
+    assert "Workspace-Id" not in captured["auth_headers"]
     assert captured["auth_headers"]["x-workspace-paths"] == "user-1/shared-prefix"
 
 

@@ -1,50 +1,48 @@
 import { BadRequestException } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
-import { getModelToken } from '@nestjs/mongoose';
 import { ConnectorService } from '../connector/connector.service';
-import { SystemSetting } from './schemas/system-setting.schema';
+import { SYSTEM_SETTING_STORE, type SystemSettingRow, type SystemSettingStore } from './persistence/system-setting.store';
 import { WorkspaceEvidenceSearchSettingsService } from './workspace-evidence-search-settings.service';
 
-interface StoredSetting {
-  key: string;
-  value: { connectorId: string | null };
-  updatedAt?: Date;
-}
+class InMemorySettingStore implements SystemSettingStore {
+  private readonly rows = new Map<string, SystemSettingRow>();
 
-class InMemoryModel {
-  private readonly store = new Map<string, StoredSetting>();
-
-  findOne({ key }: { key: string }): { lean: () => { exec: () => Promise<StoredSetting | null> } } {
-    return { lean: () => ({ exec: async () => this.store.get(key) ?? null }) };
+  async get(key: string): Promise<SystemSettingRow | null> {
+    return this.rows.get(key) ?? null;
   }
 
-  findOneAndUpdate(
-    filter: { key: string },
-    update: { key: string; value: { connectorId: string | null } },
-  ): { lean: () => { exec: () => Promise<StoredSetting> } } {
-    const next = { key: filter.key, value: update.value, updatedAt: new Date() };
-    this.store.set(filter.key, next);
-    return { lean: () => ({ exec: async () => next }) };
+  async getMany(keys: string[]): Promise<SystemSettingRow[]> {
+    return keys.flatMap((key) => (this.rows.has(key) ? [this.rows.get(key)!] : []));
   }
 
-  seed(setting: StoredSetting): void {
-    this.store.set(setting.key, setting);
+  async upsert(key: string, value: unknown): Promise<SystemSettingRow> {
+    const row: SystemSettingRow = { key, value, updatedAt: new Date() };
+    this.rows.set(key, row);
+    return row;
+  }
+
+  async delete(key: string): Promise<void> {
+    this.rows.delete(key);
+  }
+
+  seed(row: SystemSettingRow): void {
+    this.rows.set(row.key, row);
   }
 }
 
 describe('WorkspaceEvidenceSearchSettingsService', () => {
   let service: WorkspaceEvidenceSearchSettingsService;
-  let model: InMemoryModel;
+  let store: InMemorySettingStore;
   const connectorService = { findById: jest.fn(), findAll: jest.fn() };
 
   beforeEach(async () => {
-    model = new InMemoryModel();
+    store = new InMemorySettingStore();
     connectorService.findById.mockReset();
     connectorService.findAll.mockReset();
     const moduleRef = await Test.createTestingModule({
       providers: [
         WorkspaceEvidenceSearchSettingsService,
-        { provide: getModelToken(SystemSetting.name), useValue: model },
+        { provide: SYSTEM_SETTING_STORE, useValue: store },
         { provide: ConnectorService, useValue: connectorService },
       ],
     }).compile();
@@ -56,7 +54,7 @@ describe('WorkspaceEvidenceSearchSettingsService', () => {
   });
 
   it('returns the persisted connector selection', async () => {
-    model.seed({
+    store.seed({
       key: 'workspace_evidence_search',
       value: { connectorId: 'connector-1' },
       updatedAt: new Date('2026-07-13T00:00:00Z'),

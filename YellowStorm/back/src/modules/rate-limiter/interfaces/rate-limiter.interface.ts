@@ -18,9 +18,3 @@ export interface RateLimitOptions {
   keyPrefix?: string;
 }
 
-export interface RateLimitStore {
-  increment(key: string, windowMs: number): Promise<RateLimitRecord>;
-  get(key: string): Promise<RateLimitRecord | null>;
-  reset(key: string): Promise<void>;
-  cleanup(): Promise<void>;
-}
