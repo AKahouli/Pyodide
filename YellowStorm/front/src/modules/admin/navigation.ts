@@ -20,6 +20,7 @@ export const NAVIGATION_TARGETS: Record<NavigationTargetKey, {
   connectedApps: { permission: 'menu.connected_apps', path: '/apps', defaultLabels: { en: 'Connected apps', fr: 'Applications connectees' } },
   appMarketplace: { permission: 'menu.app_marketplace', path: '/app-market', defaultLabels: { en: 'App marketplace', fr: "Marketplace d'applications" }, feature: 'appBuilder' },
   governance: { permission: 'menu.governance', path: '/governance', defaultLabels: { en: 'Governance', fr: 'Gouvernance' }, feature: 'governance' },
+  evaluationLogicalSearch: { permission: 'menu.evaluation_logical_search', path: '/evaluation-logical-search', defaultLabels: { en: 'Logical search evaluation', fr: 'Evaluation recherche logique' }, feature: 'governance' },
   admin: { permission: 'menu.admin', path: '/admin', defaultLabels: { en: 'Administration', fr: 'Administration' } },
 };
 
@@ -46,7 +47,8 @@ export const DEFAULT_NAVIGATION_SETTINGS: NavigationSettings = {
     { id: 'history', type: 'item', parentId: 'ask', position: 1, visible: true, labels: NAVIGATION_TARGETS.history.defaultLabels, targetKey: 'history' },
     { id: 'govern', type: 'group', parentId: null, position: 4, visible: true, labels: { en: 'Govern', fr: 'Gouverner' } },
     { id: 'governance', type: 'item', parentId: 'govern', position: 0, visible: true, labels: NAVIGATION_TARGETS.governance.defaultLabels, targetKey: 'governance' },
-    { id: 'admin', type: 'item', parentId: 'govern', position: 1, visible: true, labels: NAVIGATION_TARGETS.admin.defaultLabels, targetKey: 'admin' },
+    { id: 'evaluation-logical-search', type: 'item', parentId: 'govern', position: 1, visible: true, labels: NAVIGATION_TARGETS.evaluationLogicalSearch.defaultLabels, targetKey: 'evaluationLogicalSearch' },
+    { id: 'admin', type: 'item', parentId: 'govern', position: 2, visible: true, labels: NAVIGATION_TARGETS.admin.defaultLabels, targetKey: 'admin' },
   ],
 };
 

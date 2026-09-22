@@ -95,6 +95,7 @@ export const MENU_PERMISSION_ITEMS = [
   { key: 'appMarketplace', permission: 'menu.app_marketplace', labelKey: 'roles.permissions.menus.appMarketplace', depth: 2, parent: 'integrations' },
   { key: 'govern', permission: 'menu.govern', labelKey: 'roles.permissions.menus.govern', depth: 0 },
   { key: 'governance', permission: 'menu.governance', labelKey: 'roles.permissions.menus.governance', depth: 1, parent: 'govern' },
+  { key: 'evaluationLogicalSearch', permission: 'menu.evaluation_logical_search', labelKey: 'roles.permissions.menus.evaluationLogicalSearch', depth: 1, parent: 'govern' },
   { key: 'admin', permission: 'menu.admin', labelKey: 'roles.permissions.menus.admin', depth: 1, parent: 'govern' },
 ] as const satisfies readonly {
   key: string;

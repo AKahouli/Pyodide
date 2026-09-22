@@ -9,7 +9,7 @@ describe('visibleNavigationItems', () => {
     settings.nodes.find((node) => node.id === 'work')!.position = 1;
 
     const targets = visibleNavigationItems(settings).map((node) => node.targetKey);
-    expect(targets.slice(0, 2)).toEqual(['governance', 'admin']);
+    expect(targets.slice(0, 3)).toEqual(['governance', 'evaluationLogicalSearch', 'admin']);
     expect(targets).not.toContain('workspace');
     expect(targets).not.toContain('semanticModels');
   });

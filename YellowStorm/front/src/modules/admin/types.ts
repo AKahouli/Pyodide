@@ -179,7 +179,7 @@ export interface SetMaintenanceRequest {
 export type NavigationTargetKey =
   | 'platform' | 'newChat' | 'projects' | 'history' | 'workspace' | 'semanticModels'
   | 'playbook' | 'agents' | 'teams' | 'groups' | 'worky' | 'connectedApps'
-  | 'appMarketplace' | 'governance' | 'admin';
+  | 'appMarketplace' | 'governance' | 'evaluationLogicalSearch' | 'admin';
 
 export interface NavigationNode {
   id: string;
