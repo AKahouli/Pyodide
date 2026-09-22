@@ -1,5 +1,6 @@
 import { Module, forwardRef } from '@nestjs/common';
-import { MongooseModule } from '@nestjs/mongoose';
+import { AGENT_SHARE_STORE } from './persistence/agent-share.store';
+import { PgAgentShareStore } from './persistence/pg-agent-share.store';
 import { ConfigModule } from '@nestjs/config';
 import { AgentController } from './controllers/agent.controller';
 import { PublicAgentController } from './controllers/public-agent.controller';
@@ -13,7 +14,6 @@ import { AgentConnectorRuntimeService } from './services/agent-connector-runtime
 import { AgentPermissionGuard } from './guards/agent-permission.guard';
 import { A2AAdminGrpcClientService } from './services/a2a-admin.grpc-client.service';
 import { A2APublishService } from './services/a2a-publish.service';
-import { SharedAgent, SharedAgentSchema } from './schemas/shared-agent.schema';
 import a2aAdminConfig from '@config/a2a-admin.config';
 import { AgentTypeModule } from '../agent-type/agent-type.module';
 import { AuthorizationModule } from '../authorization/authorization.module';
@@ -31,14 +31,20 @@ import { AgentTaskExecutionService } from './services/agent-task-execution.servi
 import { AGENT_TASK_EXECUTION } from './agent-task-execution.token';
 import { UsageModule } from '../usage/usage.module';
 import { AgentRepositoryModule } from './repositories/agent-repository.module';
+import { CHANNEL_TEARDOWN, type ChannelTeardown } from '../channels-teardown/channels-teardown.token';
+import { TelegramChannelTeardown } from '../channels-teardown/telegram-channel-teardown';
+import { WidgetChannelTeardown } from '../channels-teardown/widget-channel-teardown';
+import { CryptoService } from '@common/services/crypto.service';
+import { TelegramApiService } from '../telegram/services/telegram-api.service';
+import { TELEGRAM_INTEGRATION_STORE } from '../telegram/persistence/telegram.store';
+import { PgTelegramIntegrationStore } from '../telegram/persistence/pg-telegram.store';
+import { WIDGET_TOKEN_STORE } from '../widget-chat/persistence/widget.store';
+import { PgWidgetTokenStore } from '../widget-chat/persistence/pg-widget.store';
 
 @Module({
   imports: [
     ConfigModule,
     ConfigModule.forFeature(a2aAdminConfig),
-    MongooseModule.forFeature([
-      { name: SharedAgent.name, schema: SharedAgentSchema },
-    ]),
     AgentTypeModule,
     AuthorizationModule,
     ToolModule,
@@ -55,8 +61,33 @@ import { AgentRepositoryModule } from './repositories/agent-repository.module';
     AgentRepositoryModule,
   ],
   controllers: [AgentController, PublicAgentController, AdminAgentController, AgentA2AController, AgentShareController, AgentCrudInternalController],
-  providers: [AgentService, AgentShareService, AgentConnectorRuntimeService, AgentPermissionGuard, A2AAdminGrpcClientService, A2APublishService, AgentTaskExecutionService, { provide: AGENT_TASK_EXECUTION, useExisting: AgentTaskExecutionService }],
+  providers: [
+    // Shares cutover (plan 4.1); exported for the telegram/widget guards.
+    { provide: AGENT_SHARE_STORE, useClass: PgAgentShareStore },
+    // Channel teardown (plan 4.6). The adapters live here, not in the channel
+    // modules, because those import AgentModule (a reverse import would cycle).
+    CryptoService,
+    TelegramApiService,
+    { provide: TELEGRAM_INTEGRATION_STORE, useClass: PgTelegramIntegrationStore },
+    { provide: WIDGET_TOKEN_STORE, useClass: PgWidgetTokenStore },
+    TelegramChannelTeardown,
+    WidgetChannelTeardown,
+    {
+      provide: CHANNEL_TEARDOWN,
+      useFactory: (...teardowns: ChannelTeardown[]) => teardowns,
+      inject: [TelegramChannelTeardown, WidgetChannelTeardown],
+    },
+    AgentService,
+    AgentShareService,
+    AgentConnectorRuntimeService,
+    AgentPermissionGuard,
+    A2AAdminGrpcClientService,
+    A2APublishService,
+    AgentTaskExecutionService,
+    { provide: AGENT_TASK_EXECUTION, useExisting: AgentTaskExecutionService },
+  ],
   exports: [
+    AGENT_SHARE_STORE,
     AgentService,
     AgentShareService,
     AgentConnectorRuntimeService,

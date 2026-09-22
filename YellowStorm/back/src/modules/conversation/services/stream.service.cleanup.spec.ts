@@ -62,18 +62,21 @@ describe('StreamService.startStream exception-safe cleanup (F04)', () => {
       messageService as never,
       conversationService as never,
       logger as never,
-      {} as never,
-      {} as never,
-      {} as never,
-      {} as never,
-      {} as never,
-      {} as never,
-      {} as never,
-      {} as never,
-      {} as never,
-      {} as never,
+      {} as never, // usageService
+      {} as never, // workspaceDocumentService
+      {} as never, // workspaceService
+      {} as never, // workspaceShareService
+      {} as never, // runCodeSourceScopeService
+      {} as never, // agentService
+      {} as never, // modelsService
+      {} as never, // skillService
+      {} as never, // responseReliabilityService
+      {} as never, // agentRequestBuilder
+      {} as never, // attachmentResolver
+      {} as never, // attachmentService
+      {} as never, // attachmentContextService
       conversationSettings as never,
-      {} as never,
+      {} as never, // semanticModelService
       executionStore as never,
     );
     // Bypass gRPC client init; the lease claim happens after this check.

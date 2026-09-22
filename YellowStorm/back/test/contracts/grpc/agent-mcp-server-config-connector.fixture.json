@@ -1,0 +1,72 @@
+{
+  "conv_v2_connectors": [
+    {
+      "connector_id": "64b000000000000000000a03",
+      "connector_name": "Local MCP",
+      "mcp_transport_type": "stdio",
+      "mcp_server_url": "",
+      "auth_headers": {},
+      "auth_env": {
+        "API_KEY": "runtime-secret"
+      },
+      "mcp_server_config_json": "{\"command\":\"npx\",\"args\":[\"-y\",\"some-mcp\"],\"env\":{\"API_URL\":\"https://api.example.test\"}}",
+      "actions": [
+        {
+          "action_key": "list_messages",
+          "label": "List messages",
+          "description": "List recent messages",
+          "parameter_schema_json": "{\"type\":\"object\",\"properties\":{\"top\":{\"type\":\"number\"}}}",
+          "result_kind": "generic",
+          "citation_mode": "none",
+          "result_mapping_json": "{}"
+        }
+      ]
+    }
+  ],
+  "connector_bindings": [
+    {
+      "connector_id": "64b000000000000000000a03",
+      "connector_name": "Local MCP",
+      "connector_slug": "local-mcp",
+      "actions": [
+        {
+          "action_key": "list_messages",
+          "label": "List messages",
+          "description": "List recent messages",
+          "parameter_schema": {},
+          "parameter_schema_json": "{\"type\":\"object\",\"properties\":{\"top\":{\"type\":\"number\"}}}",
+          "safety": "read",
+          "result_kind": "generic",
+          "citation_mode": "none",
+          "result_mapping_json": "{}"
+        }
+      ],
+      "fixed_params": {},
+      "mcp_transport_type": "stdio",
+      "mcp_server_url": "",
+      "mcp_server_config": {
+        "command": "npx",
+        "args": [
+          "-y",
+          "some-mcp"
+        ],
+        "env": {
+          "API_URL": "https://api.example.test"
+        }
+      },
+      "auth_headers": {},
+      "auth_env": {
+        "API_KEY": "runtime-secret"
+      },
+      "dynamic_headers": []
+    }
+  ],
+  "tools": [
+    {
+      "name": "local-mcp_list_messages",
+      "description": "List recent messages",
+      "prompt": "",
+      "top_k": 0
+    }
+  ]
+}

@@ -13,7 +13,7 @@ import {
 import { ApiTags, ApiOperation, ApiBearerAuth, ApiParam } from '@nestjs/swagger';
 import { AgentShareService } from '../services/agent-share.service';
 import { CurrentUser } from '../../auth/decorators/current-user.decorator';
-import { UserDocument } from '../../user/schemas/user.schema';
+import type { AuthUser } from '@common/auth/auth-user';
 import { ShareAgentDto, UpdateAgentSharePermissionDto } from '../dto';
 import { IAgentShareEntry } from '../interfaces/agent.interface';
 import { AgentPermissionGuard } from '../guards/agent-permission.guard';
@@ -32,7 +32,7 @@ export class AgentShareController {
   @ApiOperation({ summary: 'Share an agent with users by email' })
   @ApiParam({ name: 'id', description: 'Agent ID' })
   async shareAgent(
-    @CurrentUser() user: UserDocument,
+    @CurrentUser() user: AuthUser,
     @Param('id') agentId: string,
     @Body() dto: ShareAgentDto,
   ): Promise<IAgentShareEntry[]> {
@@ -81,7 +81,7 @@ export class AgentShareController {
   @ApiOperation({ summary: 'Remove a shared agent from your list' })
   @ApiParam({ name: 'id', description: 'Agent ID' })
   async unshareFromSelf(
-    @CurrentUser() user: UserDocument,
+    @CurrentUser() user: AuthUser,
     @Param('id') agentId: string,
   ): Promise<void> {
     return this.agentShareService.unshareFromSelf(user._id.toString(), agentId);

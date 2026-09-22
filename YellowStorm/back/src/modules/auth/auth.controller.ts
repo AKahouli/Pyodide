@@ -22,7 +22,7 @@ import { ForgotPasswordDto } from './dto/forgot-password.dto';
 import { ResetPasswordDto } from './dto/reset-password.dto';
 import { Public } from './decorators/public.decorator';
 import { CurrentUser } from './decorators/current-user.decorator';
-import { UserDocument } from '../user/schemas/user.schema';
+import type { AuthUser } from '@common/auth/auth-user';
 import { BadRequestException, UnauthorizedException } from '../exceptions';
 import { ErrorCode } from '../exceptions/constants/error-codes';
 import { getClientIp } from '@common/utils';
@@ -154,7 +154,7 @@ export class AuthController {
   @ApiResponse({ status: 200, description: 'Verification email sent' })
   @ApiResponse({ status: 400, description: 'Email already verified' })
   @ApiResponse({ status: 429, description: 'Too many requests' })
-  async resendVerification(@CurrentUser() user: UserDocument) {
+  async resendVerification(@CurrentUser() user: AuthUser) {
     await this.authService.resendVerificationEmail(user._id.toString(), user.email);
     return { message: 'Verification email has been sent' };
   }
@@ -204,7 +204,7 @@ export class AuthController {
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Get active sessions' })
   @ApiResponse({ status: 200, description: 'Sessions retrieved' })
-  async getSessions(@CurrentUser() user: UserDocument, @Req() req: Request) {
+  async getSessions(@CurrentUser() user: AuthUser, @Req() req: Request) {
     const refreshToken = req.cookies?.[this.cookieName];
     const currentSessionId = refreshToken
       ? this.authService.extractSessionIdFromToken(refreshToken)
@@ -224,7 +224,7 @@ export class AuthController {
   @ApiResponse({ status: 404, description: 'Session not found' })
   async invalidateSession(
     @Param('sessionId') sessionId: string,
-    @CurrentUser() user: UserDocument,
+    @CurrentUser() user: AuthUser,
   ) {
     await this.authService.invalidateSession(user._id.toString(), sessionId);
     return { message: 'Session invalidated' };

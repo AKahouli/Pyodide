@@ -11,7 +11,7 @@ import type { Observable } from 'rxjs';
 import { WorkyStreamAccessGuard } from '../guards/worky-stream-access.guard';
 import { WorkyEventService } from '../services/worky-event.service';
 import { CurrentUser } from '../../auth/decorators/current-user.decorator';
-import { UserDocument } from '../../user/schemas/user.schema';
+import type { AuthUser } from '@common/auth/auth-user';
 
 @ApiTags('Worky')
 @ApiBearerAuth()
@@ -30,7 +30,7 @@ export class WorkyEventsController {
   @UseGuards(WorkyStreamAccessGuard)
   @ApiOperation({ summary: 'SSE — live events for one Worky stream' })
   stream(
-    @CurrentUser() user: UserDocument,
+    @CurrentUser() user: AuthUser,
     @Param('id') streamId: string,
   ): Observable<MessageEvent> {
     const connectionId = `${user._id.toString()}:${streamId}:${Date.now()}`;

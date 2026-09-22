@@ -1,7 +1,7 @@
 import { Body, Controller, Get, HttpCode, HttpStatus, Param, Post, Put } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { CurrentUser } from '../../auth/decorators/current-user.decorator';
-import { UserDocument } from '../../user/schemas/user.schema';
+import type { AuthUser } from '@common/auth/auth-user';
 import { RequirePermissions } from '../../authorization/decorators/require-permissions.decorator';
 import { Permissions } from '../../authorization/constants/permissions';
 import { GeminiTokenService, VoiceSessionEnvelope } from './gemini-token.service';
@@ -44,7 +44,7 @@ export class WorkyVoiceController {
   @RequirePermissions(Permissions.WORKY_STREAM_WRITE)
   @ApiOperation({ summary: 'Mint an ephemeral Gemini Live session token (per-stream persona)' })
   async createSession(
-    @CurrentUser() user: UserDocument,
+    @CurrentUser() user: AuthUser,
     @Body() dto: CreateVoiceSessionDto,
   ): Promise<VoiceSessionEnvelope> {
     const prompt = dto.streamId
@@ -63,7 +63,7 @@ export class WorkyVoiceController {
   @Get('prompt/:streamId')
   @RequirePermissions(Permissions.WORKY_STREAM_WRITE)
   @ApiOperation({ summary: 'Get the per-stream concierge prompt (or the default)' })
-  async getPrompt(@CurrentUser() user: UserDocument, @Param('streamId') streamId: string) {
+  async getPrompt(@CurrentUser() user: AuthUser, @Param('streamId') streamId: string) {
     const { prompt } = await this.planning.getVoicePrompt(user._id.toString(), streamId);
     return { prompt: prompt ?? CONCIERGE_SYSTEM_PROMPT, isDefault: prompt == null };
   }
@@ -72,7 +72,7 @@ export class WorkyVoiceController {
   @RequirePermissions(Permissions.WORKY_STREAM_WRITE)
   @ApiOperation({ summary: 'Set (or reset via blank) the per-stream concierge prompt' })
   async setPrompt(
-    @CurrentUser() user: UserDocument,
+    @CurrentUser() user: AuthUser,
     @Param('streamId') streamId: string,
     @Body() dto: VoicePromptDto,
   ) {
@@ -84,7 +84,7 @@ export class WorkyVoiceController {
   @HttpCode(HttpStatus.OK)
   @RequirePermissions(Permissions.WORKY_STREAM_WRITE)
   @ApiOperation({ summary: 'Voice tool: dispatch a worky task' })
-  async dispatch(@CurrentUser() user: UserDocument, @Body() dto: VoiceDispatchDto) {
+  async dispatch(@CurrentUser() user: AuthUser, @Body() dto: VoiceDispatchDto) {
     return this.tools.dispatchTask(user._id.toString(), dto.streamId, dto.message);
   }
 
@@ -92,7 +92,7 @@ export class WorkyVoiceController {
   @HttpCode(HttpStatus.OK)
   @RequirePermissions(Permissions.WORKY_STREAM_WRITE)
   @ApiOperation({ summary: 'Voice tool: query the current worky task status' })
-  async status(@CurrentUser() user: UserDocument, @Body() dto: VoiceStatusDto) {
+  async status(@CurrentUser() user: AuthUser, @Body() dto: VoiceStatusDto) {
     return this.tools.queryStatus(user._id.toString(), dto.streamId);
   }
 
@@ -100,7 +100,7 @@ export class WorkyVoiceController {
   @HttpCode(HttpStatus.OK)
   @RequirePermissions(Permissions.WORKY_STREAM_WRITE)
   @ApiOperation({ summary: 'Voice tool: stop the whole worky run (StopSession RPC, terminal)' })
-  async stop(@CurrentUser() user: UserDocument, @Body() dto: VoiceStopDto) {
+  async stop(@CurrentUser() user: AuthUser, @Body() dto: VoiceStopDto) {
     return this.tools.stopSession(user._id.toString(), dto.streamId);
   }
 
@@ -108,7 +108,7 @@ export class WorkyVoiceController {
   @HttpCode(HttpStatus.OK)
   @RequirePermissions(Permissions.WORKY_STREAM_WRITE)
   @ApiOperation({ summary: 'Voice tool: list the stream tasks as compact summaries' })
-  async listTasks(@CurrentUser() user: UserDocument, @Body() dto: VoiceListTasksDto) {
+  async listTasks(@CurrentUser() user: AuthUser, @Body() dto: VoiceListTasksDto) {
     return this.tools.listTasks(user._id.toString(), dto.streamId);
   }
 
@@ -116,7 +116,7 @@ export class WorkyVoiceController {
   @HttpCode(HttpStatus.OK)
   @RequirePermissions(Permissions.WORKY_STREAM_WRITE)
   @ApiOperation({ summary: 'Voice tool: get full detail for one task' })
-  async taskDetails(@CurrentUser() user: UserDocument, @Body() dto: VoiceTaskDetailsDto) {
+  async taskDetails(@CurrentUser() user: AuthUser, @Body() dto: VoiceTaskDetailsDto) {
     return this.tools.getTaskDetails(user._id.toString(), dto.streamId, dto.taskId);
   }
 
@@ -124,7 +124,7 @@ export class WorkyVoiceController {
   @HttpCode(HttpStatus.OK)
   @RequirePermissions(Permissions.WORKY_STREAM_WRITE)
   @ApiOperation({ summary: 'Persist a voice transcript turn into chat history' })
-  async transcript(@CurrentUser() user: UserDocument, @Body() dto: VoiceTranscriptDto) {
+  async transcript(@CurrentUser() user: AuthUser, @Body() dto: VoiceTranscriptDto) {
     return this.planning.appendVoiceMessage(user._id.toString(), dto.streamId, dto.role, dto.text);
   }
 
@@ -132,7 +132,7 @@ export class WorkyVoiceController {
   @HttpCode(HttpStatus.OK)
   @RequirePermissions(Permissions.WORKY_STREAM_WRITE)
   @ApiOperation({ summary: 'Ingest one finished voice turn into smart-memory (thematic memory)' })
-  async ingestThematicMemory(@CurrentUser() user: UserDocument, @Body() dto: VoiceThematicMemoryDto) {
+  async ingestThematicMemory(@CurrentUser() user: AuthUser, @Body() dto: VoiceThematicMemoryDto) {
     return this.thematicMemory.ingestTurn(user._id.toString(), dto.text);
   }
 
@@ -140,7 +140,7 @@ export class WorkyVoiceController {
   @HttpCode(HttpStatus.OK)
   @RequirePermissions(Permissions.WORKY_STREAM_WRITE)
   @ApiOperation({ summary: 'Retrieve thematic (smart-memory) context for a query — a concierge tool' })
-  async retrieveThematicMemory(@CurrentUser() user: UserDocument, @Body() dto: VoiceThematicRetrieveDto) {
+  async retrieveThematicMemory(@CurrentUser() user: AuthUser, @Body() dto: VoiceThematicRetrieveDto) {
     return this.thematicMemory.retrieve(user._id.toString(), dto.query);
   }
 }

@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { Injectable, Logger } from '@nestjs/common';
 import { BadRequestException, ConflictException, NotFoundException } from '@modules/exceptions';
 import { ErrorCode } from '@modules/exceptions/constants/error-codes';
@@ -6,6 +7,8 @@ import {
   type ResolvedMappingEntity,
 } from '../domain/semantic-cross-source.types';
 import {
+  computeFieldProfiles,
+  resolveSheetEntities,
   type SourceAssetKind,
   type SourceFieldMapping,
 } from '../domain/semantic-source-mapping.types';
@@ -18,15 +21,15 @@ import type {
   SourceMappingPreviewDto,
 } from '../dto';
 import { DocumentExtractionConceptResolver } from './document-extraction-concept.resolver';
-import { SpreadsheetConceptResolver } from './spreadsheet-concept.resolver';
 import type { AttributeDefinition } from '../domain/semantic-model.types';
+import { SemanticRuntimeClientService } from './semantic-runtime-client.service';
 
-const STRUCTURED_MIME_PREFIXES = [
+export const STRUCTURED_MIME_PREFIXES = [
   'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
   'application/vnd.ms-excel',
   'text/csv',
 ];
-const DOCUMENT_MIME_TYPES = new Set([
+export const DOCUMENT_MIME_TYPES = new Set([
   'application/pdf',
   'application/msword',
   'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
@@ -60,7 +63,7 @@ export class SemanticSourceMappingService {
     private readonly database: SemanticModelDatabaseService,
     private readonly models: SemanticModelService,
     private readonly documents: WorkspaceDocumentService,
-    private readonly spreadsheets: SpreadsheetConceptResolver,
+    private readonly runtime: SemanticRuntimeClientService,
     private readonly documentExtraction: DocumentExtractionConceptResolver,
   ) {}
 
@@ -93,7 +96,38 @@ export class SemanticSourceMappingService {
     if (!STRUCTURED_MIME_PREFIXES.some((prefix) => document.mimeType.startsWith(prefix))) {
       throw new BadRequestException(ErrorCode.SEMANTIC_MODEL_VALIDATION_FAILED, 'Only Excel and CSV assets can be profiled');
     }
-    return this.spreadsheets.profile(workspaceId, documentId, query.sheetName);
+    const result = await this.database.query<{ profile: Record<string, unknown> }>(
+      `SELECT profile FROM semantic_datasource.discovery_profiles
+       WHERE workspace_id=$1 AND asset_id=$2
+         AND source_version=$3
+         AND ($4='' OR profile->'structure'->>'selectedSheet'=$4
+              OR ($4='CSV' AND profile->'structure'->>'kind'='csv'))
+       ORDER BY completed_at DESC LIMIT 1`,
+      [workspaceId, documentId, this.sourceVersion(document), query.sheetName ?? ''],
+    );
+    if (!result.rows[0]) {
+      throw new NotFoundException(ErrorCode.SEMANTIC_MODEL_NOT_FOUND, 'This source has not been analyzed yet');
+    }
+    return this.sheetProfile(result.rows[0].profile);
+  }
+
+  async requestProfile(userId: string, modelId: string, workspaceId: string, documentId: string, query: SourceAssetProfileQueryDto) {
+    const model = await this.models.requireRole(userId, modelId, ['owner', 'editor', 'viewer']);
+    await this.requireLinkedWorkspace(model.id, workspaceId);
+    const document = await this.documents.findById(workspaceId, documentId);
+    if (!STRUCTURED_MIME_PREFIXES.some((prefix) => document.mimeType.startsWith(prefix))) {
+      throw new BadRequestException(ErrorCode.SEMANTIC_MODEL_VALIDATION_FAILED, 'Only Excel and CSV assets can be profiled');
+    }
+    return this.requestDiscovery(userId, model.id, document, query.sheetName);
+  }
+
+  async discoveryJob(userId: string, modelId: string, jobId: string) {
+    await this.models.requireRole(userId, modelId, ['owner', 'editor', 'viewer']);
+    const job = await this.runtime.getJob(jobId, userId);
+    if (job.jobType !== 'datasource.discovery' || job.modelId !== modelId) {
+      throw new NotFoundException(ErrorCode.SEMANTIC_MODEL_NOT_FOUND, 'Datasource job not found');
+    }
+    return job;
   }
 
   async preview(userId: string, modelId: string, dto: SourceMappingPreviewDto) {
@@ -114,9 +148,12 @@ export class SemanticSourceMappingService {
       identityFields: dto.identityFields ?? [],
       limit: dto.limit,
     };
-    return kind === 'document'
-      ? this.documentExtraction.preview(input)
-      : this.spreadsheets.preview({ ...input, sheetName: dto.sheetName });
+    if (kind === 'document') return this.documentExtraction.preview(input);
+    return this.requestDiscovery(userId, model.id, document, dto.sheetName, {
+      fieldMappings: dto.fieldMappings,
+      identityFields: dto.identityFields ?? [],
+      limit: dto.limit,
+    });
   }
 
   async list(userId: string, modelId: string) {
@@ -194,7 +231,7 @@ export class SemanticSourceMappingService {
         };
         const resolved = kind === 'document'
           ? await this.documentExtraction.preview(input)
-          : await this.spreadsheets.preview({ ...input, sheetName: mapping.sheetName });
+          : await this.resolvePersisted(mapping, this.sourceVersion(document), limit);
         if (!resolved.complete) incompleteConceptIds.add(mapping.conceptId);
         entities.push(...resolved.entities.map((entity) => ({
           conceptId: mapping.conceptId,
@@ -264,7 +301,16 @@ export class SemanticSourceMappingService {
       });
       return revision;
     });
-    return { revision };
+    let analysisJob: unknown;
+    try {
+      analysisJob = await this.requestDiscovery(userId, model.id, document, dto.sheetName, {
+        fieldMappings: dto.fieldMappings,
+        identityFields: dto.identityFields ?? [],
+      });
+    } catch (error) {
+      this.logger.warn(`Source mapping ${dto.documentId} was saved but health analysis could not be queued: ${(error as Error).name}`);
+    }
+    return { revision, ...(analysisJob ? { analysisJob } : {}) };
   }
 
   async createBulkDocuments(userId: string, modelId: string, dto: BulkDocumentSourceMappingDto) {
@@ -315,6 +361,16 @@ export class SemanticSourceMappingService {
       });
       return nextRevision;
     });
+    await Promise.all(uniqueDocuments.map(async (source) => {
+      try {
+        await this.requestDiscovery(
+          userId, model.id, documents.get(`${source.workspaceId}:${source.documentId}`)!, undefined,
+          { fieldMappings: dto.fieldMappings, identityFields: dto.identityFields ?? [] },
+        );
+      } catch (error) {
+        this.logger.warn(`Source mapping ${source.documentId} was saved but health analysis could not be queued: ${(error as Error).name}`);
+      }
+    }));
     return { revision, mappingCount: uniqueDocuments.length };
   }
 
@@ -336,6 +392,97 @@ export class SemanticSourceMappingService {
       [modelId, workspaceId],
     );
     if (!link.rows[0]) throw new ConflictException(ErrorCode.SEMANTIC_MODEL_WORKSPACE_INVALID);
+  }
+
+  private async requestDiscovery(
+    userId: string,
+    modelId: string,
+    document: Awaited<ReturnType<WorkspaceDocumentService['findById']>>,
+    sheetName?: string,
+    mappingPreview?: Record<string, unknown>,
+  ) {
+    const sourceVersion = this.sourceVersion(document);
+    const origin = await this.database.query<{ workspaceId: string }>(
+      `SELECT workspace_id AS "workspaceId" FROM semantic_model.workspace_links
+       WHERE model_id=$1 AND role='origin' AND enabled LIMIT 1`,
+      [modelId],
+    );
+    if (!origin.rows[0]) throw new ConflictException(ErrorCode.SEMANTIC_MODEL_WORKSPACE_INVALID);
+    const command = {
+      actorUserId: userId,
+      modelId,
+      workspaceId: origin.rows[0].workspaceId,
+      payload: {
+        source: {
+          workspaceId: document.workspaceId,
+          assetId: document.id,
+          originalName: document.originalName,
+          mimeType: document.mimeType,
+          sizeBytes: document.size,
+          contentHash: document.contentHash,
+          uploadedAt: document.uploadedAt,
+          indexingStatus: document.indexingStatus,
+          sourceVersion,
+        },
+        options: sheetName ? { sheetName } : {},
+        ...(mappingPreview ? { mappingPreview } : {}),
+      },
+    };
+    const key = createHash('sha256').update(JSON.stringify(command)).digest('hex');
+    return this.runtime.requestDatasourceDiscovery(command, `datasource:${key}`);
+  }
+
+  private sheetProfile(profile: Record<string, unknown>) {
+    const structure = (profile.structure ?? {}) as Record<string, unknown>;
+    const rawSheets = Array.isArray(structure.sheets) ? structure.sheets
+      : structure.kind === 'csv' ? [{ name: 'CSV', reportedRows: structure.dataRows, reportedColumns: Array.isArray(structure.columns) ? structure.columns.length : 0 }]
+      : [];
+    const sheets = rawSheets.map((sheet) => {
+      const value = sheet as Record<string, unknown>;
+      return {
+        name: String(value.name ?? ''),
+        rowCount: Number(value.reportedRows ?? value.rowCount ?? 0),
+        fieldCount: Number(value.reportedColumns ?? value.fieldCount ?? 0),
+      };
+    });
+    const selected = typeof structure.selectedSheet === 'string' ? structure.selectedSheet
+      : structure.kind === 'csv' ? 'CSV' : undefined;
+    return {
+      sheets,
+      ...(selected ? { sheet: sheets.find((sheet) => sheet.name === selected) } : {}),
+      fields: Array.isArray(profile.fieldProfiles) ? profile.fieldProfiles : [],
+      sampleRows: Array.isArray(profile.samples) ? profile.samples : [],
+      totalRows: Number(profile.scannedRows ?? 0),
+      complete: Boolean((profile.coverage as Record<string, unknown> | undefined)?.completeProfileDone),
+    };
+  }
+
+  private async resolvePersisted(mapping: SourceMappingRow, sourceVersion: string, limit: number) {
+    const result = await this.database.query<{ profile: Record<string, unknown> }>(
+      `SELECT profile FROM semantic_datasource.discovery_profiles
+       WHERE workspace_id=$1 AND asset_id=$2
+         AND source_version=$3
+         AND (profile->'structure'->>'selectedSheet'=$4
+              OR ($4='CSV' AND profile->'structure'->>'kind'='csv'))
+       ORDER BY completed_at DESC LIMIT 1`,
+      [mapping.workspaceId, mapping.documentId, sourceVersion, mapping.sheetName],
+    );
+    const profile = result.rows[0]?.profile;
+    if (!profile) throw new NotFoundException(ErrorCode.SEMANTIC_MODEL_NOT_FOUND, 'Source analysis is not ready');
+    const rows = Array.isArray(profile.samples) ? profile.samples as Record<string, unknown>[] : [];
+    const { entities, stats } = resolveSheetEntities(rows, mapping.fieldMappings, mapping.identityFields ?? [], limit);
+    const profiles = computeFieldProfiles(rows);
+    return {
+      entities,
+      stats,
+      identityEvidence: (mapping.identityFields ?? []).flatMap((targetAttribute) => {
+        const sourceField = mapping.fieldMappings.find((item) => item.targetAttribute === targetAttribute)?.sourceField;
+        const evidence = profiles.find((item) => item.name === sourceField);
+        return evidence ? [{ ...evidence, name: targetAttribute }] : [];
+      }),
+      warnings: ['Preview uses the persisted bounded source sample.'],
+      complete: false,
+    };
   }
 
   private async assertConceptInDraft(modelId: string, draftVersionId: string | null, conceptId: string, mappings: SourceFieldMapping[], identityFields: string[] = []) {

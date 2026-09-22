@@ -14,7 +14,7 @@ describe('UsageAnalyticsService', () => {
     };
     const store = { getAnalytics: jest.fn().mockResolvedValue(response) } as unknown as UsageStore;
     const service = new UsageAnalyticsService(store);
-    const userId = new Types.ObjectId();
+    const userId = new Types.ObjectId().toString();
 
     await expect(
       service.getUsageAnalytics([userId], undefined, undefined, GroupByPeriod.WEEK),

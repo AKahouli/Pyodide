@@ -11,6 +11,11 @@ import { useMappingHealth, useRelationResolutionRules, useSourceMappings, useSou
 import { semanticModelQueryKeys } from '../../query/queryKeys';
 import { useSemanticModelEditorStore } from '../../store';
 import type { ConceptSourceMapping, MappingHealthItem, SemanticNodeType, SourceResolutionPolicy } from '../../types';
+import { useSemanticModelChannel } from '../../data-plane/use-semantic-model-channel';
+import { useSemanticModelSources } from '../../data-plane/use-semantic-model-sources';
+import { useSemanticModelSummary } from '../../data-plane/use-semantic-model-summary';
+import { PopulationRefreshPanel } from './PopulationRefreshPanel';
+import type { SemanticSourceSummaryRow } from '../../data-plane/semantic-api.types';
 
 export function SemanticMappingsView({ modelId, canEdit, onRepairMapping }: Readonly<{ modelId: string; canEdit: boolean; onRepairMapping?: (mapping: ConceptSourceMapping) => void }>) {
   const { t } = useModuleTranslation('semantic-model');
@@ -19,11 +24,15 @@ export function SemanticMappingsView({ modelId, canEdit, onRepairMapping }: Read
   const rules = useRelationResolutionRules(modelId);
   const policies = useSourceResolutionPolicies(modelId);
   const health = useMappingHealth(modelId);
+  const sources = useSemanticModelSources(modelId);
+  const summary = useSemanticModelSummary(modelId);
+  useSemanticModelChannel(modelId, summary.data?.[0]?.active_data_revision);
   const client = useQueryClient();
   useEffect(() => {
     if (!health.dataUpdatedAt) return;
     void Promise.all([
       client.invalidateQueries({ queryKey: semanticModelQueryKeys.readiness(modelId) }),
+      client.invalidateQueries({ queryKey: semanticModelQueryKeys.sourceMappings(modelId) }),
       client.invalidateQueries({ queryKey: ['semantic-models', 'review-items', modelId] }),
     ]);
   }, [client, health.dataUpdatedAt, modelId]);
@@ -34,6 +43,8 @@ export function SemanticMappingsView({ modelId, canEdit, onRepairMapping }: Read
   const mappedConcepts = (graph?.nodes ?? []).filter((concept) => (mappings.data ?? []).some((mapping) => mapping.conceptId === concept.id));
   return <div className='h-full overflow-y-auto bg-muted/20 p-4 sm:p-6'><div className='mx-auto max-w-5xl space-y-6'>
     <div><h2 className='text-xl font-semibold'>{t('mappingsView.title')}</h2><p className='text-sm text-muted-foreground'>{t('mappingsView.description')}</p></div>
+    <SourceStatus rows={sources.data ?? []} loading={sources.isLoading} error={sources.isError} retry={() => void sources.refetch()} />
+    <PopulationRefreshPanel modelId={modelId} mappings={(mappings.data ?? []).filter((mapping) => health.data?.items.some((item) => item.id === mapping.id && item.state === 'healthy'))} canEdit={canEdit} />
     <MappingHealth modelId={modelId} items={health.data?.items ?? []} canEdit={canEdit} mappings={mappings.data ?? []} onRepairMapping={onRepairMapping} />
     {mappedConcepts.map((concept) => <ConceptMappings key={concept.id} modelId={modelId} concept={concept} mappings={(mappings.data ?? []).filter((mapping) => mapping.conceptId === concept.id)} policy={(policies.data ?? []).find((policy) => policy.conceptId === concept.id)} canEdit={canEdit} />)}
     {!mappedConcepts.length && <div className='rounded-2xl border border-dashed bg-background p-10 text-center text-sm text-muted-foreground'>{t('mappingsView.empty')}</div>}
@@ -44,6 +55,20 @@ export function SemanticMappingsView({ modelId, canEdit, onRepairMapping }: Read
        return <div key={relation.id} className='flex flex-wrap items-center gap-2 rounded-xl border p-3 text-sm'><span className='font-medium'>{source?.label}</span><ArrowRight className='h-4 w-4 text-muted-foreground' /><span className='font-medium'>{target?.label}</span><span className='ml-auto text-xs text-muted-foreground'>{rule ? `${rule.sourceAttribute} = ${rule.targetAttribute} · ${t(`cardinality.${relation.cardinality}`)} · ${t(`relationMatching.strategyOption.${rule.strategy}`)}` : t('mappingsView.notConfigured')}</span></div>;
     })}</div></section>
   </div></div>;
+}
+
+function SourceStatus({ rows, loading, error, retry }: Readonly<{ rows: SemanticSourceSummaryRow[]; loading: boolean; error: boolean; retry: () => void }>) {
+  const { t } = useModuleTranslation('semantic-model');
+  return <section className='rounded-2xl border bg-background p-5'>
+    <div className='flex items-center justify-between gap-3'><div><h3 className='font-semibold'>{t('sourceStatus.title')}</h3><p className='text-xs text-muted-foreground'>{t('sourceStatus.description')}</p></div>{error && <Button size='sm' variant='ghost' onClick={retry}><RefreshCw className='mr-1.5 h-3.5 w-3.5' />{t('sourceStatus.retry')}</Button>}</div>
+    {loading && <div className='flex justify-center p-5'><Loader2 className='h-5 w-5 animate-spin text-muted-foreground' /></div>}
+    {error && <div className='mt-4 flex items-center gap-2 rounded-xl bg-destructive/10 p-3 text-sm text-destructive'><AlertTriangle className='h-4 w-4' />{t('sourceStatus.error')}</div>}
+    {!loading && !error && !rows.length && <p className='mt-4 text-sm text-muted-foreground'>{t('sourceStatus.empty')}</p>}
+    {!loading && !error && rows.length > 0 && <div className='mt-4 grid gap-2'>{rows.map((row) => {
+      const state = row.deleted ? 'deleted' : !row.source_revision ? 'awaiting' : row.indexing_status === 'failed' ? 'failed' : row.indexing_status === 'ready' ? 'ready' : 'syncing';
+      return <div key={row.mapping_id} className='flex flex-col gap-2 rounded-xl border p-3 sm:flex-row sm:items-center'><div className='min-w-0 flex-1'><p className='truncate text-sm font-medium'>{row.original_name ?? row.document_id}{row.sheet_name ? ` / ${row.sheet_name}` : ''}</p><p className='truncate text-xs text-muted-foreground'>{row.mime_type ?? row.asset_kind}</p></div><Badge variant={state === 'ready' ? 'default' : state === 'failed' || state === 'deleted' ? 'destructive' : 'secondary'}>{t(`sourceStatus.state.${state}`)}</Badge>{row.source_revision && <span className='text-xs text-muted-foreground'>{t('sourceStatus.revision', { revision: row.source_revision })}</span>}</div>;
+    })}</div>}
+  </section>;
 }
 
 function MappingHealth({ modelId, items, canEdit, mappings, onRepairMapping }: Readonly<{ modelId: string; items: MappingHealthItem[]; canEdit: boolean; mappings: ConceptSourceMapping[]; onRepairMapping?: (mapping: ConceptSourceMapping) => void }>) {

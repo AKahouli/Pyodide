@@ -1,8 +1,8 @@
-import { Injectable } from '@nestjs/common';
-import { InjectModel } from '@nestjs/mongoose';
+import { Inject, Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { Model, Types } from 'mongoose';
-import { User, UserDocument, UserStatus } from '@modules/user/schemas/user.schema';
+import { USER_LOOKUP_PORT, type UserLookupPort } from '@common/ports/user-lookup.port';
+import { TELEGRAM_BINDING_STORE, type TelegramBindingRow, type TelegramBindingStore } from '../persistence/telegram.store';
+import type { AuthUser } from '@common/auth/auth-user';
 import { ConversationService } from '@modules/conversation/services/conversation.service';
 import { MessageService } from '@modules/conversation/services/message.service';
 import { StreamService } from '@modules/conversation/services/stream.service';
@@ -10,7 +10,6 @@ import { sanitizeSerializedToolValue } from '@modules/conversation/utils/public-
 import { ConversationSettingsService } from '@modules/system/conversation-settings.service';
 import { LoggerService } from '@modules/logger';
 import { AgentService } from '@modules/agent/agent.service';
-import { TelegramChatBinding, TelegramChatBindingDocument } from '../schemas/telegram-chat-binding.schema';
 import { TelegramUpdate } from '../interfaces/telegram-update.interface';
 import { TelegramIntegrationService } from './telegram-integration.service';
 import { TelegramApiService } from './telegram-api.service';
@@ -19,10 +18,10 @@ import { TelegramLinkCodeService } from './telegram-link-code.service';
 @Injectable()
 export class TelegramWebhookService {
   constructor(
-    @InjectModel(TelegramChatBinding.name)
-    private readonly bindingModel: Model<TelegramChatBindingDocument>,
-    @InjectModel(User.name)
-    private readonly userModel: Model<UserDocument>,
+    @Inject(TELEGRAM_BINDING_STORE)
+    private readonly bindingStore: TelegramBindingStore,
+    @Inject(USER_LOOKUP_PORT)
+    private readonly userLookup: UserLookupPort,
     private readonly configService: ConfigService,
     private readonly logger: LoggerService,
     private readonly agentService: AgentService,
@@ -59,7 +58,7 @@ export class TelegramWebhookService {
     }
 
     // Respond to Telegram immediately; message processing continues async.
-    void this.processUpdate(integration._id, update).catch((error) => {
+    void this.processUpdate(integration.id, update).catch((error) => {
       this.logger.error('Telegram update processing failed', {
         integrationId,
         updateId: update.update_id,
@@ -69,7 +68,7 @@ export class TelegramWebhookService {
   }
 
   private async processUpdate(
-    integrationId: Types.ObjectId,
+    integrationId: string,
     update: TelegramUpdate,
   ): Promise<void> {
     const message = update.message;
@@ -80,17 +79,15 @@ export class TelegramWebhookService {
     const text = (message.text || '').trim();
     if (!text) return;
 
-    const integration = await this.integrationService.getByIntegrationId(integrationId.toString());
+    const integration = await this.integrationService.getByIntegrationId(integrationId);
     const botToken = this.integrationService.getDecryptedToken(integration);
 
     if (text.startsWith('/start')) {
-      await this.handleStartCommand(integration._id, botToken, chatId, telegramUserId, text);
+      await this.handleStartCommand(integration.id, botToken, chatId, telegramUserId, text);
       return;
     }
 
-    const binding = await this.bindingModel
-      .findOne({ integrationId: integration._id, telegramChatId: chatId })
-      .exec();
+    const binding = await this.bindingStore.findByChat(integration.id, chatId);
     if (!binding) {
       await this.telegramApiService.sendMessage(
         botToken,
@@ -109,12 +106,8 @@ export class TelegramWebhookService {
       return;
     }
 
-    const user = await this.userModel
-      .findById(binding.userId)
-      .select('status email')
-      .lean()
-      .exec();
-    if (!user || user.status !== UserStatus.ACTIVE) {
+    const user = await this.userLookup.byId(String(binding.userId));
+    if (!user || user.status !== 'active') {
       await this.telegramApiService.sendMessage(
         botToken,
         chatId,
@@ -130,12 +123,12 @@ export class TelegramWebhookService {
       userEmail: user.email,
       messageText: text,
       chatId,
-      telegramUserId,
+      telegramUserId: telegramUserId ?? null,
     });
   }
 
   private async handleStartCommand(
-    integrationId: Types.ObjectId,
+    integrationId: string,
     botToken: string,
     chatId: string,
     telegramUserId: string | undefined,
@@ -153,26 +146,14 @@ export class TelegramWebhookService {
     }
 
     const linkCode = await this.linkCodeService.consumeCodeOrThrow(code, integrationId);
-    const now = new Date();
-    await this.bindingModel.findOneAndUpdate(
-      {
-        integrationId,
-        telegramChatId: chatId,
-      },
-      {
-        $set: {
-          userId: linkCode.userId,
-          agentId: linkCode.agentId,
-          telegramUserId,
-          lastMessageAt: now,
-        },
-      },
-      {
-        upsert: true,
-        new: true,
-        setDefaultsOnInsert: true,
-      },
-    );
+    await this.bindingStore.upsert({
+      integrationId,
+      userId: linkCode.userId,
+      agentId: linkCode.agentId,
+      telegramChatId: chatId,
+      telegramUserId: telegramUserId ?? null,
+      lastMessageAt: new Date(),
+    });
 
     await this.telegramApiService.sendMessage(
       botToken,
@@ -183,12 +164,12 @@ export class TelegramWebhookService {
 
   private async routeMessageToAgent(params: {
     botToken: string;
-    binding: TelegramChatBindingDocument;
+    binding: TelegramBindingRow;
     userId: string;
     userEmail: string;
     messageText: string;
     chatId: string;
-    telegramUserId?: string;
+    telegramUserId?: string | null;
   }): Promise<void> {
     const {
       botToken,
@@ -239,19 +220,11 @@ export class TelegramWebhookService {
       reply || 'I could not generate a response for this message.',
     );
 
-    await this.bindingModel.updateOne(
-      { _id: binding._id },
-      {
-        $set: {
-          lastMessageAt: new Date(),
-          telegramUserId,
-        },
-      },
-    );
+    await this.bindingStore.updateLastMessage(binding.id, new Date());
   }
 
   private async ensureConversationForBinding(
-    binding: TelegramChatBindingDocument,
+    binding: TelegramBindingRow,
     userId: string,
   ): Promise<string> {
     const existingConversationId = binding.conversationId?.toString();
@@ -261,7 +234,7 @@ export class TelegramWebhookService {
         return existingConversationId;
       } catch {
         this.logger.warn('Telegram binding conversation missing, creating a new one', {
-          bindingId: binding._id.toString(),
+          bindingId: binding.id,
           conversationId: existingConversationId,
         });
       }
@@ -271,8 +244,8 @@ export class TelegramWebhookService {
     const created = await this.conversationService.create(userId, {
       title: `Telegram - ${agent.name}`,
     });
-    binding.conversationId = new Types.ObjectId(created.id);
-    await binding.save();
+    await this.bindingStore.updateLastMessage(binding.id, new Date());
+    await this.bindingStore.update(binding.id, { conversationId: created.id });
     return created.id;
   }
 

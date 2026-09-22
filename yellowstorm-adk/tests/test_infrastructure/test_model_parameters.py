@@ -225,6 +225,34 @@ async def test_litellm_patch_normalizes_keyword_and_positional_text_only_message
     assert calls[1][3]["timeout"] == 300
 
 
+@pytest.mark.asyncio
+async def test_litellm_patch_preserves_caller_timeout(monkeypatch):
+    import litellm
+
+    from src.evaluation.agent_evaluator import apply_litellm_debug_patch
+
+    calls = []
+
+    async def async_completion(*args, **kwargs):
+        calls.append(("async", kwargs))
+        return "async-result"
+
+    def sync_completion(*args, **kwargs):
+        calls.append(("sync", kwargs))
+        return "sync-result"
+
+    monkeypatch.delattr(litellm, "_is_yellowstorm_patched", raising=False)
+    monkeypatch.setattr(litellm, "acompletion", async_completion)
+    monkeypatch.setattr(litellm, "completion", sync_completion)
+
+    apply_litellm_debug_patch()
+
+    assert await litellm.acompletion(model="test-model", messages=[], timeout=90) == "async-result"
+    assert litellm.completion(model="test-model", messages=[], timeout=90) == "sync-result"
+    assert calls == [("async", {"model": "azure/test-model", "messages": [], "timeout": 90}),
+                     ("sync", {"model": "azure/test-model", "messages": [], "timeout": 90})]
+
+
 # --- compaction resolution (configurable ADK context compaction) ---
 from src.smart_rag.infrastructure.model_parameters import (  # noqa: E402
     _resolve_request_compaction,

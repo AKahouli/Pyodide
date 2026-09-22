@@ -193,6 +193,7 @@ export const RecentChats = memo(function RecentChats({
                   title={row.displayTitle}
                   projectId={row.conv?.projectId ?? null}
                   isGroup={row.conv?.isGroup}
+                  isShared={row.conv?.isShared}
                   mentionCount={row.conv?.unseenMentionCount}
                   streaming={v1ActiveConversationId === row.id || v1BackgroundStreamingIds.includes(row.id)}
                   onRename={(newTitle) => handleRename(row.id, newTitle)}

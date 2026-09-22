@@ -7,6 +7,12 @@ import {
 import { ConfigService } from '@nestjs/config';
 import { Pool } from 'pg';
 import { LoggerService } from '../logger';
+import {
+  attachCheckedOutClientErrorHandler,
+  auxPoolTuningFromEnv,
+  buildPgSslOptions,
+  sslSettingsFromEnv,
+} from '../postgres/pg-pool-options';
 import { MemoryCardResponse } from './interfaces/memory-card.interface';
 
 const CONTEXT = 'MemoryCardsService';
@@ -75,11 +81,14 @@ export class MemoryCardsService implements OnModuleInit, OnModuleDestroy {
       user: this.config.get<string>('memoryCards.user'),
       password: this.config.get<string>('memoryCards.password'),
       database: this.config.get<string>('memoryCards.database'),
-      ssl: this.config.get<boolean>('memoryCards.ssl') ? { rejectUnauthorized: false } : undefined,
-      max: 5,
-      idleTimeoutMillis: 30_000,
-      connectionTimeoutMillis: 10_000,
+      ssl: buildPgSslOptions(
+        sslSettingsFromEnv(Boolean(this.config.get<boolean>('memoryCards.ssl'))),
+        this.logger,
+        'memory-cards',
+      ),
+      ...auxPoolTuningFromEnv('MEMORY_PG', ':memory-cards'),
     });
+    attachCheckedOutClientErrorHandler(this.pool, this.logger, 'memory-cards');
 
     this.pool.on('error', (err) => {
       this.logger.error('Memory cards PG pool error', { error: err.message });

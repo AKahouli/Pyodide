@@ -1,10 +1,10 @@
 import { Test } from '@nestjs/testing';
-import { getModelToken } from '@nestjs/mongoose';
 import { ModelsService } from './models.service';
 import { LiteLLMClient } from './litellm.client';
-import { AiModel } from './schemas/model.schema';
 import { LoggerService } from '../logger';
+import { DRIZZLE_DB } from '@modules/postgres/postgres.constants';
 import { LiteLLMModelInfoEntry } from './interfaces/model.interface';
+import { MODEL_STORE, type ModelRow, type ModelStore } from './persistence/model.store';
 
 // Helper to build a LiteLLM /v1/model/info entry
 function entry(name: string, mode: string | undefined, provider = 'openai'): LiteLLMModelInfoEntry {
@@ -27,40 +27,144 @@ function entry(name: string, mode: string | undefined, provider = 'openai'): Lit
   };
 }
 
-describe('ModelsService', () => {
-  let svc: ModelsService;
-  let find: jest.Mock;
-  let findOne: jest.Mock;
-  let create: jest.Mock;
-  let updateOne: jest.Mock;
-  let updateMany: jest.Mock;
-  let findOneAndUpdate: jest.Mock;
-  let fetchModels: jest.Mock;
+function row(overrides: Partial<ModelRow>): ModelRow {
+  return {
+    id: overrides.modelId ?? 'id',
+    modelId: 'model',
+    name: 'Model',
+    chef: 'OpenAI',
+    chefSlug: 'openai',
+    litellmModel: 'openai/model',
+    providers: ['openai'],
+    type: 'chat',
+    types: ['chat'],
+    isActive: true,
+    isDefault: false,
+    isConversationV2Default: false,
+    omitTemperature: false,
+    inputModalities: ['text'],
+    maxInputTokens: null,
+    maxOutputTokens: null,
+    inputCostPerToken: null,
+    outputCostPerToken: null,
+    cachedInputCostPerToken: null,
+    supportsReasoning: null,
+    reasoningEfforts: [],
+    defaultReasoningEffort: null,
+    createdAt: new Date('2026-01-01T00:00:00Z'),
+    updatedAt: new Date('2026-01-01T00:00:00Z'),
+    ...overrides,
+  } as ModelRow;
+}
 
-  // Make aiModelModel.find(query) return the chainable .sort().lean().exec()
-  function mockFindResult(result: unknown[]): void {
-    find.mockReturnValue({
-      sort: () => ({ lean: () => ({ exec: () => Promise.resolve(result) }) }),
-    });
+class InMemoryModelStore implements ModelStore {
+  readonly rows = new Map<string, ModelRow>();
+  readonly inserted: ModelRow[] = [];
+  readonly clearedClassifierFor: string[] = [];
+  readonly exclusiveFlags: Array<{ modelId: string; flag: 'isDefault' | 'isConversationV2Default' }> = [];
+  deactivatedNotIn: string[][] = [];
+
+  async findByModelId(modelId: string): Promise<ModelRow | null> {
+    return this.rows.get(modelId) ?? null;
   }
 
+  async findByIdOrLitellmModel(id: string): Promise<ModelRow | null> {
+    return this.rows.get(id) ?? null;
+  }
+
+  async list(options: ModelStore extends never ? never : { activeOnly?: boolean; chatOnly?: boolean; chefSlug?: string }): Promise<ModelRow[]> {
+    let rows = [...this.rows.values()];
+    if (options.activeOnly) rows = rows.filter((r) => r.isActive);
+    if (options.chatOnly) rows = rows.filter((r) => r.types.includes('chat') || r.type === 'chat');
+    if (options.chefSlug) rows = rows.filter((r) => r.chefSlug === options.chefSlug);
+    return rows;
+  }
+
+  /** Rows another instance inserts between the service's read and its write. */
+  readonly racedInserts = new Map<string, ModelRow>();
+
+  async insertIfAbsent(newRow: ModelRow): Promise<boolean> {
+    const raced = this.racedInserts.get(newRow.modelId);
+    if (raced) {
+      this.rows.set(raced.modelId, raced);
+      return false;
+    }
+    if (this.rows.has(newRow.modelId)) return false;
+    this.inserted.push(newRow);
+    this.rows.set(newRow.modelId, newRow);
+    return true;
+  }
+
+  async updateByModelId(modelId: string, patch: Partial<ModelRow>): Promise<ModelRow | null> {
+    const current = this.rows.get(modelId);
+    if (!current) return null;
+    const next = { ...current, ...patch };
+    this.rows.set(modelId, next);
+    return next;
+  }
+
+  async deactivateNotIn(modelIds: string[]): Promise<number> {
+    this.deactivatedNotIn.push(modelIds);
+    let n = 0;
+    for (const r of this.rows.values()) {
+      if (!modelIds.includes(r.modelId) && r.isActive) {
+        r.isActive = false;
+        n++;
+      }
+    }
+    return n;
+  }
+
+  async clearGuardrailsClassifierExcept(modelId: string): Promise<void> {
+    this.clearedClassifierFor.push(modelId);
+  }
+
+  async setExclusiveFlag(modelId: string, flag: 'isDefault' | 'isConversationV2Default'): Promise<ModelRow | null> {
+    this.exclusiveFlags.push({ modelId, flag });
+    for (const r of this.rows.values()) (r as any)[flag] = false;
+    const target = this.rows.get(modelId);
+    if (target) (target as any)[flag] = true;
+    return target ?? null;
+  }
+
+  async findDefault(): Promise<ModelRow | null> {
+    return [...this.rows.values()].find((r) => r.isDefault && r.isActive && (r.types.includes('chat') || r.type === 'chat')) ?? null;
+  }
+
+  async findConversationV2Default(): Promise<ModelRow | null> {
+    return [...this.rows.values()].find((r) => r.isConversationV2Default && r.isActive && (r.types.includes('chat') || r.type === 'chat')) ?? null;
+  }
+
+  async findGuardrailsClassifier(): Promise<ModelRow | null> {
+    return [...this.rows.values()].find((r) => r.isActive && (r.types.includes('guardrails_classifier') || r.type === 'guardrails_classifier')) ?? null;
+  }
+}
+
+describe('ModelsService', () => {
+  let svc: ModelsService;
+  let store: InMemoryModelStore;
+  let fetchModels: jest.Mock;
+
   beforeEach(async () => {
-    find = jest.fn();
-    findOne = jest.fn();
-    create = jest.fn().mockResolvedValue({});
-    updateOne = jest.fn().mockResolvedValue({});
-    updateMany = jest.fn().mockResolvedValue({ modifiedCount: 0 });
-    findOneAndUpdate = jest.fn();
+    store = new InMemoryModelStore();
     fetchModels = jest.fn();
+
+    // Fake transactional db: withTransaction passes straight through (outer
+    // and nested SAVEPOINT calls), so the sync's transactional wrap is
+    // exercised without a database.
+    const fakeTx: { transaction: (cb: (tx: unknown) => Promise<unknown>) => Promise<unknown> } = {
+      transaction: async (cb) => cb(fakeTx),
+    };
+    const fakeDb = {
+      transaction: async (cb: (tx: unknown) => Promise<unknown>) => cb(fakeTx),
+    };
 
     const mod = await Test.createTestingModule({
       providers: [
         ModelsService,
-        {
-          provide: getModelToken(AiModel.name),
-          useValue: { find, findOne, findOneAndUpdate, create, updateOne, updateMany },
-        },
+        { provide: MODEL_STORE, useValue: store as unknown as ModelStore },
         { provide: LiteLLMClient, useValue: { fetchModels, isConfigured: () => true } },
+        { provide: DRIZZLE_DB, useValue: fakeDb },
         {
           provide: LoggerService,
           useValue: { log: jest.fn(), warn: jest.fn(), error: jest.fn(), debug: jest.fn() },
@@ -74,22 +178,41 @@ describe('ModelsService', () => {
   describe('syncModels', () => {
     it('ingests ALL model types, not just chat (no more chat-only filter)', async () => {
       fetchModels.mockResolvedValue([entry('gpt-4o', 'chat'), entry('text-embedding-3', 'embedding'), entry('dall-e-3', 'image_generation')]);
-      findOne.mockResolvedValue(null); // all new
 
       const result = await svc.syncModels();
 
-      expect(create).toHaveBeenCalledTimes(3);
+      expect(store.inserted).toHaveLength(3);
       expect(result.added).toBe(3);
       expect(result.total).toBe(3);
     });
 
+    it('treats a model inserted concurrently by another instance as existing (no duplicate, no failure)', async () => {
+      fetchModels.mockResolvedValue([entry('gpt-4o', 'chat', 'openai')]);
+      // The other instance wins the insert between our read and our write; its row
+      // carries an admin-chosen type that the sync must not overwrite.
+      store.racedInserts.set('gpt-4o', row({
+        modelId: 'gpt-4o',
+        chefSlug: 'azure',
+        litellmModel: 'azure/old',
+        type: 'embedding',
+        types: ['embedding'],
+        isActive: true,
+      }));
+
+      const result = await svc.syncModels();
+
+      expect(result.added).toBe(0);
+      expect(store.inserted).toHaveLength(0);
+      expect(store.rows.get('gpt-4o')!.types).toEqual(['embedding']);
+      expect(store.rows.get('gpt-4o')!.chefSlug).toBe('openai');
+    });
+
     it('initialises new models with types from LiteLLM mode', async () => {
       fetchModels.mockResolvedValue([entry('text-embedding-3', 'embedding')]);
-      findOne.mockResolvedValue(null);
 
       await svc.syncModels();
 
-      expect(create).toHaveBeenCalledWith(
+      expect(store.inserted[0]).toEqual(
         expect.objectContaining({
           modelId: 'text-embedding-3',
           type: 'embedding',
@@ -101,91 +224,85 @@ describe('ModelsService', () => {
 
     it('does not overwrite administrator-selected input modalities on re-sync', async () => {
       fetchModels.mockResolvedValue([entry('vision-model', 'chat', 'openai')]);
-      findOne.mockResolvedValue({
+      store.rows.set('vision-model', row({
         modelId: 'vision-model',
         chefSlug: 'azure',
         litellmModel: 'azure/old',
         inputModalities: ['text', 'image'],
         isActive: true,
-      });
+      }));
 
       await svc.syncModels();
 
-      expect(updateOne.mock.calls[0][1].$set).not.toHaveProperty('inputModalities');
+      expect(store.rows.get('vision-model')!.inputModalities).toEqual(['text', 'image']);
     });
 
     it('leaves type empty for a model that has no mode', async () => {
       fetchModels.mockResolvedValue([entry('mystery-model', undefined)]);
-      findOne.mockResolvedValue(null);
 
       await svc.syncModels();
 
-      expect(create).toHaveBeenCalledWith(expect.objectContaining({ type: '', types: [] }));
+      expect(store.inserted[0]).toEqual(expect.objectContaining({ type: '', types: [] }));
     });
 
     it('never overwrites an existing model type on re-sync (admin choice wins)', async () => {
       fetchModels.mockResolvedValue([entry('gpt-4o', 'chat', 'openai')]);
       // Existing model whose provider changed -> forces an update, type was set to 'embedding' by admin
-      findOne.mockResolvedValue({
+      store.rows.set('gpt-4o', row({
         modelId: 'gpt-4o',
         chefSlug: 'azure',
         litellmModel: 'azure/old',
         type: 'embedding',
+        types: ['embedding'],
         isActive: true,
-      });
+      }));
 
       await svc.syncModels();
 
-      expect(updateOne).toHaveBeenCalledTimes(1);
-      const setArg = updateOne.mock.calls[0][1].$set;
-      expect(setArg).not.toHaveProperty('type');
+      expect(store.rows.get('gpt-4o')!.type).toBe('embedding');
     });
   });
 
   describe('findAll', () => {
     it('restricts to active chat models by default (public usage)', async () => {
-      mockFindResult([]);
-      await svc.findAll();
-      expect(find).toHaveBeenCalledWith({
-        isActive: true,
-        $or: [{ types: 'chat' }, { type: 'chat' }],
-      });
+      store.rows.set('inactive', row({ modelId: 'inactive', isActive: false }));
+      store.rows.set('embedding', row({ modelId: 'embedding', type: 'embedding', types: ['embedding'] }));
+      store.rows.set('chat', row({ modelId: 'chat' }));
+
+      const result = await svc.findAll();
+
+      expect(result.models.map((m) => m.id)).toEqual(['chat']);
     });
 
     it('returns every type when chatOnly=false (admin usage)', async () => {
-      mockFindResult([]);
-      await svc.findAll(false, false);
-      expect(find).toHaveBeenCalledWith({});
+      store.rows.set('inactive', row({ modelId: 'inactive', isActive: false }));
+      store.rows.set('chat', row({ modelId: 'chat' }));
+
+      const result = await svc.findAll(false, false);
+
+      expect(result.total).toBe(2);
     });
   });
 
   describe('findByChef', () => {
     it('restricts to active chat models of the provider', async () => {
-      mockFindResult([]);
-      await svc.findByChef('OpenAI');
-      expect(find).toHaveBeenCalledWith({
-        chefSlug: 'openai',
-        isActive: true,
-        $or: [{ types: 'chat' }, { type: 'chat' }],
-      });
+      store.rows.set('other-chef', row({ modelId: 'other-chef', chefSlug: 'anthropic', chef: 'Anthropic' }));
+      store.rows.set('openai-chat', row({ modelId: 'openai-chat' }));
+
+      const result = await svc.findByChef('OpenAI');
+
+      expect(result.models.map((m) => m.id)).toEqual(['openai-chat']);
     });
   });
 
   describe('type compatibility', () => {
     it('returns a types array for legacy scalar classifications', async () => {
-      mockFindResult([
-        {
-          modelId: 'legacy-chat',
-          name: 'Legacy Chat',
-          chef: 'OpenAI',
-          chefSlug: 'openai',
-          litellmModel: 'openai/legacy-chat',
-          providers: ['openai'],
-          type: 'chat',
-          isActive: true,
-          isDefault: false,
-        },
-      ]);
+      store.rows.set('legacy-chat', row({
+        modelId: 'legacy-chat',
+        name: 'Legacy Chat',
+        // legacy rows have no types array — only the scalar `type`
+        types: null as unknown as string[],
+      }));
 
       const result = await svc.findAll(false, false);
 
@@ -199,20 +316,11 @@ describe('ModelsService', () => {
     });
 
     it('returns valid persisted input modalities', async () => {
-      mockFindResult([
-        {
-          modelId: 'vision',
-          name: 'Vision',
-          chef: 'OpenAI',
-          chefSlug: 'openai',
-          litellmModel: 'openai/vision',
-          providers: ['openai'],
-          type: 'chat',
-          types: ['chat'],
-          inputModalities: ['text', 'image', 'invalid'],
-          isActive: true,
-        },
-      ]);
+      store.rows.set('vision', row({
+        modelId: 'vision',
+        name: 'Vision',
+        inputModalities: ['text', 'image', 'invalid' as never],
+      }));
 
       const result = await svc.findAll(false, false);
 
@@ -220,84 +328,30 @@ describe('ModelsService', () => {
     });
 
     it('keeps the legacy type synchronized with the first selected type', async () => {
-      findOneAndUpdate.mockReturnValue({
-        lean: () => ({
-          exec: () =>
-            Promise.resolve({
-              modelId: 'multi',
-              name: 'Multi',
-              chef: 'OpenAI',
-              chefSlug: 'openai',
-              litellmModel: 'openai/multi',
-              providers: ['openai'],
-              type: 'chat',
-              types: ['chat', 'guardrails_classifier'],
-              isActive: true,
-              isDefault: false,
-            }),
-        }),
-      });
+      store.rows.set('multi', row({ modelId: 'multi', name: 'Multi' }));
 
       await svc.updateModel('multi', { types: ['chat', 'guardrails_classifier'] });
 
-      expect(updateMany).toHaveBeenCalledWith({ modelId: { $ne: 'multi' }, isActive: true }, { $pull: { types: 'guardrails_classifier' } });
-      expect(findOneAndUpdate).toHaveBeenCalledWith({ modelId: 'multi' }, { $set: { types: ['chat', 'guardrails_classifier'], type: 'chat' } }, { new: true });
+      // Guardrails classifier assigned to an active model — others must be cleared
+      expect(store.clearedClassifierFor).toContain('multi');
+      expect(store.rows.get('multi')!.type).toBe('chat');
     });
 
     it('clears a persisted default reasoning effort explicitly', async () => {
-      findOneAndUpdate.mockReturnValue({
-        lean: () => ({
-          exec: () =>
-            Promise.resolve({
-              modelId: 'reasoning',
-              name: 'Reasoning',
-              chef: 'OpenAI',
-              chefSlug: 'openai',
-              litellmModel: 'openai/reasoning',
-              providers: ['openai'],
-              type: 'chat',
-              types: ['chat'],
-              isActive: true,
-              isDefault: false,
-            }),
-        }),
-      });
+      store.rows.set('reasoning', row({ modelId: 'reasoning', name: 'Reasoning', defaultReasoningEffort: 'high' }));
 
       await svc.updateModel('reasoning', { defaultReasoningEffort: null });
 
-      expect(findOneAndUpdate).toHaveBeenCalledWith({ modelId: 'reasoning' }, { $set: {}, $unset: { defaultReasoningEffort: 1 } }, { new: true });
-    });
-
-    it('finds guardrails classifiers classified through types', async () => {
-      const sort = jest.fn().mockReturnValue({ lean: () => ({ exec: () => Promise.resolve(null) }) });
-      findOne.mockReturnValue({ sort });
-
-      await svc.getGuardrailsClassifierModel();
-
-      expect(findOne).toHaveBeenCalledWith({
-        isActive: true,
-        $or: [{ types: 'guardrails_classifier' }, { type: 'guardrails_classifier' }],
-      });
+      expect(store.rows.get('reasoning')!.defaultReasoningEffort).toBeNull();
     });
 
     it('rejects an active model that lacks the required chat type', async () => {
-      findOne.mockReturnValue({
-        lean: () => ({
-          exec: () =>
-            Promise.resolve({
-              modelId: 'embedding',
-              name: 'Embedding',
-              chef: 'OpenAI',
-              chefSlug: 'openai',
-              litellmModel: 'openai/embedding',
-              providers: ['openai'],
-              type: 'embedding',
-              types: ['embedding'],
-              isActive: true,
-              isDefault: false,
-            }),
-        }),
-      });
+      store.rows.set('embedding', row({
+        modelId: 'embedding',
+        name: 'Embedding',
+        type: 'embedding',
+        types: ['embedding'],
+      }));
 
       await expect(svc.validateModelActive('embedding', 'chat')).resolves.toEqual(expect.objectContaining({ valid: false, inactive: false, unsupported: true }));
     });
@@ -306,147 +360,59 @@ describe('ModelsService', () => {
       [{ types: ['chat'] }, 'multi-type chat model'],
       [{ type: 'chat' }, 'legacy chat model'],
     ])('allows a %s as the default model', async (query, _description) => {
-      findOne.mockReturnValue({
-        lean: () => ({ exec: () => Promise.resolve({ modelId: 'chat' }) }),
-      });
-      findOneAndUpdate.mockReturnValue({
-        lean: () => ({
-          exec: () =>
-            Promise.resolve({
-              modelId: 'chat',
-              name: 'Chat',
-              chef: 'OpenAI',
-              chefSlug: 'openai',
-              litellmModel: 'openai/chat',
-              providers: ['openai'],
-              type: 'chat',
-              types: ['chat'],
-              isActive: true,
-              isDefault: true,
-            }),
-        }),
-      });
+      store.rows.set('chat', row({ modelId: 'chat', name: 'Chat', ...query }));
 
       await svc.setDefaultModel('chat');
 
-      expect(findOne).toHaveBeenCalledWith(
-        expect.objectContaining({
-          modelId: 'chat',
-          isActive: true,
-          $or: [{ types: 'chat' }, { type: 'chat' }],
-        }),
-      );
-      expect(updateMany).toHaveBeenCalledWith({ isDefault: true }, { $set: { isDefault: false } });
-      expect(findOneAndUpdate).toHaveBeenCalled();
+      expect(store.exclusiveFlags).toEqual([{ modelId: 'chat', flag: 'isDefault' }]);
     });
 
     it('does not clear the existing default for a non-chat or inactive model', async () => {
-      findOne.mockReturnValue({ lean: () => ({ exec: () => Promise.resolve(null) }) });
+      store.rows.set('embedding', row({ modelId: 'embedding', type: 'embedding', types: ['embedding'] }));
 
       await expect(svc.setDefaultModel('embedding')).resolves.toBeNull();
 
-      expect(updateMany).not.toHaveBeenCalled();
-      expect(findOneAndUpdate).not.toHaveBeenCalled();
+      expect(store.exclusiveFlags).toHaveLength(0);
     });
 
     it('excludes legacy inactive or non-chat defaults', async () => {
-      const sort = jest.fn().mockReturnValue({ lean: () => ({ exec: () => Promise.resolve(null) }) });
-      findOne.mockReturnValue({ sort, lean: () => ({ exec: () => Promise.resolve(null) }) });
+      store.rows.set('inactive-default', row({ modelId: 'inactive-default', isDefault: true, isActive: false }));
 
-      await svc.getDefaultModel();
-
-      expect(findOne).toHaveBeenCalledWith({
-        isDefault: true,
-        isActive: true,
-        $or: [{ types: 'chat' }, { type: 'chat' }],
-      });
+      await expect(svc.getDefaultModel()).resolves.toBeNull();
     });
   });
 
   describe('conversation-v2 default', () => {
     it('queries the flagged active chat model only', async () => {
-      const sort = jest.fn().mockReturnValue({ lean: () => ({ exec: () => Promise.resolve(null) }) });
-      findOne.mockReturnValue({ sort, lean: () => ({ exec: () => Promise.resolve(null) }) });
+      store.rows.set('v2-default', row({ modelId: 'v2-default', isConversationV2Default: true, isActive: false }));
 
-      await svc.getConversationV2DefaultModel();
-
-      expect(findOne).toHaveBeenCalledWith({
-        isConversationV2Default: true,
-        isActive: true,
-        $or: [{ types: 'chat' }, { type: 'chat' }],
-      });
+      await expect(svc.getConversationV2DefaultModel()).resolves.toBeNull();
     });
 
     it('allows an active chat model as the conversation-v2 default and clears the previous one', async () => {
-      findOne.mockReturnValue({
-        lean: () => ({ exec: () => Promise.resolve({ modelId: 'chat' }) }),
-      });
-      findOneAndUpdate.mockReturnValue({
-        lean: () => ({
-          exec: () =>
-            Promise.resolve({
-              modelId: 'chat',
-              name: 'Chat',
-              chef: 'OpenAI',
-              chefSlug: 'openai',
-              litellmModel: 'openai/chat',
-              providers: ['openai'],
-              type: 'chat',
-              types: ['chat'],
-              isActive: true,
-              isDefault: false,
-              isConversationV2Default: true,
-            }),
-        }),
-      });
+      store.rows.set('chat', row({ modelId: 'chat', name: 'Chat' }));
 
       const result = await svc.setConversationV2DefaultModel('chat');
 
-      expect(findOne).toHaveBeenCalledWith(
-        expect.objectContaining({
-          modelId: 'chat',
-          isActive: true,
-          $or: [{ types: 'chat' }, { type: 'chat' }],
-        }),
-      );
-      expect(updateMany).toHaveBeenCalledWith({ isConversationV2Default: true }, { $set: { isConversationV2Default: false } });
-      expect(findOneAndUpdate).toHaveBeenCalledWith({ modelId: 'chat' }, { $set: { isConversationV2Default: true } }, { new: true });
+      expect(store.exclusiveFlags).toEqual([{ modelId: 'chat', flag: 'isConversationV2Default' }]);
       expect(result?.isConversationV2Default).toBe(true);
     });
 
     it('does not touch the conversation-v2 default for a non-chat or inactive model', async () => {
-      findOne.mockReturnValue({ lean: () => ({ exec: () => Promise.resolve(null) }) });
+      store.rows.set('embedding', row({ modelId: 'embedding', type: 'embedding', types: ['embedding'] }));
 
       await expect(svc.setConversationV2DefaultModel('embedding')).resolves.toBeNull();
 
-      expect(updateMany).not.toHaveBeenCalled();
-      expect(findOneAndUpdate).not.toHaveBeenCalled();
+      expect(store.exclusiveFlags).toHaveLength(0);
     });
 
     it('clears the flag and surfaces it in the response', async () => {
-      findOneAndUpdate.mockReturnValue({
-        lean: () => ({
-          exec: () =>
-            Promise.resolve({
-              modelId: 'chat',
-              name: 'Chat',
-              chef: 'OpenAI',
-              chefSlug: 'openai',
-              litellmModel: 'openai/chat',
-              providers: ['openai'],
-              type: 'chat',
-              types: ['chat'],
-              isActive: true,
-              isDefault: false,
-              isConversationV2Default: false,
-            }),
-        }),
-      });
+      store.rows.set('chat', row({ modelId: 'chat', name: 'Chat', isConversationV2Default: true }));
 
       const result = await svc.clearConversationV2DefaultModel('chat');
 
-      expect(findOneAndUpdate).toHaveBeenCalledWith({ modelId: 'chat' }, { $set: { isConversationV2Default: false } }, { new: true });
       expect(result?.isConversationV2Default).toBe(false);
+      expect(store.rows.get('chat')!.isConversationV2Default).toBe(false);
     });
   });
 });

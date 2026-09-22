@@ -5,7 +5,7 @@ import { DRIZZLE_DB } from '@modules/postgres/postgres.constants';
 import * as schema from '@modules/postgres/schema';
 import { newOwnedId } from '@modules/conversation/persistence/owned-id';
 import { UsageType } from '../usage-type.enum';
-import type { PlanDocument } from '../schemas/plan.schema';
+import type { PlanRecord } from './plan.store';
 import type { RecordUsageData } from '../interfaces/usage.interface';
 import type {
   UsageAnalyticsResult,
@@ -18,7 +18,7 @@ import type {
 export class PostgresUsageStore implements UsageStore {
   constructor(@Inject(DRIZZLE_DB) private readonly db: NodePgDatabase<typeof schema>) {}
 
-  async getOrCreateCurrentWindow(userId: string, plan: PlanDocument): Promise<UsageWindowRecord> {
+  async getOrCreateCurrentWindow(userId: string, plan: PlanRecord): Promise<UsageWindowRecord> {
     return this.db.transaction(async (tx) => {
       await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${userId}))`);
       const now = new Date();
@@ -43,7 +43,7 @@ export class PostgresUsageStore implements UsageStore {
     });
   }
 
-  async record(data: RecordUsageData, plan: PlanDocument): Promise<UsageWindowRecord> {
+  async record(data: RecordUsageData, plan: PlanRecord): Promise<UsageWindowRecord> {
     const totalTokens = data.inputTokens + data.outputTokens;
     return this.db.transaction(async (tx) => {
       await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${data.userId}))`);
@@ -254,7 +254,7 @@ export class PostgresUsageStore implements UsageStore {
     return result.rowCount ?? 0;
   }
 
-  private windowValues(userId: string, plan: PlanDocument, now: Date) {
+  private windowValues(userId: string, plan: PlanRecord, now: Date) {
     const windowStartHour = Math.floor(now.getHours() / plan.windowHours) * plan.windowHours;
     const windowStart = new Date(now);
     windowStart.setHours(windowStartHour, 0, 0, 0);
@@ -266,7 +266,7 @@ export class PostgresUsageStore implements UsageStore {
       windowStart,
       windowEnd,
       windowHours: plan.windowHours,
-      planId: plan._id.toString(),
+      planId: plan.id,
       planSlug: plan.slug,
       tokenLimitAtCreation: plan.tokenLimit,
     };

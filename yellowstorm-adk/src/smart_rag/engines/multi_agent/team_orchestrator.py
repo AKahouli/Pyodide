@@ -31,11 +31,6 @@ def _mark_session_stage(marker: str) -> None:
 
 
 
-# Delayed imports for google.adk to speed up startup
-def get_adk_runner():
-    from google.adk import Runner
-    return Runner
-
 def get_adk_agent():
     from google.adk import Agent
     return Agent
@@ -44,7 +39,7 @@ def get_in_memory_session_service():
     from google.adk.sessions import InMemorySessionService
     return InMemorySessionService
 
-from src.smart_rag.infrastructure.processing.plugin import CleanSessionPlugin
+from src.smart_rag.infrastructure.compaction import make_chat_runner
 
 from src.smart_rag.tools.utilities.tool_utils import extract_tool_names
 from src.smart_rag.engines.multi_agent.config import AgentTeamConfig
@@ -662,12 +657,7 @@ Do not render charts for single values or non-numeric content.
                 _mark_session_stage("mark_session_create_seed_end")
 
             _mark_session_stage("mark_runner_construction_start")
-            agent_runner=get_adk_runner()(
-                agent=manager_agent,
-                app_name="manager_app",
-                session_service=data_base_session,
-                plugins=[CleanSessionPlugin()],
-            )
+            agent_runner = make_chat_runner(manager_agent, data_base_session)
             _mark_session_stage("mark_runner_construction_end")
             # Process streaming events and capture the manager response
             manager_response = await self.streaming_processor.process_streaming_events( session_id, user_prompt, manager_agent, agent_runner, q, image_input=image_input

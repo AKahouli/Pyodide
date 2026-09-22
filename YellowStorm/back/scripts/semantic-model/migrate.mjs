@@ -21,6 +21,18 @@ const pool = new Pool({
   database: process.env.SEMANTIC_PG_DATABASE,
   ssl: process.env.SEMANTIC_PG_SSL === 'true' ? { rejectUnauthorized: false } : undefined,
 });
+// AGE migrations must run on the graph instance, never on an AGE-less
+// definitions database (e.g. agentstore). Unset AGEGRAPH_* reuses one pool.
+const agePool = process.env.SEMANTIC_AGEGRAPH_HOST
+  ? new Pool({
+    host: process.env.SEMANTIC_AGEGRAPH_HOST,
+    port: Number(process.env.SEMANTIC_AGEGRAPH_PORT || 5432),
+    user: process.env.SEMANTIC_AGEGRAPH_USER,
+    password: process.env.SEMANTIC_AGEGRAPH_PASSWORD,
+    database: process.env.SEMANTIC_AGEGRAPH_DATABASE,
+    ssl: process.env.SEMANTIC_PG_SSL === 'true' ? { rejectUnauthorized: false } : undefined,
+  })
+  : pool;
 
 try {
   // 000 is a mutable aggregate used by application bootstrap; only immutable increments belong in the migration ledger.
@@ -41,19 +53,27 @@ try {
       }
       continue;
     }
+    // The 002 graph migration (and its AGE extension install) always runs
+    // on the graph pool; every other file runs on the definitions pool.
+    // The ledger row stays on the definitions pool either way.
+    const target = file === '002_semantic_age_graph.sql' ? agePool : pool;
     if (file === '002_semantic_age_graph.sql') {
       // AGE extension installation cannot share a transaction with its first LOAD on some server builds.
-      await pool.query('CREATE EXTENSION IF NOT EXISTS age');
+      await target.query('CREATE EXTENSION IF NOT EXISTS age');
     }
-    const client = await pool.connect();
+    const client = await target.connect();
     try {
       await client.query('BEGIN');
       const statements = sql.split(/;\s*(?:\r?\n|$)/).map((statement) => statement.trim()).filter(Boolean);
       for (const statement of statements) {
+        // Library loading is owned by deployment (session_preload_libraries);
+        // app roles may not LOAD. Remaining statements fail loudly without AGE.
+        if (file === '002_semantic_age_graph.sql' && /^LOAD\s/i.test(statement)) continue;
         await client.query(statement);
       }
-      await client.query('INSERT INTO semantic_model.schema_migrations(version, checksum) VALUES ($1, $2)', [file, checksum]);
       await client.query('COMMIT');
+      // The ledger always lives on the definitions pool, even for graph files.
+      await pool.query('INSERT INTO semantic_model.schema_migrations(version, checksum) VALUES ($1, $2)', [file, checksum]);
       process.stdout.write(`Applied ${file}\n`);
     } catch (error) {
       await client.query('ROLLBACK');
@@ -64,4 +84,5 @@ try {
   }
 } finally {
   await pool.end();
+  if (agePool !== pool) await agePool.end();
 }

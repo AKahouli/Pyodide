@@ -31,6 +31,8 @@ interface NarrativeProps {
   onComponentAction?: (action: ChoiceComponentAction) => Promise<void>;
   onSubmitQuestions?: (actions: ChoiceComponentAction[]) => Promise<void>;
   onRetry?: () => void;
+  /** Hide expandable reasoning and tool payloads on constrained assistant surfaces. */
+  restrictActivityDetails?: boolean;
   /** Agent that produced this message; when set with `onOpenAgentEditor`, the header bot icon opens the agent editor. */
   agentId?: string | null;
   onOpenAgentEditor?: (agentId: string) => void;
@@ -154,6 +156,55 @@ function AgentActivityRow({ data, isStreaming, redactSensitiveText }: Readonly<{
   );
 }
 
+function collapsePresentChoicesActivity(components: MessageComponent[], questionCount: number, summary: string): MessageComponent[] {
+  if (questionCount < 2) return components;
+  let kept = false;
+  return components.flatMap((component) => {
+    const data = component.data as ToolActivityData;
+    if (component.type !== 'toolActivity' || data.toolName !== 'present_choices' || data.status !== 'completed') return [component];
+    if (kept) return [];
+    kept = true;
+    return [{ ...component, data: { ...component.data, summary } }];
+  });
+}
+
+const RESTRICTED_SUMMARY_SENSITIVE_PATTERN = /(?:^|[^a-z])(?:api[\s_-]*key|authorization|bearer|cookie|password|secret|token)(?:$|[^a-z])/i;
+
+function safeRestrictedActivitySummary(value: unknown): string | undefined {
+  if (typeof value !== 'string') return undefined;
+  const summary = value.trim();
+  const searchable = summary
+    .replace(/([A-Z]+)([A-Z][a-z])/g, '$1 $2')
+    .replace(/([a-z\d])([A-Z])/g, '$1 $2');
+  if (!summary || summary.length > 180 || /<[^>]+>/.test(summary) || RESTRICTED_SUMMARY_SENSITIVE_PATTERN.test(searchable)) return undefined;
+  return sanitizeActivitySummary(summary);
+}
+
+function RestrictedAgentActivityRow({ data, isStreaming }: Readonly<{ data: AgentActivityData; isStreaming: boolean }>) {
+  const { t } = useModuleTranslation('conversation');
+  const summary = safeRestrictedActivitySummary(data.summary) || t('stream.activity.agentPlanning');
+  const active = isStreaming && data.status === 'running';
+  return (
+    <div className='flex min-h-7 items-center gap-2 px-2 py-0.5 text-xs text-muted-foreground'>
+      <span data-agent-activity-spinner={active || undefined} aria-hidden='true'>{statusIcon(data.status, active)}</span>
+      <span data-agent-summary className='min-w-0 flex-1 truncate font-medium leading-4 text-foreground'>{summary}</span>
+    </div>
+  );
+}
+
+function RestrictedToolRow({ data }: Readonly<{ data: ToolActivityData }>) {
+  const { t } = useModuleTranslation('conversation');
+  const label = safeRestrictedActivitySummary(data.summary)
+    || safeRestrictedActivitySummary(resolveToolFallbackName(data, true))
+    || t('stream.activity.toolFallback');
+  return (
+    <div className='flex min-h-7 items-center gap-2 px-2 py-0.5 text-xs text-muted-foreground'>
+      <span aria-hidden='true'>{statusIcon(data.status)}</span>
+      <span data-tool-summary className='min-w-0 flex-1 truncate font-medium leading-4 text-foreground'>{label}</span>
+    </div>
+  );
+}
+
 function ArtifactRow({ conversationId, messageId, data, enabled }: Readonly<{ conversationId: string; messageId: string; data: ArtifactActivityData; enabled: boolean }>) {
   const { t } = useModuleTranslation('conversation');
   const [loadingAction, setLoadingAction] = useState<'view' | 'download' | null>(null);
@@ -212,7 +263,7 @@ function ArtifactRow({ conversationId, messageId, data, enabled }: Readonly<{ co
   );
 }
 
-function MobileActivityTimeline({ components, nodes, isStreaming }: Readonly<{ components: readonly MessageComponent[]; nodes: readonly ReactNode[]; isStreaming: boolean }>) {
+function MobileActivityTimeline({ components, nodes, isStreaming, restrictActivityDetails }: Readonly<{ components: readonly MessageComponent[]; nodes: readonly ReactNode[]; isStreaming: boolean; restrictActivityDetails: boolean }>) {
   const { t } = useModuleTranslation('conversation');
   const [open, setOpen] = useState(false);
   const contentId = useId();
@@ -225,10 +276,14 @@ function MobileActivityTimeline({ components, nodes, isStreaming }: Readonly<{ c
     ? current.data.availability === 'failed' ? 'failed' : current.data.availability === 'pending' ? 'running' : 'completed'
     : current.data.status as ToolActivityData['status'] | AgentActivityData['status'];
   const label = current.type === 'toolActivity'
-    ? resolveToolSummary(current.data) || resolveToolFallbackName(current.data) || t('stream.activity.toolFallback')
+    ? restrictActivityDetails
+      ? safeRestrictedActivitySummary(current.data.summary) || safeRestrictedActivitySummary(resolveToolFallbackName(current.data)) || t('stream.activity.toolFallback')
+      : resolveToolSummary(current.data) || resolveToolFallbackName(current.data) || t('stream.activity.toolFallback')
     : current.type === 'artifact'
       ? sanitizeActivityFilename(current.data.filename) || t('stream.activity.generated')
-      : sanitizeActivitySummary(current.data.summary) || t('stream.activity.agentPlanning');
+      : restrictActivityDetails
+        ? safeRestrictedActivitySummary(current.data.summary) || t('stream.activity.agentPlanning')
+        : sanitizeActivitySummary(current.data.summary) || t('stream.activity.agentPlanning');
   const statusLabel = t(`stream.activity.toolStatus.${status}`);
 
   return (
@@ -289,7 +344,7 @@ export function ConversationAssistantBubble(props: Readonly<NarrativeProps>) {
   const agents = useAgentStore((state) => state.agents);
   const agentDirectoryInitialized = useAgentStore((state) => state.isInitialized);
   const activityPaneRef = useRef<HTMLDivElement>(null);
-  const redactSensitiveText = false;
+  const redactSensitiveText = props.restrictActivityDetails === true;
   const messageId = props.messageId;
 
   // Stable on purpose: agent lookup reads the store at click time, so the
@@ -363,16 +418,18 @@ export function ConversationAssistantBubble(props: Readonly<NarrativeProps>) {
     ? [<ArtifactRow key={component.id || index} conversationId={props.conversationId} messageId={props.messageId} data={component.data as ArtifactActivityData} enabled={!props.isStreaming} />]
     : []);
   const answerNodes: ReactNode[] = [];
-  const activityComponents = projectActivityComponents(source.filter(
+  const questionCount = source.filter((component) => component.type === 'choice').length;
+  const activityComponents = projectActivityComponents(collapsePresentChoicesActivity(source.filter(
     (component): component is MessageComponent & { type: 'agentActivity' | 'toolActivity' } =>
       component.type === 'agentActivity' || component.type === 'toolActivity',
   ).map((component) => resolvePersistedHierarchyNames(
     component,
     agents,
     (name) => t('stream.activity.delegateTo', { name }),
-  )), redactSensitiveText);
+  )), questionCount, t('stream.activity.clarificationQuestions', { count: questionCount })), redactSensitiveText);
   const activityCount = activityComponents.length;
   const activityDuration = resolveActivityDuration(activityComponents);
+  const activityPaneCollapsed = props.restrictActivityDetails ? false : paneCollapsed;
   const reasoningTexts = [...new Set(activityComponents.flatMap((component) => {
     if (component.type !== 'agentActivity') return [];
     const detail = collapseExactTandem(component.data.detail);
@@ -422,9 +479,13 @@ export function ConversationAssistantBubble(props: Readonly<NarrativeProps>) {
     publishOutline();
   }, [liveOutlineSignature, publishOutline]);
   activityComponents.forEach((component, index) => {
-    if (component.type === 'agentActivity') activityNodes.push(<AgentActivityRow key={component.id || index} data={component.data as AgentActivityData} isStreaming={props.isStreaming} redactSensitiveText={redactSensitiveText} />);
+    if (component.type === 'agentActivity') activityNodes.push(props.restrictActivityDetails
+      ? <RestrictedAgentActivityRow key={component.id || index} data={component.data as AgentActivityData} isStreaming={props.isStreaming} />
+      : <AgentActivityRow key={component.id || index} data={component.data as AgentActivityData} isStreaming={props.isStreaming} redactSensitiveText={redactSensitiveText} />);
     if (component.type === 'toolActivity') {
-      activityNodes.push(<ToolRow key={component.id || index} conversationId={props.conversationId} messageId={props.messageId} component={component} redactSensitiveText={redactSensitiveText} onRetry={props.onRetry} />);
+      activityNodes.push(props.restrictActivityDetails
+        ? <RestrictedToolRow key={component.id || index} data={component.data as ToolActivityData} />
+        : <ToolRow key={component.id || index} conversationId={props.conversationId} messageId={props.messageId} component={component} redactSensitiveText={redactSensitiveText} onRetry={props.onRetry} />);
     }
   });
   if (!activityNodes.length && props.showWorking) activityNodes.push(<div key='working' className='flex items-center gap-2 text-sm text-muted-foreground'><Loader2 className='size-4 animate-spin text-primary' />{t('stream.activity.usingTools')}</div>);
@@ -458,7 +519,15 @@ export function ConversationAssistantBubble(props: Readonly<NarrativeProps>) {
   return (
     <div data-message-role='assistant' data-testid='conversation-assistant-bubble' className={cn('w-full rounded-2xl rounded-tl-sm border border-border/70 bg-muted/45 px-4 py-4 text-sm text-foreground shadow-xs dark:bg-muted/30')}>
         {activityNodes.length > 0 ? <>
-          {props.isStreaming ? (
+          {props.restrictActivityDetails ? (
+            <div data-agent-activity data-active={props.isStreaming || undefined} className='mb-3 hidden min-w-0 w-full items-center gap-2 overflow-hidden text-sm text-muted-foreground md:flex'>
+              {agentIcon}
+              <span className='shrink-0 font-medium text-foreground'>{actorName}</span>
+              <span className={cn('relative h-0.5 min-w-8 flex-1 overflow-hidden', props.isStreaming ? 'bg-running/20' : 'bg-border')} aria-hidden='true'>
+                {props.isStreaming && <span data-agent-scan className='absolute inset-y-0 left-0 w-1/3 animate-agent-scan bg-gradient-to-r from-transparent via-running to-transparent' />}
+              </span>
+            </div>
+          ) : props.isStreaming ? (
             <div data-agent-activity data-active className='mb-3 hidden min-w-0 w-full items-center gap-2 overflow-hidden text-sm text-muted-foreground md:flex'>
               {agentIcon}
               <span className='shrink-0 font-medium text-foreground'>{actorName}</span>
@@ -517,16 +586,18 @@ export function ConversationAssistantBubble(props: Readonly<NarrativeProps>) {
           </div>
         )}
       {activityComponents.length > 0
-        ? <MobileActivityTimeline components={activityComponents} nodes={activityNodes} isStreaming={props.isStreaming} />
+        ? props.restrictActivityDetails
+          ? <div data-mobile-activity className='mb-3 space-y-1 md:hidden'>{activityNodes}</div>
+          : <MobileActivityTimeline components={activityComponents} nodes={activityNodes} isStreaming={props.isStreaming} restrictActivityDetails={false} />
         : props.showWorking && <div data-mobile-working className='flex items-center gap-2 text-sm text-muted-foreground md:hidden'><Loader2 className='size-4 animate-spin text-primary' />{t('stream.activity.usingTools')}</div>}
       {activityNodes.length > 0 && (
         <div
           data-activity-pane-shell
-          data-collapsed={paneCollapsed || undefined}
+          data-collapsed={activityPaneCollapsed || undefined}
           className='grid transition-[grid-template-rows] duration-300 ease-in-out motion-reduce:transition-none'
-          style={{ gridTemplateRows: paneCollapsed ? '0fr' : '1fr' }}
+          style={{ gridTemplateRows: activityPaneCollapsed ? '0fr' : '1fr' }}
         >
-          <div className={cn('min-h-0 overflow-hidden transition-[visibility] duration-300 motion-reduce:transition-none', paneCollapsed && 'invisible')}>
+          <div className={cn('min-h-0 overflow-hidden transition-[visibility] duration-300 motion-reduce:transition-none', activityPaneCollapsed && 'invisible')}>
             <ResizableActivityPane paneRef={activityPaneRef} resizeLabel={t('stream.activity.resizePaneAria')}>
               <div data-desktop-activity>{activityNodes}</div>
             </ResizableActivityPane>

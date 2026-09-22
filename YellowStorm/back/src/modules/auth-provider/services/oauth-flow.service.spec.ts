@@ -1,12 +1,10 @@
 import { Test, TestingModule } from '@nestjs/testing';
-import { getModelToken } from '@nestjs/mongoose';
 import { ConfigService } from '@nestjs/config';
 import { Types } from 'mongoose';
 import { OAuthFlowService } from './oauth-flow.service';
 import { AuthProviderService } from './auth-provider.service';
+import { OAUTH_STATE_STORE, PROVIDER_LINK_TOKEN_STORE } from '../persistence/auth-provider.stores';
 import { ProviderLinkService } from './provider-link.service';
-import { OAuthState } from '../schemas/oauth-state.schema';
-import { ProviderLinkToken } from '../schemas/provider-link-token.schema';
 import { AuthService } from '@modules/auth/auth.service';
 import { UserService } from '@modules/user/user.service';
 import { UsageService } from '@modules/usage';
@@ -14,7 +12,7 @@ import { AuthorizationService } from '@modules/authorization/authorization.servi
 import { EmailService, EmailTemplateRenderer } from '@modules/email';
 import { LoggerService } from '@modules/logger';
 import { WorkspaceInitializerService } from '@modules/workspace/workspace-initializer.service';
-import { UserStatus } from '@modules/user/schemas/user.schema';
+import { UserStatus } from '@modules/user/user.types';
 import { ErrorCode } from '@modules/exceptions/constants/error-codes';
 
 // Mock global fetch
@@ -150,8 +148,15 @@ describe('OAuthFlowService', () => {
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         OAuthFlowService,
-        { provide: getModelToken(OAuthState.name), useValue: oauthStateModel },
-        { provide: getModelToken(ProviderLinkToken.name), useValue: providerLinkTokenModel },
+        { provide: OAUTH_STATE_STORE, useValue: { create: oauthStateModel.create, consumeByState: oauthStateModel.findOneAndDelete } },
+        {
+          provide: PROVIDER_LINK_TOKEN_STORE,
+          useValue: {
+            create: providerLinkTokenModel.create,
+            consumeByToken: providerLinkTokenModel.findOneAndDelete,
+            consumeByTokenAndProviderKey: providerLinkTokenModel.findOneAndDelete,
+          },
+        },
         { provide: AuthProviderService, useValue: authProviderService },
         { provide: ProviderLinkService, useValue: providerLinkService },
         { provide: AuthService, useValue: authService },
@@ -203,7 +208,7 @@ describe('OAuthFlowService', () => {
 
       expect(url).not.toContain('code_challenge=');
       expect(oauthStateModel.create).toHaveBeenCalledWith(
-        expect.objectContaining({ codeVerifier: undefined }),
+        expect.objectContaining({ codeVerifier: null }),
       );
     });
 

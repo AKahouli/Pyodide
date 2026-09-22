@@ -23,7 +23,7 @@ export interface HistoryRow extends RowTime {
   /** Route target for the row. */
   to: string;
   /** Original v1 conversation (typed loosely to avoid store imports here). */
-  conv?: { id: string; title: string; projectId?: string | null; isGroup?: boolean; unseenMentionCount?: number };
+  conv?: { id: string; title: string; projectId?: string | null; isGroup?: boolean; isShared?: boolean; unseenMentionCount?: number };
   /** Original v2 pointer. */
   ptr?: { sessionId: string; title?: string | null };
 }
@@ -75,6 +75,7 @@ interface V1ConversationLike {
   createdAt?: string | null;
   projectId?: string | null;
   isGroup?: boolean;
+  isShared?: boolean;
   unseenMentionCount?: number;
 }
 

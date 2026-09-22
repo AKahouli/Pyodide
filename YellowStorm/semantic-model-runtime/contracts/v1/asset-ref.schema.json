@@ -1,0 +1,26 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://yellowmind.dev/schemas/semantic-model-runtime/v1/asset-ref.schema.json",
+  "title": "AssetRef",
+  "type": "object",
+  "description": "Authorized source identity. Resolved server-side against Workspace authorization; never accepted as an untrusted URL or filename.",
+  "required": ["workspaceId", "assetId", "assetVersionId", "sourceVersionVerification"],
+  "additionalProperties": false,
+  "properties": {
+    "workspaceId": { "type": "string", "pattern": "^[a-f0-9]{24}$" },
+    "assetId": { "type": "string", "pattern": "^[a-f0-9]{24}$" },
+    "assetVersionId": {
+      "type": "string",
+      "description": "Verified content fingerprint (sha256:<hex>) or immutable source-version correlation id. Not derivable from filename alone. 'md5:<hex>' is accepted only with sourceVersionVerification='partial'."
+    },
+    "sourceVersionVerification": {
+      "type": "string",
+      "enum": ["verified", "partial", "unknown"],
+      "description": "verified = content fingerprint (sha256) confirmed against this version; partial = MD5 content hash from a backend-buffered upload, or a recorded upload/index-job correlation for this version, without fingerprint verification; unknown = no reliable correlation (must not back source-version-dependent acceptance)."
+    },
+    "indexObservationId": {
+      "type": ["string", "null"],
+      "description": "Semantic-owned observation of the existing logical index for this asset, when one exists."
+    }
+  }
+}

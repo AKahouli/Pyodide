@@ -1,4 +1,4 @@
-import { UploadSessionStatus } from '../schemas/upload-session.schema';
+import { UploadSessionStatus } from './upload-session-status.enum';
 import { DocumentResponse } from './workspace-document.interface';
 
 export interface InitiateBulkUploadData {

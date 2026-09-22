@@ -1,0 +1,164 @@
+{
+  "success": true,
+  "data": [
+    {
+      "id": "69837251ca96b932e59d0198",
+      "name": "super_admin",
+      "description": "Super administrator with full system access",
+      "permissions": [
+        "*"
+      ],
+      "isActive": true,
+      "isSystem": true,
+      "priority": 100,
+      "createdAt": "<volatile>",
+      "updatedAt": "<volatile>"
+    },
+    {
+      "id": "69837251ca96b932e59d0195",
+      "name": "admin",
+      "description": "Administrator with broad access except super admin features",
+      "permissions": [
+        "users.*",
+        "plans.*",
+        "reports.*",
+        "workspaces.*",
+        "analytics.*",
+        "conversations.*",
+        "admin.roles.read",
+        "admin.audit.read",
+        "app_builder_ai.read",
+        "app_builder_ai.manage"
+      ],
+      "isActive": true,
+      "isSystem": true,
+      "priority": 90,
+      "createdAt": "<volatile>",
+      "updatedAt": "<volatile>"
+    },
+    {
+      "id": "69971a21e22149947dd0a103",
+      "name": "devops",
+      "description": "This role is given to devOps members, it allows them to manage the app system",
+      "permissions": [
+        "users.read",
+        "users.activate",
+        "reports.read",
+        "reports.update",
+        "reports.*",
+        "system.maintenance",
+        "system.skip_maintenance",
+        "system.*",
+        "analytics.read",
+        "analytics.*",
+        "models.read_all",
+        "models.update",
+        "models.set_default",
+        "models.*",
+        "admin.roles.read",
+        "admin.audit.read",
+        "admin.logs.read",
+        "tools.read",
+        "tools.create",
+        "tools.update",
+        "tools.delete",
+        "tools.*",
+        "agent_types.read",
+        "agent_types.create",
+        "agent_types.update",
+        "agent_types.delete",
+        "agent_types.*",
+        "agents.read",
+        "agents.create",
+        "agents.update",
+        "agents.delete",
+        "agents.*"
+      ],
+      "isActive": true,
+      "isSystem": false,
+      "priority": 60,
+      "createdAt": "<volatile>",
+      "updatedAt": "<volatile>"
+    },
+    {
+      "id": "69837251ca96b932e59d0192",
+      "name": "moderator",
+      "description": "Moderator with report and conversation management",
+      "permissions": [
+        "reports.*",
+        "conversations.admin_delete"
+      ],
+      "isActive": true,
+      "isSystem": true,
+      "priority": 50,
+      "createdAt": "<volatile>",
+      "updatedAt": "<volatile>"
+    },
+    {
+      "id": "69837251ca96b932e59d018f",
+      "name": "dev",
+      "description": "Developer with analytics and system maintenance access",
+      "permissions": [
+        "analytics.read",
+        "system.maintenance"
+      ],
+      "isActive": true,
+      "isSystem": true,
+      "priority": 20,
+      "createdAt": "<volatile>",
+      "updatedAt": "<volatile>"
+    },
+    {
+      "id": "69837251ca96b932e59d018c",
+      "name": "tester",
+      "description": "Tester with read-only analytics access",
+      "permissions": [
+        "analytics.read",
+        "users.read",
+        "users.suspend",
+        "users.activate",
+        "users.assign_plan",
+        "users.assign_role",
+        "users.*"
+      ],
+      "isActive": true,
+      "isSystem": true,
+      "priority": 10,
+      "createdAt": "<volatile>",
+      "updatedAt": "<volatile>"
+    },
+    {
+      "id": "69837251ca96b932e59d0189",
+      "name": "user",
+      "description": "Default user role with no admin permissions",
+      "permissions": [
+        "menu.restricted",
+        "menu.new_chat",
+        "menu.workspace",
+        "menu.agents",
+        "menu.teams",
+        "menu.projects",
+        "menu.ask",
+        "menu.history",
+        "feature.restricted",
+        "feature.conversation",
+        "feature.workspace",
+        "feature.agents",
+        "feature.semantic_model",
+        "feature.governance",
+        "feature.app_marketplace"
+      ],
+      "isActive": true,
+      "isSystem": true,
+      "priority": 0,
+      "createdAt": "<volatile>",
+      "updatedAt": "<volatile>"
+    }
+  ],
+  "meta": {
+    "timestamp": "<volatile>",
+    "requestId": "<volatile>",
+    "path": "/api/v1/admin/roles",
+    "duration": 22
+  }
+}

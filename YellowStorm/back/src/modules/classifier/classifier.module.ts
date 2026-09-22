@@ -16,19 +16,6 @@ import {
   ClassifierRule,
   ClassifierRuleSchema,
 } from './schemas/classifier-rule.schema';
-import {
-  Workspace,
-  WorkspaceSchema,
-} from '../workspace/schemas/workspace.schema';
-import {
-  WorkspaceShare,
-  WorkspaceShareSchema,
-} from '../workspace/schemas/workspace-share.schema';
-import {
-  WorkspaceDoc,
-  WorkspaceDocumentSchema,
-} from '../workspace/schemas/workspace-document.schema';
-import { Flow, FlowSchema } from '../playbook-flow/schemas/playbook-flow.schema';
 import { ClassifierFolderController } from './controllers/classifier-folder.controller';
 import { ClassifierFileController } from './controllers/classifier-file.controller';
 import { ClassifierRunController } from './controllers/classifier-run.controller';
@@ -41,6 +28,8 @@ import { ClassifierRunService } from './services/classifier-run.service';
 import { ClassifierRuleService } from './services/classifier-rule.service';
 import { ClassifierSyncService } from './services/classifier-sync.service';
 import { LoggerModule } from '../logger';
+import { WorkspaceModule } from '../workspace/workspace.module';
+import { FlowReadPortModule } from '../playbook-flow/ports/flow-read-port.module';
 
 @Module({
   imports: [
@@ -49,11 +38,9 @@ import { LoggerModule } from '../logger';
       { name: ClassifierFileAssignment.name, schema: ClassifierFileAssignmentSchema },
       { name: ClassificationRun.name, schema: ClassificationRunSchema },
       { name: ClassifierRule.name, schema: ClassifierRuleSchema },
-      { name: Workspace.name, schema: WorkspaceSchema },
-      { name: WorkspaceShare.name, schema: WorkspaceShareSchema },
-      { name: WorkspaceDoc.name, schema: WorkspaceDocumentSchema },
-      { name: Flow.name, schema: FlowSchema },
     ]),
+    WorkspaceModule,
+    FlowReadPortModule,
     LoggerModule,
   ],
   controllers: [

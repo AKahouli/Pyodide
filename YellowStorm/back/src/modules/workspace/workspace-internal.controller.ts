@@ -1,11 +1,11 @@
 import { Controller, Post, Body, HttpCode, HttpStatus, UseGuards, VERSION_NEUTRAL } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse } from '@nestjs/swagger';
-import { InjectModel } from '@nestjs/mongoose';
-import { Model, Types } from 'mongoose';
+import { Inject } from '@nestjs/common';
+import { isObjectId } from '@common/postgres';
 import { IsArray, IsString } from 'class-validator';
 import { InternalServiceGuard } from '../auth/guards/internal-service.guard';
 import { Public } from '../auth/decorators/public.decorator';
-import { Workspace, WorkspaceDocument } from './schemas/workspace.schema';
+import { WORKSPACE_STORE, type WorkspaceStore } from './stores/workspace-store';
 
 class ResolveNamesDto {
   @IsArray()
@@ -18,8 +18,7 @@ class ResolveNamesDto {
 @UseGuards(InternalServiceGuard)
 export class WorkspaceInternalController {
   constructor(
-    @InjectModel(Workspace.name)
-    private readonly workspaceModel: Model<WorkspaceDocument>,
+    @Inject(WORKSPACE_STORE) private readonly workspaceStore: WorkspaceStore,
   ) {}
 
   @Public()
@@ -31,18 +30,14 @@ export class WorkspaceInternalController {
   async resolveNames(
     @Body() dto: ResolveNamesDto,
   ): Promise<Record<string, string>> {
-    const ids = (dto.ids || []).filter((id) => Types.ObjectId.isValid(id));
+    const ids = (dto.ids || []).map((id) => String(id).toLowerCase()).filter((id) => isObjectId(id));
     if (!ids.length) return {};
 
-    const workspaces = await this.workspaceModel
-      .find({ _id: { $in: ids.map((id) => new Types.ObjectId(id)) } })
-      .select('_id name storagePrefix')
-      .lean()
-      .exec();
+    const byId = await this.workspaceStore.findByIds(ids);
 
     const result: Record<string, string> = {};
-    for (const ws of workspaces) {
-      result[ws._id.toString()] = ws.storagePrefix;
+    for (const [id, ws] of byId) {
+      result[id] = ws.storagePrefix;
     }
     return result;
   }

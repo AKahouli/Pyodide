@@ -382,6 +382,8 @@ All configuration is validated at startup using Joi schemas. See `src/config/con
 | `AZURE_STORAGE_ACCOUNT_NAME`         | Yes      | Azure storage account name                | `''` (empty)          |
 | `STORAGE_MAX_FILE_SIZE_MB`           | No       | Maximum file size for upload (1-500 MB)   | `50`                  |
 | `STORAGE_MAX_FILES_PER_UPLOAD`       | No       | Maximum files per upload request (1-50)   | `10`                  |
+| `SEMANTIC_DATASET_STORAGE_PREFIX`    | No       | Ceph/S3 folder for prepared semantic datasets | `semantic-model/datasets` |
+| `SEMANTIC_DATASET_MAX_SIZE_MB`       | No       | Maximum prepared Parquet upload size      | `200`                 |
 | `STORAGE_SAS_EXPIRY_MINUTES`         | No       | SAS URL expiry duration (1-10080 min)     | `60`                  |
 | `STORAGE_ALLOWED_MIME_TYPES`         | No       | Allowed file MIME types (comma-separated) | `application/pdf,...` |
 | `STORAGE_HEALTH_CHECK_ENABLED`       | No       | Enable storage health checks              | `true`                |

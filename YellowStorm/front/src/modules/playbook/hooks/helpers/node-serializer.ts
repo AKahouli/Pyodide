@@ -167,6 +167,7 @@ function buildChildFlowNode(task: PlaybookTask, iteratorTasks: Map<string, Playb
     parentId: isScoped ? parentId ?? undefined : undefined,
     extent: isScoped ? ('parent' as const) : undefined,
     data: { ...task } as PlaybookNodeData,
+    ariaLabel: task.title || undefined,
   };
 }
 

@@ -15,6 +15,7 @@ import {
 import { ReliabilityCheckToggle, useReasoningEffortState } from './components/ReasoningEffortSelect';
 import { useConversationFileUpload } from './hooks/useConversationFileUpload';
 import { useAllowedUploadExtensions } from '@/modules/workspace/hooks/useAllowedUploadExtensions';
+import { useConversationSettings } from './hooks/useConversationSettings';
 import { useModuleTranslation } from '@/modules/localization';
 import { SelectedConnectorRepo } from './components/SelectedConnectorRepo';
 import { ComposerSuggestionChips } from './components/ComposerSuggestionChips';
@@ -26,14 +27,17 @@ import { createGovernedConversation } from './api';
 import type { Conversation } from './types';
 import { ConversationHomePanels } from './components/ConversationHomePanels';
 import { ConversationScopeHeader } from './components/ConversationScopeHeader';
-import { HomePromptSuggestions } from './components/HomePromptSuggestions';
 import { useHomeMotion } from './hooks/useHomeMotion';
 import './conversation-home.css';
 import './conversation-home-motion.css';
 
+const GOVERNANCE_SCOPE_STORAGE_KEY = 'yellowmind.home.governance-scope';
+
 export function NewConversationPage() {
   const homeMotion = useHomeMotion();
   const { accept } = useAllowedUploadExtensions();
+  const conversationSettings = useConversationSettings();
+  const attachmentsDisabled = conversationSettings?.attachmentIntelligence?.enabled !== true;
   const createConversation = useConversationStore((s) => s.createConversation);
   const updateConversation = useConversationStore((s) => s.updateConversation);
   const claimCurrentConversation = useConversationStore((s) => s.claimCurrentConversation);
@@ -44,20 +48,21 @@ export function NewConversationPage() {
   const webConnectorAccessEnabled = useWebConnectorAccessEnabled();
   const navigate = useNavigate();
   const location = useLocation();
+  const { user } = useAuth();
   const libraryDraft = readLibraryDraft(location.state);
+  const governanceScopeStorageKey = user?.id ? `${GOVERNANCE_SCOPE_STORAGE_KEY}:${user.id}` : null;
   const [isSending, setIsSending] = useState(false);
   const [silentConvId, setSilentConvId] = useState<string | null>(null);
   const [silentConversation, setSilentConversation] = useState<Conversation | null>(null);
-  const [selectedScopeId, setSelectedScopeId] = useState('');
+  const [selectedScopeId, setSelectedScopeId] = useState(() => governanceScopeStorageKey ? localStorage.getItem(governanceScopeStorageKey) ?? '' : '');
   const [creationStarted, setCreationStarted] = useState(false);
   const conversationScopeRef = useRef<AvailableGovernedScope | null>();
   const governedCreationRequestId = useRef(crypto.randomUUID());
   const { t } = useModuleTranslation('conversation');
   const inputDisabled = useInputDisabled();
   const { status: usageStatus } = useUsage();
-  const { user } = useAuth();
   const governedScopesEnabled = useFeatureVisibilityStore((state) => state.visibility.governedScopeCarousel);
-  const { data: governedScopes = [], isError: governedScopesError, refetch: refetchGovernedScopes } = useAvailableGovernedScopes(governedScopesEnabled);
+  const { data: governedScopes = [], isError: governedScopesError, isSuccess: governedScopesLoaded, refetch: refetchGovernedScopes } = useAvailableGovernedScopes(governedScopesEnabled, user?.id);
   const selectedScope = governedScopes.find((scope) => scope.scopeId === selectedScopeId);
   const presentationScope = creationStarted ? conversationScopeRef.current : selectedScope;
   const isLimitExceeded = usageStatus?.isLimitExceeded ?? false;
@@ -68,6 +73,12 @@ export function NewConversationPage() {
   useEffect(() => {
     useConversationStore.setState({ currentConversationId: null, selectedSkillIds: [], selectedWorkspaceIds: [], selectedSemanticModelId: null });
   }, []);
+
+  useEffect(() => {
+    if (!governedScopesLoaded || creationStarted || !selectedScopeId || governedScopes.some((scope) => scope.scopeId === selectedScopeId)) return;
+    setSelectedScopeId('');
+    if (governanceScopeStorageKey) localStorage.removeItem(governanceScopeStorageKey);
+  }, [creationStarted, governanceScopeStorageKey, governedScopes, governedScopesLoaded, selectedScopeId]);
 
   const limitPlaceholder = useMemo(() => {
     if (!isLimitExceeded) return undefined;
@@ -224,6 +235,10 @@ export function NewConversationPage() {
 
   const handleScopeChange = (scopeId: string) => {
     setSelectedScopeId(scopeId);
+    if (governanceScopeStorageKey) {
+      if (scopeId) localStorage.setItem(governanceScopeStorageKey, scopeId);
+      else localStorage.removeItem(governanceScopeStorageKey);
+    }
     governedCreationRequestId.current = crypto.randomUUID();
   };
 
@@ -274,16 +289,17 @@ export function NewConversationPage() {
               uploadingFiles={uploadFiles}
               accept={accept}
               maxFiles={5}
+              attachmentsDisabled={attachmentsDisabled}
               showWorkspaceSelect={!presentationScope}
               preserveWorkspaceSelectionOnSubmit
               showModelSelector={!presentationScope}
               governedMode={Boolean(presentationScope)}
               enableTeamMentions={!presentationScope}
+              autoFocus
               extraTools={presentationScope ? <ReliabilityCheckToggle /> : <><WebSearchConnectorToggle /><ReliabilityCheckToggle /></>}
-              belowTextarea={<>
-                <HomePromptSuggestions scopeName={presentationScope?.name} disabled={inputDisabled || isLimitExceeded || isUploading || isSending} />
+              belowTextarea={
                 <ComposerSuggestionChips fetchDisabled={inputDisabled || isLimitExceeded || isUploading || isSending} />
-              </>}
+              }
             />
             </div>
             {!presentationScope && <SelectedConnectorRepo />}

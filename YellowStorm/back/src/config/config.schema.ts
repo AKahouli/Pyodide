@@ -21,6 +21,10 @@ export const configValidationSchema = Joi.object({
   MEMORY_PG_PASSWORD: Joi.string().optional(),
   MEMORY_PG_DB: Joi.string().optional(),
   MEMORY_PG_SSL: Joi.boolean().optional(),
+  MEMORY_PG_POOL_MAX: Joi.number().integer().min(1).max(50).default(5),
+  MEMORY_PG_STATEMENT_TIMEOUT: Joi.number().min(1000).max(300000).default(30000),
+  MEMORY_PG_IDLE_IN_TRANSACTION_TIMEOUT: Joi.number().min(1000).max(300000).default(30000),
+  MEMORY_PG_CONNECT_TIMEOUT: Joi.number().min(1000).default(10000),
   MEMORY_LIMIT_MB: Joi.number().min(64).default(512),
 
   // App-owned Postgres (agents datastore — Drizzle)
@@ -36,6 +40,11 @@ export const configValidationSchema = Joi.object({
   POSTGRES_STATEMENT_TIMEOUT: Joi.number().min(1000).max(300000).default(30000),
   POSTGRES_IDLE_IN_TRANSACTION_TIMEOUT: Joi.number().min(1000).max(300000).default(30000),
   POSTGRES_KEEPALIVE: Joi.boolean().default(true),
+  POSTGRES_KEEPALIVE_INITIAL_DELAY: Joi.number().min(0).default(10000),
+  // CA for server cert verification (all pools): PEM contents or a file path.
+  POSTGRES_SSL_CA: Joi.string().allow('').optional(),
+  // Unset => verify only when POSTGRES_SSL_CA is provided (backwards compatible).
+  POSTGRES_SSL_REJECT_UNAUTHORIZED: Joi.boolean().optional(),
   REPLICA_ID: Joi.string().max(100).optional(),
   CONVERSATION_MAX_CLONE_MESSAGES: Joi.number().min(1).max(10000).default(2000),
   CONVERSATION_MAX_PRIVATE_SHARE_RECIPIENTS: Joi.number().min(1).max(20).default(20),
@@ -46,6 +55,22 @@ export const configValidationSchema = Joi.object({
 
   // Semantic Model PostgreSQL / Apache AGE
   SEMANTIC_MODELS_AUTO_PROVISION: Joi.boolean().default(false),
+  SEMANTIC_MODEL_RUNTIME_ENABLED: Joi.boolean().default(false),
+  // Runtime writes require the runtime feature; a mismatch must fail at boot, not silently no-op.
+  SEMANTIC_MODEL_RUNTIME_WRITES_ENABLED: Joi.boolean().default(false).when('SEMANTIC_MODEL_RUNTIME_ENABLED', {
+    is: false,
+    then: Joi.valid(false),
+  }),
+  SEMANTIC_MODEL_RUNTIME_URL: Joi.string().uri().optional().allow(''),
+  SEMANTIC_RUNTIME_SERVICE_KEY: Joi.string().max(500).optional().allow(''),
+  SEMANTIC_MODEL_RUNTIME_REQUEST_TIMEOUT_MS: Joi.number().integer().min(1000).max(60000).default(5000),
+  SEMANTIC_MODEL_DATA_API_ENABLED: Joi.boolean().default(false),
+  SEMANTIC_MODEL_REALTIME_ENABLED: Joi.boolean().default(false).when('SEMANTIC_MODEL_DATA_API_ENABLED', {
+    is: false,
+    then: Joi.valid(false),
+  }),
+  SEMANTIC_MODEL_CONTEXT_SEARCH_ENABLED: Joi.boolean().default(false),
+  SEMANTIC_MODEL_LLM_FALLBACK_ENABLED: Joi.boolean().default(false),
   SEMANTIC_PG_HOST: Joi.string().optional().allow(''),
   SEMANTIC_PG_PORT: Joi.number().min(1).max(65535).default(5432),
   SEMANTIC_PG_USER: Joi.string().optional().allow(''),
@@ -53,6 +78,19 @@ export const configValidationSchema = Joi.object({
   SEMANTIC_PG_DATABASE: Joi.string().optional().allow(''),
   SEMANTIC_PG_SSL: Joi.boolean().default(false),
   SEMANTIC_PG_POOL_MAX: Joi.number().min(1).max(50).default(10),
+  SEMANTIC_PG_STATEMENT_TIMEOUT: Joi.number().min(1000).max(3600000).default(60000),
+  SEMANTIC_PG_IDLE_IN_TRANSACTION_TIMEOUT: Joi.number().min(1000).max(300000).default(30000),
+  SEMANTIC_PG_CONNECT_TIMEOUT: Joi.number().min(1000).default(10000),
+  SEMANTIC_AGEGRAPH_HOST: Joi.string().optional().allow(''),
+  SEMANTIC_AGEGRAPH_PORT: Joi.number().min(1).max(65535).optional(),
+  SEMANTIC_AGEGRAPH_USER: Joi.string().optional().allow(''),
+  SEMANTIC_AGEGRAPH_PASSWORD: Joi.string().allow('').optional(),
+  SEMANTIC_AGEGRAPH_DATABASE: Joi.string().optional().allow(''),
+  SEMANTIC_DATA_JWT_SECRET: Joi.string().allow('').optional(),
+  SEMANTIC_REALTIME_JWT_SECRET: Joi.string().allow('').optional(),
+  SEMANTIC_DATA_TOKEN_TTL_SECONDS: Joi.number().min(10).max(600).default(60),
+  SEMANTIC_DATA_REST_URL: Joi.string().optional().allow(''),
+  SEMANTIC_DATA_REALTIME_URL: Joi.string().optional().allow(''),
   SEMANTIC_AGE_GRAPH: Joi.string()
     .pattern(/^[a-z][a-z0-9_]{0,62}$/)
     .default('semantic_model_graph'),
@@ -129,6 +167,10 @@ export const configValidationSchema = Joi.object({
   STORAGE_MAX_FILE_SIZE_MB: Joi.number().min(1).max(500).default(50),
   STORAGE_MAX_FILES_PER_UPLOAD: Joi.number().min(1).max(50).default(10),
   STORAGE_SAS_EXPIRY_MINUTES: Joi.number().min(1).max(10080).default(60),
+  SEMANTIC_DATASET_STORAGE_PREFIX: Joi.string()
+    .pattern(/^(?!\/)(?!.*(?:^|\/)\.\.(?:\/|$))[A-Za-z0-9_-]+(?:\/[A-Za-z0-9_-]+)*$/)
+    .default('semantic-model/datasets'),
+  SEMANTIC_DATASET_MAX_SIZE_MB: Joi.number().integer().min(1).max(2048).default(200),
   STORAGE_ALLOWED_MIME_TYPES: Joi.string().optional(),
   STORAGE_HEALTH_CHECK_ENABLED: Joi.boolean().default(true),
   STORAGE_HEALTH_CHECK_INTERVAL_MS: Joi.number().min(10000).max(3600000).default(60000),

@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Inject, Injectable } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import AdmZip = require('adm-zip');
@@ -8,10 +8,11 @@ import {
   ClassifierFileAssignmentDocument,
 } from '../schemas/classifier-file-assignment.schema';
 import {
-  WorkspaceDoc,
-  WorkspaceDocumentDoc,
-} from '../../workspace/schemas/workspace-document.schema';
-import { Workspace, WorkspaceDocument } from '../../workspace/schemas/workspace.schema';
+  WORKSPACE_DOCUMENT_READ_PORT,
+  WORKSPACE_READ_PORT,
+  type WorkspaceDocumentReadPort,
+  type WorkspaceReadPort,
+} from '../../workspace/ports';
 import { DocumentService } from '../../document/document.service';
 import { LoggerService } from '../../logger';
 import { NotFoundException } from '../../exceptions';
@@ -30,14 +31,12 @@ export interface SyncZipResult {
 @Injectable()
 export class ClassifierSyncService {
   constructor(
-    @InjectModel(Workspace.name)
-    private readonly workspaceModel: Model<WorkspaceDocument>,
+    @Inject(WORKSPACE_READ_PORT) private readonly workspaceReadPort: WorkspaceReadPort,
     @InjectModel(ClassifierFolder.name)
     private readonly folderModel: Model<ClassifierFolderDocument>,
     @InjectModel(ClassifierFileAssignment.name)
     private readonly assignmentModel: Model<ClassifierFileAssignmentDocument>,
-    @InjectModel(WorkspaceDoc.name)
-    private readonly documentModel: Model<WorkspaceDocumentDoc>,
+    @Inject(WORKSPACE_DOCUMENT_READ_PORT) private readonly documentReadPort: WorkspaceDocumentReadPort,
     private readonly documentService: DocumentService,
     private readonly access: ClassifierAccessService,
     private readonly logger: LoggerService,
@@ -48,11 +47,7 @@ export class ClassifierSyncService {
   async buildWorkspaceZip(userId: string, workspaceId: string): Promise<SyncZipResult> {
     await this.access.assertWorkspaceAccess(workspaceId, userId);
 
-    const workspace = await this.workspaceModel
-      .findById(workspaceId)
-      .select({ name: 1 })
-      .lean()
-      .exec();
+    const workspace = await this.workspaceReadPort.findById(workspaceId);
     if (!workspace) {
       throw new NotFoundException(ErrorCode.WORKSPACE_NOT_FOUND);
     }
@@ -65,11 +60,7 @@ export class ClassifierSyncService {
         .select({ _id: 1, name: 1, parentId: 1 })
         .lean()
         .exec(),
-      this.documentModel
-        .find({ workspaceId: wsObjectId, isFolder: { $ne: true } })
-        .select({ _id: 1, originalName: 1, path: 1 })
-        .lean()
-        .exec(),
+      this.documentReadPort.find({ workspaceId, isFolder: false }),
       this.assignmentModel
         .find({ workspaceId: wsObjectId })
         .select({ documentId: 1, folderId: 1 })
@@ -90,7 +81,7 @@ export class ClassifierSyncService {
     let failedCount = 0;
 
     for (const doc of documents) {
-      const folderId = folderIdByDocId.get(doc._id.toString()) ?? null;
+      const folderId = folderIdByDocId.get(doc.id) ?? null;
       const folderPath = folderId ? folderPathById.get(folderId) : null;
 
       const segments: string[] = [rootName];
@@ -107,7 +98,7 @@ export class ClassifierSyncService {
       if (!doc.path) {
         failedCount++;
         this.logger.warn('Sync: document has no blob path, skipping', {
-          documentId: doc._id.toString(),
+          documentId: doc.id,
           workspaceId,
         });
         continue;
@@ -119,7 +110,7 @@ export class ClassifierSyncService {
       } catch (err) {
         failedCount++;
         this.logger.warn('Sync: failed to download document, skipping', {
-          documentId: doc._id.toString(),
+          documentId: doc.id,
           workspaceId,
           error: err instanceof Error ? err.message : 'Unknown error',
         });

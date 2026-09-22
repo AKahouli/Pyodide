@@ -26,7 +26,7 @@ import { WorkyHumanUpdateDto } from '../dto/worky-human-update.dto';
 import { WorkyTaskStreamAccessGuard } from '../guards/worky-task-stream-access.guard';
 import { RequirePermissions } from '../../authorization/decorators/require-permissions.decorator';
 import { CurrentUser } from '../../auth/decorators/current-user.decorator';
-import { UserDocument } from '../../user/schemas/user.schema';
+import type { AuthUser } from '@common/auth/auth-user';
 import { Permissions } from '../../authorization/constants/permissions';
 import {
   IWorkyTaskSummary,
@@ -90,7 +90,7 @@ export class WorkyTaskController {
   @ApiOperation({ summary: 'Move a Worky task to a different lane' })
   @ApiParam({ name: 'id', description: 'Task id' })
   async move(
-    @CurrentUser() user: UserDocument,
+    @CurrentUser() user: AuthUser,
     @Param('id') id: string,
     @Body() dto: MoveWorkyTaskDto,
   ): Promise<IWorkyTaskSummary> {
@@ -104,7 +104,7 @@ export class WorkyTaskController {
   @ApiOperation({ summary: 'Pause a Worky task' })
   @ApiParam({ name: 'id', description: 'Task id' })
   async pause(
-    @CurrentUser() user: UserDocument,
+    @CurrentUser() user: AuthUser,
     @Param('id') id: string,
     @Body() dto: WorkyTaskControlDto,
   ): Promise<IWorkyTaskSummary> {
@@ -118,7 +118,7 @@ export class WorkyTaskController {
   @ApiOperation({ summary: 'Resume a paused Worky task' })
   @ApiParam({ name: 'id', description: 'Task id' })
   async resume(
-    @CurrentUser() user: UserDocument,
+    @CurrentUser() user: AuthUser,
     @Param('id') id: string,
     @Body() dto: WorkyTaskControlDto,
   ): Promise<IWorkyTaskSummary> {
@@ -132,7 +132,7 @@ export class WorkyTaskController {
   @ApiOperation({ summary: 'Cancel a Worky task (not_started only)' })
   @ApiParam({ name: 'id', description: 'Task id' })
   async cancel(
-    @CurrentUser() user: UserDocument,
+    @CurrentUser() user: AuthUser,
     @Param('id') id: string,
     @Body() dto: WorkyTaskControlDto,
   ): Promise<IWorkyTaskSummary> {
@@ -146,7 +146,7 @@ export class WorkyTaskController {
   @ApiOperation({ summary: 'Move a running Worky task to review' })
   @ApiParam({ name: 'id', description: 'Task id' })
   async review(
-    @CurrentUser() user: UserDocument,
+    @CurrentUser() user: AuthUser,
     @Param('id') id: string,
     @Body() dto: WorkyTaskControlDto,
   ): Promise<IWorkyTaskSummary> {
@@ -166,7 +166,7 @@ export class WorkyTaskController {
   @ApiOperation({ summary: 'Apply a human Kanban update to a human-assigned task' })
   @ApiParam({ name: 'id', description: 'Task id' })
   async humanUpdate(
-    @CurrentUser() user: UserDocument,
+    @CurrentUser() user: AuthUser,
     @Param('id') id: string,
     @Body() dto: WorkyHumanUpdateDto,
   ): Promise<{ taskId: string; kind: string; lane: string; executionState: string }> {

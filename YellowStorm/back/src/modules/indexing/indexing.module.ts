@@ -1,9 +1,6 @@
 import { Module, forwardRef } from '@nestjs/common';
-import { MongooseModule } from '@nestjs/mongoose';
 import { ConfigModule } from '@nestjs/config';
-import { WorkspaceDoc, WorkspaceDocumentSchema } from '../workspace/schemas/workspace-document.schema';
-import { Workspace, WorkspaceSchema } from '../workspace/schemas/workspace.schema';
-import { WorkspaceSetting, WorkspaceSettingSchema } from '../workspace/schemas/workspace-setting.schema';
+import { WorkspaceModule } from '../workspace/workspace.module';
 import { IndexingService } from './indexing.service';
 import { IndexingController } from './indexing.controller';
 import { IndexingWebhookController } from './indexing-webhook.controller';
@@ -18,12 +15,8 @@ import { IntegrationEventsModule } from '../integration-events/integration-event
 
 @Module({
   imports: [
+    forwardRef(() => WorkspaceModule),
     ConfigModule.forFeature(indexingConfig),
-    MongooseModule.forFeature([
-      { name: WorkspaceDoc.name, schema: WorkspaceDocumentSchema },
-      { name: Workspace.name, schema: WorkspaceSchema },
-      { name: WorkspaceSetting.name, schema: WorkspaceSettingSchema },
-    ]),
     forwardRef(() => AuthModule),
     forwardRef(() => NotificationsModule),
     LoggerModule,

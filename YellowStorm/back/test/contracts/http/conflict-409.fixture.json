@@ -1,0 +1,12 @@
+{
+  "success": false,
+  "error": {
+    "timestamp": "<volatile>",
+    "path": "/api/v1/user-groups",
+    "method": "POST",
+    "requestId": "<volatile>",
+    "code": "ERR_1005",
+    "message": "ERR_3351",
+    "statusCode": 409
+  }
+}

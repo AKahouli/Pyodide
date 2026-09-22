@@ -35,6 +35,7 @@ vi.mock('@/components/ai-elements/input', () => ({
     showWorkspaceSelect,
     governedMode,
     onFilesAdded,
+    autoFocus,
   }: {
     onSubmit: (
       message: { text: string },
@@ -56,11 +57,13 @@ vi.mock('@/components/ai-elements/input', () => ({
     showWorkspaceSelect?: boolean;
     governedMode?: boolean;
     onFilesAdded?: (files: File[], localIds: string[]) => void;
+    autoFocus?: boolean;
   }) => (
     <>
       <span>{preserveWorkspaceSelectionOnSubmit ? 'workspace-selection-preserved' : 'workspace-selection-reset'}</span>
       <span>{showWorkspaceSelect ? 'workspace-selector-visible' : 'workspace-selector-hidden'}</span>
       <span>{governedMode ? 'governed-composer' : 'standard-composer'}</span>
+      <span>{autoFocus ? 'composer-autofocus' : 'composer-no-autofocus'}</span>
       {extraTools}
       <button
         type='button'
@@ -169,7 +172,7 @@ vi.mock('@/modules/workspace/hooks/useAllowedUploadExtensions', () => ({
 }));
 
 vi.mock('@/modules/governance', () => ({
-  useAvailableGovernedScopes: () => ({ data: governedScopesMock.value }),
+  useAvailableGovernedScopes: () => ({ data: governedScopesMock.value, isSuccess: true }),
 }));
 
 vi.mock('@/modules/admin/featureVisibilityStore', () => ({
@@ -183,7 +186,20 @@ vi.mock('@/modules/auth/useAuth', () => ({
   useAuth: () => ({ user: { id: 'user-1', email: 'amine@example.com', profile: { firstName: 'Amine' } } }),
 }));
 
-vi.mock('./api', () => ({ createGovernedConversation: createGovernedConversationMock }));
+vi.mock('./api', () => ({
+  createGovernedConversation: createGovernedConversationMock,
+  fetchConversationSettings: vi.fn().mockResolvedValue({
+    composerSuggestions: {
+      enabled: false,
+      agentId: null,
+      debounceMs: 400,
+      minimumDraftLength: 3,
+      requestsPerMinute: 60,
+      maxOutputTokens: 256,
+    },
+    attachmentIntelligence: { enabled: true, maxIndexedTabularRows: 500 },
+  }),
+}));
 
 vi.mock('./components/ConversationHomePanels', () => ({
   ConversationHomePanels: () => <div>home-panels</div>,
@@ -238,6 +254,7 @@ vi.mock('@/modules/conversation/effects/stars-background', () => ({
 describe('NewConversationPage', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    localStorage.clear();
     usageStatusMock.value = {
       isLimitExceeded: false,
       plan: { name: 'Free' },
@@ -263,6 +280,7 @@ describe('NewConversationPage', () => {
       expect(screen.queryByText('newConversation.mode.chat')).not.toBeInTheDocument();
       expect(screen.queryByText('newConversation.mode.agent')).not.toBeInTheDocument();
     });
+    expect(screen.getByText('composer-autofocus')).toBeInTheDocument();
   });
 
   it('forwards selected connector repo on first legacy message', async () => {
@@ -318,6 +336,28 @@ describe('NewConversationPage', () => {
     expect(sendMessageMock).toHaveBeenCalledWith('governed-1', expect.objectContaining({ content: 'hello' }));
     const payload = sendMessageMock.mock.calls.at(-1)?.[1];
     expect(payload).toMatchObject({ modelId: undefined, agentIds: undefined, teamIds: undefined, connectorRepo: undefined, skillIds: undefined });
+  });
+
+  it('restores the user governance scope when returning to the home page', async () => {
+    const firstRender = render(<NewConversationPage />);
+
+    await userEvent.selectOptions(screen.getByLabelText('home.scope.label'), 'scope-1');
+    expect(localStorage.getItem('yellowmind.home.governance-scope:user-1')).toBe('scope-1');
+
+    firstRender.unmount();
+    render(<NewConversationPage />);
+
+    expect(screen.getByLabelText('home.scope.label')).toHaveValue('scope-1');
+    expect(screen.getByText('governed-composer')).toBeInTheDocument();
+  });
+
+  it('discards a saved governance scope that is no longer available', async () => {
+    localStorage.setItem('yellowmind.home.governance-scope:user-1', 'scope-old');
+
+    render(<NewConversationPage />);
+
+    await waitFor(() => expect(localStorage.getItem('yellowmind.home.governance-scope:user-1')).toBeNull());
+    expect(screen.getByLabelText('home.scope.label')).toHaveValue('');
   });
 
   it('locks governed mode as soon as upload creation starts', async () => {

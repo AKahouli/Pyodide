@@ -29,6 +29,15 @@ message DocumentData {
     bool enable_extract_images = 12;     // Extract and index images from PDF via YOLO pipeline
     string sheet_name = 13;              // Sheet name filter for Excel files (optional)
     bool in_memory = 14;                 // Whether to cache document in memory
+    string document_id = 15;             // Workspace document ID (backend-prepared attachments)
+    string processing_policy = 16;       // SEARCHABLE | TEXT_ONLY | CODE_ONLY (empty = not prepared by backend)
+    bool search_index_allowed = 17;      // False: must never be indexed (heavy/unprobed spreadsheet)
+}
+
+// Bounded textual attachment context built by the backend. Kept out of `query`
+// so the user's message is never modified by file content.
+message AttachmentContext {
+    string text = 1;
 }
 
 message AttachedFile {
@@ -212,6 +221,7 @@ message RunAgentTeamRequest {
     bool web_search_enabled = 17;
     LatencyTraceContext latency_trace_context = 20;
     AgentTeamDefinition team_definition = 21;
+    AttachmentContext attachment_context = 18;   // Bounded attachment text; managers receive manifests only
 }
 
 // Mono-agent request: a single specialized agent runs directly with its own
@@ -232,6 +242,7 @@ message RunSingleAgentRequest {
     CorrectionReplayContext correction_replay_context = 12;
     bool web_search_enabled = 13;
     LatencyTraceContext latency_trace_context = 20;
+    AttachmentContext attachment_context = 14;   // Bounded attachment text for the single agent
 }
 
 message GenerateConversationNameRequest {

@@ -78,6 +78,17 @@ function StructuredSourceMappingDrawer({ modelId, target, onClose }: Readonly<{ 
     enabled: Boolean(target),
   });
 
+  const analyze = useMutation({
+    mutationFn: () => semanticModelApi.analyzeSourceAsset(
+      modelId, target!.documentId, target!.workspaceId, sheetName || undefined,
+    ),
+    onSuccess: (data) => client.setQueryData(
+      semanticModelQueryKeys.sourceAssetProfile(modelId, target!.documentId, sheetName || undefined),
+      data,
+    ),
+    onError: (error) => showError(t('sourceAnalysis.error'), { description: parseApiError(error).message }),
+  });
+
   const fields = sheetName ? profile.data?.fields ?? [] : [];
 
   // Deterministic first-pass suggestions: normalized name equality, identity = first fully populated unique field.
@@ -171,11 +182,14 @@ function StructuredSourceMappingDrawer({ modelId, target, onClose }: Readonly<{ 
                   <SelectItem key={sheet.name} value={sheet.name}>{sheet.name} · {t('mapping.sheetMeta', { rows: sheet.rowCount, fields: sheet.fieldCount })}</SelectItem>
                 ))}</SelectContent>
               </Select>
+              {profile.isLoading && <div className='flex items-center gap-2 text-xs text-muted-foreground'><Loader2 className='h-3.5 w-3.5 animate-spin' />{t('sourceAnalysis.loading')}</div>}
               {profile.isError && (
                 <div className='flex items-start gap-1.5 rounded-lg bg-destructive/10 p-2 text-xs text-destructive'>
                   <AlertTriangle className='mt-0.5 h-3.5 w-3.5 shrink-0' />
-                  <span className='min-w-0 flex-1'>{parseApiError(profile.error).message}</span>
-                  <Button size='sm' variant='ghost' className='h-6 shrink-0 px-2 text-[11px]' onClick={() => void profile.refetch()}>{t('action.retry')}</Button>
+                  <span className='min-w-0 flex-1'>{t('sourceAnalysis.required')}</span>
+                  <Button size='sm' variant='ghost' className='h-6 shrink-0 px-2 text-[11px]' disabled={analyze.isPending} onClick={() => analyze.mutate()}>
+                    {analyze.isPending ? <Loader2 className='mr-1 h-3 w-3 animate-spin' /> : null}{t('sourceAnalysis.analyze')}
+                  </Button>
                 </div>
               )}
             </div>
@@ -184,6 +198,7 @@ function StructuredSourceMappingDrawer({ modelId, target, onClose }: Readonly<{ 
               <div className='space-y-2'>
                 <Label>{t('mapping.fields')}</Label>
                 <p className='text-xs text-muted-foreground'>{t('mapping.fieldsHelp')}</p>
+                {profile.data && !profile.data.complete && <p className='text-xs text-amber-700 dark:text-amber-400'>{t('sourceAnalysis.boundedSample')}</p>}
                 <div className='overflow-hidden rounded-xl border'>
                   {mappings.map((mapping, index) => {
                     const suggested = suggestedKeys.has(mapping.sourceField ?? '');

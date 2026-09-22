@@ -102,9 +102,48 @@ export class PostgresConversationStore implements ConversationStore {
     return new Set(rows.map((row) => row.conversationId.trim())).size;
   }
 
+  /**
+   * Drizzle renders `${schema.conversations.id}` unqualified, and
+   * `shared_conversations` also has an `id` column, so inside the share
+   * subqueries an unqualified `"id"` would bind to the inner row. The outer
+   * conversation reference must therefore be table-qualified explicitly.
+   */
+  private outerConversationId() {
+    return sql.raw('"conversations"."id"');
+  }
+
+  /**
+   * A conversation counts as shared when it is a group with people beyond the
+   * creator, has pending invitations, or has an active public link. The stored
+   * `is_shared` column is not authoritative — it is never cleared on revoke.
+   */
+  private isSharedExpr() {
+    return sql<boolean>`(
+      ${schema.conversations.sharedFrom} IS NOT NULL
+      OR (SELECT count(*) FROM conversation.conversation_group_members gm WHERE gm.conversation_id = ${this.outerConversationId()}) > 1
+      OR EXISTS (SELECT 1 FROM conversation.conversation_group_invites gi WHERE gi.conversation_id = ${this.outerConversationId()})
+      OR EXISTS (
+        SELECT 1 FROM conversation.shared_conversations sc
+        WHERE sc.original_conversation_id = ${this.outerConversationId()}
+          AND sc.is_revoked = false
+          AND (sc.expires_at IS NULL OR sc.expires_at > now())
+      )
+    )`;
+  }
+
+  private activeShareCountExpr() {
+    return sql<number>`(
+      SELECT count(*)::int FROM conversation.shared_conversations sc
+      WHERE sc.original_conversation_id = ${this.outerConversationId()}
+        AND sc.is_revoked = false
+        AND (sc.expires_at IS NULL OR sc.expires_at > now())
+    )`;
+  }
+
   private hydratedSelection() {
     return {
       ...getTableColumns(schema.conversations),
+      activeShareCount: this.activeShareCountExpr(),
       workspaceIds: sql<string[]>`COALESCE((SELECT array_agg(cw.workspace_id ORDER BY cw.position) FROM conversation.conversation_workspaces cw WHERE cw.conversation_id = ${schema.conversations.id}), ARRAY[]::bpchar[])`,
       skillIds: sql<string[]>`COALESCE((SELECT array_agg(cs.skill_id ORDER BY cs.position) FROM conversation.conversation_selected_skills cs WHERE cs.conversation_id = ${schema.conversations.id}), ARRAY[]::bpchar[])`,
       taggedIds: sql<string[]>`COALESCE((SELECT array_agg(ca.agent_id ORDER BY ca.position) FROM conversation.conversation_tagged_agents ca WHERE ca.conversation_id = ${schema.conversations.id}), ARRAY[]::bpchar[])`,
@@ -167,6 +206,7 @@ export class PostgresConversationStore implements ConversationStore {
         invitedAt: string;
         job: string | null;
       }>;
+      activeShareCount: number;
     },
   ): ConversationRecord {
     return {
@@ -199,6 +239,11 @@ export class PostgresConversationStore implements ConversationStore {
         invitedAt: new Date(invite.invitedAt),
         job: invite.job ?? undefined,
       })),
+      isShared:
+        Boolean(row.sharedFrom) ||
+        row.memberRows.length > 1 ||
+        row.inviteRows.length > 0 ||
+        row.activeShareCount > 0,
     };
   }
 
@@ -340,7 +385,8 @@ export class PostgresConversationStore implements ConversationStore {
       lastMessageAt: row.lastMessageAt ?? undefined,
       messageCount: row.messageCount,
       isArchived: row.isArchived,
-      isShared: row.isShared,
+      isShared:
+        Boolean(row.sharedFrom) || related.members.length > 1 || related.invites.length > 0,
       sharedFrom: row.sharedFrom?.trim(),
       initializationStatus: row.initializationStatus as ConversationRecord['initializationStatus'],
       branchSeedAttemptId: row.branchSeedAttemptId ?? undefined,
@@ -400,6 +446,7 @@ export class PostgresConversationStore implements ConversationStore {
         governanceContext: input.governanceContext,
         projectId: input.projectId,
         isGroup: input.isGroup ?? false,
+        isShared: input.isGroup ?? false,
         createdAt: now,
         updatedAt: now,
       });
@@ -680,7 +727,7 @@ export class PostgresConversationStore implements ConversationStore {
         messageCount: schema.conversations.messageCount,
         lastMessageAt: schema.conversations.lastMessageAt,
         isArchived: schema.conversations.isArchived,
-        isShared: schema.conversations.isShared,
+        isShared: this.isSharedExpr(),
         isGroup: schema.conversations.isGroup,
         unseenMentionCount: sql<number>`(SELECT count(*)::int FROM conversation.conversation_member_mentions mm WHERE mm.conversation_id = ${schema.conversations.id} AND mm.user_id = ${input.userId} AND mm.seen_at IS NULL)`,
         projectId: schema.conversations.projectId,
@@ -926,6 +973,24 @@ export class PostgresConversationStore implements ConversationStore {
             eq(schema.conversationGroupMembers.userId, memberId),
           ),
         );
+      // Keep private share records in sync with membership: drop the removed
+      // recipient and revoke a share that has none left, so derived shared
+      // state cannot go stale after a revoke.
+      await tx
+        .update(schema.sharedConversations)
+        .set({
+          recipientUserIds: sql`array_remove(${schema.sharedConversations.recipientUserIds}, ${memberId}::varchar)`,
+          isRevoked: sql`cardinality(array_remove(${schema.sharedConversations.recipientUserIds}, ${memberId}::varchar)) = 0`,
+          updatedAt: new Date(),
+        })
+        .where(
+          and(
+            eq(schema.sharedConversations.originalConversationId, id),
+            eq(schema.sharedConversations.shareType, 'private'),
+            eq(schema.sharedConversations.isRevoked, false),
+            sql`${memberId}::varchar = ANY(${schema.sharedConversations.recipientUserIds})`,
+          ),
+        );
     });
     return this.findById(id, true);
   }
@@ -1013,7 +1078,9 @@ export class PostgresConversationStore implements ConversationStore {
         and(
           eq(schema.conversations.messageCount, 0),
           eq(schema.conversations.isFirstMessage, true),
-          eq(schema.conversations.isShared, false),
+          // Never reap a conversation that is shared by membership, invitation,
+          // or an active link — the stored is_shared column is not authoritative.
+          sql`NOT (${this.isSharedExpr()})`,
           lt(schema.conversations.createdAt, cutoff),
         ),
       )

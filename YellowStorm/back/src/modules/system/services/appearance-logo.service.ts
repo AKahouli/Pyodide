@@ -1,7 +1,10 @@
-import { Injectable } from '@nestjs/common';
-import { InjectModel } from '@nestjs/mongoose';
-import { Model, Types } from 'mongoose';
+import { Inject, Injectable } from '@nestjs/common';
+import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import { decodeMultipartFilename } from '@common/utils';
+import { isObjectId } from '@common/postgres';
+import { withTransaction } from '@common/postgres/transaction';
+import { DRIZZLE_DB } from '@modules/postgres/postgres.constants';
+import * as schema from '@modules/postgres/schema';
 import { BadRequestException, NotFoundException } from '@modules/exceptions';
 import { ErrorCode } from '@modules/exceptions/constants/error-codes';
 import {
@@ -12,8 +15,9 @@ import {
   BUILTIN_APPEARANCE_LOGOS,
 } from '../constants/appearance-logo.constants';
 import type { AppearanceLogo as AppearanceLogoDto } from '../interfaces/appearance.interface';
-import { AppearanceLogo, AppearanceLogoDocument } from '../schemas/appearance-logo.schema';
-import { AppearanceValue, SystemSetting, SystemSettingDocument } from '../schemas/system-setting.schema';
+import { APPEARANCE_LOGO_STORE, type AppearanceLogoRecord, type AppearanceLogoStore } from '../persistence/appearance-logo.store';
+import { SYSTEM_SETTING_STORE, type SystemSettingStore } from '../persistence/system-setting.store';
+import type { AppearanceValue } from '../schemas/system-setting.schema';
 import {
   isAppearanceLogoMime,
   readAppearanceLogoDimensions,
@@ -31,74 +35,79 @@ interface UploadedLogoFile {
 @Injectable()
 export class AppearanceLogoService {
   constructor(
-    @InjectModel(AppearanceLogo.name)
-    private readonly logoModel: Model<AppearanceLogoDocument>,
-    @InjectModel(SystemSetting.name)
-    private readonly systemSettingModel: Model<SystemSettingDocument>,
+    @Inject(DRIZZLE_DB) private readonly db: NodePgDatabase<typeof schema>,
+    @Inject(APPEARANCE_LOGO_STORE) private readonly logoStore: AppearanceLogoStore,
+    @Inject(SYSTEM_SETTING_STORE) private readonly systemSettings: SystemSettingStore,
   ) {}
 
   async listPublic(): Promise<AppearanceLogoDto[]> {
-    const custom = await this.logoModel.find().select('-data').sort({ createdAt: 1 }).lean().exec();
-    return [...this.builtinLogos(), ...custom.map((doc) => this.toPublic(doc))];
+    const custom = await this.logoStore.list();
+    return [...this.builtinLogos(), ...custom.map((logo) => this.toPublic(logo))];
   }
 
   async getFile(id: string): Promise<{ contentType: string; data: Buffer; updatedAt: Date }> {
     if (BUILTIN_APPEARANCE_LOGO_IDS.includes(id as (typeof BUILTIN_APPEARANCE_LOGO_IDS)[number])) {
       throw new NotFoundException(ErrorCode.APPEARANCE_LOGO_NOT_FOUND);
     }
-    if (!Types.ObjectId.isValid(id)) {
+    if (!isObjectId(id)) {
       throw new NotFoundException(ErrorCode.APPEARANCE_LOGO_NOT_FOUND);
     }
-    const doc = await this.logoModel.findById(id).select('+data').exec();
-    if (!doc?.data) {
+    const logo = await this.logoStore.findWithData(id);
+    if (!logo?.data) {
       throw new NotFoundException(ErrorCode.APPEARANCE_LOGO_NOT_FOUND);
     }
-    return { contentType: doc.contentType, data: doc.data, updatedAt: doc.updatedAt };
+    return { contentType: logo.contentType, data: logo.data, updatedAt: logo.updatedAt };
   }
 
   async create(file: UploadedLogoFile, name?: string): Promise<AppearanceLogoDto> {
     const parsed = this.parseUpload(file);
-    const count = await this.logoModel.countDocuments().exec();
-    if (count >= APPEARANCE_LOGO_CONSTRAINTS.maxCustomLogos) {
+    const created = await this.logoStore.createWithinCap(
+      {
+        name: this.resolveName(name, file.originalname),
+        contentType: parsed.mimeType,
+        width: parsed.width,
+        height: parsed.height,
+        data: parsed.buffer,
+      },
+      APPEARANCE_LOGO_CONSTRAINTS.maxCustomLogos,
+    );
+    if (!created) {
       throw new BadRequestException(ErrorCode.APPEARANCE_LOGO_LIMIT_REACHED);
     }
-    const doc = await this.logoModel.create({
-      name: this.resolveName(name, file.originalname),
-      contentType: parsed.mimeType,
-      width: parsed.width,
-      height: parsed.height,
-      data: parsed.buffer,
-    });
-    return this.toPublic(doc.toObject());
+    return this.toPublic(created);
   }
 
   async update(id: string, file: UploadedLogoFile | undefined, name?: string): Promise<AppearanceLogoDto> {
     this.assertCustomId(id);
-    const doc = await this.logoModel.findById(id).select('+data').exec();
-    if (!doc) {
-      throw new NotFoundException(ErrorCode.APPEARANCE_LOGO_NOT_FOUND);
-    }
+    const patch: Parameters<AppearanceLogoStore['update']>[1] = {};
     if (name?.trim()) {
-      doc.name = name.trim();
+      patch.name = name.trim();
     }
     if (file?.buffer?.length) {
       const parsed = this.parseUpload(file);
-      doc.contentType = parsed.mimeType;
-      doc.width = parsed.width;
-      doc.height = parsed.height;
-      doc.data = parsed.buffer;
+      patch.contentType = parsed.mimeType;
+      patch.width = parsed.width;
+      patch.height = parsed.height;
+      patch.data = parsed.buffer;
     }
-    await doc.save();
-    return this.toPublic(doc.toObject());
+    const updated = await this.logoStore.update(id, patch);
+    if (!updated) {
+      throw new NotFoundException(ErrorCode.APPEARANCE_LOGO_NOT_FOUND);
+    }
+    return this.toPublic(updated);
   }
 
   async remove(id: string): Promise<void> {
     this.assertCustomId(id);
-    await this.unassignLogoFromThemes(id);
-    const deleted = await this.logoModel.findByIdAndDelete(id).exec();
-    if (!deleted) {
-      throw new NotFoundException(ErrorCode.APPEARANCE_LOGO_NOT_FOUND);
-    }
+    // Theme rewrite and delete commit together so a failing unassign cannot
+    // leave a logo referenced by the appearance settings.
+    await withTransaction(this.db, async () => {
+      const deleted = await this.logoStore.delete(id);
+      if (!deleted) {
+        throw new NotFoundException(ErrorCode.APPEARANCE_LOGO_NOT_FOUND);
+      }
+      await this.unassignLogoFromThemes(id);
+    });
   }
 
   isKnownLogoId(id: string, logos: AppearanceLogoDto[]): boolean {
@@ -142,13 +151,13 @@ export class AppearanceLogoService {
     if (BUILTIN_APPEARANCE_LOGO_IDS.includes(id as (typeof BUILTIN_APPEARANCE_LOGO_IDS)[number])) {
       throw new BadRequestException(ErrorCode.APPEARANCE_LOGO_BUILTIN_PROTECTED);
     }
-    if (!Types.ObjectId.isValid(id)) {
+    if (!isObjectId(id)) {
       throw new NotFoundException(ErrorCode.APPEARANCE_LOGO_NOT_FOUND);
     }
   }
 
   private async unassignLogoFromThemes(id: string): Promise<void> {
-    const setting = await this.systemSettingModel.findOne({ key: APPEARANCE_SETTINGS_KEY }).exec();
+    const setting = await this.systemSettings.get(APPEARANCE_SETTINGS_KEY);
     if (!setting || typeof setting.value !== 'object' || setting.value === null) {
       return;
     }
@@ -167,8 +176,7 @@ export class AppearanceLogoService {
     if (!changed) {
       return;
     }
-    setting.markModified('value');
-    await setting.save();
+    await this.systemSettings.upsert(APPEARANCE_SETTINGS_KEY, value);
   }
 
   private builtinLogos(): AppearanceLogoDto[] {
@@ -179,17 +187,16 @@ export class AppearanceLogoService {
     }));
   }
 
-  private toPublic(doc: { _id: unknown; name: string; contentType: string; width: number; height: number; updatedAt?: Date }): AppearanceLogoDto {
-    const id = String(doc._id);
+  private toPublic(logo: AppearanceLogoRecord): AppearanceLogoDto {
     return {
-      id,
-      name: doc.name,
+      id: logo.id,
+      name: logo.name,
       kind: 'custom',
-      contentType: doc.contentType,
-      width: doc.width,
-      height: doc.height,
-      url: `/experimental/system/appearance/logos/${id}/file`,
-      updatedAt: doc.updatedAt?.toISOString(),
+      contentType: logo.contentType,
+      width: logo.width,
+      height: logo.height,
+      url: `/experimental/system/appearance/logos/${logo.id}/file`,
+      updatedAt: logo.updatedAt.toISOString(),
     };
   }
 }

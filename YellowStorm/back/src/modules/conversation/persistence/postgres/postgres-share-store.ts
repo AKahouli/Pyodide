@@ -168,38 +168,55 @@ export class PostgresShareStore implements ShareStore {
   ): Promise<string[]> {
     if (!userIds.length) return [];
     return this.db.transaction(async (tx) => {
-      await tx
-        .select({ id: schema.conversations.id })
+      const [conversation] = await tx
+        .select({ createdBy: schema.conversations.createdBy })
         .from(schema.conversations)
         .where(eq(schema.conversations.id, conversationId))
         .for('update');
+      const ownerId = conversation.createdBy.trim();
       const existing = await tx
         .select({ userId: schema.conversationGroupMembers.userId })
         .from(schema.conversationGroupMembers)
         .where(
           and(
             eq(schema.conversationGroupMembers.conversationId, conversationId),
-            inArray(schema.conversationGroupMembers.userId, userIds),
+            inArray(schema.conversationGroupMembers.userId, [...new Set([ownerId, ...userIds])]),
           ),
         );
       const existingIds = new Set(existing.map((member) => member.userId.trim()));
       const additions = userIds.filter((userId) => !existingIds.has(userId));
-      if (!additions.length) return [];
+      // Sharing a 1:1 conversation promotes it to a group. The creator must have
+      // an owner membership row, otherwise the UI cannot tell the owner apart
+      // from an unjoined invitee and the group invariant breaks.
+      const ownerMissing = !existingIds.has(ownerId);
+      if (!additions.length && !ownerMissing) return [];
       const [position] = await tx
         .select({
           value: sql<number>`COALESCE(max(${schema.conversationGroupMembers.position}), -1)::int + 1`,
         })
         .from(schema.conversationGroupMembers)
         .where(eq(schema.conversationGroupMembers.conversationId, conversationId));
-      await tx.insert(schema.conversationGroupMembers).values(
-        additions.map((userId, index) => ({
+      let nextPosition = position.value;
+      const rows: (typeof schema.conversationGroupMembers.$inferInsert)[] = [];
+      if (ownerMissing) {
+        rows.push({
+          conversationId,
+          userId: ownerId,
+          position: nextPosition++,
+          joinedAt,
+          status: 'owner',
+        });
+      }
+      for (const userId of additions) {
+        rows.push({
           conversationId,
           userId,
-          position: (position?.value ?? 0) + index,
+          position: nextPosition++,
           joinedAt,
-          status: 'member' as const,
-        })),
-      );
+          status: 'member',
+        });
+      }
+      await tx.insert(schema.conversationGroupMembers).values(rows);
       await tx
         .update(schema.conversations)
         .set({ isGroup: true, isShared: true, updatedAt: joinedAt })

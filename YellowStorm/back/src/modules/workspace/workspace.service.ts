@@ -1,17 +1,16 @@
-import { Inject, Injectable, OnModuleInit } from '@nestjs/common';
-import { InjectModel } from '@nestjs/mongoose';
-import { Model, Types } from 'mongoose';
-import { Workspace, WorkspaceDocument } from './schemas/workspace.schema';
-import {
-  WorkspaceShare,
-  WorkspaceShareDocument,
-} from './schemas/workspace-share.schema';
+import { randomUUID } from 'node:crypto';
+import { Inject, Injectable, OnModuleInit, Optional } from '@nestjs/common';
+import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
+import { withTransaction } from '@common/postgres';
+import { DRIZZLE_DB } from '@modules/postgres/postgres.constants';
+import type * as schema from '@modules/postgres/schema';
+import { USER_LOOKUP_PORT, type UserLookupPort } from '@common/ports/user-lookup.port';
 import {
   CONVERSATION_STORE,
   type ConversationStore,
 } from '../conversation/persistence/conversation-store';
 import { AgentRepository } from '../agent/repositories/agent.repository';
-import { Flow, FlowDocument } from '../playbook-flow/schemas/playbook-flow.schema';
+import { FLOW_READ_PORT, type FlowReadPort } from '../playbook-flow/ports/flow-read.port';
 import {
   CreateWorkspaceData,
   UpdateWorkspaceData,
@@ -29,22 +28,29 @@ import {
   ForbiddenException,
 } from '../exceptions';
 import { ErrorCode } from '../exceptions/constants/error-codes';
-import { escapeRegex } from '../../common/utils';
 import type { RunCodeWorkspaceMetadata } from './interfaces/run-code-source.interface';
+import type { WorkspaceRecord } from './ports/workspace-records';
+import { WORKSPACE_STORE, type WorkspaceStore } from './stores/workspace-store';
+import { SHARE_STORE, type ShareStore } from './stores/share-store';
+import { SemanticDataGrantRevocationService } from '../semantic-model/services/semantic-data-grant-revocation.service';
+import { IntegrationEventOutboxService } from '../integration-events/services/integration-event-outbox.service';
+import { WorkspaceIntegrationEvents } from '../integration-events/contracts';
 
 @Injectable()
 export class WorkspaceService implements OnModuleInit {
   constructor(
-    @InjectModel(Workspace.name)
-    private readonly workspaceModel: Model<WorkspaceDocument>,
-    @InjectModel(WorkspaceShare.name)
-    private readonly shareModel: Model<WorkspaceShareDocument>,
+    @Inject(USER_LOOKUP_PORT) private readonly userLookup: UserLookupPort,
+    @Inject(WORKSPACE_STORE) private readonly workspaceStore: WorkspaceStore,
+    @Inject(SHARE_STORE) private readonly shareStore: ShareStore,
     @Inject(CONVERSATION_STORE)
     private readonly conversationStore: ConversationStore,
     private readonly agentRepository: AgentRepository,
-    @InjectModel(Flow.name)
-    private readonly playbookModel: Model<FlowDocument>,
+    @Inject(FLOW_READ_PORT)
+    private readonly flowReadPort: FlowReadPort,
     private readonly logger: LoggerService,
+    private readonly semanticGrantRevocations: SemanticDataGrantRevocationService,
+    @Optional() @Inject(DRIZZLE_DB) private readonly db?: NodePgDatabase<typeof schema>,
+    @Optional() private readonly outbox?: IntegrationEventOutboxService,
   ) {
     this.logger.setContext('WorkspaceService');
   }
@@ -57,13 +63,10 @@ export class WorkspaceService implements OnModuleInit {
    */
   async onModuleInit(): Promise<void> {
     try {
-      const result = await this.workspaceModel.updateMany(
-        { storagePrefix: { $exists: false } },
-        [{ $set: { storagePrefix: '$alias' } }],
-      );
-      if (result.modifiedCount > 0) {
+      const modified = await this.workspaceStore.backfillStoragePrefixFromAlias();
+      if (modified > 0) {
         this.logger.log('Backfilled storagePrefix from alias', {
-          modified: result.modifiedCount,
+          modified,
         });
       }
     } catch (error) {
@@ -102,16 +105,7 @@ export class WorkspaceService implements OnModuleInit {
     const maxAttempts = 100;
 
     while (counter <= maxAttempts) {
-      const query: Record<string, unknown> = {
-        createdBy: new Types.ObjectId(userId),
-        alias,
-      };
-
-      if (excludeWorkspaceId) {
-        query._id = { $ne: new Types.ObjectId(excludeWorkspaceId) };
-      }
-
-      const existing = await this.workspaceModel.findOne(query);
+      const existing = await this.workspaceStore.findByOwnerAndAlias(userId, alias, excludeWorkspaceId);
       if (!existing) {
         return alias;
       }
@@ -135,10 +129,7 @@ export class WorkspaceService implements OnModuleInit {
   ): Promise<WorkspaceResponse> {
     // Check workspace count limit
     if (maxWorkspaces !== -1) {
-      const count = await this.workspaceModel.countDocuments({
-        createdBy: new Types.ObjectId(userId),
-        isSystem: { $ne: true },
-      });
+      const count = await this.workspaceStore.countNonSystemByOwner(userId);
 
       if (count >= maxWorkspaces) {
         throw new ForbiddenException(
@@ -149,10 +140,7 @@ export class WorkspaceService implements OnModuleInit {
     }
 
     // Check for duplicate name
-    const existingName = await this.workspaceModel.findOne({
-      createdBy: new Types.ObjectId(userId),
-      name: data.name,
-    });
+    const existingName = await this.workspaceStore.findByName(userId, data.name);
 
     if (existingName) {
       throw new ConflictException(
@@ -168,20 +156,18 @@ export class WorkspaceService implements OnModuleInit {
     // Create workspace. storagePrefix is locked here from the initial alias —
     // future renames update name/alias but never this field, so the Ceph path
     // remains stable across the workspace's lifetime.
-    const workspace = await this.workspaceModel.create({
+    const workspace = await this.workspaceStore.create({
       name: data.name,
       alias,
       storagePrefix: alias,
       description: data.description,
-      createdBy: new Types.ObjectId(userId),
-      settings: data.settings ? new Types.ObjectId(data.settings) : undefined,
-      documentCount: 0,
-      usedStorage: 0,
+      createdBy: userId,
+      settingsId: data.settings,
       allocatedStorage,
     });
 
     this.logger.log('Workspace created', {
-      workspaceId: workspace._id,
+      workspaceId: workspace.id,
       userId,
       name: data.name,
       alias,
@@ -194,7 +180,7 @@ export class WorkspaceService implements OnModuleInit {
    * Get workspace by ID
    */
   async findById(workspaceId: string): Promise<WorkspaceResponse> {
-    const workspace = await this.workspaceModel.findById(workspaceId);
+    const workspace = await this.workspaceStore.findById(workspaceId);
 
     if (!workspace) {
       throw new NotFoundException(
@@ -210,10 +196,7 @@ export class WorkspaceService implements OnModuleInit {
    * Get workspace by alias
    */
   async findByAlias(userId: string, alias: string): Promise<WorkspaceResponse> {
-    const workspace = await this.workspaceModel.findOne({
-      createdBy: new Types.ObjectId(userId),
-      alias,
-    });
+    const workspace = await this.workspaceStore.findByOwnerAndAlias(userId, alias);
 
     if (!workspace) {
       throw new NotFoundException(
@@ -232,30 +215,25 @@ export class WorkspaceService implements OnModuleInit {
     userId: string,
     allocatedStorage: number,
   ): Promise<WorkspaceResponse> {
-    const existing = await this.workspaceModel.findOne({
-      createdBy: new Types.ObjectId(userId),
-      isPersonal: true,
-    });
+    const existing = await this.workspaceStore.findByOwnerPersonal(userId);
 
     if (existing) {
       return this.mapToResponse(existing);
     }
 
-    const workspace = await this.workspaceModel.create({
+    const workspace = await this.workspaceStore.create({
       name: 'Mon workspace personnel',
       alias: 'mon-workspace-personnel',
       storagePrefix: 'mon-workspace-personnel',
       description: 'Votre espace personnel pour organiser vos fichiers',
-      createdBy: new Types.ObjectId(userId),
-      documentCount: 0,
-      usedStorage: 0,
+      createdBy: userId,
       allocatedStorage,
       isSystem: false,
       isPersonal: true,
     });
 
     this.logger.log('Personal workspace created', {
-      workspaceId: workspace._id,
+      workspaceId: workspace.id,
       userId,
     });
 
@@ -270,12 +248,7 @@ export class WorkspaceService implements OnModuleInit {
    * accessible set should compose this with WorkspaceShareService.
    */
   async findIdsByOwner(userId: string): Promise<string[]> {
-    const docs = await this.workspaceModel
-      .find({ createdBy: new Types.ObjectId(userId), isSystem: { $ne: true } })
-      .select('_id')
-      .lean()
-      .exec();
-    return docs.map((d) => (d._id as Types.ObjectId).toString());
+    return this.workspaceStore.findIdsByOwner(userId);
   }
 
   /**
@@ -295,33 +268,16 @@ export class WorkspaceService implements OnModuleInit {
 
     const skip = (page - 1) * limit;
 
-    // Build query - exclude system workspaces from user listing but include personal
-    const query: Record<string, unknown> = {
-      createdBy: new Types.ObjectId(userId),
-      isSystem: { $ne: true },
-    };
+    const { items, total } = await this.workspaceStore.listByUser(userId, {
+      search,
+      skip,
+      limit,
+      sortBy,
+      sortOrder,
+    });
 
-    if (search) {
-      const escapedSearch = escapeRegex(search);
-      query.$or = [
-        { name: { $regex: escapedSearch, $options: 'i' } },
-        { description: { $regex: escapedSearch, $options: 'i' } },
-      ];
-    }
-
-    // Build sort - always put personal workspace first
-    const sort: Record<string, 1 | -1> = {
-      isPersonal: -1, // Personal workspace first
-      [sortBy]: sortOrder === 'asc' ? 1 : -1,
-    };
-
-    // Execute queries
-    const [workspaces, total] = await Promise.all([
-      this.workspaceModel.find(query).sort(sort).skip(skip).limit(limit).exec(),
-      this.workspaceModel.countDocuments(query),
-    ]);
     return {
-      workspaces: workspaces.map((w) => this.mapToResponse(w)),
+      workspaces: items.map((w) => this.mapToResponse(w)),
       pagination: {
         page,
         limit,
@@ -342,52 +298,33 @@ export class WorkspaceService implements OnModuleInit {
     const { page = 1, limit = 20, search } = params;
     const skip = (page - 1) * limit;
 
-    const query: Record<string, unknown> = {
-      isPublic: true,
-      isSystem: { $ne: true },
-      createdBy: { $ne: new Types.ObjectId(userId) },
-    };
-    if (search) {
-      const escaped = escapeRegex(search);
-      query.$or = [
-        { name: { $regex: escaped, $options: 'i' } },
-        { description: { $regex: escaped, $options: 'i' } },
-      ];
-    }
+    const { items: workspaces, total } = await this.workspaceStore.listPublic(userId, {
+      search,
+      skip,
+      limit,
+    });
 
-    const [workspaces, total] = await Promise.all([
-      this.workspaceModel
-        .find(query)
-        .populate('createdBy', 'email profile.firstName profile.lastName')
-        .sort({ updatedAt: -1 })
-        .skip(skip)
-        .limit(limit)
-        .lean()
-        .exec(),
-      this.workspaceModel.countDocuments(query).exec(),
-    ]);
+    const owners = await this.userLookup.byIds(workspaces.map((ws) => ws.createdBy));
 
     const mapped: PublicWorkspaceResponse[] = workspaces
       .map((ws): PublicWorkspaceResponse | null => {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const owner = (ws as any).createdBy;
-        // The owner user may have been deleted, leaving createdBy unresolved by
-        // populate (null). A public workspace with no existing owner shouldn't
-        // be listed — drop it rather than crash the listing endpoint.
+        // The owner user may have been deleted; a public workspace with no
+        // existing owner shouldn't be listed — drop it rather than crash.
+        const owner = owners.get(ws.createdBy);
         if (!owner) {
           return null;
         }
         return {
-          id: ws._id.toString(),
+          id: ws.id,
           name: ws.name,
           alias: ws.alias,
           storagePrefix: ws.storagePrefix,
           description: ws.description,
           owner: {
-            id: owner._id.toString(),
+            id: owner.id,
             email: owner.email,
-            firstName: owner.profile?.firstName,
-            lastName: owner.profile?.lastName,
+            firstName: owner.firstName || undefined,
+            lastName: owner.lastName || undefined,
           },
           documentCount: ws.documentCount,
           usedStorage: ws.usedStorage,
@@ -412,7 +349,7 @@ export class WorkspaceService implements OnModuleInit {
     userId: string,
     data: UpdateWorkspaceData,
   ): Promise<WorkspaceResponse> {
-    const workspace = await this.workspaceModel.findById(workspaceId);
+    const workspace = await this.workspaceStore.findById(workspaceId);
 
     if (!workspace) {
       throw new NotFoundException(
@@ -422,7 +359,7 @@ export class WorkspaceService implements OnModuleInit {
     }
 
     // Verify ownership
-    if (workspace.createdBy.toString() !== userId) {
+    if (workspace.createdBy !== userId) {
       throw new ForbiddenException(
         ErrorCode.WORKSPACE_FORBIDDEN,
         'You do not have access to this workspace',
@@ -437,13 +374,11 @@ export class WorkspaceService implements OnModuleInit {
       );
     }
 
+    const patch: { name?: string; alias?: string; description?: string; settingsId?: string | null } = {};
+
     // Check for duplicate name if name is being updated
     if (data.name && data.name !== workspace.name) {
-      const existingName = await this.workspaceModel.findOne({
-        createdBy: new Types.ObjectId(userId),
-        name: data.name,
-        _id: { $ne: workspaceId },
-      });
+      const existingName = await this.workspaceStore.findByName(userId, data.name, workspaceId);
 
       if (existingName) {
         throw new ConflictException(
@@ -454,29 +389,28 @@ export class WorkspaceService implements OnModuleInit {
 
       // Update alias when name changes
       const baseAlias = this.generateAlias(data.name);
-      workspace.alias = await this.ensureUniqueAlias(userId, baseAlias, workspaceId);
-      workspace.name = data.name;
+      patch.alias = await this.ensureUniqueAlias(userId, baseAlias, workspaceId);
+      patch.name = data.name;
     }
 
     // Update other fields
     if (data.description !== undefined) {
-      workspace.description = data.description;
+      patch.description = data.description;
     }
 
     if (data.settings !== undefined) {
-      workspace.settings = data.settings
-        ? new Types.ObjectId(data.settings)
-        : undefined;
+      patch.settingsId = data.settings || null;
     }
 
-    await workspace.save();
+    await this.workspaceStore.updateFields(workspaceId, patch);
 
     this.logger.log('Workspace updated', {
-      workspaceId: workspace._id,
+      workspaceId,
       userId,
     });
 
-    return this.mapToResponse(workspace);
+    const merged: WorkspaceRecord = { ...workspace, ...patch, settingsId: patch.settingsId === undefined ? workspace.settingsId : (patch.settingsId ?? undefined) };
+    return this.mapToResponse(merged);
   }
 
   /**
@@ -490,14 +424,14 @@ export class WorkspaceService implements OnModuleInit {
     ownerId: string,
     isPublic: boolean,
   ): Promise<WorkspaceResponse> {
-    const workspace = await this.workspaceModel.findById(workspaceId).exec();
+    const workspace = await this.workspaceStore.findById(workspaceId);
     if (!workspace) {
       throw new NotFoundException(
         ErrorCode.WORKSPACE_NOT_FOUND,
         'Workspace not found',
       );
     }
-    if (workspace.createdBy.toString() !== ownerId) {
+    if (workspace.createdBy !== ownerId) {
       throw new ForbiddenException(
         ErrorCode.WORKSPACE_FORBIDDEN,
         'You do not have access to this workspace',
@@ -510,17 +444,23 @@ export class WorkspaceService implements OnModuleInit {
       );
     }
 
-    workspace.isPublic = isPublic;
-    await workspace.save();
+    if (workspace.isPublic && !isPublic) {
+      await this.semanticGrantRevocations.runWithWorkspaceRevocation(workspaceId, undefined, async () => {
+        await this.recordWorkspaceAccessChanged(workspaceId, 'visibility_private');
+        await this.workspaceStore.updateFields(workspaceId, { isPublic });
+      });
+    } else {
+      await this.workspaceStore.updateFields(workspaceId, { isPublic });
+    }
     this.logger.log('Workspace visibility updated', { workspaceId, ownerId, isPublic });
-    return this.mapToResponse(workspace);
+    return this.mapToResponse({ ...workspace, isPublic });
   }
 
   /**
    * Delete a workspace
    */
   async delete(workspaceId: string, userId: string): Promise<void> {
-    const workspace = await this.workspaceModel.findById(workspaceId);
+    const workspace = await this.workspaceStore.findById(workspaceId);
 
     if (!workspace) {
       throw new NotFoundException(
@@ -530,7 +470,7 @@ export class WorkspaceService implements OnModuleInit {
     }
 
     // Verify ownership
-    if (workspace.createdBy.toString() !== userId) {
+    if (workspace.createdBy !== userId) {
       throw new ForbiddenException(
         ErrorCode.WORKSPACE_FORBIDDEN,
         'You do not have access to this workspace',
@@ -545,27 +485,49 @@ export class WorkspaceService implements OnModuleInit {
       );
     }
 
-    await this.workspaceModel.deleteOne({ _id: workspaceId });
-
-    // Cascade: delete all shares for this workspace
-    await this.shareModel.deleteMany({ workspaceId: new Types.ObjectId(workspaceId) });
-
-    // Remove workspace reference from all conversations
-    await this.conversationStore.removeWorkspaceFromAll(workspaceId);
+    // Remove every reference BEFORE the workspace row: conversations first
+    // (the conversation store runs on its own connection), then shares and
+    // the workspace itself atomically.
+    const deleteSharesAndWorkspace = async (): Promise<void> => {
+      await this.shareStore.deleteManyByWorkspace(workspaceId);
+      await this.workspaceStore.deleteById(workspaceId);
+    };
+    await this.semanticGrantRevocations.runWithWorkspaceRevocation(workspaceId, undefined, async () => {
+      await this.recordWorkspaceAccessChanged(workspaceId, 'deleted');
+      await this.conversationStore.removeWorkspaceFromAll(workspaceId);
+      if (this.db) {
+        await withTransaction(this.db, deleteSharesAndWorkspace);
+      } else {
+        await deleteSharesAndWorkspace();
+      }
+    });
 
     // Remove workspace reference from all agents' knowledge bases
     await this.agentRepository.pullKnowledgeBaseFromAll(workspaceId);
 
     // Remove workspace reference from all playbooks
-    await this.playbookModel.updateMany(
-      { workspaces: new Types.ObjectId(workspaceId) },
-      { $pull: { workspaces: new Types.ObjectId(workspaceId) } },
-    );
+    await this.flowReadPort.removeWorkspaceReference(workspaceId);
 
     this.logger.log('Workspace deleted', {
       workspaceId,
       userId,
       name: workspace.name,
+    });
+  }
+
+  private async recordWorkspaceAccessChanged(
+    workspaceId: string,
+    changeType: 'visibility_private' | 'deleted',
+  ): Promise<void> {
+    if (!this.outbox) return;
+    const occurredAt = new Date();
+    await this.outbox.record({
+      eventId: randomUUID(),
+      eventType: WorkspaceIntegrationEvents.AccessChangedV1,
+      aggregateType: 'workspace_access',
+      aggregateId: workspaceId,
+      payload: { workspaceId, changeType, occurredAt: occurredAt.toISOString() },
+      occurredAt,
     });
   }
 
@@ -577,11 +539,9 @@ export class WorkspaceService implements OnModuleInit {
     sizeDelta: number,
     countDelta: number,
   ): Promise<void> {
-    await this.workspaceModel.findByIdAndUpdate(workspaceId, {
-      $inc: {
-        usedStorage: sizeDelta,
-        documentCount: countDelta,
-      },
+    await this.workspaceStore.incrementCounters(workspaceId, {
+      usedStorage: sizeDelta,
+      documentCount: countDelta,
     });
   }
 
@@ -592,7 +552,7 @@ export class WorkspaceService implements OnModuleInit {
     workspaceId: string,
     fileSize: number,
   ): Promise<{ allowed: boolean; available: number; used: number; allocated: number }> {
-    const workspace = await this.workspaceModel.findById(workspaceId);
+    const workspace = await this.workspaceStore.findById(workspaceId);
 
     if (!workspace) {
       throw new NotFoundException(
@@ -619,23 +579,19 @@ export class WorkspaceService implements OnModuleInit {
     conversationId: string,
     allocatedStorage: number,
   ): Promise<WorkspaceResponse> {
-    const workspace = await this.workspaceModel.create({
+    const workspace = await this.workspaceStore.create({
       name: `system-${conversationId}`,
       alias: `system-${conversationId}`,
       storagePrefix: `system-${conversationId}`,
       description: 'System workspace for conversation file uploads',
-      createdBy: new Types.ObjectId(userId),
-      documentCount: 0,
-      usedStorage: 0,
+      createdBy: userId,
       allocatedStorage,
       isSystem: true,
-      conversationId: Types.ObjectId.isValid(conversationId)
-        ? new Types.ObjectId(conversationId)
-        : null,
+      conversationId,
     });
 
     this.logger.log('System workspace created', {
-      workspaceId: workspace._id,
+      workspaceId: workspace.id,
       userId,
       conversationId,
     });
@@ -658,22 +614,10 @@ export class WorkspaceService implements OnModuleInit {
   async getStoragePathsByIds(workspaceIds: string[]): Promise<string[]> {
     if (workspaceIds.length === 0) return [];
 
-    const validIds = workspaceIds.filter((id) => Types.ObjectId.isValid(id));
+    const validIds = workspaceIds.filter((id) => /^[0-9a-f]{24}$/.test(id));
     if (validIds.length === 0) return [];
 
-    const docs = await this.workspaceModel
-      .find({ _id: { $in: validIds.map((id) => new Types.ObjectId(id)) } })
-      .select('createdBy storagePrefix')
-      .lean()
-      .exec();
-
-    const byId = new Map<string, { createdBy: string; storagePrefix: string }>();
-    for (const doc of docs) {
-      byId.set(doc._id.toString(), {
-        createdBy: doc.createdBy.toString(),
-        storagePrefix: doc.storagePrefix,
-      });
-    }
+    const byId = await this.workspaceStore.findByIds(validIds);
 
     const paths: string[] = [];
     for (const id of workspaceIds) {
@@ -693,18 +637,14 @@ export class WorkspaceService implements OnModuleInit {
   async getStoragePathMapByIds(workspaceIds: string[]): Promise<Record<string, string>> {
     if (workspaceIds.length === 0) return {};
 
-    const validIds = workspaceIds.filter((id) => Types.ObjectId.isValid(id));
+    const validIds = workspaceIds.filter((id) => /^[0-9a-f]{24}$/.test(id));
     if (validIds.length === 0) return {};
 
-    const docs = await this.workspaceModel
-      .find({ _id: { $in: validIds.map((id) => new Types.ObjectId(id)) } })
-      .select('createdBy storagePrefix')
-      .lean()
-      .exec();
+    const byId = await this.workspaceStore.findByIds(validIds);
 
     const pathById: Record<string, string> = {};
-    for (const doc of docs) {
-      pathById[doc._id.toString()] = `${doc.createdBy.toString()}/${doc.storagePrefix}`;
+    for (const [id, doc] of byId) {
+      pathById[id] = `${doc.createdBy}/${doc.storagePrefix}`;
     }
     return pathById;
   }
@@ -713,21 +653,16 @@ export class WorkspaceService implements OnModuleInit {
     workspaceIds: string[],
   ): Promise<Record<string, RunCodeWorkspaceMetadata>> {
     if (workspaceIds.length === 0) return {};
-    const validIds = workspaceIds.filter((id) => Types.ObjectId.isValid(id));
+    const validIds = workspaceIds.filter((id) => /^[0-9a-f]{24}$/.test(id));
     if (validIds.length === 0) return {};
-    const docs = await this.workspaceModel
-      .find({ _id: { $in: validIds.map((id) => new Types.ObjectId(id)) } })
-      .select('name alias createdBy storagePrefix')
-      .lean()
-      .exec();
+    const byId = await this.workspaceStore.findByIds(validIds);
     const metadata: Record<string, RunCodeWorkspaceMetadata> = {};
-    for (const doc of docs) {
-      const workspaceId = doc._id.toString();
+    for (const [workspaceId, doc] of byId) {
       metadata[workspaceId] = {
         workspaceId,
         name: doc.name,
         alias: doc.alias,
-        cephPrefix: `${doc.createdBy.toString()}/${doc.storagePrefix}`,
+        cephPrefix: `${doc.createdBy}/${doc.storagePrefix}`,
       };
     }
     return metadata;
@@ -742,16 +677,12 @@ export class WorkspaceService implements OnModuleInit {
   async getStorageContext(
     workspaceId: string,
   ): Promise<{ ownerUserId: string; storagePrefix: string }> {
-    const doc = await this.workspaceModel
-      .findById(workspaceId)
-      .select('createdBy storagePrefix')
-      .lean()
-      .exec();
+    const doc = await this.workspaceStore.findById(workspaceId);
     if (!doc) {
       throw new NotFoundException(ErrorCode.WORKSPACE_NOT_FOUND, 'Workspace not found');
     }
     return {
-      ownerUserId: doc.createdBy.toString(),
+      ownerUserId: doc.createdBy,
       storagePrefix: doc.storagePrefix,
     };
   }
@@ -763,12 +694,7 @@ export class WorkspaceService implements OnModuleInit {
     userId: string,
     conversationId: string,
   ): Promise<WorkspaceResponse | null> {
-    const workspace = await this.workspaceModel.findOne({
-      name: `system-${conversationId}`,
-      createdBy: new Types.ObjectId(userId),
-      isSystem: true,
-    });
-
+    const workspace = await this.workspaceStore.findSystemWorkspace(userId, conversationId);
     return workspace ? this.mapToResponse(workspace) : null;
   }
 
@@ -778,17 +704,14 @@ export class WorkspaceService implements OnModuleInit {
    * Safety: only deletes workspaces with isSystem=true.
    */
   async deleteSystemWorkspace(workspaceId: string): Promise<void> {
-    await this.workspaceModel.deleteOne({
-      _id: new Types.ObjectId(workspaceId),
-      isSystem: true,
-    });
+    await this.workspaceStore.deleteSystemWorkspace(workspaceId);
   }
 
   /**
-   * Get workspace document (internal use)
+   * Get workspace record (internal use)
    */
-  async getWorkspaceDocument(workspaceId: string): Promise<WorkspaceDocument> {
-    const workspace = await this.workspaceModel.findById(workspaceId);
+  async getWorkspaceDocument(workspaceId: string): Promise<WorkspaceRecord> {
+    const workspace = await this.workspaceStore.findById(workspaceId);
 
     if (!workspace) {
       throw new NotFoundException(ErrorCode.WORKSPACE_NOT_FOUND, 'Workspace not found');
@@ -798,24 +721,24 @@ export class WorkspaceService implements OnModuleInit {
   }
 
   /**
-   * Map workspace document to response
+   * Map workspace record to response
    */
-  private mapToResponse(workspace: WorkspaceDocument): WorkspaceResponse {
+  private mapToResponse(workspace: WorkspaceRecord): WorkspaceResponse {
     return {
-      id: workspace._id.toString(),
+      id: workspace.id,
       name: workspace.name,
       alias: workspace.alias,
       storagePrefix: workspace.storagePrefix,
       description: workspace.description,
-      createdBy: workspace.createdBy.toString(),
-      settings: workspace.settings?.toString(),
+      createdBy: workspace.createdBy,
+      settings: workspace.settingsId,
       documentCount: workspace.documentCount,
       usedStorage: workspace.usedStorage,
       allocatedStorage: workspace.allocatedStorage,
-      isSystem: workspace.isSystem || false,
-      isPersonal: workspace.isPersonal || false,
-      shareCount: workspace.shareCount || 0,
-      isPublic: workspace.isPublic || false,
+      isSystem: workspace.isSystem,
+      isPersonal: workspace.isPersonal,
+      shareCount: workspace.shareCount,
+      isPublic: workspace.isPublic,
       createdAt: workspace.createdAt.toISOString(),
       updatedAt: workspace.updatedAt.toISOString(),
     };

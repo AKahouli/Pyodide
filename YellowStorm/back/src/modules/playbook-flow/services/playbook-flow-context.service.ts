@@ -1,18 +1,20 @@
-import { Injectable } from '@nestjs/common';
-import { InjectModel } from '@nestjs/mongoose';
-import { Model } from 'mongoose';
+import { Inject, Injectable } from '@nestjs/common';
 import { LoggerService } from '@modules/logger';
 import { WorkspaceDocumentService } from '@modules/workspace/workspace-document.service';
-import { DocumentStatus } from '@modules/workspace/schemas/workspace-document.schema';
-import { Workspace, WorkspaceDocument } from '@modules/workspace/schemas/workspace.schema';
-import { WorkspaceSetting, WorkspaceSettingDocument } from '@modules/workspace/schemas/workspace-setting.schema';
+import { DocumentStatus } from '@modules/workspace/interfaces/document-status.enum';
+import {
+  WORKSPACE_READ_PORT,
+  WORKSPACE_SETTING_READ_PORT,
+  type WorkspaceReadPort,
+  type WorkspaceSettingReadPort,
+} from '@modules/workspace/ports';
 import { IGrpcAgent, IGrpcWorkspaceContext } from '@modules/agent/interfaces/agent.interface';
 
 @Injectable()
 export class PlaybookFlowContextService {
   constructor(
-    @InjectModel(Workspace.name) private readonly workspaceModel: Model<WorkspaceDocument>,
-    @InjectModel(WorkspaceSetting.name) private readonly workspaceSettingModel: Model<WorkspaceSettingDocument>,
+    @Inject(WORKSPACE_READ_PORT) private readonly workspaceReadPort: WorkspaceReadPort,
+    @Inject(WORKSPACE_SETTING_READ_PORT) private readonly workspaceSettingReadPort: WorkspaceSettingReadPort,
     private readonly workspaceDocumentService: WorkspaceDocumentService,
     private readonly logger: LoggerService,
   ) { this.logger.setContext('PlaybookFlowContextService'); }
@@ -22,10 +24,10 @@ export class PlaybookFlowContextService {
     const contexts: IGrpcWorkspaceContext[] = [];
     for (const wsId of workspaceIds) {
       try {
-        const ws = await this.workspaceModel.findById(wsId).lean().exec();
+        const ws = await this.workspaceReadPort.findById(wsId);
         const workspaceName = ws?.storagePrefix || ws?.alias || wsId;
-        let settings: WorkspaceSettingDocument | null = null;
-        if (ws?.settings) settings = await this.workspaceSettingModel.findById(ws.settings).lean().exec() as any;
+        let settings = null;
+        if (ws?.settingsId) settings = await this.workspaceSettingReadPort.findById(ws.settingsId);
 
         const result = await this.workspaceDocumentService.findAllByWorkspace(wsId, { limit: 1000, status: DocumentStatus.COMPLETED });
         contexts.push({
@@ -57,10 +59,10 @@ export class PlaybookFlowContextService {
     const contextMap = new Map<string, IGrpcWorkspaceContext>();
     await Promise.allSettled(allWsIds.map(async (wsId) => {
       const result = await this.workspaceDocumentService.findAllByWorkspace(wsId, { limit: 1000, status: DocumentStatus.COMPLETED });
-      const ws = await this.workspaceModel.findById(wsId).lean().exec();
+      const ws = await this.workspaceReadPort.findById(wsId);
       const workspaceName = ws?.storagePrefix || ws?.alias || wsId;
-      let settings: WorkspaceSettingDocument | null = null;
-      if (ws?.settings) settings = await this.workspaceSettingModel.findById(ws.settings).lean().exec() as any;
+      let settings = null;
+      if (ws?.settingsId) settings = await this.workspaceSettingReadPort.findById(ws.settingsId);
       contextMap.set(wsId, {
         workspace_id: wsId,
         workspace_name: workspaceName,

@@ -1,11 +1,9 @@
-import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
-import { InjectModel } from '@nestjs/mongoose';
-import { Model } from 'mongoose';
+import { Inject, Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import {
   DEFAULT_FEATURE_VISIBILITY,
   FeatureVisibility,
 } from './interfaces/feature-visibility.interface';
-import { SystemSetting, SystemSettingDocument } from './schemas/system-setting.schema';
+import { SYSTEM_SETTING_STORE, type SystemSettingStore } from './persistence/system-setting.store';
 
 const KEY = 'feature_visibility';
 const CACHE_MS = 5_000;
@@ -37,8 +35,8 @@ export class FeatureVisibilityService implements OnModuleInit, OnModuleDestroy {
   private refreshTimer?: NodeJS.Timeout;
 
   constructor(
-    @InjectModel(SystemSetting.name)
-    private readonly settings: Model<SystemSettingDocument>,
+    @Inject(SYSTEM_SETTING_STORE)
+    private readonly settings: SystemSettingStore,
   ) {}
 
   async onModuleInit(): Promise<void> {
@@ -69,18 +67,14 @@ export class FeatureVisibilityService implements OnModuleInit, OnModuleDestroy {
 
   async updateVisibility(value: Partial<FeatureVisibility>): Promise<FeatureVisibility> {
     const persisted = normalizeFeatureVisibility({ ...await this.getVisibility(), ...value });
-    await this.settings.findOneAndUpdate(
-      { key: KEY },
-      { key: KEY, value: persisted },
-      { upsert: true, new: true, setDefaultsOnInsert: true },
-    ).lean().exec();
+    await this.settings.upsert(KEY, persisted);
 
     this.cache = { value: persisted, expiresAt: Date.now() + CACHE_MS };
     return persisted;
   }
 
   private async refresh(): Promise<FeatureVisibility> {
-    const setting = await this.settings.findOne({ key: KEY }).lean().exec();
+    const setting = await this.settings.get(KEY);
     const value = normalizeFeatureVisibility(setting?.value);
     this.cache = { value, expiresAt: Date.now() + CACHE_MS };
     return value;

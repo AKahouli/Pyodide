@@ -1,0 +1,30 @@
+{
+  "id": "64b000000000000000000101",
+  "userId": "64b000000000000000000001",
+  "type": "agent_shared",
+  "title": "Agent shared with you",
+  "message": "An agent was shared with you",
+  "data": {
+    "agentId": "64b000000000000000000201"
+  },
+  "actions": [
+    {
+      "label": "Open",
+      "url": "/agents/64b000000000000000000201"
+    }
+  ],
+  "destination": "in_app",
+  "status": "sent",
+  "metadata": {
+    "sourceModule": "agent",
+    "priority": "normal",
+    "expiresAt": "<volatile>",
+    "extra": {
+      "origin": "share"
+    }
+  },
+  "createdAt": "<volatile>",
+  "updatedAt": "<volatile>",
+  "sentAt": "<volatile>",
+  "readAt": "<volatile>"
+}

@@ -1,14 +1,12 @@
-import { Injectable } from '@nestjs/common';
+import { Inject, Injectable } from '@nestjs/common';
 import { FeatureVisibilityService } from '@modules/system/feature-visibility.service';
-import { InjectModel } from '@nestjs/mongoose';
-import { Model, Types } from 'mongoose';
 import { AuditLogService } from '@modules/authorization/services/audit-log.service';
 import { ForbiddenException, NotFoundException, ServiceUnavailableException } from '@modules/exceptions';
 import { ErrorCode } from '@modules/exceptions/constants/error-codes';
-import { User, UserDocument } from '@modules/user/schemas/user.schema';
+import { USER_LOOKUP_PORT, type UserLookupPort } from '@common/ports/user-lookup.port';
 import { UserGroupService } from '@modules/user-group';
 import { UpdateGovernanceScopeAudienceDto } from '../dto';
-import { GovernanceScope, GovernanceScopeDocument } from '../schemas/governance-scope.schema';
+import { SCOPE_STORE, type ScopeStore } from '../persistence';
 import { GovernanceAccessService } from './governance-access.service';
 import { GovernanceAudienceAuthorizationService } from './governance-audience-authorization.service';
 import { GovernanceDraftPreparationService } from './governance-draft-preparation.service';
@@ -23,8 +21,8 @@ export interface GovernanceScopeAudienceResponse {
 @Injectable()
 export class GovernanceScopeAudienceService {
   constructor(
-    @InjectModel(GovernanceScope.name) private readonly scopeModel: Model<GovernanceScopeDocument>,
-    @InjectModel(User.name) private readonly userModel: Model<UserDocument>,
+    @Inject(SCOPE_STORE) private readonly scopeStore: ScopeStore,
+    @Inject(USER_LOOKUP_PORT) private readonly userLookup: UserLookupPort,
     private readonly accessService: GovernanceAccessService,
     private readonly userGroupService: UserGroupService,
     private readonly auditLogService: AuditLogService,
@@ -49,10 +47,10 @@ export class GovernanceScopeAudienceService {
       userIds: (scope.audience?.userIds ?? []).map(String).sort(),
       groupIds: (scope.audience?.groupIds ?? []).map(String).sort(),
     };
-    const userIds = dto.mode === 'all_authenticated' ? [] : this.uniqueObjectIds(dto.userIds);
-    const groupIds = dto.mode === 'all_authenticated' ? [] : this.uniqueObjectIds(dto.groupIds);
-    scope.audience = { mode: dto.mode, userIds, groupIds };
-    await scope.save();
+    const userIds = dto.mode === 'all_authenticated' ? [] : [...new Set(dto.userIds ?? [])];
+    const groupIds = dto.mode === 'all_authenticated' ? [] : [...new Set(dto.groupIds ?? [])];
+    const updated = await this.scopeStore.update(scope.id, { audience: { mode: dto.mode, userIds, groupIds } });
+    if (!updated) throw new NotFoundException(ErrorCode.GOVERNANCE_SCOPE_NOT_FOUND);
     await this.draftPreparation.prepare(actorId, actorEmail, programId, scopeId, { previousAudience });
     this.auditLogService.logSuccess({
       actorId,
@@ -62,7 +60,7 @@ export class GovernanceScopeAudienceService {
       targetId: scopeId,
       metadata: { programId, mode: dto.mode, userCount: userIds.length, groupCount: groupIds.length },
     });
-    return this.toResponse(actorId, scope);
+    return this.toResponse(actorId, updated);
   }
 
   async isUserAuthorized(userId: string, scopeId: string): Promise<boolean> {
@@ -73,29 +71,25 @@ export class GovernanceScopeAudienceService {
     return this.audienceAuthorization.assertUserAuthorized(userId, scopeId);
   }
 
-  private async findScope(programId: string, scopeId: string): Promise<GovernanceScopeDocument> {
-    const scope = await this.scopeModel.findOne({ _id: new Types.ObjectId(scopeId), programId: new Types.ObjectId(programId) }).exec();
+  private async findScope(programId: string, scopeId: string) {
+    const scope = await this.scopeStore.findByProgramAndId(programId, scopeId);
     if (!scope) throw new NotFoundException(ErrorCode.GOVERNANCE_SCOPE_NOT_FOUND);
     return scope;
   }
 
-  private async toResponse(actorId: string, scope: GovernanceScopeDocument): Promise<GovernanceScopeAudienceResponse> {
+  private async toResponse(actorId: string, scope: NonNullable<Awaited<ReturnType<ScopeStore['findById']>>>): Promise<GovernanceScopeAudienceResponse> {
     const audience = scope.audience ?? { mode: 'restricted' as const, userIds: [], groupIds: [] };
-    const users = await this.userModel.find({ _id: { $in: audience.userIds ?? [] } }).select('email profile.firstName profile.lastName').lean().exec();
+    const users = audience.mode !== 'all_authenticated' && audience.userIds.length ? Array.from((await this.userLookup.byIds(audience.userIds)).values()) : [];
     const groups = await this.userGroupService.findOwnedGroupsByIds(actorId, (audience.groupIds ?? []).map(String));
     const estimatedAuthorizedUserCount = audience.mode === 'restricted'
       ? new Set([...(audience.userIds ?? []).map(String), ...groups.flatMap((group) => group.members.map((member) => member.id))]).size
       : undefined;
     return {
       mode: audience.mode,
-      users: users.map((user) => ({ id: user._id.toString(), email: user.email, firstName: user.profile?.firstName, lastName: user.profile?.lastName })),
+      users: users.map((user) => ({ id: user.id, email: user.email, firstName: user.firstName || undefined, lastName: user.lastName || undefined })),
       groups: groups.map((group) => ({ id: group.id, name: group.name, memberCount: group.memberCount })),
       estimatedAuthorizedUserCount,
     };
-  }
-
-  private uniqueObjectIds(ids?: string[]): Types.ObjectId[] {
-    return [...new Set(ids ?? [])].map((id) => new Types.ObjectId(id));
   }
 
   private assertAudienceFeatureEnabled(): void {

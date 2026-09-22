@@ -48,6 +48,7 @@
   "conversations.newProject": "New project",
   "conversations.removeFromProject": "Remove from project",
   "conversations.actions": "Actions for {{title}}",
+  "conversations.shared": "Shared conversation",
   "projects.createTooltip": "Create a project",
   "projects.searchPlaceholder": "Search projects",
   "projects.empty": "No projects yet",

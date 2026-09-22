@@ -133,6 +133,21 @@ export function ConversationHeader() {
           <h1 className='flex min-w-0 items-center font-medium text-lg'>
             <span className='truncate'>{displayTitle}</span>
           </h1>
+          {conversation.isShared && (
+            <TooltipProvider>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <span tabIndex={0} data-shared-badge aria-label={t('shared.badge')} className='inline-flex shrink-0 items-center gap-1 rounded-full border border-primary/30 bg-primary/10 px-2 py-0.5 text-xs font-medium text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring'>
+                    <Share2 className='size-3.5' aria-hidden='true' />
+                    {t('shared.badge')}
+                  </span>
+                </TooltipTrigger>
+                <TooltipContent className='max-w-72'>
+                  <p>{t('shared.tooltip')}</p>
+                </TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
+          )}
           {isGoverned && conversation.governanceContext && (
             <TooltipProvider>
               <Tooltip>
@@ -165,20 +180,20 @@ export function ConversationHeader() {
         </div>
 
         <div className='flex items-center gap-1'>
-          {conversation.groupMeta?.isGroup && (
+          {conversation.groupMeta?.isGroup || conversation.isShared ? (
             <TooltipProvider>
               <Tooltip>
                 <TooltipTrigger asChild>
-                  <Button variant='ghost' size='icon' onClick={() => setGroupDialogOpen(true)} className='size-11 shrink-0 text-primary md:size-9' aria-label={t('newConversation.groupDialog.manageTitle')}>
+                  <Button variant='ghost' size='icon' onClick={() => setGroupDialogOpen(true)} className='size-11 shrink-0 text-primary md:size-9' aria-label={conversation.groupMeta?.isGroup ? t('newConversation.groupDialog.manageTitle') : t('shared.manage')}>
                     <Users className='h-4 w-4' />
                   </Button>
                 </TooltipTrigger>
                 <TooltipContent>
-                  <p>{t('newConversation.groupDialog.manageTitle')}</p>
+                  <p>{conversation.groupMeta?.isGroup ? t('newConversation.groupDialog.manageTitle') : t('shared.manage')}</p>
                 </TooltipContent>
               </Tooltip>
             </TooltipProvider>
-          )}
+          ) : null}
           {!isGoverned && (
             <TooltipProvider>
               <Tooltip>
@@ -231,7 +246,7 @@ export function ConversationHeader() {
 
       <RenameDialog open={renameOpen} onOpenChange={setRenameOpen} currentTitle={conversation.title} onRename={handleRename} />
 
-      <DeleteConversationDialog open={deleteOpen} onOpenChange={setDeleteOpen} onConfirm={handleDelete} title={conversation.title} />
+      <DeleteConversationDialog open={deleteOpen} onOpenChange={setDeleteOpen} onConfirm={handleDelete} title={conversation.title} isShared={conversation.isShared} />
 
       {!isGoverned && <ShareDialog open={shareOpen} onOpenChange={setShareOpen} conversationId={conversation.id} conversationTitle={conversation.title} />}
 

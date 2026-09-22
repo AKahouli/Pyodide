@@ -84,7 +84,7 @@ describe('StreamService guardrail metadata buffering', () => {
     };
   };
 
-  it('returns a process-local snapshot for an active conversation stream as stored', () => {
+  it('returns an active stream snapshot without exposing artifact storage paths', () => {
     const service = Object.create(StreamService.prototype) as StreamService;
     Object.assign(service as object, {
       componentBuffers: new Map([
@@ -126,7 +126,7 @@ describe('StreamService guardrail metadata buffering', () => {
         {
           id: 'artifact-1',
           type: 'artifact',
-          data: { filename: 'report.pdf', storagePath: '/workspace/private/report.pdf' },
+          data: { filename: 'report.pdf' },
         },
       ],
     });
@@ -255,27 +255,37 @@ describe('StreamService guardrail metadata buffering', () => {
 
   it('uses the user-visible original name for current attached documents', async () => {
     const service = Object.create(StreamService.prototype) as StreamService;
+    const document = {
+      id: 'file-1',
+      filename: 'stored-name-42.txt',
+      originalName: 'deatils.txt',
+      mimeType: 'text/plain',
+      path: 'owner/conversation-1/deatils.txt',
+      workspaceId: 'workspace-1',
+      createdAt: '2026-08-23T08:50:00.000Z',
+    };
     Object.assign(service as object, {
-      workspaceDocumentService: {
-        findByIds: jest.fn().mockResolvedValue([
-          {
-            id: 'file-1',
-            filename: 'stored-name-42.txt',
-            originalName: 'deatils.txt',
-            mimeType: 'text/plain',
-            path: 'owner/conversation-1/deatils.txt',
-            workspaceId: 'workspace-1',
-            createdAt: '2026-08-23T08:50:00.000Z',
-          },
+      attachmentResolver: {
+        resolve: jest.fn().mockResolvedValue([document]),
+      },
+      conversationSettings: {
+        isAttachmentIntelligenceEnabled: jest.fn().mockResolvedValue(true),
+        getAttachmentIntelligenceSettings: jest.fn().mockResolvedValue({ enabled: true, maxIndexedTabularRows: 5000 }),
+      },
+      attachmentService: {
+        prepareAttachments: jest.fn().mockResolvedValue([
+          { documentId: 'file-1', policy: 'SEARCHABLE', searchIndexAllowed: true },
         ]),
       },
       logger: { warn: jest.fn(), error: jest.fn() },
     });
 
-    const files = await (service as any).buildAttachedFiles(['file-1']);
+    const { attachedFiles } = await (service as any).buildAttachedFiles('user-1', 'conversation-1', 'system-1', ['file-1']);
 
-    expect(files[0].document.filename).toBe('deatils.txt');
-    expect(files[0].document.filepath).toBe('owner/conversation-1/deatils.txt');
+    expect(attachedFiles[0].document.filename).toBe('deatils.txt');
+    expect(attachedFiles[0].document.filepath).toBe('owner/conversation-1/deatils.txt');
+    expect(attachedFiles[0].document.processing_policy).toBe('SEARCHABLE');
+    expect(attachedFiles[0].document.search_index_allowed).toBe(true);
   });
 
   it('injects per-agent run-code descriptors only into assigned agents', async () => {
@@ -439,6 +449,94 @@ describe('StreamService guardrail metadata buffering', () => {
 
     expect(attachRunCodeContexts).toHaveBeenCalledWith([agent], 'user-1', 'message-1', ['workspace-1'], []);
     expect(executeSingleAgentGrpcStream).toHaveBeenCalled();
+  });
+
+  it('passes admin compaction settings to governed and team conversation agents', async () => {
+    const service = Object.create(StreamService.prototype) as StreamService;
+    const agent = { id: 'agent-1', tools: [], brain_context: [] };
+    const buildGovernedAgentsForStream = jest.fn().mockResolvedValue([agent]);
+    const buildGrpcAgentsForPlaybook = jest.fn().mockResolvedValue([agent]);
+    const resolveExecutionDefinition = jest.fn().mockResolvedValue(undefined);
+    const compaction = {
+      enabled: true,
+      compaction_interval: 10,
+      overlap_size: 2,
+      token_fraction: 0.75,
+      event_retention_size: 6,
+      summarizer_model: 'summary-model',
+    };
+    Object.assign(service as object, {
+      conversationService: {
+        getConversationDocument: jest.fn().mockResolvedValue({
+          isGroup: false,
+          systemWorkspaceId: 'system-1',
+          groupTaggedAgentIds: [],
+        }),
+      },
+      conversationSettings: {
+        getSettings: jest.fn().mockResolvedValue({
+          compaction: {
+            enabled: true,
+            compactionInterval: 10,
+            overlapSize: 2,
+            tokenFraction: 0.75,
+            eventRetentionSize: 6,
+            summarizerModel: 'summary-model',
+          },
+        }),
+        isAttachmentIntelligenceEnabled: jest.fn().mockResolvedValue(false),
+      },
+      teamService: { resolveExecutionDefinition },
+      semanticModelService: { resolveSearchSchema: jest.fn() },
+      agentService: { buildGovernedAgentsForStream, buildGrpcAgentsForPlaybook },
+      buildWorkspaceContexts: jest.fn().mockResolvedValue([]),
+      buildAttachedFiles: jest.fn().mockResolvedValue({ attachedFiles: [], preparedDocuments: [] }),
+      buildPreviousAttachedFiles: jest.fn().mockResolvedValue([]),
+      skillService: { findByIdsForGrpc: jest.fn().mockResolvedValue([]) },
+      resolveAgentBrainContexts: jest.fn().mockResolvedValue(undefined),
+      attachRunCodeContexts: jest.fn().mockResolvedValue(undefined),
+      agentRequestBuilder: { build: jest.fn().mockReturnValue({ rpc: 'RunSingleAgent', payload: {} }) },
+    });
+
+    await service.buildAgentExecutionRequest('user-1', 'conversation-1', {
+      content: 'hello',
+      attachedFileIds: [],
+      agentIds: [],
+      skillIds: [],
+      governanceOverride: {
+        runtimeMode: 'governed',
+        primaryAgentId: 'agent-1',
+        allowedAgentIds: ['agent-1'],
+        workspaceIds: ['workspace-1'],
+        revisionId: 'revision-1',
+        scopeId: 'scope-1',
+      },
+    } as any);
+
+    expect(buildGovernedAgentsForStream).toHaveBeenCalledWith(
+      'user-1',
+      ['agent-1'],
+      ['workspace-1'],
+      compaction,
+    );
+
+    resolveExecutionDefinition.mockResolvedValue({ nodes: [{ agentId: 'agent-1' }] });
+    await service.buildAgentExecutionRequest('user-1', 'conversation-1', {
+      content: 'hello',
+      attachedFileIds: [],
+      agentIds: [],
+      skillIds: [],
+      teamId: 'team-1',
+    } as any);
+
+    expect(buildGrpcAgentsForPlaybook).toHaveBeenCalledWith(
+      'user-1',
+      ['agent-1'],
+      undefined,
+      'conversation-1',
+      undefined,
+      compaction,
+    );
   });
 
   it('does not create a gRPC call when the durable lease was lost during request preparation', async () => {
@@ -877,7 +975,7 @@ describe('StreamService guardrail metadata buffering', () => {
     }
   });
 
-  it('uses heartbeat chunks only to reset the idle timeout', async () => {
+  it('does not let heartbeat chunks extend the idle timeout', async () => {
     jest.useFakeTimers();
     try {
       const call = Object.assign(new EventEmitter(), { cancel: jest.fn() });
@@ -905,17 +1003,26 @@ describe('StreamService guardrail metadata buffering', () => {
       });
 
       const execution = (service as any).executeGrpcStream('user-1', 'conversation-1', 'message-1', streamKey, {}, 10, ['user-1']) as Promise<void>;
+      void execution.catch(() => undefined);
       await jest.advanceTimersByTimeAsync(9);
       call.emit('data', { action: 'heartbeat', metadata: { message_id: 'conversation-1' } });
-      await jest.advanceTimersByTimeAsync(9);
+      await jest.advanceTimersByTimeAsync(1);
 
-      expect(call.cancel).not.toHaveBeenCalled();
-      expect(broadcastToConversation).not.toHaveBeenCalled();
-      expect(completeAIMessage).not.toHaveBeenCalled();
-
-      call.emit('end');
-      await execution;
-      expect(completeAIMessage).toHaveBeenCalledWith(expect.objectContaining({ components: [] }));
+      expect(call.cancel).toHaveBeenCalledTimes(1);
+      expect(broadcastToConversation).toHaveBeenCalledTimes(1);
+      expect(broadcastToConversation).toHaveBeenCalledWith(
+        [],
+        expect.objectContaining({ type: 'stream_error' }),
+      );
+      expect(completeAIMessage).toHaveBeenCalledWith(expect.objectContaining({
+        components: expect.arrayContaining([
+          expect.objectContaining({
+            type: 'error',
+            data: expect.objectContaining({ code: ErrorCode.CHAT_STREAM_TIMEOUT }),
+          }),
+        ]),
+      }));
+      await expect(execution).rejects.toThrow('Stream idle timeout');
     } finally {
       jest.useRealTimers();
     }

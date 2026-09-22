@@ -2,6 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { WorkyPlanningService } from '../services/worky-planning.service';
 import { WorkyStreamService } from '../services/worky-stream.service';
 import { WorkyOrchestratorGrpcClientService } from '../services/worky-orchestrator.grpc-client.service';
+import { asAuthUser } from '@common/auth/auth-user';
 import { WorkyTurnContextService } from '../services/worky-turn-context.service';
 import { WorkyTaskService } from '../services/worky-task.service';
 import { UserService } from '../../user/user.service';
@@ -71,7 +72,7 @@ export class VoiceToolService {
     const res = await this.orchestrator.runTask(userId, ctx.aiSessionId, message, {
       agents,
       connectors,
-      ...(user ? requesterOpts(user) : {}),
+      ...(user ? requesterOpts(asAuthUser(user)) : {}),
     });
     this.logger.log(`[voice] dispatched task run=${res.runId} session=${res.sessionId}`);
     return { runId: res.runId, sessionId: res.sessionId, accepted: res.accepted };

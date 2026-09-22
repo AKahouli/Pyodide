@@ -124,9 +124,72 @@
     {
       "idx": 17,
       "version": "7",
-      "when": 1789750000000,
-      "tag": "0017_app_data_end_user_ai_grant",
+      "when": 1789785600000,
+      "tag": "0016_project",
       "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1789785700000,
+      "tag": "0017_workspace_artifacts",
+      "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1789785800000,
+      "tag": "0018_workspace",
+      "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "7",
+      "when": 1789785900000,
+      "tag": "0019_governance",
+      "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "7",
+      "when": 1789871000000,
+      "tag": "0020_fk_actions_and_missing_indexes",
+      "breakpoints": true
+    },
+    {
+      "idx": 22,
+      "version": "7",
+      "when": 1789871100000,
+      "tag": "0021_identity",
+      "breakpoints": true
+    },
+    {
+      "idx": 23,
+      "version": "7",
+      "when": 1789871200000,
+      "tag": "0022_catalog_ops",
+      "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "7",
+      "when": 1789871300000,
+      "tag": "0023_integrations",
+      "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "7",
+      "when": 1789871400000,
+      "tag": "0024_agent_ecosystem",
+      "breakpoints": true
+    },
+    {
+      "idx": 26,
+      "version": "7",
+      "when": 1790019745486,
+      "tag": "0025_cross_schema_fks",
+      "statements": []
     }
   ]
 }

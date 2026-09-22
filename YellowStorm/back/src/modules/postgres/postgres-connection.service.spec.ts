@@ -48,6 +48,22 @@ describe('PostgresConnectionService', () => {
       expect(pool.on).toHaveBeenCalledWith('error', expect.any(Function));
     });
 
+    it('registers the pool error handler exactly once and logs effective config without password', () => {
+      const pool = {
+        on: jest.fn(),
+        options: { host: 'h', port: 5432, user: 'u', password: 'secret', max: 10, ssl: { rejectUnauthorized: false } },
+      } as unknown as Pool;
+      const logger = loggerStub();
+      const svc = new PostgresConnectionService(pool, {} as any, logger);
+      svc.onModuleInit();
+      svc.onModuleInit();
+      expect((pool.on as jest.Mock).mock.calls.filter(([ev]) => ev === 'error')).toHaveLength(1);
+      const logCalls = (logger.log as jest.Mock).mock.calls;
+      expect(logCalls).toHaveLength(1);
+      expect(JSON.stringify(logCalls[0])).not.toContain('secret');
+      expect(logCalls[0][1]).toMatchObject({ host: 'h', max: 10, ssl: { verify: false, ca: false } });
+    });
+
     it('probes until the database answers and logs recovery', async () => {
       jest.useFakeTimers();
       let connectRejectedOnce = false;

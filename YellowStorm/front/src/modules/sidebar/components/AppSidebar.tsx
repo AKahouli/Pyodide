@@ -161,6 +161,7 @@ export const AppSidebar = memo(function AppSidebar() {
           historyLoading={conversationsLoading}
           showAllChatsLink
           collapsed={isMobile || state === 'collapsed'}
+          navigateOnDisclosureClick={!isMobile && state === 'collapsed'}
         />
       </SidebarContent>
 

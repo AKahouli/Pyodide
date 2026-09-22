@@ -24,7 +24,7 @@ import {
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { SearchableSelect, type SearchableSelectOption } from '@/components/ui/searchable-select';
-import { AlertCircle, ArrowLeft, Check, ChevronDown, Loader2, Plus, RotateCcw, Trash2 } from 'lucide-react';
+import { AlertCircle, ArrowLeft, Check, ChevronDown, FileText, Loader2, Plus, RotateCcw, Trash2, X } from 'lucide-react';
 import { useAgents, useAgentStore } from '@/modules/agent/store';
 import { useAuth } from '@/modules/auth';
 import { useModels, useModelsStore } from '@/modules/models';
@@ -383,11 +383,19 @@ interface Props {
   onOpenChange: (open: boolean) => void;
   onSave: (taskId: string, data: Partial<PlaybookTask>) => void;
   initialView?: 'setup' | 'quality' | 'reference';
+  /**
+   * 'docked' renders the editor as a right-hand column beside the canvas
+   * (reduces the canvas viewport instead of covering it); 'dialog' keeps the
+   * legacy full-screen modal.
+   */
+  variant?: 'dialog' | 'docked';
+  /** Docked only: opens the execution results view for this step. */
+  onViewResults?: (taskId: string) => void;
 }
 
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
-export const PlaybookNodeEditor = forwardRef<PlaybookNodeEditorHandle, Props>(function PlaybookNodeEditor({ playbookId, task, allTasks = [], open, onOpenChange, onSave, initialView = 'setup' }, ref) {
+export const PlaybookNodeEditor = forwardRef<PlaybookNodeEditorHandle, Props>(function PlaybookNodeEditor({ playbookId, task, allTasks = [], open, onOpenChange, onSave, initialView = 'setup', variant = 'dialog', onViewResults }, ref) {
   const agents = useAgents();
   const fetchAgents = useAgentStore((s) => s.fetchAgents);
   const models = useModels();
@@ -943,6 +951,16 @@ export const PlaybookNodeEditor = forwardRef<PlaybookNodeEditorHandle, Props>(fu
     void replaySave;
   }, [cancelReplayFormatGeneration, onSave, onOpenChange]);
 
+  /** Close request honouring the replay-stale guard; shared by dialog X and docked close. */
+  const requestClose = useCallback(() => {
+    const currentTask = taskRef.current;
+    if (currentTask?.hasValidatedReplay && hasStaleMakingChanges()) {
+      setReplayStaleDialogOpen(true);
+      return;
+    }
+    flushAndClose();
+  }, [flushAndClose, hasStaleMakingChanges]);
+
   const handleRemoveStaleReplay = useCallback(async () => {
     const currentTask = taskRef.current;
     if (!playbookId || !currentTask?.activeReplayId) return;
@@ -978,30 +996,50 @@ export const PlaybookNodeEditor = forwardRef<PlaybookNodeEditorHandle, Props>(fu
       : isPlaybookDirty
         ? 'queued'
         : 'saved';
-  return (
+  const docked = variant === 'docked';
+
+  const editorBody = (
     <>
-      <Dialog open={open} onOpenChange={(nextOpen) => {
-        if (!nextOpen) {
-          const currentTask = taskRef.current;
-          if (currentTask?.hasValidatedReplay && hasStaleMakingChanges()) {
-            setReplayStaleDialogOpen(true);
-            return;
-          }
-          flushAndClose();
-        } else {
-          onOpenChange(nextOpen);
-        }
-      }}>
-        <DialogContent
-          className="flex h-[100dvh] w-screen max-w-none flex-col gap-0 overflow-hidden rounded-none border-border bg-background p-0 shadow-[0_28px_90px_-44px_rgba(15,23,42,0.35)] sm:h-[88vh] sm:w-[96vw] sm:max-w-7xl sm:rounded-lg"
-        >
-          <DialogHeader className="border-b px-4 py-3 pr-12 sm:px-6 sm:py-4 sm:pr-14">
+      <DialogHeader className={`border-b px-4 py-3 sm:px-6 sm:py-4 ${docked ? '' : 'pr-12 sm:pr-14'}`}>
             <div className="flex flex-wrap items-start justify-between gap-4">
               <div className="space-y-1">
-                <DialogTitle>{t('nodeEditor.title')}</DialogTitle>
-                <DialogDescription>{draft.title || t('nodeEditor.stepTitlePlaceholder')}</DialogDescription>
+                {docked ? (
+                  <>
+                    <h2 className="text-lg font-semibold leading-none tracking-tight">{t('nodeEditor.title')}</h2>
+                    <p className="text-sm text-muted-foreground">{draft.title || t('nodeEditor.stepTitlePlaceholder')}</p>
+                  </>
+                ) : (
+                  <>
+                    <DialogTitle>{t('nodeEditor.title')}</DialogTitle>
+                    <DialogDescription>{draft.title || t('nodeEditor.stepTitlePlaceholder')}</DialogDescription>
+                  </>
+                )}
               </div>
               <div className="flex flex-wrap items-center justify-end gap-3">
+                {docked && task && onViewResults && (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="h-7 px-2 text-xs"
+                    onClick={() => onViewResults(task.id)}
+                  >
+                    <FileText className="mr-1.5 h-3.5 w-3.5" />
+                    {t('node.viewResults')}
+                  </Button>
+                )}
+                {docked && (
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    className="h-7 w-7"
+                    aria-label={t('common.close')}
+                    onClick={requestClose}
+                  >
+                    <X className="h-4 w-4" />
+                  </Button>
+                )}
                 <div className="flex items-center gap-2 text-xs" aria-live="polite">
                   {saveState === 'saving' && <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />}
                   {saveState === 'saved' && <Check className="h-3.5 w-3.5 text-emerald-600" />}
@@ -1316,6 +1354,7 @@ export const PlaybookNodeEditor = forwardRef<PlaybookNodeEditorHandle, Props>(fu
 
                 <EditorSection title={t('dataFlow.sectionTitle')} defaultOpen resetKey={`${task.id}:data-flow`}>
                     <PlaybookDataFlowSection
+                      hideTitle
                       targetNodeId={task.id}
                       inputPortsOverride={draft.inputPorts}
                       outputPortsOverride={draft.outputPorts}
@@ -1812,8 +1851,36 @@ export const PlaybookNodeEditor = forwardRef<PlaybookNodeEditorHandle, Props>(fu
             </TabsContent>
           </Tabs>
           )}
-      </DialogContent>
-      </Dialog>
+    </>
+  );
+
+  return (
+    <>
+      {docked ? (
+        open ? (
+          <aside
+            className="flex h-full min-h-0 w-full flex-col overflow-hidden bg-background"
+            aria-label={t('inspector.title')}
+            data-docked-node-editor="true"
+          >
+            {editorBody}
+          </aside>
+        ) : null
+      ) : (
+        <Dialog open={open} onOpenChange={(nextOpen) => {
+          if (!nextOpen) {
+            requestClose();
+          } else {
+            onOpenChange(nextOpen);
+          }
+        }}>
+          <DialogContent
+            className="flex h-[100dvh] w-screen max-w-none flex-col gap-0 overflow-hidden rounded-none border-border bg-background p-0 shadow-[0_28px_90px_-44px_rgba(15,23,42,0.35)] sm:h-[88vh] sm:w-[96vw] sm:max-w-7xl sm:rounded-lg"
+          >
+            {editorBody}
+          </DialogContent>
+        </Dialog>
+      )}
 
       {playbookId && task && (
         <Dialog open={stepHitlDialogOpen} onOpenChange={setStepHitlDialogOpen}>

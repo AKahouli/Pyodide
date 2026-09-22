@@ -460,6 +460,7 @@ function ConversationCard({
         onOpenChange={setDeleteOpen}
         title={conversation.title}
         onConfirm={handleDelete}
+        isShared={conversation.isShared}
       />
     </>
   );

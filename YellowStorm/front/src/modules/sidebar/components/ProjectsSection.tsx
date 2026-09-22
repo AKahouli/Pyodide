@@ -182,10 +182,7 @@ export const ProjectsSection = memo(function ProjectsSection({ label }: { label?
   const deleteProject = useProjectStore((s) => s.deleteProject);
   const navigate = useNavigate();
 
-  const [open, setOpen] = useState<boolean>(() => {
-    if (typeof window === 'undefined') return false;
-    return localStorage.getItem('projects:sectionOpen') === 'true';
-  });
+  const [open, setOpen] = useState(false);
   const [createOpen, setCreateOpen] = useState(false);
   const [renameTarget, setRenameTarget] = useState<Project | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<Project | null>(null);
@@ -196,12 +193,6 @@ export const ProjectsSection = memo(function ProjectsSection({ label }: { label?
     fetchSharedProjects();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pendingApproval]);
-
-  useEffect(() => {
-    if (typeof window !== 'undefined') {
-      localStorage.setItem('projects:sectionOpen', String(open));
-    }
-  }, [open]);
 
   const handleCreate = useCallback(
     async (name: string) => {

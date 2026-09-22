@@ -1,0 +1,26 @@
+{
+  "success": true,
+  "data": [
+    {
+      "type": "oauth",
+      "providerKey": "microsoft",
+      "displayName": "Microsoft",
+      "iconKey": "microsoft",
+      "sortOrder": 0
+    },
+    {
+      "type": "classic",
+      "providerKey": "classic",
+      "displayName": "Email & Password",
+      "iconKey": "email",
+      "sortOrder": 999,
+      "registrationEnabled": true
+    }
+  ],
+  "meta": {
+    "timestamp": "<volatile>",
+    "requestId": "<volatile>",
+    "path": "/api/v1/auth/providers",
+    "duration": 24
+  }
+}

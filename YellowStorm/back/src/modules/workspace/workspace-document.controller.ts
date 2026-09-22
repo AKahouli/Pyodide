@@ -40,7 +40,7 @@ interface MulterFile {
 }
 import { WorkspaceDocumentService } from './workspace-document.service';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
-import { UserDocument } from '../user/schemas/user.schema';
+import type { AuthUser } from '@common/auth/auth-user';
 import { WorkspaceAccessGuard, WritePermissionGuard } from './guards';
 import { RequestUploadUrlDto } from './dto/request-upload-url.dto';
 import { ConfirmUploadDto } from './dto/confirm-upload.dto';
@@ -89,7 +89,7 @@ export class WorkspaceDocumentController {
   @ApiParam({ name: 'workspaceId', description: 'Workspace ID' })
   @ApiResponse({ status: 201, description: 'Document uploaded successfully' })
   async uploadSmallFile(
-    @CurrentUser() user: UserDocument,
+    @CurrentUser() user: AuthUser,
     @Param('workspaceId') workspaceId: string,
     @UploadedFile() file: MulterFile,
     @Body() body?: { folderId?: string; deepSearch?: string; autoIndex?: string },
@@ -125,7 +125,7 @@ export class WorkspaceDocumentController {
   @ApiParam({ name: 'workspaceId', description: 'Workspace ID' })
   @ApiResponse({ status: 201, description: 'Link accepted; conversion in progress' })
   async addLink(
-    @CurrentUser() user: UserDocument,
+    @CurrentUser() user: AuthUser,
     @Param('workspaceId') workspaceId: string,
     @Body() body: AddLinkDto,
   ) {
@@ -142,7 +142,7 @@ export class WorkspaceDocumentController {
   @ApiOperation({ summary: 'Add multiple website links (each converted to PDF and indexed)' })
   @ApiParam({ name: 'workspaceId', description: 'Workspace ID' })
   async addLinks(
-    @CurrentUser() user: UserDocument,
+    @CurrentUser() user: AuthUser,
     @Param('workspaceId') workspaceId: string,
     @Body() body: AddLinksDto,
   ) {
@@ -180,7 +180,7 @@ export class WorkspaceDocumentController {
   @ApiParam({ name: 'workspaceId', description: 'Workspace ID' })
   @ApiResponse({ status: 201, description: 'Upload URL generated' })
   async requestUploadUrl(
-    @CurrentUser() user: UserDocument,
+    @CurrentUser() user: AuthUser,
     @Param('workspaceId') workspaceId: string,
     @Body() dto: RequestUploadUrlDto,
   ) {
@@ -200,7 +200,7 @@ export class WorkspaceDocumentController {
   @ApiOperation({ summary: 'Confirm upload completed' })
   @ApiParam({ name: 'workspaceId', description: 'Workspace ID' })
   async confirmUpload(
-    @CurrentUser() user: UserDocument,
+    @CurrentUser() user: AuthUser,
     @Param('workspaceId') workspaceId: string,
     @Body() dto: ConfirmUploadDto,
   ) {
@@ -221,7 +221,7 @@ export class WorkspaceDocumentController {
   @ApiParam({ name: 'workspaceId', description: 'Workspace ID' })
   @ApiResponse({ status: 201, description: 'Bulk upload session created' })
   async initiateBulkUpload(
-    @CurrentUser() user: UserDocument,
+    @CurrentUser() user: AuthUser,
     @Param('workspaceId') workspaceId: string,
     @Body() dto: InitiateBulkUploadDto,
   ) {
@@ -242,7 +242,7 @@ export class WorkspaceDocumentController {
   @ApiParam({ name: 'workspaceId', description: 'Workspace ID' })
   @ApiParam({ name: 'sessionId', description: 'Upload session ID' })
   async reportProgress(
-    @CurrentUser() user: UserDocument,
+    @CurrentUser() user: AuthUser,
     @Param('workspaceId') workspaceId: string,
     @Param('sessionId') sessionId: string,
     @Body() dto: ReportProgressDto,
@@ -266,7 +266,7 @@ export class WorkspaceDocumentController {
   @ApiParam({ name: 'workspaceId', description: 'Workspace ID' })
   @ApiParam({ name: 'sessionId', description: 'Upload session ID' })
   async completeBulkUpload(
-    @CurrentUser() user: UserDocument,
+    @CurrentUser() user: AuthUser,
     @Param('workspaceId') workspaceId: string,
     @Param('sessionId') sessionId: string,
     @Query('deepSearch') deepSearch?: string,
@@ -289,7 +289,7 @@ export class WorkspaceDocumentController {
   @ApiParam({ name: 'workspaceId', description: 'Workspace ID' })
   @ApiParam({ name: 'sessionId', description: 'Upload session ID' })
   async getUploadSession(
-    @CurrentUser() user: UserDocument,
+    @CurrentUser() user: AuthUser,
     @Param('workspaceId') workspaceId: string,
     @Param('sessionId') sessionId: string,
   ) {
@@ -393,7 +393,7 @@ export class WorkspaceDocumentController {
   @ApiOperation({ summary: 'Bulk delete documents' })
   @ApiParam({ name: 'workspaceId', description: 'Workspace ID' })
   async bulkDelete(
-    @CurrentUser() user: UserDocument,
+    @CurrentUser() user: AuthUser,
     @Param('workspaceId') workspaceId: string,
     @Body() dto: BulkDeleteDocumentsDto,
   ) {
@@ -414,7 +414,7 @@ export class WorkspaceDocumentController {
   @ApiParam({ name: 'workspaceId', description: 'Workspace ID' })
   @ApiParam({ name: 'docId', description: 'Document ID' })
   async delete(
-    @CurrentUser() user: UserDocument,
+    @CurrentUser() user: AuthUser,
     @Param('workspaceId') workspaceId: string,
     @Param('docId') docId: string,
     @Query('cascadeArtifacts') cascadeArtifacts?: string,
@@ -438,7 +438,7 @@ export class WorkspaceDocumentController {
   @ApiOperation({ summary: 'Create a new folder in the workspace' })
   @ApiParam({ name: 'workspaceId', description: 'Workspace ID' })
   async createFolder(
-    @CurrentUser() user: UserDocument,
+    @CurrentUser() user: AuthUser,
     @Param('workspaceId') workspaceId: string,
     @Body() body: { name: string; parentId?: string },
   ) {
@@ -475,7 +475,7 @@ export class WorkspaceDocumentController {
   @ApiParam({ name: 'workspaceId', description: 'Workspace ID' })
   @ApiParam({ name: 'folderId', description: 'Folder ID' })
   async renameFolder(
-    @CurrentUser() user: UserDocument,
+    @CurrentUser() user: AuthUser,
     @Param('workspaceId') workspaceId: string,
     @Param('folderId') folderId: string,
     @Body() body: { name: string },
@@ -497,7 +497,7 @@ export class WorkspaceDocumentController {
   @ApiParam({ name: 'workspaceId', description: 'Workspace ID' })
   @ApiParam({ name: 'folderId', description: 'Folder ID' })
   async deleteFolder(
-    @CurrentUser() user: UserDocument,
+    @CurrentUser() user: AuthUser,
     @Param('workspaceId') workspaceId: string,
     @Param('folderId') folderId: string,
   ) {
@@ -532,7 +532,7 @@ export class WorkspaceDocumentController {
   @ApiOperation({ summary: 'Move documents to a different folder' })
   @ApiParam({ name: 'workspaceId', description: 'Workspace ID' })
   async moveDocuments(
-    @CurrentUser() user: UserDocument,
+    @CurrentUser() user: AuthUser,
     @Param('workspaceId') workspaceId: string,
     @Body() body: { documentIds: string[]; targetFolderId?: string },
   ) {

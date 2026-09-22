@@ -404,6 +404,32 @@ describe('DocumentService', () => {
     });
   });
 
+  describe('putStream', () => {
+    it('passes the stream and declared length directly to S3', async () => {
+      const body = Readable.from(['PAR1']);
+
+      await service.putStream(
+        'semantic-model/datasets/ws/asset/ds_1.parquet',
+        body,
+        'application/vnd.apache.parquet',
+        4,
+        { sha256: 'abc', datasetId: 'ds_1' },
+      );
+
+      const command = mockSend.mock.calls
+        .map((call) => call[0])
+        .find((item) => item.constructor.name === 'PutObjectCommand');
+      expect(command.input).toMatchObject({
+        Bucket: BUCKET,
+        Body: body,
+        ContentLength: 4,
+        ContentType: 'application/vnd.apache.parquet',
+        CacheControl: 'private, no-store',
+        Metadata: { sha256: 'abc', datasetid: 'ds_1' },
+      });
+    });
+  });
+
   describe('openReadStream', () => {
     it('opens a ranged stream and returns safe content metadata', async () => {
       const body = Readable.from(['partial']);

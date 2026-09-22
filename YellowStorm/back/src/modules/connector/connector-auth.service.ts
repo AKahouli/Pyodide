@@ -5,7 +5,7 @@ import { ConnectedAppTokenService } from '../connected-app/services/connected-ap
 import { UserService } from '../user/user.service';
 import { ConnectorCredentialService } from './connector-credential.service';
 import { ConnectorAuthService, ConnectorDynamicHeaderConfig } from './interfaces/connector-auth.interface';
-import { DynamicHeaderSource } from './schemas/connector.schema';
+import { DynamicHeaderSource } from './connector.types';
 
 @Injectable()
 export class ConnectorAuthServiceImpl implements ConnectorAuthService {

@@ -1,8 +1,7 @@
-import { Injectable } from '@nestjs/common';
-import { InjectModel } from '@nestjs/mongoose';
+import { Inject, Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { Model, Types } from 'mongoose';
-import { RegistrationApproval, User, UserDocument, UserStatus } from './schemas/user.schema';
+import { RegistrationApproval, UserStatus } from './user.types';
+import { USER_STORE, type UserRecord, type UserStore } from './persistence/user.store';
 import { AuthorizationService } from '@modules/authorization/authorization.service';
 import { EmailService, EmailTemplateRenderer, EmailTemplate } from '@modules/email';
 import { LoggerService } from '@modules/logger';
@@ -32,7 +31,7 @@ export class RegistrationApprovalService {
   private readonly frontendUrl: string;
 
   constructor(
-    @InjectModel(User.name) private readonly userModel: Model<UserDocument>,
+    @Inject(USER_STORE) private readonly userStore: UserStore,
     private readonly authorizationService: AuthorizationService,
     private readonly emailService: EmailService,
     private readonly emailTemplateRenderer: EmailTemplateRenderer,
@@ -53,15 +52,16 @@ export class RegistrationApprovalService {
     }
 
     const wasInactive = user.status === UserStatus.INACTIVE;
-    user.status = UserStatus.ACTIVE;
-    user.registrationApproval = RegistrationApproval.APPROVED;
-    await user.save();
+    const updated = await this.userStore.update(userId, {
+      status: UserStatus.ACTIVE,
+      registrationApproval: RegistrationApproval.APPROVED,
+    });
 
-    if (wasInactive) {
-      await this.sendAccessActivatedEmail(user.email);
+    if (wasInactive && updated) {
+      await this.sendAccessActivatedEmail(updated.email);
     }
 
-    return this.toDecisionResult(user, true);
+    return this.toDecisionResult(updated ?? user, true);
   }
 
   async rejectRegistration(userId: string): Promise<RegistrationDecisionResult> {
@@ -72,9 +72,10 @@ export class RegistrationApprovalService {
       return this.toDecisionResult(user, false);
     }
 
-    user.registrationApproval = RegistrationApproval.REJECTED;
-    await user.save();
-    return this.toDecisionResult(user, true);
+    const updated = await this.userStore.update(userId, {
+      registrationApproval: RegistrationApproval.REJECTED,
+    });
+    return this.toDecisionResult(updated ?? user, true);
   }
 
   async notifySuperAdminsOfRegistration(notice: PendingRegistrationNotice): Promise<void> {
@@ -136,23 +137,19 @@ export class RegistrationApprovalService {
       return [];
     }
 
-    const users = await this.userModel
-      .find({ roles: new Types.ObjectId(role.id), status: UserStatus.ACTIVE })
-      .select('email')
-      .lean();
-
+    const users = await this.userStore.findActiveByRole(role.id);
     return [...new Set(users.map((user) => user.email).filter(Boolean))];
   }
 
-  private async requireUser(userId: string): Promise<UserDocument> {
-    const user = await this.userModel.findById(userId);
+  private async requireUser(userId: string): Promise<UserRecord> {
+    const user = await this.userStore.findById(userId);
     if (!user) {
       throw new NotFoundException(ErrorCode.USER_NOT_FOUND, 'User not found');
     }
     return user;
   }
 
-  private assertCanApprove(user: UserDocument): void {
+  private assertCanApprove(user: UserRecord): void {
     if (user.status === UserStatus.SUSPENDED) {
       throw new BadRequestException(
         ErrorCode.BAD_REQUEST,
@@ -161,7 +158,7 @@ export class RegistrationApprovalService {
     }
   }
 
-  private assertCanReject(user: UserDocument): void {
+  private assertCanReject(user: UserRecord): void {
     if (user.status !== UserStatus.INACTIVE) {
       throw new BadRequestException(
         ErrorCode.BAD_REQUEST,
@@ -170,7 +167,7 @@ export class RegistrationApprovalService {
     }
   }
 
-  private isAlreadyApproved(user: UserDocument): boolean {
+  private isAlreadyApproved(user: UserRecord): boolean {
     return (
       user.status === UserStatus.ACTIVE &&
       user.registrationApproval === RegistrationApproval.APPROVED
@@ -178,15 +175,15 @@ export class RegistrationApprovalService {
   }
 
   private toDecisionResult(
-    user: UserDocument,
+    user: UserRecord,
     changed: boolean,
   ): RegistrationDecisionResult {
     return {
       changed,
-      userId: user._id.toString(),
+      userId: user.id,
       email: user.email,
-      status: user.status,
-      registrationApproval: user.registrationApproval,
+      status: user.status as UserStatus,
+      registrationApproval: (user.registrationApproval ?? undefined) as RegistrationApproval | undefined,
     };
   }
 

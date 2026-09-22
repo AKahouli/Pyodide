@@ -1,15 +1,12 @@
-import { createHash } from 'node:crypto';
 import { Injectable } from '@nestjs/common';
 import { BadRequestException, ConflictException, NotFoundException } from '@modules/exceptions';
 import { ErrorCode } from '@modules/exceptions/constants/error-codes';
-import { WorkspaceDocumentService } from '@modules/workspace/workspace-document.service';
 import type { ListReviewItemsQueryDto, ResolveReviewItemDto } from '../dto';
 import type { SourceAssetKind, SourceFieldMapping } from '../domain/semantic-source-mapping.types';
 import { SemanticModelDatabaseService } from '../infrastructure/semantic-model-database.service';
 import { SemanticModelService } from './semantic-model.service';
-import { SpreadsheetConceptResolver } from './spreadsheet-concept.resolver';
 
-type MappingHealthState = 'healthy' | 'changed' | 'unavailable' | 'broken';
+type MappingHealthState = 'healthy' | 'changed' | 'unavailable' | 'broken' | 'checking';
 
 export interface MappingHealthRow {
   id: string;
@@ -51,8 +48,6 @@ export class SemanticBusinessTrustService {
   constructor(
     private readonly database: SemanticModelDatabaseService,
     private readonly models: SemanticModelService,
-    private readonly documents: WorkspaceDocumentService,
-    private readonly spreadsheets: SpreadsheetConceptResolver,
   ) {}
 
   async reviewItems(userId: string, modelId: string, query: ListReviewItemsQueryDto) {
@@ -102,18 +97,45 @@ export class SemanticBusinessTrustService {
 
   async mappingHealth(userId: string, modelId: string) {
     const model = await this.models.requireActiveRole(userId, modelId, ['owner', 'editor', 'viewer']);
-    const rows = await this.mappingRows(model.id);
-    const items: MappingHealthItem[] = [];
-    for (const mapping of rows.slice(0, 50)) items.push(await this.inspectMapping(mapping));
-    if (model.role !== 'viewer') await this.persistHealth(model.id, items);
+    const result = await this.database.query<MappingHealthItem & { totalCount: string }>(
+      `SELECT m.id,m.concept_id AS "conceptId",COALESCE(n.label,m.concept_id::text) AS "conceptLabel",
+              m.workspace_id AS "workspaceId",m.document_id AS "documentId",m.sheet_name AS "sheetName",
+              m.asset_kind AS "assetKind",m.field_mappings AS "fieldMappings",m.status,
+              m.created_by AS "createdBy",m.created_at AS "createdAt",m.updated_at AS "updatedAt",
+              COALESCE(w.enabled,false) AS "sourceEnabled",m.validated_source_version AS "validatedSourceVersion",
+              m.validated_at AS "validatedAt",COALESCE(p.profile->'metadata'->>'originalName',m.document_id) AS "documentName",
+              COALESCE(h.state,'checking') AS state,h.source_fingerprint AS "currentSourceVersion",
+              COALESCE(h.missing_fields,'[]'::jsonb) AS "missingFields",
+              COALESCE(h.available_fields,'[]'::jsonb) AS "availableFields",
+              CASE COALESCE(h.state,'checking')
+                WHEN 'changed' THEN 'The source changed since this mapping was validated.'
+                WHEN 'broken' THEN 'One or more mapped fields no longer exist.'
+                WHEN 'unavailable' THEN 'The mapped source is unavailable.'
+                WHEN 'checking' THEN 'Source analysis is pending.' ELSE NULL END AS message,
+              count(*) OVER()::text AS "totalCount"
+       FROM semantic_model.source_mappings m
+       LEFT JOIN semantic_model.workspace_links w ON w.model_id=m.model_id AND w.workspace_id=m.workspace_id
+       LEFT JOIN semantic_model.models sm ON sm.id=m.model_id
+       LEFT JOIN semantic_model.node_types n ON n.version_id=sm.current_draft_version_id AND n.id=m.concept_id
+       LEFT JOIN semantic_datasource.mapping_health h ON h.model_id=m.model_id AND h.mapping_id=m.id
+       LEFT JOIN LATERAL (
+         SELECT profile FROM semantic_datasource.discovery_profiles
+         WHERE workspace_id=m.workspace_id AND asset_id=m.document_id
+         ORDER BY completed_at DESC LIMIT 1
+       ) p ON true
+       WHERE m.model_id=$1 ORDER BY m.created_at LIMIT 50`,
+      [model.id],
+    );
+    const items = result.rows.map(({ totalCount: _totalCount, ...item }) => item);
     return {
       items,
-      truncated: rows.length > 50,
+      truncated: Number(result.rows[0]?.totalCount ?? 0) > 50,
       summary: {
         healthy: items.filter((item) => item.state === 'healthy').length,
         changed: items.filter((item) => item.state === 'changed').length,
         unavailable: items.filter((item) => item.state === 'unavailable').length,
         broken: items.filter((item) => item.state === 'broken').length,
+        checking: items.filter((item) => item.state === 'checking').length,
       },
     };
   }
@@ -129,7 +151,7 @@ export class SemanticBusinessTrustService {
         (SELECT count(*) FROM semantic_model.identity_rules i JOIN semantic_model.node_types n ON n.id=i.concept_id AND n.version_id=$2 WHERE i.model_id=$1 AND n.system_key IS NULL AND n.record_policy<>'none')::text AS "identityCount",
         (SELECT count(*) FROM semantic_model.relation_types WHERE model_id=$1 AND version_id=$2)::text AS "relationCount",
         (SELECT count(*) FROM semantic_model.relation_resolution_rules rule JOIN semantic_model.relation_types relation ON relation.id=rule.relation_id AND relation.version_id=$2 WHERE rule.model_id=$1)::text AS "ruleCount",
-        (SELECT count(*) FROM semantic_model.source_mappings m JOIN semantic_model.node_types n ON n.id=m.concept_id AND n.version_id=$2 LEFT JOIN semantic_model.workspace_links w ON w.model_id=m.model_id AND w.workspace_id=m.workspace_id WHERE m.model_id=$1 AND (m.status<>'ready' OR NOT COALESCE(w.enabled,false)))::text AS "unhealthyMappingCount",
+        (SELECT count(*) FROM semantic_model.source_mappings m JOIN semantic_model.node_types n ON n.id=m.concept_id AND n.version_id=$2 LEFT JOIN semantic_model.workspace_links w ON w.model_id=m.model_id AND w.workspace_id=m.workspace_id LEFT JOIN semantic_datasource.mapping_health h ON h.model_id=m.model_id AND h.mapping_id=m.id WHERE m.model_id=$1 AND (m.status<>'ready' OR NOT COALESCE(w.enabled,false) OR COALESCE(h.state,'checking')<>'healthy'))::text AS "unhealthyMappingCount",
         (SELECT count(*) FROM semantic_model.review_items review WHERE review.model_id=$1 AND review.status='open' AND (
           (review.kind='ambiguous_relation' AND EXISTS (SELECT 1 FROM semantic_model.relation_types relation WHERE relation.version_id=$2 AND relation.id::text=review.target_id)) OR
           (review.kind='source_conflict' AND EXISTS (SELECT 1 FROM semantic_model.node_types node WHERE node.version_id=$2 AND node.id::text=review.details->>'conceptId')) OR
@@ -174,68 +196,4 @@ export class SemanticBusinessTrustService {
     throw new BadRequestException(ErrorCode.SEMANTIC_MODEL_VALIDATION_FAILED, 'Repair the mapping before resolving this review');
   }
 
-  private async mappingRows(modelId: string): Promise<MappingHealthRow[]> {
-    const result = await this.database.query<MappingHealthRow>(
-      `SELECT m.id,m.concept_id AS "conceptId",COALESCE(n.label,m.concept_id::text) AS "conceptLabel",
-              m.workspace_id AS "workspaceId",m.document_id AS "documentId",m.sheet_name AS "sheetName",
-              m.asset_kind AS "assetKind",m.field_mappings AS "fieldMappings",m.status,
-              COALESCE(w.enabled,false) AS "sourceEnabled",m.validated_source_version AS "validatedSourceVersion",
-              m.validated_at AS "validatedAt"
-       FROM semantic_model.source_mappings m
-       LEFT JOIN semantic_model.workspace_links w ON w.model_id=m.model_id AND w.workspace_id=m.workspace_id
-       LEFT JOIN semantic_model.models model ON model.id=m.model_id
-       LEFT JOIN semantic_model.node_types n ON n.version_id=model.current_draft_version_id AND n.id=m.concept_id
-       WHERE m.model_id=$1 ORDER BY m.created_at`,
-      [modelId],
-    );
-    return result.rows;
-  }
-
-  private async inspectMapping(mapping: MappingHealthRow): Promise<MappingHealthItem> {
-    const base = { ...mapping, documentName: mapping.documentId, currentSourceVersion: null, missingFields: [], availableFields: [], message: null };
-    if (!mapping.sourceEnabled) return { ...base, state: 'unavailable', message: 'The source workspace is disconnected.' };
-    try {
-      const document = await this.documents.findById(mapping.workspaceId, mapping.documentId);
-      const currentSourceVersion = document.contentHash || `${document.updatedAt}:${document.size}`;
-      if (currentSourceVersion === mapping.validatedSourceVersion) {
-        return { ...base, documentName: document.originalName, currentSourceVersion, state: 'healthy' };
-      }
-      if (mapping.assetKind === 'document') {
-        return { ...base, documentName: document.originalName, currentSourceVersion, state: 'changed', message: 'The source document changed since this mapping was validated.' };
-      }
-      const profile = await this.spreadsheets.profile(mapping.workspaceId, mapping.documentId, mapping.sheetName);
-      const availableFields = 'fields' in profile ? (profile.fields ?? []).map((field) => field.name) : [];
-      const available = new Set(availableFields);
-      const missingFields = mapping.fieldMappings
-        .filter((field) => field.mode === 'direct' && field.sourceField && !available.has(field.sourceField))
-        .map((field) => field.sourceField!);
-      return {
-        ...base,
-        documentName: document.originalName,
-        currentSourceVersion,
-        availableFields,
-        missingFields,
-        state: missingFields.length ? 'broken' : 'changed',
-        message: missingFields.length ? 'One or more mapped fields no longer exist.' : 'The source changed since this mapping was validated.',
-      };
-    } catch {
-      return { ...base, state: 'unavailable', message: 'The mapped source could not be accessed.' };
-    }
-  }
-
-  private async persistHealth(modelId: string, items: MappingHealthItem[]): Promise<void> {
-    for (const item of items) {
-      const status = item.state === 'healthy' ? 'ready' : item.state === 'changed' ? 'needs_review' : item.state;
-      await this.database.query('UPDATE semantic_model.source_mappings SET status=$3,updated_at=now() WHERE id=$1 AND model_id=$2 AND status IS DISTINCT FROM $3', [item.id, modelId, status]);
-      if (item.state !== 'broken') continue;
-      const details = { mappingId: item.id, conceptId: item.conceptId, conceptLabel: item.conceptLabel, documentName: item.documentName, missingFields: item.missingFields, availableFields: item.availableFields };
-      const fingerprint = createHash('sha256').update(`broken_mapping:${item.id}:${item.missingFields.join(',')}`).digest('hex');
-      await this.database.query(
-        `INSERT INTO semantic_model.review_items (model_id,kind,target_id,fingerprint,details)
-         VALUES ($1,'broken_mapping',$2,$3,$4::jsonb)
-         ON CONFLICT (model_id,fingerprint) DO UPDATE SET details=EXCLUDED.details,updated_at=now()`,
-        [modelId, item.id, fingerprint, JSON.stringify(details)],
-      );
-    }
-  }
 }

@@ -67,13 +67,22 @@ class TestLLMFactory:
 
         assert mock_litellm.call_args.kwargs["num_retries"] == 0
 
-    def test_create_no_tool_calls_llm_omits_retries_by_default(self, monkeypatch):
+    @pytest.mark.parametrize(
+        "factory_method",
+        [
+            "create_parallel_tool_calls_llm",
+            "create_no_parallel_tool_calls_llm",
+            "create_no_tool_calls_llm",
+        ],
+    )
+    def test_factory_applies_bounded_request_policy_by_default(self, monkeypatch, factory_method):
         mock_litellm = MagicMock()
         _install_lite_llm_mock(monkeypatch, mock_litellm)
 
-        LLMFactory.create_no_tool_calls_llm("test-model")
+        getattr(LLMFactory(), factory_method)("test-model")
 
-        assert "num_retries" not in mock_litellm.call_args.kwargs
+        assert mock_litellm.call_args.kwargs["timeout"] == 90
+        assert mock_litellm.call_args.kwargs["num_retries"] == 1
 
     @pytest.mark.parametrize(
         "factory_method",

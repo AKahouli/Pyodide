@@ -1,10 +1,9 @@
-import { Injectable } from '@nestjs/common';
-import { InjectModel } from '@nestjs/mongoose';
-import { Model, Types } from 'mongoose';
+import { Inject, Injectable } from '@nestjs/common';
+import { newObjectId } from '@common/postgres/object-id';
 import { LoggerService } from '../logger';
 import { AgentRepository } from '../agent/repositories/agent.repository';
 import { AgentRoleEmbeddingService } from '../agent/services/agent-role-embedding.service';
-import { AgentType, AgentTypeDocument } from '../agent-type/schemas/agent-type.schema';
+import { AGENT_TYPE_STORE, type AgentTypeStore } from '../agent-type/persistence/agent-type.store';
 import { collapseRepeatedChar, collapseWhitespace, stripLeadingTrailingChar } from '../../common/utils';
 
 /** Agent-type slug for the per-user "human" agent. Assumed created in the admin panel. */
@@ -41,7 +40,9 @@ function deriveAgentSlug(value: string): string {
 export class HumainAgentService {
   constructor(
     private readonly agentRepository: AgentRepository,
-    @InjectModel(AgentType.name) private readonly agentTypeModel: Model<AgentTypeDocument>,
+    // Store (not AgentTypeService): keeps the auth -> humain-agent import
+    // chain free of the agent/skill service subtree.
+    @Inject(AGENT_TYPE_STORE) private readonly agentTypeStore: AgentTypeStore,
     private readonly roleEmbedding: AgentRoleEmbeddingService,
     private readonly logger: LoggerService,
   ) {
@@ -60,17 +61,14 @@ export class HumainAgentService {
 
   private async upsert(input: HumainAgentInput, overwriteProfileFields: boolean): Promise<void> {
     try {
-      const humainType = await this.agentTypeModel
-        .findOne({ slug: HUMAIN_AGENT_TYPE_SLUG, isActive: true })
-        .lean()
-        .exec();
+      const humainType = await this.agentTypeStore.findBySlug(HUMAIN_AGENT_TYPE_SLUG, true);
       if (!humainType) {
         this.logger.warn('Humain agent type not found; skipping human agent upsert', { userId: input.userId });
         return;
       }
 
-      const agentType = String(humainType._id);
-      const agentTypeSlug = String(humainType.slug ?? '');
+      const agentType = humainType.id;
+      const agentTypeSlug = humainType.slug;
       const name = this.deriveName(input);
       const slug = deriveAgentSlug(name);
       const role = this.deriveRole(input, name);
@@ -79,7 +77,7 @@ export class HumainAgentService {
       const existing = await this.agentRepository.findByOwnerAndType(input.userId, agentType);
 
       if (!existing) {
-        const id = new Types.ObjectId().toString();
+        const id = newObjectId();
         await this.agentRepository.create({
           id,
           name, slug, agentType, agentTypeSlug, role, description, email: input.email,

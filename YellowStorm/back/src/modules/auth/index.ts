@@ -6,7 +6,6 @@ export * from './guards/internal-service.guard';
 export * from './strategies/jwt.strategy';
 export * from './decorators/public.decorator';
 export * from './decorators/current-user.decorator';
-export * from './schemas/session.schema';
 export * from './interfaces/auth.interface';
 export * from './interfaces/jwt-payload.interface';
 export * from './dto/register.dto';

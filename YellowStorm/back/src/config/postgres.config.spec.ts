@@ -35,4 +35,22 @@ describe('postgresConfig', () => {
     expect(cfg.ssl).toBe(true);
     expect(cfg.maxPoolSize).toBe(25);
   });
+
+  it('defaults keepalive delay and leaves SSL verification unset', () => {
+    delete process.env.POSTGRES_KEEPALIVE_INITIAL_DELAY;
+    delete process.env.POSTGRES_SSL_CA;
+    delete process.env.POSTGRES_SSL_REJECT_UNAUTHORIZED;
+    const cfg = postgresConfig();
+    expect(cfg.keepAliveInitialDelayMs).toBe(10000);
+    expect(cfg.sslCa).toBeUndefined();
+    expect(cfg.sslRejectUnauthorized).toBeUndefined();
+  });
+
+  it('reads SSL CA and verification flag', () => {
+    process.env.POSTGRES_SSL_CA = '/etc/ssl/pg-ca.pem';
+    process.env.POSTGRES_SSL_REJECT_UNAUTHORIZED = 'false';
+    const cfg = postgresConfig();
+    expect(cfg.sslCa).toBe('/etc/ssl/pg-ca.pem');
+    expect(cfg.sslRejectUnauthorized).toBe(false);
+  });
 });

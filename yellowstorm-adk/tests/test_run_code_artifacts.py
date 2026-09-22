@@ -6,17 +6,15 @@ from src.smart_rag.run_code_artifacts import build_run_code_artifacts, build_too
 def _agent_config() -> dict:
     return {
         "agent_params": {
-            "params": {
-                "run_code_context_json": json.dumps({
-                    "userId": "user-1",
-                    "runId": "conversation-1",
-                    "mounts": [{
-                        "virtualPath": "/workspace/run",
-                        "cephPrefix": "user-1/system_conversation-1",
-                        "mode": "rw",
-                    }],
-                })
-            }
+            "run_code_context_json": json.dumps({
+                "userId": "user-1",
+                "runId": "conversation-1",
+                "mounts": [{
+                    "virtualPath": "/workspace/run",
+                    "cephPrefix": "user-1/system_conversation-1",
+                    "mode": "rw",
+                }],
+            })
         }
     }
 

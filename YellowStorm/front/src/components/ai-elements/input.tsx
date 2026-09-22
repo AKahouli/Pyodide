@@ -71,6 +71,8 @@ interface InputProps {
   uploadingFiles?: FileUploadInfo[];
   accept?: string;
   maxFiles?: number;
+  /** Hides the add-attachments entry (admin attachment feature off). */
+  attachmentsDisabled?: boolean;
   members?: Array<{ id: string; name: string }>;
   autoMention?: { id: string; name: string; isMember?: boolean; _msgId?: string };
   showWorkspaceSelect?: boolean;
@@ -88,9 +90,11 @@ interface InputProps {
   extraTools?: ReactNode;
   /** Fires on each textarea input event with the current value. */
   onTextChange?: (text: string) => void;
+  /** Focuses the composer on mount. */
+  autoFocus?: boolean;
 }
 
-const Input = memo(function Input({ toolLabels, onSubmit: externalSubmit, draftKey, initialInput, initialMention, onStop, status: externalStatus, disabled, submitDisabled, requireContent = false, placeholder, onFilesAdded, onFileRemoved, uploadingFiles, accept, maxFiles, members, autoMention, showWorkspaceSelect = true, preserveWorkspaceSelectionOnSubmit = false, showModelSelector = false, showReasoningEffort = true, governedMode = false, mentionAgents, enableTeamMentions = true, workspaceOptions, onWorkspaceSelectionChange, belowTextarea, extraTools, onTextChange }: InputProps = {}) {
+const Input = memo(function Input({ toolLabels, onSubmit: externalSubmit, draftKey, initialInput, initialMention, onStop, status: externalStatus, disabled, submitDisabled, requireContent = false, placeholder, onFilesAdded, onFileRemoved, uploadingFiles, accept, maxFiles, attachmentsDisabled, members, autoMention, showWorkspaceSelect = true, preserveWorkspaceSelectionOnSubmit = false, showModelSelector = false, showReasoningEffort = true, governedMode = false, mentionAgents, enableTeamMentions = true, workspaceOptions, onWorkspaceSelectionChange, belowTextarea, extraTools, onTextChange, autoFocus = false }: InputProps = {}) {
   const models = useModels();
   const chefs = useChefs();
   const defaultModel = useDefaultModel();
@@ -517,7 +521,8 @@ const Input = memo(function Input({ toolLabels, onSubmit: externalSubmit, draftK
 
   return (
     <div>
-      <PromptInputProvider key={draftKey} draftKey={draftKey} initialInput={initialInput} onFilesAdded={onFilesAdded} onFileRemoved={onFileRemoved} maxFiles={maxFiles} onError={(err) => toast.error(err.message)}>
+      {/* maxFiles 0 also blocks drag-drop when attachments are disabled */}
+      <PromptInputProvider key={draftKey} draftKey={draftKey} initialInput={initialInput} onFilesAdded={onFilesAdded} onFileRemoved={onFileRemoved} maxFiles={attachmentsDisabled ? 0 : maxFiles} onError={(err) => toast.error(err.message)}>
         <PromptInput globalDrop multiple onSubmit={handleSubmit} accept={accept} maxFiles={maxFiles}>
           <PromptInputAttachments>
             {(attachment) => {
@@ -527,8 +532,8 @@ const Input = memo(function Input({ toolLabels, onSubmit: externalSubmit, draftK
           </PromptInputAttachments>
           <PromptInputBody>
             {governedMode
-              ? <PromptInputTextarea ref={textareaRef} disabled={disabled} placeholder={placeholder} onInput={handleTextareaInput} />
-              : <InputContextMenu onMentionAgent={handleContextMentionAgent} onCreateAgent={() => setShowCreateAgentDialog(true)}><PromptInputTextarea ref={textareaRef} disabled={disabled} placeholder={placeholder} onInput={handleTextareaInput} /></InputContextMenu>}
+              ? <PromptInputTextarea ref={textareaRef} autoFocus={autoFocus} disabled={disabled} placeholder={placeholder} onInput={handleTextareaInput} />
+              : <InputContextMenu onMentionAgent={handleContextMentionAgent} onCreateAgent={() => setShowCreateAgentDialog(true)}><PromptInputTextarea ref={textareaRef} autoFocus={autoFocus} disabled={disabled} placeholder={placeholder} onInput={handleTextareaInput} /></InputContextMenu>}
           </PromptInputBody>
           {belowTextarea}
           <PromptInputFooter className='flex-wrap'>
@@ -536,7 +541,7 @@ const Input = memo(function Input({ toolLabels, onSubmit: externalSubmit, draftK
               <PromptInputActionMenu>
                 <PromptInputActionMenuTrigger size={toolLabels ? 'sm' : undefined} {...(toolLabels ? { 'aria-label': toolLabels.attachments } : {})}>{toolLabels && <><Plus className='size-4' /><span>{toolLabels.attachments}</span></>}</PromptInputActionMenuTrigger>
                 <PromptInputActionMenuContent>
-                  <PromptInputActionAddAttachments />
+                  {!attachmentsDisabled && <PromptInputActionAddAttachments />}
                   <DropdownMenuItem onSelect={() => setSketchOpen(true)}>
                     <Pencil className='mr-2 size-4' /> {t('input.drawSketch')}
                   </DropdownMenuItem>

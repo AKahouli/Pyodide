@@ -1,0 +1,11 @@
+{
+  "shareId": "64b000000000000000000b02",
+  "permission": "write",
+  "user": {
+    "id": "64b000000000000000000002",
+    "email": "user-2@example.test",
+    "firstName": "First",
+    "lastName": "Recipient"
+  },
+  "createdAt": "<volatile>"
+}

@@ -7,9 +7,14 @@ const sidebarState = vi.hoisted(() => ({
   setOpen: vi.fn(),
   toggleSidebar: vi.fn(),
 }));
+const locationState = vi.hoisted(() => ({ pathname: '/apps' }));
 
 vi.mock('@/components/ui/sidebar', () => ({
   useSidebar: () => sidebarState,
+}));
+
+vi.mock('react-router-dom', () => ({
+  useLocation: () => locationState,
 }));
 
 function setWidth(width: number) {
@@ -20,8 +25,31 @@ describe('useAutoCollapse', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     sidebarState.state = 'expanded';
+    locationState.pathname = '/apps';
     document.cookie = 'sidebar_state=; expires=Thu, 01 Jan 1970 00:00:00 GMT';
     setWidth(1280);
+  });
+
+  it.each(['/', '/conversation', '/conversation/conversation-1'])(
+    'collapses when entering %s',
+    (pathname) => {
+      document.cookie = 'sidebar_state=true';
+      locationState.pathname = pathname;
+      const { rerender } = renderHook(() => useAutoCollapse());
+
+      expect(sidebarState.setOpen).toHaveBeenCalledWith(false);
+      sidebarState.setOpen.mockClear();
+      rerender();
+      expect(sidebarState.setOpen).not.toHaveBeenCalled();
+    },
+  );
+
+  it('does not collapse Conversation v2', () => {
+    document.cookie = 'sidebar_state=true';
+    locationState.pathname = '/conversation-v2/session-1';
+    renderHook(() => useAutoCollapse());
+
+    expect(sidebarState.setOpen).not.toHaveBeenCalled();
   });
 
   it('collapses on mount when below 1024px and no persisted state exists', () => {
