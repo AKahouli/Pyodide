@@ -52,8 +52,8 @@ CREATE OR REPLACE VIEW semantic_api.model_summary WITH (security_invoker = true)
     name,
     status,
     revision,
-    binding.version AS active_data_revision,
-    updated_at
+    models.updated_at,
+    binding.version AS active_data_revision
   FROM semantic_model.models
   LEFT JOIN semantic_runtime.active_bindings binding
     ON binding.model_id = models.id::text AND binding.environment = 'production';
