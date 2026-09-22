@@ -91,6 +91,12 @@ vi.mock("../components/editor/SemanticModelInspector", () => ({
 vi.mock("../components/versions/VersionsPanel", () => ({
   VersionsPanel: () => null,
 }));
+vi.mock("../components/mapping/SemanticMappingsView", () => ({
+  SemanticMappingsView: () => null,
+}));
+vi.mock("../data-plane/use-semantic-model-channel", () => ({
+  useSemanticModelChannel: () => ({ live: false, polling: false }),
+}));
 
 describe("SemanticModelEditorPage", () => {
   beforeEach(() => {
